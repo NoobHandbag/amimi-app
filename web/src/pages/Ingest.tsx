@@ -4,6 +4,7 @@ import PurchaseForm from '../components/PurchaseForm';
 import NewProductForm from '../components/NewProductForm';
 import GiftForm from '../components/GiftForm';
 import B2BForm from '../components/B2BForm';
+import RecentFeed from '../components/RecentFeed';
 
 const TIPI = [
   { k: 'count', icon: '🔢', label: 'Conta fisica', desc: 'Conta i pezzi reali a scaffale' },
@@ -35,15 +36,18 @@ export default function Ingest({ pin, setPin, chi, setChi }: {
       </header>
 
       {!sel ? (
-        <div className="tipi">
-          {TIPI.map((t) => (
-            <button key={t.k} className="tipo" onClick={() => setSel(t.k)} type="button">
-              <span className="ti">{t.icon}</span>
-              <span className="tt">{t.label}</span>
-              <span className="td">{t.desc}</span>
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="tipi">
+            {TIPI.map((t) => (
+              <button key={t.k} className="tipo" onClick={() => setSel(t.k)} type="button">
+                <span className="ti">{t.icon}</span>
+                <span className="tt">{t.label}</span>
+                <span className="td">{t.desc}</span>
+              </button>
+            ))}
+          </div>
+          <RecentFeed />
+        </>
       ) : (
         <>
           <button className="back" onClick={() => setSel(null)} type="button">← {cur?.label}</button>

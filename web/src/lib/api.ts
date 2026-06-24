@@ -72,4 +72,11 @@ export async function fetchLastPurchase(codice: string): Promise<{ costo_unitari
   return null;
 }
 
+export type Activity = { id: number; tbl: string; chi: string | null; ts: string; codice: string | null };
+export async function fetchRecent(): Promise<Activity[]> {
+  const { data } = await supabase.from('change_log').select('id,tbl,chi,ts,after').order('ts', { ascending: false }).limit(15);
+  return (data ?? []).map((r: { id: number; tbl: string; chi: string | null; ts: string; after: { codice?: string } | null }) =>
+    ({ id: r.id, tbl: r.tbl, chi: r.chi, ts: r.ts, codice: r.after?.codice ?? null }));
+}
+
 export const oggi = () => new Date().toISOString().slice(0, 10);
