@@ -95,3 +95,11 @@ footer { font-size: 12px; margin-top: 18px; }
 .picked { display: flex; align-items: center; gap: 12px; background: #faf6f4; border-radius: 12px; padding: 10px 12px; margin-top: 8px; }
 .pickedtxt { flex: 1; }
 .chip { background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; }
+
+/* --- purchase form extras --- */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.supgrid { display: flex; flex-wrap: wrap; gap: 8px; }
+.supcard { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 9px 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.supcard.on { background: var(--rose); color: #fff; border-color: var(--rose); }
+.supcard.alt { color: var(--accent); border-style: dashed; }
+input[type=date].txt { font-size: 16px; min-height: 46px; }

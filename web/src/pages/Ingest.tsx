@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import CountForm from '../components/CountForm';
+import PurchaseForm from '../components/PurchaseForm';
 
 const TIPI = [
   { k: 'count', icon: '🔢', label: 'Conta fisica', desc: 'Conta i pezzi reali a scaffale' },
@@ -44,10 +45,10 @@ export default function Ingest({ pin, setPin, chi, setChi }: {
         <>
           <button className="back" onClick={() => setSel(null)} type="button">← {cur?.label}</button>
           {!pin && <div className="msg err">Inserisci il PIN in alto per salvare.</div>}
-          {sel === 'count' ? (
-            <CountForm pin={pin} chi={chi} />
-          ) : (
-            <div className="card muted center">Il modulo “{cur?.label}” arriva nel prossimo aggiornamento di stanotte.</div>
+          {sel === 'count' && <CountForm pin={pin} chi={chi} />}
+          {sel === 'purchase' && <PurchaseForm pin={pin} chi={chi} />}
+          {!['count', 'purchase'].includes(sel) && (
+            <div className="card muted center">Il modulo “{cur?.label}” arriva a breve.</div>
           )}
         </>
       )}
