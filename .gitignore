@@ -1,0 +1,27 @@
+# deps & build
+node_modules/
+dist/
+build/
+*.local
+
+# secrets — NEVER commit
+.env
+.env.*
+!.env.example
+
+# real business data (seed/oracle) — keep out of git
+fixtures/*.xlsx
+fixtures/*.csv
+
+# supabase local
+supabase/.temp/
+supabase/.branches/
+
+# data dumps (contain real business data)
+etl/inspection.txt
+*.output
+
+# misc
+.DS_Store
+.vercel
+*.log

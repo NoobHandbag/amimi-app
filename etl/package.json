@@ -1,0 +1,13 @@
+{
+  "name": "amimi-etl",
+  "private": true,
+  "type": "module",
+  "description": "ETL: parse the Master xlsx export and load the Supabase replica faithfully.",
+  "scripts": {
+    "inspect": "node inspect.mjs"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5",
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}
