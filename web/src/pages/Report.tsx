@@ -5,7 +5,7 @@ const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set',
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const pct = (n: number) => `${Math.round((n || 0) * 100)}%`;
 
-type CE = { year: number; month: number; omni_netto: number; mc1: number; mc2: number };
+type CE = { year: number; month: number; omni_netto: number; mc1: number; mc2: number; online_netto: number; offline_netto: number; b2b_netto: number };
 type Inv = { codice: string; item: string | null; variant: string | null; giacenza_attuale: number; valore: number };
 
 export default function Report() {
@@ -17,7 +17,7 @@ export default function Report() {
   useEffect(() => {
     (async () => {
       try {
-        const a = await supabase.from('v_ce_amimi_summary').select('year,month,omni_netto,mc1,mc2').order('month');
+        const a = await supabase.from('v_ce_amimi_summary').select('year,month,omni_netto,mc1,mc2,online_netto,offline_netto,b2b_netto').order('month');
         const b = await supabase.from('v_inventory').select('codice,item,variant,giacenza_attuale,valore');
         if (a.error) throw a.error;
         if (b.error) throw b.error;
@@ -41,6 +41,10 @@ export default function Report() {
   const valoreMag = inv.reduce((s, r) => s + (r.valore || 0), 0);
   const sottoScorta = inv.filter((r) => r.giacenza_attuale <= 2 && r.giacenza_attuale > -50);
   const daRiordinare = inv.filter((r) => r.giacenza_attuale <= 3).sort((x, y) => x.giacenza_attuale - y.giacenza_attuale).slice(0, 20);
+  const onY = ce.reduce((s, r) => s + r.online_netto, 0);
+  const ofY = ce.reduce((s, r) => s + r.offline_netto, 0);
+  const b2bY = ce.reduce((s, r) => s + r.b2b_netto, 0);
+  const totCh = onY + ofY + b2bY || 1;
 
   return (
     <div className="screen">
@@ -55,6 +59,20 @@ export default function Report() {
         <Kpi label="MC2 (feb–mag)" value={eur(mc2Ytd)} tone={mc2Ytd >= 0 ? 'green' : 'red'} />
         <Kpi label="Valore magazzino" value={eur(valoreMag)} tone="accent" />
       </div>
+
+      <section className="card">
+        <h2>Canali (netto 2026)</h2>
+        <div className="bar">
+          <div className="seg on" style={{ flex: onY }} />
+          <div className="seg of" style={{ flex: ofY }} />
+          {b2bY > 0 && <div className="seg b2" style={{ flex: b2bY }} />}
+        </div>
+        <div className="barleg">
+          <span><i className="dot on" />Online {pct(onY / totCh)} · {eur(onY)}</span>
+          <span><i className="dot of" />Offline {pct(ofY / totCh)} · {eur(ofY)}</span>
+          {b2bY > 0 && <span><i className="dot b2" />B2B {pct(b2bY / totCh)}</span>}
+        </div>
+      </section>
 
       <section className="card">
         <h2>Conto Economico mensile</h2>
