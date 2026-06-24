@@ -66,3 +66,23 @@ Times are approximate (no wall clock in the build sandbox); ordering is what mat
 ### Notes
 - Nothing was written to any live system (Sheet/Shopify/Qromo) — fully isolated, reads only.
 - AI brain intentionally absent (no API key, DECISIONS D11). All logic above is rule-based/SQL.
+
+---
+
+## SESSION 1 COMPLETE — live deliverable
+
+**Live mobile dashboard → https://noobhandbag.github.io/amimi-app/** (open it on your phone).
+Read-only, validated data: the P&L (Feb/Mar exact vs your Sheet) + the inventory reorder list.
+
+**Security posture (this replica):** the public bundle carries the Supabase anon key, so I
+**revoked anon INSERT/UPDATE/DELETE**. The public can READ the two report views, not write.
+- Consequence: **re-running the ETL now requires re-granting writes first.** Before
+  `node --env-file=.env load.mjs`, run (MCP/SQL): `grant insert, delete on all tables in schema public to anon;`
+  then optionally revoke again. Phase 8 replaces this with a dedicated ETL Postgres role.
+
+**Delivered tonight:** Phases 0–2 + a live dashboard. All pushed to
+`github.com/NoobHandbag/amimi-app` (public). Nothing touched any live system (reads only).
+
+**Next (Phase 3 — ingestion):** the cofounder data-entry app. First decide the write-path —
+anon is read-only by design, so writes go through a PIN-checked Edge Function (or privileged
+role). That's task 1 of Phase 3.

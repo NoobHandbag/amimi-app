@@ -1,5 +1,8 @@
 // ETL — parse the Master xlsx export and load the Supabase replica FAITHFULLY.
-// Run: node --env-file=.env load.mjs   (truncate the base tables first, see runbook)
+// Run: node --env-file=.env load.mjs
+// NOTE: anon write is REVOKED for security (public dashboard uses the anon key, read-only).
+//   Before running, re-grant via SQL:  grant insert, delete on all tables in schema public to anon;
+//   (and optionally revoke again after). Phase 8: replace with a dedicated ETL Postgres role.
 //
 // Column positions are verified against fixtures/seed.xlsx (2026-06-24 export) via inspect*.mjs.
 import xlsx from 'xlsx';
