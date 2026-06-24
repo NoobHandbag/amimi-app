@@ -1,0 +1,35 @@
+import { createClient } from '@supabase/supabase-js';
+import { fileURLToPath } from 'node:url'; import { readFileSync } from 'node:fs';
+const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY, { auth: { persistSession: false } });
+const oracle = JSON.parse(readFileSync(fileURLToPath(new URL('../fixtures/ce_oracle.json', import.meta.url))));
+const oget = (key, m) => { const l = oracle['CE_AMIMI'].find(x => x.key === key); const v = l ? l.months[m - 1] : null; return typeof v === 'number' ? v : 0; };
+async function selAll(t, c) { const { data, error } = await sb.from(t).select(c); if (error) { console.log('ERR ' + t + ': ' + error.message); return []; } return data; }
+const sum = (a, f, p) => a.filter(p).reduce((s, x) => s + (Number(f(x)) || 0), 0);
+const M = [2, 3, 4, 5];
+const slAll = await selAll('shopify_line_items', 'order_id,month,quantita,price,cogs_snapshot');
+const soAll = await selAll('shopify_orders', 'order_id,month,financial_status,payment_fees,discount_total,shipping_total,free_shipping_amt,refund_amount');
+const qr = await selAll('qromo_sales', 'month,quantita,prezzo,cogs');
+const ex = await selAll('expenses', 'month,categoria,sottocategoria,costo,amimi');
+const refunded = new Set(soAll.filter(o => o.financial_status === 'refunded').map(o => o.order_id));
+const so = soAll.filter(o => o.financial_status !== 'refunded');
+const sl = slAll.filter(l => !refunded.has(l.order_id));
+const onPezzi = m => sum(sl, x => x.quantita, x => x.month == m), ofPezzi = m => sum(qr, x => x.quantita, x => x.month == m);
+const onOrdini = m => sum(so, () => 1, x => x.month == m);
+const onLordo = m => sum(sl, x => x.price * x.quantita, x => x.month == m) - sum(so, x => x.discount_total, x => x.month == m) + sum(so, x => x.free_shipping_amt, x => x.month == m) + sum(so, x => x.shipping_total, x => x.month == m);
+const omniNetto = m => onLordo(m) / 1.22 + sum(qr, x => x.prezzo, x => x.month == m) / 1.22;
+const cogs = m => -(sum(sl, x => x.cogs_snapshot, x => x.month == m) + sum(qr, x => x.cogs, x => x.month == m));
+const pack = m => -(3.71 * (onPezzi(m) + ofPezzi(m)) + onOrdini(m));
+const commis = m => sum(so, x => x.payment_fees, x => x.month == m);
+const varLog = m => sum(ex, x => x.costo, x => x.month == m && x.categoria === 'LOGISTICA' && x.amimi && /sped/i.test(x.sottocategoria || ''));
+const resi = m => -sum(soAll, x => x.refund_amount, x => x.month == m);
+const fiss = (cat, m) => sum(ex, x => x.costo, x => x.month == m && x.categoria === cat && x.amimi);
+const fissLogMag = m => sum(ex, x => x.costo, x => x.month == m && x.categoria === 'LOGISTICA' && x.amimi && !/sped/i.test(x.sottocategoria || ''));
+const mc1 = m => omniNetto(m) + cogs(m) + pack(m) + commis(m) + varLog(m) + resi(m);
+const mc2 = m => mc1(m) + fiss('SALARI', m) + fiss('TASSE', m) + fissLogMag(m) + fiss('OPEX', m) + fiss('EVENTI', m) + fiss('MARKETING', m);
+function row(label, fn, key) { const r = [label.padEnd(18)]; let ok = true; for (const m of M) { const c = fn(m), o = oget(key, m); const g = Math.abs(c - o) < 0.05; if (!g) ok = false; r.push(`${c.toFixed(1)}/${(+o).toFixed(1)}${g ? '' : ' Δ' + (c - o).toFixed(1)}`); } console.log((ok ? '  OK ' : '  .. ') + r.join('  ')); }
+console.log('=== CE_AMIMI (refunded excluded) Feb Mar Apr May ===');
+row('Online Lordo', onLordo, 'Online|Fatturato Lordo');
+row('Omni Netto', omniNetto, 'Omnichannel|Fatturato Netto');
+row('Packaging', pack, 'Variabili|Packaging');
+row('MC1', mc1, 'Omnichannel|Margine di Contribuzione_1');
+row('MC2', mc2, 'Omnichannel|Margine di Contribuzione_2');

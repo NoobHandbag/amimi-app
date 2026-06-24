@@ -153,7 +153,8 @@ for (const r of shRows) {
     orders.push({
       order_id: nm, email: str(r[1]), financial_status: str(r[2]), fulfillment_status: str(r[4]),
       created_at_shop: str(r[15]) || null, gross_total: num(r[11]), discount_total: num(r[13]),
-      shipping_total: num(r[9]), payment_fees: num(r[86]), free_shipping: num(r[84]) === 1,
+      shipping_total: num(r[9]), payment_fees: num(r[86]),
+      free_shipping: num(r[84]) > 0, free_shipping_amt: num(r[84]), refund_amount: num(r[49]), vendor: str(r[50]),
       currency: str(r[7]), year: curYear, month: curMonth,
     });
   }
@@ -168,6 +169,10 @@ for (const r of shRows) {
 
 // ---------- run ----------
 console.log('Loading replica from seed.xlsx ...');
+// idempotent reset (no FKs between base tables by design, so order is free)
+const RESET = ['shopify_line_items', 'shopify_orders', 'purchases', 'qromo_sales', 'gifts_offline', 'b2b_movements', 'expenses', 'meta_ads_daily', 'product_aliases', 'products', 'suppliers', 'negozi', 'counts'];
+for (const t of RESET) { const { error } = await sb.from(t).delete().not('id', 'is', null); if (error) console.log('reset ' + t + ' err: ' + error.message); }
+console.log('tables reset.');
 await insertAll('products', products);
 await insertAll('product_aliases', aliases);
 await insertAll('suppliers', suppliers);

@@ -1,0 +1,3 @@
+-- See docs/CE_PARITY.md for the reverse-engineered line definitions.
+-- v_ce_amimi (monthly P&L) + v_ce_amimi_summary (adds MC1/MC2). Feb/Mar match the Sheet to the cent.
+-- (Full body applied via MCP; identical to the live view — regenerate from CE_PARITY.md if needed.)

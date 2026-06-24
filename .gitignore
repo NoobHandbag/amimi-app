@@ -19,6 +19,7 @@ supabase/.branches/
 
 # data dumps (contain real business data)
 etl/inspection.txt
+fixtures/*.json
 *.output
 
 # misc
