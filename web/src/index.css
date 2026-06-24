@@ -103,3 +103,7 @@ footer { font-size: 12px; margin-top: 18px; }
 .supcard.on { background: var(--rose); color: #fff; border-color: var(--rose); }
 .supcard.alt { color: var(--accent); border-style: dashed; }
 input[type=date].txt { font-size: 16px; min-height: 46px; }
+.codicebox { margin-top: 12px; background: #f4ecdf; color: var(--dark); border-radius: 12px; padding: 12px 14px;
+  font-family: ui-monospace, Consolas, monospace; font-weight: 700; font-size: 15px;
+  display: flex; justify-content: space-between; align-items: center; word-break: break-all; }
+.codicebox.bad { background: #f6e7e3; color: var(--red); }

@@ -22,6 +22,10 @@ etl/inspection.txt
 fixtures/*.json
 *.output
 
+# playwright
+web/test-results/
+web/playwright-report/
+
 # misc
 .DS_Store
 .vercel

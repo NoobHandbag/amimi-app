@@ -43,3 +43,16 @@ test('ingestion: wrong PIN is rejected by the server', async ({ page }) => {
   await page.getByRole('button', { name: /Salva conta/ }).click();
   await expect(page.locator('.msg.err')).toContainText(/PIN errato/);
 });
+
+test('new product: live CODICE generation then create', async ({ page }) => {
+  await page.goto('');
+  await page.getByRole('button', { name: /Inserisci/ }).click();
+  await page.getByPlaceholder('PIN').fill('amimi2026');
+  await page.getByRole('button', { name: /Nuovo prodotto/ }).click();
+  await page.getByRole('button', { name: '+ nuovo' }).click();
+  await page.getByPlaceholder('es. Lea Bag').fill('E2E Test');
+  await page.getByPlaceholder('es. COCCO ROSSO').fill('VARX');
+  await expect(page.locator('.codicebox')).toContainText('E2E_Test_VARX');
+  await page.getByRole('button', { name: /Crea prodotto/ }).click();
+  await expect(page.locator('.msg.ok')).toContainText('Prodotto creato');
+});
