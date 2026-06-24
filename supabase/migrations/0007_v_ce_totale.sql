@@ -1,0 +1,4 @@
+-- v_ce_totale + v_ce_totale_summary. See docs/CE_PARITY.md.
+-- CE_TOTALE = CE_AMIMI channels + gifts folded into Offline + all expenses (no amimi filter).
+-- Revenue (omni_netto) validated vs Sheet (Mar exact); variable-cost lines (Logistica) pending.
+-- Full body applied via MCP; the live view is authoritative — regenerate from CE_PARITY.md if needed.

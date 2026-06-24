@@ -57,7 +57,14 @@ the CE matches 'Si'. The replica's `expenses.amimi` generated column was fixed t
   codice join subtracts sales the Sheet's case-sensitive VLOOKUP missed. Flag for review; do NOT
   auto-adopt (DECISIONS D14).
 
-## CE_TOTALE (not yet reverse-engineered)
-CE_TOTALE = CE_AMIMI channels + **gifts** (Offline += GIFT_OFFLINE pieces/prezzo) + **all**
-expenses (no amimi filter). Its Feb online is anomalously 2× (a Sheet-side quirk) — corrected-
-overlay candidate. Full CE_TOTALE parity is the next finance task.
+## CE_TOTALE — revenue validated; cost lines pending (migration 0007)
+`v_ce_totale` / `v_ce_totale_summary`. CE_TOTALE = CE_AMIMI channels + **gifts folded into
+Offline** (pezzi + prezzo flat + cogs flat) + **all expenses** (no amimi filter).
+- **Revenue validated:** `omni_netto` matches the Sheet (Mar exact 9,043.0; Apr/May within the
+  same ~1% refund residual as CE_AMIMI). Confirms gifts→offline, gift COGS, gift packaging pieces.
+- **Cost lines pending:** MC1/MC2 differ because CE_TOTALE handles **Variabili|Logistica**
+  differently from CE_AMIMI (it is NOT the EXPENSES MASTER spedizioni split — e.g. Mar TOTALE var
+  logistica = 0 vs AMIMI −425). Needs the same line-by-line reverse-engineering CE_AMIMI got.
+- **Feb online 2× bug:** the Sheet's CE_TOTALE doubles Feb online (34 vs real 17). `v_ce_totale`
+  does the correct thing (17) — a corrected-overlay item, so Feb intentionally won't match the Sheet.
+Next finance task: reverse-engineer CE_TOTALE's variable-cost lines, then adopt/flag corrections.

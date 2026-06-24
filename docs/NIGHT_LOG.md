@@ -86,3 +86,20 @@ Read-only, validated data: the P&L (Feb/Mar exact vs your Sheet) + the inventory
 **Next (Phase 3 — ingestion):** the cofounder data-entry app. First decide the write-path —
 anon is read-only by design, so writes go through a PIN-checked Edge Function (or privileged
 role). That's task 1 of Phase 3.
+
+---
+
+## SESSION 2 — Phase 3 + 4 shipped (ingestion + inventory)
+
+All **three sections** live at https://noobhandbag.github.io/amimi-app/ :
+- **Cruscotto** — validated P&L + reorder list.
+- **Inserisci** — 5 smart forms (Conta fisica, Arrivo/Acquisto, Nuovo prodotto, Regalo, B2B):
+  product image-picker + search, supplier/negozio cards, live CODICE generation, dates pre-filled,
+  Arrivi auto-fills cost+supplier from the last purchase. Operatore Ale/Bene + PIN.
+- **Inventario** — search + filters (da riordinare / esauriti / in negozio), value & stock.
+
+Write path: PIN-gated `write-api` Edge Function (server validation + change_log audit); anon stays
+read-only. **PIN `amimi2026`** (SHA-256 in app_config; change with
+`update app_config set pin_hash=encode(digest('NEWPIN','sha256'),'hex')`). 5 Playwright E2E passing.
+
+Next: CE_TOTALE view, close Apr/May CE residual, richer reporting, live read-only sync jobs (Phase 6).
