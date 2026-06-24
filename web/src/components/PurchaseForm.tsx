@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import ProductPicker from './ProductPicker';
 import SupplierPicker from './SupplierPicker';
-import { writeApi, oggi } from '../lib/api';
+import { writeApi, oggi, fetchLastPurchase } from '../lib/api';
 import type { Product } from '../lib/api';
 
 export default function PurchaseForm({ pin, chi }: { pin: string; chi: string }) {
@@ -11,7 +11,20 @@ export default function PurchaseForm({ pin, chi }: { pin: string; chi: string })
   const [data, setData] = useState(oggi());
   const [forn, setForn] = useState('');
   const [busy, setBusy] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ t: 'ok' | 'err'; x: string } | null>(null);
+
+  function onPick(p: Product | null) {
+    setProd(p); setMsg(null); setHint(null);
+    if (p) {
+      fetchLastPurchase(p.codice).then((l) => {
+        if (!l) return;
+        if (l.costo_unitario != null) setCosto(String(l.costo_unitario));
+        if (l.fornitore) setForn(l.fornitore);
+        setHint(`Ultimo acquisto: €${l.costo_unitario ?? '—'}${l.fornitore ? ' · ' + l.fornitore : ''}`);
+      }).catch(() => {});
+    }
+  }
 
   async function submit() {
     if (!prod) return setMsg({ t: 'err', x: 'Scegli un prodotto' });
@@ -36,7 +49,8 @@ export default function PurchaseForm({ pin, chi }: { pin: string; chi: string })
   return (
     <div className="form">
       <label className="fl">Prodotto</label>
-      <ProductPicker selected={prod} onPick={(p) => { setProd(p); setMsg(null); }} />
+      <ProductPicker selected={prod} onPick={onPick} />
+      {hint && <div className="hintline">{hint}</div>}
       {prod && (
         <>
           <div className="grid2">

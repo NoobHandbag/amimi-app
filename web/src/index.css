@@ -112,3 +112,4 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 .filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 .fchip { padding: 7px 13px; border-radius: 999px; border: 1px solid var(--line); background: #fff; font-size: 13px; font-weight: 700; color: var(--muted); cursor: pointer; }
 .fchip.on { background: var(--dark); color: #fff; border-color: var(--dark); }
+.hintline { font-size: 12px; color: var(--accent); margin-top: 6px; font-weight: 600; }

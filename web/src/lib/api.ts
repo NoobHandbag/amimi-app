@@ -60,4 +60,16 @@ export async function fetchNegozi(): Promise<string[]> {
   return (data ?? []).map((r: { name: string }) => r.name);
 }
 
+/** History-based smart prefill: the most recent purchase of a CODICE. */
+export async function fetchLastPurchase(codice: string): Promise<{ costo_unitario: number | null; fornitore: string | null } | null> {
+  const { data } = await supabase
+    .from('purchases')
+    .select('costo_unitario,fornitore,data')
+    .eq('codice', codice)
+    .order('data', { ascending: false })
+    .limit(1);
+  if (data && data[0]) return { costo_unitario: data[0].costo_unitario, fornitore: data[0].fornitore };
+  return null;
+}
+
 export const oggi = () => new Date().toISOString().slice(0, 10);
