@@ -120,3 +120,13 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 .barleg { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; color: var(--muted); }
 .barleg i.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
 .barleg .dot.on { background: var(--rose); } .barleg .dot.of { background: var(--accent); } .barleg .dot.b2 { background: var(--green); }
+
+/* --- inventory rows w/ image + tags --- */
+.invleft { display: flex; align-items: center; gap: 10px; }
+.invimg { width: 42px; height: 42px; border-radius: 9px; object-fit: cover; flex: none; background: #f0ebe9; }
+.invimg.ph { display: flex; align-items: center; justify-content: center; font-weight: 700; color: #b9aaad; font-size: 13px; }
+.invtags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.tag { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+.tag.live { background: #e7f4ec; color: var(--green); }
+.tag.off { background: #f0ecec; color: var(--muted); }
+.tag.cv { background: #f4ecdf; color: var(--accent); }

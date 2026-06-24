@@ -21,7 +21,8 @@ export default function Report() {
         const b = await supabase.from('v_inventory').select('codice,item,variant,giacenza_attuale,valore');
         if (a.error) throw a.error;
         if (b.error) throw b.error;
-        setCe((a.data as CE[]).filter((r) => r.year === 2026 && r.month >= 1 && r.month <= 12));
+        // Amimì starts in February; January is inherited/hardcoded from the previous company's P&L.
+        setCe((a.data as CE[]).filter((r) => r.year === 2026 && r.month >= 2 && r.month <= 12));
         setInv(b.data as Inv[]);
       } catch (e: unknown) {
         setErr(e instanceof Error ? e.message : String(e));
@@ -92,7 +93,7 @@ export default function Report() {
             </tbody>
           </table>
         </div>
-        <p className="note">* giugno in corso. Feb e Mar combaciano col foglio al centesimo; Apr/Mag entro ~1% (in revisione).</p>
+        <p className="note">* giugno in corso. Gennaio escluso (ereditato dal P&L precedente). Feb e Mar combaciano col foglio al centesimo; Apr/Mag entro ~1% (in revisione).</p>
       </section>
 
       <section className="card">

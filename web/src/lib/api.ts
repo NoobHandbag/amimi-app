@@ -44,15 +44,25 @@ export async function fetchGiacenze(): Promise<Map<string, number>> {
 export type InvFull = {
   codice: string; item: string | null; variant: string | null; categoria: string | null;
   giacenza_attuale: number; in_conto_vendita: number; disponibili_da_vendere: number;
-  valore: number; retail_price: number | null;
+  valore: number; retail_price: number | null; last_sale: string | null; on_shopify: boolean; image_url: string | null;
 };
 export async function fetchInventory(): Promise<InvFull[]> {
   const { data, error } = await supabase
     .from('v_inventory')
-    .select('codice,item,variant,categoria,giacenza_attuale,in_conto_vendita,disponibili_da_vendere,valore,retail_price')
+    .select('codice,item,variant,categoria,giacenza_attuale,in_conto_vendita,disponibili_da_vendere,valore,retail_price,last_sale,on_shopify,image_url')
     .order('giacenza_attuale');
   if (error) throw new Error(error.message);
   return (data ?? []) as InvFull[];
+}
+
+export type CV = { negozio: string; codice: string; item: string | null; variant: string | null; image_url: string | null; pezzi: number };
+export async function fetchContoVendita(): Promise<CV[]> {
+  const { data, error } = await supabase
+    .from('v_conto_vendita_negozio')
+    .select('negozio,codice,item,variant,image_url,pezzi')
+    .order('negozio');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CV[];
 }
 
 export async function fetchNegozi(): Promise<string[]> {
