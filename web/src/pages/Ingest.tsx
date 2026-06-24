@@ -3,6 +3,7 @@ import CountForm from '../components/CountForm';
 import PurchaseForm from '../components/PurchaseForm';
 import NewProductForm from '../components/NewProductForm';
 import GiftForm from '../components/GiftForm';
+import B2BForm from '../components/B2BForm';
 
 const TIPI = [
   { k: 'count', icon: '🔢', label: 'Conta fisica', desc: 'Conta i pezzi reali a scaffale' },
@@ -51,9 +52,7 @@ export default function Ingest({ pin, setPin, chi, setChi }: {
           {sel === 'purchase' && <PurchaseForm pin={pin} chi={chi} />}
           {sel === 'product' && <NewProductForm pin={pin} chi={chi} />}
           {sel === 'gift' && <GiftForm pin={pin} chi={chi} />}
-          {!['count', 'purchase', 'product', 'gift'].includes(sel) && (
-            <div className="card muted center">Il modulo “{cur?.label}” arriva a breve.</div>
-          )}
+          {sel === 'b2b' && <B2BForm pin={pin} chi={chi} />}
         </>
       )}
     </div>

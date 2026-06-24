@@ -56,3 +56,11 @@ test('new product: live CODICE generation then create', async ({ page }) => {
   await page.getByRole('button', { name: /Crea prodotto/ }).click();
   await expect(page.locator('.msg.ok')).toContainText('Prodotto creato');
 });
+
+test('inventory tab lists products', async ({ page }) => {
+  await page.goto('');
+  await page.getByRole('button', { name: /Inventario/ }).click();
+  await expect(page.getByText('Valore magazzino')).toBeVisible();
+  await expect(page.locator('.row').first()).toBeVisible();
+});
+

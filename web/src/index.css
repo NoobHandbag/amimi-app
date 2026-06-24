@@ -107,3 +107,8 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
   font-family: ui-monospace, Consolas, monospace; font-weight: 700; font-size: 15px;
   display: flex; justify-content: space-between; align-items: center; word-break: break-all; }
 .codicebox.bad { background: #f6e7e3; color: var(--red); }
+
+/* --- inventory filters --- */
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.fchip { padding: 7px 13px; border-radius: 999px; border: 1px solid var(--line); background: #fff; font-size: 13px; font-weight: 700; color: var(--muted); cursor: pointer; }
+.fchip.on { background: var(--dark); color: #fff; border-color: var(--dark); }

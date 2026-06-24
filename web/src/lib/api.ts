@@ -41,4 +41,23 @@ export async function fetchGiacenze(): Promise<Map<string, number>> {
   return m;
 }
 
+export type InvFull = {
+  codice: string; item: string | null; variant: string | null; categoria: string | null;
+  giacenza_attuale: number; in_conto_vendita: number; disponibili_da_vendere: number;
+  valore: number; retail_price: number | null;
+};
+export async function fetchInventory(): Promise<InvFull[]> {
+  const { data, error } = await supabase
+    .from('v_inventory')
+    .select('codice,item,variant,categoria,giacenza_attuale,in_conto_vendita,disponibili_da_vendere,valore,retail_price')
+    .order('giacenza_attuale');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as InvFull[];
+}
+
+export async function fetchNegozi(): Promise<string[]> {
+  const { data } = await supabase.from('negozi').select('name').order('name');
+  return (data ?? []).map((r: { name: string }) => r.name);
+}
+
 export const oggi = () => new Date().toISOString().slice(0, 10);
