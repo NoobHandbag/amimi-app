@@ -6,17 +6,16 @@ import Inventory from './pages/Inventory';
 
 export default function App() {
   const [tab, setTab] = useState<'report' | 'ingest' | 'arrivi' | 'inv'>('report');
-  const [pin, setPinS] = useState(() => localStorage.getItem('amimi_pin') || '');
   const [chi, setChiS] = useState(() => localStorage.getItem('amimi_chi') || 'Ale');
-  const setPin = (p: string) => { setPinS(p); localStorage.setItem('amimi_pin', p); };
   const setChi = (c: string) => { setChiS(c); localStorage.setItem('amimi_chi', c); };
+  const pin = 'x'; // PIN removed per design; writes are open (relaxed posture, test replica)
 
   return (
     <div className="app">
       <main>
         {tab === 'report' && <Report />}
-        {tab === 'ingest' && <Ingest pin={pin} setPin={setPin} chi={chi} setChi={setChi} />}
-        {tab === 'arrivi' && <Arrivi pin={pin} setPin={setPin} chi={chi} setChi={setChi} />}
+        {tab === 'ingest' && <Ingest pin={pin} chi={chi} setChi={setChi} />}
+        {tab === 'arrivi' && <Arrivi pin={pin} chi={chi} setChi={setChi} />}
         {tab === 'inv' && <Inventory />}
       </main>
       <nav className="bottomnav">

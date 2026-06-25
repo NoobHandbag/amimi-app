@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { writeApi, fetchProducts } from '../lib/api';
+import { writeApi, fetchProducts, clearProductCache } from '../lib/api';
 
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
 const modelTok = (s: string) => s.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_]/g, '');
@@ -37,6 +37,7 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
         retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs),
       }, pin, chi);
       setMsg({ t: 'ok', x: `Prodotto creato · ${codice}` });
+      clearProductCache();
       setVariant(''); setPrice(''); setCogs('');
     } catch (e) {
       setMsg({ t: 'err', x: (e as Error).message });

@@ -37,8 +37,7 @@ export default function Report() {
   }, [reload]);
 
   async function doSync() {
-    const pin = localStorage.getItem('amimi_pin') || '';
-    if (!pin) { setSyncMsg('Imposta il PIN in Inserisci'); return; }
+    const pin = 'x';
     setSyncing(true); setSyncMsg(null);
     try {
       const r = await syncShopify(pin);
@@ -59,7 +58,6 @@ export default function Report() {
   const mc1Ytd = closed.reduce((s, r) => s + r.mc1, 0);
   const mc2Ytd = closed.reduce((s, r) => s + r.mc2, 0);
   const valoreMag = inv.reduce((s, r) => s + (r.valore || 0), 0);
-  const daRiordinare = inv.filter((r) => r.giacenza_attuale <= 3).sort((x, y) => x.giacenza_attuale - y.giacenza_attuale).slice(0, 20);
   const onY = ce.reduce((s, r) => s + r.online_netto, 0);
   const ofY = ce.reduce((s, r) => s + r.offline_netto, 0);
   const b2bY = ce.reduce((s, r) => s + r.b2b_netto, 0);
@@ -167,20 +165,6 @@ export default function Report() {
         </div>
       </section>
 
-      <section className="card">
-        <h2>Inventario · da riordinare</h2>
-        <div className="list">
-          {daRiordinare.map((r) => (
-            <div className="row" key={r.codice}>
-              <div>
-                <div className="rt">{r.item || r.codice}</div>
-                <div className="rs">{r.variant || ''}</div>
-              </div>
-              <div className={`giac ${r.giacenza_attuale <= 0 ? 'neg' : ''}`}>{r.giacenza_attuale}</div>
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }

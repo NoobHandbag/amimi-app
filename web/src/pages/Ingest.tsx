@@ -14,8 +14,8 @@ const TIPI = [
   { k: 'product', icon: '🏷️', label: 'Nuovo prodotto', desc: 'Anagrafica nuovo articolo' },
 ];
 
-export default function Ingest({ pin, setPin, chi, setChi }: {
-  pin: string; setPin: (p: string) => void; chi: string; setChi: (c: string) => void;
+export default function Ingest({ pin, chi, setChi }: {
+  pin: string; chi: string; setChi: (c: string) => void;
 }) {
   const [sel, setSel] = useState<string | null>(null);
   const cur = TIPI.find((t) => t.k === sel);
@@ -24,14 +24,10 @@ export default function Ingest({ pin, setPin, chi, setChi }: {
     <div className="screen">
       <header>
         <h1>Inserisci</h1>
-        <div className="operbar">
-          <div className="seg">
-            {['Ale', 'Bene'].map((c) => (
-              <button key={c} className={chi === c ? 'on' : ''} onClick={() => setChi(c)}>{c}</button>
-            ))}
-          </div>
-          <input className="pinmini" type="password" inputMode="numeric" placeholder="PIN"
-            value={pin} onChange={(e) => setPin(e.target.value)} />
+        <div className="seg wrap">
+          {['Ale', 'Bene', 'Ginevra', 'Dan'].map((c) => (
+            <button key={c} className={chi === c ? 'on' : ''} onClick={() => setChi(c)}>{c}</button>
+          ))}
         </div>
       </header>
 
@@ -51,7 +47,6 @@ export default function Ingest({ pin, setPin, chi, setChi }: {
       ) : (
         <>
           <button className="back" onClick={() => setSel(null)} type="button">← {cur?.label}</button>
-          {!pin && <div className="msg err">Inserisci il PIN in alto per salvare.</div>}
           {sel === 'count' && <CountForm pin={pin} chi={chi} />}
           {sel === 'purchase' && <PurchaseForm pin={pin} chi={chi} />}
           {sel === 'product' && <NewProductForm pin={pin} chi={chi} />}

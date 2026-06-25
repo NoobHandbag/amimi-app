@@ -20,13 +20,17 @@ export async function writeApi(action: string, payload: Record<string, unknown>,
   return j as { ok: boolean; id: string };
 }
 
+let _productCache: Product[] | null = null;
+export function clearProductCache() { _productCache = null; }
 export async function fetchProducts(): Promise<Product[]> {
+  if (_productCache) return _productCache;
   const { data, error } = await supabase
     .from('products')
     .select('codice,item,variant,categoria,image_url,retail_price')
     .order('item');
   if (error) throw new Error(error.message);
-  return (data ?? []) as Product[];
+  _productCache = (data ?? []) as Product[];
+  return _productCache;
 }
 
 export async function fetchSuppliers(): Promise<Supplier[]> {

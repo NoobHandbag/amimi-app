@@ -39,8 +39,8 @@ function OrderCard({ o, pin, chi, reload }: { o: Ordine; pin: string; chi: strin
   );
 }
 
-export default function Arrivi({ pin, setPin, chi, setChi }: {
-  pin: string; setPin: (p: string) => void; chi: string; setChi: (c: string) => void;
+export default function Arrivi({ pin, chi, setChi }: {
+  pin: string; chi: string; setChi: (c: string) => void;
 }) {
   const [ord, setOrd] = useState<Ordine[]>([]);
   const [adding, setAdding] = useState(false);
@@ -56,11 +56,8 @@ export default function Arrivi({ pin, setPin, chi, setChi }: {
     <div className="screen">
       <header>
         <h1>In arrivo</h1>
-        <div className="operbar">
-          <div className="seg">
-            {['Ale', 'Bene'].map((c) => <button key={c} className={chi === c ? 'on' : ''} onClick={() => setChi(c)}>{c}</button>)}
-          </div>
-          <input className="pinmini" type="password" inputMode="numeric" placeholder="PIN" value={pin} onChange={(e) => setPin(e.target.value)} />
+        <div className="seg wrap">
+          {['Ale', 'Bene', 'Ginevra', 'Dan'].map((c) => <button key={c} className={chi === c ? 'on' : ''} onClick={() => setChi(c)}>{c}</button>)}
         </div>
       </header>
 

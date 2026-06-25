@@ -57,6 +57,8 @@ footer { font-size: 12px; margin-top: 18px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
 .seg button { border: 0; background: #fff; color: var(--muted); font-weight: 700; font-size: 13px; padding: 6px 12px; cursor: pointer; }
 .seg button.on { background: var(--rose); color: #fff; }
+.seg.wrap { flex-wrap: wrap; border: 0; gap: 6px; }
+.seg.wrap button { border: 1px solid var(--line); border-radius: 999px; }
 .pinmini { width: 76px; border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font-size: 14px; }
 .tipi { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .tipo { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px 14px; text-align: left;

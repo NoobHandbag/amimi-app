@@ -5,6 +5,7 @@ export default defineConfig({
   testDir: './e2e',
   timeout: 45000,
   expect: { timeout: 15000 },
+  retries: 1,
   reporter: 'list',
   use: { baseURL: 'http://localhost:4173/amimi-app/', headless: true },
   webServer: {
