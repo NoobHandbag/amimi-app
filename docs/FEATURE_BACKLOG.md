@@ -6,6 +6,12 @@ mined 2026-06-25. Ranked by frequency-in-chats × value. "Built" = shipped; "Des
 His own analysis flags the two most-manual / most-sales-eroding areas: **returns** (invisible in the CE
 today) and the **reorder + SKU-availability** pair. Those lead the list.
 
+> **STATUS (2026-06-25):** BUILT & LIVE — #1 Returns, #2 Reorder, #3 SKU-availability, #4 Deal
+> calculator, #5 Pricing helper, #6 SEO generator, #9 Ads card, #10 Valuation. NOT BUILT (need an
+> external data feed we don't hold in the replica): #7 Customer-service triage (DM/email export) and
+> #8 In-store/popup analytics (Shopify order tags aren't in our read-only order pull). Give me the
+> feed and I'll build those two too.
+
 ## 1. Returns & Exchanges — "Registra Reso / Cambio"  [BUILDING]
 One-tap logging of a return or swap across all 3 channels, capturing the two distinct effects:
 money (CE "Resi" row) and stock (does the bag become sellable again, and where).
