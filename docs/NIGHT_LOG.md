@@ -237,3 +237,12 @@ Two REAL bugs the UI tests caught and fixed:
   to `forn`). Fixed with a `typed` draft + explicit "Avanti" button.
 - Arrivi: the mount fetch resolving called setAdding(false), so opening the order form before orders
   finished loading SNAPPED IT SHUT. Fixed by removing setAdding from load(); onDone closes the form.
+
+## SESSION 7c — "Chiedi ai dati" acceso (Gemini key)
+
+Gemini key configured in app_flags.gemini_api_key (server-only, NOT in repo). gemini-2.0-flash hit the
+project's free-tier quota (429) and 1.5-flash is gone, so ask-data now uses **gemini-flash-lite-latest**
+(non-thinking, returns SQL directly, has free quota). Added schema hints (categoria enum BAG/PELLE/…,
+use v_inventory.*_sold for best-sellers, SUM(giacenza_attuale) for stock totals). All 4 in-app example
+chips verified live: "505 borse in magazzino", top sellers, sold-out-but-recently-sold (29), online
+revenue per month. ask-data at v3.

@@ -25,7 +25,10 @@ Key relations:
 - products(codice, item, variant, categoria, retail_price, cogs, verificato)
 - suppliers(name), negozi(name)
 Rules: prices are VAT-inclusive (netto = lordo/1.22, IVA 22%). expenses.costo is negative. Money is EUR.
-Current year 2026. Use ILIKE for text matching. Prefer the views. Limit yourself to a single SELECT, no semicolons, no comments.
+products.categoria values are exactly: BAG, PELLE, TESSUTO, ACCESSORI, ALTRO (BAG = le borse). Do NOT ILIKE '%borsa%'.
+For "quante borse / pezzi in magazzino" use SUM(giacenza_attuale) from v_inventory (optionally where categoria='BAG').
+For best-sellers / units sold per product, prefer v_inventory columns shopify_sold + qromo_sold + b2b_venduto (no need to re-aggregate the sales tables).
+Current year 2026. Use ILIKE for free-text names. Prefer the views. One SELECT only, no semicolons, no comments.
 Return ONLY the SQL, no markdown, no explanation.`;
 
 function cleanSql(t: string): string {
@@ -53,7 +56,7 @@ Deno.serve(async (req) => {
   // 1) NL -> SQL via Gemini
   let sql = '';
   try {
-    const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+    const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${key}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: `${SCHEMA}\n\nDomanda: ${question}\nSQL:` }] }],
