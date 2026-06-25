@@ -6,7 +6,7 @@ const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set',
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const pct = (n: number) => `${Math.round((n || 0) * 100)}%`;
 
-type CE = { year: number; month: number; omni_netto: number; mc1: number; mc2: number; online_netto: number; offline_netto: number; b2b_netto: number };
+type CE = { year: number; month: number; omni_netto: number; mc1: number; mc2: number; online_netto: number; offline_netto: number; b2b_netto: number; [k: string]: number };
 type Inv = { codice: string; item: string | null; variant: string | null; giacenza_attuale: number; valore: number; shopify_sold: number; qromo_sold: number; b2b_venduto: number; retail_price: number | null; cogs: number | null };
 
 export default function Report() {
@@ -17,11 +17,12 @@ export default function Report() {
   const [reload, setReload] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [detailMonth, setDetailMonth] = useState(5);
 
   useEffect(() => {
     (async () => {
       try {
-        const a = await supabase.from('v_ce_amimi_summary').select('year,month,omni_netto,mc1,mc2,online_netto,offline_netto,b2b_netto').order('month');
+        const a = await supabase.from('v_ce_amimi_summary').select('*').order('month');
         const b = await supabase.from('v_inventory').select('codice,item,variant,giacenza_attuale,valore,shopify_sold,qromo_sold,b2b_venduto,retail_price,cogs');
         if (a.error) throw a.error;
         if (b.error) throw b.error;
@@ -66,6 +67,7 @@ export default function Report() {
   const top = inv
     .map((p) => ({ ...p, venduto: (p.shopify_sold || 0) + (p.qromo_sold || 0) + (p.b2b_venduto || 0), margine: p.retail_price && p.cogs != null ? (p.retail_price - p.cogs) / p.retail_price : null }))
     .filter((p) => p.venduto > 0).sort((a, b) => b.venduto - a.venduto).slice(0, 12);
+  const dm = ce.find((r) => r.month === detailMonth);
 
   return (
     <div className="screen">
@@ -119,6 +121,38 @@ export default function Report() {
       </section>
 
       <section className="card">
+        <div className="dethead">
+          <h2>Dettaglio mese</h2>
+          <select value={detailMonth} onChange={(e) => setDetailMonth(Number(e.target.value))}>
+            {ce.map((r) => <option key={r.month} value={r.month}>{MESI[r.month]}</option>)}
+          </select>
+        </div>
+        {dm && (
+          <div>
+            <DetRow label="Online netto" v={dm.online_netto} />
+            <DetRow label="Offline netto" v={dm.offline_netto} />
+            {dm.b2b_netto > 0 && <DetRow label="B2B netto" v={dm.b2b_netto} />}
+            <DetRow label="Fatturato netto" v={dm.omni_netto} bold />
+            <div className="detsep">Costi variabili</div>
+            <DetRow label="COGS" v={dm.cogs} />
+            <DetRow label="Packaging" v={dm.packaging} />
+            <DetRow label="Commissioni pagamenti" v={dm.commissioni} />
+            <DetRow label="Logistica (spedizioni)" v={dm.logistica_var} />
+            <DetRow label="Resi" v={dm.resi} />
+            <DetRow label="Margine di Contribuzione 1" v={dm.mc1} bold />
+            <div className="detsep">Costi fissi</div>
+            <DetRow label="Salari" v={dm.salari} />
+            <DetRow label="Tasse" v={dm.tasse} />
+            <DetRow label="Logistica (magazzino)" v={dm.logistica_mag} />
+            <DetRow label="OPEX" v={dm.opex} />
+            <DetRow label="Eventi" v={dm.eventi} />
+            <DetRow label="Marketing" v={dm.marketing} />
+            <DetRow label="MC2 (utile)" v={dm.mc2} bold />
+          </div>
+        )}
+      </section>
+
+      <section className="card">
         <h2>Top prodotti (più venduti)</h2>
         <div className="list">
           {top.map((p) => (
@@ -153,4 +187,7 @@ export default function Report() {
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone: string }) {
   return <div className={`kpi ${tone}`}><div className="v">{value}</div><div className="k">{label}</div></div>;
+}
+function DetRow({ label, v, bold }: { label: string; v: number; bold?: boolean }) {
+  return <div className={`detrow ${bold ? 'b' : ''}`}><span>{label}</span><span className={v < 0 ? 'neg' : ''}>{eur(v)}</span></div>;
 }
