@@ -1,6 +1,7 @@
 // write-api — the ONLY write path into the replica.
 // Public anon key is read-only (writes revoked). PIN-gated; uses the service-role key to write,
-// logging every change to change_log. Handles inserts + the special 'arrival' flow.
+// logging every change to change_log. Handles inserts + the special flows (arrival, multi-order,
+// product verification, expenses, sale correction).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const CORS = {
@@ -71,27 +72,140 @@ Deno.serve(async (req) => {
   if (!ok) return json({ error: 'PIN errato' }, 401);
 
   const today = new Date().toISOString().slice(0, 10);
+  const logp = (tbl: string, row_id: string, op: string, after: unknown) =>
+    sb.from('change_log').insert({ tbl, row_id, op, after, chi: chi || null, source: 'write-api' });
 
-  // --- special: mark an arrival against a supplier order (updates order + creates a purchase) ---
+  // --- FLOW 1: mark an arrival against a supplier order (date editable) ---
   if (action === 'arrival') {
     const oid = payload.order_id as string;
     const qty = Number(payload.qty);
+    const arrDate = (payload.data as string) || today;
     if (!oid || !(qty > 0)) return json({ error: 'arrivo non valido' }, 422);
     const { data: ord } = await sb.from('supplier_orders').select('*').eq('id', oid).single();
     if (!ord) return json({ error: 'ordine non trovato' }, 404);
     const newArr = Number(ord.qty_arrived) + qty;
-    const { error: ue } = await sb.from('supplier_orders').update({ qty_arrived: newArr, data_ultimo_arrivo: today }).eq('id', oid);
+    const { error: ue } = await sb.from('supplier_orders').update({ qty_arrived: newArr, data_ultimo_arrivo: arrDate }).eq('id', oid);
     if (ue) return json({ error: ue.message }, 400);
     const { data: pur } = await sb.from('purchases').insert({
       codice: ord.codice, item: ord.item, variant: ord.variant, categoria: 'BAG',
-      tipologia: 'Prodotto Finito', unita_misura: 'Pezzi', quantita: qty, data: today,
-      fornitore: ord.fornitore, source: 'app-arrivo', chi: chi || null,
+      tipologia: 'Prodotto Finito', unita_misura: 'Pezzi', quantita: qty, data: arrDate,
+      costo_unitario: ord.costo_unitario ?? null, fornitore: ord.fornitore, source: 'app-arrivo', chi: chi || null,
     }).select().single();
-    await sb.from('change_log').insert({ tbl: 'supplier_orders', row_id: String(oid), op: 'arrival', after: { codice: ord.codice, qty, arrived: newArr }, chi: chi || null, source: 'write-api' });
+    await logp('supplier_orders', String(oid), 'arrival', { codice: ord.codice, qty, arrived: newArr, data: arrDate });
     return json({ ok: true, arrived: newArr, ordered: ord.qty_ordered, purchase_id: pur?.id });
   }
 
-  // --- generic insert (incl. 'order') ---
+  // --- FLOW 1: create a multi-bag supplier order (one gruppo, N lines) ---
+  if (action === 'order_multi') {
+    const fornitore = String(payload.fornitore || '').trim();
+    const righe = (payload.righe as Record<string, unknown>[]) || [];
+    const dataOrdine = (payload.data_ordine as string) || today;
+    if (!fornitore) return json({ error: 'fornitore mancante' }, 422);
+    if (!righe.length) return json({ error: 'nessuna riga' }, 422);
+    const gruppo = crypto.randomUUID();
+    const rows = righe.map((r) => ({
+      gruppo, fornitore, data_ordine: dataOrdine,
+      codice: String(r.codice || ''), item: (r.item as string) ?? null, variant: (r.variant as string) ?? null,
+      qty_ordered: Number(r.qty_ordered) || 0, qty_arrived: 0,
+      nuovo_riordino: (r.nuovo_riordino as string) ?? null,
+      costo_unitario: r.costo_unitario != null ? Number(r.costo_unitario) : null,
+      data_consegna: (r.data_consegna as string) ?? null, note: (r.note as string) ?? null,
+      source: 'app', chi: chi || null,
+    })).filter((r) => r.codice && r.qty_ordered > 0);
+    if (!rows.length) return json({ error: 'righe non valide (CODICE + quantità)' }, 422);
+    const { data, error } = await sb.from('supplier_orders').insert(rows).select();
+    if (error) return json({ error: error.message }, 400);
+    // Create product stubs for bags not yet in the catalog, so they surface in FLOW 2 (verifica).
+    const codici = [...new Set(rows.map((r) => r.codice))];
+    const { data: existing } = await sb.from('products').select('codice').in('codice', codici);
+    const have = new Set((existing || []).map((e: { codice: string }) => e.codice));
+    const seen = new Set<string>();
+    const stubs = rows.filter((r) => !have.has(r.codice) && !seen.has(r.codice) && seen.add(r.codice)).map((r) => ({
+      codice: r.codice, item: r.item, model: r.item, variant: r.variant,
+      categoria: 'BAG', verificato: false, status: 'nuovo', source: 'app-ordine', chi: chi || null,
+    }));
+    if (stubs.length) await sb.from('products').upsert(stubs, { onConflict: 'codice', ignoreDuplicates: true });
+    await logp('supplier_orders', gruppo, 'order_multi', { fornitore, righe: rows.length, gruppo, stubs: stubs.length });
+    return json({ ok: true, gruppo, lines: data?.length ?? 0, stubs: stubs.length });
+  }
+
+  // --- FLOW 2: verify / complete a product's details (Benedetta) ---
+  if (action === 'product_verify') {
+    const codice = String(payload.codice || '');
+    if (!codice) return json({ error: 'CODICE mancante' }, 422);
+    const upd: Record<string, unknown> = { verificato: true, updated_at: new Date().toISOString() };
+    for (const f of ['item', 'variant', 'categoria', 'image_url', 'description', 'seo_title']) {
+      if (payload[f] != null && String(payload[f]).trim() !== '') upd[f] = payload[f];
+    }
+    if (payload.retail_price != null && payload.retail_price !== '') upd.retail_price = Number(payload.retail_price);
+    const { data, error } = await sb.from('products').update(upd).eq('codice', codice).select().single();
+    if (error) return json({ error: error.message }, 400);
+    await logp('products', String(data.id), 'product_verify', upd);
+    return json({ ok: true, codice });
+  }
+
+  // --- FLOW 4/5: expenses (manual=approved, proposta=pending, approve/reject) ---
+  if (action === 'expense_manual' || action === 'expense_propose') {
+    const costoRaw = Number(payload.costo);
+    if (!Number.isFinite(costoRaw) || costoRaw === 0) return json({ error: 'importo non valido' }, 422);
+    const categoria = String(payload.categoria || '').toUpperCase();
+    const VALID = ['COGS', 'LOGISTICA', 'MARKETING', 'OPEX', 'PACKAGING', 'SALARI', 'TASSE'];
+    const datePaid = (payload.date_paid as string) || today;
+    const d = new Date(datePaid);
+    const row = {
+      year: d.getFullYear(), month: d.getMonth() + 1, date_reported: datePaid, date_paid: datePaid,
+      operazione: String(payload.operazione || '').trim() || 'Spesa', costo: -Math.abs(costoRaw),
+      categoria, sottocategoria: (payload.sottocategoria as string) ?? null,
+      amimi_raw: (payload.amimi === true || payload.amimi === 'si') ? 'si' : 'No',
+      note: (payload.note as string) ?? null, source: 'app', chi: chi || null,
+      status: action === 'expense_manual' ? 'approved' : 'pending',
+      proposed_by: chi || null, approved_by: action === 'expense_manual' ? (chi || null) : null,
+    };
+    const { data, error } = await sb.from('expenses').insert(row).select().single();
+    if (error) return json({ error: error.message }, 400);
+    await logp('expenses', String(data.id), action, data);
+    return json({ ok: true, id: data.id, status: row.status });
+  }
+  if (action === 'expense_approve') {
+    const id = String(payload.id || '');
+    const decision = String(payload.status || 'approved');
+    if (!id) return json({ error: 'id mancante' }, 422);
+    const upd: Record<string, unknown> = { status: decision === 'rejected' ? 'rejected' : 'approved', approved_by: chi || null };
+    const edits = (payload.edits as Record<string, unknown>) || {};
+    for (const f of ['operazione', 'categoria', 'sottocategoria', 'note']) if (edits[f] != null) upd[f] = edits[f];
+    if (edits.costo != null) upd.costo = -Math.abs(Number(edits.costo));
+    if (edits.amimi != null) { upd.amimi_raw = (edits.amimi === true || edits.amimi === 'si') ? 'si' : 'No'; }
+    const { data, error } = await sb.from('expenses').update(upd).eq('id', id).select().single();
+    if (error) return json({ error: error.message }, 400);
+    await logp('expenses', id, 'expense_approve', upd);
+    return json({ ok: true, id, status: upd.status });
+  }
+
+  // --- SECOND FLOW: reassign a sale to the real product (inventory follows automatically) ---
+  if (action === 'sale_correct') {
+    const src = String(payload.source || '');
+    const id = String(payload.id || '');
+    const newCodice = String(payload.new_codice || '');
+    if (!id || !newCodice) return json({ error: 'vendita o prodotto mancante' }, 422);
+    const isShop = src === 'shopify';
+    const tbl = isShop ? 'shopify_line_items' : 'qromo_sales';
+    const { data: before } = await sb.from(tbl).select('*').eq('id', id).single();
+    if (!before) return json({ error: 'vendita non trovata' }, 404);
+    // qromo_sales has item/variant columns; shopify_line_items does not (only codice + lineitem_name)
+    const upd: Record<string, unknown> = isShop
+      ? { codice: newCodice, resolved: true }
+      : {
+          codice: newCodice,
+          item: (payload.new_item as string) ?? before.item ?? null,
+          variant: (payload.new_variant as string) ?? before.variant ?? null,
+        };
+    const { error } = await sb.from(tbl).update(upd).eq('id', id);
+    if (error) return json({ error: error.message }, 400);
+    await logp(tbl, id, 'sale_correct', { from: before.codice, to: newCodice });
+    return json({ ok: true, from: before.codice, to: newCodice, shopify_stock_pending: true });
+  }
+
+  // --- generic insert (purchase/count/gift/b2b/product/order) ---
   const table = TABLES[action];
   if (!table) return json({ error: 'azione sconosciuta: ' + action }, 400);
 
@@ -102,8 +216,6 @@ Deno.serve(async (req) => {
   const { data, error } = await sb.from(table).insert(row).select().single();
   if (error) return json({ error: error.message }, 400);
 
-  await sb.from('change_log').insert({
-    tbl: table, row_id: String(data.id), op: 'insert', after: data, chi: chi || null, source: 'write-api',
-  });
+  await logp(table, String(data.id), 'insert', data);
   return json({ ok: true, id: data.id, row: data });
 });

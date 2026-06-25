@@ -129,3 +129,85 @@ export async function syncShopify(pin: string) {
 }
 
 export const oggi = () => new Date().toISOString().slice(0, 10);
+
+// ---------- FLOW 1: multi-bag supplier orders ----------
+export type OrdLine = Ordine & { nuovo_riordino: string | null; costo_unitario: number | null; data_consegna: string | null };
+export type OrdGruppo = { gruppo: string; fornitore: string | null; data_ordine: string | null; righe: OrdLine[]; mancano: number; completo: boolean };
+
+export async function fetchOrdiniGruppi(): Promise<OrdGruppo[]> {
+  const { data, error } = await supabase
+    .from('v_ordini_arrivo')
+    .select('id,gruppo,codice,item,variant,fornitore,qty_ordered,qty_arrived,mancano,completo,nuovo_riordino,costo_unitario,data_consegna,data_ordine,image_url')
+    .order('data_ordine', { ascending: false });
+  if (error) throw new Error(error.message);
+  const byG = new Map<string, OrdGruppo>();
+  (data ?? []).forEach((r: OrdLine & { gruppo: string }) => {
+    const g = byG.get(r.gruppo) ?? { gruppo: r.gruppo, fornitore: r.fornitore, data_ordine: r.data_ordine, righe: [], mancano: 0, completo: true };
+    g.righe.push(r as OrdLine); g.mancano += Number(r.mancano) || 0; g.completo = g.completo && r.completo;
+    byG.set(r.gruppo, g);
+  });
+  return [...byG.values()].sort((a, b) => Number(a.completo) - Number(b.completo) || (b.data_ordine ?? '').localeCompare(a.data_ordine ?? ''));
+}
+
+export type FornProd = { fornitore: string; codice: string; item: string | null; variant: string | null; ultimo_costo: number | null; image_url: string | null; n_ordini: number };
+export async function fetchFornitoreProdotti(fornitore: string): Promise<FornProd[]> {
+  const { data } = await supabase.from('v_fornitore_prodotti').select('*').eq('fornitore', fornitore).order('item');
+  return (data ?? []) as FornProd[];
+}
+
+export async function createOrderMulti(fornitore: string, dataOrdine: string, righe: Record<string, unknown>[], pin: string, chi: string) {
+  return writeApi('order_multi', { fornitore, data_ordine: dataOrdine, righe }, pin, chi);
+}
+
+// ---------- FLOW 2: product-detail verification ----------
+export type ProdTodo = {
+  codice: string; item: string | null; variant: string | null; model: string | null; categoria: string | null;
+  image_url: string | null; retail_price: number | null; cogs: number | null; description: string | null;
+  seo_title: string | null; verificato: boolean; missing_count: number; giacenza: number; venduto: number; on_shopify: boolean;
+};
+export async function fetchProductsTodo(): Promise<ProdTodo[]> {
+  const { data, error } = await supabase.from('v_products_todo').select('*');
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as ProdTodo[]).sort((a, b) =>
+    (b.venduto > 0 ? 1 : 0) - (a.venduto > 0 ? 1 : 0) || b.missing_count - a.missing_count);
+}
+export async function verifyProduct(payload: Record<string, unknown>, pin: string, chi: string) {
+  return writeApi('product_verify', payload, pin, chi);
+}
+
+// ---------- FLOW 4/5: expenses ----------
+export type ExpPending = { id: string; date_paid: string | null; operazione: string | null; costo: number; categoria: string | null; sottocategoria: string | null; amimi: boolean; note: string | null; proposed_by: string | null; status: string };
+export async function fetchExpensesPending(): Promise<ExpPending[]> {
+  const { data, error } = await supabase.from('v_expenses_pending').select('*');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ExpPending[];
+}
+export async function fetchExpensesRecent(): Promise<ExpPending[]> {
+  const { data } = await supabase.from('expenses').select('id,date_paid,operazione,costo,categoria,sottocategoria,amimi,note,proposed_by,status')
+    .order('created_at', { ascending: false }).limit(20);
+  return (data ?? []) as ExpPending[];
+}
+export async function addExpense(action: 'expense_manual' | 'expense_propose', payload: Record<string, unknown>, pin: string, chi: string) {
+  return writeApi(action, payload, pin, chi);
+}
+export async function approveExpense(id: string, status: 'approved' | 'rejected', edits: Record<string, unknown> | null, pin: string, chi: string) {
+  return writeApi('expense_approve', { id, status, edits: edits ?? {} }, pin, chi);
+}
+
+// ---------- SECOND FLOW: sale → product correction ----------
+export type SaleRow = { source: 'qromo' | 'shopify'; id: string; data: string | null; qty: number; price: number | null; descr: string; ref: string };
+export async function fetchSalesByCodice(codice: string): Promise<SaleRow[]> {
+  const [q, s] = await Promise.all([
+    supabase.from('qromo_sales').select('id,data,quantita,prezzo,nome,cognome').eq('codice', codice).order('data', { ascending: false }).limit(40),
+    supabase.from('shopify_line_items').select('id,created_at,quantita,price,lineitem_name,order_id').eq('codice', codice).order('created_at', { ascending: false }).limit(40),
+  ]);
+  const out: SaleRow[] = [];
+  (q.data ?? []).forEach((r: { id: string; data: string; quantita: number; prezzo: number; nome: string; cognome: string }) =>
+    out.push({ source: 'qromo', id: r.id, data: r.data, qty: Number(r.quantita), price: r.prezzo, descr: `${r.nome ?? ''} ${r.cognome ?? ''}`.trim() || 'Qromo', ref: 'POS' }));
+  (s.data ?? []).forEach((r: { id: string; created_at: string; quantita: number; price: number; lineitem_name: string; order_id: string }) =>
+    out.push({ source: 'shopify', id: r.id, data: (r.created_at ?? '').slice(0, 10), qty: Number(r.quantita), price: r.price, descr: r.lineitem_name ?? 'Shopify', ref: '#' + (r.order_id ?? '') }));
+  return out.sort((a, b) => (b.data ?? '').localeCompare(a.data ?? ''));
+}
+export async function correctSale(payload: Record<string, unknown>, pin: string, chi: string) {
+  return writeApi('sale_correct', payload, pin, chi);
+}

@@ -176,3 +176,54 @@ tr.dim { opacity: .42; }
 .detrow { display: flex; justify-content: space-between; padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
 .detrow.b { font-weight: 700; border-bottom: 2px solid var(--line); }
 .detsep { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-top: 12px; margin-bottom: 2px; font-weight: 700; }
+
+/* ---- FLOW 1: supplier order form ---- */
+.ordtop { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
+.datepick { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 10px; padding: 5px 9px; background: #fff; }
+.datepick input { border: 0; font-size: 13px; background: none; }
+.cart { background: rgba(139,94,107,.05); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; margin-bottom: 12px; }
+.cartrow { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.cartrow:last-of-type { border-bottom: 0; }
+.cartinfo { flex: 1; min-width: 0; } .cartinfo .rt { font-size: 13px; font-weight: 600; }
+.qbox { width: 46px; text-align: center; border: 1px solid var(--line); border-radius: 8px; padding: 7px 3px; font-weight: 700; }
+.cbox { width: 56px; text-align: center; border: 1px solid var(--line); border-radius: 8px; padding: 7px 3px; }
+.x { background: none; border: 0; color: var(--muted); font-size: 15px; cursor: pointer; padding: 4px; }
+.newtag { font-size: 9px; background: var(--accent); color: #fff; padding: 1px 5px; border-radius: 6px; vertical-align: middle; font-weight: 700; }
+.carttot { font-size: 11px; color: var(--muted); text-align: right; padding-top: 5px; font-weight: 700; }
+.hits { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.hit { text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.hit span { color: var(--muted); font-weight: 400; }
+.addnew { width: 100%; border: 1px dashed var(--line); background: #fff; color: var(--rose); font-weight: 700; border-radius: 10px; padding: 11px; cursor: pointer; margin-top: 8px; }
+.newbag { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.supcard.alt { color: var(--rose); border-style: dashed; }
+
+/* ---- FLOW 1: arrivals ---- */
+.invimg.sm { width: 34px; height: 34px; border-radius: 7px; }
+.grphead { padding: 2px 2px 9px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.linerow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 2px; border-bottom: 1px solid var(--line); }
+.linerow:last-child { border-bottom: 0; }
+.linerow.done { opacity: .5; }
+.lineinfo { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0; }
+.lineinfo .rt { font-size: 13.5px; }
+.arrinline { display: flex; gap: 5px; align-items: center; }
+.dbox { border: 1px solid var(--line); border-radius: 8px; padding: 6px; font-size: 12px; width: 122px; }
+
+/* ---- Verifica hub ---- */
+.subtabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.subtabs button { border: 0; background: none; color: var(--muted); font-weight: 700; font-size: 13.5px; padding: 9px 11px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.subtabs button.on { color: var(--rose); border-bottom-color: var(--rose); }
+.todocard { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; cursor: pointer; margin-bottom: 8px; }
+.todoinfo { flex: 1; min-width: 0; }
+.missrow { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.misschip { font-size: 9.5px; font-weight: 700; color: var(--accent); background: rgba(196,149,106,.12); border: 1px solid rgba(196,149,106,.3); padding: 1px 6px; border-radius: 6px; }
+.hot { font-size: 10px; background: var(--rose); color: #fff; padding: 1px 6px; border-radius: 6px; font-weight: 700; }
+.chev { color: var(--muted); font-size: 20px; flex: none; }
+.exprow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; }
+.expinfo { flex: 1; min-width: 0; }
+.expbtns { display: flex; gap: 6px; flex: none; }
+.expbtns button { width: 38px; height: 38px; border-radius: 10px; border: 0; font-size: 16px; font-weight: 700; cursor: pointer; }
+.expbtns .ok { background: rgba(62,158,91,.15); color: var(--green); }
+.expbtns .no { background: rgba(192,83,59,.12); color: var(--red); }
+.salerow { display: flex; align-items: center; justify-content: space-between; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 11px; cursor: pointer; margin-bottom: 8px; }
+.card.warn { background: rgba(196,149,106,.08); border-color: rgba(196,149,106,.35); font-size: 13px; line-height: 1.5; }
+.card.warn code { background: rgba(0,0,0,.06); padding: 1px 4px; border-radius: 4px; font-size: 12px; }

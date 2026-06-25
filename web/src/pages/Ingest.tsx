@@ -4,6 +4,7 @@ import PurchaseForm from '../components/PurchaseForm';
 import NewProductForm from '../components/NewProductForm';
 import GiftForm from '../components/GiftForm';
 import B2BForm from '../components/B2BForm';
+import ExpenseForm from '../components/ExpenseForm';
 import RecentFeed from '../components/RecentFeed';
 
 const TIPI = [
@@ -12,6 +13,7 @@ const TIPI = [
   { k: 'gift', icon: '🎁', label: 'Regalo / Rettifica', desc: 'Pezzo regalato o rettifica' },
   { k: 'b2b', icon: '🏬', label: 'Movimento B2B', desc: 'Conto vendita / wholesale' },
   { k: 'product', icon: '🏷️', label: 'Nuovo prodotto', desc: 'Anagrafica nuovo articolo' },
+  { k: 'spesa', icon: '💶', label: 'Spesa', desc: 'Proponi una spesa da approvare' },
 ];
 
 export default function Ingest({ pin, chi, setChi }: {
@@ -52,6 +54,7 @@ export default function Ingest({ pin, chi, setChi }: {
           {sel === 'product' && <NewProductForm pin={pin} chi={chi} />}
           {sel === 'gift' && <GiftForm pin={pin} chi={chi} />}
           {sel === 'b2b' && <B2BForm pin={pin} chi={chi} />}
+          {sel === 'spesa' && <ExpenseForm pin={pin} chi={chi} mode="expense_propose" />}
         </>
       )}
     </div>
