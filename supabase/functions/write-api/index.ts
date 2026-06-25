@@ -229,6 +229,36 @@ Deno.serve(async (req) => {
     return json({ ok: true, id: data.id, rientra_stock: row.rientra_stock });
   }
 
+  // --- Qromo forward: a resolved DB_QROMO row pushed from the Apps Script sync (idempotent on sale_id) ---
+  if (action === 'qromo_sale') {
+    const codice = String(payload.codice || '');
+    const qty = Number(payload.quantita);
+    const saleId = (payload.sale_id as string) || null;
+    if (!codice) return json({ error: 'CODICE mancante' }, 422);
+    if (!(qty > 0)) return json({ error: 'quantità deve essere > 0' }, 422);
+    if (saleId) {
+      const { data: ex } = await sb.from('qromo_sales').select('id').eq('sale_id', saleId).limit(1);
+      if (ex && ex.length) return json({ ok: true, skipped: true, sale_id: saleId });
+    }
+    const dt = (payload.data as string) || today;
+    const d = new Date(dt);
+    const row = {
+      sale_id: saleId, order_id: (payload.order_id as string) ?? null, data: dt,
+      year: d.getFullYear(), month: d.getMonth() + 1,
+      nome: (payload.nome as string) ?? null, cognome: (payload.cognome as string) ?? null,
+      codice, item: (payload.item as string) ?? null, variant: (payload.variant as string) ?? null,
+      quantita: qty, payment_method: (payload.payment_method as string) ?? null,
+      prezzo: payload.prezzo != null ? Number(payload.prezzo) : null,
+      cogs: payload.cogs != null ? Number(payload.cogs) : null,
+      resolver_status: (payload.resolver_status as string) ?? 'forwarded',
+      source: 'qromo-forward', note: (payload.note as string) ?? null,
+    };
+    const { data, error } = await sb.from('qromo_sales').insert(row).select().single();
+    if (error) return json({ error: error.message }, 400);
+    await logp('qromo_sales', String(data.id), 'qromo_sale', { sale_id: saleId, codice, qty });
+    return json({ ok: true, id: data.id });
+  }
+
   // --- generic insert (purchase/count/gift/b2b/product/order) ---
   const table = TABLES[action];
   if (!table) return json({ error: 'azione sconosciuta: ' + action }, 400);

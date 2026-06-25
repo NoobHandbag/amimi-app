@@ -246,3 +246,15 @@ project's free-tier quota (429) and 1.5-flash is gone, so ask-data now uses **ge
 use v_inventory.*_sold for best-sellers, SUM(giacenza_attuale) for stock totals). All 4 in-app example
 chips verified live: "505 borse in magazzino", top sellers, sold-out-but-recently-sold (29), online
 revenue per month. ask-data at v3.
+
+## SESSION 8 — architettura as-built, ponte Cowork→app, ricevitore Qromo
+
+- **docs/ARCHITECTURE.md** — doc as-built canonico (stack, tabelle+viste, 4 edge functions, cron,
+  5 sezioni frontend, sicurezza, integrazioni con stato reale, app↔foglio e i ponti, cosa manca).
+- **integrations/cowork_amimi.py** — helper Python zero-dipendenze: Cowork (o qualunque Python/Node)
+  legge l'app via REST (anon) e scrive via write-api (pin x). Testato: legge 168 prodotti. Niente
+  auth Google. Conferma: Cowork può parlare con l'app come Code, è solo HTTP.
+- **Qromo→app:** write-api v8 con azione `qromo_sale` (idempotente su sale_id) — LIVE e testata.
+  **integrations/qromo_forwarder.gs** — funzione Apps Script indipendente (NON tocca SyncImportToDBQromo)
+  che legge DB_QROMO per header e inoltra le righe nuove; watermark su Script Properties, app dedup-a.
+  PRONTA ma NON deployata: serve clasp push nel progetto Operations + trigger orario (OK di Ale).
