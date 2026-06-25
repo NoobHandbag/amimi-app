@@ -7,11 +7,11 @@ import type { Product } from '../lib/api';
 const TIPI: [string, string][] = [['invio', 'Invio'], ['venduto', 'Venduto'], ['reso', 'Reso']];
 const MODELLI: [string, string][] = [['conto_vendita', 'Conto vendita'], ['wholesale', 'Wholesale']];
 
-export default function B2BForm({ pin, chi }: { pin: string; chi: string }) {
+export default function B2BForm({ pin, chi, initialNegozio }: { pin: string; chi: string; initialNegozio?: string }) {
   const [prod, setProd] = useState<Product | null>(null);
-  const [tipo, setTipo] = useState('invio');
+  const [tipo, setTipo] = useState(initialNegozio ? 'venduto' : 'invio');
   const [modello, setModello] = useState('conto_vendita');
-  const [negozio, setNegozio] = useState('');
+  const [negozio, setNegozio] = useState(initialNegozio ?? '');
   const [qta, setQta] = useState('1');
   const [prezzo, setPrezzo] = useState('');
   const [perc, setPerc] = useState('0.5');

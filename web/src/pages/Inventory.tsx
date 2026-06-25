@@ -301,7 +301,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
                 {!items.length && <p className="muted center">Niente in conto vendita qui.</p>}
               </div>
             </section>
-            {go && <button className="submit" onClick={() => go('registra', 'b2b')}>Registra vendita / rientro (B2B)</button>}
+            {go && <button className="submit" onClick={() => go('registra', `b2b:${store}`)}>Registra vendita / rientro in {store}</button>}
           </>
         );
       })()}

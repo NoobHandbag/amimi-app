@@ -22,7 +22,8 @@ const TIPI = [
 export default function Ingest({ pin, chi, setChi, initial }: {
   pin: string; chi: string; setChi: (c: string) => void; initial?: string;
 }) {
-  const [sel, setSel] = useState<string | null>(initial ?? null);
+  const [sel, setSel] = useState<string | null>(initial ? initial.split(':')[0] : null);
+  const [arg] = useState<string | undefined>(initial && initial.includes(':') ? initial.slice(initial.indexOf(':') + 1) : undefined);
   const allowed = PERSONA[chi]?.registra ?? TIPI.map((t) => t.k);
   const tipi = TIPI.filter((t) => allowed.includes(t.k));
   const cur = TIPI.find((t) => t.k === sel);
@@ -54,7 +55,7 @@ export default function Ingest({ pin, chi, setChi, initial }: {
           {sel === 'purchase' && <PurchaseForm pin={pin} chi={chi} />}
           {sel === 'product' && <NewProductForm pin={pin} chi={chi} />}
           {sel === 'gift' && <GiftForm pin={pin} chi={chi} />}
-          {sel === 'b2b' && <B2BForm pin={pin} chi={chi} />}
+          {sel === 'b2b' && <B2BForm pin={pin} chi={chi} initialNegozio={arg} />}
           {sel === 'reso' && <ReturnForm pin={pin} chi={chi} />}
           {sel === 'spesa' && <SpeseManage pin={pin} chi={chi} />}
         </>
