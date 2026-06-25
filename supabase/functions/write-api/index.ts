@@ -205,6 +205,30 @@ Deno.serve(async (req) => {
     return json({ ok: true, from: before.codice, to: newCodice, shopify_stock_pending: true });
   }
 
+  // --- NEW: returns & exchanges (records money + stock effect) ---
+  if (action === 'return') {
+    const codice = String(payload.codice || '');
+    const qty = Number(payload.quantita);
+    if (!codice) return json({ error: 'CODICE mancante' }, 422);
+    if (!noSpaces(codice)) return json({ error: 'CODICE contiene spazi' }, 422);
+    if (!(qty > 0)) return json({ error: 'quantità deve essere > 0' }, 422);
+    const dt = (payload.data as string) || today;
+    const d = new Date(dt);
+    const row = {
+      data: dt, year: d.getFullYear(), month: d.getMonth() + 1,
+      codice, item: (payload.item as string) ?? null, variant: (payload.variant as string) ?? null,
+      quantita: qty, canale: (payload.canale as string) ?? null,
+      importo_rimborsato: payload.importo_rimborsato != null ? Math.abs(Number(payload.importo_rimborsato)) : 0,
+      rientra_stock: payload.rientra_stock !== false,
+      motivo: (payload.motivo as string) ?? null, sostituito_con: (payload.sostituito_con as string) ?? null,
+      note: (payload.note as string) ?? null, source: 'app', chi: chi || null,
+    };
+    const { data, error } = await sb.from('returns').insert(row).select().single();
+    if (error) return json({ error: error.message }, 400);
+    await logp('returns', String(data.id), 'return', data);
+    return json({ ok: true, id: data.id, rientra_stock: row.rientra_stock });
+  }
+
   // --- generic insert (purchase/count/gift/b2b/product/order) ---
   const table = TABLES[action];
   if (!table) return json({ error: 'azione sconosciuta: ' + action }, 400);

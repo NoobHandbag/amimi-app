@@ -88,6 +88,20 @@ ok((await call('purchase', { payload: { codice: 'Lea_Bag_BLACK', quantita: 2, co
 ok((await call('b2b', { payload: { codice: 'Lea_Bag_BLACK', quantita: 1, tipo_movimento: 'invio', modello: 'conto_vendita', negozio: 'ZZZTEST' } }))[0] === 200, 'b2b invio insert');
 ok((await call('b2b', { payload: { codice: 'Lea_Bag_BLACK', quantita: 1, tipo_movimento: 'bad', modello: 'conto_vendita' } }))[0] === 422, 'b2b rejects bad tipo_movimento');
 
+console.log('\n===== NEW: returns & exchanges =====');
+{
+  const C = 'Lea_Bag_BLACK';
+  const g0 = Number((await get(`/v_inventory?codice=eq.${C}&select=giacenza_attuale`))[0]?.giacenza_attuale);
+  ok((await call('return', { payload: { codice: C, quantita: 1, canale: 'qromo', importo_rimborsato: 50, rientra_stock: true, motivo: 'Difetto', data: '2026-06-25', note: 'ZZZTEST' } }))[0] === 200, 'return insert (re-enters stock)');
+  const g1 = Number((await get(`/v_inventory?codice=eq.${C}&select=giacenza_attuale`))[0]?.giacenza_attuale);
+  ok(g1 === g0 + 1, `return re-enters stock: ${g0} -> ${g1}`);
+  await call('return', { payload: { codice: C, quantita: 1, canale: 'online', importo_rimborsato: 60, rientra_stock: false, motivo: 'Difetto', data: '2026-06-25', note: 'ZZZTEST' } });
+  const g2 = Number((await get(`/v_inventory?codice=eq.${C}&select=giacenza_attuale`))[0]?.giacenza_attuale);
+  ok(g2 === g1, 'discarded return does not re-enter stock');
+  ok((await get('/v_resi_mensile?year=eq.2026&month=eq.6&select=importo'))[0] != null, 'returns visible in v_resi_mensile');
+  ok((await call('return', { payload: { codice: C, quantita: 0 } }))[0] === 422, 'return rejects qty 0');
+}
+
 console.log('\n===== THIRD + FLOW 6 =====');
 ok((await call(null, { action: 'sync', payload: undefined, codici: undefined }, 'shopify-stock'))[0] === 200 || true, 'shopify-stock reachable (skip heavy re-sync)');
 const [rg, rgj] = await call(null, { action: 'realign', codici: ['Lea_Bag_BLACK'] }, 'shopify-stock');

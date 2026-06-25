@@ -175,3 +175,28 @@ matches live. Verified via mobile screenshots (no console errors).
 — needs a live Shopify-stock read function) and FLOW 6 (NL→SQL via Gemini — needs a Google AI Studio
 key in `app_flags.gemini_api_key`). The live Shopify-write half of FLOW 3 + the Shopify-stock step of
 SECOND are gated until enablement.
+
+## SESSION 6 — plan finalized, exhaustive testing, first new feature (Returns)
+
+**Plan finalized:** THIRD (Shopify alignment) + FLOW 6 (NL→SQL) shipped earlier this session.
+
+**Exhaustive testing** — `tests/flows.mjs`, 34 checks across every flow + variant, run live. It caught
+**two real bugs**, both fixed: gifts_offline & b2b_movements lacked a `chi` column so the generic
+insert (which always adds chi) failed → gift + B2B ingestion were silently broken (migration 0017
+adds the column). Documented the sale_correct item/variant `?? before` fallback (can't null a field;
+the UI always passes the target product's values, so correct in production).
+
+**Old-chats mining** (subagent over `Catalogo_Chat_Amimi.xlsx`, 363 chats) → `docs/FEATURE_BACKLOG.md`:
+10 designed features + known edge cases. Top gaps: returns/exchanges, reorder board, SKU-availability.
+
+**NEW FEATURE — Returns & Exchanges** (the #1 gap; offline returns were invisible in the CE):
+- `returns` table + write-api `return` action (canale, importo_rimborsato, rientra_stock, motivo,
+  sostituito_con). Migration 0018.
+- Stock wired into v_inventory: a return with rientra_stock=true adds back to giacenza (resi_rientrati
+  column appended; discarded/damaged returns don't re-enter). CE parity untouched (it's sales-based).
+- Money visible via `v_resi_mensile` (kept out of the parity-validated CE on purpose).
+- UI: Inserisci ▸ "Reso / Cambio" — product, qty, canale, motivo, refund, rientra toggle, exchange
+  picks a replacement product. 5 return checks green (stock +1 on re-entry, unchanged when discarded).
+
+write-api now at v7. Live. Still designed-not-built: reorder board, SKU-availability monitor, deal
+calculator, pricing/SEO helpers, CS triage, ads card, valuation (see FEATURE_BACKLOG.md).

@@ -232,3 +232,6 @@ export const realignShopify = (codici: string[], pin: string, chi: string) => fn
 // ---------- FLOW 6: NL -> SQL ----------
 export type AskResult = { ok?: boolean; sql?: string; rows?: Record<string, unknown>[]; error?: string; needs_key?: boolean };
 export const askData = (question: string, pin: string): Promise<AskResult> => fnCall('ask-data', { question, pin }) as Promise<AskResult>;
+
+// ---------- NEW FEATURE: returns & exchanges ----------
+export const addReturn = (payload: Record<string, unknown>, pin: string, chi: string) => writeApi('return', payload, pin, chi);
