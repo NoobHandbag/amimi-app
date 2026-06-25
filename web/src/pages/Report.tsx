@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { syncShopify, fetchCeTotale, askData, fetchAdsMensile } from '../lib/api';
 import type { CeTot, AskResult, AdsMese, Product } from '../lib/api';
 import ProductPicker from '../components/ProductPicker';
+import { useSort } from '../lib/sortable';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
@@ -16,7 +17,7 @@ type Row = { month: number; netto: number; lordo: number; mc1: number; mc2: numb
 
 const CURRENT_MONTH = 6; // giugno in corso
 
-export default function Report() {
+export default function Report({ onBack }: { onBack?: () => void }) {
   const [ce, setCe] = useState<CE[]>([]);
   const [cet, setCet] = useState<CeTot[]>([]);
   const [inv, setInv] = useState<Inv[]>([]);
@@ -55,6 +56,8 @@ export default function Report() {
     }
     return ce.map((r) => ({ month: r.month, netto: r.omni_netto, lordo: r.omni_netto * 1.22, mc1: r.mc1, mc2: r.mc2, online: r.online_netto, offline: r.offline_netto, b2b: r.b2b_netto }));
   }, [scope, ce, cet]);
+
+  const ceSort = useSort(rows as unknown as Record<string, unknown>[], 'month');
 
   async function doSync() {
     setSyncing(true); setSyncMsg(null);
@@ -104,6 +107,7 @@ export default function Report() {
         <h1>Amimì · Cruscotto</h1>
         <span className="badge">replica · in validazione</span>
       </header>
+      {onBack && <button className="back" onClick={onBack}>← Home</button>}
 
       <button className="syncbtn" onClick={doSync} disabled={syncing}>{syncing ? 'Sincronizzo…' : (syncMsg || '🔄 Sincronizza Shopify')}</button>
 
@@ -177,15 +181,21 @@ export default function Report() {
       <section className="card">
         <h2>Conto Economico mensile</h2>
         <div className="tablewrap">
-          <table>
-            <thead><tr><th>Mese</th><th>Netto</th><th>MC1</th><th>MC2</th><th>MC2%</th></tr></thead>
+          <table className="sortable">
+            <thead><tr>
+              <th onClick={() => ceSort.toggle('month')}>Mese{ceSort.arrow('month')}</th>
+              <th onClick={() => ceSort.toggle('netto')}>Netto{ceSort.arrow('netto')}</th>
+              <th onClick={() => ceSort.toggle('mc1')}>MC1{ceSort.arrow('mc1')}</th>
+              <th onClick={() => ceSort.toggle('mc2')}>MC2{ceSort.arrow('mc2')}</th>
+              <th>MC2%</th>
+            </tr></thead>
             <tbody>
-              {rows.map((r) => (
+              {(ceSort.sorted as unknown as Row[]).map((r) => (
                 <tr key={r.month} className={sel.has(r.month) ? '' : 'dim'}>
                   <td className="l">{MESI[r.month]}{r.month === CURRENT_MONTH ? ' *' : ''}</td>
                   <td>{eur(r.netto)}</td>
-                  <td>{r.month < CURRENT_MONTH ? eur(r.mc1) : '—'}</td>
-                  <td className={r.mc2 < 0 ? 'neg' : ''}>{r.month < CURRENT_MONTH ? eur(r.mc2) : '—'}</td>
+                  <td className={r.month < CURRENT_MONTH ? (r.mc1 > 0 ? 'pos' : r.mc1 < 0 ? 'neg' : '') : ''}>{r.month < CURRENT_MONTH ? eur(r.mc1) : '—'}</td>
+                  <td className={r.month < CURRENT_MONTH ? (r.mc2 > 0 ? 'pos' : r.mc2 < 0 ? 'neg' : '') : ''}>{r.month < CURRENT_MONTH ? eur(r.mc2) : '—'}</td>
                   <td>{r.month < CURRENT_MONTH && r.netto ? pct(r.mc2 / r.netto) : '—'}</td>
                 </tr>
               ))}
@@ -257,6 +267,7 @@ export default function Report() {
 function AdsCard() {
   const [ads, setAds] = useState<AdsMese[] | null>(null);
   useEffect(() => { fetchAdsMensile().then(setAds).catch(() => setAds([])); }, []);
+  const aSort = useSort((ads ?? []) as unknown as Record<string, unknown>[], 'month');
   if (!ads || !ads.length) return null;
   const spend = ads.reduce((s, r) => s + Number(r.spend), 0);
   const val = ads.reduce((s, r) => s + Number(r.purchase_value), 0);
@@ -269,9 +280,15 @@ function AdsCard() {
         <Kpi label="Spesa ads" value={eur(spend)} tone="accent" />
         <Kpi label="ROAS" value={roas.toFixed(2) + '×'} tone={roas >= 1 ? 'green' : 'red'} />
       </div>
-      <div className="tablewrap"><table>
-        <thead><tr><th>Mese</th><th>Spesa</th><th>Acquisti</th><th>Valore</th><th>ROAS</th></tr></thead>
-        <tbody>{ads.map((r) => (
+      <div className="tablewrap"><table className="sortable">
+        <thead><tr>
+          <th onClick={() => aSort.toggle('month')}>Mese{aSort.arrow('month')}</th>
+          <th onClick={() => aSort.toggle('spend')}>Spesa{aSort.arrow('spend')}</th>
+          <th onClick={() => aSort.toggle('purchases')}>Acquisti{aSort.arrow('purchases')}</th>
+          <th onClick={() => aSort.toggle('purchase_value')}>Valore{aSort.arrow('purchase_value')}</th>
+          <th onClick={() => aSort.toggle('roas')}>ROAS{aSort.arrow('roas')}</th>
+        </tr></thead>
+        <tbody>{(aSort.sorted as unknown as AdsMese[]).map((r) => (
           <tr key={r.month}><td className="l">{MESI[r.month]}</td><td>{eur(Number(r.spend))}</td><td>{r.purchases}</td>
             <td>{eur(Number(r.purchase_value))}</td><td className={Number(r.roas) < 1 ? 'neg' : ''}>{Number(r.roas).toFixed(2)}×</td></tr>
         ))}</tbody>

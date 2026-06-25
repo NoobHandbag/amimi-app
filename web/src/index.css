@@ -26,6 +26,7 @@ th, td { padding: 8px 6px; text-align: right; border-bottom: 1px solid var(--lin
 th:first-child, td.l { text-align: left; }
 thead th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
 td.neg, .neg { color: var(--red); }
+td.pos, .pos { color: var(--green); }
 .note { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.45; }
 .minis { display: flex; gap: 10px; margin-bottom: 12px; }
 .mini { flex: 1; background: #faf6f4; border-radius: 12px; padding: 10px; text-align: center; }
@@ -253,3 +254,44 @@ tr.dim { opacity: .42; }
 .charcount { font-size: 11px; color: var(--muted); margin-top: 4px; }
 .dealrow { display: flex; justify-content: space-between; align-items: center; padding: 8px 2px; font-size: 13px; font-weight: 600; }
 .dealrow .qbox { width: 56px; }
+
+/* --- persona Home --- */
+.hello { margin: 2px 2px 14px; }
+.hello h1 { font-size: 24px; }
+.hello .sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.hometiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.hometile { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px 14px; text-align: left;
+  display: flex; flex-direction: column; gap: 5px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.04); min-height: 92px; }
+.hometile .hi { font-size: 26px; }
+.hometile .hl { font-weight: 700; font-size: 14.5px; line-height: 1.25; }
+.hometile .hb { position: absolute; top: 12px; right: 12px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
+  background: var(--rose); color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.homesum { display: flex; gap: 14px; }
+.homesum .hsv { font-size: 20px; font-weight: 700; }
+.homesum .hsk { font-size: 11px; color: var(--muted); }
+
+/* --- clickable supplier / store cards --- */
+.navcard { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: var(--card);
+  border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin-bottom: 10px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.04); }
+.navcard .ncmain { flex: 1; min-width: 0; }
+.navcard .nct { font-weight: 700; font-size: 16px; }
+.navcard .ncs { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.navcard .ncbig { font-size: 22px; font-weight: 700; color: var(--accent); }
+.pillrow { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.pill.warn { background: rgba(196,149,106,.14); color: var(--accent); }
+.pill.ok { background: #e7f4ec; color: var(--green); }
+.pill.muted { background: #f0ecec; color: var(--muted); }
+
+/* --- sortable table headers --- */
+table.sortable thead th { cursor: pointer; user-select: none; }
+table.sortable thead th:hover { color: var(--rose); }
+
+/* --- diagnostica / health-check --- */
+.diagrow { display: flex; align-items: flex-start; gap: 10px; padding: 11px 2px; border-bottom: 1px solid var(--line); }
+.diagrow:last-child { border-bottom: 0; }
+.diagdot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex: none; }
+.diagdot.ok { background: var(--green); } .diagdot.warn { background: var(--accent); } .diagdot.bad { background: var(--red); }
+.diaginfo { flex: 1; } .diaginfo .dt { font-weight: 600; font-size: 14px; } .diaginfo .ds { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.diagn { font-weight: 700; font-size: 15px; }
+.diagn.ok { color: var(--green); } .diagn.warn { color: var(--accent); } .diagn.bad { color: var(--red); }

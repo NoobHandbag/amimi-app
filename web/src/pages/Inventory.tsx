@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchInventory, fetchContoVendita, fetchShopifyAlign, syncShopifyStock, realignShopify, fetchReorder, fetchSkuAvailability } from '../lib/api';
 import type { InvFull, CV, ShopAlign, Reorder, SkuAvail } from '../lib/api';
+import { useSort } from '../lib/sortable';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const daysSince = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : Infinity);
@@ -160,6 +161,7 @@ function ValoreView({ inv }: { inv: InvFull[] }) {
     }
     return [...m.entries()].sort((x, y) => y[1].retail - x[1].retail);
   }, [inv]);
+  const vSort = useSort(byLine.map(([k, v]) => ({ linea: k, pezzi: v.pezzi, cogs: v.cogs, retail: v.retail })) as unknown as Record<string, unknown>[], 'retail', 'desc');
   return (
     <>
       <div className="kpis">
@@ -167,10 +169,15 @@ function ValoreView({ inv }: { inv: InvFull[] }) {
         <div className="kpi rose"><div className="v">{eur(atRetail)}</div><div className="k">Valore a prezzo vendita</div></div>
       </div>
       <section className="card"><h2>Per linea</h2>
-        <div className="tablewrap"><table>
-          <thead><tr><th>Linea</th><th>Pezzi</th><th>A costo</th><th>A prezzo</th></tr></thead>
-          <tbody>{byLine.map(([k, v]) => (
-            <tr key={k}><td className="l">{k}</td><td>{v.pezzi}</td><td>{eur(v.cogs)}</td><td>{eur(v.retail)}</td></tr>
+        <div className="tablewrap"><table className="sortable">
+          <thead><tr>
+            <th onClick={() => vSort.toggle('linea')}>Linea{vSort.arrow('linea')}</th>
+            <th onClick={() => vSort.toggle('pezzi')}>Pezzi{vSort.arrow('pezzi')}</th>
+            <th onClick={() => vSort.toggle('cogs')}>A costo{vSort.arrow('cogs')}</th>
+            <th onClick={() => vSort.toggle('retail')}>A prezzo{vSort.arrow('retail')}</th>
+          </tr></thead>
+          <tbody>{(vSort.sorted as unknown as { linea: string; pezzi: number; cogs: number; retail: number }[]).map((v) => (
+            <tr key={v.linea}><td className="l">{v.linea}</td><td>{v.pezzi}</td><td>{eur(v.cogs)}</td><td>{eur(v.retail)}</td></tr>
           ))}</tbody>
         </table></div>
       </section>
@@ -178,8 +185,11 @@ function ValoreView({ inv }: { inv: InvFull[] }) {
   );
 }
 
-export default function Inventory({ pin, chi }: { pin: string; chi: string }) {
-  const [view, setView] = useState<'mag' | 'neg' | 'shop' | 'riordino' | 'disp' | 'valore'>('mag');
+const VIEWS = ['mag', 'riordino', 'disp', 'neg', 'shop', 'valore'];
+export default function Inventory({ pin, chi, initial, go }: { pin: string; chi: string; initial?: string; go?: (t: 'registra', p?: string) => void }) {
+  type V = 'mag' | 'neg' | 'shop' | 'riordino' | 'disp' | 'valore';
+  const [view, setView] = useState<V>((initial && VIEWS.includes(initial) ? initial : 'mag') as V);
+  const [store, setStore] = useState<string | null>(null);
   const [inv, setInv] = useState<InvFull[]>([]);
   const [cv, setCv] = useState<CV[]>([]);
   const [q, setQ] = useState('');
@@ -261,27 +271,40 @@ export default function Inventory({ pin, chi }: { pin: string; chi: string }) {
         </>
       )}
 
-      {view === 'neg' && (
+      {view === 'neg' && !store && (
         <>
-          {byStore.length === 0 && <div className="card muted center">Nessuna merce in conto vendita. Registra un movimento B2B (invio) dalla sezione Inserisci.</div>}
-          {byStore.map(([store, items]) => (
-            <section className="card" key={store}>
-              <h2>{store} · {items.reduce((s, i) => s + i.pezzi, 0)} pezzi</h2>
-              <div className="list">
-                {items.map((i) => (
-                  <div className="row" key={i.codice}>
-                    <div className="invleft">
-                      <Tile url={i.image_url} label={i.item ?? i.codice} />
-                      <div><div className="rt">{i.item ?? i.codice}</div><div className="rs">{i.variant ?? ''}</div></div>
-                    </div>
-                    <div className="giac">{i.pezzi}</div>
-                  </div>
-                ))}
+          {byStore.length === 0 && <div className="card muted center">Nessuna merce in conto vendita. Registra un movimento B2B (invio) da Registra ▸ B2B.</div>}
+          {byStore.map(([s, items]) => (
+            <button className="navcard" key={s} onClick={() => setStore(s)} type="button">
+              <div className="ncmain">
+                <div className="nct">{s}</div>
+                <div className="pillrow"><span className="pill warn">{items.reduce((a, i) => a + i.pezzi, 0)} pezzi in conto</span><span className="pill muted">{items.length} modelli</span></div>
               </div>
-            </section>
+              <span className="chev">›</span>
+            </button>
           ))}
         </>
       )}
+      {view === 'neg' && store && (() => {
+        const items = byStore.find(([s]) => s === store)?.[1] ?? [];
+        const pezzi = items.reduce((a, i) => a + i.pezzi, 0);
+        return (
+          <>
+            <button className="back" onClick={() => setStore(null)}>← Tutti i negozi</button>
+            <section className="card"><h2>{store} · {pezzi} pezzi in conto</h2>
+              <div className="list">{items.map((i) => (
+                <div className="row" key={i.codice}>
+                  <div className="invleft"><Tile url={i.image_url} label={i.item ?? i.codice} />
+                    <div><div className="rt">{i.item ?? i.codice}</div><div className="rs">{i.variant ?? ''}</div></div></div>
+                  <div className="giac">{i.pezzi}</div>
+                </div>))}
+                {!items.length && <p className="muted center">Niente in conto vendita qui.</p>}
+              </div>
+            </section>
+            {go && <button className="submit" onClick={() => go('registra', 'b2b')}>Registra vendita / rientro (B2B)</button>}
+          </>
+        );
+      })()}
 
       {view === 'shop' && <ShopView pin={pin} chi={chi} />}
       {view === 'riordino' && <ReorderView />}

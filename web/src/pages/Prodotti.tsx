@@ -1,18 +1,17 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import ProductPicker from '../components/ProductPicker';
-import ExpenseForm from '../components/ExpenseForm';
 import {
-  fetchProductsTodo, verifyProduct, fetchExpensesPending, approveExpense,
-  fetchSalesByCodice, correctSale, clearProductCache,
+  fetchProductsTodo, verifyProduct, fetchSalesByCodice, correctSale, clearProductCache,
 } from '../lib/api';
-import type { ProdTodo, ExpPending, SaleRow, Product } from '../lib/api';
+import type { ProdTodo, SaleRow, Product } from '../lib/api';
 import { suggestPrice, marginOf, genSeoTitle } from '../lib/helpers';
+import { PersonaPicker } from '../lib/people';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
 
-/* ---------- FLOW 2: product-detail verification ---------- */
+/* ---------- Da completare (Benedetta) ---------- */
 function ProdEdit({ p, pin, chi, onDone }: { p: ProdTodo; pin: string; chi: string; onDone: () => void }) {
   const [item, setItem] = useState(p.item ?? '');
   const [variant, setVariant] = useState(p.variant ?? '');
@@ -89,44 +88,7 @@ function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
   );
 }
 
-/* ---------- FLOW 4/5: expense approval ---------- */
-function ExpenseApprove({ pin, chi }: { pin: string; chi: string }) {
-  const [list, setList] = useState<ExpPending[]>([]);
-  const [adding, setAdding] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const load = () => fetchExpensesPending().then(setList).catch(() => {});
-  useEffect(() => { load(); }, []);
-
-  async function decide(id: string, status: 'approved' | 'rejected') {
-    setBusy(id);
-    try { await approveExpense(id, status, null, pin, chi); load(); } finally { setBusy(null); }
-  }
-  return (
-    <div>
-      <button className="bigadd" onClick={() => setAdding((a) => !a)}>{adding ? '✕ Chiudi' : '+ Aggiungi spesa (diretta)'}</button>
-      {adding && <ExpenseForm pin={pin} chi={chi} mode="expense_manual" onDone={() => { setAdding(false); load(); }} />}
-      {!list.length ? <div className="card muted center">Nessuna spesa in attesa di approvazione.</div> : (
-        <div className="list">
-          <p className="note">{list.length} spese proposte da approvare.</p>
-          {list.map((e) => (
-            <div className="exprow" key={e.id}>
-              <div className="expinfo">
-                <div className="rt">{e.operazione} · <b>{eur(Math.abs(e.costo))}</b></div>
-                <div className="rs">{e.categoria}{e.amimi ? ' · Amimì' : ' · Altro'}{e.proposed_by ? ` · da ${e.proposed_by}` : ''}{e.date_paid ? ` · ${e.date_paid}` : ''}</div>
-              </div>
-              <div className="expbtns">
-                <button className="ok" disabled={busy === e.id} onClick={() => decide(e.id, 'approved')}>✓</button>
-                <button className="no" disabled={busy === e.id} onClick={() => decide(e.id, 'rejected')}>✕</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ---------- SECOND FLOW: sale → product correction ---------- */
+/* ---------- Correggi vendita (sale → product) ---------- */
 function SaleCorrect({ pin, chi }: { pin: string; chi: string }) {
   const [orig, setOrig] = useState<Product | null>(null);
   const [sales, setSales] = useState<SaleRow[]>([]);
@@ -142,7 +104,7 @@ function SaleCorrect({ pin, chi }: { pin: string; chi: string }) {
     setBusy(true); setMsg(null);
     try {
       await correctSale({ source: sale.source, id: sale.id, new_codice: target.codice, new_item: target.item, new_variant: target.variant }, pin, chi);
-      setMsg({ t: 'ok', x: `Vendita riassegnata a ${target.codice}. Magazzino aggiornato. Stock Shopify da riallineare.` });
+      setMsg({ t: 'ok', x: `Vendita riassegnata a ${target.codice}. Magazzino aggiornato.` });
       setSale(null); setTarget(null); setOrig(null); setSales([]);
     } catch (e) { setMsg({ t: 'err', x: (e as Error).message }); } finally { setBusy(false); }
   }
@@ -173,13 +135,13 @@ function SaleCorrect({ pin, chi }: { pin: string; chi: string }) {
   );
 }
 
-/* ---------- FLOW 3: publish ready products (gated) ---------- */
+/* ---------- Pubblica (gated) ---------- */
 function Publish() {
   const [ready, setReady] = useState<{ codice: string; item: string | null; variant: string | null }[] | null>(null);
   useEffect(() => {
     (async () => {
-      const cat = await supabase.from('shopify_catalog').select('codice').eq('on_shopify', true);
-      const onShop = new Set((cat.data ?? []).map((r: { codice: string }) => r.codice));
+      const inv = await supabase.from('v_inventory').select('codice,on_shopify');
+      const onShop = new Set((inv.data ?? []).filter((r: { on_shopify: boolean }) => r.on_shopify).map((r: { codice: string }) => r.codice));
       const pr = await supabase.from('products').select('codice,item,variant,verificato').eq('verificato', true);
       setReady((pr.data ?? []).filter((p: { codice: string }) => !onShop.has(p.codice)).slice(0, 60));
     })();
@@ -187,9 +149,8 @@ function Publish() {
   return (
     <div>
       <div className="card warn">
-        <b>Pubblicazione live disattivata.</b> Quando un prodotto è verificato e pronto, Dan lo pubblica su Shopify + Qromo da qui.
+        <b>Pubblicazione live disattivata.</b> Quando un prodotto è verificato e pronto, si pubblica su Shopify + Qromo da qui.
         La scrittura su Shopify è dietro un interruttore lato server (<code>shopify_write_enabled</code>), ancora spento per sicurezza.
-        <div className="note">Nota: oggi la pubblicazione aggiorna anche lo stock Shopify; quel passaggio va spostato fuori dalla creazione prodotto.</div>
       </div>
       {ready == null ? <p className="muted center">…</p> : !ready.length ? <div className="card muted center">Nessun prodotto verificato in attesa di pubblicazione.</div> : (
         <div className="list">
@@ -206,24 +167,50 @@ function Publish() {
   );
 }
 
-export default function Verifica({ pin, chi, setChi }: { pin: string; chi: string; setChi: (c: string) => void }) {
-  const [sub, setSub] = useState<'prod' | 'spese' | 'vendite' | 'pubblica'>('prod');
+/* ---------- Diagnostica (health-check) ---------- */
+type Health = { k: string; label: string; n: number; severity: 'ok' | 'warn' | 'bad' };
+function HealthCheck() {
+  const [rows, setRows] = useState<Health[] | null>(null);
+  const load = () => supabase.from('v_health').select('*').then(({ data }) => setRows((data ?? []) as Health[]));
+  useEffect(() => { load(); }, []);
+  if (rows == null) return <p className="muted center">Carico…</p>;
+  const order = { bad: 0, warn: 1, ok: 2 } as Record<string, number>;
+  const sorted = [...rows].sort((a, b) => order[a.severity] - order[b.severity] || b.n - a.n);
+  const bad = rows.filter((r) => r.severity === 'bad' && r.n > 0).length;
+  return (
+    <div>
+      <div className={`card ${bad ? 'warn' : ''}`} style={{ textAlign: 'center' }}>
+        {bad ? <b>{bad} controlli da sistemare</b> : <b>✓ Nessun problema critico</b>}
+        <div className="note" style={{ marginTop: 4 }}>Controlli automatici sulla qualità dei dati. Aggiornati ad ogni apertura.</div>
+      </div>
+      <div className="card"><div className="list">
+        {sorted.map((r) => (
+          <div className="diagrow" key={r.k}>
+            <span className={`diagdot ${r.severity}`} />
+            <div className="diaginfo"><div className="dt">{r.label}</div></div>
+            <div className={`diagn ${r.severity}`}>{r.severity === 'ok' ? '✓' : r.n}</div>
+          </div>
+        ))}
+      </div></div>
+      <button className="syncbtn" onClick={load}>🔄 Ricontrolla</button>
+    </div>
+  );
+}
+
+const SUBS: [string, string][] = [['prod', 'Da completare'], ['pubblica', 'Pubblica'], ['vendite', 'Correggi vendita'], ['diag', 'Diagnostica']];
+
+export default function Prodotti({ pin, chi, setChi, initial }: { pin: string; chi: string; setChi: (c: string) => void; initial?: string }) {
+  const [sub, setSub] = useState<string>(initial && SUBS.some(([k]) => k === initial) ? initial : 'prod');
   return (
     <div className="screen">
-      <header>
-        <h1>Verifica</h1>
-        <div className="seg wrap">{['Ale', 'Bene', 'Ginevra', 'Dan'].map((c) => <button key={c} className={chi === c ? 'on' : ''} onClick={() => setChi(c)}>{c}</button>)}</div>
-      </header>
+      <header><h1>Prodotti</h1><PersonaPicker chi={chi} setChi={setChi} /></header>
       <div className="subtabs">
-        <button className={sub === 'prod' ? 'on' : ''} onClick={() => setSub('prod')}>Prodotti</button>
-        <button className={sub === 'spese' ? 'on' : ''} onClick={() => setSub('spese')}>Spese</button>
-        <button className={sub === 'vendite' ? 'on' : ''} onClick={() => setSub('vendite')}>Vendite</button>
-        <button className={sub === 'pubblica' ? 'on' : ''} onClick={() => setSub('pubblica')}>Pubblica</button>
+        {SUBS.map(([k, l]) => <button key={k} className={sub === k ? 'on' : ''} onClick={() => setSub(k)}>{l}</button>)}
       </div>
       {sub === 'prod' && <ProdVerify pin={pin} chi={chi} />}
-      {sub === 'spese' && <ExpenseApprove pin={pin} chi={chi} />}
-      {sub === 'vendite' && <SaleCorrect pin={pin} chi={chi} />}
       {sub === 'pubblica' && <Publish />}
+      {sub === 'vendite' && <SaleCorrect pin={pin} chi={chi} />}
+      {sub === 'diag' && <HealthCheck />}
     </div>
   );
 }

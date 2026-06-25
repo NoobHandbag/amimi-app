@@ -1,33 +1,40 @@
 import { useState } from 'react';
+import type { Tab } from './lib/people';
+import Home from './pages/Home';
 import Report from './pages/Report';
 import Ingest from './pages/Ingest';
-import Arrivi from './pages/Arrivi';
-import Verifica from './pages/Verifica';
+import Ordini from './pages/Ordini';
+import Prodotti from './pages/Prodotti';
 import Inventory from './pages/Inventory';
 
-type Tab = 'report' | 'ingest' | 'arrivi' | 'verifica' | 'inv';
-
 export default function App() {
-  const [tab, setTab] = useState<Tab>('report');
+  const [tab, setTab] = useState<Tab>('home');
+  const [param, setParam] = useState<string | undefined>();
   const [chi, setChiS] = useState(() => localStorage.getItem('amimi_chi') || 'Ale');
   const setChi = (c: string) => { setChiS(c); localStorage.setItem('amimi_chi', c); };
-  const pin = 'x'; // PIN removed per design; writes are open (relaxed posture, test replica)
+  const go = (t: Tab, p?: string) => { setParam(p); setTab(t); };
+  const pin = 'x'; // PIN removed per design; writes go through the service-role write-api.
+
+  const navBtn = (t: Tab, icon: string, label: string) => (
+    <button className={tab === t ? 'on' : ''} onClick={() => go(t)} type="button"><span>{icon}</span>{label}</button>
+  );
 
   return (
     <div className="app">
       <main>
-        {tab === 'report' && <Report />}
-        {tab === 'ingest' && <Ingest pin={pin} chi={chi} setChi={setChi} />}
-        {tab === 'arrivi' && <Arrivi pin={pin} chi={chi} setChi={setChi} />}
-        {tab === 'verifica' && <Verifica pin={pin} chi={chi} setChi={setChi} />}
-        {tab === 'inv' && <Inventory pin={pin} chi={chi} />}
+        {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} />}
+        {tab === 'cruscotto' && <Report onBack={() => go('home')} />}
+        {tab === 'registra' && <Ingest pin={pin} chi={chi} setChi={setChi} initial={param} />}
+        {tab === 'ordini' && <Ordini pin={pin} chi={chi} setChi={setChi} initial={param} />}
+        {tab === 'prodotti' && <Prodotti pin={pin} chi={chi} setChi={setChi} initial={param} />}
+        {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}
       </main>
       <nav className="bottomnav">
-        <button className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')} type="button"><span>📊</span>Cruscotto</button>
-        <button className={tab === 'ingest' ? 'on' : ''} onClick={() => setTab('ingest')} type="button"><span>➕</span>Inserisci</button>
-        <button className={tab === 'arrivi' ? 'on' : ''} onClick={() => setTab('arrivi')} type="button"><span>📦</span>In arrivo</button>
-        <button className={tab === 'verifica' ? 'on' : ''} onClick={() => setTab('verifica')} type="button"><span>✅</span>Verifica</button>
-        <button className={tab === 'inv' ? 'on' : ''} onClick={() => setTab('inv')} type="button"><span>🏠</span>Inventario</button>
+        {navBtn('home', '🏠', 'Home')}
+        {navBtn('registra', '➕', 'Registra')}
+        {navBtn('ordini', '📦', 'Ordini')}
+        {navBtn('prodotti', '🏷️', 'Prodotti')}
+        {navBtn('magazzino', '📊', 'Magazzino')}
       </nav>
     </div>
   );
