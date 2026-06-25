@@ -3,12 +3,18 @@ import { test, expect } from '@playwright/test';
 // Unique marker so the spawned count row can be cleaned up afterwards.
 const NOTA = 'E2E_TEST_' + Date.now();
 
-test('dashboard renders the validated P&L', async ({ page }) => {
+test('dashboard renders the validated P&L with filter and scope toggle', async ({ page }) => {
   await page.goto('');
   await expect(page.getByText('Conto Economico mensile')).toBeVisible();
-  await expect(page.getByText('Fatturato Netto 2026')).toBeVisible();
+  await expect(page.getByText('Fatturato Netto', { exact: true })).toBeVisible();
+  // period filter chips + Amimì/Totale scope toggle
+  await expect(page.locator('.scopetoggle')).toBeVisible();
+  await expect(page.locator('.chip').first()).toBeVisible();
   // at least one month row with a euro value
   await expect(page.locator('table tbody tr').first()).toBeVisible();
+  // toggling to Totale surfaces January (Gen) in the monthly table
+  await page.getByRole('button', { name: 'Totale', exact: true }).click();
+  await expect(page.locator('table tbody tr td.l').first()).toContainText('Gen');
 });
 
 test('ingestion: pick a product, enter a count, submit, see success', async ({ page }) => {

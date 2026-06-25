@@ -146,6 +146,30 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 .submit.small { margin-top: 0; padding: 12px 18px; white-space: nowrap; }
 .syncbtn { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px; font-weight: 700; font-size: 13px; color: var(--rose); cursor: pointer; margin-bottom: 14px; }
 .syncbtn:disabled { opacity: .6; }
+
+/* Cruscotto controls */
+.ctrlbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.scopetoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: #fff; }
+.scopetoggle button { border: 0; background: #fff; color: var(--muted); font-weight: 700; font-size: 13px; padding: 7px 16px; cursor: pointer; }
+.scopetoggle button.on { background: var(--rose); color: #fff; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: #fff; color: var(--muted); font-weight: 700; font-size: 12.5px; padding: 6px 11px; border-radius: 999px; cursor: pointer; }
+.chip.on { background: rgba(139,94,107,.1); border-color: var(--rose); color: var(--rose); }
+.kpi .ksub { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+
+/* Monthly trend chart */
+.trend { display: flex; align-items: flex-end; gap: 6px; height: 150px; margin: 16px 0 6px; }
+.tcol { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; background: none; border: 0; padding: 0; cursor: pointer; }
+.tcol.off { opacity: .3; }
+.tbarwrap { position: relative; flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.tbar { width: 80%; max-width: 32px; display: flex; flex-direction: column; min-height: 3px; border-radius: 5px 5px 0 0; overflow: hidden; }
+.tseg { width: 100%; }
+.tseg.on { background: var(--rose); } .tseg.of { background: var(--accent); } .tseg.b2 { background: var(--green); }
+.tval { position: absolute; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: 700; color: var(--muted); margin-bottom: 3px; white-space: nowrap; z-index: 1; }
+.tlabel { font-size: 11px; font-weight: 700; color: var(--dark); }
+.tmix { font-size: 9px; color: var(--muted); }
+tr.dim { opacity: .42; }
+
 .dethead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .dethead h2 { margin: 0; }
 .dethead select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 14px; background: #fff; }

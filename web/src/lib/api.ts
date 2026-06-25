@@ -107,6 +107,18 @@ export async function fetchOrdiniArrivo(): Promise<Ordine[]> {
   return (data ?? []) as Ordine[];
 }
 
+export type CeTot = { year: number; month: number; online_netto: number; offline_netto: number; lordo: number; netto: number; mc1: number; mc2: number };
+/** Whole-business P&L (CE_TOTALE), sheet-sourced. Includes January. */
+export async function fetchCeTotale(): Promise<CeTot[]> {
+  const { data, error } = await supabase
+    .from('ce_totale_monthly')
+    .select('year,month,online_netto,offline_netto,lordo,netto,mc1,mc2')
+    .eq('year', 2026)
+    .order('month');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CeTot[];
+}
+
 export async function syncShopify(pin: string) {
   const r = await fetch((import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/shopify-sync', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin }),
