@@ -64,3 +64,22 @@ test('inventory tab lists products', async ({ page }) => {
   await expect(page.locator('.row').first()).toBeVisible();
 });
 
+test('in arrivo: create a supplier order, then mark a partial arrival', async ({ page }) => {
+  await page.goto('');
+  await page.getByRole('button', { name: /In arrivo/ }).click();
+  await page.getByPlaceholder('PIN').fill('amimi2026');
+  await page.getByRole('button', { name: /Nuovo ordine/ }).click();
+  await page.getByPlaceholder('Cerca prodotto').fill('lea bag black');
+  await page.locator('.pcard').first().click();
+  await page.locator('input.num').fill('10');
+  await page.getByRole('button', { name: '+ altro' }).click();
+  await page.getByPlaceholder('Nome fornitore').fill('E2E_ORD');
+  await page.getByRole('button', { name: /Salva ordine/ }).click();
+
+  await expect(page.locator('.ordcard').first()).toBeVisible();
+  await page.getByRole('button', { name: /Segna arrivo/ }).first().click();
+  await page.locator('.arrrow input.num').fill('4');
+  await page.getByRole('button', { name: /Conferma/ }).click();
+  await expect(page.locator('.ordnums').first()).toContainText('4/10');
+});
+

@@ -130,3 +130,15 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 .tag.live { background: #e7f4ec; color: var(--green); }
 .tag.off { background: #f0ecec; color: var(--muted); }
 .tag.cv { background: #f4ecdf; color: var(--accent); }
+
+/* --- ordini in arrivo --- */
+.bigadd { width: 100%; background: #fff; border: 1.5px dashed var(--accent); color: var(--accent); border-radius: 14px; padding: 13px; font-weight: 700; font-size: 15px; cursor: pointer; margin-bottom: 14px; }
+.ordcard { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 13px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.04); }
+.ordhead { display: flex; gap: 12px; align-items: center; }
+.ordinfo { flex: 1; }
+.ordnums { font-size: 13px; margin-top: 4px; color: var(--muted); }
+.ordnums b { font-size: 19px; color: var(--accent); }
+.arrbtn { margin-top: 11px; width: 100%; background: var(--rose); color: #fff; border: 0; border-radius: 12px; padding: 12px; font-weight: 700; font-size: 15px; cursor: pointer; }
+.arrrow { display: flex; gap: 8px; margin-top: 11px; }
+.arrrow .num { flex: 1; margin: 0; }
+.submit.small { margin-top: 0; padding: 12px 18px; white-space: nowrap; }

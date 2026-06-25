@@ -1,6 +1,6 @@
 // write-api — the ONLY write path into the replica.
-// Public anon key is read-only (writes revoked). This Edge Function is PIN-gated and uses the
-// service-role key (auto-injected by Supabase) to insert, logging every change to change_log.
+// Public anon key is read-only (writes revoked). PIN-gated; uses the service-role key to write,
+// logging every change to change_log. Handles inserts + the special 'arrival' flow.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const CORS = {
@@ -17,11 +17,11 @@ async function sha256hex(s: string): Promise<string> {
 }
 
 const TABLES: Record<string, string> = {
-  purchase: 'purchases', count: 'counts', gift: 'gifts_offline', b2b: 'b2b_movements', product: 'products',
+  purchase: 'purchases', count: 'counts', gift: 'gifts_offline', b2b: 'b2b_movements',
+  product: 'products', order: 'supplier_orders',
 };
 const noSpaces = (s: unknown) => typeof s === 'string' && s.length > 0 && !/\s/.test(s);
 
-// deterministic, server-side validation — the "bulletproof" guardrail
 function validate(action: string, p: Record<string, unknown>): string[] {
   const e: string[] = [];
   const codice = p.codice as string | undefined;
@@ -49,6 +49,9 @@ function validate(action: string, p: Record<string, unknown>): string[] {
   } else if (action === 'product') {
     reqCodice();
     if (codice && /_$/.test(codice)) e.push('CODICE non finalizzato (termina con _)');
+  } else if (action === 'order') {
+    reqCodice();
+    if (!(Number(p.qty_ordered) > 0)) e.push('quantità ordinata deve essere > 0');
   }
   return e;
 }
@@ -63,11 +66,32 @@ Deno.serve(async (req) => {
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-  // PIN gate (server-side, hashed)
   const { data: cfg } = await sb.from('app_config').select('pin_hash').eq('id', 1).single();
   const ok = cfg?.pin_hash && pin && (await sha256hex(String(pin))) === cfg.pin_hash;
   if (!ok) return json({ error: 'PIN errato' }, 401);
 
+  const today = new Date().toISOString().slice(0, 10);
+
+  // --- special: mark an arrival against a supplier order (updates order + creates a purchase) ---
+  if (action === 'arrival') {
+    const oid = payload.order_id as string;
+    const qty = Number(payload.qty);
+    if (!oid || !(qty > 0)) return json({ error: 'arrivo non valido' }, 422);
+    const { data: ord } = await sb.from('supplier_orders').select('*').eq('id', oid).single();
+    if (!ord) return json({ error: 'ordine non trovato' }, 404);
+    const newArr = Number(ord.qty_arrived) + qty;
+    const { error: ue } = await sb.from('supplier_orders').update({ qty_arrived: newArr, data_ultimo_arrivo: today }).eq('id', oid);
+    if (ue) return json({ error: ue.message }, 400);
+    const { data: pur } = await sb.from('purchases').insert({
+      codice: ord.codice, item: ord.item, variant: ord.variant, categoria: 'BAG',
+      tipologia: 'Prodotto Finito', unita_misura: 'Pezzi', quantita: qty, data: today,
+      fornitore: ord.fornitore, source: 'app-arrivo', chi: chi || null,
+    }).select().single();
+    await sb.from('change_log').insert({ tbl: 'supplier_orders', row_id: String(oid), op: 'arrival', after: { codice: ord.codice, qty, arrived: newArr }, chi: chi || null, source: 'write-api' });
+    return json({ ok: true, arrived: newArr, ordered: ord.qty_ordered, purchase_id: pur?.id });
+  }
+
+  // --- generic insert (incl. 'order') ---
   const table = TABLES[action];
   if (!table) return json({ error: 'azione sconosciuta: ' + action }, 400);
 

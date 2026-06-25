@@ -89,4 +89,18 @@ export async function fetchRecent(): Promise<Activity[]> {
     ({ id: r.id, tbl: r.tbl, chi: r.chi, ts: r.ts, codice: r.after?.codice ?? null }));
 }
 
+export type Ordine = {
+  id: string; codice: string; item: string | null; variant: string | null; fornitore: string | null;
+  qty_ordered: number; qty_arrived: number; mancano: number; completo: boolean;
+  data_ordine: string | null; image_url: string | null;
+};
+export async function fetchOrdiniArrivo(): Promise<Ordine[]> {
+  const { data, error } = await supabase
+    .from('v_ordini_arrivo')
+    .select('id,codice,item,variant,fornitore,qty_ordered,qty_arrived,mancano,completo,data_ordine,image_url')
+    .order('completo').order('data_ordine');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Ordine[];
+}
+
 export const oggi = () => new Date().toISOString().slice(0, 10);
