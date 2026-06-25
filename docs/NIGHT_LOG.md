@@ -118,3 +118,26 @@ cent-exact), idempotent. Scheduled **hourly via pg_cron** (jobname shopify-sync-
 `app_config.shopify_token` (service-role only; anon SELECT on app_config revoked). Caveat: live
 orders use an ESTIMATED payment fee (~2.2%+€0.25) + free_shipping=0 — exact only for seeded history.
 Next: same for Qromo (webhook) + Meta; reconcile live payment fees.
+
+## SESSION 4 — owner feedback round 2 (Cruscotto redesign + PIN removal)
+
+Handled the explicit asks from the 6-flows message:
+- **PIN removed** — writes go through write-api with a neutralized constant (`pin='x'`,
+  `app_config.pin_hash=sha256('x')`); cron rescheduled with `{"pin":"x"}`. Relaxed posture per owner
+  (roles are design-only, not safety). Operators expanded to Ale / Bene / Ginevra / Dan.
+- **Cruscotto inventory card removed** from the headline (lives in Inventario).
+- **Cruscotto redesigned to mirror the live finance dashboard (PDF export):**
+  4 KPIs (Fatturato Lordo / Netto / MC1 / MC2), a **period filter** (month chips Gen–Giu + "Tutti")
+  that recomputes the stats, a **scope toggle Amimì vs Totale**, and a monthly channel-stacked trend.
+- **January added.** Root cause clarified: CE_AMIMI (brand) January is genuinely €0 — Amimì sales
+  start in Feb (DB_QROMO/DB Shopify have zero Jan-2026 rows; only 34 expense + 6 gift rows exist).
+  The ~4k January in the owner's dashboard is the **CE_TOTALE** (whole-business) inherited figure.
+  Added `ce_totale_monthly` (migration 0012) seeded VERBATIM from the Master CE_TOTALE tab (Jan–Jun);
+  the Totale toggle shows January faithfully without recomputation (replica only holds Amimì txns).
+  Per CRITICAL RULE #1 no values were invented — all read from `fixtures/seed.xlsx`.
+- MC KPIs sum only closed months (giugno in corso has no fixed costs yet).
+
+Verified: build clean, dashboard E2E green (asserts filter + scope + January-via-Totale), mobile
+screenshots captured for both scopes. Live: https://noobhandbag.github.io/amimi-app/
+Next: the 6 owner workflows (multi-bag supplier orders, product-detail verification, sale→product
+correction, Shopify inventory mgmt, expense approval, NL→SQL via Gemini).
