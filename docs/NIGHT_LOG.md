@@ -258,3 +258,17 @@ revenue per month. ask-data at v3.
   **integrations/qromo_forwarder.gs** — funzione Apps Script indipendente (NON tocca SyncImportToDBQromo)
   che legge DB_QROMO per header e inoltra le righe nuove; watermark su Script Properties, app dedup-a.
   PRONTA ma NON deployata: serve clasp push nel progetto Operations + trigger orario (OK di Ale).
+
+## SESSION 8b — Qromo bridge DEPLOYED (clasp)
+
+clasp pull (local==live, no drift) -> added apps-script/QromoForwardToApp.js -> clasp push --force
+(21 files, OK). Ran forwardQromoSalesToApp once from the editor: forwarded 9 gap Qromo sales
+(24-25 Jun) into the app, 116 skipped (already in seed), 0 errors; verified 9 rows source=
+'qromo-forward' in qromo_sales. Bridge PROVEN end-to-end (Apps Script -> write-api qromo_sale -> DB).
+Watermark set to 130.
+
+REMAINING (1 manual step): the hourly TRIGGER isn't created yet. clasp run can't (project not API-
+executable) and clasp hit invalid_rapt (re-auth) mid-session, and the editor run-dropdown / trigger
+dialog (iframe) resisted automation. To finish: in the Apps Script editor, select function
+`createQromoForwardTrigger` and Run once (creates the hourly trigger + re-sets the watermark). Until
+then the forwarder only runs when invoked manually.
