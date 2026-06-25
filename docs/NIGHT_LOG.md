@@ -294,3 +294,14 @@ already up to date" on re-push = confirmed). Now every hour: Qromo webhook -> Im
   CE_AMIMI; including them is a separate decision flagged to the owner).
 - docs/COWORK_TASK_MAP.md: all 27 Cowork tasks mapped to app-native / already-in-app / stays-on-Cowork
   (Gmail/Notion/Chrome) / dies-with-cutover / deletable, building on Cowork's own condensation plan.
+
+## SESSION 9b — MCP server (your Claude operates the app)
+
+New edge function `mcp` (supabase/functions/mcp): Model Context Protocol over JSON-RPC/HTTP, so a
+Claude can read the business and act. Tools: list_inventory, what_to_reorder, sku_availability,
+pnl_summary, ads_summary, ask_data (NL->SQL), propose_expense, register_count. Reads via service-role;
+writes delegate to write-api (validation + change_log reused). Bearer-token gated (app_flags.mcp_token,
+server-only — NOT in repo). Tested: auth, initialize, tools/list, what_to_reorder/sku_availability/
+ask_data all return real data. Connect from Claude Code/Desktop with the token NOW; claude.ai web needs
+an OAuth wrapper (TODO). mcp/README.md has the connection steps. 5th edge function; additive, nothing
+else touched. Clarified: 24/7 autonomy = Supabase pg_cron (no PC); MCP = interactive control (cloud).
