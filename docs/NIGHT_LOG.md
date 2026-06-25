@@ -272,3 +272,13 @@ executable) and clasp hit invalid_rapt (re-auth) mid-session, and the editor run
 dialog (iframe) resisted automation. To finish: in the Apps Script editor, select function
 `createQromoForwardTrigger` and Run once (creates the hourly trigger + re-sets the watermark). Until
 then the forwarder only runs when invoked manually.
+
+## SESSION 8c — Qromo bridge fully automatic (clasp re-auth + hook)
+
+clasp re-authed (clasp login, invalid_rapt fixed; logged in as info@amimi.it via the connected
+Chrome). Instead of a separate trigger (which had a bootstrap chicken-and-egg: the trigger is needed
+to run the function that creates the trigger), hooked a guarded forwardQromoSalesToApp() call at the
+END of syncImportToDBQromo (which already runs hourly via its own trigger). Pushed live ("Script is
+already up to date" on re-push = confirmed). Now every hour: Qromo webhook -> Import -> DB_QROMO
+(resolve) -> forwardQromoSalesToApp -> write-api qromo_sale -> app. No new trigger, no manual step.
+9 gap sales already backfilled + verified. createQromoForwardTrigger kept for manual/standalone use.
