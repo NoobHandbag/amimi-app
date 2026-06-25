@@ -1,27 +1,30 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { syncShopify } from '../lib/api';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const pct = (n: number) => `${Math.round((n || 0) * 100)}%`;
 
 type CE = { year: number; month: number; omni_netto: number; mc1: number; mc2: number; online_netto: number; offline_netto: number; b2b_netto: number };
-type Inv = { codice: string; item: string | null; variant: string | null; giacenza_attuale: number; valore: number };
+type Inv = { codice: string; item: string | null; variant: string | null; giacenza_attuale: number; valore: number; shopify_sold: number; qromo_sold: number; b2b_venduto: number; retail_price: number | null; cogs: number | null };
 
 export default function Report() {
   const [ce, setCe] = useState<CE[]>([]);
   const [inv, setInv] = useState<Inv[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reload, setReload] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
         const a = await supabase.from('v_ce_amimi_summary').select('year,month,omni_netto,mc1,mc2,online_netto,offline_netto,b2b_netto').order('month');
-        const b = await supabase.from('v_inventory').select('codice,item,variant,giacenza_attuale,valore');
+        const b = await supabase.from('v_inventory').select('codice,item,variant,giacenza_attuale,valore,shopify_sold,qromo_sold,b2b_venduto,retail_price,cogs');
         if (a.error) throw a.error;
         if (b.error) throw b.error;
-        // Amimì starts in February; January is inherited/hardcoded from the previous company's P&L.
         setCe((a.data as CE[]).filter((r) => r.year === 2026 && r.month >= 2 && r.month <= 12));
         setInv(b.data as Inv[]);
       } catch (e: unknown) {
@@ -30,7 +33,22 @@ export default function Report() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [reload]);
+
+  async function doSync() {
+    const pin = localStorage.getItem('amimi_pin') || '';
+    if (!pin) { setSyncMsg('Imposta il PIN in Inserisci'); return; }
+    setSyncing(true); setSyncMsg(null);
+    try {
+      const r = await syncShopify(pin);
+      setSyncMsg(`✓ ${r.inserted ? r.inserted + ' nuovi ordini' : 'già aggiornato'}`);
+      setReload((x) => x + 1);
+    } catch (e) {
+      setSyncMsg((e as Error).message);
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   if (loading) return <div className="screen"><p className="muted center">Carico i dati…</p></div>;
   if (err) return <div className="screen"><div className="card err">Errore: {err}</div></div>;
@@ -40,12 +58,14 @@ export default function Report() {
   const mc1Ytd = closed.reduce((s, r) => s + r.mc1, 0);
   const mc2Ytd = closed.reduce((s, r) => s + r.mc2, 0);
   const valoreMag = inv.reduce((s, r) => s + (r.valore || 0), 0);
-  const sottoScorta = inv.filter((r) => r.giacenza_attuale <= 2 && r.giacenza_attuale > -50);
   const daRiordinare = inv.filter((r) => r.giacenza_attuale <= 3).sort((x, y) => x.giacenza_attuale - y.giacenza_attuale).slice(0, 20);
   const onY = ce.reduce((s, r) => s + r.online_netto, 0);
   const ofY = ce.reduce((s, r) => s + r.offline_netto, 0);
   const b2bY = ce.reduce((s, r) => s + r.b2b_netto, 0);
   const totCh = onY + ofY + b2bY || 1;
+  const top = inv
+    .map((p) => ({ ...p, venduto: (p.shopify_sold || 0) + (p.qromo_sold || 0) + (p.b2b_venduto || 0), margine: p.retail_price && p.cogs != null ? (p.retail_price - p.cogs) / p.retail_price : null }))
+    .filter((p) => p.venduto > 0).sort((a, b) => b.venduto - a.venduto).slice(0, 12);
 
   return (
     <div className="screen">
@@ -53,6 +73,8 @@ export default function Report() {
         <h1>Amimì · Cruscotto</h1>
         <span className="badge">replica · in validazione</span>
       </header>
+
+      <button className="syncbtn" onClick={doSync} disabled={syncing}>{syncing ? 'Sincronizzo…' : (syncMsg || '🔄 Sincronizza Shopify')}</button>
 
       <div className="kpis">
         <Kpi label="Fatturato Netto 2026" value={eur(nettoYtd)} tone="rose" />
@@ -97,12 +119,22 @@ export default function Report() {
       </section>
 
       <section className="card">
-        <h2>Inventario · da riordinare</h2>
-        <div className="minis">
-          <Mini n={inv.length} l="prodotti" />
-          <Mini n={sottoScorta.length} l="sotto scorta" tone="red" />
-          <Mini n={daRiordinare.length} l="da riordinare" tone="accent" />
+        <h2>Top prodotti (più venduti)</h2>
+        <div className="list">
+          {top.map((p) => (
+            <div className="row" key={p.codice}>
+              <div>
+                <div className="rt">{p.item ?? p.codice}</div>
+                <div className="rs">{p.variant ?? ''}{p.margine != null ? ` · MdC ${pct(p.margine)}` : ''}</div>
+              </div>
+              <div className="giac" style={{ color: 'var(--rose)' }}>{p.venduto}</div>
+            </div>
+          ))}
         </div>
+      </section>
+
+      <section className="card">
+        <h2>Inventario · da riordinare</h2>
         <div className="list">
           {daRiordinare.map((r) => (
             <div className="row" key={r.codice}>
@@ -121,7 +153,4 @@ export default function Report() {
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone: string }) {
   return <div className={`kpi ${tone}`}><div className="v">{value}</div><div className="k">{label}</div></div>;
-}
-function Mini({ n, l, tone }: { n: number; l: string; tone?: string }) {
-  return <div className={`mini ${tone || ''}`}><div className="mn">{n}</div><div className="ml">{l}</div></div>;
 }

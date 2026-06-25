@@ -142,3 +142,5 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 .arrrow { display: flex; gap: 8px; margin-top: 11px; }
 .arrrow .num { flex: 1; margin: 0; }
 .submit.small { margin-top: 0; padding: 12px 18px; white-space: nowrap; }
+.syncbtn { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px; font-weight: 700; font-size: 13px; color: var(--rose); cursor: pointer; margin-bottom: 14px; }
+.syncbtn:disabled { opacity: .6; }

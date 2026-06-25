@@ -103,4 +103,13 @@ export async function fetchOrdiniArrivo(): Promise<Ordine[]> {
   return (data ?? []) as Ordine[];
 }
 
+export async function syncShopify(pin: string) {
+  const r = await fetch((import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/shopify-sync', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `Errore ${r.status}`);
+  return j as { ok: boolean; inserted?: number };
+}
+
 export const oggi = () => new Date().toISOString().slice(0, 10);
