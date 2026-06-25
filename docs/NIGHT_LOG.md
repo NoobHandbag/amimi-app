@@ -103,3 +103,18 @@ read-only. **PIN `amimi2026`** (SHA-256 in app_config; change with
 `update app_config set pin_hash=encode(digest('NEWPIN','sha256'),'hex')`). 5 Playwright E2E passing.
 
 Next: CE_TOTALE view, close Apr/May CE residual, richer reporting, live read-only sync jobs (Phase 6).
+
+---
+
+## SESSION 3 — feedback round + Phase 6 (live Shopify sync)
+
+Owner feedback handled: January excluded (inherited P&L); "In arrivo" supplier-orders tab (order +
+mark-arrival → auto-updates stock); Inventario rebuilt (dead stock hidden, product images,
+on-Shopify + available pieces, per-store "Nei negozi" view).
+
+**Phase 6 live sync:** `shopify-sync` Edge Function (PIN-gated, read-only) pulls new Shopify orders,
+resolves CODICE via product_aliases, inserts ONLY orders newer than the seed (historical stays
+cent-exact), idempotent. Scheduled **hourly via pg_cron** (jobname shopify-sync-hourly). Token in
+`app_config.shopify_token` (service-role only; anon SELECT on app_config revoked). Caveat: live
+orders use an ESTIMATED payment fee (~2.2%+€0.25) + free_shipping=0 — exact only for seeded history.
+Next: same for Qromo (webhook) + Meta; reconcile live payment fees.
