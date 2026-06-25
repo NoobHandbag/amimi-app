@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { syncShopify, fetchCeTotale } from '../lib/api';
-import type { CeTot } from '../lib/api';
+import { syncShopify, fetchCeTotale, askData } from '../lib/api';
+import type { CeTot, AskResult } from '../lib/api';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
@@ -105,6 +105,8 @@ export default function Report() {
       </header>
 
       <button className="syncbtn" onClick={doSync} disabled={syncing}>{syncing ? 'Sincronizzo…' : (syncMsg || '🔄 Sincronizza Shopify')}</button>
+
+      <AskPanel />
 
       <div className="ctrlbar">
         <div className="scopetoggle">
@@ -254,4 +256,47 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: 
 }
 function DetRow({ label, v, bold }: { label: string; v: number; bold?: boolean }) {
   return <div className={`detrow ${bold ? 'b' : ''}`}><span>{label}</span><span className={v < 0 ? 'neg' : ''}>{eur(v)}</span></div>;
+}
+
+const ESEMPI = ['Top 5 prodotti per pezzi venduti', 'Quanto ho speso in marketing nel 2026?', 'Borse con giacenza zero ma vendute di recente', 'Fatturato online per mese'];
+function AskPanel() {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<AskResult | null>(null);
+
+  async function ask(question?: string) {
+    const text = (question ?? q).trim();
+    if (!text) return;
+    setQ(text); setBusy(true); setRes(null);
+    try { setRes(await askData(text, 'x')); }
+    catch (e) { setRes({ error: (e as Error).message }); }
+    finally { setBusy(false); }
+  }
+  const cols = res?.rows?.length ? Object.keys(res.rows[0]) : [];
+  const fmt = (v: unknown) => typeof v === 'number' ? (Number.isInteger(v) ? v.toLocaleString('it-IT') : v.toLocaleString('it-IT', { maximumFractionDigits: 2 })) : String(v ?? '');
+
+  return (
+    <section className="card ask">
+      <button className="askhead" onClick={() => setOpen((o) => !o)}>💬 Chiedi ai dati <span className="muted">{open ? '−' : '+'}</span></button>
+      {open && (
+        <div className="askbody">
+          <div className="askrow">
+            <input className="search" placeholder="es. Top 5 borse più vendute" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask()} />
+            <button className="submit small" disabled={busy} onClick={() => ask()}>{busy ? '…' : 'Chiedi'}</button>
+          </div>
+          {!res && <div className="esempi">{ESEMPI.map((e) => <button key={e} className="chip" onClick={() => ask(e)}>{e}</button>)}</div>}
+          {res?.needs_key && <div className="msg err">Per usare le domande in linguaggio naturale serve una chiave Google AI Studio in <code>app_flags.gemini_api_key</code>.</div>}
+          {res?.error && !res.needs_key && <div className="msg err">{res.error}{res.sql ? <div className="sqlshow">{res.sql}</div> : null}</div>}
+          {res?.rows && (res.rows.length ? (
+            <>
+              <div className="tablewrap"><table><thead><tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+                <tbody>{res.rows.slice(0, 50).map((r, i) => <tr key={i}>{cols.map((c) => <td key={c}>{fmt(r[c])}</td>)}</tr>)}</tbody></table></div>
+              {res.sql && <details className="sqldet"><summary>SQL</summary><div className="sqlshow">{res.sql}</div></details>}
+            </>
+          ) : <div className="msg ok">Nessun risultato.</div>)}
+        </div>
+      )}
+    </section>
+  );
 }

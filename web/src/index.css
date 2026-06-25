@@ -227,3 +227,20 @@ tr.dim { opacity: .42; }
 .salerow { display: flex; align-items: center; justify-content: space-between; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 11px; cursor: pointer; margin-bottom: 8px; }
 .card.warn { background: rgba(196,149,106,.08); border-color: rgba(196,149,106,.35); font-size: 13px; line-height: 1.5; }
 .card.warn code { background: rgba(0,0,0,.06); padding: 1px 4px; border-radius: 4px; font-size: 12px; }
+
+/* THIRD: Shopify alignment */
+.alignrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 2px; border-bottom: 1px solid var(--line); }
+.alignrow:last-child { border-bottom: 0; }
+.whytag { font-size: 10px; font-weight: 700; margin-top: 3px; display: inline-block; padding: 1px 6px; border-radius: 6px; }
+.whytag.under { color: var(--red); background: rgba(192,83,59,.1); }
+.whytag.over { color: var(--accent); background: rgba(196,149,106,.14); }
+
+/* FLOW 6: ask-data panel */
+.card.ask { padding: 0; overflow: hidden; }
+.askhead { width: 100%; text-align: left; background: none; border: 0; padding: 14px 16px; font-size: 14px; font-weight: 700; color: var(--rose); cursor: pointer; display: flex; justify-content: space-between; }
+.askbody { padding: 0 16px 16px; }
+.askrow { display: flex; gap: 8px; }
+.askrow .search { margin: 0; }
+.esempi { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.sqldet { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.sqlshow { font-family: ui-monospace, monospace; font-size: 11px; background: rgba(0,0,0,.04); padding: 8px; border-radius: 8px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }

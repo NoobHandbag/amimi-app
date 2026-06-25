@@ -20,7 +20,7 @@ export default function App() {
         {tab === 'ingest' && <Ingest pin={pin} chi={chi} setChi={setChi} />}
         {tab === 'arrivi' && <Arrivi pin={pin} chi={chi} setChi={setChi} />}
         {tab === 'verifica' && <Verifica pin={pin} chi={chi} setChi={setChi} />}
-        {tab === 'inv' && <Inventory />}
+        {tab === 'inv' && <Inventory pin={pin} chi={chi} />}
       </main>
       <nav className="bottomnav">
         <button className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')} type="button"><span>📊</span>Cruscotto</button>

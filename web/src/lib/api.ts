@@ -211,3 +211,24 @@ export async function fetchSalesByCodice(codice: string): Promise<SaleRow[]> {
 export async function correctSale(payload: Record<string, unknown>, pin: string, chi: string) {
   return writeApi('sale_correct', payload, pin, chi);
 }
+
+// ---------- THIRD FLOW: Shopify inventory alignment ----------
+export type ShopAlign = { codice: string; item: string | null; variant: string | null; image_url: string | null; giacenza: number; disponibili: number; shopify_qty: number | null; diff: number; synced_at: string | null; on_shopify: boolean };
+export async function fetchShopifyAlign(): Promise<ShopAlign[]> {
+  const { data, error } = await supabase
+    .from('v_shopify_align')
+    .select('codice,item,variant,image_url,giacenza,disponibili,shopify_qty,diff,synced_at,on_shopify');
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as ShopAlign[]).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+}
+function fnCall(fn: string, body: Record<string, unknown>) {
+  return fetch((import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/' + fn, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }).then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok && !j.error) throw new Error('Errore ' + r.status); return j; });
+}
+export const syncShopifyStock = (pin: string) => fnCall('shopify-stock', { action: 'sync', pin });
+export const realignShopify = (codici: string[], pin: string, chi: string) => fnCall('shopify-stock', { action: 'realign', codici, pin, chi });
+
+// ---------- FLOW 6: NL -> SQL ----------
+export type AskResult = { ok?: boolean; sql?: string; rows?: Record<string, unknown>[]; error?: string; needs_key?: boolean };
+export const askData = (question: string, pin: string): Promise<AskResult> => fnCall('ask-data', { question, pin }) as Promise<AskResult>;
