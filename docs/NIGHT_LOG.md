@@ -282,3 +282,15 @@ END of syncImportToDBQromo (which already runs hourly via its own trigger). Push
 already up to date" on re-push = confirmed). Now every hour: Qromo webhook -> Import -> DB_QROMO
 (resolve) -> forwardQromoSalesToApp -> write-api qromo_sale -> app. No new trigger, no manual step.
 9 gap sales already backfilled + verified. createQromoForwardTrigger kept for manual/standalone use.
+
+## SESSION 9 — manual-sale form (emulate AppSheet gift) + Cowork task map
+
+- GIFT_OFFLINE is the manual-offline-transaction log, not just free gifts: 63/124 rows have a price +
+  real payment methods (CASH/PAYPAL/BONIFICO/REVOLUT). The "Regalo" form only captured the gift
+  (inventory) — missing prezzo + payment_method. Fixed: Inserisci ▸ "Regalo / Vendita manuale" with a
+  Regalo|Vendita toggle, prezzo + payment method (Contanti/PayPal/Bonifico/Revolut/Altro), kind
+  'vendita_manuale'. Tested: price+payment persist. NOTE: v_ce_amimi counts revenue from Shopify+Qromo
+  +B2B only, NOT gifts_offline — so manual sales hit inventory but not the P&L (matches the Master's
+  CE_AMIMI; including them is a separate decision flagged to the owner).
+- docs/COWORK_TASK_MAP.md: all 27 Cowork tasks mapped to app-native / already-in-app / stays-on-Cowork
+  (Gmail/Notion/Chrome) / dies-with-cutover / deletable, building on Cowork's own condensation plan.
