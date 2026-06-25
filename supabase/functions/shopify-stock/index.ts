@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
     const { data: prods } = await sb.from('products').select('codice, codice_norm');
     const byNorm = new Map((prods ?? []).map((r) => [r.codice_norm, r.codice]));
 
-    const resp = await fetch(`${API}/products.json?limit=250&fields=id,title,variants`, { headers: SH });
+    const resp = await fetch(`${API}/products.json?limit=250&fields=id,title,image,images,variants`, { headers: SH });
     if (!resp.ok) return json({ error: 'Shopify ' + resp.status, detail: (await resp.text()).slice(0, 200) }, 502);
     const { products } = await resp.json();
 
@@ -47,8 +47,12 @@ Deno.serve(async (req) => {
         else codice = aliasMap.get(norm(p.title)) ?? (v.sku || null);
         if (!codice || seen.has(codice)) continue;
         seen.add(codice);
+        // image: the variant's own photo if it has one, else the product's featured/first image
+        const vImg = (v.image_id && Array.isArray(p.images))
+          ? (p.images.find((im: { id: number; src: string }) => im.id === v.image_id)?.src ?? null) : null;
+        const image_url = vImg ?? p.image?.src ?? (Array.isArray(p.images) ? (p.images[0]?.src ?? null) : null);
         rows.push({
-          codice, shopify_qty: Number(v.inventory_quantity ?? 0), shopify_title: p.title,
+          codice, shopify_qty: Number(v.inventory_quantity ?? 0), shopify_title: p.title, image_url,
           variant_id: String(v.id), inventory_item_id: String(v.inventory_item_id), synced_at: new Date().toISOString(),
         });
       }

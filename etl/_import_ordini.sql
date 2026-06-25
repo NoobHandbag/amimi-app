@@ -1,0 +1,53 @@
+INSERT INTO suppliers (name) VALUES ('Sarte Milano (tessuto)') ON CONFLICT (name) DO NOTHING;
+DELETE FROM supplier_orders WHERE source = 'import-ordini-fresh';
+WITH raw(group_key, codice, item, variant, fornitore, qty_ordered, qty_arrived, data_ordine, data_consegna, costo_unitario, nuovo_riordino, note) AS (
+  VALUES
+  ('Francesco (pelle)|2026-04-15', 'Lea_Bag_Maxi_COCCO_BLACK', 'Lea Bag Maxi', 'Cocco Black', 'Francesco (pelle)', 12.0, 12.0, DATE '2026-04-15', DATE '2026-04-29', 25.0, 'Riordino', NULL),
+  ('Francesco (pelle)|2026-04-15', 'Lea_Bag_LEOPARDO_SAVANA', 'Lea Bag', 'Pony Leopardo', 'Francesco (pelle)', 10.0, 10.0, DATE '2026-04-15', DATE '2026-06-09', 20.0, 'Riordino', NULL),
+  ('Francesco (pelle)|2026-04-23', 'Porta_carte_COCCO_PINK', 'Porta carte', 'Cocco Rosa', 'Francesco (pelle)', 10.0, 0.0, DATE '2026-04-23', DATE '2026-05-20', 9.0, 'Nuovo Prodotto', NULL),
+  ('Francesco (pelle)|2026-04-23', 'Porta_carte_COCCO_ORANGE', 'Porta carte', 'Cocco Arancio', 'Francesco (pelle)', 10.0, 0.0, DATE '2026-04-23', DATE '2026-05-20', 9.0, 'Nuovo Prodotto', NULL),
+  ('Francesco (pelle)|2026-04-23', 'Porta_carte_COCCO_GREEN', 'Porta carte', 'Cocco Verde', 'Francesco (pelle)', 10.0, 0.0, DATE '2026-04-23', DATE '2026-05-20', 9.0, 'Nuovo Prodotto', NULL),
+  ('Francesco (pelle)|2026-04-23', 'Porta_carte_COCCO_BEIGE', 'Porta carte', 'Cocco Panna', 'Francesco (pelle)', 10.0, 0.0, DATE '2026-04-23', DATE '2026-05-20', 9.0, 'Nuovo Prodotto', NULL),
+  ('Francesco (pelle)|2026-04-23', 'Porta_carte_COCCO_PURPLE', 'Porta carte', 'Cocco Malva', 'Francesco (pelle)', 10.0, 0.0, DATE '2026-04-23', DATE '2026-05-20', 9.0, 'Nuovo Prodotto', NULL),
+  ('Francesco (pelle)|2026-05-19', 'Lea_Bag_x_Rita_', 'Lea Bag x Rita', 'Vernice Bianca Piercing-O', 'Francesco (pelle)', 6.0, 6.0, DATE '2026-05-19', NULL, 22.0, 'Nuovo Prodotto', NULL),
+  ('Francesco (pelle)|2026-05-19', 'Lea_Bag_x_Rita_', 'Lea Bag x Rita', 'Vernice Nera Piercing-A', 'Francesco (pelle)', 6.0, 6.0, DATE '2026-05-19', NULL, 22.0, 'Nuovo Prodotto', NULL),
+  ('Francesco (pelle)|2026-05-18', 'Lea_Bag_COCCO_BLACK', 'Lea Bag', 'Cocco nera', 'Francesco (pelle)', 6.0, 6.0, DATE '2026-05-18', DATE '2026-05-19', 20.0, 'Riordino', NULL),
+  ('Francesco (pelle)|2026-05-19', 'Lea_Bag_Maxi_COCCO_BLACK', 'Lea Bag Maxi', 'Cocco nera', 'Francesco (pelle)', 10.0, 10.0, DATE '2026-05-19', DATE '2026-06-09', 25.0, 'Riordino', NULL),
+  ('Francesco (pelle)|2026-05-19', 'Maria_Bag_GREEN_PIERCING', 'Maria Bag', 'Verde  Piercing', 'Francesco (pelle)', 6.0, 6.0, DATE '2026-05-19', NULL, 26.0, 'Nuovo Prodotto', NULL),
+  ('Francesco (pelle)|2026-05-19', 'Maria_Bag_ICE_BLUE_PIERCING', 'Maria Bag', 'Azzurro menta Piercing', 'Francesco (pelle)', 6.0, 6.0, DATE '2026-05-19', NULL, 26.0, 'Nuovo Prodotto', NULL),
+  ('Francesco (pelle)|2026-05-19', 'Maria_Bag_BLACK_PIERCING', 'Maria Bag', 'Nera Piercing', 'Francesco (pelle)', 10.0, 10.0, DATE '2026-05-19', NULL, 26.0, 'Nuovo Prodotto', NULL),
+  ('Francesco (pelle)|2026-05-18', 'Lea_Bag_COCCO_BLACK', 'Lea Bag', 'Cocco nera', 'Francesco (pelle)', 10.0, 10.0, DATE '2026-05-18', DATE '2026-06-09', 20.0, 'Riordino', NULL),
+  ('Francesco (pelle)|2026-06-08', 'Lea_Bag_COCCO_PURPLE', 'Lea Bag', 'Cocco Malva', 'Francesco (pelle)', 10.0, 10.0, DATE '2026-06-08', DATE '2026-06-09', 20.0, 'Riordino', NULL),
+  ('Francesco (pelle)|2026-06-08', 'Lea_Bag_COCCO_GREEN', 'Lea Bag', 'Cocco Verde', 'Francesco (pelle)', 10.0, 10.0, DATE '2026-06-08', DATE '2026-06-09', 20.0, 'Riordino', NULL),
+  ('Francesco (pelle)|2026-06-18', 'Lea_Bag_COCCO_PURPLE', 'Lea Bag', 'Cocco Malva', 'Francesco (pelle)', 10.0, 10.0, DATE '2026-06-18', DATE '2026-06-22', 20.0, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Agata_Bag_FLORAL_DUSTY_PINK_EMBROIDERY', 'Agata Bag', 'DUSTY PINK EMBROIDERY', 'Sarte Milano (tessuto)', 10.0, 10.0, DATE '2026-04-29', DATE '2026-05-29', 19.0, 'Riordino', 'costo 25 euro x 1'),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Agata_Bag_FLORAL_PINK_EMBROIDERY', 'Agata Bag', 'Floral Pink Embroidery', 'Sarte Milano (tessuto)', 4.0, 4.0, DATE '2026-04-29', DATE '2026-05-29', 19.0, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Agata_Bag_FLORAL_GREEN_EMBROIDERY', 'Agata Bag', 'Floral Green Embroidery', 'Sarte Milano (tessuto)', 4.0, 4.0, DATE '2026-04-29', DATE '2026-05-29', 19.0, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Agata_Bag_ROSE_BUTTER', 'Agata Bag', 'Rose Bianche int. Bianco', 'Sarte Milano (tessuto)', 5.0, 5.0, DATE '2026-04-29', DATE '2026-05-29', 19.0, 'Nuovo Prodotto', NULL),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Agata_Bag_ROSE_BUTTER_GREEN', 'Agata Bag', 'Rose Bianche int. Verde', 'Sarte Milano (tessuto)', 5.0, 5.0, DATE '2026-04-29', DATE '2026-05-29', 19.0, 'Nuovo Prodotto', NULL),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Agata_Bag_PINK_CRYSTAL_BEADS', 'Agata Bag', 'Perline Rosa', 'Sarte Milano (tessuto)', 3.0, 3.0, DATE '2026-04-29', DATE '2026-05-29', 19.0, 'Nuovo Prodotto', NULL),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Agata_Bag_FLORAL_LIGHT_BLUE', 'Agata Bag', 'Ricami Azzurri', 'Sarte Milano (tessuto)', 10.0, 10.0, DATE '2026-04-29', DATE '2026-05-29', 19.0, 'Nuovo Prodotto', 'ne abbiamo vendute 2 (sono da inserirne 8)'),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Agata_Bag_FLORAL_LIGHT_GREY', 'Agata Bag', 'Ricami Grigi', 'Sarte Milano (tessuto)', 8.0, 8.0, DATE '2026-04-29', DATE '2026-05-29', 19.0, 'Nuovo Prodotto', NULL),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Agata_Bag_FLORAL_GREY', 'Agata Bag', 'Ricami Grigi', 'Sarte Milano (tessuto)', 2.0, 2.0, DATE '2026-04-29', DATE '2026-05-29', 19.0, 'Nuovo Prodotto', NULL),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Agata_Bag_PAILLETTES_PINK', 'Agata Bag', 'Palliettes Rosa', 'Sarte Milano (tessuto)', 10.0, 10.0, DATE '2026-04-29', DATE '2026-05-29', 19.0, 'Nuovo Prodotto', NULL),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Annie_Bag_PAILLETTES_CANDY_PINK', 'Annie Bag', 'Palliettes Fucsia', 'Sarte Milano (tessuto)', 10.0, 10.0, DATE '2026-04-29', DATE '2026-05-29', 16.5, 'Nuovo Prodotto', NULL),
+  ('Sarte Milano (tessuto)|2026-04-29', 'Annie_Bag_PAILLETTES_PURPLE', 'Annie Bag', 'Palliettes Lilla', 'Sarte Milano (tessuto)', 10.0, 10.0, DATE '2026-04-29', DATE '2026-05-29', 16.5, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Annie_Bag_PAILLETTES_NUDE', 'Annie Bag', 'Palliettes Nude', 'Sarte Milano (tessuto)', 10.0, 10.0, DATE '2026-06-16', DATE '2026-06-26', 16.5, 'Riordino', 'parte 1 delle 50'),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Annie_Bag_PAILLETTES_NUDE', 'Annie Bag', 'Palliettes Nude', 'Sarte Milano (tessuto)', 10.0, 10.0, DATE '2026-06-16', DATE '2026-06-26', 16.5, 'Riordino', 'parte 2 delle 50'),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Annie_Bag_PAILLETTES_NUDE', 'Annie Bag', 'Palliettes Nude', 'Sarte Milano (tessuto)', 30.0, 0.0, DATE '2026-06-16', DATE '2026-06-26', 16.5, 'Riordino', 'parte 3 delle 50'),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Annie_Bag_PAILLETTES_PINK', 'Annie Bag', 'Palliettes Rosa', 'Sarte Milano (tessuto)', 10.0, 0.0, DATE '2026-06-16', DATE '2026-07-09', 16.5, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Annie_Bag_PAILLETTES_LIGHT_BLUE', 'Annie Bag', 'Palliettes Azzurra', 'Sarte Milano (tessuto)', 10.0, 0.0, DATE '2026-06-16', DATE '2026-07-09', 16.5, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Annie_Bag_PAILLETTES_GREY', 'Annie Bag', 'Palliettes Grigio', 'Sarte Milano (tessuto)', 10.0, 0.0, DATE '2026-06-16', DATE '2026-07-09', 16.5, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Annie_Bag_PAILLETTES_LIGHT_GREEN', 'Annie Bag', 'Palliettes Verde', 'Sarte Milano (tessuto)', 10.0, 0.0, DATE '2026-06-16', DATE '2026-07-09', 16.5, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Annie_Bag_', 'Annie Bag', 'Seta verde', 'Sarte Milano (tessuto)', NULL, 0.0, DATE '2026-06-16', NULL, 16.5, 'Nuovo Prodotto', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Agata_Bag_AGATA_BAG_ROSE_BUTTER', 'Agata Bag', 'Rose Bianche int. Bianco', 'Sarte Milano (tessuto)', 5.0, 0.0, DATE '2026-06-16', NULL, 19.0, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Agata_Bag_AGATA_BAG_FLORAL_BORDEAUX_EMBROIDERY', 'Agata Bag', 'MARRONE CON FIORI INTERNO BORDEAUX', 'Sarte Milano (tessuto)', 5.0, 0.0, DATE '2026-06-16', NULL, 19.0, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Agata_Bag_AGATA_BAG_ROSE_BUTTER_LILLA', 'Agata Bag', 'Rose Bianche int. Lilla', 'Sarte Milano (tessuto)', 5.0, 0.0, DATE '2026-06-16', NULL, 19.0, 'Nuovo Prodotto', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Agata_Bag_AGATA_BAG_EMBROIDERY_WHITE', 'Agata Bag', 'Organza Bianca', 'Sarte Milano (tessuto)', 5.0, 0.0, DATE '2026-06-16', NULL, 19.0, 'Nuovo Prodotto', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Agata_Bag_AGATA_BAG_ROSE_PINK', 'Agata Bag', 'Rose marrone int. Rosa', 'Sarte Milano (tessuto)', 5.0, 0.0, DATE '2026-06-16', NULL, 19.0, 'Riordino', NULL),
+  ('Sarte Milano (tessuto)|2026-06-16', 'Agata_Bag_', 'Agata Bag', 'Organza lilla', 'Sarte Milano (tessuto)', 5.0, 0.0, DATE '2026-06-16', NULL, 19.0, 'Nuovo Prodotto', NULL)
+),
+g AS (SELECT DISTINCT group_key, gen_random_uuid() AS gruppo FROM raw)
+INSERT INTO supplier_orders (gruppo, codice, item, variant, fornitore, qty_ordered, qty_arrived, data_ordine, data_consegna, costo_unitario, nuovo_riordino, note, source, chi)
+SELECT g.gruppo, r.codice, r.item, r.variant, r.fornitore, r.qty_ordered, r.qty_arrived, r.data_ordine, r.data_consegna, r.costo_unitario, r.nuovo_riordino, r.note, 'import-ordini-fresh', 'Ale'
+FROM raw r JOIN g ON g.group_key = r.group_key;
