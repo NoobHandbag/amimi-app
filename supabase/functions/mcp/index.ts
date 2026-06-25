@@ -85,29 +85,37 @@ async function callTool(name: string, args: Record<string, unknown>) {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
-  const J = (b: unknown) => new Response(JSON.stringify(b), { headers: { ...cors, 'content-type': 'application/json' } });
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: { ...cors, 'Access-Control-Allow-Headers': 'authorization, content-type, mcp-session-id, mcp-protocol-version' } });
+  if (req.method === 'GET') return new Response('event: ping\ndata: {}\n\n', { headers: { ...cors, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' } });
 
-  // bearer-token auth (app_flags.mcp_token). Reads + writes both gated.
+  // Streamable HTTP: claude.ai sends Accept: text/event-stream and expects the response as an SSE
+  // event. Honor that; fall back to plain JSON (so curl tests still work).
+  const wantSSE = (req.headers.get('accept') || '').includes('text/event-stream');
+  const respond = (b: unknown) => wantSSE
+    ? new Response(`event: message\ndata: ${JSON.stringify(b)}\n\n`, { headers: { ...cors, 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'mcp-session-id': 'amimi' } })
+    : new Response(JSON.stringify(b), { headers: { ...cors, 'content-type': 'application/json', 'mcp-session-id': 'amimi' } });
+
+  // Reads are open (data already public via the anon key); WRITES need the bearer token.
+  const READ = new Set(['list_inventory', 'what_to_reorder', 'sku_availability', 'pnl_summary', 'ads_summary', 'ask_data']);
   const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'mcp_token').single();
   const token = flag?.value;
-  const auth = req.headers.get('authorization') || '';
-  if (!token || auth !== `Bearer ${token}`) return J(rpcErr(null, -32001, 'Unauthorized'));
+  const authed = !!token && (req.headers.get('authorization') || '') === `Bearer ${token}`;
 
   let msg: { id?: unknown; method?: string; params?: Record<string, unknown> };
-  try { msg = await req.json(); } catch { return J(rpcErr(null, -32700, 'Parse error')); }
+  try { msg = await req.json(); } catch { return respond(rpcErr(null, -32700, 'Parse error')); }
   const { id, method, params } = msg;
 
   if (method === 'initialize')
-    return J(rpc(id, { protocolVersion: (params?.protocolVersion as string) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'amimi-app', version: '1.0.0' } }));
-  if (method === 'notifications/initialized' || method === 'notifications/cancelled') return new Response(null, { status: 202, headers: cors });
-  if (method === 'ping') return J(rpc(id, {}));
-  if (method === 'tools/list') return J(rpc(id, { tools: TOOLS }));
+    return respond(rpc(id, { protocolVersion: (params?.protocolVersion as string) || '2025-06-18', capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'amimi-app', version: '1.0.0' } }));
+  if (typeof method === 'string' && method.startsWith('notifications/')) return new Response(null, { status: 202, headers: cors });
+  if (method === 'ping') return respond(rpc(id, {}));
+  if (method === 'tools/list') return respond(rpc(id, { tools: authed ? TOOLS : TOOLS.filter((t) => READ.has(t.name)) }));
   if (method === 'tools/call') {
     const name = String(params?.name || '');
-    if (!TOOLS.some((t) => t.name === name)) return J(rpcErr(id, -32602, 'Unknown tool: ' + name));
-    try { return J(rpc(id, await callTool(name, (params?.arguments as Record<string, unknown>) || {}))); }
-    catch (e) { return J(rpc(id, { ...textResult('Errore: ' + (e as Error).message), isError: true })); }
+    if (!TOOLS.some((t) => t.name === name)) return respond(rpcErr(id, -32602, 'Unknown tool: ' + name));
+    if (!READ.has(name) && !authed) return respond(rpc(id, { ...textResult('Questa azione (scrittura) richiede il token MCP nel connettore (Authorization: Bearer <mcp_token>).'), isError: true }));
+    try { return respond(rpc(id, await callTool(name, (params?.arguments as Record<string, unknown>) || {}))); }
+    catch (e) { return respond(rpc(id, { ...textResult('Errore: ' + (e as Error).message), isError: true })); }
   }
-  return J(rpcErr(id, -32601, 'Method not found: ' + method));
+  return respond(rpcErr(id, -32601, 'Method not found: ' + method));
 });

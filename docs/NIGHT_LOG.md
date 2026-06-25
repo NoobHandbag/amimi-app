@@ -305,3 +305,12 @@ server-only — NOT in repo). Tested: auth, initialize, tools/list, what_to_reor
 ask_data all return real data. Connect from Claude Code/Desktop with the token NOW; claude.ai web needs
 an OAuth wrapper (TODO). mcp/README.md has the connection steps. 5th edge function; additive, nothing
 else touched. Clarified: 24/7 autonomy = Supabase pg_cron (no PC); MCP = interactive control (cloud).
+
+## SESSION 9c — MCP connected to claude.ai web (live)
+
+Made reads open (data already public via anon; writes still token-gated) and added Streamable-HTTP
+**SSE** responses (text/event-stream) + GET handler — claude.ai's connector wants SSE, plain JSON gave
+"no tools". Added the connector in claude.ai (Personalizza → Connettori → + → custom, URL, no OAuth):
+now shows the 6 read tools (list_inventory, what_to_reorder, sku_availability, pnl_summary, ads_summary,
+ask_data). Owner's web Claude can now query the business. Writes (propose_expense, register_count) stay
+behind the bearer token → only via Code/Desktop, not the web connector. mcp v3.

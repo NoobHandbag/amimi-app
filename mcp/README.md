@@ -38,10 +38,12 @@ In `claude_desktop_config.json`:
 }
 ```
 
-### claude.ai (web Chat) — richiede un passaggio in più
-I "custom connectors" del web fanno un flusso **OAuth**, non accettano un token statico. Per usarlo dal
-web serve aggiungere un wrapper OAuth davanti a questa function (TODO separato). Da Code/Desktop funziona
-già adesso col token.
+### claude.ai (web Chat) — già attivo (sola lettura)
+Impostazioni → Personalizza → Connettori → **+** → "Aggiungi connettore personalizzato": Nome `Amimi App`,
+URL sopra, OAuth vuoti. Connesso (collegato 2026-06-25) con i **6 tool di lettura**. Le scritture
+(propose_expense, register_count) restano dietro il token, quindi NON appaiono nel connettore web — per
+quelle usa Code/Desktop col Bearer. Dettaglio tecnico: claude.ai usa il transport Streamable-HTTP e vuole
+le risposte in **SSE** (`text/event-stream`), gestito dalla function.
 
 ## Sicurezza
 Token bearer obbligatorio (no token → Unauthorized). Le letture usano il service-role lato server; le
