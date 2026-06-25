@@ -141,3 +141,37 @@ Verified: build clean, dashboard E2E green (asserts filter + scope + January-via
 screenshots captured for both scopes. Live: https://noobhandbag.github.io/amimi-app/
 Next: the 6 owner workflows (multi-bag supplier orders, product-detail verification, sale→product
 correction, Shopify inventory mgmt, expense approval, NL→SQL via Gemini).
+
+## SESSION 5 — owner workflows (DB-native flows live)
+
+Built the data-native owner workflows on a hardened write path. **write-api v6** now handles:
+order_multi, product_verify, expense_manual/propose/approve, sale_correct — alongside the
+existing insert/arrival actions. Key lesson: the DB has many **generated columns** that must NOT
+be written (codice_norm, products.is_finalized, expenses.amimi + categoria_valid,
+purchases.costo_totale, b2b_movements.incasso_amimi/quota_negozio/retail_tot) — hit three of them
+in testing, fixed, redeployed. All 9 flow E2E checks green.
+
+Live flows:
+- **FLOW 1 — supplier orders (Ginevra):** "In arrivo" rebuilt. Supplier-first; bag picker filtered
+  to that supplier via `v_fornitore_prodotti` (derived from purchase history, with last cost +
+  image); add new bags on the fly (provisional codice, auto-creates a `verificato=false` product
+  stub so it lands in FLOW 2); multi-line cart; order date editable; per-line arrivals with editable
+  date. Orders grouped by supplier (`gruppo` uuid, `v_ordini_arrivo` rebuilt).
+- **FLOW 2 — product verification (Benedetta):** `v_products_todo` surfaces the ~16 genuinely
+  incomplete products (missing item/variant — image/desc/seo are empty for ALL seed rows so not a
+  signal), sellers first. Edit form completes + flips `verificato`.
+- **FLOW 4/5 — expenses:** propose (Inserisci ▸ Spesa = pending) → approve/reject or add direct
+  (Verifica ▸ Spese). `amimi` computed from `amimi_raw`, costo negative, category validated.
+- **SECOND — sale→product correction (Verifica ▸ Vendite):** pick original product → pick the sale
+  (Qromo or Shopify) → reassign to the real product; inventory follows. Returns `shopify_stock_pending`.
+- **FLOW 3 — publish hub (Verifica ▸ Pubblica):** lists verified-not-on-Shopify products; **gated**
+  behind `app_flags.shopify_write_enabled` (off). NOTE: the Shopify-inventory update must move out
+  of product creation.
+
+Nav → 5 tabs (+ Verifica). Migrations 0012/0013/0014 persisted to repo; supabase/migrations now
+matches live. Verified via mobile screenshots (no console errors).
+
+**Still to build (external deps):** THIRD flow (Shopify inventory misalignment view + manual realign
+— needs a live Shopify-stock read function) and FLOW 6 (NL→SQL via Gemini — needs a Google AI Studio
+key in `app_flags.gemini_api_key`). The live Shopify-write half of FLOW 3 + the Shopify-stock step of
+SECOND are gated until enablement.
