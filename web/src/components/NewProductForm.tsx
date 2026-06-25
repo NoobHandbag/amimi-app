@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { writeApi, fetchProducts, clearProductCache } from '../lib/api';
+import { suggestPrice, marginOf } from '../lib/helpers';
 
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
 const modelTok = (s: string) => s.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_]/g, '');
@@ -79,6 +80,10 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
         <div><label className="fl">COGS €</label>
           <input className="num" type="number" inputMode="decimal" value={cogs} onChange={(e) => setCogs(e.target.value)} placeholder="—" /></div>
       </div>
+      {Number(cogs) > 0 ? (() => { const sug = suggestPrice(Number(cogs)); return (
+        <button type="button" className="hintchip" onClick={() => setPrice(String(sug))}>
+          💡 Prezzo consigliato €{sug.toFixed(2)} · margine {Math.round(marginOf(sug, Number(cogs)) * 100)}%
+        </button>); })() : null}
 
       <button className="submit" disabled={busy} onClick={submit}>{busy ? 'Salvo…' : 'Crea prodotto'}</button>
       {msg && <div className={`msg ${msg.t}`}>{msg.x}</div>}

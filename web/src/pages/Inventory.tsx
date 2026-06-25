@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchInventory, fetchContoVendita, fetchShopifyAlign, syncShopifyStock, realignShopify } from '../lib/api';
-import type { InvFull, CV, ShopAlign } from '../lib/api';
+import { fetchInventory, fetchContoVendita, fetchShopifyAlign, syncShopifyStock, realignShopify, fetchReorder, fetchSkuAvailability } from '../lib/api';
+import type { InvFull, CV, ShopAlign, Reorder, SkuAvail } from '../lib/api';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const daysSince = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : Infinity);
@@ -83,8 +83,103 @@ function ShopView({ pin, chi }: { pin: string; chi: string }) {
   );
 }
 
+/* ---------- FEATURE: reorder board ("Cosa Riprodurre") ---------- */
+function ReorderView() {
+  const [rows, setRows] = useState<Reorder[] | null>(null);
+  const [soloVend, setSoloVend] = useState(true);
+  useEffect(() => { fetchReorder().then(setRows).catch(() => setRows([])); }, []);
+  if (rows == null) return <p className="muted center">Carico…</p>;
+  const urgent = (p: Reorder) => p.venduto_60d > 0 && p.disponibili <= 2 && p.in_arrivo === 0;
+  const list = (soloVend ? rows.filter((p) => p.venduto_60d > 0) : rows);
+  return (
+    <>
+      <div className="filters"><button className={`fchip ${soloVend ? 'on' : ''}`} onClick={() => setSoloVend(true)}>Solo venduti</button>
+        <button className={`fchip ${!soloVend ? 'on' : ''}`} onClick={() => setSoloVend(false)}>Tutti</button></div>
+      <p className="note">Ordinati per urgenza (vendite ultimi 60 giorni ÷ stock disponibile). Badge = best-seller che sta finendo senza riordini in arrivo.</p>
+      <div className="card"><div className="list">
+        {list.slice(0, 120).map((p) => (
+          <div className="row" key={p.codice}>
+            <div className="invleft"><Tile url={p.image_url} label={p.item ?? p.codice} />
+              <div><div className="rt">{p.item ?? p.codice} {urgent(p) && <span className="hot">da riprodurre</span>}</div>
+                <div className="rs">{p.variant ?? ''}</div>
+                <div className="invtags">
+                  <span className="tag cv">{p.venduto_60d} venduti/60g</span>
+                  {p.in_arrivo > 0 && <span className="tag live">{p.in_arrivo} in arrivo</span>}
+                  {p.giorni_stock != null && <span className="tag off">~{p.giorni_stock}g stock</span>}
+                </div>
+              </div>
+            </div>
+            <div className={`giac ${p.disponibili <= 0 ? 'neg' : ''}`}>{p.disponibili}</div>
+          </div>
+        ))}
+        {!list.length && <p className="muted center">Nessun prodotto.</p>}
+      </div></div>
+    </>
+  );
+}
+
+/* ---------- FEATURE: SKU availability monitor ---------- */
+function DispView() {
+  const [rows, setRows] = useState<SkuAvail[] | null>(null);
+  useEffect(() => { fetchSkuAvailability().then(setRows).catch(() => setRows([])); }, []);
+  if (rows == null) return <p className="muted center">Carico…</p>;
+  const acq = rows.filter((r) => r.stato === 'acquistabile');
+  const nonPub = rows.filter((r) => r.stato === 'in_stock_non_pubblicato');
+  const esaur = rows.filter((r) => r.stato === 'pubblicato_esaurito');
+  const Block = ({ title, hint, items }: { title: string; hint: string; items: SkuAvail[] }) => (
+    <section className="card"><h2>{title} · {items.length}</h2><p className="note">{hint}</p>
+      <div className="list">{items.slice(0, 40).map((p) => (
+        <div className="row" key={p.codice}><div className="invleft"><Tile url={p.image_url} label={p.item ?? p.codice} />
+          <div><div className="rt">{p.item ?? p.codice}</div><div className="rs">{p.variant ?? ''}</div></div></div>
+          <div className="giac">{p.giacenza}</div></div>))}
+        {!items.length && <p className="muted center">Nessuno. ✓</p>}</div>
+    </section>
+  );
+  return (
+    <>
+      <div className="kpis">
+        <div className="kpi green"><div className="v">{acq.length}</div><div className="k">Acquistabili ora</div></div>
+        <div className="kpi red"><div className="v">{nonPub.length + esaur.length}</div><div className="k">Vendite perse</div></div>
+      </div>
+      <Block title="In stock ma NON su Shopify" hint="Hai i pezzi ma non sono pubblicati: pubblicali per vendere." items={nonPub} />
+      <Block title="Su Shopify ma esauriti" hint="Pubblicati ma senza disponibilità: riproduci o avvia il back-in-stock." items={esaur} />
+    </>
+  );
+}
+
+/* ---------- FEATURE: inventory valuation ---------- */
+function ValoreView({ inv }: { inv: InvFull[] }) {
+  const live = inv.filter((p) => p.giacenza_attuale > 0);
+  const atCogs = live.reduce((s, p) => s + p.giacenza_attuale * (p.cogs || 0), 0);
+  const atRetail = live.reduce((s, p) => s + (p.valore || 0), 0);
+  const byLine = useMemo(() => {
+    const m = new Map<string, { cogs: number; retail: number; pezzi: number }>();
+    for (const p of live) {
+      const k = p.item ?? p.codice; const a = m.get(k) ?? { cogs: 0, retail: 0, pezzi: 0 };
+      a.cogs += p.giacenza_attuale * (p.cogs || 0); a.retail += p.valore || 0; a.pezzi += p.giacenza_attuale; m.set(k, a);
+    }
+    return [...m.entries()].sort((x, y) => y[1].retail - x[1].retail);
+  }, [inv]);
+  return (
+    <>
+      <div className="kpis">
+        <div className="kpi accent"><div className="v">{eur(atCogs)}</div><div className="k">Valore a costo (COGS)</div></div>
+        <div className="kpi rose"><div className="v">{eur(atRetail)}</div><div className="k">Valore a prezzo vendita</div></div>
+      </div>
+      <section className="card"><h2>Per linea</h2>
+        <div className="tablewrap"><table>
+          <thead><tr><th>Linea</th><th>Pezzi</th><th>A costo</th><th>A prezzo</th></tr></thead>
+          <tbody>{byLine.map(([k, v]) => (
+            <tr key={k}><td className="l">{k}</td><td>{v.pezzi}</td><td>{eur(v.cogs)}</td><td>{eur(v.retail)}</td></tr>
+          ))}</tbody>
+        </table></div>
+      </section>
+    </>
+  );
+}
+
 export default function Inventory({ pin, chi }: { pin: string; chi: string }) {
-  const [view, setView] = useState<'mag' | 'neg' | 'shop'>('mag');
+  const [view, setView] = useState<'mag' | 'neg' | 'shop' | 'riordino' | 'disp' | 'valore'>('mag');
   const [inv, setInv] = useState<InvFull[]>([]);
   const [cv, setCv] = useState<CV[]>([]);
   const [q, setQ] = useState('');
@@ -122,8 +217,11 @@ export default function Inventory({ pin, chi }: { pin: string; chi: string }) {
         <h1>Inventario</h1>
         <div className="seg wrap">
           <button className={view === 'mag' ? 'on' : ''} onClick={() => setView('mag')}>Magazzino</button>
+          <button className={view === 'riordino' ? 'on' : ''} onClick={() => setView('riordino')}>Riordino</button>
+          <button className={view === 'disp' ? 'on' : ''} onClick={() => setView('disp')}>Disponibilità</button>
           <button className={view === 'neg' ? 'on' : ''} onClick={() => setView('neg')}>Nei negozi</button>
           <button className={view === 'shop' ? 'on' : ''} onClick={() => setView('shop')}>Shopify</button>
+          <button className={view === 'valore' ? 'on' : ''} onClick={() => setView('valore')}>Valore</button>
         </div>
       </header>
 
@@ -186,6 +284,9 @@ export default function Inventory({ pin, chi }: { pin: string; chi: string }) {
       )}
 
       {view === 'shop' && <ShopView pin={pin} chi={chi} />}
+      {view === 'riordino' && <ReorderView />}
+      {view === 'disp' && <DispView />}
+      {view === 'valore' && <ValoreView inv={inv} />}
     </div>
   );
 }

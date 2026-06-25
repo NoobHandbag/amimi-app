@@ -244,3 +244,12 @@ tr.dim { opacity: .42; }
 .esempi { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .sqldet { margin-top: 8px; font-size: 12px; color: var(--muted); }
 .sqlshow { font-family: ui-monospace, monospace; font-size: 11px; background: rgba(0,0,0,.04); padding: 8px; border-radius: 8px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+
+/* product helpers + deal calc */
+.hintchip { width: 100%; text-align: left; background: rgba(196,149,106,.1); border: 1px solid rgba(196,149,106,.3); color: var(--accent); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+.lblrow { display: flex; justify-content: space-between; align-items: center; }
+.minibtn { background: #fff; border: 1px solid var(--line); color: var(--rose); border-radius: 8px; font-size: 11px; font-weight: 700; padding: 4px 11px; cursor: pointer; }
+.minibtn:disabled { opacity: .4; }
+.charcount { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.dealrow { display: flex; justify-content: space-between; align-items: center; padding: 8px 2px; font-size: 13px; font-weight: 600; }
+.dealrow .qbox { width: 56px; }

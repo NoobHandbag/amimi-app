@@ -200,3 +200,24 @@ the UI always passes the target product's values, so correct in production).
 
 write-api now at v7. Live. Still designed-not-built: reorder board, SKU-availability monitor, deal
 calculator, pricing/SEO helpers, CS triage, ads card, valuation (see FEATURE_BACKLOG.md).
+
+## SESSION 7 — built the backlog (waves 1–3)
+
+Six more features from FEATURE_BACKLOG.md, all live (suite still 34/34):
+- **Riordino board** (Inventario▸Riordino) — v_reorder: velocity 60d + stock + in-arrivo, sorted by
+  urgency, "da riprodurre" badge for best-sellers running out with nothing incoming.
+- **Disponibilità SKU** (Inventario▸Disponibilità) — v_sku_availability: purchasable-now count + the
+  two loss types. Live: 52 acquistabili, 29 in-stock-non-pubblicati, 18 pubblicati-esauriti.
+- **Valutazione magazzino** (Inventario▸Valore) — stock at COGS and at retail, by line.
+- **Pricing helper** — suggestPrice(cogs, margin) VAT-inclusive, surfaced in NewProduct + verify forms.
+- **SEO generator** — genSeoTitle to the brand formula (leather vs Nina), with 60–70 char counter.
+- **Meta Ads card** (Cruscotto) — v_ads_mensile from meta_ads_daily (spend, ROAS, per-month).
+- **B2B deal calculator** (Cruscotto, collapsible) — pick products + qty + sell-in €/pz → wholesale
+  margin/profit vs conto-vendita (retail net IVA − store%).
+
+Migrations 0019 (reorder+availability), 0020 (ads). web/src/lib/helpers.ts (pricing+SEO). Product
+fetch + InvFull now carry cogs.
+
+STILL NOT BUILT (need external data feeds, noted for the user): in-store/popup pickup analytics
+(needs order tags not in our Shopify pull), customer-service triage (needs DM/email feed). Everything
+else from the backlog is shipped.

@@ -7,6 +7,7 @@ import {
   fetchSalesByCodice, correctSale, clearProductCache,
 } from '../lib/api';
 import type { ProdTodo, ExpPending, SaleRow, Product } from '../lib/api';
+import { suggestPrice, marginOf, genSeoTitle } from '../lib/helpers';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
@@ -44,10 +45,16 @@ function ProdEdit({ p, pin, chi, onDone }: { p: ProdTodo; pin: string; chi: stri
         <div><label className="fl">Prezzo € (IVA incl.)</label><input className="num" type="number" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></div>
         <div><label className="fl">Immagine (URL)</label><input className="txt" value={img} onChange={(e) => setImg(e.target.value)} placeholder="https://…" /></div>
       </div>
+      {p.cogs ? (() => { const sug = suggestPrice(p.cogs!); return (
+        <button type="button" className="hintchip" onClick={() => setPrice(String(sug))}>
+          💡 Prezzo consigliato €{sug.toFixed(2)} · margine {Math.round(marginOf(sug, p.cogs!) * 100)}% (COGS €{p.cogs})
+        </button>); })() : null}
       <label className="fl">Descrizione</label>
       <input className="txt" value={descr} onChange={(e) => setDescr(e.target.value)} placeholder="—" />
-      <label className="fl">SEO title</label>
+      <div className="lblrow"><label className="fl">SEO title</label>
+        <button type="button" className="minibtn" onClick={() => setSeo(genSeoTitle(item, variant))} disabled={!item || !variant}>genera</button></div>
       <input className="txt" value={seo} onChange={(e) => setSeo(e.target.value)} placeholder="Borsa … AMIMI … Made in Italy" />
+      {seo && <div className="charcount">{seo.length} caratteri{seo.length >= 60 && seo.length <= 70 ? ' ✓' : ' (target 60–70)'}</div>}
       <button className="submit" disabled={busy} onClick={save}>{busy ? 'Salvo…' : '✓ Verifica e salva'}</button>
       {err && <div className="msg err">{err}</div>}
     </div>

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { syncShopify, fetchCeTotale, askData } from '../lib/api';
-import type { CeTot, AskResult } from '../lib/api';
+import { syncShopify, fetchCeTotale, askData, fetchAdsMensile } from '../lib/api';
+import type { CeTot, AskResult, AdsMese, Product } from '../lib/api';
+import ProductPicker from '../components/ProductPicker';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
@@ -247,7 +248,85 @@ export default function Report() {
         </div>
       </section>
 
+      <AdsCard />
+      <DealCalc />
     </div>
+  );
+}
+
+function AdsCard() {
+  const [ads, setAds] = useState<AdsMese[] | null>(null);
+  useEffect(() => { fetchAdsMensile().then(setAds).catch(() => setAds([])); }, []);
+  if (!ads || !ads.length) return null;
+  const spend = ads.reduce((s, r) => s + Number(r.spend), 0);
+  const val = ads.reduce((s, r) => s + Number(r.purchase_value), 0);
+  const purch = ads.reduce((s, r) => s + Number(r.purchases), 0);
+  const roas = spend > 0 ? val / spend : 0;
+  return (
+    <section className="card">
+      <h2>Meta Ads 2026</h2>
+      <div className="kpis">
+        <Kpi label="Spesa ads" value={eur(spend)} tone="accent" />
+        <Kpi label="ROAS" value={roas.toFixed(2) + '×'} tone={roas >= 1 ? 'green' : 'red'} />
+      </div>
+      <div className="tablewrap"><table>
+        <thead><tr><th>Mese</th><th>Spesa</th><th>Acquisti</th><th>Valore</th><th>ROAS</th></tr></thead>
+        <tbody>{ads.map((r) => (
+          <tr key={r.month}><td className="l">{MESI[r.month]}</td><td>{eur(Number(r.spend))}</td><td>{r.purchases}</td>
+            <td>{eur(Number(r.purchase_value))}</td><td className={Number(r.roas) < 1 ? 'neg' : ''}>{Number(r.roas).toFixed(2)}×</td></tr>
+        ))}</tbody>
+      </table></div>
+      <p className="note">Totale {purch} acquisti attribuiti agli ads. ROAS = valore acquisti ÷ spesa.</p>
+    </section>
+  );
+}
+
+type DealLine = { p: Product; qty: number; sellin: string };
+function DealCalc() {
+  const [open, setOpen] = useState(false);
+  const [lines, setLines] = useState<DealLine[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [storePct, setStorePct] = useState('30');
+  const add = (p: Product | null) => { if (p && !lines.some((l) => l.p.codice === p.codice)) setLines((x) => [...x, { p, qty: 5, sellin: p.retail_price ? String(Math.round(p.retail_price / 1.22 * 0.5)) : '' }]); setPicking(false); };
+
+  const tot = lines.reduce((a, l) => {
+    const cogs = (l.p.cogs || 0) * l.qty; const ric = Number(l.sellin || 0) * l.qty;
+    return { cogs: a.cogs + cogs, ric: a.ric + ric, prof: a.prof + (ric - cogs) };
+  }, { cogs: 0, ric: 0, prof: 0 });
+  const sp = Number(storePct) / 100;
+
+  return (
+    <section className="card ask">
+      <button className="askhead" onClick={() => setOpen((o) => !o)}>🧮 Calcolatore offerte B2B <span className="muted">{open ? '−' : '+'}</span></button>
+      {open && (
+        <div className="askbody">
+          {picking ? <ProductPicker selected={null} onPick={add} /> : <button className="bigadd" onClick={() => setPicking(true)}>+ Aggiungi prodotto</button>}
+          {lines.map((l, i) => {
+            const cogs = l.p.cogs || 0; const sellin = Number(l.sellin || 0);
+            const mWhole = sellin > 0 ? (sellin - cogs) / sellin : 0;
+            const cvNet = (l.p.retail_price || 0) / 1.22 * (1 - sp); // conto-vendita net to Amimì
+            return (
+              <div className="cartrow" key={l.p.codice}>
+                <div className="cartinfo"><div className="rt">{l.p.item ?? l.p.codice}</div>
+                  <div className="rs">COGS €{cogs} · whole {Math.round(mWhole * 100)}% · c/vendita €{cvNet.toFixed(0)}/pz</div></div>
+                <input className="qbox" type="number" value={l.qty} onChange={(e) => setLines((x) => x.map((y, j) => j === i ? { ...y, qty: Number(e.target.value) } : y))} />
+                <input className="cbox" type="number" placeholder="€/pz" value={l.sellin} onChange={(e) => setLines((x) => x.map((y, j) => j === i ? { ...y, sellin: e.target.value } : y))} />
+                <button className="x" onClick={() => setLines((x) => x.filter((_, j) => j !== i))}>✕</button>
+              </div>
+            );
+          })}
+          {lines.length > 0 && (
+            <>
+              <div className="dealrow"><span>% al negozio (conto vendita)</span><input className="qbox" type="number" value={storePct} onChange={(e) => setStorePct(e.target.value)} /></div>
+              <div className="detrow b"><span>Wholesale: ricavo</span><span>{eur(tot.ric)}</span></div>
+              <div className="detrow"><span>COGS totale</span><span>{eur(tot.cogs)}</span></div>
+              <div className="detrow b"><span>Profitto wholesale</span><span className={tot.prof < 0 ? 'neg' : ''}>{eur(tot.prof)} · {tot.ric ? Math.round(tot.prof / tot.ric * 100) : 0}%</span></div>
+              <p className="note">Confronto: in conto-vendita Amimì incassa il prezzo retail netto IVA meno il {storePct}% al negozio, solo sul venduto. Wholesale = incassi subito al prezzo €/pz inserito.</p>
+            </>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

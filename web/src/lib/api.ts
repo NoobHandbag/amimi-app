@@ -4,7 +4,7 @@ const FN = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/write-
 
 export type Product = {
   codice: string; item: string | null; variant: string | null;
-  categoria: string | null; image_url: string | null; retail_price: number | null;
+  categoria: string | null; image_url: string | null; retail_price: number | null; cogs: number | null;
 };
 export type Supplier = { name: string; kind: string | null };
 
@@ -26,7 +26,7 @@ export async function fetchProducts(): Promise<Product[]> {
   if (_productCache) return _productCache;
   const { data, error } = await supabase
     .from('products')
-    .select('codice,item,variant,categoria,image_url,retail_price')
+    .select('codice,item,variant,categoria,image_url,retail_price,cogs')
     .order('item');
   if (error) throw new Error(error.message);
   _productCache = (data ?? []) as Product[];
@@ -48,12 +48,12 @@ export async function fetchGiacenze(): Promise<Map<string, number>> {
 export type InvFull = {
   codice: string; item: string | null; variant: string | null; categoria: string | null;
   giacenza_attuale: number; in_conto_vendita: number; disponibili_da_vendere: number;
-  valore: number; retail_price: number | null; last_sale: string | null; on_shopify: boolean; image_url: string | null;
+  valore: number; retail_price: number | null; cogs: number | null; last_sale: string | null; on_shopify: boolean; image_url: string | null;
 };
 export async function fetchInventory(): Promise<InvFull[]> {
   const { data, error } = await supabase
     .from('v_inventory')
-    .select('codice,item,variant,categoria,giacenza_attuale,in_conto_vendita,disponibili_da_vendere,valore,retail_price,last_sale,on_shopify,image_url')
+    .select('codice,item,variant,categoria,giacenza_attuale,in_conto_vendita,disponibili_da_vendere,valore,retail_price,cogs,last_sale,on_shopify,image_url')
     .order('giacenza_attuale');
   if (error) throw new Error(error.message);
   return (data ?? []) as InvFull[];
@@ -235,3 +235,32 @@ export const askData = (question: string, pin: string): Promise<AskResult> => fn
 
 // ---------- NEW FEATURE: returns & exchanges ----------
 export const addReturn = (payload: Record<string, unknown>, pin: string, chi: string) => writeApi('return', payload, pin, chi);
+
+// ---------- NEW FEATURE: reorder board ----------
+export type Reorder = { codice: string; item: string | null; variant: string | null; image_url: string | null; giacenza: number; disponibili: number; on_shopify: boolean; venduto_60d: number; in_arrivo: number; giorni_stock: number | null };
+export async function fetchReorder(): Promise<Reorder[]> {
+  const { data, error } = await supabase.from('v_reorder').select('*');
+  if (error) throw new Error(error.message);
+  // urgency: best-sellers running out, nothing incoming, first
+  return ((data ?? []) as Reorder[]).sort((a, b) => {
+    const ua = a.venduto_60d / Math.max(1, a.giacenza + a.in_arrivo);
+    const ub = b.venduto_60d / Math.max(1, b.giacenza + b.in_arrivo);
+    return ub - ua;
+  });
+}
+
+// ---------- NEW FEATURE: SKU availability ----------
+export type SkuAvail = { codice: string; item: string | null; variant: string | null; image_url: string | null; giacenza: number; disponibili: number; on_shopify: boolean; stato: string };
+export async function fetchSkuAvailability(): Promise<SkuAvail[]> {
+  const { data, error } = await supabase.from('v_sku_availability').select('*');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as SkuAvail[];
+}
+
+// ---------- NEW FEATURE: Meta Ads card ----------
+export type AdsMese = { year: number; month: number; spend: number; impressions: number; clicks: number; purchases: number; purchase_value: number; roas: number };
+export async function fetchAdsMensile(): Promise<AdsMese[]> {
+  const { data, error } = await supabase.from('v_ads_mensile').select('*').eq('year', 2026).order('month');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as AdsMese[];
+}
