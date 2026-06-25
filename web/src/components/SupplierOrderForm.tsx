@@ -11,6 +11,7 @@ export default function SupplierOrderForm({ pin, chi, onDone }: { pin: string; c
   const [sups, setSups] = useState<Supplier[]>([]);
   const [forn, setForn] = useState('');
   const [typing, setTyping] = useState(false);
+  const [typed, setTyped] = useState('');
   const [bags, setBags] = useState<FornProd[]>([]);
   const [all, setAll] = useState<Product[]>([]);
   const [q, setQ] = useState('');
@@ -62,7 +63,10 @@ export default function SupplierOrderForm({ pin, chi, onDone }: { pin: string; c
       <div className="form">
         <label className="fl">Fornitore</label>
         {typing ? (
-          <input className="txt" value={forn} onChange={(e) => setForn(e.target.value)} placeholder="Nome fornitore" autoFocus />
+          <div className="newbag">
+            <input className="txt" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Nome fornitore" autoFocus />
+            <button className="submit small" disabled={!typed.trim()} onClick={() => setForn(typed.trim())}>Avanti →</button>
+          </div>
         ) : (
           <div className="supgrid">
             {sups.map((s) => <button key={s.name} type="button" className="supcard" onClick={() => setForn(s.name)}>{s.name}</button>)}

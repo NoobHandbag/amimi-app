@@ -58,7 +58,9 @@ export default function Arrivi({ pin, chi, setChi }: { pin: string; chi: string;
   const [adding, setAdding] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const load = () => { fetchOrdiniGruppi().then((g) => { setGrp(g); setAdding(false); }).catch((e) => setErr(e.message)); };
+  // load only fetches; it must NOT touch `adding` or the mount fetch resolving would snap the
+  // order form shut if the user opened it before orders finished loading.
+  const load = () => { fetchOrdiniGruppi().then(setGrp).catch((e) => setErr(e.message)); };
   useEffect(load, []);
 
   const open = grp.filter((g) => !g.completo);
@@ -76,7 +78,7 @@ export default function Arrivi({ pin, chi, setChi }: { pin: string; chi: string;
       <button className="bigadd" onClick={() => setAdding((a) => !a)}>{adding ? '✕ Chiudi' : '+ Nuovo ordine fornitore'}</button>
 
       {adding ? (
-        <SupplierOrderForm pin={pin} chi={chi} onDone={load} />
+        <SupplierOrderForm pin={pin} chi={chi} onDone={() => { setAdding(false); load(); }} />
       ) : (
         <>
           {open.length === 0 && <div className="card muted center">Nessun ordine in arrivo. Tocca “+ Nuovo ordine fornitore”.</div>}

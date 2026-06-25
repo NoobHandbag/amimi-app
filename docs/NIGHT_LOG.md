@@ -221,3 +221,19 @@ fetch + InvFull now carry cogs.
 STILL NOT BUILT (need external data feeds, noted for the user): in-store/popup pickup analytics
 (needs order tags not in our Shopify pull), customer-service triage (needs DM/email feed). Everything
 else from the backlog is shipped.
+
+## SESSION 7b — feature testing (and 2 more bugs caught & fixed)
+
+Three test layers, 58 automated checks total, all green:
+- tests/flows.mjs — 34 API/integration checks (every flow + variant).
+- tests/features.mjs — 15 checks: pricing margins land on target, SEO formula (leather has "Made in
+  Italy", Nina doesn't), v_ads_mensile sums match raw to the cent, v_reorder velocity, all 156
+  v_sku_availability states verified against the giacenza/Shopify logic.
+- web/e2e/ingest.spec.ts — 9 Playwright UI tests (new subtabs, pricing chip, ads card, deal calc, SEO
+  generator, supplier-first order form).
+
+Two REAL bugs the UI tests caught and fixed:
+- SupplierOrderForm: typing a NEW supplier jumped to step 2 after one character (input wrote straight
+  to `forn`). Fixed with a `typed` draft + explicit "Avanti" button.
+- Arrivi: the mount fetch resolving called setAdding(false), so opening the order form before orders
+  finished loading SNAPPED IT SHUT. Fixed by removing setAdding from load(); onDone closes the form.
