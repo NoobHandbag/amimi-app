@@ -79,7 +79,7 @@ function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
         <button key={p.codice} className="todocard" onClick={() => setEdit(p)}>
           <div className="invimg sm">{p.image_url ? <img src={p.image_url} alt="" /> : <span>{(p.item ?? p.codice).slice(0, 2)}</span>}</div>
           <div className="todoinfo">
-            <div className="rt">{p.item ?? p.codice} {p.venduto > 0 && <span className="hot">venduto {p.venduto}×</span>}</div>
+            <div className="rt">{[p.item, p.variant].filter(Boolean).join(' ') || p.codice} {p.venduto > 0 && <span className="hot">venduto {p.venduto}×</span>}</div>
             <div className="missrow">{miss(p).map((m) => <span key={m} className="misschip">{m}</span>)}</div>
           </div>
           <span className="chev">›</span>

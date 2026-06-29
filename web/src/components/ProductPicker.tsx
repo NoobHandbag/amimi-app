@@ -21,8 +21,7 @@ export default function ProductPicker({ selected, onPick }: { selected: Product 
       <div className="picked">
         <div className="pimg sm">{selected.image_url ? <img src={selected.image_url} alt="" /> : <span>{(selected.item ?? selected.codice).slice(0, 2)}</span>}</div>
         <div className="pickedtxt">
-          <div className="rt">{selected.item ?? selected.codice}</div>
-          <div className="rs">{selected.variant ?? ''}</div>
+          <div className="rt">{[selected.item, selected.variant].filter(Boolean).join(' ') || selected.codice}</div>
         </div>
         <button className="chip" onClick={() => onPick(null)}>cambia</button>
       </div>
@@ -36,8 +35,7 @@ export default function ProductPicker({ selected, onPick }: { selected: Product 
         {list.map((p) => (
           <button key={p.codice} className="pcard" onClick={() => onPick(p)} type="button">
             <div className="pimg">{p.image_url ? <img src={p.image_url} alt="" loading="lazy" /> : <span>{(p.item ?? p.codice).slice(0, 2)}</span>}</div>
-            <div className="pname">{p.item ?? p.codice}</div>
-            <div className="pvar">{p.variant ?? ''}</div>
+            <div className="pname">{[p.item, p.variant].filter(Boolean).join(' ') || p.codice}</div>
           </button>
         ))}
         {!list.length && <p className="muted">Nessun prodotto trovato.</p>}

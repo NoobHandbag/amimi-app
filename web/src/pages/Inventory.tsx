@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchInventory, fetchContoVendita, fetchShopifyAlign, syncShopifyStock, realignShopify, fetchReorder, fetchSkuAvailability, fetchShopStockMap, fetchSalesByCodice, fetchPurchasesByCodice } from '../lib/api';
-import type { InvFull, CV, ShopAlign, Reorder, SkuAvail, SaleRow, PurchaseRow } from '../lib/api';
+import { fetchInventory, fetchContoVendita, syncShopifyStock, fetchReorder, fetchShopStockMap, fetchSalesByCodice, fetchPurchasesByCodice } from '../lib/api';
+import type { InvFull, CV, Reorder, SaleRow, PurchaseRow } from '../lib/api';
 import { useSort } from '../lib/sortable';
 import { exportCSV } from '../lib/csv';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const daysSince = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : Infinity);
-const FILTERS: [string, string][] = [['attivi', 'Attivi'], ['riordino', 'Da riordinare'], ['esauriti', 'Esauriti'], ['online', 'Su Shopify']];
+// #4: ITEM + VARIANT as one name on a single line
+const nome = (item: string | null, variant: string | null) => [item, variant].filter(Boolean).join(' ') || '—';
+const norm = (c: string) => c.toUpperCase().replace(/\s+/g, '_');
 
 function Tile({ url, label }: { url: string | null; label: string }) {
   return url ? <img className="invimg" src={url} alt="" loading="lazy" /> : <div className="invimg ph">{label.slice(0, 2)}</div>;
 }
 
-/* ---------- #4: product detail drawer — 3 stocks + sales/purchase history ---------- */
+/* product detail drawer — 3 stocks + sales/purchase history */
 function ProductDrawer({ p, shopQty, onClose }: { p: InvFull; shopQty: number | null; onClose: () => void }) {
   const [sales, setSales] = useState<SaleRow[] | null>(null);
   const [purch, setPurch] = useState<PurchaseRow[] | null>(null);
@@ -25,7 +27,7 @@ function ProductDrawer({ p, shopQty, onClose }: { p: InvFull; shopQty: number | 
       <div className="drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawerhead">
           <Tile url={p.image_url} label={p.item ?? p.codice} />
-          <div className="grow"><div className="rt">{p.item ?? p.codice}</div><div className="rs">{p.variant ?? ''} · {p.codice}</div></div>
+          <div className="grow"><div className="rt">{nome(p.item, p.variant)}</div><div className="rs">{p.codice}</div></div>
           <button className="drawerx" onClick={onClose} type="button">✕</button>
         </div>
         <div className="kpis">
@@ -56,80 +58,48 @@ function ProductDrawer({ p, shopQty, onClose }: { p: InvFull; shopQty: number | 
   );
 }
 
-/* ---------- THIRD FLOW: Shopify alignment ---------- */
-function ShopView({ pin, chi }: { pin: string; chi: string }) {
-  const [rows, setRows] = useState<ShopAlign[] | null>(null);
+/* #2: Shopify catalog composition — treemap of online SKUs per model, sized by count */
+const CATCOL: Record<string, string> = { BAG: '#8B5E6B', PELLE: '#C4956A', TESSUTO: '#3E9E5B', ACCESSORI: '#6b7a8b', ALTRO: '#9a8f93' };
+function ShopComposition({ inv, pin }: { inv: InvFull[]; pin: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const load = () => fetchShopifyAlign().then(setRows).catch(() => setRows([]));
-  useEffect(() => { load(); }, []);
-
+  const byItem = useMemo(() => {
+    const m = new Map<string, { item: string; cat: string; n: number }>();
+    for (const p of inv.filter((x) => x.on_shopify)) {
+      const k = p.item ?? p.codice; const a = m.get(k) ?? { item: k, cat: p.categoria ?? 'ALTRO', n: 0 };
+      a.n += 1; m.set(k, a);
+    }
+    return [...m.values()].sort((a, b) => b.n - a.n);
+  }, [inv]);
+  const tot = byItem.reduce((s, i) => s + i.n, 0);
   async function sync() {
     setBusy(true); setMsg(null);
-    try { const r = await syncShopifyStock(pin) as { synced: number }; setMsg(`Aggiornato: ${r.synced} varianti da Shopify`); load(); }
+    try { const r = await syncShopifyStock(pin) as { synced: number }; setMsg(`Aggiornato: ${r.synced} varianti da Shopify`); }
     catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
   }
-  async function realign(codici: string[]) {
-    setBusy(true); setMsg(null);
-    try {
-      const r = await realignShopify(codici, pin, chi) as { gated?: boolean; realigned?: number; error?: string };
-      setMsg(r.gated ? '⚠️ Riallineamento disattivato lato server (interruttore spento).' : r.error ? r.error : `Riallineati ${r.realigned} prodotti su Shopify`);
-      load();
-    } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
-  }
-
-  if (rows == null) return <p className="muted center">Carico…</p>;
-  const mis = rows.filter((r) => r.diff !== 0);
-  const low = rows.filter((r) => r.on_shopify && r.disponibili <= 2);
-  const lastSync = rows.map((r) => r.synced_at).filter(Boolean).sort().pop();
-
   return (
     <>
-      <button className="syncbtn" onClick={sync} disabled={busy}>
-        {busy ? 'Sincronizzo…' : lastSync ? `🔄 Aggiorna da Shopify · ultimo ${String(lastSync).slice(0, 10)}` : '🔄 Aggiorna da Shopify'}
-      </button>
-      {msg && <div className={`msg ${msg.startsWith('⚠️') ? 'err' : 'ok'}`}>{msg}</div>}
-      {!lastSync && <div className="card muted center">Tocca “Aggiorna da Shopify” per leggere le giacenze online e confrontarle.</div>}
-
-      {low.length > 0 && (
-        <section className="card">
-          <h2>Scorte basse online · conta consigliata</h2>
-          <div className="list">
-            {low.slice(0, 20).map((p) => (
-              <div className="row" key={p.codice}>
-                <div className="invleft"><Tile url={p.image_url} label={p.item ?? p.codice} /><div><div className="rt">{p.item ?? p.codice}</div><div className="rs">{p.variant ?? ''}</div></div></div>
-                <div className="giac neg">{p.disponibili}</div>
-              </div>
-            ))}
+      <div className="kpis">
+        <div className="kpi rose"><div className="v">{tot}</div><div className="k">SKU su Shopify</div></div>
+        <div className="kpi accent"><div className="v">{byItem.length}</div><div className="k">Modelli online</div></div>
+      </div>
+      <p className="note">Varianti pubblicate su Shopify per modello — riquadro più grande = più varianti online. Lo stock Shopify è tenuto a <b>magazzino − 2</b> per scelta (cuscinetto di sicurezza), non è un disallineamento.</p>
+      <div className="treemap">
+        {byItem.map((it) => (
+          <div className="tmbox" key={it.item} style={{ flexGrow: it.n, background: CATCOL[it.cat] ?? CATCOL.ALTRO }} title={`${it.item} · ${it.n} SKU`}>
+            <span className="tmname">{it.item}</span><span className="tmn">{it.n}</span>
           </div>
-        </section>
-      )}
-
-      {mis.length > 0 && (
-        <section className="card">
-          <div className="dethead"><h2>Disallineati con Shopify · {mis.length}</h2>
-            <button className="chip" disabled={busy} onClick={() => realign(mis.map((m) => m.codice))}>Riallinea tutti</button></div>
-          <div className="list">
-            {mis.slice(0, 60).map((p) => (
-              <div className="alignrow" key={p.codice}>
-                <div className="invleft"><Tile url={p.image_url} label={p.item ?? p.codice} />
-                  <div><div className="rt">{p.item ?? p.codice}</div>
-                    <div className="rs">gestionale {p.disponibili} · Shopify {p.shopify_qty ?? '—'}</div>
-                    <div className={`whytag ${p.diff < 0 ? 'under' : 'over'}`}>{p.diff < 0 ? `Shopify ne mostra ${-p.diff} in meno` : `Shopify ne mostra ${p.diff} in più`}</div>
-                  </div>
-                </div>
-                <button className="chip" disabled={busy} onClick={() => realign([p.codice])}>riallinea</button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-      {lastSync && !mis.length && <div className="card muted center">Tutto allineato con Shopify. ✓</div>}
+        ))}
+        {!byItem.length && <p className="muted center">Nessun prodotto su Shopify.</p>}
+      </div>
+      <div className="catleg">{Object.entries(CATCOL).map(([c, col]) => <span key={c}><i style={{ background: col }} />{c}</span>)}</div>
+      <button className="syncbtn" onClick={sync} disabled={busy}>{busy ? 'Sincronizzo…' : '🔄 Aggiorna da Shopify'}</button>
+      {msg && <div className="msg ok">{msg}</div>}
     </>
   );
 }
 
-/* ---------- FEATURE: reorder board ("Cosa Riprodurre") ---------- */
+/* reorder board */
 function ReorderView() {
   const [rows, setRows] = useState<Reorder[] | null>(null);
   const [soloVend, setSoloVend] = useState(true);
@@ -141,13 +111,12 @@ function ReorderView() {
     <>
       <div className="filters"><button className={`fchip ${soloVend ? 'on' : ''}`} onClick={() => setSoloVend(true)}>Solo venduti</button>
         <button className={`fchip ${!soloVend ? 'on' : ''}`} onClick={() => setSoloVend(false)}>Tutti</button></div>
-      <p className="note">Ordinati per urgenza (vendite ultimi 60 giorni ÷ stock disponibile). Badge = best-seller che sta finendo senza riordini in arrivo.</p>
+      <p className="note">Ordinati per urgenza (vendite 60g ÷ stock disponibile). Badge = best-seller che sta finendo senza riordini in arrivo.</p>
       <div className="card"><div className="list">
         {list.slice(0, 120).map((p) => (
           <div className="row" key={p.codice}>
             <div className="invleft"><Tile url={p.image_url} label={p.item ?? p.codice} />
-              <div><div className="rt">{p.item ?? p.codice} {urgent(p) && <span className="hot">da riprodurre</span>}</div>
-                <div className="rs">{p.variant ?? ''}</div>
+              <div><div className="rt">{nome(p.item, p.variant)} {urgent(p) && <span className="hot">da riprodurre</span>}</div>
                 <div className="invtags">
                   <span className="tag cv">{p.venduto_60d} venduti/60g</span>
                   {p.in_arrivo > 0 && <span className="tag live">{p.in_arrivo} in arrivo</span>}
@@ -164,36 +133,7 @@ function ReorderView() {
   );
 }
 
-/* ---------- FEATURE: SKU availability monitor ---------- */
-function DispView() {
-  const [rows, setRows] = useState<SkuAvail[] | null>(null);
-  useEffect(() => { fetchSkuAvailability().then(setRows).catch(() => setRows([])); }, []);
-  if (rows == null) return <p className="muted center">Carico…</p>;
-  const acq = rows.filter((r) => r.stato === 'acquistabile');
-  const nonPub = rows.filter((r) => r.stato === 'in_stock_non_pubblicato');
-  const esaur = rows.filter((r) => r.stato === 'pubblicato_esaurito');
-  const Block = ({ title, hint, items }: { title: string; hint: string; items: SkuAvail[] }) => (
-    <section className="card"><h2>{title} · {items.length}</h2><p className="note">{hint}</p>
-      <div className="list">{items.slice(0, 40).map((p) => (
-        <div className="row" key={p.codice}><div className="invleft"><Tile url={p.image_url} label={p.item ?? p.codice} />
-          <div><div className="rt">{p.item ?? p.codice}</div><div className="rs">{p.variant ?? ''}</div></div></div>
-          <div className="giac">{p.giacenza}</div></div>))}
-        {!items.length && <p className="muted center">Nessuno. ✓</p>}</div>
-    </section>
-  );
-  return (
-    <>
-      <div className="kpis">
-        <div className="kpi green"><div className="v">{acq.length}</div><div className="k">Acquistabili ora</div></div>
-        <div className="kpi red"><div className="v">{nonPub.length + esaur.length}</div><div className="k">Vendite perse</div></div>
-      </div>
-      <Block title="In stock ma NON su Shopify" hint="Hai i pezzi ma non sono pubblicati: pubblicali per vendere." items={nonPub} />
-      <Block title="Su Shopify ma esauriti" hint="Pubblicati ma senza disponibilità: riproduci o avvia il back-in-stock." items={esaur} />
-    </>
-  );
-}
-
-/* ---------- FEATURE: inventory valuation ---------- */
+/* inventory valuation */
 function ValoreView({ inv }: { inv: InvFull[] }) {
   const live = inv.filter((p) => p.giacenza_attuale > 0);
   const atCogs = live.reduce((s, p) => s + p.giacenza_attuale * (p.cogs || 0), 0);
@@ -230,19 +170,18 @@ function ValoreView({ inv }: { inv: InvFull[] }) {
   );
 }
 
-const VIEWS = ['mag', 'riordino', 'disp', 'neg', 'shop', 'valore'];
-export default function Inventory({ pin, chi, initial, go }: { pin: string; chi: string; initial?: string; go?: (t: 'registra', p?: string) => void }) {
-  type V = 'mag' | 'neg' | 'shop' | 'riordino' | 'disp' | 'valore';
+const VIEWS = ['mag', 'riordino', 'neg', 'shop', 'valore'];
+export default function Inventory({ pin, initial, go }: { pin: string; chi: string; initial?: string; go?: (t: 'registra', p?: string) => void }) {
+  type V = 'mag' | 'neg' | 'shop' | 'riordino' | 'valore';
   const [view, setView] = useState<V>((initial && VIEWS.includes(initial) ? initial : 'mag') as V);
   const [store, setStore] = useState<string | null>(null);
   const [inv, setInv] = useState<InvFull[]>([]);
   const [cv, setCv] = useState<CV[]>([]);
   const [q, setQ] = useState('');
-  const [f, setF] = useState('attivi');
   const [err, setErr] = useState<string | null>(null);
   const [sel, setSel] = useState<InvFull | null>(null);
   const [shopMap, setShopMap] = useState<Map<string, number>>(new Map());
-  const shopQ = (p: InvFull) => shopMap.get(p.codice.toUpperCase().replace(/\s+/g, '_')) ?? null;
+  const shopQ = (p: InvFull) => shopMap.get(norm(p.codice)) ?? null;
 
   useEffect(() => {
     fetchInventory().then(setInv).catch((e) => setErr(e.message));
@@ -253,12 +192,16 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
   const alive = useMemo(() => inv.filter((p) => p.giacenza_attuale > 0 || daysSince(p.last_sale) <= 60), [inv]);
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
-    let r = alive.filter((p) => !s || `${p.item ?? ''} ${p.variant ?? ''} ${p.codice}`.toLowerCase().includes(s));
-    if (f === 'riordino') r = r.filter((p) => p.giacenza_attuale <= 3);
-    else if (f === 'esauriti') r = r.filter((p) => p.giacenza_attuale <= 0);
-    else if (f === 'online') r = r.filter((p) => p.on_shopify);
-    return r.slice(0, 300);
-  }, [alive, q, f]);
+    return alive.filter((p) => !s || `${p.item ?? ''} ${p.variant ?? ''} ${p.codice}`.toLowerCase().includes(s));
+  }, [alive, q]);
+
+  // #3: Magazzino = one clean summary table with the requested KPIs (3 stocks + value)
+  const magRows = useMemo(() => list.map((p) => ({
+    codice: p.codice, nome: nome(p.item, p.variant), mag: p.giacenza_attuale, conto: p.in_conto_vendita,
+    shopify: p.on_shopify ? (shopMap.get(norm(p.codice)) ?? 0) : -1, valore: Math.round(p.valore || 0),
+    _img: p.image_url, _p: p,
+  })), [list, shopMap]);
+  const magSort = useSort(magRows as unknown as Record<string, unknown>[], 'mag', 'asc');
 
   const totVal = alive.reduce((s, p) => s + (p.valore || 0), 0);
   const hidden = inv.length - alive.length;
@@ -277,12 +220,11 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
         <div className="seg wrap">
           <button className={view === 'mag' ? 'on' : ''} onClick={() => setView('mag')}>Magazzino</button>
           <button className={view === 'riordino' ? 'on' : ''} onClick={() => setView('riordino')}>Riordino</button>
-          <button className={view === 'disp' ? 'on' : ''} onClick={() => setView('disp')}>Disponibilità</button>
           <button className={view === 'neg' ? 'on' : ''} onClick={() => setView('neg')}>Nei negozi</button>
           <button className={view === 'shop' ? 'on' : ''} onClick={() => setView('shop')}>Shopify</button>
           <button className={view === 'valore' ? 'on' : ''} onClick={() => setView('valore')}>Valore</button>
         </div>
-        <button className="exp" type="button" onClick={() => exportCSV('inventario', inv.map((p) => ({ codice: p.codice, modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, disponibili: p.disponibili_da_vendere, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore })))}>⬇ Esporta</button>
+        <button className="exp" type="button" onClick={() => exportCSV('inventario', inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore })))}>⬇ Esporta</button>
       </header>
 
       {view === 'mag' && (
@@ -292,30 +234,26 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
             <div className="kpi"><div className="v">{alive.length}</div><div className="k">Attivi{hidden > 0 ? ` · ${hidden} nascosti` : ''}</div></div>
           </div>
           <input className="search" placeholder="Cerca prodotto…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <div className="filters">
-            {FILTERS.map(([k, l]) => <button key={k} type="button" className={`fchip ${f === k ? 'on' : ''}`} onClick={() => setF(k)}>{l}</button>)}
-          </div>
           <div className="card">
-            <div className="list">
-              {list.map((p) => (
-                <button className="row clickrow" type="button" key={p.codice} onClick={() => setSel(p)}>
-                  <div className="invleft">
-                    <Tile url={p.image_url} label={p.item ?? p.codice} />
-                    <div>
-                      <div className="rt">{p.item ?? p.codice}</div>
-                      <div className="rs">{p.variant ?? ''}</div>
-                      <div className="invtags">
-                        <span className="tag">🏬 {p.giacenza_attuale} mag.</span>
-                        {p.in_conto_vendita > 0 && <span className="tag cv">🛍 {p.in_conto_vendita} conto</span>}
-                        {p.on_shopify ? <span className="tag live">● Shopify {shopQ(p) ?? '—'}</span> : <span className="tag off">non online</span>}
-                      </div>
-                    </div>
-                  </div>
-                  <div className={`giac ${p.giacenza_attuale <= 0 ? 'neg' : ''}`}>{p.giacenza_attuale}<span className="chev">›</span></div>
-                </button>
-              ))}
-              {!list.length && <p className="muted center">Nessun prodotto.</p>}
-            </div>
+            <div className="tablewrap"><table className="sortable invtable">
+              <thead><tr>
+                <th onClick={() => magSort.toggle('nome')}>Prodotto{magSort.arrow('nome')}</th>
+                <th onClick={() => magSort.toggle('mag')}>Mag.{magSort.arrow('mag')}</th>
+                <th onClick={() => magSort.toggle('conto')}>Conto{magSort.arrow('conto')}</th>
+                <th onClick={() => magSort.toggle('shopify')}>Shopify{magSort.arrow('shopify')}</th>
+                <th onClick={() => magSort.toggle('valore')}>Valore{magSort.arrow('valore')}</th>
+              </tr></thead>
+              <tbody>{(magSort.sorted as unknown as { codice: string; nome: string; mag: number; conto: number; shopify: number; valore: number; _img: string | null; _p: InvFull }[]).map((r) => (
+                <tr key={r.codice} className="clickrow" onClick={() => setSel(r._p)}>
+                  <td className="l prodcell"><span className="tdimg">{r._img ? <img src={r._img} alt="" loading="lazy" /> : <i>{r.nome.slice(0, 2)}</i>}</span>{r.nome}</td>
+                  <td className={r.mag < 0 ? 'neg' : ''}>{r.mag}</td>
+                  <td>{r.conto || ''}</td>
+                  <td>{r.shopify < 0 ? '—' : r.shopify}</td>
+                  <td>{eur(r.valore)}</td>
+                </tr>
+              ))}</tbody>
+            </table></div>
+            {!magRows.length && <p className="muted center">Nessun prodotto.</p>}
           </div>
         </>
       )}
@@ -344,7 +282,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
               <div className="list">{items.map((i) => (
                 <div className="row" key={i.codice}>
                   <div className="invleft"><Tile url={i.image_url} label={i.item ?? i.codice} />
-                    <div><div className="rt">{i.item ?? i.codice}</div><div className="rs">{i.variant ?? ''}</div></div></div>
+                    <div><div className="rt">{nome(i.item, i.variant)}</div></div></div>
                   <div className="giac">{i.pezzi}</div>
                 </div>))}
                 {!items.length && <p className="muted center">Niente in conto vendita qui.</p>}
@@ -355,9 +293,8 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
         );
       })()}
 
-      {view === 'shop' && <ShopView pin={pin} chi={chi} />}
+      {view === 'shop' && <ShopComposition inv={inv} pin={pin} />}
       {view === 'riordino' && <ReorderView />}
-      {view === 'disp' && <DispView />}
       {view === 'valore' && <ValoreView inv={inv} />}
 
       {sel && <ProductDrawer p={sel} shopQty={shopQ(sel)} onClose={() => setSel(null)} />}
