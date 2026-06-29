@@ -49,11 +49,12 @@ Deno.serve(async (req) => {
     const refund = (o.refunds ?? []).reduce((s: number, rf: any) => s + (rf.transactions ?? []).reduce((t: number, tx: any) => t + Number(tx.amount || 0), 0), 0);
     const order = {
       order_id: o.name, order_number: String(o.order_number), created_at_shop: o.created_at,
+      customer_name: [o.customer?.first_name, o.customer?.last_name].filter(Boolean).join(' ') || null,
       email: o.email, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status,
       gross_total: gross, discount_total: Number(o.total_discounts || 0), shipping_total: shipping,
       payment_fees: -Math.round((gross * 0.022 + 0.25) * 100) / 100, refund_amount: refund,
       free_shipping: false, free_shipping_amt: 0, currency: o.currency,
-      year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, vendor: null, source: 'shopify-sync',
+      year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, vendor: null,
     };
     const lines = (o.line_items ?? []).map((it: any) => {
       const nm = it.name ?? it.title;
@@ -69,15 +70,15 @@ Deno.serve(async (req) => {
     return json({ ok: true, dryRun: true, fetched: orders.length, preview });
   }
 
-  let inserted = 0, lineCount = 0;
+  let inserted = 0, lineCount = 0; const errors: string[] = [];
   for (const o of orders ?? []) {
     if (existing.has(o.name)) continue;
     const { order, lines } = parse(o);
     const { error: oe } = await sb.from('shopify_orders').insert(order);
-    if (oe) continue;
+    if (oe) { if (errors.length < 5) errors.push(`${o.name}: ${oe.message}`); continue; }
     inserted++;
     if (lines.length) { await sb.from('shopify_line_items').insert(lines); lineCount += lines.length; }
     existing.add(o.name);
   }
-  return json({ ok: true, fetched: orders.length, inserted, lineCount });
+  return json({ ok: true, fetched: orders.length, inserted, lineCount, errors: errors.length ? errors : undefined });
 });
