@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi } from '../lib/api';
+import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi, fetchActiveFornitori } from '../lib/api';
 import type { Supplier, FornProd, Product } from '../lib/api';
 
 const modelTok = (s: string) => s.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_]/g, '');
@@ -7,9 +7,11 @@ const variantTok = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '_').re
 
 type Line = { codice: string; item: string | null; variant: string | null; qty: number; costo: string; nuovo: boolean };
 
-export default function SupplierOrderForm({ pin, chi, onDone }: { pin: string; chi: string; onDone: () => void }) {
+export default function SupplierOrderForm({ pin, chi, onDone, initialForn }: { pin: string; chi: string; onDone: () => void; initialForn?: string }) {
   const [sups, setSups] = useState<Supplier[]>([]);
-  const [forn, setForn] = useState('');
+  const [active, setActive] = useState<Set<string>>(new Set());
+  const [showOld, setShowOld] = useState(false);
+  const [forn, setForn] = useState(initialForn ?? '');
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
   const [bags, setBags] = useState<FornProd[]>([]);
@@ -22,7 +24,7 @@ export default function SupplierOrderForm({ pin, chi, onDone }: { pin: string; c
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ t: 'ok' | 'err'; x: string } | null>(null);
 
-  useEffect(() => { fetchSuppliers().then(setSups).catch(() => {}); fetchProducts().then(setAll).catch(() => {}); }, []);
+  useEffect(() => { fetchSuppliers().then(setSups).catch(() => {}); fetchProducts().then(setAll).catch(() => {}); fetchActiveFornitori().then((a) => setActive(new Set(a))).catch(() => {}); }, []);
   useEffect(() => { if (forn) fetchFornitoreProdotti(forn).then(setBags).catch(() => setBags([])); }, [forn]);
 
   const inCart = useMemo(() => new Set(lines.map((l) => l.codice)), [lines]);
@@ -67,12 +69,24 @@ export default function SupplierOrderForm({ pin, chi, onDone }: { pin: string; c
             <input className="txt" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Nome fornitore" autoFocus />
             <button className="submit small" disabled={!typed.trim()} onClick={() => setForn(typed.trim())}>Avanti →</button>
           </div>
-        ) : (
-          <div className="supgrid">
-            {sups.map((s) => <button key={s.name} type="button" className="supcard" onClick={() => setForn(s.name)}>{s.name}</button>)}
-            <button type="button" className="supcard alt" onClick={() => setTyping(true)}>+ nuovo</button>
-          </div>
-        )}
+        ) : (() => {
+          const act = sups.filter((s) => active.has(s.name));
+          const vecchi = sups.filter((s) => !active.has(s.name));
+          return (
+            <>
+              <div className="supgrid">
+                {act.map((s) => <button key={s.name} type="button" className="supcard" onClick={() => setForn(s.name)}>{s.name}</button>)}
+                <button type="button" className="supcard alt" onClick={() => setTyping(true)}>+ nuovo</button>
+              </div>
+              {vecchi.length > 0 && (
+                <>
+                  <button className="addnew" type="button" onClick={() => setShowOld((v) => !v)}>{showOld ? '− Nascondi vecchi fornitori' : `Vecchi fornitori (${vecchi.length})`}</button>
+                  {showOld && <div className="supgrid">{vecchi.map((s) => <button key={s.name} type="button" className="supcard old" onClick={() => setForn(s.name)}>{s.name}</button>)}</div>}
+                </>
+              )}
+            </>
+          );
+        })()}
       </div>
     );
   }

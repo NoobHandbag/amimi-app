@@ -279,3 +279,12 @@ export async function fetchPurchasesByCodice(codice: string): Promise<PurchaseRo
     .eq('codice_norm', cnorm(codice)).order('data', { ascending: false }).limit(60);
   return (data ?? []) as PurchaseRow[];
 }
+
+// ---------- suppliers: which ones are active (have orders) vs old ----------
+export async function fetchActiveFornitori(): Promise<string[]> {
+  const { data } = await supabase.from('supplier_orders').select('fornitore');
+  return [...new Set((data ?? []).map((r: { fornitore: string }) => r.fornitore).filter(Boolean))] as string[];
+}
+// edit/correct a registered arrival: set the arrived TOTAL (stock follows the delta)
+export const setArrival = (orderId: string, qty: number, data: string, pin: string, chi: string) =>
+  writeApi('arrival_set', { order_id: orderId, qty, data }, pin, chi);

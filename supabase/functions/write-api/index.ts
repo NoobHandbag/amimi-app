@@ -95,6 +95,27 @@ Deno.serve(async (req) => {
     return json({ ok: true, arrived: newArr, ordered: ord.qty_ordered, purchase_id: pur?.id });
   }
 
+  // --- FLOW 1b: SET the arrived total (edit/correct a registered arrival). Adjusts stock by the delta. ---
+  if (action === 'arrival_set') {
+    const oid = payload.order_id as string;
+    const target = Number(payload.qty);
+    const arrDate = (payload.data as string) || today;
+    if (!oid || isNaN(target) || target < 0) return json({ error: 'valore arrivo non valido' }, 422);
+    const { data: ord } = await sb.from('supplier_orders').select('*').eq('id', oid).single();
+    if (!ord) return json({ error: 'ordine non trovato' }, 404);
+    const current = Number(ord.qty_arrived) || 0;
+    const delta = target - current;
+    const { error: ue } = await sb.from('supplier_orders').update({ qty_arrived: target, data_ultimo_arrivo: arrDate }).eq('id', oid);
+    if (ue) return json({ error: ue.message }, 400);
+    if (delta !== 0) await sb.from('purchases').insert({
+      codice: ord.codice, item: ord.item, variant: ord.variant, categoria: 'BAG',
+      tipologia: 'Prodotto Finito', unita_misura: 'Pezzi', quantita: delta, data: arrDate,
+      costo_unitario: ord.costo_unitario ?? null, fornitore: ord.fornitore, source: 'app-arrivo-edit', chi: chi || null,
+    });
+    await logp('supplier_orders', String(oid), 'arrival_set', { codice: ord.codice, target, delta, data: arrDate });
+    return json({ ok: true, arrived: target, ordered: ord.qty_ordered });
+  }
+
   // --- FLOW 1: create a multi-bag supplier order (one gruppo, N lines) ---
   if (action === 'order_multi') {
     const fornitore = String(payload.fornitore || '').trim();

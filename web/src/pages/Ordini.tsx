@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import SupplierOrderForm from '../components/SupplierOrderForm';
-import { fetchOrdiniGruppi, writeApi, oggi } from '../lib/api';
+import { fetchOrdiniGruppi, oggi, setArrival } from '../lib/api';
 import type { OrdGruppo, OrdLine } from '../lib/api';
 import { PersonaPicker } from '../lib/people';
 import { exportCSV } from '../lib/csv';
@@ -8,45 +8,50 @@ import { exportCSV } from '../lib/csv';
 /* register an arrival against one order line */
 function ArrivoRow({ l, pin, chi, reload }: { l: OrdLine; pin: string; chi: string; reload: () => void }) {
   const [open, setOpen] = useState(false);
-  const [n, setN] = useState(String(l.mancano));
+  const [n, setN] = useState(String(l.completo ? l.qty_arrived : l.qty_ordered));
   const [d, setD] = useState(oggi());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const done = l.completo;
 
-  async function arrivo() {
-    if (!(Number(n) > 0)) return setErr('Quante?');
+  // set the arrived TOTAL — registers a new arrival AND edits/corrects one already registered
+  async function save() {
+    if (isNaN(Number(n)) || Number(n) < 0) return setErr('Valore non valido');
     setBusy(true); setErr(null);
-    try { await writeApi('arrival', { order_id: l.id, qty: Number(n), data: d }, pin, chi); reload(); }
+    try { await setArrival(l.id, Number(n), d, pin, chi); reload(); }
     catch (e) { setErr((e as Error).message); setBusy(false); }
   }
 
   return (
     <div className={`linerow ${done ? 'done' : ''}`}>
-      <div className="lineinfo">
-        {l.image_url ? <img className="invimg sm" src={l.image_url} alt="" /> : <div className="invimg sm ph">{(l.item ?? l.codice).slice(0, 2)}</div>}
-        <div>
-          <div className="rt">{l.item ?? l.codice} <span className="rs">{l.variant ?? (l.codice.endsWith('_') ? '· da definire' : '')}</span></div>
-          <div className="ordnums">{done ? '✓ completo' : <><b>{l.mancano}</b> mancano</>} · {l.qty_arrived}/{l.qty_ordered}{l.data_consegna ? ` · cons. ${String(l.data_consegna).slice(0, 10)}` : ''}</div>
+      <button className="lineclick" type="button" onClick={() => setOpen((o) => !o)}>
+        <div className="lineinfo">
+          {l.image_url ? <img className="invimg sm" src={l.image_url} alt="" /> : <div className="invimg sm ph">{(l.item ?? l.codice).slice(0, 2)}</div>}
+          <div>
+            <div className="rt">{l.item ?? l.codice} <span className="rs">{l.variant ?? (l.codice.endsWith('_') ? '· da definire' : '')}</span></div>
+            <div className="ordnums">{done ? '✓ completo' : <><b>{l.mancano}</b> mancano</>} · {l.qty_arrived}/{l.qty_ordered}{l.data_consegna ? ` · cons. ${String(l.data_consegna).slice(0, 10)}` : ''}</div>
+          </div>
         </div>
-      </div>
-      {!done && (!open ? (
-        <button className="chip" onClick={() => setOpen(true)}>arrivo</button>
-      ) : (
+        <span className="chev">{open ? '▾' : '›'}</span>
+      </button>
+      {open && (
         <div className="arrinline">
-          <input className="qbox" type="number" inputMode="numeric" value={n} onChange={(e) => setN(e.target.value)} autoFocus />
-          <input className="dbox" type="date" value={d} onChange={(e) => setD(e.target.value)} />
-          <button className="submit small" disabled={busy} onClick={arrivo}>{busy ? '…' : 'ok'}</button>
+          <label className="fl mini">Arrivati in totale (su {l.qty_ordered} ordinati)</label>
+          <div className="arredit">
+            <input className="qbox" type="number" inputMode="numeric" value={n} onChange={(e) => setN(e.target.value)} autoFocus />
+            <input className="dbox" type="date" value={d} onChange={(e) => setD(e.target.value)} />
+            <button className="submit small" disabled={busy} onClick={save}>{busy ? '…' : 'salva'}</button>
+          </div>
+          {err && <div className="msg err">{err}</div>}
         </div>
-      ))}
-      {err && <div className="msg err">{err}</div>}
+      )}
     </div>
   );
 }
 
 type Sup = { fornitore: string; lines: OrdLine[]; aperte: number; pezzi: number };
 
-function SupplierDetail({ sup, pin, chi, onBack, reload }: { sup: Sup; pin: string; chi: string; onBack: () => void; reload: () => void }) {
+function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload }: { sup: Sup; pin: string; chi: string; onBack: () => void; onAdd: () => void; reload: () => void }) {
   const [showDone, setShowDone] = useState(false);
   const open = sup.lines.filter((l) => !l.completo);
   const done = sup.lines.filter((l) => l.completo);
@@ -54,6 +59,7 @@ function SupplierDetail({ sup, pin, chi, onBack, reload }: { sup: Sup; pin: stri
     <div className="screen">
       <header><h1>{sup.fornitore}</h1></header>
       <button className="back" onClick={onBack}>← Tutti i fornitori</button>
+      <button className="bigadd" onClick={onAdd}>+ Nuovo ordine per {sup.fornitore}</button>
       <section className="card">
         <h2>In arrivo · {open.length}</h2>
         {open.length === 0 ? <p className="muted center">Niente in arrivo da questo fornitore.</p>
@@ -73,6 +79,7 @@ export default function Ordini({ pin, chi, setChi, initial }: { pin: string; chi
   const [grp, setGrp] = useState<OrdGruppo[]>([]);
   const [adding, setAdding] = useState(initial === 'new');
   const [forn, setForn] = useState<string | null>(initial && initial !== 'new' ? initial : null);
+  const [addForn, setAddForn] = useState<string | undefined>(undefined);
   const [err, setErr] = useState<string | null>(null);
   const load = () => { fetchOrdiniGruppi().then(setGrp).catch((e) => setErr(e.message)); };
   useEffect(load, []);
@@ -91,14 +98,14 @@ export default function Ordini({ pin, chi, setChi, initial }: { pin: string; chi
   if (adding) return (
     <div className="screen">
       <header><h1>Nuovo ordine</h1></header>
-      <button className="back" onClick={() => setAdding(false)}>← Ordini</button>
-      <SupplierOrderForm pin={pin} chi={chi} onDone={() => { setAdding(false); load(); }} />
+      <button className="back" onClick={() => { setAdding(false); setAddForn(undefined); }}>← Ordini</button>
+      <SupplierOrderForm pin={pin} chi={chi} initialForn={addForn} onDone={() => { setAdding(false); setAddForn(undefined); load(); }} />
     </div>
   );
 
   if (forn) {
     const sup = byForn.find((s) => s.fornitore === forn);
-    if (sup) return <SupplierDetail sup={sup} pin={pin} chi={chi} onBack={() => setForn(null)} reload={load} />;
+    if (sup) return <SupplierDetail sup={sup} pin={pin} chi={chi} onBack={() => setForn(null)} onAdd={() => { setAddForn(forn ?? undefined); setAdding(true); }} reload={load} />;
     return <div className="screen"><button className="back" onClick={() => setForn(null)}>← Ordini</button><div className="card muted center">Nessun ordine per {forn}.</div></div>;
   }
 
