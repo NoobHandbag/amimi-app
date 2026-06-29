@@ -288,3 +288,12 @@ export async function fetchActiveFornitori(): Promise<string[]> {
 // edit/correct a registered arrival: set the arrived TOTAL (stock follows the delta)
 export const setArrival = (orderId: string, qty: number, data: string, pin: string, chi: string) =>
   writeApi('arrival_set', { order_id: orderId, qty, data }, pin, chi);
+
+// last sale (date + amount) per product, for the conto-vendita list
+export async function fetchLastSaleMap(): Promise<Map<string, { date: string | null; price: number | null }>> {
+  const { data } = await supabase.from('v_last_sale').select('codice_norm, last_date, last_price');
+  const m = new Map<string, { date: string | null; price: number | null }>();
+  (data ?? []).forEach((r: { codice_norm: string; last_date: string | null; last_price: number | null }) =>
+    m.set(r.codice_norm, { date: r.last_date, price: r.last_price }));
+  return m;
+}

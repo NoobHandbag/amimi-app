@@ -4,7 +4,7 @@ import { syncShopify, fetchCeTotale, askData, fetchAdsMensile } from '../lib/api
 import type { CeTot, AskResult, AdsMese, Product } from '../lib/api';
 import ProductPicker from '../components/ProductPicker';
 import { useSort } from '../lib/sortable';
-import { exportCSV } from '../lib/csv';
+import ExportBtn from '../components/ExportBtn';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
@@ -107,7 +107,7 @@ export default function Report({ onBack }: { onBack?: () => void }) {
       <header>
         <h1>Amimì · Cruscotto</h1>
         <div className="operbar">
-          <button className="exp" type="button" onClick={() => exportCSV('conto_economico', rows.map((r) => ({ mese: MESI[r.month], netto: Math.round(r.netto), lordo: Math.round(r.lordo), mc1: Math.round(r.mc1), mc2: Math.round(r.mc2), online: Math.round(r.online), offline: Math.round(r.offline), b2b: Math.round(r.b2b) })))}>⬇ Esporta</button>
+          <ExportBtn name="conto_economico" rows={() => rows.map((r) => ({ mese: MESI[r.month], netto: Math.round(r.netto), lordo: Math.round(r.lordo), mc1: Math.round(r.mc1), mc2: Math.round(r.mc2), online: Math.round(r.online), offline: Math.round(r.offline), b2b: Math.round(r.b2b) }))} />
           <span className="badge">replica</span>
         </div>
       </header>

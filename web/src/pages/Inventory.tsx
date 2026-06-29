@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchInventory, fetchContoVendita, syncShopifyStock, fetchReorder, fetchShopStockMap, fetchSalesByCodice, fetchPurchasesByCodice } from '../lib/api';
+import { fetchInventory, fetchContoVendita, syncShopifyStock, fetchReorder, fetchShopStockMap, fetchSalesByCodice, fetchPurchasesByCodice, fetchLastSaleMap } from '../lib/api';
 import type { InvFull, CV, Reorder, SaleRow, PurchaseRow } from '../lib/api';
 import { useSort } from '../lib/sortable';
-import { exportCSV } from '../lib/csv';
+import ExportBtn from '../components/ExportBtn';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const daysSince = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : Infinity);
@@ -174,19 +174,20 @@ const VIEWS = ['mag', 'riordino', 'neg', 'shop', 'valore'];
 export default function Inventory({ pin, initial, go }: { pin: string; chi: string; initial?: string; go?: (t: 'registra', p?: string) => void }) {
   type V = 'mag' | 'neg' | 'shop' | 'riordino' | 'valore';
   const [view, setView] = useState<V>((initial && VIEWS.includes(initial) ? initial : 'mag') as V);
-  const [store, setStore] = useState<string | null>(null);
   const [inv, setInv] = useState<InvFull[]>([]);
   const [cv, setCv] = useState<CV[]>([]);
   const [q, setQ] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [sel, setSel] = useState<InvFull | null>(null);
   const [shopMap, setShopMap] = useState<Map<string, number>>(new Map());
+  const [lastSaleMap, setLastSaleMap] = useState<Map<string, { date: string | null; price: number | null }>>(new Map());
   const shopQ = (p: InvFull) => shopMap.get(norm(p.codice)) ?? null;
 
   useEffect(() => {
     fetchInventory().then(setInv).catch((e) => setErr(e.message));
     fetchContoVendita().then(setCv).catch(() => {});
     fetchShopStockMap().then(setShopMap).catch(() => {});
+    fetchLastSaleMap().then(setLastSaleMap).catch(() => {});
   }, []);
 
   const alive = useMemo(() => inv.filter((p) => p.giacenza_attuale > 0 || daysSince(p.last_sale) <= 60), [inv]);
@@ -205,11 +206,10 @@ export default function Inventory({ pin, initial, go }: { pin: string; chi: stri
 
   const totVal = alive.reduce((s, p) => s + (p.valore || 0), 0);
   const hidden = inv.length - alive.length;
-  const byStore = useMemo(() => {
-    const m = new Map<string, CV[]>();
-    for (const r of cv) { const a = m.get(r.negozio) ?? []; a.push(r); m.set(r.negozio, a); }
-    return [...m.entries()];
-  }, [cv]);
+  const cvList = useMemo(() => cv.map((r) => {
+    const ls = lastSaleMap.get(norm(r.codice));
+    return { ...r, last_date: ls?.date ?? null, last_price: ls?.price ?? null };
+  }).sort((a, b) => (b.last_date ?? '').localeCompare(a.last_date ?? '')), [cv, lastSaleMap]);
 
   if (err) return <div className="screen"><div className="card err">Errore: {err}</div></div>;
 
@@ -224,7 +224,7 @@ export default function Inventory({ pin, initial, go }: { pin: string; chi: stri
           <button className={view === 'shop' ? 'on' : ''} onClick={() => setView('shop')}>Shopify</button>
           <button className={view === 'valore' ? 'on' : ''} onClick={() => setView('valore')}>Valore</button>
         </div>
-        <button className="exp" type="button" onClick={() => exportCSV('inventario', inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore })))}>⬇ Esporta</button>
+        <ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} />
       </header>
 
       {view === 'mag' && (
@@ -258,40 +258,28 @@ export default function Inventory({ pin, initial, go }: { pin: string; chi: stri
         </>
       )}
 
-      {view === 'neg' && !store && (
-        <>
-          {byStore.length === 0 && <div className="card muted center">Nessuna merce in conto vendita. Registra un movimento B2B (invio) da Registra ▸ B2B.</div>}
-          {byStore.map(([s, items]) => (
-            <button className="navcard" key={s} onClick={() => setStore(s)} type="button">
-              <div className="ncmain">
-                <div className="nct">{s}</div>
-                <div className="pillrow"><span className="pill warn">{items.reduce((a, i) => a + i.pezzi, 0)} pezzi in conto</span><span className="pill muted">{items.length} modelli</span></div>
-              </div>
-              <span className="chev">›</span>
-            </button>
-          ))}
-        </>
-      )}
-      {view === 'neg' && store && (() => {
-        const items = byStore.find(([s]) => s === store)?.[1] ?? [];
-        const pezzi = items.reduce((a, i) => a + i.pezzi, 0);
-        return (
+      {view === 'neg' && (
+        cvList.length === 0 ? <div className="card muted center">Nessuna merce in conto vendita. Registra un movimento B2B (invio) da Registra ▸ B2B.</div> : (
           <>
-            <button className="back" onClick={() => setStore(null)}>← Tutti i negozi</button>
-            <section className="card"><h2>{store} · {pezzi} pezzi in conto</h2>
-              <div className="list">{items.map((i) => (
-                <div className="row" key={i.codice}>
-                  <div className="invleft"><Tile url={i.image_url} label={i.item ?? i.codice} />
-                    <div><div className="rt">{nome(i.item, i.variant)}</div></div></div>
-                  <div className="giac">{i.pezzi}</div>
-                </div>))}
-                {!items.length && <p className="muted center">Niente in conto vendita qui.</p>}
-              </div>
-            </section>
-            {go && <button className="submit" onClick={() => go('registra', `b2b:${store}`)}>Registra vendita / rientro in {store}</button>}
+            <p className="note">In conto vendita, ordinati per ultima vendita. Tocca un prodotto per registrare vendita/rientro nel suo negozio.</p>
+            <div className="card"><div className="list">
+              {cvList.map((r) => (
+                <button className="row clickrow" type="button" key={r.negozio + r.codice} onClick={() => go && go('registra', `b2b:${r.negozio}`)}>
+                  <div className="invleft">
+                    <Tile url={r.image_url} label={r.item ?? r.codice} />
+                    <div>
+                      <div className="rt">{nome(r.item, r.variant)}</div>
+                      <div className="rs">@ {r.negozio} · {r.pezzi} pz</div>
+                      <div className="invtags"><span className="tag">{r.last_date ? `🛒 ${r.last_date}` : 'mai venduto'}{r.last_price != null ? ` · ${eur(r.last_price)}` : ''}</span></div>
+                    </div>
+                  </div>
+                  <span className="chev">›</span>
+                </button>
+              ))}
+            </div></div>
           </>
-        );
-      })()}
+        )
+      )}
 
       {view === 'shop' && <ShopComposition inv={inv} pin={pin} />}
       {view === 'riordino' && <ReorderView />}

@@ -7,7 +7,7 @@ import {
 import type { ProdTodo, SaleRow, Product } from '../lib/api';
 import { suggestPrice, marginOf, genSeoTitle } from '../lib/helpers';
 import { PersonaPicker } from '../lib/people';
-import { exportCSV } from '../lib/csv';
+import ExportBtn from '../components/ExportBtn';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
@@ -206,7 +206,7 @@ export default function Prodotti({ pin, chi, setChi, initial }: { pin: string; c
   useEffect(() => { fetchProducts().then(setCat).catch(() => {}); }, []);
   return (
     <div className="screen">
-      <header><h1>Prodotti</h1><div className="operbar"><button className="exp" type="button" onClick={() => exportCSV('prodotti', cat.map((p) => ({ codice: p.codice, modello: p.item, variante: p.variant, categoria: p.categoria, prezzo: p.retail_price, cogs: p.cogs })))}>⬇ Esporta</button><PersonaPicker chi={chi} setChi={setChi} /></div></header>
+      <header><h1>Prodotti</h1><div className="operbar"><ExportBtn name="prodotti" rows={() => cat.map((p) => ({ codice: p.codice, modello: p.item, variante: p.variant, categoria: p.categoria, prezzo: p.retail_price, cogs: p.cogs }))} /><PersonaPicker chi={chi} setChi={setChi} /></div></header>
       <div className="subtabs">
         {SUBS.map(([k, l]) => <button key={k} className={sub === k ? 'on' : ''} onClick={() => setSub(k)}>{l}</button>)}
       </div>

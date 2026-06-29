@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { writeApi, fetchProducts, clearProductCache } from '../lib/api';
+import { writeApi, fetchInventory, clearProductCache } from '../lib/api';
+import type { InvFull } from '../lib/api';
 import { suggestPrice, marginOf } from '../lib/helpers';
 
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
@@ -7,7 +8,8 @@ const modelTok = (s: string) => s.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0
 const variantTok = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
 
 export default function NewProductForm({ pin, chi }: { pin: string; chi: string }) {
-  const [models, setModels] = useState<string[]>([]);
+  const [inv, setInv] = useState<InvFull[]>([]);
+  const [mq, setMq] = useState('');
   const [model, setModel] = useState('');
   const [typingModel, setTypingModel] = useState(false);
   const [variant, setVariant] = useState('');
@@ -17,12 +19,16 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ t: 'ok' | 'err'; x: string } | null>(null);
 
-  useEffect(() => {
-    fetchProducts().then((ps) => {
-      const m = [...new Set(ps.map((p) => p.item).filter((x): x is string => !!x))].sort();
-      setModels(m);
-    }).catch(() => {});
-  }, []);
+  useEffect(() => { fetchInventory().then(setInv).catch(() => {}); }, []);
+  const ds = (iso: string | null) => (iso ? (Date.now() - new Date(iso).getTime()) / 86400000 : Infinity);
+  // #4: show models that are active (stock or sold in 90d) by default; searching reveals all (old too)
+  const shownModels = useMemo(() => {
+    const all = new Set<string>(); const active = new Set<string>();
+    for (const p of inv) { if (!p.item) continue; all.add(p.item); if (p.giacenza_attuale > 0 || ds(p.last_sale) <= 90) active.add(p.item); }
+    const allM = [...all].sort();
+    const s = mq.trim().toLowerCase();
+    return s ? allM.filter((m) => m.toLowerCase().includes(s)) : allM.filter((m) => active.has(m));
+  }, [inv, mq]);
 
   const codice = useMemo(() => (model && variant ? `${modelTok(model)}_${variantTok(variant)}` : ''), [model, variant]);
   const valid = !!codice && !/\s/.test(codice) && !/_$/.test(codice);
@@ -51,12 +57,15 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
       {typingModel ? (
         <input className="txt" value={model} onChange={(e) => setModel(e.target.value)} placeholder="es. Lea Bag" autoFocus />
       ) : (
-        <div className="supgrid">
-          {models.map((m) => (
-            <button key={m} type="button" className={`supcard ${model === m ? 'on' : ''}`} onClick={() => setModel(m)}>{m}</button>
-          ))}
-          <button type="button" className="supcard alt" onClick={() => { setTypingModel(true); setModel(''); }}>+ nuovo</button>
-        </div>
+        <>
+          <input className="search" placeholder="Cerca modello…" value={mq} onChange={(e) => setMq(e.target.value)} />
+          <div className="supgrid">
+            {shownModels.map((m) => (
+              <button key={m} type="button" className={`supcard ${model === m ? 'on' : ''}`} onClick={() => setModel(m)}>{m}</button>
+            ))}
+            <button type="button" className="supcard alt" onClick={() => { setTypingModel(true); setModel(''); }}>+ nuovo</button>
+          </div>
+        </>
       )}
 
       <label className="fl">Variante</label>
