@@ -201,11 +201,18 @@ export async function fetchSalesByCodice(codice: string): Promise<SaleRow[]> {
     supabase.from('qromo_sales').select('id,data,quantita,prezzo,nome,cognome').eq('codice', codice).order('data', { ascending: false }).limit(40),
     supabase.from('shopify_line_items').select('id,created_at,quantita,price,lineitem_name,order_id').eq('codice', codice).order('created_at', { ascending: false }).limit(40),
   ]);
+  // resolve Shopify order customer names, so returns show WHO bought (not the product name)
+  const oids = [...new Set((s.data ?? []).map((r: { order_id: string }) => r.order_id).filter(Boolean))];
+  const cust = new Map<string, string>();
+  if (oids.length) {
+    const { data: ords } = await supabase.from('shopify_orders').select('order_id, customer_name').in('order_id', oids);
+    (ords ?? []).forEach((o: { order_id: string; customer_name: string | null }) => { if (o.customer_name) cust.set(o.order_id, o.customer_name); });
+  }
   const out: SaleRow[] = [];
   (q.data ?? []).forEach((r: { id: string; data: string; quantita: number; prezzo: number; nome: string; cognome: string }) =>
-    out.push({ source: 'qromo', id: r.id, data: r.data, qty: Number(r.quantita), price: r.prezzo, descr: `${r.nome ?? ''} ${r.cognome ?? ''}`.trim() || 'Qromo', ref: 'POS' }));
+    out.push({ source: 'qromo', id: r.id, data: r.data, qty: Number(r.quantita), price: r.prezzo, descr: `${r.nome ?? ''} ${r.cognome ?? ''}`.trim() || 'Vendita negozio', ref: 'POS' }));
   (s.data ?? []).forEach((r: { id: string; created_at: string; quantita: number; price: number; lineitem_name: string; order_id: string }) =>
-    out.push({ source: 'shopify', id: r.id, data: (r.created_at ?? '').slice(0, 10), qty: Number(r.quantita), price: r.price, descr: r.lineitem_name ?? 'Shopify', ref: '#' + (r.order_id ?? '') }));
+    out.push({ source: 'shopify', id: r.id, data: (r.created_at ?? '').slice(0, 10), qty: Number(r.quantita), price: r.price, descr: cust.get(r.order_id) ?? r.lineitem_name ?? 'Ordine online', ref: '#' + (r.order_id ?? '') }));
   return out.sort((a, b) => (b.data ?? '').localeCompare(a.data ?? ''));
 }
 export async function correctSale(payload: Record<string, unknown>, pin: string, chi: string) {

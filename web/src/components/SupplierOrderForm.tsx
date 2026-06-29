@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi, fetchActiveFornitori } from '../lib/api';
 import type { Supplier, FornProd, Product } from '../lib/api';
+import { toast } from '../lib/toast';
 
 const modelTok = (s: string) => s.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_]/g, '');
 const variantTok = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
@@ -22,7 +23,6 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn }: { p
   const [newOpen, setNewOpen] = useState(false);
   const [nm, setNm] = useState(''); const [nv, setNv] = useState('');
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ t: 'ok' | 'err'; x: string } | null>(null);
 
   useEffect(() => { fetchSuppliers().then(setSups).catch(() => {}); fetchProducts().then(setAll).catch(() => {}); fetchActiveFornitori().then((a) => setActive(new Set(a))).catch(() => {}); }, []);
   useEffect(() => { if (forn) fetchFornitoreProdotti(forn).then(setBags).catch(() => setBags([])); }, [forn]);
@@ -39,24 +39,24 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn }: { p
 
   function addNewBag() {
     const codice = nm && nv ? `${modelTok(nm)}_${variantTok(nv)}` : nm ? `${modelTok(nm)}_` : '';
-    if (!nm) return setMsg({ t: 'err', x: 'Scrivi almeno il modello' });
+    if (!nm) return toast('Scrivi almeno il modello', 'err');
     addLine(codice, nm.trim(), nv ? variantTok(nv) : null, null, true);
-    setNm(''); setNv(''); setNewOpen(false); setMsg(null);
+    setNm(''); setNv(''); setNewOpen(false);
   }
 
   async function submit() {
-    if (!forn) return setMsg({ t: 'err', x: 'Scegli il fornitore' });
-    if (!lines.length) return setMsg({ t: 'err', x: 'Aggiungi almeno una borsa' });
-    setBusy(true); setMsg(null);
+    if (!forn) return toast('Scegli il fornitore', 'err');
+    if (!lines.length) return toast('Aggiungi almeno una borsa', 'err');
+    setBusy(true);
     try {
       const righe = lines.map((l) => ({
         codice: l.codice, item: l.item, variant: l.variant, qty_ordered: l.qty,
         nuovo_riordino: l.nuovo ? 'Nuovo' : 'Riordino', costo_unitario: l.costo === '' ? null : Number(l.costo),
       }));
       const r = await createOrderMulti(forn, dataOrd, righe, pin, chi) as unknown as { lines: number; stubs: number };
-      setMsg({ t: 'ok', x: `Ordine salvato · ${r.lines} borse${r.stubs ? ` · ${r.stubs} nuove da verificare` : ''}` });
+      toast(`Ordine salvato · ${r.lines} borse${r.stubs ? ` · ${r.stubs} nuove da verificare` : ''}`, 'ok');
       setTimeout(onDone, 700);
-    } catch (e) { setMsg({ t: 'err', x: (e as Error).message }); setBusy(false); }
+    } catch (e) { toast((e as Error).message, 'err'); setBusy(false); }
   }
 
   // STEP 1 — supplier
@@ -152,7 +152,6 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn }: { p
       )}
 
       <button className="submit" disabled={busy} onClick={submit}>{busy ? 'Salvo…' : `Salva ordine (${lines.length})`}</button>
-      {msg && <div className={`msg ${msg.t}`}>{msg.x}</div>}
     </div>
   );
 }

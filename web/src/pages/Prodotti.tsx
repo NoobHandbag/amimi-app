@@ -6,8 +6,8 @@ import {
 } from '../lib/api';
 import type { ProdTodo, SaleRow, Product } from '../lib/api';
 import { suggestPrice, marginOf, genSeoTitle } from '../lib/helpers';
-import { PersonaPicker } from '../lib/people';
 import ExportBtn from '../components/ExportBtn';
+import { toast } from '../lib/toast';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
@@ -95,19 +95,18 @@ function SaleCorrect({ pin, chi }: { pin: string; chi: string }) {
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [sale, setSale] = useState<SaleRow | null>(null);
   const [target, setTarget] = useState<Product | null>(null);
-  const [msg, setMsg] = useState<{ t: 'ok' | 'err'; x: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { if (orig) fetchSalesByCodice(orig.codice).then(setSales).catch(() => setSales([])); }, [orig]);
 
   async function apply() {
     if (!sale || !target) return;
-    setBusy(true); setMsg(null);
+    setBusy(true);
     try {
       await correctSale({ source: sale.source, id: sale.id, new_codice: target.codice, new_item: target.item, new_variant: target.variant }, pin, chi);
-      setMsg({ t: 'ok', x: `Vendita riassegnata a ${target.codice}. Magazzino aggiornato.` });
+      toast(`Vendita riassegnata a ${target.codice}. Magazzino aggiornato.`, 'ok');
       setSale(null); setTarget(null); setOrig(null); setSales([]);
-    } catch (e) { setMsg({ t: 'err', x: (e as Error).message }); } finally { setBusy(false); }
+    } catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(false); }
   }
 
   if (!orig) return (<div><p className="note">Quale prodotto era stato segnato per errore? Scegli l’originale, poi la vendita.</p><ProductPicker selected={null} onPick={setOrig} /></div>);
@@ -122,7 +121,6 @@ function SaleCorrect({ pin, chi }: { pin: string; chi: string }) {
           </button>
         ))}</div>
       )}
-      {msg && <div className={`msg ${msg.t}`}>{msg.x}</div>}
     </div>
   );
   return (
@@ -131,7 +129,6 @@ function SaleCorrect({ pin, chi }: { pin: string; chi: string }) {
       <p className="note">Era <b>{orig.item ?? orig.codice}</b>. Qual era il prodotto reale?</p>
       <ProductPicker selected={target} onPick={setTarget} />
       {target && <button className="submit" disabled={busy} onClick={apply}>{busy ? '…' : `Riassegna a ${target.item ?? target.codice}`}</button>}
-      {msg && <div className={`msg ${msg.t}`}>{msg.x}</div>}
     </div>
   );
 }
@@ -200,13 +197,13 @@ function HealthCheck() {
 
 const SUBS: [string, string][] = [['prod', 'Da completare'], ['pubblica', 'Pubblica'], ['vendite', 'Correggi vendita'], ['diag', 'Diagnostica']];
 
-export default function Prodotti({ pin, chi, setChi, initial }: { pin: string; chi: string; setChi: (c: string) => void; initial?: string }) {
+export default function Prodotti({ pin, chi, initial }: { pin: string; chi: string; setChi: (c: string) => void; initial?: string }) {
   const [sub, setSub] = useState<string>(initial && SUBS.some(([k]) => k === initial) ? initial : 'prod');
   const [cat, setCat] = useState<Product[]>([]);
   useEffect(() => { fetchProducts().then(setCat).catch(() => {}); }, []);
   return (
     <div className="screen">
-      <header><h1>Prodotti</h1><div className="operbar"><ExportBtn name="prodotti" rows={() => cat.map((p) => ({ codice: p.codice, modello: p.item, variante: p.variant, categoria: p.categoria, prezzo: p.retail_price, cogs: p.cogs }))} /><PersonaPicker chi={chi} setChi={setChi} /></div></header>
+      <header><h1>Prodotti</h1><ExportBtn name="prodotti" rows={() => cat.map((p) => ({ codice: p.codice, modello: p.item, variante: p.variant, categoria: p.categoria, prezzo: p.retail_price, cogs: p.cogs }))} /></header>
       <div className="subtabs">
         {SUBS.map(([k, l]) => <button key={k} className={sub === k ? 'on' : ''} onClick={() => setSub(k)}>{l}</button>)}
       </div>

@@ -3,6 +3,7 @@ import { fetchInventory, fetchContoVendita, syncShopifyStock, fetchReorder, fetc
 import type { InvFull, CV, Reorder, SaleRow, PurchaseRow } from '../lib/api';
 import { useSort } from '../lib/sortable';
 import ExportBtn from '../components/ExportBtn';
+import { toast } from '../lib/toast';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const daysSince = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : Infinity);
@@ -62,7 +63,6 @@ function ProductDrawer({ p, shopQty, onClose }: { p: InvFull; shopQty: number | 
 const CATCOL: Record<string, string> = { BAG: '#8B5E6B', PELLE: '#C4956A', TESSUTO: '#3E9E5B', ACCESSORI: '#6b7a8b', ALTRO: '#9a8f93' };
 function ShopComposition({ inv, pin }: { inv: InvFull[]; pin: string }) {
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
   const byItem = useMemo(() => {
     const m = new Map<string, { item: string; cat: string; n: number }>();
     for (const p of inv.filter((x) => x.on_shopify)) {
@@ -73,9 +73,9 @@ function ShopComposition({ inv, pin }: { inv: InvFull[]; pin: string }) {
   }, [inv]);
   const tot = byItem.reduce((s, i) => s + i.n, 0);
   async function sync() {
-    setBusy(true); setMsg(null);
-    try { const r = await syncShopifyStock(pin) as { synced: number }; setMsg(`Aggiornato: ${r.synced} varianti da Shopify`); }
-    catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+    setBusy(true);
+    try { const r = await syncShopifyStock(pin) as { synced: number }; toast(`Aggiornato: ${r.synced} varianti da Shopify`, 'ok'); }
+    catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(false); }
   }
   return (
     <>
@@ -94,7 +94,6 @@ function ShopComposition({ inv, pin }: { inv: InvFull[]; pin: string }) {
       </div>
       <div className="catleg">{Object.entries(CATCOL).map(([c, col]) => <span key={c}><i style={{ background: col }} />{c}</span>)}</div>
       <button className="syncbtn" onClick={sync} disabled={busy}>{busy ? 'Sincronizzo…' : '🔄 Aggiorna da Shopify'}</button>
-      {msg && <div className="msg ok">{msg}</div>}
     </>
   );
 }

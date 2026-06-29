@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import ProductPicker from './ProductPicker';
+import NumberStepper from './NumberStepper';
 import { writeApi, oggi } from '../lib/api';
 import type { Product } from '../lib/api';
+import { toast } from '../lib/toast';
 
 const PAGAMENTI = ['Contanti', 'PayPal', 'Bonifico', 'Revolut', 'Altro'];
 
 // GIFT_OFFLINE serve sia per i regali (prezzo 0) sia per le vendite manuali offline fuori Qromo
 // (con prezzo + metodo pagamento), come il form AppSheet. Nota: oggi il CE conta come ricavo solo
-// Shopify+Qromo+B2B, NON i GIFT_OFFLINE: la vendita manuale incide sull'inventario ma non sul P&L
-// finché non decidiamo di includerla (vedi nota in chat).
+// Shopify+Qromo+B2B, NON i GIFT_OFFLINE.
 export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
   const [tipo, setTipo] = useState<'gift' | 'vendita'>('gift');
   const [prod, setProd] = useState<Product | null>(null);
@@ -19,15 +20,14 @@ export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
   const [data, setData] = useState(oggi());
   const [nota, setNota] = useState('');
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ t: 'ok' | 'err'; x: string } | null>(null);
 
   const isVendita = tipo === 'vendita';
 
   async function submit() {
-    if (!prod) return setMsg({ t: 'err', x: 'Scegli un prodotto' });
-    if (!(Number(qta) > 0)) return setMsg({ t: 'err', x: 'Quantità non valida' });
-    if (isVendita && !(Number(prezzo) > 0)) return setMsg({ t: 'err', x: 'Inserisci il prezzo della vendita' });
-    setBusy(true); setMsg(null);
+    if (!prod) return toast('Scegli un prodotto', 'err');
+    if (!(Number(qta) > 0)) return toast('Quantità non valida', 'err');
+    if (isVendita && !(Number(prezzo) > 0)) return toast('Inserisci il prezzo della vendita', 'err');
+    setBusy(true);
     const d = new Date(data);
     try {
       await writeApi('gift', {
@@ -37,10 +37,10 @@ export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
         prezzo: isVendita ? Number(prezzo) : 0,
         payment_method: isVendita ? pagamento : 'GIFT',
       }, pin, chi);
-      setMsg({ t: 'ok', x: isVendita ? `Vendita registrata · ${prod.item} ×${qta} · €${prezzo}` : `Regalo registrato · ${prod.item} ×${qta}` });
+      toast(isVendita ? `Vendita registrata · ${prod.item} ×${qta} · €${prezzo}` : `Regalo registrato · ${prod.item} ×${qta}`, 'ok');
       setProd(null); setQta('1'); setPrezzo(''); setNome(''); setNota('');
     } catch (e) {
-      setMsg({ t: 'err', x: (e as Error).message });
+      toast((e as Error).message, 'err');
     } finally { setBusy(false); }
   }
 
@@ -52,27 +52,25 @@ export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
       </div>
 
       <label className="fl">Prodotto</label>
-      <ProductPicker selected={prod} onPick={(p) => { setProd(p); setMsg(null); }} />
+      <ProductPicker selected={prod} onPick={(p) => setProd(p)} />
       {prod && (
         <>
           <div className="grid2">
-            <div><label className="fl">Quantità</label>
-              <input className="num" type="number" inputMode="numeric" value={qta} onChange={(e) => setQta(e.target.value)} /></div>
+            <div><label className="fl">Quantità</label><NumberStepper value={qta} onChange={setQta} min={1} /></div>
             <div><label className="fl">Data</label>
-              <input className="txt" type="date" value={data} onChange={(e) => setData(e.target.value)} /></div>
+              <input className="num" type="date" value={data} onChange={(e) => setData(e.target.value)} /></div>
           </div>
 
           {isVendita && (
             <>
               <div className="grid2">
-                <div><label className="fl">Prezzo € (IVA incl.)</label>
-                  <input className="num" type="number" inputMode="decimal" value={prezzo} onChange={(e) => setPrezzo(e.target.value)} placeholder="0,00" /></div>
+                <div><label className="fl">Prezzo € (IVA incl.)</label><NumberStepper value={prezzo} onChange={setPrezzo} decimal step={5} placeholder="0,00" /></div>
                 <div><label className="fl">Pagamento</label>
                   <select className="num" value={pagamento} onChange={(e) => setPagamento(e.target.value)}>
                     {PAGAMENTI.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select></div>
               </div>
-              <p className="note">La vendita manuale scala l’inventario. Nota: oggi non entra nel P&L (il CE conta solo Shopify/Qromo/B2B) — da decidere se includerla.</p>
+              <p className="note">La vendita manuale scala l'inventario. Nota: oggi non entra nel P&L (il CE conta solo Shopify/Qromo/B2B) — da decidere se includerla.</p>
             </>
           )}
 
@@ -83,7 +81,6 @@ export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
           <button className="submit" disabled={busy} onClick={submit}>{busy ? 'Salvo…' : isVendita ? 'Registra vendita' : 'Registra regalo'}</button>
         </>
       )}
-      {msg && <div className={`msg ${msg.t}`}>{msg.x}</div>}
     </div>
   );
 }

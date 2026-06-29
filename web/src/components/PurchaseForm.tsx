@@ -1,21 +1,22 @@
 import { useState } from 'react';
 import ProductPicker from './ProductPicker';
 import SupplierPicker from './SupplierPicker';
+import NumberStepper from './NumberStepper';
 import { writeApi, oggi, fetchLastPurchase } from '../lib/api';
 import type { Product } from '../lib/api';
+import { toast } from '../lib/toast';
 
 export default function PurchaseForm({ pin, chi }: { pin: string; chi: string }) {
   const [prod, setProd] = useState<Product | null>(null);
-  const [qta, setQta] = useState('');
+  const [qta, setQta] = useState('1');
   const [costo, setCosto] = useState('');
   const [data, setData] = useState(oggi());
   const [forn, setForn] = useState('');
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
-  const [msg, setMsg] = useState<{ t: 'ok' | 'err'; x: string } | null>(null);
 
   function onPick(p: Product | null) {
-    setProd(p); setMsg(null); setHint(null);
+    setProd(p); setHint(null);
     if (p) {
       fetchLastPurchase(p.codice).then((l) => {
         if (!l) return;
@@ -27,9 +28,9 @@ export default function PurchaseForm({ pin, chi }: { pin: string; chi: string })
   }
 
   async function submit() {
-    if (!prod) return setMsg({ t: 'err', x: 'Scegli un prodotto' });
-    if (!(Number(qta) > 0)) return setMsg({ t: 'err', x: 'Quantità non valida' });
-    setBusy(true); setMsg(null);
+    if (!prod) return toast('Scegli un prodotto', 'err');
+    if (!(Number(qta) > 0)) return toast('Quantità non valida', 'err');
+    setBusy(true);
     try {
       await writeApi('purchase', {
         codice: prod.codice, item: prod.item, variant: prod.variant, categoria: prod.categoria ?? 'BAG',
@@ -37,10 +38,10 @@ export default function PurchaseForm({ pin, chi }: { pin: string; chi: string })
         quantita: Number(qta), costo_unitario: costo === '' ? null : Number(costo),
         data, fornitore: forn || null,
       }, pin, chi);
-      setMsg({ t: 'ok', x: `Arrivo registrato · ${prod.item} ${prod.variant ?? ''} ×${qta}` });
-      setProd(null); setQta(''); setCosto(''); setForn('');
+      toast(`Arrivo registrato · ${prod.item} ${prod.variant ?? ''} ×${qta}`, 'ok');
+      setProd(null); setQta('1'); setCosto(''); setForn('');
     } catch (e) {
-      setMsg({ t: 'err', x: (e as Error).message });
+      toast((e as Error).message, 'err');
     } finally {
       setBusy(false);
     }
@@ -54,10 +55,8 @@ export default function PurchaseForm({ pin, chi }: { pin: string; chi: string })
       {prod && (
         <>
           <div className="grid2">
-            <div><label className="fl">Quantità</label>
-              <input className="num" type="number" inputMode="numeric" value={qta} onChange={(e) => setQta(e.target.value)} placeholder="0" /></div>
-            <div><label className="fl">Costo unit. €</label>
-              <input className="num" type="number" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="—" /></div>
+            <div><label className="fl">Quantità</label><NumberStepper value={qta} onChange={setQta} min={1} /></div>
+            <div><label className="fl">Costo unit. €</label><NumberStepper value={costo} onChange={setCosto} decimal step={5} placeholder="—" /></div>
           </div>
           <label className="fl">Data</label>
           <input className="txt" type="date" value={data} onChange={(e) => setData(e.target.value)} />
@@ -66,7 +65,6 @@ export default function PurchaseForm({ pin, chi }: { pin: string; chi: string })
           <button className="submit" disabled={busy} onClick={submit}>{busy ? 'Salvo…' : 'Registra arrivo'}</button>
         </>
       )}
-      {msg && <div className={`msg ${msg.t}`}>{msg.x}</div>}
     </div>
   );
 }
