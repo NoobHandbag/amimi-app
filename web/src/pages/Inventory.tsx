@@ -3,6 +3,7 @@ import { fetchInventory, fetchContoVendita, syncShopifyStock, fetchReorder, fetc
 import type { InvFull, CV, Reorder, SaleRow, PurchaseRow } from '../lib/api';
 import { useSort } from '../lib/sortable';
 import ExportBtn from '../components/ExportBtn';
+import PrintBtn from '../components/PrintBtn';
 import { toast } from '../lib/toast';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
@@ -169,10 +170,79 @@ function ValoreView({ inv }: { inv: InvFull[] }) {
   );
 }
 
-const VIEWS = ['mag', 'riordino', 'neg', 'shop', 'valore'];
+/* Disponibilità — availability overview (KPI + critical lines + reorder), artifact-style.
+   Note: "giorni vuoto" is NOT shown — it needs stock-history sampling the app doesn't have yet. */
+const lineOf = (item: string | null, codice: string) => (item ?? codice).trim().split(/[\s_]/)[0].toUpperCase();
+function DisponibilitaView({ inv }: { inv: InvFull[] }) {
+  const [reord, setReord] = useState<Reorder[] | null>(null);
+  useEffect(() => { fetchReorder().then(setReord).catch(() => setReord([])); }, []);
+
+  const pub = inv.filter((p) => p.on_shopify);
+  const skuAcq = inv.filter((p) => p.on_shopify && p.giacenza_attuale > 0).length;
+  const varAcq = inv.filter((p) => p.giacenza_attuale > 0).length;
+  const attiviEsauriti = pub.filter((p) => p.giacenza_attuale <= 0).length;
+  const inStockNonPub = inv.filter((p) => !p.on_shopify && p.giacenza_attuale > 0).length;
+
+  const lines = useMemo(() => {
+    const m = new Map<string, { pub: number; esa: number }>();
+    for (const p of inv.filter((x) => x.on_shopify)) {
+      const k = lineOf(p.item, p.codice); const a = m.get(k) ?? { pub: 0, esa: 0 };
+      a.pub += 1; if (p.giacenza_attuale <= 0) a.esa += 1; m.set(k, a);
+    }
+    return [...m.entries()].filter(([, v]) => v.esa > 0)
+      .map(([k, v]) => ({ line: k, esa: v.esa, cov: Math.round(((v.pub - v.esa) / v.pub) * 100) }))
+      .sort((a, b) => b.esa - a.esa).slice(0, 8);
+  }, [inv]);
+
+  const reorder = useMemo(() => {
+    const price = new Map(inv.map((p) => [p.codice, p.retail_price ?? 0]));
+    return (reord ?? []).filter((r) => r.disponibili <= 0 && r.venduto_60d > 0)
+      .map((r) => ({ ...r, persiSett: Math.round((r.venduto_60d / 60) * 7 * (price.get(r.codice) ?? 0)) }))
+      .sort((a, b) => b.persiSett - a.persiSett);
+  }, [reord, inv]);
+
+  return (
+    <>
+      <div className="kpis">
+        <div className="kpi rose"><div className="v">{skuAcq}</div><div className="k">SKU acquistabili</div><div className="ksub">ACTIVE e in stock, oggi</div></div>
+        <div className="kpi accent"><div className="v">{varAcq}</div><div className="k">Varianti acquistabili</div><div className="ksub">varianti in stock</div></div>
+        <div className="kpi red"><div className="v">{attiviEsauriti}</div><div className="k">Attivi ma esauriti</div><div className="ksub">vetrina vuota: pubblicati a 0</div></div>
+        <div className="kpi"><div className="v">{inStockNonPub}</div><div className="k">In stock non pubblicati</div><div className="ksub">magazzino non esposto</div></div>
+        <div className="kpi green"><div className="v">{pub.length}</div><div className="k">Pubblicati (ACTIVE)</div><div className="ksub">di cui {attiviEsauriti} esauriti</div></div>
+      </div>
+
+      {lines.length > 0 && (
+        <>
+          <h2 className="sech">Linee critiche / da monitorare</h2>
+          <div className="filters">
+            {lines.map((l) => <span key={l.line} className="critchip">{l.line}: {l.esa} esauriti · copertura {l.cov}%</span>)}
+          </div>
+        </>
+      )}
+
+      <h2 className="sech">Da riordinare adesso</h2>
+      {reord == null ? <p className="muted center">Carico…</p> : !reorder.length ? (
+        <div className="card muted center">Niente di esaurito tra i best-seller. 🎉</div>
+      ) : (
+        <div className="card"><div className="tablewrap"><table className="sortable invtable">
+          <thead><tr><th className="l">Prodotto</th><th>Venduti 60g</th><th>Persi/sett</th></tr></thead>
+          <tbody>{reorder.slice(0, 40).map((r) => (
+            <tr key={r.codice}>
+              <td className="l">{nome(r.item, r.variant)}{r.in_arrivo > 0 && <span className="tag live"> {r.in_arrivo} in arrivo</span>}</td>
+              <td>{r.venduto_60d}</td>
+              <td className="neg">{eur(r.persiSett)}</td>
+            </tr>
+          ))}</tbody>
+        </table></div></div>
+      )}
+    </>
+  );
+}
+
+const VIEWS = ['disp', 'mag', 'riordino', 'neg', 'shop', 'valore'];
 export default function Inventory({ pin, initial, go }: { pin: string; chi: string; initial?: string; go?: (t: 'registra', p?: string) => void }) {
-  type V = 'mag' | 'neg' | 'shop' | 'riordino' | 'valore';
-  const [view, setView] = useState<V>((initial && VIEWS.includes(initial) ? initial : 'mag') as V);
+  type V = 'disp' | 'mag' | 'neg' | 'shop' | 'riordino' | 'valore';
+  const [view, setView] = useState<V>((initial && VIEWS.includes(initial) ? initial : 'disp') as V);
   const [inv, setInv] = useState<InvFull[]>([]);
   const [cv, setCv] = useState<CV[]>([]);
   const [q, setQ] = useState('');
@@ -217,13 +287,14 @@ export default function Inventory({ pin, initial, go }: { pin: string; chi: stri
       <header>
         <h1>Inventario</h1>
         <div className="seg wrap">
+          <button className={view === 'disp' ? 'on' : ''} onClick={() => setView('disp')}>Disponibilità</button>
           <button className={view === 'mag' ? 'on' : ''} onClick={() => setView('mag')}>Magazzino</button>
           <button className={view === 'riordino' ? 'on' : ''} onClick={() => setView('riordino')}>Riordino</button>
           <button className={view === 'neg' ? 'on' : ''} onClick={() => setView('neg')}>Nei negozi</button>
           <button className={view === 'shop' ? 'on' : ''} onClick={() => setView('shop')}>Shopify</button>
           <button className={view === 'valore' ? 'on' : ''} onClick={() => setView('valore')}>Valore</button>
         </div>
-        <ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} />
+        <div className="hbtns"><PrintBtn /><ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} /></div>
       </header>
 
       {view === 'mag' && (
@@ -280,6 +351,7 @@ export default function Inventory({ pin, initial, go }: { pin: string; chi: stri
         )
       )}
 
+      {view === 'disp' && <DisponibilitaView inv={inv} />}
       {view === 'shop' && <ShopComposition inv={inv} pin={pin} />}
       {view === 'riordino' && <ReorderView />}
       {view === 'valore' && <ValoreView inv={inv} />}

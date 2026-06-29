@@ -3,6 +3,8 @@ import SupplierOrderForm from '../components/SupplierOrderForm';
 import { fetchOrdiniGruppi, oggi, setArrival } from '../lib/api';
 import type { OrdGruppo, OrdLine } from '../lib/api';
 import ExportBtn from '../components/ExportBtn';
+import PrintBtn from '../components/PrintBtn';
+import { toast } from '../lib/toast';
 
 /* register an arrival against one order line */
 function ArrivoRow({ l, pin, chi, reload }: { l: OrdLine; pin: string; chi: string; reload: () => void }) {
@@ -10,15 +12,15 @@ function ArrivoRow({ l, pin, chi, reload }: { l: OrdLine; pin: string; chi: stri
   const [n, setN] = useState(String(l.completo ? l.qty_arrived : l.qty_ordered));
   const [d, setD] = useState(oggi());
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
   const done = l.completo;
 
   // set the arrived TOTAL — registers a new arrival AND edits/corrects one already registered
   async function save() {
-    if (isNaN(Number(n)) || Number(n) < 0) return setErr('Valore non valido');
-    setBusy(true); setErr(null);
-    try { await setArrival(l.id, Number(n), d, pin, chi); reload(); }
-    catch (e) { setErr((e as Error).message); setBusy(false); }
+    if (isNaN(Number(n)) || Number(n) < 0) return toast('Valore non valido', 'err');
+    setBusy(true);
+    try { await setArrival(l.id, Number(n), d, pin, chi); toast(`Arrivo salvato · ${n}/${l.qty_ordered}`, 'ok'); setOpen(false); }
+    catch (e) { toast((e as Error).message, 'err'); }
+    finally { setBusy(false); reload(); }
   }
 
   return (
@@ -41,7 +43,6 @@ function ArrivoRow({ l, pin, chi, reload }: { l: OrdLine; pin: string; chi: stri
             <input className="dbox" type="date" value={d} onChange={(e) => setD(e.target.value)} />
             <button className="submit small" disabled={busy} onClick={save}>{busy ? '…' : 'salva'}</button>
           </div>
-          {err && <div className="msg err">{err}</div>}
         </div>
       )}
     </div>
@@ -74,7 +75,7 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload }: { sup: Sup; pi
   );
 }
 
-export default function Ordini({ pin, chi, initial }: { pin: string; chi: string; setChi: (c: string) => void; initial?: string }) {
+export default function Ordini({ pin, chi, initial }: { pin: string; chi: string; initial?: string }) {
   const [grp, setGrp] = useState<OrdGruppo[]>([]);
   const [adding, setAdding] = useState(initial === 'new');
   const [forn, setForn] = useState<string | null>(initial && initial !== 'new' ? initial : null);
@@ -110,7 +111,7 @@ export default function Ordini({ pin, chi, initial }: { pin: string; chi: string
 
   return (
     <div className="screen">
-      <header><h1>Ordini</h1><ExportBtn name="ordini" rows={() => grp.flatMap((g) => g.righe).map((l) => ({ fornitore: l.fornitore, codice: l.codice, modello: l.item, variante: l.variant, ordinati: l.qty_ordered, arrivati: l.qty_arrived, mancano: l.mancano, completo: l.completo ? 'si' : 'no', data_ordine: l.data_ordine, data_consegna: l.data_consegna, costo_unitario: l.costo_unitario, tipo: l.nuovo_riordino }))} /></header>
+      <header><h1>Ordini</h1><div className="hbtns"><PrintBtn /><ExportBtn name="ordini" rows={() => grp.flatMap((g) => g.righe).map((l) => ({ fornitore: l.fornitore, codice: l.codice, modello: l.item, variante: l.variant, ordinati: l.qty_ordered, arrivati: l.qty_arrived, mancano: l.mancano, completo: l.completo ? 'si' : 'no', data_ordine: l.data_ordine, data_consegna: l.data_consegna, costo_unitario: l.costo_unitario, tipo: l.nuovo_riordino }))} /></div></header>
       <button className="bigadd" onClick={() => setAdding(true)}>+ Nuovo ordine fornitore</button>
       {byForn.length === 0 && <div className="card muted center">Nessun ordine. Tocca “+ Nuovo ordine fornitore”.</div>}
       {byForn.map((s) => (

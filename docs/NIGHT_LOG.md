@@ -314,3 +314,113 @@ Made reads open (data already public via anon; writes still token-gated) and add
 now shows the 6 read tools (list_inventory, what_to_reorder, sku_availability, pnl_summary, ads_summary,
 ask_data). Owner's web Claude can now query the business. Writes (propose_expense, register_count) stay
 behind the bearer token → only via Code/Desktop, not the web connector. mcp v3.
+
+## SESSION 10 — UX raffinamenti (persona, steppers, toast, reso con foto)
+
+Da feedback utente con screenshot, 5 raffinamenti (commit 7ad16af, gh-pages live): (1) personalizzazione
+solo nella Home — PersonaPicker tolto dagli altri tab, azioni Registra non piu filtrate per persona.
+(2) tile Arrivo/Acquisto tolto da Registra (vive in Ordini). (3) reso sale-anchored mostra foto prodotto
++ nome cliente (fetchSalesByCodice risolve shopify_orders.customer_name). (4) NumberStepper -/+ visibile su
+mobile su ogni campo quantita/prezzo (Reso, Regalo/Vendita, B2B, Conta, Nuovo prodotto, Spesa, Ordine,
+Arrivo). (5) toast eleganti (lib/toast.ts) al posto dei box msg inline in tutti i form di scrittura.
+npm run build verde (84 moduli).
+
+## SESSION 11 — Coda Prodotti a gruppi (nuovi-da-ordine / impatto ricavi-costi / pulizia)
+
+Da feedback utente: la coda "Da completare" mostrava in cima vecchi prodotti gia venduti, mescolando
+lavoro vero e pulizia anagrafica. Verificato sui dati live: i 16 in coda erano TUTTI residui import
+etl del 24-06, gia con prezzo+COGS, zero nati da ordini, zero buchi su ricavi/costi -> tutta pulizia.
+
+Ridisegnata la coda in 3 gruppi (migrazione 0025 + Prodotti.tsx): (1) **Nuovi da arricchire** =
+prodotti nati da un ordine (source=app-ordine, non verificato) -> in cima; tag "nuovo modello" quando
+nessun altro prodotto verificato condivide il modello, e in quel caso la **descrizione diventa
+obbligatoria** nell editor. (2) **Impatto su ricavi e costi** = manca retail_price O cogs. (3) **Pulizia
+anagrafica (facoltativa)** = solo immagine/descrizione/modello-variante mancanti con prezzo+COGS presenti
+-> in fondo, collassata e depotenziata (opacity .62). v_products_todo: stesse righe (WHERE invariato, v_health
+intatto), aggiunge in coda source/is_new_model/bucket/bucket_rank; sort client = bucket_rank, poi venduto, poi missing.
+
+Migrazione applicata al DB live (create-or-replace, retro-compatibile: il front-end deployato fa select(*)
+e ignora le colonne nuove -> nessun impatto finche non si rideploya). tsc -b + vite build verdi (84 moduli),
+render verificato in locale (coda vuota + gruppo pulizia 16 card dim). Front-end NON ancora deployato su
+gh-pages: in attesa ok utente.
+
+## SESSION 12 — Micro-fix UX dal report di verifica (29-06): spinner, subtabs, toast, a11y, cleanup
+
+Applicate 5 delle 6 migliorie prioritizzate in REPORT_verifica_stasera_2026-06-29.md (saltata la #5 stepper
+nel carrello/editor arrivi: serve una variante compatta dello stepper in righe flex strette, rischio layout
+mobile -> rimandata a giro dedicato).
+
+(1) **Spinner nativi nascosti** solo dentro .stepper .num (-moz-appearance:textfield + ::-webkit-*-spin-button
+none): elimina i controlli duplicati su desktop senza toccare gli input single-control fuori stepper.
+(2) **Overflow .subtabs**: aggiunto overflow-x:auto + scrollbar nascosta + white-space:nowrap sui bottoni;
+verificato a 360px overflow di pagina = 0 (lo scroll resta dentro la barra). (3) **Toast su ArrivoRow
+(Ordini) e ProdEdit (Prodotti)**: tolti i box .msg.err inline, ora errori+successo via toast (verificato il
+toast errore "Modello e variante obbligatori" role=alert). La validazione "descrizione obbligatoria per
+modello nuovo" di SESSION 11 e stata preservata e portata anch essa a toast. (4) **a11y toast**: host
+aria-live=polite, ogni toast role=alert (err) / status (ok). (6) **Pulizia residui orfani**: rimosso
+PurchaseForm.tsx (orfano), tolto purchase dalle liste registra in people.tsx (rischio latente schermata
+vuota), rimossa la prop inutilizzata setChi da Ingest/Ordini/Prodotti + chiamate App.tsx, corretto il
+commento obsoleto people.tsx:2.
+
+tsc -b + vite build verdi (84 moduli), nessun nuovo warning oxlint. Verifica via dev server locale: toast +
+overflow ok. NON deployato su gh-pages: in attesa ok utente (stesso batch del redesign bucket di SESSION 11).
+
+## SESSION 13 — Fix arrivo bloccato + Correggi vendita per-prodotto/per-vendita
+
+Da feedback utente (4 punti). FATTI 2: (#4) il tasto salva dell arrivo (ArrivoRow, Ordini) restava bloccato
+sui "3 pallini" sugli arrivi PARZIALI (riga non si smonta, busy mai rimesso a false: bug pre-esistente
+ereditato nella migrazione toast SESSION 12). Fix: a salvataggio ok chiudo la riga (setOpen false) e sblocco
+busy in finally. (#2) **Correggi vendita** ora ha due ingressi (toggle .seg.wrap "Per prodotto" / "Per
+vendita"): per-prodotto = flusso storico (prodotto -> sue vendite -> riassegna); per-vendita = nuova
+fetchRecentSales (qromo+shopify, 60+60, con cliente risolto e prodotto attuale), lista cercabile per
+cliente/prodotto/#ordine -> scegli la vendita -> riassegna al prodotto giusto. Verificato dal vivo: toggle,
+50 vendite, ricerca "elisa" -> 1, click -> step picker "Era Annie Bag". tsc+build verdi.
+
+IN SOSPESO (in attesa decisione utente): (#1) tab Pubblica - il filtro letterale "solo prodotti su ordine
+fornitore" oggi SVUOTA la tab (i 25 pronti non sono mai stati ordinati nell app; i veri ordinati sono gia su
+Shopify o sono i 14 orfani). Proposta alternativa: nascondere i codici-spazzatura (variante = nome modello,
+Difetto/Charm/Personalizzazione) + KPI cliccabili come filtro. (#3) export PDF dell intera piattaforma:
+da decidere scope (per-pagina vs unico) e metodo (print-to-PDF browser, zero dipendenze).
+
+## SESSION 14 — Pubblica filtrata a ordini fornitore + KPI filtro + export PDF per pagina
+
+Chiusi gli ultimi 2 dei 4 punti del feedback. (#1) Tab **Pubblica** ora mostra SOLO prodotti verificati,
+non su Shopify, **che hanno un ordine fornitore** (gli altri sono seed vecchi/fantasma). Scelta utente:
+filtro letterale + empty-state esplicito ("Niente da pubblicare. Tutti i prodotti ordinati sono gia online")
+— oggi la tab e vuota by design (i 25 pronti non sono mai stati ordinati nell app), si popolera coi nuovi
+ordini. Aggiunti **KPI cliccabili per modello** (.kpichip) che filtrano la lista. (#3) **Export PDF per
+pagina**: nuovo componente PrintBtn (window.print, zero dipendenze) accanto all export CSV su Inventario,
+Ordini, Prodotti, Cruscotto; stylesheet @media print che nasconde nav/subtabs/seg/bottoni e tiene i dati.
+Home/Registra esclusi (form d azione, niente da stampare).
+
+Verificato dal vivo: header con Scarica PDF+Esporta CSV su tutte e 4 le pagine; Pubblica mostra l empty-state.
+tsc+build verdi. Con SESSION 11-13 forma un unico batch NON ancora deployato su gh-pages (in attesa ok utente).
+
+## SESSION 15 — Nav a 4 voci (Prodotti dissolto) + vista Disponibilita stile artifact
+
+Ristrutturazione IA su richiesta utente. (#2) Tolto il tab **Prodotti** dalla bottom-nav: ora 4 voci
+(Home, Registra, Ordini, Magazzino). I suoi strumenti: "Da completare" -> tile **Pulizia dati** in Registra,
+"Pubblica" -> tile **Pubblica su Shopify** in Registra. **Correggi vendita e Diagnostica RIMOSSI dall UI**
+(scelta utente "solo i 2, gli altri rimuovili") — il codice resta in git, riattivabili. Prodotti.tsx ora e un
+modulo che esporta ProdVerify+Publish (niente piu pagina/subtabs); Ingest li renderizza come azioni; tile
+persona in people.tsx ripuntate a registra/pulizia|pubblica, tolta la tile Diagnostica.
+
+(#1) Nuova vista **Disponibilita** (default del tab Magazzino), stile artifact Cowork: 5 KPI (SKU acquistabili,
+Varianti acquistabili, Attivi ma esauriti, In stock non pubblicati, Pubblicati ACTIVE), Linee critiche
+(esauriti + copertura
+## SESSION 15 — Nav a 4 voci (Prodotti dissolto) + vista Disponibilita stile artifact
+
+Ristrutturazione IA su richiesta utente. (#2) Tolto il tab Prodotti dalla bottom-nav: ora 4 voci
+(Home, Registra, Ordini, Magazzino). I suoi strumenti: "Da completare" -> tile Pulizia dati in Registra,
+"Pubblica" -> tile Pubblica su Shopify in Registra. Correggi vendita e Diagnostica RIMOSSI dall'UI
+(scelta utente "solo i 2, gli altri rimuovili") — il codice resta in git, riattivabili. Prodotti.tsx ora e
+un modulo che esporta ProdVerify+Publish (niente piu pagina/subtabs); Ingest li renderizza come azioni;
+tile persona in people.tsx ripuntate a registra/pulizia|pubblica, tolta la tile Diagnostica.
+
+(#1) Nuova vista Disponibilita (default del tab Magazzino), stile artifact Cowork: 5 KPI (SKU acquistabili,
+Varianti acquistabili, Attivi ma esauriti, In stock non pubblicati, Pubblicati ACTIVE), Linee critiche
+(esauriti + copertura), tabella Da riordinare adesso (Prodotto, Venduti 60g, Persi/sett = run-rate
+settimanale per prezzo sui pubblicati a stock 0). I numeri sono i dati PROPRI dell'app (v_inventory/
+v_reorder), diversi dallo snapshot Shopify dell'artifact. "Giorni vuoto" NON incluso: richiede campionamento
+storico dello stock che l'app non ha (scelta utente: senza). Verificato dal vivo: nav 4 voci, 2 tile nuove
+aprono i componenti giusti, KPI/linee/tabella popolati, zero errori console. tsc+build verdi.

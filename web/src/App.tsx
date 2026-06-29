@@ -4,7 +4,6 @@ import Home from './pages/Home';
 import Report from './pages/Report';
 import Ingest from './pages/Ingest';
 import Ordini from './pages/Ordini';
-import Prodotti from './pages/Prodotti';
 import Inventory from './pages/Inventory';
 
 export default function App() {
@@ -24,16 +23,14 @@ export default function App() {
       <main>
         {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} />}
         {tab === 'cruscotto' && <Report onBack={() => go('home')} />}
-        {tab === 'registra' && <Ingest pin={pin} chi={chi} setChi={setChi} initial={param} />}
-        {tab === 'ordini' && <Ordini pin={pin} chi={chi} setChi={setChi} initial={param} />}
-        {tab === 'prodotti' && <Prodotti pin={pin} chi={chi} setChi={setChi} initial={param} />}
+        {tab === 'registra' && <Ingest pin={pin} chi={chi} initial={param} />}
+        {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} />}
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}
       </main>
       <nav className="bottomnav">
         {navBtn('home', '🏠', 'Home')}
         {navBtn('registra', '➕', 'Registra')}
         {navBtn('ordini', '📦', 'Ordini')}
-        {navBtn('prodotti', '🏷️', 'Prodotti')}
         {navBtn('magazzino', '📊', 'Magazzino')}
       </nav>
     </div>

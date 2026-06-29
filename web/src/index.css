@@ -65,6 +65,7 @@ footer { font-size: 12px; margin-top: 18px; }
 .clickrow:active { background: #faf6f4; }
 .clickrow .giac { display: inline-flex; align-items: center; gap: 1px; }
 .clickrow .chev { color: var(--muted); font-weight: 400; font-size: 18px; }
+.hbtns { display: flex; gap: 8px; flex: none; }
 .exp { border: 1px solid var(--line); background: #fff; color: var(--rose); width: 36px; height: 36px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex: none; }
 .exp:active { background: #faf6f4; }
 .exp svg { width: 19px; height: 19px; }
@@ -106,6 +107,10 @@ footer { font-size: 12px; margin-top: 18px; }
 .stepper .num { flex: 1; min-width: 0; text-align: center; }
 .stepbtn { width: 42px; flex: none; border: 1px solid var(--line); background: #fff; border-radius: 10px; font-size: 22px; font-weight: 700; line-height: 1; color: var(--rose); cursor: pointer; }
 .stepbtn:active { background: #faf6f4; }
+/* hide native number spinners where the custom −/+ already exist (avoid duplicate controls on desktop) */
+.stepper .num { -moz-appearance: textfield; appearance: textfield; }
+.stepper .num::-webkit-outer-spin-button,
+.stepper .num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 /* --- #5 elegant toast --- */
 #toast-host { position: fixed; left: 0; right: 0; bottom: 78px; display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 80; pointer-events: none; padding: 0 14px; }
@@ -170,6 +175,8 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 .codicebox.bad { background: #f6e7e3; color: var(--red); }
 
 /* --- inventory filters --- */
+.sech { font-size: 15px; font-weight: 800; margin: 18px 2px 8px; color: var(--dark); }
+.critchip { font-size: 12px; font-weight: 600; color: var(--red); background: rgba(192,83,59,.08); border: 1px solid rgba(192,83,59,.25); padding: 5px 10px; border-radius: 999px; }
 .filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 .fchip { padding: 7px 13px; border-radius: 999px; border: 1px solid var(--line); background: #fff; font-size: 13px; font-weight: 700; color: var(--muted); cursor: pointer; }
 .fchip.on { background: var(--dark); color: #fff; border-color: var(--dark); }
@@ -268,15 +275,32 @@ tr.dim { opacity: .42; }
 .dbox { border: 1px solid var(--line); border-radius: 8px; padding: 6px; font-size: 12px; width: 122px; }
 
 /* ---- Verifica hub ---- */
-.subtabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
-.subtabs button { border: 0; background: none; color: var(--muted); font-weight: 700; font-size: 13.5px; padding: 9px 11px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.subtabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.subtabs::-webkit-scrollbar { display: none; }
+.subtabs button { border: 0; background: none; color: var(--muted); font-weight: 700; font-size: 13.5px; padding: 9px 11px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; flex: 0 0 auto; }
 .subtabs button.on { color: var(--rose); border-bottom-color: var(--rose); }
 .todocard { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; cursor: pointer; margin-bottom: 8px; }
 .todoinfo { flex: 1; min-width: 0; }
 .missrow { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .misschip { font-size: 9.5px; font-weight: 700; color: var(--accent); background: rgba(196,149,106,.12); border: 1px solid rgba(196,149,106,.3); padding: 1px 6px; border-radius: 6px; }
-.hot { font-size: 10px; background: var(--rose); color: #fff; padding: 1px 6px; border-radius: 6px; font-weight: 700; }
+.hot { font-size: 10px; background: var(--rose); color: #fff; padding: 1px 6px; border-radius: 6px; font-weight: 700; margin-left: 6px; }
+.newmod { font-size: 10px; background: var(--accent); color: #fff; padding: 1px 6px; border-radius: 6px; font-weight: 700; margin-left: 6px; }
 .chev { color: var(--muted); font-size: 20px; flex: none; }
+/* grouped todo queue */
+.todogroup { margin-bottom: 18px; }
+.todoghead { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 8px; padding: 0 2px 4px; border: 0; background: none; }
+.todoghead.clk { cursor: pointer; }
+.todogt { font-size: 14px; font-weight: 800; color: var(--rose); }
+.todogt.dim { color: var(--muted); }
+.todogn { font-size: 12px; font-weight: 700; color: var(--muted); }
+.todogsub { font-size: 12px; color: var(--muted); margin: 0 2px 8px; line-height: 1.4; }
+.todocard.dim { opacity: .62; }
+/* KPI filter chips (Pubblica) */
+.kpirow { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+.kpichip { border: 1px solid var(--line); background: #fff; color: var(--muted); font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px; cursor: pointer; }
+.kpichip b { color: var(--dark); margin-left: 3px; }
+.kpichip.on { border-color: var(--rose); color: var(--rose); background: rgba(139,94,107,.07); }
+.kpichip.on b { color: var(--rose); }
 .exprow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; }
 .expinfo { flex: 1; min-width: 0; }
 .expbtns { display: flex; gap: 6px; flex: none; }
@@ -353,3 +377,14 @@ table.sortable thead th:hover { color: var(--rose); }
 .diaginfo { flex: 1; } .diaginfo .dt { font-weight: 600; font-size: 14px; } .diaginfo .ds { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .diagn { font-weight: 700; font-size: 15px; }
 .diagn.ok { color: var(--green); } .diagn.warn { color: var(--accent); } .diagn.bad { color: var(--red); }
+
+/* ---- Print to PDF (browser "Save as PDF") ---- */
+@media print {
+  .bottomnav, .subtabs, .seg, .exp, .back, .bigadd, .syncbtn, .submit, .addnew, #toast-host, .toast { display: none !important; }
+  html, body, #root, .app { background: #fff !important; max-width: none !important; }
+  .screen { padding: 0 !important; }
+  header { margin: 0 0 12px; }
+  * { box-shadow: none !important; }
+  .card, .navcard, .todocard, .row, .alignrow, .diagrow { break-inside: avoid; }
+  a { color: inherit !important; text-decoration: none; }
+}

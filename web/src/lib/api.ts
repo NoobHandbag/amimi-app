@@ -160,16 +160,21 @@ export async function createOrderMulti(fornitore: string, dataOrdine: string, ri
 }
 
 // ---------- FLOW 2: product-detail verification ----------
+export type ProdBucket = 'nuovo' | 'costo_ricavo' | 'pulizia';
 export type ProdTodo = {
   codice: string; item: string | null; variant: string | null; model: string | null; categoria: string | null;
   image_url: string | null; retail_price: number | null; cogs: number | null; description: string | null;
   seo_title: string | null; verificato: boolean; missing_count: number; giacenza: number; venduto: number; on_shopify: boolean;
+  source: string | null; is_new_model: boolean; bucket: ProdBucket; bucket_rank: number;
 };
 export async function fetchProductsTodo(): Promise<ProdTodo[]> {
   const { data, error } = await supabase.from('v_products_todo').select('*');
   if (error) throw new Error(error.message);
+  // bucket first (nuovi da ordine → impatto ricavi/costi → pulizia), then sold-first, then most-missing
   return ((data ?? []) as ProdTodo[]).sort((a, b) =>
-    (b.venduto > 0 ? 1 : 0) - (a.venduto > 0 ? 1 : 0) || b.missing_count - a.missing_count);
+    a.bucket_rank - b.bucket_rank
+    || (b.venduto > 0 ? 1 : 0) - (a.venduto > 0 ? 1 : 0)
+    || b.missing_count - a.missing_count);
 }
 export async function verifyProduct(payload: Record<string, unknown>, pin: string, chi: string) {
   return writeApi('product_verify', payload, pin, chi);
@@ -213,6 +218,30 @@ export async function fetchSalesByCodice(codice: string): Promise<SaleRow[]> {
     out.push({ source: 'qromo', id: r.id, data: r.data, qty: Number(r.quantita), price: r.prezzo, descr: `${r.nome ?? ''} ${r.cognome ?? ''}`.trim() || 'Vendita negozio', ref: 'POS' }));
   (s.data ?? []).forEach((r: { id: string; created_at: string; quantita: number; price: number; lineitem_name: string; order_id: string }) =>
     out.push({ source: 'shopify', id: r.id, data: (r.created_at ?? '').slice(0, 10), qty: Number(r.quantita), price: r.price, descr: cust.get(r.order_id) ?? r.lineitem_name ?? 'Ordine online', ref: '#' + (r.order_id ?? '') }));
+  return out.sort((a, b) => (b.data ?? '').localeCompare(a.data ?? ''));
+}
+// recent sales across both channels, with the product they are CURRENTLY attributed to —
+// lets "Correggi vendita" start from the sale/order instead of the product.
+export type RecentSale = SaleRow & { codice: string; item: string | null; variant: string | null };
+export async function fetchRecentSales(limit = 60): Promise<RecentSale[]> {
+  const [q, s, prods] = await Promise.all([
+    supabase.from('qromo_sales').select('id,codice,data,quantita,prezzo,nome,cognome').order('data', { ascending: false }).limit(limit),
+    supabase.from('shopify_line_items').select('id,codice,created_at,quantita,price,lineitem_name,order_id').order('created_at', { ascending: false }).limit(limit),
+    fetchProducts(),
+  ]);
+  const pm = new Map(prods.map((p) => [p.codice, p]));
+  const oids = [...new Set((s.data ?? []).map((r: { order_id: string }) => r.order_id).filter(Boolean))];
+  const cust = new Map<string, string>();
+  if (oids.length) {
+    const { data: ords } = await supabase.from('shopify_orders').select('order_id, customer_name').in('order_id', oids);
+    (ords ?? []).forEach((o: { order_id: string; customer_name: string | null }) => { if (o.customer_name) cust.set(o.order_id, o.customer_name); });
+  }
+  const lbl = (codice: string) => { const p = pm.get(codice); return { item: p?.item ?? null, variant: p?.variant ?? null }; };
+  const out: RecentSale[] = [];
+  (q.data ?? []).forEach((r: { id: string; codice: string; data: string; quantita: number; prezzo: number; nome: string; cognome: string }) =>
+    out.push({ source: 'qromo', id: r.id, codice: r.codice, ...lbl(r.codice), data: r.data, qty: Number(r.quantita), price: r.prezzo, descr: `${r.nome ?? ''} ${r.cognome ?? ''}`.trim() || 'Vendita negozio', ref: 'POS' }));
+  (s.data ?? []).forEach((r: { id: string; codice: string; created_at: string; quantita: number; price: number; lineitem_name: string; order_id: string }) =>
+    out.push({ source: 'shopify', id: r.id, codice: r.codice, ...lbl(r.codice), data: (r.created_at ?? '').slice(0, 10), qty: Number(r.quantita), price: r.price, descr: cust.get(r.order_id) ?? r.lineitem_name ?? 'Ordine online', ref: '#' + (r.order_id ?? '') }));
   return out.sort((a, b) => (b.data ?? '').localeCompare(a.data ?? ''));
 }
 export async function correctSale(payload: Record<string, unknown>, pin: string, chi: string) {

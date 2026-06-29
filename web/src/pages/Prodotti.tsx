@@ -1,15 +1,11 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import ProductPicker from '../components/ProductPicker';
-import {
-  fetchProductsTodo, verifyProduct, fetchSalesByCodice, correctSale, clearProductCache, fetchProducts,
-} from '../lib/api';
-import type { ProdTodo, SaleRow, Product } from '../lib/api';
+import { fetchProductsTodo, verifyProduct, clearProductCache } from '../lib/api';
+import type { ProdTodo } from '../lib/api';
 import { suggestPrice, marginOf, genSeoTitle } from '../lib/helpers';
-import ExportBtn from '../components/ExportBtn';
 import { toast } from '../lib/toast';
 
-const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
+// "Pulizia dati" (product completion) + "Pubblica su Shopify" — surfaced as buttons in Registra.
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
 
 /* ---------- Da completare (Benedetta) ---------- */
@@ -22,15 +18,17 @@ function ProdEdit({ p, pin, chi, onDone }: { p: ProdTodo; pin: string; chi: stri
   const [descr, setDescr] = useState(p.description ?? '');
   const [seo, setSeo] = useState(p.seo_title ?? '');
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const descrRequired = p.bucket === 'nuovo' && p.is_new_model;
 
   async function save() {
-    if (!item.trim() || !variant.trim()) return setErr('Modello e variante sono obbligatori');
-    setBusy(true); setErr(null);
+    if (!item.trim() || !variant.trim()) return toast('Modello e variante sono obbligatori', 'err');
+    if (descrRequired && !descr.trim()) return toast('È un modello nuovo: la descrizione è obbligatoria', 'err');
+    setBusy(true);
     try {
       await verifyProduct({ codice: p.codice, item, variant, categoria: cat, retail_price: price === '' ? null : Number(price), image_url: img, description: descr, seo_title: seo }, pin, chi);
+      toast(`${item} ${variant} verificato`, 'ok');
       clearProductCache(); onDone();
-    } catch (e) { setErr((e as Error).message); setBusy(false); }
+    } catch (e) { toast((e as Error).message, 'err'); setBusy(false); }
   }
   return (
     <div className="form">
@@ -49,111 +47,129 @@ function ProdEdit({ p, pin, chi, onDone }: { p: ProdTodo; pin: string; chi: stri
         <button type="button" className="hintchip" onClick={() => setPrice(String(sug))}>
           💡 Prezzo consigliato €{sug.toFixed(2)} · margine {Math.round(marginOf(sug, p.cogs!) * 100)}% (COGS €{p.cogs})
         </button>); })() : null}
-      <label className="fl">Descrizione</label>
-      <input className="txt" value={descr} onChange={(e) => setDescr(e.target.value)} placeholder="—" />
+      <label className="fl">Descrizione{descrRequired ? ' * (modello nuovo)' : ''}</label>
+      <input className="txt" value={descr} onChange={(e) => setDescr(e.target.value)} placeholder={descrRequired ? 'Obbligatoria per un modello nuovo' : '—'} />
       <div className="lblrow"><label className="fl">SEO title</label>
         <button type="button" className="minibtn" onClick={() => setSeo(genSeoTitle(item, variant))} disabled={!item || !variant}>genera</button></div>
       <input className="txt" value={seo} onChange={(e) => setSeo(e.target.value)} placeholder="Borsa … AMIMI … Made in Italy" />
       {seo && <div className="charcount">{seo.length} caratteri{seo.length >= 60 && seo.length <= 70 ? ' ✓' : ' (target 60–70)'}</div>}
       <button className="submit" disabled={busy} onClick={save}>{busy ? 'Salvo…' : '✓ Verifica e salva'}</button>
-      {err && <div className="msg err">{err}</div>}
     </div>
   );
 }
 
-function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
+const TODO_GROUPS: { key: 'nuovo' | 'costo_ricavo'; title: string; sub: string }[] = [
+  { key: 'nuovo', title: 'Nuovi da arricchire', sub: 'Appena ordinati. Completa variante, prezzo e immagine — se è un modello nuovo serve anche la descrizione.' },
+  { key: 'costo_ricavo', title: 'Impatto su ricavi e costi', sub: 'Manca prezzo o COGS: blocca margine e P&L. Da sistemare.' },
+];
+
+export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
   const [list, setList] = useState<ProdTodo[]>([]);
   const [edit, setEdit] = useState<ProdTodo | null>(null);
+  const [showClean, setShowClean] = useState(false);
   const load = () => fetchProductsTodo().then(setList).catch(() => {});
   useEffect(() => { load(); }, []);
   if (edit) return <ProdEdit p={edit} pin={pin} chi={chi} onDone={() => { setEdit(null); load(); }} />;
   if (!list.length) return <div className="card muted center">Tutti i prodotti sono verificati. 🎉</div>;
+
   const miss = (p: ProdTodo) => [
     !p.item && 'MODELLO', !p.variant && 'VARIANTE', !p.image_url && 'IMG',
     (!p.retail_price && 'PREZZO'), !p.description && 'DESCR',
   ].filter(Boolean) as string[];
+
+  const card = (p: ProdTodo, dim = false) => (
+    <button key={p.codice} className={`todocard${dim ? ' dim' : ''}`} onClick={() => setEdit(p)}>
+      <div className="invimg sm">{p.image_url ? <img src={p.image_url} alt="" /> : <span>{(p.item ?? p.codice).slice(0, 2)}</span>}</div>
+      <div className="todoinfo">
+        <div className="rt">{[p.item, p.variant].filter(Boolean).join(' ') || p.codice}
+          {p.bucket === 'nuovo' && p.is_new_model && <span className="newmod">nuovo modello</span>}
+          {p.venduto > 0 && <span className="hot">venduto {p.venduto}×</span>}
+        </div>
+        <div className="missrow">{miss(p).map((m) => <span key={m} className="misschip">{m}</span>)}</div>
+      </div>
+      <span className="chev">›</span>
+    </button>
+  );
+
+  const groups = TODO_GROUPS.map((g) => ({ ...g, items: list.filter((p) => p.bucket === g.key) }));
+  const clean = list.filter((p) => p.bucket === 'pulizia');
+  const actionable = groups.reduce((n, g) => n + g.items.length, 0);
+
   return (
     <div className="list">
-      <p className="note">{list.length} prodotti da completare. In alto quelli che già vendono.</p>
-      {list.map((p) => (
-        <button key={p.codice} className="todocard" onClick={() => setEdit(p)}>
-          <div className="invimg sm">{p.image_url ? <img src={p.image_url} alt="" /> : <span>{(p.item ?? p.codice).slice(0, 2)}</span>}</div>
-          <div className="todoinfo">
-            <div className="rt">{[p.item, p.variant].filter(Boolean).join(' ') || p.codice} {p.venduto > 0 && <span className="hot">venduto {p.venduto}×</span>}</div>
-            <div className="missrow">{miss(p).map((m) => <span key={m} className="misschip">{m}</span>)}</div>
-          </div>
-          <span className="chev">›</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/* ---------- Correggi vendita (sale → product) ---------- */
-function SaleCorrect({ pin, chi }: { pin: string; chi: string }) {
-  const [orig, setOrig] = useState<Product | null>(null);
-  const [sales, setSales] = useState<SaleRow[]>([]);
-  const [sale, setSale] = useState<SaleRow | null>(null);
-  const [target, setTarget] = useState<Product | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => { if (orig) fetchSalesByCodice(orig.codice).then(setSales).catch(() => setSales([])); }, [orig]);
-
-  async function apply() {
-    if (!sale || !target) return;
-    setBusy(true);
-    try {
-      await correctSale({ source: sale.source, id: sale.id, new_codice: target.codice, new_item: target.item, new_variant: target.variant }, pin, chi);
-      toast(`Vendita riassegnata a ${target.codice}. Magazzino aggiornato.`, 'ok');
-      setSale(null); setTarget(null); setOrig(null); setSales([]);
-    } catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(false); }
-  }
-
-  if (!orig) return (<div><p className="note">Quale prodotto era stato segnato per errore? Scegli l’originale, poi la vendita.</p><ProductPicker selected={null} onPick={setOrig} /></div>);
-  if (!sale) return (
-    <div>
-      <button className="back" onClick={() => setOrig(null)}>← {orig.item ?? orig.codice}</button>
-      {!sales.length ? <div className="card muted center">Nessuna vendita trovata per {orig.codice}.</div> : (
-        <div className="list">{sales.map((s) => (
-          <button key={s.source + s.id} className="salerow" onClick={() => setSale(s)}>
-            <div><div className="rt">{s.descr}</div><div className="rs">{s.source === 'qromo' ? 'Negozio' : 'Online'} · {s.data ?? ''} · {s.qty}× {s.price != null ? eur(s.price) : ''}</div></div>
-            <span className="chev">›</span>
-          </button>
-        ))}</div>
+      {actionable === 0 && (
+        <p className="note">Nessun prodotto nuovo o con buchi su prezzo/COGS. Sotto resta solo la pulizia anagrafica, facoltativa.</p>
       )}
-    </div>
-  );
-  return (
-    <div>
-      <button className="back" onClick={() => setSale(null)}>← vendita {sale.data}</button>
-      <p className="note">Era <b>{orig.item ?? orig.codice}</b>. Qual era il prodotto reale?</p>
-      <ProductPicker selected={target} onPick={setTarget} />
-      {target && <button className="submit" disabled={busy} onClick={apply}>{busy ? '…' : `Riassegna a ${target.item ?? target.codice}`}</button>}
+      {groups.map((g) => g.items.length ? (
+        <section key={g.key} className="todogroup">
+          <div className="todoghead"><span className="todogt">{g.title}</span><span className="todogn">{g.items.length}</span></div>
+          <p className="todogsub">{g.sub}</p>
+          {g.items.map((p) => card(p))}
+        </section>
+      ) : null)}
+      {clean.length ? (
+        <section className="todogroup">
+          <button type="button" className="todoghead clk" onClick={() => setShowClean((v) => !v)}>
+            <span className="todogt dim">Pulizia anagrafica (facoltativa)</span>
+            <span className="todogn">{clean.length} {showClean ? '▲' : '▼'}</span>
+          </button>
+          {showClean && (
+            <>
+              <p className="todogsub">Prezzo e COGS già presenti. Manca solo immagine, descrizione o modello/variante. Completa quando hai tempo.</p>
+              {clean.map((p) => card(p, true))}
+            </>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }
 
-/* ---------- Pubblica (gated) ---------- */
-function Publish() {
-  const [ready, setReady] = useState<{ codice: string; item: string | null; variant: string | null }[] | null>(null);
+/* ---------- Pubblica su Shopify (gated) ---------- */
+type ReadyP = { codice: string; item: string | null; variant: string | null };
+export function Publish() {
+  const [ready, setReady] = useState<ReadyP[] | null>(null);
+  const [filt, setFilt] = useState<string | null>(null);
   useEffect(() => {
     (async () => {
-      const inv = await supabase.from('v_inventory').select('codice,on_shopify');
+      const [inv, ord, pr] = await Promise.all([
+        supabase.from('v_inventory').select('codice,on_shopify'),
+        supabase.from('supplier_orders').select('codice'),
+        supabase.from('products').select('codice,item,variant,verificato').eq('verificato', true),
+      ]);
       const onShop = new Set((inv.data ?? []).filter((r: { on_shopify: boolean }) => r.on_shopify).map((r: { codice: string }) => r.codice));
-      const pr = await supabase.from('products').select('codice,item,variant,verificato').eq('verificato', true);
-      setReady((pr.data ?? []).filter((p: { codice: string }) => !onShop.has(p.codice)).slice(0, 60));
+      const ordered = new Set((ord.data ?? []).map((r: { codice: string }) => r.codice));
+      // only products that have actually been on a supplier order (the rest is old seed junk)
+      setReady((pr.data ?? []).filter((p: { codice: string }) => !onShop.has(p.codice) && ordered.has(p.codice)) as ReadyP[]);
     })();
   }, []);
+
+  // KPI chips per modello (clickable filter)
+  const byModel = (() => {
+    const m = new Map<string, number>();
+    (ready ?? []).forEach((p) => { const k = p.item ?? p.codice; m.set(k, (m.get(k) ?? 0) + 1); });
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  })();
+  const shown = filt ? (ready ?? []).filter((p) => (p.item ?? p.codice) === filt) : (ready ?? []);
+
   return (
     <div>
       <div className="card warn">
         <b>Pubblicazione live disattivata.</b> Quando un prodotto è verificato e pronto, si pubblica su Shopify + Qromo da qui.
         La scrittura su Shopify è dietro un interruttore lato server (<code>shopify_write_enabled</code>), ancora spento per sicurezza.
       </div>
-      {ready == null ? <p className="muted center">…</p> : !ready.length ? <div className="card muted center">Nessun prodotto verificato in attesa di pubblicazione.</div> : (
+      {ready == null ? <p className="muted center">…</p> : !ready.length ? (
+        <div className="card muted center">Niente da pubblicare. Tutti i prodotti ordinati sono già online. 🎉</div>
+      ) : (
         <div className="list">
-          <p className="note">{ready.length} prodotti verificati non ancora su Shopify.</p>
-          {ready.map((p) => (
+          <p className="note">{ready.length} prodotti (da ordine fornitore) non ancora su Shopify.</p>
+          <div className="kpirow">
+            <button className={`kpichip ${filt == null ? 'on' : ''}`} onClick={() => setFilt(null)}>Tutti <b>{ready.length}</b></button>
+            {byModel.map(([k, n]) => (
+              <button key={k} className={`kpichip ${filt === k ? 'on' : ''}`} onClick={() => setFilt(filt === k ? null : k)}>{k} <b>{n}</b></button>
+            ))}
+          </div>
+          {shown.map((p) => (
             <div className="row" key={p.codice}>
               <div><div className="rt">{p.item ?? p.codice}</div><div className="rs">{p.variant ?? ''}</div></div>
               <button className="chip" disabled title="abilitazione lato server richiesta">pubblica</button>
@@ -165,52 +181,3 @@ function Publish() {
   );
 }
 
-/* ---------- Diagnostica (health-check) ---------- */
-type Health = { k: string; label: string; n: number; severity: 'ok' | 'warn' | 'bad' };
-function HealthCheck() {
-  const [rows, setRows] = useState<Health[] | null>(null);
-  const load = () => supabase.from('v_health').select('*').then(({ data }) => setRows((data ?? []) as Health[]));
-  useEffect(() => { load(); }, []);
-  if (rows == null) return <p className="muted center">Carico…</p>;
-  const order = { bad: 0, warn: 1, ok: 2 } as Record<string, number>;
-  const sorted = [...rows].sort((a, b) => order[a.severity] - order[b.severity] || b.n - a.n);
-  const bad = rows.filter((r) => r.severity === 'bad' && r.n > 0).length;
-  return (
-    <div>
-      <div className={`card ${bad ? 'warn' : ''}`} style={{ textAlign: 'center' }}>
-        {bad ? <b>{bad} controlli da sistemare</b> : <b>✓ Nessun problema critico</b>}
-        <div className="note" style={{ marginTop: 4 }}>Controlli automatici sulla qualità dei dati. Aggiornati ad ogni apertura.</div>
-      </div>
-      <div className="card"><div className="list">
-        {sorted.map((r) => (
-          <div className="diagrow" key={r.k}>
-            <span className={`diagdot ${r.severity}`} />
-            <div className="diaginfo"><div className="dt">{r.label}</div></div>
-            <div className={`diagn ${r.severity}`}>{r.severity === 'ok' ? '✓' : r.n}</div>
-          </div>
-        ))}
-      </div></div>
-      <button className="syncbtn" onClick={load}>🔄 Ricontrolla</button>
-    </div>
-  );
-}
-
-const SUBS: [string, string][] = [['prod', 'Da completare'], ['pubblica', 'Pubblica'], ['vendite', 'Correggi vendita'], ['diag', 'Diagnostica']];
-
-export default function Prodotti({ pin, chi, initial }: { pin: string; chi: string; setChi: (c: string) => void; initial?: string }) {
-  const [sub, setSub] = useState<string>(initial && SUBS.some(([k]) => k === initial) ? initial : 'prod');
-  const [cat, setCat] = useState<Product[]>([]);
-  useEffect(() => { fetchProducts().then(setCat).catch(() => {}); }, []);
-  return (
-    <div className="screen">
-      <header><h1>Prodotti</h1><ExportBtn name="prodotti" rows={() => cat.map((p) => ({ codice: p.codice, modello: p.item, variante: p.variant, categoria: p.categoria, prezzo: p.retail_price, cogs: p.cogs }))} /></header>
-      <div className="subtabs">
-        {SUBS.map(([k, l]) => <button key={k} className={sub === k ? 'on' : ''} onClick={() => setSub(k)}>{l}</button>)}
-      </div>
-      {sub === 'prod' && <ProdVerify pin={pin} chi={chi} />}
-      {sub === 'pubblica' && <Publish />}
-      {sub === 'vendite' && <SaleCorrect pin={pin} chi={chi} />}
-      {sub === 'diag' && <HealthCheck />}
-    </div>
-  );
-}

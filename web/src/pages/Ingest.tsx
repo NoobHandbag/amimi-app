@@ -6,6 +6,7 @@ import B2BForm from '../components/B2BForm';
 import ReturnForm from '../components/ReturnForm';
 import SpeseManage from '../components/SpeseManage';
 import RecentFeed from '../components/RecentFeed';
+import { ProdVerify, Publish } from './Prodotti';
 
 // Same actions for everyone (only the Home is persona-personalized). "Arrivo/Acquisto" lives in Ordini.
 const TIPI = [
@@ -15,10 +16,12 @@ const TIPI = [
   { k: 'b2b', icon: '🏬', label: 'Movimento B2B', desc: 'Conto vendita / wholesale' },
   { k: 'product', icon: '🏷️', label: 'Nuovo prodotto', desc: 'Anagrafica nuovo articolo' },
   { k: 'spesa', icon: '💶', label: 'Spese', desc: 'Proponi e approva spese' },
+  { k: 'pulizia', icon: '🧹', label: 'Pulizia dati', desc: 'Completa anagrafiche prodotto (modello, prezzo, foto)' },
+  { k: 'pubblica', icon: '🚀', label: 'Pubblica su Shopify', desc: 'Metti online i prodotti pronti' },
 ];
 
 export default function Ingest({ pin, chi, initial }: {
-  pin: string; chi: string; setChi: (c: string) => void; initial?: string;
+  pin: string; chi: string; initial?: string;
 }) {
   const [sel, setSel] = useState<string | null>(initial ? initial.split(':')[0] : null);
   const [arg] = useState<string | undefined>(initial && initial.includes(':') ? initial.slice(initial.indexOf(':') + 1) : undefined);
@@ -50,6 +53,8 @@ export default function Ingest({ pin, chi, initial }: {
           {sel === 'b2b' && <B2BForm pin={pin} chi={chi} initialNegozio={arg} />}
           {sel === 'reso' && <ReturnForm pin={pin} chi={chi} />}
           {sel === 'spesa' && <SpeseManage pin={pin} chi={chi} />}
+          {sel === 'pulizia' && <ProdVerify pin={pin} chi={chi} />}
+          {sel === 'pubblica' && <Publish />}
         </>
       )}
     </div>
