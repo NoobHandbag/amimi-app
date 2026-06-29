@@ -264,3 +264,18 @@ export async function fetchAdsMensile(): Promise<AdsMese[]> {
   if (error) throw new Error(error.message);
   return (data ?? []) as AdsMese[];
 }
+
+// ---------- product detail drawer: live Shopify qty per codice + purchase history ----------
+const cnorm = (s: string) => (s || '').toUpperCase().replace(/\s+/g, '_');
+export async function fetchShopStockMap(): Promise<Map<string, number>> {
+  const { data } = await supabase.from('shopify_stock').select('codice, shopify_qty');
+  const m = new Map<string, number>();
+  (data ?? []).forEach((r: { codice: string; shopify_qty: number }) => m.set(cnorm(r.codice), Number(r.shopify_qty)));
+  return m;
+}
+export type PurchaseRow = { id: string; data: string | null; quantita: number; costo_unitario: number | null; fornitore: string | null };
+export async function fetchPurchasesByCodice(codice: string): Promise<PurchaseRow[]> {
+  const { data } = await supabase.from('purchases').select('id,data,quantita,costo_unitario,fornitore')
+    .eq('codice_norm', cnorm(codice)).order('data', { ascending: false }).limit(60);
+  return (data ?? []) as PurchaseRow[];
+}

@@ -3,6 +3,7 @@ import SupplierOrderForm from '../components/SupplierOrderForm';
 import { fetchOrdiniGruppi, writeApi, oggi } from '../lib/api';
 import type { OrdGruppo, OrdLine } from '../lib/api';
 import { PersonaPicker } from '../lib/people';
+import { exportCSV } from '../lib/csv';
 
 /* register an arrival against one order line */
 function ArrivoRow({ l, pin, chi, reload }: { l: OrdLine; pin: string; chi: string; reload: () => void }) {
@@ -103,7 +104,7 @@ export default function Ordini({ pin, chi, setChi, initial }: { pin: string; chi
 
   return (
     <div className="screen">
-      <header><h1>Ordini</h1><PersonaPicker chi={chi} setChi={setChi} /></header>
+      <header><h1>Ordini</h1><div className="operbar"><button className="exp" type="button" onClick={() => exportCSV('ordini', grp.flatMap((g) => g.righe).map((l) => ({ fornitore: l.fornitore, codice: l.codice, modello: l.item, variante: l.variant, ordinati: l.qty_ordered, arrivati: l.qty_arrived, mancano: l.mancano, completo: l.completo ? 'si' : 'no', data_ordine: l.data_ordine, data_consegna: l.data_consegna, costo_unitario: l.costo_unitario, tipo: l.nuovo_riordino })))}>⬇ Esporta</button><PersonaPicker chi={chi} setChi={setChi} /></div></header>
       <button className="bigadd" onClick={() => setAdding(true)}>+ Nuovo ordine fornitore</button>
       {byForn.length === 0 && <div className="card muted center">Nessun ordine. Tocca “+ Nuovo ordine fornitore”.</div>}
       {byForn.map((s) => (

@@ -58,6 +58,22 @@ footer { font-size: 12px; margin-top: 18px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
 .seg button { border: 0; background: #fff; color: var(--muted); font-weight: 700; font-size: 13px; padding: 6px 12px; cursor: pointer; }
 .seg button.on { background: var(--rose); color: #fff; }
+
+/* --- #4 product drawer + clickable rows + export button --- */
+.clickrow { width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; font: inherit; color: inherit; padding: 9px 2px; display: flex; align-items: center; justify-content: space-between; }
+.clickrow:last-child { border-bottom: none; }
+.clickrow:active { background: #faf6f4; }
+.clickrow .giac { display: inline-flex; align-items: center; gap: 1px; }
+.clickrow .chev { color: var(--muted); font-weight: 400; font-size: 18px; }
+.exp { border: 1px solid var(--line); background: #fff; color: var(--rose); font-weight: 700; font-size: 12px; padding: 6px 11px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+.exp:active { background: #faf6f4; }
+.drawerwrap { position: fixed; inset: 0; background: rgba(45,34,38,.45); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
+.drawer { background: var(--bg); width: 100%; max-width: 760px; max-height: 88svh; overflow-y: auto; border-radius: 18px 18px 0 0; padding: 16px 14px 30px; box-shadow: 0 -4px 24px rgba(0,0,0,.18); }
+.drawerhead { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; }
+.drawerhead .grow { flex: 1; min-width: 0; }
+.drawerhead .rs { word-break: break-word; }
+.drawerx { border: 1px solid var(--line); background: #fff; width: 32px; height: 32px; border-radius: 50%; font-size: 15px; cursor: pointer; color: var(--muted); flex-shrink: 0; }
+.drawer .kpis { grid-template-columns: 1fr 1fr 1fr; }
 .seg.wrap { flex-wrap: wrap; border: 0; gap: 6px; }
 .seg.wrap button { border: 1px solid var(--line); border-radius: 999px; }
 .pinmini { width: 76px; border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font-size: 14px; }

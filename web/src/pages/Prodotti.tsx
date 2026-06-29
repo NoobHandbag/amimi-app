@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import ProductPicker from '../components/ProductPicker';
 import {
-  fetchProductsTodo, verifyProduct, fetchSalesByCodice, correctSale, clearProductCache,
+  fetchProductsTodo, verifyProduct, fetchSalesByCodice, correctSale, clearProductCache, fetchProducts,
 } from '../lib/api';
 import type { ProdTodo, SaleRow, Product } from '../lib/api';
 import { suggestPrice, marginOf, genSeoTitle } from '../lib/helpers';
 import { PersonaPicker } from '../lib/people';
+import { exportCSV } from '../lib/csv';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
@@ -201,9 +202,11 @@ const SUBS: [string, string][] = [['prod', 'Da completare'], ['pubblica', 'Pubbl
 
 export default function Prodotti({ pin, chi, setChi, initial }: { pin: string; chi: string; setChi: (c: string) => void; initial?: string }) {
   const [sub, setSub] = useState<string>(initial && SUBS.some(([k]) => k === initial) ? initial : 'prod');
+  const [cat, setCat] = useState<Product[]>([]);
+  useEffect(() => { fetchProducts().then(setCat).catch(() => {}); }, []);
   return (
     <div className="screen">
-      <header><h1>Prodotti</h1><PersonaPicker chi={chi} setChi={setChi} /></header>
+      <header><h1>Prodotti</h1><div className="operbar"><button className="exp" type="button" onClick={() => exportCSV('prodotti', cat.map((p) => ({ codice: p.codice, modello: p.item, variante: p.variant, categoria: p.categoria, prezzo: p.retail_price, cogs: p.cogs })))}>⬇ Esporta</button><PersonaPicker chi={chi} setChi={setChi} /></div></header>
       <div className="subtabs">
         {SUBS.map(([k, l]) => <button key={k} className={sub === k ? 'on' : ''} onClick={() => setSub(k)}>{l}</button>)}
       </div>

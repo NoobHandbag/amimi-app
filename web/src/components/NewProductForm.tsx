@@ -52,7 +52,7 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
         <input className="txt" value={model} onChange={(e) => setModel(e.target.value)} placeholder="es. Lea Bag" autoFocus />
       ) : (
         <div className="supgrid">
-          {models.slice(0, 14).map((m) => (
+          {models.map((m) => (
             <button key={m} type="button" className={`supcard ${model === m ? 'on' : ''}`} onClick={() => setModel(m)}>{m}</button>
           ))}
           <button type="button" className="supcard alt" onClick={() => { setTypingModel(true); setModel(''); }}>+ nuovo</button>

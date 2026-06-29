@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchInventory, fetchContoVendita, fetchShopifyAlign, syncShopifyStock, realignShopify, fetchReorder, fetchSkuAvailability } from '../lib/api';
-import type { InvFull, CV, ShopAlign, Reorder, SkuAvail } from '../lib/api';
+import { fetchInventory, fetchContoVendita, fetchShopifyAlign, syncShopifyStock, realignShopify, fetchReorder, fetchSkuAvailability, fetchShopStockMap, fetchSalesByCodice, fetchPurchasesByCodice } from '../lib/api';
+import type { InvFull, CV, ShopAlign, Reorder, SkuAvail, SaleRow, PurchaseRow } from '../lib/api';
 import { useSort } from '../lib/sortable';
+import { exportCSV } from '../lib/csv';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const daysSince = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : Infinity);
@@ -9,6 +10,50 @@ const FILTERS: [string, string][] = [['attivi', 'Attivi'], ['riordino', 'Da rior
 
 function Tile({ url, label }: { url: string | null; label: string }) {
   return url ? <img className="invimg" src={url} alt="" loading="lazy" /> : <div className="invimg ph">{label.slice(0, 2)}</div>;
+}
+
+/* ---------- #4: product detail drawer — 3 stocks + sales/purchase history ---------- */
+function ProductDrawer({ p, shopQty, onClose }: { p: InvFull; shopQty: number | null; onClose: () => void }) {
+  const [sales, setSales] = useState<SaleRow[] | null>(null);
+  const [purch, setPurch] = useState<PurchaseRow[] | null>(null);
+  useEffect(() => {
+    fetchSalesByCodice(p.codice).then(setSales).catch(() => setSales([]));
+    fetchPurchasesByCodice(p.codice).then(setPurch).catch(() => setPurch([]));
+  }, [p.codice]);
+  return (
+    <div className="drawerwrap" onClick={onClose}>
+      <div className="drawer" onClick={(e) => e.stopPropagation()}>
+        <div className="drawerhead">
+          <Tile url={p.image_url} label={p.item ?? p.codice} />
+          <div className="grow"><div className="rt">{p.item ?? p.codice}</div><div className="rs">{p.variant ?? ''} · {p.codice}</div></div>
+          <button className="drawerx" onClick={onClose} type="button">✕</button>
+        </div>
+        <div className="kpis">
+          <div className={`kpi ${p.giacenza_attuale < 0 ? 'red' : 'accent'}`}><div className="v">{p.giacenza_attuale}</div><div className="k">Magazzino</div></div>
+          <div className="kpi"><div className="v">{p.in_conto_vendita}</div><div className="k">In conto vendita</div></div>
+          <div className="kpi"><div className="v">{p.on_shopify ? (shopQty ?? '—') : '—'}</div><div className="k">Su Shopify</div></div>
+        </div>
+        <section className="card"><h2>Acquisti{purch ? ` · ${purch.reduce((s, a) => s + Number(a.quantita), 0)} pz` : ''}</h2>
+          {purch == null ? <p className="muted center">…</p> : !purch.length ? <p className="muted center">Nessun acquisto registrato.</p> : (
+            <div className="list">{purch.map((a) => (
+              <div className="row" key={a.id}><div><div className="rt">{a.fornitore ?? '—'}</div>
+                <div className="rs">{a.data ?? ''}{a.costo_unitario != null ? ` · €${a.costo_unitario}/pz` : ''}</div></div>
+                <div className="giac">+{a.quantita}</div></div>
+            ))}</div>
+          )}
+        </section>
+        <section className="card"><h2>Vendite{sales ? ` · ${sales.reduce((s, v) => s + Number(v.qty), 0)} pz` : ''}</h2>
+          {sales == null ? <p className="muted center">…</p> : !sales.length ? <p className="muted center">Nessuna vendita.</p> : (
+            <div className="list">{sales.map((s) => (
+              <div className="row" key={s.source + s.id}><div><div className="rt">{s.source === 'qromo' ? '🏬 Negozio' : '🌐 Online'} · {s.descr}</div>
+                <div className="rs">{s.data ?? ''}{s.price != null ? ` · ${eur(s.price)}` : ''}</div></div>
+                <div className="giac neg">−{s.qty}</div></div>
+            ))}</div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
 }
 
 /* ---------- THIRD FLOW: Shopify alignment ---------- */
@@ -195,10 +240,14 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
   const [q, setQ] = useState('');
   const [f, setF] = useState('attivi');
   const [err, setErr] = useState<string | null>(null);
+  const [sel, setSel] = useState<InvFull | null>(null);
+  const [shopMap, setShopMap] = useState<Map<string, number>>(new Map());
+  const shopQ = (p: InvFull) => shopMap.get(p.codice.toUpperCase().replace(/\s+/g, '_')) ?? null;
 
   useEffect(() => {
     fetchInventory().then(setInv).catch((e) => setErr(e.message));
     fetchContoVendita().then(setCv).catch(() => {});
+    fetchShopStockMap().then(setShopMap).catch(() => {});
   }, []);
 
   const alive = useMemo(() => inv.filter((p) => p.giacenza_attuale > 0 || daysSince(p.last_sale) <= 60), [inv]);
@@ -233,6 +282,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
           <button className={view === 'shop' ? 'on' : ''} onClick={() => setView('shop')}>Shopify</button>
           <button className={view === 'valore' ? 'on' : ''} onClick={() => setView('valore')}>Valore</button>
         </div>
+        <button className="exp" type="button" onClick={() => exportCSV('inventario', inv.map((p) => ({ codice: p.codice, modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, disponibili: p.disponibili_da_vendere, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore })))}>⬇ Esporta</button>
       </header>
 
       {view === 'mag' && (
@@ -248,22 +298,21 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
           <div className="card">
             <div className="list">
               {list.map((p) => (
-                <div className="row" key={p.codice}>
+                <button className="row clickrow" type="button" key={p.codice} onClick={() => setSel(p)}>
                   <div className="invleft">
                     <Tile url={p.image_url} label={p.item ?? p.codice} />
                     <div>
                       <div className="rt">{p.item ?? p.codice}</div>
                       <div className="rs">{p.variant ?? ''}</div>
                       <div className="invtags">
-                        {p.on_shopify
-                          ? <span className="tag live">● Shopify · {Math.max(0, p.disponibili_da_vendere)} disp.</span>
-                          : <span className="tag off">non online</span>}
-                        {p.in_conto_vendita > 0 && <span className="tag cv">{p.in_conto_vendita} in negozio</span>}
+                        <span className="tag">🏬 {p.giacenza_attuale} mag.</span>
+                        {p.in_conto_vendita > 0 && <span className="tag cv">🛍 {p.in_conto_vendita} conto</span>}
+                        {p.on_shopify ? <span className="tag live">● Shopify {shopQ(p) ?? '—'}</span> : <span className="tag off">non online</span>}
                       </div>
                     </div>
                   </div>
-                  <div className={`giac ${p.giacenza_attuale <= 0 ? 'neg' : ''}`}>{p.giacenza_attuale}</div>
-                </div>
+                  <div className={`giac ${p.giacenza_attuale <= 0 ? 'neg' : ''}`}>{p.giacenza_attuale}<span className="chev">›</span></div>
+                </button>
               ))}
               {!list.length && <p className="muted center">Nessun prodotto.</p>}
             </div>
@@ -310,6 +359,8 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
       {view === 'riordino' && <ReorderView />}
       {view === 'disp' && <DispView />}
       {view === 'valore' && <ValoreView inv={inv} />}
+
+      {sel && <ProductDrawer p={sel} shopQty={shopQ(sel)} onClose={() => setSel(null)} />}
     </div>
   );
 }
