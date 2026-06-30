@@ -464,3 +464,12 @@ quella tabella. Aggiunta icona "table" a Icon.tsx. Verificato dal vivo: tutte 10
 anon (44/100/100/100/100/17/2/100/100/2 righe), zero errori, deep-link dal flusso regalo ok. tsc+build verdi.
 Nota: la lista mostra i nomi cliente (default "mostra"); mascherabili su richiesta. Si appoggia all'accesso
 anon gia ampio (vedi nota sicurezza anon key, non aggiunge esposizione ma la rende piu visibile).
+
+## SESSION 18 — CE legge i resi Qromo + test reso/conta dal vivo
+
+Test end-to-end dal browser (conta rialzo/ribasso, reso qromo, reso shopify) su Nina_Bag_STRIPES_PETROL_BLUE, verificato in DB.
+
+- **Scoperte:** (1) le **conte NON cambiano la giacenza** — `v_inventory` non referenzia la tabella `counts` e non c'e' nessun trigger: una conta scrive solo una riga "da verificare". (2) I **resi dell'app NON toccavano il CE**: `v_ce_amimi.resi = -shopify_orders.refund_amount`; la tabella `returns` alimentava solo lo stock (`v_inventory`) e `v_resi_mensile`.
+- **FIX (migration 0026_ce_resi_qromo):** `v_ce_amimi.resi = -(shopify refund + returns canale='qromo')`. Esclusi i resi `canale='online'` per non duplicare i refund Shopify gia' nel CE. Verificato: giugno resi -220 -> **-265** (220 shopify + 45 qromo di test), MC1/MC2 -45. **Nota IVA:** importo gross come il refund Shopify (eventuale /1.22 in follow-up). **Nota COGS:** il reso non ri-aggiunge il COGS (coerente col leg Shopify esistente).
+- **Aperto:** la conta-come-rettifica della giacenza (richiesta "gravissima"): inviate 2 proposte, non ancora implementata.
+- **Dati di test lasciati nel DB (da riallineare dal Master):** Nina_Bag_STRIPES_PETROL_BLUE giac 24->26, 2 righe `counts` (inerti), 2 righe `returns` (qromo 45 + online 50).
