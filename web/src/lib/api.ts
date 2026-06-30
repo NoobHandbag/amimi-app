@@ -46,6 +46,12 @@ export async function fetchGiacenze(): Promise<Map<string, number>> {
   return m;
 }
 
+/** Live giacenza for ONE product — used by the count form so an immediate re-count is never stale. */
+export async function fetchGiacenzaOne(codice: string): Promise<number> {
+  const { data } = await supabase.from('v_inventory').select('giacenza_attuale').eq('codice', codice).maybeSingle();
+  return data ? Number((data as { giacenza_attuale: number }).giacenza_attuale) : 0;
+}
+
 export type InvFull = {
   codice: string; item: string | null; variant: string | null; categoria: string | null;
   giacenza_attuale: number; in_conto_vendita: number; disponibili_da_vendere: number;

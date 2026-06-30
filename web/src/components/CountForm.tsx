@@ -1,26 +1,37 @@
 import { useEffect, useState } from 'react';
 import ProductPicker from './ProductPicker';
 import NumberStepper from './NumberStepper';
-import { writeApi, fetchGiacenze, oggi } from '../lib/api';
+import { writeApi, fetchGiacenzaOne, oggi } from '../lib/api';
 import type { Product } from '../lib/api';
 import { toast } from '../lib/toast';
 
 export default function CountForm({ pin, chi }: { pin: string; chi: string }) {
   const [prod, setProd] = useState<Product | null>(null);
-  const [giac, setGiac] = useState<Map<string, number>>(new Map());
+  const [sys, setSys] = useState<number | null>(null);
+  const [loadingSys, setLoadingSys] = useState(false);
   const [contati, setContati] = useState('');
   const [nota, setNota] = useState('');
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { fetchGiacenze().then(setGiac); }, []);
+  // Read the selected product's LIVE giacenza on every selection, so an immediate re-count of the
+  // same product is never stale (the server recomputes too, this just keeps the shown number honest).
+  useEffect(() => {
+    if (!prod) { setSys(null); return; }
+    let alive = true;
+    setSys(null); setLoadingSys(true);
+    fetchGiacenzaOne(prod.codice)
+      .then((g) => { if (alive) setSys(g); })
+      .finally(() => { if (alive) setLoadingSys(false); });
+    return () => { alive = false; };
+  }, [prod]);
 
-  const sys = prod ? (giac.get(prod.codice) ?? 0) : null;
-  const delta = prod && contati !== '' ? Number(contati) - (sys ?? 0) : null;
+  const delta = prod && contati !== '' && sys !== null ? Number(contati) - sys : null;
 
   async function submit() {
     if (!prod) return toast('Scegli un prodotto', 'err');
+    if (sys === null) return toast('Attendi la giacenza…', 'err');
     if (contati === '' || isNaN(Number(contati))) return toast('Inserisci i pezzi contati', 'err');
-    const d = Number(contati) - (sys ?? 0);
+    const d = Number(contati) - sys;
     // guard: big rectifications need an explicit confirm (fat-finger protection)
     if (Math.abs(d) >= 5 && !window.confirm(
       `Stai per correggere la giacenza di ${prod.item ?? prod.codice} ${prod.variant ?? ''} da ${sys} a ${contati} pezzi (${d > 0 ? '+' : ''}${d}). Confermi?`
@@ -36,7 +47,6 @@ export default function CountForm({ pin, chi }: { pin: string; chi: string }) {
         ? `Conta combacia · ${prod.item ?? prod.codice}: nessuna rettifica`
         : `Giacenza corretta · ${prod.item ?? ''} ${prod.variant ?? ''} ora = ${res.giac_dopo ?? contati} (${dl > 0 ? '+' : ''}${dl})`, 'ok');
       setProd(null); setContati(''); setNota('');
-      fetchGiacenze().then(setGiac); // refresh so a re-count sees the corrected stock
     } catch (e) {
       toast((e as Error).message, 'err');
     } finally {
@@ -53,7 +63,7 @@ export default function CountForm({ pin, chi }: { pin: string; chi: string }) {
         <>
           <div className="sysrow">
             <span>Il sistema dice</span>
-            <b className={(sys ?? 0) <= 0 ? 'neg' : ''}>{sys} pz</b>
+            <b className={sys !== null && sys <= 0 ? 'neg' : ''}>{loadingSys || sys === null ? '…' : `${sys} pz`}</b>
           </div>
           <label className="fl">Pezzi contati</label>
           <NumberStepper value={contati} onChange={setContati} min={0} placeholder="0" />
@@ -67,7 +77,7 @@ export default function CountForm({ pin, chi }: { pin: string; chi: string }) {
           )}
           <label className="fl">Nota (facoltativa)</label>
           <input className="txt" value={nota} onChange={(e) => setNota(e.target.value)} placeholder="es. scaffale A" />
-          <button className="submit" disabled={busy} onClick={submit}>{busy ? 'Applico…' : 'Applica conta'}</button>
+          <button className="submit" disabled={busy || loadingSys} onClick={submit}>{busy ? 'Applico…' : 'Applica conta'}</button>
         </>
       )}
     </div>

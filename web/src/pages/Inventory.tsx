@@ -286,7 +286,7 @@ export default function Inventory({ pin, initial, go }: { pin: string; chi: stri
 
   return (
     <div className="screen">
-      <header>
+      <header className="invhead">
         <h1>Inventario</h1>
         <div className="seg wrap">
           <button className={view === 'disp' ? 'on' : ''} onClick={() => setView('disp')}>Disponibilità</button>

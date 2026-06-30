@@ -513,3 +513,13 @@ erano gia sensate -> coerenti col nuovo linguaggio, lasciate. tsc+build verdi; v
 ovunque, doppioni risolti, PDF/CSV presenti, overflow 0, zero errori console. NOTA: deploy gh-pages NON fatto
 in questa run perche il working tree condiviso aveva lavoro non committato dell'altra chat (CountForm/api/
 Inventory); il deploy va fatto quando quella sessione ha committato, per non pubblicarne il lavoro a meta.
+
+## SESSION 20 — Test frontend conta + fix display giacenza viva + fix sub-tab Magazzino
+
+Test frontend (Playwright, viewport mobile) della conta-rettifica + verifica generale "al meglio".
+
+- **Verificato dal vivo:** form conta pulito (nome prodotto leggibile, "Il sistema dice X pz", stepper senza spinner nativi, badge Delta, nota "verrà corretta da X a Y"); toast "✓ Giacenza corretta · … ora = X (-1)"; **dialog di conferma** su |delta|>=5 ("Stai per correggere … da X a Y … Confermi?") con dismiss=nessuna modifica / accept=applica; conta negativa **rifiutata** dal server ("pezzi contati non validi"); **0 errori console**.
+- **FIX display (CountForm):** ora legge la giacenza VIVA del prodotto selezionato (`fetchGiacenzaOne`) invece della mappa caricata al mount, così una riconta immediata mostra il valore aggiornato (prima mostrava lo stale: il server calcolava giusto, ma il numero a schermo era vecchio). Stato "…" mentre carica + bottone disabilitato finché non è pronto. Verificato: dopo conta 32→31, la riconta legge 31 (non 32).
+- **FIX layout (trovato nel test):** nell'header Inventario i 6 sub-tab (`.seg.wrap`) si impilavano in verticale sovrapponendosi al titolo e ai bottoni su mobile (header alto 240px). Aggiunta classe `.invhead`: titolo + PDF/CSV su riga 1, sub-tab full-width che scorrono in orizzontale su riga 2 (header 87px). Verificato.
+- **NON toccato (scelta utente):** icone nav/tile tornate a emoji = decisione intenzionale dell'utente (commit `64d1c94`, "clarity over coherence"); sicurezza chiusa dall'utente (commit `08347bf`, revoca write/secret anon).
+- **Dati di test nel DB:** Nina_Bag_STRIPES_PETROL_BLUE giac 39 (13 di aggiustamenti-conta accumulati nei test), da riallineare dal Master.
