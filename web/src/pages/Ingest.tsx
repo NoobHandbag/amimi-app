@@ -7,17 +7,19 @@ import ReturnForm from '../components/ReturnForm';
 import SpeseManage from '../components/SpeseManage';
 import RecentFeed from '../components/RecentFeed';
 import { ProdVerify, Publish } from './Prodotti';
+import Icon from '../components/Icon';
+import { personaName } from '../lib/people';
 
 // Same actions for everyone (only the Home is persona-personalized). "Arrivo/Acquisto" lives in Ordini.
 const TIPI = [
-  { k: 'count', icon: '🔢', label: 'Conta fisica', desc: 'Conta i pezzi reali a scaffale' },
-  { k: 'reso', icon: '↩️', label: 'Reso / Cambio', desc: 'Parti dalla vendita, poi correggi/rimborsa' },
-  { k: 'gift', icon: '🎁', label: 'Regalo / Vendita manuale', desc: 'Regalo, oppure vendita offline fuori Qromo' },
-  { k: 'b2b', icon: '🏬', label: 'Movimento B2B', desc: 'Conto vendita / wholesale' },
-  { k: 'product', icon: '🏷️', label: 'Nuovo prodotto', desc: 'Anagrafica nuovo articolo' },
-  { k: 'spesa', icon: '💶', label: 'Spese', desc: 'Proponi e approva spese' },
-  { k: 'pulizia', icon: '🧹', label: 'Pulizia dati', desc: 'Completa anagrafiche prodotto (modello, prezzo, foto)' },
-  { k: 'pubblica', icon: '🚀', label: 'Pubblica su Shopify', desc: 'Metti online i prodotti pronti' },
+  { k: 'count', icon: 'count', label: 'Conta fisica', desc: 'Conta i pezzi reali a scaffale' },
+  { k: 'reso', icon: 'return', label: 'Reso / Cambio', desc: 'Parti dalla vendita, poi correggi o rimborsa' },
+  { k: 'gift', icon: 'gift', label: 'Regalo / Vendita manuale', desc: 'Regalo, o vendita offline fuori Qromo' },
+  { k: 'b2b', icon: 'store', label: 'Movimento B2B', desc: 'Conto vendita o ingrosso' },
+  { k: 'product', icon: 'tag', label: 'Nuovo prodotto', desc: 'Crea un nuovo articolo' },
+  { k: 'spesa', icon: 'euro', label: 'Spese', desc: 'Proponi e approva spese' },
+  { k: 'pulizia', icon: 'sparkles', label: 'Pulizia dati', desc: 'Completa modello, prezzo e foto' },
+  { k: 'pubblica', icon: 'rocket', label: 'Pubblica su Shopify', desc: 'Metti online i prodotti pronti' },
 ];
 
 export default function Ingest({ pin, chi, initial }: {
@@ -29,14 +31,14 @@ export default function Ingest({ pin, chi, initial }: {
 
   return (
     <div className="screen">
-      <header><h1>Registra</h1></header>
+      <header><h1>Registra</h1><span className="badge" title="A chi viene attribuito il movimento">{personaName(chi)}</span></header>
 
       {!sel ? (
         <>
           <div className="tipi">
             {TIPI.map((t) => (
               <button key={t.k} className="tipo" onClick={() => setSel(t.k)} type="button">
-                <span className="ti">{t.icon}</span>
+                <span className="ti"><Icon name={t.icon} size={26} /></span>
                 <span className="tt">{t.label}</span>
                 <span className="td">{t.desc}</span>
               </button>

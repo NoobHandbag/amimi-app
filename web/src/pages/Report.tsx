@@ -139,6 +139,7 @@ export default function Report({ onBack }: { onBack?: () => void }) {
         <Kpi label="MC1 (mesi chiusi)" value={eur(mc1)} sub={`${pct1(mc1 / nettoClosed)} su netto`} tone={mc1 >= 0 ? 'green' : 'red'} />
         <Kpi label="MC2 / Utile (mesi chiusi)" value={eur(mc2)} sub={`${pct1(mc2 / nettoClosed)} su netto`} tone={mc2 >= 0 ? 'green' : 'red'} />
       </div>
+      <p className="note" style={{ marginTop: -4, marginBottom: 14 }}>MC1 = margine dopo i costi variabili · MC2 = utile dopo i costi fissi.</p>
 
       <section className="card">
         <h2>Trend fatturato mensile</h2>
@@ -147,7 +148,6 @@ export default function Report({ onBack }: { onBack?: () => void }) {
             const r = rows.find((x) => x.month === m)!;
             const on = sel.has(m);
             const h = (r.lordo / maxLordo) * 100;
-            const tot = r.online + r.offline + r.b2b || 1;
             return (
               <button key={m} className={`tcol ${on ? '' : 'off'}`} onClick={() => toggle(m)} title={`${MESI[m]} · ${eur(r.lordo)}`}>
                 <div className="tbarwrap">
@@ -159,7 +159,6 @@ export default function Report({ onBack }: { onBack?: () => void }) {
                   </div>
                 </div>
                 <span className="tlabel">{MESI[m]}{m === CURRENT_MONTH ? '*' : ''}</span>
-                <span className="tmix">{pct(r.online / tot)}/{pct((r.offline + r.b2b) / tot)}</span>
               </button>
             );
           })}
@@ -213,8 +212,8 @@ export default function Report({ onBack }: { onBack?: () => void }) {
         </div>
         <p className="note">
           {scope === 'amimi'
-            ? '* giugno in corso (costi fissi non ancora caricati). Vista Amimì (brand): le vendite partono da febbraio, gennaio è 0. Feb e Mar combaciano col foglio al centesimo; Apr/Mag entro ~1%.'
-            : '* giugno in corso. Vista Totale (intera attività): valori letti dal foglio CE_TOTALE, gennaio incluso. Non ricalcolati dalle transazioni della replica.'}
+            ? '* mese in corso (costi fissi non ancora caricati). Vista Amimì (brand): Feb e Mar combaciano col foglio al centesimo, Apr/Mag entro ~1%.'
+            : '* mese in corso. Vista Totale (intera attività): valori letti dal foglio CE_TOTALE, gennaio incluso. Non ricalcolati dalle transazioni della replica.'}
         </p>
       </section>
 

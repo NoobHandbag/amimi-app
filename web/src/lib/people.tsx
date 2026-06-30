@@ -6,35 +6,32 @@ export type Tile = { icon: string; label: string; tab: Tab; param?: string; badg
 
 export const PEOPLE = ['Ale', 'Bene', 'Ginevra'] as const;
 
-export const PERSONA: Record<string, { name: string; finance: boolean; registra: string[]; tiles: Tile[] }> = {
+export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Tile[] }> = {
   Ale: {
     name: 'Ale', finance: true,
-    registra: ['gift', 'reso', 'count', 'b2b', 'product', 'spesa'],
     tiles: [
-      { icon: '📊', label: 'Cruscotto finanze', tab: 'cruscotto' },
-      { icon: '🛍️', label: 'Registra vendita', tab: 'registra', param: 'gift' },
-      { icon: '🔁', label: 'Cosa riprodurre', tab: 'magazzino', param: 'riordino' },
-      { icon: '🧹', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
-      { icon: '📦', label: 'Ordini in arrivo', tab: 'ordini', badge: 'arrivi' },
+      { icon: 'chart', label: 'Cruscotto finanze', tab: 'cruscotto' },
+      { icon: 'bag', label: 'Registra vendita', tab: 'registra', param: 'gift' },
+      { icon: 'recycle', label: 'Cosa riprodurre', tab: 'magazzino', param: 'riordino' },
+      { icon: 'sparkles', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
+      { icon: 'box', label: 'Ordini in arrivo', tab: 'ordini', badge: 'arrivi' },
     ],
   },
   Bene: {
     name: 'Benedetta', finance: false,
-    registra: ['count', 'product', 'reso'],
     tiles: [
-      { icon: '🧹', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
-      { icon: '🚀', label: 'Pubblica su Shopify', tab: 'registra', param: 'pubblica' },
-      { icon: '🔢', label: 'Registra conta', tab: 'registra', param: 'count' },
-      { icon: '📦', label: 'Ordini in arrivo', tab: 'ordini', badge: 'arrivi' },
+      { icon: 'sparkles', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
+      { icon: 'rocket', label: 'Pubblica su Shopify', tab: 'registra', param: 'pubblica' },
+      { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },
+      { icon: 'box', label: 'Ordini in arrivo', tab: 'ordini', badge: 'arrivi' },
     ],
   },
   Ginevra: {
     name: 'Ginevra', finance: false,
-    registra: ['count'],
     tiles: [
-      { icon: '➕', label: 'Nuovo ordine fornitore', tab: 'ordini', param: 'new' },
-      { icon: '📦', label: 'Registra arrivi', tab: 'ordini' },
-      { icon: '🔢', label: 'Registra conta', tab: 'registra', param: 'count' },
+      { icon: 'plus', label: 'Nuovo ordine fornitore', tab: 'ordini', param: 'new' },
+      { icon: 'box', label: 'Registra arrivi', tab: 'ordini' },
+      { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },
     ],
   },
 };

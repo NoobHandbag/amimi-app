@@ -438,3 +438,16 @@ Audit UI/UX completo (report in `audits/AUDIT_UIUX_2026-06-30.md`). Implementati
 - **CODICE:** cancellato `src/App.css` (scaffold Vite orfano, mai importato), rimossi duplicati CSS (object-fit cover morto prima di contain, .supcard.alt accent duplicato della regola rose).
 
 NON toccata la sicurezza (RLS/segreti/grant anon: vedi report sez. 2; scelta utente "ignoriamo per ora"). Le evidenze e il report in `audits/` NON sono committati (contengono numeri P&L e dati clienti). tsc + vite build verdi.
+
+## SESSION 17 — Design pass da audit (palette AA, icon set, desktop, copy/IA)
+
+Secondo giro dell'audit UI/UX: fix "di design" + rifiniture (mano libera su palette/guideline, scelta utente "usa una palette migliore"). Build + verifica dal vivo su preview.
+
+- **PALETTE (contrasti WCAG AA):** `--accent` camel #C4956A -> cognac **#9C5F33** (era 2.67:1 = FAIL, ora 5.12), `--green` #3E9E5B -> **#2E8049** (4.88), `--red` #c0533b -> **#b8472f** (5.28), `--muted` -> **#6e625f**, nuovo `--rose-deep #6E3F4D`; treemap CATCOL scuriti (PELLE/TESSUTO/ACCESSORI/ALTRO) per label bianche AA; rgba tint aggiornati al nuovo accent/green/red.
+- **ICON SET:** nuovo `components/Icon.tsx` (14 glifi line, single-path, currentColor) al posto delle emoji incoerenti in bottom nav, tile Home (rose) e hub Registra (accent). Niente piu blu fuori palette.
+- **DESKTOP:** aggiunto `@media (min-width:1024px)` (l'app non aveva breakpoint): #root/bottomnav 920px, hometiles 3 col, kpis 4 col -> meno bianco vuoto, KPI su una riga, niente tile orfana.
+- **TABELLE:** `.invtable` thead sticky durante lo scroll + `tabular-nums` sulle colonne numeriche.
+- **CRUSCOTTO:** barre trend piu alte (150->172px), tolta la doppia % sotto ogni barra (ridondante con legenda/segmenti); legenda "MC1 = margine dopo i costi variabili · MC2 = utile dopo i costi fissi" sotto i KPI; nota mese resa dinamica ("mese in corso").
+- **COPY/IA:** KPI Disponibilita in italiano (ACTIVE -> "pubblicati su Shopify"), header riordino chiari ("Venduti (60gg)", "€ persi/sett."), nota giacenze negative in Magazzino, chip persona attiva nell'header Registra, descrizioni tile Registra piu chiare; rimosso il campo dead-code `registra` da people.tsx (F3).
+
+Verificato: 4 picker innerWidth 390/overflow 0, MC1% presente, Gen nascosto in Amimi, nomi senza underscore, zero errori console. tsc + vite build verdi. NON toccata la sicurezza (scelta utente).

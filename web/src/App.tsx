@@ -5,6 +5,7 @@ import Report from './pages/Report';
 import Ingest from './pages/Ingest';
 import Ordini from './pages/Ordini';
 import Inventory from './pages/Inventory';
+import Icon from './components/Icon';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
@@ -15,7 +16,7 @@ export default function App() {
   const pin = 'x'; // PIN removed per design; writes go through the service-role write-api.
 
   const navBtn = (t: Tab, icon: string, label: string) => (
-    <button className={tab === t || (t === 'home' && tab === 'cruscotto') ? 'on' : ''} onClick={() => go(t)} type="button"><span>{icon}</span>{label}</button>
+    <button className={tab === t || (t === 'home' && tab === 'cruscotto') ? 'on' : ''} onClick={() => go(t)} type="button"><span><Icon name={icon} size={22} /></span>{label}</button>
   );
 
   return (
@@ -28,10 +29,10 @@ export default function App() {
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}
       </main>
       <nav className="bottomnav">
-        {navBtn('home', '🏠', 'Home')}
-        {navBtn('registra', '➕', 'Registra')}
-        {navBtn('ordini', '📦', 'Ordini')}
-        {navBtn('magazzino', '📊', 'Magazzino')}
+        {navBtn('home', 'home', 'Home')}
+        {navBtn('registra', 'plus', 'Registra')}
+        {navBtn('ordini', 'box', 'Ordini')}
+        {navBtn('magazzino', 'chart', 'Magazzino')}
       </nav>
     </div>
   );

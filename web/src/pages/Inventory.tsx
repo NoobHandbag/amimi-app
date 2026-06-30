@@ -62,7 +62,7 @@ function ProductDrawer({ p, shopQty, onClose }: { p: InvFull; shopQty: number | 
 }
 
 /* #2: Shopify catalog composition — treemap of online SKUs per model, sized by count */
-const CATCOL: Record<string, string> = { BAG: '#8B5E6B', PELLE: '#C4956A', TESSUTO: '#3E9E5B', ACCESSORI: '#6b7a8b', ALTRO: '#9a8f93' };
+const CATCOL: Record<string, string> = { BAG: '#8B5E6B', PELLE: '#9C5F33', TESSUTO: '#2E8049', ACCESSORI: '#5d6b7a', ALTRO: '#6f6056' };
 function ShopComposition({ inv, pin }: { inv: InvFull[]; pin: string }) {
   const [busy, setBusy] = useState(false);
   const byItem = useMemo(() => {
@@ -205,11 +205,11 @@ function DisponibilitaView({ inv }: { inv: InvFull[] }) {
   return (
     <>
       <div className="kpis">
-        <div className="kpi rose"><div className="v">{skuAcq}</div><div className="k">SKU acquistabili</div><div className="ksub">ACTIVE e in stock, oggi</div></div>
+        <div className="kpi rose"><div className="v">{skuAcq}</div><div className="k">SKU acquistabili</div><div className="ksub">pubblicati e in stock</div></div>
         <div className="kpi accent"><div className="v">{varAcq}</div><div className="k">Varianti acquistabili</div><div className="ksub">varianti in stock</div></div>
         <div className="kpi red"><div className="v">{attiviEsauriti}</div><div className="k">Attivi ma esauriti</div><div className="ksub">vetrina vuota: pubblicati a 0</div></div>
         <div className="kpi"><div className="v">{inStockNonPub}</div><div className="k">In stock non pubblicati</div><div className="ksub">magazzino non esposto</div></div>
-        <div className="kpi green"><div className="v">{pub.length}</div><div className="k">Pubblicati (ACTIVE)</div><div className="ksub">di cui {attiviEsauriti} esauriti</div></div>
+        <div className="kpi green"><div className="v">{pub.length}</div><div className="k">Pubblicati su Shopify</div><div className="ksub">di cui {attiviEsauriti} esauriti</div></div>
       </div>
 
       {lines.length > 0 && (
@@ -226,7 +226,7 @@ function DisponibilitaView({ inv }: { inv: InvFull[] }) {
         <div className="card muted center">Niente di esaurito tra i best-seller. 🎉</div>
       ) : (
         <div className="card"><div className="tablewrap"><table className="sortable invtable">
-          <thead><tr><th className="l">Prodotto</th><th>Venduti 60g</th><th>Persi/sett</th></tr></thead>
+          <thead><tr><th className="l">Prodotto</th><th>Venduti (60gg)</th><th>€ persi/sett.</th></tr></thead>
           <tbody>{reorder.slice(0, 40).map((r) => (
             <tr key={r.codice}>
               <td className="l">{nome(r.item, r.variant)}{r.in_arrivo > 0 && <span className="tag live"> {r.in_arrivo} in arrivo</span>}</td>
@@ -276,6 +276,7 @@ export default function Inventory({ pin, initial, go }: { pin: string; chi: stri
 
   const totVal = alive.reduce((s, p) => s + (p.valore || 0), 0);
   const hidden = inv.length - alive.length;
+  const magNeg = alive.filter((p) => p.giacenza_attuale < 0).length;
   const cvList = useMemo(() => cv.map((r) => {
     const ls = lastSaleMap.get(norm(r.codice));
     return { ...r, last_date: ls?.date ?? null, last_price: ls?.price ?? null };
@@ -304,6 +305,7 @@ export default function Inventory({ pin, initial, go }: { pin: string; chi: stri
             <div className="kpi accent"><div className="v">{eur(totVal)}</div><div className="k">Valore magazzino</div></div>
             <div className="kpi"><div className="v">{alive.length}</div><div className="k">Attivi{hidden > 0 ? ` · ${hidden} nascosti` : ''}</div></div>
           </div>
+          {magNeg > 0 && <p className="note">{magNeg} varianti a giacenza negativa (in rosso): vendite senza carico registrato, da sistemare. Riducono il valore mostrato.</p>}
           <input className="search" placeholder="Cerca prodotto…" value={q} onChange={(e) => setQ(e.target.value)} />
           <div className="card">
             <div className="tablewrap"><table className="sortable invtable">

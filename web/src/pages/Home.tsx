@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { PERSONA, PersonaPicker, personaName } from '../lib/people';
 import type { Tab } from '../lib/people';
 import { nowMonth, nowYear, meseNome } from '../lib/helpers';
+import Icon from '../components/Icon';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 
@@ -53,7 +54,7 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
         {cfg.tiles.map((t, i) => (
           <button key={i} className="hometile" onClick={() => go(t.tab, t.param)} type="button">
             {t.badge && badge(t.badge) > 0 ? <span className="hb">{badge(t.badge)}</span> : null}
-            <span className="hi">{t.icon}</span>
+            <span className="hi"><Icon name={t.icon} size={26} /></span>
             <span className="hl">{t.label}</span>
           </button>
         ))}
