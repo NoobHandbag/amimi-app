@@ -473,3 +473,17 @@ Test end-to-end dal browser (conta rialzo/ribasso, reso qromo, reso shopify) su 
 - **FIX (migration 0026_ce_resi_qromo):** `v_ce_amimi.resi = -(shopify refund + returns canale='qromo')`. Esclusi i resi `canale='online'` per non duplicare i refund Shopify gia' nel CE. Verificato: giugno resi -220 -> **-265** (220 shopify + 45 qromo di test), MC1/MC2 -45. **Nota IVA:** importo gross come il refund Shopify (eventuale /1.22 in follow-up). **Nota COGS:** il reso non ri-aggiunge il COGS (coerente col leg Shopify esistente).
 - **Aperto:** la conta-come-rettifica della giacenza (richiesta "gravissima"): inviate 2 proposte, non ancora implementata.
 - **Dati di test lasciati nel DB (da riallineare dal Master):** Nina_Bag_STRIPES_PETROL_BLUE giac 24->26, 2 righe `counts` (inerti), 2 righe `returns` (qromo 45 + online 50).
+
+## SESSION 17 — Sicurezza: chiusura falla anon (write/segreti)
+
+Prerequisito per qualsiasi scrittura dal browser pubblico. Audit live: RLS off ovunque, anon poteva LEGGERE
+i segreti (app_flags: gemini key, webhook secret, mcp token, shopify_write_enabled) e SCRIVERE/CANCELLARE su
+app_flags, ce_totale_monthly, returns, shopify_catalog, shopify_stock, stock_adjustments, health_log.
+Migrazione 0026: revoke ALL su app_flags/app_config da anon+authenticated; revoke INSERT/UPDATE/DELETE su
+tutte le tabelle public da anon+authenticated; default privileges per le tabelle future. SELECT preservato
+(app no-login legge i dati, incl. change_log per il feed). Verificato che (a) il frontend non scrive mai via
+anon e non legge i segreti, (b) tutte e 6 le edge function usano SERVICE_ROLE_KEY (bypassa i grant, scritture
+intatte). Esito verificato: tables_anon_can_write=0, anon_read_secrets=false, letture business true,
+service_role scrive ancora. Smoke test live: Disponibilita, RecentFeed (change_log) e browser tabelle
+leggono regolarmente. Resta per scelta la lettura ampia dei dati business via anon (app senza login).
+Il browser tabelle resta SOLA LETTURA; l'edit selettivo (via write-api+change_log) e un possibile passo dopo.
