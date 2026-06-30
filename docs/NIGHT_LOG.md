@@ -498,3 +498,18 @@ Problema emerso in sess.18: le conte non cambiavano lo stock. Risolto con un reg
 - **Review adversariale (workflow 3 lenti + verify):** 2 finding confermati — medium (errore di lettura droppato → FIXATO prima del deploy), low (race concorrenza stessa SKU → documentata, self-healing alla riconta).
 - **TEST DAL VIVO** (Nina_Bag_STRIPES_PETROL_BLUE): conta 24 su 26 -> giac **24** (adj -2, conta applicata); ri-conta 25 -> giac **25** (adj +1, NON 26 -> niente stacking, converge). Verificato in DB.
 - **Aperto / non fatto:** backfill conte storiche (opzionale, non richiesto); Approccio 2 verified-anchor (evoluzione); realign Shopify su apply (gated `shopify_write_enabled` off). Dati di test nel DB da riallineare dal Master: Nina giac 25.
+
+## SESSION 18 — Clarity-first: ritorno alle emoji + pass di chiarezza
+
+Su richiesta utente (cambio di rotta: chiarezza > estetica; preferiva le emoji di prima). Separati i due
+assi del design pass: le ICONE (emoji->line) erano coerenza estetica (audit "Bassa") -> riviste; la PALETTE
+scurita era contrasto AA (chiarezza) -> TENUTA invariata. (A) Icon.tsx ora mappa nome->emoji (full-color,
+riconoscibili); i call-site restano invariati. Doppioni risolti con glifi distinti: Ordini 📦 vs Arrivi 📥,
+Vendite negozio 🏬 vs Vendite online 🌐, B2B 🤝 (era 'store'). (C) PrintBtn/ExportBtn ora hanno label
+visibile (PDF/CSV), non piu solo-icona. (E) testo minuscolo alzato (misschip 9.5->11, newtag 9->10, caption
+KPI 11->12 scurita) e valore-trend da muted->dark. (D) opacita di stato sopra soglia leggibile (trend off
+.3->.55, righe dim .42->.6, arrivi done .5->.62). Le emoji rimaste in Inventory/Report (🏬/🌐/🔄/🧮/💬/🛒)
+erano gia sensate -> coerenti col nuovo linguaggio, lasciate. tsc+build verdi; verifica a 360px: emoji
+ovunque, doppioni risolti, PDF/CSV presenti, overflow 0, zero errori console. NOTA: deploy gh-pages NON fatto
+in questa run perche il working tree condiviso aveva lavoro non committato dell'altra chat (CountForm/api/
+Inventory); il deploy va fatto quando quella sessione ha committato, per non pubblicarne il lavoro a meta.

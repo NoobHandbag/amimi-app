@@ -30,7 +30,7 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
     name: 'Ginevra', finance: false,
     tiles: [
       { icon: 'plus', label: 'Nuovo ordine fornitore', tab: 'ordini', param: 'new' },
-      { icon: 'box', label: 'Registra arrivi', tab: 'ordini' },
+      { icon: 'inbox', label: 'Registra arrivi', tab: 'ordini' },
       { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },
     ],
   },

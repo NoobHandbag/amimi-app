@@ -23,7 +23,7 @@ const TIPI = [
   { k: 'count', icon: 'count', label: 'Conta fisica', desc: 'Conta i pezzi reali a scaffale' },
   { k: 'reso', icon: 'return', label: 'Reso / Cambio', desc: 'Parti dalla vendita, poi correggi o rimborsa' },
   { k: 'gift', icon: 'gift', label: 'Regalo / Vendita manuale', desc: 'Regalo, o vendita offline fuori Qromo' },
-  { k: 'b2b', icon: 'store', label: 'Movimento B2B', desc: 'Conto vendita o ingrosso' },
+  { k: 'b2b', icon: 'handshake', label: 'Movimento B2B', desc: 'Conto vendita o ingrosso' },
   { k: 'product', icon: 'tag', label: 'Nuovo prodotto', desc: 'Crea un nuovo articolo' },
   { k: 'spesa', icon: 'euro', label: 'Spese', desc: 'Proponi e approva spese' },
   { k: 'pulizia', icon: 'sparkles', label: 'Pulizia dati', desc: 'Completa modello, prezzo e foto' },
