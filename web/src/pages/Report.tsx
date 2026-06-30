@@ -6,6 +6,7 @@ import ProductPicker from '../components/ProductPicker';
 import { useSort } from '../lib/sortable';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
+import { nowMonth, nowYear } from '../lib/helpers';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
@@ -17,7 +18,7 @@ type Inv = { codice: string; item: string | null; variant: string | null; shopif
 type Scope = 'amimi' | 'totale';
 type Row = { month: number; netto: number; lordo: number; mc1: number; mc2: number; online: number; offline: number; b2b: number };
 
-const CURRENT_MONTH = 6; // giugno in corso
+const CURRENT_MONTH = nowMonth(); // mese in corso, derivato dalla data (mai hardcoded)
 
 export default function Report({ onBack }: { onBack?: () => void }) {
   const [ce, setCe] = useState<CE[]>([]);
@@ -28,9 +29,9 @@ export default function Report({ onBack }: { onBack?: () => void }) {
   const [reload, setReload] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
-  const [detailMonth, setDetailMonth] = useState(5);
+  const [detailMonth, setDetailMonth] = useState(Math.max(2, CURRENT_MONTH - 1));
   const [scope, setScope] = useState<Scope>('amimi');
-  const [sel, setSel] = useState<Set<number>>(new Set([1, 2, 3, 4, 5, 6]));
+  const [sel, setSel] = useState<Set<number>>(new Set(Array.from({ length: CURRENT_MONTH }, (_, i) => i + 1)));
 
   useEffect(() => {
     (async () => {
@@ -40,7 +41,7 @@ export default function Report({ onBack }: { onBack?: () => void }) {
         const c = await fetchCeTotale();
         if (a.error) throw a.error;
         if (b.error) throw b.error;
-        setCe((a.data as CE[]).filter((r) => r.year === 2026 && r.month >= 1 && r.month <= 12));
+        setCe((a.data as CE[]).filter((r) => r.year === nowYear() && r.month >= 1 && r.month <= 12));
         setInv(b.data as Inv[]);
         setCet(c);
       } catch (e: unknown) {
@@ -77,7 +78,7 @@ export default function Report({ onBack }: { onBack?: () => void }) {
   if (loading) return <div className="screen"><p className="muted center">Carico i dati…</p></div>;
   if (err) return <div className="screen"><div className="card err">Errore: {err}</div></div>;
 
-  const visMonths = rows.map((r) => r.month).filter((m) => m <= CURRENT_MONTH);
+  const visMonths = rows.map((r) => r.month).filter((m) => m <= CURRENT_MONTH && (scope === 'totale' || m >= 2));
   const picked = rows.filter((r) => sel.has(r.month));
   const lordo = picked.reduce((s, r) => s + r.lordo, 0);
   const netto = picked.reduce((s, r) => s + r.netto, 0);
@@ -192,15 +193,17 @@ export default function Report({ onBack }: { onBack?: () => void }) {
               <th onClick={() => ceSort.toggle('month')}>Mese{ceSort.arrow('month')}</th>
               <th onClick={() => ceSort.toggle('netto')}>Netto{ceSort.arrow('netto')}</th>
               <th onClick={() => ceSort.toggle('mc1')}>MC1{ceSort.arrow('mc1')}</th>
+              <th>MC1%</th>
               <th onClick={() => ceSort.toggle('mc2')}>MC2{ceSort.arrow('mc2')}</th>
               <th>MC2%</th>
             </tr></thead>
             <tbody>
-              {(ceSort.sorted as unknown as Row[]).map((r) => (
+              {(ceSort.sorted as unknown as Row[]).filter((r) => scope === 'totale' || r.month >= 2).map((r) => (
                 <tr key={r.month} className={sel.has(r.month) ? '' : 'dim'}>
                   <td className="l">{MESI[r.month]}{r.month === CURRENT_MONTH ? ' *' : ''}</td>
                   <td>{eur(r.netto)}</td>
                   <td className={r.month < CURRENT_MONTH ? (r.mc1 > 0 ? 'pos' : r.mc1 < 0 ? 'neg' : '') : ''}>{r.month < CURRENT_MONTH ? eur(r.mc1) : '—'}</td>
+                  <td>{r.month < CURRENT_MONTH && r.netto ? pct(r.mc1 / r.netto) : '—'}</td>
                   <td className={r.month < CURRENT_MONTH ? (r.mc2 > 0 ? 'pos' : r.mc2 < 0 ? 'neg' : '') : ''}>{r.month < CURRENT_MONTH ? eur(r.mc2) : '—'}</td>
                   <td>{r.month < CURRENT_MONTH && r.netto ? pct(r.mc2 / r.netto) : '—'}</td>
                 </tr>
@@ -256,7 +259,7 @@ export default function Report({ onBack }: { onBack?: () => void }) {
             <div className="row" key={p.codice}>
               <div>
                 <div className="rt">{p.item ?? p.codice}</div>
-                <div className="rs">{p.variant ?? ''}{p.margine != null ? ` · MdC ${pct(p.margine)}` : ''}</div>
+                <div className="rs">{(p.variant ?? '').replace(/_/g, ' ')}{p.margine != null ? ` · MdC ${pct(p.margine)}` : ''}</div>
               </div>
               <div className="giac" style={{ color: 'var(--rose)' }}>{p.venduto}</div>
             </div>

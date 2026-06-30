@@ -7,8 +7,8 @@ import PrintBtn from '../components/PrintBtn';
 import { toast } from '../lib/toast';
 
 /* register an arrival against one order line */
-function ArrivoRow({ l, pin, chi, reload }: { l: OrdLine; pin: string; chi: string; reload: () => void }) {
-  const [open, setOpen] = useState(false);
+function ArrivoRow({ l, pin, chi, reload, defaultOpen }: { l: OrdLine; pin: string; chi: string; reload: () => void; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen ?? false);
   const [n, setN] = useState(String(l.completo ? l.qty_arrived : l.qty_ordered));
   const [d, setD] = useState(oggi());
   const [busy, setBusy] = useState(false);
@@ -63,7 +63,7 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload }: { sup: Sup; pi
       <section className="card">
         <h2>In arrivo · {open.length}</h2>
         {open.length === 0 ? <p className="muted center">Niente in arrivo da questo fornitore.</p>
-          : <div className="list">{open.map((l) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} />)}</div>}
+          : <div className="list">{open.map((l, i) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} defaultOpen={i === 0} />)}</div>}
       </section>
       {done.length > 0 && (
         <section className="card ask">

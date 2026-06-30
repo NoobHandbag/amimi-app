@@ -5,11 +5,12 @@ import { useSort } from '../lib/sortable';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
 import { toast } from '../lib/toast';
+import { prettyName } from '../lib/helpers';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const daysSince = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : Infinity);
-// #4: ITEM + VARIANT as one name on a single line
-const nome = (item: string | null, variant: string | null) => [item, variant].filter(Boolean).join(' ') || '—';
+// #4: ITEM + VARIANT as one clean name on a single line (underscores stripped, model de-duped)
+const nome = (item: string | null, variant: string | null) => prettyName(item, variant);
 const norm = (c: string) => c.toUpperCase().replace(/\s+/g, '_');
 
 function Tile({ url, label }: { url: string | null; label: string }) {

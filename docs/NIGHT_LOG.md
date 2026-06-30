@@ -424,3 +424,17 @@ settimanale per prezzo sui pubblicati a stock 0). I numeri sono i dati PROPRI de
 v_reorder), diversi dallo snapshot Shopify dell'artifact. "Giorni vuoto" NON incluso: richiede campionamento
 storico dello stock che l'app non ha (scelta utente: senza). Verificato dal vivo: nav 4 voci, 2 tile nuove
 aprono i componenti giusti, KPI/linee/tabella popolati, zero errori console. tsc+build verdi.
+
+## SESSION 16 — Fix da audit UI/UX (overflow picker, mese dinamico, copy, a11y)
+
+Audit UI/UX completo (report in `audits/AUDIT_UIUX_2026-06-30.md`). Implementati i fix non-di-sicurezza ad alto valore; build + verifica dal vivo su preview locale (zero errori console, innerWidth/overflow misurati).
+
+- **MOBILE (era Bloccante):** ProductPicker `.pgrid` andava in overflow (514px) e faceva zoomare l'intera pagina sui 4 form Conta/Reso/Vendita/B2B (innerWidth 390 -> 528). Fix in `index.css`: `.pgrid` repeat(3, minmax(0,1fr)), `.pcard min-width:0`, `.pname overflow-wrap:anywhere; word-break:break-word`. Verificato: innerWidth torna 390 e pgridOverflow 0 su tutti e 4.
+- **DATI (era Alta):** mese/anno hardcoded (`CURRENT_MONTH=6`, `2026`) sostituiti con `nowMonth()`/`nowYear()` in `lib/helpers`; usati in Report.tsx, Home.tsx (label "Netto <mese>"), api.ts (fetchCeTotale/fetchAdsMensile). Non marcisce piu a cambio mese/anno.
+- **DATI:** aggiunta colonna MC1% nella tabella CE (prima c'era solo MC2%); gennaio nascosto da grafico/tabella/chip nello scope Amimi (resta nel Totale).
+- **COPY:** nomi prodotto puliti via `prettyName()` (underscore->spazio, dedup prefisso modello) in ProductPicker e Inventario (nome); "Vecchi prodotti" -> "Non visti da oltre 90 giorni"; RecentFeed mappa supplier_orders/expenses/returns/qromo_sales/shopify_orders e "qromo-forward"->"Qromo (auto)"; nota Pubblica senza nome variabile `shopify_write_enabled`.
+- **IA:** Cruscotto evidenzia "Home" come attiva nella bottom nav quando aperto (non piu stato senza voce attiva); ArrivoRow apre di default la prima riga in arrivo nel dettaglio fornitore (affordance arrivo).
+- **A11y/mobile:** touch target alzati (.seg/.chip/.scopetoggle/.subtabs ~40px, .exp 36->40, .drawerx 32->40); testo <11px portato a 11px (.tval/.tmix/.ksub/.tag).
+- **CODICE:** cancellato `src/App.css` (scaffold Vite orfano, mai importato), rimossi duplicati CSS (object-fit cover morto prima di contain, .supcard.alt accent duplicato della regola rose).
+
+NON toccata la sicurezza (RLS/segreti/grant anon: vedi report sez. 2; scelta utente "ignoriamo per ora"). Le evidenze e il report in `audits/` NON sono committati (contengono numeri P&L e dati clienti). tsc + vite build verdi.

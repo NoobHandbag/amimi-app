@@ -156,7 +156,7 @@ export function Publish() {
     <div>
       <div className="card warn">
         <b>Pubblicazione live disattivata.</b> Quando un prodotto è verificato e pronto, si pubblica su Shopify + Qromo da qui.
-        La scrittura su Shopify è dietro un interruttore lato server (<code>shopify_write_enabled</code>), ancora spento per sicurezza.
+        La pubblicazione automatica su Shopify è disattivata per sicurezza e va riattivata da chi gestisce il sistema.
       </div>
       {ready == null ? <p className="muted center">…</p> : !ready.length ? (
         <div className="card muted center">Niente da pubblicare. Tutti i prodotti ordinati sono già online. 🎉</div>

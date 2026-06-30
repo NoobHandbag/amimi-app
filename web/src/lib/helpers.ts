@@ -1,5 +1,24 @@
 // Pricing + SEO helpers (pure logic, from the brand rules in CLAUDE.md).
 
+/** Current month (1-12) and year, derived from the clock — never hardcode (it rots at month/year change). */
+export const nowMonth = (): number => new Date().getMonth() + 1;
+export const nowYear = (): number => new Date().getFullYear();
+const MESI_FULL = ['', 'gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+export const meseNome = (m: number): string => MESI_FULL[m] ?? '';
+
+/** Human product name: strip underscores from item/variant and de-dup a model prefix the variant sometimes repeats. */
+export function prettyName(item: string | null, variant: string | null, codice?: string | null): string {
+  const deUnder = (s: string) => s.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  const it = deUnder(item ?? '');
+  let va = deUnder(variant ?? '');
+  if (it && va) {
+    const low = va.toLowerCase(), ilow = it.toLowerCase();
+    if (low === ilow) va = '';
+    else if (low.startsWith(ilow + ' ')) va = va.slice(it.length).trim();
+  }
+  return [it, va].filter(Boolean).join(' ').trim() || deUnder(codice ?? '') || '—';
+}
+
 /** Suggest a VAT-inclusive retail price from COGS at a target net margin. Prices are IVA 22% inclusive. */
 export function suggestPrice(cogs: number, margin = 0.62): number {
   if (!(cogs > 0)) return 0;

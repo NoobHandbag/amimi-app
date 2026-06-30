@@ -56,7 +56,7 @@ footer { font-size: 12px; margin-top: 18px; }
 /* --- ingest hub --- */
 .operbar { display: flex; align-items: center; gap: 8px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
-.seg button { border: 0; background: #fff; color: var(--muted); font-weight: 700; font-size: 13px; padding: 6px 12px; cursor: pointer; }
+.seg button { border: 0; background: #fff; color: var(--muted); font-weight: 700; font-size: 13px; padding: 9px 14px; cursor: pointer; }
 .seg button.on { background: var(--rose); color: #fff; }
 
 /* --- #4 product drawer + clickable rows + export button --- */
@@ -66,7 +66,7 @@ footer { font-size: 12px; margin-top: 18px; }
 .clickrow .giac { display: inline-flex; align-items: center; gap: 1px; }
 .clickrow .chev { color: var(--muted); font-weight: 400; font-size: 18px; }
 .hbtns { display: flex; gap: 8px; flex: none; }
-.exp { border: 1px solid var(--line); background: #fff; color: var(--rose); width: 36px; height: 36px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex: none; }
+.exp { border: 1px solid var(--line); background: #fff; color: var(--rose); width: 40px; height: 40px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex: none; }
 .exp:active { background: #faf6f4; }
 .exp svg { width: 19px; height: 19px; }
 .drawerwrap { position: fixed; inset: 0; background: rgba(45,34,38,.45); z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
@@ -74,7 +74,7 @@ footer { font-size: 12px; margin-top: 18px; }
 .drawerhead { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; }
 .drawerhead .grow { flex: 1; min-width: 0; }
 .drawerhead .rs { word-break: break-word; }
-.drawerx { border: 1px solid var(--line); background: #fff; width: 32px; height: 32px; border-radius: 50%; font-size: 15px; cursor: pointer; color: var(--muted); flex-shrink: 0; }
+.drawerx { border: 1px solid var(--line); background: #fff; width: 40px; height: 40px; border-radius: 50%; font-size: 15px; cursor: pointer; color: var(--muted); flex-shrink: 0; }
 .drawer .kpis { grid-template-columns: 1fr 1fr 1fr; }
 
 /* --- #2 Shopify treemap + #3 inventory summary table --- */
@@ -149,14 +149,13 @@ footer { font-size: 12px; margin-top: 18px; }
 .msg.err { background: #f6e7e3; color: var(--red); }
 
 /* --- product picker --- */
-.pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
-.pcard { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 6px; cursor: pointer; text-align: center; }
+.pgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.pcard { min-width: 0; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 6px; cursor: pointer; text-align: center; }
 .pimg { aspect-ratio: 1 / 1; width: 100%; border-radius: 9px; background: #f0ebe9; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.pimg img { width: 100%; height: 100%; object-fit: cover; }
 .pimg img { width: 100%; height: 100%; object-fit: contain; }
 .pimg span { font-weight: 700; color: #b9aaad; }
 .pimg.sm { height: 44px; width: 44px; flex: none; }
-.pname { font-size: 12px; font-weight: 600; margin-top: 5px; line-height: 1.2; }
+.pname { font-size: 12px; font-weight: 600; margin-top: 5px; line-height: 1.2; overflow-wrap: anywhere; word-break: break-word; }
 .pvar { font-size: 11px; color: var(--muted); }
 .picked { display: flex; align-items: center; gap: 12px; background: #faf6f4; border-radius: 12px; padding: 10px 12px; margin-top: 8px; }
 .pickedtxt { flex: 1; }
@@ -167,7 +166,6 @@ footer { font-size: 12px; margin-top: 18px; }
 .supgrid { display: flex; flex-wrap: wrap; gap: 8px; }
 .supcard { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 9px 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .supcard.on { background: var(--rose); color: #fff; border-color: var(--rose); }
-.supcard.alt { color: var(--accent); border-style: dashed; }
 input[type=date].txt { font-size: 16px; min-height: 46px; }
 .codicebox { margin-top: 12px; background: #f4ecdf; color: var(--dark); border-radius: 12px; padding: 12px 14px;
   font-family: ui-monospace, Consolas, monospace; font-weight: 700; font-size: 15px;
@@ -194,7 +192,7 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 .invimg { width: 42px; height: 42px; border-radius: 9px; object-fit: contain; flex: none; background: #f0ebe9; }
 .invimg.ph { display: flex; align-items: center; justify-content: center; font-weight: 700; color: #b9aaad; font-size: 13px; }
 .invtags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
-.tag { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+.tag { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
 .tag.live { background: #e7f4ec; color: var(--green); }
 .tag.off { background: #f0ecec; color: var(--muted); }
 .tag.cv { background: #f4ecdf; color: var(--accent); }
@@ -216,12 +214,12 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 /* Cruscotto controls */
 .ctrlbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
 .scopetoggle { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: #fff; }
-.scopetoggle button { border: 0; background: #fff; color: var(--muted); font-weight: 700; font-size: 13px; padding: 7px 16px; cursor: pointer; }
+.scopetoggle button { border: 0; background: #fff; color: var(--muted); font-weight: 700; font-size: 13px; padding: 9px 16px; cursor: pointer; }
 .scopetoggle button.on { background: var(--rose); color: #fff; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { border: 1px solid var(--line); background: #fff; color: var(--muted); font-weight: 700; font-size: 12.5px; padding: 6px 11px; border-radius: 999px; cursor: pointer; }
+.chip { border: 1px solid var(--line); background: #fff; color: var(--muted); font-weight: 700; font-size: 12.5px; padding: 8px 13px; border-radius: 999px; cursor: pointer; }
 .chip.on { background: rgba(139,94,107,.1); border-color: var(--rose); color: var(--rose); }
-.kpi .ksub { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+.kpi .ksub { font-size: 11px; color: var(--muted); margin-top: 4px; }
 
 /* Monthly trend chart */
 .trend { display: flex; align-items: flex-end; gap: 6px; height: 150px; margin: 16px 0 6px; }
@@ -231,9 +229,9 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 .tbar { width: 80%; max-width: 32px; display: flex; flex-direction: column; min-height: 3px; border-radius: 5px 5px 0 0; overflow: hidden; }
 .tseg { width: 100%; }
 .tseg.on { background: var(--rose); } .tseg.of { background: var(--accent); } .tseg.b2 { background: var(--green); }
-.tval { position: absolute; left: 50%; transform: translateX(-50%); font-size: 10px; font-weight: 700; color: var(--muted); margin-bottom: 3px; white-space: nowrap; z-index: 1; }
+.tval { position: absolute; left: 50%; transform: translateX(-50%); font-size: 11px; font-weight: 700; color: var(--muted); margin-bottom: 3px; white-space: nowrap; z-index: 1; }
 .tlabel { font-size: 11px; font-weight: 700; color: var(--dark); }
-.tmix { font-size: 9px; color: var(--muted); }
+.tmix { font-size: 11px; color: var(--muted); }
 tr.dim { opacity: .42; }
 
 .dethead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
@@ -277,7 +275,7 @@ tr.dim { opacity: .42; }
 /* ---- Verifica hub ---- */
 .subtabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
 .subtabs::-webkit-scrollbar { display: none; }
-.subtabs button { border: 0; background: none; color: var(--muted); font-weight: 700; font-size: 13.5px; padding: 9px 11px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; flex: 0 0 auto; }
+.subtabs button { border: 0; background: none; color: var(--muted); font-weight: 700; font-size: 13.5px; padding: 11px 12px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; flex: 0 0 auto; }
 .subtabs button.on { color: var(--rose); border-bottom-color: var(--rose); }
 .todocard { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; cursor: pointer; margin-bottom: 8px; }
 .todoinfo { flex: 1; min-width: 0; }

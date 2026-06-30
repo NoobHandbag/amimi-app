@@ -15,7 +15,7 @@ export default function App() {
   const pin = 'x'; // PIN removed per design; writes go through the service-role write-api.
 
   const navBtn = (t: Tab, icon: string, label: string) => (
-    <button className={tab === t ? 'on' : ''} onClick={() => go(t)} type="button"><span>{icon}</span>{label}</button>
+    <button className={tab === t || (t === 'home' && tab === 'cruscotto') ? 'on' : ''} onClick={() => go(t)} type="button"><span>{icon}</span>{label}</button>
   );
 
   return (

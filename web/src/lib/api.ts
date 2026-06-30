@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { nowYear } from './helpers';
 
 const FN = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/write-api';
 
@@ -113,7 +114,7 @@ export async function fetchCeTotale(): Promise<CeTot[]> {
   const { data, error } = await supabase
     .from('ce_totale_monthly')
     .select('year,month,online_netto,offline_netto,lordo,netto,mc1,mc2')
-    .eq('year', 2026)
+    .eq('year', nowYear())
     .order('month');
   if (error) throw new Error(error.message);
   return (data ?? []) as CeTot[];
@@ -296,7 +297,7 @@ export async function fetchSkuAvailability(): Promise<SkuAvail[]> {
 // ---------- NEW FEATURE: Meta Ads card ----------
 export type AdsMese = { year: number; month: number; spend: number; impressions: number; clicks: number; purchases: number; purchase_value: number; roas: number };
 export async function fetchAdsMensile(): Promise<AdsMese[]> {
-  const { data, error } = await supabase.from('v_ads_mensile').select('*').eq('year', 2026).order('month');
+  const { data, error } = await supabase.from('v_ads_mensile').select('*').eq('year', nowYear()).order('month');
   if (error) throw new Error(error.message);
   return (data ?? []) as AdsMese[];
 }
