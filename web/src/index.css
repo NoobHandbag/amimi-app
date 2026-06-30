@@ -94,6 +94,10 @@ footer { font-size: 12px; margin-top: 18px; }
 .invtable th { cursor: pointer; }
 .invtable thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
 .invtable td:not(.prodcell), .invtable th:not(:first-child) { font-variant-numeric: tabular-nums; }
+.rawtable { font-size: 12px; }
+.rawtable th, .rawtable td { white-space: nowrap; padding: 7px 10px; cursor: default; }
+.seeall { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 16px; padding: 11px; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--rose); font-weight: 700; font-size: 13.5px; cursor: pointer; }
+.seeall:active { background: #faf6f4; }
 
 /* --- order line: clickable + inline arrival editor; old suppliers --- */
 .lineclick { width: 100%; background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: left; display: flex; align-items: center; justify-content: space-between; cursor: pointer; gap: 8px; }

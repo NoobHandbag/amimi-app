@@ -7,8 +7,16 @@ import ReturnForm from '../components/ReturnForm';
 import SpeseManage from '../components/SpeseManage';
 import RecentFeed from '../components/RecentFeed';
 import { ProdVerify, Publish } from './Prodotti';
+import { DataTables } from './Tables';
 import Icon from '../components/Icon';
 import { personaName } from '../lib/people';
+
+// at the end of a flow, jump straight to that flow's full table
+const SEE_ALL: Record<string, { key: string; label: string }> = {
+  gift: { key: 'regali', label: 'i regali' }, reso: { key: 'resi', label: 'i resi' },
+  b2b: { key: 'b2b', label: 'i movimenti B2B' }, count: { key: 'conte', label: 'le conte' },
+  product: { key: 'prodotti', label: 'i prodotti' }, spesa: { key: 'spese', label: 'le spese' },
+};
 
 // Same actions for everyone (only the Home is persona-personalized). "Arrivo/Acquisto" lives in Ordini.
 const TIPI = [
@@ -20,6 +28,7 @@ const TIPI = [
   { k: 'spesa', icon: 'euro', label: 'Spese', desc: 'Proponi e approva spese' },
   { k: 'pulizia', icon: 'sparkles', label: 'Pulizia dati', desc: 'Completa modello, prezzo e foto' },
   { k: 'pubblica', icon: 'rocket', label: 'Pubblica su Shopify', desc: 'Metti online i prodotti pronti' },
+  { k: 'tabelle', icon: 'table', label: 'Tabelle', desc: 'Sfoglia i dati grezzi (ordini, vendite, prodotti…)' },
 ];
 
 export default function Ingest({ pin, chi, initial }: {
@@ -27,7 +36,9 @@ export default function Ingest({ pin, chi, initial }: {
 }) {
   const [sel, setSel] = useState<string | null>(initial ? initial.split(':')[0] : null);
   const [arg] = useState<string | undefined>(initial && initial.includes(':') ? initial.slice(initial.indexOf(':') + 1) : undefined);
+  const [tableInit, setTableInit] = useState<string | undefined>(undefined);
   const cur = TIPI.find((t) => t.k === sel);
+  const seeAll = sel ? SEE_ALL[sel] : undefined;
 
   return (
     <div className="screen">
@@ -37,7 +48,7 @@ export default function Ingest({ pin, chi, initial }: {
         <>
           <div className="tipi">
             {TIPI.map((t) => (
-              <button key={t.k} className="tipo" onClick={() => setSel(t.k)} type="button">
+              <button key={t.k} className="tipo" onClick={() => { setTableInit(undefined); setSel(t.k); }} type="button">
                 <span className="ti"><Icon name={t.icon} size={26} /></span>
                 <span className="tt">{t.label}</span>
                 <span className="td">{t.desc}</span>
@@ -57,6 +68,12 @@ export default function Ingest({ pin, chi, initial }: {
           {sel === 'spesa' && <SpeseManage pin={pin} chi={chi} />}
           {sel === 'pulizia' && <ProdVerify pin={pin} chi={chi} />}
           {sel === 'pubblica' && <Publish />}
+          {sel === 'tabelle' && <DataTables initial={tableInit} />}
+          {seeAll && (
+            <button className="seeall" type="button" onClick={() => { setTableInit(seeAll.key); setSel('tabelle'); }}>
+              <Icon name="table" size={16} /> Vedi tutti {seeAll.label} →
+            </button>
+          )}
         </>
       )}
     </div>

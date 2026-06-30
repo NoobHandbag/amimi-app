@@ -451,3 +451,16 @@ Secondo giro dell'audit UI/UX: fix "di design" + rifiniture (mano libera su pale
 - **COPY/IA:** KPI Disponibilita in italiano (ACTIVE -> "pubblicati su Shopify"), header riordino chiari ("Venduti (60gg)", "€ persi/sett."), nota giacenze negative in Magazzino, chip persona attiva nell'header Registra, descrizioni tile Registra piu chiare; rimosso il campo dead-code `registra` da people.tsx (F3).
 
 Verificato: 4 picker innerWidth 390/overflow 0, MC1% presente, Gen nascosto in Amimi, nomi senza underscore, zero errori console. tsc + vite build verdi. NON toccata la sicurezza (scelta utente).
+
+## SESSION 16 — Browser dati grezzi (tabelle) + deep-link "Vedi tutti" dai flussi
+
+Su richiesta utente (riferimento: come le tabelle di AppSheet). Nuova pagina Tables.tsx (config-driven,
+sola lettura): 10 tabelle business (Ordini fornitore, Arrivi/Acquisti, Prodotti, Vendite negozio,
+Vendite online, Conto vendita B2B, Resi, Regali, Spese, Conte) — mai app_flags/app_config (segreti) ne
+change_log/health_log. Ogni tabella: ricerca testuale, paginazione (+100), scroll orizzontale, export CSV.
+Raggiunta da due punti: tile "Tabelle" in Registra, e un bottone "Vedi tutti i … →" a fine di ogni flusso
+(regalo->regali, reso->resi, b2b, conta->conte, nuovo prodotto->prodotti, spesa->spese) che apre dritto
+quella tabella. Aggiunta icona "table" a Icon.tsx. Verificato dal vivo: tutte 10 le tabelle leggono via
+anon (44/100/100/100/100/17/2/100/100/2 righe), zero errori, deep-link dal flusso regalo ok. tsc+build verdi.
+Nota: la lista mostra i nomi cliente (default "mostra"); mascherabili su richiesta. Si appoggia all'accesso
+anon gia ampio (vedi nota sicurezza anon key, non aggiunge esposizione ma la rende piu visibile).
