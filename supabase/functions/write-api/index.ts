@@ -18,7 +18,7 @@ async function sha256hex(s: string): Promise<string> {
 }
 
 const TABLES: Record<string, string> = {
-  purchase: 'purchases', count: 'counts', gift: 'gifts_offline', b2b: 'b2b_movements',
+  purchase: 'purchases', gift: 'gifts_offline', b2b: 'b2b_movements',
   product: 'products', order: 'supplier_orders',
 };
 const noSpaces = (s: unknown) => typeof s === 'string' && s.length > 0 && !/\s/.test(s);
@@ -280,7 +280,45 @@ Deno.serve(async (req) => {
     return json({ ok: true, id: data.id });
   }
 
-  // --- generic insert (purchase/count/gift/b2b/product/order) ---
+  // --- COUNT: a physical count is applied as a stock rectification (Approccio 1) ---
+  // The count row stays the audit log; if it differs from the live giacenza we write an
+  // adjustment of exactly (contati - giacenza_live), so v_inventory shows == contati.
+  if (action === 'count') {
+    const codice = String(payload.codice || '');
+    const contati = Number(payload.contati);
+    if (!codice || !noSpaces(codice)) return json({ error: 'CODICE mancante o con spazi' }, 422);
+    if (isNaN(contati) || contati < 0) return json({ error: 'pezzi contati non validi' }, 422);
+    const dt = (payload.data_conta as string) || today;
+    // recompute the delta SERVER-SIDE against the live giacenza (which already includes prior
+    // adjustments) — never trust the client snapshot, so re-counts converge instead of stacking.
+    // NB: a failed read MUST abort, otherwise giacLive would silently fall back to 0 for an
+    // existing product and write a bogus full-stock adjustment. null-with-no-error = genuinely
+    // new product (baseline 0). No per-codice lock: assumes counts of the same SKU aren't truly
+    // concurrent (single shop + UI busy-guard); a later re-count self-heals any double-apply.
+    const { data: invRow, error: re } = await sb.from('v_inventory').select('giacenza_attuale').eq('codice', codice).maybeSingle();
+    if (re) return json({ error: 'lettura giacenza fallita: ' + re.message }, 400);
+    const giacLive = Number(invRow?.giacenza_attuale ?? 0);
+    const delta = contati - giacLive;
+    const { data: cnt, error: ce } = await sb.from('counts').insert({
+      codice, modello: (payload.modello as string) ?? null, variante: (payload.variante as string) ?? null,
+      contati, giac_snapshot: giacLive, delta, data_conta: dt,
+      nota: (payload.nota as string) ?? null, stato: delta === 0 ? 'combacia' : 'applicata',
+      source: 'app', chi: chi || null,
+    }).select().single();
+    if (ce) return json({ error: ce.message }, 400);
+    let adjustment_id: string | null = null;
+    if (delta !== 0) {
+      const { data: a, error: ae } = await sb.from('stock_adjustments').insert({
+        codice, qty_delta: delta, motivo: 'conta', count_id: cnt.id, data: dt, chi: chi || null, source: 'app',
+      }).select('id').single();
+      if (ae) return json({ error: ae.message }, 400);
+      adjustment_id = a.id;
+    }
+    await logp('counts', String(cnt.id), 'count_apply', { codice, contati, giac_prima: giacLive, delta, adjustment_id });
+    return json({ ok: true, id: cnt.id, contati, giac_prima: giacLive, delta, giac_dopo: contati, adjustment_id });
+  }
+
+  // --- generic insert (purchase/gift/b2b/product/order) ---
   const table = TABLES[action];
   if (!table) return json({ error: 'azione sconosciuta: ' + action }, 400);
 

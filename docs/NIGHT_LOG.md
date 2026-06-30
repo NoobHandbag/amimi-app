@@ -487,3 +487,14 @@ intatte). Esito verificato: tables_anon_can_write=0, anon_read_secrets=false, le
 service_role scrive ancora. Smoke test live: Disponibilita, RecentFeed (change_log) e browser tabelle
 leggono regolarmente. Resta per scelta la lettura ampia dei dati business via anon (app senza login).
 Il browser tabelle resta SOLA LETTURA; l'edit selettivo (via write-api+change_log) e un possibile passo dopo.
+
+## SESSION 19 — Conta = rettifica della giacenza (Approccio 1, adjustment ledger)
+
+Problema emerso in sess.18: le conte non cambiavano lo stock. Risolto con un registro di rettifiche.
+
+- **Migration 0027_stock_adjustments:** tabella `stock_adjustments` (codice, codice_norm gen, qty_delta, motivo, count_id, data Europe/Rome, chi); `v_inventory` ora somma `+ COALESCE(adj.q,0)` in giacenza_attuale / giacenza_totale_conb2b / disponibili_da_vendere / valore, + nuova colonna `aggiustamenti`.
+- **write-api azione `count` dedicata** (tolta dal generic insert): ricalcola il delta SERVER-SIDE contro la giacenza viva (che include le rettifiche precedenti), scrive `counts` (stato applicata/combacia) + `stock_adjustments`(delta); le riconte convergono (non accumulano); abort su errore di lettura giacenza (fix dalla review). Deploy edge fn **v10** (verify_jwt off, custom PIN).
+- **CountForm:** guard `window.confirm` su |delta|>=5, nota "La giacenza verrà corretta da X a Y", toast aggiornato, refresh giacenze dopo il salvataggio, payload non manda più giac_snapshot/delta/stato (il server li ricalcola). Label "Applica conta".
+- **Review adversariale (workflow 3 lenti + verify):** 2 finding confermati — medium (errore di lettura droppato → FIXATO prima del deploy), low (race concorrenza stessa SKU → documentata, self-healing alla riconta).
+- **TEST DAL VIVO** (Nina_Bag_STRIPES_PETROL_BLUE): conta 24 su 26 -> giac **24** (adj -2, conta applicata); ri-conta 25 -> giac **25** (adj +1, NON 26 -> niente stacking, converge). Verificato in DB.
+- **Aperto / non fatto:** backfill conte storiche (opzionale, non richiesto); Approccio 2 verified-anchor (evoluzione); realign Shopify su apply (gated `shopify_write_enabled` off). Dati di test nel DB da riallineare dal Master: Nina giac 25.
