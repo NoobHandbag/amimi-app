@@ -1,0 +1,25 @@
+name: db-backup
+
+# Daily logical backup of the Supabase business tables (read-only, public key).
+# Snapshots are kept as build artifacts (90 days). Schema lives in supabase/migrations/.
+on:
+  schedule:
+    - cron: '17 3 * * *'   # every day 03:17 UTC
+  workflow_dispatch: {}      # manual run button
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Export tables
+        run: node scripts/db-backup.mjs
+      - name: Upload snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: amimi-db-backup-${{ github.run_id }}
+          path: db-backup/
+          retention-days: 90
