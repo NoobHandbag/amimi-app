@@ -566,3 +566,7 @@ Il badge "todo" sulla tile Pulizia dati (Home) contava TUTTE le righe di `v_prod
 
 - **Doc `TRIGGER_MIGRAZIONE.md`** creato: runbook go-live (0 gia' pronto, blocker con stato, 4 fasi ordinate, pulizia, decisioni, punto di non ritorno + rollback, segreti da ruotare, checklist).
 - **Pulizia negative:** 35 codici negativi. Incrocio col Master ACQUISTI: **solo 2** hanno l'acquisto nel Foglio (`Lea_Bag_ZEBRA` 10, `Annie_Bag_PAILLETTES_PINK` 12 = i Cat C sovra-venduti). Gli altri **33 sono buchi veri/mis-coding** (venduti/regalati ma mai acquistati nemmeno nel Foglio) → riconciliati a **0** con `stock_adjustments` `motivo='pulizia-pre-cutover'`. **CE-neutro** (il COGS del CE e' snapshottato per vendita, non deriva da `purchases`) e **reversibile** (cancella le 33 righe). Restano **2 Cat C** da rivedere con owner (riordino non registrato o vendita mal-attribuita — es. ZEBRA = gotcha `Maria_Bag_Red`). Ghost (item nullo/variante=modello) idealmente da ri-mappare con `sale_correct` per l'attribuzione (cosmetico per lo stock).
+
+## SESSION 25b — Giacenze negative = 0
+
+I 2 Cat C rimasti risolti: `Lea_Bag_ZEBRA` (-7) e `Annie_Bag_PAILLETTES_PINK` (-1) → conta fisica **0** confermata dall'owner → rettifica a 0 (`stock_adjustments`, source `conta`). **Negative totali ora 0** (35 rettifiche-pulizia in tutto). Blocker #6 (negative) chiuso; restano i 14 codici-ordine orfani (cosmetici).

@@ -27,7 +27,7 @@
 | 3 | Scrittura Shopify (stock realign) | ✅ fatto (single + SC/CC). Resta: trigger automatico (vedi §2 fase 3) |
 | 4 | Flag `single_source_of_truth` (interruttore di coordinamento) | 🔴 da creare |
 | 5 | **Ruotare i segreti**: 3 Supabase (`gemini_api_key`, `mcp_token`, `qromo_webhook_secret`) + **token Shopify** (esposto in chat 01-07) | 🟠 da fare con owner |
-| 6 | Pulizia 34 giacenze negative + 14 codici-ordine orfani | 🟠 in corso (vedi §3) |
+| 6 | Pulizia giacenze negative + 14 codici-ordine orfani | 🟢 **negative = 0** (35 rettifiche); restano i 14 orfani |
 | 7 | Backup/DR runbook (pg_dump schedulato + restore testato) | 🔴 da definire |
 | 8 | Runbook di cutover scritto (questo doc) | 🟢 in corso |
 | 9 | Dashboard/consumatori che leggono il Master vanno ripuntati | 🔴 aperto |
@@ -68,7 +68,8 @@
 - **35 codici negativi.** Incrociati col Master: **solo 2** hanno l'acquisto nel Foglio (`Lea_Bag_ZEBRA` acq 10, `Annie_Bag_PAILLETTES_PINK` acq 12 — già in app, sono i sovra-venduti Cat C). Gli **altri 33** sono **buchi veri o mis-coding**: venduti/regalati ma mai acquistati nemmeno nel Foglio.
 - **Conseguenza:** non c'è nulla da "risincronizzare" dagli acquisti del Master. Il fix corretto è **riconciliare a 0** (una giacenza non può essere negativa: al minimo hai fatto ciò che hai venduto).
 - **Metodo:** `stock_adjustments` di `+ammanco` con `motivo='pulizia-pre-cutover'` → giacenza a 0. **CE-neutro** (il COGS nel CE è snapshottato per vendita, gli adjustment non lo toccano) e **reversibile** (basta cancellare le righe).
-- **Da rivedere con l'owner (non inventati):** i 2 Cat C (`Lea_Bag_ZEBRA`, `Annie_Bag_PAILLETTES_PINK`) hanno acquisti reali → il negativo può nascondere un riordino non registrato o una vendita mal-attribuita. E i **ghost** (item nullo/variante=modello) andrebbero **ri-mappati** (`sale_correct`) al prodotto vero per l'attribuzione corretta (cosmetico per lo stock, utile per il reporting).
+- **Cat C risolti (01-07):** `Lea_Bag_ZEBRA` e `Annie_Bag_PAILLETTES_PINK` → conta fisica **0** confermata dall'owner → rettifica a 0 (source `conta`). **Negative totali ora = 0.**
+- **Follow-up cosmetico (non bloccante):** i **ghost** (item nullo/variante=modello) andrebbero **ri-mappati** (`sale_correct`) al prodotto vero per l'attribuzione corretta del venduto (non cambia lo stock, migliora il reporting per-SKU).
 
 ---
 
