@@ -16,11 +16,12 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
     (async () => {
       const [ord, todo] = await Promise.all([
         supabase.from('v_ordini_arrivo').select('completo'),
-        supabase.from('v_products_todo').select('codice'),
+        supabase.from('v_products_todo').select('codice,bucket'),
       ]);
       setBadges({
         arrivi: (ord.data ?? []).filter((r: { completo: boolean }) => !r.completo).length,
-        todo: (todo.data ?? []).length,
+        // only actionable work (nuovi + prezzo/COGS mancanti); the "pulizia" bucket is optional
+        todo: (todo.data ?? []).filter((r: { bucket: string }) => r.bucket !== 'pulizia').length,
       });
       if (cfg.finance) {
         const ce = await supabase.from('v_ce_amimi_summary').select('month,omni_netto,mc2').eq('year', nowYear());

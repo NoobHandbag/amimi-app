@@ -534,3 +534,7 @@ Giro completo end-to-end (Playwright, viewport mobile) di ogni user flow, ognuno
 - **FIX (trovato nel test):** riga arrivo (`ArrivoRow`) — `.linerow` era `display:flex` in riga, così l'editor inline (qta + data + **salva**) finiva **fuori dallo schermo a destra** su mobile (salva quasi intoccabile). Fix: `.linerow` a `flex-direction:column`, `.arrinline` a `display:block` (era duplicato flex vs block). Ora l'editor sta su una riga sotto e ci sta tutto. Deployato + verificato.
 - **Findings (non bug, da sapere):** (1) **"Correggi vendita" (`sale_correct`) e `OrderForm.tsx` sono codice morto** — le funzioni API esistono ma NESSUNA UI le usa, quindi non raggiungibili dal frontend. (2) La vendita manuale (gift) scala lo stock ma non entra nel P&L (scelta documentata nel form).
 - **Dati di test lasciati (Master realign):** Lea_Bag_COCCO_PURPLE giac 7; Annie_Bag_PAILLETTES_NUDE +5; righe gift/b2b/spese/conte/return dei test. **Puliti io:** prodotto Lea_Bag_QATESTZZZ e ordine di test rimossi; nome di Lea_Bag_VERNICE_VIOLA ripristinato (il verifica-test l'aveva rinominato "QA Model/QA VAR").
+
+## SESSION 22 — Badge Benedetta = solo lavoro reale
+
+Il badge "todo" sulla tile Pulizia dati (Home) contava TUTTE le righe di `v_products_todo`, incluse le 15 del bucket `pulizia` (facoltativo). Fix: conta solo i bucket azionabili (`nuovo` + `costo_ricavo`), esclude `pulizia`. Al momento tutte e 15 sono `pulizia` → badge = 0 (nascosto), corretto. Home.tsx: select codice,bucket + filter bucket!='pulizia'.
