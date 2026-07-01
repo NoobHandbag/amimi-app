@@ -561,3 +561,8 @@ Il badge "todo" sulla tile Pulizia dati (Home) contava TUTTE le righe di `v_prod
 - **realign:** spinge il target su OGNI inventory-item del codice, non piu' solo il primo.
 - **Validato live:** Agata Floral Dusty → entrambe le varianti (SC + CC) da 1 a 2 su Shopify. `shopify-stock` v4.
 - **Trigger automatico — NON ancora fatto (prerequisiti):** l'auto-push va acceso solo DOPO (1) la pulizia delle 34 giacenze negative (altrimenti le azzera su Shopify nascondendo prodotti vendibili) e (2) il ritiro del variant-sync (altrimenti due sistemi scrivono lo stesso stock in conflitto). Design pronto: azione `realign_all` (solo i codici driftati) gated da un nuovo flag `shopify_autopush_enabled` + cron orario.
+
+## SESSION 25 — Pulizia giacenze negative + doc Trigger Migrazione
+
+- **Doc `TRIGGER_MIGRAZIONE.md`** creato: runbook go-live (0 gia' pronto, blocker con stato, 4 fasi ordinate, pulizia, decisioni, punto di non ritorno + rollback, segreti da ruotare, checklist).
+- **Pulizia negative:** 35 codici negativi. Incrocio col Master ACQUISTI: **solo 2** hanno l'acquisto nel Foglio (`Lea_Bag_ZEBRA` 10, `Annie_Bag_PAILLETTES_PINK` 12 = i Cat C sovra-venduti). Gli altri **33 sono buchi veri/mis-coding** (venduti/regalati ma mai acquistati nemmeno nel Foglio) → riconciliati a **0** con `stock_adjustments` `motivo='pulizia-pre-cutover'`. **CE-neutro** (il COGS del CE e' snapshottato per vendita, non deriva da `purchases`) e **reversibile** (cancella le 33 righe). Restano **2 Cat C** da rivedere con owner (riordino non registrato o vendita mal-attribuita — es. ZEBRA = gotcha `Maria_Bag_Red`). Ghost (item nullo/variante=modello) idealmente da ri-mappare con `sale_correct` per l'attribuzione (cosmetico per lo stock).
