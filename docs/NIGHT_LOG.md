@@ -538,3 +538,11 @@ Giro completo end-to-end (Playwright, viewport mobile) di ogni user flow, ognuno
 ## SESSION 22 — Badge Benedetta = solo lavoro reale
 
 Il badge "todo" sulla tile Pulizia dati (Home) contava TUTTE le righe di `v_products_todo`, incluse le 15 del bucket `pulizia` (facoltativo). Fix: conta solo i bucket azionabili (`nuovo` + `costo_ricavo`), esclude `pulizia`. Al momento tutte e 15 sono `pulizia` → badge = 0 (nascosto), corretto. Home.tsx: select codice,bucket + filter bucket!='pulizia'.
+
+## SESSION 23 — Re-seed dal Master + CE Totale nativo (v_ce_totale) + fix B2B annullato
+
+- **RE-SEED** dall'export Master 2026-07-01: ricaricate tutte le tabelle transazionali via edge function temporanea `etl-load` (service role, **anon MAI riaperto**; poi disabilitata a stub 410). Puliti i dati di test (returns, stock_adjustments). Conteggi: products 170, shopify 433 ord/461 righe, qromo 145, gifts 126, b2b 17, expenses 237, purchases 231, meta 128.
+- **v_ce_amimi — FIX B2B (migration 0028):** esclusi i movimenti `venduto` con `stato=annullato` (giu 492 -> **220** = Master). Feb/Mar esatti al centesimo; apr/mag entro **~1%** (edge case online Shopify: sconti/free-shipping/refund ri-derivati vs colonne pre-calcolate del Master — scelta utente: calcolo indipendente); giu live.
+- **v_ce_totale NATIVO** (non più la copia statica `ce_totale_monthly`): online (Shopify) + offline (Qromo + GIFT_OFFLINE) + b2b (non-annullato) + **tutte** le spese (non filtrate amimi) + `ce_totale_manual` (blocco non-Amimì gen/feb, hardcoded anche nel Master, non calcolabile). Reso: **gen/feb/mar esatti**, apr/mag ~1%, giu live.
+- **Master quirk riprodotto:** la logistica variabile del CE_TOTALE nel Master ha una SUMIFS col filtro sottocategoria = una cella numerica (A40=-207) → no-op → 0. `v_ce_totale` la tratta manual-only. (L'Amimì mantiene la sua logistica, corretta.)
+- **FRONTEND:** `fetchCeTotale` legge ora `v_ce_totale` (toggle Totale del Cruscotto), incluso `b2b_netto`.

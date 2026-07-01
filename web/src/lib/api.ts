@@ -114,16 +114,21 @@ export async function fetchOrdiniArrivo(): Promise<Ordine[]> {
   return (data ?? []) as Ordine[];
 }
 
-export type CeTot = { year: number; month: number; online_netto: number; offline_netto: number; lordo: number; netto: number; mc1: number; mc2: number };
-/** Whole-business P&L (CE_TOTALE), sheet-sourced. Includes January. */
+export type CeTot = { year: number; month: number; online_netto: number; offline_netto: number; b2b_netto: number; lordo: number; netto: number; mc1: number; mc2: number };
+/** Whole-business P&L (CE_TOTALE): now COMPUTED natively by v_ce_totale (Amimì + gifts + all
+ *  expenses + the irreducibly-manual non-Amimì Jan/Feb block), not the old static sheet copy. */
 export async function fetchCeTotale(): Promise<CeTot[]> {
   const { data, error } = await supabase
-    .from('ce_totale_monthly')
-    .select('year,month,online_netto,offline_netto,lordo,netto,mc1,mc2')
+    .from('v_ce_totale')
+    .select('year,month,online_netto,offline_netto,b2b_netto,omni_netto,mc1,mc2')
     .eq('year', nowYear())
     .order('month');
   if (error) throw new Error(error.message);
-  return (data ?? []) as CeTot[];
+  return (data ?? []).map((r: { year: number; month: number; online_netto: number; offline_netto: number; b2b_netto: number; omni_netto: number; mc1: number; mc2: number }) => ({
+    year: r.year, month: r.month,
+    online_netto: Number(r.online_netto), offline_netto: Number(r.offline_netto), b2b_netto: Number(r.b2b_netto),
+    netto: Number(r.omni_netto), lordo: Number(r.omni_netto) * 1.22, mc1: Number(r.mc1), mc2: Number(r.mc2),
+  })) as CeTot[];
 }
 
 export async function syncShopify(pin: string) {

@@ -55,7 +55,7 @@ export default function Report({ onBack }: { onBack?: () => void }) {
   // Unified monthly rows for the active scope
   const rows: Row[] = useMemo(() => {
     if (scope === 'totale') {
-      return cet.map((r) => ({ month: r.month, netto: r.netto, lordo: r.lordo, mc1: r.mc1, mc2: r.mc2, online: r.online_netto, offline: r.offline_netto, b2b: 0 }));
+      return cet.map((r) => ({ month: r.month, netto: r.netto, lordo: r.lordo, mc1: r.mc1, mc2: r.mc2, online: r.online_netto, offline: r.offline_netto, b2b: r.b2b_netto }));
     }
     return ce.map((r) => ({ month: r.month, netto: r.omni_netto, lordo: r.omni_netto * 1.22, mc1: r.mc1, mc2: r.mc2, online: r.online_netto, offline: r.offline_netto, b2b: r.b2b_netto }));
   }, [scope, ce, cet]);
