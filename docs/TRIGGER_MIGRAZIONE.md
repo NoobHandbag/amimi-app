@@ -27,8 +27,8 @@
 | 3 | Scrittura Shopify (stock realign) | ✅ fatto (single + SC/CC). Resta: trigger automatico (vedi §2 fase 3) |
 | 4 | Flag `single_source_of_truth` (interruttore di coordinamento) | 🔴 da creare |
 | 5 | **Ruotare i segreti**: 3 Supabase (`gemini_api_key`, `mcp_token`, `qromo_webhook_secret`) + **token Shopify** (esposto in chat 01-07) | 🟠 da fare con owner |
-| 6 | Pulizia giacenze negative + 14 codici-ordine orfani | 🟢 **negative = 0** (35 rettifiche); restano i 14 orfani |
-| 7 | Backup/DR runbook (pg_dump schedulato + restore testato) | 🔴 da definire |
+| 6 | Pulizia giacenze negative + codici-ordine orfani | 🟢 **fatto**: negative = 0 (35 rettifiche) + 13 codici orfani sistemati (4 ripuntati ai canonici Agata, 9 stub `verificato=false` per Benedetta) |
+| 7 | Backup/DR runbook (backup schedulato + restore testato) | 🟠 backup logico giornaliero **live** (GH Action `db-backup`, artifact 90gg, run verificata 14s); resta il restore-test |
 | 8 | Runbook di cutover scritto (questo doc) | 🟢 in corso |
 | 9 | Dashboard/consumatori che leggono il Master vanno ripuntati | 🔴 aperto |
 
@@ -38,7 +38,7 @@
 
 ### Fase 1 — Pulizia & presa in carico (app non ancora autorevole)
 1. **Giacenze negative** → riconciliate a 0 (vedi §3). ✅/in corso.
-2. **14 codici-ordine orfani**: correggere i 6 doppio-prefisso Agata o creare i prodotti; creare la linea Porta_carte (cosmetico, non tocca lo stock).
+2. **Codici-ordine orfani → ✅ fatto (01-07)**: 13 codici in `supplier_orders` senza prodotto (0 impatto su stock/CE, vivevano solo negli ordini). 4 doppio-prefisso Agata ripuntati ai canonici esistenti; 9 stub `verificato=false, source='app-ordine'` creati (5 Porta carte + Agata ORGANZA_LILLA/ROSE_BUTTER_LILLA + Annie SETA_VERDE + Lea x Rita) → ora in cima alla coda "Nuovi da arricchire" di Benedetta. Orfani residui = 0.
 3. Verificare che PRODUCT_MAP/COGS non abbiano buchi (nessuna vendita irrisolta, nessun COGS mancante).
 4. Backfill delle ~38 immagini prodotto mancanti (UX, non bloccante).
 
