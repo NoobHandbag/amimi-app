@@ -546,3 +546,10 @@ Il badge "todo" sulla tile Pulizia dati (Home) contava TUTTE le righe di `v_prod
 - **v_ce_totale NATIVO** (non più la copia statica `ce_totale_monthly`): online (Shopify) + offline (Qromo + GIFT_OFFLINE) + b2b (non-annullato) + **tutte** le spese (non filtrate amimi) + `ce_totale_manual` (blocco non-Amimì gen/feb, hardcoded anche nel Master, non calcolabile). Reso: **gen/feb/mar esatti**, apr/mag ~1%, giu live.
 - **Master quirk riprodotto:** la logistica variabile del CE_TOTALE nel Master ha una SUMIFS col filtro sottocategoria = una cella numerica (A40=-207) → no-op → 0. `v_ce_totale` la tratta manual-only. (L'Amimì mantiene la sua logistica, corretta.)
 - **FRONTEND:** `fetchCeTotale` legge ora `v_ce_totale` (toggle Totale del Cruscotto), incluso `b2b_netto`.
+
+## SESSION 23 — Blocker #2 & #3: feed ordini + scrittura Shopify validati
+
+- **#2 (feed ordini):** `shopify-sync` tira gli ordini DIRETTAMENTE da Shopify Admin API, idempotente (rilancio: 0 inseriti), current. Autorevole e indipendente dall'Apps Script → ritirarlo è una decisione di cutover, non una capacità mancante.
+- **#3 (scrittura stock):** il token in `app_config` era read-only → il realign moriva su `locations.json` (manca `read_locations`). Fix in 3 passi: (a) l'owner ha messo in `app_config.shopify_token` l'`ADMIN_TOKEN` write del variant-sync (via SQL); (b) `shopify-stock` **non legge piu' le location** — usa `app_flags.shopify_location_id` con default `107986518343` ("Punto di ritiro"), come fa il variant-sync; (c) `shopify_write_enabled=true`. **Validato dal vivo:** realign `Nina_Bag_Maxi_STRIPES_REED` -> Shopify available 27->26 confermato via Shopify API.
+- **Aperto per rimpiazzare DEL TUTTO il variant-sync:** (a) doppia variante SC/CC (l'app setta 1 inventory_item per codice; i bag con "Senza Catena"/"Con Catena" ne hanno 2); (b) trigger automatico (oggi il realign e' manuale). Finche' non estesi: NON far girare app + variant-sync sugli stessi bag.
+- **SICUREZZA:** l'`ADMIN_TOKEN` Shopify e' transitato in chat il 2026-07-01 -> va RUOTATO (ed e' condiviso app + variant-sync).

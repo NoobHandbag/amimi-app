@@ -68,9 +68,10 @@ Deno.serve(async (req) => {
 
     const codici: string[] = body.codici || [];
     if (!codici.length) return json({ error: 'nessun prodotto selezionato' }, 422);
-    const loc = await fetch(`${API}/locations.json`, { headers: SH }).then((r) => r.json()).catch(() => null);
-    const locationId = loc?.locations?.find((l: Record<string, unknown>) => l.active)?.id ?? loc?.locations?.[0]?.id;
-    if (!locationId) return json({ error: 'location Shopify non trovata' }, 502);
+    // Location is CONFIGURED, not fetched: the token only needs write_inventory (not read_locations).
+    // Default = "Punto di ritiro" (the same id variant-sync hardcodes); override via app_flags.shopify_location_id.
+    const { data: locFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_location_id').maybeSingle();
+    const locationId = Number(locFlag?.value || '107986518343');
 
     const { data: stock } = await sb.from('shopify_stock').select('codice, inventory_item_id').in('codice', codici);
     const { data: inv } = await sb.from('v_inventory').select('codice, disponibili_da_vendere').in('codice', codici);
@@ -83,8 +84,9 @@ Deno.serve(async (req) => {
         method: 'POST', headers: SH,
         body: JSON.stringify({ location_id: locationId, inventory_item_id: Number(s.inventory_item_id), available }),
       });
-      results.push({ codice: s.codice, available, ok: r.ok });
-      if (r.ok) await sb.from('shopify_stock').update({ shopify_qty: available, synced_at: new Date().toISOString() }).eq('codice', s.codice);
+      const ok = r.ok;
+      results.push({ codice: s.codice, available, ok, ...(ok ? {} : { status: r.status, detail: (await r.text()).slice(0, 200) }) });
+      if (ok) await sb.from('shopify_stock').update({ shopify_qty: available, synced_at: new Date().toISOString() }).eq('codice', s.codice);
     }
     await sb.from('change_log').insert({ tbl: 'shopify_stock', row_id: 'realign', op: 'shopify_realign', after: { results }, chi: body.chi || null, source: 'shopify-stock' });
     return json({ ok: true, realigned: results.filter((r) => r.ok).length, results });
