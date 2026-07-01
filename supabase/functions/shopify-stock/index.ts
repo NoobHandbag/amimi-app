@@ -36,8 +36,9 @@ Deno.serve(async (req) => {
     if (!resp.ok) return json({ error: 'Shopify ' + resp.status, detail: (await resp.text()).slice(0, 200) }, 502);
     const { products } = await resp.json();
 
-    const rows: Record<string, unknown>[] = [];
-    const seen = new Set<string>();
+    // Group ALL variant inventory items per codice: dual-variant bags (SC/CC "Senza/Con Catena")
+    // share ONE codice via the product-title alias — both inventory items must be kept and realigned.
+    const byCodice = new Map<string, { qty: number; title: string; image: string | null; variant_id: string; items: string[] }>();
     for (const p of products ?? []) {
       for (const v of p.variants ?? []) {
         // SKU is the CODICE_AMIIMI; fall back to product title via aliases, then normalized codice.
@@ -45,20 +46,22 @@ Deno.serve(async (req) => {
         if (v.sku && byNorm.has(norm(v.sku))) codice = byNorm.get(norm(v.sku))!;
         else if (v.sku && [...byNorm.values()].includes(v.sku)) codice = v.sku;
         else codice = aliasMap.get(norm(p.title)) ?? (v.sku || null);
-        if (!codice || seen.has(codice)) continue;
-        seen.add(codice);
+        if (!codice) continue;
         // image: the variant's own photo if it has one, else the product's featured/first image
         const vImg = (v.image_id && Array.isArray(p.images))
           ? (p.images.find((im: { id: number; src: string }) => im.id === v.image_id)?.src ?? null) : null;
         const image_url = vImg ?? p.image?.src ?? (Array.isArray(p.images) ? (p.images[0]?.src ?? null) : null);
-        rows.push({
-          codice, shopify_qty: Number(v.inventory_quantity ?? 0), shopify_title: p.title, image_url,
-          variant_id: String(v.id), inventory_item_id: String(v.inventory_item_id), synced_at: new Date().toISOString(),
-        });
+        const e = byCodice.get(codice) ?? { qty: Number(v.inventory_quantity ?? 0), title: p.title, image: image_url, variant_id: String(v.id), items: [] };
+        if (!e.items.includes(String(v.inventory_item_id))) e.items.push(String(v.inventory_item_id));
+        byCodice.set(codice, e);
       }
     }
+    const rows = [...byCodice.entries()].map(([codice, e]) => ({
+      codice, shopify_qty: e.qty, shopify_title: e.title, image_url: e.image,
+      variant_id: e.variant_id, inventory_item_id: e.items[0], inventory_item_ids: e.items, synced_at: new Date().toISOString(),
+    }));
     if (rows.length) await sb.from('shopify_stock').upsert(rows, { onConflict: 'codice' });
-    return json({ ok: true, synced: rows.length, products: (products ?? []).length });
+    return json({ ok: true, synced: rows.length, products: (products ?? []).length, dual: rows.filter((r) => r.inventory_item_ids.length > 1).length });
   }
 
   // ---- REALIGN: set Shopify available = gestionale disponibili (GATED) ----
@@ -73,20 +76,25 @@ Deno.serve(async (req) => {
     const { data: locFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_location_id').maybeSingle();
     const locationId = Number(locFlag?.value || '107986518343');
 
-    const { data: stock } = await sb.from('shopify_stock').select('codice, inventory_item_id').in('codice', codici);
+    const { data: stock } = await sb.from('shopify_stock').select('codice, inventory_item_id, inventory_item_ids').in('codice', codici);
     const { data: inv } = await sb.from('v_inventory').select('codice, disponibili_da_vendere').in('codice', codici);
     const target = new Map((inv ?? []).map((r) => [r.codice, Math.max(0, Number(r.disponibili_da_vendere) || 0)]));
 
     const results: Record<string, unknown>[] = [];
     for (const s of stock ?? []) {
       const available = target.get(s.codice) ?? 0;
-      const r = await fetch(`${API}/inventory_levels/set.json`, {
-        method: 'POST', headers: SH,
-        body: JSON.stringify({ location_id: locationId, inventory_item_id: Number(s.inventory_item_id), available }),
-      });
-      const ok = r.ok;
-      results.push({ codice: s.codice, available, ok, ...(ok ? {} : { status: r.status, detail: (await r.text()).slice(0, 200) }) });
-      if (ok) await sb.from('shopify_stock').update({ shopify_qty: available, synced_at: new Date().toISOString() }).eq('codice', s.codice);
+      // push to EVERY variant's inventory item (SC + CC share the codice's physical stock)
+      const items: string[] = (s.inventory_item_ids && s.inventory_item_ids.length) ? s.inventory_item_ids : [s.inventory_item_id].filter(Boolean);
+      let allOk = true; const errs: Record<string, unknown>[] = [];
+      for (const item of items) {
+        const r = await fetch(`${API}/inventory_levels/set.json`, {
+          method: 'POST', headers: SH,
+          body: JSON.stringify({ location_id: locationId, inventory_item_id: Number(item), available }),
+        });
+        if (!r.ok) { allOk = false; errs.push({ item, status: r.status, detail: (await r.text()).slice(0, 120) }); }
+      }
+      results.push({ codice: s.codice, available, variants: items.length, ok: allOk, ...(allOk ? {} : { errs }) });
+      if (allOk) await sb.from('shopify_stock').update({ shopify_qty: available, synced_at: new Date().toISOString() }).eq('codice', s.codice);
     }
     await sb.from('change_log').insert({ tbl: 'shopify_stock', row_id: 'realign', op: 'shopify_realign', after: { results }, chi: body.chi || null, source: 'shopify-stock' });
     return json({ ok: true, realigned: results.filter((r) => r.ok).length, results });

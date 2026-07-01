@@ -553,3 +553,11 @@ Il badge "todo" sulla tile Pulizia dati (Home) contava TUTTE le righe di `v_prod
 - **#3 (scrittura stock):** il token in `app_config` era read-only → il realign moriva su `locations.json` (manca `read_locations`). Fix in 3 passi: (a) l'owner ha messo in `app_config.shopify_token` l'`ADMIN_TOKEN` write del variant-sync (via SQL); (b) `shopify-stock` **non legge piu' le location** — usa `app_flags.shopify_location_id` con default `107986518343` ("Punto di ritiro"), come fa il variant-sync; (c) `shopify_write_enabled=true`. **Validato dal vivo:** realign `Nina_Bag_Maxi_STRIPES_REED` -> Shopify available 27->26 confermato via Shopify API.
 - **Aperto per rimpiazzare DEL TUTTO il variant-sync:** (a) doppia variante SC/CC (l'app setta 1 inventory_item per codice; i bag con "Senza Catena"/"Con Catena" ne hanno 2); (b) trigger automatico (oggi il realign e' manuale). Finche' non estesi: NON far girare app + variant-sync sugli stessi bag.
 - **SICUREZZA:** l'`ADMIN_TOKEN` Shopify e' transitato in chat il 2026-07-01 -> va RUOTATO (ed e' condiviso app + variant-sync).
+
+## SESSION 24 — Realign Shopify: doppia variante SC/CC
+
+- **Migration 0029:** `shopify_stock.inventory_item_ids text[]`.
+- **sync:** ora raggruppa TUTTI gli inventory-item per codice (i bag SC/CC "Senza/Con Catena" condividono un codice via alias del titolo) → **50 codici dual-variant** tracciati.
+- **realign:** spinge il target su OGNI inventory-item del codice, non piu' solo il primo.
+- **Validato live:** Agata Floral Dusty → entrambe le varianti (SC + CC) da 1 a 2 su Shopify. `shopify-stock` v4.
+- **Trigger automatico — NON ancora fatto (prerequisiti):** l'auto-push va acceso solo DOPO (1) la pulizia delle 34 giacenze negative (altrimenti le azzera su Shopify nascondendo prodotti vendibili) e (2) il ritiro del variant-sync (altrimenti due sistemi scrivono lo stesso stock in conflitto). Design pronto: azione `realign_all` (solo i codici driftati) gated da un nuovo flag `shopify_autopush_enabled` + cron orario.
