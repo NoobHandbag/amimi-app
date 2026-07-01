@@ -523,3 +523,14 @@ Test frontend (Playwright, viewport mobile) della conta-rettifica + verifica gen
 - **FIX layout (trovato nel test):** nell'header Inventario i 6 sub-tab (`.seg.wrap`) si impilavano in verticale sovrapponendosi al titolo e ai bottoni su mobile (header alto 240px). Aggiunta classe `.invhead`: titolo + PDF/CSV su riga 1, sub-tab full-width che scorrono in orizzontale su riga 2 (header 87px). Verificato.
 - **NON toccato (scelta utente):** icone nav/tile tornate a emoji = decisione intenzionale dell'utente (commit `64d1c94`, "clarity over coherence"); sicurezza chiusa dall'utente (commit `08347bf`, revoca write/secret anon).
 - **Dati di test nel DB:** Nina_Bag_STRIPES_PETROL_BLUE giac 39 (13 di aggiustamenti-conta accumulati nei test), da riallineare dal Master.
+
+## SESSION 21 — Test frontend di TUTTI i flussi + fix riga arrivo
+
+Giro completo end-to-end (Playwright, viewport mobile) di ogni user flow, ognuno verificato sul DB. Prodotto di test principale: Lea_Bag_COCCO_PURPLE.
+
+- **Scritture verificate (form → submit → effetto DB):** Regalo (gifts_offline, −1 giac); Vendita manuale (gift kind vendita_manuale, −1 giac, **fuori dal CE per scelta**); Movimento B2B venduto (b2b_movements, incasso_amimi 60 = retail×(1−%), CE b2b +49.18); Arrivo fornitore (purchases +5, order arrived, giac +5); Nuovo ordine fornitore (supplier_orders); Spesa manuale (expenses approved, costo negativo); Approva spesa (pending→approved via ✓); Nuovo prodotto (products); Verifica prodotto (product_verify). Tutti OK, **0 errori console**.
+- **Gated:** Pubblica su Shopify mostra il warning "Pubblicazione live disattivata", nessun path di scrittura. OK.
+- **Viste di lettura (render + 0 errori):** Home, Cruscotto (KPI/trend/Chiedi ai dati/Calcolatore), Inventario (Disponibilità/Magazzino/Riordino/Nei negozi/Shopify/Valore + drawer prodotto con storico acquisti/vendite), Tabelle. Tutte OK.
+- **FIX (trovato nel test):** riga arrivo (`ArrivoRow`) — `.linerow` era `display:flex` in riga, così l'editor inline (qta + data + **salva**) finiva **fuori dallo schermo a destra** su mobile (salva quasi intoccabile). Fix: `.linerow` a `flex-direction:column`, `.arrinline` a `display:block` (era duplicato flex vs block). Ora l'editor sta su una riga sotto e ci sta tutto. Deployato + verificato.
+- **Findings (non bug, da sapere):** (1) **"Correggi vendita" (`sale_correct`) e `OrderForm.tsx` sono codice morto** — le funzioni API esistono ma NESSUNA UI le usa, quindi non raggiungibili dal frontend. (2) La vendita manuale (gift) scala lo stock ma non entra nel P&L (scelta documentata nel form).
+- **Dati di test lasciati (Master realign):** Lea_Bag_COCCO_PURPLE giac 7; Annie_Bag_PAILLETTES_NUDE +5; righe gift/b2b/spese/conte/return dei test. **Puliti io:** prodotto Lea_Bag_QATESTZZZ e ordine di test rimossi; nome di Lea_Bag_VERNICE_VIOLA ripristinato (il verifica-test l'aveva rinominato "QA Model/QA VAR").

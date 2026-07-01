@@ -277,12 +277,12 @@ tr.dim { opacity: .6; }
 /* ---- FLOW 1: arrivals ---- */
 .invimg.sm { width: 34px; height: 34px; border-radius: 7px; }
 .grphead { padding: 2px 2px 9px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
-.linerow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 2px; border-bottom: 1px solid var(--line); }
+.linerow { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 9px 2px; border-bottom: 1px solid var(--line); }
 .linerow:last-child { border-bottom: 0; }
 .linerow.done { opacity: .62; }
 .lineinfo { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0; }
 .lineinfo .rt { font-size: 13.5px; }
-.arrinline { display: flex; gap: 5px; align-items: center; }
+.arrinline { display: block; margin-top: 6px; }
 .dbox { border: 1px solid var(--line); border-radius: 8px; padding: 6px; font-size: 12px; width: 122px; }
 
 /* ---- Verifica hub ---- */
