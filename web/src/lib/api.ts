@@ -93,11 +93,11 @@ export async function fetchLastPurchase(codice: string): Promise<{ costo_unitari
   return null;
 }
 
-export type Activity = { id: number; tbl: string; chi: string | null; ts: string; codice: string | null };
+export type Activity = { id: number; tbl: string; rowId: string | null; op: string | null; chi: string | null; ts: string; codice: string | null; after: Record<string, unknown> | null };
 export async function fetchRecent(): Promise<Activity[]> {
-  const { data } = await supabase.from('change_log').select('id,tbl,chi,ts,after').order('ts', { ascending: false }).limit(15);
-  return (data ?? []).map((r: { id: number; tbl: string; chi: string | null; ts: string; after: { codice?: string } | null }) =>
-    ({ id: r.id, tbl: r.tbl, chi: r.chi, ts: r.ts, codice: r.after?.codice ?? null }));
+  const { data } = await supabase.from('change_log').select('id,tbl,row_id,op,chi,ts,after').order('ts', { ascending: false }).limit(25);
+  return (data ?? []).map((r: { id: number; tbl: string; row_id: string | null; op: string | null; chi: string | null; ts: string; after: Record<string, unknown> | null }) =>
+    ({ id: r.id, tbl: r.tbl, rowId: r.row_id, op: r.op, chi: r.chi, ts: r.ts, codice: (r.after as { codice?: string } | null)?.codice ?? null, after: r.after ?? null }));
 }
 
 export type Ordine = {

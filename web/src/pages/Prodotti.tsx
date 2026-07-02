@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { pushBack, popBack } from '../lib/backnav';
 import { supabase } from '../lib/supabase';
 import { fetchProductsTodo, verifyProduct, clearProductCache } from '../lib/api';
 import type { ProdTodo } from '../lib/api';
@@ -69,16 +70,18 @@ export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
   const [showClean, setShowClean] = useState(false);
   const load = () => fetchProductsTodo().then(setList).catch(() => {});
   useEffect(() => { load(); }, []);
-  if (edit) return <ProdEdit p={edit} pin={pin} chi={chi} onDone={() => { setEdit(null); load(); }} />;
+  if (edit) return <ProdEdit p={edit} pin={pin} chi={chi} onDone={() => { popBack(() => setEdit(null)); load(); }} />;
   if (!list.length) return <div className="card muted center">Tutti i prodotti sono verificati. 🎉</div>;
 
+  // DESCR e' richiesta solo per i modelli NUOVI: per le varianti di item esistenti
+  // la descrizione vive a livello di modello (gia' scritta), il tag sarebbe rumore.
   const miss = (p: ProdTodo) => [
     !p.item && 'MODELLO', !p.variant && 'VARIANTE', !p.image_url && 'IMG',
-    (!p.retail_price && 'PREZZO'), !p.description && 'DESCR',
+    (!p.retail_price && 'PREZZO'), (!p.description && p.is_new_model && 'DESCR'),
   ].filter(Boolean) as string[];
 
   const card = (p: ProdTodo, dim = false) => (
-    <button key={p.codice} className={`todocard${dim ? ' dim' : ''}`} onClick={() => setEdit(p)}>
+    <button key={p.codice} className={`todocard${dim ? ' dim' : ''}`} onClick={() => { pushBack(() => setEdit(null)); setEdit(p); }}>
       <div className="invimg sm">{p.image_url ? <img src={p.image_url} alt="" /> : <span>{(p.item ?? p.codice).slice(0, 2)}</span>}</div>
       <div className="todoinfo">
         <div className="rt">{[p.item, p.variant].filter(Boolean).join(' ') || p.codice}

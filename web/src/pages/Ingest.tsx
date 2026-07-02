@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { pushBack, popBack } from '../lib/backnav';
 import CountForm from '../components/CountForm';
 import NewProductForm from '../components/NewProductForm';
 import GiftForm from '../components/GiftForm';
@@ -48,7 +49,7 @@ export default function Ingest({ pin, chi, initial }: {
         <>
           <div className="tipi">
             {TIPI.map((t) => (
-              <button key={t.k} className="tipo" onClick={() => { setTableInit(undefined); setSel(t.k); }} type="button">
+              <button key={t.k} className="tipo" onClick={() => { setTableInit(undefined); pushBack(() => setSel(null)); setSel(t.k); }} type="button">
                 <span className="ti"><Icon name={t.icon} size={26} /></span>
                 <span className="tt">{t.label}</span>
                 <span className="td">{t.desc}</span>
@@ -59,7 +60,7 @@ export default function Ingest({ pin, chi, initial }: {
         </>
       ) : (
         <>
-          <button className="back" onClick={() => setSel(null)} type="button">← {cur?.label}</button>
+          <button className="back" onClick={() => popBack(() => setSel(null))} type="button">← {cur?.label}</button>
           {sel === 'count' && <CountForm pin={pin} chi={chi} />}
           {sel === 'product' && <NewProductForm pin={pin} chi={chi} />}
           {sel === 'gift' && <GiftForm pin={pin} chi={chi} />}

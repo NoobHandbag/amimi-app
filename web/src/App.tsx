@@ -6,13 +6,18 @@ import Ingest from './pages/Ingest';
 import Ordini from './pages/Ordini';
 import Inventory from './pages/Inventory';
 import Icon from './components/Icon';
+import { pushBack } from './lib/backnav';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [param, setParam] = useState<string | undefined>();
   const [chi, setChiS] = useState(() => localStorage.getItem('amimi_chi') || 'Ale');
   const setChi = (c: string) => { setChiS(c); localStorage.setItem('amimi_chi', c); };
-  const go = (t: Tab, p?: string) => { setParam(p); setTab(t); };
+  const go = (t: Tab, p?: string) => {
+    // swipe-back Android: ogni cambio tab spinge una entry di history che riporta al tab precedente
+    if (t !== tab) { const prev = tab; pushBack(() => { setParam(undefined); setTab(prev); }); }
+    setParam(p); setTab(t);
+  };
   const pin = 'x'; // PIN removed per design; writes go through the service-role write-api.
 
   const navBtn = (t: Tab, icon: string, label: string) => (
