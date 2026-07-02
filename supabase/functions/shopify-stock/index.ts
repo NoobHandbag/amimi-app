@@ -64,6 +64,62 @@ Deno.serve(async (req) => {
     return json({ ok: true, synced: rows.length, products: (products ?? []).length, dual: rows.filter((r) => r.inventory_item_ids.length > 1).length });
   }
 
+  // ---- REALIGN_ALL: push automatico con POLICY variant-sync V2 (cron orario, GATED) ----
+  // Policy: target = disponibili - buffer (default 2); con conta fresca (<=30gg) target = disponibili
+  // pieno; MAI rialzi senza conta fresca (hold); ribassi sempre. Solo i codici driftati.
+  if (action === 'realign_all') {
+    const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'shopify_autopush_enabled').maybeSingle();
+    if (flag?.value !== 'true') return json({ ok: true, skipped: 'autopush disattivato (shopify_autopush_enabled != true)' });
+    const dryRun = body.dryRun === true;
+
+    const { data: locFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_location_id').maybeSingle();
+    const locationId = Number(locFlag?.value || '107986518343');
+    const { data: bufFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_expose_buffer').maybeSingle();
+    const buffer = Number(bufFlag?.value ?? '2');
+
+    const { data: stock } = await sb.from('shopify_stock').select('codice, shopify_qty, inventory_item_id, inventory_item_ids');
+    const { data: inv } = await sb.from('v_inventory').select('codice, disponibili_da_vendere');
+    const dispByCod = new Map((inv ?? []).map((r) => [r.codice, Math.max(0, Number(r.disponibili_da_vendere) || 0)]));
+    const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const { data: fresh } = await sb.from('counts').select('codice').gte('data_conta', cutoff);
+    const freshSet = new Set((fresh ?? []).map((r) => r.codice));
+
+    let pushed = 0, held = 0, okCount = 0; const actions: Record<string, unknown>[] = []; const unmapped: string[] = [];
+    for (const s of stock ?? []) {
+      const disp = dispByCod.get(s.codice);
+      // SKU Shopify non mappato al catalogo: MAI toccarlo (azzerarlo nasconderebbe un prodotto vivo)
+      if (disp === undefined) { unmapped.push(s.codice); continue; }
+      const hasFresh = freshSet.has(s.codice);
+      const target = hasFresh ? disp : Math.max(0, disp - buffer);
+      const current = Number(s.shopify_qty) || 0;
+      if (target === current) { okCount++; continue; }
+      if (target > current && !hasFresh) { held++; actions.push({ codice: s.codice, azione: 'HOLD (serve conta per alzare)', current, target }); continue; }
+      actions.push({ codice: s.codice, azione: dryRun ? 'PUSH (dry)' : 'PUSH', current, target });
+      if (dryRun) { pushed++; continue; }
+      const items: string[] = (s.inventory_item_ids && s.inventory_item_ids.length) ? s.inventory_item_ids : [s.inventory_item_id].filter(Boolean);
+      let allOk = true;
+      for (const item of items) {
+        const r = await fetch(`${API}/inventory_levels/set.json`, {
+          method: 'POST', headers: SH,
+          body: JSON.stringify({ location_id: locationId, inventory_item_id: Number(item), available: target }),
+        });
+        if (!r.ok) allOk = false;
+      }
+      if (allOk) {
+        pushed++;
+        await sb.from('shopify_stock').update({ shopify_qty: target, synced_at: new Date().toISOString() }).eq('codice', s.codice);
+      }
+    }
+    const summary = { pushed, held, ok: okCount, unmapped, dryRun, buffer, actions: actions.slice(0, 40) };
+    if (!dryRun) {
+      const today = new Date().toISOString().slice(0, 10);
+      await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
+      await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: `autopush: ${pushed} push, ${held} hold, ${okCount} ok`, n: pushed, severity: 'ok' });
+      if (pushed || held) await sb.from('change_log').insert({ tbl: 'shopify_stock', row_id: 'realign_all', op: 'stock_autopush', after: summary, chi: 'cron', source: 'shopify-stock' });
+    }
+    return json({ ok: true, ...summary });
+  }
+
   // ---- REALIGN: set Shopify available = gestionale disponibili (GATED) ----
   if (action === 'realign') {
     const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'shopify_write_enabled').single();
