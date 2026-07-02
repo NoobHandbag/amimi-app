@@ -274,6 +274,13 @@ Deno.serve(async (req) => {
       resolver_status: (payload.resolver_status as string) ?? 'forwarded',
       source: 'qromo-forward', note: (payload.note as string) ?? null,
     };
+    // fallback COGS: il forwarder non sempre lo manda -> snapshot dal listino (products).
+    // Trovato dalla ce-guard 03-07: 5 vendite di luglio senza COGS.
+    if (row.cogs == null && codice) {
+      const cn = codice.toUpperCase().replace(/\s+/g, '_');
+      const { data: pr } = await sb.from('products').select('cogs').eq('codice_norm', cn).maybeSingle();
+      if (pr?.cogs != null) row.cogs = Number(pr.cogs);
+    }
     const { data, error } = await sb.from('qromo_sales').insert(row).select().single();
     if (error) return json({ error: error.message }, 400);
     await logp('qromo_sales', String(data.id), 'qromo_sale', { sale_id: saleId, codice, qty });

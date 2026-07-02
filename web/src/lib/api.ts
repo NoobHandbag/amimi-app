@@ -199,6 +199,13 @@ export async function fetchExpensesPending(): Promise<ExpPending[]> {
   if (error) throw new Error(error.message);
   return (data ?? []) as ExpPending[];
 }
+// coda di revisione completa: proposte pending + storiche con nota "DA VERIFICARE"
+export type ExpReview = ExpPending & { year: number; month: number; date_reported: string | null; amimi_raw: string | null; created_at: string };
+export async function fetchExpensesReview(): Promise<ExpReview[]> {
+  const { data, error } = await supabase.from('v_expenses_review').select('*');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ExpReview[];
+}
 export async function fetchExpensesRecent(): Promise<ExpPending[]> {
   const { data } = await supabase.from('expenses').select('id,date_paid,operazione,costo,categoria,sottocategoria,amimi,note,proposed_by,status')
     .order('created_at', { ascending: false }).limit(20);
