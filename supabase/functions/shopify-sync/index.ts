@@ -55,6 +55,8 @@ Deno.serve(async (req) => {
       payment_fees: -Math.round((gross * 0.022 + 0.25) * 100) / 100, refund_amount: refund,
       free_shipping: false, free_shipping_amt: 0, currency: o.currency,
       year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, vendor: null,
+      fulfilled_at: o.fulfillments?.[0]?.created_at ?? null,
+      discount_codes: (o.discount_codes ?? []).map((c: any) => c.code).filter(Boolean).join('+') || null,
     };
     const lines = (o.line_items ?? []).map((it: any) => {
       const nm = it.name ?? it.title;
@@ -64,6 +66,30 @@ Deno.serve(async (req) => {
     });
     return { order, lines };
   };
+
+  // ---- one-off: backfill fulfilled_at + discount_codes on EXISTING rows (never touches amounts) ----
+  if (body.action === 'backfill_meta') {
+    let sinceId = 0, updated = 0, scanned = 0;
+    for (let page = 0; page < 20; page++) {
+      const u = `https://${SHOP}.myshopify.com/admin/api/2024-01/orders.json?status=any&limit=250&since_id=${sinceId}&fields=id,name,fulfillments,discount_codes`;
+      const r = await fetch(u, { headers: { 'X-Shopify-Access-Token': token } });
+      if (!r.ok) return json({ error: 'Shopify ' + r.status, updated, scanned }, 502);
+      const batch = (await r.json()).orders ?? [];
+      if (!batch.length) break;
+      for (const o of batch) {
+        sinceId = Math.max(sinceId, Number(o.id));
+        scanned++;
+        const fulfilled_at = o.fulfillments?.[0]?.created_at ?? null;
+        const discount_codes = (o.discount_codes ?? []).map((c: { code?: string }) => c.code).filter(Boolean).join('+') || null;
+        if (!fulfilled_at && !discount_codes) continue;
+        const { error: ue, count } = await sb.from('shopify_orders')
+          .update({ fulfilled_at, discount_codes }, { count: 'exact' }).eq('order_id', o.name);
+        if (!ue && count) updated += count;
+      }
+      if (batch.length < 250) break;
+    }
+    return json({ ok: true, backfill: true, scanned, updated });
+  }
 
   if (body.dryRun) {
     const preview = (orders ?? []).slice(0, 3).map(parse);
