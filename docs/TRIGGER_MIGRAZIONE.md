@@ -66,6 +66,17 @@
 
 ---
 
+## 2b. Parity CE finale (audit 03-07) — PASSATA, con il Master in torto sui delta
+
+- **Riferimento congelato:** `audit/Amimi_Master_2026_V2_REFERENCE_PRE-CUTOVER_2026-07-03.xlsx` (in git, PER SEMPRE). Script di verifica: `scripts/ce_parity.py` (Master export vs viste live, tutte le voci, mesi 1–7).
+- **Riallineamento pre-check:** expenses 237→278 (replace), gifts 126→130, meta 128→130, purchases +2 (append `ARR_*_20260708`), via `etl-load` temporanea (ridispiegata e SUBITO ritirata a stub 410). Qromo e B2B già pari (il forwarder orario tiene Qromo corrente).
+- **Esito:** fissi (salari/tasse/logistica/opex/eventi) ESATTI gen–giu su entrambi i CE; offline (Qromo) ESATTO; COGS/commissioni/logistica var/resi esatti o ±0,07.
+- **Delta residui — TUTTI spiegati, e quasi tutti errori del MASTER:**
+  1. **Il CE del Master non vede le righe recenti dei suoi stessi tab** (classe "fallimento silenzioso", audit 09-06): marketing mar (−32,99: le 3 righe expenses aggiunte il 02-07) e apr (−17,23); ordini giu (CE=168 ma DB Shopify del Master ne ha 172, identici all'app); gift giu (CE=82 pezzi ma GIFT_OFFLINE ne ha 87 → +COGS 135). L'app conta tutto correttamente.
+  2. **Apr/mag ±1%** su online lordo/netto: residui refund-timing, scelta documentata in `docs/CE_PARITY.md`.
+  3. **Gen/feb Totale, split di canale:** il blocco non-Amimì manuale vive nella replica solo come netto aggregato (`ce_totale_manual`) → le righe Online pezzi/lordo di gen/feb differiscono ma **l'Omni netto e MC1/MC2 tornano** (gen ±0,40 di rounding del seed).
+  4. Il segno di MC2 del Totale (gen–apr negativi) combacia col Master; era la VECCHIA dashboard a mostrarlo positivo (bug `Math.abs`).
+
 ## 3. Pulizia giacenze negative (stato reale 01-07)
 
 - **35 codici negativi.** Incrociati col Master: **solo 2** hanno l'acquisto nel Foglio (`Lea_Bag_ZEBRA` acq 10, `Annie_Bag_PAILLETTES_PINK` acq 12 — già in app, sono i sovra-venduti Cat C). Gli **altri 33** sono **buchi veri o mis-coding**: venduti/regalati ma mai acquistati nemmeno nel Foglio.
