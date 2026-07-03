@@ -25,13 +25,17 @@ Deno.serve(async (req) => {
   let body: Record<string, any>;
   try { body = await req.json(); } catch { return json({ ok: false, error: 'bad json' }, 400); }
 
-  // auth: accetta `auth` nel body (token Qromo) OPPURE `?key=` nell'URL configurato in console.
-  // Il token generato da Qromo e' mascherato in console e non estraibile: il secret vive nel
-  // NOSTRO URL del webhook (pattern standard), cosi' l'auth resta sotto il nostro controllo.
-  const { data: sf } = await sb.from('app_flags').select('value').eq('key', 'qromo_webhook_secret').maybeSingle();
-  const secret = sf?.value;
+  // auth (difesa in profondita', v3): accetta il NOSTRO secret (in body.auth o ?key= nell'URL del
+  // webhook) OPPURE il token che Qromo ha generato per il webhook "Amimi App Supabase" (2026-07-03,
+  // salvato in app_flags.qromo_webhook_token) — cosi' l'auth regge anche se Qromo strippa la query string.
+  const { data: sf } = await sb.from('app_flags').select('key, value').in('key', ['qromo_webhook_secret', 'qromo_webhook_token']);
+  const flags = new Map((sf ?? []).map((r: Record<string, string>) => [r.key, r.value]));
+  const secret = flags.get('qromo_webhook_secret');
+  const qToken = flags.get('qromo_webhook_token');
   const urlKey = new URL(req.url).searchParams.get('key') ?? '';
-  if (secret && String(body.auth ?? '') !== secret && urlKey !== secret) return json({ ok: false, error: 'auth' }, 401);
+  const bodyAuth = String(body.auth ?? '');
+  const authed = (!!secret && (bodyAuth === secret || urlKey === secret)) || (!!qToken && bodyAuth === qToken);
+  if ((secret || qToken) && !authed) return json({ ok: false, error: 'auth' }, 401);
 
   const order = body.order ?? body?.data?.order ?? body?.payload?.order ?? null;
   if (!order) return json({ ok: true, skipped: 'no_order' });

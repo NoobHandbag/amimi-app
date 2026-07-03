@@ -22,7 +22,7 @@
 
 | # | Blocker | Stato |
 |---|---|---|
-| 1 | **Webhook Qromo** punta ancora all'Apps Script (Foglio), non alla edge `qromo-webhook` | 🔴 aperto — è LO switch |
+| 1 | **Webhook Qromo** punta ancora all'Apps Script (Foglio), non alla edge `qromo-webhook` | 🟢 **SWITCHATO 03-07** (vedi §4b) — smoke test alla prima vendita reale |
 | 2 | Feed ordini Shopify autorevole senza Apps Script | ✅ fatto |
 | 3 | Scrittura Shopify (stock realign) | ✅ fatto (single + SC/CC). Resta: trigger automatico (vedi §2 fase 3) |
 | 4 | Flag `single_source_of_truth` (interruttore di coordinamento) | 🔴 da creare |
@@ -97,29 +97,28 @@
 
 ---
 
-## 4b. SWITCH QROMO — stato al 2026-07-03 (preparazione COMPLETA, resta 1 click owner)
+## 4b. SWITCH QROMO — ✅ ESEGUITO il 2026-07-03 (~12:30 CET), smoke test in attesa
 
-- **Console Qromo:** `qromo.it/console` → Settings ▸ General ▸ Webhooks. Login = sessione di Benedetta.
-  Il webhook vecchio si chiama **"Import GsheetsQromo"** e punta all'Apps Script `AKfycbwAAL4Ni…/exec`
-  (token Qromo mascherato ****YCGw, tipi New orders + Update orders).
-- **Auth della edge:** Qromo maschera/non-espone l'URL del webhook esistente e genera un proprio token
-  per il campo `auth` del body. Perciò la edge `qromo-webhook` (v2) accetta l'auth **anche via `?key=` nell'URL**
-  (oltre che via `body.auth`). Secret **ruotato** in `app_flags.qromo_webhook_secret` =
-  `qromo-575380f9192380663c71968557e534d5`. Il vecchio secret non è più valido. **Nota:** il path
-  Apps Script NON usa `app_flags` (ha il suo auth), quindi la rotazione non lo ha toccato: resta operativo.
-- **URL della edge da incollare in Qromo (nome libero, tipi New+Update):**
-  `https://imszbjeyplaiovylhkgl.supabase.co/functions/v1/qromo-webhook?key=qromo-575380f9192380663c71968557e534d5`
-- **Auth testata:** senza key → 401; `?key` giusta → ok; `?key` sbagliata → 401. End-to-end 6/6 su payload sintetici.
-- **Perché non l'ho finito in autonomia:** la console Qromo è risultata molto instabile via automazione
-  (screenshot in timeout, React che ignora i click sintetici, "Add" del nuovo webhook che non parte).
-  Essendo IL punto di non ritorno, meglio 2 click nativi dell'owner che uno stato a metà.
-- **SEQUENZA FINALE (owner, ~1 min):** in Settings ▸ General ▸ Webhooks: (1) espandi **New webhook**,
-  incolla nome + l'URL sopra, **Edit** tipi → attiva **New orders** + **Update orders** → Confirm → **Add**;
-  (2) verifica che compaia la card "Amimi App…"; (3) **subito dopo**, apri il vecchio "Import GsheetsQromo"
-  (matita) → **Delete webhook** (per evitare doppio conteggio: i due path usano `sale_id` diversi → MAI
-  entrambi attivi a lungo). Fatto ciò, avvisare così parte lo smoke test (vendita reale → 1 riga
-  `source='qromo-direct'` in `qromo_sales`, nessun doppione con `qromo-forward`).
-- **Rollback:** ri-crea il webhook verso `AKfycbwAAL4Ni…/exec` (Apps Script) e riattiva il forwarder orario.
+**Lo switch è FATTO.** In console Qromo (Settings ▸ General ▸ Webhooks) esiste UN solo webhook:
+**"Amimi App Supabase"** → `https://imszbjeyplaiovylhkgl.supabase.co/functions/v1/qromo-webhook?key=qromo-…`
+(tipi New orders + Update orders). Il vecchio "Import GsheetsQromo" (Apps Script `AKfycbwAAL4Ni…/exec`)
+è stato **cancellato** — la subscription Qromo ammette 1 solo webhook, quindi l'ordine obbligato è stato
+Delete → Add (finestra senza webhook: pochi secondi). Da ora il Foglio NON riceve più le vendite Qromo.
+
+- **Auth (edge v3, difesa in profondità):** la edge accetta TRE credenziali equivalenti:
+  (a) `?key=` nell'URL = `app_flags.qromo_webhook_secret` (è nel URL configurato in console);
+  (b) `body.auth` = stesso secret; (c) `body.auth` = token generato da Qromo per il nuovo webhook,
+  salvato in `app_flags.qromo_webhook_token` — così l'auth regge anche se Qromo strippasse la query string.
+  Testata live su v3: auth errata → 401; token Qromo → ok; `?key=` → ok (payload senza ordine, zero scritture).
+- **Smoke test (in attesa della prima vendita reale):** baseline al momento dello switch = 150 righe in
+  `qromo_sales`, ultima 02-07 17:25, 0 righe `source='qromo-direct'`. La prossima vendita in negozio deve
+  produrre 1 riga `qromo-direct` e nessun doppione (il forwarder non riceve più nulla, `sale_id` diversi).
+  Check: `select * from qromo_sales where source='qromo-direct' order by created_at desc;` + bottone **Log**
+  del webhook in console Qromo (mostra le consegne).
+- **Forwarder Apps Script:** resta installato ma a secco (il Foglio non riceve più righe nuove in Import).
+  Lasciato attivo apposta come pezzo del rollback.
+- **Rollback:** in console Qromo, Delete "Amimi App Supabase" → New webhook verso `AKfycbwAAL4Ni…/exec`
+  (tipi New+Update). Il Foglio ricomincia a ricevere e il forwarder riprende da solo.
 
 ## 5. Punto di non ritorno & rollback
 

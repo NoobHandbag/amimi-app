@@ -626,3 +626,25 @@ Il "mega prompt" approvato dall'owner e' `docs/GO_LIVE_WORKPLAN.md` (stati aggio
 - **Verifica:** Annie Stripes Pink 0→2, Lea Cocco Black 0→**20**; esauriti-con-stock **16→0**, sotto-esposti **75→0**.
 - **CAVEAT SC/CC da rifinire:** ~50 codici hanno 2 inventory_item (bag SC/CC "Senza/Con Catena", stock fisico condiviso). Con buffer 0 l'autopush setta `disp` su ENTRAMBE le varianti → Shopify espone `2×disp` per quei bag (rischio oversell di piccola entità: richiede l'acquisto separato della versione SC e CC dello stesso bag a basso stock prima del rifornimento). Il vecchio variant-sync lo mascherava col buffer. Da rifinire: buffer dedicato ai soli codici dual, o inventory-sharing Shopify. Per ora accettato (negozio a basso volume, meglio esporre che nascondere — scelta owner).
 - **Domanda Benedetta sulla conta:** "Applica conta" (Registra ▸ Conta fisica) rettifica la giacenza gestionale al numero contato (stock_adjustment); poi l'autopush orario lo rispecchia su Shopify. NON serve contare tutto (il fix buffer-0 ha gia' ripristinato); la conta serve solo quando il conteggio fisico differisce dal sistema. "Tabelle" = sola lettura dei dati grezzi (come fogli Excel), corretto.
+
+## SESSION 32 — 2026-07-03 (pomeriggio) — SWITCH QROMO ESEGUITO ✅ (punto di non ritorno)
+
+- **Webhook Qromo switchato in console** (Chrome, sessione Benedetta): cancellato "Import GsheetsQromo"
+  (Apps Script `/exec`) e creato **"Amimi App Supabase"** → edge `qromo-webhook` con `?key=` nell'URL,
+  tipi New orders + Update orders. Ordine obbligato Delete→Add per il limite 1-webhook della subscription
+  (l'Add con 2 webhook veniva rifiutato: "only 1 webhook per account" — conferma owner). Finestra senza
+  webhook: pochi secondi.
+- **Automazione console:** i real-click (computer) funzionano su matita/Delete/conferma/Add; falliva solo
+  l'Add PRIMA del delete (limite piano, non bug UI). `form_input` ok sui campi testo; toggle tipi via
+  click reale sulla ✓.
+- **Edge v3 (difesa in profondità):** Qromo ha generato un proprio token per il nuovo webhook →
+  salvato in `app_flags.qromo_webhook_token` e accettato come `body.auth` alternativo (oltre a
+  secret via `?key=`/`body.auth`). Test live: auth errata 401, token Qromo ok, `?key=` ok (payload
+  no_order, zero scritture).
+- **Baseline smoke test:** 150 righe `qromo_sales`, ultima 02-07 17:25, 0 `qromo-direct`, 5 `qromo-forward`.
+  Prossima vendita reale → 1 riga `source='qromo-direct'`, zero doppioni. Forwarder Apps Script lasciato
+  attivo a secco (pezzo del rollback).
+- **Docs:** TRIGGER_MIGRAZIONE §4b riscritto (eseguito + rollback), blocker 1 → 🟢.
+- **Cocco Green/Black/Annie verificati anche dal sito cliente** (storefront): comprabili, "Low stock"
+  su Cocco Green = corretto (9 pz). SC/CC 2×disp = decisione owner ACCETTATA (registrata in memoria,
+  non è un bug).
