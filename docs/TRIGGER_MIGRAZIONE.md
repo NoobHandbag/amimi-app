@@ -97,6 +97,30 @@
 
 ---
 
+## 4b. SWITCH QROMO — stato al 2026-07-03 (preparazione COMPLETA, resta 1 click owner)
+
+- **Console Qromo:** `qromo.it/console` → Settings ▸ General ▸ Webhooks. Login = sessione di Benedetta.
+  Il webhook vecchio si chiama **"Import GsheetsQromo"** e punta all'Apps Script `AKfycbwAAL4Ni…/exec`
+  (token Qromo mascherato ****YCGw, tipi New orders + Update orders).
+- **Auth della edge:** Qromo maschera/non-espone l'URL del webhook esistente e genera un proprio token
+  per il campo `auth` del body. Perciò la edge `qromo-webhook` (v2) accetta l'auth **anche via `?key=` nell'URL**
+  (oltre che via `body.auth`). Secret **ruotato** in `app_flags.qromo_webhook_secret` =
+  `qromo-575380f9192380663c71968557e534d5`. Il vecchio secret non è più valido. **Nota:** il path
+  Apps Script NON usa `app_flags` (ha il suo auth), quindi la rotazione non lo ha toccato: resta operativo.
+- **URL della edge da incollare in Qromo (nome libero, tipi New+Update):**
+  `https://imszbjeyplaiovylhkgl.supabase.co/functions/v1/qromo-webhook?key=qromo-575380f9192380663c71968557e534d5`
+- **Auth testata:** senza key → 401; `?key` giusta → ok; `?key` sbagliata → 401. End-to-end 6/6 su payload sintetici.
+- **Perché non l'ho finito in autonomia:** la console Qromo è risultata molto instabile via automazione
+  (screenshot in timeout, React che ignora i click sintetici, "Add" del nuovo webhook che non parte).
+  Essendo IL punto di non ritorno, meglio 2 click nativi dell'owner che uno stato a metà.
+- **SEQUENZA FINALE (owner, ~1 min):** in Settings ▸ General ▸ Webhooks: (1) espandi **New webhook**,
+  incolla nome + l'URL sopra, **Edit** tipi → attiva **New orders** + **Update orders** → Confirm → **Add**;
+  (2) verifica che compaia la card "Amimi App…"; (3) **subito dopo**, apri il vecchio "Import GsheetsQromo"
+  (matita) → **Delete webhook** (per evitare doppio conteggio: i due path usano `sale_id` diversi → MAI
+  entrambi attivi a lungo). Fatto ciò, avvisare così parte lo smoke test (vendita reale → 1 riga
+  `source='qromo-direct'` in `qromo_sales`, nessun doppione con `qromo-forward`).
+- **Rollback:** ri-crea il webhook verso `AKfycbwAAL4Ni…/exec` (Apps Script) e riattiva il forwarder orario.
+
 ## 5. Punto di non ritorno & rollback
 
 - **Il punto di non ritorno è lo switch del webhook Qromo (Fase 2.1).** Dopo, il Foglio non ha più le vendite Qromo nuove.

@@ -25,10 +25,13 @@ Deno.serve(async (req) => {
   let body: Record<string, any>;
   try { body = await req.json(); } catch { return json({ ok: false, error: 'bad json' }, 400); }
 
-  // auth: Qromo sends `auth` in the body; require it to match the stored secret (if configured)
+  // auth: accetta `auth` nel body (token Qromo) OPPURE `?key=` nell'URL configurato in console.
+  // Il token generato da Qromo e' mascherato in console e non estraibile: il secret vive nel
+  // NOSTRO URL del webhook (pattern standard), cosi' l'auth resta sotto il nostro controllo.
   const { data: sf } = await sb.from('app_flags').select('value').eq('key', 'qromo_webhook_secret').maybeSingle();
   const secret = sf?.value;
-  if (secret && String(body.auth ?? '') !== secret) return json({ ok: false, error: 'auth' }, 401);
+  const urlKey = new URL(req.url).searchParams.get('key') ?? '';
+  if (secret && String(body.auth ?? '') !== secret && urlKey !== secret) return json({ ok: false, error: 'auth' }, 401);
 
   const order = body.order ?? body?.data?.order ?? body?.payload?.order ?? null;
   if (!order) return json({ ok: true, skipped: 'no_order' });
