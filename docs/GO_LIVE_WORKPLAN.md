@@ -65,8 +65,7 @@ Ale/Benedetta leggono le info e confermano o ricodificano. LE NOTE NON SI PERDON
 ## STAGE 4 — Shopify stock automatico + monitoraggio
 
 Policy variant-sync V2 da REPLICARE (mai copiare alla cieca il numero):
-default esporre `disponibili − 2` (min 0); **mai rialzi automatici** (target > qty attuale Shopify
-si applica SOLO se esiste conta fresca ≤30gg in `counts`); ribassi sempre.
+~~default esporre `disponibili − 2`; mai rialzi senza conta fresca~~ → **CAMBIATA 03-07 (feedback Benedetta): SPECCHIO DEL REALE, buffer 0, si alza e si abbassa.** La vecchia policy nascondeva 16 prodotti vendibili + 75 sotto-esposti. Ora `shopify_expose_buffer=0`, `shopify_hold_raises=false`. Caveat SC/CC (dual-variant over-espone) da rifinire — vedi NIGHT_LOG SESSION 31.
 - [x] `shopify-stock` azione `realign_all` (v6; skip SKU unmapped ~90, mai azzerarli): calcola target per ogni codice on_shopify, applica la policy,
   scrive SOLO i driftati; gated da `app_flags.shopify_autopush_enabled`; ogni run scrive un riepilogo in
   `health_log` (pushed/held/skipped) + `change_log`.

@@ -64,9 +64,11 @@ Deno.serve(async (req) => {
     return json({ ok: true, synced: rows.length, products: (products ?? []).length, dual: rows.filter((r) => r.inventory_item_ids.length > 1).length });
   }
 
-  // ---- REALIGN_ALL: push automatico con POLICY variant-sync V2 (cron orario, GATED) ----
-  // Policy: target = disponibili - buffer (default 2); con conta fresca (<=30gg) target = disponibili
-  // pieno; MAI rialzi senza conta fresca (hold); ribassi sempre. Solo i codici driftati.
+  // ---- REALIGN_ALL: push automatico dello stock su Shopify (cron orario, GATED) ----
+  // Policy (scelta owner 2026-07-03): SPECCHIO DEL REALE — target = disponibili_da_vendere − buffer
+  // (buffer default 0), sia in su che in giù. Il "hold" conservativo del vecchio variant-sync
+  // (non alzare senza conta fresca) è ora OPT-IN via app_flags.shopify_hold_raises='true' (default off:
+  // con dati puliti Shopify deve rispecchiare lo stock reale). SKU non mappati mai toccati.
   if (action === 'realign_all') {
     const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'shopify_autopush_enabled').maybeSingle();
     if (flag?.value !== 'true') return json({ ok: true, skipped: 'autopush disattivato (shopify_autopush_enabled != true)' });
@@ -75,7 +77,9 @@ Deno.serve(async (req) => {
     const { data: locFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_location_id').maybeSingle();
     const locationId = Number(locFlag?.value || '107986518343');
     const { data: bufFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_expose_buffer').maybeSingle();
-    const buffer = Number(bufFlag?.value ?? '2');
+    const buffer = Number(bufFlag?.value ?? '0');
+    const { data: holdFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_hold_raises').maybeSingle();
+    const holdRaises = holdFlag?.value === 'true';
 
     const { data: stock } = await sb.from('shopify_stock').select('codice, shopify_qty, inventory_item_id, inventory_item_ids');
     const { data: inv } = await sb.from('v_inventory').select('codice, disponibili_da_vendere');
@@ -90,10 +94,11 @@ Deno.serve(async (req) => {
       // SKU Shopify non mappato al catalogo: MAI toccarlo (azzerarlo nasconderebbe un prodotto vivo)
       if (disp === undefined) { unmapped.push(s.codice); continue; }
       const hasFresh = freshSet.has(s.codice);
-      const target = hasFresh ? disp : Math.max(0, disp - buffer);
+      const target = Math.max(0, disp - buffer);
       const current = Number(s.shopify_qty) || 0;
       if (target === current) { okCount++; continue; }
-      if (target > current && !hasFresh) { held++; actions.push({ codice: s.codice, azione: 'HOLD (serve conta per alzare)', current, target }); continue; }
+      // hold solo se richiesto esplicitamente (modo conservativo): non alzare senza conta fresca
+      if (holdRaises && target > current && !hasFresh) { held++; actions.push({ codice: s.codice, azione: 'HOLD (serve conta per alzare)', current, target }); continue; }
       actions.push({ codice: s.codice, azione: dryRun ? 'PUSH (dry)' : 'PUSH', current, target });
       if (dryRun) { pushed++; continue; }
       const items: string[] = (s.inventory_item_ids && s.inventory_item_ids.length) ? s.inventory_item_ids : [s.inventory_item_id].filter(Boolean);
