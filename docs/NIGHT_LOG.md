@@ -648,3 +648,26 @@ Il "mega prompt" approvato dall'owner e' `docs/GO_LIVE_WORKPLAN.md` (stati aggio
 - **Cocco Green/Black/Annie verificati anche dal sito cliente** (storefront): comprabili, "Low stock"
   su Cocco Green = corretto (9 pz). SC/CC 2×disp = decisione owner ACCETTATA (registrata in memoria,
   non è un bug).
+
+## SESSION 33 — 2026-07-03 (sera) — Doppio conteggio Cocco Black (+10) trovato e corretto
+
+- **Segnalazione owner:** Shopify mostrava ~20 Lea Cocco Black alle 14:00 ma le fisiche erano ~10.
+- **Causa: errore MIO del 02-07 sera.** Il realign `chi='realign-2026-07-03'` (22:21) ha inserito in
+  `purchases` il riordino WhatsApp 01/07 come consegnato (+10 Black, +10 Green, data 08-07), ma per
+  il BLACK l'arrivo era GIA' stato registrato da Ginevra la mattina stessa alle 08:58 via app
+  (`source='app-arrivo-edit'`) → +10 doppio → giacenza 18 invece di 8, esposta online (policy
+  specchio-reale ha amplificato l'errore del dato).
+- **Fix Black:** cancellata la riga duplicata `ARR_Lea_Bag_COCCO_BLACK_20260708` (id `12a0253f…`,
+  10pz, €200) con snapshot completo in `change_log` (`op='delete_duplicate_arrival'`). Giacenza
+  49−41=**8**, Shopify riallineato subito a 8 (era 18).
+- **Green: NON doppione** (nessuna registrazione app), ma segnata consegnata con data 08-07.
+  Owner conferma: arrivate in anticipo → corretta solo la data (08/07→02/07) su purchases +
+  supplier_orders. Giacenza 8, Shopify riallineato a 8.
+- **Vendite di oggi (post fix esposizione):** 2 Black (#1440, #1445) + 2 Green (#1439, #1441) online —
+  la nuova policy sta convertendo.
+- **Delta residuo ±1:** Benedetta contava ~10 Black alle 14; app dice 9 a quell'ora (8 + la vendita
+  delle 12:11 gia' scalata). Possibile causa: il difetto del lotto Feb ("1 ha difetto" mai scaricato)
+  o conteggio approssimativo. Se serve precisione: **Registra ▸ Conta fisica** su Cocco Black.
+- **LEZIONE (per i prossimi realign manuali):** prima di inserire arrivi da fogli ordini, controllare
+  in `purchases` le righe recenti dello stesso codice con QUALSIASI source (soprattutto
+  `app-arrivo-edit`): la dedup su `id_acquisto` non basta, l'app genera id diversi.
