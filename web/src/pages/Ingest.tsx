@@ -7,7 +7,7 @@ import B2BForm from '../components/B2BForm';
 import ReturnForm from '../components/ReturnForm';
 import SpeseManage from '../components/SpeseManage';
 import RecentFeed from '../components/RecentFeed';
-import { ProdVerify, Publish } from './Prodotti';
+import { ProdVerify, Publish, Catalog } from './Prodotti';
 import { DataTables } from './Tables';
 import Icon from '../components/Icon';
 import { personaName } from '../lib/people';
@@ -17,6 +17,7 @@ const SEE_ALL: Record<string, { key: string; label: string }> = {
   gift: { key: 'regali', label: 'i regali' }, reso: { key: 'resi', label: 'i resi' },
   b2b: { key: 'b2b', label: 'i movimenti B2B' }, count: { key: 'conte', label: 'le conte' },
   product: { key: 'prodotti', label: 'i prodotti' }, spesa: { key: 'spese', label: 'le spese' },
+  catalogo: { key: 'prodotti', label: 'i prodotti' },
 };
 
 // Same actions for everyone (only the Home is persona-personalized). "Arrivo/Acquisto" lives in Ordini.
@@ -26,6 +27,7 @@ const TIPI = [
   { k: 'gift', icon: 'gift', label: 'Regalo / Vendita manuale', desc: 'Regalo, o vendita offline fuori Qromo' },
   { k: 'b2b', icon: 'handshake', label: 'Movimento B2B', desc: 'Conto vendita o ingrosso' },
   { k: 'product', icon: 'tag', label: 'Nuovo prodotto', desc: 'Crea un nuovo articolo' },
+  { k: 'catalogo', icon: 'search', label: 'Prodotti & prezzi', desc: 'Cerca un prodotto: modifica prezzo, COGS e scheda' },
   { k: 'spesa', icon: 'euro', label: 'Spese', desc: 'Proponi e approva spese' },
   { k: 'pulizia', icon: 'sparkles', label: 'Pulizia dati', desc: 'Completa modello, prezzo e foto' },
   { k: 'pubblica', icon: 'rocket', label: 'Pubblica su Shopify', desc: 'Metti online i prodotti pronti' },
@@ -67,6 +69,7 @@ export default function Ingest({ pin, chi, initial }: {
           {sel === 'b2b' && <B2BForm pin={pin} chi={chi} initialNegozio={arg} />}
           {sel === 'reso' && <ReturnForm pin={pin} chi={chi} />}
           {sel === 'spesa' && <SpeseManage pin={pin} chi={chi} />}
+          {sel === 'catalogo' && <Catalog pin={pin} chi={chi} />}
           {sel === 'pulizia' && <ProdVerify pin={pin} chi={chi} />}
           {sel === 'pubblica' && <Publish />}
           {sel === 'tabelle' && <DataTables initial={tableInit} />}

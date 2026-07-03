@@ -15,18 +15,21 @@ function ProdEdit({ p, pin, chi, onDone }: { p: ProdTodo; pin: string; chi: stri
   const [variant, setVariant] = useState(p.variant ?? '');
   const [cat, setCat] = useState(p.categoria ?? 'BAG');
   const [price, setPrice] = useState(p.retail_price != null ? String(p.retail_price) : '');
+  const [cogs, setCogs] = useState(p.cogs != null ? String(p.cogs) : '');
   const [img, setImg] = useState(p.image_url ?? '');
   const [descr, setDescr] = useState(p.description ?? '');
   const [seo, setSeo] = useState(p.seo_title ?? '');
   const [busy, setBusy] = useState(false);
   const descrRequired = p.bucket === 'nuovo' && p.is_new_model;
+  const cogsNum = cogs === '' ? null : Number(cogs);
 
   async function save() {
     if (!item.trim() || !variant.trim()) return toast('Modello e variante sono obbligatori', 'err');
     if (descrRequired && !descr.trim()) return toast('È un modello nuovo: la descrizione è obbligatoria', 'err');
+    if (cogs !== '' && !(Number(cogs) >= 0)) return toast('COGS non valido', 'err');
     setBusy(true);
     try {
-      await verifyProduct({ codice: p.codice, item, variant, categoria: cat, retail_price: price === '' ? null : Number(price), image_url: img, description: descr, seo_title: seo }, pin, chi);
+      await verifyProduct({ codice: p.codice, item, variant, categoria: cat, retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs), image_url: img, description: descr, seo_title: seo }, pin, chi);
       toast(`${item} ${variant} verificato`, 'ok');
       clearProductCache(); onDone();
     } catch (e) { toast((e as Error).message, 'err'); setBusy(false); }
@@ -42,12 +45,14 @@ function ProdEdit({ p, pin, chi, onDone }: { p: ProdTodo; pin: string; chi: stri
       <div className="supgrid">{CATS.map((c) => <button key={c} type="button" className={`supcard ${cat === c ? 'on' : ''}`} onClick={() => setCat(c)}>{c}</button>)}</div>
       <div className="grid2">
         <div><label className="fl">Prezzo € (IVA incl.)</label><input className="num" type="number" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></div>
-        <div><label className="fl">Immagine (URL)</label><input className="txt" value={img} onChange={(e) => setImg(e.target.value)} placeholder="https://…" /></div>
+        <div><label className="fl">COGS € (costo unitario)</label><input className="num" type="number" inputMode="decimal" value={cogs} onChange={(e) => setCogs(e.target.value)} placeholder="—" /></div>
       </div>
-      {p.cogs ? (() => { const sug = suggestPrice(p.cogs!); return (
+      {cogsNum && cogsNum > 0 ? (() => { const sug = suggestPrice(cogsNum); return (
         <button type="button" className="hintchip" onClick={() => setPrice(String(sug))}>
-          💡 Prezzo consigliato €{sug.toFixed(2)} · margine {Math.round(marginOf(sug, p.cogs!) * 100)}% (COGS €{p.cogs})
+          💡 Prezzo consigliato €{sug.toFixed(2)} · margine {Math.round(marginOf(sug, cogsNum) * 100)}% (COGS €{cogsNum})
         </button>); })() : null}
+      <label className="fl">Immagine (URL)</label>
+      <input className="txt" value={img} onChange={(e) => setImg(e.target.value)} placeholder="https://…" />
       <label className="fl">Descrizione{descrRequired ? ' * (modello nuovo)' : ''}</label>
       <input className="txt" value={descr} onChange={(e) => setDescr(e.target.value)} placeholder={descrRequired ? 'Obbligatoria per un modello nuovo' : '—'} />
       <div className="lblrow"><label className="fl">SEO title</label>
@@ -179,6 +184,64 @@ export function Publish() {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Catalogo: cerca e modifica QUALSIASI prodotto (prezzo, COGS, scheda) ---------- */
+type CatRow = {
+  codice: string; item: string | null; variant: string | null; model: string | null; categoria: string | null;
+  image_url: string | null; retail_price: number | null; cogs: number | null; description: string | null;
+  seo_title: string | null; verificato: boolean;
+};
+const toTodo = (r: CatRow): ProdTodo => ({
+  ...r, missing_count: 0, giacenza: 0, venduto: 0, on_shopify: false, source: null,
+  is_new_model: false, bucket: 'pulizia', bucket_rank: 3,
+});
+
+export function Catalog({ pin, chi }: { pin: string; chi: string }) {
+  const [rows, setRows] = useState<CatRow[] | null>(null);
+  const [q, setQ] = useState('');
+  const [edit, setEdit] = useState<CatRow | null>(null);
+  const load = () => {
+    supabase.from('products')
+      .select('codice,item,variant,model,categoria,image_url,retail_price,cogs,description,seo_title,verificato')
+      .order('item', { nullsFirst: false })
+      .then(({ data }) => setRows((data ?? []) as CatRow[]));
+  };
+  useEffect(() => { load(); }, []);
+
+  if (edit) return <ProdEdit p={toTodo(edit)} pin={pin} chi={chi} onDone={() => { popBack(() => setEdit(null)); clearProductCache(); setEdit(null); load(); }} />;
+
+  const nq = q.trim().toLowerCase();
+  const match = (r: CatRow) => !nq
+    || r.codice.toLowerCase().includes(nq)
+    || (r.item ?? '').toLowerCase().includes(nq)
+    || (r.variant ?? '').toLowerCase().includes(nq);
+  const found = (rows ?? []).filter(match);
+  const shown = found.slice(0, 60);
+
+  return (
+    <div className="list">
+      <input className="txt" autoFocus placeholder="Cerca per nome, variante o CODICE…" value={q} onChange={(e) => setQ(e.target.value)} />
+      {rows == null ? <p className="muted center">…</p> : (
+        <>
+          <p className="note">{found.length} prodotti{found.length > shown.length ? ` (mostro i primi ${shown.length}: affina la ricerca)` : ''} · tocca per modificare prezzo, COGS e scheda.</p>
+          {shown.map((r) => (
+            <button key={r.codice} className="todocard" onClick={() => { pushBack(() => setEdit(null)); setEdit(r); }}>
+              <div className="invimg sm">{r.image_url ? <img src={r.image_url} alt="" /> : <span>{(r.item ?? r.codice).slice(0, 2)}</span>}</div>
+              <div className="todoinfo">
+                <div className="rt">{[r.item, r.variant].filter(Boolean).join(' ') || r.codice}</div>
+                <div className="missrow">
+                  <span className="misschip">{r.retail_price != null ? `€${r.retail_price}` : 'PREZZO —'}</span>
+                  <span className="misschip">{r.cogs != null ? `COGS €${r.cogs}` : 'COGS —'}</span>
+                </div>
+              </div>
+              <span className="chev">›</span>
+            </button>
+          ))}
+        </>
       )}
     </div>
   );

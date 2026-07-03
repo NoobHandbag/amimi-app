@@ -159,6 +159,9 @@ Deno.serve(async (req) => {
       if (payload[f] != null && String(payload[f]).trim() !== '') upd[f] = payload[f];
     }
     if (payload.retail_price != null && payload.retail_price !== '') upd.retail_price = Number(payload.retail_price);
+    // COGS editabile dal catalogo (2026-07-04): cambia i margini FUTURI; le vendite passate
+    // tengono il loro snapshot cogs — nessun ricalcolo retroattivo.
+    if (payload.cogs != null && payload.cogs !== '') upd.cogs = Number(payload.cogs);
     const { data, error } = await sb.from('products').update(upd).eq('codice', codice).select().single();
     if (error) return json({ error: error.message }, 400);
     await logp('products', String(data.id), 'product_verify', upd);

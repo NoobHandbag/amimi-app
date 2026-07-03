@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { PERSONA, PersonaPicker, personaName } from '../lib/people';
-import type { Tab } from '../lib/people';
+import { PERSONA, PersonaPicker, personaName, ALL_ACTIONS } from '../lib/people';
+import type { Tab, Tile } from '../lib/people';
 import { nowMonth, nowYear, meseNome } from '../lib/helpers';
 import Icon from '../components/Icon';
 
@@ -11,6 +11,8 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
   const cfg = PERSONA[chi] ?? PERSONA.Ale;
   const [badges, setBadges] = useState({ arrivi: 0, todo: 0 });
   const [fin, setFin] = useState<{ netto: number; mc2: number } | null>(null);
+  const [showAll, setShowAll] = useState(() => localStorage.getItem('amimi_allact') !== '0');
+  const toggleAll = () => setShowAll((v) => { localStorage.setItem('amimi_allact', v ? '0' : '1'); return !v; });
 
   useEffect(() => {
     (async () => {
@@ -60,6 +62,35 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
           </button>
         ))}
       </div>
+
+      {(() => {
+        // Tutte le azioni dell'app che NON sono già nei bottoni personali sopra.
+        const key = (t: Tile) => `${t.tab}:${t.param ?? ''}`;
+        const mine = new Set(cfg.tiles.map(key));
+        const others = ALL_ACTIONS.filter((t) => !mine.has(key(t)) && (t.tab !== 'cruscotto' || cfg.finance));
+        if (!others.length) return null;
+        return (
+          <section style={{ marginTop: 18 }}>
+            <button type="button" onClick={toggleAll}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', padding: '4px 2px', cursor: 'pointer', color: 'var(--muted, #8a7f84)', fontWeight: 700, fontSize: 14 }}>
+              <span>Tutte le azioni</span>
+              <span style={{ opacity: .7 }}>{others.length}</span>
+              <span style={{ marginLeft: 'auto' }}>{showAll ? '▲' : '▼'}</span>
+            </button>
+            {showAll && (
+              <div className="hometiles" style={{ marginTop: 8 }}>
+                {others.map((t, i) => (
+                  <button key={i} className="hometile" onClick={() => go(t.tab, t.param)} type="button">
+                    {t.badge && badge(t.badge) > 0 ? <span className="hb">{badge(t.badge)}</span> : null}
+                    <span className="hi"><Icon name={t.icon} size={26} /></span>
+                    <span className="hl">{t.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })()}
     </div>
   );
 }

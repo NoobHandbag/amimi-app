@@ -671,3 +671,21 @@ Il "mega prompt" approvato dall'owner e' `docs/GO_LIVE_WORKPLAN.md` (stati aggio
 - **LEZIONE (per i prossimi realign manuali):** prima di inserire arrivi da fogli ordini, controllare
   in `purchases` le righe recenti dello stesso codice con QUALSIASI source (soprattutto
   `app-arrivo-edit`): la dedup su `id_acquisto` non basta, l'app genera id diversi.
+
+## SESSION 34 — 2026-07-04 — Home "Tutte le azioni" + editor Catalogo con COGS
+
+- **Home:** sotto i bottoni personali di ogni persona ora c'è la sezione **"Tutte le azioni"** (union
+  di tutte le azioni dell'app, dedup con i personali; Cruscotto solo per persona finance). Collassabile,
+  stato ricordato per dispositivo (`localStorage amimi_allact`). `ALL_ACTIONS` in `lib/people.tsx`.
+- **Prodotti & prezzi (nuovo, in Registra):** ricerca su TUTTO il catalogo (nome/variante/CODICE) →
+  tocca → stesso form della Pulizia dati, ora con **campo COGS** (prima il COGS non era editabile da
+  nessuna parte). Il suggerimento prezzo ora segue il COGS digitato. `Catalog` in `pages/Prodotti.tsx`.
+- **write-api v12:** `product_verify` accetta `cogs` (Number, opzionale). Le vendite passate NON
+  vengono ricalcolate (tengono lo snapshot cogs); il nuovo COGS vale per margini futuri. Testato
+  no-op live su Lea_Bag_COCCO_BLACK (20→20, change_log ok).
+- **Test Playwright (iPhone 13, vite preview): 17/17 PASS** — sezione presente, dedup, toggle
+  persistente, Bene senza Cruscotto, catalogo cerca "cocco black" (4 risultati), form con COGS=20 /
+  Prezzo=120, hint margine, zero errori JS. Script: `web/scripts/test-home-catalog.mjs`.
+- **Gotcha Git Bash:** `--base /amimi-app/` viene manglato da MSYS in `/Program Files/Git/amimi-app/`
+  → mai passare path-like args a vite via Git Bash, il base sta già in vite.config.ts.
+- Deploy: gh-pages Published. PWA: serve hard-refresh (o riapri l'app) per il nuovo bundle.
