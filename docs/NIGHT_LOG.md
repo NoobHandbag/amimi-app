@@ -689,3 +689,22 @@ Il "mega prompt" approvato dall'owner e' `docs/GO_LIVE_WORKPLAN.md` (stati aggio
 - **Gotcha Git Bash:** `--base /amimi-app/` viene manglato da MSYS in `/Program Files/Git/amimi-app/`
   → mai passare path-like args a vite via Git Bash, il base sta già in vite.config.ts.
 - Deploy: gh-pages Published. PWA: serve hard-refresh (o riapri l'app) per il nuovo bundle.
+
+## SESSION 35 - 2026-07-04 - Snapshot giornaliero su Google Drive (Apps Script)
+
+- **Nuovo:** "Amimi App Snapshot Drive" (Apps Script standalone su info@amimi.it, scriptId
+  1uIZfErcMUn2V-YcVx9hsEQ-Oi8HVxk5ANZ6rO_RLK23VkxpbT_mir0HL, sorgente in Cowork12/clasp/app-snapshot-drive/
+  + copia versionata in amimi-app/scripts/appsscript-snapshot/). Ogni giorno alle 05-06 Roma crea un
+  Google Sheet "Amimi_App_Snapshot_YYYY-MM-DD" nella cartella Drive "Amimi App Snapshots": 24 fonti
+  (20 tabelle + 4 viste, colonna raw esclusa) + tab RIEPILOGO con conteggi. Chiave PUBBLICA read-only,
+  retention 30gg (cestino), MAIL a info@amimi.it se fallisce o parziale. Complementare al backup JSON
+  GitHub (db-backup.yml, per il restore): questo e' lo snapshot sfogliabile su Drive.
+- **Trigger auto-installante:** snapshotDaily() chiama ensureTrigger_() a ogni run (self-healing).
+  Rilancio manuale senza editor: web app /exec?k=RUN_TOKEN (token nel sorgente, deployment @1
+  AKfycbwCCsezNkLf...), risponde {ok,triggers}. Primo run verificato: 24/24 tabelle, file su Drive.
+- **Gotcha editor Apps Script via Chrome MCP (oggi):** dropdown funzioni e dialog "Aggiungi attivatore"
+  NON si aprono (ne' ref ne' coordinate; renderer freeze sugli screenshot) - il click su Esegui esegue
+  la funzione DEFAULT. Soluzione: funzioni auto-installanti + web app /exec, mai affidarsi alla
+  selezione funzione da automazione.
+- **clasp ri-autenticato come info@amimi.it** (era dan@geeiq.com, account sbagliato). Fix ORDER
+  paginazione: change_log usa ts, shopify_stock usa codice, ce_totale_* usano year,month.
