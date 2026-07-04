@@ -31,3 +31,7 @@ web/playwright-report/
 .vercel
 *.log
 db-backup/
+
+# session artifacts + secrets locali (mai committare)
+etl/push.mjs
+audits/
