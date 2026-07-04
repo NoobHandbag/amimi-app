@@ -1,7 +1,7 @@
 # Trigger Migrazione — runbook di go-live (app = fonte di verità al posto del Foglio)
 
 > Scopo: la sequenza ESATTA, ordinata, per spegnere il Google Sheet Master (+ Apps Script, dashboard, task Cowork, webhook) e far diventare **amimi-app** (React PWA + Supabase, project `imszbjeyplaiovylhkgl`) l'unico sistema di record.
-> Aggiornato: 2026-07-01. Fonti: gap-analysis multi-agente + sessioni SESSION 18–24 (`NIGHT_LOG.md`).
+> Aggiornato: 2026-07-04. Fonti: gap-analysis multi-agente + sessioni SESSION 18–24 (`NIGHT_LOG.md`).
 > Regola d'oro: **niente è irreversibile finché non switchi il webhook Qromo e congeli il Foglio.** Fino a lì si gira in parallelo.
 
 ---
@@ -24,11 +24,11 @@
 |---|---|---|
 | 1 | **Webhook Qromo** punta ancora all'Apps Script (Foglio), non alla edge `qromo-webhook` | 🟢 **SWITCHATO 03-07** (vedi §4b) — smoke test alla prima vendita reale |
 | 2 | Feed ordini Shopify autorevole senza Apps Script | ✅ fatto |
-| 3 | Scrittura Shopify (stock realign) | ✅ fatto (single + SC/CC). Resta: trigger automatico (vedi §2 fase 3) |
+| 3 | Scrittura Shopify (stock realign) | ✅ fatto (single + SC/CC). Trigger automatico **LIVE dal 03-07**: cron :27 `realign_all` autopush (policy specchio del reale, buffer 0); trigger `reconcileApply` del variant-sync ELIMINATO il 03-07 (vedi §2 fase 3.2) |
 | 4 | Flag `single_source_of_truth` (interruttore di coordinamento) | 🔴 da creare |
 | 5 | **Ruotare i segreti**: 3 Supabase (`gemini_api_key`, `mcp_token`, `qromo_webhook_secret`) + **token Shopify** (esposto in chat 01-07) | 🟠 da fare con owner |
 | 6 | Pulizia giacenze negative + codici-ordine orfani | 🟢 **fatto**: negative = 0 (35 rettifiche) + 13 codici orfani sistemati (4 ripuntati ai canonici Agata, 9 stub `verificato=false` per Benedetta) |
-| 7 | Backup/DR runbook (backup schedulato + restore testato) | 🟠 backup logico giornaliero **live** (GH Action `db-backup`, artifact 90gg, run verificata 14s); resta il restore-test |
+| 7 | Backup/DR runbook (backup schedulato + restore testato) | 🟠 backup logico giornaliero **live** (GH Action `db-backup`, artifact 90gg, run verificata 14s); dal 04-07 anche snapshot Drive giornaliero (Apps Script "Amimi App Snapshot Drive", daily 05-06 Roma, Google Sheet datato in cartella Drive "Amimi App Snapshots", 24 fonti + RIEPILOGO, retention 30gg, mail a info@amimi.it su errore, rilancio via /exec?k=); resta il restore-test |
 | 8 | Runbook di cutover scritto (questo doc) | 🟢 in corso |
 | 9 | Dashboard/consumatori che leggono il Master vanno ripuntati | 🟢 **Operations pronta** (switch `DATA_SOURCE`, vedi §2 Fase 3.1); Finance = no-op (non legge il Foglio); inventario-web + gestione.html = porting al cutover (vedi Fase 3.1b) |
 
@@ -53,7 +53,7 @@
    - **Operations (noobhandbag.github.io/amimi-dashboard) → PRONTA.** Il feed `ops-feed-8f21.json` è prodotto da `scripts/build-feed.mjs` (repo amimi-dashboard) con doppia sorgente: oggi `sheet` (passthrough dashdata, identico a prima), al cutover si setta la **repo variable `DATA_SOURCE=supabase`** (`gh variable set DATA_SOURCE --body supabase --repo NoobHandbag/amimi-dashboard`, account NoobHandbag) e lo stesso shape esce dalle viste Supabase. Frontend intatto. Riconciliato vs feed live: CE Amimì gen–mar esatto, spese identiche, apr ~1% (parity nota), mag/giu Supabase più fresco del Foglio. La modalità supabase **corregge il bug `Math.abs` su margine2** (feb Totale è −267.33, il feed sheet mostrava +267.33) e i giftPezzi di gen/feb del blocco non-Amimì restano solo come netto aggregato. Ads: META/GOOGLE/GA4 passthrough da dashdata finché vive, fallback `meta_ads_daily`. Aggiunte le colonne `fulfilled_at`+`discount_codes` a `shopify_orders` (migr 0030, shopify-sync v3 + backfill 267 ordini, finestra API 60gg) per le tab Salute/Marketing.
    - **Finance (React/Recharts su Apps Script) → NO-OP.** Non legge NESSUN tab del Foglio a runtime: è un simulatore Q2 2026 con costanti hardcoded (inventario marzo 2026), già scaduto il 30-06. La migrazione non lo rompe. Decisione owner separata: ritirarlo o rifarlo per Q3 con seed da `v_inventory`+`v_ce_amimi_summary` (~30 righe di fetch client-side).
    - **1b. Inventario pubblico (/exec) + gestione.html → porting al cutover, NON mezzo-ripoint ora.** Motivo: fino allo switch Qromo il Foglio è più fresco di Supabase, e gestione.html SCRIVE sul Foglio (ripuntare solo le letture creerebbe incoerenza scrivi-e-non-vedi). Al cutover: (a) l'Inventario pubblico è coperto dalla pagina Inventario di amimi-app — ritirare il /exec (attenzione: lo stesso deployment serve anche `?conta_shop=1` e `?app=gestione`); (b) gestione.html va portata su Supabase per le letture E su write-api per le scritture B2B/gift (oggi passa da fix-anagrafica→Foglio) — è un **workstream nuovo**, con gap dati da colmare: `sku_history` (tab Disponibilità, oggi solo nel Foglio), stato ACTIVE/DRAFT Shopify per codice (manca in `shopify_stock`), anagrafica negozi completa (tabella `negozi` ha solo 4 campi vs B2B_NEGOZI), checkbox tracker ordini (gest/shop/pronto mancano in `supplier_orders`), telemetria variant-sync (muore col Foglio, ok).
-2. **Trigger automatico stock Shopify**: abilitabile SOLO dopo la pulizia negative (§3) e il ritiro del variant-sync (altrimenti due writer in conflitto). Poi: azione `realign_all` gated da `shopify_autopush_enabled` + cron orario. Estendere per SC/CC (già fatto lato realign) e ritirare il variant-sync.
+2. **Trigger automatico stock Shopify**: abilitabile SOLO dopo la pulizia negative (§3) e il ritiro del variant-sync (altrimenti due writer in conflitto). Poi: azione `realign_all` gated da `shopify_autopush_enabled` + cron orario. Estendere per SC/CC (già fatto lato realign) e ritirare il variant-sync. **FATTA il 2026-07-03:** cron :27 `realign_all` autopush live (shopify-stock v7, policy specchio del reale, buffer 0, hold opt-in via `shopify_hold_raises`); trigger `reconcileApply` del variant-sync ELIMINATO (restano report 07:00 e buildMap, che non scrivono su Shopify; reconcileApply non e' nella whitelist del selfHealWatchdog, nessun rischio resurrezione).
 3. Esporre `health_log`/`v_health` come cruscotto ops con alert.
 4. (Opzionale) ruoli/gate sulle azioni distruttive; Obiettivi Tracker nativo.
 
@@ -139,7 +139,7 @@ Delete → Add (finestra senza webhook: pochi secondi). Da ora il Foglio NON ric
 
 - [ ] Negative a 0, orfani sistemati, nessun COGS mancante.
 - [ ] `shopify-sync` confermato unico feed ordini (1 ciclo di parità).
-- [ ] Trigger stock automatico attivo e variant-sync ritirato.
+- [x] Trigger stock automatico attivo e variant-sync ritirato (03-07: cron :27 autopush live, trigger reconcileApply eliminato).
 - [ ] Dashboard ripuntate su Supabase.
 - [ ] Segreti ruotati.
 - [ ] Backup pg_dump schedulato + restore testato.

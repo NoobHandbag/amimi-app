@@ -79,6 +79,7 @@ Read-only, validated data: the P&L (Feb/Mar exact vs your Sheet) + the inventory
 - Consequence: **re-running the ETL now requires re-granting writes first.** Before
   `node --env-file=.env load.mjs`, run (MCP/SQL): `grant insert, delete on all tables in schema public to anon;`
   then optionally revoke again. Phase 8 replaces this with a dedicated ETL Postgres role.
+  [SUPERATO in SESSION 23: re-seed via edge etl-load PIN-gated; NON riaprire MAI le write anon]
 
 **Delivered tonight:** Phases 0–2 + a live dashboard. All pushed to
 `github.com/NoobHandbag/amimi-app` (public). Nothing touched any live system (reads only).

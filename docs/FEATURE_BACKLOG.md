@@ -12,7 +12,7 @@ today) and the **reorder + SKU-availability** pair. Those lead the list.
 > #8 In-store/popup analytics (Shopify order tags aren't in our read-only order pull). Give me the
 > feed and I'll build those two too.
 
-## 1. Returns & Exchanges — "Registra Reso / Cambio"  [BUILDING]
+## 1. Returns & Exchanges — "Registra Reso / Cambio"  [BUILT]
 One-tap logging of a return or swap across all 3 channels, capturing the two distinct effects:
 money (CE "Resi" row) and stock (does the bag become sellable again, and where).
 - Section: Inserisci (sibling of count/purchase/gift). Data: new `returns` table
@@ -69,5 +69,6 @@ TikTok Shop — exploratory, not recurring ops.)
 - Returns: partial stays "Paid"/sold; only `refunded` re-enters stock.
 - Qromo writes the PAID amount, not catalog price.
 - Three stock locations: gestionale (truth) / Shopify (site, −2 buffer) / Qromo (store).
+  (SUPERATO il 2026-07-03: Shopify policy is now mirror-of-real, buffer 0, hold opt-in via shopify_hold_raises.)
 - B2B `reso` = stock returning, never a CE money refund.
 - Gift units must use the canonical codice or they aren't subtracted.

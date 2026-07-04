@@ -1,5 +1,7 @@
 # Cowork ↔ App — mappa dei task schedulati (2026-06-25)
 
+> AGGIORNAMENTO 2026-07-04 (post-cutover). CUTOVER ESEGUITO il 2026-07-03: l'app e' il sistema di record per vendite, stock, inventario e CE (https://noobhandbag.github.io/amimi-app + Supabase imszbjeyplaiovylhkgl); il webhook Qromo punta alla edge function qromo-webhook e il Foglio Master non riceve piu' le vendite Qromo (resta semi-attivo fino al congelamento). Questo file descrive il piano PRE-cutover: le categorie che scrivono sul Foglio vanno riviste in quest'ottica. Stato corrente: amimi-app/docs/TRIGGER_MIGRAZIONE.md.
+
 Per ognuno dei 27 task Cowork (registro `Cowork12/projects/Control_Center/sched_tasks.json`), dove va
 rispetto all'Amimì App. Si appoggia al piano di Cowork `Piano_Condensazione_Task_Schedulati_2026-06-25.md`
 (quello riguarda la riduzione del numero; questo riguarda app vs Foglio).
@@ -23,9 +25,9 @@ Google). Molti task esistono SOLO per reggere la fragilità del Foglio: muoiono 
 | `registra-acquisti` | Inserisci ▸ Acquisto / In arrivo (arrivi) |
 | `registra-conta` | Inserisci ▸ Conta fisica |
 | `verifica-chiusura-prodotti` | Verifica ▸ Prodotti (v_products_todo) |
-| `agente-upload-prodotti` | Verifica ▸ Pubblica (GATED finché `shopify_write_enabled` off) |
+| `agente-upload-prodotti` | Verifica ▸ Pubblica (SUPERATO il 2026-07-03: autopush Shopify live, edge shopify-stock v7, cron :17/:27, non piu' GATED) |
 | `riallinea-stock` | Inventario ▸ Shopify (realign, GATED) |
-| `qromo-product-sync` | il resolver `SyncImportToDBQromo` + ponte Qromo→app risolvono i nomi; resta solo per casi non risolti |
+| `qromo-product-sync` | il resolver `SyncImportToDBQromo` + ponte Qromo→app risolvono i nomi (LEGACY dal 2026-07-03: path Apps Script installato ma a secco, il webhook Qromo punta alla edge function qromo-webhook); resta solo per casi non risolti |
 
 ## C) Restano su Cowork (Google/Notion/Chrome/email) — possono scrivere nell'app via helper
 | Task | Perché resta | Aggancio all'app |

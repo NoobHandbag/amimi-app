@@ -1,5 +1,7 @@
 # Dossier — Pulizia dati pre-cutover (34 negativi + 14 orfani + CE_TOTALE)
 
+> AGGIORNAMENTO 2026-07-04: ESEGUITO/SUPERATO. Negativi a 0 (SESSION 25-25b), orfani a 0 (SESSION 26), CE_TOTALE risolto in modo NATIVO (migr 0028, l'opposto dell'Opzione 1 qui raccomandata), cutover avvenuto il 2026-07-03. Documento storico di analisi. Stato corrente: amimi-app/docs/TRIGGER_MIGRAZIONE.md.
+
 > Stato: **ANALISI, nulla modificato.** Data: 2026-06-29 (Claude Code). Fonte: query live su `v_inventory` / `supplier_orders` / `v_health`.
 > Obiettivo: portare la Diagnostica al verde **prima** del cutover, con il metodo giusto per ogni categoria. NON è "aggiungi 34 acquisti": è un mix di cause che vanno trattate diversamente.
 > Regola: per riconciliare serve l'**ULTIMO export del Master** (non uno snapshot vecchio). Vedi memoria `data_use_latest_export`.

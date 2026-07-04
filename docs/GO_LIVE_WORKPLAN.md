@@ -5,6 +5,7 @@
 > Shopify stock automatico + monitoraggio → Qromo. Ogni stage ha CRITERI DI TEST espliciti.
 > Stato: [ ] da fare, [~] in corso, [x] fatto+testato.
 > ESEGUITO 2026-07-03: stage 0-4 COMPLETATI E TESTATI; stage 5 validato (switch console = ultimo bottone, insieme all'owner).
+> AGGIORNAMENTO 2026-07-04: anche lo switch console e' stato ESEGUITO il 2026-07-03 (vedi TRIGGER_MIGRAZIONE.md §4b); smoke test con la prima vendita reale pendente. Workplan COMPLETO.
 
 ## STAGE 0 — Pulizia dati di test (B2B + sweep)
 
@@ -76,16 +77,17 @@ Policy variant-sync V2 da REPLICARE (mai copiare alla cieca il numero):
 - TEST: run manuale realign_all in dry-run → lista sensata; live su 2-3 codici driftati → Shopify
   combacia; verifica health_log; con flag OFF il cron non scrive.
 
-## STAGE 5 — Qromo diretto (prepararlo; LO switch resta l'ultimo bottone)
+## STAGE 5 — Qromo diretto (prepararlo; LO switch resta l'ultimo bottone) (SWITCH ESEGUITO il 2026-07-03)
 
 - [x] Test end-to-end della edge `qromo-webhook` (6/6: auth, not-paid, paid-missing, vendita risolta con COGS 14.58, dedup, unresolved flaggato; righe test rimosse con audit) con payload sintetico (auth giusta/sbagliata,
   paid true/false/missing, item non risolvibile) → righe attese in qromo_sales con source='qromo-direct',
   poi PULIRE le righe di test (sale_id sintetici, delete + change_log).
-- [~] SWITCH SEQUENCE atomica documentata; lo switch console si fa INSIEME (punto di non ritorno): (1) spegnere il forwarder lato Apps Script
+- [x] SWITCH SEQUENCE atomica documentata; switch console ESEGUITO il 2026-07-03 (era il punto di non ritorno; vedi TRIGGER_MIGRAZIONE.md §4b): (1) spegnere il forwarder lato Apps Script
   (QromoForwardToApp / trigger SyncImportToDBQromo), (2) puntare il webhook Qromo alla edge
   (console Qromo), (3) smoke test con vendita reale, (4) rollback = ripuntare a /exec + riattivare forwarder.
   ⚠️ MAI entrambi attivi (sale_id diversi → vendite doppie).
-- Lo switch effettivo (punto di non ritorno) si fa INSIEME all'owner a fine periodo ponte.
+  Nota esecuzione: la subscription Qromo ammette 1 solo webhook, quindi l'ordine reale e' stato Delete vecchio + Add "Amimi App Supabase"; il forwarder Apps Script e' rimasto installato ma a secco, come pezzo del rollback; smoke test (3) PENDENTE alla prima vendita reale.
+- Lo switch effettivo (punto di non ritorno) si fa INSIEME all'owner a fine periodo ponte. (ESEGUITO il 2026-07-03 con l'owner.)
 
 ## Vincoli trasversali
 

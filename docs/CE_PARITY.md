@@ -1,5 +1,7 @@
 # CE_AMIMI — reverse-engineered definitions & parity status
 
+> Aggiornato: 2026-07-04 (post-cutover). Read this file in two layers: the line DEFINITIONS below remain valid and are now implemented natively in the app (v_ce_totale, migration 0028, computed not copied); the PARITY STATUS sections are historical, pre-cutover (last full reconciliation: NIGHT_LOG SESSION 28). Since 2026-07-03 the app is the system of record for the CE and the Sheet no longer receives Qromo sales. Current state: amimi-app/docs/TRIGGER_MIGRAZIONE.md.
+
 Derived empirically by comparing computed values to the Sheet's CE_AMIMI (read by the
 `(Sottocategoria, Voce)` key in cols E/F, months in cols G–R). Validation: **Feb & Mar match
 to the cent; Apr/May within ~1%** (residual = order-level refund timing, see §Residuals).
@@ -45,6 +47,8 @@ the CE matches 'Si'. The replica's `expenses.amimi` generated column was fixed t
 "si vs Si" doc contradiction: **case-insensitive is correct.**
 
 ## Residuals (open — to close with order-level diffing)
+
+> (SUPERATO il 2026-07-03: the Apr/May ~1% residuals are ACCEPTED by owner decision, no longer an open task.)
 - **Refunded orders:** the CE excludes fully-`refunded` Shopify orders from **pieces/packaging**
   but appears to keep their **gross sale** in Vendite/Lordo (then subtracts via Resi). Modelling
   both consistently leaves Apr +67.5 / May −10 on Online Lordo (~0.7% / 0.1%). Needs order-level
@@ -56,8 +60,12 @@ the CE matches 'Si'. The replica's `expenses.amimi` generated column was fixed t
   `Lea_Bag_Zebra`, `Annie_Bag_Blue`, `Lea_Bag_Cocco_Beige`. The normalized (case-insensitive)
   codice join subtracts sales the Sheet's case-sensitive VLOOKUP missed. Flag for review; do NOT
   auto-adopt (DECISIONS D14).
+  (SUPERATO il 2026-07-03: section closed post-cutover, the app is the system of record;
+  Lea_Bag_Zebra was rectified with a physical count to 0.)
 
 ## CE_TOTALE — revenue validated; cost lines pending (migration 0007)
+
+> (SUPERATO il 2026-07-03: v_ce_totale is NATIVE since migration 0028, computed not copied. Reconciled line by line: Jan/Feb/Mar exact, Apr/May ~1% ACCEPTED by owner decision. The "pending" status below is historical.)
 `v_ce_totale` / `v_ce_totale_summary`. CE_TOTALE = CE_AMIMI channels + **gifts folded into
 Offline** (pezzi + prezzo flat + cogs flat) + **all expenses** (no amimi filter).
 - **Revenue validated:** `omni_netto` matches the Sheet (Mar exact 9,043.0; Apr/May within the
@@ -68,3 +76,4 @@ Offline** (pezzi + prezzo flat + cogs flat) + **all expenses** (no amimi filter)
 - **Feb online 2× bug:** the Sheet's CE_TOTALE doubles Feb online (34 vs real 17). `v_ce_totale`
   does the correct thing (17) — a corrected-overlay item, so Feb intentionally won't match the Sheet.
 Next finance task: reverse-engineer CE_TOTALE's variable-cost lines, then adopt/flag corrections.
+(DONE, SUPERATO il 2026-07-03: completed with migration 0028, v_ce_totale native.)
