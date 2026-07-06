@@ -31,7 +31,8 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
     return s ? allM.filter((m) => m.toLowerCase().includes(s)) : allM.filter((m) => active.has(m));
   }, [inv, mq]);
 
-  const codice = useMemo(() => (model && variant ? `${modelTok(model)}_${variantTok(variant)}` : ''), [model, variant]);
+  // CODICE tutto MAIUSCOLO (decisione owner 06-07)
+  const codice = useMemo(() => (model && variant ? `${modelTok(model)}_${variantTok(variant)}`.toUpperCase() : ''), [model, variant]);
   const valid = !!codice && !/\s/.test(codice) && !/_$/.test(codice);
 
   async function submit() {

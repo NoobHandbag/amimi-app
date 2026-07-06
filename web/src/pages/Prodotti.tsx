@@ -54,9 +54,10 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
     const itemUp = item.trim().toUpperCase();
     const variantUp = variant.trim().toUpperCase();
     try {
-      await verifyProduct({ codice: p.codice, item: itemUp, variant: variantUp, categoria: cat, retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs), image_url: img, description: descr, seo_title: seo }, pin, chi);
+      const res = await verifyProduct({ codice: p.codice, item: itemUp, variant: variantUp, categoria: cat, retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs), image_url: img, description: descr, seo_title: seo }, pin, chi) as unknown as { codice?: string; renamed?: boolean; warning?: string };
       // feedback esplicito (item 24): in call Benny non capiva dove fosse finito il prodotto salvato
-      toast(`✓ Salvato — ${itemUp} ${variantUp} è completo: ora lo trovi in Magazzino.${remaining != null && remaining > 0 ? ` Ne restano ${remaining} da sistemare.` : remaining === 0 ? ' Erano gli ultimi: tutto pulito! 🎉' : ''}`, 'ok');
+      toast(`✓ Salvato — ${itemUp} ${variantUp} è completo: ora lo trovi in Magazzino.${res.renamed ? ` Codice definitivo: ${res.codice}.` : ''}${remaining != null && remaining > 0 ? ` Ne restano ${remaining} da sistemare.` : remaining === 0 ? ' Erano gli ultimi: tutto pulito! 🎉' : ''}`, 'ok');
+      if (res.warning) toast(res.warning, 'err');
       clearProductCache(); onDone();
     } catch (e) { toast((e as Error).message, 'err'); setBusy(false); }
   }

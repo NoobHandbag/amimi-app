@@ -55,9 +55,10 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   }, [all, q]);
 
   function addNewBag() {
-    // CODICE resta col Model in Title_Case (Regola Ferrea 4); i NOMI (item/variant) vanno in
-    // MAIUSCOLO (decisione call 06-07) — sono campi diversi, il codice e' la join key.
-    const codice = nm && nv ? `${modelTok(nm)}_${variantTok(nv)}` : nm ? `${modelTok(nm)}_` : '';
+    // CODICE tutto MAIUSCOLO (decisione owner 06-07). Il codice qui e' comunque PROVVISORIO:
+    // quello definitivo lo fissa Benny alla verifica in pulizia dati (product_verify lo
+    // rigenera dai suoi Modello+Variante con rename a cascata).
+    const codice = (nm && nv ? `${modelTok(nm)}_${variantTok(nv)}` : nm ? `${modelTok(nm)}_` : '').toUpperCase();
     if (!nm) return toast('Scrivi almeno il modello', 'err');
     addLine(codice, nm.trim().toUpperCase(), nv ? variantTok(nv) : null, null, true);
     setNm(''); setNv(''); setNewOpen(false);

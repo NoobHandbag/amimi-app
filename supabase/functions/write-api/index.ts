@@ -204,10 +204,12 @@ Deno.serve(async (req) => {
     return json({ ok: true, gruppo, lines: data?.length ?? 0, stubs: stubs.length });
   }
 
-  // --- FLOW 2: verify / complete a product's details (Benedetta) ---
+  // --- FLOW 2: verify / complete a product's details (Benny) ---
   if (action === 'product_verify') {
     const codice = String(payload.codice || '');
     if (!codice) return json({ error: 'CODICE mancante' }, 422);
+    const { data: cur } = await sb.from('products').select('id, codice, verificato').eq('codice', codice).single();
+    if (!cur) return json({ error: 'prodotto non trovato' }, 404);
     const upd: Record<string, unknown> = { verificato: true, updated_at: new Date().toISOString() };
     for (const f of ['item', 'variant', 'categoria', 'image_url', 'description', 'seo_title']) {
       if (payload[f] != null && String(payload[f]).trim() !== '') upd[f] = payload[f];
@@ -219,10 +221,38 @@ Deno.serve(async (req) => {
     // COGS editabile dal catalogo (2026-07-04): cambia i margini FUTURI; le vendite passate
     // tengono il loro snapshot cogs — nessun ricalcolo retroattivo.
     if (payload.cogs != null && payload.cogs !== '') upd.cogs = Number(payload.cogs);
-    const { data, error } = await sb.from('products').update(upd).eq('codice', codice).select().single();
+
+    // CODICE DEFINITIVO alla verifica di Benny (decisione owner 06-07): il codice nato con
+    // l'ordine di Ginni e' PROVVISORIO. Alla prima verifica (o finche' il codice resta non
+    // finalizzato, cioe' termina con '_') si rigenera dai Modello+Variante finali, MAIUSCOLO.
+    // Le verifiche successive non lo toccano piu'. Se il derivato collide con un altro
+    // prodotto, la verifica passa SENZA rename (segnalato in risposta).
+    const tok = (s: unknown) => String(s ?? '').toUpperCase().trim().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
+    let newCodice: string | null = null;
+    let renameSkipped: string | null = null;
+    if ((!cur.verificato || /_$/.test(cur.codice)) && typeof upd.item === 'string' && typeof upd.variant === 'string') {
+      const derived = `${tok(upd.item)}_${tok(upd.variant)}`;
+      if (derived && !/^_|_$/.test(derived) && derived !== cur.codice) {
+        const { data: clash } = await sb.from('products').select('id').eq('codice_norm', derived).neq('id', cur.id).maybeSingle();
+        if (clash) renameSkipped = `codice ${derived} gia' esistente: verifica salvata senza rinomina`;
+        else newCodice = derived;
+      }
+    }
+    if (newCodice) upd.codice = newCodice;
+
+    const { data, error } = await sb.from('products').update(upd).eq('id', cur.id).select().single();
     if (error) return json({ error: error.message }, 400);
-    await logp('products', String(data.id), 'product_verify', upd);
-    return json({ ok: true, codice });
+
+    // cascata: le righe gia' scritte col codice provvisorio seguono il codice definitivo
+    const cascata: Record<string, number> = {};
+    if (newCodice) {
+      for (const t of ['supplier_orders', 'purchases', 'qromo_sales', 'shopify_line_items', 'gifts_offline', 'returns', 'counts', 'stock_adjustments']) {
+        const { count, error: ce } = await sb.from(t).update({ codice: newCodice }, { count: 'exact' }).eq('codice', cur.codice);
+        if (!ce && count) cascata[t] = count;
+      }
+    }
+    await logp('products', String(data.id), 'product_verify', { ...upd, ...(newCodice ? { codice_da: cur.codice, codice_a: newCodice, cascata } : {}) });
+    return json({ ok: true, codice: newCodice ?? codice, renamed: !!newCodice, ...(renameSkipped ? { warning: renameSkipped } : {}) });
   }
 
   // --- FLOW 4/5: expenses (manual=approved, proposta=pending, approve/reject) ---

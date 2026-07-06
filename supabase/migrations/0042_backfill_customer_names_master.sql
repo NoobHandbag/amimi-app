@@ -1,0 +1,14 @@
+-- 0042 — backfill customer_name ordini #1001-#1179 (16-feb -> 07-mag) dal Foglio Master
+-- (tab "DB Shopify" dell'export Amimi_Master_2026_V2_close_20260621.xlsx, colonna Billing Name).
+-- Quegli ordini non sono piu' esposti dall'API dello store Shopify: fonte = Master, come da
+-- indicazione owner 2026-07-06.
+--
+-- NB: questa migrazione e' stata APPLICATA solo lato server (supabase_migrations) con i 179
+-- UPDATE espliciti nome-per-nome. I nomi dei clienti NON sono committati in questo file perche'
+-- il repo e' PUBBLICO (privacy). Traccia in change_log: op='backfill_customer_master',
+-- source='migration-0042' (179 righe aggiornate; dopo il backfill: 452/452 ordini con nome).
+--
+-- Per ri-eseguirla (restore): rigenerare gli UPDATE dall'export Master con lo stesso criterio
+--   update shopify_orders set customer_name = <Billing Name>
+--   where order_id = <Name> and (customer_name is null or trim(customer_name) = '');
+select 1; -- no-op nel repo, vedi sopra
