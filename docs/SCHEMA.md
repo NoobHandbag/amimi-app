@@ -80,6 +80,7 @@ Un INSERT/UPDATE che include una colonna generata FALLISCE (gia' successo: orpha
 - service_role: tutto (usato solo dalle edge functions).
 - Niente RLS: il modello e' read-only pubblico by-design (frontend no-login) + write path unico.
 - Sottoinsieme sicuro di una tabella bloccata: se serve esporre ad anon SOLO alcune colonne/chiavi di una tabella revocata (es. i flag operativi di `app_flags`), si usa una vista SECURITY DEFINER che seleziona esplicitamente le sole colonne sicure (vedi `v_ops_flags`, migr 0044). MAI riaprire `app_flags` ad anon.
+- **VERIFICA 2026-07-06 (brief RLS/app_flags)**: l'advisor Supabase "RLS disabled" e' generico e va letto insieme ai GRANT. Provato che i segreti NON sono esposti ad anon in tre modi: (1) `role_table_grants` su `app_flags`/`app_config` = solo `service_role`; (2) `set role anon; select from app_flags` -> `permission denied`; (3) le due tabelle NON compaiono nell'elenco `rls_disabled_in_public` dell'advisor (senza grant anon PostgREST non le espone). Protezione via REVOKE (0026/0037), non via RLS: corretta e sufficiente per i segreti. Restano APERTI-OWNER (non fix ciechi): abilitare RLS+policy romperebbe l'app no-login (avviso esplicito dell'advisor); la PII cliente in `shopify_orders` (nome/email) e' leggibile da anon PER DESIGN no-login (rischio accettato, audit A-items); rotazione segreti A1/A2.
 
 ## 8. Cron (pg_cron)
 
