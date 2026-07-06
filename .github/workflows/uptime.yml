@@ -1,0 +1,32 @@
+# Monitor uptime esterno (audit C33, scelta owner 2026-07-06).
+# Gira su GitHub (FUORI dall'infra Supabase): se l'app, il DB o i cron muoiono, questo job FALLISCE
+# e GitHub ti manda una mail (notifiche di Actions fallite, default on). Usa solo la chiave PUBBLICA
+# (gia' nel bundle, non e' un segreto). Controlla: (1) l'app carica, (2) il DB risponde, (3) lo stock
+# Shopify si e' sincronizzato da <3h (prova che i cron sono vivi).
+name: uptime-monitor
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: App raggiungibile
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://noobhandbag.github.io/amimi-app/)
+          echo "app http $code"
+          [ "$code" = "200" ] || { echo "::error::APP DOWN (http $code)"; exit 1; }
+      - name: DB raggiungibile + cron freschi
+        env:
+          KEY: sb_publishable_DP66FFObEGagJknhGOz8xw_8KO8WIgD
+        run: |
+          resp=$(curl -s -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            "https://imszbjeyplaiovylhkgl.supabase.co/rest/v1/shopify_stock?select=synced_at&order=synced_at.desc&limit=1")
+          echo "resp: $resp"
+          ts=$(printf '%s' "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['synced_at'] if d else '')")
+          [ -n "$ts" ] || { echo "::error::DB irraggiungibile o vuoto"; exit 1; }
+          age=$(python3 -c "import datetime; t=datetime.datetime.fromisoformat('$ts'.replace('Z','+00:00')); n=datetime.datetime.now(datetime.timezone.utc); print(int((n-t).total_seconds()//60))")
+          echo "ultimo sync stock: ${age} min fa"
+          [ "$age" -lt 180 ] || { echo "::error::CRON FERMI (${age} min senza sync) â€” sync/DB probabilmente giu"; exit 1; }
