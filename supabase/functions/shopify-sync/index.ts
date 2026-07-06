@@ -34,8 +34,27 @@ Deno.serve(async (req) => {
   // resolution maps
   const { data: al } = await sb.from('product_aliases').select('shopify_name_norm, codice');
   const aliasMap = new Map((al ?? []).map((r) => [r.shopify_name_norm, r.codice]));
-  const { data: pr } = await sb.from('products').select('codice_norm, cogs');
+  const { data: pr } = await sb.from('products').select('codice, codice_norm, cogs');
   const cogsByNorm = new Map((pr ?? []).map((r) => [r.codice_norm, r.cogs]));
+  const codiceByNorm = new Map((pr ?? []).map((r) => [r.codice_norm, r.codice]));
+
+  // Resolver con FALLBACK (audit A5/C25): prima l'alias, poi il nome Shopify == CODICE, poi il nome
+  // senza il descrittore " - Senza Catena", infine lo SKU. Prima esisteva SOLO il lookup alias esatto,
+  // quindi un titolo rinominato o con suffisso lasciava codice=null -> ricavo con COGS 0 e stock non scalato.
+  const resolveCodice = (nm: string, sku?: string): string | null => {
+    const n1 = norm(nm);
+    if (aliasMap.has(n1)) return aliasMap.get(n1)!;
+    if (codiceByNorm.has(n1)) return codiceByNorm.get(n1)!;
+    const base = String(nm).split(/\s[-–]\s/)[0];
+    const n2 = norm(base);
+    if (n2 && n2 !== n1) {
+      if (aliasMap.has(n2)) return aliasMap.get(n2)!;
+      if (codiceByNorm.has(n2)) return codiceByNorm.get(n2)!;
+    }
+    const ns = norm(sku ?? '');
+    if (ns && codiceByNorm.has(ns)) return codiceByNorm.get(ns)!;
+    return null;
+  };
 
   const url = `https://${SHOP}.myshopify.com/admin/api/2024-01/orders.json?status=any&created_at_min=${encodeURIComponent(sinceDate)}&limit=${body.dryRun ? 5 : 250}&order=created_at+asc`;
   const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
@@ -60,7 +79,7 @@ Deno.serve(async (req) => {
     };
     const lines = (o.line_items ?? []).map((it: any) => {
       const nm = it.name ?? it.title;
-      const codice = aliasMap.get(norm(nm)) ?? null;
+      const codice = resolveCodice(nm, it.sku);
       const cn = codice ? norm(codice) : null;
       return { order_id: o.name, lineitem_name: nm, codice, resolved: !!codice, quantita: Number(it.quantity), price: Number(it.price), cogs_snapshot: cn ? (cogsByNorm.get(cn) ?? null) : null, year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
     });
@@ -106,5 +125,24 @@ Deno.serve(async (req) => {
     if (lines.length) { await sb.from('shopify_line_items').insert(lines); lineCount += lines.length; }
     existing.add(o.name);
   }
-  return json({ ok: true, fetched: orders.length, inserted, lineCount, errors: errors.length ? errors : undefined });
+
+  // Re-sync rimborsi/stato (audit A7): un ordine puo' essere rimborsato/modificato DOPO il primo ingest;
+  // il pull normale (created_at_min) non lo ripesca. Ripassa gli ordini AGGIORNATI di recente e aggiorna
+  // SOLO refund/financial/fulfillment (mai importi/righe). Un rimborso su un mese chiuso accendera'
+  // ce_drift -> l'owner ri-chiude: e' il comportamento contabile corretto.
+  let resynced = 0;
+  const updSince = new Date(Date.now() - 45 * 86400000).toISOString();
+  const ru = `https://${SHOP}.myshopify.com/admin/api/2024-01/orders.json?status=any&updated_at_min=${encodeURIComponent(updSince)}&limit=250&fields=id,name,financial_status,fulfillment_status,refunds`;
+  const rr = await fetch(ru, { headers: { 'X-Shopify-Access-Token': token } });
+  if (rr.ok) {
+    for (const o of (((await rr.json()).orders ?? []) as Record<string, any>[])) {
+      if (!existing.has(o.name)) continue;
+      const refund = (o.refunds ?? []).reduce((s: number, rf: any) => s + (rf.transactions ?? []).reduce((t: number, tx: any) => t + Number(tx.amount || 0), 0), 0);
+      const { error: ue, count } = await sb.from('shopify_orders')
+        .update({ refund_amount: refund, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status }, { count: 'exact' })
+        .eq('order_id', o.name);
+      if (!ue && count) resynced += count;
+    }
+  }
+  return json({ ok: true, fetched: orders.length, inserted, lineCount, resynced, errors: errors.length ? errors : undefined });
 });

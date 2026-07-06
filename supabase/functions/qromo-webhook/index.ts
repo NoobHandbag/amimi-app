@@ -85,7 +85,16 @@ Deno.serve(async (req) => {
       cogs: prod?.cogs ?? null, payment_method: order.payment_type ?? null, resolver_status: status,
       source: 'qromo-direct', note: status === 'unresolved' ? ('Qromo POS: ' + rawName) : null,
     });
-    if (error) { if (errors.length < 5) errors.push(`${saleId}: ${error.message}`); skipped++; } else inserted++;
+    if (error) {
+      // 23505 = la riga esiste gia' (re-delivery/race): dedup ATOMICO via l'indice UNIQUE parziale
+      // qromo_sales_live_saleid_uq (audit B14) -> skip benigno, NON un errore da ritentare.
+      if ((error as { code?: string }).code === '23505') { skipped++; }
+      else { if (errors.length < 5) errors.push(`${saleId}: ${error.message}`); skipped++; }
+    } else inserted++;
   }
-  return json({ ok: true, order_id: orderId, items: items.length, inserted, skipped, unresolved, errors: errors.length ? errors : undefined });
+  // Se un item ha fallito per un errore VERO (non 23505), rispondi non-200 cosi' Qromo RITENTA l'ordine
+  // (audit B15: prima un errore per-item tornava 200 e la vendita era persa in silenzio). Il retry e'
+  // idempotente grazie all'indice UNIQUE, quindi gli item gia' inseriti non si duplicano.
+  const failed = errors.length > 0;
+  return json({ ok: !failed, order_id: orderId, items: items.length, inserted, skipped, unresolved, errors: errors.length ? errors : undefined }, failed ? 500 : 200);
 });

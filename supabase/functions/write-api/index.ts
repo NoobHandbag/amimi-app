@@ -240,16 +240,21 @@ Deno.serve(async (req) => {
     // ripuntare una vendita di un mese chiuso ne cambia il COGS/CE: blocca senza force.
     if (!force && await closedMonth(before.year, before.month)) return closedErr(before.year, before.month);
     // qromo_sales has item/variant columns; shopify_line_items does not (only codice + lineitem_name)
+    // Ri-snapshotta il COGS dal prodotto di destinazione (audit B17): prima cambiava solo il codice e
+    // il CE teneva il COGS del prodotto SBAGLIATO. Il codice_norm di prodotti/righe e' generato.
+    const nc = newCodice.toUpperCase().replace(/\s+/g, '_');
+    const { data: np } = await sb.from('products').select('cogs, item, variant').eq('codice_norm', nc).maybeSingle();
     const upd: Record<string, unknown> = isShop
-      ? { codice: newCodice, resolved: true }
+      ? { codice: newCodice, resolved: true, cogs_snapshot: np?.cogs ?? null }
       : {
           codice: newCodice,
-          item: (payload.new_item as string) ?? before.item ?? null,
-          variant: (payload.new_variant as string) ?? before.variant ?? null,
+          item: (payload.new_item as string) ?? np?.item ?? before.item ?? null,
+          variant: (payload.new_variant as string) ?? np?.variant ?? before.variant ?? null,
+          cogs: np?.cogs ?? before.cogs ?? null,
         };
     const { error } = await sb.from(tbl).update(upd).eq('id', id);
     if (error) return json({ error: error.message }, 400);
-    await logp(tbl, id, 'sale_correct', { from: before.codice, to: newCodice });
+    await logp(tbl, id, 'sale_correct', { from: before.codice, to: newCodice, cogs: np?.cogs ?? null });
     return json({ ok: true, from: before.codice, to: newCodice, shopify_stock_pending: true });
   }
 
@@ -274,8 +279,19 @@ Deno.serve(async (req) => {
     if (!force && await closedMonth(row.year, row.month)) return closedErr(row.year, row.month);
     const { data, error } = await sb.from('returns').insert(row).select().single();
     if (error) return json({ error: error.message }, 400);
-    await logp('returns', String(data.id), 'return', data);
-    return json({ ok: true, id: data.id, rientra_stock: row.rientra_stock });
+    // Cambio merce (audit A9): la borsa resa rientra (rientra_stock) ma il RIMPIAZZO e' uscito dal
+    // negozio. Prima nessuno scalava il sostituto -> il suo stock restava gonfiato per sempre. Registra
+    // un aggiustamento di -qty sul codice sostituto (ledger, tracciabile).
+    let sostituzione_id: string | null = null;
+    const sost = String(payload.sostituito_con || '').trim();
+    if (sost) {
+      const { data: adj } = await sb.from('stock_adjustments').insert({
+        codice: sost, qty_delta: -qty, motivo: 'cambio (sostituto uscito)', data: dt, chi: chi || null, source: 'app',
+      }).select('id').single();
+      sostituzione_id = adj?.id ?? null;
+    }
+    await logp('returns', String(data.id), 'return', { ...data, sostituzione_adjustment: sostituzione_id });
+    return json({ ok: true, id: data.id, rientra_stock: row.rientra_stock, sostituzione_id });
   }
 
   // --- Qromo forward: a resolved DB_QROMO row pushed from the Apps Script sync (idempotent on sale_id) ---
