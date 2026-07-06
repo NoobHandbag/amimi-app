@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { pushBack, popBack } from '../lib/backnav';
 import { supabase } from '../lib/supabase';
-import { fetchProductsTodo, verifyProduct, clearProductCache } from '../lib/api';
+import { fetchProductsTodo, verifyProduct, clearProductCache, fetchLastOrderCost, fetchLastPurchase, fetchSiblingDescription } from '../lib/api';
 import type { ProdTodo } from '../lib/api';
 import { suggestPrice, marginOf, genSeoTitle } from '../lib/helpers';
 import { toast } from '../lib/toast';
@@ -9,28 +9,54 @@ import { toast } from '../lib/toast';
 // "Pulizia dati" (product completion) + "Pubblica su Shopify" — surfaced as buttons in Registra.
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
 
-/* ---------- Da completare (Benedetta) ---------- */
-function ProdEdit({ p, pin, chi, onDone }: { p: ProdTodo; pin: string; chi: string; onDone: () => void }) {
+/* ---------- Da completare (Benny) ---------- */
+function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string; chi: string; onDone: () => void; remaining?: number }) {
   const [item, setItem] = useState(p.item ?? '');
   const [variant, setVariant] = useState(p.variant ?? '');
   const [cat, setCat] = useState(p.categoria ?? 'BAG');
   const [price, setPrice] = useState(p.retail_price != null ? String(p.retail_price) : '');
   const [cogs, setCogs] = useState(p.cogs != null ? String(p.cogs) : '');
+  const [cogsAuto, setCogsAuto] = useState(false);
   const [img, setImg] = useState(p.image_url ?? '');
   const [descr, setDescr] = useState(p.description ?? '');
+  const [descrAuto, setDescrAuto] = useState(false);
   const [seo, setSeo] = useState(p.seo_title ?? '');
   const [busy, setBusy] = useState(false);
   const descrRequired = p.bucket === 'nuovo' && p.is_new_model;
   const cogsNum = cogs === '' ? null : Number(cogs);
+
+  // prefill (item 26): COGS pescato dall'ordine/acquisto di Ginni; descrizione dalla variante
+  // sorella dello stesso modello. Entrambi restano modificabili prima del salvataggio.
+  useEffect(() => {
+    let alive = true;
+    if (p.cogs == null) {
+      (async () => {
+        const fromOrder = await fetchLastOrderCost(p.codice).catch(() => null);
+        const c = fromOrder ?? (await fetchLastPurchase(p.codice).catch(() => null))?.costo_unitario ?? null;
+        if (alive && c != null) { setCogs((cur) => cur === '' ? String(c) : cur); setCogsAuto(true); }
+      })();
+    }
+    if (!p.description && p.item && !p.is_new_model) {
+      fetchSiblingDescription(p.item, p.codice).then((d) => {
+        if (alive && d) { setDescr((cur) => cur === '' ? d : cur); setDescrAuto(true); }
+      }).catch(() => {});
+    }
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.codice]);
 
   async function save() {
     if (!item.trim() || !variant.trim()) return toast('Modello e variante sono obbligatori', 'err');
     if (descrRequired && !descr.trim()) return toast('È un modello nuovo: la descrizione è obbligatoria', 'err');
     if (cogs !== '' && !(Number(cogs) >= 0)) return toast('COGS non valido', 'err');
     setBusy(true);
+    // nomi in MAIUSCOLO (decisione call 06-07, item 27) — il server fa lo stesso per difesa
+    const itemUp = item.trim().toUpperCase();
+    const variantUp = variant.trim().toUpperCase();
     try {
-      await verifyProduct({ codice: p.codice, item, variant, categoria: cat, retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs), image_url: img, description: descr, seo_title: seo }, pin, chi);
-      toast(`${item} ${variant} verificato`, 'ok');
+      await verifyProduct({ codice: p.codice, item: itemUp, variant: variantUp, categoria: cat, retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs), image_url: img, description: descr, seo_title: seo }, pin, chi);
+      // feedback esplicito (item 24): in call Benny non capiva dove fosse finito il prodotto salvato
+      toast(`✓ Salvato — ${itemUp} ${variantUp} è completo: ora lo trovi in Magazzino.${remaining != null && remaining > 0 ? ` Ne restano ${remaining} da sistemare.` : remaining === 0 ? ' Erano gli ultimi: tutto pulito! 🎉' : ''}`, 'ok');
       clearProductCache(); onDone();
     } catch (e) { toast((e as Error).message, 'err'); setBusy(false); }
   }
@@ -38,14 +64,15 @@ function ProdEdit({ p, pin, chi, onDone }: { p: ProdTodo; pin: string; chi: stri
     <div className="form">
       <button className="back" onClick={onDone}>← {p.codice}</button>
       <div className="grid2">
-        <div><label className="fl">Modello *</label><input className="txt" value={item} onChange={(e) => setItem(e.target.value)} /></div>
-        <div><label className="fl">Variante *</label><input className="txt" value={variant} onChange={(e) => setVariant(e.target.value)} /></div>
+        <div><label className="fl">Modello *</label><input className="txt" style={{ textTransform: 'uppercase' }} value={item} onChange={(e) => setItem(e.target.value)} /></div>
+        <div><label className="fl">Variante *</label><input className="txt" style={{ textTransform: 'uppercase' }} value={variant} onChange={(e) => setVariant(e.target.value)} /></div>
       </div>
+      <p className="note" style={{ margin: '4px 0 0' }}>I nomi si salvano sempre in MAIUSCOLO (regola condivisa).</p>
       <label className="fl">Categoria</label>
       <div className="supgrid">{CATS.map((c) => <button key={c} type="button" className={`supcard ${cat === c ? 'on' : ''}`} onClick={() => setCat(c)}>{c}</button>)}</div>
       <div className="grid2">
         <div><label className="fl">Prezzo € (IVA incl.)</label><input className="num" type="number" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></div>
-        <div><label className="fl">COGS € (costo unitario)</label><input className="num" type="number" inputMode="decimal" value={cogs} onChange={(e) => setCogs(e.target.value)} placeholder="—" /></div>
+        <div><label className="fl">COGS € (costo unitario){cogsAuto ? ' · dall’ordine di Ginni' : ''}</label><input className="num" type="number" inputMode="decimal" value={cogs} onChange={(e) => { setCogs(e.target.value); setCogsAuto(false); }} placeholder="—" /></div>
       </div>
       {cogsNum && cogsNum > 0 ? (() => { const sug = suggestPrice(cogsNum); return (
         <button type="button" className="hintchip" onClick={() => setPrice(String(sug))}>
@@ -53,13 +80,14 @@ function ProdEdit({ p, pin, chi, onDone }: { p: ProdTodo; pin: string; chi: stri
         </button>); })() : null}
       <label className="fl">Immagine (URL)</label>
       <input className="txt" value={img} onChange={(e) => setImg(e.target.value)} placeholder="https://…" />
-      <label className="fl">Descrizione{descrRequired ? ' * (modello nuovo)' : ''}</label>
-      <input className="txt" value={descr} onChange={(e) => setDescr(e.target.value)} placeholder={descrRequired ? 'Obbligatoria per un modello nuovo' : '—'} />
+      <label className="fl">Descrizione{descrRequired ? ' * (modello nuovo)' : ''}{descrAuto ? ' · proposta dal modello' : ''}</label>
+      <input className="txt" value={descr} onChange={(e) => { setDescr(e.target.value); setDescrAuto(false); }} placeholder={descrRequired ? 'Obbligatoria per un modello nuovo' : '—'} />
       <div className="lblrow"><label className="fl">SEO title</label>
         <button type="button" className="minibtn" onClick={() => setSeo(genSeoTitle(item, variant))} disabled={!item || !variant}>genera</button></div>
       <input className="txt" value={seo} onChange={(e) => setSeo(e.target.value)} placeholder="Borsa … AMIMI … Made in Italy" />
       {seo && <div className="charcount">{seo.length} caratteri{seo.length >= 60 && seo.length <= 70 ? ' ✓' : ' (target 60–70)'}</div>}
       <button className="submit" disabled={busy} onClick={save}>{busy ? 'Salvo…' : '✓ Verifica e salva'}</button>
+      <p className="note">Le modifiche valgono per l'app: prezzo e COGS contano per vendite e margini FUTURI (lo storico non si ricalcola) e <b>non cambiano nulla su Shopify</b>.</p>
     </div>
   );
 }
@@ -75,7 +103,8 @@ export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
   const [showClean, setShowClean] = useState(false);
   const load = () => fetchProductsTodo().then(setList).catch(() => {});
   useEffect(() => { load(); }, []);
-  if (edit) return <ProdEdit p={edit} pin={pin} chi={chi} onDone={() => { popBack(() => setEdit(null)); load(); }} />;
+  if (edit) return <ProdEdit p={edit} pin={pin} chi={chi} onDone={() => { popBack(() => setEdit(null)); load(); }}
+    remaining={list.filter((x) => x.bucket !== 'pulizia' && x.codice !== edit.codice).length} />;
   if (!list.length) return <div className="card muted center">Tutti i prodotti sono verificati. 🎉</div>;
 
   // DESCR e' richiesta solo per i modelli NUOVI: per le varianti di item esistenti

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import SupplierOrderForm from '../components/SupplierOrderForm';
-import { fetchOrdiniGruppi, oggi, setArrival } from '../lib/api';
+import { fetchOrdiniGruppi, oggi, setArrival, deleteOrder } from '../lib/api';
 import type { OrdGruppo, OrdLine } from '../lib/api';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
@@ -9,16 +9,29 @@ import { toast } from '../lib/toast';
 /* register an arrival against one order line */
 function ArrivoRow({ l, pin, chi, reload, defaultOpen }: { l: OrdLine; pin: string; chi: string; reload: () => void; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen ?? false);
-  const [n, setN] = useState(String(l.completo ? l.qty_arrived : l.qty_ordered));
+  const [n, setN] = useState(String(l.completo ? l.qty_arrived : (l.wip ? '' : l.qty_ordered)));
   const [d, setD] = useState(oggi());
+  const [costo, setCosto] = useState(l.costo_unitario != null ? String(l.costo_unitario) : '');
   const [busy, setBusy] = useState(false);
   const done = l.completo;
 
   // set the arrived TOTAL — registers a new arrival AND edits/corrects one already registered
   async function save() {
-    if (isNaN(Number(n)) || Number(n) < 0) return toast('Valore non valido', 'err');
+    if (n === '' || isNaN(Number(n)) || Number(n) < 0) return toast('Valore non valido', 'err');
     setBusy(true);
-    try { await setArrival(l.id, Number(n), d, pin, chi); toast(`Arrivo salvato · ${n}/${l.qty_ordered}`, 'ok'); setOpen(false); }
+    try {
+      await setArrival(l.id, Number(n), d, pin, chi, costo !== '' ? Number(costo) : null);
+      toast(`Arrivo salvato · ${n}${l.wip ? '' : `/${l.qty_ordered}`}`, 'ok'); setOpen(false);
+    }
+    catch (e) { toast((e as Error).message, 'err'); }
+    finally { setBusy(false); reload(); }
+  }
+
+  // elimina la riga ordine (item 10): il server rifiuta se ha arrivi registrati
+  async function remove() {
+    if (!window.confirm(`Eliminare l'ordine di ${l.item ?? l.codice} ${l.variant ?? ''} (${l.qty_ordered} pz)? L'operazione non si annulla.`)) return;
+    setBusy(true);
+    try { await deleteOrder(l.id, pin, chi); toast('Riga ordine eliminata', 'ok'); }
     catch (e) { toast((e as Error).message, 'err'); }
     finally { setBusy(false); reload(); }
   }
@@ -29,20 +42,26 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen }: { l: OrdLine; pin: stri
         <div className="lineinfo">
           {l.image_url ? <img className="invimg sm" src={l.image_url} alt="" /> : <div className="invimg sm ph">{(l.item ?? l.codice).slice(0, 2)}</div>}
           <div>
-            <div className="rt">{l.item ?? l.codice} <span className="rs">{l.variant ?? (l.codice.endsWith('_') ? '· da definire' : '')}</span></div>
-            <div className="ordnums">{done ? '✓ completo' : <><b>{l.mancano}</b> mancano</>} · {l.qty_arrived}/{l.qty_ordered}{l.data_consegna ? ` · cons. ${String(l.data_consegna).slice(0, 10)}` : ''}</div>
+            <div className="rt">{l.item ?? l.codice} <span className="rs">{l.variant ?? (l.codice.endsWith('_') ? '· da definire' : '')}</span>{l.wip && <span className="newtag" title="quantità/costo da definire: si risolvono all'arrivo">WIP</span>}</div>
+            <div className="ordnums">{done ? '✓ completo' : l.wip ? 'quantità da definire' : <><b>{l.mancano}</b> mancano</>} · {l.qty_arrived}/{l.wip ? '?' : l.qty_ordered}{l.data_consegna ? ` · cons. ${String(l.data_consegna).slice(0, 10)}` : ''}</div>
           </div>
         </div>
         <span className="chev">{open ? '▾' : '›'}</span>
       </button>
       {open && (
         <div className="arrinline">
-          <label className="fl mini">Arrivati in totale (su {l.qty_ordered} ordinati)</label>
+          <label className="fl mini">{l.wip ? 'Arrivati in totale (ordine WIP: diventa la quantità ordinata)' : `Arrivati in totale (su ${l.qty_ordered} ordinati)`}</label>
           <div className="arredit">
-            <input className="qbox" type="number" inputMode="numeric" value={n} onChange={(e) => setN(e.target.value)} autoFocus />
+            <input className="qbox" type="number" inputMode="numeric" value={n} onChange={(e) => setN(e.target.value)} placeholder="pezzi" autoFocus />
             <input className="dbox" type="date" value={d} onChange={(e) => setD(e.target.value)} />
             <button className="submit small" disabled={busy} onClick={save}>{busy ? '…' : 'salva'}</button>
           </div>
+          {(l.wip || l.costo_unitario == null) && (
+            <div className="arredit" style={{ marginTop: 6 }}>
+              <input className="cbox" type="number" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="€ al pezzo (se ora lo sai)" />
+            </div>
+          )}
+          <button type="button" className="linkbtn" style={{ marginTop: 8, color: 'var(--red, #b3423f)' }} disabled={busy} onClick={remove}>🗑 Elimina questa riga ordine</button>
         </div>
       )}
     </div>
@@ -77,12 +96,23 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload }: { sup: Sup; pi
 
 export default function Ordini({ pin, chi, initial }: { pin: string; chi: string; initial?: string }) {
   const [grp, setGrp] = useState<OrdGruppo[]>([]);
-  const [adding, setAdding] = useState(initial === 'new');
-  const [forn, setForn] = useState<string | null>(initial && initial !== 'new' ? initial : null);
+  // deep-link: 'new' apre il form vuoto; 'new:CODICE' lo apre precompilato (riordino da magazzino, item 21)
+  const isNew = initial === 'new' || (initial ?? '').startsWith('new:');
+  const [adding, setAdding] = useState(isNew);
+  const [addCodice, setAddCodice] = useState<string | undefined>((initial ?? '').startsWith('new:') ? initial!.slice(4) : undefined);
+  const [forn, setForn] = useState<string | null>(initial && !isNew ? initial : null);
   const [addForn, setAddForn] = useState<string | undefined>(undefined);
   const [err, setErr] = useState<string | null>(null);
   const load = () => { fetchOrdiniGruppi().then(setGrp).catch((e) => setErr(e.message)); };
   useEffect(load, []);
+  // il tab puo' essere gia' montato quando arriva un nuovo deep-link dal riordino
+  useEffect(() => {
+    if (!initial) return;
+    const nn = initial === 'new' || initial.startsWith('new:');
+    setAdding(nn);
+    setAddCodice(initial.startsWith('new:') ? initial.slice(4) : undefined);
+    if (!nn) setForn(initial);
+  }, [initial]);
 
   const byForn = useMemo(() => {
     const m = new Map<string, OrdLine[]>();
@@ -98,8 +128,8 @@ export default function Ordini({ pin, chi, initial }: { pin: string; chi: string
   if (adding) return (
     <div className="screen">
       <header><h1>Nuovo ordine</h1></header>
-      <button className="back" onClick={() => { setAdding(false); setAddForn(undefined); }}>← Ordini</button>
-      <SupplierOrderForm pin={pin} chi={chi} initialForn={addForn} onDone={() => { setAdding(false); setAddForn(undefined); load(); }} />
+      <button className="back" onClick={() => { setAdding(false); setAddForn(undefined); setAddCodice(undefined); }}>← Ordini</button>
+      <SupplierOrderForm pin={pin} chi={chi} initialForn={addForn} initialCodice={addCodice} onDone={() => { setAdding(false); setAddForn(undefined); setAddCodice(undefined); load(); }} />
     </div>
   );
 

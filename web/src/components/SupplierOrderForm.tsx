@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi, fetchActiveFornitori } from '../lib/api';
+import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi, fetchActiveFornitori, fetchLastPurchase } from '../lib/api';
 import type { Supplier, FornProd, Product } from '../lib/api';
 import { toast } from '../lib/toast';
 
 const modelTok = (s: string) => s.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_]/g, '');
 const variantTok = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
 
-type Line = { codice: string; item: string | null; variant: string | null; qty: number; costo: string; nuovo: boolean };
+type Line = { codice: string; item: string | null; variant: string | null; qty: number; costo: string; nuovo: boolean; wip: boolean };
 
-export default function SupplierOrderForm({ pin, chi, onDone, initialForn }: { pin: string; chi: string; onDone: () => void; initialForn?: string }) {
+export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initialCodice }: { pin: string; chi: string; onDone: () => void; initialForn?: string; initialCodice?: string }) {
   const [sups, setSups] = useState<Supplier[]>([]);
   const [active, setActive] = useState<Set<string>>(new Set());
   const [showOld, setShowOld] = useState(false);
@@ -30,27 +30,47 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn }: { p
   const inCart = useMemo(() => new Set(lines.map((l) => l.codice)), [lines]);
   const addLine = (codice: string, item: string | null, variant: string | null, costo: number | null, nuovo: boolean) => {
     if (!codice || inCart.has(codice)) return;
-    setLines((p) => [...p, { codice, item, variant, qty: nuovo ? 5 : 5, costo: costo != null ? String(costo) : '', nuovo }]);
+    setLines((p) => [...p, { codice, item, variant, qty: nuovo ? 5 : 5, costo: costo != null ? String(costo) : '', nuovo, wip: false }]);
   };
+
+  // riordino precompilato (item 21): arrivo dal magazzino con un CODICE — fornitore e costo
+  // dall'ultimo acquisto di quella borsa, riga già nel carrello.
+  useEffect(() => {
+    if (!initialCodice) return;
+    let alive = true;
+    (async () => {
+      const [prods, last] = await Promise.all([fetchProducts(), fetchLastPurchase(initialCodice).catch(() => null)]);
+      if (!alive) return;
+      const p = prods.find((x) => x.codice === initialCodice);
+      if (last?.fornitore) setForn((f) => f || last.fornitore!);
+      setLines((prev) => prev.some((l) => l.codice === initialCodice) ? prev
+        : [...prev, { codice: initialCodice, item: p?.item ?? null, variant: p?.variant ?? null, qty: 5, costo: last?.costo_unitario != null ? String(last.costo_unitario) : '', nuovo: false, wip: false }]);
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCodice]);
   const searchHits = useMemo(() => {
     const s = q.trim().toLowerCase(); if (!s) return [];
     return all.filter((p) => `${p.item ?? ''} ${p.variant ?? ''} ${p.codice}`.toLowerCase().includes(s)).slice(0, 8);
   }, [all, q]);
 
   function addNewBag() {
-    const codice = nm && nv ? `${modelTok(nm)}_${variantTok(nv)}` : nm ? `${modelTok(nm)}_` : '';
+    // nomi in MAIUSCOLO (decisione call 06-07): codice e nomi sempre uppercase per i prodotti nuovi
+    const codice = nm && nv ? `${modelTok(nm).toUpperCase()}_${variantTok(nv)}` : nm ? `${modelTok(nm).toUpperCase()}_` : '';
     if (!nm) return toast('Scrivi almeno il modello', 'err');
-    addLine(codice, nm.trim(), nv ? variantTok(nv) : null, null, true);
+    addLine(codice, nm.trim().toUpperCase(), nv ? variantTok(nv) : null, null, true);
     setNm(''); setNv(''); setNewOpen(false);
   }
 
   async function submit() {
     if (!forn) return toast('Scegli il fornitore', 'err');
     if (!lines.length) return toast('Aggiungi almeno una borsa', 'err');
+    const invalid = lines.find((l) => !l.wip && !(l.qty > 0));
+    if (invalid) return toast(`Quantità mancante per ${invalid.item ?? invalid.codice}: mettila o segna WIP`, 'err');
     setBusy(true);
     try {
       const righe = lines.map((l) => ({
-        codice: l.codice, item: l.item, variant: l.variant, qty_ordered: l.qty,
+        codice: l.codice, item: l.item, variant: l.variant, qty_ordered: l.wip ? 0 : l.qty, wip: l.wip,
         nuovo_riordino: l.nuovo ? 'Nuovo' : 'Riordino', costo_unitario: l.costo === '' ? null : Number(l.costo),
       }));
       const r = await createOrderMulti(forn, dataOrd, righe, pin, chi) as unknown as { lines: number; stubs: number };
@@ -91,7 +111,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn }: { p
     );
   }
 
-  const tot = lines.reduce((s, l) => s + l.qty, 0);
+  const tot = lines.reduce((s, l) => s + (l.wip ? 0 : l.qty), 0);
   return (
     <div className="form">
       <div className="ordtop">
@@ -101,20 +121,32 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn }: { p
 
       {lines.length > 0 && (
         <div className="cart">
+          {/* etichette esplicite Pezzi / € al pezzo: in call Ginni li aveva invertiti (item 28) */}
+          <div className="cartrow" style={{ opacity: .7, fontSize: 11, fontWeight: 700, paddingBottom: 0 }}>
+            <div className="cartinfo">BORSA</div>
+            <div className="qbox" style={{ textAlign: 'center', border: 'none', background: 'none' }}>PEZZI</div>
+            <div className="cbox" style={{ textAlign: 'center', border: 'none', background: 'none' }}>€ AL PEZZO</div>
+            <span style={{ width: 28 }} />
+          </div>
           {lines.map((l, i) => (
             <div className="cartrow" key={l.codice}>
               <div className="cartinfo">
                 <div className="rt">{l.item ?? l.codice} {l.nuovo && <span className="newtag">nuova</span>}</div>
                 <div className="rs">{l.variant ?? (l.codice.endsWith('_') ? 'variante da definire' : '')}</div>
+                <button type="button" className="linkbtn" style={{ fontSize: 11, padding: 0 }}
+                  title="WIP = non so ancora quanti pezzi/che costo (es. affinamento pelle): si definisce all'arrivo"
+                  onClick={() => setLines((p) => p.map((x, j) => j === i ? { ...x, wip: !x.wip } : x))}>
+                  {l.wip ? '⏳ WIP · quantità/costo da definire (tocca per annullare)' : 'non so la quantità? → segna WIP'}
+                </button>
               </div>
-              <input className="qbox" type="number" inputMode="numeric" value={l.qty}
+              <input className="qbox" type="number" inputMode="numeric" placeholder="pezzi" value={l.wip ? '' : l.qty} disabled={l.wip}
                 onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x))} />
-              <input className="cbox" type="number" inputMode="decimal" placeholder="€" value={l.costo}
+              <input className="cbox" type="number" inputMode="decimal" placeholder="€/pz" value={l.costo}
                 onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, costo: e.target.value } : x))} />
               <button className="x" onClick={() => setLines((p) => p.filter((_, j) => j !== i))}>✕</button>
             </div>
           ))}
-          <div className="carttot">{lines.length} borse · {tot} pezzi</div>
+          <div className="carttot">{lines.length} borse · {tot} pezzi{lines.some((l) => l.wip) ? ' · + WIP' : ''}</div>
         </div>
       )}
 
@@ -135,6 +167,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn }: { p
         <div className="hits">
           {searchHits.map((p) => (
             <button key={p.codice} className="hit" type="button" onClick={() => { addLine(p.codice, p.item, p.variant, null, false); setQ(''); }}>
+              {p.image_url ? <img className="invimg sm" src={p.image_url} alt="" loading="lazy" style={{ verticalAlign: 'middle', marginRight: 6 }} /> : null}
               {p.item ?? p.codice} <span>{p.variant ?? ''}</span>
             </button>
           ))}

@@ -40,8 +40,9 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
     if (!valid) return toast('CODICE non valido', 'err');
     setBusy(true);
     try {
+      // nomi in MAIUSCOLO (decisione call 06-07): item/model uppercase alla scrittura
       await writeApi('product', {
-        codice, model, item: model, variant: variantTok(variant), categoria: cat,
+        codice, model: model.trim().toUpperCase(), item: model.trim().toUpperCase(), variant: variantTok(variant), categoria: cat,
         retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs),
       }, pin, chi);
       toast(`Prodotto creato · ${codice}`, 'ok');

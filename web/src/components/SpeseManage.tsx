@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import ExpenseForm from './ExpenseForm';
 import { fetchExpensesReview, approveExpense } from '../lib/api';
 import type { ExpReview } from '../lib/api';
+import { toast } from '../lib/toast';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n || 0);
 const CATS = ['COGS', 'LOGISTICA', 'MARKETING', 'OPEX', 'PACKAGING', 'SALARI', 'TASSE', 'EVENTI'];
@@ -38,24 +39,41 @@ export default function SpeseManage({ pin, chi }: { pin: string; chi: string }) 
   async function confirm(e: ExpReview) {
     const v = edited(e);
     const ricodificata = v.categoria !== (e.categoria || 'OPEX');
+    const cambiataSottocat = (v.sottocategoria || '') !== (e.sottocategoria || '');
+    const cambiataAmimi = v.amimi !== !!e.amimi;
     let note = confirmNote(e.note);
     if (ricodificata) note += ` · ricodificata ${e.categoria || '?'}→${v.categoria} da ${chi}`;
+    // manda SOLO i campi cambiati: la conferma "com'e'" cambia la sola nota e passa anche sui
+    // mesi chiusi (il CE non si muove). Prima mandava sempre tutto e il server bloccava con un
+    // 409 che veniva ingoiato: era il bug "le spese non si confermano" (feedback 06-07, item 1).
+    const edits: Record<string, unknown> = { note };
+    if (ricodificata) edits.categoria = v.categoria;
+    if (cambiataSottocat) edits.sottocategoria = v.sottocategoria || null;
+    if (cambiataAmimi) edits.amimi = v.amimi ? 'si' : 'No';
     setBusy(e.id);
     try {
-      await approveExpense(e.id, 'approved', {
-        categoria: v.categoria,
-        sottocategoria: v.sottocategoria || null,
-        amimi: v.amimi ? 'si' : 'No',
-        note,
-      }, pin, chi);
+      try {
+        await approveExpense(e.id, 'approved', edits, pin, chi);
+      } catch (err) {
+        const ce = err as Error & { closedMonth?: boolean };
+        // ricodifica su mese chiuso: il CE cambia davvero — chiedi conferma esplicita e forza
+        if (ce.closedMonth && window.confirm(`${ce.message}\n\nConfermi comunque? Il CE di quel mese cambierà e andrà richiuso.`)) {
+          await approveExpense(e.id, 'approved', edits, pin, chi, true);
+        } else throw err;
+      }
+      toast('Spesa verificata ✓', 'ok');
       setEdits((m) => { const n = { ...m }; delete n[e.id]; return n; });
       load();
+    } catch (err) {
+      toast((err as Error).message, 'err');
     } finally { setBusy(null); }
   }
 
   async function reject(e: ExpReview) {
     setBusy(e.id);
-    try { await approveExpense(e.id, 'rejected', { note: (e.note ? e.note + ' · ' : '') + `rifiutata da ${chi}` }, pin, chi); load(); } finally { setBusy(null); }
+    try { await approveExpense(e.id, 'rejected', { note: (e.note ? e.note + ' · ' : '') + `rifiutata da ${chi}` }, pin, chi); toast('Spesa rifiutata', 'ok'); load(); }
+    catch (err) { toast((err as Error).message, 'err'); }
+    finally { setBusy(null); }
   }
 
   return (

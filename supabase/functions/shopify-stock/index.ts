@@ -32,32 +32,45 @@ Deno.serve(async (req) => {
     const { data: prods } = await sb.from('products').select('codice, codice_norm');
     const byNorm = new Map((prods ?? []).map((r) => [r.codice_norm, r.codice]));
 
-    const resp = await fetch(`${API}/products.json?limit=250&fields=id,title,image,images,variants`, { headers: SH });
+    const resp = await fetch(`${API}/products.json?limit=250&fields=id,title,status,image,images,variants`, { headers: SH });
     if (!resp.ok) return json({ error: 'Shopify ' + resp.status, detail: (await resp.text()).slice(0, 200) }, 502);
     const { products } = await resp.json();
 
     // Group ALL variant inventory items per codice: dual-variant bags (SC/CC "Senza/Con Catena")
     // share ONE codice via the product-title alias — both inventory items must be kept and realigned.
-    const byCodice = new Map<string, { qty: number; title: string; image: string | null; variant_id: string; items: string[] }>();
+    // Quando PIU' prodotti Shopify mappano allo stesso codice (es. il doppione ritirato "DARK LEOPARD
+    // PONY" in bozza + la "SAVANA" attiva), titolo/immagine/status vengono dal MIGLIORE:
+    // attivo batte bozza/archiviato, SKU esatto batte l'alias sul titolo (feedback 06-07, item 19).
+    const byCodice = new Map<string, { qty: number; title: string; image: string | null; variant_id: string; items: string[]; status: string; score: number }>();
     for (const p of products ?? []) {
+      const status = String(p.status ?? 'active');
       for (const v of p.variants ?? []) {
         // SKU is the CODICE_AMIIMI; fall back to product title via aliases, then normalized codice.
         let codice: string | null = null;
-        if (v.sku && byNorm.has(norm(v.sku))) codice = byNorm.get(norm(v.sku))!;
-        else if (v.sku && [...byNorm.values()].includes(v.sku)) codice = v.sku;
+        let bySku = false;
+        if (v.sku && byNorm.has(norm(v.sku))) { codice = byNorm.get(norm(v.sku))!; bySku = true; }
+        else if (v.sku && [...byNorm.values()].includes(v.sku)) { codice = v.sku; bySku = true; }
         else codice = aliasMap.get(norm(p.title)) ?? (v.sku || null);
         if (!codice) continue;
         // image: the variant's own photo if it has one, else the product's featured/first image
         const vImg = (v.image_id && Array.isArray(p.images))
           ? (p.images.find((im: { id: number; src: string }) => im.id === v.image_id)?.src ?? null) : null;
         const image_url = vImg ?? p.image?.src ?? (Array.isArray(p.images) ? (p.images[0]?.src ?? null) : null);
-        const e = byCodice.get(codice) ?? { qty: Number(v.inventory_quantity ?? 0), title: p.title, image: image_url, variant_id: String(v.id), items: [] };
-        if (!e.items.includes(String(v.inventory_item_id))) e.items.push(String(v.inventory_item_id));
-        byCodice.set(codice, e);
+        const score = (status === 'active' ? 2 : 0) + (bySku ? 1 : 0);
+        const e = byCodice.get(codice);
+        if (!e) {
+          byCodice.set(codice, { qty: Number(v.inventory_quantity ?? 0), title: p.title, image: image_url, variant_id: String(v.id), items: [String(v.inventory_item_id)], status, score });
+        } else {
+          if (!e.items.includes(String(v.inventory_item_id))) e.items.push(String(v.inventory_item_id));
+          if (score > e.score) {
+            e.qty = Number(v.inventory_quantity ?? 0); e.title = p.title; e.image = image_url;
+            e.variant_id = String(v.id); e.status = status; e.score = score;
+          }
+        }
       }
     }
     const rows = [...byCodice.entries()].map(([codice, e]) => ({
-      codice, shopify_qty: e.qty, shopify_title: e.title, image_url: e.image,
+      codice, shopify_qty: e.qty, shopify_title: e.title, image_url: e.image, shopify_status: e.status,
       variant_id: e.variant_id, inventory_item_id: e.items[0], inventory_item_ids: e.items, synced_at: new Date().toISOString(),
     }));
     if (rows.length) await sb.from('shopify_stock').upsert(rows, { onConflict: 'codice' });

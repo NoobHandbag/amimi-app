@@ -33,10 +33,11 @@ export default function App() {
         {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} />}
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}
       </main>
+      {/* nav ridotta (decisione call 06-07, item 13+28): Registra e Ordini vivono nella Home
+          ("la home page fa tutto"); al loro posto l'accesso diretto alle Tabelle (dati grezzi). */}
       <nav className="bottomnav">
         {navBtn('home', 'home', 'Home')}
-        {navBtn('registra', 'plus', 'Registra')}
-        {navBtn('ordini', 'box', 'Ordini')}
+        <button className={tab === 'registra' && (param ?? '').startsWith('tabelle') ? 'on' : ''} onClick={() => go('registra', 'tabelle')} type="button"><span><Icon name="table" size={22} /></span>Tabelle</button>
         {navBtn('magazzino', 'chart', 'Magazzino')}
       </nav>
     </div>

@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react';
 import ProductPicker from './ProductPicker';
 import NumberStepper from './NumberStepper';
-import { writeApi, fetchGiacenzaOne, oggi } from '../lib/api';
+import { writeApi, fetchGiacenzaOne, fetchProducts, oggi } from '../lib/api';
 import type { Product } from '../lib/api';
 import { toast } from '../lib/toast';
 
-export default function CountForm({ pin, chi }: { pin: string; chi: string }) {
+export default function CountForm({ pin, chi, initialCodice }: { pin: string; chi: string; initialCodice?: string }) {
   const [prod, setProd] = useState<Product | null>(null);
+  // arrivo dalla scheda prodotto in magazzino (item 3): prodotto gia' selezionato
+  useEffect(() => {
+    if (!initialCodice) return;
+    let alive = true;
+    fetchProducts().then((ps) => { if (alive) { const p = ps.find((x) => x.codice === initialCodice); if (p) setProd(p); } }).catch(() => {});
+    return () => { alive = false; };
+  }, [initialCodice]);
   const [sys, setSys] = useState<number | null>(null);
   const [loadingSys, setLoadingSys] = useState(false);
   const [contati, setContati] = useState('');

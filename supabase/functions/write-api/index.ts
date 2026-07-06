@@ -118,15 +118,51 @@ Deno.serve(async (req) => {
     if (!ord) return json({ error: 'ordine non trovato' }, 404);
     const current = Number(ord.qty_arrived) || 0;
     const delta = target - current;
-    const { error: ue } = await sb.from('supplier_orders').update({ qty_arrived: target, data_ultimo_arrivo: arrDate }).eq('id', oid);
+    // costo opzionale all'arrivo (feedback 06-07 item 18): su una riga WIP il costo si scopre quando
+    // le borse arrivano; se passato, aggiorna anche la riga ordine.
+    const costo = payload.costo_unitario != null && payload.costo_unitario !== '' ? Number(payload.costo_unitario) : null;
+    const updOrd: Record<string, unknown> = { qty_arrived: target, data_ultimo_arrivo: arrDate };
+    if (costo != null && Number.isFinite(costo) && costo >= 0) updOrd.costo_unitario = costo;
+    // riga WIP: quantita' ordinata ignota; l'arrivo la RISOLVE (ordinato = arrivato totale)
+    if (ord.wip && target > 0) { updOrd.qty_ordered = target; updOrd.wip = false; }
+    const { error: ue } = await sb.from('supplier_orders').update(updOrd).eq('id', oid);
     if (ue) return json({ error: ue.message }, 400);
     if (delta !== 0) await sb.from('purchases').insert({
       codice: ord.codice, item: ord.item, variant: ord.variant, categoria: 'BAG',
       tipologia: 'Prodotto Finito', unita_misura: 'Pezzi', quantita: delta, data: arrDate,
-      costo_unitario: ord.costo_unitario ?? null, fornitore: ord.fornitore, source: 'app-arrivo-edit', chi: chi || null,
+      costo_unitario: (updOrd.costo_unitario as number | undefined) ?? ord.costo_unitario ?? null,
+      fornitore: ord.fornitore, source: 'app-arrivo-edit', chi: chi || null,
     });
-    await logp('supplier_orders', String(oid), 'arrival_set', { codice: ord.codice, target, delta, data: arrDate });
-    return json({ ok: true, arrived: target, ordered: ord.qty_ordered });
+    await logp('supplier_orders', String(oid), 'arrival_set', { codice: ord.codice, target, delta, data: arrDate, costo: updOrd.costo_unitario ?? null, wip_resolved: !!(ord.wip && target > 0) });
+    return json({ ok: true, arrived: target, ordered: (updOrd.qty_ordered as number | undefined) ?? ord.qty_ordered });
+  }
+
+  // --- NEW (feedback 06-07 item 10): delete a supplier-order line ---
+  // Sicurezza: se ha arrivi registrati serve prima azzerarli (l'azzeramento scrive il purchase
+  // negativo che riporta lo stock a posto), oppure force:true esplicito che li cancella insieme.
+  if (action === 'order_delete') {
+    const oid = payload.order_id as string;
+    if (!oid) return json({ error: 'order_id mancante' }, 422);
+    const { data: ord } = await sb.from('supplier_orders').select('*').eq('id', oid).single();
+    if (!ord) return json({ error: 'ordine non trovato' }, 404);
+    if (Number(ord.qty_arrived) > 0 && !force) {
+      return json({ error: `Questa riga ha ${ord.qty_arrived} pezzi gia' registrati come arrivati: prima azzera gli arrivi (salva "0" come totale arrivato), poi elimina.`, has_arrivals: true }, 409);
+    }
+    const { error: de } = await sb.from('supplier_orders').delete().eq('id', oid);
+    if (de) return json({ error: de.message }, 400);
+    await logp('supplier_orders', String(oid), 'order_delete', { codice: ord.codice, qty_ordered: ord.qty_ordered, qty_arrived: ord.qty_arrived, fornitore: ord.fornitore });
+    return json({ ok: true, deleted: oid });
+  }
+
+  // --- NEW (feedback 06-07 item 20): archivio riordino (nasconde dal riordino, ripristinabile) ---
+  if (action === 'reorder_archive') {
+    const codice = String(payload.codice || '');
+    const archived = payload.archived !== false;
+    if (!codice) return json({ error: 'CODICE mancante' }, 422);
+    const { data, error } = await sb.from('products').update({ riordino_archiviato: archived }).eq('codice', codice).select('id, codice').single();
+    if (error) return json({ error: error.message }, 400);
+    await logp('products', String(data.id), 'reorder_archive', { codice, archived });
+    return json({ ok: true, codice, archived });
   }
 
   // --- FLOW 1: create a multi-bag supplier order (one gruppo, N lines) ---
@@ -140,12 +176,15 @@ Deno.serve(async (req) => {
     const rows = righe.map((r) => ({
       gruppo, fornitore, data_ordine: dataOrdine,
       codice: String(r.codice || ''), item: (r.item as string) ?? null, variant: (r.variant as string) ?? null,
-      qty_ordered: Number(r.qty_ordered) || 0, qty_arrived: 0,
+      // riga WIP (feedback 06-07 item 18): quantita'/costo ancora ignoti (es. affinamento pelle);
+      // qty_ordered resta 0 e si risolve alla registrazione dell'arrivo.
+      wip: r.wip === true,
+      qty_ordered: r.wip === true ? 0 : (Number(r.qty_ordered) || 0), qty_arrived: 0,
       nuovo_riordino: (r.nuovo_riordino as string) ?? null,
       costo_unitario: r.costo_unitario != null ? Number(r.costo_unitario) : null,
       data_consegna: (r.data_consegna as string) ?? null, note: (r.note as string) ?? null,
       source: 'app', chi: chi || null,
-    })).filter((r) => r.codice && r.qty_ordered > 0);
+    })).filter((r) => r.codice && (r.qty_ordered > 0 || r.wip));
     if (!rows.length) return json({ error: 'righe non valide (CODICE + quantità)' }, 422);
     const { data, error } = await sb.from('supplier_orders').insert(rows).select();
     if (error) return json({ error: error.message }, 400);
@@ -154,8 +193,10 @@ Deno.serve(async (req) => {
     const { data: existing } = await sb.from('products').select('codice').in('codice', codici);
     const have = new Set((existing || []).map((e: { codice: string }) => e.codice));
     const seen = new Set<string>();
+    // nomi in MAIUSCOLO (decisione call 06-07): item e variant sempre uppercase alla scrittura
     const stubs = rows.filter((r) => !have.has(r.codice) && !seen.has(r.codice) && seen.add(r.codice)).map((r) => ({
-      codice: r.codice, item: r.item, model: r.item, variant: r.variant,
+      codice: r.codice, item: r.item ? r.item.toUpperCase() : r.item, model: r.item ? r.item.toUpperCase() : r.item,
+      variant: r.variant ? r.variant.toUpperCase() : r.variant,
       categoria: 'BAG', verificato: false, status: 'nuovo', source: 'app-ordine', chi: chi || null,
     }));
     if (stubs.length) await sb.from('products').upsert(stubs, { onConflict: 'codice', ignoreDuplicates: true });
@@ -171,6 +212,9 @@ Deno.serve(async (req) => {
     for (const f of ['item', 'variant', 'categoria', 'image_url', 'description', 'seo_title']) {
       if (payload[f] != null && String(payload[f]).trim() !== '') upd[f] = payload[f];
     }
+    // nomi in MAIUSCOLO (decisione call 06-07): difesa server-side, qualunque client scriva
+    if (typeof upd.item === 'string') upd.item = (upd.item as string).toUpperCase();
+    if (typeof upd.variant === 'string') upd.variant = (upd.variant as string).toUpperCase();
     if (payload.retail_price != null && payload.retail_price !== '') upd.retail_price = Number(payload.retail_price);
     // COGS editabile dal catalogo (2026-07-04): cambia i margini FUTURI; le vendite passate
     // tengono il loro snapshot cogs — nessun ricalcolo retroattivo.
@@ -210,14 +254,19 @@ Deno.serve(async (req) => {
     const id = String(payload.id || '');
     const decision = String(payload.status || 'approved');
     if (!id) return json({ error: 'id mancante' }, 422);
+    const edits = (payload.edits as Record<string, unknown>) || {};
     // approvare una spesa datata in un mese chiuso ne muove il CE (fu questo + una ricategorizzazione
     // a far derivare giugno). Blocca l'approvazione verso un mese chiuso (il reject e' sempre ok).
+    // ECCEZIONE (feedback 06-07 item 1): confermare SENZA cambiare nulla di contabile (solo nota,
+    // spesa GIA' approved) non muove il CE — era il caso delle 3 spese storiche "DA VERIFICARE" che
+    // non si confermavano mai (il 409 veniva pure ingoiato dal client senza messaggio).
+    const movesCE = edits.categoria != null || edits.costo != null || edits.amimi != null || edits.sottocategoria != null;
     if (decision !== 'rejected' && !force) {
-      const { data: exRow } = await sb.from('expenses').select('year, month').eq('id', id).single();
-      if (exRow && await closedMonth(exRow.year, exRow.month)) return closedErr(exRow.year, exRow.month);
+      const { data: exRow } = await sb.from('expenses').select('year, month, status').eq('id', id).single();
+      const noteOnly = !movesCE && exRow?.status === 'approved';
+      if (exRow && !noteOnly && await closedMonth(exRow.year, exRow.month)) return closedErr(exRow.year, exRow.month);
     }
     const upd: Record<string, unknown> = { status: decision === 'rejected' ? 'rejected' : 'approved', approved_by: chi || null };
-    const edits = (payload.edits as Record<string, unknown>) || {};
     for (const f of ['operazione', 'categoria', 'sottocategoria', 'note']) if (edits[f] != null) upd[f] = edits[f];
     if (edits.costo != null) upd.costo = -Math.abs(Number(edits.costo));
     if (edits.amimi != null) { upd.amimi_raw = (edits.amimi === true || edits.amimi === 'si') ? 'si' : 'No'; }
@@ -267,11 +316,15 @@ Deno.serve(async (req) => {
     if (!(qty > 0)) return json({ error: 'quantità deve essere > 0' }, 422);
     const dt = (payload.data as string) || today;
     const d = new Date(dt);
+    // importo CON SEGNO (feedback 06-07 item 5): positivo = rimborso al cliente; NEGATIVO = il
+    // cliente ha pagato la differenza (cambio con borsa piu' cara). Prima Math.abs mangiava il segno.
+    const impRaw = payload.importo_rimborsato != null ? Number(payload.importo_rimborsato) : 0;
+    if (!Number.isFinite(impRaw)) return json({ error: 'importo rimborsato non valido' }, 422);
     const row = {
       data: dt, year: d.getFullYear(), month: d.getMonth() + 1,
       codice, item: (payload.item as string) ?? null, variant: (payload.variant as string) ?? null,
       quantita: qty, canale: (payload.canale as string) ?? null,
-      importo_rimborsato: payload.importo_rimborsato != null ? Math.abs(Number(payload.importo_rimborsato)) : 0,
+      importo_rimborsato: impRaw,
       rientra_stock: payload.rientra_stock !== false,
       motivo: (payload.motivo as string) ?? null, sostituito_con: (payload.sostituito_con as string) ?? null,
       note: (payload.note as string) ?? null, source: 'app', chi: chi || null,

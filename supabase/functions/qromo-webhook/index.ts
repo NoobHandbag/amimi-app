@@ -60,6 +60,12 @@ Deno.serve(async (req) => {
   const dt = (String(order.order_date ?? '').slice(0, 10)) || new Date().toISOString().slice(0, 10);
   const d = new Date(dt);
 
+  // nome cliente, se Qromo lo manda (feedback 06-07 item 9): le vendite POS sono di solito anonime,
+  // ma quando il campo c'e' lo salviamo. Copre le forme note: customer{first/last_name|name}, client, customer_name.
+  const cust = order.customer ?? order.client ?? null;
+  const custNome = (cust?.first_name ?? cust?.name ?? order.customer_name ?? null) || null;
+  const custCognome = (cust?.last_name ?? null) || null;
+
   let inserted = 0, skipped = 0, unresolved = 0; const errors: string[] = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
@@ -81,6 +87,7 @@ Deno.serve(async (req) => {
 
     const { error } = await sb.from('qromo_sales').insert({
       sale_id: saleId, order_id: orderId || null, data: dt, year: d.getFullYear(), month: d.getMonth() + 1,
+      nome: custNome, cognome: custCognome,
       codice, item: prod?.item ?? null, variant: prod?.variant ?? null, quantita: qty, prezzo: unit,
       cogs: prod?.cogs ?? null, payment_method: order.payment_type ?? null, resolver_status: status,
       source: 'qromo-direct', note: status === 'unresolved' ? ('Qromo POS: ' + rawName) : null,

@@ -18,7 +18,7 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
     ],
   },
   Bene: {
-    name: 'Benedetta', finance: false,
+    name: 'Benny', finance: false,
     tiles: [
       { icon: 'sparkles', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
       { icon: 'rocket', label: 'Pubblica su Shopify', tab: 'registra', param: 'pubblica' },
@@ -27,7 +27,7 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
     ],
   },
   Ginevra: {
-    name: 'Ginevra', finance: false,
+    name: 'Ginni', finance: false,
     tiles: [
       { icon: 'plus', label: 'Nuovo ordine fornitore', tab: 'ordini', param: 'new' },
       { icon: 'inbox', label: 'Registra arrivi', tab: 'ordini' },
@@ -52,8 +52,7 @@ export const ALL_ACTIONS: Tile[] = [
   { icon: 'table', label: 'Tabelle (dati grezzi)', tab: 'registra', param: 'tabelle' },
   { icon: 'plus', label: 'Nuovo ordine fornitore', tab: 'ordini', param: 'new' },
   { icon: 'inbox', label: 'Ordini e arrivi', tab: 'ordini', badge: 'arrivi' },
-  { icon: 'box', label: 'Disponibilità', tab: 'magazzino', param: 'disp' },
-  { icon: 'store', label: 'Magazzino', tab: 'magazzino', param: 'mag' },
+  // Magazzino e Disponibilita' tolti dai quick-link (feedback 06-07 item 12): gia' in bottom-nav.
   { icon: 'recycle', label: 'Cosa riprodurre', tab: 'magazzino', param: 'riordino' },
 ];
 

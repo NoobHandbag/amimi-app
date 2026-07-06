@@ -34,10 +34,12 @@ export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
         codice: prod.codice, item: prod.item, variant: prod.variant, quantita: Number(qta),
         nome: nome || null, nota: nota || null, data, year: d.getFullYear(), month: d.getMonth() + 1,
         kind: isVendita ? 'vendita_manuale' : 'gift',
-        prezzo: isVendita ? Number(prezzo) : 0,
+        // anche un regalo puo' avere un prezzo (decisione call 06-07 item 11: vendite "black");
+        // va SOLO nel CE Totale, mai nel fatturato ufficiale.
+        prezzo: prezzo !== '' ? Number(prezzo) : 0,
         payment_method: isVendita ? pagamento : 'GIFT',
       }, pin, chi);
-      toast(isVendita ? `Vendita registrata · ${prod.item} ×${qta} · €${prezzo}` : `Regalo registrato · ${prod.item} ×${qta}`, 'ok');
+      toast(isVendita ? `Vendita registrata · ${prod.item} ×${qta} · €${prezzo}` : `Regalo registrato · ${prod.item} ×${qta}${prezzo !== '' && Number(prezzo) > 0 ? ` · €${prezzo}` : ''}`, 'ok');
       setProd(null); setQta('1'); setPrezzo(''); setNome(''); setNota('');
     } catch (e) {
       toast((e as Error).message, 'err');
@@ -61,7 +63,7 @@ export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
               <input className="num" type="date" value={data} onChange={(e) => setData(e.target.value)} /></div>
           </div>
 
-          {isVendita && (
+          {isVendita ? (
             <>
               <div className="grid2">
                 <div><label className="fl">Prezzo € (IVA incl.)</label><NumberStepper value={prezzo} onChange={setPrezzo} decimal step={5} placeholder="0,00" /></div>
@@ -71,6 +73,12 @@ export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
                   </select></div>
               </div>
               <p className="note">La vendita manuale scala l'inventario. Nota: oggi non entra nel P&L (il CE conta solo Shopify/Qromo/B2B) — da decidere se includerla.</p>
+            </>
+          ) : (
+            <>
+              <label className="fl">Prezzo € (se pagato · facoltativo)</label>
+              <NumberStepper value={prezzo} onChange={setPrezzo} decimal step={5} placeholder="0 = regalo puro" />
+              <p className="note">Se per questa borsa sono entrati dei soldi, annota qui l'importo: resta FUORI dal fatturato ufficiale (va solo nel CE Totale), ma non lo perdiamo.</p>
             </>
           )}
 

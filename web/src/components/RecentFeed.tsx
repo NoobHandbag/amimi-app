@@ -20,7 +20,7 @@ const OPMETA: Record<string, [string, string]> = {
   sale_correct: ['🔁', 'Vendita ri-mappata'], guard_fix: ['🛡️', 'Fix della guardia'],
   qromo_sale: ['🛒', 'Vendita Qromo'], gift: ['🎁', 'Regalo'], return: ['↩️', 'Reso'],
 };
-const CHI: Record<string, string> = { 'qromo-forward': 'Qromo (auto)', 'shopify-sync': 'Shopify (auto)', cron: 'automatico', claude: 'assistente' };
+const CHI: Record<string, string> = { 'qromo-forward': 'Qromo (auto)', 'shopify-sync': 'Shopify (auto)', cron: 'automatico', claude: 'assistente', Bene: 'Benny', Ginevra: 'Ginni' };
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n);
 
 function ago(ts: string) {

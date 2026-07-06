@@ -86,11 +86,12 @@ Deno.serve(async (req) => {
     return { order, lines };
   };
 
-  // ---- one-off: backfill fulfilled_at + discount_codes on EXISTING rows (never touches amounts) ----
+  // ---- one-off: backfill fulfilled_at + discount_codes + customer_name on EXISTING rows ----
+  // (feedback 2026-07-06 item 9: il seed ETL non aveva i nomi cliente — 433/452 ordini senza nome)
   if (body.action === 'backfill_meta') {
     let sinceId = 0, updated = 0, scanned = 0;
     for (let page = 0; page < 20; page++) {
-      const u = `https://${SHOP}.myshopify.com/admin/api/2024-01/orders.json?status=any&limit=250&since_id=${sinceId}&fields=id,name,fulfillments,discount_codes`;
+      const u = `https://${SHOP}.myshopify.com/admin/api/2024-01/orders.json?status=any&limit=250&since_id=${sinceId}&fields=id,name,fulfillments,discount_codes,customer`;
       const r = await fetch(u, { headers: { 'X-Shopify-Access-Token': token } });
       if (!r.ok) return json({ error: 'Shopify ' + r.status, updated, scanned }, 502);
       const batch = (await r.json()).orders ?? [];
@@ -100,9 +101,12 @@ Deno.serve(async (req) => {
         scanned++;
         const fulfilled_at = o.fulfillments?.[0]?.created_at ?? null;
         const discount_codes = (o.discount_codes ?? []).map((c: { code?: string }) => c.code).filter(Boolean).join('+') || null;
-        if (!fulfilled_at && !discount_codes) continue;
+        const customer_name = [o.customer?.first_name, o.customer?.last_name].filter(Boolean).join(' ') || null;
+        if (!fulfilled_at && !discount_codes && !customer_name) continue;
+        const upd: Record<string, unknown> = { fulfilled_at, discount_codes };
+        if (customer_name) upd.customer_name = customer_name; // mai sbiancare un nome esistente
         const { error: ue, count } = await sb.from('shopify_orders')
-          .update({ fulfilled_at, discount_codes }, { count: 'exact' }).eq('order_id', o.name);
+          .update(upd, { count: 'exact' }).eq('order_id', o.name);
         if (!ue && count) updated += count;
       }
       if (batch.length < 250) break;

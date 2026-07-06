@@ -29,6 +29,14 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
   const isCambio = motivo === 'Cambio';
   const canale = sale ? (sale.source === 'qromo' ? 'qromo' : 'online') : 'qromo';
 
+  // Cambio: rimborso 0 di default (decisione call 06-07 item 5); tornando a un reso normale
+  // si ripropone il prezzo della vendita scelta.
+  function pickMotivo(m: string) {
+    setMotivo(m);
+    if (m === 'Cambio') setImporto('0');
+    else if (importo === '0' || importo === '') setImporto(sale?.price != null ? String(sale.price) : '');
+  }
+
   function reset() {
     setProd(null); setSale(null); setSales(null); setSostituto(null);
     setQty('1'); setImporto(''); setNote(''); setMotivo('Difetto'); setRientra(true);
@@ -72,7 +80,7 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
           <div className="list">{sales.map((s) => (
             <button key={s.source + s.id} className="salerow" onClick={() => { setSale(s); setQty(String(s.qty || 1)); setImporto(s.price != null ? String(s.price) : ''); }}>
               <Thumb p={prod} />
-              <div className="grow"><div className="rt">{s.descr}</div><div className="rs">{s.source === 'qromo' ? '🏬 Negozio' : '🌐 Online'} · {s.data ?? ''} · {s.qty}× {s.price != null ? eur(s.price) : ''}</div></div>
+              <div className="grow"><div className="rt">{s.descr}</div><div className="rs">{s.source === 'qromo' ? '🏬 QROMO' : '🌐 Shopify'} · {s.data ?? ''} · {s.qty}× {s.price != null ? eur(s.price) : ''}</div></div>
               <span className="chev">›</span>
             </button>
           ))}</div>
@@ -88,9 +96,11 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
         <Thumb p={prod} />
         <div className="pickedtxt">
           <div className="rt">{nm(prod)}</div>
-          <div className="rs">{sale.descr} · {sale.source === 'qromo' ? 'Negozio' : 'Online'} · {sale.data ?? ''} · {sale.qty}× {sale.price != null ? eur(sale.price) : ''}</div>
+          <div className="rs">{sale.descr} · {sale.source === 'qromo' ? 'QROMO' : 'Shopify'} · {sale.data ?? ''} · {sale.qty}× {sale.price != null ? eur(sale.price) : ''}
+            {sale.adminUrl ? <> · <a href={sale.adminUrl} target="_blank" rel="noreferrer">apri l'ordine su Shopify ↗</a></> : null}</div>
         </div>
       </div>
+      {sale.source === 'shopify' && <p className="note">Il rimborso dei soldi si fa su Shopify (link qui sopra); qui registri il rientro fisico in magazzino. Non toccare lo stock su Shopify a mano: si riallinea da solo ogni ora.</p>}
 
       <div className="grid2">
         <div><label className="fl">Quantità resa</label><NumberStepper value={qty} onChange={setQty} min={1} /></div>
@@ -98,7 +108,7 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
       </div>
 
       <label className="fl">Motivo</label>
-      <div className="supgrid">{MOTIVI.map((m) => <button key={m} type="button" className={`supcard ${motivo === m ? 'on' : ''}`} onClick={() => setMotivo(m)}>{m}</button>)}</div>
+      <div className="supgrid">{MOTIVI.map((m) => <button key={m} type="button" className={`supcard ${motivo === m ? 'on' : ''}`} onClick={() => pickMotivo(m)}>{m}</button>)}</div>
 
       {isCambio && (
         <>
@@ -109,10 +119,11 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
       )}
 
       <div className="grid2">
-        <div><label className="fl">Importo rimborsato €</label><NumberStepper value={importo} onChange={setImporto} decimal step={5} placeholder="0,00" /></div>
+        <div><label className="fl">Importo rimborsato €</label><NumberStepper value={importo} onChange={setImporto} decimal step={5} min={-9999} placeholder="0,00" /></div>
         <div><label className="fl">Rientra in magazzino?</label>
           <div className="seg"><button className={rientra ? 'on' : ''} onClick={() => setRientra(true)}>Sì</button><button className={!rientra ? 'on' : ''} onClick={() => setRientra(false)}>No</button></div></div>
       </div>
+      {isCambio && <p className="note">Se il cliente paga la differenza (borsa più cara), metti l'importo <b>negativo</b>: −10 = il cliente ci ha dato 10 €.</p>}
 
       <label className="fl">Note (opzionale)</label>
       <input className="txt" value={note} onChange={(e) => setNote(e.target.value)} placeholder="—" />

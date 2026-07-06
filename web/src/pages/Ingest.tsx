@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { pushBack, popBack } from '../lib/backnav';
 import CountForm from '../components/CountForm';
 import NewProductForm from '../components/NewProductForm';
@@ -38,8 +38,16 @@ export default function Ingest({ pin, chi, initial }: {
   pin: string; chi: string; initial?: string;
 }) {
   const [sel, setSel] = useState<string | null>(initial ? initial.split(':')[0] : null);
-  const [arg] = useState<string | undefined>(initial && initial.includes(':') ? initial.slice(initial.indexOf(':') + 1) : undefined);
+  const [arg, setArg] = useState<string | undefined>(initial && initial.includes(':') ? initial.slice(initial.indexOf(':') + 1) : undefined);
   const [tableInit, setTableInit] = useState<string | undefined>(undefined);
+  // il tab puo' essere GIA' montato quando arriva un nuovo deep-link (es. bottone nav "Tabelle",
+  // o "Registra conta" dalla scheda prodotto): reagisci ai cambi di initial, non solo al mount.
+  useEffect(() => {
+    if (!initial) return;
+    setTableInit(undefined);
+    setSel(initial.split(':')[0]);
+    setArg(initial.includes(':') ? initial.slice(initial.indexOf(':') + 1) : undefined);
+  }, [initial]);
   const cur = TIPI.find((t) => t.k === sel);
   const seeAll = sel ? SEE_ALL[sel] : undefined;
 
@@ -63,7 +71,7 @@ export default function Ingest({ pin, chi, initial }: {
       ) : (
         <>
           <button className="back" onClick={() => popBack(() => setSel(null))} type="button">← {cur?.label}</button>
-          {sel === 'count' && <CountForm pin={pin} chi={chi} />}
+          {sel === 'count' && <CountForm pin={pin} chi={chi} initialCodice={arg} />}
           {sel === 'product' && <NewProductForm pin={pin} chi={chi} />}
           {sel === 'gift' && <GiftForm pin={pin} chi={chi} />}
           {sel === 'b2b' && <B2BForm pin={pin} chi={chi} initialNegozio={arg} />}
