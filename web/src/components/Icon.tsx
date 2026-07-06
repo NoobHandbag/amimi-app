@@ -5,7 +5,7 @@
 const EMOJI: Record<string, string> = {
   home: '🏠', plus: '➕', box: '📦', inbox: '📥', chart: '📊', bag: '🛍️', globe: '🌐',
   recycle: '🔁', sparkles: '🧹', rocket: '🚀', count: '🔢', return: '↩️', gift: '🎁',
-  store: '🏬', handshake: '🤝', tag: '🏷️', euro: '💶', table: '📋', search: '🔍',
+  store: '🏬', handshake: '🤝', tag: '🏷️', euro: '💶', table: '📋', search: '🔍', pulse: '🩺',
 };
 
 export default function Icon({ name, size = 24 }: { name: string; size?: number }) {

@@ -354,6 +354,61 @@ export async function fetchAdsMensile(): Promise<AdsMese[]> {
   return (data ?? []) as AdsMese[];
 }
 
+// ---------- PAGE: Salute & Movimenti (read-only pulse of the ecosystem) ----------
+// Numbers come from v_movimenti_14gg (same window logic as the Cowork digest task) so the
+// in-app page and the digest agree to the cent. Everything here is read-only.
+export type Movimenti = {
+  off_pezzi14: number; off_lordo14: number; off_pezzi28: number; off_lordo28: number;
+  on_pezzi14: number; on_lordo14: number; on_pezzi28: number; on_lordo28: number;
+  pezzi14: number; pezzi28: number; lordo14: number; lordo28: number; netto14: number; netto28: number;
+  ordini14: number; ordini28: number; aov_lordo14: number | null;
+  sup_new14: number; sup_arr14: number; sup_open: number; ret14: number; ret28: number;
+  live: number; draft: number; soldout: number;
+};
+const MOV_KEYS: (keyof Movimenti)[] = ['off_pezzi14', 'off_lordo14', 'off_pezzi28', 'off_lordo28', 'on_pezzi14', 'on_lordo14', 'on_pezzi28', 'on_lordo28', 'pezzi14', 'pezzi28', 'lordo14', 'lordo28', 'netto14', 'netto28', 'ordini14', 'ordini28', 'aov_lordo14', 'sup_new14', 'sup_arr14', 'sup_open', 'ret14', 'ret28', 'live', 'draft', 'soldout'];
+export async function fetchMovimenti14gg(): Promise<Movimenti> {
+  const { data, error } = await supabase.from('v_movimenti_14gg').select('*').maybeSingle();
+  if (error) throw new Error(error.message);
+  const r = (data ?? {}) as Record<string, unknown>;
+  const out = {} as Record<string, number | null>;
+  for (const k of MOV_KEYS) out[k] = r[k] == null ? (k === 'aov_lordo14' ? null : 0) : Number(r[k]); // numeric cols arrive as strings via PostgREST
+  return out as unknown as Movimenti;
+}
+
+export type OpsFlags = { write: boolean; autopush: boolean; hold_raises: boolean; expose_buffer: number };
+export async function fetchOpsFlags(): Promise<OpsFlags> {
+  const { data } = await supabase.from('v_ops_flags').select('*').maybeSingle();
+  const r = (data ?? {}) as Record<string, string | null>;
+  const b = (v: string | null) => v === 'true' || v === '1' || v === 'on' || v === 'yes';
+  return { write: b(r.shopify_write_enabled), autopush: b(r.shopify_autopush_enabled), hold_raises: b(r.shopify_hold_raises), expose_buffer: Number(r.shopify_expose_buffer ?? 0) };
+}
+
+export type HealthRow = { k: string; label: string; n: number; severity: string };
+export async function fetchHealthLatest(): Promise<{ day: string | null; rows: HealthRow[] }> {
+  const last = await supabase.from('health_log').select('day').order('day', { ascending: false }).limit(1);
+  const day = last.data && last.data[0] ? (last.data[0] as { day: string }).day : null;
+  if (!day) return { day: null, rows: [] };
+  const { data } = await supabase.from('health_log').select('k,label,n,severity').eq('day', day);
+  const rank = (s: string) => (s === 'bad' ? 0 : s === 'warn' ? 1 : 2);
+  const rows = ((data ?? []) as HealthRow[]).sort((a, b) => rank(a.severity) - rank(b.severity) || a.k.localeCompare(b.k));
+  return { day, rows };
+}
+
+// Shipping has no courier API (TWS sends LDV lists by email, tracked in the Cowork digest). These two are
+// INFORMATIVE proxies, not alarms: last offline (Qromo) sale date, and recent online orders not yet fulfilled.
+export async function fetchOpsExtra(): Promise<{ lastQromo: string | null; unfulfilledRecent: number }> {
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  const [q, o] = await Promise.all([
+    supabase.from('qromo_sales').select('data').order('data', { ascending: false }).limit(1),
+    supabase.from('shopify_orders').select('order_id', { count: 'exact', head: true })
+      .gte('created_at_shop', since).or('fulfillment_status.is.null,fulfillment_status.eq.unfulfilled'),
+  ]);
+  return {
+    lastQromo: q.data && q.data[0] ? (q.data[0] as { data: string }).data : null,
+    unfulfilledRecent: o.count ?? 0,
+  };
+}
+
 // ---------- product detail drawer: live Shopify qty per codice + purchase history ----------
 const cnorm = (s: string) => (s || '').toUpperCase().replace(/\s+/g, '_');
 export async function fetchShopStockMap(): Promise<Map<string, number>> {
