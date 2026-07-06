@@ -1,6 +1,6 @@
 # Amimì App - SCHEMA (tabelle, viste, colonne generate)
 
-> Stato cumulativo dello schema dopo le migrazioni `0001`-`0038` (generato 2026-07-06 leggendo `supabase/migrations/`). Per rigenerarlo: rileggere le migrazioni o `list_tables` via Supabase MCP.
+> Stato cumulativo dello schema dopo le migrazioni `0001`-`0044` (generato 2026-07-06 leggendo `supabase/migrations/`). Per rigenerarlo: rileggere le migrazioni o `list_tables` via Supabase MCP.
 > Filosofia (migr 0001): la storia si carica FEDELE e permissiva (niente FK strette), i problemi EMERGONO dalle viste di salute; l'integrita' stretta sta sul write path (write-api). Niente RLS: anon e' sola lettura via REVOKE, le scritture passano dal service-role delle edge.
 
 ## 1. Colonne GENERATED (MAI scrivibili: si corregge sempre l'input)
@@ -65,6 +65,8 @@ Un INSERT/UPDATE che include una colonna generata FALLISCE (gia' successo: orpha
 - **`v_shopify_align`**, **`v_stock_drift`** (migr 0034): disallineamenti app<->Shopify e azione di policy per l'autopush (ok / da_abbassare / da_alzare / hold_serve_conta).
 - **`v_reorder`**, **`v_sku_availability`**: velocita' 60gg + giorni di stock; stato SKU (acquistabile / in_stock_non_pubblicato / pubblicato_esaurito). Dal 0041 v_reorder espone `riordino_archiviato` (flag su `products`, archivio riordino ripristinabile) e v_ordini_arrivo/v_fornitore_prodotti hanno il fallback immagini da shopify_stock + flag `wip`. Dal 0043 il CODICE e' TUTTO MAIUSCOLO in 12 tabelle (decisione owner 06-07; SKU Shopify legacy invariati, join case-insensitive); 0042 (solo server, dati non nel repo per privacy) ha backfillato i customer_name degli ordini #1001-#1179 dal Foglio Master.
 - **`v_resi_mensile`**, **`v_ads_mensile`**, **`v_last_sale`**, **`v_conto_vendita_negozio`**.
+- **`v_movimenti_14gg`** (migr 0044): riga singola col polso ecosistema ultimi 14gg vs 14 precedenti, stessa finestra del task Cowork `digest-salute-movimenti` (una sola fonte di logica): vendite online (shopify_line_items+orders su `created_at_shop`) e offline (qromo_sales) split e combinate, netto = lordo/1,22, ordini Shopify + AOV, movimenti fornitori (nuovi/arrivi/aperti), resi, catalogo (live/draft/soldout). SOLO aggregati: nessun PII, nessun segreto. Alimenta la pagina in-app "Salute & Movimenti".
+- **`v_ops_flags`** (migr 0044): SECURITY DEFINER, espone SOLO i 4 flag operativi non-segreti (shopify_write_enabled, shopify_autopush_enabled, shopify_hold_raises, shopify_expose_buffer) come colonne hard-coded. E' il modo corretto per far leggere ad anon un sottoinsieme sicuro di `app_flags` (che 0026 ha bloccato del tutto): i segreti gemini_api_key/mcp_token/qromo_webhook_* NON sono mai selezionati.
 
 ## 6. Funzioni DB
 
@@ -77,6 +79,7 @@ Un INSERT/UPDATE che include una colonna generata FALLISCE (gia' successo: orpha
 - anon / authenticated: SELECT su tabelle operative e viste; INSERT/UPDATE/DELETE REVOCATI ovunque (migr 0026); TRUNCATE REVOCATO + default privileges future (migr 0037); ZERO accesso a `app_config`/`app_flags`; `ask_select` non eseguibile.
 - service_role: tutto (usato solo dalle edge functions).
 - Niente RLS: il modello e' read-only pubblico by-design (frontend no-login) + write path unico.
+- Sottoinsieme sicuro di una tabella bloccata: se serve esporre ad anon SOLO alcune colonne/chiavi di una tabella revocata (es. i flag operativi di `app_flags`), si usa una vista SECURITY DEFINER che seleziona esplicitamente le sole colonne sicure (vedi `v_ops_flags`, migr 0044). MAI riaprire `app_flags` ad anon.
 
 ## 8. Cron (pg_cron)
 

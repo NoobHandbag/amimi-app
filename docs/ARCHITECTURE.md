@@ -96,9 +96,13 @@ Colonne **generate, mai scrivere**: `codice_norm` (ovunque), `products.is_finali
 
 Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma (vedi §13).
 
-## 7. Frontend (5 sezioni)
+## 7. Frontend (6 sezioni)
 - **Cruscotto** (`Report.tsx`) — P&L Amimì/Totale con filtro mesi, trend per canale, "Chiedi ai dati"
   (FLOW 6), card Meta Ads, calcolatore offerte B2B.
+- **Salute & Movimenti** (`Salute.tsx`, tab `salute`, dal 06-07) — sola lettura: polso vendite online+offline
+  14gg vs 14 precedenti, movimenti fornitori/resi, catalogo Shopify + flag operativi, semaforo salute da
+  `health_log`. Numeri da `v_movimenti_14gg` (stessa finestra del digest Cowork); flag da `v_ops_flags`.
+  Raggiungibile dalla Home (tile per Ale/Bene + "Tutte le azioni").
 - **Inserisci** (`Ingest.tsx`) — conta, acquisto, reso/cambio, regalo, B2B, nuovo prodotto, spesa.
 - **In arrivo** (`Arrivi.tsx`) — ordini fornitore multi-borsa, arrivi parziali/totali.
 - **Verifica** (`Verifica.tsx`) — dettagli prodotto, approvazione spese, correzione vendita, pubblica (gated).
