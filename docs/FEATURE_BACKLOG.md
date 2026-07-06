@@ -1,5 +1,7 @@
 # Amimì App — feature backlog (from old-chats analysis)
 
+> **Snapshot 2026-06-25, bannerato 2026-07-06.** Fa fede la riga STATUS qui sotto: i tag `[DESIGNED]` nelle sezioni 2-6/9-10 sono lo stato PRE-build (quelle feature sono poi state costruite). Post-cutover 2026-07-03 l'app e' il sistema di record; la nota "Shopify -2 buffer" negli edge case in fondo e' superata (policy specchio del reale, buffer 0). Nuove feature si propongono via brief in `_CLAUDE_CODE_INBOX/`.
+
 Source: `Catalogo_Chat_Amimi.xlsx` (363 catalogued Claude/Cowork chats) + `Analisi_Razionalizzazione.md`,
 mined 2026-06-25. Ranked by frequency-in-chats × value. "Built" = shipped; "Designed" = spec ready.
 

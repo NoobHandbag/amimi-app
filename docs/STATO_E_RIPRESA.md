@@ -1,7 +1,7 @@
 # Amimì App — Stato e ripresa (self-contained)
 
 > Doc di ripresa per Alessandro: leggi QUESTO per ricominciare a lavorare a migliorie da una chat nuova, senza contesto.
-> Aggiornato: 2026-07-04 (annotazioni post-cutover; corpo del doc fermo al round-4 UX del 2026-06-29). Fonti agganciate: `docs/ARCHITECTURE.md` (as-built), `docs/NIGHT_LOG.md` (storia per sessione), `docs/FEATURE_BACKLOG.md`, `docs/qromo_webhook_cutover.md`, `docs/DOSSIER_pulizia_dati_pre_cutover.md`, `docs/REPORT_verifica_stasera_2026-06-29.md` (verifica + migliorie di stasera).
+> Aggiornato: 2026-07-06 (sezioni §3 edge/cron e §5 allineate allo stato corrente; corpo UX fermo al round-4 del 2026-06-29). Fonti agganciate: `docs/ARCHITECTURE.md` (as-built), `docs/OPERATIONS.md` (runbook), `docs/EDGE_FUNCTIONS.md`, `docs/SCHEMA.md`, `docs/NIGHT_LOG.md` (storia per sessione), `docs/FEATURE_BACKLOG.md`, `docs/qromo_webhook_cutover.md`, `docs/DOSSIER_pulizia_dati_pre_cutover.md`, `docs/REPORT_verifica_stasera_2026-06-29.md`.
 > Non duplica quei doc: li riassume e dice cosa è aperto.
 
 > AGGIORNAMENTO 2026-07-04 (post-cutover). Dal 2026-07-03 il sistema di record per vendite, stock, inventario e CE e' amimi-app (https://noobhandbag.github.io/amimi-app + Supabase imszbjeyplaiovylhkgl); il webhook Qromo punta alla edge function qromo-webhook e il Foglio Master non riceve piu' le vendite Qromo (resta semi-attivo fino al congelamento). Le parti di questo documento su parallel-run app/Foglio, qromo-webhook IDLE, gate `shopify_write_enabled` e `ce_totale_monthly` copiato dal Foglio valgono come storico/rollback. Stato corrente: amimi-app/docs/TRIGGER_MIGRAZIONE.md.
@@ -53,12 +53,12 @@ C'è anche lo script `npm run deploy` (= `gh-pages -d dist`).
 - **Lib** (`lib/`): `api.ts` (tutte le chiamate read REST + write verso write-api), `supabase.ts` (client anon), `toast.ts` (toast eleganti, sostituiscono i box msg inline), `helpers.ts` (`suggestPrice`, `genSeoTitle`), `csv.ts` (export), `people.tsx` (picklist persone), `sortable.tsx` (tabelle ordinabili).
 
 ### Backend — `amimi-app/supabase/`
-- **Edge functions** (`functions/`): `write-api` (UNICO path di scrittura, v8+; azioni: purchase, count, gift, b2b, product, order, arrival, order_multi, product_verify, expense_manual/propose/approve, sale_correct, return, **qromo_sale**; ogni scrittura → `change_log`), `shopify-sync` (pull ordini Shopify, sola lettura, cron orario), `shopify-stock` (giacenze Shopify; azione `realign` scrive su Shopify ma **gated** da `app_flags.shopify_write_enabled`, off), `qromo-webhook` (ricevitore diretto Qromo→Supabase, **pronto ma IDLE**, vedi §5) (SUPERATO il 2026-07-03: switch console eseguito, edge v3 LIVE, smoke test prima vendita reale pendente), `ask-data` (NL→SQL via Gemini), `mcp` (server MCP per pilotare l'app da Claude).
+- **Edge functions** (`functions/`, versioni verificate live al 2026-07-06; dettaglio in `EDGE_FUNCTIONS.md`): `write-api` v14 (UNICO path di scrittura; azioni: purchase, count, gift, b2b, product, order, order_multi, arrival, arrival_set, product_verify, expense_manual/propose/approve, sale_correct, return, **qromo_sale**; ogni scrittura → `change_log`; dal 06-07 BLOCCA le scritture nei mesi chiusi in `ce_snapshots` senza force+motivo), `shopify-sync` v4 (pull ordini Shopify sola lettura, cron :07; fallback resolver + re-sync rimborsi dal 06-07), `shopify-stock` v9 (giacenze + push stock: autopush **LIVE** cron :17 sync e :27 realign_all, policy specchio del reale buffer 0), `qromo-webhook` v4 (**LIVE** dal cutover 03-07; smoke test prima vendita reale ancora aperto al 06-07), `ce-guard` v2 (guardiano contabile daily 06:30 → `health_log`; azione close_month), `ask-data` v4 (NL→SQL via Gemini, legge `v_ce_totale`), `mcp` v4 (server MCP per pilotare l'app da Claude), `etl-load` v4 (RITIRATA, stub 410).
 - **Viste SQL** (`v_*`, logica derivata): `v_inventory` (giacenza = acquisti − shopify − qromo − regali + resi_rientrati), `v_ce_amimi` / `v_ce_amimi_summary` (P&L brand, parità col Foglio Feb/Mar al centesimo, Apr/Mag ~1%), `ce_totale_monthly` (P&L Totale, verbatim dal Foglio, include gennaio ereditato) (SUPERATO il 2026-07-03: ora `v_ce_totale` nativa, migr 0028), `v_conto_vendita_negozio`, `v_ordini_arrivo`, `v_fornitore_prodotti`, `v_products_todo`, `v_expenses_pending`, `v_shopify_align`, `v_reorder`, `v_sku_availability`, `v_last_sale`, `v_ads_mensile`, `v_resi_mensile`. Colonne **generate, mai scrivere**: `codice_norm`, `products.is_finalized`, `expenses.amimi`/`categoria_valid`, `purchases.costo_totale`, `b2b_movements.incasso_amimi`/`quota_negozio`/`retail_tot`.
 - **Integrazioni** (`integrations/`): `cowork_amimi.py` (helper Python zero-dipendenze: Cowork legge via REST anon e scrive via write-api pin `x`, niente auth Google), `qromo_forwarder.gs` (Apps Script che inoltra DB_QROMO→write-api; è il ponte attuale, vedi §5).
 
-### Cron (pg_cron)
-- Job principali: `shopify-sync-hourly` (`7 * * * *`), più gli orari di sync stock/health aggiunti nelle migrazioni recenti. Tutto il resto è on-demand dall'app.
+### Cron (pg_cron) — 5 job attivi (verificati live 2026-07-06)
+- `shopify-sync-hourly` (`7 * * * *`), `shopify-stock-hourly` (`17 * * * *`, sync), `shopify-autopush-hourly` (`27 * * * *`, realign_all), `health-daily` (`0 6 * * *`, `refresh_health_log()`), `ce-guard-daily` (`30 6 * * *`). Fuori pg_cron: backup GitHub Actions 03:17 UTC + snapshot Drive 05-06 Roma. Dettagli e diagnostica: `OPERATIONS.md`.
 
 ---
 
@@ -93,13 +93,14 @@ C'è anche lo script `npm run deploy` (= `gh-pages -d dist`).
 6. **Migliorie UX dal report di stasera** (`REPORT_verifica_stasera_2026-06-29.md`). **FATTE (SESSION 12, 2026-06-30, non ancora deployate):** (a) spinner nativi nascosti in `.stepper .num`; (b) overflow `.subtabs` contenuto (overflow-x:auto, page-overflow 0 a 360px); (c) ArrivoRow/ProdEdit migrati al toast; (d) `aria-live`/`role` sul toast; (f) pulizia residui orfani (`PurchaseForm.tsx` eliminato, `'purchase'` tolto da people.tsx, prop `setChi` rimossa, commento corretto). **APERTA:** (e) stepper nel carrello SupplierOrderForm + editor arrivi — rimandata (serve variante compatta dello stepper in righe flex strette, rischio layout mobile).
 7. **Gate ancora chiusi:** `shopify_write_enabled` off (realign Shopify + pubblica-prodotto restano in sola lettura finché non lo abiliti). (SUPERATO il 2026-07-03: autopush stock LIVE, shopify-stock v7 con cron :17 e :27, policy specchio del reale buffer 0, hold opt-in via `shopify_hold_raises`; vedi GO_LIVE_WORKPLAN.md stage 4.)
 8. **Non costruite (servono feed esterni):** triage servizio clienti (feed DM/email), analytics ritiri-in-negozio/popup (tag ordine Shopify non nel pull). Vedi `FEATURE_BACKLOG.md`.
+9. **Aperti post-remediation audit 2026-07-06** (stato aggiornato nella testata di `audits/AUDIT_SYSTEM_2026-07-06.md` e in `_CHANGELOG_CODE.md`): rotazione segreti + chiusura esfiltrazione ask_select (A1/A2, urgente, richiede l'owner); smoke test webhook Qromo (0 righe `source='qromo-direct'` al 06-07, baseline 150); restatement mesi chiusi e ri-chiusura; creazione/mappatura prodotti Agata_Bag_Beads_Pink e Lola Bag Orange (qromo_orphan resta 4 finche' non fatto).
 
 ---
 
 ## 6. Come riprendere da un'altra chat
 
 **Doc da leggere (in `amimi-app/docs/`), in quest'ordine:**
-0. **`TRIGGER_MIGRAZIONE.md`** e **`GO_LIVE_WORKPLAN.md`**: stato post-cutover (dal 2026-07-03 l'app e' il sistema di record), leggili per primi.
+0. **`TRIGGER_MIGRAZIONE.md`** e **`GO_LIVE_WORKPLAN.md`**: stato post-cutover (dal 2026-07-03 l'app e' il sistema di record), leggili per primi. Per OPERARE: **`OPERATIONS.md`** (runbook: flussi, cron, diagnostica), **`EDGE_FUNCTIONS.md`**, **`SCHEMA.md`** (creati 2026-07-06).
 1. **QUESTO file** — stato e indice.
 2. **`REPORT_verifica_stasera_2026-06-29.md`** — cosa è stato verificato di stasera e le migliorie proposte con priorità (ottimo punto di partenza per il prossimo giro di lavoro).
 3. **`ARCHITECTURE.md`** — verità as-built (stack, tabelle, viste, edge functions, cron, sezioni frontend, integrazioni, cosa manca/gated).

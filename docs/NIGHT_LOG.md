@@ -1,5 +1,7 @@
 # NIGHT LOG — overnight build of amimi-app
 
+> **LOG STORICO DI SESSIONE, NON documentazione corrente** (banner 2026-07-06). Chi cerca lo stato del sistema va su `ARCHITECTURE.md` (as-built), `TRIGGER_MIGRAZIONE.md` (post-cutover), `OPERATIONS.md` (runbook), `EDGE_FUNCTIONS.md` e `SCHEMA.md`. Qui sotto: la storia per sessione delle build notturne, utile solo come archeologia.
+
 Running log so the morning report writes itself. Newest entries at the bottom.
 Times are approximate (no wall clock in the build sandbox); ordering is what matters.
 

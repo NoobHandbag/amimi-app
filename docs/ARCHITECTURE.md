@@ -1,6 +1,8 @@
-# Amimì App — Architettura (as-built, 2026-06-25; annotazioni 2026-07-04)
+# Amimì App — Architettura (as-built, 2026-06-25; aggiornata 2026-07-06)
 
-> AGGIORNAMENTO 2026-07-04 (post-cutover). Dal 2026-07-03 il sistema di record per vendite, stock, inventario e CE e' amimi-app (https://noobhandbag.github.io/amimi-app + Supabase imszbjeyplaiovylhkgl); il webhook Qromo punta alla edge function qromo-webhook e il Foglio Master non riceve piu' le vendite Qromo (resta semi-attivo fino al congelamento). Le sezioni di questo documento su Qromo, stock e cron (§5, §6, §9, §10, §11) sono superate dal cutover 03-07 e valgono come storico/rollback: dettagli nelle annotazioni inline e in TRIGGER_MIGRAZIONE.md. Stato corrente: amimi-app/docs/TRIGGER_MIGRAZIONE.md.
+> AGGIORNAMENTO 2026-07-04 (post-cutover). Dal 2026-07-03 il sistema di record per vendite, stock, inventario e CE e' amimi-app (https://noobhandbag.github.io/amimi-app + Supabase imszbjeyplaiovylhkgl); il webhook Qromo punta alla edge function qromo-webhook e il Foglio Master non riceve piu' le vendite Qromo (resta semi-attivo fino al congelamento). Stato corrente: amimi-app/docs/TRIGGER_MIGRAZIONE.md.
+
+> AGGIORNAMENTO 2026-07-06 (consolidamento doc + remediation audit di sistema, commit a758756/0b0385d/a3b0306). Le sezioni §5/§6/§9 sono state RISCRITTE allo stato corrente (versioni edge verificate live il 06-07). Novita' strutturali dalla remediation: write-api blocca le scritture nei mesi chiusi (`ce_snapshots`) senza force+motivo; UNIQUE parziale su `qromo_sales(sale_id)` (migr 0036); detector estesi in `v_health` + banner rosso in Home (migr 0035); merge duplicati `codice_norm` + UNIQUE e REVOKE TRUNCATE (migr 0037). Doc operativi nuovi: `OPERATIONS.md` (runbook), `EDGE_FUNCTIONS.md`, `SCHEMA.md`. Dettaglio remediation: `audits/AUDIT_SYSTEM_2026-07-06.md`.
 
 Stato reale del sistema costruito, non il piano. Il piano iniziale vive in
 `Cowork12/projects/Amimi_App_Rebuild/ARCHITECTURE.md`; questo file fotografa **ciò che è
@@ -17,7 +19,7 @@ indice riga, casing dei CODICE).
   URL `https://imszbjeyplaiovylhkgl.supabase.co`. anon/publishable key pubblica (sola lettura).
 - **Logica derivata:** viste SQL + 1 funzione (`ask_select`).
 - **Write path:** edge function `write-api` (Deno/TS), PIN-gated, scrive con service-role, logga su `change_log`.
-- **Scheduling:** `pg_cron` (oggi 1 job: shopify-sync orario).
+- **Scheduling:** `pg_cron` (5 job attivi, vedi §6).
 - **Sync esterni:** edge functions in sola lettura (Shopify live; Qromo/Meta da seed).
 - **Frontend:** React 19 + Vite 8 + TS, PWA, mobile-first. Deploy su GitHub Pages
   (`NoobHandbag/amimi-app`, base `/amimi-app/`), live https://noobhandbag.github.io/amimi-app/.
@@ -31,7 +33,10 @@ indice riga, casing dei CODICE).
 +`status` per approvazione), `meta_ads_daily` (ads), `ce_totale_monthly` (CE_TOTALE da foglio,
 include gennaio), `suppliers`, `negozi`, `product_aliases` (nome Shopify→CODICE),
 `non_product_codici`, `app_config` (pin_hash, shopify_token — service-role), `app_flags`
-(feature flag + gemini_api_key — service-role), `change_log` (audit di ogni scrittura).
+(feature flag + gemini_api_key — service-role), `change_log` (audit di ogni scrittura),
+`stock_adjustments` (rettifiche da conta fisica, migr 0027), `ce_totale_manual` (blocco manuale
+storico del Totale, migr 0028), `ce_snapshots` (mesi chiusi congelati, migr 0032),
+`health_log` (esiti dei guardiani: v_health + ce-guard + stock autopush, migr 0024).
 Colonne **generate, mai scrivere**: `codice_norm` (ovunque), `products.is_finalized`,
 `expenses.amimi`/`categoria_valid`, `purchases.costo_totale`, `b2b_movements.incasso_amimi`/
 `quota_negozio`/`retail_tot`.
@@ -39,39 +44,57 @@ Colonne **generate, mai scrivere**: `codice_norm` (ovunque), `products.is_finali
 ## 4. Dati — viste (logica derivata)
 - `v_inventory` — giacenza = acquisti − shopify − qromo − regali + resi_rientrati; +B2B, disponibili,
   valore, last_sale, on_shopify.
-- `v_ce_amimi` / `v_ce_amimi_summary` — P&L brand (parità col foglio Feb/Mar al centesimo, Apr/Mag ~1%).
-- `ce_totale_monthly` — P&L intera attività (vista Totale del Cruscotto), include gennaio ereditato.
+- `v_ce_amimi` / `v_ce_amimi_summary` — P&L brand (parità col foglio Feb/Mar al centesimo, Apr/Mag ~1%;
+  dal 06-07 la riga resi e' nettata /1.22, migr 0038).
+- `v_ce_totale` / `v_ce_totale_summary` — **P&L intera attivita', DI RECORD per il Totale** (nativa da
+  migr 0028): calcolata dai dati vivi + blocco manuale `ce_totale_manual` (seed storico non-Amimi:
+  gennaio 2026 pre-Amimi, rettifiche feb). La tabella `ce_totale_monthly` (copia dal Foglio) resta solo
+  come riferimento storico e NON alimenta piu' il Cruscotto.
+- `v_ce_drift` (drift mesi chiusi vs `ce_snapshots`), `v_health` (14 detector qualita' dati, migr 0035),
+  `v_stock_drift` (policy autopush Shopify), `v_expenses_review` (coda approvazione spese).
 - `v_conto_vendita_negozio`, `v_ordini_arrivo`, `v_fornitore_prodotti` (borse per fornitore),
   `v_products_todo` (da verificare), `v_expenses_pending` (spese da approvare),
   `v_shopify_align` (disallineamenti app↔Shopify), `v_reorder` (riordino, velocità 60g),
   `v_sku_availability` (acquistabili / non-pubblicati / esauriti), `v_ads_mensile`, `v_resi_mensile`.
 
-## 5. Edge functions (4 all'as-built; dal cutover si aggiungono qromo-webhook e ce-guard, vedi sotto)
-- **`write-api`** (v7, verify_jwt off) — UNICO path di scrittura. PIN-gated (sha256(pin)==app_config.pin_hash;
-  pin neutralizzato a `x`). Azioni: purchase, count, gift, b2b, product, order, arrival, order_multi,
-  product_verify, expense_manual/propose/approve, sale_correct, return. Ogni scrittura → change_log.
-  (AGGIORNAMENTO 2026-07-04: ora v12; product_verify accetta anche cogs, quindi il COGS e' editabile
-  da Registra > Prodotti & prezzi.)
-- **`shopify-sync`** (v1) — pull SOLA LETTURA dei nuovi ordini Shopify (solo > snapshot, idempotente).
-- **`shopify-stock`** (v1) — pull giacenze Shopify → `shopify_stock`; azione `realign` (scrive su Shopify)
-  **GATED** da `app_flags.shopify_write_enabled` (oggi off). (SUPERATO il 2026-07-03: ora v7, cron :17 sync
-  e :27 realign_all autopush; policy "specchio del reale": target = disponibili da vendere, buffer 0,
-  rialzi e ribassi liberi; hold "non alzare senza conta" opt-in via `shopify_hold_raises`, default off.)
-- **`ask-data`** (v3) — NL→SQL: Gemini (`gemini-flash-lite-latest`) genera l'SQL, eseguito da
-  `ask_select` (SECURITY DEFINER, solo SELECT, una query, max 200 righe). Key in app_flags.
-- **`qromo-webhook`** (v3, aggiunta post as-built): ricevitore diretto Qromo→Supabase, LIVE dal cutover
-  2026-07-03 (in console Qromo il webhook e' "Amimi App Supabase"). Auth tripla: `?key=` nell'URL,
-  oppure `body.auth` = secret, oppure token Qromo in `app_flags.qromo_webhook_token`.
+## 5. Edge functions (8 al 2026-07-06; versioni verificate live, dettaglio per function in `EDGE_FUNCTIONS.md`)
+- **`write-api`** (v14, verify_jwt off) — UNICO path di scrittura. PIN-gated (sha256(pin)==app_config.pin_hash;
+  pin neutralizzato a `x`). Azioni: purchase, count, gift, b2b, product, order, order_multi, arrival,
+  arrival_set, product_verify, expense_manual/propose/approve, sale_correct, return, qromo_sale.
+  Ogni scrittura → change_log. Dal 06-07 BLOCCA le scritture nei mesi presenti in `ce_snapshots`
+  senza `force`+motivo (risposta 409). Il COGS e' editabile via product_verify (Registra > Prodotti & prezzi).
+- **`shopify-sync`** (v4) — pull SOLA LETTURA dei nuovi ordini Shopify (idempotente su order_id);
+  dal 06-07 fallback resolver nome/CODICE/suffisso/SKU e re-sync rimborsi/stato (finestra 45gg).
+- **`shopify-stock`** (v9) — sync giacenze Shopify → `shopify_stock` + push stock: `realign` manuale
+  (gated `shopify_write_enabled`) e `realign_all` autopush (cron :27, gated `shopify_autopush_enabled`).
+  Policy "specchio del reale": target = disponibili da vendere, buffer 0, rialzi e ribassi liberi;
+  hold "non alzare senza conta" opt-in via `shopify_hold_raises` (default off). SKU non mappati mai
+  toccati; push falliti contati in health_log con severity.
+- **`qromo-webhook`** (v4) — ricevitore diretto Qromo→Supabase, LIVE dal cutover 2026-07-03 (in console
+  Qromo il webhook e' "Amimi App Supabase"). Auth tripla: `?key=` nell'URL, oppure `body.auth` = secret,
+  oppure token Qromo in `app_flags.qromo_webhook_token`. Idempotente (UNIQUE parziale su sale_id,
+  23505 = skip benigno); errore vero su un item → risposta non-200 cosi' Qromo ritenta.
   Vedi `qromo_webhook_cutover.md` e TRIGGER_MIGRAZIONE.md §4b.
-- **`ce-guard`** (aggiunta post as-built): guardiano contabile daily 06:30, controlla drift dei mesi
-  chiusi (vs `ce_snapshots`), vendite unresolved, COGS mancanti, riconciliazione ordini vs Shopify.
-  Esito in `health_log`.
+- **`ce-guard`** (v2) — guardiano contabile daily 06:30: drift mesi chiusi (vs `ce_snapshots`, etichetta
+  con netto E mc2), vendite unresolved, COGS mancanti, giacenze negative, categorie spese, spese da
+  verificare, riconciliazione ordini vs Shopify, token Shopify e freschezza sync. Esito in `health_log`
+  (banner rosso in Home se error/warn). Azione `close_month` congela un mese in `ce_snapshots`.
+- **`ask-data`** (v4) — NL→SQL: Gemini (`gemini-flash-lite-latest`) genera l'SQL, eseguito da
+  `ask_select` (SECURITY DEFINER, solo SELECT, una query, max 200 righe). Key in app_flags.
+  Dal 06-07 legge `v_ce_totale` live.
+- **`mcp`** (v4) — server MCP JSON-RPC per Claude: tool read aperti (inventario, riordino, disponibilita',
+  P&L, ads, ask_data) + 2 write (propose_expense, register_count) dietro Bearer `app_flags.mcp_token`,
+  delegati a write-api.
+- **`etl-load`** (v4) — RITIRATA: stub che risponde 410, era il loader one-off del re-seed 2026-07-01.
 
-## 6. Scheduling (pg_cron)
-- `shopify-sync-hourly` — `7 * * * *`, POST a shopify-sync. **È l'unico cron.** Tutto il resto
-  dell'automazione, per ora, è on-demand dall'app o assente (vedi §9).
-  (SUPERATO il 2026-07-03: i cron reali sono shopify-sync :07, shopify-stock :17 (sync) e :27
-  (realign_all autopush), ce-guard 06:30, health-daily 06:00.)
+## 6. Scheduling (pg_cron) — 5 job attivi (verificati live 2026-07-06)
+- `shopify-sync-hourly` — `7 * * * *` → shopify-sync (ordini).
+- `shopify-stock-hourly` — `17 * * * *` → shopify-stock action `sync` (pull giacenze).
+- `shopify-autopush-hourly` — `27 * * * *` → shopify-stock action `realign_all` (push stock).
+- `health-daily` — `0 6 * * *` → funzione DB `refresh_health_log()`.
+- `ce-guard-daily` — `30 6 * * *` → ce-guard action `run`.
+
+Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma (vedi §13).
 
 ## 7. Frontend (5 sezioni)
 - **Cruscotto** (`Report.tsx`) — P&L Amimì/Totale con filtro mesi, trend per canale, "Chiedi ai dati"
@@ -82,16 +105,19 @@ Colonne **generate, mai scrivere**: `codice_norm` (ovunque), `products.is_finali
 - **Inventario** (`Inventory.tsx`) — Magazzino, Riordino, Disponibilità, Nei negozi, Shopify, Valore.
 
 ## 8. Sicurezza (posture rilassata, per scelta)
-anon = sola lettura (grant revocati in scrittura). Scritture solo via `write-api` (PIN, service-role).
+anon = sola lettura (grant revocati in scrittura; TRUNCATE revocato dal 06-07, migr 0037). Scritture
+solo via `write-api` (PIN, service-role), che dal 06-07 blocca anche i mesi chiusi (`ce_snapshots`).
 Segreti **mai nel bundle**: shopify_token in `app_config`, gemini_api_key in `app_flags` (entrambi
-solo service-role). PIN neutralizzato a `x` di proposito. Scrittura su Shopify dietro interruttore off.
+solo service-role). PIN neutralizzato a `x` di proposito. Scritture su Shopify dietro i flag
+`shopify_write_enabled` / `shopify_autopush_enabled` (autopush ON dal 03-07). APERTO (owner):
+rotazione segreti + chiusura esfiltrazione ask_select (audit A1/A2, vedi `audits/AUDIT_SYSTEM_2026-07-06.md`).
 
 ## 9. Integrazioni — stato reale
 | Sistema | Stato nell'app |
 |---|---|
 | **Shopify** ordini | **LIVE** (shopify-sync, ogni ora, sola lettura) |
-| **Shopify** giacenze | on-demand (shopify-stock); realign **gated** (SUPERATO il 2026-07-03: automatico, v7, cron :17 e :27, autopush live) |
-| **Qromo** vendite | **NON live** — solo seed (SUPERATO il 2026-07-03: **LIVE** via edge `qromo-webhook` v3, il webhook Qromo punta alla edge; il path Apps Script/Foglio e' rollback a secco). Vedi §10 e TRIGGER_MIGRAZIONE.md §4b |
+| **Shopify** giacenze | **LIVE automatico** (shopify-stock v9: cron :17 sync + :27 realign_all autopush; era on-demand/gated fino al 03-07) |
+| **Qromo** vendite | **LIVE** via edge `qromo-webhook` v4 dal cutover 03-07 (il path Apps Script/Foglio e' rollback a secco; smoke test prima vendita reale ancora aperto al 06-07). Vedi §10 e TRIGGER_MIGRAZIONE.md §4b |
 | **Meta Ads** | da seed (`meta_ads_daily`); nessun pull live |
 | **Gemini** | live (ask-data) |
 | **Google Sheet** | nessun sync automatico app↔foglio (app seedata una volta dal foglio) |
