@@ -1,36 +1,38 @@
 # Amimì App - EDGE FUNCTIONS (riferimento)
 
 > Una scheda per ogni edge function Supabase (project `imszbjeyplaiovylhkgl`). Creato 2026-07-06 dal codice in `supabase/functions/` + verifica live (`list_edge_functions`).
-> Le VERSIONI cambiano a ogni deploy: quelle qui sotto sono lo stato al 2026-07-06 ~14:00; per la verita' live usare Supabase MCP `list_edge_functions`. Tutte le functions hanno `verify_jwt=false`.
+> Le VERSIONI cambiano a ogni deploy: quelle qui sotto sono lo stato al 2026-07-06 sera (round feedback cofounder); per la verita' live usare Supabase MCP `list_edge_functions`. Tutte le functions hanno `verify_jwt=false`.
 > Deploy: SOLO via Supabase MCP `deploy_edge_function` (niente CLI link); e' territorio Claude Code (Regola Ferrea 16). I valori dei segreti NON vanno mai riportati nei doc (repo pubblico).
 
 Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.pin_hash` (PIN neutralizzato a `x` per scelta owner: e' design, non sicurezza). Scritture con service-role key da env. Audit su `change_log`, telemetria su `health_log`.
 
-## write-api (v14) - UNICO path di scrittura dati
+## write-api (v15) - UNICO path di scrittura dati
 
 - **Scopo:** ogni scrittura dati dell'ecosistema (app, Cowork, MCP) passa da qui.
 - **Auth:** PIN.
-- **Azioni:** `purchase`, `gift`, `b2b`, `product`, `order` (insert generici con validazione), `order_multi` (ordine fornitore multi-riga, un `gruppo`), `arrival` (arrivo su ordine: aggiorna `qty_arrived` + inserisce in `purchases`), `arrival_set` (correzione qty_arrived con delta), `count` (conta fisica: delta calcolato LATO SERVER da `v_inventory`, scrive `counts` + `stock_adjustments`), `product_verify` (completa anagrafica, accetta anche `cogs`), `expense_manual` / `expense_propose` / `expense_approve` (spese: dirette, in coda, approvazione con eventuale ricategorizzazione), `sale_correct` (riassegna una vendita Shopify/Qromo a un CODICE corretto, ri-snapshotta il COGS), `return` (reso/cambio; `sostituito_con` scala anche il sostituto), `qromo_sale` (forward idempotente, fallback COGS da `products`).
-- **Protezioni:** blocco MESI CHIUSI (anno/mese presente in `ce_snapshots` -> 409 `closed_month`, si supera solo con `force` + motivo); validazioni input (CODICE senza spazi, quantita' > 0); idempotenza `qromo_sale` su `sale_id`; ogni op scrive `change_log` con `chi` e source.
+- **Azioni:** `purchase`, `gift`, `b2b`, `product`, `order` (insert generici con validazione), `order_multi` (ordine fornitore multi-riga, un `gruppo`; dal v15 righe `wip:true` con qty 0 ammesse e stub prodotto con item/variant MAIUSCOLI), `arrival` (arrivo su ordine: aggiorna `qty_arrived` + inserisce in `purchases`), `arrival_set` (correzione qty_arrived con delta; dal v15 accetta `costo_unitario` opzionale e RISOLVE le righe WIP: ordinato = arrivato totale, wip=false), `count` (conta fisica: delta calcolato LATO SERVER da `v_inventory`, scrive `counts` + `stock_adjustments`), `product_verify` (completa anagrafica, accetta anche `cogs`; dal v15 item/variant forzati MAIUSCOLI lato server), `expense_manual` / `expense_propose` / `expense_approve` (spese: dirette, in coda, approvazione con eventuale ricategorizzazione), `sale_correct` (riassegna una vendita Shopify/Qromo a un CODICE corretto, ri-snapshotta il COGS), `return` (reso/cambio; `sostituito_con` scala anche il sostituto; dal v15 `importo_rimborsato` e' CON SEGNO: negativo = il cliente paga la differenza), `qromo_sale` (forward idempotente, fallback COGS da `products`), `order_delete` (v15: elimina una riga ordine fornitore; 409 se ha arrivi registrati, salvo force), `reorder_archive` (v15: flag `products.riordino_archiviato` on/off).
+- **Protezioni:** blocco MESI CHIUSI (anno/mese presente in `ce_snapshots` -> 409 `closed_month`, si supera solo con `force` + motivo; ECCEZIONE v15: `expense_approve` con edit di sola nota su spesa gia' approved passa, il CE non si muove — era il bug 'le spese non si confermano'); validazioni input (CODICE senza spazi, quantita' > 0); idempotenza `qromo_sale` su `sale_id`; ogni op scrive `change_log` con `chi` e source.
 - **Tocca:** legge `app_config`, `v_inventory`, `products`, `supplier_orders`, `expenses`; scrive `purchases`, `counts`, `stock_adjustments`, `products`, `expenses`, `returns`, `qromo_sales`, `shopify_line_items` (solo sale_correct), `gifts_offline`, `b2b_movements`, `supplier_orders`, `change_log`.
 
-## shopify-sync (v4) - pull ordini Shopify
+## shopify-sync (v5) - pull ordini Shopify
 
 - **Scopo:** ingest SOLA LETTURA degli ordini Shopify nuovi + aggiornamento rimborsi/stato.
 - **Auth:** PIN. Token Shopify da `app_config.shopify_token` (Admin API 2024-01).
-- **Azioni:** default = pull ordini nuovi (idempotente su order_id) + re-sync `refund_amount`/`financial_status`/`fulfillment_status` degli ordini aggiornati negli ultimi 45gg (mai gli importi/righe); `backfill_meta` = aggiorna solo `fulfilled_at` + `discount_codes` su righe esistenti; `dryRun` = preview senza insert.
+- **Azioni:** default = pull ordini nuovi (idempotente su order_id) + re-sync `refund_amount`/`financial_status`/`fulfillment_status` degli ordini aggiornati negli ultimi 45gg (mai gli importi/righe); `backfill_meta` = aggiorna `fulfilled_at` + `discount_codes` + `customer_name` (dal v5, feedback 06-07 item 9; eseguito il 06-07: 273 ordini aggiornati) su righe esistenti; `dryRun` = preview senza insert.
 - **Resolver (dal 06-07):** alias esatto -> `codice_norm` -> nome base senza suffisso " - Senza/Con Catena" -> SKU; una riga che non risolve entra con codice NULL e la intercetta il detector `shopify_orphan`.
 - **Note:** payment fees ~2.2% + 0,25 EUR stimate sugli ordini live (i mesi storici da seed sono al centesimo); errori per-item raccolti e ritornati (max 5), mai silenzio.
+- **Limite noto (06-07):** 179 ordini della replica (16-feb -> 07-mag) sono del VECCHIO store e non esistono sull'API dello store attuale: per quelli `customer_name` non e' recuperabile via Shopify (eventuale fonte: DB Shopify del Foglio Master legacy).
 
-## shopify-stock (v9) - giacenze e push stock
+## shopify-stock (v10) - giacenze e push stock
 
 - **Scopo:** specchio giacenze Shopify (`shopify_stock`) + push dello stock reale verso Shopify.
 - **Auth:** PIN. Token Shopify da `app_config`.
-- **Azioni:** `sync` (default, pull di tutti i prodotti/varianti: SKU -> codice via alias + codice_norm + fallback SKU; gestisce i dual-variant SC/CC = un codice, piu' `inventory_item_ids`); `realign_all` (autopush cron :27, gated `app_flags.shopify_autopush_enabled`; target = disponibili da vendere - buffer, oggi buffer 0; hold rialzi senza conta fresca <=30gg se `shopify_hold_raises='true'`; `dryRun` disponibile); `realign` (push manuale per codici scelti, gated `app_flags.shopify_write_enabled`, logga `chi`).
+- **Azioni:** `sync` (default, pull di tutti i prodotti/varianti: SKU -> codice via alias + codice_norm + fallback SKU; gestisce i dual-variant SC/CC = un codice, piu' `inventory_item_ids`; dal v10 salva anche `shopify_status` e quando PIU' prodotti Shopify mappano allo stesso codice titolo/immagine/status vengono dal migliore: attivo batte bozza, SKU esatto batte alias — fix immagine Savana/Leopardo, feedback 06-07 item 19); `realign_all` (autopush cron :27, gated `app_flags.shopify_autopush_enabled`; target = disponibili da vendere - buffer, oggi buffer 0; hold rialzi senza conta fresca <=30gg se `shopify_hold_raises='true'`; `dryRun` disponibile); `realign` (push manuale per codici scelti, gated `app_flags.shopify_write_enabled`, logga `chi`).
 - **Protezioni:** SKU non mappati MAI toccati (azzerarli nasconderebbe un prodotto live); push falliti NON mascherati (ritornati come failedCodici + `health_log` chiave `stock_autopush` con severity error); location da `app_flags.shopify_location_id`.
 
-## qromo-webhook (v4) - ricevitore vendite POS
+## qromo-webhook (v5) - ricevitore vendite POS
 
+- **Dal v5 (06-07):** se il payload Qromo porta un cliente (customer/client/customer_name), nome e cognome finiscono in `qromo_sales.nome/cognome`; le vendite POS restano di norma anonime.
 - **Scopo:** riceve la vendita dalla console Qromo (webhook "Amimi App Supabase") e la scrive in `qromo_sales` (source `qromo-direct`). LIVE dal cutover 2026-07-03.
 - **Auth (tripla, senza PIN):** `?key=` nell'URL, oppure `body.auth` = secret, oppure token Qromo in `app_flags.qromo_webhook_token`. Valori in `app_flags`, mai nei doc.
 - **Comportamento:** POST only (GET risponde `online`); estrae l'ordine da body.order/data.order/payload.order; un record per item con paid=true; `sale_id` = order_id + indice item (stabile); prezzo = PAGATO per unita'; COGS snapshot da `products` se risolto, altrimenti `resolver_status='unresolved'` con nome raw in nota (mai perso).

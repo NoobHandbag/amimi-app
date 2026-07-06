@@ -55,8 +55,9 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   }, [all, q]);
 
   function addNewBag() {
-    // nomi in MAIUSCOLO (decisione call 06-07): codice e nomi sempre uppercase per i prodotti nuovi
-    const codice = nm && nv ? `${modelTok(nm).toUpperCase()}_${variantTok(nv)}` : nm ? `${modelTok(nm).toUpperCase()}_` : '';
+    // CODICE resta col Model in Title_Case (Regola Ferrea 4); i NOMI (item/variant) vanno in
+    // MAIUSCOLO (decisione call 06-07) — sono campi diversi, il codice e' la join key.
+    const codice = nm && nv ? `${modelTok(nm)}_${variantTok(nv)}` : nm ? `${modelTok(nm)}_` : '';
     if (!nm) return toast('Scrivi almeno il modello', 'err');
     addLine(codice, nm.trim().toUpperCase(), nv ? variantTok(nv) : null, null, true);
     setNm(''); setNv(''); setNewOpen(false);

@@ -39,7 +39,7 @@ Un INSERT/UPDATE che include una colonna generata FALLISCE (gia' successo: orpha
 - **`returns`** (migr 0018): resi/cambi su 3 canali; `rientra_stock` bool, `sostituito_con` per i cambi merce. Nel CE la riga resi e' nettata /1.22 dal 06-07 (migr 0038).
 - **`expenses`** (EXPENSES MASTER): `costo` NEGATIVO; `status` approved/pending/rejected con proposed_by/approved_by; `amimi` e `categoria_valid` generate.
 - **`counts`** (staging conte) + **`stock_adjustments`** (migr 0027): la conta scrive in counts e produce una rettifica firmata in stock_adjustments (delta calcolato lato server); `v_inventory` somma le rettifiche.
-- **`supplier_orders`**: ordini fornitore multi-borsa (`gruppo` uuid, qty_ordered/qty_arrived, costo_unitario, data_consegna).
+- **`supplier_orders`**: ordini fornitore multi-borsa (`gruppo` uuid, qty_ordered/qty_arrived, costo_unitario, data_consegna; `wip` boolean da migr 0041: quantita'/costo ignoti, si risolve all'arrivo via arrival_set).
 - **`meta_ads_daily`**: metriche Meta per campagna/giorno (da seed).
 
 ## 4. Tabelle di servizio
@@ -50,11 +50,11 @@ Un INSERT/UPDATE che include una colonna generata FALLISCE (gia' successo: orpha
 - **`ce_totale_monthly`**: copia storica del CE_TOTALE dal Foglio. NON e' piu' la fonte del Cruscotto (vedi `v_ce_totale`).
 - **`ce_totale_manual`** (migr 0028): blocco manuale del Totale (gennaio 2026 pre-Amimi + rettifiche feb) che si SOMMA al calcolo live in `v_ce_totale`.
 - **`app_config`** (singleton: pin_hash, shopify_token, iva_rate 0.22) e **`app_flags`** (key/value: gate Shopify, secret Qromo, key Gemini, token MCP): entrambe SERVICE-ROLE ONLY (lockdown migr 0026).
-- **`shopify_stock`**: specchio giacenze/immagini Shopify (variant_id, `inventory_item_ids[]` per i dual SC/CC, synced_at).
+- **`shopify_stock`**: specchio giacenze/immagini Shopify (variant_id, `inventory_item_ids[]` per i dual SC/CC, synced_at; `shopify_status` active/draft/archived da migr 0041 + sync v10).
 
 ## 5. Viste (logica derivata)
 
-- **`v_inventory`**: giacenza = acquisti - shopify - qromo - regali - b2b_venduto + resi_rientrati + aggiustamenti; espone anche in_conto_vendita, disponibili_da_vendere, valore, last_sale, on_shopify (da `shopify_stock` LIVE, migr 0021), image_url con fallback Shopify.
+- **`v_inventory`**: giacenza = acquisti - shopify - qromo - regali - b2b_venduto + resi_rientrati + aggiustamenti; espone anche in_conto_vendita, disponibili_da_vendere, valore, last_sale, on_shopify (da `shopify_stock` LIVE, migr 0021; dal 0041 SOLO status active: le bozze non contano come pubblicate), image_url con fallback Shopify.
 - **`v_ce_amimi`** / **`v_ce_amimi_summary`**: P&L brand per mese (online/offline/b2b netti /1.22, cogs, packaging, commissioni, logistica, resi /1.22 da migr 0038; MC1, MC2).
 - **`v_ce_totale`** / **`v_ce_totale_summary`** (migr 0028, DI RECORD per il Totale): calcolo live + blocco `ce_totale_manual`.
 - **`v_ce_drift`** (migr 0032): mesi in `ce_snapshots` con delta netto/mc2 tra congelato e live.
@@ -63,7 +63,7 @@ Un INSERT/UPDATE che include una colonna generata FALLISCE (gia' successo: orpha
 - **`v_products_todo`**: anagrafiche incomplete con bucket di priorita'.
 - **`v_ordini_arrivo`**, **`v_fornitore_prodotti`**: monitor ordini fornitore e storico costi per fornitore.
 - **`v_shopify_align`**, **`v_stock_drift`** (migr 0034): disallineamenti app<->Shopify e azione di policy per l'autopush (ok / da_abbassare / da_alzare / hold_serve_conta).
-- **`v_reorder`**, **`v_sku_availability`**: velocita' 60gg + giorni di stock; stato SKU (acquistabile / in_stock_non_pubblicato / pubblicato_esaurito).
+- **`v_reorder`**, **`v_sku_availability`**: velocita' 60gg + giorni di stock; stato SKU (acquistabile / in_stock_non_pubblicato / pubblicato_esaurito). Dal 0041 v_reorder espone `riordino_archiviato` (flag su `products`, archivio riordino ripristinabile) e v_ordini_arrivo/v_fornitore_prodotti hanno il fallback immagini da shopify_stock + flag `wip`.
 - **`v_resi_mensile`**, **`v_ads_mensile`**, **`v_last_sale`**, **`v_conto_vendita_negozio`**.
 
 ## 6. Funzioni DB
