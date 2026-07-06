@@ -61,9 +61,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
-  let body: { action?: string; payload?: Record<string, unknown>; pin?: string; chi?: string };
+  let body: { action?: string; payload?: Record<string, unknown>; pin?: string; chi?: string; force?: boolean };
   try { body = await req.json(); } catch { return json({ error: 'JSON non valido' }, 400); }
-  const { action = '', payload = {}, pin = '', chi = '' } = body;
+  const { action = '', payload = {}, pin = '', chi = '', force = false } = body;
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
@@ -74,6 +74,19 @@ Deno.serve(async (req) => {
   const today = new Date().toISOString().slice(0, 10);
   const logp = (tbl: string, row_id: string, op: string, after: unknown) =>
     sb.from('change_log').insert({ tbl, row_id, op, after, chi: chi || null, source: 'write-api' });
+
+  // Protezione mesi chiusi (audit 2026-07-06, A3): una scrittura datata in un mese gia' congelato
+  // in ce_snapshots fa derivare in silenzio un P&L che l'owner ha gia' comunicato. Blocca, a meno
+  // di force esplicito (con motivo consigliato). Il mese corrente non e' mai chiuso -> le operazioni
+  // quotidiane non sono toccate; scatta solo su scritture retrodatate in gen-giu.
+  const closedMonth = async (y: unknown, m: unknown): Promise<boolean> => {
+    const yy = Number(y), mm = Number(m);
+    if (!yy || !mm) return false;
+    const { data } = await sb.from('ce_snapshots').select('id').eq('year', yy).eq('month', mm).limit(1);
+    return !!(data && data.length);
+  };
+  const closedErr = (y: unknown, m: unknown) =>
+    json({ error: `Mese ${Number(m)}/${Number(y)} CHIUSO: i numeri sono congelati. Riaprilo o passa force:true (con motivo) per scrivere comunque.`, closed_month: true, year: Number(y), month: Number(m) }, 409);
 
   // --- FLOW 1: mark an arrival against a supplier order (date editable) ---
   if (action === 'arrival') {
@@ -185,6 +198,9 @@ Deno.serve(async (req) => {
       status: action === 'expense_manual' ? 'approved' : 'pending',
       proposed_by: chi || null, approved_by: action === 'expense_manual' ? (chi || null) : null,
     };
+    // una spesa APPROVATA (expense_manual) datata in un mese chiuso ne sposta il CE: blocca.
+    // le proposte (expense_propose) restano pending e non toccano il CE finche' non approvate.
+    if (action === 'expense_manual' && !force && await closedMonth(row.year, row.month)) return closedErr(row.year, row.month);
     const { data, error } = await sb.from('expenses').insert(row).select().single();
     if (error) return json({ error: error.message }, 400);
     await logp('expenses', String(data.id), action, data);
@@ -194,6 +210,12 @@ Deno.serve(async (req) => {
     const id = String(payload.id || '');
     const decision = String(payload.status || 'approved');
     if (!id) return json({ error: 'id mancante' }, 422);
+    // approvare una spesa datata in un mese chiuso ne muove il CE (fu questo + una ricategorizzazione
+    // a far derivare giugno). Blocca l'approvazione verso un mese chiuso (il reject e' sempre ok).
+    if (decision !== 'rejected' && !force) {
+      const { data: exRow } = await sb.from('expenses').select('year, month').eq('id', id).single();
+      if (exRow && await closedMonth(exRow.year, exRow.month)) return closedErr(exRow.year, exRow.month);
+    }
     const upd: Record<string, unknown> = { status: decision === 'rejected' ? 'rejected' : 'approved', approved_by: chi || null };
     const edits = (payload.edits as Record<string, unknown>) || {};
     for (const f of ['operazione', 'categoria', 'sottocategoria', 'note']) if (edits[f] != null) upd[f] = edits[f];
@@ -215,6 +237,8 @@ Deno.serve(async (req) => {
     const tbl = isShop ? 'shopify_line_items' : 'qromo_sales';
     const { data: before } = await sb.from(tbl).select('*').eq('id', id).single();
     if (!before) return json({ error: 'vendita non trovata' }, 404);
+    // ripuntare una vendita di un mese chiuso ne cambia il COGS/CE: blocca senza force.
+    if (!force && await closedMonth(before.year, before.month)) return closedErr(before.year, before.month);
     // qromo_sales has item/variant columns; shopify_line_items does not (only codice + lineitem_name)
     const upd: Record<string, unknown> = isShop
       ? { codice: newCodice, resolved: true }
@@ -247,6 +271,7 @@ Deno.serve(async (req) => {
       motivo: (payload.motivo as string) ?? null, sostituito_con: (payload.sostituito_con as string) ?? null,
       note: (payload.note as string) ?? null, source: 'app', chi: chi || null,
     };
+    if (!force && await closedMonth(row.year, row.month)) return closedErr(row.year, row.month);
     const { data, error } = await sb.from('returns').insert(row).select().single();
     if (error) return json({ error: error.message }, 400);
     await logp('returns', String(data.id), 'return', data);
@@ -334,6 +359,10 @@ Deno.serve(async (req) => {
 
   const errs = validate(action, payload);
   if (errs.length) return json({ error: errs.join(' · '), validation: errs }, 422);
+
+  // gift/b2b portano year/month (derivati client-side): blocca la scrittura in un mese chiuso.
+  if (!force && await closedMonth((payload as Record<string, unknown>).year, (payload as Record<string, unknown>).month))
+    return closedErr((payload as Record<string, unknown>).year, (payload as Record<string, unknown>).month);
 
   const row = { ...payload, source: 'app', chi: chi || null };
   const { data, error } = await sb.from(table).insert(row).select().single();

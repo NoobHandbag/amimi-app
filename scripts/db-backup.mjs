@@ -14,6 +14,9 @@ const TABLES = [
   'shopify_orders', 'shopify_line_items', 'gifts_offline', 'b2b_movements', 'expenses',
   'meta_ads_daily', 'counts', 'returns', 'stock_adjustments', 'supplier_orders',
   'shopify_stock', 'change_log', 'ce_totale_monthly', 'ce_totale_manual', 'health_log',
+  // Aggiunte audit 2026-07-06 (A11): ce_snapshots e' la BASELINE del drift dei mesi chiusi —
+  // senza, un restore silenzia per sempre ce-guard. Le altre due sono config anon-readable.
+  'ce_snapshots', 'shopify_catalog', 'non_product_codici',
 ];
 const PAGE = 1000;
 
@@ -43,3 +46,11 @@ for (const t of TABLES) {
 }
 writeFileSync('db-backup/_manifest.json', JSON.stringify(manifest, null, 2));
 console.log('backup complete:', Object.keys(manifest.tables).length, 'tables');
+
+// Guardia di completezza (C34): un backup parziale (key ruotata, tabella rinominata) NON deve
+// passare come verde. Se una tabella e' stata saltata/errata, esci non-zero cosi' l'Action mostra rosso.
+const broken = TABLES.filter((t) => manifest.tables[t]?.skipped != null || manifest.tables[t]?.error != null);
+if (broken.length) {
+  console.error('BACKUP INCOMPLETO — tabelle non salvate:', broken.join(', '));
+  process.exit(1);
+}

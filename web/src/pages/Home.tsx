@@ -4,6 +4,7 @@ import { PERSONA, PersonaPicker, personaName, ALL_ACTIONS } from '../lib/people'
 import type { Tab, Tile } from '../lib/people';
 import { nowMonth, nowYear, meseNome } from '../lib/helpers';
 import Icon from '../components/Icon';
+import HealthBanner from '../components/HealthBanner';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 
@@ -44,6 +45,9 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
         <div className="sub">Cosa vuoi fare?</div>
       </div>
       <div style={{ marginBottom: 14 }}><PersonaPicker chi={chi} setChi={setChi} /></div>
+
+      <HealthBanner />
+
 
       {cfg.finance && fin && (
         <button className="card homesum" onClick={() => go('cruscotto')} style={{ cursor: 'pointer', width: '100%' }}>

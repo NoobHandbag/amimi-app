@@ -91,10 +91,18 @@ Deno.serve(async (req) => {
   // 7) DRIFT dei mesi chiusi: i numeri del passato NON devono muoversi
   const { data: drift } = await sb.from('v_ce_drift').select('*');
   const drifted = (drift ?? []).filter((r) => Math.abs(N(r.delta_netto)) > 0.01 || Math.abs(N(r.delta_mc2)) > 0.01);
-  add('ce_drift_mesi_chiusi', 'Mesi CHIUSI i cui numeri sono cambiati' + (drifted.length ? ': ' + drifted.map((d) => `${d.ce} ${d.year}-${d.month} (netto ${d.delta_netto >= 0 ? '+' : ''}${d.delta_netto})`).join(', ') : ''), drifted.length);
+  // l'etichetta deve mostrare il delta che ha fatto scattare il filtro: prima stampava solo netto,
+  // nascondendo il drift su mc2 (l'utile) — l'allarme diceva "netto +0" mentre 400 EUR si muovevano (A4).
+  const driftLabel = (d: Record<string, unknown>) => {
+    const parts: string[] = [];
+    if (Math.abs(N(d.delta_netto)) > 0.01) parts.push(`netto ${N(d.delta_netto) >= 0 ? '+' : ''}${d.delta_netto}`);
+    if (Math.abs(N(d.delta_mc2)) > 0.01) parts.push(`mc2 ${N(d.delta_mc2) >= 0 ? '+' : ''}${d.delta_mc2}`);
+    return `${d.ce} ${d.year}-${d.month} (${parts.join(', ')})`;
+  };
+  add('ce_drift_mesi_chiusi', 'Mesi CHIUSI i cui numeri sono cambiati' + (drifted.length ? ': ' + drifted.map(driftLabel).join(', ') : ''), drifted.length);
 
   // 8) riconciliazione ESTERNA Shopify: count ordini mese corrente + precedente vs Admin API
-  let shopifyChecked = 0, shopifyMismatch = 0; const shopDetails: string[] = [];
+  let shopifyChecked = 0, shopifyMismatch = 0, shopifyErr = 0; const shopDetails: string[] = [];
   if (cfg.shopify_token) {
     const months: [number, number][] = [];
     const cm = now.getUTCMonth() + 1;
@@ -106,15 +114,24 @@ Deno.serve(async (req) => {
       try {
         const r = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/orders/count.json?status=any&created_at_min=${from}&created_at_max=${to}`,
           { headers: { 'X-Shopify-Access-Token': cfg.shopify_token } });
-        if (!r.ok) continue;
+        if (!r.ok) { shopifyErr++; continue; }  // NON ingoiare: un token morto deve accendere ce_shopify_token (A10)
         const apiCount = (await r.json()).count ?? 0;
         const { count: dbCount } = await sb.from('shopify_orders').select('*', { count: 'exact', head: true }).eq('year', y).eq('month', m);
         shopifyChecked++;
         if (apiCount !== (dbCount ?? 0)) { shopifyMismatch++; shopDetails.push(`${y}-${m}: api=${apiCount} db=${dbCount}`); }
-      } catch { /* rete: riprova domani */ }
+      } catch { shopifyErr++; }
     }
-  }
+  } else { shopifyErr = 1; }
   add('ce_shopify_reconcile', `Riconciliazione ordini vs Shopify API (${shopifyChecked} mesi)` + (shopDetails.length ? ': ' + shopDetails.join(', ') : ''), shopifyMismatch);
+  // token/connessione Shopify: se l'API non risponde o il token e' assente/morto, l'intera pipeline
+  // Shopify (sync ordini, stock, autopush) e' cieca ma tutti i cron restano verdi. Questo lo accende.
+  add('ce_shopify_token', 'Chiamate Shopify fallite (token assente/scaduto o API giu)', shopifyErr);
+
+  // 9) freschezza sync: se lo stock Shopify non si aggiorna da >2h, un cron/edge e' morto in silenzio (A10)
+  const { data: freshRow } = await sb.from('shopify_stock').select('synced_at').order('synced_at', { ascending: false }).limit(1);
+  const lastSync = freshRow?.[0]?.synced_at ? new Date(freshRow[0].synced_at as string).getTime() : 0;
+  const staleMin = lastSync ? Math.round((now.getTime() - lastSync) / 60000) : 99999;
+  add('ce_sync_freshness', `Ultimo sync stock Shopify: ${staleMin} min fa (atteso <120)`, staleMin > 120 ? staleMin : 0);
 
   // scrivi in health_log (sostituisce le chiavi ce_* di oggi)
   const today = now.toISOString().slice(0, 10);
