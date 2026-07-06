@@ -14,7 +14,7 @@ Postgres (Italian handbag business "Amimì"). Answer with ONE read-only SELECT.
 Key relations:
 - v_inventory(codice, item, variant, categoria, giacenza_attuale, disponibili_da_vendere, valore, retail_price, cogs, last_sale, on_shopify, shopify_sold, qromo_sold, b2b_venduto)
 - v_ce_amimi_summary(year, month, omni_netto, online_netto, offline_netto, b2b_netto, cogs, mc1, mc2)  -- Amimì brand P&L; sales start month 2
-- ce_totale_monthly(year, month, lordo, netto, mc1, mc2, online_netto, offline_netto)  -- whole-business P&L incl. January
+- v_ce_totale(year, month, omni_netto, online_netto, offline_netto, cogs, mc1, mc2)  -- whole-business P&L, native/live, incl. January. Use THIS for "totale" (NOT the old seed).
 - qromo_sales(data date, codice, item, variant, quantita, prezzo, nome, cognome, year, month)  -- offline/POS sales
 - shopify_orders(order_id, created_at_shop, customer_name, gross_total, net_total, discount_total, year, month)
 - shopify_line_items(order_id, codice, lineitem_name, quantita, price, year, month)  -- online sales lines

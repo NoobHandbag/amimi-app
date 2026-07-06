@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
     const { data: fresh } = await sb.from('counts').select('codice').gte('data_conta', cutoff);
     const freshSet = new Set((fresh ?? []).map((r) => r.codice));
 
-    let pushed = 0, held = 0, okCount = 0; const actions: Record<string, unknown>[] = []; const unmapped: string[] = [];
+    let pushed = 0, held = 0, okCount = 0, failed = 0; const actions: Record<string, unknown>[] = []; const unmapped: string[] = []; const failedCodici: string[] = [];
     for (const s of stock ?? []) {
       const disp = dispByCod.get(s.codice);
       // SKU Shopify non mappato al catalogo: MAI toccarlo (azzerarlo nasconderebbe un prodotto vivo)
@@ -113,13 +113,14 @@ Deno.serve(async (req) => {
       if (allOk) {
         pushed++;
         await sb.from('shopify_stock').update({ shopify_qty: target, synced_at: new Date().toISOString() }).eq('codice', s.codice);
-      }
+      } else { failed++; failedCodici.push(s.codice); }  // audit B19: NON mascherare, il PUSH fallito lascia Shopify a vendere fantasmi
     }
-    const summary = { pushed, held, ok: okCount, unmapped, dryRun, buffer, actions: actions.slice(0, 40) };
+    const summary = { pushed, held, ok: okCount, failed, failedCodici, unmapped, dryRun, buffer, actions: actions.slice(0, 40) };
     if (!dryRun) {
       const today = new Date().toISOString().slice(0, 10);
       await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
-      await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: `autopush: ${pushed} push, ${held} hold, ${okCount} ok`, n: pushed, severity: 'ok' });
+      // severity riflette i fallimenti (prima era hardcoded 'ok' -> un push fallito era invisibile, B19)
+      await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: `autopush: ${pushed} push, ${held} hold, ${okCount} ok` + (failed ? `, ${failed} FALLITI: ${failedCodici.slice(0, 10).join(', ')}` : ''), n: failed, severity: failed > 0 ? 'warn' : 'ok' });
       if (pushed || held) await sb.from('change_log').insert({ tbl: 'shopify_stock', row_id: 'realign_all', op: 'stock_autopush', after: summary, chi: 'cron', source: 'shopify-stock' });
     }
     return json({ ok: true, ...summary });
