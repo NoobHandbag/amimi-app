@@ -21,11 +21,10 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
   Bene: {
     name: 'Benny', finance: false,
     tiles: [
-      { icon: 'pulse', label: 'Salute & Movimenti', tab: 'salute' },
       { icon: 'sparkles', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
-      { icon: 'rocket', label: 'Pubblica su Shopify', tab: 'registra', param: 'pubblica' },
-      { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },
-      { icon: 'box', label: 'Ordini in arrivo', tab: 'ordini', badge: 'arrivi' },
+      { icon: 'bag', label: 'Registra vendita', tab: 'registra', param: 'gift' },
+      { icon: 'return', label: 'Reso / Cambio', tab: 'registra', param: 'reso' },
+      { icon: 'euro', label: 'Spese', tab: 'registra', param: 'spesa' },
     ],
   },
   Ginevra: {

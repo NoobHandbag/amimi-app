@@ -92,18 +92,22 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
             <button className="submit small" disabled={!typed.trim()} onClick={() => setForn(typed.trim())}>Avanti →</button>
           </div>
         ) : (() => {
-          const act = sups.filter((s) => active.has(s.name));
-          const vecchi = sups.filter((s) => !active.has(s.name));
+          // Fornitori attivi = quelli che HANNO ordini (stessa lista della pagina "Ordini", che legge
+          // da supplier_orders): mostrarli direttamente dal set `active`, NON intersecando i nomi col
+          // catalogo `suppliers`. Un fornitore ordinato ma non presente in `suppliers` (es. "Sarte
+          // Milano (tessuto)") altrimenti sparirebbe del tutto. I "vecchi" restano i suppliers senza ordini.
+          const act = [...active].sort((a, b) => a.localeCompare(b));
+          const vecchi = sups.filter((s) => !active.has(s.name)).map((s) => s.name);
           return (
             <>
               <div className="supgrid">
-                {act.map((s) => <button key={s.name} type="button" className="supcard" onClick={() => setForn(s.name)}>{s.name}</button>)}
+                {act.map((name) => <button key={name} type="button" className="supcard" onClick={() => setForn(name)}>{name}</button>)}
                 <button type="button" className="supcard alt" onClick={() => setTyping(true)}>+ nuovo</button>
               </div>
               {vecchi.length > 0 && (
                 <>
                   <button className="addnew" type="button" onClick={() => setShowOld((v) => !v)}>{showOld ? '− Nascondi vecchi fornitori' : `Vecchi fornitori (${vecchi.length})`}</button>
-                  {showOld && <div className="supgrid">{vecchi.map((s) => <button key={s.name} type="button" className="supcard old" onClick={() => setForn(s.name)}>{s.name}</button>)}</div>}
+                  {showOld && <div className="supgrid">{vecchi.map((name) => <button key={name} type="button" className="supcard old" onClick={() => setForn(name)}>{name}</button>)}</div>}
                 </>
               )}
             </>
