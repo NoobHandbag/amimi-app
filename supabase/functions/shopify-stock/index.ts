@@ -93,6 +93,9 @@ Deno.serve(async (req) => {
     const buffer = Number(bufFlag?.value ?? '0');
     const { data: holdFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_hold_raises').maybeSingle();
     const holdRaises = holdFlag?.value === 'true';
+    // OPT-IN (default off): se un inventory item è tracked:false, riaccendi il tracking e ritenta. Mai gift card.
+    const { data: autoEnFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_autoenable_tracking').maybeSingle();
+    const autoEnableTracking = autoEnFlag?.value === 'true';
 
     const { data: stock } = await sb.from('shopify_stock').select('codice, shopify_qty, inventory_item_id, inventory_item_ids');
     const { data: inv } = await sb.from('v_inventory').select('codice, disponibili_da_vendere');
@@ -101,7 +104,29 @@ Deno.serve(async (req) => {
     const { data: fresh } = await sb.from('counts').select('codice').gte('data_conta', cutoff);
     const freshSet = new Set((fresh ?? []).map((r) => r.codice));
 
-    let pushed = 0, held = 0, okCount = 0, failed = 0; const actions: Record<string, unknown>[] = []; const unmapped: string[] = []; const failedCodici: string[] = [];
+    let pushed = 0, held = 0, okCount = 0, failed = 0; const actions: Record<string, unknown>[] = []; const unmapped: string[] = []; const failedCodici: string[] = []; const untracked: string[] = [];
+    // helper: scrive lo stock su un inventory item; true = Shopify ha accettato
+    const setStock = async (item: string, available: number) => (await fetch(`${API}/inventory_levels/set.json`, {
+      method: 'POST', headers: SH, body: JSON.stringify({ location_id: locationId, inventory_item_id: Number(item), available }),
+    })).ok;
+    // helper: diagnosi AUTHORITATIVE via GraphQL (tracked + gift card). Non ci si fida della stringa d'errore REST.
+    const itemMeta = async (item: string): Promise<{ tracked: boolean; isGiftCard: boolean } | null> => {
+      const r = await fetch(`${API}/graphql.json`, { method: 'POST', headers: SH, body: JSON.stringify({
+        query: 'query($id:ID!){inventoryItem(id:$id){tracked variant{product{isGiftCard}}}}', variables: { id: `gid://shopify/InventoryItem/${item}` },
+      }) });
+      if (!r.ok) return null;
+      const it = (await r.json())?.data?.inventoryItem;
+      return it ? { tracked: it.tracked === true, isGiftCard: it?.variant?.product?.isGiftCard === true } : null;
+    };
+    // helper: riaccende il tracking magazzino su un item FISICO (mai gift card: garantito dal chiamante)
+    const enableTracking = async (item: string): Promise<boolean> => {
+      const r = await fetch(`${API}/graphql.json`, { method: 'POST', headers: SH, body: JSON.stringify({
+        query: 'mutation($id:ID!){inventoryItemUpdate(id:$id,input:{tracked:true}){inventoryItem{tracked} userErrors{message}}}', variables: { id: `gid://shopify/InventoryItem/${item}` },
+      }) });
+      if (!r.ok) return false;
+      const res = (await r.json())?.data?.inventoryItemUpdate;
+      return res?.inventoryItem?.tracked === true && (!res.userErrors || res.userErrors.length === 0);
+    };
     for (const s of stock ?? []) {
       const disp = dispByCod.get(s.codice);
       // SKU Shopify non mappato al catalogo: MAI toccarlo (azzerarlo nasconderebbe un prodotto vivo)
@@ -115,26 +140,42 @@ Deno.serve(async (req) => {
       actions.push({ codice: s.codice, azione: dryRun ? 'PUSH (dry)' : 'PUSH', current, target });
       if (dryRun) { pushed++; continue; }
       const items: string[] = (s.inventory_item_ids && s.inventory_item_ids.length) ? s.inventory_item_ids : [s.inventory_item_id].filter(Boolean);
-      let allOk = true;
-      for (const item of items) {
-        const r = await fetch(`${API}/inventory_levels/set.json`, {
-          method: 'POST', headers: SH,
-          body: JSON.stringify({ location_id: locationId, inventory_item_id: Number(item), available: target }),
-        });
-        if (!r.ok) allOk = false;
-      }
-      if (allOk) {
+      const failedItems: string[] = [];
+      for (const item of items) { if (!(await setStock(item, target))) failedItems.push(item); }
+      if (!failedItems.length) {
         pushed++;
         await sb.from('shopify_stock').update({ shopify_qty: target, synced_at: new Date().toISOString() }).eq('codice', s.codice);
-      } else { failed++; failedCodici.push(s.codice); }  // audit B19: NON mascherare, il PUSH fallito lascia Shopify a vendere fantasmi
+      } else {
+        // Un set fallito è un GUASTO vero (Shopify a vendere fantasmi, audit B19: NON mascherare) OPPURE una
+        // variante con inventory item tracked:false: Shopify rifiuta la scrittura, ma NON è un fallimento, è
+        // assenza di tracking magazzino. Lo separiamo nel bucket `untracked` (come `unmapped`) così non
+        // maschera i guasti veri né tiene acceso un warn perenne. Dietro flag `shopify_autoenable_tracking`
+        // (default off, MAI gift card) riaccendiamo il tracking e ritentiamo. Diagnosi authoritative via GraphQL.
+        const stillFailed: string[] = []; let untrackedHere = false;
+        for (const item of failedItems) {
+          const meta = await itemMeta(item);
+          if (meta && !meta.tracked && !meta.isGiftCard) {
+            if (autoEnableTracking && (await enableTracking(item)) && (await setStock(item, target))) continue;
+            untrackedHere = true;
+          } else { stillFailed.push(item); }  // tracked / gift card / diagnosi non disponibile = trattalo come guasto vero
+        }
+        if (stillFailed.length) { failed++; failedCodici.push(s.codice); }
+        else if (untrackedHere) { untracked.push(s.codice); }
+        else {
+          pushed++;
+          await sb.from('shopify_stock').update({ shopify_qty: target, synced_at: new Date().toISOString() }).eq('codice', s.codice);
+        }
+      }
     }
-    const summary = { pushed, held, ok: okCount, failed, failedCodici, unmapped, dryRun, buffer, actions: actions.slice(0, 40) };
+    const summary = { pushed, held, ok: okCount, failed, failedCodici, untracked, unmapped, dryRun, buffer, actions: actions.slice(0, 40) };
     if (!dryRun) {
       const today = new Date().toISOString().slice(0, 10);
       await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
-      // severity riflette i fallimenti (prima era hardcoded 'ok' -> un push fallito era invisibile, B19)
-      await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: `autopush: ${pushed} push, ${held} hold, ${okCount} ok` + (failed ? `, ${failed} FALLITI: ${failedCodici.slice(0, 10).join(', ')}` : ''), n: failed, severity: failed > 0 ? 'warn' : 'ok' });
-      if (pushed || held) await sb.from('change_log').insert({ tbl: 'shopify_stock', row_id: 'realign_all', op: 'stock_autopush', after: summary, chi: 'cron', source: 'shopify-stock' });
+      // severity riflette solo i fallimenti VERI (prima era hardcoded 'ok' -> un push fallito era invisibile, B19).
+      // Gli `untracked` sono informativi e NON alzano la severity: niente warn perenne (brief 08-07).
+      await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: `autopush: ${pushed} push, ${held} hold, ${okCount} ok` + (failed ? `, ${failed} FALLITI: ${failedCodici.slice(0, 10).join(', ')}` : '') + (untracked.length ? `, ${untracked.length} untracked: ${untracked.slice(0, 10).join(', ')}` : ''), n: failed, severity: failed > 0 ? 'warn' : 'ok' });
+      // logga anche i run con soli fallimenti/untracked (prima: solo pushed||held -> giorni di soli errori senza traccia, brief 08-07)
+      if (pushed || held || failed || untracked.length) await sb.from('change_log').insert({ tbl: 'shopify_stock', row_id: 'realign_all', op: 'stock_autopush', after: summary, chi: 'cron', source: 'shopify-stock' });
     }
     return json({ ok: true, ...summary });
   }

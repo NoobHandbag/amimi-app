@@ -23,12 +23,13 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 - **Note:** payment fees ~2.2% + 0,25 EUR stimate sugli ordini live (i mesi storici da seed sono al centesimo); errori per-item raccolti e ritornati (max 5), mai silenzio.
 - **Limite noto (06-07):** 179 ordini della replica (16-feb -> 07-mag) sono del VECCHIO store e non esistono sull'API dello store attuale: per quelli `customer_name` non e' recuperabile via Shopify (eventuale fonte: DB Shopify del Foglio Master legacy).
 
-## shopify-stock (v10) - giacenze e push stock
+## shopify-stock (v11) - giacenze e push stock
 
 - **Scopo:** specchio giacenze Shopify (`shopify_stock`) + push dello stock reale verso Shopify.
 - **Auth:** PIN. Token Shopify da `app_config`.
 - **Azioni:** `sync` (default, pull di tutti i prodotti/varianti: SKU -> codice via alias + codice_norm + fallback SKU; gestisce i dual-variant SC/CC = un codice, piu' `inventory_item_ids`; dal v10 salva anche `shopify_status` e quando PIU' prodotti Shopify mappano allo stesso codice titolo/immagine/status vengono dal migliore: attivo batte bozza, SKU esatto batte alias — fix immagine Savana/Leopardo, feedback 06-07 item 19); `realign_all` (autopush cron :27, gated `app_flags.shopify_autopush_enabled`; target = disponibili da vendere - buffer, oggi buffer 0; hold rialzi senza conta fresca <=30gg se `shopify_hold_raises='true'`; `dryRun` disponibile); `realign` (push manuale per codici scelti, gated `app_flags.shopify_write_enabled`, logga `chi`).
-- **Protezioni:** SKU non mappati MAI toccati (azzerarli nasconderebbe un prodotto live); push falliti NON mascherati (ritornati come failedCodici + `health_log` chiave `stock_autopush` con severity error); location da `app_flags.shopify_location_id`.
+- **Protezioni:** SKU non mappati MAI toccati (azzerarli nasconderebbe un prodotto live); push falliti VERI NON mascherati (ritornati come `failedCodici` + `health_log` chiave `stock_autopush` severity 'warn'); location da `app_flags.shopify_location_id`.
+- **Untracked (dal v11):** un set fallisce anche quando l'`inventoryItem.tracked=false` (Shopify rifiuta la scrittura stock su un item non tracciato): NON e' un guasto, e' assenza di tracking magazzino. In `realign_all` un set fallito viene diagnosticato via GraphQL (`inventoryItem.tracked` + `variant.product.isGiftCard`, endpoint `2024-01/graphql.json`, stesso token): se untracked e non gift card finisce nel bucket **`untracked`** (non `failed`), riportato a parte nel summary/health_log e senza alzare la severity (niente warn perenne). Dietro flag `shopify_autoenable_tracking` (default off) l'autopush riaccende il tracking (`inventoryItemUpdate(tracked:true)`) e ritenta, **MAI su gift card**. `change_log` `stock_autopush` ora si scrive anche nei run con soli fallimenti/untracked. (Brief 08-07; caso reale `AGATA_BAG_PINK_CRYSTAL_BEADS` risolto a mano prima del deploy. Le 3 `GIFT CARD Amimì` restano `tracked:false` by design ma senza SKU non entrano in `shopify_stock`.)
 
 ## qromo-webhook (v5) - ricevitore vendite POS
 
@@ -64,4 +65,4 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 ## Flag e config di riferimento
 
 - `app_config`: `pin_hash`, `shopify_token`, `iva_rate` (0.22), `parity_tolerance_cents`.
-- `app_flags`: `shopify_write_enabled`, `shopify_autopush_enabled`, `shopify_expose_buffer` (oggi 0), `shopify_hold_raises`, `shopify_location_id`, `qromo_webhook_secret`, `qromo_webhook_token`, `gemini_api_key`, `mcp_token`. Entrambe le tabelle sono service-role only (lockdown migr 0026); i flag si cambiano SOLO con decisione owner (Regola 15/16).
+- `app_flags`: `shopify_write_enabled`, `shopify_autopush_enabled`, `shopify_expose_buffer` (oggi 0), `shopify_hold_raises`, `shopify_autoenable_tracking` (default off: riaccende il tracking magazzino su item fisici untracked prima del set, mai gift card, dal v11), `shopify_location_id`, `qromo_webhook_secret`, `qromo_webhook_token`, `gemini_api_key`, `mcp_token`. Entrambe le tabelle sono service-role only (lockdown migr 0026); i flag si cambiano SOLO con decisione owner (Regola 15/16).
