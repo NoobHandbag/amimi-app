@@ -19,6 +19,18 @@ h2 { font-size: 14px; margin: 0 0 10px; color: var(--rose); text-transform: uppe
 .kpi .v { font-size: 22px; font-weight: 700; }
 .kpi .k { font-size: 12px; color: var(--dark); margin-top: 3px; text-transform: uppercase; letter-spacing: .4px; }
 .kpi.rose .v { color: var(--rose); } .kpi.green .v { color: var(--green); } .kpi.red .v { color: var(--red); } .kpi.accent .v { color: var(--accent); }
+/* Salute — clickable KPI with drill-down (0045) */
+.kpi.clickable { position: relative; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.kpi.clickable:hover { border-color: var(--rose); box-shadow: 0 3px 12px rgba(139,94,107,.12); }
+.kpi.clickable.on { border-color: var(--rose); background: #fdf7f8; }
+.kpi .tap { position: absolute; top: 8px; right: 10px; font-size: 11px; color: var(--muted); }
+.drill { margin-top: 2px; border-top: 1px dashed var(--line); padding-top: 12px; }
+.drill h3 { font-size: 13px; margin: 0 0 8px; color: var(--rose); }
+.dscroll { overflow-x: auto; }
+.dtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.dtable th, .dtable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.dtable thead th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+.dtable th.num, .dtable td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 15px; margin-bottom: 14px; box-shadow: 0 2px 10px rgba(0,0,0,.04); }
 .tablewrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }

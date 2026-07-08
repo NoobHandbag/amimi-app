@@ -102,7 +102,13 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
 - **Salute & Movimenti** (`Salute.tsx`, tab `salute`, dal 06-07) — sola lettura: polso vendite online+offline
   14gg vs 14 precedenti, movimenti fornitori/resi, catalogo Shopify + flag operativi, semaforo salute da
   `health_log`. Numeri da `v_movimenti_14gg` (stessa finestra del digest Cowork); flag da `v_ops_flags`.
-  Raggiungibile dalla Home (tile per Ale/Bene + "Tutte le azioni").
+  Raggiungibile dalla Home (tile per Ale/Bene + "Tutte le azioni"). Dal 08-07 include una **vista per persona**
+  (selettore Ginevra=ordini / Benedetta=catalogo·resi·spese / Dan[=Ale]=sistema): ogni KPI e' cliccabile e apre
+  un drill-down (liste da `v_digest_*`, migr 0045). Aggregati headline da `v_digest_persone`; conteggio migrazioni
+  LIVE da `v_digest_versioni` (le versioni delle 8 edge function sono un riferimento statico in `Salute.tsx`,
+  aggiornato al rilascio). Riconciliazioni sui numeri (brief 08-07): l'AOV mostrato e' quello ONLINE
+  (lordo online/ordini) non `aov_lordo14`; "aperti da evadere" usa `unfulfilledRecent` (=~32, non 0: i 181
+  `unfulfilled` sono pre-migrazione, esclusi).
 - **Inserisci** (`Ingest.tsx`) — conta, acquisto, reso/cambio, regalo, B2B, nuovo prodotto, spesa.
 - **In arrivo** (`Arrivi.tsx`) — ordini fornitore multi-borsa, arrivi parziali/totali.
 - **Verifica** (`Verifica.tsx`) — dettagli prodotto, approvazione spese, correzione vendita, pubblica (gated).

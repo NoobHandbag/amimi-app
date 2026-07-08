@@ -394,6 +394,59 @@ export async function fetchHealthLatest(): Promise<{ day: string | null; rows: H
   return { day, rows };
 }
 
+// ---------- PAGE: Salute — per-person digest (brief 2026-07-08) ----------
+// Movements of the last 14 days split by the person responsible. Aggregate headline numbers come
+// from v_digest_persone (one row); each KPI has a drill-down list from a dedicated view. Read-only.
+export type DigestPersone = {
+  gin_ordini14: number; gin_ordini28: number; gin_evasi14: number; gin_evasi28: number; gin_aov14: number | null;
+  ben_puliti14: number; ben_resi14: number; ben_spese14: number; ben_todo: number;
+  dan_log14: number; dan_attori14: number; dan_health_ok: number; dan_health_warn: number; dan_health_bad: number; dan_ce_bad: number;
+};
+const DIGEST_KEYS: (keyof DigestPersone)[] = ['gin_ordini14', 'gin_ordini28', 'gin_evasi14', 'gin_evasi28', 'gin_aov14', 'ben_puliti14', 'ben_resi14', 'ben_spese14', 'ben_todo', 'dan_log14', 'dan_attori14', 'dan_health_ok', 'dan_health_warn', 'dan_health_bad', 'dan_ce_bad'];
+export async function fetchDigestPersone(): Promise<DigestPersone> {
+  const { data, error } = await supabase.from('v_digest_persone').select('*').maybeSingle();
+  if (error) throw new Error(error.message);
+  const r = (data ?? {}) as Record<string, unknown>;
+  const out = {} as Record<string, number | null>;
+  for (const k of DIGEST_KEYS) out[k] = r[k] == null ? (k === 'gin_aov14' ? null : 0) : Number(r[k]); // numeric cols arrive as strings via PostgREST
+  return out as unknown as DigestPersone;
+}
+
+// Live count of applied DB migrations (safe subset via the SECURITY DEFINER view). Edge-function
+// versions are NOT in the DB — the app keeps them as a static reference (EDGE_FUNCTIONS in Salute.tsx).
+export async function fetchDigestVersioni(): Promise<{ migr_n: number }> {
+  const { data } = await supabase.from('v_digest_versioni').select('migr_n').maybeSingle();
+  return { migr_n: Number((data as { migr_n?: number } | null)?.migr_n ?? 0) };
+}
+
+export type DigestOrdine = { order_number: string | null; customer_name: string | null; data: string | null; evaso: boolean; gross_total: number | null };
+export async function fetchDigestOrdini(): Promise<DigestOrdine[]> {
+  const { data, error } = await supabase.from('v_digest_ordini_14gg').select('*').limit(200);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as DigestOrdine[]).map((r) => ({ ...r, gross_total: r.gross_total == null ? null : Number(r.gross_total) }));
+}
+
+export type DigestPulizia = { data: string | null; op: string | null; chi: string | null; tbl: string | null; row_id: string | null };
+export async function fetchDigestPulizia(): Promise<DigestPulizia[]> {
+  const { data, error } = await supabase.from('v_digest_pulizia_14gg').select('*').limit(200);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as DigestPulizia[];
+}
+
+export type DigestSpesa = { data: string | null; op: string | null; chi: string | null; operazione: string | null; costo: number | null };
+export async function fetchDigestSpese(): Promise<DigestSpesa[]> {
+  const { data, error } = await supabase.from('v_digest_spese_14gg').select('*').limit(200);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as DigestSpesa[]).map((r) => ({ ...r, costo: r.costo == null ? null : Number(r.costo) }));
+}
+
+export type DigestAttore = { chi: string | null; n: number };
+export async function fetchDigestLogAttori(): Promise<DigestAttore[]> {
+  const { data, error } = await supabase.from('v_digest_log_attori_14gg').select('*').limit(50);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as DigestAttore[]).map((r) => ({ chi: r.chi, n: Number(r.n) }));
+}
+
 // Shipping has no courier API (TWS sends LDV lists by email, tracked in the Cowork digest). These two are
 // INFORMATIVE proxies, not alarms: last offline (Qromo) sale date, and recent online orders not yet fulfilled.
 export async function fetchOpsExtra(): Promise<{ lastQromo: string | null; unfulfilledRecent: number }> {
