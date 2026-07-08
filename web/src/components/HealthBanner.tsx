@@ -35,7 +35,7 @@ export default function HealthBanner() {
     <div
       style={{
         background: 'rgba(200,60,70,.10)', border: '1px solid var(--red, #c83c46)',
-        borderRadius: 12, padding: '10px 12px', marginBottom: 14, color: 'var(--red, #c83c46)',
+        borderRadius: 12, padding: '10px 12px', marginTop: 18, color: 'var(--red, #c83c46)',
       }}
     >
       <button

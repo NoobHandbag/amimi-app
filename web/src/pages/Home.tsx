@@ -46,9 +46,6 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
       </div>
       <div style={{ marginBottom: 14 }}><PersonaPicker chi={chi} setChi={setChi} /></div>
 
-      <HealthBanner />
-
-
       {cfg.finance && fin && (
         <button className="card homesum" onClick={() => go('cruscotto')} style={{ cursor: 'pointer', width: '100%' }}>
           <div><div className="hsv" style={{ color: 'var(--accent)' }}>{eur(fin.netto)}</div><div className="hsk">Netto {meseNome(nowMonth())}</div></div>
@@ -95,6 +92,9 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
           </section>
         );
       })()}
+
+      {/* Controlli contabili: solo sulla home di Ale (finance), in fondo a tutto. */}
+      {cfg.finance && <HealthBanner />}
     </div>
   );
 }
