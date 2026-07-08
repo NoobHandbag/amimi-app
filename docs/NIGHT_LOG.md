@@ -711,3 +711,21 @@ Il "mega prompt" approvato dall'owner e' `docs/GO_LIVE_WORKPLAN.md` (stati aggio
   selezione funzione da automazione.
 - **clasp ri-autenticato come info@amimi.it** (era dan@geeiq.com, account sbagliato). Fix ORDER
   paginazione: change_log usa ts, shopify_stock usa codice, ce_totale_* usano year,month.
+
+## SESSION 36 - 2026-07-08 - Nuova icona app (logo pelle rosa/oro)
+
+- **Cambiata l'icona ovunque** col logo fornito dall'owner (rounded-square pelle rosa, "A" + borsa
+  oro, testo "amimì"). Sorgente `Downloads/Gemini_Generated_Image_lfacn4lfacn4lfac.png` (2816x1536).
+- **Gotcha:** il PNG sorgente NON aveva trasparenza reale (alpha tutto 255), lo sfondo a scacchi era
+  DIPINTO. Pipeline Python (PIL+scipy) in `web/scripts/` non usata a regime, one-off: isola il logo
+  (maschera saturazione rosa/oro, fill-holes, largest-component), ritaglia il quadrato ~1109px,
+  replica il colore ai bordi (distance-transform) per togliere l'alone grigio, alpha anti-aliasing.
+- **Due master:** trasparente (angoli tondi veri) per favicon + PWA "any"; opaco full-bleed (angoli
+  riempiti col rosa) per apple-touch iOS (la trasparenza darebbe angoli neri) e maskable Android.
+- **File in `web/public/`:** favicon.svg (ora embedda un PNG 128 base64, non piu' la "A" disegnata),
+  icon-192.png + icon-512.png (trasparenti, manifest "any"), icon-180.png (opaco, apple-touch),
+  NUOVO icon-maskable-512.png (logo al 90% su rosa pieno, safe-zone per mask circolari).
+- **manifest.webmanifest:** entry "maskable" ripuntata a icon-maskable-512.png (prima riusava
+  icon-512). index.html invariato (link favicon.svg + apple-touch icon-180 gia' presenti).
+- Deploy: `npm run build && npm run deploy` (gh-pages Published). Sorgenti committati su main.
+  PWA installata: serve rimuovere e reinstallare (o hard-refresh) per rivedere l'icona aggiornata.
