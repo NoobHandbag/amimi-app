@@ -138,15 +138,16 @@ Deno.serve(async (req) => {
   }
 
   // --- NEW (feedback 06-07 item 10): delete a supplier-order line ---
-  // Sicurezza: se ha arrivi registrati serve prima azzerarli (l'azzeramento scrive il purchase
-  // negativo che riporta lo stock a posto), oppure force:true esplicito che li cancella insieme.
+  // Sicurezza: se ha arrivi registrati serve PRIMA azzerarli (arrival_set 0, che scrive il purchase
+  // negativo e riporta lo stock a posto), poi eliminare. #4 (audit 09-07): niente bypass force qui,
+  // force NON cancella gli acquisti gia' scritti dall'arrivo -> lascerebbe stock fantasma permanente.
   if (action === 'order_delete') {
     const oid = payload.order_id as string;
     if (!oid) return json({ error: 'order_id mancante' }, 422);
     const { data: ord } = await sb.from('supplier_orders').select('*').eq('id', oid).single();
     if (!ord) return json({ error: 'ordine non trovato' }, 404);
-    if (Number(ord.qty_arrived) > 0 && !force) {
-      return json({ error: `Questa riga ha ${ord.qty_arrived} pezzi gia' registrati come arrivati: prima azzera gli arrivi (salva "0" come totale arrivato), poi elimina.`, has_arrivals: true }, 409);
+    if (Number(ord.qty_arrived) > 0) {
+      return json({ error: `Questa riga ha ${ord.qty_arrived} pezzi gia' registrati come arrivati (gli acquisti restano a magazzino): prima azzera gli arrivi salvando "0" come totale arrivato, poi elimina.`, has_arrivals: true }, 409);
     }
     const { error: de } = await sb.from('supplier_orders').delete().eq('id', oid);
     if (de) return json({ error: de.message }, 400);
@@ -235,9 +236,9 @@ Deno.serve(async (req) => {
   if (action === 'product_verify') {
     const codice = String(payload.codice || '');
     if (!codice) return json({ error: 'CODICE mancante' }, 422);
-    const { data: cur } = await sb.from('products').select('id, codice, verificato').eq('codice', codice).single();
+    const { data: cur } = await sb.from('products').select('id, codice, verificato, cogs').eq('codice', codice).single();
     if (!cur) return json({ error: 'prodotto non trovato' }, 404);
-    const upd: Record<string, unknown> = { verificato: true, updated_at: new Date().toISOString() };
+    const upd: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const f of ['item', 'variant', 'categoria', 'image_url', 'description', 'seo_title']) {
       if (payload[f] != null && String(payload[f]).trim() !== '') upd[f] = payload[f];
     }
@@ -248,6 +249,13 @@ Deno.serve(async (req) => {
     // COGS editabile dal catalogo (2026-07-04): cambia i margini FUTURI; le vendite passate
     // tengono il loro snapshot cogs — nessun ricalcolo retroattivo.
     if (payload.cogs != null && payload.cogs !== '') upd.cogs = Number(payload.cogs);
+
+    // #8 (audit 09-07): non marcare 'verificato' senza COGS. Un prodotto senza costo non e' pronto:
+    // resta in lista e le sue vendite future non snapshottano un COGS nullo che sottostima il CE.
+    // Il COGS finale = quello passato ora, altrimenti quello gia' a listino.
+    const finalCogs = upd.cogs != null ? Number(upd.cogs) : (cur.cogs != null ? Number(cur.cogs) : null);
+    const hasCogs = finalCogs != null && finalCogs > 0;
+    upd.verificato = hasCogs;
 
     // CODICE DEFINITIVO alla verifica di Benny (decisione owner 06-07): il codice nato con
     // l'ordine di Ginni e' PROVVISORIO. Alla prima verifica (o finche' il codice resta non
@@ -261,8 +269,15 @@ Deno.serve(async (req) => {
       const derived = `${tok(upd.item)}_${tok(upd.variant)}`;
       if (derived && !/^_|_$/.test(derived) && derived !== cur.codice) {
         const { data: clash } = await sb.from('products').select('id').eq('codice_norm', derived).neq('id', cur.id).maybeSingle();
-        if (clash) renameSkipped = `codice ${derived} gia' esistente: verifica salvata senza rinomina`;
-        else newCodice = derived;
+        if (clash) {
+          // #9 (audit 09-07): se il codice attuale e' ancora provvisorio (termina con _), finalizzarlo
+          // e' impossibile perche' un ALTRO prodotto ha gia' il codice definitivo -> resterebbe col
+          // provvisorio e l'inventario si spaccherebbe su due codici per la stessa borsa. Blocca.
+          if (/_$/.test(cur.codice)) {
+            return json({ error: `Esiste gia' un prodotto ${derived}: probabilmente e' la stessa borsa. Uniscila a quella o correggi Modello/Variante. Verifica non salvata.`, clash_codice: derived }, 409);
+          }
+          renameSkipped = `codice ${derived} gia' esistente: verifica salvata senza rinomina`;
+        } else newCodice = derived;
       }
     }
     if (newCodice) upd.codice = newCodice;
@@ -273,13 +288,15 @@ Deno.serve(async (req) => {
     // cascata: le righe gia' scritte col codice provvisorio seguono il codice definitivo
     const cascata: Record<string, number> = {};
     if (newCodice) {
-      for (const t of ['supplier_orders', 'purchases', 'qromo_sales', 'shopify_line_items', 'gifts_offline', 'returns', 'counts', 'stock_adjustments']) {
+      // #cascade (v17): b2b_movements + product_aliases inclusi, altrimenti un rename orfana le vendite B2B / gli alias.
+      for (const t of ['supplier_orders', 'purchases', 'qromo_sales', 'shopify_line_items', 'gifts_offline', 'returns', 'counts', 'stock_adjustments', 'b2b_movements', 'product_aliases']) {
         const { count, error: ce } = await sb.from(t).update({ codice: newCodice }, { count: 'exact' }).eq('codice', cur.codice);
         if (!ce && count) cascata[t] = count;
       }
     }
     await logp('products', String(data.id), 'product_verify', { ...upd, ...(newCodice ? { codice_da: cur.codice, codice_a: newCodice, cascata } : {}) });
-    return json({ ok: true, codice: newCodice ?? codice, renamed: !!newCodice, ...(renameSkipped ? { warning: renameSkipped } : {}) });
+    const warn = renameSkipped || (hasCogs ? null : "Salvato. Manca il COGS: non risulta ancora verificato e resta in lista finche' non aggiungi il costo.");
+    return json({ ok: true, codice: newCodice ?? codice, renamed: !!newCodice, verificato: hasCogs, ...(warn ? { warning: warn } : {}) });
   }
 
   // --- FLOW 4/5: expenses (manual=approved, proposta=pending, approve/reject) ---
@@ -364,6 +381,20 @@ Deno.serve(async (req) => {
     return json({ ok: true, from: before.codice, to: newCodice, shopify_stock_pending: true });
   }
 
+  // #5 (audit 09-07): annulla un reso e reverte l'aggiustamento del sostituto collegato (return_id).
+  if (action === 'return_delete') {
+    const rid = String(payload.id || '');
+    if (!rid) return json({ error: 'id reso mancante' }, 422);
+    const { data: r } = await sb.from('returns').select('*').eq('id', rid).single();
+    if (!r) return json({ error: 'reso non trovato' }, 404);
+    if (!force && await closedMonth(r.year, r.month)) return closedErr(r.year, r.month);
+    const { data: adjs } = await sb.from('stock_adjustments').delete().eq('return_id', rid).select('id');
+    const { error: de } = await sb.from('returns').delete().eq('id', rid);
+    if (de) return json({ error: de.message }, 400);
+    await logp('returns', rid, 'return_delete', { codice: r.codice, adjustments_reverted: (adjs || []).length });
+    return json({ ok: true, deleted: rid, adjustments_reverted: (adjs || []).length });
+  }
+
   // --- NEW: returns & exchanges (records money + stock effect) ---
   if (action === 'return') {
     const codice = String(payload.codice || '');
@@ -393,15 +424,23 @@ Deno.serve(async (req) => {
     // negozio. Prima nessuno scalava il sostituto -> il suo stock restava gonfiato per sempre. Registra
     // un aggiustamento di -qty sul codice sostituto (ledger, tracciabile).
     let sostituzione_id: string | null = null;
+    let sostituto_warning: string | null = null;
     const sost = String(payload.sostituito_con || '').trim();
     if (sost) {
+      // #5 (audit 09-07): quantita' del sostituto esplicita (default = qty resa; un cambio puo' essere
+      // 1:N); valida che il sostituto sia a catalogo (altrimenti l'aggiustamento e' invisibile in
+      // giacenza) e collega l'aggiustamento al reso via return_id per poterlo revertire (return_delete).
+      const qtySost = payload.qty_sostituto != null && Number(payload.qty_sostituto) > 0 ? Number(payload.qty_sostituto) : qty;
+      const sostNorm = sost.toUpperCase().replace(/\s+/g, '_');
+      const { data: sp } = await sb.from('products').select('id').eq('codice_norm', sostNorm).maybeSingle();
+      if (!sp) sostituto_warning = `Il sostituto ${sost} non e' a catalogo: l'aggiustamento di stock resta ma non si vede in giacenza finche' il prodotto non esiste.`;
       const { data: adj } = await sb.from('stock_adjustments').insert({
-        codice: sost, qty_delta: -qty, motivo: 'cambio (sostituto uscito)', data: dt, chi: chi || null, source: 'app',
+        codice: sost, qty_delta: -qtySost, motivo: 'cambio (sostituto uscito)', data: dt, chi: chi || null, source: 'app', return_id: data.id,
       }).select('id').single();
       sostituzione_id = adj?.id ?? null;
     }
     await logp('returns', String(data.id), 'return', { ...data, sostituzione_adjustment: sostituzione_id });
-    return json({ ok: true, id: data.id, rientra_stock: row.rientra_stock, sostituzione_id });
+    return json({ ok: true, id: data.id, rientra_stock: row.rientra_stock, sostituzione_id, ...(sostituto_warning ? { warning: sostituto_warning } : {}) });
   }
 
   // --- Qromo forward: a resolved DB_QROMO row pushed from the Apps Script sync (idempotent on sale_id) ---
@@ -435,6 +474,10 @@ Deno.serve(async (req) => {
       const { data: pr } = await sb.from('products').select('cogs').eq('codice_norm', cn).maybeSingle();
       if (pr?.cogs != null) row.cogs = Number(pr.cogs);
     }
+    // #1 (audit 09-07): come return/sale_correct, blocca una vendita datata in un mese gia' chiuso
+    // (ce_snapshots) senza force -> un forward tardivo altrimenti droga un CE congelato in silenzio.
+    // La dedup su sale_id resta sopra, quindi un replay legittimo non prende il 409.
+    if (!force && await closedMonth(row.year, row.month)) return closedErr(row.year, row.month);
     const { data, error } = await sb.from('qromo_sales').insert(row).select().single();
     if (error) return json({ error: error.message }, 400);
     await logp('qromo_sales', String(data.id), 'qromo_sale', { sale_id: saleId, codice, qty });
@@ -456,9 +499,14 @@ Deno.serve(async (req) => {
     // existing product and write a bogus full-stock adjustment. null-with-no-error = genuinely
     // new product (baseline 0). No per-codice lock: assumes counts of the same SKU aren't truly
     // concurrent (single shop + UI busy-guard); a later re-count self-heals any double-apply.
-    const { data: invRow, error: re } = await sb.from('v_inventory').select('giacenza_attuale').eq('codice', codice).maybeSingle();
+    const { data: invRow, error: re } = await sb.from('v_inventory').select('giacenza_attuale, in_conto_vendita').eq('codice', codice).maybeSingle();
     if (re) return json({ error: 'lettura giacenza fallita: ' + re.message }, 400);
-    const giacLive = Number(invRow?.giacenza_attuale ?? 0);
+    // #6 (audit 09-07): la conta e' "a scaffale" (pezzi fisicamente in negozio). I pezzi fuori in
+    // conto-vendita NON sono a scaffale: si confronta contro (giacenza - conto_vendita), cosi' il
+    // totale torna contati + conto_vendita. Senza, contando col conto-vendita attivo si
+    // scomputerebbero come persi i pezzi dai rivenditori. (Oggi in_conto_vendita=0 ovunque: no-op.)
+    const inConto = Number(invRow?.in_conto_vendita ?? 0);
+    const giacLive = Number(invRow?.giacenza_attuale ?? 0) - inConto;
     const delta = contati - giacLive;
     const { data: cnt, error: ce } = await sb.from('counts').insert({
       codice, modello: (payload.modello as string) ?? null, variante: (payload.variante as string) ?? null,
@@ -490,7 +538,11 @@ Deno.serve(async (req) => {
   if (!force && await closedMonth((payload as Record<string, unknown>).year, (payload as Record<string, unknown>).month))
     return closedErr((payload as Record<string, unknown>).year, (payload as Record<string, unknown>).month);
 
-  const row = { ...payload, source: 'app', chi: chi || null };
+  const row: Record<string, unknown> = { ...payload, source: 'app', chi: chi || null };
+  // #10 (audit 09-07): un prodotto creato dall'insert generico NON e' verificato da un umano ->
+  // nasce verificato=false (solo product_verify puo' portarlo a true). Senza questo il default DB
+  // (true) lo farebbe nascere "verificato" con eventuali buchi, saltando la lista da-completare.
+  if (action === 'product' && row.verificato == null) row.verificato = false;
   const { data, error } = await sb.from(table).insert(row).select().single();
   if (error) return json({ error: error.message }, 400);
 
