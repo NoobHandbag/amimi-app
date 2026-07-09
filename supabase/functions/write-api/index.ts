@@ -151,7 +151,34 @@ Deno.serve(async (req) => {
     const { error: de } = await sb.from('supplier_orders').delete().eq('id', oid);
     if (de) return json({ error: de.message }, 400);
     await logp('supplier_orders', String(oid), 'order_delete', { codice: ord.codice, qty_ordered: ord.qty_ordered, qty_arrived: ord.qty_arrived, fornitore: ord.fornitore });
-    return json({ ok: true, deleted: oid });
+
+    // Reap dello stub orfano (simmetria con order_multi, che CREA lo stub prodotto): se questa era
+    // l'ULTIMA riga d'ordine per il codice e il prodotto e' ancora uno stub app-ordine MAI toccato
+    // (non verificato, zero movimenti di magazzino), cancellalo. Senza questo lo stub resterebbe per
+    // sempre nella lista "da verificare" anche se l'ordine che l'ha generato non esiste piu'.
+    let stub_reaped: string | null = null;
+    const { data: prod } = await sb.from('products')
+      .select('id, codice, source, verificato').eq('codice', ord.codice).maybeSingle();
+    if (prod && prod.verificato === false && prod.source === 'app-ordine') {
+      const { count: otherOrders } = await sb.from('supplier_orders')
+        .select('*', { count: 'exact', head: true }).eq('codice', ord.codice);
+      if (!otherOrders) {
+        const { data: inv } = await sb.from('v_inventory')
+          .select('qty_purchased, shopify_sold, qromo_sold, gift_sold, b2b_venduto, resi_rientrati, aggiustamenti')
+          .eq('codice', ord.codice).maybeSingle();
+        const touched = !!inv && [inv.qty_purchased, inv.shopify_sold, inv.qromo_sold, inv.gift_sold,
+          inv.b2b_venduto, inv.resi_rientrati, inv.aggiustamenti].some((v) => Number(v) !== 0);
+        if (!touched) {
+          const { error: pde } = await sb.from('products').delete().eq('id', prod.id);
+          if (!pde) {
+            stub_reaped = prod.codice;
+            await logp('products', String(prod.id), 'stub_reaped_on_order_delete',
+              { codice: prod.codice, motivo: 'stub app-ordine mai toccato; ultima riga ordine cancellata' });
+          }
+        }
+      }
+    }
+    return json({ ok: true, deleted: oid, stub_reaped });
   }
 
   // --- NEW (feedback 06-07 item 20): archivio riordino (nasconde dal riordino, ripristinabile) ---
