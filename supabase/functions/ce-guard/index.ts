@@ -139,5 +139,31 @@ Deno.serve(async (req) => {
   await sb.from('health_log').insert(checks.map((c) => ({ day: today, ...c })));
 
   const problems = checks.filter((c) => c.severity !== 'ok');
+
+  // NOTIFICHE ATTIVE (ntfy, 2026-07-09): al CAMBIO dell'insieme dei problemi ERROR manda una push
+  // al topic ntfy del titolare (app sul telefono). "Solo su cambio" = niente spam orario; la firma
+  // e' l'insieme delle CHIAVI error (non i conteggi) per non pingare sui flap di conteggio. Il topic
+  // vive in app_flags.ntfy_topic (service-role); se assente -> no-op. Mai rompere la guardia.
+  try {
+    const { data: tf } = await sb.from('app_flags').select('value').eq('key', 'ntfy_topic').maybeSingle();
+    const topic = tf?.value as string | undefined;
+    if (topic) {
+      const errs = checks.filter((c) => c.severity === 'error');
+      const sig = errs.map((c) => c.k).sort().join(',');
+      const { data: lf } = await sb.from('app_flags').select('value').eq('key', 'ceguard_alert_state').maybeSingle();
+      const prev = (lf?.value as string | undefined) ?? '';
+      if (sig !== prev) {
+        const hasProblems = sig !== '';
+        const title = hasProblems ? `Amimi: ${errs.length} da controllare` : 'Amimi: tutto a posto';
+        const message = hasProblems ? errs.map((c) => '- ' + c.label).join('\n') : 'I problemi segnalati sono rientrati.';
+        await fetch('https://ntfy.sh', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic, title, message, priority: hasProblems ? 4 : 3, tags: [hasProblems ? 'warning' : 'white_check_mark'], click: 'https://noobhandbag.github.io/amimi-app/' }),
+        });
+        await sb.from('app_flags').upsert({ key: 'ceguard_alert_state', value: sig }, { onConflict: 'key' });
+      }
+    }
+  } catch (_e) { /* la notifica non deve mai rompere la guardia contabile */ }
+
   return json({ ok: true, all_green: problems.length === 0, checks, problems });
 });

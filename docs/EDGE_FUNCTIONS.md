@@ -39,10 +39,11 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 - **Comportamento:** POST only (GET risponde `online`); estrae l'ordine da body.order/data.order/payload.order; un record per item con paid=true; `sale_id` = order_id + indice item (stabile); prezzo = PAGATO per unita'; COGS snapshot da `products` se risolto, altrimenti `resolver_status='unresolved'` con nome raw in nota (mai perso).
 - **Protezioni:** idempotenza via UNIQUE parziale `qromo_sales_live_saleid_uq` (23505 = re-delivery benigna, skip); errore vero su un item -> risposta non-200 cosi' Qromo RITENTA; item senza flag paid = skip segnalato.
 
-## ce-guard (v2) - guardiano contabile
+## ce-guard (v3) - guardiano contabile
 
-- **Scopo:** sorveglianza quotidiana del CE e della qualita' dati; esiti in `health_log` (chiavi `ce_*`), letti dal banner rosso in Home.
-- **Auth:** PIN. Cron daily 06:30.
+- **Scopo:** sorveglianza del CE e della qualita' dati; esiti in `health_log` (chiavi `ce_*`), letti dal banner rosso in Home.
+- **Auth:** PIN. Cron **ORARIO** (`30 * * * *`, migr 0051; era daily 06:30 fino al 2026-07-09).
+- **Notifiche ntfy (v3, 2026-07-09):** al termine del `run`, se cambia l'insieme delle CHIAVI dei problemi **error** (non i conteggi), pubblica una push sul topic ntfy del titolare (`https://ntfy.sh`, JSON, tag `warning`/`white_check_mark`, click alla app). "Solo su cambio" -> niente spam orario. Il topic vive in `app_flags.ntfy_topic` (service-role; se assente -> no-op); lo stato ultimo-notificato in `app_flags.ceguard_alert_state`. Le WARN (cogs mancanti, spese da verificare) NON notificano.
 - **Azioni:** `run` (default) = 10 check: invarianti MC1/MC2 (tolleranza 0,02 EUR), `ce_qromo_unresolved`, `ce_cogs_mancanti` (warn), `ce_giacenze_negative`, `ce_expenses_categoria`, `ce_expenses_da_verificare` (warn), `ce_drift_mesi_chiusi` (da `v_ce_drift`, etichetta con netto E mc2), `ce_shopify_reconcile` (conteggio ordini API vs DB, mese corrente + precedente), `ce_shopify_token`, `ce_sync_freshness` (warn se `shopify_stock.synced_at` > 120 min). `close_month` (year, month, chi) = congela il CE del mese in `ce_snapshots` (UNIQUE, mai sovrascrive) + `change_log`. `status` = health_log `ce_*` di oggi.
 - **Nota:** cancella e riscrive SOLO le chiavi `ce_*` di oggi (le altre sono di `refresh_health_log()`).
 
