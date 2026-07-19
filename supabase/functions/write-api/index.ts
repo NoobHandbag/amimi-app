@@ -182,6 +182,64 @@ Deno.serve(async (req) => {
     return json({ ok: true, deleted: oid, stub_reaped });
   }
 
+  // --- NEW (brief 2026-07-14): elimina una riga di anagrafica prodotto, guardrailed ---
+  // Canale sanzionato per cancellare un doppione/stub da `products` con gli stessi standard delle altre
+  // azioni (PIN, chi, audit change_log). UN codice per chiamata (stop-loss Regola 2). NON tocca MAI
+  // product_aliases (rete di sicurezza del resolver/sync). Se il codice ha movimenti storici la delete
+  // richiede add_to_non_product:true -> il codice entra in non_product_codici (pattern Vendita_Generica,
+  // remediation 06-07) cosi' i detector (qromo_orphan ecc.) non si accendono e le vendite passate
+  // tengono il loro COGS snapshot (il CE non cambia: e' calcolato dalle vendite, non dai prodotti).
+  if (action === 'product_delete') {
+    const codice = String(payload.codice || '');
+    if (!codice) return json({ error: 'CODICE mancante' }, 422);
+    if (!noSpaces(codice)) return json({ error: 'CODICE contiene spazi' }, 422);
+    const { data: prod } = await sb.from('products').select('*').eq('codice', codice).maybeSingle();
+    if (!prod) return json({ error: `Prodotto ${codice} non trovato` }, 404);
+
+    // giacenza / conto vendita devono essere a zero: prima si porta a zero con una conta, poi si cancella.
+    const { data: invRow } = await sb.from('v_inventory')
+      .select('giacenza_attuale, in_conto_vendita').eq('codice', codice).maybeSingle();
+    const giac = Number(invRow?.giacenza_attuale ?? 0);
+    const conto = Number(invRow?.in_conto_vendita ?? 0);
+    if (giac !== 0 || conto !== 0)
+      return json({ error: `Giacenza ${giac} / conto vendita ${conto}: porta a 0 con una conta prima di eliminare.`, giacenza: giac, in_conto_vendita: conto }, 409);
+
+    // ordini fornitore ancora agganciati: eliminarli/smistarli prima (non orfanare righe d'ordine).
+    const { count: ordCount } = await sb.from('supplier_orders')
+      .select('*', { count: 'exact', head: true }).eq('codice', codice);
+    if (ordCount) return json({ error: `Ci sono ${ordCount} righe ordine fornitore su ${codice}: elimina o smista prima quelle.`, supplier_orders: ordCount }, 409);
+
+    // aggancio Shopify: una riga shopify_stock su questo codice diventerebbe unmapped per l'autopush.
+    // Blocco senza force (owner decide, brief): con force si procede e si segnala nel warning.
+    const { count: shopCount } = await sb.from('shopify_stock')
+      .select('*', { count: 'exact', head: true }).eq('codice', codice);
+    if (shopCount && !force)
+      return json({ error: `${codice} e' agganciato a Shopify (mirror shopify_stock): eliminarlo lo renderebbe unmapped per l'autopush. Passa force:true se e' voluto.`, on_shopify: true }, 409);
+
+    // movimenti storici: se esistono, delete consentita SOLO con add_to_non_product:true.
+    const histTables = ['purchases', 'qromo_sales', 'shopify_line_items', 'gifts_offline', 'b2b_movements', 'returns', 'counts', 'stock_adjustments'];
+    const movimenti: Record<string, number> = {};
+    for (const t of histTables) {
+      const { count } = await sb.from(t).select('*', { count: 'exact', head: true }).eq('codice', codice);
+      if (count) movimenti[t] = count;
+    }
+    const hasHistory = Object.keys(movimenti).length > 0;
+    const addNP = payload.add_to_non_product === true;
+    if (hasHistory && !addNP)
+      return json({ error: `${codice} ha movimenti storici (${Object.entries(movimenti).map(([k, v]) => `${k}:${v}`).join(', ')}): per non accendere i detector e tenere il COGS delle vendite passate, richiama con add_to_non_product:true.`, movimenti, needs_non_product: true }, 409);
+
+    // esecuzione: prima entra in non_product_codici (se richiesto), poi si cancella la riga prodotto.
+    if (addNP) await sb.from('non_product_codici').upsert({ codice }, { onConflict: 'codice', ignoreDuplicates: true });
+    const { error: de } = await sb.from('products').delete().eq('id', prod.id);
+    if (de) return json({ error: de.message }, 400);
+    await sb.from('change_log').insert({
+      tbl: 'products', row_id: String(prod.id), op: 'product_delete',
+      before: { ...prod, motivo: (payload.motivo as string) ?? null, non_product_added: addNP, movimenti, on_shopify_forced: !!shopCount },
+      chi: chi || null, source: 'write-api',
+    });
+    return json({ ok: true, deleted: codice, non_product_added: addNP, movimenti, ...(shopCount ? { warning: `Eliminato ma era agganciato a Shopify (${shopCount} righe mirror): ora unmapped per l'autopush.` } : {}) });
+  }
+
   // --- NEW (feedback 06-07 item 20): archivio riordino (nasconde dal riordino, ripristinabile) ---
   if (action === 'reorder_archive') {
     const codice = String(payload.codice || '');
@@ -367,18 +425,23 @@ Deno.serve(async (req) => {
     // il CE teneva il COGS del prodotto SBAGLIATO. Il codice_norm di prodotti/righe e' generato.
     const nc = newCodice.toUpperCase().replace(/\s+/g, '_');
     const { data: np } = await sb.from('products').select('cogs, item, variant').eq('codice_norm', nc).maybeSingle();
+    // #7 (audit 09-07): non ripuntare a un codice inesistente come se fosse risolto. Se il target non
+    // e' a catalogo, la vendita resta ORFANA: shopify resolved=false, qromo resolver_status='unresolved'
+    // (entra in qromo_orphan / Correggi vendita), invece di sparire con COGS nullo.
+    const resolved = !!np;
     const upd: Record<string, unknown> = isShop
-      ? { codice: newCodice, resolved: true, cogs_snapshot: np?.cogs ?? null }
+      ? { codice: newCodice, resolved, cogs_snapshot: np?.cogs ?? null }
       : {
           codice: newCodice,
           item: (payload.new_item as string) ?? np?.item ?? before.item ?? null,
           variant: (payload.new_variant as string) ?? np?.variant ?? before.variant ?? null,
           cogs: np?.cogs ?? before.cogs ?? null,
+          resolver_status: resolved ? 'resolved' : 'unresolved',
         };
     const { error } = await sb.from(tbl).update(upd).eq('id', id);
     if (error) return json({ error: error.message }, 400);
-    await logp(tbl, id, 'sale_correct', { from: before.codice, to: newCodice, cogs: np?.cogs ?? null });
-    return json({ ok: true, from: before.codice, to: newCodice, shopify_stock_pending: true });
+    await logp(tbl, id, 'sale_correct', { from: before.codice, to: newCodice, cogs: np?.cogs ?? null, resolved });
+    return json({ ok: true, from: before.codice, to: newCodice, resolved, shopify_stock_pending: true, ...(resolved ? {} : { warning: `Il codice ${newCodice} non e' a catalogo: vendita segnata da risolvere (Correggi vendita).` }) });
   }
 
   // #5 (audit 09-07): annulla un reso e reverte l'aggiustamento del sostituto collegato (return_id).
@@ -467,12 +530,21 @@ Deno.serve(async (req) => {
       resolver_status: (payload.resolver_status as string) ?? 'forwarded',
       source: 'qromo-forward', note: (payload.note as string) ?? null,
     };
-    // fallback COGS: il forwarder non sempre lo manda -> snapshot dal listino (products).
-    // Trovato dalla ce-guard 03-07: 5 vendite di luglio senza COGS.
-    if (row.cogs == null && codice) {
+    // #7 (audit 09-07): risolvi il prodotto per codice_norm. Se NON esiste (e non e' un non-prodotto
+    // tipo Gift Card), la vendita e' ORFANA (ricavo sì, stock no, COGS nullo): marcala 'unresolved'
+    // cosi' entra nel detector qromo_orphan/ce_qromo_unresolved (banner Home) e nella lista "Correggi
+    // vendita", invece di passare liscia. Se esiste, fallback COGS dal listino (il forwarder non sempre
+    // lo manda; trovato dalla ce-guard 03-07: 5 vendite di luglio senza COGS).
+    if (codice) {
       const cn = codice.toUpperCase().replace(/\s+/g, '_');
       const { data: pr } = await sb.from('products').select('cogs').eq('codice_norm', cn).maybeSingle();
-      if (pr?.cogs != null) row.cogs = Number(pr.cogs);
+      if (pr) {
+        if (row.cogs == null && pr.cogs != null) row.cogs = Number(pr.cogs);
+      } else if (payload.resolver_status == null) {
+        const { data: npc } = await sb.from('non_product_codici').select('codice');
+        const isNonProd = (npc || []).some((n: { codice: string }) => String(n.codice).toUpperCase().replace(/\s+/g, '_') === cn);
+        if (!isNonProd) row.resolver_status = 'unresolved';
+      }
     }
     // #1 (audit 09-07): come return/sale_correct, blocca una vendita datata in un mese gia' chiuso
     // (ce_snapshots) senza force -> un forward tardivo altrimenti droga un CE congelato in silenzio.
