@@ -317,6 +317,12 @@ function fnCall(fn: string, body: Record<string, unknown>) {
 }
 export const syncShopifyStock = (pin: string) => fnCall('shopify-stock', { action: 'sync', pin });
 export const realignShopify = (codici: string[], pin: string, chi: string) => fnCall('shopify-stock', { action: 'realign', codici, pin, chi });
+// giro completo on-demand (come i cron :17 + :27): pull mirror -> push Shopify := disponibili.
+// Unico writer stock = edge shopify-stock (Regola 15). Cooldown lato server (45s) + disable lato client.
+export type SyncNowResult = { ok?: boolean; skipped?: string; cooldown_s?: number; error?: string;
+  sync?: { synced?: number }; realign?: { skipped?: string; pushed?: number; held?: number; ok?: number; failed?: number; untracked?: string[]; unmapped?: string[] } };
+export const syncNowShopify = (pin: string, chi: string): Promise<SyncNowResult> =>
+  fnCall('shopify-stock', { action: 'sync_now', pin, chi }) as Promise<SyncNowResult>;
 
 // ---------- FLOW 6: NL -> SQL ----------
 export type AskResult = { ok?: boolean; sql?: string; rows?: Record<string, unknown>[]; error?: string; needs_key?: boolean };

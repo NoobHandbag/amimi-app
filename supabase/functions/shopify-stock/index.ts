@@ -26,14 +26,15 @@ Deno.serve(async (req) => {
   const action = body.action || 'sync';
 
   // ---- SYNC: pull variant inventory, map SKU -> codice, upsert shopify_stock ----
-  if (action === 'sync') {
+  // estratto in helper cosi' l'azione on-demand `sync_now` puo' rieseguire lo stesso identico giro.
+  const doSync = async () => {
     const { data: al } = await sb.from('product_aliases').select('shopify_name_norm, codice');
     const aliasMap = new Map((al ?? []).map((r) => [r.shopify_name_norm, r.codice]));
     const { data: prods } = await sb.from('products').select('codice, codice_norm');
     const byNorm = new Map((prods ?? []).map((r) => [r.codice_norm, r.codice]));
 
     const resp = await fetch(`${API}/products.json?limit=250&fields=id,title,status,image,images,variants`, { headers: SH });
-    if (!resp.ok) return json({ error: 'Shopify ' + resp.status, detail: (await resp.text()).slice(0, 200) }, 502);
+    if (!resp.ok) return { error: 'Shopify ' + resp.status, detail: (await resp.text()).slice(0, 200), status: 502 };
     const { products } = await resp.json();
 
     // Group ALL variant inventory items per codice: dual-variant bags (SC/CC "Senza/Con Catena")
@@ -74,18 +75,19 @@ Deno.serve(async (req) => {
       variant_id: e.variant_id, inventory_item_id: e.items[0], inventory_item_ids: e.items, synced_at: new Date().toISOString(),
     }));
     if (rows.length) await sb.from('shopify_stock').upsert(rows, { onConflict: 'codice' });
-    return json({ ok: true, synced: rows.length, products: (products ?? []).length, dual: rows.filter((r) => r.inventory_item_ids.length > 1).length });
-  }
+    return { ok: true, synced: rows.length, products: (products ?? []).length, dual: rows.filter((r) => r.inventory_item_ids.length > 1).length };
+  };
+  if (action === 'sync') { const r = await doSync() as { status?: number }; return json(r, r.status ?? 200); }
 
   // ---- REALIGN_ALL: push automatico dello stock su Shopify (cron orario, GATED) ----
   // Policy (scelta owner 2026-07-03): SPECCHIO DEL REALE — target = disponibili_da_vendere − buffer
   // (buffer default 0), sia in su che in giù. Il "hold" conservativo del vecchio variant-sync
   // (non alzare senza conta fresca) è ora OPT-IN via app_flags.shopify_hold_raises='true' (default off:
   // con dati puliti Shopify deve rispecchiare lo stock reale). SKU non mappati mai toccati.
-  if (action === 'realign_all') {
+  // estratto in helper (who = attore per l'audit: 'cron' o l'utente); sync_now lo richiama a valle di doSync.
+  const doRealignAll = async (dryRun: boolean, who: string) => {
     const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'shopify_autopush_enabled').maybeSingle();
-    if (flag?.value !== 'true') return json({ ok: true, skipped: 'autopush disattivato (shopify_autopush_enabled != true)' });
-    const dryRun = body.dryRun === true;
+    if (flag?.value !== 'true') return { ok: true, skipped: 'autopush disattivato (shopify_autopush_enabled != true)' };
 
     const { data: locFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_location_id').maybeSingle();
     const locationId = Number(locFlag?.value || '107986518343');
@@ -175,9 +177,35 @@ Deno.serve(async (req) => {
       // Gli `untracked` sono informativi e NON alzano la severity: niente warn perenne (brief 08-07).
       await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: `autopush: ${pushed} push, ${held} hold, ${okCount} ok` + (failed ? `, ${failed} FALLITI: ${failedCodici.slice(0, 10).join(', ')}` : '') + (untracked.length ? `, ${untracked.length} untracked: ${untracked.slice(0, 10).join(', ')}` : ''), n: failed, severity: failed > 0 ? 'warn' : 'ok' });
       // logga anche i run con soli fallimenti/untracked (prima: solo pushed||held -> giorni di soli errori senza traccia, brief 08-07)
-      if (pushed || held || failed || untracked.length) await sb.from('change_log').insert({ tbl: 'shopify_stock', row_id: 'realign_all', op: 'stock_autopush', after: summary, chi: 'cron', source: 'shopify-stock' });
+      if (pushed || held || failed || untracked.length) await sb.from('change_log').insert({ tbl: 'shopify_stock', row_id: 'realign_all', op: 'stock_autopush', after: summary, chi: who, source: 'shopify-stock' });
     }
-    return json({ ok: true, ...summary });
+    return { ok: true, ...summary };
+  };
+  if (action === 'realign_all') return json(await doRealignAll(body.dryRun === true, 'cron'));
+
+  // ---- SYNC_NOW: giro completo on-demand (sync -> realign_all), come i cron :17 + :27 ma a comando ----
+  // Regola Ferrea 15: unico writer stock = questa edge. Nessun segreto nel client (PIN 'x' gia' usato
+  // ovunque). Audit `chi` in change_log. Cooldown server-side anti doppio-click: se un sync_now e' girato
+  // negli ultimi 45s, salta (i click ravvicinati spawnano run parallele; realign_all e' idempotente ma
+  // cosi' non raddoppiamo le chiamate API Shopify). Il mirror e' gia' aggiornato inline da realign_all
+  // per i codici pushati, quindi non serve un secondo sync a valle.
+  if (action === 'sync_now') {
+    const who = body.chi || 'app';
+    if (body.force !== true) {
+      const since = new Date(Date.now() - 45000).toISOString();
+      const { data: recent } = await sb.from('change_log').select('id').eq('op', 'stock_sync_now').gte('ts', since).limit(1);
+      if (recent && recent.length) return json({ ok: true, skipped: 'cooldown', cooldown_s: 45 });
+    }
+    const sync1 = await doSync() as Record<string, unknown>;
+    // se il pull Shopify fallisce, aborta il giro (non riallineare su un mirror stantio)
+    if (sync1.error) return json(sync1, (sync1.status as number) ?? 502);
+    const realign = await doRealignAll(false, who) as Record<string, unknown>;
+    await sb.from('change_log').insert({
+      tbl: 'shopify_stock', row_id: 'sync_now', op: 'stock_sync_now',
+      after: { synced: sync1.synced, pushed: realign.pushed ?? null, held: realign.held ?? null, ok: realign.ok ?? null, failed: realign.failed ?? null, untracked: realign.untracked ?? null, unmapped: realign.unmapped ?? null, skipped: realign.skipped ?? null },
+      chi: who, source: 'shopify-stock',
+    });
+    return json({ ok: true, sync: sync1, realign });
   }
 
   // ---- REALIGN: set Shopify available = gestionale disponibili (GATED) ----

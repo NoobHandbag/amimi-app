@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { pushBack, popBack } from '../lib/backnav';
-import { fetchInventory, fetchContoVendita, syncShopifyStock, fetchReorder, fetchShopStockMap, fetchSalesByCodice, fetchPurchasesByCodice, fetchAdjustmentsByCodice, fetchLastSaleMap, archiveReorder } from '../lib/api';
+import { fetchInventory, fetchContoVendita, syncShopifyStock, syncNowShopify, fetchReorder, fetchShopStockMap, fetchSalesByCodice, fetchPurchasesByCodice, fetchAdjustmentsByCodice, fetchLastSaleMap, archiveReorder } from '../lib/api';
 import type { InvFull, CV, Reorder, SaleRow, PurchaseRow, AdjustmentRow } from '../lib/api';
 import { useSort } from '../lib/sortable';
 import ExportBtn from '../components/ExportBtn';
@@ -87,8 +87,9 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
 
 /* #2: Shopify catalog composition — treemap of online SKUs per model, sized by count */
 const CATCOL: Record<string, string> = { BAG: '#8B5E6B', PELLE: '#9C5F33', TESSUTO: '#2E8049', ACCESSORI: '#5d6b7a', ALTRO: '#6f6056' };
-function ShopComposition({ inv, pin }: { inv: InvFull[]; pin: string }) {
+function ShopComposition({ inv, pin, chi, onSynced }: { inv: InvFull[]; pin: string; chi: string; onSynced?: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [nowBusy, setNowBusy] = useState(false);
   const byItem = useMemo(() => {
     const m = new Map<string, { item: string; cat: string; n: number }>();
     for (const p of inv.filter((x) => x.on_shopify)) {
@@ -102,6 +103,25 @@ function ShopComposition({ inv, pin }: { inv: InvFull[]; pin: string }) {
     setBusy(true);
     try { const r = await syncShopifyStock(pin) as { synced: number }; toast(`Aggiornato: ${r.synced} varianti da Shopify`, 'ok'); }
     catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(false); }
+  }
+  // giro completo on-demand: pull mirror + push Shopify := disponibili (stesso giro dei cron :17/:27).
+  // disable durante il run; il server ha un cooldown di 45s (doppio click = skip idempotente).
+  async function syncNow() {
+    if (nowBusy) return;
+    setNowBusy(true);
+    try {
+      const r = await syncNowShopify(pin, chi);
+      if (r.skipped === 'cooldown') { toast('Giro appena eseguito: riprova tra qualche secondo.', 'ok'); }
+      else if (r.realign?.skipped) { toast('Autopush Shopify disattivato (interruttore server).', 'err'); }
+      else {
+        const ra = r.realign;
+        const parts = [`${ra?.pushed ?? 0} aggiornati`, `${ra?.ok ?? 0} già ok`];
+        if (ra?.failed) parts.push(`${ra.failed} falliti`);
+        if (ra?.untracked?.length) parts.push(`${ra.untracked.length} senza tracking`);
+        toast(`Shopify sincronizzato: ${parts.join(', ')}.`, ra?.failed ? 'err' : 'ok');
+      }
+      onSynced?.();
+    } catch (e) { toast((e as Error).message, 'err'); } finally { setNowBusy(false); }
   }
   return (
     <>
@@ -119,7 +139,9 @@ function ShopComposition({ inv, pin }: { inv: InvFull[]; pin: string }) {
         {!byItem.length && <p className="muted center">Nessun prodotto su Shopify.</p>}
       </div>
       <div className="catleg">{Object.entries(CATCOL).map(([c, col]) => <span key={c}><i style={{ background: col }} />{c}</span>)}</div>
-      <button className="syncbtn" onClick={sync} disabled={busy}>{busy ? 'Sincronizzo…' : '🔄 Aggiorna da Shopify'}</button>
+      <button className="syncbtn" onClick={syncNow} disabled={nowBusy || busy}>{nowBusy ? 'Sincronizzo Shopify…' : '🔁 Sincronizza Shopify adesso'}</button>
+      <p className="note">Esegue subito il giro orario completo: legge Shopify e riallinea le quantità allo stock reale. Utile dopo un arrivo o una conta per non aspettare l'ora.</p>
+      <button className="syncbtn ghost" onClick={sync} disabled={busy || nowBusy}>{busy ? 'Leggo…' : '🔄 Solo rileggi da Shopify'}</button>
     </>
   );
 }
@@ -442,7 +464,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
       )}
 
       {view === 'disp' && <DisponibilitaView inv={inv} />}
-      {view === 'shop' && <ShopComposition inv={inv} pin={pin} />}
+      {view === 'shop' && <ShopComposition inv={inv} pin={pin} chi={chi} onSynced={() => { fetchShopStockMap().then(setShopMap).catch(() => {}); fetchInventory().then(setInv).catch(() => {}); }} />}
       {view === 'riordino' && <ReorderView pin={pin} chi={chi} goOrdini={go ? (param) => go('ordini', param) : undefined} />}
       {view === 'valore' && <ValoreView inv={inv} />}
 
