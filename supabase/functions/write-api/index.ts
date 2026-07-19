@@ -552,8 +552,8 @@ Deno.serve(async (req) => {
     if (!force && await closedMonth(row.year, row.month)) return closedErr(row.year, row.month);
     const { data, error } = await sb.from('qromo_sales').insert(row).select().single();
     if (error) return json({ error: error.message }, 400);
-    await logp('qromo_sales', String(data.id), 'qromo_sale', { sale_id: saleId, codice, qty });
-    return json({ ok: true, id: data.id });
+    await logp('qromo_sales', String(data.id), 'qromo_sale', { sale_id: saleId, codice, qty, resolver_status: row.resolver_status });
+    return json({ ok: true, id: data.id, resolver_status: row.resolver_status });
   }
 
   // --- COUNT: a physical count is applied as a stock rectification (Approccio 1) ---
