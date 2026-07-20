@@ -59,6 +59,14 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 - **Scopo:** pilotare l'app da Claude (JSON-RPC 2.0, supporto SSE).
 - **Auth:** tool read APERTI (`list_inventory`, `what_to_reorder`, `sku_availability`, `pnl_summary`, `ads_summary`, `ask_data`); tool write (`propose_expense`, `register_count`) dietro `Authorization: Bearer` = `app_flags.mcp_token`, delegati alla write-api con `chi='Claude-MCP'`.
 
+## cs-sync (v1) - tool assistenza clienti, FASE 0 (solo diagnostica)
+
+- **Scopo:** fondamenta del tool assistenza clienti (design: `Cowork12/projects/Servizio_Clienti_2026-06/DESIGN_Tool_Assistenza_Amimi_V1_2026-07-20.md`). La v1 e' SOLO diagnostica: zero scritture DB, zero tabelle `cs_*` (arrivano in Fase 1).
+- **Auth:** PIN. Chiave service account Google in `app_flags.cs_gmail_sa_key` (service-role only): se assente risponde `needs_key` (pattern ask-data), si inserisce DOPO senza redeploy.
+- **Azioni:** `ping` = con chiave assente `{ok:false, needs_key:true}`; con chiave presente fa OAuth 2.0 JWT grant (RS256, impersonazione `info@amimi.it`, scope `gmail.readonly`) + `messages.list` (maxResults=1) + `messages.get` (format=metadata) e ritorna `{ok:true, subject, from, date}` dell'ultimo messaggio della casella (NIENTE body, NIENTE log del contenuto). `status` (default) = `{cs_enabled, key_present (boolean), last_history_id}` senza mai esporre i valori dei segreti.
+- **Caveat Fase 0 (da chiudere in Fase 1):** il PIN e' neutralizzato (`x`), quindi quando la chiave SA sara' inserita `ping` esporra' subject/from/date dell'ultimo messaggio a chiunque conosca l'URL. Accettabile finche' e' solo metadata di diagnostica; dalla Fase 1 le letture del tool passano dietro JWT Supabase Auth (utenti @amimi.it, signup OFF).
+- **Prerequisiti esterni (owner):** service account GCP con domain-wide delegation su `info@amimi.it` (sessione guidata a parte); utenti Supabase Auth per le email @amimi.it + toggle dashboard "Allow new users to sign up" = OFF (al 2026-07-20 le signup pubbliche risultano ANCORA APERTE, `disable_signup:false`).
+
 ## etl-load (v4) - RITIRATA
 
 - Stub che risponde 410 Gone: era il loader one-off del re-seed 2026-07-01. Nessuna azione. Candidata alla cancellazione.
@@ -67,3 +75,4 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 
 - `app_config`: `pin_hash`, `shopify_token`, `iva_rate` (0.22), `parity_tolerance_cents`.
 - `app_flags`: `shopify_write_enabled`, `shopify_autopush_enabled`, `shopify_expose_buffer` (oggi 0), `shopify_hold_raises`, `shopify_autoenable_tracking` (default off: riaccende il tracking magazzino su item fisici untracked prima del set, mai gift card, dal v11), `shopify_location_id`, `qromo_webhook_secret`, `qromo_webhook_token`, `gemini_api_key`, `mcp_token`. Entrambe le tabelle sono service-role only (lockdown migr 0026); i flag si cambiano SOLO con decisione owner (Regola 15/16).
+- Chiavi `cs_*` (tool assistenza, dal 2026-07-20, Fase 0): `cs_enabled` ('false' = sync spento), `cs_last_history_id` (cursore Gmail, vuoto), `cs_gmail_sa_key` (chiave JSON service account, vuota finche' l'owner non la inserisce via canale sicuro), `cs_ntfy_topic_benny` / `cs_ntfy_topic_ginevra` / `cs_ntfy_topic_ale` (topic ntfy con suffisso random generato direttamente nel DB: i valori NON sono mai transitati in repo, doc o chat e sono da trattare come segreti). Inserite via SQL one-off, NON via migrazione (repo pubblico).
