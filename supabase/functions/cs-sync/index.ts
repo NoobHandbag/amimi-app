@@ -108,6 +108,9 @@ function extractBody(payload: GMsg['payload']): string {
   return '';
 }
 const hdr = (headers: Hdr[] | undefined, name: string) => (headers ?? []).find((h) => h.name?.toLowerCase() === name)?.value ?? '';
+// Postgres text/jsonb RIFIUTANO il byte NUL (): un corpo che lo contiene (capita, quoted-printable/
+// base64) farebbe fallire deterministicamente ogni scrittura -> livelock del cursore. Si toglie a monte.
+const stripNull = (s: string) => s.replace(/\u0000/g, '');
 function parseAddr(v: string): { email: string; name: string } {
   const m = v.match(/<([^>]+)>/);
   const email = (m ? m[1] : v).trim().toLowerCase();
@@ -253,13 +256,13 @@ Deno.serve(async (req) => {
     try {
       const H = msg.payload?.headers;
       const from = parseAddr(hdr(H, 'from')); const replyTo = parseAddr(hdr(H, 'reply-to')); const to = parseAddr(hdr(H, 'to'));
-      const subject = hdr(H, 'subject'); const bodyText = extractBody(msg.payload);
+      const subject = stripNull(hdr(H, 'subject')); const bodyText = stripNull(extractBody(msg.payload));   // NUL -> Postgres rifiuta
       const cl = classify(from, replyTo, subject, bodyText, extraDeny);
       const isForm = cl.canale === 'form_contatto' || cl.canale === 'form_evento';
       return {
         cl, from, to, subject, bodyText,
         sentAt: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null,
-        snippet: (msg.snippet ?? '').slice(0, 300),
+        snippet: stripNull((msg.snippet ?? '').slice(0, 300)),
         formFields: isForm ? extractFormFields(bodyText) : null,
         order: extractOrderNumber(subject + '\n' + bodyText), lingua: detectLingua(bodyText || subject),
       };
@@ -269,14 +272,19 @@ Deno.serve(async (req) => {
   // conversazione: idempotente su gmail_thread_id, non clobbera stato/stato_by; promuove un thread
   // gia' marcato rumore se arriva un messaggio cliente reale. Lancia su errore DB reale (-> transient).
   const ensureConv = async (threadId: string, cl: Parsed['cl'], meta: { sentAt: string | null; subject: string; snippet: string; order: number | null; lingua: string }): Promise<string> => {
-    const { data: ex } = await sb.from('cs_conversations').select('id,canale').eq('gmail_thread_id', threadId).maybeSingle();
+    const { data: ex } = await sb.from('cs_conversations').select('id,canale,last_msg_at').eq('gmail_thread_id', threadId).maybeSingle();
     if (ex) {
-      const upd: Record<string, unknown> = { last_msg_at: meta.sentAt, last_direction: 'in', subject: meta.subject, snippet: meta.snippet };
+      const upd: Record<string, unknown> = {};
+      // last_*/subject/snippet solo se il messaggio e' PIU' RECENTE: il re-processo (cursore che torna a
+      // safeHid) puo' ripassare un messaggio vecchio dello stesso thread e non deve regredire la coda.
+      if (!ex.last_msg_at || (!!meta.sentAt && meta.sentAt > (ex.last_msg_at as string))) {
+        upd.last_msg_at = meta.sentAt; upd.last_direction = 'in'; upd.subject = meta.subject; upd.snippet = meta.snippet;
+      }
       if (meta.order) upd.order_number = meta.order;
       if (cl.email) upd.customer_email = cl.email;
       if (cl.name) upd.customer_name = cl.name;
       if (cl.canale !== 'rumore' && ex.canale === 'rumore') upd.canale = cl.canale;   // un cliente reale "promuove" un thread-rumore
-      await sb.from('cs_conversations').update(upd).eq('id', ex.id as string);
+      if (Object.keys(upd).length) await sb.from('cs_conversations').update(upd).eq('id', ex.id as string);
       return ex.id as string;
     }
     const { data: ins, error } = await sb.from('cs_conversations').insert({
@@ -295,11 +303,19 @@ Deno.serve(async (req) => {
     const { data: ex } = await sb.from('cs_conversations').select('id').eq('gmail_thread_id', threadId).maybeSingle();
     let cid = ex?.id as string | undefined;
     if (!cid) {
-      const { data: ins } = await sb.from('cs_conversations').insert({ gmail_thread_id: threadId, canale: 'email_diretta', subject: '(non interpretabile)', parse_failed: true }).select('id').single();
-      cid = ins?.id as string | undefined; if (cid) newConv++;
-    } else { await sb.from('cs_conversations').update({ parse_failed: true }).eq('id', cid); }
-    if (!cid) return;
-    const { count } = await sb.from('cs_messages').upsert({ gmail_message_id: messageId, conversation_id: cid, direction: 'in', body_text: null }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
+      const { data: ins, error: ce } = await sb.from('cs_conversations').insert({ gmail_thread_id: threadId, canale: 'email_diretta', subject: '(non interpretabile)', parse_failed: true }).select('id').single();
+      if (!ce && ins) { cid = ins.id as string; newConv++; }
+      else {   // corsa UNIQUE o errore DB: rileggi; se manca -> errore reale, PROPAGA (chiamante -> transient, ripresa)
+        const { data: again } = await sb.from('cs_conversations').select('id').eq('gmail_thread_id', threadId).maybeSingle();
+        if (!again) throw new Error('antiloss_conv_failed: ' + (ce?.message ?? 'no id'));
+        cid = again.id as string;
+      }
+    } else {
+      const { error: ue } = await sb.from('cs_conversations').update({ parse_failed: true }).eq('id', cid);
+      if (ue) throw new Error('antiloss_update_failed: ' + ue.message);
+    }
+    const { error: me, count } = await sb.from('cs_messages').upsert({ gmail_message_id: messageId, conversation_id: cid, direction: 'in', body_text: null }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
+    if (me) throw new Error('antiloss_msg_failed: ' + me.message);   // errore DB -> transient: mail non persa, ripresa al giro dopo
     if (count) await sb.from('cs_events').insert({ conversation_id: cid, azione: 'parse_failed', chi: 'cs-sync', dettaglio: { message_id: messageId, ...detail } });
   };
 
@@ -363,7 +379,14 @@ Deno.serve(async (req) => {
   const drained = !pageToken && !stopped;
   const newHistoryId = drained ? tip : safeHid;
   await sb.from('app_flags').upsert({ key: 'cs_last_history_id', value: newHistoryId }, { onConflict: 'key' });
-  await writeHealth(parseFailed, parseFailed ? `giro ok, ${parseFailed} non interpretati` : 'giro ok', parseFailed ? 'warn' : 'ok');
+  // un giro fermato da un errore ricorrente su un messaggio SENZA alcun avanzamento = potenziale stallo:
+  // NON scriverlo verde (un singolo hiccup transitorio si autorisolve e torna 'ok' al giro dopo).
+  const stalled = stopped && processed === 0;
+  await writeHealth(
+    stalled ? 1 : parseFailed,
+    stalled ? 'giro fermato su un messaggio, nessun avanzamento (si riprova)' : (parseFailed ? `giro ok, ${parseFailed} non interpretati` : 'giro ok'),
+    stalled || parseFailed ? 'warn' : 'ok',
+  );
 
-  return json({ ok: true, processed, new_conversations: newConv, new_messages: newMsg, counts, parse_failed: parseFailed, historyId: newHistoryId, backlog: !drained });
+  return json({ ok: true, processed, new_conversations: newConv, new_messages: newMsg, counts, parse_failed: parseFailed, historyId: newHistoryId, backlog: !drained, stalled });
 });
