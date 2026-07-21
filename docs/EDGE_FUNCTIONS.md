@@ -59,7 +59,7 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 - **Scopo:** pilotare l'app da Claude (JSON-RPC 2.0, supporto SSE).
 - **Auth:** tool read APERTI (`list_inventory`, `what_to_reorder`, `sku_availability`, `pnl_summary`, `ads_summary`, `ask_data`); tool write (`propose_expense`, `register_count`) dietro `Authorization: Bearer` = `app_flags.mcp_token`, delegati alla write-api con `chi='Claude-MCP'`.
 
-## cs-sync (v2) - tool assistenza clienti, FASE 1 (ingest reale)
+## cs-sync (v3) - tool assistenza clienti, FASE 1 (ingest reale)
 
 - **Scopo:** ingest della posta cliente di `info@amimi.it` nelle tabelle `cs_*` (design: `Cowork12/projects/Servizio_Clienti_2026-06/DESIGN_Tool_Assistenza_Amimi_V1_2026-07-20.md`). Fase 1 = coda SOLA LETTURA dietro login Supabase Auth; niente AI/bozze/invio (Fasi 2-4).
 - **Auth:** PIN (`x`), `verify_jwt=false` (chiamabile dal cron). Chiave service account Google in `app_flags.cs_gmail_sa_key` (service-role only): OAuth 2.0 JWT grant RS256, impersona `info@amimi.it`, scope `gmail.readonly`.
@@ -73,6 +73,7 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 - **Cron:** `cs-sync-poll` `*/2 * * * *` (migr 0054), no-op finche' `cs_enabled='false'`.
 - **GO-LIVE (owner):** `app_flags.cs_enabled='true'`. Da quel momento il cron ingerisce; una mail di test compare in coda entro ~2-5'. Tuning rumore senza redeploy: aggiungere mittenti/pattern (uno per riga o CSV) in `app_flags.cs_noise_senders`.
 - **Frontend:** sezione "Assistenza" nella PWA (`web/`), client Supabase Auth DEDICATO (`lib/csClient.ts`, storageKey separato) cosi' il login non tocca il resto dell'app no-login; letture `cs_*` col JWT utente + RLS `authenticated`.
+- **Hardening v3 (2a review avversariale):** (a) i byte NUL nel corpo si strippano a monte (`stripNull`) - Postgres text/jsonb li rifiuta e un solo messaggio velenoso avrebbe bloccato l'ingest (livelock); (b) `antiLoss` ora PROPAGA gli errori DB (prima li ingoiava -> una mail parse_failed poteva essere ne' salvata ne' ripresa = persa); (c) un giro fermato senza avanzamento (`stalled`) scrive `health_log` **warn**, non verde (uno stallo diventa visibile); (d) il re-processo non regredisce `last_msg_at`/ordine coda.
 
 ## etl-load (v4) - RITIRATA
 
