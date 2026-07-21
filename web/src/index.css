@@ -433,3 +433,57 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .fdrow b { text-align: right; word-break: break-word; font-weight: 600; }
 
 .giaclbl { font-size: 11px; color: var(--mut, #8a7a80); font-weight: 500; }
+
+/* ===== Assistenza clienti (Fase 1) ===== */
+.cs-login { display: flex; flex-direction: column; align-items: stretch; max-width: 340px; margin: 8vh auto 0; gap: 4px; }
+.cs-logo { font-size: 34px; font-weight: 800; color: var(--rose-deep); text-align: center; letter-spacing: .5px; }
+.cs-logo span { font-weight: 400; color: var(--rose); }
+.cs-lt { text-align: center; color: var(--muted); margin: 4px 0 16px; }
+.cs-fld { margin-bottom: 10px; }
+.cs-fld label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin: 0 0 4px 3px; }
+.cs-fld input { width: 100%; border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 12px; font: inherit; font-size: 15px; color: var(--dark); }
+.cs-fld input:focus { outline: 2px solid rgba(139,94,107,.25); }
+.cs-note { font-size: 12px; color: var(--muted); text-align: center; margin-top: 14px; line-height: 1.5; }
+.cs-btn { border: none; border-radius: 12px; padding: 12px 14px; font-size: 14px; font-weight: 700; cursor: pointer; }
+.cs-primary { background: var(--rose); color: #fff; }
+.cs-primary:disabled { opacity: .6; }
+.cs-who { display: flex; align-items: center; gap: 14px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin-top: 10px; cursor: pointer; text-align: left; }
+.cs-whn { font-weight: 700; font-size: 15px; }
+.cs-av { width: 38px; height: 38px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; color: #fff; flex: 0 0 auto; cursor: pointer; }
+.cs-b { background: #2e7d6b; } .cs-g { background: #b0533a; } .cs-a { background: #6a6a6a; }
+.cs-menu { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.06); }
+.cs-srow { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: none; padding: 9px 4px; font: inherit; font-size: 14px; cursor: pointer; border-radius: 10px; color: var(--dark); }
+.cs-srow.on { background: rgba(139,94,107,.08); }
+.cs-tag { margin-left: auto; font-size: 11px; color: var(--green); font-weight: 700; }
+.cs-stats { display: flex; gap: 8px; margin-bottom: 8px; }
+.cs-stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 6px 11px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.cs-stat b { font-size: 15px; color: var(--dark); margin-right: 3px; }
+.cs-chips { display: flex; gap: 7px; margin-bottom: 10px; }
+.cs-chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 7px 14px; font-size: 12.5px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.cs-chip.on { background: var(--rose); border-color: var(--rose); color: #fff; }
+.cs-sect { font-size: 11.5px; font-weight: 800; letter-spacing: .6px; color: var(--muted); text-transform: uppercase; margin: 14px 2px 6px; }
+.cs-cnt { background: var(--line); border-radius: 999px; padding: 1px 8px; font-size: 11px; margin-left: 4px; }
+.cs-card { display: block; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 13px; margin-bottom: 8px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.03); }
+.cs-quiet { opacity: .82; }
+.cs-ctop { display: flex; align-items: center; gap: 8px; }
+.cs-emoji { font-size: 18px; }
+.cs-cn { font-weight: 700; font-size: 14.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-cora { font-size: 11.5px; color: var(--muted); flex: 0 0 auto; }
+.cs-snip { font-size: 13px; color: var(--muted); margin-top: 4px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cs-badges { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 6px; }
+.cs-badge { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 3px 9px; }
+.cs-can { background: rgba(0,0,0,.05); color: var(--muted); }
+.cs-chat { background: #ece9f6; color: #5c4d9c; }
+.cs-warn { background: #fff3e0; color: #b26a00; }
+.cs-state { background: rgba(139,94,107,.1); color: var(--rose-deep); }
+.cs-rumore { display: block; width: 100%; background: none; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); font-size: 12.5px; padding: 10px; margin: 16px 0 8px; cursor: pointer; }
+.cs-tnm { font-weight: 800; font-size: 17px; }
+.cs-tem { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.cs-banner { background: #ece9f6; color: #5c4d9c; font-size: 12.5px; font-weight: 600; padding: 11px 13px; border-radius: 12px; margin-bottom: 12px; line-height: 1.4; }
+.cs-inbox { display: inline-block; background: #5c4d9c; color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
+.cs-msg { max-width: 86%; border-radius: 14px; padding: 10px 13px; margin: 8px 0; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.cs-msg.in { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+.cs-msg.out { background: rgba(139,94,107,.12); margin-left: auto; border-bottom-right-radius: 5px; }
+.cs-who { font-size: 10.5px; font-weight: 800; color: var(--muted); margin-bottom: 3px; }
+.cs-form { background: rgba(156,95,51,.08); border-radius: 8px; padding: 7px 9px; margin-bottom: 6px; font-size: 12.5px; line-height: 1.5; }
+.cs-body { }

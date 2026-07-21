@@ -3,6 +3,7 @@ import type { Tab } from './lib/people';
 import Home from './pages/Home';
 import Report from './pages/Report';
 import Salute from './pages/Salute';
+import Assistenza from './pages/Assistenza';
 import Ingest from './pages/Ingest';
 import Ordini from './pages/Ordini';
 import Inventory from './pages/Inventory';
@@ -31,6 +32,7 @@ export default function App() {
         {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} />}
         {tab === 'cruscotto' && <Report onBack={() => go('home')} />}
         {tab === 'salute' && <Salute onBack={() => go('home')} chi={chi} />}
+        {tab === 'assistenza' && <Assistenza onBack={() => go('home')} />}
         {tab === 'registra' && <Ingest pin={pin} chi={chi} initial={param} />}
         {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} />}
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}
