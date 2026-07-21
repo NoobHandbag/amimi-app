@@ -8,6 +8,7 @@ import Ingest from './pages/Ingest';
 import Ordini from './pages/Ordini';
 import Inventory from './pages/Inventory';
 import Icon from './components/Icon';
+import AssistantPanel from './components/AssistantPanel';
 import { pushBack } from './lib/backnav';
 
 export default function App() {
@@ -44,6 +45,8 @@ export default function App() {
         <button className={tab === 'registra' && (param ?? '').startsWith('tabelle') ? 'on' : ''} onClick={() => go('registra', 'tabelle')} type="button"><span><Icon name="table" size={22} /></span>Tabelle</button>
         {navBtn('magazzino', 'chart', 'Magazzino')}
       </nav>
+      {/* "Chiedi ad Amimì": overlay presente su ogni schermata, si auto-nasconde se ai_enabled = false */}
+      <AssistantPanel pin={pin} />
     </div>
   );
 }

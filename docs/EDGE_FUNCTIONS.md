@@ -54,6 +54,17 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 - **Dal 06-07:** interroga `v_ce_totale` live (non piu' la copia storica).
 - **APERTO (audit A1):** `ask_select` non ha allowlist di viste e ask-data e' pubblica: via di esfiltrazione segreti finche' l'owner non ruota i segreti e si chiude la falla.
 
+## assistant (v5) - Assistente AI in-app (FLOW 6 v2, sola lettura, gated)
+
+- **Scopo:** "Chiedi ad Amimì", pannello slide-in presente su OGNI schermata della PWA. Evoluzione di ask-data: risponde in italiano sui dati LIVE con testo + grafico + card prodotti con foto, e ricorda la conversazione. Design: `Cowork12/projects/Assistente_AI_2026-07/DESIGN_Assistente_AI_Amimi_V1.md` (Fase 1 di 3).
+- **Pipeline (2 passi Gemini):** (1) `gemini-flash-lite-latest` traduce domanda + storia breve in UNA SELECT (schema-dal-reale CORRETTO: `categoria` = `BAG`/`ACCESSORY`/null, non piu' lo stale `ACCESSORI`/`PELLE`/`TESSUTO` di ask-data; glossario "borse tessili" = Nina/Agata/Annie via `item ILIKE`, netto = lordo/1,22); (2) `ask_select` esegue (SELECT-only, cap 200); (3) `gemini-flash-latest` in **JSON mode** (`responseMimeType: application/json`) scrive la prosa e MAPPA le colonne per grafico/prodotti. **I numeri arrivano SOLO da `ask_select`:** l'edge materializza barre e card DALLE righe reali (Gemini sceglie solo tipo/colonne), mai cifre inventate (Regola 1). Le card sono arricchite con foto/prezzo/giacenza reali da `v_inventory`.
+- **Auth + gate:** `verify_jwt=false` + PIN (`x`), come ask-data. Gated da `app_config.ai_enabled` (default FALSE): a flag off risponde `{gated:true, testo:"L'assistente non e' attivo."}`. Key Gemini in `app_flags.gemini_api_key` (server-only).
+- **Sola lettura:** nessuna scrittura, `ask_select` unica porta dati. Le domande che chiedono di MODIFICARE (azzera/cancella/modifica/registra...) ricevono la spiegazione "sono in sola lettura", non un no-op.
+- **Input:** `{domanda, storia:[{ruolo,testo}], pin}`. **Output:** `{ok, gated?, testo, grafico?{tipo,titolo,etichette[],valori[]}, prodotti?[{codice,nome,variante,image_url,prezzo,disponibili,giacenza,stato,venduto_tot,valore,valore_label}], sql, righe}`.
+- **Frontend:** componente globale `web/src/components/AssistantPanel.tsx` (FAB "Chiedi ad Amimì" + bottom-sheet, grafici inline SVG/CSS senza dipendenze, card con foto, blocco "fonti" con SQL e righe). Si auto-nasconde se `ai_enabled=false`, letto via `v_ops_flags.ai_enabled` (migr 0057). Il vecchio pannello inline "Chiedi ai dati" del Cruscotto (`Report.tsx`) e' stato rimosso perche' superato.
+- **GO-LIVE (owner):** `app_config.ai_enabled='true'`.
+- **Nota audit A1:** condivide con ask-data la via `ask_select` senza allowlist di viste -> stesso caveat esfiltrazione segreti finche' i segreti non sono ruotati/chiusi.
+
 ## mcp (v4) - server MCP per Claude
 
 - **Scopo:** pilotare l'app da Claude (JSON-RPC 2.0, supporto SSE).
@@ -81,6 +92,6 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 
 ## Flag e config di riferimento
 
-- `app_config`: `pin_hash`, `shopify_token`, `iva_rate` (0.22), `parity_tolerance_cents`.
+- `app_config`: `pin_hash`, `shopify_token`, `iva_rate` (0.22), `parity_tolerance_cents`, `ai_enabled` (gate dell'assistente AI in-app, default false, go-live owner, dal 2026-07-22; esposto ad anon come booleano via `v_ops_flags`, migr 0057).
 - `app_flags`: `shopify_write_enabled`, `shopify_autopush_enabled`, `shopify_expose_buffer` (oggi 0), `shopify_hold_raises`, `shopify_autoenable_tracking` (default off: riaccende il tracking magazzino su item fisici untracked prima del set, mai gift card, dal v11), `shopify_location_id`, `qromo_webhook_secret`, `qromo_webhook_token`, `gemini_api_key`, `mcp_token`. Entrambe le tabelle sono service-role only (lockdown migr 0026); i flag si cambiano SOLO con decisione owner (Regola 15/16).
 - Chiavi `cs_*` (tool assistenza, dal 2026-07-20, Fase 0): `cs_enabled` ('false' = sync spento), `cs_last_history_id` (cursore Gmail, vuoto), `cs_gmail_sa_key` (chiave JSON service account, vuota finche' l'owner non la inserisce via canale sicuro), `cs_ntfy_topic_benny` / `cs_ntfy_topic_ginevra` / `cs_ntfy_topic_ale` (topic ntfy con suffisso random generato direttamente nel DB: i valori NON sono mai transitati in repo, doc o chat e sono da trattare come segreti). Inserite via SQL one-off, NON via migrazione (repo pubblico).

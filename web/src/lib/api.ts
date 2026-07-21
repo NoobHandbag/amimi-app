@@ -328,6 +328,21 @@ export const syncNowShopify = (pin: string, chi: string): Promise<SyncNowResult>
 export type AskResult = { ok?: boolean; sql?: string; rows?: Record<string, unknown>[]; error?: string; needs_key?: boolean };
 export const askData = (question: string, pin: string): Promise<AskResult> => fnCall('ask-data', { question, pin }) as Promise<AskResult>;
 
+// ---------- FLOW 6 v2: Assistente AI (read-only, gated ai_enabled) ----------
+export type AsstMsg = { ruolo: 'user' | 'assistant'; testo: string };
+export type AsstGrafico = { tipo: 'barre' | 'linee' | 'torta'; titolo: string; etichette: string[]; valori: number[] };
+export type AsstProdotto = {
+  codice: string; nome: string | null; variante: string | null; image_url: string | null;
+  prezzo: number | null; disponibili: number | null; giacenza: number | null; stato: string | null;
+  venduto_tot: number | null; valore: number | null; valore_label: string | null;
+};
+export type AsstResult = {
+  ok?: boolean; gated?: boolean; testo?: string; grafico?: AsstGrafico; prodotti?: AsstProdotto[];
+  sql?: string; righe?: Record<string, unknown>[]; error?: string; needs_key?: boolean;
+};
+export const askAssistant = (domanda: string, storia: AsstMsg[], pin: string): Promise<AsstResult> =>
+  fnCall('assistant', { domanda, storia, pin }) as Promise<AsstResult>;
+
 // ---------- NEW FEATURE: returns & exchanges ----------
 export const addReturn = (payload: Record<string, unknown>, pin: string, chi: string) => writeApi('return', payload, pin, chi);
 
@@ -381,12 +396,13 @@ export async function fetchMovimenti14gg(): Promise<Movimenti> {
   return out as unknown as Movimenti;
 }
 
-export type OpsFlags = { write: boolean; autopush: boolean; hold_raises: boolean; expose_buffer: number };
+export type OpsFlags = { write: boolean; autopush: boolean; hold_raises: boolean; expose_buffer: number; ai_enabled: boolean };
 export async function fetchOpsFlags(): Promise<OpsFlags> {
   const { data } = await supabase.from('v_ops_flags').select('*').maybeSingle();
-  const r = (data ?? {}) as Record<string, string | null>;
-  const b = (v: string | null) => v === 'true' || v === '1' || v === 'on' || v === 'yes';
-  return { write: b(r.shopify_write_enabled), autopush: b(r.shopify_autopush_enabled), hold_raises: b(r.shopify_hold_raises), expose_buffer: Number(r.shopify_expose_buffer ?? 0) };
+  const r = (data ?? {}) as Record<string, unknown>;
+  // shopify_* flags arrive as text from app_flags; ai_enabled arrives as a real boolean from app_config.
+  const b = (v: unknown) => v === true || v === 'true' || v === '1' || v === 'on' || v === 'yes';
+  return { write: b(r.shopify_write_enabled), autopush: b(r.shopify_autopush_enabled), hold_raises: b(r.shopify_hold_raises), expose_buffer: Number(r.shopify_expose_buffer ?? 0), ai_enabled: b(r.ai_enabled) };
 }
 
 export type HealthRow = { k: string; label: string; n: number; severity: string };
