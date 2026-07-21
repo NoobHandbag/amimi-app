@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test';
 test('assistenza: mostra il cancello di login (nessun dato senza auth)', async ({ page }) => {
   await page.goto('');
   await page.getByRole('button', { name: /Assistenza clienti/ }).click();
-  await expect(page.getByText(/Accedi con una email Amimi/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /Accedi con Google/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /^Entra$/ })).toBeVisible();
   // nessuna coda visibile senza login
   await expect(page.getByText('Assistenza', { exact: true })).toHaveCount(0);

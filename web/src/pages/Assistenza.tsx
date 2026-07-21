@@ -66,6 +66,18 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     if (error) setErr('Accesso non riuscito. Controlla email e password.');
     else setPwd('');
   };
+  // "Accedi con Google": redirect OAuth. `hd` suggerisce il dominio Workspace amimi.it (hint, non
+  // vincolo: il vincolo vero e' la RLS @amimi.it, migr 0056). Al ritorno il client raccoglie la
+  // sessione dall'URL (detectSessionInUrl) e onAuthStateChange porta dentro. Se il provider Google
+  // non e' ancora attivo nel pannello Supabase, signInWithOAuth ritorna errore e resta email/password.
+  const doGoogle = async () => {
+    setBusy(true); setErr('');
+    const { error } = await csClient.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin + import.meta.env.BASE_URL, queryParams: { hd: 'amimi.it', prompt: 'select_account' } },
+    });
+    if (error) { setBusy(false); setErr('Google non ancora attivo (manca il setup nel pannello Supabase). Per ora accedi con email/password qui sotto.'); }
+  };
   const logout = async () => { setMenu(false); await csClient.auth.signOut(); setConvs(null); setCurrent(null); setView('coda'); };
   const openThread = async (c: CsConversation) => {
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
@@ -84,7 +96,14 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       <header><button className="badge" onClick={onBack} type="button">‹ Home app</button></header>
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; assistenza</span></div>
-        <div className="cs-lt">Accedi con una email Amimi&#8217;</div>
+        <div className="cs-lt">Accedi con il tuo account Amimi&#8217;</div>
+        <button className="cs-btn" style={{ width: '100%', background: '#fff', border: '1px solid var(--line)', color: 'var(--dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }} onClick={doGoogle} disabled={busy} type="button">
+          <span aria-hidden="true" style={{ fontWeight: 800, fontFamily: 'Arial, sans-serif' }}><span style={{ color: '#4285F4' }}>G</span><span style={{ color: '#EA4335' }}>o</span><span style={{ color: '#FBBC05' }}>o</span><span style={{ color: '#4285F4' }}>g</span><span style={{ color: '#34A853' }}>l</span><span style={{ color: '#EA4335' }}>e</span></span>
+          <span>Accedi con Google</span>
+        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 4px', color: 'var(--muted)', fontSize: 12 }}>
+          <span style={{ flex: 1, height: 1, background: 'var(--line)' }} /> oppure con email <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
+        </div>
         <div className="cs-fld"><label>Email (@amimi.it)</label>
           <input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="info@amimi.it" /></div>
         <div className="cs-fld"><label>Password</label>
