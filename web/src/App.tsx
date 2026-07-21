@@ -44,6 +44,7 @@ export default function App() {
         {navBtn('home', 'home', 'Home')}
         <button className={tab === 'registra' && (param ?? '').startsWith('tabelle') ? 'on' : ''} onClick={() => go('registra', 'tabelle')} type="button"><span><Icon name="table" size={22} /></span>Tabelle</button>
         {navBtn('magazzino', 'chart', 'Magazzino')}
+        {navBtn('assistenza', 'chat', 'Assistenza')}
       </nav>
       {/* "Chiedi ad Amimì": overlay presente su ogni schermata, si auto-nasconde se ai_enabled = false */}
       <AssistantPanel pin={pin} />

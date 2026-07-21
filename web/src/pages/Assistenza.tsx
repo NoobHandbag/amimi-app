@@ -133,8 +133,6 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     </div>
   );
 
-  const av = IDENTS[ident] ?? IDENTS.A;
-
   // ---- thread ----
   if (view === 'thread' && current) {
     const c = current;
@@ -142,7 +140,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       <div className="screen">
         <header>
           <button className="badge" onClick={() => setView('coda')} type="button">‹ Coda</button>
-          <span className={'cs-av ' + av.cls} onClick={() => setMenu((m) => !m)} role="button" tabIndex={0}>{ident}</span>
+          <button onClick={() => setMenu((m) => !m)} type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} ▾</button>
         </header>
         {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
         <div className="card">
@@ -206,8 +204,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   return (
     <div className="screen">
       <header>
-        <span className={'cs-av ' + av.cls} onClick={() => setMenu((m) => !m)} role="button" tabIndex={0}>{ident}</span>
-        <div style={{ flex: 1 }}><h1 style={{ fontSize: 19 }}>Assistenza</h1></div>
+        <button onClick={() => setMenu((m) => !m)} type="button" style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--dark)', fontSize: 18, fontWeight: 700 }}>Ciao {IDENTS[ident]?.n ?? ident}, aiutiamo dei clienti! <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 400 }}>▾</span></button>
         <button className="badge" onClick={onBack} type="button">Home app</button>
       </header>
       {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}

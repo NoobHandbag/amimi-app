@@ -21,7 +21,6 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
   Bene: {
     name: 'Benny', finance: false,
     tiles: [
-      { icon: 'chat', label: 'Assistenza clienti', tab: 'assistenza' },
       { icon: 'sparkles', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
       { icon: 'bag', label: 'Registra vendita', tab: 'registra', param: 'gift' },
       { icon: 'return', label: 'Reso / Cambio', tab: 'registra', param: 'reso' },
@@ -31,7 +30,6 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
   Ginevra: {
     name: 'Ginni', finance: false,
     tiles: [
-      { icon: 'chat', label: 'Assistenza clienti', tab: 'assistenza' },
       { icon: 'plus', label: 'Nuovo ordine fornitore', tab: 'ordini', param: 'new' },
       { icon: 'inbox', label: 'Registra arrivi', tab: 'ordini' },
       { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },
@@ -44,7 +42,6 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
 export const ALL_ACTIONS: Tile[] = [
   { icon: 'chart', label: 'Cruscotto finanze', tab: 'cruscotto' },
   { icon: 'pulse', label: 'Salute & Movimenti', tab: 'salute' },
-  { icon: 'chat', label: 'Assistenza clienti', tab: 'assistenza' },
   { icon: 'bag', label: 'Registra vendita', tab: 'registra', param: 'gift' },
   { icon: 'return', label: 'Reso / Cambio', tab: 'registra', param: 'reso' },
   { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },
