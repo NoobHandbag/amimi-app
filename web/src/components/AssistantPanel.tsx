@@ -2,7 +2,7 @@
 // Read-only: calls the `assistant` edge (gated by ai_enabled). Self-gates — renders nothing when the flag is off.
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { askAssistant, fetchOpsFlags, type AsstResult, type AsstMsg, type AsstGrafico, type AsstProdotto } from '../lib/api';
+import { askAssistant, fetchOpsFlags, writeApi, type AsstResult, type AsstMsg, type AsstGrafico, type AsstProdotto, type AsstAzione } from '../lib/api';
 
 type Turn = { user: string; res?: AsstResult };
 
@@ -133,6 +133,57 @@ function Answer({ res }: { res: AsstResult }) {
   );
 }
 
+// Fase 3: confirmation card for a PROPOSED action. The assistant only proposes; the write happens here,
+// via write-api, ONLY after the user reviews/adjusts and confirms. Expense proposals land pending.
+function ActionCard({ azione, pin, chi }: { azione: AsstAzione; pin: string; chi: string }) {
+  const [costo, setCosto] = useState(String(azione.payload.costo));
+  const [categoria, setCategoria] = useState(azione.payload.categoria);
+  const [operazione, setOperazione] = useState(azione.payload.operazione);
+  const [amimi, setAmimi] = useState(azione.payload.amimi);
+  const [state, setState] = useState<'idle' | 'busy' | 'done' | 'cancel'>('idle');
+  const [msg, setMsg] = useState('');
+  const okToSend = Number(costo) > 0 && !!categoria;
+
+  async function conferma() {
+    if (!okToSend || state === 'busy') return;
+    setState('busy'); setMsg('');
+    try {
+      const r = await writeApi('expense_propose', { costo: Number(costo), categoria, operazione: operazione.trim() || 'Spesa', amimi }, pin, chi) as { ok?: boolean; error?: string };
+      if (r.ok) { setState('done'); setMsg('Proposta registrata: resta in attesa di approvazione in Registra › Spese.'); }
+      else { setMsg(r.error || 'Errore'); setState('idle'); }
+    } catch (e) { setMsg((e as Error).message); setState('idle'); }
+  }
+
+  if (state === 'done') return <div className="ai-a"><div className="ai-action-ok"><span className="ai-who-m"><Spark s={12} /></span> ✓ {msg}</div></div>;
+  if (state === 'cancel') return <div className="ai-a"><div className="ai-action-cancel">Proposta annullata.</div></div>;
+
+  return (
+    <div className="ai-a">
+      <div className="ai-who"><span className="ai-who-m"><Spark s={12} /></span><span>Amimì</span></div>
+      <div className="ai-action">
+        <div className="ai-action-h">Registro questa spesa?</div>
+        <div className="ai-action-grid">
+          <label>Importo €<input type="number" inputMode="decimal" min="0" value={costo} onChange={(e) => setCosto(e.target.value)} /></label>
+          <label>Categoria
+            <select value={categoria} onChange={(e) => setCategoria(e.target.value)}>
+              <option value="">— scegli —</option>
+              {azione.categoria_valide.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <label className="wide">Causale<input value={operazione} onChange={(e) => setOperazione(e.target.value)} /></label>
+          <label className="chk"><input type="checkbox" checked={amimi} onChange={(e) => setAmimi(e.target.checked)} /> Spesa Amimì</label>
+        </div>
+        <div className="ai-action-note">Resta in attesa di approvazione: non tocca il conto economico finché non la approvi in Registra › Spese.</div>
+        {msg && <div className="err ai-action-err">{msg}</div>}
+        <div className="ai-action-btns">
+          <button className="ai-action-no" type="button" onClick={() => setState('cancel')}>Annulla</button>
+          <button className="ai-action-yes" type="button" disabled={!okToSend || state === 'busy'} onClick={conferma}>{state === 'busy' ? 'Registro…' : 'Conferma e proponi'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Printable report of one answer (question + text + chart + product cards), rendered into a body-level
 // portal and shown only in @media print, so "Salva come report" -> the browser's Save as PDF / share.
 function PrintReport({ turn }: { turn: Turn }) {
@@ -154,7 +205,7 @@ function PrintReport({ turn }: { turn: Turn }) {
   );
 }
 
-export default function AssistantPanel({ pin }: { pin: string }) {
+export default function AssistantPanel({ pin, chi }: { pin: string; chi: string }) {
   const [enabled, setEnabled] = useState(false);
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -222,7 +273,8 @@ export default function AssistantPanel({ pin }: { pin: string }) {
           {thread.map((t, i) => (
             <div key={i}>
               <div className="ai-u">{t.user}</div>
-              {t.res ? <Answer res={t.res} /> : null}
+              {t.res?.azione ? <ActionCard azione={t.res.azione} pin={pin} chi={chi} />
+                : t.res ? <Answer res={t.res} /> : null}
               {t.res && t.res.testo && !t.res.error && !t.res.gated && !t.res.needs_key ? (
                 <button className="ai-export" type="button" onClick={() => setPrintTurn(t)}>
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9V4h12v5M6 18H5a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-1M8 15h8v5H8z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>

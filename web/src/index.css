@@ -446,6 +446,23 @@ tr.dim { opacity: .6; }
   .ai-print-portal { display: block !important; }
   .ai-print-portal, .ai-print-portal * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 }
+/* Fase 3: action confirmation card (assistant proposes -> user confirms -> write-api) */
+.ai-action { background: var(--card); border: 1px solid var(--accent); border-radius: 14px; padding: 13px 14px; }
+.ai-action-h { font-weight: 700; font-size: 14.5px; color: var(--dark); margin-bottom: 10px; }
+.ai-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.ai-action-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.ai-action-grid label.wide { grid-column: 1 / -1; }
+.ai-action-grid label.chk { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 7px; font-size: 13px; color: var(--dark); }
+.ai-action-grid input, .ai-action-grid select { border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px; font-size: 14.5px; color: var(--dark); background: #fff; }
+.ai-action-grid input[type=checkbox] { width: 18px; height: 18px; padding: 0; accent-color: var(--accent); }
+.ai-action-note { font-size: 11.5px; color: var(--muted); margin-top: 9px; line-height: 1.4; }
+.ai-action-err { font-size: 12px; margin-top: 6px; }
+.ai-action-btns { display: flex; gap: 9px; margin-top: 11px; }
+.ai-action-no { flex: 0 0 auto; padding: 9px 16px; border-radius: 22px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-weight: 600; font-size: 13.5px; cursor: pointer; }
+.ai-action-yes { flex: 1; padding: 9px 16px; border-radius: 22px; border: 0; background: var(--accent); color: #fff; font-weight: 700; font-size: 13.5px; cursor: pointer; }
+.ai-action-yes:disabled { opacity: .5; }
+.ai-action-ok { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 600; color: var(--green); }
+.ai-action-cancel { font-size: 13px; color: var(--muted); }
 
 /* product helpers + deal calc */
 .hintchip { width: 100%; text-align: left; background: rgba(156,95,51,.1); border: 1px solid rgba(156,95,51,.3); color: var(--accent); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; margin-top: 8px; }

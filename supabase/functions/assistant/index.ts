@@ -86,32 +86,64 @@ function historyText(storia: unknown): string {
   return last.length ? `\nConversazione recente (per capire i riferimenti dei follow-up):\n${last.join('\n')}\n` : '';
 }
 
+// Fase 3 (gated ai_actions_enabled): parse a request into a PROPOSED expense. Read-only — never writes.
+// Returns null unless it is clearly an expense with a real amount (never invents an amount). The user
+// reviews/adjusts (esp. categoria) and confirms in the app; execution goes through write-api (expense_propose,
+// which lands PENDING and does not touch the CE until separately approved).
+const EXPENSE_CATS = ['COGS', 'LOGISTICA', 'MARKETING', 'OPEX', 'PACKAGING', 'SALARI', 'TASSE'];
+async function proposeExpense(question: string, key: string, storia: unknown) {
+  const prompt = `L'utente vuole forse registrare una SPESA nell'app gestionale "Amimì" (borse artigianali). Estrai i dati dalla richiesta. Categorie valide: ${EXPENSE_CATS.join(', ')}.
+Rispondi SOLO JSON: { "e_spesa": true, "costo": <numero positivo>, "categoria": "<una valida o vuota>", "operazione": "<causale breve>", "amimi": true }
+Regole: metti "e_spesa": false se NON e' chiaramente una spesa da REGISTRARE, o se manca un importo numerico chiaro (NON inventare importi). "costo" = solo il numero, senza segno. "categoria" = la piu' probabile tra quelle valide, "" se incerta. "operazione" = descrizione breve (es. "imballaggi"). "amimi" = true se e' una spesa del brand (default true), false se chiaramente di altro business.
+${historyText(storia)}
+Richiesta: ${question}`;
+  let raw = '';
+  for (const [model, tok] of [[MODEL_ANSWER, 400] as const, [MODEL_SQL, 400] as const]) {
+    try { raw = (await gemini(model, prompt, key, tok, true)).trim(); if (raw) break; } catch { /* try the other model */ }
+  }
+  let p: Row = {};
+  try { p = JSON.parse(cleanJson(raw)) as Row; } catch { return null; }
+  if (p.e_spesa !== true) return null;
+  const costo = Number(p.costo);
+  if (!Number.isFinite(costo) || costo <= 0) return null;
+  const cat = EXPENSE_CATS.includes(String(p.categoria ?? '').toUpperCase()) ? String(p.categoria).toUpperCase() : '';
+  const operazione = String(p.operazione ?? '').trim().slice(0, 80) || 'Spesa';
+  const amimi = p.amimi !== false;
+  const descrizione = `Proposta spesa: −${costo}€${operazione !== 'Spesa' ? ' · ' + operazione : ''}${cat ? ' · ' + cat : ' · (scegli la categoria)'}${amimi ? ' · Amimì' : ''}. Resta IN ATTESA di approvazione: non tocca il conto economico finché non la approvi tu in Registra > Spese.`;
+  return { tipo: 'expense_propose', payload: { costo, categoria: cat, operazione, amimi }, descrizione, categoria_valide: EXPENSE_CATS };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const body = await req.json().catch(() => ({}));
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
   // 0) gate + PIN
-  const { data: cfg } = await sb.from('app_config').select('pin_hash, ai_enabled').eq('id', 1).single();
+  const { data: cfg } = await sb.from('app_config').select('pin_hash, ai_enabled, ai_actions_enabled').eq('id', 1).single();
   if (!cfg?.ai_enabled) return json({ ok: true, gated: true, testo: "L'assistente non è attivo." });
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const question = String(body.domanda ?? body.question ?? '').trim();
   if (!question) return json({ error: 'domanda mancante' }, 422);
 
-  // How-to phrasing ("come/dove/a cosa serve/cosa vuol dire...") is a question ABOUT the app, not a command:
-  // it must reach the how-to path, so it is excluded from the read-only guard below.
-  const isHowtoish = /\b(come|dove|a cosa serve|cosa (vuol dire|significa)|come si|come funziona|si pu[oò]|posso|spiegami|mi spieghi)\b/i.test(question);
-
-  // Read-only: if the user COMMANDS a change (imperative), say so plainly instead of running a no-op query.
-  // Narrow, high-precision verb list (destructive imperatives) to avoid flagging legit read questions like "vendite".
-  if (!isHowtoish && /\b(azzer|cancell|elimin|svuot|resett|sovrascriv|rimuov|modific|aggiorn|imposta|corregg|registr|inserisc)\w*/i.test(question)) {
-    return json({ ok: true, testo: 'Sono in sola lettura: ti mostro e analizzo i dati, ma non modifico niente nell’app (conta, spese, ordini, stock). Per registrare o cambiare qualcosa usa le funzioni Registra / Inserisci dell’app.' });
-  }
-
   const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'gemini_api_key').single();
   const key = flag?.value;
   if (!key) return json({ ok: true, testo: 'Assistente non configurato (manca la chiave Gemini).', needs_key: true });
+
+  // How-to phrasing ("come/dove/a cosa serve/cosa vuol dire...") is a question ABOUT the app, not a command:
+  // it must reach the how-to path, so it is excluded from the write-intent branch below.
+  const isHowtoish = /\b(come|dove|a cosa serve|cosa (vuol dire|significa)|come si|come funziona|si pu[oò]|posso|spiegami|mi spieghi)\b/i.test(question);
+
+  // Write-intent (imperative change). Fase 3: if ai_actions_enabled, try to PROPOSE a supported action.
+  // The assistant NEVER writes: it returns a proposal the user confirms; execution goes via write-api.
+  // Not enabled, or not a supported action -> plain read-only message.
+  if (!isHowtoish && /\b(azzer|cancell|elimin|svuot|resett|sovrascriv|rimuov|modific|aggiorn|imposta|corregg|registr|inserisc|aggiung)\w*/i.test(question)) {
+    if (cfg?.ai_actions_enabled) {
+      const azione = await proposeExpense(question, key, body.storia);
+      if (azione) return json({ ok: true, azione });
+    }
+    return json({ ok: true, testo: 'Sono in sola lettura: ti mostro e analizzo i dati, ma non modifico niente nell’app (conta, spese, ordini, stock). Per registrare o cambiare qualcosa usa le funzioni Registra / Inserisci dell’app.' });
+  }
 
   // 1) route: NL -> SQL, or the sentinel HOWTO (flash-lite)
   let sql = '';

@@ -336,9 +336,16 @@ export type AsstProdotto = {
   prezzo: number | null; disponibili: number | null; giacenza: number | null; stato: string | null;
   venduto_tot: number | null; valore: number | null; valore_label: string | null;
 };
+// Fase 3: a PROPOSED action the assistant returns for the user to confirm (execution goes via write-api).
+export type AsstAzione = {
+  tipo: 'expense_propose';
+  payload: { costo: number; categoria: string; operazione: string; amimi: boolean };
+  descrizione: string;
+  categoria_valide: string[];
+};
 export type AsstResult = {
-  ok?: boolean; gated?: boolean; testo?: string; grafico?: AsstGrafico; prodotti?: AsstProdotto[];
-  sql?: string; righe?: Record<string, unknown>[]; error?: string; needs_key?: boolean;
+  ok?: boolean; gated?: boolean; howto?: boolean; testo?: string; grafico?: AsstGrafico; prodotti?: AsstProdotto[];
+  azione?: AsstAzione; sql?: string; righe?: Record<string, unknown>[]; error?: string; needs_key?: boolean;
 };
 export const askAssistant = (domanda: string, storia: AsstMsg[], pin: string): Promise<AsstResult> =>
   fnCall('assistant', { domanda, storia, pin }) as Promise<AsstResult>;
