@@ -427,6 +427,25 @@ tr.dim { opacity: .6; }
   display: grid; place-items: center; box-shadow: 0 5px 14px rgba(156,95,51,.4); }
 .ai-send:disabled { opacity: .5; }
 .ai-foot { text-align: center; font-size: 10.5px; color: var(--muted); padding: 0 0 calc(8px + env(safe-area-inset-bottom)); flex: none; }
+/* export answer as a printable report (Save as PDF / share) */
+.ai-export { display: inline-flex; align-items: center; gap: 6px; margin: -6px 0 6px; padding: 4px 0; background: none; border: 0;
+  color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; }
+.ai-export svg { width: 14px; height: 14px; }
+.ai-export:hover { color: var(--accent); }
+.ai-print-portal { display: none; }
+.ai-report { padding: 26px; max-width: 720px; margin: 0 auto; color: #1a1614; font: 14px/1.55 system-ui, 'Segoe UI', sans-serif; }
+.ai-report-head { display: flex; align-items: center; gap: 12px; border-bottom: 2px solid var(--accent); padding-bottom: 12px; margin-bottom: 18px; }
+.ai-report-mark { width: 38px; height: 38px; border-radius: 11px; flex: none; display: grid; place-items: center; color: #fff; background: var(--accent); }
+.ai-report-ttl { font-size: 18px; font-weight: 800; color: var(--dark); }
+.ai-report-date { font-size: 12px; color: var(--muted); }
+.ai-report-q { font-size: 15px; font-weight: 700; color: var(--rose-deep); margin-bottom: 10px; }
+.ai-report-testo { font-size: 14px; line-height: 1.6; margin: 0 0 16px; }
+.ai-report-foot { margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+@media print {
+  #root { display: none !important; }
+  .ai-print-portal { display: block !important; }
+  .ai-print-portal, .ai-print-portal * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}
 
 /* product helpers + deal calc */
 .hintchip { width: 100%; text-align: left; background: rgba(156,95,51,.1); border: 1px solid rgba(156,95,51,.3); color: var(--accent); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; margin-top: 8px; }

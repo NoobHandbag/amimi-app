@@ -1,7 +1,10 @@
 // FLOW 6 v2 — "Chiedi ad Amimì": slide-in assistant panel, present on every screen.
 // Read-only: calls the `assistant` edge (gated by ai_enabled). Self-gates — renders nothing when the flag is off.
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { askAssistant, fetchOpsFlags, type AsstResult, type AsstMsg, type AsstGrafico, type AsstProdotto } from '../lib/api';
+
+type Turn = { user: string; res?: AsstResult };
 
 const CHIPS = ['Cosa riordinare?', 'Le più vendute con foto', 'Borse a stock zero', 'Vendite di luglio'];
 
@@ -130,16 +133,46 @@ function Answer({ res }: { res: AsstResult }) {
   );
 }
 
+// Printable report of one answer (question + text + chart + product cards), rendered into a body-level
+// portal and shown only in @media print, so "Salva come report" -> the browser's Save as PDF / share.
+function PrintReport({ turn }: { turn: Turn }) {
+  const res = turn.res;
+  const righe = res?.righe ?? [];
+  const oggi = new Date().toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' });
+  return (
+    <div className="ai-report">
+      <div className="ai-report-head">
+        <span className="ai-report-mark"><Spark s={22} /></span>
+        <div><div className="ai-report-ttl">Amimì · Assistente</div><div className="ai-report-date">{oggi}</div></div>
+      </div>
+      <div className="ai-report-q">{turn.user}</div>
+      {res?.testo && <p className="ai-report-testo">{res.testo}</p>}
+      {res?.grafico && res.grafico.valori?.length ? <Chart g={res.grafico} /> : null}
+      {res?.prodotti?.length ? <div className="ai-grid">{res.prodotti.map((p, i) => <ProdCard key={p.codice + i} p={p} rank={i + 1} />)}</div> : null}
+      <div className="ai-report-foot">Dati Amimì in tempo reale{righe.length ? ` · ${righe.length} righe` : ''} · non modifica nulla</div>
+    </div>
+  );
+}
+
 export default function AssistantPanel({ pin }: { pin: string }) {
   const [enabled, setEnabled] = useState(false);
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
-  const [thread, setThread] = useState<{ user: string; res?: AsstResult }[]>([]);
+  const [thread, setThread] = useState<Turn[]>([]);
+  const [printTurn, setPrintTurn] = useState<Turn | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { fetchOpsFlags().then((f) => setEnabled(f.ai_enabled)).catch(() => {}); }, []);
   useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [thread, busy, open]);
+  // once the print portal has rendered, open the print / Save-as-PDF dialog; clear when done
+  useEffect(() => {
+    if (!printTurn) return;
+    const done = () => setPrintTurn(null);
+    window.addEventListener('afterprint', done);
+    const t = setTimeout(() => window.print(), 80);
+    return () => { clearTimeout(t); window.removeEventListener('afterprint', done); };
+  }, [printTurn]);
 
   if (!enabled) return null;
 
@@ -190,6 +223,12 @@ export default function AssistantPanel({ pin }: { pin: string }) {
             <div key={i}>
               <div className="ai-u">{t.user}</div>
               {t.res ? <Answer res={t.res} /> : null}
+              {t.res && t.res.testo && !t.res.error && !t.res.gated && !t.res.needs_key ? (
+                <button className="ai-export" type="button" onClick={() => setPrintTurn(t)}>
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9V4h12v5M6 18H5a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-1M8 15h8v5H8z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  Salva come report
+                </button>
+              ) : null}
             </div>
           ))}
           {busy && <div className="ai-a ai-typing"><span className="ai-who-m"><Spark s={12} /></span> Sto guardando i dati…</div>}
@@ -205,6 +244,7 @@ export default function AssistantPanel({ pin }: { pin: string }) {
         </div>
         <div className="ai-foot">Legge i tuoi dati in tempo reale · non modifica nulla</div>
       </div>
+      {printTurn && createPortal(<div className="ai-print-portal"><PrintReport turn={printTurn} /></div>, document.body)}
     </>
   );
 }
