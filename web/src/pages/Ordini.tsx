@@ -43,7 +43,7 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen }: { l: OrdLine; pin: stri
           {l.image_url ? <img className="invimg sm" src={l.image_url} alt="" /> : <div className="invimg sm ph">{(l.item ?? l.codice).slice(0, 2)}</div>}
           <div>
             <div className="rt">{l.item ?? l.codice} <span className="rs">{l.variant ?? (l.codice.endsWith('_') ? '· da definire' : '')}</span>{l.wip && <span className="newtag" title="quantità/costo da definire: si risolvono all'arrivo">WIP</span>}</div>
-            <div className="ordnums">{done ? '✓ completo' : l.wip ? 'quantità da definire' : <><b>{l.mancano}</b> mancano</>} · {l.qty_arrived}/{l.wip ? '?' : l.qty_ordered}{l.data_consegna ? ` · cons. ${String(l.data_consegna).slice(0, 10)}` : ''}</div>
+            <div className="ordnums">{done ? '✓ completo' : l.wip ? 'quantità da definire' : <><b>{l.mancano}</b> mancano</>} · {l.qty_arrived}/{l.wip ? '?' : l.qty_ordered}{l.data_consegna_display ? ` · cons. ${String(l.data_consegna_display).slice(0, 10)}` : ''}</div>
           </div>
         </div>
         <span className="chev">{open ? '▾' : '›'}</span>
