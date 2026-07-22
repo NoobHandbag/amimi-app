@@ -138,14 +138,18 @@ Restituisci SOLO un oggetto JSON valido (niente markdown) con questa forma:
 }
 Regole: metti "grafico" solo se una classifica/andamento aiuta (una classifica -> barre; un andamento mensile -> linee; poche quote -> torta) e SOLO se label_col e value_col esistono tra le colonne. Metti "prodotti" solo se le righe riguardano prodotti specifici e c'è una colonna con il codice. Se un singolo numero risponde, lascia grafico e prodotti a null. Non aggiungere testo fuori dal JSON.`;
 
-  // The answer pass is best-effort: if Gemini or the JSON parse fails, we still return the real rows
-  // with a plain fallback text (never a fabricated answer). Failures are logged server-side, not exposed.
+  // Answer pass: Flash for quality, but it occasionally returns empty (its internal "thinking" can exhaust
+  // the token budget) -> retry once on the reliable, non-thinking flash-lite. Generic fallback only if BOTH
+  // fail (rare). Numbers still come only from the rows either way (never fabricated).
   let parsed: Row = {};
-  try {
-    const raw = await gemini(MODEL_ANSWER, answerPrompt, key, 2048, true);
-    try { parsed = JSON.parse(cleanJson(raw)) as Row; }
-    catch { console.warn('assistant: answer JSON parse failed:', raw.slice(0, 200)); }
-  } catch (e) { console.warn('assistant: answer pass failed:', (e as Error).message.slice(0, 200)); }
+  for (const [model, tok] of [[MODEL_ANSWER, 2048] as const, [MODEL_SQL, 1400] as const]) {
+    try {
+      const raw = await gemini(model, answerPrompt, key, tok, true);
+      const p = JSON.parse(cleanJson(raw)) as Row;
+      if (p && String(p.testo ?? '').trim()) { parsed = p; break; }
+      console.warn('assistant: answer pass empty on ' + model);
+    } catch (e) { console.warn('assistant: answer pass failed on ' + model + ': ' + (e as Error).message.slice(0, 150)); }
+  }
 
   const testo = String(parsed.testo ?? '').trim()
     || `Ho trovato ${rows.length} ${rows.length === 1 ? 'risultato' : 'risultati'}. Vedi il dettaglio nelle fonti qui sotto.`;
