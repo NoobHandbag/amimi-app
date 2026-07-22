@@ -19,9 +19,33 @@ export type CsConversation = {
   snippet: string | null;
   order_number: number | null;
   lingua: string | null;
+  categoria: string | null;
+  categoria_source: string | null;      // ai | ai_low | manuale
+  categoria_confidence: number | null;
+  urgente: boolean | null;
+  urgenza_motivo: string | null;
+  flags: string[] | null;               // sollecito | reclamo_assistenza | chiusura
   parse_failed: boolean;
   created_at: string;
 };
+
+// Tassonomia BLOCCATA (design 6.2): etichetta canonica + emoji. Stesso ordine del design.
+export const CS_CATEGORIES: { label: string; emoji: string }[] = [
+  { label: 'Spedizione e stato ordine', emoji: '📦' },
+  { label: 'Restock e disponibilita', emoji: '🔁' },
+  { label: 'Ritiro, negozio, appuntamenti', emoji: '🏠' },
+  { label: 'Codice sconto', emoji: '💸' },
+  { label: 'Personalizzazione e cerimonia', emoji: '💍' },
+  { label: 'Gift card e account', emoji: '🎁' },
+  { label: 'Reso e rimborso', emoji: '↩️' },
+  { label: 'Cambio e prodotto errato', emoji: '🔄' },
+  { label: 'Info prodotto', emoji: 'ℹ️' },
+  { label: 'Riparazione', emoji: '🔧' },
+  { label: 'Pagamento', emoji: '💳' },
+  { label: 'Collaborazioni e B2B', emoji: '📢' },
+  { label: 'Altro / richiesta varia', emoji: '💬' },
+];
+export const catEmoji = (label: string | null): string => CS_CATEGORIES.find((c) => c.label === label)?.emoji ?? '🏷️';
 
 export type CsMessage = {
   id: string;
@@ -35,7 +59,7 @@ export type CsMessage = {
   form_fields: Record<string, string> | null;
 };
 
-const CONV_COLS = 'id,gmail_thread_id,canale,customer_email,customer_name,stato,stato_by,last_msg_at,last_direction,subject,snippet,order_number,lingua,parse_failed,created_at';
+const CONV_COLS = 'id,gmail_thread_id,canale,customer_email,customer_name,stato,stato_by,last_msg_at,last_direction,subject,snippet,order_number,lingua,categoria,categoria_source,categoria_confidence,urgente,urgenza_motivo,flags,parse_failed,created_at';
 
 /** Coda cliente: tutto tranne il rumore, piu' recenti in cima. */
 export async function fetchConversations(): Promise<CsConversation[]> {
@@ -81,4 +105,22 @@ export async function csPollNow(): Promise<void> {
       body: JSON.stringify({ pin: 'x', action: 'poll' }),
     });
   } catch { /* ignora */ }
+}
+
+const CS_API_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/cs-api';
+
+/** Correzione manuale della categoria (PRIMA scrittura dalla UI). Passa l'access token dell'utente
+ *  loggato: la edge cs-api lo verifica (getUser + @amimi.it) e scrive col service_role, tracciando
+ *  `chi` (l'identita' del selettore, non il login). categoria=null riporta a "da confermare". */
+export async function setCategoria(conversationId: string, categoria: string | null, chi: string): Promise<void> {
+  const { data } = await csClient.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sessione scaduta: rientra.');
+  const r = await fetch(CS_API_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+    body: JSON.stringify({ action: 'set_categoria', conversation_id: conversationId, categoria, chi }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(j.error || ('Errore ' + r.status));
 }

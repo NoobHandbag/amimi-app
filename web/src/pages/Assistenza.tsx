@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, catEmoji, CS_CATEGORIES } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale } from '../lib/csApi';
 
 // Sezione Assistenza clienti — FASE 1: SOLA LETTURA dietro login Supabase Auth.
@@ -31,12 +31,38 @@ function fmtWhen(iso: string | null): string {
 }
 const nmeOf = (c: CsConversation) => c.customer_name || c.customer_email || '(senza nome)';
 
+const FLAG_LABEL: Record<string, string> = { sollecito: '⏱ sollecito', reclamo_assistenza: '⚠️ reclamo', chiusura: '✅ chiusura' };
+const isUrg = (c: CsConversation) => c.urgente === true;
+// La coda mette gli urgenti in cima, poi per anzianita' del messaggio (piu' recente prima) (design 6.4).
+const urgSort = (a: CsConversation, b: CsConversation) => {
+  if (isUrg(a) !== isUrg(b)) return isUrg(a) ? -1 : 1;
+  return (b.last_msg_at || '').localeCompare(a.last_msg_at || '');
+};
+
+// Badge riga: categoria (o "da confermare"), urgenza col motivo, flag. Riusati su card e thread.
+function Badges({ c }: { c: CsConversation }) {
+  const daConfermare = !c.categoria && c.categoria_source === 'ai_low';
+  return (
+    <div className="cs-badges">
+      {c.categoria && <span className="cs-badge cs-cat">{catEmoji(c.categoria)} {c.categoria}</span>}
+      {daConfermare && <span className="cs-badge cs-confirm">🏷️ da confermare</span>}
+      {isUrg(c) && <span className="cs-badge cs-urg">🚨 {c.urgenza_motivo || 'urgente'}</span>}
+      {(c.flags ?? []).filter((f) => f !== 'urgente' && FLAG_LABEL[f]).map((f) => (
+        <span key={f} className="cs-badge cs-flag">{FLAG_LABEL[f]}</span>
+      ))}
+    </div>
+  );
+}
+
 export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [session, setSession] = useState<'loading' | 'in' | 'out'>('loading');
   const [ident, setIdentS] = useState(() => localStorage.getItem('amimi_cs_ident') || '');
   const setIdent = (k: string) => { setIdentS(k); localStorage.setItem('amimi_cs_ident', k); };
   const [view, setView] = useState<'coda' | 'thread' | 'rumore'>('coda');
   const [filtro, setFiltro] = useState<'dafare' | 'fatte' | 'tutte'>('dafare');
+  const [codaView, setCodaView] = useState<'tema' | 'tempo'>('tempo');
+  const [savingCat, setSavingCat] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [convs, setConvs] = useState<CsConversation[] | null>(null);
   const [rumore, setRumore] = useState<CsConversation[] | null>(null);
   const [current, setCurrent] = useState<CsConversation | null>(null);
@@ -95,6 +121,18 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const openRumore = async () => {
     setView('rumore'); setErr('');
     if (!rumore) { try { setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); } }
+  };
+  // correzione manuale categoria (scrive via cs-api, JWT-gated); aggiorna subito la UI
+  const applyCat = async (categoria: string | null) => {
+    if (!current) return;
+    setSavingCat(true); setErr('');
+    try {
+      await setCategoria(current.id, categoria, ident);
+      const patch = { categoria, categoria_source: categoria ? 'manuale' : 'ai_low' } as Partial<CsConversation>;
+      setCurrent({ ...current, ...patch } as CsConversation);
+      setConvs((prev) => prev ? prev.map((x) => x.id === current.id ? { ...x, ...patch } as CsConversation : x) : prev);
+    } catch (e) { setErr((e as Error).message); }
+    setSavingCat(false);
   };
 
   // ---- login gate ----
@@ -160,6 +198,17 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
             <span className="cs-badge cs-state">{c.stato === 'fatto' ? '✓ fatta' : 'da fare'}</span>
           </div>
+          {c.canale !== 'rumore' && <Badges c={c} />}
+          {c.canale !== 'rumore' && (
+            <div className="cs-catedit">
+              <label>Categoria</label>
+              <select value={c.categoria ?? ''} disabled={savingCat} onChange={(e) => applyCat(e.target.value || null)}>
+                <option value="">— da confermare —</option>
+                {CS_CATEGORIES.map((k) => <option key={k.label} value={k.label}>{k.emoji} {k.label}</option>)}
+              </select>
+              {savingCat && <span className="muted" style={{ fontSize: 12 }}>salvo…</span>}
+            </div>
+          )}
         </div>
         {c.canale === 'chat_notifica' && (
           <div className="cs-banner">💬 Conversazione della chat del sito (Shopify Inbox): il tool la legge dalle email di notifica. Si risponde dentro Shopify Inbox.
@@ -205,10 +254,34 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   // ---- coda ----
   const passa = (c: CsConversation) => filtro === 'tutte' ? true : filtro === 'fatte' ? c.stato === 'fatto' : c.stato === 'da_fare';
-  const list = (convs ?? []).filter(passa);
+  const list = (convs ?? []).filter(passa).slice().sort(urgSort);   // urgenti in cima (design 6.4)
   const daf = (convs ?? []).filter((c) => c.stato === 'da_fare').length;
   const fatte = (convs ?? []).filter((c) => c.stato === 'fatto').length;
+  const urg = list.filter(isUrg).length;
   const rumCount = rumore?.length;
+
+  const card = (c: CsConversation) => (
+    <button key={c.id} className={'cs-card' + (isUrg(c) ? ' cs-cardurg' : '')} onClick={() => openThread(c)} type="button">
+      <div className="cs-ctop">
+        <span className="cs-cn">{nmeOf(c)}</span>
+        <span className="cs-cora">{fmtWhen(c.last_msg_at)}</span>
+      </div>
+      <div className="cs-snip">{c.snippet || c.subject || ''}</div>
+      <Badges c={c} />
+      <div className="cs-badges">
+        <span className="cs-badge cs-can">{CANALI[c.canale]}</span>
+        {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">solo lettura</span>}
+        {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
+      </div>
+    </button>
+  );
+
+  // PER TEMA: le 13 categorie nell'ordine del design + "Da confermare" (ai_low/senza categoria)
+  const temaGroups = [
+    ...CS_CATEGORIES.map((k) => ({ key: k.label, label: k.label, emoji: k.emoji, items: list.filter((c) => c.categoria === k.label) })),
+    { key: '__daconf__', label: 'Da confermare', emoji: '🏷️', items: list.filter((c) => !c.categoria) },
+  ].filter((g) => g.items.length > 0);
+  const toggleCat = (key: string) => setCollapsed((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
 
   return (
     <div className="screen">
@@ -220,6 +293,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
       <div className="cs-stats">
         <span className="cs-stat"><b>{daf}</b> da fare</span>
+        {urg > 0 && <span className="cs-stat cs-staturg"><b>{urg}</b> 🚨 urgenti</span>}
         <span className="cs-stat"><b>{fatte}</b> fatte</span>
         <button onClick={doRefresh} disabled={refreshing} type="button" style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--line)', borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, color: 'var(--rose)', cursor: 'pointer', opacity: refreshing ? 0.6 : 1 }}>{refreshing ? 'Aggiorno…' : '↻ Aggiorna'}</button>
       </div>
@@ -227,30 +301,37 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         {([['dafare', 'Da fare'], ['fatte', 'Fatte'], ['tutte', 'Tutte']] as const).map(([k, l]) => (
           <button key={k} className={'cs-chip' + (filtro === k ? ' on' : '')} onClick={() => setFiltro(k)} type="button">{l}</button>
         ))}
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
+          {([['tempo', '🕗 Tempo'], ['tema', '🏷️ Tema']] as const).map(([k, l]) => (
+            <button key={k} className={'cs-chip' + (codaView === k ? ' on' : '')} onClick={() => setCodaView(k)} type="button">{l}</button>
+          ))}
+        </span>
       </div>
       {err && <div className="err">{err}</div>}
       {convs === null ? <div className="muted center" style={{ padding: 24 }}>Carico la coda…</div> :
         list.length === 0 ? <div className="muted center" style={{ padding: 24 }}>Niente qui: coda pulita ✨</div> :
+        codaView === 'tempo' ?
           BUCKETS.map(([bk, label]) => {
             const g = list.filter((c) => bucketOf(c.last_msg_at) === bk);
             if (!g.length) return null;
             return (
               <div key={bk}>
                 <div className="cs-sect">{label} <span className="cs-cnt">{g.length}</span></div>
-                {g.map((c) => (
-                  <button key={c.id} className="cs-card" onClick={() => openThread(c)} type="button">
-                    <div className="cs-ctop">
-                      <span className="cs-cn">{nmeOf(c)}</span>
-                      <span className="cs-cora">{fmtWhen(c.last_msg_at)}</span>
-                    </div>
-                    <div className="cs-snip">{c.snippet || c.subject || ''}</div>
-                    <div className="cs-badges">
-                      <span className="cs-badge cs-can">{CANALI[c.canale]}</span>
-                      {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">solo lettura</span>}
-                      {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
-                    </div>
-                  </button>
-                ))}
+                {g.map(card)}
+              </div>
+            );
+          })
+        :
+          temaGroups.map((grp) => {
+            const isColl = collapsed.has(grp.key);
+            const nurg = grp.items.filter(isUrg).length;
+            return (
+              <div key={grp.key}>
+                <button className="cs-sect cs-secttoggle" type="button" onClick={() => toggleCat(grp.key)}>
+                  <span>{grp.emoji} {grp.label}</span>
+                  <span className="cs-cnt">{nurg > 0 ? `${nurg}🚨 · ` : ''}{grp.items.length} {isColl ? '▸' : '▾'}</span>
+                </button>
+                {!isColl && grp.items.map(card)}
               </div>
             );
           })}
