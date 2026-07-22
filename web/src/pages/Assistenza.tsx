@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchConversations, fetchRumore, fetchMessages } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale } from '../lib/csApi';
 
 // Sezione Assistenza clienti — FASE 1: SOLA LETTURA dietro login Supabase Auth.
@@ -46,6 +46,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [email, setEmail] = useState('');
   const [pwd, setPwd] = useState('');
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     csClient.auth.getSession().then(({ data }) => setSession(data.session ? 'in' : 'out'));
@@ -58,6 +59,14 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     setErr(''); setConvs(null);
     fetchConversations().then(setConvs).catch((e: Error) => setErr(e.message));
   }, [session, ident]);
+
+  // "Aggiorna": forza un giro di lettura posta (come il cron) + ricarica la coda, per non aspettare i 2'.
+  const doRefresh = async () => {
+    setRefreshing(true); setErr('');
+    await csPollNow();
+    try { setConvs(await fetchConversations()); if (rumore) setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); }
+    setRefreshing(false);
+  };
 
   const doLogin = async () => {
     setBusy(true); setErr('');
@@ -212,6 +221,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       <div className="cs-stats">
         <span className="cs-stat"><b>{daf}</b> da fare</span>
         <span className="cs-stat"><b>{fatte}</b> fatte</span>
+        <button onClick={doRefresh} disabled={refreshing} type="button" style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--line)', borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, color: 'var(--rose)', cursor: 'pointer', opacity: refreshing ? 0.6 : 1 }}>{refreshing ? 'Aggiorno…' : '↻ Aggiorna'}</button>
       </div>
       <div className="cs-chips">
         {([['dafare', 'Da fare'], ['fatte', 'Fatte'], ['tutte', 'Tutte']] as const).map(([k, l]) => (

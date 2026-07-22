@@ -67,3 +67,18 @@ export async function fetchMessages(conversationId: string): Promise<CsMessage[]
   if (error) throw new Error(error.message);
   return (data ?? []) as CsMessage[];
 }
+
+const CS_SYNC_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/cs-sync';
+
+/** Forza subito un giro di lettura della posta (stesso ingest del cron, PIN-gated, idempotente):
+ *  cosi' il refresh della coda mostra le mail arrivate negli ultimi minuti senza aspettare il cron.
+ *  Non lancia: un errore di rete non deve bloccare il reload (la coda si ricarica comunque). */
+export async function csPollNow(): Promise<void> {
+  try {
+    await fetch(CS_SYNC_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pin: 'x', action: 'poll' }),
+    });
+  } catch { /* ignora */ }
+}
