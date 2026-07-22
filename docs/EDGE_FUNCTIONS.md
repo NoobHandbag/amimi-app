@@ -54,17 +54,24 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 - **Dal 06-07:** interroga `v_ce_totale` live (non piu' la copia storica).
 - **APERTO (audit A1):** `ask_select` non ha allowlist di viste e ask-data e' pubblica: via di esfiltrazione segreti finche' l'owner non ruota i segreti e si chiude la falla.
 
-## assistant (v6) - Assistente AI in-app (FLOW 6 v2, sola lettura, gated)
+## assistant (v7) - Assistente AI in-app (FLOW 6 v2, sola lettura, gated)
 
 - **Scopo:** "Chiedi ad Amimì", pannello slide-in presente su OGNI schermata della PWA. Evoluzione di ask-data: risponde in italiano sui dati LIVE con testo + grafico + card prodotti con foto, e ricorda la conversazione. Design: `Cowork12/projects/Assistente_AI_2026-07/DESIGN_Assistente_AI_Amimi_V1.md` (Fase 1 di 3).
 - **Pipeline (2 passi Gemini):** (1) `gemini-flash-lite-latest` traduce domanda + storia breve in UNA SELECT (schema-dal-reale CORRETTO: `categoria` = `BAG`/`ACCESSORY`/null, non piu' lo stale `ACCESSORI`/`PELLE`/`TESSUTO` di ask-data; glossario "borse tessili" = Nina/Agata/Annie via `item ILIKE`, netto = lordo/1,22); (2) `ask_select` esegue (SELECT-only, cap 200); (3) `gemini-flash-latest` in **JSON mode** (`responseMimeType: application/json`) scrive la prosa e MAPPA le colonne per grafico/prodotti. **I numeri arrivano SOLO da `ask_select`:** l'edge materializza barre e card DALLE righe reali (Gemini sceglie solo tipo/colonne), mai cifre inventate (Regola 1). Le card sono arricchite con foto/prezzo/giacenza reali da `v_inventory`.
 - **Robustezza passo risposta (v6):** Flash a volte torna vuoto (il suo "thinking" esaurisce il budget token) e la risposta degradava a un generico "Ho trovato N risultati" senza grafico/card. Fix: se Flash torna vuoto/illeggibile, **retry automatico su `gemini-flash-lite-latest`** (non-thinking) prima del fallback generico. Stress test 8/9 prosa vera (il residuo era rate-limit free-tier sotto burst, non a carico reale). I numeri restano solo dalle righe.
+- **How-to (Fase 2, v7):** il passo 1 (flash-lite) ora ROUTA: se la domanda chiede COME USARE l'app risponde con la sola parola `HOWTO`, altrimenti produce la SELECT. Sul ramo HOWTO l'assistente risponde dal **corpus how-to in `app_guides` (id=1)** — FAQ ancorate al codice reale dell'app (build via workflow `howto-corpus`, 25 sezioni, editabile senza redeploy via `corpus-load`) — e se la guida non copre la domanda indica la sezione dell'app, MAI passaggi inventati (Regola 1, design 4.4). La guardia read-only (imperativi azzera/cancella/...) e' esclusa per le frasi how-to ("come/dove/cosa vuol dire...") cosi' "come cancello un ordine?" arriva alla how-to invece del messaggio sola-lettura. Verificato live: "come registro un arrivo?" -> Ordini (non Registra, come diceva erroneamente il mockup).
 - **Auth + gate:** `verify_jwt=false` + PIN (`x`), come ask-data. Gated da `app_config.ai_enabled` (default FALSE): a flag off risponde `{gated:true, testo:"L'assistente non e' attivo."}`. Key Gemini in `app_flags.gemini_api_key` (server-only).
 - **Sola lettura:** nessuna scrittura, `ask_select` unica porta dati. Le domande che chiedono di MODIFICARE (azzera/cancella/modifica/registra...) ricevono la spiegazione "sono in sola lettura", non un no-op.
 - **Input:** `{domanda, storia:[{ruolo,testo}], pin}`. **Output:** `{ok, gated?, testo, grafico?{tipo,titolo,etichette[],valori[]}, prodotti?[{codice,nome,variante,image_url,prezzo,disponibili,giacenza,stato,venduto_tot,valore,valore_label}], sql, righe}`.
 - **Frontend:** componente globale `web/src/components/AssistantPanel.tsx` (FAB "Chiedi ad Amimì" + bottom-sheet, grafici inline SVG/CSS senza dipendenze, card con foto, blocco "fonti" con SQL e righe). Si auto-nasconde se `ai_enabled=false`, letto via `v_ops_flags.ai_enabled` (migr 0057). Il vecchio pannello inline "Chiedi ai dati" del Cruscotto (`Report.tsx`) e' stato rimosso perche' superato.
 - **GO-LIVE (owner):** `app_config.ai_enabled='true'`.
 - **Nota audit A1:** condivide con ask-data la via `ask_select` senza allowlist di viste -> stesso caveat esfiltrazione segreti finche' i segreti non sono ruotati/chiusi.
+
+## corpus-load (v1) - loader della guida how-to (admin)
+
+- **Scopo:** caricare/aggiornare il corpus how-to dell'assistente in `app_guides` (id=1). Esiste per POSTare da file via curl (il corpus e' ~21 KB) invece di incorporarlo/ribatterlo nel sorgente.
+- **Auth:** PIN (`x`), `verify_jwt=false`. Scrive SOLO `app_guides` (knowledge base, non dati di business) con service-role; upsert `{content}`. Input `{pin, content}` -> `{ok, len}`.
+- **Uso:** `curl -X POST .../corpus-load -d @payload.json` con `{pin:'x', content:<markdown>}`. Per aggiornare la guida basta ri-postare (nessun redeploy dell'assistant).
 
 ## mcp (v4) - server MCP per Claude
 

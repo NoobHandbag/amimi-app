@@ -38,7 +38,13 @@ GLOSSARY (business):
 - prices are VAT-inclusive: netto = lordo/1.22 (IVA 22%). Money is EUR.
 - units sold per product = shopify_sold + qromo_sold + b2b_venduto (from v_inventory; no need to re-aggregate the sales tables).
 - "disponibili da vendere" = disponibili_da_vendere; "giacenza"/"a stock" = giacenza_attuale; "esaurito"/"stock zero" = disponibili_da_vendere <= 0.
-Rules: current year is 2026. Use ILIKE for free-text names. When the question is about specific products, ALWAYS include the "codice" column so the app can show photos. One SELECT only, no semicolons, no comments, no markdown. Return ONLY the SQL.`;
+Rules: current year is 2026. Use ILIKE for free-text names. When the question is about specific products, ALWAYS include the "codice" column so the app can show photos. One SELECT only, no semicolons, no comments, no markdown.
+ROUTING: if the question asks HOW TO USE the app (operational instructions: "come registro/aggiungo/faccio/cambio X", "dove trovo X", "come funziona X", "a cosa serve X"), do NOT produce SQL: reply with the single word HOWTO. Otherwise (data/numbers: sales, stock, expenses, P&L, ...) produce ONE SELECT. Return ONLY the SQL, or the single word HOWTO.`;
+
+// How-to knowledge base (FLOW 6 v2 Fase 2) lives in the DB table `app_guides` (id=1), curated from the
+// REAL app code (workflow howto-corpus) and editable without a redeploy. The assistant answers "how do I
+// use the app" questions grounded ONLY in this corpus; if a question is not covered it points to the
+// likeliest app section instead of inventing UI steps (design 4.4, Regola 1). Loaded via the corpus-load edge.
 
 function cleanSql(t: string): string {
   let s = (t || '').trim();
@@ -93,9 +99,13 @@ Deno.serve(async (req) => {
   const question = String(body.domanda ?? body.question ?? '').trim();
   if (!question) return json({ error: 'domanda mancante' }, 422);
 
-  // Read-only: if the user asks to CHANGE something, say so plainly instead of running a no-op query.
+  // How-to phrasing ("come/dove/a cosa serve/cosa vuol dire...") is a question ABOUT the app, not a command:
+  // it must reach the how-to path, so it is excluded from the read-only guard below.
+  const isHowtoish = /\b(come|dove|a cosa serve|cosa (vuol dire|significa)|come si|come funziona|si pu[oò]|posso|spiegami|mi spieghi)\b/i.test(question);
+
+  // Read-only: if the user COMMANDS a change (imperative), say so plainly instead of running a no-op query.
   // Narrow, high-precision verb list (destructive imperatives) to avoid flagging legit read questions like "vendite".
-  if (/\b(azzer|cancell|elimin|svuot|resett|sovrascriv|rimuov|modific|aggiorn|imposta|corregg|registr|inserisc)\w*/i.test(question)) {
+  if (!isHowtoish && /\b(azzer|cancell|elimin|svuot|resett|sovrascriv|rimuov|modific|aggiorn|imposta|corregg|registr|inserisc)\w*/i.test(question)) {
     return json({ ok: true, testo: 'Sono in sola lettura: ti mostro e analizzo i dati, ma non modifico niente nell’app (conta, spese, ordini, stock). Per registrare o cambiare qualcosa usa le funzioni Registra / Inserisci dell’app.' });
   }
 
@@ -103,11 +113,33 @@ Deno.serve(async (req) => {
   const key = flag?.value;
   if (!key) return json({ ok: true, testo: 'Assistente non configurato (manca la chiave Gemini).', needs_key: true });
 
-  // 1) NL -> SQL (flash-lite)
+  // 1) route: NL -> SQL, or the sentinel HOWTO (flash-lite)
   let sql = '';
   try {
     sql = cleanSql(await gemini(MODEL_SQL, `${SCHEMA}\n${historyText(body.storia)}\nDomanda: ${question}\nSQL:`, key, 400));
   } catch (e) { return json({ error: (e as Error).message }, 502); }
+
+  // 1b) HOW-TO route: answer from the how-to corpus (no SQL, no data). Grounded only in the corpus;
+  // if not covered -> honest pointer to the app section, never invented UI steps (design 4.4, Regola 1).
+  if (/^howto\b/i.test(sql)) {
+    const { data: g } = await sb.from('app_guides').select('content').eq('id', 1).single();
+    const corpus = String(g?.content ?? '');
+    if (!corpus) return json({ ok: true, howto: true, testo: 'La guida non è ancora caricata. Dai un’occhiata alle sezioni Registra e Ordini della Home, oppure chiedimi qualcosa sui tuoi dati.' });
+    const htPrompt = `Sei l'assistente dell'app gestionale "Amimì" (PWA per un e-commerce di borse artigianali). Rispondi alla domanda su COME USARE l'app usando SOLO le informazioni della GUIDA qui sotto. NON inventare schermate, bottoni o passaggi che non sono nella guida. Se la guida non copre la domanda, dillo con onestà e indica la sezione dell'app più probabile dove guardare (Home, Registra, Ordini, Magazzino, Tabelle). Rispondi in italiano, conciso, con passi numerati quando utile.
+
+GUIDA:
+${corpus}
+${historyText(body.storia)}
+Domanda: ${question}`;
+    let testo = '';
+    for (const [model, tok] of [[MODEL_ANSWER, 1200] as const, [MODEL_SQL, 1000] as const]) {
+      try { const t = (await gemini(model, htPrompt, key, tok)).trim(); if (t) { testo = t; break; } }
+      catch (e) { console.warn('assistant: howto pass failed on ' + model + ': ' + (e as Error).message.slice(0, 150)); }
+    }
+    if (!testo) testo = 'Non sono sicuro di come si faccia esattamente. Dai un’occhiata alle sezioni Registra e Ordini della Home, oppure chiedimi qualcosa sui tuoi dati.';
+    return json({ ok: true, howto: true, testo });
+  }
+
   if (!/^\s*select\b/i.test(sql)) {
     return json({ ok: true, testo: 'Non sono riuscito a trasformare la domanda in una richiesta sui dati. Prova a chiedere di vendite, stock, riordini o conto economico.', sql, righe: [] });
   }
