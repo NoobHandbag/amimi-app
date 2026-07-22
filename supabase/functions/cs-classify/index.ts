@@ -147,7 +147,7 @@ async function classifyText(text: string, key: string): Promise<AiOut> {
 }
 
 // --- Regole deterministiche di urgenza (design 6.4): certe, sul testo/metadati, non AI ---
-const RE_DISPUTA = /chargeback|contestazion|\bdisputa\b|rimborso non ricevut|non ho (mai )?ricevuto il rimbors|mi rivolg[oò] alla banca|segnal(o|er[oò]) alla banca|contest(o|azione) (il )?pagament|apert[oa] una (contestazione|disputa)|pratica paypal/i;
+const RE_DISPUTA = /chargeback|contestazion|\bdisputa\b|rimborso non (ancora )?ricevut|non ho (mai |ancora |piu' )?ricevuto (il |alcun )?rimbors|mi rivolg[oò] alla banca|segnal(o|er[oò]) alla banca|contest(o|azione) (il )?pagament|apert[oa] una (contestazione|disputa)|pratica paypal/i;
 const RE_INLOCO = /sono (qui|qua) (fuori|davanti|sotto)|sono al portone|sono davanti (al|allo) (negozio|showroom)|sono in negozio|vi aspetto (qui|fuori|sotto)|sono sotto (il |al )?(negozio|showroom|casa)/i;
 
 type RuleUrg = { urgente: boolean; motivo: string; flags: string[] };
