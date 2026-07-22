@@ -25,6 +25,7 @@ export type CsConversation = {
   urgente: boolean | null;
   urgenza_motivo: string | null;
   flags: string[] | null;               // sollecito | reclamo_assistenza | chiusura
+  summary: string | null;               // riassunto+storia 2 righe (Fase 3, cs-assist)
   parse_failed: boolean;
   created_at: string;
 };
@@ -59,7 +60,7 @@ export type CsMessage = {
   form_fields: Record<string, string> | null;
 };
 
-const CONV_COLS = 'id,gmail_thread_id,canale,customer_email,customer_name,stato,stato_by,last_msg_at,last_direction,subject,snippet,order_number,lingua,categoria,categoria_source,categoria_confidence,urgente,urgenza_motivo,flags,parse_failed,created_at';
+const CONV_COLS = 'id,gmail_thread_id,canale,customer_email,customer_name,stato,stato_by,last_msg_at,last_direction,subject,snippet,order_number,lingua,categoria,categoria_source,categoria_confidence,urgente,urgenza_motivo,flags,summary,parse_failed,created_at';
 
 /** Coda cliente: tutto tranne il rumore, piu' recenti in cima. */
 export async function fetchConversations(): Promise<CsConversation[]> {
@@ -123,4 +124,25 @@ export async function setCategoria(conversationId: string, categoria: string | n
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) throw new Error(j.error || ('Errore ' + r.status));
+}
+
+const CS_ASSIST_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/cs-assist';
+
+export type Bozza = { draft: string; fonti: string[]; da_verificare: number };
+
+/** Genera una BOZZA di risposta con dati reali (Fase 3). JWT-gated (edge cs-assist): passa l'access token
+ *  dell'utente loggato. Il recupero dati (giacenza/ordine/tracking) e' deterministico nell'edge; Gemini scrive
+ *  usando SOLO quel blocco, con [DA VERIFICARE] dove un dato manca. NON invia (Fase 4). */
+export async function generateDraft(conversationId: string, chi: string): Promise<Bozza> {
+  const { data } = await csClient.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sessione scaduta: rientra.');
+  const r = await fetch(CS_ASSIST_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+    body: JSON.stringify({ action: 'draft', conversation_id: conversationId, chi }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(j.error || (j.needs_key ? 'Gemini non configurato' : 'Errore ' + r.status));
+  return { draft: String(j.draft || ''), fonti: (j.fonti || []) as string[], da_verificare: Number(j.da_verificare || 0) };
 }

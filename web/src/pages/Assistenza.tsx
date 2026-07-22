@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, catEmoji, CS_CATEGORIES } from '../lib/csApi';
-import type { CsConversation, CsMessage, Canale } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, generateDraft, catEmoji, CS_CATEGORIES } from '../lib/csApi';
+import type { CsConversation, CsMessage, Canale, Bozza } from '../lib/csApi';
 
 // Sezione Assistenza clienti — FASE 1: SOLA LETTURA dietro login Supabase Auth.
 // Login = solo cancello (@amimi.it); l'identita' che firma (Benny/Ginni) e' un selettore in-tool,
@@ -63,6 +63,10 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [codaView, setCodaView] = useState<'tema' | 'tempo'>('tempo');
   const [savingCat, setSavingCat] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [bozza, setBozza] = useState<Bozza | null>(null);
+  const [bozzaText, setBozzaText] = useState('');
+  const [genBozza, setGenBozza] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [convs, setConvs] = useState<CsConversation[] | null>(null);
   const [rumore, setRumore] = useState<CsConversation[] | null>(null);
   const [current, setCurrent] = useState<CsConversation | null>(null);
@@ -116,8 +120,18 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const logout = async () => { setMenu(false); await csClient.auth.signOut(); setConvs(null); setCurrent(null); setView('coda'); };
   const openThread = async (c: CsConversation) => {
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
+    setBozza(null); setBozzaText(''); setCopied(false);
     try { setMsgs(await fetchMessages(c.id)); } catch (e) { setErr((e as Error).message); }
   };
+  // Fase 3: genera una bozza con dati reali (edge cs-assist, JWT). Recupero dati deterministico + Gemini.
+  const doGenBozza = async () => {
+    if (!current) return;
+    setGenBozza(true); setErr(''); setCopied(false);
+    try { const b = await generateDraft(current.id, ident); setBozza(b); setBozzaText(b.draft); }
+    catch (e) { setErr((e as Error).message); }
+    setGenBozza(false);
+  };
+  const copiaBozza = async () => { try { await navigator.clipboard.writeText(bozzaText); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* no clipboard */ } };
   const openRumore = async () => {
     setView('rumore'); setErr('');
     if (!rumore) { try { setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); } }
@@ -210,6 +224,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             </div>
           )}
         </div>
+        {c.summary && (
+          <div className="cs-summary"><span className="cs-summary-h">📝 Riassunto e storia</span>{c.summary}</div>
+        )}
         {c.canale === 'chat_notifica' && (
           <div className="cs-banner">💬 Conversazione della chat del sito (Shopify Inbox): il tool la legge dalle email di notifica. Si risponde dentro Shopify Inbox.
             <div style={{ marginTop: 8 }}><a className="cs-btn cs-inbox" href={SHOPIFY_INBOX} target="_blank" rel="noreferrer">Apri Shopify Inbox ↗</a></div>
@@ -227,7 +244,34 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 <div className="cs-body">{m.body_text || m.form_fields ? (m.body_text || '') : '(vuoto)'}</div>
               </div>
             ))}
-        <div className="cs-note">Fase 1: sola lettura. Riassunto AI, bozza e invito arrivano nelle fasi successive.</div>
+        {c.canale !== 'chat_notifica' && c.canale !== 'rumore' && (
+          <div className="cs-draftbox">
+            {!bozza ? (
+              <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doGenBozza} disabled={genBozza} type="button">
+                {genBozza ? 'Genero la bozza…' : '✍️ Genera bozza con i dati reali'}
+              </button>
+            ) : (
+              <>
+                <div className="cs-draft-h">
+                  <span>✍️ Bozza (ritoccala e copiala)</span>
+                  {bozza.da_verificare > 0 && <span className="cs-badge cs-warn">{bozza.da_verificare} da verificare</span>}
+                </div>
+                <textarea className="cs-draft-ta" value={bozzaText} onChange={(e) => setBozzaText(e.target.value)} rows={8} />
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <button className="cs-btn cs-primary" onClick={copiaBozza} type="button">{copied ? '✓ Copiata' : '📋 Copia'}</button>
+                  <button className="cs-btn" style={{ border: '1px solid var(--line)', color: 'var(--muted)' }} onClick={doGenBozza} disabled={genBozza} type="button">{genBozza ? '…' : '↻ Rigenera'}</button>
+                </div>
+                {bozza.fonti.length > 0 && (
+                  <div className="cs-fonti">
+                    <div className="cs-fonti-h">Fonti (dati recuperati dal gestionale)</div>
+                    {bozza.fonti.map((f, i) => <div key={i} className="cs-fonti-row">• {f}</div>)}
+                  </div>
+                )}
+              </>
+            )}
+            <div className="cs-note">La bozza usa SOLO i dati reali; dove manca un dato scrive [DA VERIFICARE]. Ritoccala e copiala nel thread Gmail. L&#8217;invio dal tool arriva in Fase 4.</div>
+          </div>
+        )}
       </div>
     );
   }
