@@ -4,6 +4,7 @@ import NumberStepper from './NumberStepper';
 import { writeApi, oggi } from '../lib/api';
 import type { Product } from '../lib/api';
 import { toast } from '../lib/toast';
+import Icon from './Icon';
 
 const PAGAMENTI = ['Contanti', 'PayPal', 'Bonifico', 'Revolut', 'Altro'];
 
@@ -48,10 +49,11 @@ export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
 
   return (
     <div className="form">
-      <div className="seg">
-        <button className={tipo === 'gift' ? 'on' : ''} onClick={() => setTipo('gift')}>🎁 Regalo</button>
-        <button className={tipo === 'vendita' ? 'on' : ''} onClick={() => setTipo('vendita')}>💶 Vendita manuale</button>
+      <div className="ds-seg full">
+        <button type="button" className={tipo === 'gift' ? 'on' : ''} onClick={() => setTipo('gift')}><Icon name="gift" size={16} /> Regalo</button>
+        <button type="button" className={tipo === 'vendita' ? 'on' : ''} onClick={() => setTipo('vendita')}><Icon name="euro" size={16} /> Vendita manuale</button>
       </div>
+      <p className="ds-modehint">{isVendita ? 'Vendita offline fuori Qromo: scala l’inventario, con prezzo e metodo di pagamento.' : 'Regalo o campione: scala l’inventario. Se sono entrati dei soldi puoi annotarli sotto (restano fuori dal fatturato ufficiale).'}</p>
 
       <label className="fl">Prodotto</label>
       <ProductPicker selected={prod} onPick={(p) => setProd(p)} />
@@ -86,7 +88,7 @@ export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
           <input className="txt" value={nome} onChange={(e) => setNome(e.target.value)} placeholder={isVendita ? 'nome cliente' : 'nome destinatario'} />
           <label className="fl">Nota</label>
           <input className="txt" value={nota} onChange={(e) => setNota(e.target.value)} placeholder={isVendita ? 'es. vendita evento' : 'es. campione stampa'} />
-          <button className="submit" disabled={busy} onClick={submit}>{busy ? 'Salvo…' : isVendita ? 'Registra vendita' : 'Registra regalo'}</button>
+          <button className="ds-btn primary full" style={{ marginTop: 18 }} disabled={busy} onClick={submit}>{busy ? 'Salvo…' : isVendita ? 'Registra vendita' : 'Registra regalo'}</button>
         </>
       )}
     </div>

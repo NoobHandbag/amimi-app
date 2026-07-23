@@ -30,7 +30,7 @@ Vincoli: solo frontend/design + la piccola aggiunta backend §6 (feed change_log
 | Home | FATTO |
 | Cruscotto | FATTO |
 | Magazzino | FATTO (tab Disponibilità rimosso; lenti; sync_now ri-esposto) |
-| Registra | da fare |
+| Registra | FATTO (ProductPicker condiviso: giacenza + filtri linea; toggle GiftForm) |
 | Prodotti & prezzi | da fare |
 | Ordini in arrivo | da fare |
 | Spese | da fare |
