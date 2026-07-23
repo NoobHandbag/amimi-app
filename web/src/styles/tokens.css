@@ -1,0 +1,120 @@
+/* ============================================================================
+   Amimì su GEEIQ — Design tokens (single source of truth)
+   Redesign 2026-07-23. Vedi _CLAUDE_CODE_INBOX/_redesign_amimi_app/PIANO_BUILD §2.
+   Regola: usa SEMPRE i token, mai hex hardcoded nei componenti nuovi/toccati.
+
+   Ruoli colore (i "sei principi"): un accento per l'azione, esito verde/rosso.
+   - Viola  (--interactive / --info) = interazione: bottoni, tab attivi, focus, "nuovo".
+   - Coral  (--accent / --negative)  = accento/allarme + esito negativo/reso.
+   - Emerald(--positive)             = esito positivo/spedito.
+   - Orange (--warning)              = in lavorazione / attesa.
+   Tertiary (Emerald/Cerulean/Azure) SOLO nei grafici, salvo Emerald=positivo.
+   ============================================================================ */
+:root {
+  /* ---- superfici / testo ---- */
+  --bg: #faf7f2;
+  --surface: #ffffff;
+  --surface-alt: #f3eee5;
+  --ink: #2e204d;
+  --ink-muted: #6b6580;
+  --border: #ece6db;
+  --border-strong: #e3dccf;
+
+  /* ---- interazione (viola) ---- */
+  --interactive: #7c68fb;
+  --interactive-600: #5b35f2;
+  --interactive-700: #4c23de;
+  --interactive-tint: #d5d5ff;
+
+  /* ---- accento / allarme (coral) ---- */
+  --accent-coral: #fc4f3f;
+  --accent-coral-700: #c51f10;
+  --accent-coral-tint: #ffcbc6;
+
+  /* ---- esito ---- */
+  --positive: #00bd9d;
+  --positive-700: #028371;
+  --positive-tint: #d8f5ec;
+  --negative: #fc4f3f;
+  --negative-700: #c51f10;
+  --negative-tint: #ffcbc6;
+  --warning: #ff8614;
+  --warning-700: #c74d07;
+  --warning-tint: #ffdea8;
+  --info: #7c68fb;
+  --info-700: #4c23de;
+  --info-tint: #d5d5ff;
+
+  /* ---- secondary (accenti card + gradienti) ---- */
+  --sec-lavender: #b380e5;
+  --sec-lavender-tint: #e9dbf9;
+  --sec-lavender-700: #7b3ab6;
+  --sec-cabaret: #e6476f;
+  --sec-cabaret-tint: #fad1d9;
+  --sec-cabaret-700: #b11f4e;
+  --sec-flush: #ff8614;
+  --sec-azure: #4678ec;
+  --sec-cerulean: #20acd8;
+
+  /* ---- sequenza grafici (categorico, primario prima) ---- */
+  --chart-1: #7c68fb;
+  --chart-2: #b380e5;
+  --chart-3: #00bd9d;
+  --chart-4: #ff8614;
+  --chart-5: #e6476f;
+  --chart-6: #4678ec;
+  --chart-7: #20acd8;
+  --chart-current: #fc4f3f; /* barra "corrente" = coral */
+
+  /* ---- gradienti decorativi ---- */
+  --grad-hero: linear-gradient(135deg, #7c68fb 0%, #b380e5 100%);
+  --grad-brand: linear-gradient(170deg, #2e204d 0%, #3a2668 45%, #4c23de 100%);
+  --grad-action: linear-gradient(135deg, #5b35f2 0%, #7c68fb 100%);
+  --grad-ai: linear-gradient(135deg, #efe9ff 0%, #f6efff 100%);
+
+  /* ---- raggi / ombre ---- */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --e1: 0 1px 2px rgba(46,32,77,.05), 0 12px 30px rgba(46,32,77,.07);
+  --e2: 0 10px 24px rgba(124,104,251,.26);
+
+  /* ---- tipografia ---- */
+  --font-sans: "Roboto", -apple-system, "Segoe UI", Arial, sans-serif;
+  --font: var(--font-sans);
+  --font-mono: ui-monospace, "SF Mono", Consolas, monospace;
+
+  /* ==========================================================================
+     BRIDGE — nomi legaci usati in tutta la vecchia index.css e nei componenti.
+     Ripuntati ai token GEEIQ cosi' l'app adotta subito la nuova palette; la
+     rifinitura semantica precisa avviene schermata per schermata.
+       rose  = colore primario/azione   -> viola (interactive)
+       accent= emphasis/attenzione calda -> arancio (warning)   [NB: il coral
+               della design system e' esposto come --negative / --accent-coral]
+     ========================================================================== */
+  --rose: var(--interactive);
+  --rose-deep: var(--interactive-700);
+  --dark: var(--ink);
+  --accent: var(--warning);
+  --card: var(--surface);
+  --line: var(--border);
+  --muted: var(--ink-muted);
+  --mut: var(--ink-muted);
+  --green: var(--positive);
+  --red: var(--negative);
+}
+
+/* Base tipografia + numeri tabellari (dati) */
+html {
+  font-family: var(--font-sans);
+}
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+/* opt-in per numeri allineati dove servono cifre pari */
+.num,
+.tabnum {
+  font-variant-numeric: tabular-nums;
+}

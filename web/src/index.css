@@ -1,9 +1,8 @@
 :root {
-  --rose: #8B5E6B; --rose-deep: #6E3F4D; --dark: #2D2226; --accent: #9C5F33;
-  --bg: #faf8f7; --card: #ffffff; --line: #ece7e8; --muted: #6e625f;
-  --green: #2E8049; --red: #b8472f;
-  font: 16px/1.5 system-ui, 'Segoe UI', Roboto, sans-serif;
-  color: var(--dark); background: var(--bg); color-scheme: light;
+  /* Palette + design token: vedi styles/tokens.css (Amimì su GEEIQ).
+     I nomi legaci (--rose/--accent/--green/...) sono bridge-ati la'. */
+  font: 16px/1.5 var(--font-sans);
+  color: var(--ink); background: var(--bg); color-scheme: light;
   -webkit-font-smoothing: antialiased;
 }
 * { box-sizing: border-box; }
