@@ -84,7 +84,7 @@ function DKpi({ id, open, setOpen, value, label, cur, prev, goodUp = true, sub, 
   );
 }
 
-export default function Salute({ onBack, chi, go }: { onBack?: () => void; chi?: string; go?: Go }) {
+export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; chi?: string; go?: Go; pin?: string }) {
   const [m, setM] = useState<Movimenti | null>(null);
   const [speseReview, setSpeseReview] = useState(0);
   const [flags, setFlags] = useState<OpsFlags | null>(null);
@@ -372,7 +372,7 @@ export default function Salute({ onBack, chi, go }: { onBack?: () => void; chi?:
       </section>
 
       {/* Attività recente: feed "chi ha fatto cosa quando" dal change_log (§6) */}
-      <ActivityFeed />
+      <ActivityFeed pin={pin} />
     </div>
   );
 }

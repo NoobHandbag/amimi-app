@@ -328,6 +328,10 @@ export const syncNowShopify = (pin: string, chi: string): Promise<SyncNowResult>
 export type AskResult = { ok?: boolean; sql?: string; rows?: Record<string, unknown>[]; error?: string; needs_key?: boolean };
 export const askData = (question: string, pin: string): Promise<AskResult> => fnCall('ask-data', { question, pin }) as Promise<AskResult>;
 
+// §6 redesign: riepilogo Gemini delle ultime attività (change_log). Sola lettura, gated PIN.
+export type ActivityDigest = { summary?: string | null; generated_at?: string; count?: number; error?: string; needs_key?: boolean };
+export const fetchActivityDigest = (pin: string): Promise<ActivityDigest> => fnCall('activity-digest', { pin }) as Promise<ActivityDigest>;
+
 // ---------- FLOW 6 v2: Assistente AI (read-only, gated ai_enabled) ----------
 export type AsstMsg = { ruolo: 'user' | 'assistant'; testo: string };
 export type AsstGrafico = { tipo: 'barre' | 'linee' | 'torta'; titolo: string; etichette: string[]; valori: number[] };

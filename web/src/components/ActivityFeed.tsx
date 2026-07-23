@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchRecent } from '../lib/api';
+import { fetchRecent, fetchActivityDigest } from '../lib/api';
 import type { Activity } from '../lib/api';
+import Icon from './Icon';
 
 // Feed "chi ha fatto cosa quando" dal change_log — riga-attività (avatar persona + azione + tag + ora),
 // senza emoji (redesign GEEIQ). Filtri per persona e per tipo. Sola lettura.
@@ -74,11 +75,29 @@ function summarize(r: Activity): string {
 const PERSONE = [['', 'Tutti'], ['Ale', 'Ale'], ['Bene', 'Benny'], ['Ginevra', 'Ginni']] as const;
 const TIPI = ['vendite', 'spese', 'magazzino', 'ordini'];
 
-export default function ActivityFeed() {
+type Digest = { text: string; at: string };
+
+export default function ActivityFeed({ pin = 'x' }: { pin?: string }) {
   const [rows, setRows] = useState<Activity[]>([]);
   const [who, setWho] = useState('');
   const [tipo, setTipo] = useState('');
+  const [sum, setSum] = useState<Digest | null>(() => {
+    try { const c = JSON.parse(localStorage.getItem('amimi_actdigest') || 'null'); return c?.text ? c : null; } catch { return null; }
+  });
+  const [sumBusy, setSumBusy] = useState(false);
+  const [sumErr, setSumErr] = useState<string | null>(null);
+  const [sumHidden, setSumHidden] = useState(false);
   useEffect(() => { fetchRecent().then(setRows).catch(() => {}); }, []);
+
+  async function genSummary() {
+    setSumBusy(true); setSumErr(null);
+    try {
+      const r = await fetchActivityDigest(pin);
+      if (r.needs_key) { setSumHidden(true); return; }
+      if (r.error) { setSumErr(/429|quota/i.test(r.error) ? 'Quota AI esaurita per oggi, riprova più tardi.' : r.error); return; }
+      if (r.summary) { const rec = { text: r.summary, at: r.generated_at ?? new Date().toISOString() }; setSum(rec); localStorage.setItem('amimi_actdigest', JSON.stringify(rec)); }
+    } catch (e) { setSumErr((e as Error).message); } finally { setSumBusy(false); }
+  }
 
   const shown = useMemo(() => rows.filter((r) => {
     if (tipo && tagOf(r) !== tipo) return false;
@@ -91,6 +110,27 @@ export default function ActivityFeed() {
   return (
     <section className="card">
       <h2>Attività recente</h2>
+
+      {!sumHidden && (
+        <div className="ds-aisum">
+          <div className="ds-aisum-h">
+            <Icon name="sparkles" size={13} /><span>Riepilogo Amimì</span>
+            <span className="badge2">Gemini</span>
+            {sum && <button type="button" onClick={genSummary} disabled={sumBusy}>{sumBusy ? '…' : 'Rigenera'}</button>}
+          </div>
+          {sum ? (
+            <>
+              <p>{sum.text}</p>
+              <div style={{ fontSize: 10.5, color: 'var(--ink-muted)', marginTop: 6 }}>Aggiornato {ago(sum.at)}</div>
+            </>
+          ) : sumErr ? (
+            <p style={{ fontSize: 12.5, color: 'var(--negative-700)' }}>{sumErr} <button type="button" className="linkbtn" onClick={genSummary} style={{ color: 'var(--interactive-700)', fontWeight: 700 }}>Riprova</button></p>
+          ) : (
+            <button type="button" className="ds-btn secondary sm" onClick={genSummary} disabled={sumBusy}>{sumBusy ? 'Genero…' : 'Genera riepilogo attività'}</button>
+          )}
+        </div>
+      )}
+
       <div className="ds-linefilters">
         {PERSONE.map(([k, l]) => <button key={k} type="button" className={`ds-fp ${who === k ? 'on' : ''}`} onClick={() => setWho(k)}>{l}</button>)}
       </div>
