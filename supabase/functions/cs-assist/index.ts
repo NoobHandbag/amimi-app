@@ -1,17 +1,21 @@
-// cs-assist — tool assistenza clienti, FASE 3: recupero DATI + riassunto/storia + bozza.
+// cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
 // Design: Cowork12/projects/Servizio_Clienti_2026-06/DESIGN_Tool_Assistenza_Amimi_V1_2026-07-20.md (6.1, 6.3, 8).
 //
 // Il recupero dati e' DETERMINISTICO (dal codice, non dall'AI): giacenza/disponibilita'/prezzo da v_inventory,
-// ordine da shopify_orders (per numero o email), tracking fresco via Shopify Admin API, FAQ/tono da cs_faq.
-// Gemini scrive SOLO usando quel blocco DATI; un numero mancante diventa [DA VERIFICARE: ...] (Regola Ferrea 1).
+// ordine da shopify_orders (per numero o email), tracking + id admin via Shopify Admin API, storico acquisti
+// da shopify_orders per email, FAQ/tono da cs_faq. Gemini scrive SOLO usando quel blocco DATI; un dato mancante
+// diventa [DA VERIFICARE: ...] (Regola Ferrea 1).
 //
 // Azioni:
-//   - dry_data (PIN): assembla il blocco DATI + fonti da una conversazione. NESSUN Gemini, NESSUNA scrittura.
-//       Serve a testare il recupero dati e a mostrare le "Fonti" in UI prima di generare.
-//   - summary (PIN, cron */7): riempie cs_conversations.summary/summary_at dove NULL (canale != rumore).
-//       Riassunto 2 righe che incrocia la storia per customer_email. Gemini flash-lite. Decoupled.
-//   - draft (JWT): assembla DATI -> Gemini flash -> bozza con [DA VERIFICARE], scrive cs_drafts + cs_events
-//       (azione 'draft', chi = selettore). Ritorna {draft, fonti, dati}. Nessun invio (Fase 4).
+//   - context (JWT): assembla il CONTESTO (dati/fonti + link ordine Shopify + storico acquisti cliente),
+//       NESSUN Gemini. La UI la chiama all'apertura del thread per popolare la testata (nessuna spesa AI).
+//   - dry_data (PIN): come context ma PIN-gated, per test/diagnosi senza login.
+//   - draft (JWT): assembla DATI -> Gemini -> TRE opzioni di risposta (toni: breve/calda/formale) in una sola
+//       chiamata. Ritorna {options:[{tono,testo,da_verificare}], fonti, order_admin_url, storia}. Retro-compat:
+//       ritorna anche `draft` = testo della prima opzione. Scrive cs_drafts (la 1a) + cs_events. Nessun invio.
+//   - refine (JWT): riscrive una bozza data applicando un'istruzione ("piu' formale", "aggiungi X"), sempre
+//       vincolata al BLOCCO DATI. Ritorna {draft, da_verificare}. Scrive cs_events 'refine'.
+//   - summary (PIN, cron */7): riempie cs_conversations.summary dove NULL. Gemini flash-lite. Decoupled.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -26,17 +30,21 @@ const MODEL_SUMMARY = 'gemini-flash-lite-latest';
 const MODEL_DRAFT = 'gemini-flash-latest';
 const MAX_SUMMARY_PER_RUN = 8;
 
-const norm = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+const norm = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
 const words = (s: string) => new Set(norm(s).split(' ').filter((w) => w.length >= 2));
 // parole troppo comuni per essere segnale di variante
 const STOP = new Set(['bag', 'the', 'con', 'senza', 'and', 'borsa', 'mini', 'maxi', 'new', 'del', 'della']);
 
 type Row = Record<string, unknown>;
+const cleanJson = (t: string) => (t || '').trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+const countDaVerificare = (t: string) => (t.match(/\[DA VERIFICARE[^\]]*\]/gi) || []).length;
 
-async function gemini(model: string, prompt: string, key: string, maxTokens: number): Promise<string> {
+async function gemini(model: string, prompt: string, key: string, maxTokens: number, jsonMode = false): Promise<string> {
+  const genCfg: Record<string, unknown> = { temperature: 0.3, maxOutputTokens: maxTokens };
+  if (jsonMode) genCfg.responseMimeType = 'application/json';   // MAI thinkingConfig (400), gotcha CONOSCENZA
   const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3, maxOutputTokens: maxTokens } }),
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: genCfg }),
   });
   const gj = await g.json();
   if (!g.ok) throw new Error('Gemini ' + g.status + ': ' + JSON.stringify(gj).slice(0, 200));
@@ -77,9 +85,7 @@ async function matchProducts(sb: ReturnType<typeof createClient>, text: string):
     scored.push({ p: prod, score: (modelHit ? 2 : 0) + varHits * 3 + (isAlias ? 4 : 0) });
   }
   scored.sort((a, b) => b.score - a.score);
-  // tieni i migliori (max 4): il primo e' il match piu' forte, gli altri sono varianti/ambiguita' da mostrare
-  const top = scored.slice(0, 4).map((x) => x.p);
-  return top;
+  return scored.slice(0, 4).map((x) => x.p);
 }
 
 type Ord = { order_number: unknown; financial_status: unknown; fulfillment_status: unknown; fulfilled_at: unknown; gross_total: unknown; email: unknown; order_id: unknown; righe: { nome: string; qta: number }[] } | null;
@@ -96,21 +102,48 @@ async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: num
   return { order_number: o.order_number, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status, fulfilled_at: o.fulfilled_at, gross_total: o.gross_total, email: o.email, order_id: o.order_id, righe };
 }
 
-// tracking fresco (best-effort; il DB non tiene ne' l'id numerico ne' il tracking). Cerca l'ordine per NOME
-// (#numero) via Shopify Admin API e legge il primo fulfillment. Se fallisce -> null (la bozza usa [DA VERIFICARE]).
-async function fetchTracking(orderNumber: unknown, token: string): Promise<{ numero: string; url: string; corriere: string } | null> {
+// Shopify Admin API: cerca l'ordine per NOME (#numero) e ritorna id numerico (per il link admin) + tracking.
+// Il DB non tiene ne' l'id numerico ne' il tracking (order_id e' il NOME #1518). Best-effort: null se fallisce.
+type OrdMeta = { adminId: number | null; tracking: { numero: string; url: string; corriere: string } | null };
+async function fetchOrderMeta(orderNumber: unknown, token: string): Promise<OrdMeta | null> {
   if (!orderNumber || !token) return null;
   try {
     const r = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/orders.json?status=any&name=${encodeURIComponent('#' + orderNumber)}&fields=id,name,fulfillments&limit=1`, { headers: { 'X-Shopify-Access-Token': token } });
     if (!r.ok) return null;
     const j = await r.json();
     const o = (j.orders ?? [])[0];
-    const f = (o?.fulfillments ?? [])[0];
+    if (!o) return null;
+    const f = (o.fulfillments ?? [])[0];
     const numero = f?.tracking_number || (f?.tracking_numbers ?? [])[0] || '';
-    if (!numero) return null;
-    return { numero: String(numero), url: String(f?.tracking_url || (f?.tracking_urls ?? [])[0] || `https://mytws.it/tracking-status;ldv=${numero}`), corriere: String(f?.tracking_company || 'TWS') };
+    const tracking = numero
+      ? { numero: String(numero), url: String(f?.tracking_url || (f?.tracking_urls ?? [])[0] || `https://www.mytws.it/tracking-status;ldv=${numero}`), corriere: String(f?.tracking_company || 'TWS') }
+      : null;
+    return { adminId: (o.id as number) ?? null, tracking };
   } catch { return null; }
 }
+
+// Storico acquisti del cliente (per email): totale, conteggio, ordini recenti. Solo Shopify (il POS Qromo
+// non tiene l'email cliente). Sola lettura, nessun PII oltre a cio' che la UI gia' vede sul thread.
+type Storia = { n_ordini: number; totale: number; prima: string | null; ultima: string | null; recenti: { numero: unknown; data: string; totale: number; stato: unknown }[] };
+async function purchaseHistory(sb: ReturnType<typeof createClient>, email: string | null): Promise<Storia | null> {
+  if (!email) return null;
+  const { data } = await sb.from('shopify_orders')
+    .select('order_number,created_at_shop,gross_total,financial_status')
+    .eq('email', email.toLowerCase()).order('created_at_shop', { ascending: false }).limit(30);
+  const orders = (data ?? []) as Row[];
+  if (!orders.length) return { n_ordini: 0, totale: 0, prima: null, ultima: null, recenti: [] };
+  const totale = orders.reduce((s, o) => s + Number(o.gross_total ?? 0), 0);
+  const recenti = orders.slice(0, 6).map((o) => ({ numero: o.order_number, data: String(o.created_at_shop ?? '').slice(0, 10), totale: Number(o.gross_total ?? 0), stato: o.financial_status }));
+  return {
+    n_ordini: orders.length, totale: Math.round(totale * 100) / 100,
+    ultima: String(orders[0].created_at_shop ?? '').slice(0, 10),
+    prima: String(orders[orders.length - 1].created_at_shop ?? '').slice(0, 10),
+    recenti,
+  };
+}
+
+type Dati = { prodotti: Prod[]; ordine: Ord; tracking: OrdMeta['tracking']; standard: string[]; fonti: string[] };
+type Ctx = { dati: Dati; tono: string[]; order_admin_url: string | null; storia: Storia | null };
 
 async function faqTono(sb: ReturnType<typeof createClient>, categoria: string | null): Promise<{ tono: string[]; standard: string[] }> {
   const { data } = await sb.from('cs_faq').select('tipo,testo_it,categoria').eq('attiva', true);
@@ -120,18 +153,21 @@ async function faqTono(sb: ReturnType<typeof createClient>, categoria: string | 
   return { tono, standard };
 }
 
-type Dati = { prodotti: Prod[]; ordine: Ord; tracking: { numero: string; url: string; corriere: string } | null; standard: string[]; fonti: string[] };
-async function assembleDati(sb: ReturnType<typeof createClient>, conv: Row, inboundText: string, token: string, categoria: string | null): Promise<{ dati: Dati; tono: string[] }> {
+async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, inboundText: string, token: string, categoria: string | null): Promise<Ctx> {
   const prodotti = await matchProducts(sb, inboundText);
   const ordine = await lookupOrder(sb, (conv.order_number as number) ?? null, (conv.customer_email as string) ?? null);
   const wantsTracking = categoria === 'Spedizione e stato ordine' || /tracking|spedizione|corriere|dov.?\s*e|arriv/i.test(inboundText);
-  const tracking = ordine && wantsTracking ? await fetchTracking(ordine.order_number, token) : null;
+  const meta = ordine ? await fetchOrderMeta(ordine.order_number, token) : null;
+  const tracking = meta && wantsTracking ? meta.tracking : null;
+  const order_admin_url = meta?.adminId ? `https://admin.shopify.com/store/${SHOP}/orders/${meta.adminId}` : null;
   const { tono, standard } = await faqTono(sb, categoria);
+  const storia = await purchaseHistory(sb, (conv.customer_email as string) ?? null);
   const fonti: string[] = [];
   for (const p of prodotti) fonti.push(`${p.item} ${p.variant}: disponibili ${p.disponibili}, giacenza ${p.giacenza}${p.prezzo != null ? `, prezzo ${p.prezzo}EUR` : ''}${p.on_shopify ? ', a catalogo' : ''} (v_inventory)`);
   if (ordine) fonti.push(`Ordine #${ordine.order_number}: pagamento ${ordine.financial_status ?? 'n/d'}, evasione ${ordine.fulfillment_status ?? 'non evaso'}${ordine.fulfilled_at ? `, evaso il ${String(ordine.fulfilled_at).slice(0, 10)}` : ''} (shopify_orders)`);
   if (tracking) fonti.push(`Tracking ${tracking.corriere} ${tracking.numero} (Shopify Admin API, live)`);
-  return { dati: { prodotti, ordine, tracking, standard, fonti }, tono };
+  if (storia && storia.n_ordini > 0) fonti.push(`Cliente: ${storia.n_ordini} ordini, ${storia.totale}EUR totali (storico Shopify)`);
+  return { dati: { prodotti, ordine, tracking, standard, fonti }, tono, order_admin_url, storia };
 }
 
 function datiBlock(d: Dati): string {
@@ -150,6 +186,10 @@ function datiBlock(d: Dati): string {
   return L.join('\n');
 }
 
+const STYLE_RULES = `STILE: dai del tu (dai del lei solo se il cliente e' formale o arrabbiato), frasi corte, 1-2 emoji leggere al massimo, chiudi con "Grazie, Team Amimi'". Niente promesse su date/numeri non nei DATI.
+REGOLA FERREA anti-invenzione: cita SOLO dati presenti nel BLOCCO DATI qui sotto. Se ti serve un dato che NON c'e' (prezzo, data, indirizzo, tracking, condizione), NON inventarlo: scrivi il segnaposto [DA VERIFICARE: cosa manca].
+CASI DA NON CHIUDERE DA SOLA (scrivi una risposta PRUDENTE che raccoglie info e propone il contatto di una persona; non promettere e non rifiutare): difetto/garanzia -> NON negare mai il reso citando solo i 14 giorni del recesso (la garanzia legale dura 24 mesi), proponi riparazione/cambio o il contatto; disputa/chargeback/banca -> massima cautela + persona; reclamo/rivenditore/proposta B2B/preventivo cerimonia -> raccogli info e rimanda a una persona.`;
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const url = Deno.env.get('SUPABASE_URL')!;
@@ -165,8 +205,10 @@ Deno.serve(async (req) => {
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
 
-  // draft = scrittura dalla UI: gate JWT (utente reale @amimi.it), come cs-api. Le altre azioni = PIN.
-  if (action === 'draft') {
+  // Azioni che scrivono/leggono per la UI = gate JWT (utente reale @amimi.it), come cs-api. Le altre = PIN.
+  const JWT_ACTIONS = new Set(['context', 'draft', 'refine']);
+  const chi = ({ B: 'Benedetta', G: 'Ginevra', A: 'Ale' } as Record<string, string>)[String(body.chi || '').toUpperCase()] || 'ignoto';
+  if (JWT_ACTIONS.has(action)) {
     const authz = req.headers.get('Authorization') || '';
     const tk = authz.toLowerCase().startsWith('bearer ') ? authz.slice(7).trim() : '';
     if (!tk) return json({ error: 'non autenticato' }, 401);
@@ -180,16 +222,25 @@ Deno.serve(async (req) => {
 
   const key = flags.gemini_api_key;
 
-  // ---------- dry_data: recupero DATI, nessun Gemini, nessuna scrittura ----------
-  if (action === 'dry_data') {
+  // carica conversazione + testo del cliente (usato da context/dry_data/draft/refine)
+  const loadConv = async (withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[] } | null> => {
     const convId = String(body.conversation_id || '');
-    const { data: conv } = await sb.from('cs_conversations').select('id,canale,customer_email,customer_name,order_number,categoria,subject').eq('id', convId).maybeSingle();
-    if (!conv) return json({ error: 'conversazione inesistente' }, 404);
-    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,form_fields').eq('conversation_id', convId).eq('direction', 'in').order('sent_at', { ascending: false }).limit(1);
-    const last = (msgs ?? [])[0] as Row | undefined;
-    const inbound = [conv.subject, last?.body_text, last?.form_fields ? JSON.stringify(last.form_fields) : ''].filter(Boolean).join(' ');
-    const { dati } = await assembleDati(sb, conv as Row, inbound, token, (conv.categoria as string) ?? null);
-    return json({ ok: true, fonti: dati.fonti, dati });
+    const cols = 'id,canale,customer_email,customer_name,order_number,categoria,subject' + (withLingua ? ',lingua' : '');
+    const { data: conv } = await sb.from('cs_conversations').select(cols).eq('id', convId).maybeSingle();
+    if (!conv) return null;
+    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,form_fields,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(4);
+    const recent = ((msgs ?? []) as Row[]).slice().reverse();
+    const lastIn = [...recent].reverse().find((m) => m.direction === 'in') as Row | undefined;
+    const inbound = [conv.subject, lastIn?.body_text, lastIn?.form_fields ? JSON.stringify(lastIn.form_fields) : ''].filter(Boolean).join(' ');
+    return { conv: conv as Row, inbound, recent };
+  };
+
+  // ---------- context / dry_data: assembla il CONTESTO, nessun Gemini ----------
+  if (action === 'context' || action === 'dry_data') {
+    const lc = await loadConv();
+    if (!lc) return json({ error: 'conversazione inesistente' }, 404);
+    const ctx = await assembleContext(sb, lc.conv, lc.inbound, token, (lc.conv.categoria as string) ?? null);
+    return json({ ok: true, fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, dati: ctx.dati });
   }
 
   // ---------- summary: riassunto+storia (cron), Gemini flash-lite ----------
@@ -224,46 +275,84 @@ Riassunto (max 2 righe):`;
     return json({ ok: true, done, failed, remaining: remaining ?? 0 });
   }
 
-  // ---------- draft: bozza on-demand (JWT), Gemini flash ----------
+  // ---------- draft: 3 opzioni (JWT), Gemini flash, una sola chiamata ----------
   if (action === 'draft') {
     if (!key) return json({ ok: false, needs_key: true, error: 'Gemini non configurato.' });
-    const convId = String(body.conversation_id || '');
-    const chi = ({ B: 'Benedetta', G: 'Ginevra', A: 'Ale' } as Record<string, string>)[String(body.chi || '').toUpperCase()] || 'ignoto';
-    const { data: conv } = await sb.from('cs_conversations').select('id,canale,customer_email,customer_name,order_number,categoria,subject,lingua').eq('id', convId).maybeSingle();
-    if (!conv) return json({ error: 'conversazione inesistente' }, 404);
-    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,form_fields,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(4);
-    const recent = ((msgs ?? []) as Row[]).reverse();
-    const lastIn = [...recent].reverse().find((m) => m.direction === 'in') as Row | undefined;
-    const inbound = [conv.subject, lastIn?.body_text, lastIn?.form_fields ? JSON.stringify(lastIn.form_fields) : ''].filter(Boolean).join(' ');
-    const { dati, tono } = await assembleDati(sb, conv as Row, inbound, token, (conv.categoria as string) ?? null);
+    const lc = await loadConv(true);
+    if (!lc) return json({ error: 'conversazione inesistente' }, 404);
+    const conv = lc.conv;
+    const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
+    const threadTxt = lc.recent.map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${String(m.body_text ?? '').slice(0, 800)}`).join('\n') || String(conv.subject ?? '');
 
-    const prompt = `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi una BOZZA di risposta email al cliente, pronta da ritoccare. NON inviarla.
-STILE (obbligatorio): dai del tu (dai del lei solo se il cliente e' formale o arrabbiato), frasi corte, 1-2 emoji leggere al massimo, chiudi con "Grazie, Team Amimi'". Niente promesse su date che non sono nei DATI.
-REGOLA FERREA anti-invenzione: puoi citare SOLO numeri/dati presenti nel blocco DATI qui sotto. Se ti serve un dato che NON c'e' (un prezzo, una data, un indirizzo, un numero di tracking, una condizione), NON inventarlo: scrivi il segnaposto [DA VERIFICARE: cosa manca] al suo posto. Meglio un segnaposto che un dato sbagliato.
-CASI DA NON CHIUDERE DA SOLA (scrivi una bozza PRUDENTE che raccoglie le informazioni e propone il contatto di una persona del team; non promettere e non rifiutare):
-- Difetto/garanzia: NON negare mai il reso citando solo i 14 giorni del recesso. La garanzia legale di conformita' dura 24 mesi. Proponi riparazione o cambio, oppure il contatto con noi; mai un no secco.
-- Disputa/chargeback/banca ("rimborso non ricevuto", "mi rivolgo alla banca"): massima cautela, di' che una persona del team la ricontatta subito.
-- Reclamo sull'assistenza, reso tramite rivenditore/creator, proposta B2B/collaborazione o preventivo cerimonia: raccogli le informazioni utili e rimanda a una persona; non decidere tu.
+    const prompt = `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi TRE versioni ALTERNATIVE della stessa risposta email al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.
+LE TRE VERSIONI (usa esattamente questi tre "tono"): "breve" = 2-3 righe, dritta al punto, cordiale; "calda" = piu' empatica e personale, un pizzico di calore; "formale" = piu' completa e composta, adatta a casi delicati.
+${STYLE_RULES}
 Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
 
 Ultimi messaggi (il piu' recente e' del cliente):
-${recent.map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${String(m.body_text ?? '').slice(0, 800)}`).join('\n') || String(conv.subject ?? '')}
+${threadTxt}
 
 BLOCCO DATI (l'unica fonte di numeri che puoi usare):
-${datiBlock(dati)}
-${tono.length ? `\nEsempi del NOSTRO tono (imita lo stile, non copiare i contenuti):\n${tono.map((t) => '- ' + t).join('\n')}` : ''}
+${datiBlock(ctx.dati)}
+${ctx.tono.length ? `\nEsempi del NOSTRO tono (imita lo stile, non copiare i contenuti):\n${ctx.tono.map((t) => '- ' + t).join('\n')}` : ''}
 
-Scrivi SOLO la bozza (nessuna spiegazione, nessun oggetto):`;
+Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo:
+{"opzioni":[{"tono":"breve","testo":"..."},{"tono":"calda","testo":"..."},{"tono":"formale","testo":"..."}]}`;
 
-    let draft = '';
-    try { draft = await gemini(MODEL_DRAFT, prompt, key, 700); }
-    catch { try { draft = await gemini(MODEL_SUMMARY, prompt, key, 700); } catch (e) { return json({ ok: false, error: (e as Error).message }, 502); } }
-    if (!draft) return json({ ok: false, error: 'bozza vuota' }, 502);
+    let opzioni: { tono: string; testo: string }[] = [];
+    try {
+      const raw = await gemini(MODEL_DRAFT, prompt, key, 1400, true);
+      const parsed = JSON.parse(cleanJson(raw)) as { opzioni?: { tono?: unknown; testo?: unknown }[] };
+      opzioni = (Array.isArray(parsed?.opzioni) ? parsed.opzioni : []).map((o) => ({ tono: String(o.tono ?? ''), testo: String(o.testo ?? '') })).filter((o) => o.testo);
+    } catch { opzioni = []; }
+    if (!opzioni.length) {
+      // fallback robusto: una sola bozza in testo semplice (come la Fase 3 originale), mai un errore secco
+      try {
+        const single = await gemini(MODEL_DRAFT, prompt.replace(/Rispondi SOLO con JSON[\s\S]*$/, 'Scrivi SOLO una bozza (nessun JSON, nessuna spiegazione):'), key, 700);
+        if (single) opzioni = [{ tono: 'bozza', testo: single }];
+      } catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
+    }
+    if (!opzioni.length) return json({ ok: false, error: 'bozza vuota' }, 502);
+    const options = opzioni.slice(0, 3).map((o) => ({ tono: o.tono, testo: o.testo, da_verificare: countDaVerificare(o.testo) }));
 
-    const daVerificare = (draft.match(/\[DA VERIFICARE[^\]]*\]/gi) || []).length;
-    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: convId, testo: draft, dati_usati: dati as unknown as Row, model: MODEL_DRAFT }).select('id').single();
-    await sb.from('cs_events').insert({ conversation_id: convId, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, da_verificare: daVerificare } });
-    return json({ ok: true, draft, fonti: dati.fonti, da_verificare: daVerificare, draft_id: ins?.id });
+    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: MODEL_DRAFT }).select('id').single();
+    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length } });
+    return json({
+      ok: true, options, draft: options[0].testo, da_verificare: options[0].da_verificare,   // draft = retro-compat
+      fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, draft_id: ins?.id,
+    });
+  }
+
+  // ---------- refine: riscrivi una bozza data applicando un'istruzione (JWT), Gemini flash ----------
+  if (action === 'refine') {
+    if (!key) return json({ ok: false, needs_key: true, error: 'Gemini non configurato.' });
+    const testo = String(body.testo || '').trim();
+    const istruzione = String(body.istruzione || '').trim();
+    if (!testo || !istruzione) return json({ error: 'servono testo e istruzione' }, 422);
+    const lc = await loadConv(true);
+    if (!lc) return json({ error: 'conversazione inesistente' }, 404);
+    const conv = lc.conv;
+    const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
+
+    const prompt = `Sei chi risponde al servizio clienti di "Amimi'". Ti do una BOZZA di risposta al cliente e una richiesta di modifica. Riscrivi la bozza applicando la modifica. NON inviarla.
+${STYLE_RULES}
+Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}.
+RICHIESTA DI MODIFICA (dalla collega): ${istruzione.slice(0, 400)}
+
+BOZZA ATTUALE:
+${testo.slice(0, 2500)}
+
+BLOCCO DATI (l'unica fonte di numeri che puoi usare):
+${datiBlock(ctx.dati)}
+
+Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto):`;
+
+    let out = '';
+    try { out = await gemini(MODEL_DRAFT, prompt, key, 800); }
+    catch { try { out = await gemini(MODEL_SUMMARY, prompt, key, 800); } catch (e) { return json({ ok: false, error: (e as Error).message }, 502); } }
+    if (!out) return json({ ok: false, error: 'bozza vuota' }, 502);
+    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'refine', chi, dettaglio: { istruzione: istruzione.slice(0, 200) } });
+    return json({ ok: true, draft: out, da_verificare: countDaVerificare(out) });
   }
 
   return json({ error: 'azione sconosciuta: ' + action }, 422);

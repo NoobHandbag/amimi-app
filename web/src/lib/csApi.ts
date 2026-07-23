@@ -128,21 +128,45 @@ export async function setCategoria(conversationId: string, categoria: string | n
 
 const CS_ASSIST_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/cs-assist';
 
-export type Bozza = { draft: string; fonti: string[]; da_verificare: number };
+export type OrderHistory = { n_ordini: number; totale: number; prima: string | null; ultima: string | null; recenti: { numero: number; data: string; totale: number; stato: string | null }[] };
+export type CsContext = { fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null };
+export type DraftOption = { tono: string; testo: string; da_verificare: number };
 
-/** Genera una BOZZA di risposta con dati reali (Fase 3). JWT-gated (edge cs-assist): passa l'access token
- *  dell'utente loggato. Il recupero dati (giacenza/ordine/tracking) e' deterministico nell'edge; Gemini scrive
- *  usando SOLO quel blocco, con [DA VERIFICARE] dove un dato manca. NON invia (Fase 4). */
-export async function generateDraft(conversationId: string, chi: string): Promise<Bozza> {
+// Header JWT dell'utente loggato (edge cs-assist verifica getUser + @amimi.it).
+async function jwtHeaders(): Promise<Record<string, string>> {
   const { data } = await csClient.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error('Sessione scaduta: rientra.');
-  const r = await fetch(CS_ASSIST_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
-    body: JSON.stringify({ action: 'draft', conversation_id: conversationId, chi }),
-  });
+  return { 'content-type': 'application/json', authorization: 'Bearer ' + token };
+}
+async function callAssist(bodyObj: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const r = await fetch(CS_ASSIST_URL, { method: 'POST', headers: await jwtHeaders(), body: JSON.stringify(bodyObj) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || !j.ok) throw new Error(j.error || (j.needs_key ? 'Gemini non configurato' : 'Errore ' + r.status));
-  return { draft: String(j.draft || ''), fonti: (j.fonti || []) as string[], da_verificare: Number(j.da_verificare || 0) };
+  if (!r.ok || !j.ok) throw new Error(j.error || (j.needs_key ? 'AI non configurata' : 'Errore ' + r.status));
+  return j as Record<string, unknown>;
+}
+
+/** CONTESTO del thread (nessuna spesa AI): link ordine Shopify + storico acquisti cliente + fonti.
+ *  Chiamata all'apertura del thread per popolare la testata. */
+export async function fetchContext(conversationId: string): Promise<CsContext> {
+  const j = await callAssist({ action: 'context', conversation_id: conversationId });
+  return { fonti: (j.fonti || []) as string[], order_admin_url: (j.order_admin_url as string) ?? null, storia: (j.storia as OrderHistory) ?? null };
+}
+
+/** Genera 3 opzioni di risposta (toni breve/calda/formale) con dati reali. JWT-gated; Gemini scrive usando
+ *  SOLO il blocco DATI, con [DA VERIFICARE] dove un dato manca. NON invia (Fase 4). */
+export async function generateOptions(conversationId: string, chi: string): Promise<{ options: DraftOption[]; fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null }> {
+  const j = await callAssist({ action: 'draft', conversation_id: conversationId, chi });
+  const options = (j.options || []) as DraftOption[];
+  return {
+    options: options.length ? options : [{ tono: 'bozza', testo: String(j.draft || ''), da_verificare: Number(j.da_verificare || 0) }],
+    fonti: (j.fonti || []) as string[], order_admin_url: (j.order_admin_url as string) ?? null, storia: (j.storia as OrderHistory) ?? null,
+  };
+}
+
+/** Riscrive la bozza corrente applicando un'istruzione della collega ("più formale", "aggiungi X"),
+ *  sempre vincolata ai dati reali. */
+export async function refineDraft(conversationId: string, chi: string, testo: string, istruzione: string): Promise<{ draft: string; da_verificare: number }> {
+  const j = await callAssist({ action: 'refine', conversation_id: conversationId, chi, testo, istruzione });
+  return { draft: String(j.draft || ''), da_verificare: Number(j.da_verificare || 0) };
 }

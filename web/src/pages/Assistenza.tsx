@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, generateDraft, catEmoji, CS_CATEGORIES } from '../lib/csApi';
-import type { CsConversation, CsMessage, Canale, Bozza } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, fetchContext, generateOptions, refineDraft, catEmoji, CS_CATEGORIES } from '../lib/csApi';
+import type { CsConversation, CsMessage, Canale, CsContext, DraftOption } from '../lib/csApi';
 
 // Sezione Assistenza clienti — FASE 1: SOLA LETTURA dietro login Supabase Auth.
 // Login = solo cancello (@amimi.it); l'identita' che firma (Benny/Ginni) e' un selettore in-tool,
@@ -10,6 +10,7 @@ import type { CsConversation, CsMessage, Canale, Bozza } from '../lib/csApi';
 const IDENTS: Record<string, { n: string; cls: string }> = { B: { n: 'Benedetta', cls: 'cs-b' }, G: { n: 'Ginevra', cls: 'cs-g' }, A: { n: 'Ale', cls: 'cs-a' } };
 const CANALI: Record<Canale, string> = { email_diretta: '✉️ email', form_contatto: '📝 form sito', form_evento: '💍 form evento', chat_notifica: '💬 chat sito', rumore: '🔕 rumore' };
 const BUCKETS: [string, string][] = [['oggi', 'Oggi'], ['ieri', 'Ieri'], ['sett', 'Questa settimana'], ['vecchie', 'Piu’ vecchie']];
+const TONO_LABEL: Record<string, string> = { breve: '⚡ Breve', calda: '💛 Calda', formale: '🎩 Formale', bozza: '✍️ Bozza' };
 const SHOPIFY_INBOX = 'https://admin.shopify.com/store/amimi-10000/apps/inbox';
 
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
@@ -63,9 +64,15 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [codaView, setCodaView] = useState<'tema' | 'tempo'>('tempo');
   const [savingCat, setSavingCat] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [bozza, setBozza] = useState<Bozza | null>(null);
+  const [ctx, setCtx] = useState<CsContext | null>(null);
+  const [options, setOptions] = useState<DraftOption[] | null>(null);
+  const [selIdx, setSelIdx] = useState(0);
+  const [daVer, setDaVer] = useState(0);
+  const [fonti, setFonti] = useState<string[]>([]);
   const [bozzaText, setBozzaText] = useState('');
   const [genBozza, setGenBozza] = useState(false);
+  const [refineTxt, setRefineTxt] = useState('');
+  const [refining, setRefining] = useState(false);
   const [copied, setCopied] = useState(false);
   const [convs, setConvs] = useState<CsConversation[] | null>(null);
   const [rumore, setRumore] = useState<CsConversation[] | null>(null);
@@ -120,16 +127,32 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const logout = async () => { setMenu(false); await csClient.auth.signOut(); setConvs(null); setCurrent(null); setView('coda'); };
   const openThread = async (c: CsConversation) => {
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
-    setBozza(null); setBozzaText(''); setCopied(false);
+    setCtx(null); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false);
     try { setMsgs(await fetchMessages(c.id)); } catch (e) { setErr((e as Error).message); }
+    // Contesto (link ordine + storico acquisti): nessuna spesa AI, best-effort (non blocca il thread).
+    if (c.canale !== 'chat_notifica' && c.canale !== 'rumore') {
+      fetchContext(c.id).then(setCtx).catch(() => { /* testata best-effort */ });
+    }
   };
-  // Fase 3: genera una bozza con dati reali (edge cs-assist, JWT). Recupero dati deterministico + Gemini.
-  const doGenBozza = async () => {
+  // Fase 3: 3 opzioni di risposta con dati reali (edge cs-assist, JWT). Recupero dati deterministico + Gemini.
+  const doGenOptions = async () => {
     if (!current) return;
     setGenBozza(true); setErr(''); setCopied(false);
-    try { const b = await generateDraft(current.id, ident); setBozza(b); setBozzaText(b.draft); }
-    catch (e) { setErr((e as Error).message); }
+    try {
+      const r = await generateOptions(current.id, ident);
+      setOptions(r.options); setSelIdx(0); setBozzaText(r.options[0]?.testo ?? ''); setDaVer(r.options[0]?.da_verificare ?? 0); setFonti(r.fonti);
+      if (!ctx) setCtx({ fonti: r.fonti, order_admin_url: r.order_admin_url, storia: r.storia });
+    } catch (e) { setErr((e as Error).message); }
     setGenBozza(false);
+  };
+  const pickOption = (i: number) => { if (!options?.[i]) return; setSelIdx(i); setBozzaText(options[i].testo); setDaVer(options[i].da_verificare); setCopied(false); };
+  // "Chiedi una modifica": l'AI riscrive la bozza corrente applicando l'istruzione, sempre sui dati reali.
+  const doRefine = async () => {
+    if (!current || !bozzaText.trim() || !refineTxt.trim()) return;
+    setRefining(true); setErr(''); setCopied(false);
+    try { const r = await refineDraft(current.id, ident, bozzaText, refineTxt); setBozzaText(r.draft); setDaVer(r.da_verificare); setRefineTxt(''); }
+    catch (e) { setErr((e as Error).message); }
+    setRefining(false);
   };
   const copiaBozza = async () => { try { await navigator.clipboard.writeText(bozzaText); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* no clipboard */ } };
   const openRumore = async () => {
@@ -224,6 +247,21 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             </div>
           )}
         </div>
+        {c.canale !== 'rumore' && ctx && (ctx.order_admin_url || (ctx.storia && ctx.storia.n_ordini > 0)) && (
+          <div className="cs-ctx">
+            {ctx.order_admin_url && (
+              <a className="cs-orderlink" href={ctx.order_admin_url} target="_blank" rel="noreferrer">🛍 Apri ordine{c.order_number ? ` #${c.order_number}` : ''} su Shopify ↗</a>
+            )}
+            {ctx.storia && ctx.storia.n_ordini > 0 && (
+              <div className="cs-storia">
+                <div className="cs-storia-h">🧾 Cliente: <b>{ctx.storia.n_ordini}</b> {ctx.storia.n_ordini === 1 ? 'ordine' : 'ordini'} · <b>{ctx.storia.totale}€</b> totali{ctx.storia.n_ordini > 1 ? ' · abituale' : ''}</div>
+                <div className="cs-storia-list">
+                  {ctx.storia.recenti.map((o, i) => <span key={i} className="cs-storia-row">#{o.numero} · {o.data} · {o.totale}€</span>)}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         {c.summary && (
           <div className="cs-summary"><span className="cs-summary-h">📝 Riassunto e storia</span>{c.summary}</div>
         )}
@@ -246,30 +284,44 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             ))}
         {c.canale !== 'chat_notifica' && c.canale !== 'rumore' && (
           <div className="cs-draftbox">
-            {!bozza ? (
-              <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doGenBozza} disabled={genBozza} type="button">
-                {genBozza ? 'Genero la bozza…' : '✍️ Genera bozza con i dati reali'}
+            {!options ? (
+              <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doGenOptions} disabled={genBozza} type="button">
+                {genBozza ? 'Genero 3 proposte…' : '✍️ Genera 3 risposte con i dati reali'}
               </button>
             ) : (
               <>
+                {options.length > 1 && (
+                  <div className="cs-opts">
+                    {options.map((o, i) => (
+                      <button key={i} className={'cs-opt' + (i === selIdx ? ' on' : '')} onClick={() => pickOption(i)} type="button">
+                        <span className="cs-opt-t">{TONO_LABEL[o.tono] ?? o.tono}</span>
+                        <span className="cs-opt-p">{o.testo.slice(0, 90)}{o.testo.length > 90 ? '…' : ''}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="cs-draft-h">
-                  <span>✍️ Bozza (ritoccala e copiala)</span>
-                  {bozza.da_verificare > 0 && <span className="cs-badge cs-warn">{bozza.da_verificare} da verificare</span>}
+                  <span>✍️ Bozza (ritoccala o chiedi una modifica)</span>
+                  {daVer > 0 && <span className="cs-badge cs-warn">{daVer} da verificare</span>}
                 </div>
                 <textarea className="cs-draft-ta" value={bozzaText} onChange={(e) => setBozzaText(e.target.value)} rows={8} />
+                <div className="cs-refine">
+                  <input className="cs-refine-in" value={refineTxt} onChange={(e) => setRefineTxt(e.target.value)} placeholder="Chiedi una modifica all’AI (es. più formale, aggiungi il reso)" onKeyDown={(e) => { if (e.key === 'Enter') doRefine(); }} disabled={refining} />
+                  <button className="cs-btn cs-ghost" onClick={doRefine} disabled={refining || !refineTxt.trim()} type="button">{refining ? '…' : '✨ Applica'}</button>
+                </div>
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                   <button className="cs-btn cs-primary" onClick={copiaBozza} type="button">{copied ? '✓ Copiata' : '📋 Copia'}</button>
-                  <button className="cs-btn" style={{ border: '1px solid var(--line)', color: 'var(--muted)' }} onClick={doGenBozza} disabled={genBozza} type="button">{genBozza ? '…' : '↻ Rigenera'}</button>
+                  <button className="cs-btn cs-ghost" onClick={doGenOptions} disabled={genBozza} type="button">{genBozza ? '…' : '↻ Rigenera'}</button>
                 </div>
-                {bozza.fonti.length > 0 && (
+                {fonti.length > 0 && (
                   <div className="cs-fonti">
                     <div className="cs-fonti-h">Fonti (dati recuperati dal gestionale)</div>
-                    {bozza.fonti.map((f, i) => <div key={i} className="cs-fonti-row">• {f}</div>)}
+                    {fonti.map((f, i) => <div key={i} className="cs-fonti-row">• {f}</div>)}
                   </div>
                 )}
               </>
             )}
-            <div className="cs-note">La bozza usa SOLO i dati reali; dove manca un dato scrive [DA VERIFICARE]. Ritoccala e copiala nel thread Gmail. L&#8217;invio dal tool arriva in Fase 4.</div>
+            <div className="cs-note">Le bozze usano SOLO i dati reali; dove manca un dato scrivono [DA VERIFICARE]. Ritocca e copia nel thread Gmail. L&#8217;invio dal tool arriva in Fase 4.</div>
           </div>
         )}
       </div>

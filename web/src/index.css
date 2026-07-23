@@ -609,6 +609,23 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-tnm { font-weight: 800; font-size: 17px; }
 .cs-tem { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .cs-banner { background: #ece9f6; color: #5c4d9c; font-size: 12.5px; font-weight: 600; padding: 11px 13px; border-radius: 12px; margin-bottom: 12px; line-height: 1.4; }
+/* --- contesto thread (link ordine + storico acquisti) e reply UX (3 opzioni + chiedi-modifica) --- */
+.cs-ctx { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.cs-orderlink { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; background: var(--card); border: 1px solid var(--line); color: var(--rose); border-radius: 999px; padding: 7px 13px; font-size: 12.5px; font-weight: 700; text-decoration: none; }
+.cs-orderlink:hover { border-color: var(--rose); }
+.cs-storia { background: var(--surface-alt, #f3eee5); border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
+.cs-storia-h { font-size: 12.5px; color: var(--dark); }
+.cs-storia-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cs-storia-row { font-size: 11.5px; color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; }
+.cs-opts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.cs-opt { text-align: left; background: var(--card); border: 1.5px solid var(--line); border-radius: 12px; padding: 9px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.cs-opt.on { border-color: var(--rose); box-shadow: 0 0 0 3px var(--interactive-tint, rgba(124,104,251,.18)); }
+.cs-opt-t { font-size: 12px; font-weight: 800; color: var(--rose); }
+.cs-opt-p { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.cs-refine { display: flex; gap: 8px; margin-top: 8px; }
+.cs-refine-in { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font-size: 13px; font-family: inherit; background: var(--card); color: var(--dark); }
+.cs-refine-in:focus { outline: none; border-color: var(--rose); }
+.cs-ghost { border: 1px solid var(--line); color: var(--muted); background: var(--card); }
 .cs-inbox { display: inline-block; background: #5c4d9c; color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
 .cs-msg { max-width: 86%; border-radius: 14px; padding: 10px 13px; margin: 8px 0; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .cs-msg.in { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
