@@ -19,9 +19,19 @@ async function sha256hex(s: string): Promise<string> {
 
 const TABLES: Record<string, string> = {
   purchase: 'purchases', gift: 'gifts_offline', b2b: 'b2b_movements',
-  product: 'products', order: 'supplier_orders',
+  product: 'products',
 };
 const noSpaces = (s: unknown) => typeof s === 'string' && s.length > 0 && !/\s/.test(s);
+
+// tok v2 (v21, brief 23-07): normalizzazione condivisa nome -> CODICE (order_multi + product_verify).
+// Piega gli accenti (NFD), converte OGNI sequenza non alfanumerica in UN '_' (la tok vecchia
+// strappava trattini/accenti senza sostituirli: 'Vernice-Nera' -> VERNICENERA, che non matchava
+// VERNICE_NERA a catalogo), trim degli underscore ai bordi.
+const tok = (s: unknown) => String(s ?? '')
+  .normalize('NFD').replace(/\p{M}/gu, '')
+  .toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+// identica alla colonna generata products.codice_norm (upper + spazi -> _)
+const cnorm = (s: unknown) => String(s ?? '').toUpperCase().replace(/\s+/g, '_');
 
 function validate(action: string, p: Record<string, unknown>): string[] {
   const e: string[] = [];
@@ -252,49 +262,115 @@ Deno.serve(async (req) => {
   }
 
   // --- FLOW 1: create a multi-bag supplier order (one gruppo, N lines) ---
+  // v21 (brief 23-07 A): il CODICE torna "generated, never typed". Precedenza per riga:
+  // (1) il codice del client norm-matcha un prodotto esistente -> RIORDINO col codice canonico
+  //     del DB, MAI ri-derivato (29/181 legacy hanno item/variant segnaposto che derivano garbage);
+  // (2) altrimenti, con Modello+Variante -> codice DERIVATO server-side (tok v2) e ri-match per
+  //     norm: un riordino scritto "quasi uguale" (spazi, maiuscole, trattini) NON crea uno stub;
+  // (3) niente match e niente Modello+Variante -> 422 esplicito. Mai derivare da campi vuoti.
   if (action === 'order_multi') {
     const fornitore = String(payload.fornitore || '').trim();
     const righe = (payload.righe as Record<string, unknown>[]) || [];
     const dataOrdine = (payload.data_ordine as string) || today;
     if (!fornitore) return json({ error: 'fornitore mancante' }, 422);
     if (!righe.length) return json({ error: 'nessuna riga' }, 422);
-    const gruppo = crypto.randomUUID();
-    const rows = righe.map((r) => ({
-      gruppo, fornitore, data_ordine: dataOrdine,
+    const raw = righe.map((r) => ({
       codice: String(r.codice || ''), item: (r.item as string) ?? null, variant: (r.variant as string) ?? null,
       // riga WIP (feedback 06-07 item 18): quantita'/costo ancora ignoti (es. affinamento pelle);
       // qty_ordered resta 0 e si risolve alla registrazione dell'arrivo.
       wip: r.wip === true,
-      qty_ordered: r.wip === true ? 0 : (Number(r.qty_ordered) || 0), qty_arrived: 0,
+      qty_ordered: r.wip === true ? 0 : (Number(r.qty_ordered) || 0),
       nuovo_riordino: (r.nuovo_riordino as string) ?? null,
       costo_unitario: r.costo_unitario != null ? Number(r.costo_unitario) : null,
       data_consegna: (r.data_consegna as string) ?? null, note: (r.note as string) ?? null,
-      source: 'app', chi: chi || null,
-    })).filter((r) => r.codice && (r.qty_ordered > 0 || r.wip));
-    if (!rows.length) return json({ error: 'righe non valide (CODICE + quantità)' }, 422);
-    const { data, error } = await sb.from('supplier_orders').insert(rows).select();
-    if (error) return json({ error: error.message }, 400);
-    // Create product stubs for bags not yet in the catalog, so they surface in FLOW 2 (verifica).
-    const codici = [...new Set(rows.map((r) => r.codice))];
-    const { data: existing } = await sb.from('products').select('codice').in('codice', codici);
-    const have = new Set((existing || []).map((e: { codice: string }) => e.codice));
+    })).filter((r) => (r.codice || (r.item && r.variant)) && (r.qty_ordered > 0 || r.wip));
+    if (!raw.length) return json({ error: 'righe non valide (CODICE o Modello+Variante, più quantità)' }, 422);
+
+    const { data: prods, error: pe } = await sb.from('products').select('codice, codice_norm');
+    if (pe) return json({ error: 'lettura catalogo fallita: ' + pe.message }, 400);
+    const byNorm = new Map((prods || []).map((p: { codice: string; codice_norm: string }) => [p.codice_norm, p.codice]));
+
+    const resolved: (typeof raw[number] & { nuovo: boolean })[] = [];
+    const errs: string[] = [];
+    for (const r of raw) {
+      const hit = r.codice ? byNorm.get(cnorm(r.codice)) : undefined;
+      if (hit) { resolved.push({ ...r, codice: hit, nuovo: false }); continue; }
+      if (r.item && r.variant) {
+        const derived = `${tok(r.item)}_${tok(r.variant)}`;
+        if (derived.length > 1 && !/^_|_$/.test(derived)) {
+          const hit2 = byNorm.get(cnorm(derived));
+          resolved.push({ ...r, codice: hit2 ?? derived, nuovo: !hit2 });
+          continue;
+        }
+      }
+      if (r.item && !r.variant) {
+        // borsa nuova senza variante: codice PROVVISORIO col trailing '_' (lo finalizza Benny)
+        const prov = `${tok(r.item)}_`;
+        if (prov.length > 1) {
+          const hitP = byNorm.get(cnorm(prov));
+          resolved.push({ ...r, codice: hitP ?? prov, nuovo: !hitP });
+          continue;
+        }
+      }
+      errs.push(`"${r.codice || r.item || '?'}": non a catalogo e senza Modello+Variante per derivare il codice`);
+    }
+    if (errs.length) return json({ error: 'Righe non risolvibili: ' + errs.join(' · '), righe_non_valide: errs }, 422);
+    // coerenza gruppo (era l'origine del caso Rita: 2 colori sotto 1 codice): stesso codice
+    // con varianti diverse nello stesso ordine -> errore, ogni variante ha il suo codice.
+    const seenVar = new Map<string, string>();
+    for (const r of resolved) {
+      const k = cnorm(r.codice);
+      const v = cnorm(r.variant ?? '');
+      const prev = seenVar.get(k);
+      if (prev != null && prev !== v) return json({ error: `Due righe con codice ${r.codice} ma varianti diverse: separale, ogni variante ha il suo codice.` }, 422);
+      seenVar.set(k, v);
+    }
+
+    // Stub PRIMA delle righe ordine, con errore CONTROLLATO (A.3): se l'anagrafica fallisce
+    // l'ordine NON viene scritto (un errore dopo il commit farebbe duplicare le righe al retry).
+    // onConflict su codice_norm: e' la UNIQUE che scattava davvero (audit use case 3, prima
+    // l'errore veniva ingoiato). Niente status (deprecato, C.3) e niente categoria fissa 'BAG'
+    // (C.1: la categoria la da' la tabella models via modello).
     const seen = new Set<string>();
-    // nomi in MAIUSCOLO (decisione call 06-07): item e variant sempre uppercase alla scrittura
-    const stubs = rows.filter((r) => !have.has(r.codice) && !seen.has(r.codice) && seen.add(r.codice)).map((r) => ({
-      codice: r.codice, item: r.item ? r.item.toUpperCase() : r.item, model: r.item ? r.item.toUpperCase() : r.item,
-      variant: r.variant ? r.variant.toUpperCase() : r.variant,
-      categoria: 'BAG', verificato: false, status: 'nuovo', source: 'app-ordine', chi: chi || null,
+    const stubs = resolved.filter((r) => r.nuovo && !seen.has(cnorm(r.codice)) && !!seen.add(cnorm(r.codice))).map((r) => ({
+      codice: r.codice, item: r.item ? r.item.toUpperCase() : null, model: r.item ? r.item.toUpperCase() : null,
+      variant: r.variant ? r.variant.toUpperCase() : null,
+      verificato: false, source: 'app-ordine', chi: chi || null,
     }));
-    if (stubs.length) await sb.from('products').upsert(stubs, { onConflict: 'codice', ignoreDuplicates: true });
-    await logp('supplier_orders', gruppo, 'order_multi', { fornitore, righe: rows.length, gruppo, stubs: stubs.length });
+    if (stubs.length) {
+      const { error: se } = await sb.from('products').upsert(stubs, { onConflict: 'codice_norm', ignoreDuplicates: true });
+      if (se) return json({ error: `Anagrafica non creata (${se.message}). Ordine NON salvato: riprova o segnala.`, stub_error: se.message }, 400);
+      // se un concorrente ha creato lo stesso norm un attimo prima (DO NOTHING), le righe
+      // ordine devono comunque puntare al codice canonico gia' a catalogo
+      const { data: after } = await sb.from('products').select('codice, codice_norm').in('codice_norm', stubs.map((s) => cnorm(s.codice)));
+      const canon = new Map((after || []).map((p: { codice: string; codice_norm: string }) => [p.codice_norm, p.codice]));
+      for (const r of resolved) { const c = canon.get(cnorm(r.codice)); if (c) r.codice = c; }
+    }
+
+    const gruppo = crypto.randomUUID();
+    const rows = resolved.map((r) => ({
+      gruppo, fornitore, data_ordine: dataOrdine,
+      codice: r.codice, item: r.item, variant: r.variant, wip: r.wip,
+      qty_ordered: r.qty_ordered, qty_arrived: 0,
+      nuovo_riordino: r.nuovo_riordino ?? (r.nuovo ? 'Nuovo' : 'Riordino'),
+      costo_unitario: r.costo_unitario, data_consegna: r.data_consegna, note: r.note,
+      source: 'app', chi: chi || null,
+    }));
+    const { data, error } = await sb.from('supplier_orders').insert(rows).select();
+    if (error) return json({ error: error.message, ...(stubs.length ? { note: "anagrafica gia' creata, righe ordine no: riprova l'ordine" } : {}) }, 400);
+    await logp('supplier_orders', gruppo, 'order_multi', { fornitore, righe: rows.length, gruppo, stubs: stubs.length, riordini: resolved.filter((r) => !r.nuovo).length });
     return json({ ok: true, gruppo, lines: data?.length ?? 0, stubs: stubs.length });
   }
 
   // --- FLOW 2: verify / complete a product's details (Benny) ---
+  // v21 (brief 23-07 B): la completezza E' il segnale. Bloccanti (model, variant, prezzo>0,
+  // COGS>0) sulla TRANSIZIONE a verificato: un edit su prodotto GIA' verificato (es. correzione
+  // COGS dal catalogo) passa sempre. Il rename usa i Modello+Variante FINALI (dal DB se il
+  // payload non li porta): il codice provvisorio non resta mai per una UI che non li rimanda.
   if (action === 'product_verify') {
     const codice = String(payload.codice || '');
     if (!codice) return json({ error: 'CODICE mancante' }, 422);
-    const { data: cur } = await sb.from('products').select('id, codice, verificato, cogs').eq('codice', codice).single();
+    const { data: cur } = await sb.from('products').select('id, codice, verificato, cogs, retail_price, item, variant, source').eq('codice', codice).single();
     if (!cur) return json({ error: 'prodotto non trovato' }, 404);
     const upd: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const f of ['item', 'variant', 'categoria', 'image_url', 'description', 'seo_title']) {
@@ -308,34 +384,55 @@ Deno.serve(async (req) => {
     // tengono il loro snapshot cogs — nessun ricalcolo retroattivo.
     if (payload.cogs != null && payload.cogs !== '') upd.cogs = Number(payload.cogs);
 
-    // #8 (audit 09-07): non marcare 'verificato' senza COGS. Un prodotto senza costo non e' pronto:
-    // resta in lista e le sue vendite future non snapshottano un COGS nullo che sottostima il CE.
-    // Il COGS finale = quello passato ora, altrimenti quello gia' a listino.
+    // Stato FINALE = payload sovrapposto al DB. COGS 0 NON verifica (#8 audit 09-07, tenuto:
+    // le vendite future non devono snapshottare un costo nullo che sottostima il CE).
+    const finalItem = ((upd.item as string) ?? (cur.item ? String(cur.item).toUpperCase() : '')).trim();
+    const finalVariant = ((upd.variant as string) ?? (cur.variant ? String(cur.variant).toUpperCase() : '')).trim();
+    const finalPrice = upd.retail_price != null ? Number(upd.retail_price) : (cur.retail_price != null ? Number(cur.retail_price) : null);
     const finalCogs = upd.cogs != null ? Number(upd.cogs) : (cur.cogs != null ? Number(cur.cogs) : null);
-    const hasCogs = finalCogs != null && finalCogs > 0;
-    upd.verificato = hasCogs;
+    const mancanti: string[] = [];
+    if (!finalItem) mancanti.push('model');
+    if (!finalVariant) mancanti.push('variant');
+    if (!(finalPrice != null && finalPrice > 0)) mancanti.push('retail_price');
+    if (!(finalCogs != null && finalCogs > 0)) mancanti.push('cogs');
+    // confirm:true = "Verifica e salva" dal pannello: incompleto -> 4xx con la lista (B.1).
+    // Senza confirm (editor di campo) si salva comunque, ma verificato scatta solo se completo.
+    if (payload.confirm === true && mancanti.length) {
+      return json({ error: 'Verifica incompleta, mancano: ' + mancanti.join(', '), mancanti }, 422);
+    }
+    // verificato non retrocede mai (timbro audit, C.3); diventa true solo a anagrafica completa
+    upd.verificato = cur.verificato === true ? true : mancanti.length === 0;
 
-    // CODICE DEFINITIVO alla verifica di Benny (decisione owner 06-07): il codice nato con
-    // l'ordine di Ginni e' PROVVISORIO. Alla prima verifica (o finche' il codice resta non
-    // finalizzato, cioe' termina con '_') si rigenera dai Modello+Variante finali, MAIUSCOLO.
-    // Le verifiche successive non lo toccano piu'. Se il derivato collide con un altro
-    // prodotto, la verifica passa SENZA rename (segnalato in risposta).
-    const tok = (s: unknown) => String(s ?? '').toUpperCase().trim().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
+    // CODICE DEFINITIVO alla verifica di Benny (decisione owner 06-07): si rigenera dai
+    // Modello+Variante FINALI finche' il prodotto non e' mai stato verificato o il codice resta
+    // provvisorio (termina con '_'). Le verifiche successive non lo toccano piu'.
     let newCodice: string | null = null;
     let renameSkipped: string | null = null;
-    if ((!cur.verificato || /_$/.test(cur.codice)) && typeof upd.item === 'string' && typeof upd.variant === 'string') {
-      const derived = `${tok(upd.item)}_${tok(upd.variant)}`;
+    if ((!cur.verificato || /_$/.test(cur.codice)) && finalItem && finalVariant) {
+      const derived = `${tok(finalItem)}_${tok(finalVariant)}`;
       if (derived && !/^_|_$/.test(derived) && derived !== cur.codice) {
-        const { data: clash } = await sb.from('products').select('id').eq('codice_norm', derived).neq('id', cur.id).maybeSingle();
-        if (clash) {
-          // #9 (audit 09-07): se il codice attuale e' ancora provvisorio (termina con _), finalizzarlo
-          // e' impossibile perche' un ALTRO prodotto ha gia' il codice definitivo -> resterebbe col
-          // provvisorio e l'inventario si spaccherebbe su due codici per la stessa borsa. Blocca.
-          if (/_$/.test(cur.codice)) {
-            return json({ error: `Esiste gia' un prodotto ${derived}: probabilmente e' la stessa borsa. Uniscila a quella o correggi Modello/Variante. Verifica non salvata.`, clash_codice: derived }, 409);
-          }
-          renameSkipped = `codice ${derived} gia' esistente: verifica salvata senza rinomina`;
-        } else newCodice = derived;
+        // guardia B.4: codice gia' nel mirror Shopify (QUALSIASI status, bozze incluse) -> niente
+        // rename: la cascata non tocca shopify_stock (Regola 15) e lo SKU divergerebbe in silenzio.
+        const { data: shopRows } = await sb.from('shopify_stock').select('codice');
+        const onShop = (shopRows || []).some((r: { codice: string }) => cnorm(r.codice) === cnorm(cur.codice));
+        // guardia B.4-bis: sui legacy non-app (etl/qromo-sale) item/variant a DB possono essere
+        // segnaposto del seed -> il rename da DB vale solo per gli stub app-ordine; per gli altri
+        // serve l'intento esplicito (item+variant ri-digitati nel payload).
+        const explicitNames = payload.item != null && String(payload.item).trim() !== '' && payload.variant != null && String(payload.variant).trim() !== '';
+        if (onShop) {
+          renameSkipped = `${cur.codice} e' gia' agganciato a Shopify: salvato senza rinomina (coordinare a mano se serve)`;
+        } else if (cur.source === 'app-ordine' || explicitNames) {
+          const { data: clash } = await sb.from('products').select('id').eq('codice_norm', cnorm(derived)).neq('id', cur.id).maybeSingle();
+          if (clash) {
+            // #9 (audit 09-07): se il codice attuale e' ancora provvisorio (termina con _), finalizzarlo
+            // e' impossibile perche' un ALTRO prodotto ha gia' il codice definitivo. Blocca, con la
+            // via d'uscita che FUNZIONA (il product_delete manuale verrebbe 409 per le righe ordine).
+            if (/_$/.test(cur.codice)) {
+              return json({ error: `Esiste gia' ${derived}: e' quasi certamente la stessa borsa. Elimina la riga ordine di questo stub e ricreala come RIORDINO su ${derived} (lo stub sparisce da solo), oppure correggi Modello/Variante. Verifica non salvata.`, clash_codice: derived }, 409);
+            }
+            renameSkipped = `codice ${derived} gia' esistente: verifica salvata senza rinomina`;
+          } else newCodice = derived;
+        }
       }
     }
     if (newCodice) upd.codice = newCodice;
@@ -353,8 +450,8 @@ Deno.serve(async (req) => {
       }
     }
     await logp('products', String(data.id), 'product_verify', { ...upd, ...(newCodice ? { codice_da: cur.codice, codice_a: newCodice, cascata } : {}) });
-    const warn = renameSkipped || (hasCogs ? null : "Salvato. Manca il COGS: non risulta ancora verificato e resta in lista finche' non aggiungi il costo.");
-    return json({ ok: true, codice: newCodice ?? codice, renamed: !!newCodice, verificato: hasCogs, ...(warn ? { warning: warn } : {}) });
+    const warn = renameSkipped || (mancanti.length ? `Salvato. Mancano: ${mancanti.join(', ')} — non risulta ancora verificato e resta in lista.` : null);
+    return json({ ok: true, codice: newCodice ?? codice, renamed: !!newCodice, verificato: upd.verificato === true, ...(mancanti.length ? { mancanti } : {}), ...(warn ? { warning: warn } : {}) });
   }
 
   // --- FLOW 4/5: expenses (manual=approved, proposta=pending, approve/reject) ---
@@ -599,7 +696,12 @@ Deno.serve(async (req) => {
     return json({ ok: true, id: cnt.id, contati, giac_prima: giacLive, delta, giac_dopo: contati, adjustment_id });
   }
 
-  // --- generic insert (purchase/gift/b2b/product/order) ---
+  // v21: l'insert generico 'order' bypassava derivazione e anti-doppione (codice testo libero,
+  // nessuno stub). Nel client web e' dead code (OrderForm non e' montato): disabilitato, si passa
+  // da order_multi anche per una riga sola.
+  if (action === 'order') return json({ error: "azione 'order' disabilitata: usa order_multi (il CODICE lo deriva/risolve il server)" }, 400);
+
+  // --- generic insert (purchase/gift/b2b/product) ---
   const table = TABLES[action];
   if (!table) return json({ error: 'azione sconosciuta: ' + action }, 400);
 

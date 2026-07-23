@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi, fetchActiveFornitori, fetchLastPurchase } from '../lib/api';
+import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi, fetchActiveFornitori, fetchLastPurchase, fetchModels } from '../lib/api';
 import type { Supplier, FornProd, Product } from '../lib/api';
 import { toast } from '../lib/toast';
 
@@ -22,9 +22,19 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   const [dataOrd, setDataOrd] = useState(oggi());
   const [newOpen, setNewOpen] = useState(false);
   const [nm, setNm] = useState(''); const [nv, setNv] = useState('');
+  const [nmFree, setNmFree] = useState(false);
+  const [modelList, setModelList] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { fetchSuppliers().then(setSups).catch(() => {}); fetchProducts().then(setAll).catch(() => {}); fetchActiveFornitori().then((a) => setActive(new Set(a))).catch(() => {}); }, []);
+  useEffect(() => { fetchSuppliers().then(setSups).catch(() => {}); fetchProducts().then(setAll).catch(() => {}); fetchActiveFornitori().then((a) => setActive(new Set(a))).catch(() => {}); fetchModels().then((m) => setModelList(m.map((x) => x.model))).catch(() => {}); }, []);
+
+  // MODELLO da picklist (brief 23-07 C.2): tabella models + modelli gia' a catalogo. Il testo
+  // libero resta come "+ nuovo modello" per il primo capo di una linea davvero nuova.
+  const modelOpts = useMemo(() => {
+    const s = new Set<string>(modelList.map((m) => m.toUpperCase()));
+    for (const p of all) if (p.item) s.add(p.item.toUpperCase());
+    return [...s].sort();
+  }, [modelList, all]);
   useEffect(() => { if (forn) fetchFornitoreProdotti(forn).then(setBags).catch(() => setBags([])); }, [forn]);
 
   const inCart = useMemo(() => new Set(lines.map((l) => l.codice)), [lines]);
@@ -61,7 +71,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
     const codice = (nm && nv ? `${modelTok(nm)}_${variantTok(nv)}` : nm ? `${modelTok(nm)}_` : '').toUpperCase();
     if (!nm) return toast('Scrivi almeno il modello', 'err');
     addLine(codice, nm.trim().toUpperCase(), nv ? variantTok(nv) : null, null, true);
-    setNm(''); setNv(''); setNewOpen(false);
+    setNm(''); setNv(''); setNewOpen(false); setNmFree(false);
   }
 
   async function submit() {
@@ -184,9 +194,21 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
         <button className="addnew" onClick={() => setNewOpen(true)}>+ Borsa nuova (senza codice finale)</button>
       ) : (
         <div className="newbag">
-          <input className="txt" placeholder="Modello (es. Lea Bag x Rita)" value={nm} onChange={(e) => setNm(e.target.value)} autoFocus />
+          {nmFree ? (
+            <input className="txt" placeholder="Nuovo modello (es. Clutch)" value={nm} onChange={(e) => setNm(e.target.value)} autoFocus />
+          ) : (
+            <>
+              <label className="fl">Modello</label>
+              <div className="supgrid">
+                {modelOpts.map((m) => (
+                  <button key={m} type="button" className={`supcard${nm === m ? ' alt' : ''}`} onClick={() => setNm(nm === m ? '' : m)}>{m}</button>
+                ))}
+                <button type="button" className="supcard old" onClick={() => { setNmFree(true); setNm(''); }}>+ nuovo modello</button>
+              </div>
+            </>
+          )}
           <input className="txt" placeholder="Variante (opzionale)" value={nv} onChange={(e) => setNv(e.target.value)} />
-          <button className="submit small" onClick={addNewBag}>Aggiungi</button>
+          <button className="submit small" disabled={!nm.trim()} onClick={addNewBag}>Aggiungi</button>
         </div>
       )}
 

@@ -182,8 +182,25 @@ export type ProdTodo = {
   codice: string; item: string | null; variant: string | null; model: string | null; categoria: string | null;
   image_url: string | null; retail_price: number | null; cogs: number | null; description: string | null;
   seo_title: string | null; verificato: boolean; missing_count: number; giacenza: number; venduto: number; on_shopify: boolean;
-  source: string | null; is_new_model: boolean; bucket: ProdBucket; bucket_rank: number;
+  source: string | null; is_new_model: boolean; bucket: ProdBucket; bucket_rank: number; stub_orfano?: boolean;
 };
+
+// tabella models (migr 0073): modello -> categoria/product_type/template/collezioni.
+// La picklist ordini unisce questi ai modelli gia' a catalogo.
+export type ModelRow = { model: string; categoria: string; product_type: string | null; template_suffix: string | null };
+export async function fetchModels(): Promise<ModelRow[]> {
+  const { data } = await supabase.from('models').select('model,categoria,product_type,template_suffix').order('model');
+  return (data ?? []) as ModelRow[];
+}
+
+// v_products_to_publish (migr 0074): l'UNICO segnale "pronto per Shopify" (brief 23-07 D.1).
+// pronto_stock e' informativo (bozza anche prima dell'arrivo, decisione owner 23-07).
+export type ToPublish = { codice: string; item: string | null; variant: string | null; pronto_stock: boolean; modello_censito: boolean };
+export async function fetchToPublish(): Promise<ToPublish[]> {
+  const { data, error } = await supabase.from('v_products_to_publish').select('codice,item,variant,pronto_stock,modello_censito');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ToPublish[];
+}
 export async function fetchProductsTodo(): Promise<ProdTodo[]> {
   const { data, error } = await supabase.from('v_products_todo').select('*');
   if (error) throw new Error(error.message);

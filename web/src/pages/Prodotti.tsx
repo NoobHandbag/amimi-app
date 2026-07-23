@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { pushBack, popBack } from '../lib/backnav';
 import { supabase } from '../lib/supabase';
-import { fetchProductsTodo, verifyProduct, clearProductCache, fetchLastOrderCost, fetchLastPurchase, fetchSiblingDescription } from '../lib/api';
+import { fetchProductsTodo, verifyProduct, clearProductCache, fetchLastOrderCost, fetchLastPurchase, fetchSiblingDescription, fetchToPublish } from '../lib/api';
 import type { ProdTodo } from '../lib/api';
 import { suggestPrice, marginOf, genSeoTitle, prettyName } from '../lib/helpers';
 import { toast } from '../lib/toast';
@@ -9,14 +9,12 @@ import Icon from '../components/Icon';
 
 const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s);
 
-// "Pulizia dati" (product completion) + "Pubblica su Shopify" — surfaced as buttons in Registra.
-const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
-
 /* ---------- Da completare (Benny) ---------- */
+// v21 (brief 23-07 C.1): la CATEGORIA non e' piu' un input manuale — la deriva la tabella
+// `models` dal modello (lo stub non scrive piu' 'BAG' fisso e l'upload legge da models).
 function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string; chi: string; onDone: () => void; remaining?: number }) {
   const [item, setItem] = useState(p.item ?? '');
   const [variant, setVariant] = useState(p.variant ?? '');
-  const [cat, setCat] = useState(p.categoria ?? 'BAG');
   const [price, setPrice] = useState(p.retail_price != null ? String(p.retail_price) : '');
   const [cogs, setCogs] = useState(p.cogs != null ? String(p.cogs) : '');
   const [cogsAuto, setCogsAuto] = useState(false);
@@ -27,6 +25,16 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
   const [busy, setBusy] = useState(false);
   const descrRequired = p.bucket === 'nuovo' && p.is_new_model;
   const cogsNum = cogs === '' ? null : Number(cogs);
+  // Bloccanti di VERIFICA (brief 23-07 B.1/B.4): modello, variante, prezzo>0, COGS>0. Contano solo
+  // per la transizione a verificato: su un prodotto gia' verificato il salvataggio e' un normale
+  // edit di campo (es. correzione COGS dal catalogo) e passa sempre. IMG resta gate di
+  // PUBBLICAZIONE (v_products_to_publish), non di verifica.
+  const isVerifica = !p.verificato;
+  const bloccanti = [
+    !item.trim() && 'Modello', !variant.trim() && 'Variante',
+    !(price !== '' && Number(price) > 0) && 'Prezzo', !(cogs !== '' && Number(cogs) > 0) && 'COGS',
+  ].filter(Boolean) as string[];
+  const completo = bloccanti.length === 0;
 
   // prefill (item 26): COGS pescato dall'ordine/acquisto di Ginni; descrizione dalla variante
   // sorella dello stesso modello. Entrambi restano modificabili prima del salvataggio.
@@ -57,9 +65,15 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
     const itemUp = item.trim().toUpperCase();
     const variantUp = variant.trim().toUpperCase();
     try {
-      const res = await verifyProduct({ codice: p.codice, item: itemUp, variant: variantUp, categoria: cat, retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs), image_url: img, description: descr, seo_title: seo }, pin, chi) as unknown as { codice?: string; renamed?: boolean; warning?: string };
+      // confirm: la VERIFICA vera (transizione a verificato) viaggia solo quando i bloccanti ci
+      // sono tutti; un salvataggio parziale resta un edit (il server non marca verificato).
+      const res = await verifyProduct({ codice: p.codice, item: itemUp, variant: variantUp, retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs), image_url: img, description: descr, seo_title: seo, ...(isVerifica && completo ? { confirm: true } : {}) }, pin, chi) as unknown as { codice?: string; renamed?: boolean; verificato?: boolean; warning?: string };
       // feedback esplicito (item 24): in call Benny non capiva dove fosse finito il prodotto salvato
-      toast(`✓ Salvato — ${itemUp} ${variantUp} è completo: ora lo trovi in Magazzino.${res.renamed ? ` Codice definitivo: ${res.codice}.` : ''}${remaining != null && remaining > 0 ? ` Ne restano ${remaining} da sistemare.` : remaining === 0 ? ' Erano gli ultimi: tutto pulito! 🎉' : ''}`, 'ok');
+      if (res.verificato) {
+        toast(`✓ Salvato — ${itemUp} ${variantUp} è completo: ora lo trovi in Magazzino.${res.renamed ? ` Codice definitivo: ${res.codice}.` : ''}${remaining != null && remaining > 0 ? ` Ne restano ${remaining} da sistemare.` : remaining === 0 ? ' Erano gli ultimi: tutto pulito! 🎉' : ''}`, 'ok');
+      } else {
+        toast(`Salvato. ${itemUp} ${variantUp} non è ancora completo: resta in lista.`, 'ok');
+      }
       if (res.warning) toast(res.warning, 'err');
       clearProductCache(); onDone();
     } catch (e) { toast((e as Error).message, 'err'); setBusy(false); }
@@ -71,9 +85,7 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
         <div><label className="fl">Modello *</label><input className="txt" style={{ textTransform: 'uppercase' }} value={item} onChange={(e) => setItem(e.target.value)} /></div>
         <div><label className="fl">Variante *</label><input className="txt" style={{ textTransform: 'uppercase' }} value={variant} onChange={(e) => setVariant(e.target.value)} /></div>
       </div>
-      <p className="note" style={{ margin: '4px 0 0' }}>I nomi si salvano sempre in MAIUSCOLO (regola condivisa).</p>
-      <label className="fl">Categoria</label>
-      <div className="ds-linefilters">{CATS.map((c) => <button key={c} type="button" className={`ds-fp ${cat === c ? 'on' : ''}`} onClick={() => setCat(c)}>{c}</button>)}</div>
+      <p className="note" style={{ margin: '4px 0 0' }}>I nomi si salvano sempre in MAIUSCOLO (regola condivisa). La categoria la deriva il sistema dal modello.</p>
       <div className="grid2">
         <div><label className="fl">Prezzo € (IVA incl.)</label><input className="num" type="number" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></div>
         <div><label className="fl">COGS € (costo unitario){cogsAuto ? ' · dall’ordine di Ginni' : ''}</label><input className="num" type="number" inputMode="decimal" value={cogs} onChange={(e) => { setCogs(e.target.value); setCogsAuto(false); }} placeholder="—" /></div>
@@ -91,7 +103,12 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
         <button type="button" className="minibtn" onClick={() => setSeo(genSeoTitle(item, variant))} disabled={!item || !variant}>genera</button></div>
       <input className="txt" value={seo} onChange={(e) => setSeo(e.target.value)} placeholder="Borsa … AMIMI … Made in Italy" />
       {seo && <div className="charcount">{seo.length} caratteri{seo.length >= 60 && seo.length <= 70 ? ' ✓' : ' (target 60–70)'}</div>}
-      <button className="ds-btn primary full" style={{ marginTop: 18 }} disabled={busy} onClick={save}>{busy ? 'Salvo…' : 'Verifica e salva'}</button>
+      {isVerifica && !completo && (
+        <p className="note" style={{ marginTop: 12 }}>Per verificare mancano: <b>{bloccanti.join(', ')}</b>. Puoi comunque salvare quello che hai: resta in lista.</p>
+      )}
+      <button className="ds-btn primary full" style={{ marginTop: isVerifica && !completo ? 6 : 18 }} disabled={busy} onClick={save}>
+        {busy ? 'Salvo…' : isVerifica ? (completo ? 'Verifica e salva' : 'Salva (incompleto)') : 'Salva modifiche'}
+      </button>
       <p className="note">Le modifiche valgono per l'app: prezzo e COGS contano per vendite e margini FUTURI (lo storico non si ricalcola) e <b>non cambiano nulla su Shopify</b>.</p>
     </div>
   );
@@ -168,22 +185,15 @@ export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
 }
 
 /* ---------- Pubblica su Shopify (gated) ---------- */
-type ReadyP = { codice: string; item: string | null; variant: string | null };
+// v21 (brief 23-07 D.1): UNICA fonte = v_products_to_publish. La vecchia logica locale
+// (verificato + ordini + on_shopify=false) non vedeva le BOZZE Shopify (on_shopify conta solo
+// le active) e avrebbe riproposto prodotti gia' caricati in bozza -> doppioni.
+type ReadyP = { codice: string; item: string | null; variant: string | null; pronto_stock?: boolean };
 export function Publish() {
   const [ready, setReady] = useState<ReadyP[] | null>(null);
   const [filt, setFilt] = useState<string | null>(null);
   useEffect(() => {
-    (async () => {
-      const [inv, ord, pr] = await Promise.all([
-        supabase.from('v_inventory').select('codice,on_shopify'),
-        supabase.from('supplier_orders').select('codice'),
-        supabase.from('products').select('codice,item,variant,verificato').eq('verificato', true),
-      ]);
-      const onShop = new Set((inv.data ?? []).filter((r: { on_shopify: boolean }) => r.on_shopify).map((r: { codice: string }) => r.codice));
-      const ordered = new Set((ord.data ?? []).map((r: { codice: string }) => r.codice));
-      // only products that have actually been on a supplier order (the rest is old seed junk)
-      setReady((pr.data ?? []).filter((p: { codice: string }) => !onShop.has(p.codice) && ordered.has(p.codice)) as ReadyP[]);
-    })();
+    fetchToPublish().then((rows) => setReady(rows as ReadyP[])).catch(() => setReady([]));
   }, []);
 
   // KPI chips per modello (clickable filter)
@@ -201,10 +211,10 @@ export function Publish() {
         La pubblicazione automatica su Shopify è disattivata per sicurezza e va riattivata da chi gestisce il sistema.
       </div>
       {ready == null ? <p className="muted center">…</p> : !ready.length ? (
-        <div className="card muted center">Niente da pubblicare. Tutti i prodotti ordinati sono già online. 🎉</div>
+        <div className="card muted center">Niente da pubblicare. Tutti i prodotti completi sono già su Shopify (bozze incluse). 🎉</div>
       ) : (
         <div className="list">
-          <p className="note">{ready.length} prodotti (da ordine fornitore) non ancora su Shopify.</p>
+          <p className="note">{ready.length} prodotti completi (scheda + foto) non ancora su Shopify, nemmeno in bozza.</p>
           <div className="kpirow">
             <button className={`kpichip ${filt == null ? 'on' : ''}`} onClick={() => setFilt(null)}>Tutti <b>{ready.length}</b></button>
             {byModel.map(([k, n]) => (
@@ -213,7 +223,7 @@ export function Publish() {
           </div>
           {shown.map((p) => (
             <div className="row" key={p.codice}>
-              <div><div className="rt">{p.item ?? p.codice}</div><div className="rs">{p.variant ?? ''}</div></div>
+              <div><div className="rt">{p.item ?? p.codice}{p.pronto_stock === false && <span className="newtag" title="Ordine non ancora arrivato: si può preparare la bozza, il go-live aspetta lo stock">in arrivo</span>}</div><div className="rs">{p.variant ?? ''}</div></div>
               <button className="chip" disabled title="abilitazione lato server richiesta">pubblica</button>
             </div>
           ))}
