@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { pushBack, popBack } from '../lib/backnav';
-import { fetchInventory, fetchContoVendita, syncShopifyStock, syncNowShopify, fetchReorder, fetchShopStockMap, fetchSalesByCodice, fetchPurchasesByCodice, fetchAdjustmentsByCodice, fetchLastSaleMap, archiveReorder } from '../lib/api';
+import { fetchInventory, fetchContoVendita, syncNowShopify, fetchReorder, fetchShopStockMap, fetchSalesByCodice, fetchPurchasesByCodice, fetchAdjustmentsByCodice, fetchLastSaleMap, archiveReorder } from '../lib/api';
+import Icon from '../components/Icon';
 import type { InvFull, CV, Reorder, SaleRow, PurchaseRow, AdjustmentRow } from '../lib/api';
-import { useSort } from '../lib/sortable';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
 import { toast } from '../lib/toast';
@@ -85,67 +85,6 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
   );
 }
 
-/* #2: Shopify catalog composition — treemap of online SKUs per model, sized by count */
-const CATCOL: Record<string, string> = { BAG: '#8B5E6B', PELLE: '#9C5F33', TESSUTO: '#2E8049', ACCESSORI: '#5d6b7a', ALTRO: '#6f6056' };
-function ShopComposition({ inv, pin, chi, onSynced }: { inv: InvFull[]; pin: string; chi: string; onSynced?: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [nowBusy, setNowBusy] = useState(false);
-  const byItem = useMemo(() => {
-    const m = new Map<string, { item: string; cat: string; n: number }>();
-    for (const p of inv.filter((x) => x.on_shopify)) {
-      const k = p.item ?? p.codice; const a = m.get(k) ?? { item: k, cat: p.categoria ?? 'ALTRO', n: 0 };
-      a.n += 1; m.set(k, a);
-    }
-    return [...m.values()].sort((a, b) => b.n - a.n);
-  }, [inv]);
-  const tot = byItem.reduce((s, i) => s + i.n, 0);
-  async function sync() {
-    setBusy(true);
-    try { const r = await syncShopifyStock(pin) as { synced: number }; toast(`Aggiornato: ${r.synced} varianti da Shopify`, 'ok'); }
-    catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(false); }
-  }
-  // giro completo on-demand: pull mirror + push Shopify := disponibili (stesso giro dei cron :17/:27).
-  // disable durante il run; il server ha un cooldown di 45s (doppio click = skip idempotente).
-  async function syncNow() {
-    if (nowBusy) return;
-    setNowBusy(true);
-    try {
-      const r = await syncNowShopify(pin, chi);
-      if (r.skipped === 'cooldown') { toast('Giro appena eseguito: riprova tra qualche secondo.', 'ok'); }
-      else if (r.realign?.skipped) { toast('Autopush Shopify disattivato (interruttore server).', 'err'); }
-      else {
-        const ra = r.realign;
-        const parts = [`${ra?.pushed ?? 0} aggiornati`, `${ra?.ok ?? 0} già ok`];
-        if (ra?.failed) parts.push(`${ra.failed} falliti`);
-        if (ra?.untracked?.length) parts.push(`${ra.untracked.length} senza tracking`);
-        toast(`Shopify sincronizzato: ${parts.join(', ')}.`, ra?.failed ? 'err' : 'ok');
-      }
-      onSynced?.();
-    } catch (e) { toast((e as Error).message, 'err'); } finally { setNowBusy(false); }
-  }
-  return (
-    <>
-      <div className="kpis">
-        <div className="kpi rose"><div className="v">{tot}</div><div className="k">SKU su Shopify</div></div>
-        <div className="kpi accent"><div className="v">{byItem.length}</div><div className="k">Modelli online</div></div>
-      </div>
-      <p className="note">Varianti pubblicate su Shopify per modello — riquadro più grande = più varianti online. Lo stock Shopify è lo <b>specchio del reale</b> (riallineato ogni ora dall'app).</p>
-      <div className="treemap">
-        {byItem.map((it) => (
-          <div className="tmbox" key={it.item} style={{ flexGrow: it.n, background: CATCOL[it.cat] ?? CATCOL.ALTRO }} title={`${it.item} · ${it.n} SKU`}>
-            <span className="tmname">{it.item}</span><span className="tmn">{it.n}</span>
-          </div>
-        ))}
-        {!byItem.length && <p className="muted center">Nessun prodotto su Shopify.</p>}
-      </div>
-      <div className="catleg">{Object.entries(CATCOL).map(([c, col]) => <span key={c}><i style={{ background: col }} />{c}</span>)}</div>
-      <button className="syncbtn" onClick={syncNow} disabled={nowBusy || busy}>{nowBusy ? 'Sincronizzo Shopify…' : '🔁 Sincronizza Shopify adesso'}</button>
-      <p className="note">Esegue subito il giro orario completo: legge Shopify e riallinea le quantità allo stock reale. Utile dopo un arrivo o una conta per non aspettare l'ora.</p>
-      <button className="syncbtn ghost" onClick={sync} disabled={busy || nowBusy}>{busy ? 'Leggo…' : '🔄 Solo rileggi da Shopify'}</button>
-    </>
-  );
-}
-
 /* reorder board — click = nuovo ordine precompilato (item 21); archivio ripristinabile (item 20) */
 function ReorderView({ pin, chi, goOrdini }: { pin: string; chi: string; goOrdini?: (param: string) => void }) {
   const [rows, setRows] = useState<Reorder[] | null>(null);
@@ -213,144 +152,22 @@ function ReorderView({ pin, chi, goOrdini }: { pin: string; chi: string; goOrdin
   );
 }
 
-/* inventory valuation */
-function ValoreView({ inv }: { inv: InvFull[] }) {
-  const live = inv.filter((p) => p.giacenza_attuale > 0);
-  const atCogs = live.reduce((s, p) => s + p.giacenza_attuale * (p.cogs || 0), 0);
-  const atRetail = live.reduce((s, p) => s + (p.valore || 0), 0);
-  const byLine = useMemo(() => {
-    const m = new Map<string, { cogs: number; retail: number; pezzi: number }>();
-    for (const p of live) {
-      const k = p.item ?? p.codice; const a = m.get(k) ?? { cogs: 0, retail: 0, pezzi: 0 };
-      a.cogs += p.giacenza_attuale * (p.cogs || 0); a.retail += p.valore || 0; a.pezzi += p.giacenza_attuale; m.set(k, a);
-    }
-    return [...m.entries()].sort((x, y) => y[1].retail - x[1].retail);
-  }, [inv]);
-  const vSort = useSort(byLine.map(([k, v]) => ({ linea: k, pezzi: v.pezzi, cogs: v.cogs, retail: v.retail })) as unknown as Record<string, unknown>[], 'retail', 'desc');
-  return (
-    <>
-      <div className="kpis">
-        <div className="kpi accent"><div className="v">{eur(atCogs)}</div><div className="k">Valore a costo (COGS)</div></div>
-        <div className="kpi rose"><div className="v">{eur(atRetail)}</div><div className="k">Valore a prezzo vendita</div></div>
-      </div>
-      <section className="card"><h2>Per linea</h2>
-        <div className="tablewrap"><table className="sortable">
-          <thead><tr>
-            <th onClick={() => vSort.toggle('linea')}>Linea{vSort.arrow('linea')}</th>
-            <th onClick={() => vSort.toggle('pezzi')}>Pezzi{vSort.arrow('pezzi')}</th>
-            <th onClick={() => vSort.toggle('cogs')}>A costo{vSort.arrow('cogs')}</th>
-            <th onClick={() => vSort.toggle('retail')}>A prezzo{vSort.arrow('retail')}</th>
-          </tr></thead>
-          <tbody>{(vSort.sorted as unknown as { linea: string; pezzi: number; cogs: number; retail: number }[]).map((v) => (
-            <tr key={v.linea}><td className="l">{v.linea}</td><td>{v.pezzi}</td><td>{eur(v.cogs)}</td><td>{eur(v.retail)}</td></tr>
-          ))}</tbody>
-        </table></div>
-      </section>
-    </>
-  );
+/* Shopify status of a product → badge (Pubblicato / Esaurito online / In stock da caricare). */
+function shopStatus(p: InvFull): { cls: string; label: string } | null {
+  if (p.on_shopify) return p.giacenza_attuale > 0 ? { cls: 'pub', label: 'Pubblicato' } : { cls: 'out', label: 'Esaurito online' };
+  if (p.giacenza_attuale > 0) return { cls: 'load', label: 'In stock, da caricare' };
+  return null;
+}
+const giaCls = (n: number) => (n < 0 ? 'neg' : n === 0 ? 'zero' : n <= 3 ? 'low' : '');
+function Thumb2({ url, label }: { url: string | null; label: string }) {
+  return url ? <span className="ds-thumb"><img src={url} alt="" loading="lazy" /></span> : <span className="ds-thumb">{label.slice(0, 2).toUpperCase()}</span>;
 }
 
-/* Disponibilità — availability overview (KPI + critical lines + reorder), artifact-style.
-   Note: "giorni vuoto" is NOT shown — it needs stock-history sampling the app doesn't have yet. */
-const lineOf = (item: string | null, codice: string) => (item ?? codice).trim().split(/[\s_]/)[0].toUpperCase();
-function DisponibilitaView({ inv }: { inv: InvFull[] }) {
-  const [reord, setReord] = useState<Reorder[] | null>(null);
-  useEffect(() => { fetchReorder().then(setReord).catch(() => setReord([])); }, []);
-
-  // filtri per KPI cliccabile: chi soddisfa quel KPI
-  type F = 'sku' | 'var' | 'esauriti' | 'nonpub' | 'pub';
-  const [filtro, setFiltro] = useState<F | null>(null);
-  const FILTERS: Record<F, { label: string; test: (p: InvFull) => boolean }> = {
-    sku: { label: 'SKU acquistabili online', test: (p) => p.on_shopify && p.giacenza_attuale > 0 },
-    var: { label: 'Varianti in stock (tutte)', test: (p) => p.giacenza_attuale > 0 },
-    esauriti: { label: 'Pubblicati ma esauriti', test: (p) => p.on_shopify && p.giacenza_attuale <= 0 },
-    nonpub: { label: 'In stock non pubblicati', test: (p) => !p.on_shopify && p.giacenza_attuale > 0 },
-    pub: { label: 'Pubblicati su Shopify', test: (p) => p.on_shopify },
-  };
-  const filtered = filtro ? inv.filter(FILTERS[filtro].test).sort((a, b) => b.giacenza_attuale - a.giacenza_attuale) : [];
-
-  const pub = inv.filter((p) => p.on_shopify);
-  const skuAcq = inv.filter((p) => p.on_shopify && p.giacenza_attuale > 0).length;
-  const varAcq = inv.filter((p) => p.giacenza_attuale > 0).length;
-  const attiviEsauriti = pub.filter((p) => p.giacenza_attuale <= 0).length;
-  const inStockNonPub = inv.filter((p) => !p.on_shopify && p.giacenza_attuale > 0).length;
-
-  const lines = useMemo(() => {
-    const m = new Map<string, { pub: number; esa: number }>();
-    for (const p of inv.filter((x) => x.on_shopify)) {
-      const k = lineOf(p.item, p.codice); const a = m.get(k) ?? { pub: 0, esa: 0 };
-      a.pub += 1; if (p.giacenza_attuale <= 0) a.esa += 1; m.set(k, a);
-    }
-    return [...m.entries()].filter(([, v]) => v.esa > 0)
-      .map(([k, v]) => ({ line: k, esa: v.esa, cov: Math.round(((v.pub - v.esa) / v.pub) * 100) }))
-      .sort((a, b) => b.esa - a.esa).slice(0, 8);
-  }, [inv]);
-
-  const reorder = useMemo(() => {
-    const price = new Map(inv.map((p) => [p.codice, p.retail_price ?? 0]));
-    return (reord ?? []).filter((r) => r.disponibili <= 0 && r.venduto_60d > 0)
-      .map((r) => ({ ...r, persiSett: Math.round((r.venduto_60d / 60) * 7 * (price.get(r.codice) ?? 0)) }))
-      .sort((a, b) => b.persiSett - a.persiSett);
-  }, [reord, inv]);
-
-  return (
-    <>
-      <div className="kpis">
-        {/* KPI cliccabili: toccane uno per vedere ESATTAMENTE quali prodotti conta */}
-        <button type="button" className={`kpi rose kpibtn${filtro === 'sku' ? ' selk' : ''}`} onClick={() => setFiltro(filtro === 'sku' ? null : 'sku')}><div className="v">{skuAcq}</div><div className="k">SKU acquistabili</div><div className="ksub">su Shopify e in stock: comprabili online ora</div></button>
-        <button type="button" className={`kpi accent kpibtn${filtro === 'var' ? ' selk' : ''}`} onClick={() => setFiltro(filtro === 'var' ? null : 'var')}><div className="v">{varAcq}</div><div className="k">Varianti in stock</div><div className="ksub">tutte, anche non pubblicate (vendibili in negozio)</div></button>
-        <button type="button" className={`kpi red kpibtn${filtro === 'esauriti' ? ' selk' : ''}`} onClick={() => setFiltro(filtro === 'esauriti' ? null : 'esauriti')}><div className="v">{attiviEsauriti}</div><div className="k">Pubblicati ma esauriti</div><div className="ksub">vetrina vuota: pubblicati (attivi, no bozze) a 0</div></button>
-        <button type="button" className={`kpi kpibtn${filtro === 'nonpub' ? ' selk' : ''}`} onClick={() => setFiltro(filtro === 'nonpub' ? null : 'nonpub')}><div className="v">{inStockNonPub}</div><div className="k">In stock non pubblicati</div><div className="ksub">magazzino non esposto</div></button>
-        <button type="button" className={`kpi green kpibtn${filtro === 'pub' ? ' selk' : ''}`} onClick={() => setFiltro(filtro === 'pub' ? null : 'pub')}><div className="v">{pub.length}</div><div className="k">Pubblicati su Shopify</div><div className="ksub">di cui {attiviEsauriti} esauriti</div></button>
-      </div>
-
-      {filtro && (
-        <div className="card">
-          <div className="todoghead"><span className="todogt">{FILTERS[filtro].label}</span><span className="todogn">{filtered.length} <button type="button" className="linkbtn" onClick={() => setFiltro(null)}>✕</button></span></div>
-          <div className="list">
-            {filtered.slice(0, 80).map((p) => (
-              <div className="row" key={p.codice}>
-                <div className="grow"><div className="rt">{nome(p.item, p.variant)}</div><div className="rs">{p.codice}</div></div>
-                <div className="rs" style={{ whiteSpace: 'nowrap' }}>{p.giacenza_attuale} pz{p.on_shopify ? ' · 🌐' : ''}</div>
-              </div>
-            ))}
-            {filtered.length > 80 && <p className="muted center">… e altri {filtered.length - 80}</p>}
-          </div>
-        </div>
-      )}
-
-      {lines.length > 0 && (
-        <>
-          <h2 className="sech">Linee critiche / da monitorare</h2>
-          <div className="filters">
-            {lines.map((l) => <span key={l.line} className="critchip">{l.line}: {l.esa} esauriti · copertura {l.cov}%</span>)}
-          </div>
-        </>
-      )}
-
-      <h2 className="sech">Da riordinare adesso</h2>
-      {reord == null ? <p className="muted center">Carico…</p> : !reorder.length ? (
-        <div className="card muted center">Niente di esaurito tra i best-seller. 🎉</div>
-      ) : (
-        <div className="card"><div className="tablewrap"><table className="sortable invtable">
-          <thead><tr><th className="l">Prodotto</th><th>Venduti (60gg)</th><th>€ persi/sett.</th></tr></thead>
-          <tbody>{reorder.slice(0, 40).map((r) => (
-            <tr key={r.codice}>
-              <td className="l">{nome(r.item, r.variant)}{r.in_arrivo > 0 && <span className="tag live"> {r.in_arrivo} in arrivo</span>}</td>
-              <td>{r.venduto_60d}</td>
-              <td className="neg">{eur(r.persiSett)}</td>
-            </tr>
-          ))}</tbody>
-        </table></div></div>
-      )}
-    </>
-  );
-}
-
-const VIEWS = ['disp', 'mag', 'riordino', 'neg', 'shop', 'valore'];
+type Lens = 'giacenza' | 'valore' | 'shopify' | 'negozi';
 export default function Inventory({ pin, chi, initial, go }: { pin: string; chi: string; initial?: string; go?: (t: 'registra' | 'ordini', p?: string) => void }) {
-  type V = 'disp' | 'mag' | 'neg' | 'shop' | 'riordino' | 'valore';
-  const [view, setView] = useState<V>((initial && VIEWS.includes(initial) ? initial : 'disp') as V);
+  type Tab = 'mag' | 'riordino';
+  const [tab, setTab] = useState<Tab>(initial === 'riordino' ? 'riordino' : 'mag');
+  const [lens, setLens] = useState<Lens>('giacenza');
   const [inv, setInv] = useState<InvFull[]>([]);
   const [cv, setCv] = useState<CV[]>([]);
   const [q, setQ] = useState('');
@@ -358,6 +175,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
   const [sel, setSel] = useState<InvFull | null>(null);
   const [shopMap, setShopMap] = useState<Map<string, number>>(new Map());
   const [lastSaleMap, setLastSaleMap] = useState<Map<string, { date: string | null; price: number | null }>>(new Map());
+  const [nowBusy, setNowBusy] = useState(false);
   const shopQ = (p: InvFull) => shopMap.get(norm(p.codice)) ?? null;
 
   useEffect(() => {
@@ -367,106 +185,148 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
     fetchLastSaleMap().then(setLastSaleMap).catch(() => {});
   }, []);
 
+  // §6bis — giro completo on-demand (azione sync_now già LIVE): pull mirror + push Shopify
+  // := disponibili (stessi helper dei cron :17/:27). Cooldown server 45s; rispetta i flag di scrittura.
+  async function syncNow() {
+    if (nowBusy) return;
+    setNowBusy(true);
+    try {
+      const r = await syncNowShopify(pin, chi);
+      if (r.skipped === 'cooldown') toast('Giro appena eseguito: riprova tra qualche secondo.', 'ok');
+      else if (r.realign?.skipped) toast('Autopush Shopify disattivato (interruttore server).', 'err');
+      else {
+        const ra = r.realign;
+        const parts = [`${ra?.pushed ?? 0} aggiornati`, `${ra?.ok ?? 0} già ok`];
+        if (ra?.failed) parts.push(`${ra.failed} falliti`);
+        if (ra?.untracked?.length) parts.push(`${ra.untracked.length} senza tracking`);
+        toast(`Shopify sincronizzato: ${parts.join(', ')}.`, ra?.failed ? 'err' : 'ok');
+      }
+      fetchShopStockMap().then(setShopMap).catch(() => {});
+      fetchInventory().then(setInv).catch(() => {});
+    } catch (e) { toast((e as Error).message, 'err'); } finally { setNowBusy(false); }
+  }
+
   const alive = useMemo(() => inv.filter((p) => p.giacenza_attuale > 0 || daysSince(p.last_sale) <= 60), [inv]);
-  const list = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    return alive.filter((p) => !s || `${p.item ?? ''} ${p.variant ?? ''} ${p.codice}`.toLowerCase().includes(s));
-  }, [alive, q]);
 
-  // #3: Magazzino = one clean summary table with the requested KPIs (3 stocks + value)
-  const magRows = useMemo(() => list.map((p) => ({
-    codice: p.codice, nome: nome(p.item, p.variant), mag: p.giacenza_attuale, conto: p.in_conto_vendita,
-    shopify: p.on_shopify ? (shopMap.get(norm(p.codice)) ?? 0) : -1, valore: Math.round(p.valore || 0),
-    _img: p.image_url, _p: p,
-  })), [list, shopMap]);
-  const magSort = useSort(magRows as unknown as Record<string, unknown>[], 'mag', 'asc');
-
+  // pannello KPI macro
   const totVal = alive.reduce((s, p) => s + (p.valore || 0), 0);
+  const varInStock = inv.filter((p) => p.giacenza_attuale > 0).length;
   const hidden = inv.length - alive.length;
+  const pubN = inv.filter((p) => p.on_shopify).length;
+  const dispOnline = inv.filter((p) => p.on_shopify && p.giacenza_attuale > 0).length;
+  const esauriti = inv.filter((p) => p.on_shopify && p.giacenza_attuale <= 0).length;
+  const daCaricare = inv.filter((p) => !p.on_shopify && p.giacenza_attuale > 0).length;
   const magNeg = alive.filter((p) => p.giacenza_attuale < 0).length;
-  const cvList = useMemo(() => cv.map((r) => {
-    const ls = lastSaleMap.get(norm(r.codice));
-    return { ...r, last_date: ls?.date ?? null, last_price: ls?.price ?? null };
-  }).sort((a, b) => (b.last_date ?? '').localeCompare(a.last_date ?? '')), [cv, lastSaleMap]);
+
+  // lista prodotti secondo la lente attiva (stessa lista, ordinamento/filtro diverso)
+  const rows = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    const match = (p: InvFull) => !s || `${p.item ?? ''} ${p.variant ?? ''} ${p.codice}`.toLowerCase().includes(s);
+    const base = (lens === 'shopify' ? inv.filter((p) => p.on_shopify) : alive).filter(match);
+    if (lens === 'valore') return [...base].sort((a, b) => (b.valore || 0) - (a.valore || 0));
+    if (lens === 'shopify') return [...base].sort((a, b) => (a.giacenza_attuale > 0 ? 1 : 0) - (b.giacenza_attuale > 0 ? 1 : 0) || a.giacenza_attuale - b.giacenza_attuale);
+    // giacenza: in stock prima (bassa in cima → arancio ben visibile), esauriti/negativi in fondo
+    return [...base].sort((a, b) => (a.giacenza_attuale > 0 ? 0 : 1) - (b.giacenza_attuale > 0 ? 0 : 1) || a.giacenza_attuale - b.giacenza_attuale);
+  }, [alive, inv, lens, q]);
+
+  const cvList = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    return cv.map((r) => {
+      const ls = lastSaleMap.get(norm(r.codice));
+      return { ...r, last_date: ls?.date ?? null, last_price: ls?.price ?? null };
+    }).filter((r) => !s || `${r.item ?? ''} ${r.variant ?? ''} ${r.negozio} ${r.codice}`.toLowerCase().includes(s))
+      .sort((a, b) => (b.last_date ?? '').localeCompare(a.last_date ?? ''));
+  }, [cv, lastSaleMap, q]);
 
   if (err) return <div className="screen"><div className="card err">Errore: {err}</div></div>;
+
+  const LENSES: [Lens, string][] = [['giacenza', 'Giacenza'], ['valore', 'Valore'], ['shopify', 'Shopify'], ['negozi', 'Nei negozi']];
 
   return (
     <div className="screen">
       <header className="invhead">
-        <h1>Inventario</h1>
-        <div className="seg wrap">
-          <button className={view === 'disp' ? 'on' : ''} onClick={() => setView('disp')}>Disponibilità</button>
-          <button className={view === 'mag' ? 'on' : ''} onClick={() => setView('mag')}>Magazzino</button>
-          <button className={view === 'riordino' ? 'on' : ''} onClick={() => setView('riordino')}>Riordino</button>
-          <button className={view === 'neg' ? 'on' : ''} onClick={() => setView('neg')}>Nei negozi</button>
-          <button className={view === 'shop' ? 'on' : ''} onClick={() => setView('shop')}>Shopify</button>
-          <button className={view === 'valore' ? 'on' : ''} onClick={() => setView('valore')}>Valore</button>
+        <h1>Magazzino</h1>
+        <div className="ds-seg">
+          <button type="button" className={tab === 'mag' ? 'on' : ''} onClick={() => setTab('mag')}>Magazzino</button>
+          <button type="button" className={tab === 'riordino' ? 'on' : ''} onClick={() => setTab('riordino')}>Riordino</button>
         </div>
         <div className="hbtns"><PrintBtn /><ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} /></div>
       </header>
 
-      {view === 'mag' && (
+      {tab === 'mag' && (
         <>
-          <div className="kpis">
-            <div className="kpi accent"><div className="v">{eur(totVal)}</div><div className="k">Valore magazzino</div></div>
-            <div className="kpi"><div className="v">{alive.length}</div><div className="k">Attivi{hidden > 0 ? ` · ${hidden} nascosti` : ''}</div></div>
-          </div>
-          {magNeg > 0 && <p className="note">{magNeg} varianti a giacenza negativa (in rosso): vendite senza carico registrato, da sistemare. Riducono il valore mostrato.</p>}
-          <input className="search" placeholder="Cerca prodotto…" value={q} onChange={(e) => setQ(e.target.value)} />
-          {/* lista a card (la tabella a 5 colonne collassava su mobile); i chip ordinano */}
-          <div className="filters">
-            {([['nome', 'Nome'], ['mag', 'Magazzino'], ['conto', 'Conto'], ['shopify', 'Shopify'], ['valore', 'Valore']] as const).map(([k, l]) => (
-              <button key={k} className={`fchip ${magSort.arrow(k) ? 'on' : ''}`} onClick={() => magSort.toggle(k)}>{l}{magSort.arrow(k)}</button>
-            ))}
-          </div>
-          <div className="card">
-            <div className="list">
-              {(magSort.sorted as unknown as { codice: string; nome: string; mag: number; conto: number; shopify: number; valore: number; _img: string | null; _p: InvFull }[]).map((r) => (
-                <button type="button" key={r.codice} className="row clickrow" style={{ width: '100%', textAlign: 'left' }} onClick={() => { pushBack(() => setSel(null)); setSel(r._p); }}>
-                  <div className="invleft">
-                    <Tile url={r._img} label={r.nome} />
-                    <div>
-                      <div className="rt">{r.nome}</div>
-                      <div className="rs">{eur(r.valore)}{r.conto ? ` · conto ${r.conto}` : ''}{r.shopify >= 0 ? ` · 🌐 ${r.shopify}` : ''}</div>
-                    </div>
-                  </div>
-                  <div className={`giac${r.mag < 0 ? ' neg' : ''}`}>{r.mag}<span className="giaclbl"> pz</span></div>
-                </button>
-              ))}
+          <div className="ds-macro">
+            <div className="mcell">
+              <div className="mval">{eur(totVal)}</div>
+              <div className="mlab">Valore a magazzino</div>
+              <div className="msub">{varInStock} varianti in stock{hidden > 0 ? ` · ${hidden} nascosti` : ''}</div>
             </div>
-            {!magRows.length && <p className="muted center">Nessun prodotto.</p>}
+            <div className="mcell">
+              <div className="ds-stgrid">
+                <div className="ds-st pub"><div className="v">{pubN}</div><div className="l">Pubblicati</div></div>
+                <div className="ds-st ok"><div className="v">{dispOnline}</div><div className="l">Disponibili online</div></div>
+                <div className="ds-st out"><div className="v">{esauriti}</div><div className="l">Pubblicati ma esauriti</div></div>
+                <div className="ds-st load"><div className="v">{daCaricare}</div><div className="l">In stock, da caricare</div></div>
+              </div>
+            </div>
           </div>
+
+          <button className="ds-btn primary full" style={{ marginBottom: 6 }} onClick={syncNow} disabled={nowBusy}>
+            <Icon name="recycle" size={17} />{nowBusy ? 'Sincronizzo Shopify…' : 'Aggiorna stock Shopify ora'}
+          </button>
+          <p className="note" style={{ marginBottom: 12 }}>Esegue subito il giro orario completo: legge Shopify e riallinea le quantità allo stock reale. Rispetta gli interruttori di scrittura Shopify.</p>
+
+          {magNeg > 0 && <p className="note">{magNeg} varianti a giacenza negativa (in rosso): vendite senza carico registrato, da sistemare.</p>}
+
+          <div className="ds-search">
+            <Icon name="search" size={18} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca prodotto…" aria-label="Cerca prodotto" />
+          </div>
+
+          <div className="ds-lens">
+            <span className="ll">Lente</span>
+            {LENSES.map(([k, l]) => <button key={k} type="button" className={`ds-lp ${lens === k ? 'on' : ''}`} onClick={() => setLens(k)}>{l}</button>)}
+          </div>
+
+          {lens === 'negozi' ? (
+            cvList.length === 0 ? <div className="card muted center">Nessuna merce in conto vendita. Registra un movimento B2B (invio) da Registra ▸ B2B.</div> : (
+              cvList.map((r) => (
+                <button className="ds-prow" type="button" key={r.negozio + r.codice} onClick={() => go && go('registra', `b2b:${r.negozio}`)}>
+                  <Thumb2 url={r.image_url} label={r.item ?? r.codice} />
+                  <div className="ds-pinfo">
+                    <div className="ds-pn">{nome(r.item, r.variant)}</div>
+                    <div className="ds-psub">@ {r.negozio}{r.last_date ? ` · ultima vendita ${r.last_date}` : ' · mai venduto'}</div>
+                  </div>
+                  <div className="ds-gia"><div className="g">{r.pezzi}</div><div className="gp">pz</div></div>
+                </button>
+              ))
+            )
+          ) : (
+            <>
+              {rows.map((p) => {
+                const st = shopStatus(p);
+                return (
+                  <button type="button" key={p.codice} className="ds-prow" onClick={() => { pushBack(() => setSel(null)); setSel(p); }}>
+                    <Thumb2 url={p.image_url} label={p.item ?? p.codice} />
+                    <div className="ds-pinfo">
+                      <div className="ds-pn">{nome(p.item, p.variant)}</div>
+                      {st && <span className={`ds-pbadge ${st.cls}`}>{st.label}</span>}
+                    </div>
+                    <div className="ds-gia">
+                      <div className={`g ${giaCls(p.giacenza_attuale)}`}>{p.giacenza_attuale}</div>
+                      <div className="gp">pz</div>
+                      <div className="val">{eur(p.valore || 0)}</div>
+                    </div>
+                  </button>
+                );
+              })}
+              {!rows.length && <p className="muted center">Nessun prodotto.</p>}
+            </>
+          )}
         </>
       )}
 
-      {view === 'neg' && (
-        cvList.length === 0 ? <div className="card muted center">Nessuna merce in conto vendita. Registra un movimento B2B (invio) da Registra ▸ B2B.</div> : (
-          <>
-            <p className="note">In conto vendita, ordinati per ultima vendita. Tocca un prodotto per registrare vendita/rientro nel suo negozio.</p>
-            <div className="card"><div className="list">
-              {cvList.map((r) => (
-                <button className="row clickrow" type="button" key={r.negozio + r.codice} onClick={() => go && go('registra', `b2b:${r.negozio}`)}>
-                  <div className="invleft">
-                    <Tile url={r.image_url} label={r.item ?? r.codice} />
-                    <div>
-                      <div className="rt">{nome(r.item, r.variant)}</div>
-                      <div className="rs">@ {r.negozio} · {r.pezzi} pz</div>
-                      <div className="invtags"><span className="tag">{r.last_date ? `🛒 ${r.last_date}` : 'mai venduto'}{r.last_price != null ? ` · ${eur(r.last_price)}` : ''}</span></div>
-                    </div>
-                  </div>
-                  <span className="chev">›</span>
-                </button>
-              ))}
-            </div></div>
-          </>
-        )
-      )}
-
-      {view === 'disp' && <DisponibilitaView inv={inv} />}
-      {view === 'shop' && <ShopComposition inv={inv} pin={pin} chi={chi} onSynced={() => { fetchShopStockMap().then(setShopMap).catch(() => {}); fetchInventory().then(setInv).catch(() => {}); }} />}
-      {view === 'riordino' && <ReorderView pin={pin} chi={chi} goOrdini={go ? (param) => go('ordini', param) : undefined} />}
-      {view === 'valore' && <ValoreView inv={inv} />}
+      {tab === 'riordino' && <ReorderView pin={pin} chi={chi} goOrdini={go ? (param) => go('ordini', param) : undefined} />}
 
       {sel && <ProductDrawer p={sel} shopQty={shopQ(sel)} onClose={() => popBack(() => setSel(null))} go={go} />}
     </div>

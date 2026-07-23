@@ -29,7 +29,7 @@ Vincoli: solo frontend/design + la piccola aggiunta backend §6 (feed change_log
 | Icone a linea (`Icon.tsx`, sostituzione globale emoji) | FATTO |
 | Home | FATTO |
 | Cruscotto | FATTO |
-| Magazzino | da fare |
+| Magazzino | FATTO (tab Disponibilità rimosso; lenti; sync_now ri-esposto) |
 | Registra | da fare |
 | Prodotti & prezzi | da fare |
 | Ordini in arrivo | da fare |
