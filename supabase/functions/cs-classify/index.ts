@@ -28,7 +28,9 @@ const MAX_PER_RUN = 10;          // sotto la quota free 15 RPM; il cron drena il
 const CONF_THRESHOLD = 0.6;      // sotto = "da confermare" (categoria NULL, source ai_low)
 const TEXT_MAX = 2400;
 
-// Tassonomia BLOCCATA (design 6.2). Il valore memorizzato in cs_conversations.categoria e' una di queste.
+// Tassonomia (design 6.2). Il valore memorizzato in cs_conversations.categoria e' una di queste.
+// 14a categoria "Modifica / correzione indirizzo" aggiunta il 2026-07-23 (OK owner): era il gap noto
+// nella ricerca (indirizzi errati/incompleti finivano in Cambio/Spedizione/Altro).
 const CANON = [
   'Spedizione e stato ordine',
   'Restock e disponibilita',
@@ -39,6 +41,7 @@ const CANON = [
   'Altro / richiesta varia',
   'Reso e rimborso',
   'Cambio e prodotto errato',
+  'Modifica / correzione indirizzo',
   'Info prodotto',
   'Riparazione',
   'Pagamento',
@@ -58,7 +61,7 @@ function toCanon(raw: unknown): string {
   return '';
 }
 
-const PROMPT = `Sei il classificatore del servizio clienti di "Amimi'" (borse artigianali, Milano; vende online su Shopify e in negozio/pop-up). Classifichi UN messaggio di un cliente in UNA delle 13 categorie. Rispondi SOLO con JSON valido, niente altro testo.
+const PROMPT = `Sei il classificatore del servizio clienti di "Amimi'" (borse artigianali, Milano; vende online su Shopify e in negozio/pop-up). Classifichi UN messaggio di un cliente in UNA delle 14 categorie. Rispondi SOLO con JSON valido, niente altro testo.
 
 Categorie (usa ESATTAMENTE una di queste etichette in "categoria"):
 - "Spedizione e stato ordine": dov'e' il mio ordine, tracking, tempi di consegna, corriere, ordine non arrivato.
@@ -69,6 +72,7 @@ Categorie (usa ESATTAMENTE una di queste etichette in "categoria"):
 - "Gift card e account": gift card / buono regalo, area riservata / account.
 - "Reso e rimborso": voglio rendere, ho spedito un reso, chiedo il rimborso.
 - "Cambio e prodotto errato": voglio cambiare taglia/colore/modello, ho ricevuto il prodotto sbagliato/difettoso appena arrivato.
+- "Modifica / correzione indirizzo": indirizzo di spedizione errato o incompleto, o cambio dell'indirizzo di consegna di un ordine (manca il civico, CAP sbagliato, cambio destinazione). NON e' un cambio di prodotto.
 - "Info prodotto": domande sul prodotto (misure, materiale, ci sta il telefono, esiste in un altro colore) senza un ordine in corso.
 - "Riparazione": prodotto rovinato/usurato da riparare, sostituzione catena/manico.
 - "Pagamento": problema col pagamento (PayPal/carta), non so se l'ordine e' andato a buon fine.
@@ -82,6 +86,7 @@ Esempi (testo cliente -> categoria):
 "il codice AMIMILANO10 non e' valido dopo l'iscrizione alla newsletter" -> Codice sconto
 "vorrei una borsa su misura per un matrimonio" -> Personalizzazione e cerimonia
 "ho ordinato la nude ma vorrei cambiarla con un'altra" -> Cambio e prodotto errato
+"ho sbagliato l'indirizzo, manca il numero civico: potete correggerlo?" -> Modifica / correzione indirizzo
 "ho inviato un reso, quando arriva il rimborso?" -> Reso e rimborso
 "la Annie esiste in argento? ci sta un iPhone 17 Pro Max?" -> Info prodotto
 "la catena e' da sostituire, posso venire in showroom?" -> Riparazione
