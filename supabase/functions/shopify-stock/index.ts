@@ -27,15 +27,30 @@ Deno.serve(async (req) => {
 
   // ---- SYNC: pull variant inventory, map SKU -> codice, upsert shopify_stock ----
   // estratto in helper cosi' l'azione on-demand `sync_now` puo' rieseguire lo stesso identico giro.
-  const doSync = async () => {
+  // `who` = attore per l'audit del prune in change_log ('cron' per i giri schedulati).
+  const doSync = async (who = 'cron') => {
     const { data: al } = await sb.from('product_aliases').select('shopify_name_norm, codice');
     const aliasMap = new Map((al ?? []).map((r) => [r.shopify_name_norm, r.codice]));
     const { data: prods } = await sb.from('products').select('codice, codice_norm');
     const byNorm = new Map((prods ?? []).map((r) => [r.codice_norm, r.codice]));
 
-    const resp = await fetch(`${API}/products.json?limit=250&fields=id,title,status,image,images,variants`, { headers: SH });
-    if (!resp.ok) return { error: 'Shopify ' + resp.status, detail: (await resp.text()).slice(0, 200), status: 502 };
-    const { products } = await resp.json();
+    // Pull con PAGINAZIONE cursor-based (brief 23-07): products.json e' cappato a 250 prodotti
+    // per pagina — la singola fetch troncava in silenzio oltre i 250 (mirror gia' a 245 codici).
+    // Si segue rel="next" nell'header Link finche' c'e'. Una pagina fallita aborta TUTTO il giro
+    // (niente upsert ne' prune su un pull parziale); cap di sicurezza anti-loop, MAI silenzioso.
+    // deno-lint-ignore no-explicit-any
+    const products: any[] = [];
+    let pageUrl: string | null = `${API}/products.json?limit=250&fields=id,title,status,image,images,variants`;
+    let pages = 0;
+    while (pageUrl) {
+      if (++pages > 20) return { error: 'Shopify: oltre 20 pagine di prodotti, pull abortito (cap di sicurezza)', status: 502 };
+      const resp = await fetch(pageUrl, { headers: SH });
+      if (!resp.ok) return { error: 'Shopify ' + resp.status, detail: (await resp.text()).slice(0, 200), status: 502 };
+      const page = await resp.json();
+      products.push(...(page.products ?? []));
+      const next = (resp.headers.get('link') ?? '').match(/<([^>]+)>;\s*rel="next"/);
+      pageUrl = next ? next[1] : null;
+    }
 
     // Group ALL variant inventory items per codice: dual-variant bags (SC/CC "Senza/Con Catena")
     // share ONE codice via the product-title alias — both inventory items must be kept and realigned.
@@ -74,8 +89,24 @@ Deno.serve(async (req) => {
       codice, shopify_qty: e.qty, shopify_title: e.title, image_url: e.image, shopify_status: e.status,
       variant_id: e.variant_id, inventory_item_id: e.items[0], inventory_item_ids: e.items, synced_at: new Date().toISOString(),
     }));
-    if (rows.length) await sb.from('shopify_stock').upsert(rows, { onConflict: 'codice' });
-    return { ok: true, synced: rows.length, products: (products ?? []).length, dual: rows.filter((r) => r.inventory_item_ids.length > 1).length };
+    let pruned = 0;
+    if (rows.length) {
+      await sb.from('shopify_stock').upsert(rows, { onConflict: 'codice' });
+      // PRUNE (brief 23-07): il mirror e' lo SPECCHIO di Shopify — una riga non piu' vista nel
+      // pull va rimossa (prodotto eliminato da Shopify), altrimenti resta per sempre con
+      // synced_at congelato e, se era active, tiene on_shopify=true in v_inventory (caso
+      // ANNIE_BAG_SILK_BROWN, 23 righe ferme al 06-07). Qui si arriva SOLO a pull completo e
+      // non vuoto, quindi "non vista" = davvero assente, non un pull parziale. Tocca solo la
+      // tabella mirror, mai Shopify (Regola Ferrea 15 invariata: unico stock writer, push gated).
+      const { data: existing } = await sb.from('shopify_stock').select('codice');
+      const gone = (existing ?? []).map((r) => r.codice as string).filter((c) => !byCodice.has(c));
+      if (gone.length) {
+        await sb.from('shopify_stock').delete().in('codice', gone);
+        await sb.from('change_log').insert({ tbl: 'shopify_stock', row_id: 'sync', op: 'stock_prune', after: { pruned: gone.length, codici: gone.slice(0, 40) }, chi: who, source: 'shopify-stock' });
+        pruned = gone.length;
+      }
+    }
+    return { ok: true, synced: rows.length, pruned, pages, products: products.length, dual: rows.filter((r) => r.inventory_item_ids.length > 1).length };
   };
   if (action === 'sync') { const r = await doSync() as { status?: number }; return json(r, r.status ?? 200); }
 
@@ -196,13 +227,13 @@ Deno.serve(async (req) => {
       const { data: recent } = await sb.from('change_log').select('id').eq('op', 'stock_sync_now').gte('ts', since).limit(1);
       if (recent && recent.length) return json({ ok: true, skipped: 'cooldown', cooldown_s: 45 });
     }
-    const sync1 = await doSync() as Record<string, unknown>;
+    const sync1 = await doSync(who) as Record<string, unknown>;
     // se il pull Shopify fallisce, aborta il giro (non riallineare su un mirror stantio)
     if (sync1.error) return json(sync1, (sync1.status as number) ?? 502);
     const realign = await doRealignAll(false, who) as Record<string, unknown>;
     await sb.from('change_log').insert({
       tbl: 'shopify_stock', row_id: 'sync_now', op: 'stock_sync_now',
-      after: { synced: sync1.synced, pushed: realign.pushed ?? null, held: realign.held ?? null, ok: realign.ok ?? null, failed: realign.failed ?? null, untracked: realign.untracked ?? null, unmapped: realign.unmapped ?? null, skipped: realign.skipped ?? null },
+      after: { synced: sync1.synced, pruned: sync1.pruned ?? null, pushed: realign.pushed ?? null, held: realign.held ?? null, ok: realign.ok ?? null, failed: realign.failed ?? null, untracked: realign.untracked ?? null, unmapped: realign.unmapped ?? null, skipped: realign.skipped ?? null },
       chi: who, source: 'shopify-stock',
     });
     return json({ ok: true, sync: sync1, realign });
