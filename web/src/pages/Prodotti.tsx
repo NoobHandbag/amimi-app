@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { pushBack, popBack } from '../lib/backnav';
 import { supabase } from '../lib/supabase';
 import { fetchProductsTodo, verifyProduct, clearProductCache, fetchLastOrderCost, fetchLastPurchase, fetchSiblingDescription } from '../lib/api';
 import type { ProdTodo } from '../lib/api';
-import { suggestPrice, marginOf, genSeoTitle } from '../lib/helpers';
+import { suggestPrice, marginOf, genSeoTitle, prettyName } from '../lib/helpers';
 import { toast } from '../lib/toast';
+import Icon from '../components/Icon';
+
+const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s);
 
 // "Pulizia dati" (product completion) + "Pubblica su Shopify" — surfaced as buttons in Registra.
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
@@ -70,14 +73,15 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
       </div>
       <p className="note" style={{ margin: '4px 0 0' }}>I nomi si salvano sempre in MAIUSCOLO (regola condivisa).</p>
       <label className="fl">Categoria</label>
-      <div className="supgrid">{CATS.map((c) => <button key={c} type="button" className={`supcard ${cat === c ? 'on' : ''}`} onClick={() => setCat(c)}>{c}</button>)}</div>
+      <div className="ds-linefilters">{CATS.map((c) => <button key={c} type="button" className={`ds-fp ${cat === c ? 'on' : ''}`} onClick={() => setCat(c)}>{c}</button>)}</div>
       <div className="grid2">
         <div><label className="fl">Prezzo € (IVA incl.)</label><input className="num" type="number" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></div>
         <div><label className="fl">COGS € (costo unitario){cogsAuto ? ' · dall’ordine di Ginni' : ''}</label><input className="num" type="number" inputMode="decimal" value={cogs} onChange={(e) => { setCogs(e.target.value); setCogsAuto(false); }} placeholder="—" /></div>
       </div>
       {cogsNum && cogsNum > 0 ? (() => { const sug = suggestPrice(cogsNum); return (
-        <button type="button" className="hintchip" onClick={() => setPrice(String(sug))}>
-          💡 Prezzo consigliato €{sug.toFixed(2)} · margine {Math.round(marginOf(sug, cogsNum) * 100)}% (COGS €{cogsNum})
+        <button type="button" className="ds-reco" onClick={() => setPrice(String(sug))}>
+          <span className="ic"><Icon name="sparkles" size={16} /></span>
+          <span className="ht">Prezzo consigliato <b>€{sug.toFixed(2)}</b> · margine <b>{Math.round(marginOf(sug, cogsNum) * 100)}%</b> (COGS €{cogsNum}). Tocca per usarlo.</span>
         </button>); })() : null}
       <label className="fl">Immagine (URL)</label>
       <input className="txt" value={img} onChange={(e) => setImg(e.target.value)} placeholder="https://…" />
@@ -87,7 +91,7 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
         <button type="button" className="minibtn" onClick={() => setSeo(genSeoTitle(item, variant))} disabled={!item || !variant}>genera</button></div>
       <input className="txt" value={seo} onChange={(e) => setSeo(e.target.value)} placeholder="Borsa … AMIMI … Made in Italy" />
       {seo && <div className="charcount">{seo.length} caratteri{seo.length >= 60 && seo.length <= 70 ? ' ✓' : ' (target 60–70)'}</div>}
-      <button className="submit" disabled={busy} onClick={save}>{busy ? 'Salvo…' : '✓ Verifica e salva'}</button>
+      <button className="ds-btn primary full" style={{ marginTop: 18 }} disabled={busy} onClick={save}>{busy ? 'Salvo…' : 'Verifica e salva'}</button>
       <p className="note">Le modifiche valgono per l'app: prezzo e COGS contano per vendite e margini FUTURI (lo storico non si ricalcola) e <b>non cambiano nulla su Shopify</b>.</p>
     </div>
   );
@@ -233,6 +237,8 @@ const toTodo = (r: CatRow): ProdTodo => ({
 export function Catalog({ pin, chi }: { pin: string; chi: string }) {
   const [rows, setRows] = useState<CatRow[] | null>(null);
   const [q, setQ] = useState('');
+  const [line, setLine] = useState('');
+  const [todoOnly, setTodoOnly] = useState(false);
   const [edit, setEdit] = useState<CatRow | null>(null);
   const load = () => {
     supabase.from('products')
@@ -242,35 +248,59 @@ export function Catalog({ pin, chi }: { pin: string; chi: string }) {
   };
   useEffect(() => { load(); }, []);
 
+  const lineOf = (r: CatRow) => (r.item ?? r.codice).trim().split(/[\s_]/)[0];
+  const lines = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows ?? []) m.set(lineOf(r), (m.get(lineOf(r)) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k);
+  }, [rows]);
+
   if (edit) return <ProdEdit p={toTodo(edit)} pin={pin} chi={chi} onDone={() => { popBack(() => setEdit(null)); clearProductCache(); setEdit(null); load(); }} />;
 
   const nq = q.trim().toLowerCase();
-  const match = (r: CatRow) => !nq
-    || r.codice.toLowerCase().includes(nq)
-    || (r.item ?? '').toLowerCase().includes(nq)
-    || (r.variant ?? '').toLowerCase().includes(nq);
+  const isTodo = (r: CatRow) => r.retail_price == null || r.cogs == null;
+  const match = (r: CatRow) =>
+    (!nq || r.codice.toLowerCase().includes(nq) || (r.item ?? '').toLowerCase().includes(nq) || (r.variant ?? '').toLowerCase().includes(nq))
+    && (!line || lineOf(r) === line) && (!todoOnly || isTodo(r));
   const found = (rows ?? []).filter(match);
-  const shown = found.slice(0, 60);
+  const shown = found.slice(0, 80);
+  const todoCount = (rows ?? []).filter(isTodo).length;
 
   return (
-    <div className="list">
-      <input className="txt" autoFocus placeholder="Cerca per nome, variante o CODICE…" value={q} onChange={(e) => setQ(e.target.value)} />
+    <div>
+      <div className="ds-search">
+        <Icon name="search" size={18} />
+        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca per nome, variante o CODICE…" aria-label="Cerca prodotto" />
+      </div>
       {rows == null ? <p className="muted center">…</p> : (
         <>
-          <p className="note">{found.length} prodotti{found.length > shown.length ? ` (mostro i primi ${shown.length}: affina la ricerca)` : ''} · tocca per modificare prezzo, COGS e scheda.</p>
-          {shown.map((r) => (
-            <button key={r.codice} className="todocard" onClick={() => { pushBack(() => setEdit(null)); setEdit(r); }}>
-              <div className="invimg sm">{r.image_url ? <img src={r.image_url} alt="" /> : <span>{(r.item ?? r.codice).slice(0, 2)}</span>}</div>
-              <div className="todoinfo">
-                <div className="rt">{[r.item, r.variant].filter(Boolean).join(' ') || r.codice}</div>
-                <div className="missrow">
-                  <span className="misschip">{r.retail_price != null ? `€${r.retail_price}` : 'PREZZO —'}</span>
-                  <span className="misschip">{r.cogs != null ? `COGS €${r.cogs}` : 'COGS —'}</span>
+          <div className="ds-count">{found.length} prodotti{found.length > shown.length ? ` · mostro i primi ${shown.length}` : ''} · tocca per modificare prezzo, COGS e scheda.</div>
+          <div className="ds-linefilters">
+            <button type="button" className={`ds-fp ${line === '' ? 'on' : ''}`} onClick={() => setLine('')}>Tutte</button>
+            {lines.map((l) => <button key={l} type="button" className={`ds-fp ${line === l ? 'on' : ''}`} onClick={() => setLine(line === l ? '' : l)}>{titleCase(l)}</button>)}
+            <span className="ds-fp-div" />
+            <button type="button" className={`ds-fp ds-fp-todo ${todoOnly ? 'on' : ''}`} onClick={() => setTodoOnly((v) => !v)}>Da completare · {todoCount}</button>
+          </div>
+          {shown.map((r) => {
+            const missing = isTodo(r);
+            const marg = r.retail_price != null && r.cogs != null && r.retail_price > 0 ? (r.retail_price - r.cogs) / r.retail_price : null;
+            return (
+              <button key={r.codice} className={`ds-prow ${missing ? 'miss' : ''}`} onClick={() => { pushBack(() => setEdit(null)); setEdit(r); }}>
+                <span className="ds-thumb">{r.image_url ? <img src={r.image_url} alt="" loading="lazy" /> : (r.item ?? r.codice).slice(0, 2).toUpperCase()}</span>
+                <div className="ds-pinfo">
+                  <div className="ds-pn">{prettyName(r.item, r.variant, r.codice)}</div>
+                  <div className="ds-pcode">{r.codice}</div>
+                  <div className="ds-dchips">
+                    {r.retail_price != null ? <span className="ds-dchip price">€{r.retail_price}</span> : <span className="ds-dchip miss">Prezzo manca</span>}
+                    {r.cogs != null ? <span className="ds-dchip cogs">COGS €{r.cogs}</span> : <span className="ds-dchip miss">COGS manca</span>}
+                    {marg != null && <span className={`ds-dchip ${marg >= 0.65 ? 'marg' : 'marglow'}`}>margine {Math.round(marg * 100)}%</span>}
+                  </div>
                 </div>
-              </div>
-              <span className="chev">›</span>
-            </button>
-          ))}
+                <span className="chev">›</span>
+              </button>
+            );
+          })}
+          {!found.length && <p className="muted center">Nessun prodotto.</p>}
         </>
       )}
     </div>

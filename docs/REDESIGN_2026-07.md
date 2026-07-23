@@ -31,7 +31,8 @@ Vincoli: solo frontend/design + la piccola aggiunta backend §6 (feed change_log
 | Cruscotto | FATTO |
 | Magazzino | FATTO (tab Disponibilità rimosso; lenti; sync_now ri-esposto) |
 | Registra | FATTO (ProductPicker condiviso: giacenza + filtri linea; toggle GiftForm) |
-| Prodotti & prezzi | da fare |
+| Prodotti & prezzi | FATTO (lista margine/Da-completare; edit segmented+reco) |
+| Nomi Title Case display (`prettyName`) | FATTO (fix globale: display Title Case, storage MAIUSCOLO) |
 | Ordini in arrivo | da fare |
 | Spese | da fare |
 | Salute & Movimenti (+ Attività/Gemini §6) | da fare |

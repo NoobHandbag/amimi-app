@@ -6,11 +6,13 @@ export const nowYear = (): number => new Date().getFullYear();
 const MESI_FULL = ['', 'gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
 export const meseNome = (m: number): string => MESI_FULL[m] ?? '';
 
-/** Human product name: strip underscores from item/variant and de-dup a model prefix the variant sometimes repeats. */
+/** Human product name: strip underscores, de-dup a model prefix the variant repeats, and
+ *  render in Title Case (regola condivisa: display Title Case, storage MAIUSCOLO). */
 export function prettyName(item: string | null, variant: string | null, codice?: string | null): string {
   const deUnder = (s: string) => s.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
-  const it = deUnder(item ?? '');
-  let va = deUnder(variant ?? '');
+  const titleCase = (s: string) => s.split(' ').map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w)).join(' ');
+  const it = titleCase(deUnder(item ?? ''));
+  let va = titleCase(deUnder(variant ?? ''));
   if (it && va) {
     const low = va.toLowerCase(), ilow = it.toLowerCase();
     if (low === ilow) va = '';
