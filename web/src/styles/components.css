@@ -96,6 +96,40 @@
 .ds-bdg { position: absolute; top: 8px; right: 8px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
   background: var(--negative); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
 
+/* ---- Cruscotto ---- */
+.ds-kpi.hero { background: var(--grad-hero); border: 0; box-shadow: var(--e2); }
+.ds-kpi.hero .v, .ds-kpi.hero .s { color: #fff; }
+.ds-kpi.hero .l { color: #fff; opacity: .85; }
+.ds-kpi.pos .v { color: var(--positive-700); }
+.ds-kpi.neg .v { color: var(--negative-700); }
+
+/* single-series trend (barre viola, corrente coral) */
+.ds-trend { display: flex; align-items: flex-end; gap: 6px; height: 150px; margin: 12px 0 6px; }
+.ds-tcol { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; height: 100%; background: none; border: 0; padding: 0; cursor: pointer; font-family: inherit; }
+.ds-tcol.off { opacity: .42; }
+.ds-tbarwrap { position: relative; flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.ds-tbar { width: 72%; max-width: 30px; background: var(--interactive); border-radius: 5px 5px 0 0; min-height: 3px; }
+.ds-tbar.cur { background: var(--accent-coral); }
+.ds-tval { position: absolute; left: 50%; transform: translateX(-50%); font-size: 10.5px; font-weight: 700; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ds-tlabel { font-size: 11px; font-weight: 700; color: var(--ink-muted); }
+
+/* channel mix bar */
+.ds-chbar { display: flex; height: 16px; border-radius: 8px; overflow: hidden; background: var(--surface-alt); }
+.ds-chleg { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; color: var(--ink-muted); }
+.ds-chleg span { display: inline-flex; align-items: center; }
+.ds-chleg i { width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; display: inline-block; }
+.ds-ch-on { background: var(--interactive); }
+.ds-ch-of { background: var(--sec-lavender); }
+.ds-ch-b2 { background: var(--positive); }
+
+/* funnel "dal lordo all'utile" */
+.ds-funnel .fb { display: flex; align-items: center; gap: 10px; margin: 9px 0; }
+.ds-funnel .fname { width: 104px; flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.ds-funnel .fname small { display: block; color: var(--ink-muted); font-weight: 400; font-size: 10px; }
+.ds-funnel .ftrack { flex: 1; min-width: 0; height: 28px; background: var(--surface-alt); border-radius: 8px; overflow: hidden; }
+.ds-funnel .ffill { height: 100%; border-radius: 8px; min-width: 4px; }
+.ds-funnel .fval { flex: none; width: 92px; text-align: right; font-size: 12px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 @media (min-width: 620px) {
   .ds-manage { grid-template-columns: repeat(4, 1fr); }
 }

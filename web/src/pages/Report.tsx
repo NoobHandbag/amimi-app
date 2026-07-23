@@ -6,6 +6,7 @@ import ProductPicker from '../components/ProductPicker';
 import { useSort } from '../lib/sortable';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
+import Icon from '../components/Icon';
 import { nowMonth, nowYear } from '../lib/helpers';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
@@ -116,69 +117,74 @@ export default function Report({ onBack }: { onBack?: () => void }) {
       </header>
       {onBack && <button className="back" onClick={onBack}>← Home</button>}
 
-      <button className="syncbtn" onClick={doSync} disabled={syncing}>{syncing ? 'Sincronizzo…' : (syncMsg || '🔄 Sincronizza Shopify')}</button>
+      <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={doSync} disabled={syncing}>
+        <Icon name="recycle" size={18} />{syncing ? 'Sincronizzo…' : (syncMsg || 'Sincronizza Shopify')}
+      </button>
 
       <div className="ctrlbar">
-        <div className="scopetoggle">
-          <button className={scope === 'amimi' ? 'on' : ''} onClick={() => setScope('amimi')}>Amimì</button>
-          <button className={scope === 'totale' ? 'on' : ''} onClick={() => setScope('totale')}>Totale</button>
+        <div className="ds-seg">
+          <button type="button" className={scope === 'amimi' ? 'on' : ''} onClick={() => setScope('amimi')}>Amimì</button>
+          <button type="button" className={scope === 'totale' ? 'on' : ''} onClick={() => setScope('totale')}>Totale</button>
         </div>
         <div className="chips">
-          <button className={`chip ${allOn ? 'on' : ''}`} onClick={() => setSel(new Set(allOn ? [CURRENT_MONTH] : visMonths))}>Tutti</button>
+          <button type="button" className={`ds-fp ${allOn ? 'on' : ''}`} onClick={() => setSel(new Set(allOn ? [CURRENT_MONTH] : visMonths))}>Tutti</button>
           {visMonths.map((m) => (
-            <button key={m} className={`chip ${sel.has(m) ? 'on' : ''}`} onClick={() => toggle(m)}>{MESI[m]}</button>
+            <button key={m} type="button" className={`ds-fp ${sel.has(m) ? 'on' : ''}`} onClick={() => toggle(m)}>{MESI[m]}</button>
           ))}
         </div>
       </div>
 
       <div className="kpis">
-        <Kpi label="Fatturato Lordo" value={eur(lordo)} sub="incl. IVA" tone="rose" />
-        <Kpi label="Fatturato Netto" value={eur(netto)} sub="IVA 22% esclusa" tone="accent" />
-        <Kpi label="MC1 (mesi chiusi)" value={eur(mc1)} sub={`${pct1(mc1 / nettoClosed)} su netto`} tone={mc1 >= 0 ? 'green' : 'red'} />
-        <Kpi label="MC2 / Utile (mesi chiusi)" value={eur(mc2)} sub={`${pct1(mc2 / nettoClosed)} su netto`} tone={mc2 >= 0 ? 'green' : 'red'} />
+        <div className="ds-kpi accent"><div className="v">{eur(lordo)}</div><div className="l">Fatturato lordo</div><div className="s">incl. IVA</div></div>
+        <div className="ds-kpi"><div className="v">{eur(netto)}</div><div className="l">Fatturato netto</div><div className="s">IVA 22% esclusa</div></div>
+        <div className={`ds-kpi ${mc1 >= 0 ? 'pos' : 'neg'}`}><div className="v">{eur(mc1)}</div><div className="l">MC1 · margine</div><div className="s">{pct1(mc1 / nettoClosed)} su netto · mesi chiusi</div></div>
+        <div className="ds-kpi hero"><div className="v">{eur(mc2)}</div><div className="l">MC2 · Utile</div><div className="s">{pct1(mc2 / nettoClosed)} su netto · mesi chiusi</div></div>
       </div>
-      <p className="note" style={{ marginTop: -4, marginBottom: 14 }}>MC1 = margine dopo i costi variabili · MC2 = utile dopo i costi fissi.</p>
+
+      {lordo > 0 && (
+        <section className="card ds-funnel">
+          <h2>Dal lordo all'utile</h2>
+          <p className="note" style={{ marginTop: -4, marginBottom: 12 }}>Dove se ne va il valore, dai ricavi ai costi. MC su mesi chiusi.</p>
+          {funnelRow('Fatturato lordo', null, lordo, lordo, 'var(--grad-action)')}
+          {funnelRow('Fatturato netto', 'meno IVA', netto, lordo, 'var(--interactive)')}
+          {funnelRow('MC1', 'meno costi variabili', mc1, lordo, 'var(--sec-lavender)')}
+          {funnelRow('MC2 · Utile', 'meno costi fissi', mc2, lordo, 'var(--sec-cabaret)')}
+        </section>
+      )}
 
       <section className="card">
-        <h2>Trend fatturato mensile</h2>
-        <div className="trend">
+        <h2>Trend fatturato lordo mensile</h2>
+        <div className="ds-trend">
           {visMonths.map((m) => {
             const r = rows.find((x) => x.month === m)!;
             const on = sel.has(m);
             const h = (r.lordo / maxLordo) * 100;
+            const cur = m === CURRENT_MONTH;
             return (
-              <button key={m} className={`tcol ${on ? '' : 'off'}`} onClick={() => toggle(m)} title={`${MESI[m]} · ${eur(r.lordo)}`}>
-                <div className="tbarwrap">
-                  <span className="tval" style={{ bottom: `${h}%` }}>{r.lordo >= 1000 ? Math.round(r.lordo / 1000) + 'k' : Math.round(r.lordo)}</span>
-                  <div className="tbar" style={{ height: `${h}%` }}>
-                    <div className="tseg on" style={{ flex: r.online }} />
-                    <div className="tseg of" style={{ flex: r.offline }} />
-                    {r.b2b > 0 && <div className="tseg b2" style={{ flex: r.b2b }} />}
-                  </div>
+              <button key={m} type="button" className={`ds-tcol ${on ? '' : 'off'}`} onClick={() => toggle(m)} title={`${MESI[m]} · ${eur(r.lordo)}`}>
+                <div className="ds-tbarwrap">
+                  <span className="ds-tval" style={{ bottom: `${h}%` }}>{r.lordo >= 1000 ? Math.round(r.lordo / 1000) + 'k' : Math.round(r.lordo)}</span>
+                  <div className={`ds-tbar ${cur ? 'cur' : ''}`} style={{ height: `${h}%` }} />
                 </div>
-                <span className="tlabel">{MESI[m]}{m === CURRENT_MONTH ? '*' : ''}</span>
+                <span className="ds-tlabel">{MESI[m]}{cur ? '*' : ''}</span>
               </button>
             );
           })}
         </div>
-        <div className="barleg">
-          <span><i className="dot on" />Online</span>
-          <span><i className="dot of" />Offline</span>
-          {scope === 'amimi' && <span><i className="dot b2" />B2B</span>}
-        </div>
+        <p className="note">Barre viola = fatturato lordo per mese, corallo = mese in corso. Tocca un mese per includerlo o escluderlo dai totali.</p>
       </section>
 
       <section className="card">
         <h2>Canali · periodo selezionato</h2>
-        <div className="bar">
-          <div className="seg on" style={{ flex: onY }} />
-          <div className="seg of" style={{ flex: ofY }} />
-          {b2bY > 0 && <div className="seg b2" style={{ flex: b2bY }} />}
+        <div className="ds-chbar">
+          <div className="ds-ch-on" style={{ flex: onY }} />
+          <div className="ds-ch-of" style={{ flex: ofY }} />
+          {b2bY > 0 && <div className="ds-ch-b2" style={{ flex: b2bY }} />}
         </div>
-        <div className="barleg">
-          <span><i className="dot on" />Online {pct(onY / totCh)} · {eur(onY)}</span>
-          <span><i className="dot of" />Offline {pct(ofY / totCh)} · {eur(ofY)}</span>
-          {b2bY > 0 && <span><i className="dot b2" />B2B {pct(b2bY / totCh)} · {eur(b2bY)}</span>}
+        <div className="ds-chleg">
+          <span><i className="ds-ch-on" />Online {pct(onY / totCh)} · {eur(onY)}</span>
+          <span><i className="ds-ch-of" />Offline {pct(ofY / totCh)} · {eur(ofY)}</span>
+          {b2bY > 0 && <span><i className="ds-ch-b2" />B2B {pct(b2bY / totCh)} · {eur(b2bY)}</span>}
         </div>
       </section>
 
@@ -358,6 +364,16 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: 
 }
 function DetRow({ label, v, bold }: { label: string; v: number; bold?: boolean }) {
   return <div className={`detrow ${bold ? 'b' : ''}`}><span>{label}</span><span className={v < 0 ? 'neg' : ''}>{eur(v)}</span></div>;
+}
+function funnelRow(name: string, sub: string | null, val: number, base: number, color: string) {
+  const w = base > 0 ? Math.max(0, Math.min(100, (val / base) * 100)) : 0;
+  return (
+    <div className="fb" key={name}>
+      <div className="fname">{name}{sub && <small>{sub}</small>}</div>
+      <div className="ftrack"><div className="ffill" style={{ width: `${w.toFixed(0)}%`, background: color }} /></div>
+      <div className="fval">{eur(val)} · {Math.round(w)}%</div>
+    </div>
+  );
 }
 
 // The old inline "Chiedi ai dati" panel here was superseded by the global AssistantPanel

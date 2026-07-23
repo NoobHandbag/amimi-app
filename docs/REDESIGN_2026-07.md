@@ -28,7 +28,7 @@ Vincoli: solo frontend/design + la piccola aggiunta backend §6 (feed change_log
 | Componenti base (`components.css` ds-*) | FATTO (primitivi + Home; si estende per-schermata) |
 | Icone a linea (`Icon.tsx`, sostituzione globale emoji) | FATTO |
 | Home | FATTO |
-| Cruscotto | da fare |
+| Cruscotto | FATTO |
 | Magazzino | da fare |
 | Registra | da fare |
 | Prodotti & prezzi | da fare |
