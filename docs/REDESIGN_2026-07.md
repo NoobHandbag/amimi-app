@@ -34,6 +34,7 @@ Vincoli: solo frontend/design + la piccola aggiunta backend §6 (feed change_log
 | Prodotti & prezzi | FATTO (lista margine/Da-completare; edit segmented+reco) |
 | Nomi Title Case display (`prettyName`) | FATTO (fix globale: display Title Case, storage MAIUSCOLO) |
 | Ordini in arrivo | FATTO (card fornitore, barra avanzamento, stepper, cestino) |
+| Spese | FATTO (fornitore estratto, conferma 1-tap, ricodifica segmented+toggle) |
 | Ordini in arrivo | da fare |
 | Spese | da fare |
 | Salute & Movimenti (+ Attività/Gemini §6) | da fare |
