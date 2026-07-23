@@ -1,0 +1,101 @@
+/* ============================================================================
+   Componenti design-system GEEIQ (namespace ds-*).
+   Namespacing per NON collidere con la index.css legacy (.search/.pill/.seg/.kpi
+   esistono già con altro significato). Le schermate adottano ds-* man mano che
+   vengono rifinite (redesign 2026-07). Coral della design system = --negative
+   (in questo codebase --accent è il bridge legacy arancio).
+   ============================================================================ */
+
+/* ---- primitivi condivisi ---- */
+.ds-itile { display: flex; align-items: center; justify-content: center; flex: none; border-radius: 11px; }
+.ds-itile svg { width: 21px; height: 21px; }
+
+.ds-btn { border: 0; border-radius: var(--r-md); font-family: inherit; font-size: 14px; font-weight: 700;
+  padding: 11px 16px; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.ds-btn.primary { background: var(--grad-action); color: #fff; box-shadow: 0 6px 16px rgba(92,53,242,.26); }
+.ds-btn.secondary { background: var(--surface); color: var(--ink); border: 1px solid var(--border-strong); }
+.ds-btn.ghost { background: transparent; color: var(--info-700); }
+.ds-btn.danger { background: var(--negative); color: #fff; }
+.ds-btn.full { width: 100%; }
+.ds-btn:disabled { opacity: .55; cursor: default; }
+
+.ds-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 999px; }
+.ds-pill.pos { background: var(--positive-tint); color: var(--positive-700); }   /* spedito/positivo */
+.ds-pill.warn { background: var(--warning-tint); color: var(--warning-700); }    /* in lavorazione/attesa */
+.ds-pill.info { background: var(--info-tint); color: var(--info-700); }           /* nuovo/interazione */
+.ds-pill.neg { background: var(--negative-tint); color: var(--negative-700); }    /* reso/negativo */
+
+.ds-fp { font-size: 12.5px; font-weight: 600; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--ink-muted); cursor: pointer; font-family: inherit; }
+.ds-fp.on { background: var(--interactive); border-color: var(--interactive); color: #fff; }
+
+.ds-seg { display: inline-flex; background: var(--surface-alt); border-radius: 11px; padding: 3px; gap: 3px; }
+.ds-seg button { border: 0; background: none; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink-muted);
+  padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+.ds-seg button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+
+.ds-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 14px 15px; box-shadow: var(--e1); }
+.ds-kpi.accent { border-top: 3px solid var(--sec-cabaret); }
+.ds-kpi .v { font-size: 22px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.ds-kpi .l { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-muted); margin-top: 5px; }
+.ds-kpi .s { font-size: 10.5px; color: var(--ink-muted); margin-top: 3px; }
+
+.ds-delta { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 800; border-radius: 7px; padding: 2px 8px; font-variant-numeric: tabular-nums; }
+.ds-delta.up { color: var(--positive-700); background: var(--positive-tint); }
+.ds-delta.down { color: var(--negative-700); background: var(--negative-tint); }
+.ds-delta.flat { color: var(--ink-muted); background: var(--surface-alt); }
+
+.ds-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px; box-shadow: var(--e1); }
+
+.ds-bars { display: flex; align-items: flex-end; gap: 8px; }
+.ds-bars .b { flex: 1; background: var(--interactive); border-radius: 5px 5px 0 0; min-height: 3px; }
+.ds-bars .b.cur { background: var(--accent-coral); }
+
+/* ---- Home ---- */
+.ds-search { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 13px; padding: 11px 14px; margin-bottom: 16px; box-shadow: var(--e1); }
+.ds-search svg { width: 19px; height: 19px; stroke: var(--ink-muted); flex: none; }
+.ds-search input { flex: 1; border: 0; background: none; font-family: inherit; font-size: 14.5px; color: var(--ink); min-width: 0; }
+.ds-search input::placeholder { color: var(--ink-muted); }
+.ds-search input:focus { outline: none; }
+
+.ds-hero { display: flex; align-items: center; gap: 16px; width: 100%; text-align: left; border: 0; cursor: pointer; font-family: inherit;
+  background: var(--grad-hero); border-radius: 15px; padding: 16px 18px; color: #fff; margin-bottom: 18px; box-shadow: var(--e2); }
+.ds-hero .l { font-size: 12px; opacity: .85; }
+.ds-hero .big { font-size: 30px; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.ds-hero .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 700; background: rgba(255,255,255,.2);
+  border-radius: 999px; padding: 3px 9px; margin-top: 5px; }
+.ds-hero .spark { margin-top: 8px; display: block; }
+.ds-hero .sec { border-left: 1px solid rgba(255,255,255,.3); padding-left: 16px; align-self: stretch; display: flex; flex-direction: column; justify-content: center; }
+.ds-hero .sec .big { font-size: 20px; }
+.ds-hero .go { margin-left: auto; align-self: flex-start; white-space: nowrap; background: rgba(255,255,255,.18);
+  border: 1px solid rgba(255,255,255,.35); color: #fff; font-size: 12px; font-weight: 700; padding: 8px 12px; border-radius: 9px; }
+
+.ds-seclb { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted);
+  margin: 16px 0 10px; display: flex; align-items: center; gap: 8px; }
+.ds-seclb .c { font-size: 11px; font-weight: 700; color: var(--ink-muted); background: var(--surface-alt); border-radius: 999px; padding: 1px 8px; }
+
+.ds-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 11px; }
+.ds-qbtn { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px 8px;
+  text-align: center; box-shadow: var(--e1); cursor: pointer; font-family: inherit; }
+.ds-qbtn .qi { width: 40px; height: 40px; border-radius: 11px; margin: 0 auto 9px; display: flex; align-items: center; justify-content: center; }
+.ds-qbtn .qi svg { width: 20px; height: 20px; }
+.ds-qbtn .ql { font-size: 12px; font-weight: 700; color: var(--ink); line-height: 1.2; }
+
+.ds-manage { display: grid; grid-template-columns: repeat(2, 1fr); gap: 11px; }
+.ds-mcard { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px;
+  display: flex; align-items: center; gap: 10px; box-shadow: var(--e1); cursor: pointer; font-family: inherit; text-align: left; }
+.ds-mcard .mi { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex: none; }
+.ds-mcard .mi svg { width: 17px; height: 17px; }
+.ds-mcard .ml { font-size: 12.5px; font-weight: 600; line-height: 1.15; color: var(--ink); }
+
+.ds-more { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; background: var(--surface-alt);
+  border: 0; border-radius: 12px; padding: 13px 15px; margin-top: 11px; font-size: 12.5px; color: var(--ink-muted); cursor: pointer; font-family: inherit; text-align: left; }
+.ds-more b { color: var(--ink); white-space: nowrap; }
+
+.ds-bdg { position: absolute; top: 8px; right: 8px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  background: var(--negative); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+
+@media (min-width: 620px) {
+  .ds-manage { grid-template-columns: repeat(4, 1fr); }
+}

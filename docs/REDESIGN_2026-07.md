@@ -15,13 +15,19 @@ Vincoli: solo frontend/design + la piccola aggiunta backend §6 (feed change_log
 - **Roboto self-hosted** via `@fontsource/roboto` (400/500/700, woff2 bundlati da Vite, nessun CDN). Importato in `main.tsx`. Numeri **tabellari** attivi su `body` (`font-feature-settings:"tnum" 1,"lnum" 1`) + classi `.num`/`.tabnum`.
 - `index.css` `:root` non ridefinisce più la palette (solo font/color/scheme dai token).
 
+## Componenti + icone
+
+- **`web/src/styles/components.css`** = libreria design-system, classi **namespaced `ds-*`** (per NON collidere con la `index.css` legacy dove `.search`/`.pill`/`.seg`/`.kpi` esistono già con altro significato). Primitivi: `ds-btn` (primary/secondary/ghost/danger/full), `ds-pill` (pos/warn/info/neg), `ds-fp` (filter), `ds-seg` (segmented), `ds-kpi` (+.accent bordo-top), `ds-delta` (up/down/flat), `ds-card`, `ds-bars`. Home: `ds-search`, `ds-hero`, `ds-seclb`, `ds-quick`/`ds-qbtn`, `ds-manage`/`ds-mcard`, `ds-more`, `ds-bdg`. Le schermate adottano `ds-*` man mano.
+- **`web/src/components/Icon.tsx`** riscritto: **icone a linea** (SVG stroke ~1.9, `currentColor`) al posto delle emoji. Stessa API `{name,size}` → sostituzione globale in tutta l'app (nav, tile, bottoni). Il colore lo dà il contenitore (tinta 700 su tile tint). Nome sconosciuto → cerchio neutro. L'unica emoji che resta è il 👋 del saluto e il badge "✨ Chiedi ad Amimì" (Assistenza, fuori scope).
+
 ## Stato schermate (Fase 1)
 
 | Schermata | Stato |
 |---|---|
 | Layer design (token+font+bridge) | FATTO (Fase 0 core) |
-| Componenti base | da fare |
-| Home | da fare |
+| Componenti base (`components.css` ds-*) | FATTO (primitivi + Home; si estende per-schermata) |
+| Icone a linea (`Icon.tsx`, sostituzione globale emoji) | FATTO |
+| Home | FATTO |
 | Cruscotto | da fare |
 | Magazzino | da fare |
 | Registra | da fare |
