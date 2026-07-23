@@ -300,6 +300,25 @@
 .ds-aisum-h button { margin-left: auto; background: none; border: 0; color: var(--interactive-700); font-size: 11.5px; font-weight: 700; cursor: pointer; font-family: inherit; }
 .ds-aisum p { font-size: 13px; line-height: 1.5; color: var(--ink); margin: 0; }
 
+/* ---- Tabelle (DataTable) ---- */
+.ds-dtwrap { overflow: auto; max-height: 72vh; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--e1); }
+.ds-dt { border-collapse: separate; border-spacing: 0; font-size: 12.5px; width: max-content; min-width: 100%; }
+.ds-dt th, .ds-dt td { padding: 8px 11px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.ds-dt th { position: sticky; top: 0; z-index: 2; background: var(--surface-alt); color: var(--ink-muted); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; cursor: pointer; user-select: none; }
+.ds-dt th:hover { color: var(--interactive-700); }
+.ds-dt th .ar { opacity: .8; margin-left: 3px; color: var(--interactive-700); }
+.ds-dt td { color: var(--ink); }
+.ds-dt .num { text-align: right; font-variant-numeric: tabular-nums; }
+.ds-dt .txt { text-align: left; }
+.ds-dt tbody td { background: var(--surface); }
+.ds-dt tbody tr:nth-child(even) td { background: var(--surface-alt); }
+.ds-dt th:first-child, .ds-dt td:first-child { position: sticky; left: 0; }
+.ds-dt th:first-child { z-index: 3; }
+.ds-dt td:first-child { z-index: 1; box-shadow: 1px 0 0 var(--border); }
+.ds-dt-count { font-size: 11px; font-weight: 800; color: var(--interactive-700); background: var(--interactive-tint); border-radius: 999px; padding: 2px 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ds-dt-hidden { font-size: 11.5px; color: var(--ink-muted); margin: 8px 2px; }
+.ds-dt-hidden button { background: none; border: 0; color: var(--interactive-700); font-weight: 700; cursor: pointer; font-family: inherit; font-size: 11.5px; padding: 0 2px; }
+
 @media (min-width: 620px) {
   .ds-manage { grid-template-columns: repeat(4, 1fr); }
 }

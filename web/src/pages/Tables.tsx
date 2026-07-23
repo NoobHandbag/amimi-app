@@ -43,38 +43,76 @@ function TableView({ cfg, onBack }: { cfg: TableCfg; onBack: () => void }) {
   const [q, setQ] = useState('');
   const [limit, setLimit] = useState(100);
   const [err, setErr] = useState<string | null>(null);
+  const [sort, setSort] = useState<{ field: string; asc: boolean } | null>(null);
+  const [showEmpty, setShowEmpty] = useState(false);
   useEffect(() => {
     setRows(null); setErr(null);
     supabase.from(cfg.source).select(cfg.cols.map((c) => c.field).join(','))
       .order(cfg.order.field, { ascending: !!cfg.order.asc }).limit(limit)
       .then(({ data, error }) => { if (error) setErr(error.message); setRows((data ?? []) as unknown as Record<string, unknown>[]); });
   }, [cfg, limit]);
+  useEffect(() => { setSort(null); setShowEmpty(false); }, [cfg]);
+
   const s = q.trim().toLowerCase();
-  const shown = !rows ? [] : (s ? rows.filter((r) => cfg.cols.some((c) => String(r[c.field] ?? '').toLowerCase().includes(s))) : rows);
+  const filtered = !rows ? [] : (s ? rows.filter((r) => cfg.cols.some((c) => String(r[c.field] ?? '').toLowerCase().includes(s))) : rows);
+  // colonne completamente vuote nella pagina caricata -> nascoste (con avviso + toggle)
+  const emptyCols = rows && rows.length ? cfg.cols.filter((c) => rows.every((r) => r[c.field] == null || r[c.field] === '')) : [];
+  const cols = showEmpty ? cfg.cols : cfg.cols.filter((c) => !emptyCols.includes(c));
+  const isNum = (field: string) => !!rows && rows.some((r) => typeof r[field] === 'number');
+  const sorted = sort ? [...filtered].sort((a, b) => {
+    const av = a[sort.field], bv = b[sort.field];
+    let cmp: number;
+    if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv;
+    else cmp = String(av ?? '').localeCompare(String(bv ?? ''), 'it', { numeric: true });
+    return sort.asc ? cmp : -cmp;
+  }) : filtered;
+  const toggleSort = (field: string) => setSort((cur) => (cur && cur.field === field ? { field, asc: !cur.asc } : { field, asc: true }));
+
   return (
     <div>
       <button className="back" onClick={onBack}>← Tutte le tabelle</button>
-      <div className="lblrow"><h2 className="sech" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}><Icon name={cfg.icon} size={20} /> {cfg.label}</h2>
-        <ExportBtn name={cfg.key} rows={() => shown} /></div>
-      <input className="search" placeholder="Cerca in tabella…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="lblrow" style={{ marginBottom: 10 }}>
+        <h2 className="sech" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}><Icon name={cfg.icon} size={20} /> {cfg.label}</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{rows != null && <span className="ds-dt-count">{sorted.length} righe</span>}<ExportBtn name={cfg.key} rows={() => sorted} /></div>
+      </div>
+      <div className="ds-search"><Icon name="search" size={18} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca in tabella…" aria-label="Cerca" /></div>
       {err ? <div className="card err">Niente accesso a questa tabella ({err}).</div>
         : rows == null ? <p className="muted center">Carico…</p>
-        : !shown.length ? <div className="card muted center">Nessuna riga.</div> : (
-          <div className="card"><div className="tablewrap"><table className="sortable invtable rawtable">
-            <thead><tr>{cfg.cols.map((c) => <th key={c.field}>{c.label}</th>)}</tr></thead>
-            <tbody>{shown.map((r, i) => (
-              <tr key={i}>{cfg.cols.map((c) => <td key={c.field} className={typeof r[c.field] === 'number' ? '' : 'l'}>{fmt(r[c.field])}</td>)}</tr>
-            ))}</tbody>
-          </table></div></div>
+        : !sorted.length ? <div className="card muted center">Nessuna riga.</div> : (
+          <>
+            <div className="ds-dtwrap"><table className="ds-dt">
+              <thead><tr>{cols.map((c) => (
+                <th key={c.field} className={isNum(c.field) ? 'num' : 'txt'} onClick={() => toggleSort(c.field)} title="Ordina">
+                  {c.label}{sort?.field === c.field && <span className="ar">{sort.asc ? '▲' : '▼'}</span>}
+                </th>
+              ))}</tr></thead>
+              <tbody>{sorted.map((r, i) => (
+                <tr key={i}>{cols.map((c) => <td key={c.field} className={isNum(c.field) ? 'num' : 'txt'}>{fmt(r[c.field])}</td>)}</tr>
+              ))}</tbody>
+            </table></div>
+            {emptyCols.length > 0 && (
+              <div className="ds-dt-hidden">{showEmpty ? `${emptyCols.length} colonne vuote mostrate` : `${emptyCols.length} colonne vuote nascoste`} <button type="button" onClick={() => setShowEmpty((v) => !v)}>{showEmpty ? 'nascondi' : 'mostra tutte'}</button></div>
+            )}
+          </>
         )}
       {rows && rows.length >= limit && <button className="addnew" onClick={() => setLimit((l) => l + 100)}>Carica altre 100</button>}
-      {rows != null && <p className="note">{shown.length} righe{q ? ' (filtrate)' : ''}{rows.length >= limit ? ` · prime ${limit}` : ''}.</p>}
+      {rows != null && <p className="note">{sorted.length} righe{q ? ' (filtrate)' : ''}{rows.length >= limit ? ` · prime ${limit}` : ''} · valori grezzi, sola lettura.</p>}
     </div>
   );
 }
 
 export function DataTables({ initial }: { initial?: string }) {
   const [openKey, setOpenKey] = useState<string | undefined>(initial);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    (async () => {
+      const entries = await Promise.all(TABLES.map(async (t) => {
+        const { count } = await supabase.from(t.source).select('*', { count: 'exact', head: true });
+        return [t.key, count ?? 0] as const;
+      }));
+      setCounts(Object.fromEntries(entries));
+    })().catch(() => {});
+  }, []);
   const cfg = TABLES.find((t) => t.key === openKey);
   if (cfg) return <TableView cfg={cfg} onBack={() => setOpenKey(undefined)} />;
   return (
@@ -85,7 +123,7 @@ export function DataTables({ initial }: { initial?: string }) {
           <button key={t.key} className="tipo" type="button" onClick={() => setOpenKey(t.key)}>
             <span className="ti"><Icon name={t.icon} size={26} /></span>
             <span className="tt">{t.label}</span>
-            <span className="td">{t.desc}</span>
+            <span className="td">{counts[t.key] != null ? `${counts[t.key].toLocaleString('it-IT')} righe` : t.desc}</span>
           </button>
         ))}
       </div>
