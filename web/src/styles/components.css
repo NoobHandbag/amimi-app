@@ -319,6 +319,26 @@
 .ds-dt-hidden { font-size: 11.5px; color: var(--ink-muted); margin: 8px 2px; }
 .ds-dt-hidden button { background: none; border: 0; color: var(--interactive-700); font-weight: 700; cursor: pointer; font-family: inherit; font-size: 11.5px; padding: 0 2px; }
 
+/* ---- Assistenza "Chiedi ad Amimì": SOLO tema (§4.10) ----
+   Struttura/logica invariate; ri-colora l'assistente col viola (interazione/AI del design
+   system) al posto del vecchio marrone hardcoded. Override additivi (components.css vince
+   su index.css), nessuna modifica alla struttura del pannello. */
+.ai-fab { background: var(--interactive); box-shadow: var(--e2); }
+.ai-send { background: var(--interactive); box-shadow: 0 5px 14px rgba(124,104,251,.4); }
+.ai-mark, .ai-empty-m, .ai-who-m, .ai-report-mark { background: var(--grad-hero); }
+.ai-chip { color: var(--interactive-700); background: var(--interactive-tint); }
+.ai-dot { background: var(--positive); box-shadow: 0 0 0 3px var(--positive-tint); }
+.ai-bar-fill { background: var(--interactive); }
+.ai-bar-track { background: var(--surface-alt); }
+.ai-u { background: var(--interactive-tint); color: var(--ink); }
+.ai-note { background: var(--interactive-tint); border-color: var(--interactive-tint); color: var(--ink); }
+.ai-action { border-color: var(--interactive); }
+.ai-action-yes { background: var(--interactive); }
+.ai-action-grid input[type=checkbox] { accent-color: var(--interactive); }
+.ai-report-head { border-bottom-color: var(--interactive); }
+.ai-report-q { color: var(--interactive-700); }
+.ai-export:hover { color: var(--interactive-700); }
+
 @media (min-width: 620px) {
   .ds-manage { grid-template-columns: repeat(4, 1fr); }
 }

@@ -37,8 +37,6 @@ Vincoli: solo frontend/design + la piccola aggiunta backend §6 (feed change_log
 | Spese | FATTO (fornitore estratto, conferma 1-tap, ricodifica segmented+toggle) |
 | Salute & Movimenti | FATTO (voci cliccabili, barretta, feed attività + riepilogo Gemini §6) |
 | Tabelle | FATTO (DataTable: header+1ª col fissi, ordinamento, colonne vuote nascoste, conteggi) |
-| Ordini in arrivo | da fare |
-| Spese | da fare |
-| Salute & Movimenti (+ Attività/Gemini §6) | da fare |
-| Tabelle | da fare |
-| Assistenza | solo tema (fuori scope redesign) |
+| Assistenza | FATTO (solo tema: viola/AI + token, struttura invariata) |
+| Regressione Fase 2 | FATTO (10 schermate rendono, 0 errori console, persona switch ok; dummy write NON eseguiti — logica invariata) |
+| Deploy web (gh-pages) | **PENDENTE — go-live owner** (build pronta; è un cambio outward-facing per i cofounder) |
