@@ -30,7 +30,8 @@ const MODEL_SUMMARY = 'gemini-flash-lite-latest';
 const MODEL_DRAFT = 'gemini-flash-latest';
 const MAX_SUMMARY_PER_RUN = 8;
 
-const norm = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+const stripMarks = (s: string): string => [...s.normalize('NFD')].filter((ch) => { const c = ch.codePointAt(0)!; return c < 0x300 || c > 0x36f; }).join('');
+const norm = (s: string): string => stripMarks((s || '').toLowerCase()).replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
 const words = (s: string) => new Set(norm(s).split(' ').filter((w) => w.length >= 2));
 // parole troppo comuni per essere segnale di variante
 const STOP = new Set(['bag', 'the', 'con', 'senza', 'and', 'borsa', 'mini', 'maxi', 'new', 'del', 'della']);
@@ -97,6 +98,10 @@ async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: num
   const { data } = await q;
   const o = (data ?? [])[0] as Row | undefined;
   if (!o) return null;
+  // guard cross-cliente (audit 2026-07-24): il numero ordine e' estratto dal TESTO del cliente, quindi
+  // puo' citare un ordine ALTRUI. Se conosciamo l'email del cliente, l'ordine deve essere suo (match
+  // case-insensitive lato codice, evita anche il bug case-sensitivity di shopify_orders.email).
+  if (orderNumber && email && String(o.email ?? '').toLowerCase() !== email.toLowerCase()) return null;
   const { data: li } = await sb.from('shopify_line_items').select('lineitem_name,quantita').eq('order_id', o.order_id as string);
   const righe = ((li ?? []) as Row[]).map((r) => ({ nome: String(r.lineitem_name ?? ''), qta: Number(r.quantita ?? 0) }));
   return { order_number: o.order_number, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status, fulfilled_at: o.fulfilled_at, gross_total: o.gross_total, email: o.email, order_id: o.order_id, righe };
@@ -205,8 +210,10 @@ Deno.serve(async (req) => {
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
 
-  // Azioni che scrivono/leggono per la UI = gate JWT (utente reale @amimi.it), come cs-api. Le altre = PIN.
-  const JWT_ACTIONS = new Set(['context', 'draft', 'refine']);
+  // Azioni che scrivono/leggono dati cliente per la UI = gate JWT (utente reale @amimi.it), come cs-api.
+  // dry_data ritorna lo STESSO payload PII di context: DEVE essere JWT (non PIN pubblico). Solo summary
+  // (aggregato, cron) resta PIN. (audit 2026-07-24: dry_data dietro PIN 'x' esponeva PII cliente.)
+  const JWT_ACTIONS = new Set(['context', 'dry_data', 'draft', 'refine']);
   const chi = ({ B: 'Benedetta', G: 'Ginevra', A: 'Ale' } as Record<string, string>)[String(body.chi || '').toUpperCase()] || 'ignoto';
   if (JWT_ACTIONS.has(action)) {
     const authz = req.headers.get('Authorization') || '';

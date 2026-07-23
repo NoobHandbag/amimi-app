@@ -48,9 +48,8 @@ const CANON = [
   'Collaborazioni e B2B',
 ];
 // normalizza per il match (accenti/apostrofi/punteggiatura/spazi via): la label Gemini torna alla canonica.
-const norm = (s: string) => (s || '').toLowerCase()
-  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-  .replace(/['`]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const stripMarks = (s: string): string => [...s.normalize('NFD')].filter((ch) => { const c = ch.codePointAt(0)!; return c < 0x300 || c > 0x36f; }).join('');
+const norm = (s: string): string => stripMarks((s || '').toLowerCase()).replace(/['`]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 const CANON_BY_NORM = new Map(CANON.map((c) => [norm(c), c]));
 function toCanon(raw: unknown): string {
   const n = norm(String(raw ?? ''));
@@ -201,7 +200,7 @@ Deno.serve(async (req) => {
   // Coda da classificare: categoria mancante, non rumore, testo disponibile (parse_failed escluse).
   const { data: convs, error: qe } = await sb.from('cs_conversations')
     .select('id,canale,subject,snippet,lingua,stato,stato_at,last_direction,last_msg_at')
-    .is('categoria', null).neq('canale', 'rumore').eq('parse_failed', false)
+    .is('categoria', null).is('categoria_source', null).neq('canale', 'rumore').eq('parse_failed', false)
     .order('last_msg_at', { ascending: true, nullsFirst: true }).limit(limit);
   if (qe) return json({ ok: false, error: qe.message }, 500);
   if (!convs || convs.length === 0) return json({ ok: true, classified: 0, low: 0, remaining: 0 });
@@ -244,22 +243,25 @@ Deno.serve(async (req) => {
     const source = hasCat ? 'ai' : 'ai_low';
     if (!hasCat) low++; else classified++;
 
-    if (dryRun) { preview.push({ id: c.id, categoria, source, conf: ai.categoria_confidence, urgente, urgenza_motivo, flags }); continue; }
+    if (dryRun) { preview.push({ categoria, source, conf: ai.categoria_confidence, urgente, flags }); continue; }   // no id/urgenza_motivo (no leak UUID/PII dietro PIN pubblico)
 
     const upd: Row = {
       categoria, categoria_source: source, categoria_confidence: ai.categoria_confidence,
       urgente, urgenza_motivo: urgente ? urgenza_motivo : null, flags,
     };
     if (!c.lingua) upd.lingua = ai.lingua;
-    const { error: ue } = await sb.from('cs_conversations').update(upd).eq('id', c.id as string);
+    // guard anti-race: scrive SOLO se ancora non categorizzata. Una correzione manuale via cs-api
+    // (categoria!=null, source='manuale') arrivata mentre Gemini girava NON deve essere sovrascritta.
+    const { data: upRows, error: ue } = await sb.from('cs_conversations').update(upd).eq('id', c.id as string).is('categoria', null).select('id');
     if (ue) { failed++; continue; }
+    if (!upRows || upRows.length === 0) continue;   // gia' corretta a mano nel frattempo: non toccare
     await sb.from('cs_events').insert({ conversation_id: c.id, azione: 'classify', chi: 'cs-classify', dettaglio: { categoria, source, confidence: ai.categoria_confidence, urgente, flags } });
   }
 
   // quante restano ancora da classificare (per sapere se il cron deve continuare a drenare)
   const { count: remaining } = await sb.from('cs_conversations')
     .select('id', { count: 'exact', head: true })
-    .is('categoria', null).neq('canale', 'rumore').eq('parse_failed', false);
+    .is('categoria', null).is('categoria_source', null).neq('canale', 'rumore').eq('parse_failed', false);
 
   return json({ ok: true, classified, low, failed, remaining: remaining ?? 0, ...(dryRun ? { dryRun: true, preview } : {}) });
 });
