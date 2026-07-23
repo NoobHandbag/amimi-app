@@ -4,6 +4,9 @@ import { fetchOrdiniGruppi, oggi, setArrival, deleteOrder } from '../lib/api';
 import type { OrdGruppo, OrdLine } from '../lib/api';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
+import NumberStepper from '../components/NumberStepper';
+import Icon from '../components/Icon';
+import { prettyName } from '../lib/helpers';
 import { toast } from '../lib/toast';
 
 /* register an arrival against one order line */
@@ -36,32 +39,39 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen }: { l: OrdLine; pin: stri
     finally { setBusy(false); reload(); }
   }
 
+  const ordered = l.wip ? 0 : l.qty_ordered;
+  const pct = ordered > 0 ? Math.min(100, Math.round((l.qty_arrived / ordered) * 100)) : (done ? 100 : 0);
+
   return (
-    <div className={`linerow ${done ? 'done' : ''}`}>
-      <button className="lineclick" type="button" onClick={() => setOpen((o) => !o)}>
-        <div className="lineinfo">
-          {l.image_url ? <img className="invimg sm" src={l.image_url} alt="" /> : <div className="invimg sm ph">{(l.item ?? l.codice).slice(0, 2)}</div>}
-          <div>
-            <div className="rt">{l.item ?? l.codice} <span className="rs">{l.variant ?? (l.codice.endsWith('_') ? '· da definire' : '')}</span>{l.wip && <span className="newtag" title="quantità/costo da definire: si risolvono all'arrivo">WIP</span>}</div>
-            <div className="ordnums">{done ? '✓ completo' : l.wip ? 'quantità da definire' : <><b>{l.mancano}</b> mancano</>} · {l.qty_arrived}/{l.wip ? '?' : l.qty_ordered}{l.data_consegna_display ? ` · cons. ${String(l.data_consegna_display).slice(0, 10)}` : ''}</div>
-          </div>
+    <div className={`ds-lrow ${done ? 'done' : ''}`}>
+      <button className="ds-lhead" type="button" onClick={() => setOpen((o) => !o)}>
+        {l.image_url ? <span className="ds-thumb"><img src={l.image_url} alt="" /></span> : <span className="ds-thumb">{(l.item ?? l.codice).slice(0, 2).toUpperCase()}</span>}
+        <div className="ds-lname">
+          <div className="lm">{prettyName(l.item, l.variant, l.codice)}{l.wip && <span className="wip" title="quantità/costo da definire: si risolvono all'arrivo">WIP</span>}</div>
         </div>
-        <span className="chev">{open ? '▾' : '›'}</span>
+        {done
+          ? <div className="ds-miss done"><Icon name="check" size={15} /><small>arrivato</small></div>
+          : <div className="ds-miss">{l.wip ? '?' : l.mancano}<small>mancano</small></div>}
       </button>
+      <div className="ds-progline">
+        <div className="ds-prog"><div className={`ds-progfill ${done ? 'done' : ''}`} style={{ width: `${pct}%` }} /></div>
+        <span className="ds-progtxt">{l.qty_arrived} / {l.wip ? '?' : l.qty_ordered}</span>
+      </div>
+      {l.data_consegna_display && <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 5 }}>Consegna prevista: {String(l.data_consegna_display).slice(0, 10)}</div>}
       {open && (
-        <div className="arrinline">
-          <label className="fl mini">{l.wip ? 'Arrivati in totale (ordine WIP: diventa la quantità ordinata)' : `Arrivati in totale (su ${l.qty_ordered} ordinati)`}</label>
-          <div className="arredit">
-            <input className="qbox" type="number" inputMode="numeric" value={n} onChange={(e) => setN(e.target.value)} placeholder="pezzi" autoFocus />
-            <input className="dbox" type="date" value={d} onChange={(e) => setD(e.target.value)} />
-            <button className="submit small" disabled={busy} onClick={save}>{busy ? '…' : 'salva'}</button>
+        <div className="ds-recv">
+          <div className="rl">{l.wip ? 'Arrivati in totale (WIP: diventa la quantità ordinata)' : `Arrivati in totale (su ${l.qty_ordered} ordinati)`}</div>
+          <div className="ds-recvrow">
+            <NumberStepper value={n} onChange={setN} min={0} />
+            <input className="ds-recvdate" type="date" value={d} onChange={(e) => setD(e.target.value)} />
+            <button className="ds-segna" disabled={busy} onClick={save}>{busy ? '…' : 'Segna arrivati'}</button>
           </div>
           {(l.wip || l.costo_unitario == null) && (
-            <div className="arredit" style={{ marginTop: 6 }}>
-              <input className="cbox" type="number" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="€ al pezzo (se ora lo sai)" />
-            </div>
+            <input className="ds-recvdate" style={{ marginTop: 8, flexBasis: '100%', width: '100%' }} type="number" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="€ al pezzo (se ora lo sai)" />
           )}
-          <button type="button" className="linkbtn" style={{ marginTop: 8, color: 'var(--red, #b3423f)' }} disabled={busy} onClick={remove}>🗑 Elimina questa riga ordine</button>
+          <div className="ds-recvfoot">
+            <button type="button" className="ds-del" disabled={busy} onClick={remove}><Icon name="trash" size={14} /> Elimina riga</button>
+          </div>
         </div>
       )}
     </div>
@@ -78,17 +88,18 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload }: { sup: Sup; pi
     <div className="screen">
       <header><h1>{sup.fornitore}</h1></header>
       <button className="back" onClick={onBack}>← Tutti i fornitori</button>
-      <button className="bigadd" onClick={onAdd}>➕ Nuovo ordine per {sup.fornitore}</button>
-      <section className="card">
-        <h2>In arrivo · {open.length}</h2>
-        {open.length === 0 ? <p className="muted center">Niente in arrivo da questo fornitore.</p>
-          : <div className="list">{open.map((l, i) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} defaultOpen={i === 0} />)}</div>}
-      </section>
+      <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={onAdd}><Icon name="plus" size={17} /> Nuovo ordine per {sup.fornitore}</button>
+      <div className="ds-seclb">In arrivo <span className="c">{open.length}</span></div>
+      {open.length === 0 ? <div className="card muted center">Niente in arrivo da questo fornitore.</div>
+        : open.map((l, i) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} defaultOpen={i === 0} />)}
       {done.length > 0 && (
-        <section className="card ask">
-          <button className="askhead" onClick={() => setShowDone((s) => !s)}>✓ Già arrivati · {done.length} <span className="muted">{showDone ? '−' : '+'}</span></button>
-          {showDone && <div className="askbody"><div className="list">{done.map((l) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} />)}</div></div>}
-        </section>
+        <>
+          <button type="button" className="ds-more" style={{ marginTop: 8 }} onClick={() => setShowDone((s) => !s)}>
+            <span>Già arrivati <span style={{ opacity: .7 }}>({done.length})</span></span>
+            <b>{showDone ? 'Nascondi ▲' : 'Mostra ›'}</b>
+          </button>
+          {showDone && <div style={{ marginTop: 10 }}>{done.map((l) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} />)}</div>}
+        </>
       )}
     </div>
   );
@@ -142,18 +153,18 @@ export default function Ordini({ pin, chi, initial }: { pin: string; chi: string
   return (
     <div className="screen">
       <header><h1>Ordini</h1><div className="hbtns"><PrintBtn /><ExportBtn name="ordini" rows={() => grp.flatMap((g) => g.righe).map((l) => ({ fornitore: l.fornitore, codice: l.codice, modello: l.item, variante: l.variant, ordinati: l.qty_ordered, arrivati: l.qty_arrived, mancano: l.mancano, completo: l.completo ? 'si' : 'no', data_ordine: l.data_ordine, data_consegna: l.data_consegna, costo_unitario: l.costo_unitario, tipo: l.nuovo_riordino }))} /></div></header>
-      <button className="bigadd" onClick={() => setAdding(true)}>📦 ➕ Nuovo ordine fornitore</button>
-      {byForn.length === 0 && <div className="card muted center">Nessun ordine. Tocca “+ Nuovo ordine fornitore”.</div>}
+      <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={() => setAdding(true)}><Icon name="plus" size={17} /> Nuovo ordine fornitore</button>
+      {byForn.length === 0 && <div className="card muted center">Nessun ordine. Tocca “Nuovo ordine fornitore”.</div>}
       {byForn.map((s) => (
-        <button className="navcard" key={s.fornitore} onClick={() => setForn(s.fornitore)} type="button">
-          <div className="ncmain">
-            <div className="nct">{s.fornitore}</div>
-            <div className="pillrow">
-              {s.aperte > 0 ? <span className="pill warn">{s.aperte} in arrivo · {s.pezzi} pz</span> : <span className="pill ok">tutto arrivato</span>}
-              <span className="pill muted">{s.lines.length} righe</span>
+        <button className="ds-scard" key={s.fornitore} onClick={() => setForn(s.fornitore)} type="button">
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sn">{s.fornitore}</div>
+            <div className="ds-schips">
+              {s.aperte > 0 ? <span className="a">{s.aperte} in arrivo · {s.pezzi} pz</span> : <span className="ok">tutto arrivato</span>}
+              <span className="r">{s.lines.length} righe</span>
             </div>
           </div>
-          <span className="chev">›</span>
+          <span className="chev" style={{ color: 'var(--ink-muted)', fontSize: 20 }}>›</span>
         </button>
       ))}
     </div>

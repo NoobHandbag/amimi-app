@@ -28,6 +28,8 @@ const P: Record<string, ReactNode> = {
   pulse: <><polyline points="3 13 8 13 11 6 14 18 17 12 21 12" /></>,
   chat: <><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H9l-4 4V6a1 1 0 0 1 1-1z" /></>,
   mail: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M4 7l8 6 8-6" /></>,
+  trash: <><polyline points="3 6 5 6 21 6" /><path d="M8 6V4h8v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6" /></>,
+  check: <><polyline points="4 12 10 18 20 6" /></>,
 };
 
 export default function Icon({ name, size = 24 }: { name: string; size?: number }) {
