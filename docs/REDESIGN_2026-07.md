@@ -39,4 +39,4 @@ Vincoli: solo frontend/design + la piccola aggiunta backend §6 (feed change_log
 | Tabelle | FATTO (DataTable: header+1ª col fissi, ordinamento, colonne vuote nascoste, conteggi) |
 | Assistenza | FATTO (solo tema: viola/AI + token, struttura invariata) |
 | Regressione Fase 2 | FATTO (10 schermate rendono, 0 errori console, persona switch ok; dummy write NON eseguiti — logica invariata) |
-| Deploy web (gh-pages) | **PENDENTE — go-live owner** (build pronta; è un cambio outward-facing per i cofounder) |
+| Deploy web (gh-pages) | **FATTO** (OK owner "deploy" 2026-07-23; `gh-pages` HEAD `7275fbd` con asset nuovi `index-BBbVhsJ-`/`DnHIktf2`; CDN GitHub Pages in propagazione ~min) |
