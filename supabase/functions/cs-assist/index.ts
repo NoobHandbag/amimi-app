@@ -238,8 +238,12 @@ Riassunto (max 2 righe):`;
     const { dati, tono } = await assembleDati(sb, conv as Row, inbound, token, (conv.categoria as string) ?? null);
 
     const prompt = `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi una BOZZA di risposta email al cliente, pronta da ritoccare. NON inviarla.
-STILE (obbligatorio): dai del tu (dai del lei solo se il cliente e' formale), frasi corte, 1-2 emoji leggere al massimo, chiudi con "Grazie, Team Amimi'". Niente promesse su date che non sono nei DATI.
+STILE (obbligatorio): dai del tu (dai del lei solo se il cliente e' formale o arrabbiato), frasi corte, 1-2 emoji leggere al massimo, chiudi con "Grazie, Team Amimi'". Niente promesse su date che non sono nei DATI.
 REGOLA FERREA anti-invenzione: puoi citare SOLO numeri/dati presenti nel blocco DATI qui sotto. Se ti serve un dato che NON c'e' (un prezzo, una data, un indirizzo, un numero di tracking, una condizione), NON inventarlo: scrivi il segnaposto [DA VERIFICARE: cosa manca] al suo posto. Meglio un segnaposto che un dato sbagliato.
+CASI DA NON CHIUDERE DA SOLA (scrivi una bozza PRUDENTE che raccoglie le informazioni e propone il contatto di una persona del team; non promettere e non rifiutare):
+- Difetto/garanzia: NON negare mai il reso citando solo i 14 giorni del recesso. La garanzia legale di conformita' dura 24 mesi. Proponi riparazione o cambio, oppure il contatto con noi; mai un no secco.
+- Disputa/chargeback/banca ("rimborso non ricevuto", "mi rivolgo alla banca"): massima cautela, di' che una persona del team la ricontatta subito.
+- Reclamo sull'assistenza, reso tramite rivenditore/creator, proposta B2B/collaborazione o preventivo cerimonia: raccogli le informazioni utili e rimanda a una persona; non decidere tu.
 Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
 
 Ultimi messaggi (il piu' recente e' del cliente):
