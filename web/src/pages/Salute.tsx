@@ -3,8 +3,13 @@ import type { ReactNode } from 'react';
 import {
   fetchMovimenti14gg, fetchOpsFlags, fetchHealthLatest, fetchOpsExtra,
   fetchDigestPersone, fetchDigestVersioni, fetchDigestOrdini, fetchDigestPulizia, fetchDigestSpese, fetchDigestLogAttori,
+  fetchExpensesReview,
 } from '../lib/api';
 import type { Movimenti, OpsFlags, HealthRow, DigestPersone, DigestOrdine, DigestPulizia, DigestSpesa, DigestAttore } from '../lib/api';
+import ActivityFeed from '../components/ActivityFeed';
+import Icon from '../components/Icon';
+
+type Go = (t: 'registra' | 'magazzino', p?: string) => void;
 
 // Pagina "Salute & Movimenti" (sola lettura). Semaforo salute ecosistema, movimenti per persona
 // (Ginevra=ordini, Benedetta=catalogo/resi/spese, Dan[=Ale]=sistema) con KPI cliccabili e drill-down,
@@ -79,8 +84,9 @@ function DKpi({ id, open, setOpen, value, label, cur, prev, goodUp = true, sub, 
   );
 }
 
-export default function Salute({ onBack, chi }: { onBack?: () => void; chi?: string }) {
+export default function Salute({ onBack, chi, go }: { onBack?: () => void; chi?: string; go?: Go }) {
   const [m, setM] = useState<Movimenti | null>(null);
+  const [speseReview, setSpeseReview] = useState(0);
   const [flags, setFlags] = useState<OpsFlags | null>(null);
   const [health, setHealth] = useState<{ day: string | null; rows: HealthRow[] }>({ day: null, rows: [] });
   const [extra, setExtra] = useState<{ lastQromo: string | null; unfulfilledRecent: number } | null>(null);
@@ -104,6 +110,7 @@ export default function Salute({ onBack, chi }: { onBack?: () => void; chi?: str
         ]);
         setM(mv); setFlags(fl); setHealth(hl); setExtra(ex);
         setD(dg); setMigr(vr.migr_n); setOrdini(or); setPulizia(pu); setSpese(sp); setAttori(la);
+        fetchExpensesReview().then((r) => setSpeseReview(r.length)).catch(() => {});
       } catch (e: unknown) {
         setErr(e instanceof Error ? e.message : String(e));
       } finally {
@@ -219,10 +226,15 @@ export default function Salute({ onBack, chi }: { onBack?: () => void; chi?: str
           <h2 style={{ margin: 0 }}>Salute ecosistema: {overallLabel}</h2>
           {healthDay && <span className="muted" style={{ marginLeft: 'auto', fontSize: 12 }}>check {healthDay}</span>}
         </div>
-        <div style={{ display: 'flex', gap: 8, margin: '10px 0 4px', flexWrap: 'wrap' }}>
-          <span className="pill" style={{ color: SEV_COLOR.bad, border: `1px solid ${SEV_COLOR.bad}`, borderRadius: 999, padding: '2px 10px', fontWeight: 700, fontSize: 13 }}>{bad.length} da sistemare</span>
-          <span className="pill" style={{ color: SEV_COLOR.warn, border: `1px solid ${SEV_COLOR.warn}`, borderRadius: 999, padding: '2px 10px', fontWeight: 700, fontSize: 13 }}>{warn.length} avvisi</span>
-          <span className="pill" style={{ color: SEV_COLOR.ok, border: `1px solid ${SEV_COLOR.ok}`, borderRadius: 999, padding: '2px 10px', fontWeight: 700, fontSize: 13 }}>{ok.length} ok</span>
+        <div className="ds-hbar">
+          <div className="ok" style={{ flex: ok.length || 0.001 }} />
+          <div className="warn" style={{ flex: warn.length || 0.001 }} />
+          <div className="bad" style={{ flex: bad.length || 0.001 }} />
+        </div>
+        <div className="ds-hlegend">
+          <span><i style={{ background: 'var(--positive)' }} />{ok.length} ok</span>
+          <span><i style={{ background: 'var(--warning)' }} />{warn.length} avvisi</span>
+          <span><i style={{ background: 'var(--negative)' }} />{bad.length} da sistemare</span>
         </div>
         {alerts.length > 0 && (
           <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.6 }}>
@@ -235,6 +247,29 @@ export default function Salute({ onBack, chi }: { onBack?: () => void; chi?: str
         )}
         {!health.day && <p className="note">Nessun dato health_log disponibile.</p>}
       </section>
+
+      {/* Voci cliccabili "da sistemare": portano dritto alla schermata giusta (§4.8) */}
+      {go && (() => {
+        const todos = [
+          speseReview > 0 && { n: speseReview, label: 'spese da verificare', icon: 'euro', tint: ['--warning-tint', '--warning-700'] as const, act: () => go('registra', 'spesa') },
+          m.soldout > 0 && { n: m.soldout, label: 'SKU pubblicati ma esauriti', icon: 'box', tint: ['--negative-tint', '--negative-700'] as const, act: () => go('magazzino') },
+          d.ben_todo > 0 && { n: d.ben_todo, label: 'prodotti da completare', icon: 'tag', tint: ['--interactive-tint', '--interactive-700'] as const, act: () => go('registra', 'pulizia') },
+        ].filter(Boolean) as { n: number; label: string; icon: string; tint: readonly [string, string]; act: () => void }[];
+        if (!todos.length) return null;
+        return (
+          <>
+            <div className="ds-seclb" style={{ marginTop: 6 }}>Da sistemare <span className="c">{todos.length}</span></div>
+            {todos.map((t, i) => (
+              <button key={i} type="button" className="ds-todo" onClick={t.act}>
+                <span className="ic" style={{ background: `var(${t.tint[0]})`, color: `var(${t.tint[1]})` }}><Icon name={t.icon} size={18} /></span>
+                <span className="tt">{t.label}</span>
+                <span className="tn" style={{ color: `var(${t.tint[1]})` }}>{t.n}</span>
+                <span className="chev">›</span>
+              </button>
+            ))}
+          </>
+        );
+      })()}
 
       {/* Movimenti per persona (Ginevra / Benedetta / Dan): KPI cliccabili con drill-down */}
       <section className="card">
@@ -335,6 +370,9 @@ export default function Salute({ onBack, chi }: { onBack?: () => void; chi?: str
         </div>
         <p className="note">Il corriere TWS non ha API: la freschezza delle liste LDV la controlla il digest Cowork via email. Qui sopra sono indicatori informativi, non allarmi.</p>
       </section>
+
+      {/* Attività recente: feed "chi ha fatto cosa quando" dal change_log (§6) */}
+      <ActivityFeed />
     </div>
   );
 }

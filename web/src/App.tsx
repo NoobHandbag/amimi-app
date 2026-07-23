@@ -32,7 +32,7 @@ export default function App() {
       <main>
         {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} />}
         {tab === 'cruscotto' && <Report onBack={() => go('home')} />}
-        {tab === 'salute' && <Salute onBack={() => go('home')} chi={chi} />}
+        {tab === 'salute' && <Salute onBack={() => go('home')} chi={chi} go={go} />}
         {tab === 'assistenza' && <Assistenza onBack={() => go('home')} />}
         {tab === 'registra' && <Ingest pin={pin} chi={chi} initial={param} />}
         {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} />}
