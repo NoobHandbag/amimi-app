@@ -149,6 +149,9 @@
 .ds-lens .ll { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-muted); margin-right: 2px; }
 .ds-lp { font-size: 11.5px; font-weight: 600; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink-muted); cursor: pointer; font-family: inherit; }
 .ds-lp.on { background: var(--surface-alt); color: var(--ink); font-weight: 700; }
+.ds-lens.scrollx { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+.ds-lens.scrollx::-webkit-scrollbar { display: none; }
+.ds-lens.scrollx .ds-lp { flex: 0 0 auto; white-space: nowrap; }
 
 .ds-prow { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px; box-shadow: var(--e1); margin-bottom: 8px; cursor: pointer; font-family: inherit; }
 .ds-thumb { width: 40px; height: 40px; border-radius: 9px; background: linear-gradient(160deg, #f3eee6, #efe7f7); display: flex; align-items: center; justify-content: center; flex: none; font-weight: 800; color: #b9a9df; font-size: 12px; overflow: hidden; }

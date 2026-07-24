@@ -164,10 +164,13 @@ function Thumb2({ url, label }: { url: string | null; label: string }) {
 }
 
 type Lens = 'giacenza' | 'valore' | 'shopify' | 'negozi';
+type FShop = 'pub' | 'out' | 'load' | null;
 export default function Inventory({ pin, chi, initial, go }: { pin: string; chi: string; initial?: string; go?: (t: 'registra' | 'ordini', p?: string) => void }) {
   type Tab = 'mag' | 'riordino';
   const [tab, setTab] = useState<Tab>(initial === 'riordino' ? 'riordino' : 'mag');
   const [lens, setLens] = useState<Lens>('giacenza');
+  const [fItem, setFItem] = useState<string | null>(null);
+  const [fShop, setFShop] = useState<FShop>(null);
   const [inv, setInv] = useState<InvFull[]>([]);
   const [cv, setCv] = useState<CV[]>([]);
   const [q, setQ] = useState('');
@@ -218,16 +221,26 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
   const daCaricare = inv.filter((p) => !p.on_shopify && p.giacenza_attuale > 0).length;
   const magNeg = alive.filter((p) => p.giacenza_attuale < 0).length;
 
-  // lista prodotti secondo la lente attiva (stessa lista, ordinamento/filtro diverso)
+  // modelli distinti per il filtro item (da tutto l'inventario, così la lista non cambia col filtro)
+  const models = useMemo(() => [...new Set(inv.map((p) => p.item).filter(Boolean) as string[])].sort(), [inv]);
+
+  // lista prodotti secondo lente + filtri (modello, stato Shopify)
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
     const match = (p: InvFull) => !s || `${p.item ?? ''} ${p.variant ?? ''} ${p.codice}`.toLowerCase().includes(s);
-    const base = (lens === 'shopify' ? inv.filter((p) => p.on_shopify) : alive).filter(match);
+    const shopMatch = (p: InvFull) =>
+      fShop === 'pub' ? p.on_shopify && p.giacenza_attuale > 0
+      : fShop === 'out' ? p.on_shopify && p.giacenza_attuale <= 0
+      : fShop === 'load' ? !p.on_shopify && p.giacenza_attuale > 0
+      : true;
+    // con un filtro Shopify attivo si parte da TUTTO l'inventario (gli esauriti non venduti da 60g stanno fuori da `alive`)
+    const pool = (lens === 'shopify' || fShop) ? inv : alive;
+    const base = pool.filter((p) => match(p) && shopMatch(p) && (!fItem || p.item === fItem) && (lens !== 'shopify' || p.on_shopify));
     if (lens === 'valore') return [...base].sort((a, b) => (b.valore || 0) - (a.valore || 0));
     if (lens === 'shopify') return [...base].sort((a, b) => (a.giacenza_attuale > 0 ? 1 : 0) - (b.giacenza_attuale > 0 ? 1 : 0) || a.giacenza_attuale - b.giacenza_attuale);
-    // giacenza: in stock prima (bassa in cima → arancio ben visibile), esauriti/negativi in fondo
-    return [...base].sort((a, b) => (a.giacenza_attuale > 0 ? 0 : 1) - (b.giacenza_attuale > 0 ? 0 : 1) || a.giacenza_attuale - b.giacenza_attuale);
-  }, [alive, inv, lens, q]);
+    // giacenza (default): più borse a magazzino in cima, esauriti/negativi in fondo
+    return [...base].sort((a, b) => b.giacenza_attuale - a.giacenza_attuale);
+  }, [alive, inv, lens, q, fItem, fShop]);
 
   const cvList = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -250,7 +263,14 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
           <button type="button" className={tab === 'mag' ? 'on' : ''} onClick={() => setTab('mag')}>Magazzino</button>
           <button type="button" className={tab === 'riordino' ? 'on' : ''} onClick={() => setTab('riordino')}>Riordino</button>
         </div>
-        <div className="hbtns"><PrintBtn /><ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} /></div>
+        <div className="hbtns">
+          {tab === 'mag' && (
+            <button className="ds-btn primary sm" onClick={syncNow} disabled={nowBusy}
+              title="Esegue subito il giro orario completo: legge Shopify e riallinea le quantità allo stock reale. Rispetta gli interruttori di scrittura Shopify.">
+              <Icon name="recycle" size={15} />{nowBusy ? 'Sincronizzo…' : 'Aggiorna Shopify'}
+            </button>
+          )}
+          <PrintBtn /><ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} /></div>
       </header>
 
       {tab === 'mag' && (
@@ -271,11 +291,6 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
             </div>
           </div>
 
-          <button className="ds-btn primary full" style={{ marginBottom: 6 }} onClick={syncNow} disabled={nowBusy}>
-            <Icon name="recycle" size={17} />{nowBusy ? 'Sincronizzo Shopify…' : 'Aggiorna stock Shopify ora'}
-          </button>
-          <p className="note" style={{ marginBottom: 12 }}>Esegue subito il giro orario completo: legge Shopify e riallinea le quantità allo stock reale. Rispetta gli interruttori di scrittura Shopify.</p>
-
           {magNeg > 0 && <p className="note">{magNeg} varianti a giacenza negativa (in rosso): vendite senza carico registrato, da sistemare.</p>}
 
           <div className="ds-search">
@@ -287,6 +302,24 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
             <span className="ll">Lente</span>
             {LENSES.map(([k, l]) => <button key={k} type="button" className={`ds-lp ${lens === k ? 'on' : ''}`} onClick={() => setLens(k)}>{l}</button>)}
           </div>
+
+          {lens !== 'negozi' && (
+            <>
+              <div className="ds-lens scrollx">
+                <span className="ll">Modello</span>
+                <button type="button" className={`ds-lp ${!fItem ? 'on' : ''}`} onClick={() => setFItem(null)}>Tutti</button>
+                {models.map((m) => (
+                  <button key={m} type="button" className={`ds-lp ${fItem === m ? 'on' : ''}`} onClick={() => setFItem(fItem === m ? null : m)}>{prettyName(m, null)}</button>
+                ))}
+              </div>
+              <div className="ds-lens">
+                <span className="ll">Shopify</span>
+                {([[null, 'Tutti'], ['pub', 'Pubblicato'], ['out', 'Esaurito online'], ['load', 'Da caricare']] as [FShop, string][]).map(([k, l]) => (
+                  <button key={l} type="button" className={`ds-lp ${fShop === k ? 'on' : ''}`} onClick={() => setFShop(k)}>{l}</button>
+                ))}
+              </div>
+            </>
+          )}
 
           {lens === 'negozi' ? (
             cvList.length === 0 ? <div className="card muted center">Nessuna merce in conto vendita. Registra un movimento B2B (invio) da Registra ▸ B2B.</div> : (
@@ -310,6 +343,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
                     <Thumb2 url={p.image_url} label={p.item ?? p.codice} />
                     <div className="ds-pinfo">
                       <div className="ds-pn">{nome(p.item, p.variant)}</div>
+                      <div className="ds-psub">{p.giacenza_attuale} a magazzino{p.on_shopify && <> · 🌐 {shopQ(p) ?? '—'} su Shopify</>}{p.in_conto_vendita > 0 && <> · conto {p.in_conto_vendita}</>}</div>
                       {st && <span className={`ds-pbadge ${st.cls}`}>{st.label}</span>}
                     </div>
                     <div className="ds-gia">
