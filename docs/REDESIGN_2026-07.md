@@ -33,7 +33,7 @@ Vincoli: solo frontend/design + la piccola aggiunta backend §6 (feed change_log
 | Registra | FATTO (ProductPicker condiviso: giacenza + filtri linea; toggle GiftForm) |
 | Prodotti & prezzi | FATTO (lista margine/Da-completare; edit segmented+reco) |
 | Nomi Title Case display (`prettyName`) | FATTO (fix globale: display Title Case, storage MAIUSCOLO) |
-| Ordini in arrivo | FATTO (card fornitore, barra avanzamento, stepper, cestino) |
+| Ordini in arrivo | FATTO (card fornitore, barra avanzamento, stepper, cestino). Ritocchi feedback owner 24-07 (commit `91fe295`): stepper arrivi 128→172px + padding input ridotto (la quantità era invisibile, ~4px utili), lista "Già arrivati" ordinata per data di consegna decrescente (senza data in fondo) |
 | Spese | FATTO (fornitore estratto, conferma 1-tap, ricodifica segmented+toggle) |
 | Salute & Movimenti | FATTO (voci cliccabili, barretta, feed attività + riepilogo Gemini §6) |
 | Tabelle | FATTO (DataTable: header+1ª col fissi, ordinamento, colonne vuote nascoste, conteggi) |
