@@ -83,7 +83,9 @@ type Sup = { fornitore: string; lines: OrdLine[]; aperte: number; pezzi: number 
 function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload }: { sup: Sup; pin: string; chi: string; onBack: () => void; onAdd: () => void; reload: () => void }) {
   const [showDone, setShowDone] = useState(false);
   const open = sup.lines.filter((l) => !l.completo);
-  const done = sup.lines.filter((l) => l.completo);
+  // già arrivati ordinati per data di consegna, i più recenti in cima (senza data in fondo)
+  const dcons = (l: OrdLine) => String(l.data_consegna_display ?? l.data_consegna ?? '').slice(0, 10);
+  const done = sup.lines.filter((l) => l.completo).sort((a, b) => dcons(b).localeCompare(dcons(a)));
   return (
     <div className="screen">
       <header><h1>{sup.fornitore}</h1></header>
