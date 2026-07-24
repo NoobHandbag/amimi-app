@@ -29,7 +29,7 @@ Vincoli: solo frontend/design + la piccola aggiunta backend §6 (feed change_log
 | Icone a linea (`Icon.tsx`, sostituzione globale emoji) | FATTO |
 | Home | FATTO |
 | Cruscotto | FATTO |
-| Magazzino | FATTO (tab Disponibilità rimosso; lenti; sync_now ri-esposto) |
+| Magazzino | FATTO (tab Disponibilità rimosso; lenti; sync_now ri-esposto). Ritocchi feedback owner 24-07 (commit `1570084`): bottone sync compatto in header (in alto a destra, tooltip col dettaglio), filtri chip Modello (scroll orizzontale, `ds-lens scrollx`) + stato Shopify (Pubblicato/Esaurito online/Da caricare, col filtro attivo si parte da tutto l'inventario perché gli esauriti fermi >60g stanno fuori da `alive`), lente Giacenza ordina per pezzi decrescente, sottotitolo riga "N a magazzino · 🌐 N su Shopify · conto N" come pre-redesign |
 | Registra | FATTO (ProductPicker condiviso: giacenza + filtri linea; toggle GiftForm) |
 | Prodotti & prezzi | FATTO (lista margine/Da-completare; edit segmented+reco) |
 | Nomi Title Case display (`prettyName`) | FATTO (fix globale: display Title Case, storage MAIUSCOLO) |
