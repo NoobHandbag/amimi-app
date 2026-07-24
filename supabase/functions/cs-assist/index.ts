@@ -109,7 +109,7 @@ async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: num
 
 // Shopify Admin API: cerca l'ordine per NOME (#numero) e ritorna id numerico (per il link admin) + tracking.
 // Il DB non tiene ne' l'id numerico ne' il tracking (order_id e' il NOME #1518). Best-effort: null se fallisce.
-type OrdMeta = { adminId: number | null; tracking: { numero: string; url: string; corriere: string } | null };
+type OrdMeta = { adminId: number | null; tracking: { numero: string; url: string; corriere: string } | null; shipment_status: string | null; f_updated_at: string | null };
 async function fetchOrderMeta(orderNumber: unknown, token: string): Promise<OrdMeta | null> {
   if (!orderNumber || !token) return null;
   try {
@@ -123,8 +123,66 @@ async function fetchOrderMeta(orderNumber: unknown, token: string): Promise<OrdM
     const tracking = numero
       ? { numero: String(numero), url: String(f?.tracking_url || (f?.tracking_urls ?? [])[0] || `https://www.mytws.it/tracking-status;ldv=${numero}`), corriere: String(f?.tracking_company || 'TWS') }
       : null;
-    return { adminId: (o.id as number) ?? null, tracking };
+    // shipment_status: nel NOSTRO flusso quasi sempre null (i fulfillment li crea amimi-ship senza events,
+    // review 24-07); se un giorno c'e' 'delivered', updated_at e' un'APPROSSIMAZIONE della data di consegna.
+    return { adminId: (o.id as number) ?? null, tracking, shipment_status: (f?.shipment_status as string) ?? null, f_updated_at: (f?.updated_at as string) ?? null };
   } catch { return null; }
+}
+
+// --- Motore dei verdetti (design Parte B 24-07): il CODICE decide il caso, l'AI scrive la frase ---
+const DIFETTO_RE = /difett|rott[oa]|scucit|staccat|danneggiat|rovinat|macchiat|non funziona|si (e'|è) (rotta|scucita|staccata|aperta)/i;
+const CASE_CATS = new Set(['Reso e rimborso', 'Cambio e prodotto errato', 'Modifica / correzione indirizzo']);
+type CasoReso = { delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'sconosciuto'; difetto_sospetto: boolean };
+type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 'verificare_tracking' | 'consegnato' | 'sconosciuto' };
+
+function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: string, finestra: number, confirmedDate: string | null): { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo } {
+  // Guard (review 24-07): il numero ordine viene dal TESTO del cliente. L'ordine e' "verificato" solo se
+  // abbiamo potuto agganciarlo all'email del cliente (lookupOrder gia' scarta i mismatch). Senza email,
+  // nessun verdetto: SCONOSCIUTO, mai un caso calcolato sull'ordine di un terzo.
+  const verificato = !!ordine && !!(conv.customer_email);
+  const difetto = DIFETTO_RE.test(inbound);
+
+  // RESO: data di consegna = confermata dalla collega (STEP 1 pragmatico) > shipment_status delivered (approx).
+  let delivered: string | null = null, fonte: string | null = null;
+  if (confirmedDate && /^\d{4}-\d{2}-\d{2}$/.test(confirmedDate)) { delivered = confirmedDate; fonte = 'confermata dalla collega'; }
+  else if (verificato && meta?.shipment_status === 'delivered' && meta.f_updated_at) { delivered = String(meta.f_updated_at).slice(0, 10); fonte = 'shopify (approssimata)'; }
+  let giorni: number | null = null;
+  let verdetto: CasoReso['verdetto'] = 'sconosciuto';
+  if (delivered && (verificato || fonte === 'confermata dalla collega')) {
+    giorni = Math.floor((Date.now() - new Date(delivered + 'T12:00:00Z').getTime()) / 86400000);
+    if (giorni >= 0) verdetto = giorni <= finestra ? 'entro' : 'fuori';
+  }
+  const reso: CasoReso = { delivered_at: delivered, fonte, giorni, finestra, verdetto, difetto_sospetto: difetto };
+
+  // INDIRIZZO: fulfillment ASSENTE = non ritirato (affidabile: ship-sync evade solo al ritiro) -> correggibile.
+  // Fulfillment PRESENTE senza fonte delivered -> "verificare dal tracking" (MAI "in transito" secco, review 24-07).
+  const fulf = String(ordine?.fulfillment_status ?? '');
+  const fulfPresente = fulf === 'fulfilled' || fulf === 'partial';
+  let casoInd: CasoIndirizzo['caso'] = 'sconosciuto';
+  if (verificato) {
+    if (!fulfPresente) casoInd = 'correggibile';
+    else if (delivered) casoInd = 'consegnato';
+    else casoInd = 'verificare_tracking';
+  }
+  return { verificato, reso, indirizzo: { fulfillment_presente: fulfPresente, caso: casoInd } };
+}
+
+// Blocco CASO da iniettare nel prompt draft: vincolante, l'AI scrive DENTRO il caso, non lo decide.
+function casoBlock(categoria: string | null, cd: { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo }): string {
+  if (!categoria || !CASE_CATS.has(categoria)) return '';
+  const L: string[] = ['CASO CALCOLATO DAL SISTEMA (vincolante: scrivi la risposta DENTRO questo caso, non metterlo in dubbio):'];
+  if (categoria === 'Modifica / correzione indirizzo') {
+    if (cd.indirizzo.caso === 'correggibile') L.push("- Spedizione NON ancora ritirata dal corriere: la correzione E' POSSIBILE. Rassicura e chiedi l'indirizzo completo e corretto (via, civico, CAP, citta').");
+    else if (cd.indirizzo.caso === 'consegnato') L.push('- Il pacco risulta GIA\' CONSEGNATO: nessuna modifica possibile. Empatia + passi concreti (vicini, portineria); se non salta fuori, segnalazione al corriere. Niente promesse impossibili.');
+    else if (cd.indirizzo.caso === 'verificare_tracking') L.push("- Spedizione GIA' PARTITA ma non sappiamo se e' in viaggio o gia' consegnata: resta PRUDENTE su entrambe le ipotesi (se in viaggio: ritorno al mittente e rispedizione a carico del cliente con costo [DA VERIFICARE], oppure attendere; se consegnata: controllare vicini/portineria). NON affermare con certezza nessuna delle due.");
+    else L.push('- Stato spedizione NON determinabile dai dati: niente verdetti, usa [DA VERIFICARE: stato spedizione].');
+  } else {
+    if (cd.reso.difetto_sospetto) L.push('- POSSIBILE DIFETTO segnalato dal cliente: la finestra reso NON si applica da sola (garanzia legale 24 mesi). Bozza prudente: chiedi una foto, proponi riparazione/cambio o contatto. MAI un rifiuto.');
+    else if (cd.reso.verdetto === 'entro') L.push(`- Reso AMMESSO: consegna il ${cd.reso.delivered_at} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra}). Istruzioni + link resi; spedizione di rientro a carico del cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` + (categoria === 'Cambio e prodotto errato' ? ' Per il CAMBIO: stessa finestra, spese a carico del cliente (salvo errore nostro: allora scuse e spese nostre).' : ''));
+    else if (cd.reso.verdetto === 'fuori') L.push(`- Reso NON ammesso: consegna il ${cd.reso.delivered_at}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra}). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto, cambia tutto: proponi il contatto.`);
+    else L.push('- Data di consegna NON nota: nessun verdetto sulla finestra. Spiega la regola dei 15 giorni dalla consegna in generale e usa [DA VERIFICARE: data di consegna].');
+  }
+  return L.join('\n') + '\n';
 }
 
 // Storico acquisti del cliente (per email): totale, conteggio, ordini recenti. Solo Shopify (il POS Qromo
@@ -205,7 +263,7 @@ Deno.serve(async (req) => {
   const action = String(body.action || '');
 
   const flags: Record<string, string> = {};
-  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled']);
+  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni']);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
@@ -213,7 +271,7 @@ Deno.serve(async (req) => {
   // Azioni che scrivono/leggono dati cliente per la UI = gate JWT (utente reale @amimi.it), come cs-api.
   // dry_data ritorna lo STESSO payload PII di context: DEVE essere JWT (non PIN pubblico). Solo summary
   // (aggregato, cron) resta PIN. (audit 2026-07-24: dry_data dietro PIN 'x' esponeva PII cliente.)
-  const JWT_ACTIONS = new Set(['context', 'dry_data', 'draft', 'refine']);
+  const JWT_ACTIONS = new Set(['context', 'dry_data', 'draft', 'refine', 'case_data']);
   const chi = ({ B: 'Benedetta', G: 'Ginevra', A: 'Ale' } as Record<string, string>)[String(body.chi || '').toUpperCase()] || 'ignoto';
   if (JWT_ACTIONS.has(action)) {
     const authz = req.headers.get('Authorization') || '';
@@ -248,6 +306,26 @@ Deno.serve(async (req) => {
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     const ctx = await assembleContext(sb, lc.conv, lc.inbound, token, (lc.conv.categoria as string) ?? null);
     return json({ ok: true, fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, dati: ctx.dati });
+  }
+
+  // ---------- case_data: motore dei verdetti (JWT, NESSUN Gemini) ----------
+  // La UI lo chiama su Reso/Cambio/Indirizzo; `delivered_at` opzionale = data confermata dalla collega
+  // dal tracking (STEP 1 pragmatico): il verdetto resta deterministico, su un fatto umano.
+  if (action === 'case_data') {
+    const lc = await loadConv();
+    if (!lc) return json({ error: 'conversazione inesistente' }, 404);
+    const conv = lc.conv;
+    const ordine = await lookupOrder(sb, (conv.order_number as number) ?? null, (conv.customer_email as string) ?? null);
+    const meta = ordine ? await fetchOrderMeta(ordine.order_number, token) : null;
+    const finestra = Number(flags.cs_reso_finestra_giorni) || 15;
+    const confirmed = String(body.delivered_at || '').trim() || null;
+    const cd = computeCaso(conv, ordine, meta, lc.inbound, finestra, confirmed);
+    return json({
+      ok: true, categoria: (conv.categoria as string) ?? null, verificato: cd.verificato,
+      reso: cd.reso, indirizzo: cd.indirizzo,
+      tracking_url: meta?.tracking?.url ?? null,
+      order_admin_url: meta?.adminId ? `https://admin.shopify.com/store/${SHOP}/orders/${meta.adminId}` : null,
+    });
   }
 
   // ---------- summary: riassunto+storia (cron), Gemini flash-lite ----------
@@ -290,11 +368,19 @@ Riassunto (max 2 righe):`;
     const conv = lc.conv;
     const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
     const threadTxt = lc.recent.map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${String(m.body_text ?? '').slice(0, 800)}`).join('\n') || String(conv.subject ?? '');
+    // motore dei verdetti: sulle categorie a caso (reso/cambio/indirizzo) il CASO e' calcolato dal codice
+    // (con eventuale delivered_at confermata dalla collega) e VINCOLA la bozza. L'AI non decide, esegue.
+    let casoTxt = '';
+    if (CASE_CATS.has(String(conv.categoria ?? ''))) {
+      const meta2 = ctx.dati.ordine ? await fetchOrderMeta(ctx.dati.ordine.order_number, token) : null;
+      const cd = computeCaso(conv, ctx.dati.ordine, meta2, lc.inbound, Number(flags.cs_reso_finestra_giorni) || 15, String(body.delivered_at || '').trim() || null);
+      casoTxt = casoBlock((conv.categoria as string) ?? null, cd);
+    }
 
     const prompt = `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi TRE versioni ALTERNATIVE della stessa risposta email al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.
 LE TRE VERSIONI (usa esattamente questi tre "tono"): "breve" = 2-3 righe, dritta al punto, cordiale; "calda" = piu' empatica e personale, un pizzico di calore; "formale" = piu' completa e composta, adatta a casi delicati.
 ${STYLE_RULES}
-Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
+${casoTxt}Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
 
 Ultimi messaggi (il piu' recente e' del cliente):
 ${threadTxt}

@@ -626,6 +626,19 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-refine-in { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font-size: 13px; font-family: inherit; background: var(--card); color: var(--dark); }
 .cs-refine-in:focus { outline: none; border-color: var(--rose); }
 .cs-ghost { border: 1px solid var(--line); color: var(--muted); background: var(--card); }
+/* --- pannello caso (motore dei verdetti: il sistema decide, la collega vede) --- */
+.cs-case { background: var(--card); border: 1.5px solid var(--line); border-radius: 14px; padding: 11px 13px; margin-top: 12px; }
+.cs-case-h { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 8px; }
+.cs-verdict { border-radius: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.45; display: flex; flex-direction: column; gap: 3px; }
+.cs-verdict + .cs-verdict { margin-top: 8px; }
+.cs-verdict b { font-size: 13px; }
+.cs-verdict a { color: inherit; font-weight: 700; }
+.cs-v-ok { background: rgba(0,189,157,.10); color: #028371; border: 1px solid rgba(0,189,157,.25); }
+.cs-v-no { background: rgba(252,79,63,.08); color: #c51f10; border: 1px solid rgba(252,79,63,.22); }
+.cs-v-warn { background: rgba(255,134,20,.10); color: #c74d07; border: 1px solid rgba(255,134,20,.25); }
+.cs-v-info { background: var(--surface-alt, #f3eee5); color: var(--dark); border: 1px solid var(--line); }
+.cs-case-row { display: flex; gap: 8px; margin-top: 8px; }
+.cs-case-row input[type="date"] { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font: inherit; font-size: 13px; background: var(--card); color: var(--dark); }
 .cs-inbox { display: inline-block; background: #5c4d9c; color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
 .cs-msg { max-width: 86%; border-radius: 14px; padding: 10px 13px; margin: 8px 0; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .cs-msg.in { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
