@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, fetchContext, generateOptions, refineDraft, catEmoji, CS_CATEGORIES } from '../lib/csApi';
-import type { CsConversation, CsMessage, Canale, CsContext, DraftOption } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, fetchContext, fetchCaseData, generateOptions, refineDraft, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData } from '../lib/csApi';
 
 // Sezione Assistenza clienti — FASE 1: SOLA LETTURA dietro login Supabase Auth.
 // Login = solo cancello (@amimi.it); l'identita' che firma (Benny/Ginni) e' un selettore in-tool,
@@ -65,7 +65,12 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [savingCat, setSavingCat] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [ctx, setCtx] = useState<CsContext | null>(null);
+  const [caso, setCaso] = useState<CaseData | null>(null);
+  const [confirmDate, setConfirmDate] = useState('');
+  const [casoBusy, setCasoBusy] = useState(false);
   const [options, setOptions] = useState<DraftOption[] | null>(null);
+  // guardia race (audit #7): le risposte async di un thread APERTO PRIMA non devono scrivere sul corrente
+  const threadRef = useRef('');
   const [selIdx, setSelIdx] = useState(0);
   const [daVer, setDaVer] = useState(0);
   const [fonti, setFonti] = useState<string[]>([]);
@@ -125,34 +130,49 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     if (error) { setBusy(false); setErr('Google non ancora attivo (manca il setup nel pannello Supabase). Per ora accedi con email/password qui sotto.'); }
   };
   const logout = async () => { setMenu(false); await csClient.auth.signOut(); setConvs(null); setCurrent(null); setView('coda'); };
+  // Motore verdetti: carica il caso (reso/cambio/indirizzo) calcolato dal sistema. Best-effort:
+  // se l'edge live non ha ancora `case_data` (deploy pending) il pannello semplicemente non appare.
+  const loadCaso = (tid: string, deliveredAt?: string) => {
+    setCasoBusy(true);
+    fetchCaseData(tid, deliveredAt)
+      .then((cd) => { if (threadRef.current === tid) setCaso(cd); })
+      .catch(() => { if (threadRef.current === tid) setCaso(null); })
+      .finally(() => { if (threadRef.current === tid) setCasoBusy(false); });
+  };
   const openThread = async (c: CsConversation) => {
+    threadRef.current = c.id;
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
-    setCtx(null); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false);
-    try { setMsgs(await fetchMessages(c.id)); } catch (e) { setErr((e as Error).message); }
+    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false);
+    try { const m = await fetchMessages(c.id); if (threadRef.current === c.id) setMsgs(m); }
+    catch (e) { if (threadRef.current === c.id) setErr((e as Error).message); }
     // Contesto (link ordine + storico acquisti): nessuna spesa AI, best-effort (non blocca il thread).
     if (c.canale !== 'chat_notifica' && c.canale !== 'rumore') {
-      fetchContext(c.id).then(setCtx).catch(() => { /* testata best-effort */ });
+      fetchContext(c.id).then((x) => { if (threadRef.current === c.id) setCtx(x); }).catch(() => { /* testata best-effort */ });
+      if (c.categoria && CASE_CATS.has(c.categoria)) loadCaso(c.id);
     }
   };
   // Fase 3: 3 opzioni di risposta con dati reali (edge cs-assist, JWT). Recupero dati deterministico + Gemini.
   const doGenOptions = async () => {
     if (!current) return;
+    const tid = current.id;
     setGenBozza(true); setErr(''); setCopied(false);
     try {
-      const r = await generateOptions(current.id, ident);
+      const r = await generateOptions(tid, ident, confirmDate || undefined);
+      if (threadRef.current !== tid) return;   // thread cambiato nel frattempo: butta la risposta
       setOptions(r.options); setSelIdx(0); setBozzaText(r.options[0]?.testo ?? ''); setDaVer(r.options[0]?.da_verificare ?? 0); setFonti(r.fonti);
       if (!ctx) setCtx({ fonti: r.fonti, order_admin_url: r.order_admin_url, storia: r.storia });
-    } catch (e) { setErr((e as Error).message); }
-    setGenBozza(false);
+    } catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
+    if (threadRef.current === tid) setGenBozza(false);
   };
   const pickOption = (i: number) => { if (!options?.[i]) return; setSelIdx(i); setBozzaText(options[i].testo); setDaVer(options[i].da_verificare); setCopied(false); };
   // "Chiedi una modifica": l'AI riscrive la bozza corrente applicando l'istruzione, sempre sui dati reali.
   const doRefine = async () => {
     if (!current || !bozzaText.trim() || !refineTxt.trim()) return;
+    const tid = current.id;
     setRefining(true); setErr(''); setCopied(false);
-    try { const r = await refineDraft(current.id, ident, bozzaText, refineTxt); setBozzaText(r.draft); setDaVer(r.da_verificare); setRefineTxt(''); }
-    catch (e) { setErr((e as Error).message); }
-    setRefining(false);
+    try { const r = await refineDraft(tid, ident, bozzaText, refineTxt); if (threadRef.current === tid) { setBozzaText(r.draft); setDaVer(r.da_verificare); setRefineTxt(''); } }
+    catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
+    if (threadRef.current === tid) setRefining(false);
   };
   const copiaBozza = async () => { try { await navigator.clipboard.writeText(bozzaText); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* no clipboard */ } };
   const openRumore = async () => {
@@ -168,6 +188,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       const patch = { categoria, categoria_source: categoria ? 'manuale' : 'ai_low' } as Partial<CsConversation>;
       setCurrent({ ...current, ...patch } as CsConversation);
       setConvs((prev) => prev ? prev.map((x) => x.id === current.id ? { ...x, ...patch } as CsConversation : x) : prev);
+      // correzione verso una categoria a caso (reso/cambio/indirizzo): carica subito il verdetto
+      if (categoria && CASE_CATS.has(categoria)) loadCaso(current.id, confirmDate || undefined); else setCaso(null);
     } catch (e) { setErr((e as Error).message); }
     setSavingCat(false);
   };
@@ -282,6 +304,42 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 <div className="cs-body">{m.body_text || m.form_fields ? (m.body_text || '') : '(vuoto)'}</div>
               </div>
             ))}
+        {c.canale !== 'chat_notifica' && c.canale !== 'rumore' && c.categoria && CASE_CATS.has(c.categoria) && caso && (
+          <div className="cs-case">
+            <div className="cs-case-h">{c.categoria === 'Modifica / correzione indirizzo' ? '📍 Caso indirizzo — calcolato dal sistema' : '↩️ Caso reso — calcolato dal sistema'}</div>
+            {c.categoria === 'Modifica / correzione indirizzo' ? (
+              caso.indirizzo.caso === 'correggibile' ? (
+                <div className="cs-verdict cs-v-ok"><b>🚚 Non ancora ritirata dal corriere · ✅ correggibile</b><span>Chiedi l&#8217;indirizzo completo; correggi su Shopify e TWS prima del ritiro.</span></div>
+              ) : caso.indirizzo.caso === 'consegnato' ? (
+                <div className="cs-verdict cs-v-no"><b>📬 Risulta gia&#8217; consegnata · nulla da fare sulla spedizione</b><span>Bozza: empatia + vicini/portineria, niente promesse impossibili.</span></div>
+              ) : caso.indirizzo.caso === 'verificare_tracking' ? (
+                <div className="cs-verdict cs-v-warn"><b>🚚 Gia&#8217; partita: in viaggio o gia&#8217; consegnata?</b><span>{caso.tracking_url ? <>Controlla dal <a href={caso.tracking_url} target="_blank" rel="noreferrer">tracking ↗</a> — la bozza resta prudente su entrambe le ipotesi.</> : 'Tracking non disponibile: la bozza resta prudente su entrambe le ipotesi.'}</span></div>
+              ) : (
+                <div className="cs-verdict cs-v-info"><b>Stato spedizione non determinabile</b><span>Ordine non agganciato con certezza alla cliente: la bozza usa [DA VERIFICARE].</span></div>
+              )
+            ) : (
+              <>
+                {caso.reso.difetto_sospetto && (
+                  <div className="cs-verdict cs-v-warn"><b>⚠️ Possibile difetto segnalato</b><span>La finestra non si applica da sola (garanzia legale 24 mesi): bozza prudente, mai un rifiuto.</span></div>
+                )}
+                {caso.reso.verdetto === 'entro' ? (
+                  <div className="cs-verdict cs-v-ok"><b>📦 Consegnata il {caso.reso.delivered_at} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra}</b><span>Fonte: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
+                ) : caso.reso.verdetto === 'fuori' ? (
+                  <div className="cs-verdict cs-v-no"><b>📦 Consegnata il {caso.reso.delivered_at} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra}</b><span>Fonte: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
+                ) : (
+                  <div className="cs-verdict cs-v-info">
+                    <b>Data di consegna non nota</b>
+                    <span>{caso.tracking_url ? <>Leggila dal <a href={caso.tracking_url} target="_blank" rel="noreferrer">tracking ↗</a> e confermala qui: il conteggio dei {caso.reso.finestra} giorni lo fa il sistema.</> : 'Senza data niente verdetto: la bozza usa [DA VERIFICARE].'}</span>
+                    <div className="cs-case-row">
+                      <input type="date" value={confirmDate} onChange={(e) => setConfirmDate(e.target.value)} aria-label="Data di consegna" />
+                      <button className="cs-btn cs-ghost" type="button" disabled={!confirmDate || casoBusy} onClick={() => loadCaso(c.id, confirmDate)}>{casoBusy ? '…' : '✓ Conferma data'}</button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
         {c.canale !== 'chat_notifica' && c.canale !== 'rumore' && (
           <div className="cs-draftbox">
             {!options ? (

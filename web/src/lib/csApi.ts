@@ -40,6 +40,7 @@ export const CS_CATEGORIES: { label: string; emoji: string }[] = [
   { label: 'Gift card e account', emoji: '🎁' },
   { label: 'Reso e rimborso', emoji: '↩️' },
   { label: 'Cambio e prodotto errato', emoji: '🔄' },
+  { label: 'Modifica / correzione indirizzo', emoji: '📍' },
   { label: 'Info prodotto', emoji: 'ℹ️' },
   { label: 'Riparazione', emoji: '🔧' },
   { label: 'Pagamento', emoji: '💳' },
@@ -153,10 +154,25 @@ export async function fetchContext(conversationId: string): Promise<CsContext> {
   return { fonti: (j.fonti || []) as string[], order_admin_url: (j.order_admin_url as string) ?? null, storia: (j.storia as OrderHistory) ?? null };
 }
 
+// --- Motore dei verdetti (design Parte B): il codice decide il caso, l'AI scrive la frase ---
+export const CASE_CATS = new Set(['Reso e rimborso', 'Cambio e prodotto errato', 'Modifica / correzione indirizzo']);
+export type CasoReso = { delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'sconosciuto'; difetto_sospetto: boolean };
+export type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 'verificare_tracking' | 'consegnato' | 'sconosciuto' };
+export type CaseData = { categoria: string | null; verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo; tracking_url: string | null; order_admin_url: string | null };
+
+/** Verdetto del caso (reso/cambio/indirizzo), calcolato dal CODICE (nessuna AI). `deliveredAt` opzionale =
+ *  data di consegna CONFERMATA dalla collega dal tracking (il verdetto resta deterministico). Se l'edge live
+ *  non ha ancora l'azione (deploy pending) la chiamata fallisce: il chiamante nasconde il pannello. */
+export async function fetchCaseData(conversationId: string, deliveredAt?: string): Promise<CaseData> {
+  const j = await callAssist({ action: 'case_data', conversation_id: conversationId, ...(deliveredAt ? { delivered_at: deliveredAt } : {}) });
+  return j as unknown as CaseData;
+}
+
 /** Genera 3 opzioni di risposta (toni breve/calda/formale) con dati reali. JWT-gated; Gemini scrive usando
- *  SOLO il blocco DATI, con [DA VERIFICARE] dove un dato manca. NON invia (Fase 4). */
-export async function generateOptions(conversationId: string, chi: string): Promise<{ options: DraftOption[]; fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null }> {
-  const j = await callAssist({ action: 'draft', conversation_id: conversationId, chi });
+ *  SOLO il blocco DATI, con [DA VERIFICARE] dove un dato manca. Sui casi (reso/indirizzo) il verdetto del
+ *  sistema VINCOLA la bozza; `deliveredAt` = data confermata dalla collega. NON invia (Fase 4). */
+export async function generateOptions(conversationId: string, chi: string, deliveredAt?: string): Promise<{ options: DraftOption[]; fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null }> {
+  const j = await callAssist({ action: 'draft', conversation_id: conversationId, chi, ...(deliveredAt ? { delivered_at: deliveredAt } : {}) });
   const options = (j.options || []) as DraftOption[];
   return {
     options: options.length ? options : [{ tono: 'bozza', testo: String(j.draft || ''), da_verificare: Number(j.da_verificare || 0) }],
