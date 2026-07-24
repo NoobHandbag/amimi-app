@@ -52,6 +52,20 @@ async function gemini(model: string, prompt: string, key: string, maxTokens: num
   return String(gj?.candidates?.[0]?.content?.parts?.[0]?.text ?? '').trim();
 }
 
+// Claude (Anthropic Messages API) — motore preferito per bozze/refine quando c'e' app_flags.anthropic_api_key
+// (tono migliore, niente quota giornaliera come Gemini free). Fallback automatico a Gemini se la chiave manca.
+async function claude(model: string, system: string, user: string, key: string, maxTokens: number): Promise<string> {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error('Claude ' + r.status + ': ' + JSON.stringify(j).slice(0, 200));
+  const parts = Array.isArray(j?.content) ? j.content : [];
+  return parts.filter((p: Row) => p.type === 'text').map((p: Row) => String(p.text ?? '')).join('').trim();
+}
+
 // --- Recupero DATI (deterministico) ---
 type Prod = { codice: string; item: string; variant: string; prezzo: number | null; giacenza: number; disponibili: number; on_shopify: boolean };
 
@@ -263,7 +277,7 @@ Deno.serve(async (req) => {
   const action = String(body.action || '');
 
   const flags: Record<string, string> = {};
-  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni']);
+  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model', 'cs_ai_istruzioni']);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
@@ -286,6 +300,21 @@ Deno.serve(async (req) => {
   }
 
   const key = flags.gemini_api_key;
+  // Motore AI: Claude se c'e' anthropic_api_key (owner lo mette a mano, mai in repo/chat), altrimenti Gemini free.
+  const claudeKey = (flags.anthropic_api_key || '').trim();
+  const claudeModel = (flags.cs_ai_model || 'claude-sonnet-5').trim();
+  const draftModel = claudeKey ? claudeModel : MODEL_DRAFT;
+  const haveLLM = !!claudeKey || !!key;
+  // "come rispondere": istruzioni editabili dal team (app_flags.cs_ai_istruzioni), iniettate come CONTESTO
+  // in ogni bozza. Guidano il tono; non superano MAI la regola anti-invenzione.
+  const aiIstruzioni = (flags.cs_ai_istruzioni || '').trim();
+  const istruzioniBlock = aiIstruzioni ? `\nISTRUZIONI DEL TEAM (come rispondere; priorita' sullo stile generico, MAI sull'anti-invenzione):\n${aiIstruzioni}\n` : '';
+  // LLM unificato: Claude (system separato) se configurato, altrimenti Gemini (system+user concatenati).
+  const runLLM = async (system: string, userMsg: string, maxTok: number, jsonMode: boolean): Promise<string> => {
+    if (claudeKey) return await claude(claudeModel, system, userMsg, claudeKey, maxTok);
+    try { return await gemini(MODEL_DRAFT, system + '\n\n' + userMsg, key, maxTok, jsonMode); }
+    catch (e) { if (jsonMode) throw e; return await gemini(MODEL_SUMMARY, system + '\n\n' + userMsg, key, maxTok, false); }
+  };
 
   // carica conversazione + testo del cliente (usato da context/dry_data/draft/refine)
   const loadConv = async (withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[] } | null> => {
@@ -360,9 +389,9 @@ Riassunto (max 2 righe):`;
     return json({ ok: true, done, failed, remaining: remaining ?? 0 });
   }
 
-  // ---------- draft: 3 opzioni (JWT), Gemini flash, una sola chiamata ----------
+  // ---------- draft: 3 opzioni (JWT), Claude o Gemini, una sola chiamata ----------
   if (action === 'draft') {
-    if (!key) return json({ ok: false, needs_key: true, error: 'Gemini non configurato.' });
+    if (!haveLLM) return json({ ok: false, needs_key: true, error: 'Nessun motore AI configurato (Gemini o Claude).' });
     const lc = await loadConv(true);
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     const conv = lc.conv;
@@ -377,10 +406,10 @@ Riassunto (max 2 righe):`;
       casoTxt = casoBlock((conv.categoria as string) ?? null, cd);
     }
 
-    const prompt = `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi TRE versioni ALTERNATIVE della stessa risposta email al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.
+    const system = `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi TRE versioni ALTERNATIVE della stessa risposta email al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.
 LE TRE VERSIONI (usa esattamente questi tre "tono"): "breve" = 2-3 righe, dritta al punto, cordiale; "calda" = piu' empatica e personale, un pizzico di calore; "formale" = piu' completa e composta, adatta a casi delicati.
-${STYLE_RULES}
-${casoTxt}Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
+${STYLE_RULES}${istruzioniBlock}${casoTxt}`;
+    const user = `Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
 
 Ultimi messaggi (il piu' recente e' del cliente):
 ${threadTxt}
@@ -389,14 +418,14 @@ BLOCCO DATI (l'unica fonte di numeri che puoi usare):
 ${datiBlock(ctx.dati)}
 ${ctx.tono.length ? `\nEsempi del NOSTRO tono (imita lo stile, non copiare i contenuti):\n${ctx.tono.map((t) => '- ' + t).join('\n')}` : ''}
 
-Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo:
+Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (nessun markdown, nessun **grassetto**):
 {"opzioni":[{"tono":"breve","testo":"..."},{"tono":"calda","testo":"..."},{"tono":"formale","testo":"..."}]}`;
 
     // pulizia bozza: via i titoli markdown tipo **BREVE** e i grassetti (la mail e' testo semplice)
     const tidy = (t: string) => t.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
     let opzioni: { tono: string; testo: string }[] = [];
     try {
-      const raw = await gemini(MODEL_DRAFT, prompt, key, 2400, true);   // 1400 troncava il JSON delle 3 bozze (bug 24-07)
+      const raw = await runLLM(system, user, 2400, true);   // Claude se configurato, altrimenti Gemini (1400 troncava, bug 24-07)
       let parsed: { opzioni?: { tono?: unknown; testo?: unknown }[] } = {};
       try { parsed = JSON.parse(cleanJson(raw)); }
       catch {   // JSON sporco/troncato: prova a estrarre il blocco { ... } piu' esterno
@@ -406,21 +435,20 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo:
       opzioni = (Array.isArray(parsed?.opzioni) ? parsed.opzioni : []).map((o) => ({ tono: String(o.tono ?? ''), testo: tidy(String(o.testo ?? '')) })).filter((o) => o.testo);
     } catch { opzioni = []; }
     if (!opzioni.length) {
-      // fallback robusto: UNA sola bozza in testo semplice. Il prompt fallback NON deve piu' chiedere
-      // "TRE versioni" (bug 24-07: restavano i 3 toni in markdown in un testo unico, pure troncato).
+      // fallback robusto: UNA sola bozza in testo semplice. NON chiede piu' "TRE versioni" (bug 24-07).
       try {
-        const singlePrompt = prompt
+        const sysSingle = system
           .replace('Scrivi TRE versioni ALTERNATIVE della stessa risposta email al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.', 'Scrivi UNA bozza di risposta email al cliente, pronta da ritoccare. NON inviarla.')
-          .replace(/LE TRE VERSIONI[^\n]*\n/, '')
-          .replace(/Rispondi SOLO con JSON[\s\S]*$/, 'Scrivi SOLO la bozza (nessun JSON, nessun titolo, nessuna spiegazione):');
-        const single = await gemini(MODEL_DRAFT, singlePrompt, key, 1000);
+          .replace(/LE TRE VERSIONI[^\n]*\n/, '');
+        const usrSingle = user.replace(/Rispondi SOLO con JSON[\s\S]*$/, 'Scrivi SOLO la bozza (nessun JSON, nessun titolo, nessuna spiegazione, nessun markdown):');
+        const single = await runLLM(sysSingle, usrSingle, 1000, false);
         if (single) opzioni = [{ tono: 'bozza', testo: tidy(single) }];
       } catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     }
     if (!opzioni.length) return json({ ok: false, error: 'bozza vuota' }, 502);
     const options = opzioni.slice(0, 3).map((o) => ({ tono: o.tono, testo: o.testo, da_verificare: countDaVerificare(o.testo) }));
 
-    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: MODEL_DRAFT }).select('id').single();
+    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: draftModel }).select('id').single();
     await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length } });
     return json({
       ok: true, options, draft: options[0].testo, da_verificare: options[0].da_verificare,   // draft = retro-compat
@@ -428,9 +456,9 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo:
     });
   }
 
-  // ---------- refine: riscrivi una bozza data applicando un'istruzione (JWT), Gemini flash ----------
+  // ---------- refine: riscrivi una bozza data applicando un'istruzione (JWT), Claude o Gemini ----------
   if (action === 'refine') {
-    if (!key) return json({ ok: false, needs_key: true, error: 'Gemini non configurato.' });
+    if (!haveLLM) return json({ ok: false, needs_key: true, error: 'Nessun motore AI configurato (Gemini o Claude).' });
     const testo = String(body.testo || '').trim();
     const istruzione = String(body.istruzione || '').trim();
     if (!testo || !istruzione) return json({ error: 'servono testo e istruzione' }, 422);
@@ -439,9 +467,9 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo:
     const conv = lc.conv;
     const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
 
-    const prompt = `Sei chi risponde al servizio clienti di "Amimi'". Ti do una BOZZA di risposta al cliente e una richiesta di modifica. Riscrivi la bozza applicando la modifica. NON inviarla.
-${STYLE_RULES}
-Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}.
+    const sysR = `Sei chi risponde al servizio clienti di "Amimi'". Ti do una BOZZA di risposta al cliente e una richiesta di modifica. Riscrivi la bozza applicando la modifica. NON inviarla.
+${STYLE_RULES}${istruzioniBlock}`;
+    const usrR = `Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}.
 RICHIESTA DI MODIFICA (dalla collega): ${istruzione.slice(0, 400)}
 
 BOZZA ATTUALE:
@@ -450,12 +478,13 @@ ${testo.slice(0, 2500)}
 BLOCCO DATI (l'unica fonte di numeri che puoi usare):
 ${datiBlock(ctx.dati)}
 
-Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto):`;
+Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown):`;
 
     let out = '';
-    try { out = await gemini(MODEL_DRAFT, prompt, key, 800); }
-    catch { try { out = await gemini(MODEL_SUMMARY, prompt, key, 800); } catch (e) { return json({ ok: false, error: (e as Error).message }, 502); } }
+    try { out = await runLLM(sysR, usrR, 800, false); }
+    catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     if (!out) return json({ ok: false, error: 'bozza vuota' }, 502);
+    out = out.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
     await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'refine', chi, dettaglio: { istruzione: istruzione.slice(0, 200) } });
     return json({ ok: true, draft: out, da_verificare: countDaVerificare(out) });
   }

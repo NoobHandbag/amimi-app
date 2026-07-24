@@ -655,6 +655,29 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-seg-btn.on { background: var(--rose); color: #fff; }
 /* --- swipe card --- */
 .cs-card { touch-action: pan-y; will-change: transform; }
+/* --- email in testo semplice: preserva gli a-capo (feedback 24-07) --- */
+.cs-body { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+/* --- filtri coda (scroll orizzontale, mai tagliati) + ordinamento su riga propria --- */
+.cs-filterbar { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.cs-filterbar::-webkit-scrollbar { display: none; }
+.cs-fpill { flex: 0 0 auto; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--card); color: var(--muted); border-radius: 999px; padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.cs-fpill.on { background: var(--rose); border-color: var(--rose); color: #fff; }
+.cs-fn { background: rgba(0,0,0,.08); border-radius: 999px; padding: 0 7px; font-size: 11px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.cs-fpill.on .cs-fn { background: rgba(255,255,255,.28); color: #fff; }
+.cs-sortrow { display: flex; align-items: center; gap: 9px; margin: 4px 0 12px; }
+.cs-sortlbl { font-size: 11.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+/* --- toast (feedback swipe/azioni) --- */
+.cs-toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); max-width: 92%; display: flex; align-items: center; gap: 14px; background: var(--dark); color: #fff; padding: 11px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; box-shadow: 0 10px 30px rgba(46,32,77,.32); z-index: 60; animation: cs-toast-in .18s ease; }
+.cs-toast button { background: none; border: none; color: #ffd7a8; font-weight: 800; font-size: 13px; cursor: pointer; white-space: nowrap; padding: 2px 4px; }
+@keyframes cs-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .cs-toast { animation: none; } }
+/* --- editor "come deve rispondere l'AI" --- */
+.cs-aiset { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
+.cs-aiset-h { width: 100%; display: flex; justify-content: space-between; align-items: center; background: none; border: none; cursor: pointer; font-size: 13px; font-weight: 700; color: var(--dark); padding: 8px 4px; }
+.cs-aiset-h span { color: var(--muted); }
+.cs-aiset-b { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px 6px; }
+.cs-aiset-ta { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 13px; line-height: 1.5; color: var(--dark); background: var(--card); resize: vertical; min-height: 120px; }
+.cs-aiset-ta:focus { outline: none; border-color: var(--rose); }
 .cs-inbox { display: inline-block; background: #5c4d9c; color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
 .cs-msg { max-width: 86%; border-radius: 14px; padding: 10px 13px; margin: 8px 0; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .cs-msg.in { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 5px; }

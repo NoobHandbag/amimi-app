@@ -130,7 +130,7 @@ export async function setCategoria(conversationId: string, categoria: string | n
   if (!r.ok || !j.ok) throw new Error(j.error || ('Errore ' + r.status));
 }
 
-async function callCsApi(bodyObj: Record<string, unknown>): Promise<void> {
+async function callCsApi(bodyObj: Record<string, unknown>): Promise<Record<string, unknown>> {
   const { data } = await csClient.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error('Sessione scaduta: rientra.');
@@ -141,6 +141,17 @@ async function callCsApi(bodyObj: Record<string, unknown>): Promise<void> {
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) throw new Error(j.error || ('Errore ' + r.status));
+  return j as Record<string, unknown>;
+}
+
+// --- Motore AI: quale motore risponde + istruzioni "come rispondere" editabili dal team (feedback 24-07) ---
+export type AiConfig = { istruzioni: string; provider: 'claude' | 'gemini'; model: string };
+export async function getAiConfig(): Promise<AiConfig> {
+  const j = await callCsApi({ action: 'get_ai_config' });
+  return { istruzioni: String(j.istruzioni ?? ''), provider: j.provider === 'claude' ? 'claude' : 'gemini', model: String(j.model ?? '') };
+}
+export async function setAiIstruzioni(istruzioni: string, chi: string): Promise<void> {
+  await callCsApi({ action: 'set_ai_istruzioni', istruzioni, chi });
 }
 
 export type Stato = 'da_fare' | 'in_corso' | 'fatto';

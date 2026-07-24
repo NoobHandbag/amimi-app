@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato } from '../lib/csApi';
+
+// email in testo semplice: preserva gli a-capo (CSS pre-wrap) e collassa i vuoti multipli (feedback 24-07)
+const cleanBody = (t: string) => (t || '').replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 
 // Sezione Assistenza clienti — FASE 1: SOLA LETTURA dietro login Supabase Auth.
 // Login = solo cancello (@amimi.it); l'identita' che firma (Benny/Ginni) e' un selettore in-tool,
@@ -105,12 +108,30 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [pwd, setPwd] = useState('');
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // toast (feedback swipe + azioni). undo opzionale.
+  const [toast, setToast] = useState<{ msg: string; undo?: () => void } | null>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
+  const showToast = (msg: string, undo?: () => void) => {
+    setToast({ msg, undo });
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 4500);
+  };
 
   useEffect(() => {
     csClient.auth.getSession().then(({ data }) => setSession(data.session ? 'in' : 'out'));
     const { data: sub } = csClient.auth.onAuthStateChange((_e, s) => setSession(s ? 'in' : 'out'));
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  // Back del browser / swipe-back: da un thread (o dal rumore) torna alla CODA, non fuori dall'app.
+  // Push di uno stato quando si apre un sotto-livello; il popstate lo consuma riportando alla coda (feedback 24-07).
+  useEffect(() => {
+    const onPop = () => { setMenu(false); setView((v) => (v === 'thread' || v === 'rumore') ? 'coda' : v); };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  const pushSub = () => { try { if (!window.history.state?.csSub) window.history.pushState({ csSub: true }, ''); } catch { /* no-op */ } };
+  const goCoda = () => { if (window.history.state?.csSub) window.history.back(); else setView('coda'); };
 
   useEffect(() => {
     if (session !== 'in' || !ident) return;
@@ -156,6 +177,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       .finally(() => { if (threadRef.current === tid) setCasoBusy(false); });
   };
   const openThread = async (c: CsConversation) => {
+    pushSub();
     threadRef.current = c.id;
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
     setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false);
@@ -192,6 +214,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   };
   const copiaBozza = async () => { try { await navigator.clipboard.writeText(bozzaText); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* no clipboard */ } };
   const openRumore = async () => {
+    pushSub();
     setView('rumore'); setErr('');
     if (!rumore) { try { setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); } }
   };
@@ -232,15 +255,17 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       await addNoise(c.id, sender, ident);
       setConvs((prevC) => prevC ? prevC.filter((x) => x.id !== c.id) : prevC);
       setRumore(null);   // la vista Rumore si ricarichera'
-      setView('coda');
+      goCoda();
+      showToast(`🚫 "${sender}" spostata nel Rumore`);
     } catch (e) { setErr((e as Error).message); }
     setSavingStato(false);
   };
-  // swipe a sinistra su una card = conclusa (sparisce da "Da iniziare", la ritrovi in "Concluse")
+  // swipe a sinistra su una card = conclusa (sparisce da "Da iniziare", la ritrovi in "Concluse") + toast con Annulla
   const doSwipeDone = (c: CsConversation) => {
     suppressOpenRef.current = c.id;
     setTimeout(() => { if (suppressOpenRef.current === c.id) suppressOpenRef.current = ''; }, 450);
     void doStato(c, 'fatto');
+    showToast(`✓ "${nmeOf(c).slice(0, 22)}" tolta dalla coda`, () => doStato(c, 'da_fare'));
   };
 
   // ---- login gate ----
@@ -294,7 +319,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     return (
       <div className="screen">
         <header>
-          <button className="badge" onClick={() => setView('coda')} type="button">‹ Coda</button>
+          <button className="badge" onClick={goCoda} type="button">‹ Coda</button>
           <button onClick={() => setMenu((m) => !m)} type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} ▾</button>
         </header>
         {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
@@ -361,7 +386,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 {m.form_fields && Object.keys(m.form_fields).length > 0 && (
                   <div className="cs-form">{Object.entries(m.form_fields).map(([k, v]) => <div key={k}><b>{k}:</b> {v}</div>)}</div>
                 )}
-                <div className="cs-body">{m.body_text || m.form_fields ? (m.body_text || '') : '(vuoto)'}</div>
+                <div className="cs-body">{m.body_text ? cleanBody(m.body_text) : (m.form_fields ? '' : '(vuoto)')}</div>
               </div>
             ))}
         {c.canale !== 'chat_notifica' && c.canale !== 'rumore' && c.categoria && CASE_CATS.has(c.categoria) && caso && (
@@ -450,7 +475,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   if (view === 'rumore') return (
     <div className="screen">
       <header>
-        <button className="badge" onClick={() => setView('coda')} type="button">‹ Coda</button>
+        <button className="badge" onClick={goCoda} type="button">‹ Coda</button>
         <h1 style={{ fontSize: 18 }}>Rumore</h1>
         <span style={{ width: 40 }} />
       </header>
@@ -523,15 +548,20 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         <span className="cs-stat"><b>{fatte}</b> concluse</span>
         <button onClick={doRefresh} disabled={refreshing} type="button" style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--line)', borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, color: 'var(--rose)', cursor: 'pointer', opacity: refreshing ? 0.6 : 1 }}>{refreshing ? 'Aggiorno…' : '↻ Aggiorna'}</button>
       </div>
-      <div className="cs-chips">
-        {([['dafare', 'Da iniziare'], ['incorso', 'In corso'], ['fatte', 'Concluse'], ['tutte', 'Tutte']] as const).map(([k, l]) => (
-          <button key={k} className={'cs-chip' + (filtro === k ? ' on' : '')} onClick={() => setFiltro(k)} type="button">{l}</button>
+      <div className="cs-filterbar">
+        {(([['dafare', 'Da iniziare', daf], ['incorso', 'In corso', inc], ['fatte', 'Concluse', fatte], ['tutte', 'Tutte', null]]) as [typeof filtro, string, number | null][]).map(([k, l, n]) => (
+          <button key={k} className={'cs-fpill' + (filtro === k ? ' on' : '')} onClick={() => setFiltro(k)} type="button">
+            {l}{n != null && n > 0 ? <span className="cs-fn">{n}</span> : null}
+          </button>
         ))}
-        <span className="cs-seg" style={{ marginLeft: 'auto' }}>
-          {([['tempo', '🕗 Tempo'], ['tema', '🏷️ Tema']] as const).map(([k, l]) => (
+      </div>
+      <div className="cs-sortrow">
+        <span className="cs-sortlbl">Ordina per</span>
+        <div className="cs-seg">
+          {([['tempo', '🕗 Data'], ['tema', '🏷️ Tema']] as const).map(([k, l]) => (
             <button key={k} className={'cs-seg-btn' + (codaView === k ? ' on' : '')} onClick={() => setCodaView(k)} type="button">{l}</button>
           ))}
-        </span>
+        </div>
       </div>
       {err && <div className="err">{err}</div>}
       {convs === null ? <div className="muted center" style={{ padding: 24 }}>Carico la coda…</div> :
@@ -562,6 +592,12 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             );
           })}
       <button className="cs-rumore" onClick={openRumore} type="button">🔕 Rumore nascosto (notifiche Shopify, spam, DMARC){rumCount != null ? `: ${rumCount}` : ''} ›</button>
+      {toast && (
+        <div className="cs-toast" role="status">
+          <span>{toast.msg}</span>
+          {toast.undo && <button type="button" onClick={() => { toast.undo?.(); setToast(null); }}>Annulla</button>}
+        </div>
+      )}
     </div>
   );
 }
@@ -576,7 +612,51 @@ function IdentMenu({ ident, setIdent, logout }: { ident: string; setIdent: (k: s
           <span>{IDENTS[k].n}</span>{ident === k && <span className="cs-tag">attiva</span>}
         </button>
       ))}
+      <AiSettings ident={ident} />
       <button className="cs-srow" onClick={logout} type="button" style={{ justifyContent: 'center', color: 'var(--muted)' }}>Esci (logout)</button>
+    </div>
+  );
+}
+
+// "Come deve rispondere l'AI": mostra il motore attivo (Claude/Gemini) + istruzioni del team editabili.
+// Le istruzioni guidano TUTTE le bozze; non superano mai la regola anti-invenzione (lato edge).
+function AiSettings({ ident }: { ident: string }) {
+  const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [txt, setTxt] = useState('');
+  const [cfg, setCfg] = useState<{ provider: string; model: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const expand = async () => {
+    const next = !open; setOpen(next);
+    if (next && !loaded) {
+      try { const c = await getAiConfig(); setTxt(c.istruzioni); setCfg({ provider: c.provider, model: c.model }); } catch { /* best-effort */ }
+      setLoaded(true);
+    }
+  };
+  const save = async () => {
+    setSaving(true); setMsg('');
+    try { await setAiIstruzioni(txt, ident); setMsg('Salvato ✓'); } catch (e) { setMsg((e as Error).message); }
+    setSaving(false);
+  };
+  return (
+    <div className="cs-aiset">
+      <button className="cs-aiset-h" type="button" onClick={expand}>⚙️ Come deve rispondere l&#8217;AI <span>{open ? '▾' : '▸'}</span></button>
+      {open && (
+        <div className="cs-aiset-b">
+          {cfg && <div className="cs-note" style={{ marginTop: 0 }}>Motore attivo: <b>{cfg.provider === 'claude' ? 'Claude (' + cfg.model + ')' : 'Gemini (gratis)'}</b></div>}
+          {!loaded ? <div className="muted" style={{ fontSize: 12 }}>Carico…</div> : (
+            <>
+              <textarea className="cs-aiset-ta" value={txt} onChange={(e) => setTxt(e.target.value)} rows={7} placeholder="Es. Rispondi sempre calde e gentili, ringrazia, firma Team Amimì…" />
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button className="cs-btn cs-primary" type="button" onClick={save} disabled={saving}>{saving ? 'Salvo…' : 'Salva istruzioni'}</button>
+                {msg && <span className="muted" style={{ fontSize: 12 }}>{msg}</span>}
+              </div>
+              <div className="cs-note">Guidano tutte le bozze AI. Non superano mai la regola anti-invenzione ([DA VERIFICARE]).</div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
