@@ -3,17 +3,12 @@
 //
 // DECOUPLED dall'ingest (cs-sync): se Gemini e' giu' l'ingest continua, le card restano "da classificare".
 // Azioni (PIN-gated, verify_jwt=false, come le altre edge; service_role scrive cs_conversations):
-//   - classify (default): pesca fino a MAX_PER_RUN conversazioni con categoria IS NULL e canale != 'rumore'
-//       (parse_failed escluse: non c'e' testo), le classifica (Gemini flash-lite, JSON vincolato,
-//       temperature 0) e ci sovrappone le REGOLE deterministiche di urgenza. Scrive categoria/
-//       categoria_source/categoria_confidence/lingua/urgente/urgenza_motivo/flags + evento cs_events 'classify'.
-//       Sotto soglia di confidence o categoria vuota: categoria resta NULL con source='ai_low'
-//       (UI: "da confermare"; mai una categoria inventata con sicurezza finta). Un errore Gemini su una
-//       conversazione la salta (resta da classificare), non blocca le altre.
-//   - classify_text: classifica un TESTO grezzo e ritorna il JSON, SENZA scrivere nulla. Serve al
-//       benchmark (golden set) per misurare l'ESATTA logica AI che gira in produzione. Solo lo strato AI
-//       (categoria + urgenza AI); le regole deterministiche dipendono dai messaggi e non si applicano qui.
-//   - dryRun=true su classify: classifica ma NON scrive (ritorna l'anteprima).
+//   - classify (default): pesca fino a MAX_PER_RUN conversazioni MAI TENTATE (categoria IS NULL AND
+//       categoria_source IS NULL) e canale != 'rumore' (parse_failed escluse). Gemini flash-lite, JSON,
+//       temp 0, + REGOLE deterministiche di urgenza. Sotto soglia / vuota -> categoria NULL, source='ai_low'
+//       ("da confermare", NON piu' ripescata: si corregge a mano via cs-api). Errore Gemini = la salta.
+//   - classify_text: classifica un TESTO grezzo, SENZA scrivere. Serve al benchmark.
+//   - dryRun=true su classify: classifica ma NON scrive (anteprima, senza id/PII).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
