@@ -639,6 +639,22 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-v-info { background: var(--surface-alt, #f3eee5); color: var(--dark); border: 1px solid var(--line); }
 .cs-case-row { display: flex; gap: 8px; margin-top: 8px; }
 .cs-case-row input[type="date"] { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font: inherit; font-size: 13px; background: var(--card); color: var(--dark); }
+/* --- foto profilo (rounded, fallback iniziale colorata gia' in .cs-av) --- */
+.cs-avimg { border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1.5px solid var(--line); display: inline-block; vertical-align: middle; }
+.cs-assignee { display: inline-flex; align-items: center; margin-left: auto; margin-right: 6px; }
+/* --- workflow stato --- */
+.cs-state-done { background: rgba(0,189,157,.12) !important; color: #028371 !important; }
+.cs-state-prog { background: rgba(255,134,20,.12) !important; color: #c74d07 !important; }
+.cs-actions-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+.cs-actions-row .cs-btn { padding: 8px 12px; font-size: 12.5px; }
+.cs-okbtn { border-color: rgba(0,189,157,.4); color: #028371; }
+.cs-noisebtn { border-color: rgba(252,79,63,.35); color: #c51f10; margin-left: auto; }
+/* --- toggle segmentato Tempo|Tema --- */
+.cs-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--card); }
+.cs-seg-btn { border: none; background: none; padding: 6px 13px; font-size: 12px; font-weight: 700; color: var(--muted); cursor: pointer; }
+.cs-seg-btn.on { background: var(--rose); color: #fff; }
+/* --- swipe card --- */
+.cs-card { touch-action: pan-y; will-change: transform; }
 .cs-inbox { display: inline-block; background: #5c4d9c; color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
 .cs-msg { max-width: 86%; border-radius: 14px; padding: 10px 13px; margin: 8px 0; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .cs-msg.in { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 5px; }

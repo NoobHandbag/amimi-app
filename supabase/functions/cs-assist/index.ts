@@ -392,17 +392,29 @@ ${ctx.tono.length ? `\nEsempi del NOSTRO tono (imita lo stile, non copiare i con
 Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo:
 {"opzioni":[{"tono":"breve","testo":"..."},{"tono":"calda","testo":"..."},{"tono":"formale","testo":"..."}]}`;
 
+    // pulizia bozza: via i titoli markdown tipo **BREVE** e i grassetti (la mail e' testo semplice)
+    const tidy = (t: string) => t.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
     let opzioni: { tono: string; testo: string }[] = [];
     try {
-      const raw = await gemini(MODEL_DRAFT, prompt, key, 1400, true);
-      const parsed = JSON.parse(cleanJson(raw)) as { opzioni?: { tono?: unknown; testo?: unknown }[] };
-      opzioni = (Array.isArray(parsed?.opzioni) ? parsed.opzioni : []).map((o) => ({ tono: String(o.tono ?? ''), testo: String(o.testo ?? '') })).filter((o) => o.testo);
+      const raw = await gemini(MODEL_DRAFT, prompt, key, 2400, true);   // 1400 troncava il JSON delle 3 bozze (bug 24-07)
+      let parsed: { opzioni?: { tono?: unknown; testo?: unknown }[] } = {};
+      try { parsed = JSON.parse(cleanJson(raw)); }
+      catch {   // JSON sporco/troncato: prova a estrarre il blocco { ... } piu' esterno
+        const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+        if (a >= 0 && b > a) { try { parsed = JSON.parse(raw.slice(a, b + 1)); } catch { parsed = {}; } }
+      }
+      opzioni = (Array.isArray(parsed?.opzioni) ? parsed.opzioni : []).map((o) => ({ tono: String(o.tono ?? ''), testo: tidy(String(o.testo ?? '')) })).filter((o) => o.testo);
     } catch { opzioni = []; }
     if (!opzioni.length) {
-      // fallback robusto: una sola bozza in testo semplice (come la Fase 3 originale), mai un errore secco
+      // fallback robusto: UNA sola bozza in testo semplice. Il prompt fallback NON deve piu' chiedere
+      // "TRE versioni" (bug 24-07: restavano i 3 toni in markdown in un testo unico, pure troncato).
       try {
-        const single = await gemini(MODEL_DRAFT, prompt.replace(/Rispondi SOLO con JSON[\s\S]*$/, 'Scrivi SOLO una bozza (nessun JSON, nessuna spiegazione):'), key, 700);
-        if (single) opzioni = [{ tono: 'bozza', testo: single }];
+        const singlePrompt = prompt
+          .replace('Scrivi TRE versioni ALTERNATIVE della stessa risposta email al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.', 'Scrivi UNA bozza di risposta email al cliente, pronta da ritoccare. NON inviarla.')
+          .replace(/LE TRE VERSIONI[^\n]*\n/, '')
+          .replace(/Rispondi SOLO con JSON[\s\S]*$/, 'Scrivi SOLO la bozza (nessun JSON, nessun titolo, nessuna spiegazione):');
+        const single = await gemini(MODEL_DRAFT, singlePrompt, key, 1000);
+        if (single) opzioni = [{ tono: 'bozza', testo: tidy(single) }];
       } catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     }
     if (!opzioni.length) return json({ ok: false, error: 'bozza vuota' }, 502);

@@ -30,21 +30,24 @@ export type CsConversation = {
   created_at: string;
 };
 
-// Tassonomia BLOCCATA (design 6.2): etichetta canonica + emoji. Stesso ordine del design.
+// Tassonomia BLOCCATA (design 6.2), ORDINATA PER FREQUENZA REALE via email (golden set 211,
+// ANALISI casella 22-07: Spedizione 18%, Restock 14%, Ritiro 13%, Cambio 9%, Sconto 9%,
+// Personalizzazione 8%, Reso 7%, Collab 7%, Info 4%, Riparazione 2%, Pagamento/Gift/Altro 1-2%;
+// Modifica indirizzo = "frequente" dalla riunione 23-07, senza % storica: messa dopo Reso).
 export const CS_CATEGORIES: { label: string; emoji: string }[] = [
   { label: 'Spedizione e stato ordine', emoji: '📦' },
   { label: 'Restock e disponibilita', emoji: '🔁' },
   { label: 'Ritiro, negozio, appuntamenti', emoji: '🏠' },
+  { label: 'Cambio e prodotto errato', emoji: '🔄' },
   { label: 'Codice sconto', emoji: '💸' },
   { label: 'Personalizzazione e cerimonia', emoji: '💍' },
-  { label: 'Gift card e account', emoji: '🎁' },
   { label: 'Reso e rimborso', emoji: '↩️' },
-  { label: 'Cambio e prodotto errato', emoji: '🔄' },
   { label: 'Modifica / correzione indirizzo', emoji: '📍' },
+  { label: 'Collaborazioni e B2B', emoji: '📢' },
   { label: 'Info prodotto', emoji: 'ℹ️' },
   { label: 'Riparazione', emoji: '🔧' },
   { label: 'Pagamento', emoji: '💳' },
-  { label: 'Collaborazioni e B2B', emoji: '📢' },
+  { label: 'Gift card e account', emoji: '🎁' },
   { label: 'Altro / richiesta varia', emoji: '💬' },
 ];
 export const catEmoji = (label: string | null): string => CS_CATEGORIES.find((c) => c.label === label)?.emoji ?? '🏷️';
@@ -125,6 +128,32 @@ export async function setCategoria(conversationId: string, categoria: string | n
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) throw new Error(j.error || ('Errore ' + r.status));
+}
+
+async function callCsApi(bodyObj: Record<string, unknown>): Promise<void> {
+  const { data } = await csClient.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sessione scaduta: rientra.');
+  const r = await fetch(CS_API_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+    body: JSON.stringify(bodyObj),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(j.error || ('Errore ' + r.status));
+}
+
+export type Stato = 'da_fare' | 'in_corso' | 'fatto';
+/** Workflow coda: da_fare (da iniziare) -> in_corso (presa in carico da `chi`) -> fatto (conclusa).
+ *  Tornare a da_fare azzera l'assegnazione. Scrive via cs-api (JWT) + cs_events 'stato'. */
+export async function setStato(conversationId: string, stato: Stato, chi: string): Promise<void> {
+  await callCsApi({ action: 'set_stato', conversation_id: conversationId, stato, chi });
+}
+
+/** "Non e' un cliente": aggiunge il mittente alla denylist rumore (le prossime mail non entrano in coda)
+ *  e sposta QUESTA conversazione nel Rumore. Reversibile a mano (denylist in app_flags, vista Rumore). */
+export async function addNoise(conversationId: string, sender: string, chi: string): Promise<void> {
+  await callCsApi({ action: 'add_noise', conversation_id: conversationId, sender, chi });
 }
 
 const CS_ASSIST_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/cs-assist';

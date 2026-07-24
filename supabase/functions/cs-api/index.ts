@@ -1,28 +1,32 @@
-// cs-api — tool assistenza clienti, FASE 2: scritture dalla UI, gated dal JWT dell'utente loggato.
-// Design 6.2 (categoria correggibile a mano) + 3.4 (l'identita' che firma e' il selettore Benny/Ginni,
-// NON il login). Questo e' il PRIMO endpoint di scrittura dalla UI: e' il pattern che servira' anche
-// alla Fase 4 per gli stati (da_fare/fatto).
-//
-// AUTORIZZAZIONE (belt-and-suspenders): NON si aprono le scritture via RLS (la UI non scrive diretto).
+// cs-api — tool assistenza clienti: scritture dalla UI, gated dal JWT dell'utente loggato.
+// Design 6.2 (categoria correggibile) + 3.4 (l'identita' che firma e' il selettore Benny/Ginni/Ale,
+// NON il login). AUTORIZZAZIONE (belt-and-suspenders): la UI non scrive mai diretto via RLS;
 //   1) l'Authorization header deve portare un access_token di un UTENTE Supabase Auth reale
-//      (getUser lo verifica lato server: la anon key NON e' un utente -> rifiutata);
+//      (getUser lato server: la anon key NON e' un utente -> rifiutata);
 //   2) l'email dell'utente deve finire in @amimi.it (stessa postura della RLS cs_*).
-//   Solo allora un client service_role esegue la scrittura + l'audit. verify_jwt=false: l'auth la
-//   facciamo QUI (verify_jwt del platform accetterebbe anche la anon key, che non e' un utente).
+//   Solo allora un client service_role esegue la scrittura + l'audit su cs_events.
 //
-// Azioni: set_categoria (correzione manuale della categoria, categoria_source='manuale' + cs_events
-//   'categoria_edit' con chi = identita' selezionata). Stati/bozze/invio = Fasi 3-4 (fuori scope).
+// Azioni (v2, feedback owner 24-07):
+//   - set_categoria: correzione manuale della categoria (categoria_source='manuale').
+//   - set_stato: workflow della coda -> 'da_fare' (da iniziare) | 'in_corso' (presa in carico da chi)
+//       | 'fatto' (conclusa). Scrive stato + stato_by=chi + stato_at. cs_events 'stato'.
+//   - add_noise: "non e' un cliente" -> appende il MITTENTE a app_flags.cs_noise_senders (dedup)
+//       cosi' le prossime mail finiscono nel rumore, e sposta la conversazione a canale='rumore'
+//       (sparisce dalla coda). cs_events 'noise_add'. Il flag e' riletto a runtime da cs-sync.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
 
-// Tassonomia BLOCCATA (design 6.2): la correzione manuale puo' solo assegnare una di queste, o svuotare.
+// Tassonomia (design 6.2 + 14a categoria "Modifica / correzione indirizzo" del 23-07):
+// la correzione manuale puo' solo assegnare una di queste, o svuotare.
 const CANON = [
   'Spedizione e stato ordine', 'Restock e disponibilita', 'Ritiro, negozio, appuntamenti', 'Codice sconto',
   'Personalizzazione e cerimonia', 'Gift card e account', 'Altro / richiesta varia', 'Reso e rimborso',
-  'Cambio e prodotto errato', 'Info prodotto', 'Riparazione', 'Pagamento', 'Collaborazioni e B2B',
+  'Cambio e prodotto errato', 'Modifica / correzione indirizzo', 'Info prodotto', 'Riparazione',
+  'Pagamento', 'Collaborazioni e B2B',
 ];
+const STATI = new Set(['da_fare', 'in_corso', 'fatto']);
 const IDENT: Record<string, string> = { B: 'Benedetta', G: 'Ginevra', A: 'Ale' };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -47,19 +51,23 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || '');
   const sb = createClient(url, svc);
+  const chiKey = String(body.chi || '').toUpperCase();
+  const chi = IDENT[chiKey] || 'ignoto';
+
+  const loadConv = async (convId: string) => {
+    if (!UUID_RE.test(convId)) return null;
+    const { data } = await sb.from('cs_conversations').select('id,categoria,categoria_source,stato,stato_by,canale,customer_email').eq('id', convId).maybeSingle();
+    return data ?? null;
+  };
 
   if (action === 'set_categoria') {
     const convId = String(body.conversation_id || '');
-    if (!UUID_RE.test(convId)) return json({ error: 'conversation_id non valido' }, 422);
+    const ex = await loadConv(convId);
+    if (!ex) return json({ error: UUID_RE.test(convId) ? 'conversazione inesistente' : 'conversation_id non valido' }, UUID_RE.test(convId) ? 404 : 422);
     // categoria: una canonica, oppure '' / null per riportare a "da confermare"
     const rawCat = body.categoria == null ? '' : String(body.categoria);
     const categoria = rawCat === '' ? null : (CANON.includes(rawCat) ? rawCat : '__invalid__');
     if (categoria === '__invalid__') return json({ error: 'categoria fuori tassonomia' }, 422);
-    const chiKey = String(body.chi || '').toUpperCase();
-    const chi = IDENT[chiKey] || 'ignoto';
-
-    const { data: ex } = await sb.from('cs_conversations').select('id,categoria,categoria_source').eq('id', convId).maybeSingle();
-    if (!ex) return json({ error: 'conversazione inesistente' }, 404);
 
     const { error: ue } = await sb.from('cs_conversations')
       .update({ categoria, categoria_source: categoria ? 'manuale' : 'ai_low' })
@@ -71,6 +79,56 @@ Deno.serve(async (req) => {
       dettaglio: { da: ex.categoria, a: categoria, da_source: ex.categoria_source, by_email: email },
     });
     return json({ ok: true, categoria, categoria_source: categoria ? 'manuale' : 'ai_low', chi });
+  }
+
+  if (action === 'set_stato') {
+    const convId = String(body.conversation_id || '');
+    const stato = String(body.stato || '');
+    if (!STATI.has(stato)) return json({ error: 'stato non valido (da_fare|in_corso|fatto)' }, 422);
+    const ex = await loadConv(convId);
+    if (!ex) return json({ error: UUID_RE.test(convId) ? 'conversazione inesistente' : 'conversation_id non valido' }, UUID_RE.test(convId) ? 404 : 422);
+
+    // stato_by: chi la prende in carico / chi la chiude. Tornare a da_fare azzera l'assegnazione.
+    const stato_by = stato === 'da_fare' ? null : chi;
+    const { error: ue } = await sb.from('cs_conversations')
+      .update({ stato, stato_by, stato_at: new Date().toISOString() })
+      .eq('id', convId);
+    if (ue) return json({ error: 'scrittura fallita: ' + ue.message }, 500);
+
+    await sb.from('cs_events').insert({
+      conversation_id: convId, azione: 'stato', chi,
+      dettaglio: { da: ex.stato, a: stato, da_by: ex.stato_by, by_email: email },
+    });
+    return json({ ok: true, stato, stato_by, chi });
+  }
+
+  if (action === 'add_noise') {
+    const convId = String(body.conversation_id || '');
+    const ex = await loadConv(convId);
+    if (!ex) return json({ error: UUID_RE.test(convId) ? 'conversazione inesistente' : 'conversation_id non valido' }, UUID_RE.test(convId) ? 404 : 422);
+    // mittente da bloccare: dal body (la UI passa il from della mail) o fallback all'email cliente della conv
+    const sender = String(body.sender || ex.customer_email || '').trim().toLowerCase();
+    if (!sender || sender.length < 4 || !sender.includes('@')) return json({ error: 'mittente non valido' }, 422);
+    if (sender.endsWith('@amimi.it')) return json({ error: 'non puoi bloccare @amimi.it' }, 422);
+
+    // append con dedup alla denylist (match substring su From+Subject in cs-sync, riletta a runtime)
+    const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'cs_noise_senders').maybeSingle();
+    const items = String(flag?.value ?? '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+    const already = items.some((x) => x.toLowerCase() === sender);
+    if (!already) {
+      items.push(sender);
+      const { error: fe } = await sb.from('app_flags').upsert({ key: 'cs_noise_senders', value: items.join('\n') }, { onConflict: 'key' });
+      if (fe) return json({ error: 'denylist non aggiornata: ' + fe.message }, 500);
+    }
+    // la conversazione esce dalla coda: canale='rumore' (resta consultabile nella vista Rumore)
+    const { error: ue } = await sb.from('cs_conversations').update({ canale: 'rumore' }).eq('id', convId);
+    if (ue) return json({ error: 'scrittura fallita: ' + ue.message }, 500);
+
+    await sb.from('cs_events').insert({
+      conversation_id: convId, azione: 'noise_add', chi,
+      dettaglio: { sender, gia_presente: already, canale_da: ex.canale, by_email: email },
+    });
+    return json({ ok: true, sender, gia_presente: already, chi });
   }
 
   return json({ error: 'azione sconosciuta: ' + action }, 422);

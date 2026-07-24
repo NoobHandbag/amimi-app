@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, fetchContext, fetchCaseData, generateOptions, refineDraft, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
-import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato } from '../lib/csApi';
 
 // Sezione Assistenza clienti — FASE 1: SOLA LETTURA dietro login Supabase Auth.
 // Login = solo cancello (@amimi.it); l'identita' che firma (Benny/Ginni) e' un selettore in-tool,
 // ricordato per dispositivo (design 3.4). Niente AI, niente bozze, niente invio (Fasi 2-4).
 
 const IDENTS: Record<string, { n: string; cls: string }> = { B: { n: 'Benedetta', cls: 'cs-b' }, G: { n: 'Ginevra', cls: 'cs-g' }, A: { n: 'Ale', cls: 'cs-a' } };
+const KEY_BY_NAME: Record<string, string> = { Benedetta: 'B', Ginevra: 'G', Ale: 'A' };
+// Foto profilo (rounded): file in web/public/avatars/. Se il file manca -> fallback all'iniziale colorata.
+const AVATAR_SRC: Record<string, string> = { B: 'avatars/benedetta.jpg', G: 'avatars/ginevra.jpg', A: 'avatars/ale.jpg' };
+
+function Avatar({ k, size = 30 }: { k: string; size?: number }) {
+  const [err, setErr] = useState(false);
+  const id = IDENTS[k];
+  if (!id) return null;
+  if (err || !AVATAR_SRC[k]) return <span className={'cs-av ' + id.cls} style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}>{k}</span>;
+  return <img className="cs-avimg" src={import.meta.env.BASE_URL + AVATAR_SRC[k]} alt={id.n} style={{ width: size, height: size }} onError={() => setErr(true)} />;
+}
 const CANALI: Record<Canale, string> = { email_diretta: '✉️ email', form_contatto: '📝 form sito', form_evento: '💍 form evento', chat_notifica: '💬 chat sito', rumore: '🔕 rumore' };
 const BUCKETS: [string, string][] = [['oggi', 'Oggi'], ['ieri', 'Ieri'], ['sett', 'Questa settimana'], ['vecchie', 'Piu’ vecchie']];
 const TONO_LABEL: Record<string, string> = { breve: '⚡ Breve', calda: '💛 Calda', formale: '🎩 Formale', bozza: '✍️ Bozza' };
@@ -60,7 +71,12 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [ident, setIdentS] = useState(() => localStorage.getItem('amimi_cs_ident') || '');
   const setIdent = (k: string) => { setIdentS(k); localStorage.setItem('amimi_cs_ident', k); };
   const [view, setView] = useState<'coda' | 'thread' | 'rumore'>('coda');
-  const [filtro, setFiltro] = useState<'dafare' | 'fatte' | 'tutte'>('dafare');
+  const [filtro, setFiltro] = useState<'dafare' | 'incorso' | 'fatte' | 'tutte'>('dafare');
+  const [savingStato, setSavingStato] = useState(false);
+  // swipe sulle card (mobile): trascina a sinistra oltre soglia = conclusa
+  const swipeRef = useRef<{ id: string; x0: number; dx: number } | null>(null);
+  const suppressOpenRef = useRef('');
+  const [swipeDx, setSwipeDx] = useState<{ id: string; dx: number } | null>(null);
   const [codaView, setCodaView] = useState<'tema' | 'tempo'>('tempo');
   const [savingCat, setSavingCat] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -193,6 +209,39 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     } catch (e) { setErr((e as Error).message); }
     setSavingCat(false);
   };
+  // workflow coda: da_fare (da iniziare) -> in_corso (chi la prende) -> fatto (conclusa)
+  const patchConv = (id: string, patch: Partial<CsConversation>) => {
+    setConvs((prev) => prev ? prev.map((x) => x.id === id ? { ...x, ...patch } as CsConversation : x) : prev);
+    setCurrent((cur) => cur && cur.id === id ? { ...cur, ...patch } as CsConversation : cur);
+  };
+  const doStato = async (c: CsConversation, stato: Stato) => {
+    setSavingStato(true); setErr('');
+    const prev = { stato: c.stato, stato_by: c.stato_by };
+    patchConv(c.id, { stato, stato_by: stato === 'da_fare' ? null : (IDENTS[ident]?.n ?? ident) });   // ottimistico
+    try { await setStato(c.id, stato, ident); }
+    catch (e) { patchConv(c.id, prev); setErr((e as Error).message); }
+    setSavingStato(false);
+  };
+  // "Non e' un cliente": mittente in denylist + conversazione nel Rumore (fuori dalla coda)
+  const doNoise = async (c: CsConversation) => {
+    const sender = ([...(msgs ?? [])].reverse().find((m) => m.direction === 'in')?.from_email) || c.customer_email || '';
+    if (!sender) { setErr('Mittente non identificabile.'); return; }
+    if (!window.confirm(`Blocco "${sender}" (le prossime mail finiscono nel Rumore) e sposto questa conversazione fuori dalla coda. Confermi?`)) return;
+    setSavingStato(true); setErr('');
+    try {
+      await addNoise(c.id, sender, ident);
+      setConvs((prevC) => prevC ? prevC.filter((x) => x.id !== c.id) : prevC);
+      setRumore(null);   // la vista Rumore si ricarichera'
+      setView('coda');
+    } catch (e) { setErr((e as Error).message); }
+    setSavingStato(false);
+  };
+  // swipe a sinistra su una card = conclusa (sparisce da "Da iniziare", la ritrovi in "Concluse")
+  const doSwipeDone = (c: CsConversation) => {
+    suppressOpenRef.current = c.id;
+    setTimeout(() => { if (suppressOpenRef.current === c.id) suppressOpenRef.current = ''; }, 450);
+    void doStato(c, 'fatto');
+  };
 
   // ---- login gate ----
   if (session === 'loading') return <div className="screen"><div className="muted center" style={{ padding: 40 }}>Carico…</div></div>;
@@ -230,7 +279,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         <div className="cs-lt">L&#8217;identita&#8217; firma le tue risposte, il login no</div>
         {(['B', 'G', 'A'] as const).map((k) => (
           <button key={k} className="cs-who" onClick={() => setIdent(k)} type="button">
-            <span className={'cs-av ' + IDENTS[k].cls}>{k}</span>
+            <Avatar k={k} size={42} />
             <span className="cs-whn">{IDENTS[k].n}{k === 'A' ? ' (admin)' : ''}</span>
           </button>
         ))}
@@ -255,7 +304,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
           <div style={{ marginTop: 6 }}>
             <span className="cs-badge cs-can">{CANALI[c.canale]}</span>
             {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
-            <span className="cs-badge cs-state">{c.stato === 'fatto' ? '✓ fatta' : 'da fare'}</span>
+            <span className={'cs-badge cs-state' + (c.stato === 'fatto' ? ' cs-state-done' : c.stato === 'in_corso' ? ' cs-state-prog' : '')}>
+              {c.stato === 'fatto' ? `✓ conclusa${c.stato_by ? ' · ' + c.stato_by : ''}` : c.stato === 'in_corso' ? `✋ in corso · ${c.stato_by ?? ''}` : 'da iniziare'}
+            </span>
           </div>
           {c.canale !== 'rumore' && <Badges c={c} />}
           {c.canale !== 'rumore' && (
@@ -266,6 +317,15 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 {CS_CATEGORIES.map((k) => <option key={k.label} value={k.label}>{k.emoji} {k.label}</option>)}
               </select>
               {savingCat && <span className="muted" style={{ fontSize: 12 }}>salvo…</span>}
+            </div>
+          )}
+          {c.canale !== 'rumore' && (
+            <div className="cs-actions-row">
+              {c.stato === 'da_fare' && <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'in_corso')} type="button">✋ Prendo io</button>}
+              {c.stato !== 'fatto'
+                ? <button className="cs-btn cs-ghost cs-okbtn" disabled={savingStato} onClick={() => doStato(c, 'fatto')} type="button">✓ Conclusa</button>
+                : <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'da_fare')} type="button">↩ Riapri</button>}
+              <button className="cs-btn cs-ghost cs-noisebtn" disabled={savingStato} onClick={() => doNoise(c)} type="button">🚫 Non è un cliente</button>
             </div>
           )}
         </div>
@@ -407,23 +467,32 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   );
 
   // ---- coda ----
-  const passa = (c: CsConversation) => filtro === 'tutte' ? true : filtro === 'fatte' ? c.stato === 'fatto' : c.stato === 'da_fare';
+  const passa = (c: CsConversation) => filtro === 'tutte' ? true : filtro === 'fatte' ? c.stato === 'fatto' : filtro === 'incorso' ? c.stato === 'in_corso' : c.stato === 'da_fare';
   const list = (convs ?? []).filter(passa).slice().sort(urgSort);   // urgenti in cima (design 6.4)
   const daf = (convs ?? []).filter((c) => c.stato === 'da_fare').length;
+  const inc = (convs ?? []).filter((c) => c.stato === 'in_corso').length;
   const fatte = (convs ?? []).filter((c) => c.stato === 'fatto').length;
   const urg = list.filter(isUrg).length;
   const rumCount = rumore?.length;
 
   const card = (c: CsConversation) => (
-    <button key={c.id} className={'cs-card' + (isUrg(c) ? ' cs-cardurg' : '')} onClick={() => openThread(c)} type="button">
+    <button key={c.id} className={'cs-card' + (isUrg(c) ? ' cs-cardurg' : '')}
+      onClick={() => { if (suppressOpenRef.current === c.id) return; openThread(c); }}
+      onTouchStart={(e) => { swipeRef.current = { id: c.id, x0: e.touches[0].clientX, dx: 0 }; }}
+      onTouchMove={(e) => { const s = swipeRef.current; if (!s || s.id !== c.id) return; s.dx = e.touches[0].clientX - s.x0; if (s.dx < -8) setSwipeDx({ id: c.id, dx: s.dx }); }}
+      onTouchEnd={() => { const s = swipeRef.current; swipeRef.current = null; setSwipeDx(null); if (s && s.dx < -90 && c.stato !== 'fatto') doSwipeDone(c); }}
+      style={swipeDx?.id === c.id ? { transform: `translateX(${Math.max(swipeDx.dx, -150)}px)`, opacity: Math.max(0.35, 1 + swipeDx.dx / 400) } : undefined}
+      type="button">
       <div className="cs-ctop">
         <span className="cs-cn">{nmeOf(c)}</span>
+        {c.stato_by && c.stato !== 'da_fare' && KEY_BY_NAME[c.stato_by] && <span className="cs-assignee" title={c.stato_by}><Avatar k={KEY_BY_NAME[c.stato_by]} size={20} /></span>}
         <span className="cs-cora">{fmtWhen(c.last_msg_at)}</span>
       </div>
       <div className="cs-snip">{c.snippet || c.subject || ''}</div>
       <Badges c={c} />
       <div className="cs-badges">
         <span className="cs-badge cs-can">{CANALI[c.canale]}</span>
+        {c.stato === 'in_corso' && <span className="cs-badge cs-state cs-state-prog">✋ {c.stato_by}</span>}
         {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">solo lettura</span>}
         {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
       </div>
@@ -440,24 +509,27 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   return (
     <div className="screen">
       <header>
-        <button onClick={() => setMenu((m) => !m)} type="button" style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--dark)', fontSize: 18, fontWeight: 700 }}>Ciao {IDENTS[ident]?.n ?? ident}, aiutiamo dei clienti! <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 400 }}>▾</span></button>
-        <button className="badge" onClick={onBack} type="button">Home app</button>
+        <button onClick={() => setMenu((m) => !m)} type="button" style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--dark)', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 9 }}>
+          <Avatar k={ident} size={30} />
+          <span>Ciao {IDENTS[ident]?.n ?? ident}, aiutiamo dei clienti! <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 400 }}>▾</span></span>
+        </button>
       </header>
       {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
 
       <div className="cs-stats">
-        <span className="cs-stat"><b>{daf}</b> da fare</span>
+        <span className="cs-stat"><b>{daf}</b> da iniziare</span>
+        {inc > 0 && <span className="cs-stat"><b>{inc}</b> in corso</span>}
         {urg > 0 && <span className="cs-stat cs-staturg"><b>{urg}</b> 🚨 urgenti</span>}
-        <span className="cs-stat"><b>{fatte}</b> fatte</span>
+        <span className="cs-stat"><b>{fatte}</b> concluse</span>
         <button onClick={doRefresh} disabled={refreshing} type="button" style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--line)', borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, color: 'var(--rose)', cursor: 'pointer', opacity: refreshing ? 0.6 : 1 }}>{refreshing ? 'Aggiorno…' : '↻ Aggiorna'}</button>
       </div>
       <div className="cs-chips">
-        {([['dafare', 'Da fare'], ['fatte', 'Fatte'], ['tutte', 'Tutte']] as const).map(([k, l]) => (
+        {([['dafare', 'Da iniziare'], ['incorso', 'In corso'], ['fatte', 'Concluse'], ['tutte', 'Tutte']] as const).map(([k, l]) => (
           <button key={k} className={'cs-chip' + (filtro === k ? ' on' : '')} onClick={() => setFiltro(k)} type="button">{l}</button>
         ))}
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
+        <span className="cs-seg" style={{ marginLeft: 'auto' }}>
           {([['tempo', '🕗 Tempo'], ['tema', '🏷️ Tema']] as const).map(([k, l]) => (
-            <button key={k} className={'cs-chip' + (codaView === k ? ' on' : '')} onClick={() => setCodaView(k)} type="button">{l}</button>
+            <button key={k} className={'cs-seg-btn' + (codaView === k ? ' on' : '')} onClick={() => setCodaView(k)} type="button">{l}</button>
           ))}
         </span>
       </div>
@@ -500,7 +572,7 @@ function IdentMenu({ ident, setIdent, logout }: { ident: string; setIdent: (k: s
       <div className="cs-note" style={{ marginTop: 0, marginBottom: 8 }}>Chi sono? Firma ogni azione, resta su questo dispositivo.</div>
       {(['B', 'G', 'A'] as const).map((k) => (
         <button key={k} className={'cs-srow' + (ident === k ? ' on' : '')} onClick={() => setIdent(k)} type="button">
-          <span className={'cs-av ' + IDENTS[k].cls} style={{ width: 30, height: 30, fontSize: 13 }}>{k}</span>
+          <Avatar k={k} size={30} />
           <span>{IDENTS[k].n}</span>{ident === k && <span className="cs-tag">attiva</span>}
         </button>
       ))}
