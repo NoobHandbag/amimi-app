@@ -199,6 +199,71 @@ function casoBlock(categoria: string | null, cd: { verificato: boolean; reso: Ca
   return L.join('\n') + '\n';
 }
 
+// --- Linter di aderenza ("ensure context" 24-07): controllo DETERMINISTICO post-bozza, ZERO AI ---
+// Estrae numeri/prezzi/date/URL dalla bozza e verifica che esistano nel CORPUS dei fatti consentiti
+// (messaggi del cliente + BLOCCO DATI + caso + fonti + risposte standard/tono + istruzioni team).
+// Cio' che non trova torna in `non_grounded[]`: la UI lo evidenzia, l'operatrice decide. Mai bloccante.
+function factKeys(text: string): Set<string> {
+  const out = new Set<string>();
+  const t = text || '';
+  // date ISO yyyy-mm-dd -> chiavi d/m e d/m/yyyy
+  for (const m of t.matchAll(/(\d{4})-(\d{2})-(\d{2})/g)) { out.add('d:' + (+m[3]) + '/' + (+m[2])); out.add('d:' + (+m[3]) + '/' + (+m[2]) + '/' + m[1]); }
+  // date dd/mm[/yyyy]
+  for (const m of t.matchAll(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/g)) {
+    out.add('d:' + (+m[1]) + '/' + (+m[2]));
+    if (m[3]) out.add('d:' + (+m[1]) + '/' + (+m[2]) + '/' + (m[3].length === 2 ? '20' + m[3] : m[3]));
+  }
+  // numeri (prezzi, quantita', finestre): normalizza il formato italiano (1.234,56 -> 1234.56)
+  for (const m of t.matchAll(/\d+(?:[.,]\d+)*/g)) {
+    let s = m[0];
+    if (s.includes('.') && s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+    else if (s.includes(',')) s = s.replace(',', '.');
+    const n = parseFloat(s);
+    if (Number.isFinite(n)) out.add('n:' + String(n));
+  }
+  // domini/URL (tld solo lettere, per non matchare parole attaccate da un punto)
+  for (const m of t.matchAll(/(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,6})((?:\/[^\s"',;!?)\]]*)?)/gi)) {
+    const host = m[1].toLowerCase();
+    out.add('u:' + host);
+    if (m[2]) out.add('u:' + host + m[2].replace(/[.,;:!?)]+$/, '').toLowerCase());
+  }
+  return out;
+}
+function lintDraft(testo: string, corpus: Set<string>): string[] {
+  // i placeholder [DA VERIFICARE: ...] sono gia' flag espliciti: non ri-segnalarli
+  const clean = (testo || '').replace(/\[DA VERIFICARE[^\]]*\]/gi, ' ');
+  const missing: string[] = [];
+  const seen = new Set<string>();
+  const flag = (raw: string, key: string) => { if (!corpus.has(key) && !seen.has(raw)) { seen.add(raw); missing.push(raw); } };
+  for (const m of clean.matchAll(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/g)) flag(m[0], 'd:' + (+m[1]) + '/' + (+m[2]));
+  for (const m of clean.matchAll(/(?<![\d/.,])(\d+(?:[.,]\d+)*)(?![\d/])/g)) {
+    let s = m[1];
+    if (s.includes('.') && s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+    else if (s.includes(',')) s = s.replace(',', '.');
+    const n = parseFloat(s);
+    if (Number.isFinite(n)) flag(m[1], 'n:' + String(n));
+  }
+  for (const m of clean.matchAll(/(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,6})((?:\/[^\s"',;!?)\]]*)?)/gi)) {
+    const host = m[1].toLowerCase();
+    const full = 'u:' + host + (m[2] ? m[2].replace(/[.,;:!?)]+$/, '').toLowerCase() : '');
+    if (!corpus.has(full) && !corpus.has('u:' + host)) flag(m[0], full);
+  }
+  return missing.slice(0, 8);
+}
+
+// --- Contratto di contesto per categoria ("ensure context" 24-07): dati OBBLIGATORI per rispondere ---
+// Se mancano, la UI lo dice PRIMA di generare; la bozza usera' [DA VERIFICARE], mai inventare.
+// (Il gap "data di consegna" di reso/cambio lo mostra gia' il pannello caso: non duplicato qui.)
+function contractGaps(categoria: string | null, dati: Dati): string[] {
+  const gaps: string[] = [];
+  const cat = categoria ?? '';
+  const needOrder = ['Spedizione e stato ordine', 'Reso e rimborso', 'Cambio e prodotto errato', 'Modifica / correzione indirizzo', 'Pagamento'].includes(cat);
+  if (needOrder && !dati.ordine) gaps.push('ordine non trovato (numero/email mancanti o non combacianti)');
+  if (cat === 'Spedizione e stato ordine' && dati.ordine && !dati.tracking) gaps.push('tracking non ancora disponibile');
+  if ((cat === 'Restock e disponibilita' || cat === 'Info prodotto') && dati.prodotti.length === 0) gaps.push('prodotto non identificato dal testo');
+  return gaps;
+}
+
 // Storico acquisti del cliente (per email): totale, conteggio, ordini recenti. Solo Shopify (il POS Qromo
 // non tiene l'email cliente). Sola lettura, nessun PII oltre a cio' che la UI gia' vede sul thread.
 type Storia = { n_ordini: number; totale: number; prima: string | null; ultima: string | null; recenti: { numero: unknown; data: string; totale: number; stato: unknown }[] };
@@ -334,7 +399,9 @@ Deno.serve(async (req) => {
     const lc = await loadConv();
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     const ctx = await assembleContext(sb, lc.conv, lc.inbound, token, (lc.conv.categoria as string) ?? null);
-    return json({ ok: true, fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, dati: ctx.dati });
+    // contratto di contesto: cosa manca per rispondere bene a QUESTA categoria (mostrato prima di generare)
+    const gaps = contractGaps((lc.conv.categoria as string) ?? null, ctx.dati);
+    return json({ ok: true, fonti: ctx.dati.fonti, gaps, order_admin_url: ctx.order_admin_url, storia: ctx.storia, dati: ctx.dati });
   }
 
   // ---------- case_data: motore dei verdetti (JWT, NESSUN Gemini) ----------
@@ -446,7 +513,12 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
       } catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     }
     if (!opzioni.length) return json({ ok: false, error: 'bozza vuota' }, 502);
-    const options = opzioni.slice(0, 3).map((o) => ({ tono: o.tono, testo: o.testo, da_verificare: countDaVerificare(o.testo) }));
+    // linter di aderenza: ogni numero/data/URL della bozza deve esistere nel corpus dei fatti consentiti
+    const lintCorpus = factKeys([
+      threadTxt, datiBlock(ctx.dati), casoTxt, ctx.dati.fonti.join('\n'), ctx.tono.join('\n'),
+      aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''),
+    ].join('\n'));
+    const options = opzioni.slice(0, 3).map((o) => ({ tono: o.tono, testo: o.testo, da_verificare: countDaVerificare(o.testo), non_grounded: lintDraft(o.testo, lintCorpus) }));
 
     const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: draftModel }).select('id').single();
     await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length } });
@@ -485,8 +557,14 @@ Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown
     catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     if (!out) return json({ ok: false, error: 'bozza vuota' }, 502);
     out = out.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
+    // linter di aderenza anche sulla riscrittura (la bozza di partenza NON e' fonte: potrebbe gia' inventare)
+    const threadTxtR = lc.recent.map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${String(m.body_text ?? '').slice(0, 800)}`).join('\n') || String(conv.subject ?? '');
+    const lintCorpusR = factKeys([
+      threadTxtR, datiBlock(ctx.dati), ctx.dati.fonti.join('\n'), ctx.tono.join('\n'),
+      aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''), istruzione,
+    ].join('\n'));
     await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'refine', chi, dettaglio: { istruzione: istruzione.slice(0, 200) } });
-    return json({ ok: true, draft: out, da_verificare: countDaVerificare(out) });
+    return json({ ok: true, draft: out, da_verificare: countDaVerificare(out), non_grounded: lintDraft(out, lintCorpusR) });
   }
 
   return json({ error: 'azione sconosciuta: ' + action }, 422);

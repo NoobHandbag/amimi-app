@@ -678,6 +678,11 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-aiset-b { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px 6px; }
 .cs-aiset-ta { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 13px; line-height: 1.5; color: var(--dark); background: var(--card); resize: vertical; min-height: 120px; }
 .cs-aiset-ta:focus { outline: none; border-color: var(--rose); }
+/* --- contratto di contesto: cosa manca per rispondere bene (mostrato prima di generare) --- */
+.cs-gaps { background: rgba(255,134,20,.09); border: 1px solid rgba(255,134,20,.28); color: #9a4a10; border-radius: 12px; padding: 10px 13px; font-size: 12.5px; line-height: 1.5; margin-top: 10px; }
+/* --- linter di aderenza: dati della bozza non trovati nel gestionale --- */
+.cs-lint { background: rgba(252,79,63,.07); border: 1px solid rgba(252,79,63,.22); color: #9c2417; border-radius: 10px; padding: 9px 12px; font-size: 12px; line-height: 1.7; margin-top: 8px; }
+.cs-lint-t { display: inline-block; background: #fff; border: 1px solid rgba(252,79,63,.35); border-radius: 6px; padding: 1px 7px; margin: 0 3px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .cs-inbox { display: inline-block; background: #5c4d9c; color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
 .cs-msg { max-width: 86%; border-radius: 14px; padding: 10px 13px; margin: 8px 0; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .cs-msg.in { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 5px; }

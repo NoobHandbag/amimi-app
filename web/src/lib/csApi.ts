@@ -170,8 +170,9 @@ export async function addNoise(conversationId: string, sender: string, chi: stri
 const CS_ASSIST_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/cs-assist';
 
 export type OrderHistory = { n_ordini: number; totale: number; prima: string | null; ultima: string | null; recenti: { numero: number; data: string; totale: number; stato: string | null }[] };
-export type CsContext = { fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null };
-export type DraftOption = { tono: string; testo: string; da_verificare: number };
+export type CsContext = { fonti: string[]; gaps?: string[]; order_admin_url: string | null; storia: OrderHistory | null };
+// non_grounded = linter di aderenza server-side: numeri/date/URL della bozza NON trovati nei dati reali
+export type DraftOption = { tono: string; testo: string; da_verificare: number; non_grounded?: string[] };
 
 // Header JWT dell'utente loggato (edge cs-assist verifica getUser + @amimi.it).
 async function jwtHeaders(): Promise<Record<string, string>> {
@@ -191,7 +192,7 @@ async function callAssist(bodyObj: Record<string, unknown>): Promise<Record<stri
  *  Chiamata all'apertura del thread per popolare la testata. */
 export async function fetchContext(conversationId: string): Promise<CsContext> {
   const j = await callAssist({ action: 'context', conversation_id: conversationId });
-  return { fonti: (j.fonti || []) as string[], order_admin_url: (j.order_admin_url as string) ?? null, storia: (j.storia as OrderHistory) ?? null };
+  return { fonti: (j.fonti || []) as string[], gaps: (j.gaps || []) as string[], order_admin_url: (j.order_admin_url as string) ?? null, storia: (j.storia as OrderHistory) ?? null };
 }
 
 // --- Motore dei verdetti (design Parte B): il codice decide il caso, l'AI scrive la frase ---
@@ -222,7 +223,7 @@ export async function generateOptions(conversationId: string, chi: string, deliv
 
 /** Riscrive la bozza corrente applicando un'istruzione della collega ("più formale", "aggiungi X"),
  *  sempre vincolata ai dati reali. */
-export async function refineDraft(conversationId: string, chi: string, testo: string, istruzione: string): Promise<{ draft: string; da_verificare: number }> {
+export async function refineDraft(conversationId: string, chi: string, testo: string, istruzione: string): Promise<{ draft: string; da_verificare: number; non_grounded: string[] }> {
   const j = await callAssist({ action: 'refine', conversation_id: conversationId, chi, testo, istruzione });
-  return { draft: String(j.draft || ''), da_verificare: Number(j.da_verificare || 0) };
+  return { draft: String(j.draft || ''), da_verificare: Number(j.da_verificare || 0), non_grounded: (j.non_grounded || []) as string[] };
 }

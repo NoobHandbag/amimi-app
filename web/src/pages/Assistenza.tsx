@@ -92,6 +92,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const threadRef = useRef('');
   const [selIdx, setSelIdx] = useState(0);
   const [daVer, setDaVer] = useState(0);
+  // linter di aderenza: numeri/date/URL della bozza NON trovati nei dati reali (calcolato server-side)
+  const [nonGrounded, setNonGrounded] = useState<string[]>([]);
   const [fonti, setFonti] = useState<string[]>([]);
   const [bozzaText, setBozzaText] = useState('');
   const [genBozza, setGenBozza] = useState(false);
@@ -180,7 +182,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     pushSub();
     threadRef.current = c.id;
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
-    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false);
+    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]);
     try { const m = await fetchMessages(c.id); if (threadRef.current === c.id) setMsgs(m); }
     catch (e) { if (threadRef.current === c.id) setErr((e as Error).message); }
     // Contesto (link ordine + storico acquisti): nessuna spesa AI, best-effort (non blocca il thread).
@@ -197,18 +199,18 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     try {
       const r = await generateOptions(tid, ident, confirmDate || undefined);
       if (threadRef.current !== tid) return;   // thread cambiato nel frattempo: butta la risposta
-      setOptions(r.options); setSelIdx(0); setBozzaText(r.options[0]?.testo ?? ''); setDaVer(r.options[0]?.da_verificare ?? 0); setFonti(r.fonti);
+      setOptions(r.options); setSelIdx(0); setBozzaText(r.options[0]?.testo ?? ''); setDaVer(r.options[0]?.da_verificare ?? 0); setNonGrounded(r.options[0]?.non_grounded ?? []); setFonti(r.fonti);
       if (!ctx) setCtx({ fonti: r.fonti, order_admin_url: r.order_admin_url, storia: r.storia });
     } catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
     if (threadRef.current === tid) setGenBozza(false);
   };
-  const pickOption = (i: number) => { if (!options?.[i]) return; setSelIdx(i); setBozzaText(options[i].testo); setDaVer(options[i].da_verificare); setCopied(false); };
+  const pickOption = (i: number) => { if (!options?.[i]) return; setSelIdx(i); setBozzaText(options[i].testo); setDaVer(options[i].da_verificare); setNonGrounded(options[i].non_grounded ?? []); setCopied(false); };
   // "Chiedi una modifica": l'AI riscrive la bozza corrente applicando l'istruzione, sempre sui dati reali.
   const doRefine = async () => {
     if (!current || !bozzaText.trim() || !refineTxt.trim()) return;
     const tid = current.id;
     setRefining(true); setErr(''); setCopied(false);
-    try { const r = await refineDraft(tid, ident, bozzaText, refineTxt); if (threadRef.current === tid) { setBozzaText(r.draft); setDaVer(r.da_verificare); setRefineTxt(''); } }
+    try { const r = await refineDraft(tid, ident, bozzaText, refineTxt); if (threadRef.current === tid) { setBozzaText(r.draft); setDaVer(r.da_verificare); setNonGrounded(r.non_grounded ?? []); setRefineTxt(''); } }
     catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
     if (threadRef.current === tid) setRefining(false);
   };
@@ -369,6 +371,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             )}
           </div>
         )}
+        {c.canale !== 'rumore' && ctx?.gaps && ctx.gaps.length > 0 && (
+          <div className="cs-gaps">⚠️ <b>Contesto incompleto:</b> {ctx.gaps.join(' · ')}. La bozza usera&#8217; [DA VERIFICARE], mai inventare.</div>
+        )}
         {c.summary && (
           <div className="cs-summary"><span className="cs-summary-h">📝 Riassunto e storia</span>{c.summary}</div>
         )}
@@ -446,8 +451,12 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 <div className="cs-draft-h">
                   <span>✍️ Bozza (ritoccala o chiedi una modifica)</span>
                   {daVer > 0 && <span className="cs-badge cs-warn">{daVer} da verificare</span>}
+                  {nonGrounded.length > 0 && <span className="cs-badge cs-urg">⚠ {nonGrounded.length} non nel gestionale</span>}
                 </div>
                 <textarea className="cs-draft-ta" value={bozzaText} onChange={(e) => setBozzaText(e.target.value)} rows={8} />
+                {nonGrounded.length > 0 && (
+                  <div className="cs-lint">⚠️ <b>Controlla questi dati</b> — l&#8217;AI li ha scritti ma NON risultano dal gestionale: {nonGrounded.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}</div>
+                )}
                 <div className="cs-refine">
                   <input className="cs-refine-in" value={refineTxt} onChange={(e) => setRefineTxt(e.target.value)} placeholder="Chiedi una modifica all’AI (es. più formale, aggiungi il reso)" onKeyDown={(e) => { if (e.key === 'Enter') doRefine(); }} disabled={refining} />
                   <button className="cs-btn cs-ghost" onClick={doRefine} disabled={refining || !refineTxt.trim()} type="button">{refining ? '…' : '✨ Applica'}</button>
