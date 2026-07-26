@@ -5,6 +5,20 @@ import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseDat
 
 // email in testo semplice: preserva gli a-capo (CSS pre-wrap) e collassa i vuoti multipli (feedback 24-07)
 const cleanBody = (t: string) => (t || '').replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+// notifica chat Shopify Inbox: mostra solo il messaggio del cliente, non il boilerplate della notifica
+const cleanChatBody = (t: string) => {
+  const s = cleanBody(t);
+  const m = s.match(/new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox/i);
+  return m ? m[1].trim() : s;
+};
+// deep-link alla conversazione esatta in Shopify Inbox: e' nel corpo di ogni notifica ("Reply in Inbox")
+const inboxUrlOf = (ms: CsMessage[] | null): string | null => {
+  for (const m of [...(ms ?? [])].reverse()) {
+    const hit = (m.body_text || '').match(/https:\/\/inbox\.shopify\.com\/store\/[\w-]+\/conversations\/open\/[\w-]+/);
+    if (hit) return hit[0];
+  }
+  return null;
+};
 
 // Sezione Assistenza clienti — FASE 1: SOLA LETTURA dietro login Supabase Auth.
 // Login = solo cancello (@amimi.it); l'identita' che firma (Benny/Ginni) e' un selettore in-tool,
@@ -186,7 +200,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     try { const m = await fetchMessages(c.id); if (threadRef.current === c.id) setMsgs(m); }
     catch (e) { if (threadRef.current === c.id) setErr((e as Error).message); }
     // Contesto (link ordine + storico acquisti): nessuna spesa AI, best-effort (non blocca il thread).
-    if (c.canale !== 'chat_notifica' && c.canale !== 'rumore') {
+    // Vale anche per la chat del sito (dal 26-07): se il visitatore ha lasciato l'email, storia e ordine si agganciano.
+    if (c.canale !== 'rumore') {
       fetchContext(c.id).then((x) => { if (threadRef.current === c.id) setCtx(x); }).catch(() => { /* testata best-effort */ });
       if (c.categoria && CASE_CATS.has(c.categoria)) loadCaso(c.id);
     }
@@ -378,8 +393,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
           <div className="cs-summary"><span className="cs-summary-h">📝 Riassunto e storia</span>{c.summary}</div>
         )}
         {c.canale === 'chat_notifica' && (
-          <div className="cs-banner">💬 Conversazione della chat del sito (Shopify Inbox): il tool la legge dalle email di notifica. Si risponde dentro Shopify Inbox.
-            <div style={{ marginTop: 8 }}><a className="cs-btn cs-inbox" href={SHOPIFY_INBOX} target="_blank" rel="noreferrer">Apri Shopify Inbox ↗</a></div>
+          <div className="cs-banner">💬 Chat del sito (Shopify Inbox): Shopify non permette di rispondere da qui. Genera la bozza qui sotto, copiala e incollala nella conversazione.
+            <div style={{ marginTop: 8 }}><a className="cs-btn cs-inbox" href={inboxUrlOf(msgs) ?? SHOPIFY_INBOX} target="_blank" rel="noreferrer">{inboxUrlOf(msgs) ? 'Rispondi in Inbox ↗' : 'Apri Shopify Inbox ↗'}</a></div>
           </div>
         )}
         {err && <div className="err">{err}</div>}
@@ -391,10 +406,10 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 {m.form_fields && Object.keys(m.form_fields).length > 0 && (
                   <div className="cs-form">{Object.entries(m.form_fields).map(([k, v]) => <div key={k}><b>{k}:</b> {v}</div>)}</div>
                 )}
-                <div className="cs-body">{m.body_text ? cleanBody(m.body_text) : (m.form_fields ? '' : '(vuoto)')}</div>
+                <div className="cs-body">{m.body_text ? (c.canale === 'chat_notifica' ? cleanChatBody(m.body_text) : cleanBody(m.body_text)) : (m.form_fields ? '' : '(vuoto)')}</div>
               </div>
             ))}
-        {c.canale !== 'chat_notifica' && c.canale !== 'rumore' && c.categoria && CASE_CATS.has(c.categoria) && caso && (
+        {c.canale !== 'rumore' && c.categoria && CASE_CATS.has(c.categoria) && caso && (
           <div className="cs-case">
             <div className="cs-case-h">{c.categoria === 'Modifica / correzione indirizzo' ? '📍 Caso indirizzo — calcolato dal sistema' : '↩️ Caso reso — calcolato dal sistema'}</div>
             {c.categoria === 'Modifica / correzione indirizzo' ? (
@@ -430,7 +445,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             )}
           </div>
         )}
-        {c.canale !== 'chat_notifica' && c.canale !== 'rumore' && (
+        {c.canale !== 'rumore' && (
           <div className="cs-draftbox">
             {!options ? (
               <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doGenOptions} disabled={genBozza} type="button">
@@ -473,7 +488,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 )}
               </>
             )}
-            <div className="cs-note">Le bozze usano SOLO i dati reali; dove manca un dato scrivono [DA VERIFICARE]. Ritocca e copia nel thread Gmail. L&#8217;invio dal tool arriva in Fase 4.</div>
+            <div className="cs-note">Le bozze usano SOLO i dati reali; dove manca un dato scrivono [DA VERIFICARE]. {c.canale === 'chat_notifica' ? 'Ritocca, copia e incolla nella chat (bottone "Rispondi in Inbox" qui sopra).' : 'Ritocca e copia nel thread Gmail.'} L&#8217;invio dal tool arriva in Fase 4.</div>
           </div>
         )}
       </div>
@@ -527,7 +542,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       <div className="cs-badges">
         <span className="cs-badge cs-can">{CANALI[c.canale]}</span>
         {c.stato === 'in_corso' && <span className="cs-badge cs-state cs-state-prog">✋ {c.stato_by}</span>}
-        {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">solo lettura</span>}
+        {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">risposta in Inbox</span>}
         {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
       </div>
     </button>

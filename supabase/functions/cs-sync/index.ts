@@ -1,4 +1,5 @@
-// cs-sync v2 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v5 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v5 (2026-07-26): chat Shopify Inbox — se il "nome" nel subject e' un'email, va in customer_email.
 // Design: Cowork12/projects/Servizio_Clienti_2026-06/DESIGN_Tool_Assistenza_Amimi_V1_2026-07-20.md
 //
 // Azione UNICA: `poll` (PIN-gated, verify_jwt=false come le altre edge, chiamata dal cron */2).
@@ -133,10 +134,13 @@ function isNoiseSender(from: string, subject: string, extraDeny: string[]): bool
 }
 function classify(from: { email: string; name: string }, replyTo: { email: string; name: string }, subject: string, body: string, extraDeny: string[]): { canale: Canale; email: string | null; name: string | null } {
   const fe = from.email, rt = replyTo.email;
-  // 1) Notifica chat Shopify Inbox (READ-ONLY): no-reply@mailer.shopify.com, subject "New Message from <nome>"
+  // 1) Notifica chat Shopify Inbox: no-reply@mailer.shopify.com, subject "New Message from <nome>".
+  //    Se il visitatore lascia l'email in chat, Shopify la usa come nome: catturarla in customer_email
+  //    sblocca storia/ordine/bozze. La RISPOSTA resta dentro Shopify Inbox (Inbox non ha API pubblica).
   if (fe.endsWith('@mailer.shopify.com') && /new message|nuovo messaggio/i.test(subject)) {
     const nm = (subject.match(/from\s+(.+?)\s*$/i)?.[1] || from.name || '').trim();
-    return { canale: 'chat_notifica', email: null, name: nm || null };
+    const asEmail = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(nm) ? nm.toLowerCase() : null;
+    return { canale: 'chat_notifica', email: asEmail, name: nm || null };
   }
   // 2) Form del sito (mittente Shopify CON reply-to del cliente) vs 3) notifica admin Shopify (senza reply-to cliente)
   if (isShopifySender(fe)) {

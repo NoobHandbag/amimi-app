@@ -1,4 +1,6 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v9 (2026-07-26): bozze anche per la chat del sito (chat_notifica): boilerplate della notifica
+//   Shopify Inbox rimosso dal testo passato al modello, prompt in tono chat (niente formato email).
 // Design: Cowork12/projects/Servizio_Clienti_2026-06/DESIGN_Tool_Assistenza_Amimi_V1_2026-07-20.md (6.1, 6.3, 8).
 //
 // Il recupero dati e' DETERMINISTICO (dal codice, non dall'AI): giacenza/disponibilita'/prezzo da v_inventory,
@@ -381,6 +383,13 @@ Deno.serve(async (req) => {
     catch (e) { if (jsonMode) throw e; return await gemini(MODEL_SUMMARY, system + '\n\n' + userMsg, key, maxTok, false); }
   };
 
+  // notifica chat Shopify Inbox: al modello serve il messaggio del cliente, non il boilerplate della
+  // notifica ("You have a new message from ... / Sent via Inbox / Reply in Inbox (url)").
+  const stripChat = (t: string): string => {
+    const m = (t || '').match(/new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox/i);
+    return m ? m[1].trim() : (t || '');
+  };
+
   // carica conversazione + testo del cliente (usato da context/dry_data/draft/refine)
   const loadConv = async (withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[] } | null> => {
     const convId = String(body.conversation_id || '');
@@ -388,7 +397,8 @@ Deno.serve(async (req) => {
     const { data: conv } = await sb.from('cs_conversations').select(cols).eq('id', convId).maybeSingle();
     if (!conv) return null;
     const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,form_fields,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(4);
-    const recent = ((msgs ?? []) as Row[]).slice().reverse();
+    let recent = ((msgs ?? []) as Row[]).slice().reverse();
+    if (conv.canale === 'chat_notifica') recent = recent.map((m) => ({ ...m, body_text: stripChat(String(m.body_text ?? '')) }));
     const lastIn = [...recent].reverse().find((m) => m.direction === 'in') as Row | undefined;
     const inbound = [conv.subject, lastIn?.body_text, lastIn?.form_fields ? JSON.stringify(lastIn.form_fields) : ''].filter(Boolean).join(' ');
     return { conv: conv as Row, inbound, recent };
@@ -473,9 +483,11 @@ Riassunto (max 2 righe):`;
       casoTxt = casoBlock((conv.categoria as string) ?? null, cd);
     }
 
-    const system = `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi TRE versioni ALTERNATIVE della stessa risposta email al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.
+    // canale chat: la bozza verra' incollata nella chat di Shopify Inbox, non in una email
+    const chatBlock = conv.canale === 'chat_notifica' ? `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggi corti stile chat (anche la versione "formale" resta un messaggio di chat, solo piu' composto).` : '';
+    const system = `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi TRE versioni ALTERNATIVE della stessa risposta ${conv.canale === 'chat_notifica' ? 'in chat' : 'email'} al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.
 LE TRE VERSIONI (usa esattamente questi tre "tono"): "breve" = 2-3 righe, dritta al punto, cordiale; "calda" = piu' empatica e personale, un pizzico di calore; "formale" = piu' completa e composta, adatta a casi delicati.
-${STYLE_RULES}${istruzioniBlock}${casoTxt}`;
+${STYLE_RULES}${istruzioniBlock}${casoTxt}${chatBlock}`;
     const user = `Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
 
 Ultimi messaggi (il piu' recente e' del cliente):
@@ -505,7 +517,7 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
       // fallback robusto: UNA sola bozza in testo semplice. NON chiede piu' "TRE versioni" (bug 24-07).
       try {
         const sysSingle = system
-          .replace('Scrivi TRE versioni ALTERNATIVE della stessa risposta email al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.', 'Scrivi UNA bozza di risposta email al cliente, pronta da ritoccare. NON inviarla.')
+          .replace(/Scrivi TRE versioni ALTERNATIVE della stessa risposta [^\n]+? al cliente, con toni diversi, tutte pronte da ritoccare\. NON inviarle\./, 'Scrivi UNA bozza di risposta al cliente, pronta da ritoccare. NON inviarla.')
           .replace(/LE TRE VERSIONI[^\n]*\n/, '');
         const usrSingle = user.replace(/Rispondi SOLO con JSON[\s\S]*$/, 'Scrivi SOLO la bozza (nessun JSON, nessun titolo, nessuna spiegazione, nessun markdown):');
         const single = await runLLM(sysSingle, usrSingle, 1000, false);
@@ -539,8 +551,9 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
     const conv = lc.conv;
     const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
 
+    const chatBlockR = conv.canale === 'chat_notifica' ? `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggio corto stile chat.` : '';
     const sysR = `Sei chi risponde al servizio clienti di "Amimi'". Ti do una BOZZA di risposta al cliente e una richiesta di modifica. Riscrivi la bozza applicando la modifica. NON inviarla.
-${STYLE_RULES}${istruzioniBlock}`;
+${STYLE_RULES}${istruzioniBlock}${chatBlockR}`;
     const usrR = `Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}.
 RICHIESTA DI MODIFICA (dalla collega): ${istruzione.slice(0, 400)}
 
