@@ -505,6 +505,118 @@ Deno.serve(async (req) => {
     return json({ ok: true, id, status: upd.status });
   }
 
+  // --- FLOW 4-bis: expenses_bulk — carico mensile delle spese da xlsx (brief 29-07) ---
+  // Sostituisce la scrittura sul Foglio Master del task expenses-master-upload-mensile (vietata dalla
+  // Regola Ferrea 12): il task ora produce solo l'xlsx normalizzato e le righe entrano da qui.
+  // Principio: la VALIDAZIONE e' per riga (le buone passano, le cattive tornano col motivo, mai
+  // tutto-o-niente); l'INSERT delle valide e' una sola chiamata, quindi un errore a livello DB non
+  // lascia meta' carico dentro. dry_run e' il DEFAULT: si scrive solo con dry_run:false esplicito.
+  if (action === 'expenses_bulk') {
+    const b = body as unknown as Record<string, unknown>;
+    const rowsIn = (Array.isArray(b.rows) ? b.rows : (payload.rows as unknown[]) ?? []) as Record<string, unknown>[];
+    // Si SCRIVE solo con dry_run false esplicito (booleano o la stringa "false", che arriva dai
+    // chiamanti che serializzano i JSON da template). Qualunque altro valore resta dry-run: su un
+    // carico che muove il CE il default deve sbagliare verso il non-scrivere (Regola 2).
+    const dryRaw = b.dry_run ?? payload.dry_run;
+    const dryRun = !(dryRaw === false || dryRaw === 'false');
+    if (!Array.isArray(rowsIn) || !rowsIn.length) return json({ error: 'nessuna riga: passa rows: [{data, descrizione, costo, categoria, amimi}]' }, 422);
+    if (rowsIn.length > 200) return json({ error: `troppe righe: ${rowsIn.length} (max 200 per payload, una mensilita' sta ampiamente sotto)` }, 422);
+
+    // Le 8 categorie sono quelle della colonna generata expenses.categoria_valid, non le 7 del brief:
+    // EVENTI e' una categoria vera (1 spesa a catalogo, riga `eventi` in entrambi i CE). Escluderla
+    // avrebbe respinto spese legittime. La generata NON si scrive (Regola 14): si valida l'input.
+    const VALID = ['COGS', 'LOGISTICA', 'MARKETING', 'OPEX', 'PACKAGING', 'SALARI', 'TASSE', 'EVENTI'];
+    // confronto descrizioni per il dedup: minuscole, accenti piegati, ogni non-alfanumerico -> spazio
+    const dnorm = (s: unknown) => String(s ?? '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
+      .replace(/[^a-z0-9]+/g, ' ').trim();
+
+    // mesi chiusi e spese esistenti: una lettura sola per tutto il carico, non una per riga
+    const { data: snaps } = await sb.from('ce_snapshots').select('year, month');
+    const closedSet = new Set((snaps ?? []).map((s) => `${s.year}-${s.month}`));
+    const { data: exist } = await sb.from('expenses').select('id, year, month, date_paid, costo, operazione');
+
+    type Esito = { i: number; esito: 'inserita' | 'valida' | 'respinta'; descrizione?: string; motivo?: string; duplicato?: string; id?: string };
+    const esiti: Esito[] = [];
+    const daInserire: { i: number; row: Record<string, unknown> }[] = [];
+
+    rowsIn.forEach((r, i) => {
+      const push = (esito: Esito['esito'], extra: Partial<Esito> = {}) =>
+        esiti.push({ i, esito, descrizione: String(r.descrizione ?? r.operazione ?? '').trim() || undefined, ...extra });
+
+      // Data SOLO in ISO YYYY-MM-DD, di proposito: `new Date('07/08/2026')` sarebbe l'8 luglio per il
+      // parser e il 7 agosto per un italiano. Su dati contabili un'ambiguita' del genere sposta una
+      // spesa di mese in silenzio, quindi il formato non ISO si respinge invece di indovinare.
+      const dataRaw = String(r.data ?? r.date_paid ?? '').trim();
+      const d = new Date(dataRaw);
+      if (!/^\d{4}-\d{2}-\d{2}/.test(dataRaw) || Number.isNaN(d.getTime())) {
+        return push('respinta', { motivo: `data non valida: "${dataRaw}" (atteso YYYY-MM-DD)` });
+      }
+      const year = d.getFullYear(), month = d.getMonth() + 1;
+      const iso = d.toISOString().slice(0, 10);
+
+      const descrizione = String(r.descrizione ?? r.operazione ?? '').trim();
+      if (!descrizione) return push('respinta', { motivo: 'descrizione mancante (una spesa senza descrizione non e\' verificabile nel CE)' });
+
+      const costoRaw = Number(r.costo);
+      if (!Number.isFinite(costoRaw) || costoRaw === 0) return push('respinta', { motivo: `importo non valido: "${r.costo}"` });
+      const costo = -Math.abs(costoRaw);  // come expense_manual: il COSTO in expenses e' sempre negativo
+
+      const categoria = String(r.categoria ?? '').trim().toUpperCase();
+      if (!VALID.includes(categoria)) return push('respinta', { motivo: `categoria non valida: "${r.categoria}" (ammesse: ${VALID.join(', ')})` });
+
+      // mese chiuso: respinta di default, override per riga (Regola 11: il CE comunicato non si muove
+      // di nascosto). force_closed_month e' PER RIGA e non c'e' un force globale, di proposito.
+      if (closedSet.has(`${year}-${month}`) && r.force_closed_month !== true) {
+        return push('respinta', { motivo: `mese ${month}/${year} CHIUSO (ce_snapshots): passa force_closed_month:true su questa riga per scrivere comunque` });
+      }
+
+      // dedup: SEGNALA, non blocca. Stessa data + stesso importo + descrizione normalizzata uguale
+      // o contenuta l'una nell'altra. Regola volutamente prevedibile: nessuna soglia di similarita'.
+      const dn = dnorm(descrizione);
+      const dup = (exist ?? []).find((e) => e.date_paid === iso && Math.abs(Number(e.costo) - costo) < 0.005
+        && (() => { const en = dnorm(e.operazione); return en === dn || en.includes(dn) || dn.includes(en); })());
+
+      const row = {
+        year, month, date_reported: iso, date_paid: iso,
+        operazione: descrizione, costo, categoria,
+        sottocategoria: (r.sottocategoria as string) ?? null,
+        amimi_raw: (r.amimi === true || String(r.amimi).toLowerCase() === 'si') ? 'si' : 'No',
+        note: (r.note as string) ?? null,
+        source: String(r.fonte ?? 'bulk'), chi: chi || null,
+        status: 'approved', proposed_by: chi || null, approved_by: chi || null,
+      };
+      daInserire.push({ i, row });
+      push('valida', dup ? { duplicato: String(dup.id) } : {});
+    });
+
+    const totali = {
+      ricevute: rowsIn.length,
+      valide: daInserire.length,
+      respinte: esiti.filter((e) => e.esito === 'respinta').length,
+      duplicati: esiti.filter((e) => e.duplicato).length,
+      inserite: 0,
+    };
+
+    if (dryRun) return json({ ok: true, dry_run: true, totali, righe: esiti });
+
+    if (daInserire.length) {
+      const { data: ins, error } = await sb.from('expenses').insert(daInserire.map((x) => x.row)).select();
+      if (error) return json({ error: error.message, dry_run: false, totali, righe: esiti }, 400);
+      // PostgREST restituisce le righe nell'ordine di inserimento: rimappa per indice e verifica
+      // l'accoppiamento sulla descrizione prima di dichiarare inserita una riga.
+      (ins ?? []).forEach((rec, k) => {
+        const src = daInserire[k];
+        const e = esiti.find((x) => x.i === src.i);
+        if (e && rec.operazione === src.row.operazione) { e.esito = 'inserita'; e.id = String(rec.id); }
+      });
+      totali.inserite = esiti.filter((e) => e.esito === 'inserita').length;
+      await sb.from('change_log').insert((ins ?? []).map((rec) => ({
+        tbl: 'expenses', row_id: String(rec.id), op: 'expenses_bulk', after: rec, chi: chi || null, source: 'write-api',
+      })));
+    }
+    return json({ ok: true, dry_run: false, totali, righe: esiti });
+  }
+
   // --- SECOND FLOW: reassign a sale to the real product (inventory follows automatically) ---
   if (action === 'sale_correct') {
     const src = String(payload.source || '');
