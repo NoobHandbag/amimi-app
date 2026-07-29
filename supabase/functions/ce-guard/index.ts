@@ -1,11 +1,17 @@
-// ce-guard — la guardia contabile. PIN-gated, gira ogni giorno alle 06:30 (pg_cron) e on-demand.
+// ce-guard — la guardia contabile. PIN-gated, gira OGNI ORA al minuto 30 (pg_cron job
+// 'ce-guard-daily', schedule '30 * * * *': il nome dice daily, la schedule dice orario) e on-demand.
+// Conseguenza da non dimenticare: le chiavi scritte qui DEVONO iniziare per `ce_`, altrimenti la
+// delete a fine run (che filtra `k like 'ce_%'`) non le ripulisce, il secondo giro del giorno
+// sbatte sull'unique index health_log(day,k) e l'insert intero fallisce -> la guardia smette di
+// scrivere per il resto della giornata, in silenzio.
 // Azioni:
 //   run          -> esegue TUTTI i check e scrive l'esito in health_log (chiavi ce_*)
 //   close_month  -> {year, month, chi} congela il CE del mese (amimi+totale) in ce_snapshots
 //   status       -> ritorna i check di oggi
 // Check: invarianti MC1/MC2, vendite non risolte, COGS mancanti, giacenze negative,
 // categorie spese non valide, DRIFT dei mesi chiusi (vs ce_snapshots), riconciliazione
-// ESTERNA con Shopify Admin API (count ordini mese corrente + precedente).
+// ESTERNA con Shopify Admin API (count ordini mese corrente + precedente), collegamento
+// app <-> Shopify (sku mismatch / sku non a catalogo / merce senza scheda).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -76,7 +82,7 @@ Deno.serve(async (req) => {
   add('ce_cogs_mancanti', 'Righe vendita risolte senza COGS (Shopify+Qromo)', (liNoCogs ?? 0) + (qrNoCogs ?? 0), 'warn');
 
   // 4) giacenze negative
-  const { data: inv } = await sb.from('v_inventory').select('codice, giacenza_attuale');
+  const { data: inv } = await sb.from('v_inventory').select('codice, giacenza_attuale, disponibili_da_vendere');
   const neg = (inv ?? []).filter((r) => N(r.giacenza_attuale) < 0).length;
   add('ce_giacenze_negative', 'Prodotti con giacenza negativa', neg);
 
@@ -132,6 +138,74 @@ Deno.serve(async (req) => {
   const lastSync = freshRow?.[0]?.synced_at ? new Date(freshRow[0].synced_at as string).getTime() : 0;
   const staleMin = lastSync ? Math.round((now.getTime() - lastSync) / 60000) : 99999;
   add('ce_sync_freshness', `Ultimo sync stock Shopify: ${staleMin} min fa (atteso <120)`, staleMin > 120 ? staleMin : 0);
+
+  // 10) COLLEGAMENTO app <-> Shopify (3 sentinelle, brief 29-07, caso LEA BAG BLACK & WHITE PONY).
+  // Il guasto: una scheda ACTIVE con SKU su un codice DIVERSO ma ancora a catalogo (doppione storico
+  // a giacenza 0). In shopify-stock la mappatura va prima per SKU e usa l'alias del titolo SOLO se lo
+  // SKU non matcha nessun codice: con uno SKU che matcha un codice vero l'alias non entra mai in gioco,
+  // l'autopush spinge la disponibilita' del codice fantasma (0) e il codice vero non ha nemmeno una
+  // riga in shopify_stock. Silenzioso da aprile a fine luglio: non e' unmapped, il push riesce, le
+  // vendite arrivano corrette dal resolver per NOME di shopify-sync. Qui le sentinelle.
+  // SOLO LETTURE: nessun SKU viene corretto da qui (una auto-correzione su un mismatch mal
+  // interpretato sposterebbe lo stock del prodotto sbagliato). La correzione e' un gesto umano.
+  // La normalizzazione deve restare IDENTICA a quella di shopify-stock (`norm`, riga 8 di quella
+  // funzione: s.toUpperCase().replace(/\s+/g,'_')), altrimenti il check e' cieco proprio sui titoli
+  // con spazi doppi. Se una cambia, cambiano entrambe.
+  const norm = (s: string | null | undefined) => (s ? s.toUpperCase().replace(/\s+/g, '_') : '');
+  const { data: stockRows } = await sb.from('shopify_stock').select('codice, shopify_title, shopify_status');
+  const { data: aliasRows } = await sb.from('product_aliases').select('shopify_name_norm, codice');
+  // Map e non join SQL: product_aliases ha shopify_name_norm duplicati (14 al 29-07) e un join
+  // moltiplicherebbe le righe, gonfiando i conteggi. Una entry per titolo, come fa shopify-stock.
+  const aliasByTitle = new Map((aliasRows ?? []).map((r) => [r.shopify_name_norm as string, r.codice as string]));
+  const invByNorm = new Map((inv ?? []).map((r) => [norm(r.codice as string), r]));
+  // Confronti case-insensitive: gli SKU legacy in Title_Case sono validi per scelta (Regola Ferrea 4,
+  // i join passano da codice_norm), quindi una differenza di solo maiuscole NON e' un mismatch.
+
+  // A) sku_mismatch: lo SKU aggancia un codice diverso da quello suggerito dall'alias sul titolo.
+  const mism = (stockRows ?? []).filter((s) => {
+    const fromTitle = aliasByTitle.get(norm(s.shopify_title as string));
+    return !!fromTitle && !!s.codice && norm(fromTitle) !== norm(s.codice as string);
+  });
+  const mismActive = mism.filter((s) => s.shopify_status === 'active');
+  // n = le sole ACTIVE (quelle azionabili): una draft non e' vendibile e non deve tenere acceso un
+  // warn perenne, come il bucket `untracked` di shopify-stock. Il totale sta nell'etichetta.
+  const mismEx = [...mismActive, ...mism.filter((s) => s.shopify_status !== 'active')].slice(0, 2)
+    .map((s) => `"${s.shopify_title}": SKU->${s.codice}, titolo->${aliasByTitle.get(norm(s.shopify_title as string))}`);
+  // quante ACTIVE non hanno alias sul titolo: su quelle il check A non puo' pronunciarsi (copertura).
+  const noAlias = (stockRows ?? []).filter((s) => s.shopify_status === 'active' && !aliasByTitle.has(norm(s.shopify_title as string))).length;
+  add('ce_sku_mismatch',
+    `SKU Shopify agganciato al codice sbagliato: ${mism.length} schede, ${mismActive.length} attive`
+    + (mismEx.length ? ' · ' + mismEx.join(' | ') : '')
+    + (noAlias ? ` (${noAlias} attive senza alias sul titolo: non confrontabili)` : ''),
+    mismActive.length, 'warn');
+
+  // B) sku_unmapped_active: scheda ACTIVE il cui codice risolto non esiste a catalogo -> realign_all
+  // la mette nel bucket `unmapped` e la SALTA senza alzare severity (giusto per le ~88 draft/archived
+  // del vecchio catalogo, sbagliato per una scheda viva: quel prodotto non riceve mai stock).
+  // Nota: si guarda il codice RISOLTO, non lo SKU grezzo (shopify_stock non lo conserva). Uno SKU
+  // sbagliato ma recuperato dall'alias del titolo finisce sul codice giusto: lo stock va dove deve,
+  // quindi non e' un guasto e non compare qui. Per scelta: qui stanno solo le schede che NON ricevono stock.
+  const unmapped = (stockRows ?? []).filter((s) => s.shopify_status === 'active' && !invByNorm.has(norm(s.codice as string)));
+  add('ce_sku_unmapped_active',
+    `Schede Shopify attive con codice non a catalogo (stock mai spinto): ${unmapped.length}`
+    + (unmapped.length ? ' · ' + unmapped.slice(0, 2).map((s) => `"${s.shopify_title}" (${s.codice ?? 'nessun codice'})`).join(' | ') : ''),
+    unmapped.length, 'warn');
+
+  // C) stock_senza_scheda: merce disponibile che il sito non puo' vendere. INFORMATIVO, mai warn:
+  // spesso e' una scelta di catalogo (prodotto mai pubblicato) e un warn qui sarebbe perenne.
+  // Unico posto dove n > 0 con severity 'ok' e' voluto: e' un contatore, non un allarme.
+  const { data: ignFlag } = await sb.from('app_flags').select('value').eq('key', 'ceguard_no_shopify_ignore').maybeSingle();
+  const ignore = new Set(String(ignFlag?.value ?? '').split(',').map((c) => norm(c.trim())).filter(Boolean));
+  const stockCodici = new Set((stockRows ?? []).map((s) => norm(s.codice as string)));
+  const senzaScheda = (inv ?? []).filter((r) => N(r.disponibili_da_vendere) > 0 && !stockCodici.has(norm(r.codice as string)) && !ignore.has(norm(r.codice as string)));
+  const pezzi = senzaScheda.reduce((t, r) => t + N(r.disponibili_da_vendere), 0);
+  checks.push({
+    k: 'ce_stock_senza_scheda',
+    label: `Merce disponibile senza scheda Shopify: ${senzaScheda.length} codici, ${pezzi} pezzi (informativo)`
+      + (senzaScheda.length ? ' · es. ' + senzaScheda.slice(0, 2).map((r) => `${r.codice} (${N(r.disponibili_da_vendere)})`).join(', ') : ''),
+    n: senzaScheda.length,
+    severity: 'ok',
+  });
 
   // scrivi in health_log (sostituisce le chiavi ce_* di oggi)
   const today = now.toISOString().slice(0, 10);

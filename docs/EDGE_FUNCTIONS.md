@@ -41,13 +41,37 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 - **Comportamento:** POST only (GET risponde `online`); estrae l'ordine da body.order/data.order/payload.order; un record per item con paid=true; `sale_id` = order_id + indice item (stabile); prezzo = PAGATO per unita'; COGS snapshot da `products` se risolto, altrimenti `resolver_status='unresolved'` con nome raw in nota (mai perso).
 - **Protezioni:** idempotenza via UNIQUE parziale `qromo_sales_live_saleid_uq` (23505 = re-delivery benigna, skip); errore vero su un item -> risposta non-200 cosi' Qromo RITENTA; item senza flag paid = skip segnalato.
 
-## ce-guard (v3) - guardiano contabile
+## ce-guard (v4) - guardiano contabile
 
 - **Scopo:** sorveglianza del CE e della qualita' dati; esiti in `health_log` (chiavi `ce_*`), letti dal banner rosso in Home.
 - **Auth:** PIN. Cron **ORARIO** (`30 * * * *`, migr 0051; era daily 06:30 fino al 2026-07-09).
 - **Notifiche ntfy (v3, 2026-07-09):** al termine del `run`, se cambia l'insieme delle CHIAVI dei problemi **error** (non i conteggi), pubblica una push sul topic ntfy del titolare (`https://ntfy.sh`, JSON, tag `warning`/`white_check_mark`, click alla app). "Solo su cambio" -> niente spam orario. Il topic vive in `app_flags.ntfy_topic` (service-role; se assente -> no-op); lo stato ultimo-notificato in `app_flags.ceguard_alert_state`. Le WARN (cogs mancanti, spese da verificare) NON notificano.
-- **Azioni:** `run` (default) = 10 check: invarianti MC1/MC2 (tolleranza 0,02 EUR), `ce_qromo_unresolved`, `ce_cogs_mancanti` (warn), `ce_giacenze_negative`, `ce_expenses_categoria`, `ce_expenses_da_verificare` (warn), `ce_drift_mesi_chiusi` (da `v_ce_drift`, etichetta con netto E mc2), `ce_shopify_reconcile` (conteggio ordini API vs DB, mese corrente + precedente), `ce_shopify_token`, `ce_sync_freshness` (warn se `shopify_stock.synced_at` > 120 min). `close_month` (year, month, chi) = congela il CE del mese in `ce_snapshots` (UNIQUE, mai sovrascrive) + `change_log`. `status` = health_log `ce_*` di oggi.
+- **Azioni:** `run` (default) = 13 check: invarianti MC1/MC2 (tolleranza 0,02 EUR), `ce_qromo_unresolved`, `ce_cogs_mancanti` (warn), `ce_giacenze_negative`, `ce_expenses_categoria`, `ce_expenses_da_verificare` (warn), `ce_drift_mesi_chiusi` (da `v_ce_drift`, etichetta con netto E mc2), `ce_shopify_reconcile` (conteggio ordini API vs DB, mese corrente + precedente), `ce_shopify_token`, `ce_sync_freshness` (warn se `shopify_stock.synced_at` > 120 min), piu' le 3 sentinelle del collegamento app <-> Shopify qui sotto. `close_month` (year, month, chi) = congela il CE del mese in `ce_snapshots` (UNIQUE, mai sovrascrive) + `change_log`. `status` = health_log `ce_*` di oggi.
 - **Nota:** cancella e riscrive SOLO le chiavi `ce_*` di oggi (le altre sono di `refresh_health_log()`).
+
+### Collegamento app <-> Shopify: 3 sentinelle (v4, 2026-07-29)
+
+Nate dal caso **LEA BAG BLACK & WHITE PONY**: scheda ACTIVE con SKU `Lea_Bag_MUCCATA_NERA`, cioe' un codice diverso ma ancora a catalogo (doppione storico, giacenza 0). In `shopify-stock` la mappatura variante -> codice va **prima per SKU** e usa l'alias del TITOLO solo se lo SKU non matcha nessun codice: con uno SKU che matcha un codice vero l'alias non entra mai in gioco, l'autopush spinge la disponibilita' del codice fantasma (0) e il codice vero non ha nemmeno una riga in `shopify_stock`. Guasto silenzioso da aprile a fine luglio: non e' `unmapped`, il push riesce (Shopify accetta lo 0), le vendite arrivano corrette dal resolver per NOME di `shopify-sync`. Nessun controllo lo vedeva.
+
+Tutte e tre sono in **sola lettura**: segnalano, non riparano. Correggere uno SKU in automatico su un mismatch mal interpretato sposterebbe lo stock del prodotto sbagliato, quindi la correzione resta un gesto umano (owner, o Cowork con OK owner).
+
+| Chiave | Cosa vede | Severity | Cosa fare quando scatta |
+|---|---|---|---|
+| `ce_sku_mismatch` | Scheda il cui SKU aggancia un codice diverso da quello suggerito dall'alias sul titolo. `n` = le sole schede **active**; il totale (draft comprese) e' nell'etichetta con 2 esempi. | `warn` se almeno una active, altrimenti `ok` (una draft non e' vendibile e non deve tenere acceso un warn perenne, come il bucket `untracked` di `shopify-stock`) | Aprire la scheda su Shopify e decidere quale codice e' quello giusto: di norma vince l'alias sul titolo (e' quello su cui risolvono le vendite). Corretto lo SKU, il check rientra al giro dopo. |
+| `ce_sku_unmapped_active` | Scheda **active** il cui codice risolto non esiste a catalogo: `realign_all` la mette nel bucket `unmapped` e la salta, quindi quel prodotto **non riceve mai stock**. | `warn` se > 0 | Mettere sullo SKU il CODICE_AMIIMI vero, oppure aggiungere il prodotto a catalogo se manca davvero. Draft e archived restano fuori per scelta (~88 residui del vecchio catalogo, rumore). |
+| `ce_stock_senza_scheda` | Codici con `disponibili_da_vendere > 0` e nessuna riga in `shopify_stock`: merce in magazzino che il sito non puo' vendere. | **sempre `ok`**, informativo (spesso e' una scelta di catalogo, un warn qui sarebbe perenne). Unico check dove `n > 0` con severity `ok` e' voluto: e' un contatore. | Se il prodotto va venduto online, pubblicarlo. Se e' voluto che resti fuori, aggiungere il codice all'allowlist `app_flags.ceguard_no_shopify_ignore` (codici separati da virgola, tollera spazi e minuscole; se il flag non esiste il check gira lo stesso). |
+
+Dettagli di implementazione da non perdere:
+
+- **La normalizzazione del titolo deve restare identica a quella di `shopify-stock`.** Le due righe gemelle sono `const norm = (s) => (s ? s.toUpperCase().replace(/\s+/g, '_') : '')` in `shopify-stock/index.ts` (riga 8) e la stessa riga nel blocco 10 di `ce-guard/index.ts`. Se una cambia, cambiano entrambe: altrimenti il check diventa cieco proprio sui titoli con spazi doppi.
+- **Join in JS con una Map, non in SQL.** `product_aliases` ha `shopify_name_norm` duplicati (14 al 29-07): un join SQL moltiplicherebbe le righe e gonfierebbe i conteggi.
+- **Confronti case-insensitive** (upper + spazi a underscore su entrambi i lati): gli SKU legacy in `Title_Case` sono validi per scelta (Regola Ferrea 4, i join passano da `codice_norm`), quindi una differenza di sole maiuscole non e' un mismatch.
+- **`ce_sku_unmapped_active` guarda il codice RISOLTO, non lo SKU grezzo** (`shopify_stock` non conserva lo SKU). Uno SKU sbagliato ma recuperato dall'alias del titolo finisce sul codice giusto, lo stock va dove deve e per scelta non compare qui: la sentinella elenca solo le schede che non ricevono stock.
+- **Copertura di `ce_sku_mismatch`:** sulle schede active il cui titolo non ha alcun alias il check non puo' pronunciarsi. Quante sono e' scritto in coda all'etichetta (6 al 29-07).
+- **Le chiavi iniziano per `ce_` e devono continuare a farlo.** Il cron e' ORARIO: la delete di fine run filtra `k like 'ce_%'`, quindi una chiave senza prefisso sopravviverebbe, al secondo giro del giorno sbatterebbe sull'unique index `health_log(day,k)` e farebbe fallire l'INSERT intero, spegnendo la guardia per il resto della giornata. In piu' `action=status`, il banner rosso in Home e `refresh_health_log()` (migr 0035) filtrano tutti sul prefisso.
+- **Nessuna notifica ntfy:** le tre sentinelle sono `warn`/`ok` e la firma delle push guarda solo le chiavi `error`. Si vedono nella pagina Salute, non nel banner rosso.
+
+Valori al 2026-07-29 (deploy v4): `ce_sku_mismatch` 1 scheda 0 active (ANNIE BAG PINK SILK, draft: SKU `ANNIE_BAG_SILK_PINK` vs titolo `ANNIE_BAG_PINK`) -> ok; `ce_sku_unmapped_active` 0 (ANNIE BAG BROWN SILK e' stata corretta dall'owner a SKU `ANNIE_BAG_BROWN` nel pomeriggio, verificato via Admin API) -> ok; `ce_stock_senza_scheda` 8 codici / 10 pezzi (3 LEA_BAG_TOASTED_LEATHER_GREEN, 5 PORTA_CARTE_COCCO, AGATA_BAG_FLOWER_LILLA, LEA_BAG_CAVALLINO_CHOCOLATE) -> informativo.
 
 ## ask-data (v4) - NL -> SQL
 
