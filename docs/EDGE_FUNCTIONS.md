@@ -6,7 +6,7 @@
 
 Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.pin_hash` (PIN neutralizzato a `x` per scelta owner: e' design, non sicurezza). Scritture con service-role key da env. Audit su `change_log`, telemetria su `health_log`.
 
-## write-api (v21) - UNICO path di scrittura dati
+## write-api (v22) - UNICO path di scrittura dati
 
 - **Scopo:** ogni scrittura dati dell'ecosistema (app, Cowork, MCP) passa da qui.
 - **Auth:** PIN.
@@ -14,6 +14,25 @@ Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.p
 - **Protezioni:** blocco MESI CHIUSI (`ce_snapshots` -> 409 `closed_month`, si supera con `force`; eccezione nota-only su expense_approve); validazioni input; idempotenza `qromo_sale` su `sale_id`; ogni op scrive `change_log` con `chi` e source.
 - **Tocca:** legge `app_config`, `v_inventory`, `products`, `supplier_orders`, `expenses`, `shopify_stock` (guardia rename v21); scrive `purchases`, `counts`, `stock_adjustments`, `products`, `expenses`, `returns`, `qromo_sales`, `shopify_line_items` (solo sale_correct), `gifts_offline`, `b2b_movements`, `supplier_orders`, `change_log`.
 - **Smoke v21 (23/24-07, dati test ripuliti):** riordino con codice scritto male -> nessuno stub; derivato con trattino/accento UTF-8 -> match; verify confirm incompleta -> 422 `mancanti`; edit COGS senza confirm su prodotto con buchi -> 200; verify completa senza item nel payload -> rename da DB + cascata su supplier_orders; `order` -> 400; reap su order_delete OK.
+
+### expenses_bulk (v22, 2026-07-29) - carico mensile spese da xlsx
+
+Nasce per chiudere l'ultimo pezzo della migrazione finanza: il task `expenses-master-upload-mensile` scriveva le spese sul Foglio Master via webapp Fix Anagrafica, cosa vietata dalla Regola Ferrea 12. Dal 29-07 il task e' declassato a solo-xlsx (produce `EXPENSES_prep_YYYY-MM.xlsx` con le righe normalizzate) e le righe entrano da questa azione.
+
+- **Input:** `{action:'expenses_bulk', pin, chi, dry_run, rows:[...]}`. `rows` sta al livello ALTO del body (accettato anche dentro `payload`). Ogni riga: `data` (obbligatoria, **solo ISO `YYYY-MM-DD`**), `descrizione`, `costo`, `categoria`, `amimi`, opzionali `sottocategoria`, `note`, `fonte`, `force_closed_month`.
+- **Output:** `{ok, dry_run, totali:{ricevute, valide, respinte, duplicati, inserite}, righe:[{i, esito, descrizione, motivo?, duplicato?, id?}]}`. `esito` e' `valida` (dry-run), `inserita` (apply) o `respinta` col `motivo` in chiaro. `i` e' l'indice nella `rows` di partenza, cosi' l'operatore sa QUALE riga dell'xlsx sistemare.
+- **`dry_run` e' il DEFAULT.** Si scrive solo con `dry_run` uguale a `false` booleano o alla stringa `"false"`; qualunque altro valore (`0`, `"no"`, assente) resta dry-run. Su un carico che muove il CE il default deve sbagliare verso il non-scrivere (Regola 2).
+- **Validazione PER RIGA, mai tutto-o-niente:** le righe buone passano, le cattive tornano col motivo. L'INSERT delle valide e' invece UNA sola chiamata: se fallisce a livello DB non resta mezzo carico dentro. Una riga di `change_log` (op `expenses_bulk`, con `chi`) per ogni spesa inserita.
+- **8 categorie, non 7:** `COGS, LOGISTICA, MARKETING, OPEX, PACKAGING, SALARI, TASSE, EVENTI`. Sono quelle della colonna generata `expenses.categoria_valid`, che ammette anche EVENTI (categoria vera: 1 spesa a catalogo e riga `eventi` in entrambi i CE). Il brief ne elencava 7: escludere EVENTI avrebbe respinto spese legittime. Come sempre la generata non si scrive, si valida l'input (Regola 14).
+- **Data solo ISO, di proposito:** `new Date('07/08/2026')` e' l'8 luglio per il parser e il 7 agosto per un italiano. Su dati contabili quell'ambiguita' sposta una spesa di mese in silenzio, quindi il formato non ISO si RESPINGE invece di indovinare. Respinte anche `15/07/2026` e `2026-7-5`.
+- **Descrizione obbligatoria:** una spesa senza descrizione non e' verificabile nel CE ed e' invisibile al dedup.
+- **Costo:** sempre normalizzato a negativo (`-Math.abs`), come `expense_manual`; `0` e i non-numeri sono respinti.
+- **Dedup SEGNALATO, non bloccante:** stessa `date_paid` + stesso importo (tolleranza 0,005) + descrizione normalizzata (minuscole, accenti piegati, non-alfanumerici a spazio) uguale o contenuta l'una nell'altra. Regola volutamente prevedibile, nessuna soglia fuzzy: la riga passa con `duplicato: <id esistente>` e decide l'operatore.
+- **Guardia mesi chiusi:** data in un mese presente in `ce_snapshots` -> respinta, con override `force_closed_month: true` **per riga**. Non esiste un force globale: forzare va deciso una spesa alla volta (Regola 11).
+- **Cap 200 righe** per payload (422 con messaggio esplicito); `rows` vuoto -> 422.
+- **Letture:** una sola per tutto il carico (`ce_snapshots` e `expenses`), non una per riga.
+- **Verifica (29-07):** 40/40 su test a fixture. Live in dry-run: payload misto -> 5 esiti distinti e 0 scritture (279 spese invariate, 0 righe `change_log`); il dedup ha agganciato la spesa vera "Spazio Plinio" del 10-07 partendo da `SPAZIO  PLINIO` con doppio spazio; 201 righe -> 422. Apply provato con 2 righe da 0,01 EUR (autorizzazione owner in chat): inserite solo le valide, 1 riga di `change_log` a testa, comparse nel mese giusto dei due CE (`opex` luglio da -400,00 a -400,01), `categoria_valid`/`amimi` calcolate dal DB, mese chiuso inserito solo con force. Righe di test poi **rimosse su autorizzazione esplicita dell'owner** (deroga puntuale alla Regola 13, che vieta i DELETE diretti): ripristinati 279 spese, 0 residui, `v_ce_drift` a 0, marzo e luglio ai valori di partenza.
+- **Handback a Cowork:** ripuntare il prompt del task a "dry_run via `expenses_bulk` + apply su conferma owner", riga in `_CHANGELOG.md`, chiudere la proposta P5 in `_SYNC_REPORT.md`.
 
 ## shopify-sync (v5) - pull ordini Shopify
 
