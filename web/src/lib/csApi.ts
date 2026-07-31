@@ -214,7 +214,9 @@ export async function fetchContext(conversationId: string): Promise<CsContext> {
 
 // --- Motore dei verdetti (design Parte B): il codice decide il caso, l'AI scrive la frase ---
 export const CASE_CATS = new Set(['Reso e rimborso', 'Cambio e prodotto errato', 'Modifica / correzione indirizzo']);
-export type CasoReso = { delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'sconosciuto'; difetto_sospetto: boolean };
+// v14: la finestra reso decorre dalla DATA DELL'ORDINE (ordine_del); delivered_at resta come info
+// e per il caso indirizzo ('consegnato', confermabile dalla collega dal tracking).
+export type CasoReso = { ordine_del: string | null; delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'sconosciuto'; difetto_sospetto: boolean };
 export type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 'verificare_tracking' | 'consegnato' | 'sconosciuto' };
 export type CaseData = { categoria: string | null; verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo; tracking_url: string | null; order_admin_url: string | null };
 

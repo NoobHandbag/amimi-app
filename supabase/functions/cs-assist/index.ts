@@ -1,4 +1,17 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v14 (2026-07-31 sera, richiesta owner "contesto massimo" + valori riconfermati dal sito):
+//   - THREAD INTERO nel prompt (ultimi 30 messaggi, prima 4): su conversazioni lunghe l'AI
+//     perdeva l'inizio; col piano Gemini a pagamento il costo e' spiccioli.
+//   - CONOSCENZA DI CASA nel prompt: tabella `cs_knowledge` (migr 0082, pattern app_guides,
+//     editabile senza redeploy) = tono di voce, valori operativi correnti (fonte unica), criteri
+//     di escalation + linee guida della categoria. Entra anche nel corpus del linter (14, 3.90,
+//     gli indirizzi ecc. sono fatti consentiti, non "numeri inventati").
+//   - CONVERSAZIONI PRECEDENTI dello stesso cliente (riassunti, max 5) nel prompt della bozza:
+//     l'AI sa se ha gia' chiesto resi/cambi/solleciti.
+//   - RESO: finestra 14 giorni dalla DATA DELL'ORDINE (decisione owner 31-07, allineata al sito;
+//     prima 15 dalla consegna): il verdetto entro/fuori si calcola da created_at_shop dell'ordine,
+//     quindi e' SEMPRE disponibile quando l'ordine e' verificato (niente piu' data di consegna da
+//     confermare a mano per il reso; delivered_at resta per il caso indirizzo).
 // v13 (2026-07-31, brief redesign thread + body_clean, Parte A punto 5): la cronologia passata al
 //   modello (draft/refine/summary) e il testo per match prodotti/caso usano `body_clean` (migr 0081,
 //   fallback body_text: mai perdere contesto); il CORPUS del linter di aderenza resta sul RAW
@@ -174,7 +187,7 @@ async function fetchOrderMeta(orderNumber: unknown, token: string): Promise<OrdM
 // --- Motore dei verdetti (design Parte B 24-07): il CODICE decide il caso, l'AI scrive la frase ---
 const DIFETTO_RE = /difett|rott[oa]|scucit|staccat|danneggiat|rovinat|macchiat|non funziona|si (e'|è) (rotta|scucita|staccata|aperta)/i;
 const CASE_CATS = new Set(['Reso e rimborso', 'Cambio e prodotto errato', 'Modifica / correzione indirizzo']);
-type CasoReso = { delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'sconosciuto'; difetto_sospetto: boolean };
+type CasoReso = { ordine_del: string | null; delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'sconosciuto'; difetto_sospetto: boolean };
 type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 'verificare_tracking' | 'consegnato' | 'sconosciuto' };
 
 function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: string, finestra: number, confirmedDate: string | null): { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo } {
@@ -184,17 +197,21 @@ function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: stri
   const verificato = !!ordine && !!(conv.customer_email);
   const difetto = DIFETTO_RE.test(inbound);
 
-  // RESO: data di consegna = confermata dalla collega (STEP 1 pragmatico) > shipment_status delivered (approx).
+  // v14 (owner 31-07, allineato al sito): la finestra reso decorre dalla DATA DELL'ORDINE
+  // (created_at_shop), non piu' dalla consegna. Verdetto quindi SEMPRE calcolabile a ordine
+  // verificato. La data di consegna (confermata dalla collega > shipment_status Shopify) resta
+  // in uso per il caso INDIRIZZO ('consegnato') e come info.
   let delivered: string | null = null, fonte: string | null = null;
   if (confirmedDate && /^\d{4}-\d{2}-\d{2}$/.test(confirmedDate)) { delivered = confirmedDate; fonte = 'confermata dalla collega'; }
   else if (verificato && meta?.shipment_status === 'delivered' && meta.f_updated_at) { delivered = String(meta.f_updated_at).slice(0, 10); fonte = 'shopify (approssimata)'; }
+  const ordineDel = verificato && ordine?.created_at_shop ? String(ordine.created_at_shop).slice(0, 10) : null;
   let giorni: number | null = null;
   let verdetto: CasoReso['verdetto'] = 'sconosciuto';
-  if (delivered && (verificato || fonte === 'confermata dalla collega')) {
-    giorni = Math.floor((Date.now() - new Date(delivered + 'T12:00:00Z').getTime()) / 86400000);
+  if (ordineDel) {
+    giorni = Math.floor((Date.now() - new Date(ordineDel + 'T12:00:00Z').getTime()) / 86400000);
     if (giorni >= 0) verdetto = giorni <= finestra ? 'entro' : 'fuori';
   }
-  const reso: CasoReso = { delivered_at: delivered, fonte, giorni, finestra, verdetto, difetto_sospetto: difetto };
+  const reso: CasoReso = { ordine_del: ordineDel, delivered_at: delivered, fonte: ordineDel ? 'data ordine (Shopify)' : fonte, giorni, finestra, verdetto, difetto_sospetto: difetto };
 
   // INDIRIZZO: fulfillment ASSENTE = non ritirato (affidabile: ship-sync evade solo al ritiro) -> correggibile.
   // Fulfillment PRESENTE senza fonte delivered -> "verificare dal tracking" (MAI "in transito" secco, review 24-07).
@@ -220,9 +237,9 @@ function casoBlock(categoria: string | null, cd: { verificato: boolean; reso: Ca
     else L.push('- Stato spedizione NON determinabile dai dati: niente verdetti, usa [DA VERIFICARE: stato spedizione].');
   } else {
     if (cd.reso.difetto_sospetto) L.push('- POSSIBILE DIFETTO segnalato dal cliente: la finestra reso NON si applica da sola (garanzia legale 24 mesi). Bozza prudente: chiedi una foto, proponi riparazione/cambio o contatto. MAI un rifiuto.');
-    else if (cd.reso.verdetto === 'entro') L.push(`- Reso AMMESSO: consegna il ${cd.reso.delivered_at} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra}). Istruzioni + link resi; spedizione di rientro a carico del cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` + (categoria === 'Cambio e prodotto errato' ? ' Per il CAMBIO: stessa finestra, spese a carico del cliente (salvo errore nostro: allora scuse e spese nostre).' : ''));
-    else if (cd.reso.verdetto === 'fuori') L.push(`- Reso NON ammesso: consegna il ${cd.reso.delivered_at}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra}). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto, cambia tutto: proponi il contatto.`);
-    else L.push('- Data di consegna NON nota: nessun verdetto sulla finestra. Spiega la regola dei 15 giorni dalla consegna in generale e usa [DA VERIFICARE: data di consegna].');
+    else if (cd.reso.verdetto === 'entro') L.push(`- Reso AMMESSO: ordine del ${cd.reso.ordine_del} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla data dell'ordine). Istruzioni + link resi; spedizione di rientro a carico del cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` + (categoria === 'Cambio e prodotto errato' ? ' Per il CAMBIO: stessa finestra, spese a carico del cliente (salvo errore nostro: allora scuse e spese nostre).' : ''));
+    else if (cd.reso.verdetto === 'fuori') L.push(`- Reso NON ammesso: ordine del ${cd.reso.ordine_del}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra} dalla data dell'ordine). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto, cambia tutto: proponi il contatto.`);
+    else L.push(`- Ordine NON identificato con certezza: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla data dell'ordine in generale e usa [DA VERIFICARE: numero ordine].`);
   }
   return L.join('\n') + '\n';
 }
@@ -313,7 +330,22 @@ async function purchaseHistory(sb: ReturnType<typeof createClient>, email: strin
 }
 
 type Dati = { prodotti: Prod[]; ordine: Ord; tracking: OrdMeta['tracking']; standard: string[]; fonti: string[] };
-type Ctx = { dati: Dati; tono: string[]; order_admin_url: string | null; storia: Storia | null; gapExtra: string[] };
+type Ctx = { dati: Dati; tono: string[]; order_admin_url: string | null; storia: Storia | null; gapExtra: string[]; conoscenza: string[]; precedenti: string[] };
+
+// v14: conoscenza di casa (cs_knowledge, migr 0082): righe con categoria NULL sempre, piu' quelle
+// della categoria della conversazione. Editabile a DB senza redeploy; cap prudente sul totale.
+async function csKnowledge(sb: ReturnType<typeof createClient>, categoria: string | null): Promise<string[]> {
+  const { data } = await sb.from('cs_knowledge').select('categoria,titolo,contenuto').eq('attiva', true).order('id');
+  const rows = ((data ?? []) as Row[]).filter((r) => r.categoria == null || (categoria != null && r.categoria === categoria));
+  const out: string[] = [];
+  let tot = 0;
+  for (const r of rows) {
+    const s = `[${r.titolo}] ${String(r.contenuto ?? '')}`;
+    if (tot + s.length > 6000) break;
+    out.push(s); tot += s.length;
+  }
+  return out;
+}
 
 async function faqTono(sb: ReturnType<typeof createClient>, categoria: string | null, lingua: string | null): Promise<{ tono: string[]; standard: string[] }> {
   const { data } = await sb.from('cs_faq').select('tipo,testo_it,testo_en,categoria').eq('attiva', true);
@@ -354,12 +386,24 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   const order_admin_url = meta?.adminId ? `https://admin.shopify.com/store/${SHOP}/orders/${meta.adminId}` : null;
   const { tono, standard } = await faqTono(sb, categoria, (conv.lingua as string) ?? null);
   const storia = await purchaseHistory(sb, (conv.customer_email as string) ?? null);
+  const conoscenza = await csKnowledge(sb, categoria);
+  // v14: conversazioni PRECEDENTI dello stesso cliente (riassunti, max 5): l'AI sa se ha gia'
+  // chiesto resi/cambi/solleciti senza rileggere i thread interi. Contesto, non fonte di promesse.
+  let precedenti: string[] = [];
+  if (conv.customer_email && conv.id) {
+    const { data: altre } = await sb.from('cs_conversations')
+      .select('subject,categoria,stato,last_msg_at,summary')
+      .eq('customer_email', String(conv.customer_email)).neq('id', String(conv.id))
+      .order('last_msg_at', { ascending: false }).limit(5);
+    precedenti = ((altre ?? []) as Row[]).map((a) =>
+      `- ${String(a.last_msg_at ?? '').slice(0, 10)} [${a.categoria ?? '?'}${a.stato ? '/' + a.stato : ''}] ${String(a.subject ?? '').slice(0, 80)}${a.summary ? ': ' + String(a.summary).slice(0, 200) : ''}`);
+  }
   const fonti: string[] = [];
   for (const p of prodotti) fonti.push(`${p.item} ${p.variant}: disponibili ${p.disponibili}, giacenza ${p.giacenza}${p.prezzo != null ? `, prezzo ${p.prezzo}EUR` : ''}${p.on_shopify ? ', a catalogo' : ''} (v_inventory)`);
   if (ordine) fonti.push(`Ordine #${ordine.order_number}: pagamento ${ordine.financial_status ?? 'n/d'}, evasione ${ordine.fulfillment_status ?? 'non evaso'}${ordine.fulfilled_at ? `, evaso il ${String(ordine.fulfilled_at).slice(0, 10)}` : ''} (shopify_orders)`);
   if (tracking) fonti.push(`Tracking ${tracking.corriere} ${tracking.numero} (Shopify Admin API, live)`);
   if (storia && storia.n_ordini > 0) fonti.push(`Cliente: ${storia.n_ordini} ordini, ${storia.totale}EUR totali (storico Shopify)`);
-  return { dati: { prodotti, ordine, tracking, standard, fonti }, tono, order_admin_url, storia, gapExtra };
+  return { dati: { prodotti, ordine, tracking, standard, fonti }, tono, order_admin_url, storia, gapExtra, conoscenza, precedenti };
 }
 
 function datiBlock(d: Dati): string {
@@ -482,7 +526,8 @@ Deno.serve(async (req) => {
     const cols = 'id,canale,customer_email,customer_name,order_number,categoria,subject,lingua';
     const { data: conv } = await sb.from('cs_conversations').select(cols).eq('id', convId).maybeSingle();
     if (!conv) return null;
-    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,body_clean,form_fields,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(4);
+    // v14: THREAD INTERO (cap 30 messaggi, i piu' recenti): prima si vedevano solo gli ultimi 4
+    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,body_clean,form_fields,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(30);
     const recent = ((msgs ?? []) as Row[]).slice().reverse().map((m): Row => ({
       ...m,
       testo: String(m.body_clean ?? '') || (conv.canale === 'chat_notifica' ? stripChat(String(m.body_text ?? '')) : String(m.body_text ?? '')),
@@ -516,7 +561,7 @@ Deno.serve(async (req) => {
     const conv = lc.conv;
     const ordine = await lookupOrder(sb, (conv.order_number as number) ?? null, (conv.customer_email as string) ?? null);
     const meta = ordine ? await fetchOrderMeta(ordine.order_number, token) : null;
-    const finestra = Number(flags.cs_reso_finestra_giorni) || 15;
+    const finestra = Number(flags.cs_reso_finestra_giorni) || 14;
     const confirmed = String(body.delivered_at || '').trim() || null;
     const cd = computeCaso(conv, ordine, meta, lc.inbound, finestra, confirmed);
     return json({
@@ -575,7 +620,7 @@ Riassunto (max 2 righe):`;
     let casoTxt = '';
     if (CASE_CATS.has(String(conv.categoria ?? ''))) {
       const meta2 = ctx.dati.ordine ? await fetchOrderMeta(ctx.dati.ordine.order_number, token) : null;
-      const cd = computeCaso(conv, ctx.dati.ordine, meta2, lc.inbound, Number(flags.cs_reso_finestra_giorni) || 15, String(body.delivered_at || '').trim() || null);
+      const cd = computeCaso(conv, ctx.dati.ordine, meta2, lc.inbound, Number(flags.cs_reso_finestra_giorni) || 14, String(body.delivered_at || '').trim() || null);
       casoTxt = casoBlock((conv.categoria as string) ?? null, cd);
     }
 
@@ -585,8 +630,8 @@ Riassunto (max 2 righe):`;
 LE TRE VERSIONI (usa esattamente questi tre "tono"): "breve" = 2-3 righe, dritta al punto, cordiale; "calda" = piu' empatica e personale, un pizzico di calore; "formale" = piu' completa e composta, adatta a casi delicati.
 ${STYLE_RULES}${istruzioniBlock}${casoTxt}${chatBlock}`;
     const user = `Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
-
-Ultimi messaggi (il piu' recente e' del cliente):
+${ctx.conoscenza.length ? `\nCONOSCENZA DI CASA (regole e fatti Amimi'; se un valore qui contraddice il BLOCCO DATI, vince il BLOCCO DATI):\n${ctx.conoscenza.map((k) => '- ' + k).join('\n')}\n` : ''}${ctx.precedenti.length ? `\nCONVERSAZIONI PRECEDENTI DI QUESTO CLIENTE (contesto: tienine conto nel tono e nei riferimenti, NON promettere nulla in base a queste):\n${ctx.precedenti.join('\n')}\n` : ''}
+Conversazione (il piu' recente e' del cliente):
 ${threadTxt}
 
 BLOCCO DATI (l'unica fonte di numeri che puoi usare):
@@ -626,6 +671,7 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
     const lintCorpus = factKeys([
       threadRaw(lc.recent, conv.subject), datiBlock(ctx.dati), casoTxt, ctx.dati.fonti.join('\n'), ctx.tono.join('\n'),
       aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''),
+      ctx.conoscenza.join('\n'), ctx.precedenti.join('\n'),   // v14: i valori di casa (14, 3.90, CAP...) sono fatti consentiti
     ].join('\n'));
     const options = opzioni.slice(0, 3).map((o) => ({ tono: o.tono, testo: o.testo, da_verificare: countDaVerificare(o.testo), non_grounded: lintDraft(o.testo, lintCorpus) }));
 
@@ -662,6 +708,7 @@ ${testo.slice(0, 2500)}
 
 BLOCCO DATI (l'unica fonte di numeri che puoi usare):
 ${datiBlock(ctx.dati)}
+${ctx.conoscenza.length ? `\nCONOSCENZA DI CASA (regole e fatti Amimi'; se contraddice il BLOCCO DATI, vince il BLOCCO DATI):\n${ctx.conoscenza.map((k) => '- ' + k).join('\n')}` : ''}
 ${ctx.tono.length ? `\nEsempi del NOSTRO tono (imita lo stile, non copiare i contenuti):\n${ctx.tono.map((t) => '- ' + t).join('\n')}` : ''}
 
 Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown):`;
@@ -676,6 +723,7 @@ Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown
     const lintCorpusR = factKeys([
       threadRaw(lc.recent, conv.subject), datiBlock(ctx.dati), ctx.dati.fonti.join('\n'), ctx.tono.join('\n'),
       aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''), istruzione,
+      ctx.conoscenza.join('\n'),   // v14: i valori di casa sono fatti consentiti anche in riscrittura
     ].join('\n'));
     await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'refine', chi, dettaglio: { istruzione: istruzione.slice(0, 200), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
     return json({ ok: true, draft: out, da_verificare: countDaVerificare(out), non_grounded: lintDraft(out, lintCorpusR), ...(claudeFellBack ? { engine_fallback: 'gemini' } : {}) });

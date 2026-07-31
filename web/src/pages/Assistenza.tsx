@@ -484,7 +484,14 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
               ) : caso.indirizzo.caso === 'consegnato' ? (
                 <div className="cs-verdict cs-v-no"><b>📬 Risulta gia&#8217; consegnata · nulla da fare sulla spedizione</b><span>Bozza: empatia + vicini/portineria, niente promesse impossibili.</span></div>
               ) : caso.indirizzo.caso === 'verificare_tracking' ? (
-                <div className="cs-verdict cs-v-warn"><b>🚚 Gia&#8217; partita: in viaggio o gia&#8217; consegnata?</b><span>{caso.tracking_url ? <>Controlla dal <a href={caso.tracking_url} target="_blank" rel="noreferrer">tracking ↗</a> — la bozza resta prudente su entrambe le ipotesi.</> : 'Tracking non disponibile: la bozza resta prudente su entrambe le ipotesi.'}</span></div>
+                <div className="cs-verdict cs-v-warn">
+                  <b>🚚 Gia&#8217; partita: in viaggio o gia&#8217; consegnata?</b>
+                  <span>{caso.tracking_url ? <>Controlla dal <a href={caso.tracking_url} target="_blank" rel="noreferrer">tracking ↗</a> — se risulta consegnata, conferma qui la data.</> : 'Tracking non disponibile: la bozza resta prudente su entrambe le ipotesi.'}</span>
+                  <div className="cs-case-row">
+                    <input type="date" value={confirmDate} onChange={(e) => setConfirmDate(e.target.value)} aria-label="Data di consegna" />
+                    <button className="cs-btn cs-ghost" type="button" disabled={!confirmDate || casoBusy} onClick={() => loadCaso(c.id, confirmDate)}>{casoBusy ? '…' : '✓ Consegnata in questa data'}</button>
+                  </div>
+                </div>
               ) : (
                 <div className="cs-verdict cs-v-info"><b>Stato spedizione non determinabile</b><span>Ordine non agganciato con certezza alla cliente: la bozza usa [DA VERIFICARE].</span></div>
               )
@@ -494,17 +501,13 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   <div className="cs-verdict cs-v-warn"><b>⚠️ Possibile difetto segnalato</b><span>La finestra non si applica da sola (garanzia legale 24 mesi): bozza prudente, mai un rifiuto.</span></div>
                 )}
                 {caso.reso.verdetto === 'entro' ? (
-                  <div className="cs-verdict cs-v-ok"><b>📦 Consegnata il {caso.reso.delivered_at} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra}</b><span>Fonte: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
+                  <div className="cs-verdict cs-v-ok"><b>🧾 Ordine del {caso.reso.ordine_del} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
                 ) : caso.reso.verdetto === 'fuori' ? (
-                  <div className="cs-verdict cs-v-no"><b>📦 Consegnata il {caso.reso.delivered_at} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra}</b><span>Fonte: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
+                  <div className="cs-verdict cs-v-no"><b>🧾 Ordine del {caso.reso.ordine_del} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
                 ) : (
                   <div className="cs-verdict cs-v-info">
-                    <b>Data di consegna non nota</b>
-                    <span>{caso.tracking_url ? <>Leggila dal <a href={caso.tracking_url} target="_blank" rel="noreferrer">tracking ↗</a> e confermala qui: il conteggio dei {caso.reso.finestra} giorni lo fa il sistema.</> : 'Senza data niente verdetto: la bozza usa [DA VERIFICARE].'}</span>
-                    <div className="cs-case-row">
-                      <input type="date" value={confirmDate} onChange={(e) => setConfirmDate(e.target.value)} aria-label="Data di consegna" />
-                      <button className="cs-btn cs-ghost" type="button" disabled={!confirmDate || casoBusy} onClick={() => loadCaso(c.id, confirmDate)}>{casoBusy ? '…' : '✓ Conferma data'}</button>
-                    </div>
+                    <b>Ordine non identificato con certezza</b>
+                    <span>La finestra dei {caso.reso.finestra} giorni decorre dalla data dell&#8217;ordine: senza l&#8217;ordine agganciato niente verdetto, la bozza usa [DA VERIFICARE: numero ordine].</span>
                   </div>
                 )}
               </>
