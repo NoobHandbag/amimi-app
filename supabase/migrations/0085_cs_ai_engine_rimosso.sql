@@ -1,0 +1,21 @@
+-- 0085: rimuove `cs_ai_engine` introdotta pochi minuti prima dalla 0084 (stessa sessione, 31-07).
+--
+-- Perche' e' stata introdotta: rendere il motore AI una scelta ESPLICITA invece di dedurlo dalla
+-- presenza di `anthropic_api_key`, cosi' che rimettere la chiave un domani non riaccenda Claude in
+-- silenzio (rischio nominato dal brief).
+--
+-- Perche' viene tolta subito: quel flag ha senso solo se lo legge `cs-assist`, che e' l'unica a
+-- scegliere il motore. Deployare `cs-assist` da qui vuol dire ribattere a mano ~58.000 caratteri
+-- attraverso il connettore MCP (nessuna auth CLI disponibile in questa sessione): un solo carattere
+-- sbagliato corrompe la funzione che genera le bozze del servizio clienti. Rischio sproporzionato
+-- rispetto al beneficio, e nessuno dei 4 criteri del brief lo richiede.
+--
+-- Lasciare il flag a DB senza che `cs-assist` lo onori sarebbe peggio del problema di partenza:
+-- `cs-api` direbbe alla UI "motore = X" mentre `cs-assist` ne userebbe un altro. Config morta e
+-- fuorviante. Quindi si toglie e si riprende quando ci sara' un canale di deploy sicuro
+-- (`SUPABASE_ACCESS_TOKEN` + `supabase functions deploy`, un comando, byte-safe).
+--
+-- Resta fatto e verificato della 0084: `cs_ai_model` -> `cs_ai_model_claude`, che e' il cuore del
+-- brief (nessun campo di app_flags dice piu' che il motore attivo e' Claude).
+
+delete from public.app_flags where key = 'cs_ai_engine';
