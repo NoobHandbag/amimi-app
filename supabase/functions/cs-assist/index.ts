@@ -1,4 +1,10 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v13 (2026-07-31, brief redesign thread + body_clean, Parte A punto 5): la cronologia passata al
+//   modello (draft/refine/summary) e il testo per match prodotti/caso usano `body_clean` (migr 0081,
+//   fallback body_text: mai perdere contesto); il CORPUS del linter di aderenza resta sul RAW
+//   (body_text): un numero presente solo nella citazione (es. totale ordine) resta un fatto
+//   consentito e non diventa un falso positivo "non nel gestionale". Decisione dichiarata nel
+//   changelog CODE. In piu': `created_at_shop` esposto nell'ordine del context (card Ordine UI).
 // v12 (2026-07-31 notte, richiesta owner): FALLBACK Claude -> Gemini nell'uso NORMALE dell'app.
 //   Se Claude e' configurato ma fallisce (credito API a zero, outage), la bozza NON muore: si
 //   ripiega su Gemini, `cs_drafts.model` registra il modello REALMENTE usato e la risposta porta
@@ -125,9 +131,9 @@ async function matchProducts(sb: ReturnType<typeof createClient>, text: string):
   return scored.slice(0, 4).map((x) => x.p);
 }
 
-type Ord = { order_number: unknown; financial_status: unknown; fulfillment_status: unknown; fulfilled_at: unknown; gross_total: unknown; email: unknown; order_id: unknown; righe: { nome: string; qta: number }[] } | null;
+type Ord = { order_number: unknown; financial_status: unknown; fulfillment_status: unknown; fulfilled_at: unknown; gross_total: unknown; email: unknown; order_id: unknown; created_at_shop: unknown; righe: { nome: string; qta: number }[] } | null;
 async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: number | null, email: string | null): Promise<Ord> {
-  let q = sb.from('shopify_orders').select('order_id,order_number,financial_status,fulfillment_status,fulfilled_at,gross_total,email').order('created_at_shop', { ascending: false }).limit(1);
+  let q = sb.from('shopify_orders').select('order_id,order_number,financial_status,fulfillment_status,fulfilled_at,gross_total,email,created_at_shop').order('created_at_shop', { ascending: false }).limit(1);
   if (orderNumber) q = q.eq('order_number', orderNumber);
   else if (email) q = q.eq('email', email.toLowerCase());
   else return null;
@@ -140,7 +146,7 @@ async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: num
   if (orderNumber && email && String(o.email ?? '').toLowerCase() !== email.toLowerCase()) return null;
   const { data: li } = await sb.from('shopify_line_items').select('lineitem_name,quantita').eq('order_id', o.order_id as string);
   const righe = ((li ?? []) as Row[]).map((r) => ({ nome: String(r.lineitem_name ?? ''), qta: Number(r.quantita ?? 0) }));
-  return { order_number: o.order_number, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status, fulfilled_at: o.fulfilled_at, gross_total: o.gross_total, email: o.email, order_id: o.order_id, righe };
+  return { order_number: o.order_number, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status, fulfilled_at: o.fulfilled_at, gross_total: o.gross_total, email: o.email, order_id: o.order_id, created_at_shop: o.created_at_shop, righe };
 }
 
 // Shopify Admin API: cerca l'ordine per NOME (#numero) e ritorna id numerico (per il link admin) + tracking.
@@ -468,18 +474,28 @@ Deno.serve(async (req) => {
 
   // carica conversazione + testo del cliente (usato da context/dry_data/draft/refine)
   // v11: lingua SEMPRE caricata (serve a faqTono per scegliere testo_en anche su context)
+  // v13: ogni messaggio porta `testo` = body_clean (fallback: stripChat/raw). Il PROMPT usa
+  // `testo` (meno rumore); il CORPUS del linter usa il RAW body_text (i numeri citati restano
+  // fatti consentiti). body_text nei row NON viene piu' sovrascritto.
   const loadConv = async (_withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[] } | null> => {
     const convId = String(body.conversation_id || '');
     const cols = 'id,canale,customer_email,customer_name,order_number,categoria,subject,lingua';
     const { data: conv } = await sb.from('cs_conversations').select(cols).eq('id', convId).maybeSingle();
     if (!conv) return null;
-    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,form_fields,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(4);
-    let recent = ((msgs ?? []) as Row[]).slice().reverse();
-    if (conv.canale === 'chat_notifica') recent = recent.map((m) => ({ ...m, body_text: stripChat(String(m.body_text ?? '')) }));
+    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,body_clean,form_fields,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(4);
+    const recent = ((msgs ?? []) as Row[]).slice().reverse().map((m): Row => ({
+      ...m,
+      testo: String(m.body_clean ?? '') || (conv.canale === 'chat_notifica' ? stripChat(String(m.body_text ?? '')) : String(m.body_text ?? '')),
+    }));
     const lastIn = [...recent].reverse().find((m) => m.direction === 'in') as Row | undefined;
-    const inbound = [conv.subject, lastIn?.body_text, lastIn?.form_fields ? JSON.stringify(lastIn.form_fields) : ''].filter(Boolean).join(' ');
+    const inbound = [conv.subject, lastIn?.testo, lastIn?.form_fields ? JSON.stringify(lastIn.form_fields) : ''].filter(Boolean).join(' ');
     return { conv: conv as Row, inbound, recent };
   };
+  // cronologia per il prompt (CLEAN) e per il corpus del linter (RAW, slice piu' larga: regex, zero AI)
+  const threadClean = (recent: Row[], subject: unknown): string =>
+    recent.map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${String(m.testo ?? '').slice(0, 800)}`).join('\n') || String(subject ?? '');
+  const threadRaw = (recent: Row[], subject: unknown): string =>
+    recent.map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${String(m.body_text ?? '').slice(0, 4000)}`).join('\n') || String(subject ?? '');
 
   // ---------- context / dry_data: assembla il CONTESTO, nessun Gemini ----------
   if (action === 'context' || action === 'dry_data') {
@@ -519,8 +535,8 @@ Deno.serve(async (req) => {
     const { data: convs } = await sb.from('cs_conversations').select('id,customer_email,customer_name,subject,snippet,categoria').is('summary', null).neq('canale', 'rumore').eq('parse_failed', false).order('last_msg_at', { ascending: true, nullsFirst: true }).limit(limit);
     let done = 0, failed = 0;
     for (const c of (convs ?? []) as Row[]) {
-      const { data: msgs } = await sb.from('cs_messages').select('direction,body_text').eq('conversation_id', c.id as string).order('sent_at', { ascending: true }).limit(12);
-      const thread = ((msgs ?? []) as Row[]).map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${String(m.body_text ?? '').slice(0, 500)}`).join('\n');
+      const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,body_clean').eq('conversation_id', c.id as string).order('sent_at', { ascending: true }).limit(12);
+      const thread = ((msgs ?? []) as Row[]).map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${(String(m.body_clean ?? '') || String(m.body_text ?? '')).slice(0, 500)}`).join('\n');
       let storia = '';
       if (c.customer_email) {
         const { data: altre } = await sb.from('cs_conversations').select('subject,categoria,stato,last_msg_at,summary').eq('customer_email', c.customer_email as string).neq('id', c.id as string).order('last_msg_at', { ascending: false }).limit(5);
@@ -553,7 +569,7 @@ Riassunto (max 2 righe):`;
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     const conv = lc.conv;
     const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
-    const threadTxt = lc.recent.map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${String(m.body_text ?? '').slice(0, 800)}`).join('\n') || String(conv.subject ?? '');
+    const threadTxt = threadClean(lc.recent, conv.subject);
     // motore dei verdetti: sulle categorie a caso (reso/cambio/indirizzo) il CASO e' calcolato dal codice
     // (con eventuale delivered_at confermata dalla collega) e VINCOLA la bozza. L'AI non decide, esegue.
     let casoTxt = '';
@@ -605,9 +621,10 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
       } catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     }
     if (!opzioni.length) return json({ ok: false, error: 'bozza vuota' }, 502);
-    // linter di aderenza: ogni numero/data/URL della bozza deve esistere nel corpus dei fatti consentiti
+    // linter di aderenza: ogni numero/data/URL della bozza deve esistere nel corpus dei fatti
+    // consentiti. v13: il corpus usa il thread RAW (citazioni incluse), il prompt quello CLEAN.
     const lintCorpus = factKeys([
-      threadTxt, datiBlock(ctx.dati), casoTxt, ctx.dati.fonti.join('\n'), ctx.tono.join('\n'),
+      threadRaw(lc.recent, conv.subject), datiBlock(ctx.dati), casoTxt, ctx.dati.fonti.join('\n'), ctx.tono.join('\n'),
       aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''),
     ].join('\n'));
     const options = opzioni.slice(0, 3).map((o) => ({ tono: o.tono, testo: o.testo, da_verificare: countDaVerificare(o.testo), non_grounded: lintDraft(o.testo, lintCorpus) }));
@@ -655,9 +672,9 @@ Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown
     if (!out) return json({ ok: false, error: 'bozza vuota' }, 502);
     out = out.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
     // linter di aderenza anche sulla riscrittura (la bozza di partenza NON e' fonte: potrebbe gia' inventare)
-    const threadTxtR = lc.recent.map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${String(m.body_text ?? '').slice(0, 800)}`).join('\n') || String(conv.subject ?? '');
+    // v13: corpus sul thread RAW (citazioni incluse), come su draft
     const lintCorpusR = factKeys([
-      threadTxtR, datiBlock(ctx.dati), ctx.dati.fonti.join('\n'), ctx.tono.join('\n'),
+      threadRaw(lc.recent, conv.subject), datiBlock(ctx.dati), ctx.dati.fonti.join('\n'), ctx.tono.join('\n'),
       aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''), istruzione,
     ].join('\n'));
     await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'refine', chi, dettaglio: { istruzione: istruzione.slice(0, 200), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });

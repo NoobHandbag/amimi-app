@@ -1,4 +1,12 @@
-// cs-sync v6 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v7 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v7 (2026-07-31, brief redesign thread + body_clean, Parte A): colonna `cs_messages.body_clean`
+//   (migr 0081) = SOLO le parole del mittente, pulite in modo deterministico (ZERO AI) dalla
+//   funzione condivisa `stripQuoted` (stessa famiglia di stripQuote: stessi QUOTE_MARKERS per
+//   inbound e outbound, come chiesto dal brief): taglio alla prima attribution line (anche a
+//   inizio corpo), via le righe quotate '>', via la firma '-- ', boilerplate Inbox estratto per
+//   chat_notifica, whitespace normalizzato. Output vuoto -> NULL (la UI fa fallback su body_text:
+//   MAI perdere contenuto; body_text resta INTATTO). Valorizzata a ogni insert (in e out) +
+//   azione `backfill_clean` (PIN, a blocchi) per lo storico gia' ingerito.
 // v6 (2026-07-31, brief contesto risposte out): il replier ora VEDE le nostre risposte.
 //   - la posta SENT non viene piu' scartata: un messaggio inviato entra come direction='out',
 //     SOLO se il suo thread e' gia' in cs_conversations (fornitori/banca/newsletter restano fuori:
@@ -7,7 +15,8 @@
 //     Gmail/Outlook IT+EN + cap 8000 char) per non gonfiare corpi, classificatore e prompt.
 //   - azione `backfill_out` (PIN, una tantum, a blocchi con limit/offset): threads.get sui
 //     gmail_thread_id gia' noti (canale != rumore) e ingest dei soli messaggi out mancanti;
-//     idempotente (UNIQUE gmail_message_id), nessuna conversazione nuova, categorie intatte.
+//     idempotente (UNIQUE gmail_message_id), nessuna conversazione nuova, categorie intatte;
+//     i corpi gia' scritti CONVERGONO se le regole di strip migliorano (out_aggiornati).
 //   - `last_direction` DERIVATA dal messaggio piu' recente (prima era il letterale 'in').
 //   - ricalcolo DETERMINISTICO dell'urgenza (recomputeUrgency) su nuovo messaggio in/out e nel
 //     backfill: applica/spegne SOLO la regola sollecito di cs-classify (stessi motivi testuali),
@@ -191,8 +200,9 @@ const detectLingua = (t: string) => (/\b(the|your|order|hello|hi|please|thanks|w
 // gonfiare corpi/classificatore/prompt col thread intero duplicato.
 const QUOTE_MARKERS = [
   // NB: "Il giorno <data> <nome> <email> ha scritto:" nelle mail reali VA A CAPO nel mezzo
-  // (l'email wrappa su una riga nuova): serve [\s\S] lazy, non '.', per attraversare i newline.
-  /\r?\nIl giorno [\s\S]{0,220}?\sha scritto:/i,   // Gmail IT (il wrap puo' cadere anche PRIMA di "ha scritto")
+  // (l'email wrappa su una riga nuova): serve [\s\S] lazy, non '.', per attraversare i newline;
+  // e il wrap puo' cadere anche PRIMA di "ha scritto"/"wrote", quindi \s al posto dello spazio.
+  /\r?\nIl giorno [\s\S]{0,220}?\sha scritto:/i,   // Gmail IT
   /\r?\nOn [\s\S]{0,220}?\swrote:/i,               // Gmail EN
   /\r?\n-{2,}\s*(Original Message|Messaggio originale)\s*-{2,}/i,
   /\r?\n_{5,}\r?\n/,                              // divisore Outlook
@@ -204,6 +214,35 @@ function stripQuote(t: string): string {
   let cut = t.length;
   for (const re of QUOTE_MARKERS) { const m = t.match(re); if (m && m.index != null && m.index < cut) cut = m.index; }
   return t.slice(0, cut).trim().slice(0, 8000);
+}
+
+// v7: pulizia COMPLETA per body_clean (funzione condivisa in/out, stessa famiglia di stripQuote:
+// stessi QUOTE_MARKERS). In piu' rispetto a stripQuote: marcatore riconosciuto anche a INIZIO
+// corpo (messaggio che e' solo una citazione -> NULL), via le righe quotate '>' residue, via la
+// firma da '-- ' in poi, boilerplate della notifica Inbox estratto per chat_notifica, whitespace
+// normalizzato. Ritorna NULL se non resta nulla: la UI fa fallback su body_text (mai perdere).
+function stripQuoted(t: string, canale?: string): string | null {
+  let s = t || '';
+  if (canale === 'chat_notifica') {
+    const m = s.match(/new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox/i);
+    if (m) s = m[1];
+  }
+  // taglio alla prima attribution line; probe con \n iniettato per agganciare un marcatore a inizio corpo
+  const probe = '\n' + s;
+  let cut = s.length;
+  for (const re of QUOTE_MARKERS) {
+    const m = probe.match(re);
+    if (m && m.index != null && Math.max(0, m.index - 1) < cut) cut = Math.max(0, m.index - 1);
+  }
+  s = s.slice(0, cut);
+  const kept: string[] = [];
+  for (const line of s.replace(/\r\n?/g, '\n').split('\n')) {
+    if (/^\s*>/.test(line)) continue;          // riga quotata residua
+    if (/^--\s*$/.test(line)) break;           // firma: da qui in poi via
+    kept.push(line);
+  }
+  s = kept.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 8000);
+  return s || null;
 }
 
 async function gGet(path: string, token: string): Promise<{ ok: boolean; status: number; j: Record<string, unknown> }> {
@@ -228,7 +267,7 @@ Deno.serve(async (req) => {
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const action = String(body.action || 'poll');
-  if (action !== 'poll' && action !== 'backfill_out') return json({ error: 'azione sconosciuta: ' + action }, 422);
+  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
   const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders']);
@@ -313,11 +352,13 @@ Deno.serve(async (req) => {
     const H = msg.payload?.headers;
     const to = parseAddr(hdr(H, 'to'));
     const sentAt = msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null;
-    const bodyText = stripQuote(stripNull(extractBody(msg.payload)));
+    const rawBody = stripNull(extractBody(msg.payload));
+    const bodyText = stripQuote(rawBody);
     try {
       const { error: me, count } = await sb.from('cs_messages').upsert({
         gmail_message_id: id, conversation_id: conv.id, direction: 'out',
         from_email: GMAIL_USER, to_email: to.email || null, sent_at: sentAt, body_text: bodyText || null,
+        body_clean: stripQuoted(rawBody, conv.canale),
       }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
       if (me) return 'transient';
       if (count) {
@@ -345,7 +386,7 @@ Deno.serve(async (req) => {
       .order('created_at', { ascending: true })
       .range(offset, offset + limit - 1);
     let scanned = 0, wrote = 0, updated = 0, urgFixed = 0; const errors: string[] = [];
-    for (const c of (convs ?? []) as { id: string; gmail_thread_id: string }[]) {
+    for (const c of (convs ?? []) as { id: string; gmail_thread_id: string; canale: string }[]) {
       scanned++;
       let th: { ok: boolean; status: number; j: Record<string, unknown> };
       try { th = await gGet(`/threads/${encodeURIComponent(c.gmail_thread_id)}?format=full`, token); }
@@ -360,17 +401,20 @@ Deno.serve(async (req) => {
         if (!(lbl.includes('SENT') || isAmimi(from.email))) continue;   // solo i NOSTRI messaggi
         const to = parseAddr(hdr(H, 'to'));
         const sentAt = m.internalDate ? new Date(Number(m.internalDate)).toISOString() : null;
-        const bodyText = stripQuote(stripNull(extractBody(m.payload)));
+        const rawBody = stripNull(extractBody(m.payload));
+        const bodyText = stripQuote(rawBody);
+        const bodyClean = stripQuoted(rawBody, c.canale);
         const { error: me, count } = await sb.from('cs_messages').upsert({
           gmail_message_id: m.id, conversation_id: c.id, direction: 'out',
           from_email: from.email || GMAIL_USER, to_email: to.email || null, sent_at: sentAt, body_text: bodyText || null,
+          body_clean: bodyClean,
         }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
         if (me) { errors.push(m.id + ':' + me.message.slice(0, 60)); continue; }
         if (count) { wrote += count; convWrote += count; }
         else if (bodyText) {
-          // riga gia' presente: CONVERGI il corpo se le regole di strip sono migliorate nel
-          // frattempo (ri-derivato dalla fonte Gmail, idempotente); non conta come "scritto"
-          const { count: uc } = await sb.from('cs_messages').update({ body_text: bodyText }, { count: 'exact' })
+          // riga gia' presente: CONVERGI corpo e clean se le regole di strip sono migliorate nel
+          // frattempo (ri-derivati dalla fonte Gmail, idempotente); non conta come "scritto"
+          const { count: uc } = await sb.from('cs_messages').update({ body_text: bodyText, body_clean: bodyClean }, { count: 'exact' })
             .eq('gmail_message_id', m.id).eq('direction', 'out').neq('body_text', bodyText);
           if (uc) updated += uc;
         }
@@ -387,6 +431,36 @@ Deno.serve(async (req) => {
       }
     }
     return json({ ok: true, scanned, out_scritti: wrote, out_aggiornati: updated, urgenze_ricalcolate: urgFixed, offset, next_offset: offset + scanned, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
+  }
+
+  // --- BACKFILL body_clean (v7): pulisce lo storico gia' ingerito con la STESSA stripQuoted ---
+  // A blocchi (limit/offset su righe con body_clean NULL e body_text presente); body_text MAI
+  // toccato; idempotente (ri-eseguito a coda vuota scrive 0). `force: true` ricalcola TUTTE le
+  // righe (convergenza se le regole di strip migliorano in futuro).
+  if (action === 'backfill_clean') {
+    const limit = Math.min(Number(body.limit) || 200, 400);
+    const force = body.force === true;
+    const { data: convRows } = await sb.from('cs_conversations').select('id, canale');
+    const canaleOf = new Map<string, string>();
+    for (const c of (convRows ?? []) as { id: string; canale: string }[]) canaleOf.set(c.id, c.canale);
+    // keyset su id (le righe con clean legittimamente NULL restano NULL: senza keyset
+    // occuperebbero per sempre la testa della coda non-force)
+    let q = sb.from('cs_messages').select('id, conversation_id, body_text, body_clean').not('body_text', 'is', null).order('id', { ascending: true }).limit(limit);
+    if (!force) q = q.is('body_clean', null);
+    if (body.after_id) q = q.gt('id', String(body.after_id));
+    const { data: msgs, error: qe } = await q;
+    if (qe) return json({ ok: false, error: qe.message }, 500);
+    let scanned = 0, wrote = 0, invariati = 0; let lastId: string | null = null; const errors: string[] = [];
+    for (const m of (msgs ?? []) as { id: string; conversation_id: string; body_text: string; body_clean: string | null }[]) {
+      scanned++; lastId = m.id;
+      const clean = stripQuoted(m.body_text, canaleOf.get(m.conversation_id));
+      if (clean === m.body_clean) { invariati++; continue; }
+      const { error: ue } = await sb.from('cs_messages').update({ body_clean: clean }).eq('id', m.id);
+      if (ue) { errors.push(m.id + ':' + ue.message.slice(0, 60)); continue; }
+      wrote++;
+    }
+    const { count: remaining } = await sb.from('cs_messages').select('id', { count: 'exact', head: true }).is('body_clean', null).not('body_text', 'is', null);
+    return json({ ok: true, scanned, clean_scritti: wrote, invariati, last_id: lastId, remaining: remaining ?? 0, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
   }
 
   // --- DRY RUN: classifica i messaggi recenti, ritorna SOLO conteggi, scrive NULLA ---
@@ -501,6 +575,7 @@ Deno.serve(async (req) => {
       const { error: me, count } = await sb.from('cs_messages').upsert({
         gmail_message_id: id, conversation_id: convId, direction: 'in',
         from_email: p.from.email || null, to_email: p.to.email || null, sent_at: p.sentAt, body_text: p.bodyText || null, form_fields: p.formFields,
+        body_clean: stripQuoted(p.bodyText, p.cl.canale),
       }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
       if (me) return 'transient';
       if (count) {
