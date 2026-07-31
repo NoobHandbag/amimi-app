@@ -1,20 +1,22 @@
-import { useEffect, useMemo, useState } from 'react';
-import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi, fetchActiveFornitori, fetchLastPurchase, fetchModels } from '../lib/api';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi, fetchActiveFornitori, fetchLastPurchase, fetchLastOrder, fetchModels } from '../lib/api';
 import type { Supplier, FornProd, Product } from '../lib/api';
 import { toast } from '../lib/toast';
+import Icon from './Icon';
 
 const modelTok = (s: string) => s.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_]/g, '');
 const variantTok = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
 
-type Line = { codice: string; item: string | null; variant: string | null; qty: number; costo: string; nuovo: boolean; wip: boolean };
+// qty come TESTO: vuotabile (redesign 31-07: il default 5 hardcoded era concausa dell'ordine
+// fantasma COCCO; mai ordinata = campo vuoto da compilare, la validazione al salvataggio blocca).
+type Line = { codice: string; item: string | null; variant: string | null; qty: string; costo: string; nuovo: boolean; wip: boolean };
 
 export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initialCodice }: { pin: string; chi: string; onDone: () => void; initialForn?: string; initialCodice?: string }) {
   const [sups, setSups] = useState<Supplier[]>([]);
   const [active, setActive] = useState<Set<string>>(new Set());
   const [showOld, setShowOld] = useState(false);
   const [forn, setForn] = useState(initialForn ?? '');
-  const [typing, setTyping] = useState(false);
-  const [typed, setTyped] = useState('');
+  const [fq, setFq] = useState('');
   const [bags, setBags] = useState<FornProd[]>([]);
   const [all, setAll] = useState<Product[]>([]);
   const [q, setQ] = useState('');
@@ -25,6 +27,10 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   const [nmFree, setNmFree] = useState(false);
   const [modelList, setModelList] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  // feedback aggiunta (decisione owner 2): flash sulla riga carrello appena aggiunta/gia' presente
+  const [flashCodice, setFlashCodice] = useState('');
+  const flashTimer = useRef<number | undefined>(undefined);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { fetchSuppliers().then(setSups).catch(() => {}); fetchProducts().then(setAll).catch(() => {}); fetchActiveFornitori().then((a) => setActive(new Set(a))).catch(() => {}); fetchModels().then((m) => setModelList(m.map((x) => x.model))).catch(() => {}); }, []);
 
@@ -38,13 +44,62 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   useEffect(() => { if (forn) fetchFornitoreProdotti(forn).then(setBags).catch(() => setBags([])); }, [forn]);
 
   const inCart = useMemo(() => new Set(lines.map((l) => l.codice)), [lines]);
-  const addLine = (codice: string, item: string | null, variant: string | null, costo: number | null, nuovo: boolean) => {
-    if (!codice || inCart.has(codice)) return;
-    setLines((p) => [...p, { codice, item, variant, qty: nuovo ? 5 : 5, costo: costo != null ? String(costo) : '', nuovo, wip: false }]);
+  const bagOf = useMemo(() => new Map(bags.map((b) => [b.codice, b])), [bags]);
+
+  const flashRow = (codice: string) => {
+    setFlashCodice('');
+    window.clearTimeout(flashTimer.current);
+    // due frame: ri-applica la classe anche su flash consecutivi della stessa riga
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      setFlashCodice(codice);
+      flashTimer.current = window.setTimeout(() => setFlashCodice(''), 1300);
+    }));
+  };
+  // scroll-into-view della riga evidenziata se fuori schermo
+  useEffect(() => {
+    if (!flashCodice) return;
+    document.querySelector(`[data-cart-codice="${CSS.escape(flashCodice)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [flashCodice]);
+
+  // prefill ASINCRONO di costo/quantita' dallo storico: mai bloccare l'aggiunta, se la chiamata
+  // fallisce i campi restano vuoti. Riempie solo se l'utente non ha gia' scritto.
+  const prefillLine = (codice: string) => {
+    fetchLastOrder(codice).then((lo) => {
+      if (!lo) return;
+      setLines((p) => p.map((x) => x.codice === codice ? {
+        ...x,
+        qty: x.qty === '' && lo.qty_ordered != null ? String(lo.qty_ordered) : x.qty,
+        costo: x.costo === '' && lo.costo_unitario != null ? String(lo.costo_unitario) : x.costo,
+      } : x));
+    }).catch(() => {});
+    fetchLastPurchase(codice).then((lp) => {
+      if (!lp || lp.costo_unitario == null) return;
+      setLines((p) => p.map((x) => x.codice === codice && x.costo === '' ? { ...x, costo: String(lp.costo_unitario) } : x));
+    }).catch(() => {});
   };
 
-  // riordino precompilato (item 21): arrivo dal magazzino con un CODICE — fornitore e costo
-  // dall'ultimo acquisto di quella borsa, riga già nel carrello.
+  // aggiunta dal risultato di ricerca: costo dallo storico fornitore se c'e', il resto async;
+  // toast + flash + query svuotata + focus ancora sulla barra (aggiunte consecutive su iPhone)
+  const addFromSearch = (codice: string, item: string | null, variant: string | null) => {
+    const nome = [item, variant].filter(Boolean).join(' ') || codice;
+    if (inCart.has(codice)) {
+      toast(`${nome}: già nell'ordine`, 'err');
+      flashRow(codice);
+      setQ(''); searchRef.current?.focus();
+      return;
+    }
+    const costoStorico = bagOf.get(codice)?.ultimo_costo;
+    setLines((p) => {
+      toast(`${nome} aggiunta · ${p.length + 1} nell'ordine`);
+      return [...p, { codice, item, variant, qty: '', costo: costoStorico != null ? String(costoStorico) : '', nuovo: false, wip: false }];
+    });
+    prefillLine(codice);
+    flashRow(codice);
+    setQ(''); searchRef.current?.focus();
+  };
+
+  // riordino precompilato (item 21 + decisione 3): arrivo dal magazzino con un CODICE — fornitore
+  // e costo dall'ultimo acquisto, quantita' dall'ultimo ordine, riga già nel carrello.
   useEffect(() => {
     if (!initialCodice) return;
     let alive = true;
@@ -54,15 +109,24 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
       const p = prods.find((x) => x.codice === initialCodice);
       if (last?.fornitore) setForn((f) => f || last.fornitore!);
       setLines((prev) => prev.some((l) => l.codice === initialCodice) ? prev
-        : [...prev, { codice: initialCodice, item: p?.item ?? null, variant: p?.variant ?? null, qty: 5, costo: last?.costo_unitario != null ? String(last.costo_unitario) : '', nuovo: false, wip: false }]);
+        : [...prev, { codice: initialCodice, item: p?.item ?? null, variant: p?.variant ?? null, qty: '', costo: last?.costo_unitario != null ? String(last.costo_unitario) : '', nuovo: false, wip: false }]);
+      prefillLine(initialCodice);
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCodice]);
-  const searchHits = useMemo(() => {
+
+  // risultati: storico del fornitore IN TESTA (con thumbnail e "gia' ordinata N volte · ultimo €X"),
+  // poi il resto del catalogo; con barra vuota NESSUNA lista (decisione owner 1).
+  type Hit = { codice: string; item: string | null; variant: string | null; image_url: string | null; storico: FornProd | null };
+  const searchHits: Hit[] = useMemo(() => {
     const s = q.trim().toLowerCase(); if (!s) return [];
-    return all.filter((p) => `${p.item ?? ''} ${p.variant ?? ''} ${p.codice}`.toLowerCase().includes(s)).slice(0, 8);
-  }, [all, q]);
+    const match = (item: string | null, variant: string | null, codice: string) => `${item ?? ''} ${variant ?? ''} ${codice}`.toLowerCase().includes(s);
+    const hitsForn: Hit[] = bags.filter((b) => match(b.item, b.variant, b.codice)).map((b) => ({ codice: b.codice, item: b.item, variant: b.variant, image_url: b.image_url, storico: b }));
+    const seen = new Set(hitsForn.map((h) => h.codice));
+    const hitsAll: Hit[] = all.filter((p) => !seen.has(p.codice) && match(p.item, p.variant, p.codice)).map((p) => ({ codice: p.codice, item: p.item, variant: p.variant, image_url: p.image_url, storico: null }));
+    return [...hitsForn, ...hitsAll].slice(0, 12);
+  }, [all, bags, q]);
 
   function addNewBag() {
     // CODICE tutto MAIUSCOLO (decisione owner 06-07). Il codice qui e' comunque PROVVISORIO:
@@ -70,19 +134,24 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
     // rigenera dai suoi Modello+Variante con rename a cascata).
     const codice = (nm && nv ? `${modelTok(nm)}_${variantTok(nv)}` : nm ? `${modelTok(nm)}_` : '').toUpperCase();
     if (!nm) return toast('Scrivi almeno il modello', 'err');
-    addLine(codice, nm.trim().toUpperCase(), nv ? variantTok(nv) : null, null, true);
+    if (!codice || inCart.has(codice)) { if (inCart.has(codice)) { toast(`già nell'ordine`, 'err'); flashRow(codice); } return; }
+    setLines((p) => {
+      toast(`${nm.trim().toUpperCase()} aggiunta · ${p.length + 1} nell'ordine`);
+      return [...p, { codice, item: nm.trim().toUpperCase(), variant: nv ? variantTok(nv) : null, qty: '', costo: '', nuovo: true, wip: false }];
+    });
+    flashRow(codice);
     setNm(''); setNv(''); setNewOpen(false); setNmFree(false);
   }
 
   async function submit() {
     if (!forn) return toast('Scegli il fornitore', 'err');
     if (!lines.length) return toast('Aggiungi almeno una borsa', 'err');
-    const invalid = lines.find((l) => !l.wip && !(l.qty > 0));
+    const invalid = lines.find((l) => !l.wip && !(Number(l.qty) > 0));
     if (invalid) return toast(`Quantità mancante per ${invalid.item ?? invalid.codice}: mettila o segna WIP`, 'err');
     setBusy(true);
     try {
       const righe = lines.map((l) => ({
-        codice: l.codice, item: l.item, variant: l.variant, qty_ordered: l.wip ? 0 : l.qty, wip: l.wip,
+        codice: l.codice, item: l.item, variant: l.variant, qty_ordered: l.wip ? 0 : Number(l.qty), wip: l.wip,
         nuovo_riordino: l.nuovo ? 'Nuovo' : 'Riordino', costo_unitario: l.costo === '' ? null : Number(l.costo),
       }));
       const r = await createOrderMulti(forn, dataOrd, righe, pin, chi) as unknown as { lines: number; stubs: number };
@@ -91,47 +160,54 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
     } catch (e) { toast((e as Error).message, 'err'); setBusy(false); }
   }
 
-  // STEP 1 — supplier
+  // STEP 1 — fornitore: ricerca in alto + attivi come chip compatte (decisione owner 4).
+  // Fonte attivi invariata: set `active` da supplier_orders, NON intersecato con `suppliers`
+  // (un fornitore ordinato ma assente dal catalogo suppliers sparirebbe). I vecchi si vedono
+  // cercando o dietro il toggle. Testo senza match esatto -> "Crea fornitore {testo}".
   if (!forn) {
+    const fs = fq.trim().toLowerCase();
+    const act = [...active].sort((a, b) => a.localeCompare(b)).filter((n) => !fs || n.toLowerCase().includes(fs));
+    const vecchiTutti = sups.filter((s) => !active.has(s.name)).map((s) => s.name);
+    const vecchi = vecchiTutti.filter((n) => !fs || n.toLowerCase().includes(fs));
+    const exact = [...active, ...vecchiTutti].some((n) => n.toLowerCase() === fs);
     return (
       <div className="form">
         <label className="fl">Fornitore</label>
-        {typing ? (
-          <div className="newbag">
-            <input className="txt" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Nome fornitore" autoFocus />
-            <button className="submit small" disabled={!typed.trim()} onClick={() => setForn(typed.trim())}>Avanti →</button>
+        <div className="ds-search">
+          <Icon name="search" size={19} />
+          <input value={fq} onChange={(e) => setFq(e.target.value)} placeholder="Cerca o crea un fornitore…" autoFocus />
+        </div>
+        {act.length > 0 && (
+          <div className="ds-lens" style={{ marginTop: 2 }}>
+            {act.map((name) => <button key={name} type="button" className="ds-fp" onClick={() => setForn(name)}>{name}</button>)}
           </div>
-        ) : (() => {
-          // Fornitori attivi = quelli che HANNO ordini (stessa lista della pagina "Ordini", che legge
-          // da supplier_orders): mostrarli direttamente dal set `active`, NON intersecando i nomi col
-          // catalogo `suppliers`. Un fornitore ordinato ma non presente in `suppliers` (es. "Sarte
-          // Milano (tessuto)") altrimenti sparirebbe del tutto. I "vecchi" restano i suppliers senza ordini.
-          const act = [...active].sort((a, b) => a.localeCompare(b));
-          const vecchi = sups.filter((s) => !active.has(s.name)).map((s) => s.name);
-          return (
-            <>
-              <div className="supgrid">
-                {act.map((name) => <button key={name} type="button" className="supcard" onClick={() => setForn(name)}>{name}</button>)}
-                <button type="button" className="supcard alt" onClick={() => setTyping(true)}>+ nuovo</button>
-              </div>
-              {vecchi.length > 0 && (
-                <>
-                  <button className="addnew" type="button" onClick={() => setShowOld((v) => !v)}>{showOld ? '− Nascondi vecchi fornitori' : `Vecchi fornitori (${vecchi.length})`}</button>
-                  {showOld && <div className="supgrid">{vecchi.map((name) => <button key={name} type="button" className="supcard old" onClick={() => setForn(name)}>{name}</button>)}</div>}
-                </>
-              )}
-            </>
-          );
-        })()}
+        )}
+        {fs && vecchi.length > 0 && (
+          <div className="ds-lens">
+            <span className="ll">Vecchi</span>
+            {vecchi.map((name) => <button key={name} type="button" className="ds-lp" onClick={() => setForn(name)}>{name}</button>)}
+          </div>
+        )}
+        {fs && !exact && (
+          <button className="ds-btn secondary full" style={{ marginTop: 6 }} type="button" onClick={() => setForn(fq.trim())}>
+            <Icon name="plus" size={16} /> Crea fornitore “{fq.trim()}”
+          </button>
+        )}
+        {!fs && vecchiTutti.length > 0 && (
+          <>
+            <button className="addnew" type="button" onClick={() => setShowOld((v) => !v)}>{showOld ? '− Nascondi vecchi fornitori' : `Vecchi fornitori (${vecchiTutti.length})`}</button>
+            {showOld && <div className="ds-lens">{vecchiTutti.map((name) => <button key={name} type="button" className="ds-lp" onClick={() => setForn(name)}>{name}</button>)}</div>}
+          </>
+        )}
       </div>
     );
   }
 
-  const tot = lines.reduce((s, l) => s + (l.wip ? 0 : l.qty), 0);
+  const tot = lines.reduce((s, l) => s + (l.wip ? 0 : (Number(l.qty) || 0)), 0);
   return (
     <div className="form">
       <div className="ordtop">
-        <button className="chip on" onClick={() => { setForn(''); setLines([]); }}>{forn} ✕</button>
+        <button className="chip on" onClick={() => { setForn(''); setLines([]); setQ(''); }}>{forn} ✕</button>
         <label className="datepick">📅 <input type="date" value={dataOrd} onChange={(e) => setDataOrd(e.target.value)} /></label>
       </div>
 
@@ -145,7 +221,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
             <span style={{ width: 28 }} />
           </div>
           {lines.map((l, i) => (
-            <div className="cartrow" key={l.codice}>
+            <div className={'cartrow' + (flashCodice === l.codice ? ' flash' : '')} data-cart-codice={l.codice} key={l.codice}>
               <div className="cartinfo">
                 <div className="rt">{l.item ?? l.codice} {l.nuovo && <span className="newtag">nuova</span>}</div>
                 <div className="rs">{l.variant ?? (l.codice.endsWith('_') ? 'variante da definire' : '')}</div>
@@ -156,7 +232,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
                 </button>
               </div>
               <input className="qbox" type="number" inputMode="numeric" placeholder="pezzi" value={l.wip ? '' : l.qty} disabled={l.wip}
-                onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, qty: Number(e.target.value) } : x))} />
+                onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, qty: e.target.value } : x))} />
               <input className="cbox" type="number" inputMode="decimal" placeholder="€/pz" value={l.costo}
                 onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, costo: e.target.value } : x))} />
               <button className="x" onClick={() => setLines((p) => p.filter((_, j) => j !== i))}>✕</button>
@@ -166,27 +242,37 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
         </div>
       )}
 
-      <label className="fl">Borse di {forn}</label>
-      <div className="pgrid">
-        {bags.filter((b) => !inCart.has(b.codice)).slice(0, 12).map((b) => (
-          <button key={b.codice} className="pcard" type="button" onClick={() => addLine(b.codice, b.item, b.variant, b.ultimo_costo, false)}>
-            <div className="pimg">{b.image_url ? <img src={b.image_url} alt="" loading="lazy" /> : <span>{(b.item ?? b.codice).slice(0, 2)}</span>}</div>
-            <div className="pname">{b.item ?? b.codice}</div>
-            <div className="pvar">{b.variant ?? ''}{b.ultimo_costo != null ? ` · €${b.ultimo_costo}` : ''}</div>
-          </button>
-        ))}
-        {!bags.length && <p className="muted">Nessuno storico per {forn}. Cerca sotto o aggiungi una borsa nuova.</p>}
+      {/* search-first (decisione owner 1): si aggiunge SOLO dalla ricerca; barra vuota = nessuna lista */}
+      <div className="ds-search" style={{ marginBottom: 8 }}>
+        <Icon name="search" size={19} />
+        <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Cerca una borsa da ordinare a ${forn}…`} autoFocus={!initialCodice} />
       </div>
-
-      <input className="search" placeholder="Cerca un'altra borsa…" value={q} onChange={(e) => setQ(e.target.value)} />
-      {searchHits.length > 0 && (
-        <div className="hits">
-          {searchHits.map((p) => (
-            <button key={p.codice} className="hit" type="button" onClick={() => { addLine(p.codice, p.item, p.variant, null, false); setQ(''); }}>
-              {p.image_url ? <img className="invimg sm" src={p.image_url} alt="" loading="lazy" style={{ verticalAlign: 'middle', marginRight: 6 }} /> : null}
-              {p.item ?? p.codice} <span>{p.variant ?? ''}</span>
-            </button>
-          ))}
+      {q.trim() && searchHits.length > 0 && (
+        <div style={{ marginBottom: 4 }}>
+          {searchHits.map((h) => {
+            const already = inCart.has(h.codice);
+            return (
+              <button key={h.codice} className="ds-prow" type="button" onClick={() => addFromSearch(h.codice, h.item, h.variant)}>
+                <span className="ds-thumb">{h.image_url ? <img src={h.image_url} alt="" loading="lazy" /> : (h.item ?? h.codice).slice(0, 2)}</span>
+                <span className="ds-pinfo">
+                  <span className="ds-pn">{h.item ?? h.codice} <span style={{ fontWeight: 400, color: 'var(--ink-muted)' }}>{h.variant ?? ''}</span></span>
+                  <span className="ds-psub">{h.storico
+                    ? `già ordinata ${h.storico.n_ordini} ${h.storico.n_ordini === 1 ? 'volta' : 'volte'}${h.storico.ultimo_costo != null ? ` · ultimo €${h.storico.ultimo_costo}` : ''}`
+                    : 'mai ordinata da questo fornitore'}</span>
+                </span>
+                {already ? <span className="ds-pbadge pub">✓ nell’ordine</span> : <span className="ds-pbadge off">+ aggiungi</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {q.trim() && searchHits.length === 0 && (
+        <div className="muted" style={{ fontSize: 13, margin: '4px 2px 8px' }}>
+          Nessuna borsa trovata per “{q.trim()}”.
+          <button type="button" className="linkbtn" style={{ display: 'block', padding: '6px 0 0', fontWeight: 700 }}
+            onClick={() => { setNewOpen(true); setNmFree(true); setNm(q.trim()); setQ(''); }}>
+            + Borsa nuova “{q.trim()}”
+          </button>
         </div>
       )}
 

@@ -60,6 +60,7 @@ export type CsMessage = {
   to_email: string | null;
   sent_at: string | null;
   body_text: string | null;
+  body_clean: string | null;    // solo le parole del mittente (cs-sync stripQuoted, migr 0081); NULL = fallback su body_text
   is_via_tool: boolean;
   form_fields: Record<string, string> | null;
 };
@@ -90,7 +91,7 @@ export async function fetchRumore(): Promise<CsConversation[]> {
 export async function fetchMessages(conversationId: string): Promise<CsMessage[]> {
   const { data, error } = await csClient
     .from('cs_messages')
-    .select('id,direction,sent_by,from_email,to_email,sent_at,body_text,is_via_tool,form_fields')
+    .select('id,direction,sent_by,from_email,to_email,sent_at,body_text,body_clean,is_via_tool,form_fields')
     .eq('conversation_id', conversationId)
     .order('sent_at', { ascending: true, nullsFirst: true });
   if (error) throw new Error(error.message);
@@ -170,7 +171,10 @@ export async function addNoise(conversationId: string, sender: string, chi: stri
 const CS_ASSIST_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/cs-assist';
 
 export type OrderHistory = { n_ordini: number; totale: number; prima: string | null; ultima: string | null; recenti: { numero: number; data: string; totale: number; stato: string | null }[] };
-export type CsContext = { fonti: string[]; gaps?: string[]; order_admin_url: string | null; storia: OrderHistory | null };
+// dati gia' recuperati dal context (cs-assist assembleContext): alimentano la strip "fatti" della testata
+export type CtxOrdine = { order_number: number | null; gross_total: number | null; fulfillment_status: string | null; created_at_shop: string | null; righe: { nome: string; qta: number }[] };
+export type CtxTracking = { numero: string; url: string; corriere: string };
+export type CsContext = { fonti: string[]; gaps?: string[]; order_admin_url: string | null; storia: OrderHistory | null; ordine?: CtxOrdine | null; tracking?: CtxTracking | null };
 // non_grounded = linter di aderenza server-side: numeri/date/URL della bozza NON trovati nei dati reali
 export type DraftOption = { tono: string; testo: string; da_verificare: number; non_grounded?: string[] };
 
@@ -192,7 +196,20 @@ async function callAssist(bodyObj: Record<string, unknown>): Promise<Record<stri
  *  Chiamata all'apertura del thread per popolare la testata. */
 export async function fetchContext(conversationId: string): Promise<CsContext> {
   const j = await callAssist({ action: 'context', conversation_id: conversationId });
-  return { fonti: (j.fonti || []) as string[], gaps: (j.gaps || []) as string[], order_admin_url: (j.order_admin_url as string) ?? null, storia: (j.storia as OrderHistory) ?? null };
+  const dati = (j.dati ?? {}) as { ordine?: unknown; tracking?: unknown };
+  const o = dati.ordine as Record<string, unknown> | null | undefined;
+  const ordine: CtxOrdine | null = o ? {
+    order_number: o.order_number == null ? null : Number(o.order_number),
+    gross_total: o.gross_total == null ? null : Number(o.gross_total),
+    fulfillment_status: (o.fulfillment_status as string) ?? null,
+    created_at_shop: (o.created_at_shop as string) ?? null,
+    righe: Array.isArray(o.righe) ? (o.righe as { nome: string; qta: number }[]) : [],
+  } : null;
+  return {
+    fonti: (j.fonti || []) as string[], gaps: (j.gaps || []) as string[],
+    order_admin_url: (j.order_admin_url as string) ?? null, storia: (j.storia as OrderHistory) ?? null,
+    ordine, tracking: (dati.tracking as CtxTracking) ?? null,
+  };
 }
 
 // --- Motore dei verdetti (design Parte B): il codice decide il caso, l'AI scrive la frase ---

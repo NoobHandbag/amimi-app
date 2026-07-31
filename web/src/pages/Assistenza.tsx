@@ -119,6 +119,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [current, setCurrent] = useState<CsConversation | null>(null);
   const [msgs, setMsgs] = useState<CsMessage[] | null>(null);
   const [menu, setMenu] = useState(false);
+  // menu overflow "..." della testata thread (redesign 31-07: "Non e' un cliente" e' un'azione rara)
+  const [moreOpen, setMoreOpen] = useState(false);
   const [err, setErr] = useState('');
   const [email, setEmail] = useState('');
   const [pwd, setPwd] = useState('');
@@ -196,7 +198,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     pushSub();
     threadRef.current = c.id;
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
-    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]);
+    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]); setMoreOpen(false);
     try { const m = await fetchMessages(c.id); if (threadRef.current === c.id) setMsgs(m); }
     catch (e) { if (threadRef.current === c.id) setErr((e as Error).message); }
     // Contesto (link ordine + storico acquisti): nessuna spesa AI, best-effort (non blocca il thread).
@@ -333,6 +335,13 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // ---- thread ----
   if (view === 'thread' && current) {
     const c = current;
+    const draftMode = options !== null;   // bozze generate: testata compressa, contesto lascia spazio (mockup frame 3)
+    const primoNome = (nmeOf(c).split(' ')[0] || 'Cliente');
+    const ordSub = ctx?.ordine ? [
+      ctx.ordine.created_at_shop ? `${ctx.ordine.created_at_shop.slice(8, 10)}-${ctx.ordine.created_at_shop.slice(5, 7)}` : null,
+      ctx.ordine.gross_total != null ? `${Math.round(ctx.ordine.gross_total)}€` : null,
+      ctx.ordine.righe[0]?.nome ? ctx.ordine.righe[0].nome.slice(0, 26) : null,
+    ].filter(Boolean).join(' · ') : '';
     return (
       <div className="screen">
         <header>
@@ -340,75 +349,132 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
           <button onClick={() => setMenu((m) => !m)} type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} ▾</button>
         </header>
         {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
+        {/* testata: compatta; in modalita' bozza si comprime a nome + ordine/categoria + urgenza */}
         <div className="card">
-          <div className="cs-tnm">{nmeOf(c)}</div>
-          <div className="cs-tem">{c.customer_email || '—'} · {CANALI[c.canale]}{c.order_number ? ` · ordine #${c.order_number}` : ''}</div>
-          <div style={{ marginTop: 6 }}>
-            <span className="cs-badge cs-can">{CANALI[c.canale]}</span>
-            {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
-            <span className={'cs-badge cs-state' + (c.stato === 'fatto' ? ' cs-state-done' : c.stato === 'in_corso' ? ' cs-state-prog' : '')}>
-              {c.stato === 'fatto' ? `✓ conclusa${c.stato_by ? ' · ' + c.stato_by : ''}` : c.stato === 'in_corso' ? `✋ in corso · ${c.stato_by ?? ''}` : 'da iniziare'}
-            </span>
+          <div className="cs-chead-r1">
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className={'cs-tnm' + (draftMode ? ' sm' : '')}>{nmeOf(c)}</div>
+              <div className="cs-tem">{draftMode
+                ? `${c.order_number ? `#${c.order_number} · ` : ''}${c.categoria ? `${catEmoji(c.categoria)} ${c.categoria}` : CANALI[c.canale]}`
+                : `${c.customer_email || '—'} · ${CANALI[c.canale]}`}</div>
+            </div>
+            {isUrg(c) && <span className="cs-urgpill" title={c.urgenza_motivo || 'urgente'}>🚨 {c.urgenza_motivo || 'urgente'}</span>}
           </div>
-          {c.canale !== 'rumore' && <Badges c={c} />}
-          {c.canale !== 'rumore' && (
-            <div className="cs-catedit">
-              <label>Categoria</label>
-              <select value={c.categoria ?? ''} disabled={savingCat} onChange={(e) => applyCat(e.target.value || null)}>
-                <option value="">— da confermare —</option>
-                {CS_CATEGORIES.map((k) => <option key={k.label} value={k.label}>{k.emoji} {k.label}</option>)}
-              </select>
-              {savingCat && <span className="muted" style={{ fontSize: 12 }}>salvo…</span>}
-            </div>
-          )}
-          {c.canale !== 'rumore' && (
-            <div className="cs-actions-row">
-              {c.stato === 'da_fare' && <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'in_corso')} type="button">✋ Prendo io</button>}
-              {c.stato !== 'fatto'
-                ? <button className="cs-btn cs-ghost cs-okbtn" disabled={savingStato} onClick={() => doStato(c, 'fatto')} type="button">✓ Conclusa</button>
-                : <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'da_fare')} type="button">↩ Riapri</button>}
-              <button className="cs-btn cs-ghost cs-noisebtn" disabled={savingStato} onClick={() => doNoise(c)} type="button">🚫 Non è un cliente</button>
-            </div>
-          )}
-        </div>
-        {c.canale !== 'rumore' && ctx && (ctx.order_admin_url || (ctx.storia && ctx.storia.n_ordini > 0)) && (
-          <div className="cs-ctx">
-            {ctx.order_admin_url && (
-              <a className="cs-orderlink" href={ctx.order_admin_url} target="_blank" rel="noreferrer">🛍 Apri ordine{c.order_number ? ` #${c.order_number}` : ''} su Shopify ↗</a>
-            )}
-            {ctx.storia && ctx.storia.n_ordini > 0 && (
-              <div className="cs-storia">
-                <div className="cs-storia-h">🧾 Cliente: <b>{ctx.storia.n_ordini}</b> {ctx.storia.n_ordini === 1 ? 'ordine' : 'ordini'} · <b>{ctx.storia.totale}€</b> totali{ctx.storia.n_ordini > 1 ? ' · abituale' : ''}</div>
-                <div className="cs-storia-list">
-                  {ctx.storia.recenti.map((o, i) => <span key={i} className="cs-storia-row">#{o.numero} · {o.data} · {o.totale}€</span>)}
+          {!draftMode && c.canale !== 'rumore' && (
+            <>
+              <div className="cs-chiprow">
+                <select className="cs-catchip" value={c.categoria ?? ''} disabled={savingCat} onChange={(e) => applyCat(e.target.value || null)} aria-label="Categoria">
+                  <option value="">🏷️ da confermare</option>
+                  {CS_CATEGORIES.map((k) => <option key={k.label} value={k.label}>{k.emoji} {k.label}</option>)}
+                </select>
+                <span className={'cs-badge cs-state' + (c.stato === 'fatto' ? ' cs-state-done' : c.stato === 'in_corso' ? ' cs-state-prog' : '')}>
+                  {c.stato === 'fatto' ? `✓ conclusa${c.stato_by ? ' · ' + c.stato_by : ''}` : c.stato === 'in_corso' ? `✋ in corso · ${c.stato_by ?? ''}` : 'da iniziare'}
+                </span>
+                {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
+                {(c.flags ?? []).filter((f) => f !== 'urgente' && FLAG_LABEL[f]).map((f) => (
+                  <span key={f} className="cs-badge cs-flag">{FLAG_LABEL[f]}</span>
+                ))}
+                {savingCat && <span className="muted" style={{ fontSize: 12 }}>salvo…</span>}
+              </div>
+              <div className="cs-actions-row">
+                {c.stato === 'da_fare' && <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'in_corso')} type="button">✋ Prendo io</button>}
+                {c.stato !== 'fatto'
+                  ? <button className="cs-btn cs-ghost cs-okbtn" disabled={savingStato} onClick={() => doStato(c, 'fatto')} type="button">✓ Conclusa</button>
+                  : <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'da_fare')} type="button">↩ Riapri</button>}
+                <div className="cs-more-wrap">
+                  <button className="cs-btn cs-ghost cs-morebtn" onClick={() => setMoreOpen((o) => !o)} type="button" aria-label="Altre azioni" aria-expanded={moreOpen}>⋯</button>
+                  {moreOpen && (
+                    <div className="cs-moremenu">
+                      <button type="button" disabled={savingStato} onClick={() => { setMoreOpen(false); doNoise(c); }}>🚫 Non è un cliente</button>
+                    </div>
+                  )}
                 </div>
               </div>
+            </>
+          )}
+          {!draftMode && c.canale === 'rumore' && (
+            <div style={{ marginTop: 6 }}><span className="cs-badge cs-can">{CANALI[c.canale]}</span></div>
+          )}
+        </div>
+        {/* strip "fatti": ordine / cliente / tracking gia' recuperati dal context, zero recuperi nuovi */}
+        {!draftMode && c.canale !== 'rumore' && ctx && (ctx.ordine || ctx.order_admin_url || (ctx.storia && ctx.storia.n_ordini > 0)) && (
+          <div className="cs-facts">
+            {(ctx.ordine || ctx.order_admin_url) && (ctx.order_admin_url ? (
+              <a className="cs-fact link" href={ctx.order_admin_url} target="_blank" rel="noreferrer">
+                <span className="fl">Ordine</span>
+                <span className="fv">#{ctx.ordine?.order_number ?? c.order_number ?? ''} ↗</span>
+                {ordSub && <span className="fs">{ordSub}</span>}
+              </a>
+            ) : (
+              <div className="cs-fact">
+                <span className="fl">Ordine</span>
+                <span className="fv">#{ctx.ordine?.order_number ?? c.order_number ?? ''}</span>
+                {ordSub && <span className="fs">{ordSub}</span>}
+              </div>
+            ))}
+            {ctx.storia && ctx.storia.n_ordini > 0 && (
+              <div className="cs-fact">
+                <span className="fl">Cliente</span>
+                <span className="fv">{ctx.storia.n_ordini} {ctx.storia.n_ordini === 1 ? 'ordine' : 'ordini'}</span>
+                <span className="fs">{ctx.storia.totale}€ totali{ctx.storia.n_ordini > 1 ? ' · abituale' : ''}</span>
+              </div>
             )}
+            {ctx.ordine && (ctx.tracking ? (
+              <a className="cs-fact link" href={ctx.tracking.url} target="_blank" rel="noreferrer">
+                <span className="fl">Tracking</span>
+                <span className="fv">{ctx.tracking.corriere} ↗</span>
+                <span className="fs">{ctx.tracking.numero}</span>
+              </a>
+            ) : (
+              <div className="cs-fact warn">
+                <span className="fl">Tracking</span>
+                <span className="fv">⚠ non disponibile</span>
+                <span className="fs">la bozza userà [DA VERIFICARE]</span>
+              </div>
+            ))}
           </div>
         )}
         {c.canale !== 'rumore' && ctx?.gaps && ctx.gaps.length > 0 && (
           <div className="cs-gaps">⚠️ <b>Contesto incompleto:</b> {ctx.gaps.join(' · ')}. La bozza usera&#8217; [DA VERIFICARE], mai inventare.</div>
         )}
-        {c.summary && (
-          <div className="cs-summary"><span className="cs-summary-h">📝 Riassunto e storia</span>{c.summary}</div>
+        {/* "In breve" (riassunto AI) subito sopra la conversazione */}
+        {!draftMode && c.summary && (
+          <div className="ds-aisum"><div className="ds-aisum-h">📝 In breve</div><p>{c.summary}</p></div>
         )}
-        {c.canale === 'chat_notifica' && (
+        {c.canale === 'chat_notifica' && !draftMode && (
           <div className="cs-banner">💬 Chat del sito (Shopify Inbox): Shopify non permette di rispondere da qui. Genera la bozza qui sotto, copiala e incollala nella conversazione.
             <div style={{ marginTop: 8 }}><a className="cs-btn cs-inbox" href={inboxUrlOf(msgs) ?? SHOPIFY_INBOX} target="_blank" rel="noreferrer">{inboxUrlOf(msgs) ? 'Rispondi in Inbox ↗' : 'Apri Shopify Inbox ↗'}</a></div>
           </div>
         )}
         {err && <div className="err">{err}</div>}
+        {msgs !== null && msgs.length > 0 && <div className="ds-seclb" style={{ marginTop: 12 }}>Conversazione</div>}
         {msgs === null ? <div className="muted center" style={{ padding: 20 }}>Carico messaggi…</div> :
           msgs.length === 0 ? <div className="muted center" style={{ padding: 20 }}>Nessun messaggio.</div> :
-            msgs.map((m) => (
-              <div key={m.id} className={'cs-msg ' + (m.direction === 'out' ? 'out' : 'in')}>
-                <div className="cs-who">{m.direction === 'out' ? (m.sent_by || 'Amimi’') + ' · ' : ''}{fmtWhen(m.sent_at)}</div>
-                {m.form_fields && Object.keys(m.form_fields).length > 0 && (
-                  <div className="cs-form">{Object.entries(m.form_fields).map(([k, v]) => <div key={k}><b>{k}:</b> {v}</div>)}</div>
-                )}
-                <div className="cs-body">{m.body_text ? (c.canale === 'chat_notifica' ? cleanChatBody(m.body_text) : cleanBody(m.body_text)) : (m.form_fields ? '' : '(vuoto)')}</div>
-              </div>
-            ))}
+            msgs.map((m) => {
+              const out = m.direction === 'out';
+              // bolla = body_clean (solo le parole del mittente); NULL -> grezzo come prima, senza expander
+              const fallback = m.body_text ? (c.canale === 'chat_notifica' ? cleanChatBody(m.body_text) : cleanBody(m.body_text)) : '';
+              const testo = m.body_clean ?? fallback;
+              const showOrig = !!m.body_clean && !!m.body_text && m.body_clean.trim() !== cleanBody(m.body_text).trim();
+              return (
+                <div key={m.id} className={'cs-msg ' + (out ? 'out' : 'in')}>
+                  <div className="cs-mh">{out ? `${fmtWhen(m.sent_at)} · ${m.sent_by || 'Amimi’'}` : `${primoNome} · ${fmtWhen(m.sent_at)}`}</div>
+                  <div className="cs-mb">
+                    {m.form_fields && Object.keys(m.form_fields).length > 0 && (
+                      <div className="cs-form">{Object.entries(m.form_fields).map(([k, v]) => <div key={k}><b>{k}:</b> {v}</div>)}</div>
+                    )}
+                    <div className="cs-body">{testo || (m.form_fields ? '' : '(vuoto)')}</div>
+                  </div>
+                  {showOrig && (
+                    <details className="cs-orig">
+                      <summary><span className="cs-tri">▶</span> Email completa <span style={{ fontWeight: 400 }}>(citazioni e riepilogo)</span></summary>
+                      <div className="cs-obody">{m.body_text}</div>
+                      <div className="cs-ofoot">Testo originale conservato tale e quale: questa è solo una vista.</div>
+                    </details>
+                  )}
+                </div>
+              );
+            })}
         {c.canale !== 'rumore' && c.categoria && CASE_CATS.has(c.categoria) && caso && (
           <div className="cs-case">
             <div className="cs-case-h">{c.categoria === 'Modifica / correzione indirizzo' ? '📍 Caso indirizzo — calcolato dal sistema' : '↩️ Caso reso — calcolato dal sistema'}</div>

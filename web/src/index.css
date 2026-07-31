@@ -273,6 +273,10 @@ tr.dim { opacity: .6; }
 .cart { background: rgba(139,94,107,.05); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; margin-bottom: 12px; }
 .cartrow { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .cartrow:last-of-type { border-bottom: 0; }
+/* feedback aggiunta ordine fornitore (31-07): la riga appena aggiunta/gia' presente lampeggia */
+@keyframes cart-flash { 0% { background: var(--positive-tint); } 100% { background: transparent; } }
+.cartrow.flash { animation: cart-flash 1.2s ease-out; border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .cartrow.flash { animation: none; background: var(--positive-tint); } }
 .cartinfo { flex: 1; min-width: 0; } .cartinfo .rt { font-size: 13px; font-weight: 600; }
 .qbox { width: 46px; text-align: center; border: 1px solid var(--line); border-radius: 8px; padding: 7px 3px; font-weight: 700; }
 .cbox { width: 56px; text-align: center; border: 1px solid var(--line); border-radius: 8px; padding: 7px 3px; }
@@ -684,9 +688,44 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-lint { background: rgba(252,79,63,.07); border: 1px solid rgba(252,79,63,.22); color: #9c2417; border-radius: 10px; padding: 9px 12px; font-size: 12px; line-height: 1.7; margin-top: 8px; }
 .cs-lint-t { display: inline-block; background: #fff; border: 1px solid rgba(252,79,63,.35); border-radius: 6px; padding: 1px 7px; margin: 0 3px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .cs-inbox { display: inline-block; background: #5c4d9c; color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
-.cs-msg { max-width: 86%; border-radius: 14px; padding: 10px 13px; margin: 8px 0; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
-.cs-msg.in { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
-.cs-msg.out { background: rgba(139,94,107,.12); margin-left: auto; border-bottom-right-radius: 5px; }
-.cs-who { font-size: 10.5px; font-weight: 800; color: var(--muted); margin-bottom: 3px; }
 .cs-form { background: rgba(156,95,51,.08); border-radius: 8px; padding: 7px 9px; margin-bottom: 6px; font-size: 12.5px; line-height: 1.5; }
-.cs-body { }
+
+/* ===== Redesign vista thread 31-07 (mockup DESIGN_Redesign_Thread_Assistenza_2026-07-31, solo token ds) ===== */
+/* testata compatta: pill urgenza a destra, categoria come chip-select, overflow "..." */
+.cs-chead-r1 { display: flex; align-items: flex-start; gap: 10px; }
+.cs-tnm.sm { font-size: 15.5px; }
+.cs-urgpill { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 800; background: var(--negative-tint); color: var(--negative-700); border-radius: 999px; padding: 4px 10px; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cs-chiprow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; align-items: center; }
+.cs-catchip { border: none; background: var(--interactive-tint); color: var(--interactive-700); border-radius: 999px; padding: 5px 11px; font-size: 11.5px; font-weight: 700; font-family: inherit; max-width: 100%; cursor: pointer; }
+.cs-more-wrap { position: relative; margin-left: auto; }
+.cs-morebtn { min-width: 38px; font-size: 16px; font-weight: 800; }
+.cs-moremenu { position: absolute; right: 0; top: calc(100% + 6px); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-md); box-shadow: var(--e1); z-index: 30; min-width: 190px; overflow: hidden; }
+.cs-moremenu button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 11px 14px; font: inherit; font-size: 13px; font-weight: 700; color: var(--negative-700); cursor: pointer; }
+.cs-moremenu button:hover { background: var(--negative-tint); }
+/* strip "fatti" scorrevole (ordine / cliente / tracking) */
+.cs-facts { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 10px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.cs-facts::-webkit-scrollbar { display: none; }
+.cs-fact { flex: none; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 9px 12px; box-shadow: var(--e1); min-width: 128px; max-width: 235px; text-decoration: none; }
+.cs-fact .fl { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-muted); }
+.cs-fact .fv { font-size: 13px; font-weight: 800; margin-top: 3px; white-space: nowrap; color: var(--ink); }
+.cs-fact .fs { font-size: 10.5px; color: var(--ink-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-fact.link .fv { color: var(--interactive-700); }
+.cs-fact.warn { border-color: var(--warning); background: var(--warning-tint); }
+.cs-fact.warn .fv { color: var(--warning-700); }
+/* bolle: wrapper + intestazione + bolla; in = surface a sinistra, out = info-tint a destra */
+.cs-msg { max-width: 88%; margin: 10px 0; }
+.cs-mh { font-size: 10.5px; font-weight: 700; color: var(--ink-muted); margin: 0 4px 3px; }
+.cs-mb { border-radius: var(--r-lg); padding: 11px 13px; font-size: 13.5px; line-height: 1.5; box-shadow: var(--e1); }
+.cs-msg.in .cs-mb { background: var(--surface); border: 1px solid var(--border); border-top-left-radius: 5px; }
+.cs-msg.out { margin-left: auto; }
+.cs-msg.out .cs-mh { text-align: right; }
+.cs-msg.out .cs-mb { background: var(--info-tint); border: 1px solid var(--interactive-tint); border-top-right-radius: 5px; color: var(--ink); }
+/* expander "Email completa": il grezzo resta a un tap, mai perso */
+.cs-orig { margin: 5px 0 0; }
+.cs-orig > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: var(--ink-muted); background: var(--surface-alt); border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; }
+.cs-orig > summary::-webkit-details-marker { display: none; }
+.cs-orig > summary .cs-tri { font-size: 8.5px; transition: transform .15s; display: inline-block; }
+.cs-orig[open] > summary .cs-tri { transform: rotate(90deg); }
+.cs-obody { margin-top: 7px; background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 12px; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.55; color: var(--ink-muted); max-height: 190px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+.cs-ofoot { font-size: 10px; color: var(--ink-muted); margin-top: 5px; }
+.cs-body { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }

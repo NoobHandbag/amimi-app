@@ -111,6 +111,19 @@ export async function fetchLastPurchase(codice: string): Promise<{ costo_unitari
   return null;
 }
 
+/** Ultimo ORDINE fornitore del CODICE (supplier_orders): quantita' e costo per il prefill del form
+ *  Nuovo ordine (decisione owner 31-07: mai piu' 5 hardcoded; mai ordinata = campo vuoto).
+ *  qty = ultima qty_ordered > 0 (le righe WIP hanno 0); costo = ultimo costo_unitario non nullo. */
+export async function fetchLastOrder(codice: string): Promise<{ qty_ordered: number | null; costo_unitario: number | null } | null> {
+  const { data } = await supabase.from('supplier_orders').select('qty_ordered,costo_unitario,data_ordine')
+    .eq('codice', codice).order('data_ordine', { ascending: false }).limit(8);
+  const rows = (data ?? []) as { qty_ordered: number | null; costo_unitario: number | null }[];
+  if (!rows.length) return null;
+  const qty = rows.find((r) => Number(r.qty_ordered) > 0)?.qty_ordered ?? null;
+  const costo = rows.find((r) => r.costo_unitario != null)?.costo_unitario ?? null;
+  return { qty_ordered: qty == null ? null : Number(qty), costo_unitario: costo == null ? null : Number(costo) };
+}
+
 export type Activity = { id: number; tbl: string; rowId: string | null; op: string | null; chi: string | null; ts: string; codice: string | null; after: Record<string, unknown> | null };
 export async function fetchRecent(): Promise<Activity[]> {
   const { data } = await supabase.from('change_log').select('id,tbl,row_id,op,chi,ts,after').order('ts', { ascending: false }).limit(25);
