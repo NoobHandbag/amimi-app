@@ -250,6 +250,86 @@ Deno.serve(async (req) => {
     return json({ ok: true, deleted: codice, non_product_added: addNP, movimenti, ...(shopCount ? { warning: `Eliminato ma era agganciato a Shopify (${shopCount} righe mirror): ora unmapped per l'autopush.` } : {}) });
   }
 
+  // --- NEW (brief 2026-07-31): row_delete, cancellazione VERA di righe, guardrailed ---
+  // L'owner ha rifiutato gli storni compensativi (arrival_set a target 0) perche' lasciano lo
+  // storico illeggibile: questo e' il canale sanzionato per cancellare righe sbagliate. La
+  // contropartita che rende accettabile una delete su un DB senza RLS e' la before-image COMPLETA
+  // in change_log PRIMA della delete (op='row_delete', before=riga intera, after=null): ogni
+  // cancellazione resta ricostruibile a mano.
+  if (action === 'row_delete') {
+    // whitelist: le tabelle-ledger dell'app. FUORI di proposito: products (product_delete ha le
+    // sue guardie), shopify_orders/shopify_line_items (specchio di Shopify: cancellarle
+    // desincronizza), change_log/health_log (audit), ce_snapshots/app_flags/app_config (config
+    // e mesi congelati).
+    const ALLOWED = ['purchases', 'supplier_orders', 'gifts_offline', 'returns', 'stock_adjustments', 'qromo_sales', 'b2b_movements', 'expenses'];
+    const tabella = String(payload.tabella || '');
+    const idsRaw = Array.isArray(payload.ids) ? payload.ids : [];
+    const ids = [...new Set(idsRaw.map((x) => String(x).trim()).filter(Boolean))];
+    const motivo = String(payload.motivo || '').trim();
+    // default DRY RUN, come expenses_bulk: si cancella solo con dry_run false esplicito
+    const dryRaw = payload.dry_run;
+    const dryRun = !(dryRaw === false || dryRaw === 'false');
+    if (!ALLOWED.includes(tabella)) return json({ error: `tabella non ammessa: "${tabella}" (ammesse: ${ALLOWED.join(', ')})` }, 422);
+    if (!ids.length) return json({ error: 'ids mancanti (array di id riga)' }, 422);
+    if (ids.length > 20) return json({ error: `troppe righe: ${ids.length} (max 20 per chiamata, Regola 2)` }, 422);
+    if (!motivo) return json({ error: "motivo obbligatorio: ogni cancellazione deve dire perche'" }, 422);
+
+    const { data: found, error: se } = await sb.from(tabella).select('*').in('id', ids);
+    if (se) return json({ error: 'lettura righe fallita: ' + se.message }, 400);
+    const rows = found ?? [];
+    const foundIds = new Set(rows.map((r: { id: unknown }) => String(r.id)));
+    const missing = ids.filter((i) => !foundIds.has(i));
+
+    // guardia mesi chiusi DA SUBITO (Regola 11): decide la data della riga. year/month dove la
+    // tabella li ha, altrimenti la colonna data (purchases.data, supplier_orders.data_ordine,
+    // stock_adjustments.data, expenses.date_paid).
+    const rowYM = (r: Record<string, unknown>): [number, number] => {
+      const d = String(r.data ?? r.data_ordine ?? r.date_paid ?? '');
+      return [Number(r.year ?? d.slice(0, 4)), Number(r.month ?? d.slice(5, 7))];
+    };
+    const { data: snaps } = await sb.from('ce_snapshots').select('year, month');
+    const closedSet = new Set((snaps ?? []).map((s: { year: number; month: number }) => `${s.year}-${s.month}`));
+    const inChiuso = rows.filter((r: Record<string, unknown>) => {
+      const [y, m] = rowYM(r);
+      return y && m && closedSet.has(`${y}-${m}`);
+    });
+    if (inChiuso.length && !force) {
+      const mesi = [...new Set(inChiuso.map((r: Record<string, unknown>) => { const [y, m] = rowYM(r); return `${m}/${y}`; }))];
+      return json({ error: `${inChiuso.length} righe cadono in mesi CHIUSI (${mesi.join(', ')}): i numeri sono congelati. force:true per cancellare comunque.`, closed_month: true, righe_chiuse: inChiuso.map((r: { id: unknown }) => String(r.id)) }, 409);
+    }
+
+    // orfani: cancellando righe supplier_orders, gli acquisti generati dai loro arrivi restano
+    // senza ordine di origine (arrival/arrival_set non salvano il link ordine->purchase). Match:
+    // stesso codice + fornitore + source app-arrivo*; la data NON entra nel match di proposito
+    // (gli arrivi parziali di un ordine cadono su date diverse) ma e' nell'output, chi opera vede
+    // cosa resta scollegato e decide.
+    let orphan_purchases: Record<string, unknown>[] = [];
+    if (tabella === 'supplier_orders' && rows.length) {
+      const codici = [...new Set(rows.map((r: Record<string, unknown>) => String(r.codice)))];
+      const fornitori = [...new Set(rows.map((r: Record<string, unknown>) => String(r.fornitore)))];
+      const { data: orp } = await sb.from('purchases')
+        .select('id, codice, quantita, costo_unitario, data, fornitore, source, chi')
+        .in('codice', codici).in('fornitore', fornitori).like('source', 'app-arrivo%');
+      orphan_purchases = orp ?? [];
+    }
+
+    if (dryRun) {
+      return json({ ok: true, dry_run: true, tabella, righe: rows.length, da_cancellare: rows, ...(missing.length ? { non_trovate: missing } : {}), ...(orphan_purchases.length ? { orphan_purchases } : {}) });
+    }
+
+    if (!rows.length) return json({ error: 'nessuna riga trovata: niente da cancellare', non_trovate: missing }, 404);
+
+    // before-image PRIMA della delete: se il log fallisce, la delete NON parte.
+    const { error: le } = await sb.from('change_log').insert(rows.map((r: Record<string, unknown>) => ({
+      tbl: tabella, row_id: String(r.id), op: 'row_delete',
+      before: { ...r, motivo }, after: null, chi: chi || null, source: 'write-api',
+    })));
+    if (le) return json({ error: 'change_log non scrivibile, delete ANNULLATA: ' + le.message }, 400);
+    const { data: del, error: de } = await sb.from(tabella).delete().in('id', [...foundIds]).select('id');
+    if (de) return json({ error: de.message + " (before-image gia' in change_log)" }, 400);
+    return json({ ok: true, dry_run: false, tabella, righe: (del ?? []).length, deleted: (del ?? []).map((r: { id: unknown }) => String(r.id)), motivo, ...(missing.length ? { non_trovate: missing } : {}), ...(orphan_purchases.length ? { orphan_purchases } : {}) });
+  }
+
   // --- NEW (feedback 06-07 item 20): archivio riordino (nasconde dal riordino, ripristinabile) ---
   if (action === 'reorder_archive') {
     const codice = String(payload.codice || '');
