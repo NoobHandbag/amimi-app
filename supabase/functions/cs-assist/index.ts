@@ -1,4 +1,9 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v12 (2026-07-31 notte, richiesta owner): FALLBACK Claude -> Gemini nell'uso NORMALE dell'app.
+//   Se Claude e' configurato ma fallisce (credito API a zero, outage), la bozza NON muore: si
+//   ripiega su Gemini, `cs_drafts.model` registra il modello REALMENTE usato e la risposta porta
+//   `engine_fallback`. Con `model_override` attivo il fallback resta SPENTO: un A/B che ripiega
+//   in silenzio e' un confronto falsato (deve fallire rumorosamente).
 // v11 (2026-07-31, brief contesto risposte out, punti 4-7):
 //   - richieste in INGLESE: le risposte standard entrano nel prompt con `testo_en` (fallback
 //     testo_it se vuoto); gli esempi di tono restano IT (0/6 hanno testo_en: lacuna di contenuto
@@ -417,8 +422,10 @@ Deno.serve(async (req) => {
   if (override && !MODEL_ALLOW.includes(override)) return json({ error: `model_override non ammesso: "${override}" (ammessi: ${MODEL_ALLOW.join(', ')})` }, 400);
   const useClaude = override ? override.startsWith('claude-') : !!claudeKey;
   const effModel = override || (claudeKey ? claudeModel : MODEL_DRAFT);
-  const draftModel = effModel;   // finisce in cs_drafts.model: sempre il modello REALE
   const haveLLM = !!claudeKey || !!key;
+  // v12: il modello REALMENTE usato (il fallback puo' cambiarlo in corsa) finisce in cs_drafts.model
+  let usedModel = effModel;
+  let claudeFellBack: string | null = null;
   // bozze dell'harness marcate 'eval' (migr 0080): distinguibili con una query, la UI non le vede mai
   // (le opzioni mostrate arrivano dalla risposta live, cs_drafts non viene letta dal client).
   const draftSource = body.source === 'eval' ? 'eval' : 'app';
@@ -427,12 +434,29 @@ Deno.serve(async (req) => {
   const aiIstruzioni = (flags.cs_ai_istruzioni || '').trim();
   const istruzioniBlock = aiIstruzioni ? `\nISTRUZIONI DEL TEAM (come rispondere; priorita' sullo stile generico, MAI sull'anti-invenzione):\n${aiIstruzioni}\n` : '';
   // LLM unificato: Claude (system separato) se richiesto/configurato, altrimenti Gemini (system+user
-  // concatenati). Con override attivo il retry su flash-lite e' DISATTIVATO: il modello del run deve
-  // restare quello chiesto (integrita' dell'A/B), meglio un errore che un dato falsato.
+  // concatenati). v12: nell'uso NORMALE (senza override) un errore Claude RIPIEGA su Gemini invece
+  // di far morire la bozza (caso reale 31-07: chiave valida, credito API a zero, bozze tutte in
+  // errore). Con override attivo OGNI fallback resta disattivato, anche il retry flash-lite: il
+  // modello del run deve restare quello chiesto (integrita' dell'A/B), meglio un errore che un
+  // dato falsato.
   const runLLM = async (system: string, userMsg: string, maxTok: number, jsonMode: boolean): Promise<string> => {
-    if (useClaude) return await claude(effModel, system, userMsg, claudeKey, maxTok);
-    try { return await gemini(effModel, system + '\n\n' + userMsg, key, maxTok, jsonMode); }
-    catch (e) { if (jsonMode || override) throw e; return await gemini(MODEL_SUMMARY, system + '\n\n' + userMsg, key, maxTok, false); }
+    if (useClaude) {
+      try { const out = await claude(effModel, system, userMsg, claudeKey, maxTok); usedModel = effModel; return out; }
+      catch (e) {
+        if (override || !key) throw e;
+        claudeFellBack = (e as Error).message.slice(0, 150);
+        const out = await gemini(MODEL_DRAFT, system + '\n\n' + userMsg, key, maxTok, jsonMode);
+        usedModel = MODEL_DRAFT;
+        return out;
+      }
+    }
+    try { const out = await gemini(effModel, system + '\n\n' + userMsg, key, maxTok, jsonMode); usedModel = effModel; return out; }
+    catch (e) {
+      if (jsonMode || override) throw e;
+      const out = await gemini(MODEL_SUMMARY, system + '\n\n' + userMsg, key, maxTok, false);
+      usedModel = MODEL_SUMMARY;
+      return out;
+    }
   };
 
   // notifica chat Shopify Inbox: al modello serve il messaggio del cliente, non il boilerplate della
@@ -588,11 +612,12 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
     ].join('\n'));
     const options = opzioni.slice(0, 3).map((o) => ({ tono: o.tono, testo: o.testo, da_verificare: countDaVerificare(o.testo), non_grounded: lintDraft(o.testo, lintCorpus) }));
 
-    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: draftModel, source: draftSource }).select('id').single();
-    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length, ...(draftSource === 'eval' ? { source: 'eval', model: draftModel } : {}) } });
+    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: usedModel, source: draftSource }).select('id').single();
+    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length, ...(draftSource === 'eval' ? { source: 'eval', model: usedModel } : {}), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
     return json({
       ok: true, options, draft: options[0].testo, da_verificare: options[0].da_verificare,   // draft = retro-compat
       fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, draft_id: ins?.id,
+      ...(claudeFellBack ? { engine_fallback: 'gemini' } : {}),
     });
   }
 
@@ -635,8 +660,8 @@ Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown
       threadTxtR, datiBlock(ctx.dati), ctx.dati.fonti.join('\n'), ctx.tono.join('\n'),
       aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''), istruzione,
     ].join('\n'));
-    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'refine', chi, dettaglio: { istruzione: istruzione.slice(0, 200) } });
-    return json({ ok: true, draft: out, da_verificare: countDaVerificare(out), non_grounded: lintDraft(out, lintCorpusR) });
+    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'refine', chi, dettaglio: { istruzione: istruzione.slice(0, 200), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
+    return json({ ok: true, draft: out, da_verificare: countDaVerificare(out), non_grounded: lintDraft(out, lintCorpusR), ...(claudeFellBack ? { engine_fallback: 'gemini' } : {}) });
   }
 
   return json({ error: 'azione sconosciuta: ' + action }, 422);
