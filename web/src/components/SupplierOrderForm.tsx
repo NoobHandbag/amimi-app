@@ -47,13 +47,9 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   const bagOf = useMemo(() => new Map(bags.map((b) => [b.codice, b])), [bags]);
 
   const flashRow = (codice: string) => {
-    setFlashCodice('');
     window.clearTimeout(flashTimer.current);
-    // due frame: ri-applica la classe anche su flash consecutivi della stessa riga
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      setFlashCodice(codice);
-      flashTimer.current = window.setTimeout(() => setFlashCodice(''), 1300);
-    }));
+    setFlashCodice(codice);
+    flashTimer.current = window.setTimeout(() => setFlashCodice(''), 1300);
   };
   // scroll-into-view della riga evidenziata se fuori schermo
   useEffect(() => {
@@ -89,10 +85,8 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
       return;
     }
     const costoStorico = bagOf.get(codice)?.ultimo_costo;
-    setLines((p) => {
-      toast(`${nome} aggiunta · ${p.length + 1} nell'ordine`);
-      return [...p, { codice, item, variant, qty: '', costo: costoStorico != null ? String(costoStorico) : '', nuovo: false, wip: false }];
-    });
+    setLines((p) => [...p, { codice, item, variant, qty: '', costo: costoStorico != null ? String(costoStorico) : '', nuovo: false, wip: false }]);
+    toast(`${nome} aggiunta · ${lines.length + 1} nell'ordine`);
     prefillLine(codice);
     flashRow(codice);
     setQ(''); searchRef.current?.focus();
@@ -135,10 +129,8 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
     const codice = (nm && nv ? `${modelTok(nm)}_${variantTok(nv)}` : nm ? `${modelTok(nm)}_` : '').toUpperCase();
     if (!nm) return toast('Scrivi almeno il modello', 'err');
     if (!codice || inCart.has(codice)) { if (inCart.has(codice)) { toast(`già nell'ordine`, 'err'); flashRow(codice); } return; }
-    setLines((p) => {
-      toast(`${nm.trim().toUpperCase()} aggiunta · ${p.length + 1} nell'ordine`);
-      return [...p, { codice, item: nm.trim().toUpperCase(), variant: nv ? variantTok(nv) : null, qty: '', costo: '', nuovo: true, wip: false }];
-    });
+    setLines((p) => [...p, { codice, item: nm.trim().toUpperCase(), variant: nv ? variantTok(nv) : null, qty: '', costo: '', nuovo: true, wip: false }]);
+    toast(`${nm.trim().toUpperCase()} aggiunta · ${lines.length + 1} nell'ordine`);
     flashRow(codice);
     setNm(''); setNv(''); setNewOpen(false); setNmFree(false);
   }
