@@ -76,6 +76,8 @@ Un INSERT/UPDATE che include una colonna generata FALLISCE (gia' successo: orpha
 - **`v_ops_flags`** (migr 0044, esteso 0057): SECURITY DEFINER, espone SOLO flag operativi non-segreti come colonne hard-coded: i 4 shopify (`shopify_write_enabled`, `shopify_autopush_enabled`, `shopify_hold_raises`, `shopify_expose_buffer`) da `app_flags`, piu' `ai_enabled` (booleano da `app_config`, gate dell'assistente AI, migr 0057). E' il modo corretto per far leggere ad anon un sottoinsieme sicuro di `app_flags`/`app_config` (che 0026 ha bloccato del tutto): i segreti gemini_api_key/mcp_token/qromo_webhook_*/pin_hash/shopify_token NON sono mai selezionati.
 - **`v_digest_persone` + `v_digest_ordini_14gg` / `v_digest_pulizia_14gg` / `v_digest_spese_14gg` / `v_digest_log_attori_14gg` / `v_digest_versioni`** (migr 0045): alimentano la vista PER PERSONA della pagina "Salute & Movimenti" (Ginevra=ordini, Benedetta=catalogo/resi/spese, Dan[=Ale]=sistema). `v_digest_persone` e' la riga singola con tutti i KPI headline (finestra 14gg come 0044); le altre sono i drill-down (liste). Solo colonne di display: i drill su change_log espongono data/op/chi (+operazione/costo per le spese via join `expenses`), MAI i payload grezzi before/after. `v_digest_versioni` e' l'unica SECURITY DEFINER: legge lo schema riservato `supabase_migrations` ed espone SOLO `count(*)` + ultima versione (safe-subset, stesso pattern di v_ops_flags). NB: `gin_aov14` e' l'AOV ONLINE corretto (lordo online / ordini online); il campo `aov_lordo14` di v_movimenti_14gg divide invece il lordo TOTALE (incl. offline) per i soli ordini online e sovrastima -> non usarlo per l'AOV online.
 
+- **`v_margine_sku`** + **`v_margine_ordine`** (migr 0083, brief A4): contribution margin per codice x anno x mese x canale e profitto per ordine online. Sono additive e in sola lettura: nessuna vista preesistente e' stata toccata, rollback = `drop view`. Formule, limiti dichiarati e riconciliazione col CE nella sezione 9.
+
 ## 6. Funzioni DB
 
 - **`ask_select(q text)`**: SECURITY DEFINER; SELECT-only, singolo statement, keyword DML/DDL vietate, cap 200 righe, timeout 5s. EXECUTE solo service_role (migr 0016). APERTO audit A1: manca l'allowlist di viste.
@@ -94,3 +96,93 @@ Un INSERT/UPDATE che include una colonna generata FALLISCE (gia' successo: orpha
 ## 8. Cron (pg_cron)
 
 8 job attivi: vedi `OPERATIONS.md` §2 (shopify-sync :07, stock sync :17, autopush :27, health 06:00, ce-guard 06:30) + **`cs-sync-poll` `*/2`** (migr 0054, ingest tool assistenza; NO-OP finche' `app_flags.cs_enabled='false'`) + **`cs-classify` `*/5`** (migr 0066, classificatore Fase 2) + **`cs-assist-summary` `*/7`** (migr 0067, riassunto/storia Fase 3); gli ultimi tre NO-OP se `cs_enabled!='true'`, decoupled tra loro. Definiti nelle migrazioni 0011/0024/0032/0034/0054/0066/0067.
+
+## 9. Margine per SKU e per ordine (migr 0083, brief A4)
+
+Due viste NUOVE e additive. Il CE non e' stato toccato: `v_ce_amimi`, `v_ce_amimi_summary`,
+`v_ce_totale` e `v_inventory` hanno la stessa definizione byte per byte di prima
+(md5 dell'insieme verificato identico prima e dopo: `0f1c8805edd8998da0d7673a9337bee3`).
+Rollback = `drop view public.v_margine_ordine; drop view public.v_margine_sku;`.
+
+### Convenzioni
+
+- **Segno**: qui i costi sono POSITIVI e il margine li sottrae. Nel CE gli stessi costi sono
+  negativi e vengono sommati. I due risultati coincidono.
+- **Chiave di allocazione unica**: sconto, commissioni di incasso e quota fissa di packaging
+  vivono sull'ORDINE e vengono allocati alla riga pro-quota sul valore riga
+  (`quota = price*quantita / valore_ordine`). Valore ordine 0 -> quota 0: la riga resta
+  (pezzi e cogs non si perdono) ma non riceve allocazioni. Al 2026-07-31 nessun ordine e' in
+  questo caso.
+- **Packaging**: non e' una categoria di spesa, e' una formula del CE. Vengono usate le STESSE
+  costanti, **3,71 per pezzo piu' 1,00 per ordine online**. Se un domani il CE cambia quelle
+  costanti vanno cambiate anche qui.
+- **Quantita'**: queste viste moltiplicano SEMPRE per la quantita'. `cogs_snapshot`,
+  `qromo_sales.prezzo` e `qromo_sales.cogs` sono valori UNITARI.
+
+### Limiti dichiarati
+
+- **Spedizione FUORI dal margine.** `shipping_total` e `free_shipping_amt` sono quello
+  INCASSATO dal cliente; il costo vero del corriere sta in `expenses` categoria LOGISTICA e
+  non e' attribuibile al singolo ordine. In `v_margine_ordine` la spedizione incassata e'
+  esposta come colonna informativa, fuori dal margine.
+- **Resi.** `returns` ha 0 righe e i rimborsi Shopify esistono solo a livello di ORDINE.
+  Percio' `v_margine_ordine` sottrae il rimborso dal ricavo netto (MAI dal cogs) e un ordine
+  interamente rimborsato esce a margine NEGATIVO, esplicito, non escluso.
+  `v_margine_sku` NON alloca nessun rimborso alla riga: espone solo
+  `pezzi_in_ordini_rimborsati`. **Il margine per SKU non sa se la merce e' rientrata**, perche'
+  `returns` e' vuota: non assumere il rientro.
+- **Fuori perimetro**: `b2b_movements` (0 righe) e `gifts_offline` (quirk noto: `prezzo` e'
+  totale riga, `cogs` e' per unita'). Nessun dato personale del cliente nelle viste.
+- **Arrotondamento**: ogni gruppo e' arrotondato a 2 decimali. Sommare le righe arrotondate di
+  un mese differisce dal valore esatto di pochi centesimi (max 7 misurati su 6 mesi).
+
+### Riconciliazione col CE (il test che conta)
+
+`sum(margine_contribuzione)` di `v_margine_sku` contro `mc1` di `v_ce_amimi_summary`.
+Non coincidono, e non devono: mc1 contiene voci non attribuibili al singolo SKU. Lo scarto e'
+spiegato voce per voce, con residuo ZERO su tutti i mesi (2026, EUR):
+
+| Mese | margine SKU | mc1 CE | scarto | spedizione esclusa | qta Qromo | qta COGS | logistica var | resi | arrotond. |
+|---|---|---|---|---|---|---|---|---|---|
+| 02 | 1.629,04 | 1.612,25 | 16,79 | 11,15 | 0,00 | 0,00 | 0,00 | 5,66 | -0,01 |
+| 03 | 5.583,06 | 4.866,59 | 716,47 | 238,11 | 81,97 | -28,66 | 425,07 | 0,00 | -0,03 |
+| 04 | 6.314,89 | 6.143,45 | 171,44 | 151,48 | 0,00 | 20,00 | 0,00 | 0,00 | -0,04 |
+| 05 | 7.831,90 | 6.482,97 | 1.348,93 | 58,11 | 0,00 | 0,00 | 1.015,42 | 275,41 | -0,01 |
+| 06 | 12.016,69 | 11.380,01 | 636,68 | 168,95 | 0,00 | -4,00 | 0,00 | 471,72 | 0,01 |
+| 07 | 11.218,01 | 11.124,19 | 93,82 | -191,80 | 0,00 | 0,00 | 0,00 | 285,69 | -0,07 |
+
+Le cinque voci:
+
+1. **Spedizione esclusa**: `(shipping_total + free_shipping_amt) / 1,22`. Il CE la include nel
+   ricavo online, il margine no. A luglio la voce e' negativa perche' `free_shipping_amt` e'
+   negativo: e' il candidato bug "free shipping sottratto due volte" gia' aperto in CONOSCENZA,
+   non un effetto di queste viste.
+2. **Qta Qromo**: `(sum(prezzo*quantita) - sum(prezzo)) / 1,22`.
+3. **Qta COGS**: differenza tra COGS moltiplicato per la quantita' e COGS sommato grezzo.
+4. **Logistica variabile**: spese di spedizione pagate, in mc1 e non nel margine di riga.
+5. **Resi**: `refund_amount / 1,22`, in mc1 e non nel margine per SKU.
+
+### Il CE e' cieco alla quantita' (SEGNALAZIONE, non corretto qui)
+
+Le voci 2 e 3 non sono scelte di design del margine: sono un difetto del CE. `v_ce_amimi`
+somma `cogs_snapshot`, `qromo_sales.prezzo` e `qromo_sales.cogs` **senza moltiplicarli per la
+quantita'**, mentre le tre colonne sono unitarie (`shopify-sync/index.ts` scrive il COGS di
+anagrafica per unita'; per Qromo lo conferma il match con `products.cogs`). Con 843 righe di
+vendita su 845 a quantita' 1 il difetto era finora invisibile. I tre casi reali:
+
+- **giugno 2026**: ordine `#1394`, 2x `NINA_BAG_PEACH` a COGS 4,00 -> il CE conta 4,00 invece di
+  8,00. COGS sottostimato di **4,00**.
+- **marzo 2026**: vendita Qromo 3x `CHAIN_TIGER` a 50,00 con COGS 14,33 -> il CE conta 50,00 di
+  ricavo invece di 150,00 e 14,33 di COGS invece di 42,99. Ricavo sottostimato di **100,00**
+  lordi, COGS di **28,66**.
+- **aprile 2026**: la riga Qromo neutralizzata del 11-04 (quantita' 0, prezzo 0, nota "DOPPIONE
+  rimosso") ha `cogs` 20,00 e il CE lo conta lo stesso. COGS sovrastimato di **20,00**.
+
+Tutti e tre cadono in mesi CHIUSI (gen-giu 2026 in `ce_snapshots`), quindi **non sono stati
+corretti**: una correzione retroattiva cambierebbe un CE gia' comunicato (Regola Ferrea 11) e
+il brief A4 vieta di toccare il CE (Regola Ferrea 19). Serve una decisione dell'owner.
+
+Nota sull'interpretazione di `qromo_sales.prezzo`: CONOSCENZA lo documenta come PAGATO per
+unita', il CE lo tratta come totale di riga. Le due letture divergono solo su quell'unica riga
+`CHAIN_TIGER`. Queste viste seguono CONOSCENZA (150,00 per 3 catene con retail 70,00 e' un
+prezzo plausibile; 50,00 totali sarebbe uno sconto del 76%), ma la riga merita una conferma.
