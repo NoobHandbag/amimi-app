@@ -75,7 +75,7 @@ async function gemini(model: string, prompt: string, key: string, maxTokens: num
 }
 
 // Claude (Anthropic Messages API) — motore preferito per bozze/refine quando c'e' app_flags.anthropic_api_key
-// (tono migliore, niente quota giornaliera come Gemini free). Fallback automatico a Gemini se la chiave manca.
+// (tono migliore, niente quota giornaliera come Gemini free). v12: fallback a Gemini se Claude fallisce (no override).
 async function claude(model: string, system: string, user: string, key: string, maxTokens: number): Promise<string> {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
