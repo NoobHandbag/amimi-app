@@ -6,7 +6,9 @@
 
 Pattern comuni: auth "PIN" = `body.pin` -> sha256 -> confronto con `app_config.pin_hash` (PIN neutralizzato a `x` per scelta owner: e' design, non sicurezza). Scritture con service-role key da env. Audit su `change_log`, telemetria su `health_log`.
 
-## write-api (v23) - UNICO path di scrittura dati
+## write-api (v24) - UNICO path di scrittura dati
+
+- **v24 (31-07 sera, fix a-i su ordine owner):** `arrival`/`arrival_set` con GUARDIA ANTI-DUPLICATO (un arrivo gia' registrato OGGI, ts server di change_log quindi robusto ai retrodatati, su un'ALTRA riga ordine dello stesso codice -> 409 `duplicato_possibile` con dettagli; si supera con `confirm_duplicato:true`; le correzioni sulla stessa riga e i ribassi non scattano mai), fallback del costo su `products.cogs` quando l'ordine non lo porta (mai piu' carichi a costo NULL; loggato `costo_da_cogs`), INSERT in `purchases` CONTROLLATO con rollback della riga ordine se fallisce (prima ok:true con stock sballato in silenzio), `purchase_id` nel change_log di entrambe, guardia MESI CHIUSI estesa a `arrival`/`arrival_set`/`order_multi`/`order_delete`/`count` (sulla data operazione), e `ctx` opzionale nel body (id di contesto client, in ogni change_log via logp: distingue app-home da Safari sullo stesso iPhone). Collaudo live 15/15 su ZZZTEST, dati ripuliti coi canali sanzionati.
 
 - **Scopo:** ogni scrittura dati dell'ecosistema (app, Cowork, MCP) passa da qui.
 - **Auth:** PIN.
