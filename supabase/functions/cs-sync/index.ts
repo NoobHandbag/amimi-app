@@ -190,13 +190,15 @@ const detectLingua = (t: string) => (/\b(the|your|order|hello|hi|please|thanks|w
 // quotate '>'), poi cap 8000 char. Prevedibile e documentata; meglio perdere una coda ambigua che
 // gonfiare corpi/classificatore/prompt col thread intero duplicato.
 const QUOTE_MARKERS = [
-  /\r?\nIl giorno .{0,160} ha scritto:/i,      // Gmail IT
-  /\r?\nOn .{0,160} wrote:/i,                  // Gmail EN
+  // NB: "Il giorno <data> <nome> <email> ha scritto:" nelle mail reali VA A CAPO nel mezzo
+  // (l'email wrappa su una riga nuova): serve [\s\S] lazy, non '.', per attraversare i newline.
+  /\r?\nIl giorno [\s\S]{0,220}?\sha scritto:/i,   // Gmail IT (il wrap puo' cadere anche PRIMA di "ha scritto")
+  /\r?\nOn [\s\S]{0,220}?\swrote:/i,               // Gmail EN
   /\r?\n-{2,}\s*(Original Message|Messaggio originale)\s*-{2,}/i,
-  /\r?\n_{5,}\r?\n/,                           // divisore Outlook
-  /\r?\nDa:\s.{1,120}\r?\n(Inviato|Data):/i,   // blocco header Outlook IT
-  /\r?\nFrom:\s.{1,120}\r?\nSent:/i,           // blocco header Outlook EN
-  /\r?\n>\s?(Il giorno|On|Da:|From:)\b/i,      // prima riga quotata col prefisso >
+  /\r?\n_{5,}\r?\n/,                              // divisore Outlook
+  /\r?\nDa:\s.{1,120}\r?\n(Inviato|Data):/i,      // blocco header Outlook IT
+  /\r?\nFrom:\s.{1,120}\r?\nSent:/i,              // blocco header Outlook EN
+  /\r?\n>\s?(Il giorno|On|Da:|From:)\b/i,         // prima riga quotata col prefisso >
 ];
 function stripQuote(t: string): string {
   let cut = t.length;
@@ -342,7 +344,7 @@ Deno.serve(async (req) => {
       .neq('canale', 'rumore')
       .order('created_at', { ascending: true })
       .range(offset, offset + limit - 1);
-    let scanned = 0, wrote = 0, urgFixed = 0; const errors: string[] = [];
+    let scanned = 0, wrote = 0, updated = 0, urgFixed = 0; const errors: string[] = [];
     for (const c of (convs ?? []) as { id: string; gmail_thread_id: string }[]) {
       scanned++;
       let th: { ok: boolean; status: number; j: Record<string, unknown> };
@@ -365,6 +367,13 @@ Deno.serve(async (req) => {
         }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
         if (me) { errors.push(m.id + ':' + me.message.slice(0, 60)); continue; }
         if (count) { wrote += count; convWrote += count; }
+        else if (bodyText) {
+          // riga gia' presente: CONVERGI il corpo se le regole di strip sono migliorate nel
+          // frattempo (ri-derivato dalla fonte Gmail, idempotente); non conta come "scritto"
+          const { count: uc } = await sb.from('cs_messages').update({ body_text: bodyText }, { count: 'exact' })
+            .eq('gmail_message_id', m.id).eq('direction', 'out').neq('body_text', bodyText);
+          if (uc) updated += uc;
+        }
       }
       if (convWrote) {
         // last_msg_at/last_direction DERIVATI dal messaggio realmente piu' recente
@@ -377,7 +386,7 @@ Deno.serve(async (req) => {
         if (await recomputeUrgency(c.id)) urgFixed++;
       }
     }
-    return json({ ok: true, scanned, out_scritti: wrote, urgenze_ricalcolate: urgFixed, offset, next_offset: offset + scanned, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
+    return json({ ok: true, scanned, out_scritti: wrote, out_aggiornati: updated, urgenze_ricalcolate: urgFixed, offset, next_offset: offset + scanned, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
   }
 
   // --- DRY RUN: classifica i messaggi recenti, ritorna SOLO conteggi, scrive NULLA ---
