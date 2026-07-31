@@ -21,9 +21,10 @@
 | `shopify-stock-hourly` | :17 ogni ora | pull giacenze -> `shopify_stock` | `ce_sync_freshness` (warn se synced_at > 120 min) |
 | `shopify-autopush-hourly` | :27 ogni ora | push stock a Shopify (`realign_all`) | chiave `stock_autopush` in `health_log` (error se push falliti) |
 | `health-daily` | 06:00 | `refresh_health_log()` dai 14 detector di `v_health` | righe assenti in `health_log` per oggi |
-| `ce-guard-daily` | 06:30 | edge `ce-guard` action `run` (10 check `ce_*`) | righe `ce_*` assenti in `health_log` per oggi |
+| `ce-guard-daily` | **`30 * * * *` = ogni ora al minuto :30** (il nome dice daily ma non lo e': verificato 31-07, 21 run in un giorno; il prefisso `ce_` delle chiavi esiste proprio per questo) | edge `ce-guard` action `run` (10 check `ce_*`) | righe `ce_*` assenti in `health_log` per oggi |
 | `cs-sync-poll` | `*/2` | ingest posta cliente -> `cs_*` (tool assistenza, Fase 1) | `cs_sync` in `health_log`; NO-OP se `cs_enabled!='true'` |
 | `cs-classify` | `*/5` | classificatore CS (categoria+urgenza, Fase 2) `cs-classify` | NO-OP se `cs_enabled!='true'`; decoupled dall'ingest |
+| `cs-assist-summary` | `*/7` | riassunto e storia cliente (Fase 3) `cs-assist` | NO-OP se `cs_enabled!='true'`; decoupled dagli altri due |
 
 Fuori pg_cron: **backup** GitHub Actions `db-backup.yml` daily 03:17 UTC (artifact JSON 90gg, exit non-zero se parziale) + **snapshot Drive** "Amimi App Snapshots" 05-06 Roma (mail a info@amimi.it su errore).
 
