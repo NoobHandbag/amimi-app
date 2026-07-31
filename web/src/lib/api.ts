@@ -3,6 +3,17 @@ import { nowYear } from './helpers';
 
 const FN = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/write-api';
 
+// fix i (31-07): identificativo di CONTESTO accanto a chi. Su iOS l'app installata in home e la
+// stessa app in Safari hanno localStorage SEPARATI (e quindi possono firmare chi diversi): un uuid
+// per contesto, generato una volta e mandato in ogni scrittura, li rende distinguibili in change_log.
+const ctxId = (() => {
+  try {
+    let c = localStorage.getItem('amimi_ctx');
+    if (!c) { c = crypto.randomUUID().slice(0, 8); localStorage.setItem('amimi_ctx', c); }
+    return c;
+  } catch { return null; }
+})();
+
 export type Product = {
   codice: string; item: string | null; variant: string | null;
   categoria: string | null; image_url: string | null; retail_price: number | null; cogs: number | null;
@@ -15,12 +26,14 @@ export async function writeApi(action: string, payload: Record<string, unknown>,
   const r = await fetch(FN, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action, payload, pin, chi, ...(force ? { force: true } : {}) }),
+    body: JSON.stringify({ action, payload, pin, chi, ...(force ? { force: true } : {}), ...(ctxId ? { ctx: ctxId } : {}) }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const e = new Error(j.error || `Errore ${r.status}`) as Error & { closedMonth?: boolean };
+    const e = new Error(j.error || `Errore ${r.status}`) as Error & { closedMonth?: boolean; duplicato?: boolean };
     if (j.closed_month) e.closedMonth = true;
+    // fix a (31-07): il server segnala un possibile doppio arrivo; la UI chiede conferma e ritenta
+    if (j.duplicato_possibile) e.duplicato = true;
     throw e;
   }
   return j as { ok: boolean; id: string };
@@ -540,9 +553,10 @@ export async function fetchActiveFornitori(): Promise<string[]> {
   return [...new Set((data ?? []).map((r: { fornitore: string }) => r.fornitore).filter(Boolean))] as string[];
 }
 // edit/correct a registered arrival: set the arrived TOTAL (stock follows the delta);
-// costo opzionale per risolvere le righe WIP all'arrivo
-export const setArrival = (orderId: string, qty: number, data: string, pin: string, chi: string, costo?: number | null) =>
-  writeApi('arrival_set', { order_id: orderId, qty, data, ...(costo != null ? { costo_unitario: costo } : {}) }, pin, chi);
+// costo opzionale per risolvere le righe WIP all'arrivo. confirmDup (fix a, 31-07): il server
+// blocca un possibile doppio arrivo in giornata; si supera solo dopo conferma dell'utente.
+export const setArrival = (orderId: string, qty: number, data: string, pin: string, chi: string, costo?: number | null, confirmDup = false) =>
+  writeApi('arrival_set', { order_id: orderId, qty, data, ...(costo != null ? { costo_unitario: costo } : {}), ...(confirmDup ? { confirm_duplicato: true } : {}) }, pin, chi);
 
 // cancella una riga ordine fornitore (item 10); il server blocca se ha arrivi registrati
 export const deleteOrder = (orderId: string, pin: string, chi: string) =>

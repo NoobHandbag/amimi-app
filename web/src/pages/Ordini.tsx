@@ -10,7 +10,7 @@ import { prettyName } from '../lib/helpers';
 import { toast } from '../lib/toast';
 
 /* register an arrival against one order line */
-function ArrivoRow({ l, pin, chi, reload, defaultOpen }: { l: OrdLine; pin: string; chi: string; reload: () => void; defaultOpen?: boolean }) {
+function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLine; pin: string; chi: string; reload: () => void; defaultOpen?: boolean; altri?: OrdLine[] }) {
   const [open, setOpen] = useState(defaultOpen ?? false);
   const [n, setN] = useState(String(l.completo ? l.qty_arrived : (l.wip ? '' : l.qty_ordered)));
   const [d, setD] = useState(oggi());
@@ -26,7 +26,18 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen }: { l: OrdLine; pin: stri
       await setArrival(l.id, Number(n), d, pin, chi, costo !== '' ? Number(costo) : null);
       toast(`Arrivo salvato · ${n}${l.wip ? '' : `/${l.qty_ordered}`}`, 'ok'); setOpen(false);
     }
-    catch (e) { toast((e as Error).message, 'err'); }
+    catch (e) {
+      // fix a (31-07): il server ha visto un arrivo GIA' registrato oggi per questo codice su
+      // un'altra riga (il meccanismo del doppio conteggio COCCO/TOASTED). Si procede solo su conferma.
+      if ((e as Error & { duplicato?: boolean }).duplicato) {
+        if (window.confirm((e as Error).message + '\n\nRegistrare COMUNQUE questo arrivo?')) {
+          try {
+            await setArrival(l.id, Number(n), d, pin, chi, costo !== '' ? Number(costo) : null, true);
+            toast(`Arrivo salvato · ${n}${l.wip ? '' : `/${l.qty_ordered}`}`, 'ok'); setOpen(false);
+          } catch (e2) { toast((e2 as Error).message, 'err'); }
+        }
+      } else toast((e as Error).message, 'err');
+    }
     finally { setBusy(false); reload(); }
   }
 
@@ -60,6 +71,15 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen }: { l: OrdLine; pin: stri
       {l.data_consegna_display && <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 5 }}>Consegna prevista: {String(l.data_consegna_display).slice(0, 10)}</div>}
       {open && (
         <div className="ds-recv">
+          {altri.length > 0 && (
+            // fix b (31-07): il vero antidoto al doppio conteggio: chi registra VEDE che esistono
+            // altre righe ordine aperte per la stessa borsa e controlla di essere su quella giusta.
+            <div style={{ background: '#fff4e0', border: '1px solid #eac07a', color: '#7a4d0b', borderRadius: 10, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}>
+              Attenzione: {altri.length === 1 ? "c'e' un altro ordine aperto" : `ci sono ${altri.length} altri ordini aperti`} per questa borsa
+              ({altri.map((a) => `${a.fornitore ?? '?'}: ${a.wip ? '?' : a.mancano} mancano, ordine del ${String(a.data_ordine ?? '').slice(0, 10)}`).join(' · ')}).
+              Controlla di registrare l'arrivo sulla riga giusta.
+            </div>
+          )}
           <div className="rl">{l.wip ? 'Arrivati in totale (WIP: diventa la quantità ordinata)' : `Arrivati in totale (su ${l.qty_ordered} ordinati)`}</div>
           <div className="ds-recvrow">
             <NumberStepper value={n} onChange={setN} min={0} />
@@ -80,7 +100,7 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen }: { l: OrdLine; pin: stri
 
 type Sup = { fornitore: string; lines: OrdLine[]; aperte: number; pezzi: number };
 
-function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload }: { sup: Sup; pin: string; chi: string; onBack: () => void; onAdd: () => void; reload: () => void }) {
+function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload, openByCodice }: { sup: Sup; pin: string; chi: string; onBack: () => void; onAdd: () => void; reload: () => void; openByCodice: Map<string, OrdLine[]> }) {
   const [showDone, setShowDone] = useState(false);
   const open = sup.lines.filter((l) => !l.completo);
   // già arrivati ordinati per data di consegna, i più recenti in cima (senza data in fondo)
@@ -92,8 +112,10 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload }: { sup: Sup; pi
       <button className="back" onClick={onBack}>← Tutti i fornitori</button>
       <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={onAdd}><Icon name="plus" size={17} /> Nuovo ordine per {sup.fornitore}</button>
       <div className="ds-seclb">In arrivo <span className="c">{open.length}</span></div>
+      {/* fix d (31-07): niente riga auto-aperta: cosi' com'era, un tocco accidentale su "Segna
+          arrivati" registrava un arrivo COMPLETO (quantita' precompilata + pannello gia' aperto). */}
       {open.length === 0 ? <div className="card muted center">Niente in arrivo da questo fornitore.</div>
-        : open.map((l, i) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} defaultOpen={i === 0} />)}
+        : open.map((l) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} altri={(openByCodice.get(l.codice) ?? []).filter((x) => x.id !== l.id)} />)}
       {done.length > 0 && (
         <>
           <button type="button" className="ds-more" style={{ marginTop: 8 }} onClick={() => setShowDone((s) => !s)}>
@@ -118,6 +140,22 @@ export default function Ordini({ pin, chi, initial }: { pin: string; chi: string
   const [err, setErr] = useState<string | null>(null);
   const load = () => { fetchOrdiniGruppi().then(setGrp).catch((e) => setErr(e.message)); };
   useEffect(load, []);
+  // fix e (31-07): la lista si aggiorna anche quando il tab TORNA VISIBILE o l'app riprende focus.
+  // Prima si ricaricava solo al mount e dopo un salvataggio PROPRIO: un secondo contesto (altro
+  // telefono, o app-home vs Safari sullo stesso iPhone) restava stantio e mostrava ancora
+  // "N mancano" per arrivi gia' registrati altrove: era l'invito al doppio inserimento.
+  useEffect(() => {
+    const onVis = () => { if (!document.hidden) load(); };
+    window.addEventListener('focus', onVis);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { window.removeEventListener('focus', onVis); document.removeEventListener('visibilitychange', onVis); };
+  }, []);
+  // fix b (31-07): mappa codice -> righe ordine APERTE (tutti i fornitori), per l'avviso in ArrivoRow
+  const openByCodice = useMemo(() => {
+    const m = new Map<string, OrdLine[]>();
+    for (const g of grp) for (const l of g.righe) if (!l.completo) { const a = m.get(l.codice) ?? []; a.push(l); m.set(l.codice, a); }
+    return m;
+  }, [grp]);
   // il tab puo' essere gia' montato quando arriva un nuovo deep-link dal riordino
   useEffect(() => {
     if (!initial) return;
@@ -148,7 +186,7 @@ export default function Ordini({ pin, chi, initial }: { pin: string; chi: string
 
   if (forn) {
     const sup = byForn.find((s) => s.fornitore === forn);
-    if (sup) return <SupplierDetail sup={sup} pin={pin} chi={chi} onBack={() => setForn(null)} onAdd={() => { setAddForn(forn ?? undefined); setAdding(true); }} reload={load} />;
+    if (sup) return <SupplierDetail sup={sup} pin={pin} chi={chi} onBack={() => setForn(null)} onAdd={() => { setAddForn(forn ?? undefined); setAdding(true); }} reload={load} openByCodice={openByCodice} />;
     return <div className="screen"><button className="back" onClick={() => setForn(null)}>← Ordini</button><div className="card muted center">Nessun ordine per {forn}.</div></div>;
   }
 

@@ -71,9 +71,13 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
-  let body: { action?: string; payload?: Record<string, unknown>; pin?: string; chi?: string; force?: boolean };
+  let body: { action?: string; payload?: Record<string, unknown>; pin?: string; chi?: string; force?: boolean; ctx?: string };
   try { body = await req.json(); } catch { return json({ error: 'JSON non valido' }, 400); }
   const { action = '', payload = {}, pin = '', chi = '', force = false } = body;
+  // fix i (31-07): identificativo di CONTESTO accanto a chi. Su iOS l'app in home e la stessa app in
+  // Safari hanno localStorage separati e possono firmare chi diversi: il ctx (uuid per contesto,
+  // generato dal client) rende distinguibile "da quale istanza e' arrivata questa scrittura".
+  const ctx = typeof body.ctx === 'string' && body.ctx.trim() ? body.ctx.trim().slice(0, 64) : null;
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
@@ -83,7 +87,11 @@ Deno.serve(async (req) => {
 
   const today = new Date().toISOString().slice(0, 10);
   const logp = (tbl: string, row_id: string, op: string, after: unknown) =>
-    sb.from('change_log').insert({ tbl, row_id, op, after, chi: chi || null, source: 'write-api' });
+    sb.from('change_log').insert({
+      tbl, row_id, op,
+      after: (after && typeof after === 'object' && !Array.isArray(after)) ? { ...(after as Record<string, unknown>), ...(ctx ? { ctx } : {}) } : after,
+      chi: chi || null, source: 'write-api',
+    });
 
   // Protezione mesi chiusi (audit 2026-07-06, A3): una scrittura datata in un mese gia' congelato
   // in ce_snapshots fa derivare in silenzio un P&L che l'owner ha gia' comunicato. Blocca, a meno
@@ -97,6 +105,30 @@ Deno.serve(async (req) => {
   };
   const closedErr = (y: unknown, m: unknown) =>
     json({ error: `Mese ${Number(m)}/${Number(y)} CHIUSO: i numeri sono congelati. Riaprilo o passa force:true (con motivo) per scrivere comunque.`, closed_month: true, year: Number(y), month: Number(m) }, 409);
+  // fix h (31-07): variante su data ISO, per le azioni che portano una data e non year/month
+  const closedDate = (d: string) => closedMonth(d.slice(0, 4), d.slice(5, 7));
+
+  // fix a (31-07, doppio conteggio COCCO/TOASTED): un arrivo REGISTRATO OGGI (ts server di
+  // change_log, robusto agli arrivi retrodatati) su un'ALTRA riga ordine dello stesso codice e'
+  // il segnale del doppione. Si SEGNALA e si chiede conferma esplicita (confirm_duplicato:true),
+  // non si vieta: il secondo arrivo legittimo nello stesso giorno esiste. La correzione sulla
+  // STESSA riga (caso AGATA, target 3 -> 5) non scatta mai: la riga propria e' esclusa.
+  const arriviOggiAltrove = async (codice: string, oid: string): Promise<Record<string, unknown>[]> => {
+    const { data } = await sb.from('change_log')
+      .select('row_id, ts, chi, after')
+      .eq('tbl', 'supplier_orders').in('op', ['arrival', 'arrival_set'])
+      .gte('ts', today + 'T00:00:00Z').neq('row_id', oid)
+      .order('ts', { ascending: false }).limit(50);
+    return (data ?? []).filter((r: Record<string, unknown>) => {
+      const a = (r.after ?? {}) as Record<string, unknown>;
+      return cnorm(a.codice) === cnorm(codice) && Number(a.qty ?? a.delta ?? 0) > 0;
+    }).map((r: Record<string, unknown>) => {
+      const a = (r.after ?? {}) as Record<string, unknown>;
+      return { ordine: r.row_id, ora: String(r.ts).slice(11, 16), chi: r.chi, pezzi: Number(a.qty ?? a.delta ?? 0) };
+    });
+  };
+  const dupErr = (codice: string, dup: Record<string, unknown>[]) =>
+    json({ error: `Attenzione: OGGI ${dup.length === 1 ? "e' gia' stato registrato un arrivo" : `sono gia' stati registrati ${dup.length} arrivi`} di ${codice} su un'altra riga ordine (${dup.map((d) => `${d.pezzi} pz alle ${d.ora} da ${d.chi ?? '?'}`).join(', ')}). Controlla di non star contando due volte le stesse borse; se e' davvero un ALTRO arrivo, ripeti con conferma.`, duplicato_possibile: true, arrivi_oggi: dup }, 409);
 
   // --- FLOW 1: mark an arrival against a supplier order (date editable) ---
   if (action === 'arrival') {
@@ -106,15 +138,37 @@ Deno.serve(async (req) => {
     if (!oid || !(qty > 0)) return json({ error: 'arrivo non valido' }, 422);
     const { data: ord } = await sb.from('supplier_orders').select('*').eq('id', oid).single();
     if (!ord) return json({ error: 'ordine non trovato' }, 404);
+    // fix h (31-07): un arrivo datato in un mese chiuso muove giacenze e COGS congelati
+    if (!force && await closedDate(arrDate)) return closedErr(arrDate.slice(0, 4), arrDate.slice(5, 7));
+    // fix a (31-07): guardia anti-duplicato, si supera solo con conferma esplicita
+    if (payload.confirm_duplicato !== true) {
+      const dup = await arriviOggiAltrove(String(ord.codice), String(oid));
+      if (dup.length) return dupErr(String(ord.codice), dup);
+    }
+    // fix c (31-07): il costo non deve mai risolvere a NULL in silenzio (= carico a costo zero nel
+    // CE): se l'ordine non lo porta, fallback su products.cogs (Regola 17: poi fa fede l'acquisto).
+    let costoEff: number | null = ord.costo_unitario != null ? Number(ord.costo_unitario) : null;
+    let costoDaCogs = false;
+    if (costoEff == null) {
+      const { data: pr } = await sb.from('products').select('cogs').eq('codice_norm', cnorm(ord.codice)).maybeSingle();
+      if (pr?.cogs != null && Number(pr.cogs) > 0) { costoEff = Number(pr.cogs); costoDaCogs = true; }
+    }
     const newArr = Number(ord.qty_arrived) + qty;
     const { error: ue } = await sb.from('supplier_orders').update({ qty_arrived: newArr, data_ultimo_arrivo: arrDate }).eq('id', oid);
     if (ue) return json({ error: ue.message }, 400);
-    const { data: pur } = await sb.from('purchases').insert({
+    // fix f (31-07): INSERT controllato. Se l'acquisto non entra, l'ordine viene RIPORTATO com'era:
+    // prima tornava ok:true con qty_arrived aggiornato e zero purchases (stock sballato in silenzio).
+    const { data: pur, error: pe } = await sb.from('purchases').insert({
       codice: ord.codice, item: ord.item, variant: ord.variant, categoria: 'BAG',
       tipologia: 'Prodotto Finito', unita_misura: 'Pezzi', quantita: qty, data: arrDate,
-      costo_unitario: ord.costo_unitario ?? null, fornitore: ord.fornitore, source: 'app-arrivo', chi: chi || null,
+      costo_unitario: costoEff, fornitore: ord.fornitore, source: 'app-arrivo', chi: chi || null,
     }).select().single();
-    await logp('supplier_orders', String(oid), 'arrival', { codice: ord.codice, qty, arrived: newArr, data: arrDate });
+    if (pe) {
+      await sb.from('supplier_orders').update({ qty_arrived: ord.qty_arrived, data_ultimo_arrivo: ord.data_ultimo_arrivo }).eq('id', oid);
+      return json({ error: `acquisto NON registrato (${pe.message}): arrivo annullato, riprova` }, 400);
+    }
+    // fix g (31-07): l'id della riga purchases creata finisce in change_log (forensics immediata)
+    await logp('supplier_orders', String(oid), 'arrival', { codice: ord.codice, qty, arrived: newArr, data: arrDate, purchase_id: pur?.id ?? null, ...(costoDaCogs ? { costo_da_cogs: costoEff } : {}) });
     return json({ ok: true, arrived: newArr, ordered: ord.qty_ordered, purchase_id: pur?.id });
   }
 
@@ -128,6 +182,14 @@ Deno.serve(async (req) => {
     if (!ord) return json({ error: 'ordine non trovato' }, 404);
     const current = Number(ord.qty_arrived) || 0;
     const delta = target - current;
+    // fix h (31-07): mesi chiusi sulla data dell'arrivo (solo se la scrittura muove qualcosa)
+    if (delta !== 0 && !force && await closedDate(arrDate)) return closedErr(arrDate.slice(0, 4), arrDate.slice(5, 7));
+    // fix a (31-07): guardia anti-duplicato SOLO sugli aumenti (una correzione al ribasso o un
+    // semplice edit di costo non e' mai un doppio arrivo)
+    if (delta > 0 && payload.confirm_duplicato !== true) {
+      const dup = await arriviOggiAltrove(String(ord.codice), String(oid));
+      if (dup.length) return dupErr(String(ord.codice), dup);
+    }
     // costo opzionale all'arrivo (feedback 06-07 item 18): su una riga WIP il costo si scopre quando
     // le borse arrivano; se passato, aggiorna anche la riga ordine.
     const costo = payload.costo_unitario != null && payload.costo_unitario !== '' ? Number(payload.costo_unitario) : null;
@@ -135,15 +197,33 @@ Deno.serve(async (req) => {
     if (costo != null && Number.isFinite(costo) && costo >= 0) updOrd.costo_unitario = costo;
     // riga WIP: quantita' ordinata ignota; l'arrivo la RISOLVE (ordinato = arrivato totale)
     if (ord.wip && target > 0) { updOrd.qty_ordered = target; updOrd.wip = false; }
+    // fix c (31-07): mai un acquisto a costo NULL in silenzio; fallback su products.cogs
+    let costoEff: number | null = (updOrd.costo_unitario as number | undefined) ?? (ord.costo_unitario != null ? Number(ord.costo_unitario) : null);
+    let costoDaCogs = false;
+    if (delta !== 0 && costoEff == null) {
+      const { data: pr } = await sb.from('products').select('cogs').eq('codice_norm', cnorm(ord.codice)).maybeSingle();
+      if (pr?.cogs != null && Number(pr.cogs) > 0) { costoEff = Number(pr.cogs); costoDaCogs = true; }
+    }
     const { error: ue } = await sb.from('supplier_orders').update(updOrd).eq('id', oid);
     if (ue) return json({ error: ue.message }, 400);
-    if (delta !== 0) await sb.from('purchases').insert({
-      codice: ord.codice, item: ord.item, variant: ord.variant, categoria: 'BAG',
-      tipologia: 'Prodotto Finito', unita_misura: 'Pezzi', quantita: delta, data: arrDate,
-      costo_unitario: (updOrd.costo_unitario as number | undefined) ?? ord.costo_unitario ?? null,
-      fornitore: ord.fornitore, source: 'app-arrivo-edit', chi: chi || null,
-    });
-    await logp('supplier_orders', String(oid), 'arrival_set', { codice: ord.codice, target, delta, data: arrDate, costo: updOrd.costo_unitario ?? null, wip_resolved: !!(ord.wip && target > 0) });
+    // fix f (31-07): INSERT controllato + rollback della riga ordine se l'acquisto non entra
+    // (prima tornava ok:true con qty_arrived gia' aggiornato e nessun purchases: stock sballato).
+    let purchaseId: string | null = null;
+    if (delta !== 0) {
+      const { data: pur, error: pe } = await sb.from('purchases').insert({
+        codice: ord.codice, item: ord.item, variant: ord.variant, categoria: 'BAG',
+        tipologia: 'Prodotto Finito', unita_misura: 'Pezzi', quantita: delta, data: arrDate,
+        costo_unitario: costoEff,
+        fornitore: ord.fornitore, source: 'app-arrivo-edit', chi: chi || null,
+      }).select('id').single();
+      if (pe) {
+        await sb.from('supplier_orders').update({ qty_arrived: current, data_ultimo_arrivo: ord.data_ultimo_arrivo, costo_unitario: ord.costo_unitario, qty_ordered: ord.qty_ordered, wip: ord.wip }).eq('id', oid);
+        return json({ error: `acquisto NON registrato (${pe.message}): arrivo annullato, riprova` }, 400);
+      }
+      purchaseId = pur?.id ?? null;
+    }
+    // fix g (31-07): purchase_id nel change_log (l'indagine del 31-07 ne ha sofferto l'assenza)
+    await logp('supplier_orders', String(oid), 'arrival_set', { codice: ord.codice, target, delta, data: arrDate, costo: updOrd.costo_unitario ?? null, wip_resolved: !!(ord.wip && target > 0), purchase_id: purchaseId, ...(costoDaCogs ? { costo_da_cogs: costoEff } : {}) });
     return json({ ok: true, arrived: target, ordered: (updOrd.qty_ordered as number | undefined) ?? ord.qty_ordered });
   }
 
@@ -156,6 +236,8 @@ Deno.serve(async (req) => {
     if (!oid) return json({ error: 'order_id mancante' }, 422);
     const { data: ord } = await sb.from('supplier_orders').select('*').eq('id', oid).single();
     if (!ord) return json({ error: 'ordine non trovato' }, 404);
+    // fix h (31-07): cancellare una riga ordine datata in un mese chiuso senza force
+    if (!force && ord.data_ordine && await closedDate(String(ord.data_ordine))) return closedErr(String(ord.data_ordine).slice(0, 4), String(ord.data_ordine).slice(5, 7));
     if (Number(ord.qty_arrived) > 0) {
       return json({ error: `Questa riga ha ${ord.qty_arrived} pezzi gia' registrati come arrivati (gli acquisti restano a magazzino): prima azzera gli arrivi salvando "0" come totale arrivato, poi elimina.`, has_arrivals: true }, 409);
     }
@@ -354,6 +436,8 @@ Deno.serve(async (req) => {
     const dataOrdine = (payload.data_ordine as string) || today;
     if (!fornitore) return json({ error: 'fornitore mancante' }, 422);
     if (!righe.length) return json({ error: 'nessuna riga' }, 422);
+    // fix h (31-07): niente ordini retrodatati in un mese chiuso senza force
+    if (!force && await closedDate(dataOrdine)) return closedErr(dataOrdine.slice(0, 4), dataOrdine.slice(5, 7));
     const raw = righe.map((r) => ({
       codice: String(r.codice || ''), item: (r.item as string) ?? null, variant: (r.variant as string) ?? null,
       // riga WIP (feedback 06-07 item 18): quantita'/costo ancora ignoti (es. affinamento pelle);
@@ -854,6 +938,8 @@ Deno.serve(async (req) => {
     if (!codice || !noSpaces(codice)) return json({ error: 'CODICE mancante o con spazi' }, 422);
     if (isNaN(contati) || contati < 0) return json({ error: 'pezzi contati non validi' }, 422);
     const dt = (payload.data_conta as string) || today;
+    // fix h (31-07): una conta retrodatata in un mese chiuso scrive un aggiustamento in quel mese
+    if (!force && await closedDate(dt)) return closedErr(dt.slice(0, 4), dt.slice(5, 7));
     // recompute the delta SERVER-SIDE against the live giacenza (which already includes prior
     // adjustments) — never trust the client snapshot, so re-counts converge instead of stacking.
     // NB: a failed read MUST abort, otherwise giacLive would silently fall back to 0 for an
