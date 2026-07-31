@@ -1,4 +1,17 @@
-// cs-sync v5 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v6 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v6 (2026-07-31, brief contesto risposte out): il replier ora VEDE le nostre risposte.
+//   - la posta SENT non viene piu' scartata: un messaggio inviato entra come direction='out',
+//     SOLO se il suo thread e' gia' in cs_conversations (fornitori/banca/newsletter restano fuori:
+//     un out non crea MAI una conversazione) e mai sui thread 'rumore'. Niente classify sull'out.
+//   - citazione del messaggio precedente TRONCATA (stripQuote: taglio al primo marcatore tipico
+//     Gmail/Outlook IT+EN + cap 8000 char) per non gonfiare corpi, classificatore e prompt.
+//   - azione `backfill_out` (PIN, una tantum, a blocchi con limit/offset): threads.get sui
+//     gmail_thread_id gia' noti (canale != rumore) e ingest dei soli messaggi out mancanti;
+//     idempotente (UNIQUE gmail_message_id), nessuna conversazione nuova, categorie intatte.
+//   - `last_direction` DERIVATA dal messaggio piu' recente (prima era il letterale 'in').
+//   - ricalcolo DETERMINISTICO dell'urgenza (recomputeUrgency) su nuovo messaggio in/out e nel
+//     backfill: applica/spegne SOLO la regola sollecito di cs-classify (stessi motivi testuali),
+//     senza AI, senza toccare categoria/categoria_source; un'urgenza decisa dall'AI non si tocca.
 // v5 (2026-07-26): chat Shopify Inbox — se il "nome" nel subject e' un'email, va in customer_email.
 // Design: Cowork12/projects/Servizio_Clienti_2026-06/DESIGN_Tool_Assistenza_Amimi_V1_2026-07-20.md
 //
@@ -172,6 +185,25 @@ function extractOrderNumber(text: string): number | null {
 }
 const detectLingua = (t: string) => (/\b(the|your|order|hello|hi|please|thanks|would|available)\b/i.test(t) && !/\b(il|la|per|grazie|ordine|ciao|salve|vorrei|disponibile)\b/i.test(t) ? 'en' : 'it');
 
+// v6: tronca la citazione del thread precedente nel corpo di una RISPOSTA (le mail Gmail includono
+// tutto il quotato). Regola: taglio al PRIMO marcatore tipico (Gmail IT/EN, Outlook IT/EN, righe
+// quotate '>'), poi cap 8000 char. Prevedibile e documentata; meglio perdere una coda ambigua che
+// gonfiare corpi/classificatore/prompt col thread intero duplicato.
+const QUOTE_MARKERS = [
+  /\r?\nIl giorno .{0,160} ha scritto:/i,      // Gmail IT
+  /\r?\nOn .{0,160} wrote:/i,                  // Gmail EN
+  /\r?\n-{2,}\s*(Original Message|Messaggio originale)\s*-{2,}/i,
+  /\r?\n_{5,}\r?\n/,                           // divisore Outlook
+  /\r?\nDa:\s.{1,120}\r?\n(Inviato|Data):/i,   // blocco header Outlook IT
+  /\r?\nFrom:\s.{1,120}\r?\nSent:/i,           // blocco header Outlook EN
+  /\r?\n>\s?(Il giorno|On|Da:|From:)\b/i,      // prima riga quotata col prefisso >
+];
+function stripQuote(t: string): string {
+  let cut = t.length;
+  for (const re of QUOTE_MARKERS) { const m = t.match(re); if (m && m.index != null && m.index < cut) cut = m.index; }
+  return t.slice(0, cut).trim().slice(0, 8000);
+}
+
 async function gGet(path: string, token: string): Promise<{ ok: boolean; status: number; j: Record<string, unknown> }> {
   const r = await fetch(`${GMAIL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
   const j = await r.json().catch(() => ({}));
@@ -194,7 +226,7 @@ Deno.serve(async (req) => {
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const action = String(body.action || 'poll');
-  if (action !== 'poll') return json({ error: 'azione sconosciuta: ' + action }, 422);
+  if (action !== 'poll' && action !== 'backfill_out') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
   const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders']);
@@ -224,6 +256,129 @@ Deno.serve(async (req) => {
 
   const counts: Record<Canale, number> = { email_diretta: 0, form_contatto: 0, form_evento: 0, chat_notifica: 0, rumore: 0 };
   let parseFailed = 0;
+  let outMsg = 0;
+
+  // v6: ricalcolo DETERMINISTICO dell'urgenza. Replica ESATTAMENTE la regola sollecito di
+  // cs-classify (ruleUrgency, stessi motivi testuali) e la applica/spegne quando i conteggi
+  // in/out cambiano. MAI l'AI, MAI categoria/categoria_source (il filtro "pesca solo mai
+  // tentate" di cs-classify resta intatto: fix 1 audit anti-loop). Un'urgenza decisa dall'AI
+  // (motivo diverso dai due della regola) non viene mai toccata da qui.
+  const RULE_MOTIVI = ['thread riaperto (sollecito)', '2+ messaggi senza nostra risposta'];
+  const recomputeUrgency = async (convId: string): Promise<boolean> => {
+    const { data: c } = await sb.from('cs_conversations')
+      .select('id, stato, stato_at, last_direction, last_msg_at, categoria_source, urgente, urgenza_motivo, flags')
+      .eq('id', convId).maybeSingle();
+    if (!c || !c.categoria_source) return false;   // mai classificata: ci pensera' cs-classify alla pesca
+    const { data: msgs } = await sb.from('cs_messages').select('direction').eq('conversation_id', convId);
+    const inCnt = (msgs ?? []).filter((m) => m.direction === 'in').length;
+    const outCnt = (msgs ?? []).filter((m) => m.direction === 'out').length;
+    const reopened = String(c.stato) === 'fatto' && c.last_direction === 'in' && !!c.last_msg_at && (!c.stato_at || (c.last_msg_at as string) > (c.stato_at as string));
+    const ruleUrg = reopened || (inCnt >= 2 && outCnt === 0);
+    const ruleMotivo = reopened ? 'thread riaperto (sollecito)' : '2+ messaggi senza nostra risposta';
+    const flags: string[] = Array.isArray(c.flags) ? [...new Set((c.flags as unknown[]).map(String))] : [];
+    const upd: Record<string, unknown> = {};
+    if (ruleUrg) {
+      if (c.urgente !== true) { upd.urgente = true; upd.urgenza_motivo = ruleMotivo; }
+      if (!flags.includes('sollecito')) upd.flags = [...flags, 'sollecito'];
+    } else if (c.urgente === true && RULE_MOTIVI.includes(String(c.urgenza_motivo ?? ''))) {
+      // l'urgenza era della REGOLA e la regola non vale piu' (abbiamo risposto): si spegne
+      upd.urgente = false; upd.urgenza_motivo = null;
+      if (flags.includes('sollecito')) upd.flags = flags.filter((f) => f !== 'sollecito');
+    } else if (flags.includes('sollecito')) {
+      upd.flags = flags.filter((f) => f !== 'sollecito');
+    }
+    if (!Object.keys(upd).length) return false;
+    const { error } = await sb.from('cs_conversations').update(upd).eq('id', convId);
+    if (error) return false;
+    await sb.from('cs_events').insert({ conversation_id: convId, azione: 'urgenza_ricalcolo', chi: 'cs-sync', dettaglio: { in: inCnt, out: outCnt, ...upd } });
+    return true;
+  };
+
+  // v6: ingest di un messaggio INVIATO. SOLO su thread gia' tracciato e non-rumore: un out non
+  // crea mai una conversazione (fornitori/banca/commercialista restano fuori, design 8.1).
+  const processOutbound = async (id: string, threadId: string): Promise<'done' | 'transient'> => {
+    let conv: { id: string; canale: string; last_msg_at: string | null } | null = null;
+    try {
+      const { data } = await sb.from('cs_conversations').select('id, canale, last_msg_at').eq('gmail_thread_id', threadId).maybeSingle();
+      conv = (data as typeof conv) ?? null;
+    } catch { return 'transient'; }
+    if (!conv || conv.canale === 'rumore') return 'done';
+    let mg: { ok: boolean; status: number; j: Record<string, unknown> };
+    try { mg = await gGet(`/messages/${id}?format=full`, token); } catch { return 'transient'; }
+    if (mg.status === 404) return 'done';
+    if (!mg.ok) return 'transient';
+    const msg = mg.j as GMsg;
+    const H = msg.payload?.headers;
+    const to = parseAddr(hdr(H, 'to'));
+    const sentAt = msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null;
+    const bodyText = stripQuote(stripNull(extractBody(msg.payload)));
+    try {
+      const { error: me, count } = await sb.from('cs_messages').upsert({
+        gmail_message_id: id, conversation_id: conv.id, direction: 'out',
+        from_email: GMAIL_USER, to_email: to.email || null, sent_at: sentAt, body_text: bodyText || null,
+      }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
+      if (me) return 'transient';
+      if (count) {
+        outMsg += count;
+        await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'ingest', chi: 'cs-sync', dettaglio: { direction: 'out', message_id: id } });
+        if (!conv.last_msg_at || (sentAt && sentAt > conv.last_msg_at)) {
+          await sb.from('cs_conversations').update({ last_msg_at: sentAt, last_direction: 'out' }).eq('id', conv.id);
+        }
+        await recomputeUrgency(conv.id);
+      }
+      return 'done';
+    } catch { return 'transient'; }
+  };
+
+  // --- BACKFILL una tantum (v6): porta dentro le risposte GIA' inviate sui thread noti ---
+  // history.list e' incrementale: senza questo, la cronologia resta muta sui thread aperti.
+  // A blocchi (limit/offset) per stare nei tempi della edge; idempotente (UNIQUE gmail_message_id):
+  // ri-eseguito scrive 0. Nessuna conversazione nuova, nessuna riclassificazione.
+  if (action === 'backfill_out') {
+    const limit = Math.min(Number(body.limit) || 60, 120);
+    const offset = Number(body.offset) || 0;
+    const { data: convs } = await sb.from('cs_conversations')
+      .select('id, gmail_thread_id, canale')
+      .neq('canale', 'rumore')
+      .order('created_at', { ascending: true })
+      .range(offset, offset + limit - 1);
+    let scanned = 0, wrote = 0, urgFixed = 0; const errors: string[] = [];
+    for (const c of (convs ?? []) as { id: string; gmail_thread_id: string }[]) {
+      scanned++;
+      let th: { ok: boolean; status: number; j: Record<string, unknown> };
+      try { th = await gGet(`/threads/${encodeURIComponent(c.gmail_thread_id)}?format=full`, token); }
+      catch { errors.push(c.gmail_thread_id + ':fetch'); continue; }
+      if (!th.ok) { errors.push(c.gmail_thread_id + ':' + th.status); continue; }
+      let convWrote = 0;
+      for (const m of ((th.j as { messages?: GMsg[] }).messages ?? [])) {
+        const lbl = m.labelIds ?? [];
+        if (lbl.includes('DRAFT') || lbl.includes('TRASH')) continue;
+        const H = m.payload?.headers;
+        const from = parseAddr(hdr(H, 'from'));
+        if (!(lbl.includes('SENT') || isAmimi(from.email))) continue;   // solo i NOSTRI messaggi
+        const to = parseAddr(hdr(H, 'to'));
+        const sentAt = m.internalDate ? new Date(Number(m.internalDate)).toISOString() : null;
+        const bodyText = stripQuote(stripNull(extractBody(m.payload)));
+        const { error: me, count } = await sb.from('cs_messages').upsert({
+          gmail_message_id: m.id, conversation_id: c.id, direction: 'out',
+          from_email: from.email || GMAIL_USER, to_email: to.email || null, sent_at: sentAt, body_text: bodyText || null,
+        }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
+        if (me) { errors.push(m.id + ':' + me.message.slice(0, 60)); continue; }
+        if (count) { wrote += count; convWrote += count; }
+      }
+      if (convWrote) {
+        // last_msg_at/last_direction DERIVATI dal messaggio realmente piu' recente
+        const { data: lastM } = await sb.from('cs_messages').select('direction, sent_at')
+          .eq('conversation_id', c.id).not('sent_at', 'is', null)
+          .order('sent_at', { ascending: false }).limit(1);
+        if (lastM && lastM[0]?.sent_at) {
+          await sb.from('cs_conversations').update({ last_msg_at: lastM[0].sent_at, last_direction: lastM[0].direction }).eq('id', c.id);
+        }
+        if (await recomputeUrgency(c.id)) urgFixed++;
+      }
+    }
+    return json({ ok: true, scanned, out_scritti: wrote, urgenze_ricalcolate: urgFixed, offset, next_offset: offset + scanned, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
+  }
 
   // --- DRY RUN: classifica i messaggi recenti, ritorna SOLO conteggi, scrive NULLA ---
   if (dryRun) {
@@ -339,7 +494,13 @@ Deno.serve(async (req) => {
         from_email: p.from.email || null, to_email: p.to.email || null, sent_at: p.sentAt, body_text: p.bodyText || null, form_fields: p.formFields,
       }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
       if (me) return 'transient';
-      if (count) { newMsg += count; await sb.from('cs_events').insert({ conversation_id: convId, azione: 'ingest', chi: 'cs-sync', dettaglio: { canale: p.cl.canale, message_id: id } }); }
+      if (count) {
+        newMsg += count;
+        await sb.from('cs_events').insert({ conversation_id: convId, azione: 'ingest', chi: 'cs-sync', dettaglio: { canale: p.cl.canale, message_id: id } });
+        // v6: su un NUOVO messaggio cliente di una conversazione gia' classificata, la regola
+        // sollecito va rivalutata subito (senza AI, senza toccare categoria)
+        await recomputeUrgency(convId);
+      }
       counts[p.cl.canale]++; processed++;
       return 'done';
     } catch { return 'transient'; }   // errore DB recuperabile: cursore fermo, si riprova
@@ -367,7 +528,12 @@ Deno.serve(async (req) => {
       let recOk = true;
       for (const ma of rec.messagesAdded ?? []) {
         const lbl = ma.message.labelIds ?? [];
-        if (lbl.includes('SENT') || lbl.includes('DRAFT') || lbl.includes('TRASH')) continue;   // solo posta in ingresso
+        if (lbl.includes('DRAFT') || lbl.includes('TRASH')) continue;
+        // v6: la posta INVIATA non si scarta piu': entra come 'out' sui soli thread gia' tracciati
+        if (lbl.includes('SENT')) {
+          if (await processOutbound(ma.message.id, ma.message.threadId) === 'transient') { recOk = false; break; }
+          continue;
+        }
         if (await processMessage(ma.message.id, ma.message.threadId) === 'transient') { recOk = false; break; }
       }
       if (!recOk) { stopped = true; break; }   // non superare un record con un fallimento transitorio
@@ -392,5 +558,5 @@ Deno.serve(async (req) => {
     stalled || parseFailed ? 'warn' : 'ok',
   );
 
-  return json({ ok: true, processed, new_conversations: newConv, new_messages: newMsg, counts, parse_failed: parseFailed, historyId: newHistoryId, backlog: !drained, stalled });
+  return json({ ok: true, processed, new_conversations: newConv, new_messages: newMsg, out_messages: outMsg, counts, parse_failed: parseFailed, historyId: newHistoryId, backlog: !drained, stalled });
 });

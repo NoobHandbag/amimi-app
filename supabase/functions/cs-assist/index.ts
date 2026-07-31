@@ -1,4 +1,15 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v11 (2026-07-31, brief contesto risposte out, punti 4-7):
+//   - richieste in INGLESE: le risposte standard entrano nel prompt con `testo_en` (fallback
+//     testo_it se vuoto); gli esempi di tono restano IT (0/6 hanno testo_en: lacuna di contenuto
+//     dichiarata, la colma Cowork con l'owner, non si inventano).
+//   - esempi di tono ORDINATI per categoria della conversazione (prima i suoi, poi gli altri fino
+//     al cap 6, prima erano in ordine di id) e passati ANCHE a `refine` (prima il tono spariva
+//     alla prima richiesta di modifica).
+//   - FAQ trasversali: le righe cs_faq con categoria NULL entrano SEMPRE (prima una conversazione
+//     classificata le escludeva in silenzio; oggi 0 righe NULL, fix preventivo).
+//   - residuo guard cross-cliente: ordine trovato SOLO per numero citato nel testo e SENZA email
+//     del cliente -> NON entra in dati/fonti (potenzialmente di un terzo), gap esplicito al suo posto.
 // v10 (2026-07-31, brief harness eval): `model_override` opzionale su draft/refine (solo JWT,
 //   allowlist esplicita, MAI fallback silenzioso: Claude senza chiave -> needs_key) per l'A/B
 //   modello senza toccare app_flags; `source` ('app'|'eval') su cs_drafts per distinguere le bozze
@@ -291,31 +302,53 @@ async function purchaseHistory(sb: ReturnType<typeof createClient>, email: strin
 }
 
 type Dati = { prodotti: Prod[]; ordine: Ord; tracking: OrdMeta['tracking']; standard: string[]; fonti: string[] };
-type Ctx = { dati: Dati; tono: string[]; order_admin_url: string | null; storia: Storia | null };
+type Ctx = { dati: Dati; tono: string[]; order_admin_url: string | null; storia: Storia | null; gapExtra: string[] };
 
-async function faqTono(sb: ReturnType<typeof createClient>, categoria: string | null): Promise<{ tono: string[]; standard: string[] }> {
-  const { data } = await sb.from('cs_faq').select('tipo,testo_it,categoria').eq('attiva', true);
+async function faqTono(sb: ReturnType<typeof createClient>, categoria: string | null, lingua: string | null): Promise<{ tono: string[]; standard: string[] }> {
+  const { data } = await sb.from('cs_faq').select('tipo,testo_it,testo_en,categoria').eq('attiva', true);
   const rows = (data ?? []) as Row[];
-  const tono = rows.filter((r) => r.tipo === 'esempio_tono').map((r) => String(r.testo_it ?? '')).filter(Boolean).slice(0, 6);
-  const standard = rows.filter((r) => (r.tipo === 'faq' || r.tipo === 'risposta_standard') && (!categoria || r.categoria === categoria)).map((r) => String(r.testo_it ?? '')).filter(Boolean).slice(0, 4);
+  // v11: esempi di tono PRIMA quelli della categoria della conversazione, poi gli altri, cap 6
+  // (prima erano in ordine di id: su un reso arrivavano anche cerimonia, ritiro e restock in testa)
+  const toni = rows.filter((r) => r.tipo === 'esempio_tono');
+  const tono = [
+    ...toni.filter((r) => categoria != null && r.categoria === categoria),
+    ...toni.filter((r) => !(categoria != null && r.categoria === categoria)),
+  ].map((r) => String(r.testo_it ?? '')).filter(Boolean).slice(0, 6);
+  // v11: risposte standard della categoria + le TRASVERSALI (categoria NULL, mai escluse);
+  // in inglese entra testo_en se popolato (12/12 lo hanno), fallback testo_it
+  const standard = rows
+    .filter((r) => (r.tipo === 'faq' || r.tipo === 'risposta_standard') && (!categoria || r.categoria === categoria || r.categoria == null))
+    .sort((a, b) => Number(b.categoria != null) - Number(a.categoria != null))
+    .map((r) => {
+      const en = String(r.testo_en ?? '').trim();
+      return lingua === 'en' && en ? en : String(r.testo_it ?? '');
+    }).filter(Boolean).slice(0, 4);
   return { tono, standard };
 }
 
 async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, inboundText: string, token: string, categoria: string | null): Promise<Ctx> {
   const prodotti = await matchProducts(sb, inboundText);
-  const ordine = await lookupOrder(sb, (conv.order_number as number) ?? null, (conv.customer_email as string) ?? null);
+  let ordine = await lookupOrder(sb, (conv.order_number as number) ?? null, (conv.customer_email as string) ?? null);
+  const gapExtra: string[] = [];
+  // v11 (residuo audit fix 5): il numero ordine viene dal TESTO del cliente. Se non abbiamo la sua
+  // email per verificarlo, l'ordine trovato per solo numero e' potenzialmente di un TERZO: non
+  // entra nei dati ne' nelle fonti, al suo posto un gap esplicito. (I verdetti erano gia' bloccati.)
+  if (ordine && conv.order_number && !conv.customer_email) {
+    ordine = null;
+    gapExtra.push("ordine citato non verificabile come suo (manca l'email del cliente): chiedere conferma, non dare dettagli");
+  }
   const wantsTracking = categoria === 'Spedizione e stato ordine' || /tracking|spedizione|corriere|dov.?\s*e|arriv/i.test(inboundText);
   const meta = ordine ? await fetchOrderMeta(ordine.order_number, token) : null;
   const tracking = meta && wantsTracking ? meta.tracking : null;
   const order_admin_url = meta?.adminId ? `https://admin.shopify.com/store/${SHOP}/orders/${meta.adminId}` : null;
-  const { tono, standard } = await faqTono(sb, categoria);
+  const { tono, standard } = await faqTono(sb, categoria, (conv.lingua as string) ?? null);
   const storia = await purchaseHistory(sb, (conv.customer_email as string) ?? null);
   const fonti: string[] = [];
   for (const p of prodotti) fonti.push(`${p.item} ${p.variant}: disponibili ${p.disponibili}, giacenza ${p.giacenza}${p.prezzo != null ? `, prezzo ${p.prezzo}EUR` : ''}${p.on_shopify ? ', a catalogo' : ''} (v_inventory)`);
   if (ordine) fonti.push(`Ordine #${ordine.order_number}: pagamento ${ordine.financial_status ?? 'n/d'}, evasione ${ordine.fulfillment_status ?? 'non evaso'}${ordine.fulfilled_at ? `, evaso il ${String(ordine.fulfilled_at).slice(0, 10)}` : ''} (shopify_orders)`);
   if (tracking) fonti.push(`Tracking ${tracking.corriere} ${tracking.numero} (Shopify Admin API, live)`);
   if (storia && storia.n_ordini > 0) fonti.push(`Cliente: ${storia.n_ordini} ordini, ${storia.totale}EUR totali (storico Shopify)`);
-  return { dati: { prodotti, ordine, tracking, standard, fonti }, tono, order_admin_url, storia };
+  return { dati: { prodotti, ordine, tracking, standard, fonti }, tono, order_admin_url, storia, gapExtra };
 }
 
 function datiBlock(d: Dati): string {
@@ -410,9 +443,10 @@ Deno.serve(async (req) => {
   };
 
   // carica conversazione + testo del cliente (usato da context/dry_data/draft/refine)
-  const loadConv = async (withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[] } | null> => {
+  // v11: lingua SEMPRE caricata (serve a faqTono per scegliere testo_en anche su context)
+  const loadConv = async (_withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[] } | null> => {
     const convId = String(body.conversation_id || '');
-    const cols = 'id,canale,customer_email,customer_name,order_number,categoria,subject' + (withLingua ? ',lingua' : '');
+    const cols = 'id,canale,customer_email,customer_name,order_number,categoria,subject,lingua';
     const { data: conv } = await sb.from('cs_conversations').select(cols).eq('id', convId).maybeSingle();
     if (!conv) return null;
     const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,form_fields,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(4);
@@ -429,7 +463,7 @@ Deno.serve(async (req) => {
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     const ctx = await assembleContext(sb, lc.conv, lc.inbound, token, (lc.conv.categoria as string) ?? null);
     // contratto di contesto: cosa manca per rispondere bene a QUESTA categoria (mostrato prima di generare)
-    const gaps = contractGaps((lc.conv.categoria as string) ?? null, ctx.dati);
+    const gaps = [...contractGaps((lc.conv.categoria as string) ?? null, ctx.dati), ...ctx.gapExtra];
     return json({ ok: true, fonti: ctx.dati.fonti, gaps, order_admin_url: ctx.order_admin_url, storia: ctx.storia, dati: ctx.dati });
   }
 
@@ -586,6 +620,7 @@ ${testo.slice(0, 2500)}
 
 BLOCCO DATI (l'unica fonte di numeri che puoi usare):
 ${datiBlock(ctx.dati)}
+${ctx.tono.length ? `\nEsempi del NOSTRO tono (imita lo stile, non copiare i contenuti):\n${ctx.tono.map((t) => '- ' + t).join('\n')}` : ''}
 
 Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown):`;
 

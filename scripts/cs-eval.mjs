@@ -69,7 +69,9 @@ async function edge(action, body) {
   return { status: r.status, ms: Date.now() - t0, ...((r.status === 429) ? { rate_limited: true } : {}), data: j };
 }
 async function rest(q) {
-  const r = await fetch(REST + q, { headers: { apikey: ANON, authorization: 'Bearer ' + ANON } });
+  // NB: le tabelle cs_* hanno RLS "SELECT solo authenticated" (SCHEMA §7): le letture di supporto
+  // devono viaggiare col token UTENTE, non con la anon key (che vede zero righe in silenzio).
+  const r = await fetch(REST + q, { headers: { apikey: ANON, authorization: 'Bearer ' + token } });
   return r.json();
 }
 
