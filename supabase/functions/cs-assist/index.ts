@@ -1,4 +1,8 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v10 (2026-07-31, brief harness eval): `model_override` opzionale su draft/refine (solo JWT,
+//   allowlist esplicita, MAI fallback silenzioso: Claude senza chiave -> needs_key) per l'A/B
+//   modello senza toccare app_flags; `source` ('app'|'eval') su cs_drafts per distinguere le bozze
+//   generate dall'harness (migr 0080). Nessun cambio di comportamento senza override.
 // v9 (2026-07-26): bozze anche per la chat del sito (chat_notifica): boilerplate della notifica
 //   Shopify Inbox rimosso dal testo passato al modello, prompt in tono chat (niente formato email).
 // Design: Cowork12/projects/Servizio_Clienti_2026-06/DESIGN_Tool_Assistenza_Amimi_V1_2026-07-20.md (6.1, 6.3, 8).
@@ -370,17 +374,32 @@ Deno.serve(async (req) => {
   // Motore AI: Claude se c'e' anthropic_api_key (owner lo mette a mano, mai in repo/chat), altrimenti Gemini free.
   const claudeKey = (flags.anthropic_api_key || '').trim();
   const claudeModel = (flags.cs_ai_model || 'claude-sonnet-5').trim();
-  const draftModel = claudeKey ? claudeModel : MODEL_DRAFT;
+  // model_override (harness eval, brief 29-07): A/B sulle stesse conversazioni senza toccare i flag
+  // globali, e baseline Gemini rigenerabile anche DOPO l'inserimento della chiave Anthropic. Vale solo
+  // per draft/refine (rami JWT: qui siamo gia' oltre il gate), allowlist esplicita, e MAI fallback
+  // silenzioso su un altro modello: falserebbe il confronto.
+  const MODEL_ALLOW = ['gemini-flash-latest', 'claude-sonnet-5'];
+  const override = String(body.model_override || '').trim();
+  if (override && !['draft', 'refine'].includes(action)) return json({ error: 'model_override vale solo per draft/refine' }, 400);
+  if (override && !MODEL_ALLOW.includes(override)) return json({ error: `model_override non ammesso: "${override}" (ammessi: ${MODEL_ALLOW.join(', ')})` }, 400);
+  const useClaude = override ? override.startsWith('claude-') : !!claudeKey;
+  const effModel = override || (claudeKey ? claudeModel : MODEL_DRAFT);
+  const draftModel = effModel;   // finisce in cs_drafts.model: sempre il modello REALE
   const haveLLM = !!claudeKey || !!key;
+  // bozze dell'harness marcate 'eval' (migr 0080): distinguibili con una query, la UI non le vede mai
+  // (le opzioni mostrate arrivano dalla risposta live, cs_drafts non viene letta dal client).
+  const draftSource = body.source === 'eval' ? 'eval' : 'app';
   // "come rispondere": istruzioni editabili dal team (app_flags.cs_ai_istruzioni), iniettate come CONTESTO
   // in ogni bozza. Guidano il tono; non superano MAI la regola anti-invenzione.
   const aiIstruzioni = (flags.cs_ai_istruzioni || '').trim();
   const istruzioniBlock = aiIstruzioni ? `\nISTRUZIONI DEL TEAM (come rispondere; priorita' sullo stile generico, MAI sull'anti-invenzione):\n${aiIstruzioni}\n` : '';
-  // LLM unificato: Claude (system separato) se configurato, altrimenti Gemini (system+user concatenati).
+  // LLM unificato: Claude (system separato) se richiesto/configurato, altrimenti Gemini (system+user
+  // concatenati). Con override attivo il retry su flash-lite e' DISATTIVATO: il modello del run deve
+  // restare quello chiesto (integrita' dell'A/B), meglio un errore che un dato falsato.
   const runLLM = async (system: string, userMsg: string, maxTok: number, jsonMode: boolean): Promise<string> => {
-    if (claudeKey) return await claude(claudeModel, system, userMsg, claudeKey, maxTok);
-    try { return await gemini(MODEL_DRAFT, system + '\n\n' + userMsg, key, maxTok, jsonMode); }
-    catch (e) { if (jsonMode) throw e; return await gemini(MODEL_SUMMARY, system + '\n\n' + userMsg, key, maxTok, false); }
+    if (useClaude) return await claude(effModel, system, userMsg, claudeKey, maxTok);
+    try { return await gemini(effModel, system + '\n\n' + userMsg, key, maxTok, jsonMode); }
+    catch (e) { if (jsonMode || override) throw e; return await gemini(MODEL_SUMMARY, system + '\n\n' + userMsg, key, maxTok, false); }
   };
 
   // notifica chat Shopify Inbox: al modello serve il messaggio del cliente, non il boilerplate della
@@ -469,6 +488,9 @@ Riassunto (max 2 righe):`;
   // ---------- draft: 3 opzioni (JWT), Claude o Gemini, una sola chiamata ----------
   if (action === 'draft') {
     if (!haveLLM) return json({ ok: false, needs_key: true, error: 'Nessun motore AI configurato (Gemini o Claude).' });
+    // chiave del motore RICHIESTO assente -> needs_key, mai ripiegare sull'altro (falserebbe l'A/B)
+    if (useClaude && !claudeKey) return json({ ok: false, needs_key: true, error: 'model_override Claude ma anthropic_api_key assente: nessun fallback.' });
+    if (!useClaude && !key) return json({ ok: false, needs_key: true, error: 'motore Gemini richiesto ma gemini_api_key assente.' });
     const lc = await loadConv(true);
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     const conv = lc.conv;
@@ -532,8 +554,8 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
     ].join('\n'));
     const options = opzioni.slice(0, 3).map((o) => ({ tono: o.tono, testo: o.testo, da_verificare: countDaVerificare(o.testo), non_grounded: lintDraft(o.testo, lintCorpus) }));
 
-    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: draftModel }).select('id').single();
-    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length } });
+    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: draftModel, source: draftSource }).select('id').single();
+    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length, ...(draftSource === 'eval' ? { source: 'eval', model: draftModel } : {}) } });
     return json({
       ok: true, options, draft: options[0].testo, da_verificare: options[0].da_verificare,   // draft = retro-compat
       fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, draft_id: ins?.id,
@@ -543,6 +565,8 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
   // ---------- refine: riscrivi una bozza data applicando un'istruzione (JWT), Claude o Gemini ----------
   if (action === 'refine') {
     if (!haveLLM) return json({ ok: false, needs_key: true, error: 'Nessun motore AI configurato (Gemini o Claude).' });
+    if (useClaude && !claudeKey) return json({ ok: false, needs_key: true, error: 'model_override Claude ma anthropic_api_key assente: nessun fallback.' });
+    if (!useClaude && !key) return json({ ok: false, needs_key: true, error: 'motore Gemini richiesto ma gemini_api_key assente.' });
     const testo = String(body.testo || '').trim();
     const istruzione = String(body.istruzione || '').trim();
     if (!testo || !istruzione) return json({ error: 'servono testo e istruzione' }, 422);
