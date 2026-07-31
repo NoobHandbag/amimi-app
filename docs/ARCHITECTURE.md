@@ -1,5 +1,28 @@
 # Amimì App — Architettura (as-built, 2026-06-25; aggiornata 2026-07-06)
 
+> # STATO REALE VERIFICATO IL 2026-07-31 - LEGGI QUESTO PRIMA DEL RESTO
+>
+> **Questo file e' rimasto indietro.** Le sezioni 5, 6, 7 e 9 qui sotto fotografano il 6 luglio 2026 e non descrivono piu' il sistema: mancano il tool Assistenza clienti, la loyalty Premia, l'assistente AI in-app e activity-digest. **Finche' non vengono riscritte fa fede questo blocco.** Le fonti aggiornate e affidabili sono `SCHEMA.md` (schema dati) e `EDGE_FUNCTIONS.md` (dettaglio per function).
+> Verifica fatta da Cowork in sola lettura (`list_edge_functions`, `cron.job`, `cron.job_run_details`, `information_schema`) durante la ricerca software PMI del 31-07-2026.
+>
+> ### Edge functions: **17 attive**, non 8
+> `write-api`, `shopify-sync`, `shopify-stock`, `qromo-webhook`, `ce-guard`, `ask-data`, `mcp`, `etl-load` (ritirata, risponde 410) - le 8 gia' documentate - piu' le **9 mai entrate in questo file**: `cs-sync`, `cs-classify`, `cs-api`, `cs-assist` (tool Assistenza clienti), `loyalty-proxy` e `loyalty-proxy-smoke` (Premia/Mimi), `assistant` e `corpus-load` (assistente AI in-app "Chiedi ad Amimi"), `activity-digest`.
+> **ATTENZIONE al numero di versione:** il campo `version` di `list_edge_functions` e' un **contatore di deploy**, NON la numerazione `vN` scritta nei commenti in testa al codice e in `EDGE_FUNCTIONS.md`. I due numeri coincidono solo per coincidenza. Esempio verificato il 31-07: `cs-assist` risulta `version: 11` su Supabase mentre il sorgente e' `v13`. **Non trattare mai uno scarto fra i due come codice non deployato**: si verifica cercando le feature nel sorgente deployato, non confrontando numeri.
+>
+> ### Cron: **8 job attivi**, non 5
+> Ai 5 documentati (`shopify-sync-hourly` :07, `shopify-stock-hourly` :17, `shopify-autopush-hourly` :27, `health-daily`, `ce-guard-daily`) si aggiungono i 3 del tool Assistenza: **`cs-sync-poll` `*/2`**, **`cs-classify` `*/5`**, **`cs-assist-summary` `*/7`** (tutti NO-OP se `app_flags.cs_enabled != 'true'`).
+> **DRIFT REALE DA DECIDERE (owner):** `ce-guard-daily` ha schedule **`30 * * * *`**, cioe' gira **ogni ora al minuto :30**, non una volta al giorno come dicono il nome del job, questo file e `OPERATIONS.md`. Verificato su `cron.job_run_details`: **21 run il 31-07**, dalle 02:30 alle 22:30, tutte riuscite. Non produce righe doppie (`health_log` ha UNIQUE su `day, k`, quindi fa upsert) ma moltiplica per 21 le chiamate all'API Shopify della riconciliazione. Va deciso se e' voluto: se si', si rinomina il job e si aggiorna la doc; se no, si riporta a `30 6 * * *`.
+>
+> ### Frontend: **7 tab montate** in `App.tsx`, non 6
+> `home`, `cruscotto` (Report), `salute`, **`assistenza`**, `registra` (Ingest), **`ordini`**, `magazzino` (Inventory), piu' l'overlay `AssistantPanel` presente su ogni schermata (si auto-nasconde se `ai_enabled` e' false). In `pages/` esistono anche `Prodotti.tsx` e `Tables.tsx`, raggiunte dall'interno di altre tab e non montate direttamente in `App.tsx`.
+>
+> ### Dati: **36 tabelle + 29 viste**
+> Rispetto alla sezione 3 mancano qui: le 5 `cs_*` (`cs_conversations`, `cs_messages`, `cs_events`, `cs_drafts`, `cs_faq`), `loyalty_points`, `loyalty_events`, `mimi_state`, `models`, `app_guides`. **Sono le uniche tabelle dell'app con RLS**: dettaglio e postura di sicurezza in `SCHEMA.md` sezione 7.
+>
+> ### "Live" non vuol dire "usato"
+> Al 31-07-2026 **`b2b_movements` e `returns` hanno 0 righe**, pur essendo deployate e funzionanti da mesi; **263 conversazioni su 268 sono ferme in stato `da_fare`**. Questo file, come tutta la doc, descrive cosa e' costruito: non dice nulla su cosa venga effettivamente compilato. Prima di progettare sopra uno di questi moduli, controllare i conteggi di riga.
+
+
 > AGGIORNAMENTO 2026-07-04 (post-cutover). Dal 2026-07-03 il sistema di record per vendite, stock, inventario e CE e' amimi-app (https://noobhandbag.github.io/amimi-app + Supabase imszbjeyplaiovylhkgl); il webhook Qromo punta alla edge function qromo-webhook e il Foglio Master non riceve piu' le vendite Qromo (resta semi-attivo fino al congelamento). Stato corrente: amimi-app/docs/TRIGGER_MIGRAZIONE.md.
 
 > AGGIORNAMENTO 2026-07-06 (consolidamento doc + remediation audit di sistema, commit a758756/0b0385d/a3b0306). Le sezioni §5/§6/§9 sono state RISCRITTE allo stato corrente (versioni edge verificate live il 06-07). Novita' strutturali dalla remediation: write-api blocca le scritture nei mesi chiusi (`ce_snapshots`) senza force+motivo; UNIQUE parziale su `qromo_sales(sale_id)` (migr 0036); detector estesi in `v_health` + banner rosso in Home (migr 0035); merge duplicati `codice_norm` + UNIQUE e REVOKE TRUNCATE (migr 0037). Doc operativi nuovi: `OPERATIONS.md` (runbook), `EDGE_FUNCTIONS.md`, `SCHEMA.md`. Dettaglio remediation: `audits/AUDIT_SYSTEM_2026-07-06.md`.

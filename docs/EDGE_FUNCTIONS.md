@@ -1,5 +1,8 @@
 # Amimì App - EDGE FUNCTIONS (riferimento)
 
+> **COME SI LEGGONO I NUMERI DI VERSIONE (verificato 31-07-2026).** Le sigle `vN` nei titoli qui sotto sono la **numerazione interna** scritta nei commenti in testa a ogni `index.ts`. Il campo `version` restituito da `list_edge_functions` e' invece un **contatore di deploy** di Supabase. I due numeri sono indipendenti e coincidono solo per caso. Esempio reale: il 31-07 `cs-assist` risultava `version: 11` su Supabase mentre il sorgente nel repo era gia' `v13` e le feature v12 e v13 (`fallback_da_claude`, `engine_fallback`, `body_clean`) erano **tutte presenti nel codice deployato**. **Uno scarto fra i due numeri non e' un segnale di codice non deployato:** per sapere se una feature e' live si cerca il suo marcatore nel sorgente deployato (`get_edge_function`), non si confrontano i numeri.
+
+
 > Una scheda per ogni edge function Supabase (project `imszbjeyplaiovylhkgl`). Creato 2026-07-06 dal codice in `supabase/functions/` + verifica live (`list_edge_functions`).
 > Le VERSIONI cambiano a ogni deploy: quelle qui sotto sono lo stato al 2026-07-06 sera (round feedback cofounder); per la verita' live usare Supabase MCP `list_edge_functions`. Tutte le functions hanno `verify_jwt=false`.
 > Deploy: SOLO via Supabase MCP `deploy_edge_function` (niente CLI link); e' territorio Claude Code (Regola Ferrea 16). I valori dei segreti NON vanno mai riportati nei doc (repo pubblico).

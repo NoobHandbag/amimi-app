@@ -35,3 +35,4 @@ db-backup/
 # session artifacts + secrets locali (mai committare)
 etl/push.mjs
 audits/
+__pycache__/
