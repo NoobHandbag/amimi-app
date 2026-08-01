@@ -1,4 +1,11 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v20 (2026-08-01 notte, brief cs_assist_migliorie punto 4): fra i prodotti candidati entrano quelli
+//   dell'ORDINE VERIFICATO, comunque la cliente li abbia scritti. Il brief proponeva di allargare il
+//   match alle sole parole della VARIANTE: riprovato sui due casi reali che cita, non ne risolve
+//   nessuno e peggiora le cose (dettaglio sopra `matchProducts`). Il dato certo era sotto il naso:
+//   `shopify_line_items.codice_norm` dice quale borsa ha in mano, e non si indovina. Vincolo di
+//   riservatezza: i codici si leggono SOLO dopo la guardia che verifica che l'ordine sia suo, mai
+//   da un ordine agganciato al solo numero citato nel testo.
 // v19 (2026-08-01 notte, brief cs_bozze_troncate + cs_faq_indirizzo_e_link_resi problema 2):
 //   - SEGNAPOSTO DI LINK PER TIPO. `[link resi]` (cs_faq id 13) non era coperto dalla regex del v15
 //     ed e' arrivato TALE E QUALE nella mail a una cliente ("Tutte le istruzioni sono disponibili su
@@ -246,9 +253,23 @@ async function claude(model: string, system: string, user: string, key: string, 
 type Prod = { codice: string; item: string; variant: string; prezzo: number | null; giacenza: number; disponibili: number; on_shopify: boolean; url: string | null };
 
 // match prodotti citati nel testo: modello (item) presente + overlap parole variante; fallback alias sito.
-async function matchProducts(sb: ReturnType<typeof createClient>, text: string): Promise<Prod[]> {
+//
+// v20 (brief cs_assist_migliorie punto 4): entrano anche i prodotti dell'ORDINE VERIFICATO, comunque
+// siano scritti nel testo. Il brief proponeva di allargare il match alle sole parole della VARIANTE:
+// riprovato sui due casi reali che cita, non ne risolve nessuno e peggiora le cose. Caso S5, "la
+// borsina con i piercing azzurra": la variante e' ICE BLUE PIERCING, la cliente scrive in italiano,
+// quindi combacia solo "piercing" - una parola, sotto qualunque soglia sensata; e abbassando la
+// soglia a una parola entrerebbero TUTTE e sette le borse con i piercing, cioe' esattamente il
+// rischio di citare a una cliente il prodotto sbagliato. Caso S9, "cercavo qualcosa sul fucsia
+// scuro": nessuna parola della variante e' italiana (CANDY PINK, PAILLETTES), quindi non cambia
+// nulla. Il dato certo, in S5, era sotto il naso: l'ordine #1397 ha UNA riga, e risolve a
+// MARIA_BAG_ICE_BLUE_PIERCING. Cio' che la cliente ha comprato non si indovina, si legge.
+async function matchProducts(sb: ReturnType<typeof createClient>, text: string, codiciOrdine: string[] = []): Promise<Prod[]> {
   const tw = words(text);
-  if (tw.size === 0) return [];
+  // I codici dell'ordine bastano da soli: un messaggio senza parole utili ("come mai?") non deve
+  // far sparire il prodotto che la cliente ha effettivamente comprato.
+  const ordSet = new Set(codiciOrdine.map((c) => c.toUpperCase()));
+  if (tw.size === 0 && ordSet.size === 0) return [];
   const { data: inv } = await sb.from('v_inventory').select('codice,item,variant,retail_price,giacenza_attuale,disponibili_da_vendere,on_shopify');
   const rows = (inv ?? []) as Row[];
   // v15: link scheda da shopify_catalog.handle (join case-insensitive, Regola Ferrea 4:
@@ -274,7 +295,10 @@ async function matchProducts(sb: ReturnType<typeof createClient>, text: string):
     const modelHit = modelWords.length > 0 && modelWords.some((w) => tw.has(w));
     const varHits = varWords.filter((w) => tw.has(w)).length;
     const isAlias = aliasHit.has(String(r.codice));
-    if (!modelHit && !isAlias) continue;
+    // v20: comprato davvero > citato a parole. Punteggio piu' alto di alias (4) e modello (2) messi
+    // insieme, cosi' e' sempre il MIGLIOR match, che e' anche quello da cui si prende l'url.
+    const isOrdine = ordSet.has(String(r.codice).toUpperCase());
+    if (!modelHit && !isAlias && !isOrdine) continue;
     const handle = handleByCod.get(String(r.codice).toUpperCase()) ?? null;
     const prod: Prod = {
       codice: String(r.codice), item, variant,
@@ -282,13 +306,13 @@ async function matchProducts(sb: ReturnType<typeof createClient>, text: string):
       giacenza: Number(r.giacenza_attuale ?? 0), disponibili: Number(r.disponibili_da_vendere ?? 0), on_shopify: r.on_shopify === true,
       url: handle ? `${SITE_URL}/products/${handle}` : null,
     };
-    scored.push({ p: prod, score: (modelHit ? 2 : 0) + varHits * 3 + (isAlias ? 4 : 0) });
+    scored.push({ p: prod, score: (modelHit ? 2 : 0) + varHits * 3 + (isAlias ? 4 : 0) + (isOrdine ? 10 : 0) });
   }
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, 4).map((x) => x.p);
 }
 
-type Ord = { order_number: unknown; financial_status: unknown; fulfillment_status: unknown; fulfilled_at: unknown; gross_total: unknown; email: unknown; order_id: unknown; created_at_shop: unknown; righe: { nome: string; qta: number }[] } | null;
+type Ord = { order_number: unknown; financial_status: unknown; fulfillment_status: unknown; fulfilled_at: unknown; gross_total: unknown; email: unknown; order_id: unknown; created_at_shop: unknown; righe: { nome: string; qta: number; codice: string | null }[] } | null;
 async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: number | null, email: string | null): Promise<Ord> {
   const COLS = 'order_id,order_number,financial_status,fulfillment_status,fulfilled_at,gross_total,email,created_at_shop';
   const base = () => sb.from('shopify_orders').select(COLS).order('created_at_shop', { ascending: false }).limit(1);
@@ -313,8 +337,10 @@ async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: num
   // puo' citare un ordine ALTRUI. Se conosciamo l'email del cliente, l'ordine deve essere suo (match
   // case-insensitive lato codice, evita anche il bug case-sensitivity di shopify_orders.email).
   if (orderNumber && email && String(o.email ?? '').toLowerCase() !== email.toLowerCase()) return null;
-  const { data: li } = await sb.from('shopify_line_items').select('lineitem_name,quantita').eq('order_id', o.order_id as string);
-  const righe = ((li ?? []) as Row[]).map((r) => ({ nome: String(r.lineitem_name ?? ''), qta: Number(r.quantita ?? 0) }));
+  // v20: oltre al nome serve il CODICE risolto (`codice_norm`, 675/675 righe risolte): e' il
+  // modo deterministico di sapere quale borsa ha in mano la cliente, senza dedurlo dal testo.
+  const { data: li } = await sb.from('shopify_line_items').select('lineitem_name,quantita,codice_norm').eq('order_id', o.order_id as string);
+  const righe = ((li ?? []) as Row[]).map((r) => ({ nome: String(r.lineitem_name ?? ''), qta: Number(r.quantita ?? 0), codice: r.codice_norm ? String(r.codice_norm) : null }));
   return { order_number: o.order_number, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status, fulfilled_at: o.fulfilled_at, gross_total: o.gross_total, email: o.email, order_id: o.order_id, created_at_shop: o.created_at_shop, righe };
 }
 
@@ -596,7 +622,6 @@ async function faqTono(sb: ReturnType<typeof createClient>, categoria: string | 
 }
 
 async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, inboundText: string, token: string, categoria: string | null): Promise<Ctx> {
-  const prodotti = await matchProducts(sb, inboundText);
   let ordine = await lookupOrder(sb, (conv.order_number as number) ?? null, (conv.customer_email as string) ?? null);
   const gapExtra: string[] = [];
   // v11 (residuo audit fix 5): il numero ordine viene dal TESTO del cliente. Se non abbiamo la sua
@@ -606,6 +631,11 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
     ordine = null;
     gapExtra.push("ordine citato non verificabile come suo (manca l'email del cliente): chiedere conferma, non dare dettagli");
   }
+  // v20: i prodotti dell'ordine entrano fra i candidati, ma SOLO DOPO la guardia qui sopra e solo da
+  // un ordine verificato. L'ordine di queste righe e' la guardia stessa: leggere le righe di un
+  // ordine non verificato vorrebbe dire raccontare a una persona cosa ha comprato un'altra.
+  const codiciOrdine = ordine ? ordine.righe.map((r) => r.codice).filter((c): c is string => !!c) : [];
+  const prodotti = await matchProducts(sb, inboundText, codiciOrdine);
   const wantsTracking = categoria === 'Spedizione e stato ordine' || /tracking|spedizione|corriere|dov.?\s*e|arriv/i.test(inboundText);
   const meta = ordine ? await fetchOrderMeta(ordine.order_number, token) : null;
   const tracking = meta && wantsTracking ? meta.tracking : null;
