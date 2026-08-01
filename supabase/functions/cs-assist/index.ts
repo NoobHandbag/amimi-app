@@ -420,9 +420,11 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   const tracking = meta && wantsTracking ? meta.tracking : null;
   const order_admin_url = meta?.adminId ? `https://admin.shopify.com/store/${SHOP}/orders/${meta.adminId}` : null;
   const { tono, standard: standardRaw } = await faqTono(sb, categoria, (conv.lingua as string) ?? null);
-  // v15: i segnaposto di link si risolvono QUI, prima del prompt: il miglior prodotto agganciato
-  // con scheda a catalogo presta il suo URL; senza URL resta un [DA VERIFICARE] esplicito.
-  const bestUrl = prodotti.find((p) => p.url)?.url ?? null;
+  // v15: i segnaposto di link si risolvono QUI, prima del prompt. SOLO l'URL del MIGLIOR match:
+  // prendere il primo prodotto CON url darebbe il link di un'ALTRA borsa quando il top match non ha
+  // la scheda (provato live: richiesta PURPLE_PATENT senza handle -> usciva il link della VERNICE
+  // ROSSO). Meglio [DA VERIFICARE] di un link sbagliato.
+  const bestUrl = prodotti[0]?.url ?? null;
   const standard = standardRaw.map((s) => resolveLinkPh(s, bestUrl));
   const storia = await purchaseHistory(sb, (conv.customer_email as string) ?? null);
   const conoscenza = await csKnowledge(sb, categoria);
@@ -451,9 +453,10 @@ function datiBlock(d: Dati): string {
   if (d.prodotti.length) {
     L.push('PRODOTTI (giacenza/disponibilita/prezzo dal gestionale):');
     for (const p of d.prodotti) L.push(`- ${p.item} ${p.variant}: disponibili da vendere ${p.disponibili}, giacenza ${p.giacenza}${p.prezzo != null ? `, prezzo ${p.prezzo} EUR` : ''}${p.on_shopify ? ', a catalogo sul sito' : ', non a catalogo'}${p.url ? `, link scheda: ${p.url}` : p.on_shopify ? ', link scheda NON disponibile (non rimandare alla pagina del prodotto: se serve, usa [DA VERIFICARE: link scheda prodotto])' : ''}`);
-    // v15: prodotto esaurito ma con scheda a catalogo -> la bozza deve dare il link dell'avviso restock
-    const soldOutLink = d.prodotti.filter((p) => p.disponibili <= 0 && p.url);
-    if (soldOutLink.length) L.push('NOTA RESTOCK: sulla scheda del prodotto esaurito (link qui sopra) c\'e\' il bottone "Avvisami quando torna disponibile": nella risposta INDICA quel link come il posto dove iscriversi all\'avviso ("qui puoi iscriverti per essere avvisata quando torna: <link>").');
+    // v15: prodotto esaurito ma con scheda a catalogo -> la bozza deve dare il link dell'avviso
+    // restock. Solo se e' il MIGLIOR match (il primo): mai suggerire la scheda di un'altra borsa.
+    const top = d.prodotti[0];
+    if (top && top.disponibili <= 0 && top.url) L.push(`NOTA RESTOCK: sulla scheda del prodotto esaurito (${top.url}) c'e' il bottone "Avvisami quando torna disponibile": nella risposta INDICA quel link come il posto dove iscriversi all'avviso ("qui puoi iscriverti per essere avvisata quando torna: ${top.url}").`);
   } else L.push('PRODOTTI: nessun prodotto identificato con certezza dal testo.');
   if (d.ordine) {
     L.push(`ORDINE #${d.ordine.order_number}: pagamento ${d.ordine.financial_status ?? 'n/d'}, evasione ${d.ordine.fulfillment_status ?? 'non ancora evaso'}${d.ordine.fulfilled_at ? `, evaso il ${String(d.ordine.fulfilled_at).slice(0, 10)}` : ''}.`);
@@ -717,8 +720,9 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
       aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''),
       ctx.conoscenza.join('\n'), ctx.precedenti.join('\n'),   // v14: i valori di casa (14, 3.90, CAP...) sono fatti consentiti
     ].join('\n'));
-    // v15: safety net sui segnaposto di LINK sopravvissuti alla generazione (url reale o rimozione)
-    const bestUrlD = ctx.dati.prodotti.find((p) => p.url)?.url ?? null;
+    // v15: safety net sui segnaposto di LINK sopravvissuti alla generazione (url reale o rimozione).
+    // Solo l'url del MIGLIOR match, mai quello di un altro prodotto (vedi assembleContext).
+    const bestUrlD = ctx.dati.prodotti[0]?.url ?? null;
     const options = opzioni.slice(0, 3).map((o) => { const testo = scrubLinkPh(o.testo, bestUrlD); return { tono: o.tono, testo, da_verificare: countDaVerificare(testo), non_grounded: lintDraft(testo, lintCorpus) }; });
 
     const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: usedModel, source: draftSource }).select('id').single();
@@ -764,7 +768,7 @@ Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown
     catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     if (!out) return json({ ok: false, error: 'bozza vuota' }, 502);
     out = out.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
-    out = scrubLinkPh(out, ctx.dati.prodotti.find((p) => p.url)?.url ?? null);   // v15: safety net link
+    out = scrubLinkPh(out, ctx.dati.prodotti[0]?.url ?? null);   // v15: safety net link (solo il top match)
     // linter di aderenza anche sulla riscrittura (la bozza di partenza NON e' fonte: potrebbe gia' inventare)
     // v13: corpus sul thread RAW (citazioni incluse), come su draft
     const lintCorpusR = factKeys([
