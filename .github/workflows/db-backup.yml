@@ -1,11 +1,33 @@
 name: db-backup
 
-# Daily logical backup of the Supabase business tables (read-only, public key).
-# Snapshots are kept as build artifacts (90 days). Schema lives in supabase/migrations/.
+# Backup del database Supabase. DUE livelli, con scopi diversi:
+#
+#  1. QUOTIDIANO (ogni notte): dati + struttura, come artefatto. Conservato 90 giorni.
+#     Serve al caso comune: "ci siamo accorti oggi di aver rotto qualcosa ieri".
+#
+#  2. PERMANENTE (il primo del mese): stessa roba, ma pubblicata come asset di una Release.
+#     Gli asset delle Release NON SCADONO MAI, a differenza degli artefatti. Serve al caso
+#     raro e grave: ricostruire com'era il magazzino a marzo, un controllo fiscale, un errore
+#     scoperto sei mesi dopo.
+#
+# Perche' serve tutto questo: il progetto Supabase e' su piano FREE, che NON include i backup
+# della piattaforma (verificato in dashboard il 2026-08-01). Questa e' l'unica rete di sicurezza.
+#
+# La STRUTTURA (schema.sql) e' entrata nel backup il 2026-08-01: prima si salvavano solo i dati e
+# per la struttura ci si affidava alle migrazioni, che NON sono in grado di ricreare il database.
+
 on:
   schedule:
-    - cron: '17 3 * * *'   # every day 03:17 UTC
-  workflow_dispatch: {}      # manual run button
+    - cron: '17 3 * * *'   # ogni giorno 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      archivio_permanente:
+        description: 'Crea anche l archivio permanente (normalmente solo il primo del mese)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # serve per pubblicare la Release dell archivio permanente
 
 jobs:
   backup:
@@ -15,11 +37,58 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Export tables
+
+      - name: Esporta i DATI (24 tabelle in JSON)
         run: node scripts/db-backup.mjs
-      - name: Upload snapshot
+
+      - name: Estrai la STRUTTURA (schema.sql)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -e
+          npx --yes supabase@latest link --project-ref imszbjeyplaiovylhkgl -p "$SUPABASE_DB_PASSWORD"
+          npx --yes supabase@latest db dump --linked -f db-backup/schema.sql
+          echo "schema.sql: $(wc -c < db-backup/schema.sql) byte"
+
+      - name: La struttura e cambiata rispetto al repo?
+        run: |
+          if ! diff -q supabase/schema.sql db-backup/schema.sql > /dev/null 2>&1; then
+            echo "::warning::La struttura del database e' cambiata rispetto a supabase/schema.sql nel repo."
+            echo "::warning::Aggiorna la copia versionata con: node scripts/schema-dump.mjs, poi committa."
+          else
+            echo "Struttura invariata rispetto alla copia nel repo."
+          fi
+
+      - name: Snapshot quotidiano (artefatto, 90 giorni)
         uses: actions/upload-artifact@v4
         with:
           name: amimi-db-backup-${{ github.run_id }}
           path: db-backup/
           retention-days: 90
+
+      - name: Serve l archivio permanente?
+        id: check
+        run: |
+          if [ "${{ inputs.archivio_permanente }}" = "true" ] || [ "$(date -u +%d)" = "01" ]; then
+            echo "si=true" >> "$GITHUB_OUTPUT"
+            echo "tag=backup-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+          else
+            echo "si=false" >> "$GITHUB_OUTPUT"
+            echo "Non e' il primo del mese: nessun archivio permanente."
+          fi
+
+      - name: Archivio permanente (Release, non scade mai)
+        if: steps.check.outputs.si == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          set -e
+          tar czf "amimi-${TAG}.tar.gz" db-backup/
+          echo "archivio: $(du -h "amimi-${TAG}.tar.gz" | cut -f1)"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "amimi-${TAG}.tar.gz" --clobber
+          else
+            gh release create "$TAG" "amimi-${TAG}.tar.gz" --title "Backup $TAG" --notes "Archivio permanente del database amimi-app. Contiene i DATI (un JSON per tabella) e la STRUTTURA (schema.sql). Per ricostruire da zero: applicare schema.sql, poi reinserire i JSON. Gli asset delle Release non scadono mai; gli artefatti del backup quotidiano scadono dopo 90 giorni."
+          fi
