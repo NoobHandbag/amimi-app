@@ -13,6 +13,9 @@
 //   - add_noise: "non e' un cliente" -> appende il MITTENTE a app_flags.cs_noise_senders (dedup)
 //       cosi' le prossime mail finiscono nel rumore, e sposta la conversazione a canale='rumore'
 //       (sparisce dalla coda). cs_events 'noise_add'. Il flag e' riletto a runtime da cs-sync.
+//   - set_categoria con regola B2B (v7, 01-08, decisione owner): marcare 'Collaborazioni e B2B'
+//       porta la conversazione FUORI dalla coda (canale='rumore', categoria conservata: il B2B si
+//       risponde su Gmail); correggere VIA dal B2B una riga a rumore per quel motivo la riporta in coda.
 //   - remove_noise (v6, 01-08, gesto INVERSO richiesto dal brief stato_automatico_e_rumore Parte B):
 //       riporta una conversazione dal rumore a canale='email_diretta' e toglie il MITTENTE esatto
 //       dalla denylist se presente. Se il blocco viene da una voce di DOMINIO ('@x.com'), la voce
@@ -74,16 +77,22 @@ Deno.serve(async (req) => {
     const categoria = rawCat === '' ? null : (CANON.includes(rawCat) ? rawCat : '__invalid__');
     if (categoria === '__invalid__') return json({ error: 'categoria fuori tassonomia' }, 422);
 
+    // v7 (01-08, decisione owner): il B2B si risponde su Gmail -> marcarlo a mano lo porta fuori
+    // dalla coda (rumore, categoria conservata); correggere VIA dal B2B una riga finita nel rumore
+    // per questo motivo la riporta in coda. Simmetrico e reversibile.
+    const updCat: Record<string, unknown> = { categoria, categoria_source: categoria ? 'manuale' : 'ai_low' };
+    if (categoria === 'Collaborazioni e B2B' && ex.canale !== 'rumore') updCat.canale = 'rumore';
+    if (ex.categoria === 'Collaborazioni e B2B' && categoria && categoria !== 'Collaborazioni e B2B' && ex.canale === 'rumore') updCat.canale = 'email_diretta';
     const { error: ue } = await sb.from('cs_conversations')
-      .update({ categoria, categoria_source: categoria ? 'manuale' : 'ai_low' })
+      .update(updCat)
       .eq('id', convId);
     if (ue) return json({ error: 'scrittura fallita: ' + ue.message }, 500);
 
     await sb.from('cs_events').insert({
       conversation_id: convId, azione: 'categoria_edit', chi,
-      dettaglio: { da: ex.categoria, a: categoria, da_source: ex.categoria_source, by_email: email },
+      dettaglio: { da: ex.categoria, a: categoria, da_source: ex.categoria_source, by_email: email, ...(updCat.canale ? { canale: updCat.canale, motivo_canale: 'B2B si risponde su Gmail (owner 01-08)' } : {}) },
     });
-    return json({ ok: true, categoria, categoria_source: categoria ? 'manuale' : 'ai_low', chi });
+    return json({ ok: true, categoria, categoria_source: categoria ? 'manuale' : 'ai_low', ...(updCat.canale ? { canale: updCat.canale } : {}), chi });
   }
 
   if (action === 'set_stato') {

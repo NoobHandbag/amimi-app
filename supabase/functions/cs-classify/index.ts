@@ -1,4 +1,7 @@
 // cs-classify — tool assistenza clienti, FASE 2: auto-categorizzazione + urgenza.
+// v7 (2026-08-01, decisione owner in chat): "Collaborazioni e B2B" si risponde su GMAIL, non in
+//   app -> appena classificata con confidenza la conversazione esce dalla coda (canale='rumore',
+//   categoria conservata sulla riga; gesto inverso in cs-api remove_noise). Storico: migr 0091.
 // Design: Cowork12/projects/Servizio_Clienti_2026-06/DESIGN_Tool_Assistenza_Amimi_V1_2026-07-20.md (6.2, 6.4).
 //
 // DECOUPLED dall'ingest (cs-sync): se Gemini e' giu' l'ingest continua, le card restano "da classificare".
@@ -245,12 +248,18 @@ Deno.serve(async (req) => {
       urgente, urgenza_motivo: urgente ? urgenza_motivo : null, flags,
     };
     if (!c.lingua) upd.lingua = ai.lingua;
+    // v7 (01-08, decisione owner): "Collaborazioni e B2B" si gestisce su GMAIL, non in app.
+    // Appena riconosciuta con confidenza, la conversazione esce dalla coda (canale='rumore');
+    // la CATEGORIA resta scritta: nella vista Rumore e' identificabile e il gesto inverso
+    // (cs-api remove_noise) esiste. Sotto soglia resta "da confermare" in coda: mai nascondere
+    // in silenzio una classificazione incerta.
+    if (categoria === 'Collaborazioni e B2B') upd.canale = 'rumore';
     // guard anti-race: scrive SOLO se ancora non categorizzata. Una correzione manuale via cs-api
     // (categoria!=null, source='manuale') arrivata mentre Gemini girava NON deve essere sovrascritta.
     const { data: upRows, error: ue } = await sb.from('cs_conversations').update(upd).eq('id', c.id as string).is('categoria', null).select('id');
     if (ue) { failed++; continue; }
     if (!upRows || upRows.length === 0) continue;   // gia' corretta a mano nel frattempo: non toccare
-    await sb.from('cs_events').insert({ conversation_id: c.id, azione: 'classify', chi: 'cs-classify', dettaglio: { categoria, source, confidence: ai.categoria_confidence, urgente, flags } });
+    await sb.from('cs_events').insert({ conversation_id: c.id, azione: 'classify', chi: 'cs-classify', dettaglio: { categoria, source, confidence: ai.categoria_confidence, urgente, flags, ...(upd.canale ? { canale: upd.canale, motivo_canale: 'B2B si risponde su Gmail (owner 01-08)' } : {}) } });
   }
 
   // quante restano ancora da classificare (per sapere se il cron deve continuare a drenare)

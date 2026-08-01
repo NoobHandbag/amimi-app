@@ -1,4 +1,7 @@
-// cs-sync v10 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v11 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v11 (2026-08-01, decisione owner in chat): i thread "Collaborazioni e B2B" NON tornano in coda
+//   quando arriva una nuova mail (la promozione rumore->cliente di ensureConv li esclude): il B2B
+//   si risponde su Gmail, in app non deve comparire. Uscita dalla coda: cs-classify v7 + migr 0091.
 // v10 (2026-08-01, brief cs_stato_automatico_e_rumore, PARTE B, apply su OK owner in chat):
 //   regola PREVENTIVA sul bulk mail: un messaggio con header `List-Unsubscribe` o
 //   `Precedence: bulk/list` non e' un contatto commerciale, qualunque cosa dica il testo ->
@@ -637,7 +640,7 @@ Deno.serve(async (req) => {
   // conversazione: idempotente su gmail_thread_id, non clobbera stato/stato_by; promuove un thread
   // gia' marcato rumore se arriva un messaggio cliente reale. Lancia su errore DB reale (-> transient).
   const ensureConv = async (threadId: string, cl: Parsed['cl'], meta: { sentAt: string | null; subject: string; snippet: string; order: number | null; lingua: string }): Promise<string> => {
-    const { data: ex } = await sb.from('cs_conversations').select('id,canale,last_msg_at').eq('gmail_thread_id', threadId).maybeSingle();
+    const { data: ex } = await sb.from('cs_conversations').select('id,canale,categoria,last_msg_at').eq('gmail_thread_id', threadId).maybeSingle();
     if (ex) {
       const upd: Record<string, unknown> = {};
       // last_*/subject/snippet solo se il messaggio e' PIU' RECENTE: il re-processo (cursore che torna a
@@ -648,7 +651,9 @@ Deno.serve(async (req) => {
       if (meta.order) upd.order_number = meta.order;
       if (cl.email) upd.customer_email = cl.email;
       if (cl.name) upd.customer_name = cl.name;
-      if (cl.canale !== 'rumore' && ex.canale === 'rumore') upd.canale = cl.canale;   // un cliente reale "promuove" un thread-rumore
+      // un cliente reale "promuove" un thread-rumore; ECCETTO i B2B (v11, owner 01-08: si
+      // rispondono su Gmail, una nuova mail sullo stesso thread non li riporta in coda)
+      if (cl.canale !== 'rumore' && ex.canale === 'rumore' && ex.categoria !== 'Collaborazioni e B2B') upd.canale = cl.canale;
       if (Object.keys(upd).length) await sb.from('cs_conversations').update(upd).eq('id', ex.id as string);
       return ex.id as string;
     }
