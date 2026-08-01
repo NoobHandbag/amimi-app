@@ -186,3 +186,24 @@ Nota sull'interpretazione di `qromo_sales.prezzo`: CONOSCENZA lo documenta come 
 unita', il CE lo tratta come totale di riga. Le due letture divergono solo su quell'unica riga
 `CHAIN_TIGER`. Queste viste seguono CONOSCENZA (150,00 per 3 catene con retail 70,00 e' un
 prezzo plausibile; 50,00 totali sarebbe uno sconto del 76%), ma la riga merita una conferma.
+
+## 10. Modulo shipping_status (migr 0086, brief stato_tws_in_app, 01-08)
+
+- **`shipping_status`** (stato CORRENTE del corriere TWS per LDV, nessuno storico by design): `ldv` PK, `order_name` ('#NNNN'), `stato_tws` (UPPERCASE normalizzato), `stato_raw`, `shipped_date`, `delivered_at` (fissata alla PRIMA osservazione di CONSEGNATA, data Europe/Rome, approssimazione dichiarata), `updated_at`. Indice su `order_name`.
+- **Sicurezza:** RLS on, SELECT solo `authenticated` (pattern cs_*), anon NEGATO (test `set role anon` -> permission denied); scritture SOLO service-role via edge `shipping-status-sync` (PIN-gated).
+- **Chi scrive / chi legge:** scrive il sync spedizioni (Apps Script `SyncShopify.gs`, `pushShipStatusToApp_`, push clasp PENDENTE al 01-08); legge `cs-assist` v16 (BLOCCO DATI + caso indirizzo). Ciclo di vita stati: `NUOVA -> IN ATTESA DI AFFIDO -> IN PARTENZA TWS -> ... -> CONSEGNATA` (doc canonico: `Cowork12/docs/Spedizioni/Sistema_Spedizioni.md`).
+
+## 11. Modulo sales-guard (migr 0087, brief A7, 01-08)
+
+- **`alert_rules`** (soglie dei segnali, MAI hardcoded): `metrica` PK, `soglia`, `finestra_giorni`, `severity` (error/warn/info), `attivo`, `note`. 5 righe seed coi valori TARATI dal backtest 90gg (dettaglio nel changelog CODE 01-08). Ritaratura = UPDATE, zero redeploy. SELECT anon+authenticated (nessun segreto).
+- **`v_sales_anomalie`** (ispezione a mano): righe correnti di best_seller_fermo / low_stock / esaurito_pubblicato / sconto_anomalo con `tipo, codice, dettaglio, valore`; legge le soglie da alert_rules (un solo posto).
+- **`refresh_health_log()` aggiornata:** la pulizia giornaliera delle 06:00 ora esclude `sales\_%` e `shipping_status` oltre alle `ce\_%` (le chiavi scritte una volta al giorno/ora non spariscono piu' in silenzio). Provata invocandola.
+- Flag: `app_flags.sales_guard_enabled` (default 'false'), `sales_guard_alert_state` (firma push), `ntfy_topic_sales` (opzionale, fallback `ntfy_topic`).
+
+## 12. Viste clienti RFM e coorti (migr 0088, brief A8, 01-08)
+
+> **DUE LIMITI STRUTTURALI, da ricordare prima di leggere qualsiasi numero:** (1) SOLO ONLINE: le 172 vendite Qromo hanno nome e cognome vuoti (172/172), l'identita' cross-canale non esiste e non e' costruibile a viste; (2) STORICO DAL 16-02-2026: recency/frequency strutturalmente sottostimate, per questo NON esiste il segmento "perso" (indistinguibile da "deve ancora ricomprare").
+
+- **`v_clienti_rfm`** (una riga per email, 580 al 01-08): `email, primo_ordine, ultimo_ordine, recency_giorni, frequency, monetary, aov, segmento`. Resi: `frequency` conta TUTTI gli ordini con email (sum(frequency) = ordini con email, verificato 594=594); `monetary` esclude i `refunded` interi; i `partially_refunded` restano a gross_total pieno (l'importo parziale non e' a DB). Segmenti tarati sui dati (12 clienti ripetuti: quintili da manuale = classi assurde): `top` (monetary >= p90) > `ripetuto` (2+) > `nuovo` (1 ordine <= 60gg) > `dormiente` (> 120gg) > `una_tantum` (61-120gg, residuo). Test di allineamento: i 9 returning di luglio secondo ShopifyQL sono 9/9 in vista con frequency >= 2.
+- **`v_clienti_coorti`** (per mese di primo acquisto): `coorte, maturita_giorni, clienti, ricomprato_30/60/90gg, netto_medio_cliente`. `maturita_giorni` esposta perche' le coorti giovani sembrano sempre peggiori solo per mancanza di tempo.
+- **PII:** solo `email`, gia' esposta da `shopify_orders` (anon by design). Nessuna UI in questo giro: se un domani servira', la scelta anon-vs-login va presa esplicitamente (nota del brief).
