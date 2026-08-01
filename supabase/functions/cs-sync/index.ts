@@ -1,4 +1,11 @@
-// cs-sync v9 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v10 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v10 (2026-08-01, brief cs_stato_automatico_e_rumore, PARTE B, apply su OK owner in chat):
+//   regola PREVENTIVA sul bulk mail: un messaggio con header `List-Unsubscribe` o
+//   `Precedence: bulk/list` non e' un contatto commerciale, qualunque cosa dica il testo ->
+//   canale 'rumore'. Il check sta DOPO i rami form/chat (le notifiche Shopify dei moduli e della
+//   chat sono gia' instradate prima e NON possono finirci) e PRIMA del default email_diretta.
+//   Deterministico, zero AI: vale piu' di qualunque prompt. Denylist estesa per DOMINIO
+//   (12 vendor, forma '@dominio') + riclassifica storico = migr 0090.
 // v9 (2026-08-01, brief cs_stato_automatico_e_rumore, PARTE A - decisione testuale owner "assolutamente
 //   deve essere automatico"): lo stato della coda segue la realta' della posta, senza gesti manuali.
 //   - nuovo `out` ingerito -> conversazione `fatto` con stato_by='auto' + evento cs_events 'stato_auto';
@@ -177,7 +184,7 @@ function isNoiseSender(from: string, subject: string, extraDeny: string[]): bool
   for (const d of extraDeny) { const t = d.trim().toLowerCase(); if (t && (from.includes(t) || s.includes(t))) return true; }  // denylist estendibile via app_flags.cs_noise_senders
   return false;
 }
-function classify(from: { email: string; name: string }, replyTo: { email: string; name: string }, subject: string, body: string, extraDeny: string[]): { canale: Canale; email: string | null; name: string | null } {
+function classify(from: { email: string; name: string }, replyTo: { email: string; name: string }, subject: string, body: string, extraDeny: string[], bulk = false): { canale: Canale; email: string | null; name: string | null } {
   const fe = from.email, rt = replyTo.email;
   // 1) Notifica chat Shopify Inbox: no-reply@mailer.shopify.com, subject "New Message from <nome>".
   //    Se il visitatore lascia l'email in chat, Shopify la usa come nome: catturarla in customer_email
@@ -198,6 +205,9 @@ function classify(from: { email: string; name: string }, replyTo: { email: strin
   }
   // 4) Rumore noto (DMARC, bounce, newsletter, denylist owner)
   if (isNoiseSender(fe, subject, extraDeny)) return { canale: 'rumore', email: fe, name: from.name || null };
+  // 4bis) v10: bulk mail per HEADER (List-Unsubscribe / Precedence bulk): newsletter e marketing
+  // vendor, qualunque cosa dica il testo. DOPO form/chat (mai su una richiesta cliente dai moduli).
+  if (bulk) return { canale: 'rumore', email: fe, name: from.name || null };
   // 5) Posta interna Amimi' (non e' un cliente)
   if (isAmimi(fe)) return { canale: 'rumore', email: fe, name: from.name || null };
   // 6) Default: un umano ci ha scritto direttamente = cliente (incl. risposte alle mail transazionali)
@@ -576,13 +586,14 @@ Deno.serve(async (req) => {
     if (!lst.ok) return json({ ok: false, error: 'gmail_list ' + lst.status, detail: JSON.stringify(lst.j).slice(0, 200) });
     const ids = ((lst.j.messages as { id: string }[]) ?? []).map((m) => m.id);
     for (const id of ids) {
-      const mg = await gGet(`/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Reply-To&metadataHeaders=Subject`, token);
+      const mg = await gGet(`/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Reply-To&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence`, token);
       if (!mg.ok) { parseFailed++; continue; }
       const p = (mg.j as GMsg).payload;
       const from = parseAddr(hdr(p?.headers, 'from'));
       const replyTo = parseAddr(hdr(p?.headers, 'reply-to'));
       const subject = hdr(p?.headers, 'subject');
-      counts[classify(from, replyTo, subject, '', extraDeny).canale]++;
+      const bulk = !!hdr(p?.headers, 'list-unsubscribe') || /\b(bulk|list)\b/i.test(hdr(p?.headers, 'precedence'));
+      counts[classify(from, replyTo, subject, '', extraDeny, bulk).canale]++;
     }
     return json({ ok: true, dryRun: true, scanned: ids.length, counts, parse_failed: parseFailed });
   }
@@ -606,7 +617,9 @@ Deno.serve(async (req) => {
       const H = msg.payload?.headers;
       const from = parseAddr(hdr(H, 'from')); const replyTo = parseAddr(hdr(H, 'reply-to')); const to = parseAddr(hdr(H, 'to'));
       const subject = stripNull(hdr(H, 'subject')); const bodyText = stripNull(extractBody(msg.payload));   // NUL -> Postgres rifiuta
-      const cl = classify(from, replyTo, subject, bodyText, extraDeny);
+      // v10: header di bulk mail = segnale deterministico di newsletter/marketing
+      const bulk = !!hdr(H, 'list-unsubscribe') || /\b(bulk|list)\b/i.test(hdr(H, 'precedence'));
+      const cl = classify(from, replyTo, subject, bodyText, extraDeny, bulk);
       const isForm = cl.canale === 'form_contatto' || cl.canale === 'form_evento';
       // v8: i campi si estraggono solo dallo STAMPO vero (wrapper presente), mai dalle risposte
       // successive del cliente nello stesso thread; {} non si scrive (resta NULL, la UI non accende)

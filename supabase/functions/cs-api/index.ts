@@ -13,6 +13,11 @@
 //   - add_noise: "non e' un cliente" -> appende il MITTENTE a app_flags.cs_noise_senders (dedup)
 //       cosi' le prossime mail finiscono nel rumore, e sposta la conversazione a canale='rumore'
 //       (sparisce dalla coda). cs_events 'noise_add'. Il flag e' riletto a runtime da cs-sync.
+//   - remove_noise (v6, 01-08, gesto INVERSO richiesto dal brief stato_automatico_e_rumore Parte B):
+//       riporta una conversazione dal rumore a canale='email_diretta' e toglie il MITTENTE esatto
+//       dalla denylist se presente. Se il blocco viene da una voce di DOMINIO ('@x.com'), la voce
+//       NON si rimuove da sola (un dominio copre piu' mittenti): la risposta la segnala e la
+//       decisione resta umana. cs_events 'noise_remove'.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -129,6 +134,37 @@ Deno.serve(async (req) => {
       dettaglio: { sender, gia_presente: already, canale_da: ex.canale, by_email: email },
     });
     return json({ ok: true, sender, gia_presente: already, chi });
+  }
+
+  if (action === 'remove_noise') {
+    const convId = String(body.conversation_id || '');
+    const ex = await loadConv(convId);
+    if (!ex) return json({ error: UUID_RE.test(convId) ? 'conversazione inesistente' : 'conversation_id non valido' }, UUID_RE.test(convId) ? 404 : 422);
+    if (ex.canale !== 'rumore') return json({ error: 'la conversazione non e\' nel rumore' }, 422);
+    const sender = String(body.sender || ex.customer_email || '').trim().toLowerCase();
+
+    // togli il mittente ESATTO dalla denylist (se c'e'); una voce di DOMINIO che lo copre non si
+    // rimuove da sola: viene segnalata (rimuoverla riaprirebbe il flusso a TUTTO il dominio)
+    let rimossoDaDenylist = false;
+    let dominioCheBlocca: string | null = null;
+    const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'cs_noise_senders').maybeSingle();
+    const items = String(flag?.value ?? '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+    if (sender) {
+      const kept = items.filter((x) => x.toLowerCase() !== sender);
+      if (kept.length !== items.length) {
+        const { error: fe } = await sb.from('app_flags').upsert({ key: 'cs_noise_senders', value: kept.join('\n') }, { onConflict: 'key' });
+        if (fe) return json({ error: 'denylist non aggiornata: ' + fe.message }, 500);
+        rimossoDaDenylist = true;
+      }
+      dominioCheBlocca = items.find((x) => x.startsWith('@') && sender.endsWith(x.toLowerCase())) ?? null;
+    }
+    const { error: ue } = await sb.from('cs_conversations').update({ canale: 'email_diretta' }).eq('id', convId);
+    if (ue) return json({ error: 'scrittura fallita: ' + ue.message }, 500);
+    await sb.from('cs_events').insert({
+      conversation_id: convId, azione: 'noise_remove', chi,
+      dettaglio: { sender: sender || null, rimosso_da_denylist: rimossoDaDenylist, dominio_che_blocca: dominioCheBlocca, by_email: email },
+    });
+    return json({ ok: true, canale: 'email_diretta', rimosso_da_denylist: rimossoDaDenylist, dominio_che_blocca: dominioCheBlocca, chi });
   }
 
   // Configurazione AI (come rispondere): leggi/scrivi le istruzioni del team + stato del motore.

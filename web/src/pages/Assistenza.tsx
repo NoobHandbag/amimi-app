@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato } from '../lib/csApi';
 
 // email in testo semplice: preserva gli a-capo (CSS pre-wrap) e collassa i vuoti multipli (feedback 24-07)
@@ -236,6 +236,17 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     pushSub();
     setView('rumore'); setErr('');
     if (!rumore) { try { setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); } }
+  };
+  // gesto inverso del "non e' un cliente": riporta in coda e toglie il mittente dalla denylist
+  const doUnNoise = async (c: CsConversation) => {
+    setSavingStato(true); setErr('');
+    try {
+      const r = await removeNoise(c.id, ident);
+      setRumore((prev) => (prev ?? []).filter((x) => x.id !== c.id));
+      setConvs(await fetchConversations());
+      if (r.dominio_che_blocca) setErr(`Riportata in coda, ma il dominio ${r.dominio_che_blocca} resta in denylist (copre altri mittenti): le sue prossime mail finiranno ancora nel rumore.`);
+    } catch (e) { setErr((e as Error).message); }
+    setSavingStato(false);
   };
   // correzione manuale categoria (scrive via cs-api, JWT-gated); aggiorna subito la UI
   const applyCat = async (categoria: string | null) => {
@@ -590,11 +601,14 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       {rumore === null ? <div className="muted center" style={{ padding: 20 }}>Carico…</div> :
         rumore.length === 0 ? <div className="muted center" style={{ padding: 20 }}>Niente rumore.</div> :
           rumore.map((c) => (
-            <button key={c.id} className="cs-card cs-quiet" onClick={() => openThread(c)} type="button">
+            <div key={c.id} className="cs-card cs-quiet" onClick={() => openThread(c)} role="button" tabIndex={0}>
               <div className="cs-ctop"><span className="cs-emoji">🔕</span><span className="cs-cn">{c.subject || nmeOf(c)}</span><span className="cs-cora">{fmtWhen(c.last_msg_at)}</span></div>
-            </button>
+              <div style={{ marginTop: 6 }}>
+                <button className="cs-btn cs-ghost" type="button" disabled={savingStato} onClick={(e) => { e.stopPropagation(); doUnNoise(c); }}>↩ È un cliente, riporta in coda</button>
+              </div>
+            </div>
           ))}
-      <div className="cs-note">Nascosto di default, mai passato all&#8217;AI. Serve solo a controllare che il filtro non abbia nascosto un cliente per errore.</div>
+      <div className="cs-note">Nascosto di default, mai passato all&#8217;AI. Serve a controllare che il filtro non abbia nascosto un cliente per errore: se succede, &#8220;È un cliente&#8221; lo riporta in coda e sblocca il mittente.</div>
     </div>
   );
 

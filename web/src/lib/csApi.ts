@@ -168,6 +168,14 @@ export async function addNoise(conversationId: string, sender: string, chi: stri
   await callCsApi({ action: 'add_noise', conversation_id: conversationId, sender, chi });
 }
 
+/** Gesto INVERSO (brief rumore vendor, 01-08): riporta la conversazione dal Rumore alla coda
+ *  (canale email_diretta) e toglie il mittente esatto dalla denylist. Se a bloccare e' una voce
+ *  di DOMINIO, la voce resta (coprirebbe altri mittenti) e viene ritornata per mostrarla. */
+export async function removeNoise(conversationId: string, chi: string): Promise<{ dominio_che_blocca: string | null }> {
+  const j = await callCsApi({ action: 'remove_noise', conversation_id: conversationId, chi });
+  return { dominio_che_blocca: (j as { dominio_che_blocca?: string | null }).dominio_che_blocca ?? null };
+}
+
 const CS_ASSIST_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/cs-assist';
 
 export type OrderHistory = { n_ordini: number; totale: number; prima: string | null; ultima: string | null; recenti: { numero: number; data: string; totale: number; stato: string | null }[] };
