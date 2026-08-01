@@ -689,6 +689,9 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-lint-t { display: inline-block; background: #fff; border: 1px solid rgba(252,79,63,.35); border-radius: 6px; padding: 1px 7px; margin: 0 3px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .cs-inbox { display: inline-block; background: #5c4d9c; color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
 .cs-form { background: rgba(156,95,51,.08); border-radius: 8px; padding: 7px 9px; margin-bottom: 6px; font-size: 12.5px; line-height: 1.5; }
+.cs-formrow { display: flex; flex-wrap: wrap; gap: 4px 12px; background: rgba(156,95,51,.08); border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; font-size: 12px; line-height: 1.45; }
+.cs-formrow .cs-ff b { text-transform: capitalize; font-weight: 700; margin-right: 4px; }
+.cs-formrow .cs-ff a { color: var(--interactive-700); font-weight: 700; text-decoration: none; }
 
 /* ===== Redesign vista thread 31-07 (mockup DESIGN_Redesign_Thread_Assistenza_2026-07-31, solo token ds) ===== */
 /* testata compatta: pill urgenza a destra, categoria come chip-select, overflow "..." */

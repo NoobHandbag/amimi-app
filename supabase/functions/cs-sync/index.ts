@@ -1,4 +1,15 @@
-// cs-sync v7 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v8 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v8 (2026-08-01, brief cs_pulizia_moduli_form): lo STAMPO dei moduli del sito (form_contatto /
+//   form_evento, wrapper "Hai ricevuto un nuovo messaggio dal modulo di contatto...") viene tolto
+//   da `body_clean` in modo deterministico, ZERO AI: testa fino all'etichetta del campo libero
+//   ("Corpo:" per il contatto, "...Nella Casella Della Richiesta:" per l'evento, tolleranti al
+//   word-wrap di Gmail), coda dal legalese "Cliccando Su Invia" in poi. Il taglio avviene DOPO il
+//   taglio citazioni (una NOSTRA risposta che quota il modulo non deve perdere il proprio testo)
+//   ed e' gated sul CONTENUTO (wrapper presente), non solo sul canale. `extractFormFields`
+//   RISCRITTA sul formato reale (etichetta su riga propria, valore sulla riga dopo: la versione
+//   vecchia assumeva "label: valore" sulla stessa riga e non ha mai popolato nulla, 0/438) e
+//   chiamata solo quando il wrapper c'e' davvero; {} non si scrive piu' (NULL). `backfill_clean`
+//   ora ri-deriva anche `form_fields` (solo dove NULL/vuoto) sui messaggi col wrapper.
 // v7 (2026-07-31, brief redesign thread + body_clean, Parte A): colonna `cs_messages.body_clean`
 //   (migr 0081) = SOLO le parole del mittente, pulite in modo deterministico (ZERO AI) dalla
 //   funzione condivisa `stripQuoted` (stessa famiglia di stripQuote: stessi QUOTE_MARKERS per
@@ -180,13 +191,44 @@ function classify(from: { email: string; name: string }, replyTo: { email: strin
   // 6) Default: un umano ci ha scritto direttamente = cliente (incl. risposte alle mail transazionali)
   return { canale: 'email_diretta', email: fe, name: from.name || null };
 }
+// v8: lo stampo REALE del modulo Shopify mette l'etichetta su una riga ("Name:") e il valore su
+// quella DOPO, con una riga vuota tra i blocchi; la vecchia versione same-line non agganciava mai.
+// Un'etichetta e' valida solo se corta (esclude la domanda lunga e il legalese) e preceduta da una
+// riga vuota (esclude i frammenti di word-wrap tipo "...Della Richiesta:" a fine domanda).
 function extractFormFields(body: string): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const line of body.split('\n').slice(0, 40)) {
-    const m = line.match(/^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '/]{1,30}?)\s*:\s*(.+?)\s*$/);
-    if (m) { const k = m[1].trim().toLowerCase(); if (!(k in out)) out[k] = m[2].trim().slice(0, 500); }
+  const lines = (body || '').replace(/\r\n?/g, '\n').split('\n').slice(0, 60);
+  const LABEL_RE = /^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '/]{1,30})\s*:\s*$/;
+  // 'corpo' e' il campo libero del form_contatto: il suo contenuto e' body_clean, non un campo
+  const SKIP_KEYS = new Set(['corpo']);
+  const keep = (k: string) => !SKIP_KEYS.has(k) && !k.includes('richiesta') && !k.includes('cliccando');
+  for (let i = 0; i < lines.length; i++) {
+    const same = lines[i].match(/^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '/]{1,30}?)\s*:\s*(.+?)\s*$/);
+    if (same) { const k = same[1].trim().toLowerCase(); if (keep(k) && !(k in out)) out[k] = same[2].trim().slice(0, 500); continue; }
+    const label = lines[i].match(LABEL_RE);
+    if (!label) continue;
+    if (i > 0 && lines[i - 1].trim()) continue;   // frammento di wrap, non un'etichetta di campo
+    let j = i + 1;
+    while (j < lines.length && !lines[j].trim()) j++;
+    const v = (lines[j] ?? '').trim();
+    if (v && !LABEL_RE.test(v)) { const k = label[1].trim().toLowerCase(); if (keep(k) && !(k in out)) out[k] = v.slice(0, 500); }
   }
   return out;
+}
+// v8: riconoscimento + taglio dello stampo del modulo. Gated sul CONTENUTO: se il wrapper non c'e'
+// (es. la risposta del cliente nello stesso thread) non tocca nulla. Ritorna null = "non era uno
+// stampo riconoscibile" (il chiamante lascia il testo com'e', mai un taglio sbagliato); ritorna ''
+// = stampo riconosciuto ma SENZA testo libero (a valle diventa body_clean NULL, la UI usa il grezzo).
+const FORM_WRAP_RE = /Hai\s+ricevuto\s+un\s+nuovo\s+messaggio\s+dal\s+modulo\s+di\s+contatto/i;
+function stripFormPrint(s: string): string | null {
+  if (!FORM_WRAP_RE.test(s)) return null;
+  // coda: legalese "Cliccando Su Invia ..." fino in fondo (include il "SÌ" di consenso)
+  let t = s.replace(/(?:^|\n)\s*Cliccando\s+Su\s+Invia[\s\S]*$/i, '');
+  // testa: tutto fino all'etichetta del campo libero (tollerante al word-wrap: \s+ attraversa i newline)
+  const m = t.match(/(?:(?:^|\n)\s*Corpo|Nella\s+Casella\s+Della\s+Richiesta)\s*:\s*/i);
+  if (!m || m.index == null) return null;   // wrapper presente ma formato ignoto: non tagliare
+  t = t.slice(m.index + m[0].length);
+  return t.trim();
 }
 function extractOrderNumber(text: string): number | null {
   const m = text.match(/(?:ordine|order|#)\s*#?\s*(\d{3,6})/i);
@@ -242,6 +284,13 @@ function stripQuoted(t: string, canale?: string): string | null {
     kept.push(line);
   }
   s = kept.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 8000);
+  // v8: stampo del modulo del sito: via testa (campi) e coda (legalese), restano le parole della
+  // cliente. DOPO il taglio citazioni: una NOSTRA risposta che quota il modulo ha gia' perso il
+  // quotato qui sopra, quindi il wrapper non c'e' piu' e questo passo non la tocca.
+  if (canale === 'form_contatto' || canale === 'form_evento') {
+    const f = stripFormPrint(s);
+    if (f !== null) s = f;
+  }
   return s || null;
 }
 
@@ -445,22 +494,32 @@ Deno.serve(async (req) => {
     for (const c of (convRows ?? []) as { id: string; canale: string }[]) canaleOf.set(c.id, c.canale);
     // keyset su id (le righe con clean legittimamente NULL restano NULL: senza keyset
     // occuperebbero per sempre la testa della coda non-force)
-    let q = sb.from('cs_messages').select('id, conversation_id, body_text, body_clean').not('body_text', 'is', null).order('id', { ascending: true }).limit(limit);
+    let q = sb.from('cs_messages').select('id, conversation_id, direction, body_text, body_clean, form_fields').not('body_text', 'is', null).order('id', { ascending: true }).limit(limit);
     if (!force) q = q.is('body_clean', null);
     if (body.after_id) q = q.gt('id', String(body.after_id));
     const { data: msgs, error: qe } = await q;
     if (qe) return json({ ok: false, error: qe.message }, 500);
-    let scanned = 0, wrote = 0, invariati = 0; let lastId: string | null = null; const errors: string[] = [];
-    for (const m of (msgs ?? []) as { id: string; conversation_id: string; body_text: string; body_clean: string | null }[]) {
+    let scanned = 0, wrote = 0, invariati = 0, fieldsWrote = 0; let lastId: string | null = null; const errors: string[] = [];
+    for (const m of (msgs ?? []) as { id: string; conversation_id: string; direction: string; body_text: string; body_clean: string | null; form_fields: Record<string, string> | null }[]) {
       scanned++; lastId = m.id;
-      const clean = stripQuoted(m.body_text, canaleOf.get(m.conversation_id));
-      if (clean === m.body_clean) { invariati++; continue; }
-      const { error: ue } = await sb.from('cs_messages').update({ body_clean: clean }).eq('id', m.id);
+      const canale = canaleOf.get(m.conversation_id);
+      const clean = stripQuoted(m.body_text, canale);
+      const upd: Record<string, unknown> = {};
+      if (clean !== m.body_clean) upd.body_clean = clean;
+      // v8: ri-deriva anche form_fields (solo dove NULL/vuoto) sui messaggi 'in' col wrapper del modulo
+      if ((canale === 'form_contatto' || canale === 'form_evento') && m.direction === 'in'
+        && (!m.form_fields || !Object.keys(m.form_fields).length) && FORM_WRAP_RE.test(m.body_text)) {
+        const ff = extractFormFields(m.body_text);
+        if (Object.keys(ff).length) upd.form_fields = ff;
+      }
+      if (!Object.keys(upd).length) { invariati++; continue; }
+      const { error: ue } = await sb.from('cs_messages').update(upd).eq('id', m.id);
       if (ue) { errors.push(m.id + ':' + ue.message.slice(0, 60)); continue; }
-      wrote++;
+      if (upd.body_clean !== undefined) wrote++;
+      if (upd.form_fields !== undefined) fieldsWrote++;
     }
     const { count: remaining } = await sb.from('cs_messages').select('id', { count: 'exact', head: true }).is('body_clean', null).not('body_text', 'is', null);
-    return json({ ok: true, scanned, clean_scritti: wrote, invariati, last_id: lastId, remaining: remaining ?? 0, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
+    return json({ ok: true, scanned, clean_scritti: wrote, fields_scritti: fieldsWrote, invariati, last_id: lastId, remaining: remaining ?? 0, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
   }
 
   // --- DRY RUN: classifica i messaggi recenti, ritorna SOLO conteggi, scrive NULLA ---
@@ -501,11 +560,14 @@ Deno.serve(async (req) => {
       const subject = stripNull(hdr(H, 'subject')); const bodyText = stripNull(extractBody(msg.payload));   // NUL -> Postgres rifiuta
       const cl = classify(from, replyTo, subject, bodyText, extraDeny);
       const isForm = cl.canale === 'form_contatto' || cl.canale === 'form_evento';
+      // v8: i campi si estraggono solo dallo STAMPO vero (wrapper presente), mai dalle risposte
+      // successive del cliente nello stesso thread; {} non si scrive (resta NULL, la UI non accende)
+      const ff = isForm && FORM_WRAP_RE.test(bodyText) ? extractFormFields(bodyText) : {};
       return {
         cl, from, to, subject, bodyText,
         sentAt: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null,
         snippet: stripNull((msg.snippet ?? '').slice(0, 300)),
-        formFields: isForm ? extractFormFields(bodyText) : null,
+        formFields: Object.keys(ff).length ? ff : null,
         order: extractOrderNumber(subject + '\n' + bodyText), lingua: detectLingua(bodyText || subject),
       };
     } catch { return null; }

@@ -460,8 +460,18 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 <div key={m.id} className={'cs-msg ' + (out ? 'out' : 'in')}>
                   <div className="cs-mh">{out ? `${fmtWhen(m.sent_at)} · ${m.sent_by || 'Amimi’'}` : `${primoNome} · ${fmtWhen(m.sent_at)}`}</div>
                   <div className="cs-mb">
+                    {/* riga compatta coi campi del modulo (brief cs_pulizia_moduli_form): telefono cliccabile */}
                     {m.form_fields && Object.keys(m.form_fields).length > 0 && (
-                      <div className="cs-form">{Object.entries(m.form_fields).map(([k, v]) => <div key={k}><b>{k}:</b> {v}</div>)}</div>
+                      <div className="cs-formrow">
+                        {Object.entries(m.form_fields).map(([k, v]) => {
+                          const tel = /telefono|phone/i.test(k) ? String(v).replace(/[^\d+]/g, '') : '';
+                          return (
+                            <span key={k} className="cs-ff">
+                              <b>{k}</b>{tel.length >= 6 ? <a href={'tel:' + tel}>{v}</a> : v}
+                            </span>
+                          );
+                        })}
+                      </div>
                     )}
                     <div className="cs-body">{testo || (m.form_fields ? '' : '(vuoto)')}</div>
                   </div>
