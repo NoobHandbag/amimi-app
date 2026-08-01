@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "deploy": "gh-pages -d dist"
+    "deploy": "gh-pages -d dist",
+    "predeploy": "node scripts/check-bundle-env.mjs"
   },
   "dependencies": {
     "@fontsource/roboto": "^5.3.0",
