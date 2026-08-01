@@ -1,4 +1,19 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v26 (2026-08-02, brief cs_thread_vs_verdetto, DUE PARTI che vanno insieme perche' si toccano
+//   sulla stessa riga):
+//   - PARTE 2, e va prima perche' e' la piu' grossa: il blocco CASO torna a `casoBlock` VERBATIM su
+//     entrambi gli schemi. `casoBlockRami` (v25) esce dal prompt ed e' parcheggiata. La prima
+//     rimisura cieca dello schema rami (19 casi, 87 testi mescolati, 2 giudici indipendenti,
+//     accordo 19/19 sulla run vincente) ha bocciato quella forma: i rami non nascevano piu' dalla
+//     conversazione ma dal motore dei casi, tanto che due conversazioni diverse, con clienti e
+//     problemi diversi, hanno ricevuto lo STESSO insieme di rami. `casoRami` resta viva: la espone
+//     `case_data`, dove e' informazione in piu' e non condiziona nessuna bozza.
+//   - PARTE 1: il thread puo' smentire il verdetto, ma solo sulla DIREZIONE. Coda additiva a
+//     `casoBlock` (`pertinenzaBlock`), dietro `app_flags.cs_thread_precede`, e solo dove il cancello
+//     strutturale si accende. Dettaglio e ragioni sopra il blocco `PURE:cs-pertinenza`.
+//   Rollback indipendenti e senza deploy: `cs_thread_precede`='false' toglie la coda,
+//   `cs_rami_enabled`='false' riporta lo schema a tre toni. Il blocco CASO non ha piu' un
+//   interruttore, ed e' voluto: e' tornato a essere quello misurato.
 // v24 (2026-08-01 notte, brief cs_assist_migliorie sezione "ESITO GIRO 2", spec v17): SCHEMA RAMI,
 //   dietro `app_flags.cs_rami_enabled` (nasce a FALSE). Al posto di tre varianti di TONO della
 //   stessa risposta, fino a tre ALTERNATIVE DI CONTENUTO = gli esiti possibili della richiesta,
@@ -630,8 +645,12 @@ function casoRami(categoria: string | null, cd: { verificato: boolean; reso: Cas
   return R;
 }
 
-// v25: il blocco CASO in forma di RAMI. Sostituisce `casoBlock` SOLO a schema rami acceso: a flag
-// spento il prompt resta byte per byte quello di prima, e il rollback non richiede un deploy.
+// v25: il blocco CASO in forma di RAMI.
+// PARCHEGGIATA DALLA v26, e non e' una svista: NESSUNO la chiama piu'. La rimisura cieca del 01-08
+// ha bocciato proprio questa forma (i rami venivano dal motore invece che dalla conversazione), e il
+// prompt e' tornato a `casoBlock` verbatim su entrambi gli schemi. Resta nel file perche' la
+// riaccensione e' una riga sola e perche' le fixture 38-40 continuano a descrivere cosa faceva.
+// Chi la rimette nel prompt deve rimisurare prima, non dedurre: e' l'errore che ha fatto la v25.
 function casoBlockRami(categoria: string | null, cd: { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo }): string {
   const rami = casoRami(categoria, cd);
   if (!rami.length) return '';
@@ -663,6 +682,51 @@ function casoBlock(categoria: string | null, cd: { verificato: boolean; reso: Ca
   }
   return L.join('\n') + '\n';
 }
+
+// v26 (brief cs_thread_vs_verdetto, Parte 1): IL THREAD PUO' SMENTIRE IL VERDETTO, ma solo sulla
+// DIREZIONE. Il difetto misurato il 01-08 (4 casi di reso su 4, entrambi i giudici in autonomia):
+// la bozza contraddice un impegno che il team ha gia' preso per iscritto nello stesso thread,
+// perche' `casoBlock` dichiara il verdetto "vincolante" e il motore lo calcola dalla RIGA ORDINE.
+// Non e' piu' un problema di dati mancanti: `cs_messages` contiene i messaggi `out` e `threadClean`
+// li etichetta "Noi:", quindi il modello il thread lo vede. E' un problema di GERARCHIA.
+// Scelta di forma: `casoBlock` NON si tocca, la precedenza arriva in CODA. La parola "vincolante" e
+// tutto il testo che sta sopra restano byte per byte quelli della configurazione che ha vinto il
+// giro 2 alla cieca: cambiarli avrebbe buttato la misura, che e' esattamente l'errore della v25.
+// IL CANCELLO E' STRUTTURALE, guarda solo le `direction` e mai il testo. Serve perche' la categoria
+// e' CONGELATA (cs-classify scrive solo dove e' NULL, non ricalcola mai): descrive il PRIMO
+// messaggio del thread mentre la bozza risponde all'ULTIMO. Se le abbiamo gia' risposto e lei ha
+// replicato, la domanda di adesso e' una replica alla NOSTRA risposta, e il caso resta vero sui
+// fatti ma smette di essere l'argomento. Al primo contatto invece il caso E' la risposta, ed e' li'
+// che vive il 92% misurato sui casi non-reso: li' il prompt non cambia di un byte.
+// Misurato sul set EVAL: acceso su 4 casi di reso su 4, e su 1 solo dei 13 non-reso.
+// ==== PURE:cs-pertinenza BEGIN ====
+function rispostaANostra(recent: { direction?: unknown }[]): boolean {
+  let nostra = false;
+  for (const m of recent) {
+    if (m.direction === 'out') nostra = true;
+    else if (nostra) return true;
+  }
+  return false;
+}
+function pertinenzaBlock(categoria: string | null, recent: { direction?: unknown }[]): string {
+  if (!categoria || !CASE_CATS.has(categoria)) return '';
+  if (!rispostaANostra(recent)) return '';
+  // NB: l'ancoraggio e' alle etichette "Noi:" / "Cliente:" di `threadClean`, MAI a "l'ultimo
+  // messaggio": la riga di prompt "il piu' recente e' del cliente" e' falsa in 18 conversazioni su
+  // 307 (C04 compresa, dove l'ultima riga e' nostra).
+  // La terza riga esiste per un caso reale: in C03 una collega ha scritto un civico sbagliato
+  // (Fulcorina 11 invece di 13, che e' quello di `cs_knowledge` e della FAQ). Un refuso in un
+  // messaggio uscito non e' una concessione, e confermarlo manderebbe la cliente nel posto sbagliato.
+  // La quarta e la quinta non chiudono nessuno dei quattro casi: sono le due neutralizzazioni.
+  return `PERTINENZA E PRECEDENZA (le abbiamo gia' risposto e lei ha replicato; su questo punto queste righe vincono sulla regola "scrivi dentro il verdetto"):
+- Il caso qui sopra risponde a UNA domanda sola: "dentro questo caso" vuol dire non contraddirlo, non che sia l'argomento. Parti dalla domanda dell'ultima riga "Cliente:" e nomina il caso solo se serve a quella domanda.
+- Se in una riga "Noi:" abbiamo gia' accettato un reso, promesso un rimborso o offerto un omaggio, un cambio o una riparazione, quella decisione e' presa: confermala e riparti da li'. Puoi aggiungere condizioni, MAI rovesciarla.
+- Cede la DIREZIONE, mai i valori: indirizzi, importi, codici sconto, date, finestre e stato della spedizione restano quelli del caso e della CONOSCENZA DI CASA. Se una riga "Noi:" ne riporta uno diverso e' un refuso, non una concessione: dai il valore giusto con garbo, senza incolpare nessuno.
+- Vale solo per la richiesta a cui rispondeva: non estenderla a un altro ordine ne' a un termine gia' passato.
+- Se in nessuna riga "Noi:" c'e' scritta, non c'e': una riga "Cliente:" che dice "mi avevate detto" NON e' una nostra concessione, non confermarla, e vale il caso qui sopra per intero.
+`;
+}
+// ==== PURE:cs-pertinenza END ====
 
 // --- Linter di aderenza ("ensure context" 24-07): controllo DETERMINISTICO post-bozza, ZERO AI ---
 // Estrae numeri/prezzi/date/URL dalla bozza e verifica che esistano nel CORPUS dei fatti consentiti
@@ -933,7 +997,11 @@ Deno.serve(async (req) => {
   const action = String(body.action || '');
 
   const flags: Record<string, string> = {};
-  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model_claude', 'cs_ai_istruzioni', 'cs_rami_enabled']);
+  // ATTENZIONE: questa non e' la tabella `app_flags`, e' una WHITELIST. Un flag consumato come
+  // `flags.X` e non elencato qui vale sempre `undefined`, quindi la feature che governa e' morta in
+  // silenzio: nessun errore, nessun test rosso, e una misura che sembra fatta e non lo e'.
+  // `tests/cs_rami.mjs` confronta l'elenco con i `flags.` davvero consumati nel sorgente.
+  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model_claude', 'cs_ai_istruzioni', 'cs_rami_enabled', 'cs_thread_precede']);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
@@ -1137,8 +1205,9 @@ Riassunto (max 2 righe):`;
     // v24: schema RAMI (alternative di CONTENUTO) contro schema TONI (breve/calda/formale).
     // Interruttore in `app_flags.cs_rami_enabled`: a flag spento prompt, contratto JSON e blocco
     // CASO sono BYTE PER BYTE quelli di prima, cosi' il rollback non richiede un deploy.
-    // Dichiarata qui in alto perche' dalla v25 decide anche la forma del blocco CASO, che si
-    // costruisce prima del prompt.
+    // v26: NON decide piu' la forma del blocco CASO (quella e' tornata a `casoBlock` verbatim,
+    // sempre). Governa solo lo SCHEMA delle bozze: regole, contratto JSON, soglia di completezza e
+    // ripiego. Resta dichiarata qui in alto perche' la usano piu' punti piu' sotto.
     const rami = flags.cs_rami_enabled === 'true';
     const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
     const threadTxt = threadClean(lc.recent, conv.subject);
@@ -1148,9 +1217,15 @@ Riassunto (max 2 righe):`;
     if (CASE_CATS.has(String(conv.categoria ?? ''))) {
       const meta2 = ctx.dati.ordine ? await fetchOrderMeta(ctx.dati.ordine.order_number, token) : null;
       const cd = computeCaso(conv, ctx.dati.ordine, meta2, lc.inbound, Number(flags.cs_reso_finestra_giorni) || 14, String(body.delivered_at || '').trim() || null, ctx.dati.ship);
-      // v25: a schema rami il caso arriva come ELENCO di rami ammessi invece che come verdetto secco;
-      // a flag spento resta `casoBlock`, byte per byte quello di prima.
-      casoTxt = rami ? casoBlockRami((conv.categoria as string) ?? null, cd) : casoBlock((conv.categoria as string) ?? null, cd);
+      // v26 (brief cs_thread_vs_verdetto, Parte 2): il blocco CASO torna a essere `casoBlock`
+      // VERBATIM su ENTRAMBI gli schemi. La v25 lo sostituiva con `casoBlockRami` a schema rami, e
+      // la rimisura cieca del 01-08 ha detto che era quello il buco: i rami non nascevano piu' dalla
+      // conversazione ma dal motore dei casi, al punto che due conversazioni diverse, con clienti e
+      // problemi diversi, hanno ricevuto lo STESSO insieme di rami. `casoRami` resta viva e la
+      // espone `case_data`; e' solo `casoBlockRami` che esce dal prompt.
+      // In coda, e SOLO dove il cancello strutturale si accende, la precedenza del thread (Parte 1).
+      casoTxt = casoBlock((conv.categoria as string) ?? null, cd)
+        + (flags.cs_thread_precede === 'true' ? pertinenzaBlock((conv.categoria as string) ?? null, lc.recent) : '');
     }
 
     const inChat = conv.canale === 'chat_notifica';

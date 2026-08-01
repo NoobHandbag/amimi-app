@@ -124,10 +124,11 @@ writeFileSync(TMP, [
   ritagliaBlocco("const NON_APPLICABILE_LINE"),
   ritagliaBlocco("const dmy = "),
   ritagliaMarcato('cs-casorami'),
-  'export { casoRami, casoBlockRami };',
+  ritagliaMarcato('cs-pertinenza'),
+  'export { casoRami, casoBlockRami, pertinenzaBlock };',
 ].join('\n'), 'utf8');
-let casoRami, casoBlockRami;
-try { ({ casoRami, casoBlockRami } = await import(pathToFileURL(TMP).href)); }
+let casoRami, casoBlockRami, pertinenzaBlock;
+try { ({ casoRami, casoBlockRami, pertinenzaBlock } = await import(pathToFileURL(TMP).href)); }
 finally { try { unlinkSync(TMP); } catch { /* niente */ } }
 
 const reso = (o = {}) => ({ ordine_del: '2026-07-24', delivered_at: null, fonte: null, giorni: 8, finestra: 14, verdetto: 'entro', non_applicabile: null, stato_pagamento: 'paid', difetto_sospetto: false, ...o });
@@ -188,10 +189,66 @@ t('39 due rami -> il prompt li conta e li elenca con i titoli esatti', (() => {
   return /Gli esiti possibili sono 2/.test(b) && /TITOLO "In viaggio: rientro e rispedizione"/.test(b) && /TITOLO "Forse gia' consegnata: controlla"/.test(b);
 })());
 t('40 categoria non a caso -> blocco vuoto, il prompt non cambia', casoBlockRami('Info prodotto', cd()) === '');
-t('41 il blocco vecchio NON e\' stato toccato: a flag spento il prompt resta quello misurato',
+t('41 il blocco vecchio NON e\' stato toccato: e\' quello della configurazione misurata',
   /CASO CALCOLATO DAL SISTEMA \(vincolante: scrivi la risposta DENTRO questo caso, non metterlo in dubbio\)/.test(SRC));
-t('42 e i due blocchi convivono: casoBlock per lo schema toni, casoBlockRami per i rami',
-  /casoTxt = rami \? casoBlockRami\(/.test(SRC) && /: casoBlock\(/.test(SRC));
+// v26 (brief cs_thread_vs_verdetto, Parte 2): la 42 diceva che i due blocchi CONVIVONO, uno per
+// schema. Non e' piu' vero e non deve tornare a esserlo: il blocco CASO e' `casoBlock` VERBATIM su
+// entrambi gli schemi, perche' la rimisura cieca ha bocciato la forma a rami. Ora la 42 asserisce
+// il contrario di prima, ed e' il punto: se qualcuno rimette `casoBlockRami` nel prompt senza
+// rimisurare, questo test diventa rosso.
+t('42 il prompt riceve SEMPRE casoBlock: casoBlockRami e\' fuori dal prompt (bocciata alla cieca)',
+  /casoTxt = casoBlock\(/.test(SRC) && !/casoTxt = rami \? casoBlockRami\(/.test(SRC)
+  && !/\?\s*casoBlockRami\(/.test(SRC));
+
+console.log('\n== v26: il thread puo\' smentire il verdetto, ma solo sulla direzione ==');
+const P = (cat, seq) => pertinenzaBlock(cat, seq.split('>').map((d) => ({ direction: d })));
+const B = P(RESO, 'in>out>in');
+
+t('43 primo contatto: nessuna coda, il prompt resta byte per byte quello misurato',
+  ['in', 'out', 'in>in>in'].every((s) => P(RESO, s) === '' && P(CAMBIO, s) === '' && P(IND, s) === ''));
+t('44 abbiamo risposto ma lei non ha replicato: ancora nessuna coda',
+  P(IND, 'in>out') === '' && P(RESO, 'in>out') === '');
+t('45 cancello acceso su tutte e quattro le forme dei casi reali di reso',
+  ['in>out>in', 'out>in', 'in>out>in>out', 'out>in>out>in>out>in'].every((s) => P(RESO, s) !== ''));
+t('46 fuori dalle tre categorie a caso mai coda, nemmeno a cancello acceso',
+  P('Info prodotto', 'in>out>in') === '' && P(null, 'in>out>in') === '');
+t('47 la coda NON riscrive la testa e non ripete la parola "vincolante"',
+  !/CASO CALCOLATO DAL SISTEMA/.test(B) && !/vincolante/.test(B));
+t('48 la coda si AGGIUNGE a casoBlock ed e\' gated da un flag suo',
+  /casoTxt = casoBlock\([^;]*\)\s*\n?\s*\+ \(flags\.cs_thread_precede === 'true' \? pertinenzaBlock\(/.test(SRC));
+t('49 pertinenza ancorata all\'etichetta "Cliente:", MAI a "l\'ultimo messaggio"',
+  /risponde a UNA domanda sola/.test(B) && /ultima riga "Cliente:"/.test(B) && !/ultimo messaggio/.test(B));
+t('50 la precedenza copre tutte le concessioni, e vieta di rovesciarle',
+  [/accettato un reso/, /promesso un rimborso/, /omaggio/, /riparazione/, /MAI rovesciarla/].every((r) => r.test(B)));
+// La 51 e' nata da una verifica avversariale su un caso VERO (conv 88260612): una collega aveva
+// scritto "Fulcorina 11", ma il civico di casa e' il 13 (cs_knowledge id 6 e 12, cs_faq id 15).
+// Con l'indirizzo fra le concessioni confermabili la bozza avrebbe confermato il civico SBAGLIATO,
+// cioe' una regressione su un output che oggi in produzione e' gia' giusto.
+t('51 un VALORE sbagliato in una riga "Noi:" e\' un refuso, non una concessione da confermare',
+  !/indirizzo di rientro/.test(B) && /Cede la DIREZIONE, mai i valori/.test(B)
+  && /indirizzi, importi, codici sconto, date, finestre e stato della spedizione/.test(B));
+t('52 neutralizzazione: la concessione non si estende ad altri ordini ne\' a termini scaduti',
+  /non estenderla a un altro ordine ne' a un termine gia' passato/.test(B));
+t('53 neutralizzazione: "mi avevate detto" della CLIENTE non e\' una nostra concessione',
+  /una riga "Cliente:" che dice "mi avevate detto" NON e' una nostra concessione/.test(B)
+  && /vale il caso qui sopra per intero/.test(B));
+t('54 budget e stile: la coda non cresce di nascosto, zero cifre nel corpus del linter',
+  B.length < 1500 && B.trimEnd().split('\n').length === 6 && !/\d/.test(B)
+  && !/[–—]/.test(B) && !/[À-ſ]/.test(B), { len: B.length, righe: B.trimEnd().split('\n').length });
+
+// Questa e' la guardia che manca(va) e che vale piu' delle altre: `flags` NON e' la tabella
+// app_flags, e' una whitelist. Un flag consumato ma non elencato vale `undefined` per sempre, e la
+// feature che governa muore in silenzio: nessun errore, nessun test rosso, e una misura che sembra
+// fatta e non lo e'. Trovata da una verifica avversariale sul diff, non da una fixture.
+console.log('\n== ogni flag consumato deve essere anche CARICATO da app_flags ==');
+t('55 nessun flags.X consumato fuori dalla whitelist della query', (() => {
+  const wl = SRC.match(/\.in\('key',\s*\[([^\]]*)\]\)/);
+  if (!wl) return false;
+  const usati = [...new Set([...SRC.matchAll(/\bflags\.([a-z0-9_]+)/g)].map((m) => m[1]))];
+  const orfani = usati.filter((k) => !wl[1].includes(`'${k}'`));
+  return orfani.length === 0 || (console.log('     orfani: ' + orfani.join(', ')), false);
+})());
+t('56 e cs_thread_precede e\' fra quelli caricati', /'cs_thread_precede'/.test(SRC.match(/\.in\('key',\s*\[([^\]]*)\]\)/)?.[1] ?? ''));
 
 console.log(`\n${ok}/${ok + ko} verdi` + (ko ? ` — ${ko} ROSSI` : ''));
 process.exitCode = ko ? 1 : 0;
