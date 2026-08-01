@@ -142,50 +142,57 @@ Rollback = `drop view public.v_margine_ordine; drop view public.v_margine_sku;`.
 Non coincidono, e non devono: mc1 contiene voci non attribuibili al singolo SKU. Lo scarto e'
 spiegato voce per voce, con residuo ZERO su tutti i mesi (2026, EUR):
 
-| Mese | margine SKU | mc1 CE | scarto | spedizione esclusa | qta Qromo | qta COGS | logistica var | resi | arrotond. |
-|---|---|---|---|---|---|---|---|---|---|
-| 02 | 1.629,04 | 1.612,25 | 16,79 | 11,15 | 0,00 | 0,00 | 0,00 | 5,66 | -0,01 |
-| 03 | 5.583,06 | 4.866,59 | 716,47 | 238,11 | 81,97 | -28,66 | 425,07 | 0,00 | -0,03 |
-| 04 | 6.314,89 | 6.143,45 | 171,44 | 151,48 | 0,00 | 20,00 | 0,00 | 0,00 | -0,04 |
-| 05 | 7.831,90 | 6.482,97 | 1.348,93 | 58,11 | 0,00 | 0,00 | 1.015,42 | 275,41 | -0,01 |
-| 06 | 12.016,69 | 11.380,01 | 636,68 | 168,95 | 0,00 | -4,00 | 0,00 | 471,72 | 0,01 |
-| 07 | 11.218,01 | 11.124,19 | 93,82 | -191,80 | 0,00 | 0,00 | 0,00 | 285,69 | -0,07 |
+| Mese | margine SKU | mc1 CE | scarto | spedizione esclusa | qta COGS | logistica var | resi | arrotond. |
+|---|---|---|---|---|---|---|---|---|
+| 02 | 1.629,04 | 1.612,25 | 16,79 | 11,15 | 0,00 | 0,00 | 5,66 | -0,01 |
+| 03 | 5.501,09 | 4.866,59 | 634,50 | 238,11 | -28,66 | 425,07 | 0,00 | -0,03 |
+| 04 | 6.314,89 | 6.143,45 | 171,44 | 151,48 | 20,00 | 0,00 | 0,00 | -0,04 |
+| 05 | 7.831,90 | 6.482,97 | 1.348,93 | 58,11 | 0,00 | 1.015,42 | 275,41 | -0,01 |
+| 06 | 12.016,69 | 11.380,01 | 636,68 | 168,95 | -4,00 | 0,00 | 471,72 | 0,01 |
+| 07 | 11.218,01 | 11.124,19 | 93,82 | -191,80 | 0,00 | 0,00 | 285,69 | -0,07 |
 
-Le cinque voci:
+Le quattro voci:
 
 1. **Spedizione esclusa**: `(shipping_total + free_shipping_amt) / 1,22`. Il CE la include nel
    ricavo online, il margine no. A luglio la voce e' negativa perche' `free_shipping_amt` e'
    negativo: e' il candidato bug "free shipping sottratto due volte" gia' aperto in CONOSCENZA,
    non un effetto di queste viste.
-2. **Qta Qromo**: `(sum(prezzo*quantita) - sum(prezzo)) / 1,22`.
-3. **Qta COGS**: differenza tra COGS moltiplicato per la quantita' e COGS sommato grezzo.
-4. **Logistica variabile**: spese di spedizione pagate, in mc1 e non nel margine di riga.
-5. **Resi**: `refund_amount / 1,22`, in mc1 e non nel margine per SKU.
+2. **Qta COGS**: differenza tra COGS moltiplicato per la quantita' e COGS sommato grezzo.
+3. **Logistica variabile**: spese di spedizione pagate, in mc1 e non nel margine di riga.
+4. **Resi**: `refund_amount / 1,22`, in mc1 e non nel margine per SKU.
 
-### Il CE e' cieco alla quantita' (SEGNALAZIONE, non corretto qui)
+### Il CE conta il COGS senza la quantita' (SEGNALAZIONE, non corretto qui)
 
-Le voci 2 e 3 non sono scelte di design del margine: sono un difetto del CE. `v_ce_amimi`
-somma `cogs_snapshot`, `qromo_sales.prezzo` e `qromo_sales.cogs` **senza moltiplicarli per la
-quantita'**, mentre le tre colonne sono unitarie (`shopify-sync/index.ts` scrive il COGS di
-anagrafica per unita'; per Qromo lo conferma il match con `products.cogs`). Con 843 righe di
-vendita su 845 a quantita' 1 il difetto era finora invisibile. I tre casi reali:
+La voce 2 non e' una scelta di design del margine: e' un difetto del CE. `v_ce_amimi` somma
+`shopify_line_items.cogs_snapshot` e `qromo_sales.cogs` **senza moltiplicarli per la quantita'**,
+mentre entrambe le colonne sono unitarie (`shopify-sync/index.ts` scrive il COGS di anagrafica per
+unita'; per Qromo lo conferma il match esatto con `products.cogs` sulla riga da 3 pezzi, 14,33 e
+non 42,99). Con 843 righe di vendita su 845 a quantita' 1 il difetto era finora invisibile. I tre
+casi reali:
 
+- **marzo 2026**: vendita Qromo 3x `CHAIN_TIGER`, COGS contato 14,33 invece di 42,99.
+  COGS sottostimato di **28,66**.
+- **aprile 2026**: la riga Qromo neutralizzata dell'11-04 (quantita' 0, prezzo 0, nota "DOPPIONE
+  rimosso") ha `cogs` 20,00 e il CE lo conta lo stesso. COGS sovrastimato di **20,00**.
 - **giugno 2026**: ordine `#1394`, 2x `NINA_BAG_PEACH` a COGS 4,00 -> il CE conta 4,00 invece di
   8,00. COGS sottostimato di **4,00**.
-- **marzo 2026**: vendita Qromo 3x `CHAIN_TIGER` a 50,00 con COGS 14,33 -> il CE conta 50,00 di
-  ricavo invece di 150,00 e 14,33 di COGS invece di 42,99. Ricavo sottostimato di **100,00**
-  lordi, COGS di **28,66**.
-- **aprile 2026**: la riga Qromo neutralizzata del 11-04 (quantita' 0, prezzo 0, nota "DOPPIONE
-  rimosso") ha `cogs` 20,00 e il CE lo conta lo stesso. COGS sovrastimato di **20,00**.
 
-Tutti e tre cadono in mesi CHIUSI (gen-giu 2026 in `ce_snapshots`), quindi **non sono stati
-corretti**: una correzione retroattiva cambierebbe un CE gia' comunicato (Regola Ferrea 11) e
-il brief A4 vieta di toccare il CE (Regola Ferrea 19). Serve una decisione dell'owner.
+Tutti e tre cadono in mesi CHIUSI (gen-giu 2026 in `ce_snapshots`). **L'owner ha autorizzato la
+correzione il 2026-08-01**, che pero' comporta di rimettere mano a `v_ce_amimi` e `v_ce_totale` e
+di RI-CHIUDERE i tre mesi: e' un lavoro a se', con brief dedicato
+(`_CLAUDE_CODE_INBOX/2026-08-01_CLAUDE_CODE_BRIEF_ce_cogs_quantita.md`), non un fix di passaggio.
+Effetto atteso su mc1: marzo 4.866,59 -> 4.837,93; aprile 6.143,45 -> 6.163,45;
+giugno 11.380,01 -> 11.376,01.
 
-Nota sull'interpretazione di `qromo_sales.prezzo`: CONOSCENZA lo documenta come PAGATO per
-unita', il CE lo tratta come totale di riga. Le due letture divergono solo su quell'unica riga
-`CHAIN_TIGER`. Queste viste seguono CONOSCENZA (150,00 per 3 catene con retail 70,00 e' un
-prezzo plausibile; 50,00 totali sarebbe uno sconto del 76%), ma la riga merita una conferma.
+### Il RICAVO offline invece e' giusto nel CE
+
+`qromo_sales.prezzo` e' il **TOTALE della riga**, non il prezzo unitario: confermato dall'owner il
+2026-08-01 sul caso reale (28-03, 3x `CHAIN_TIGER`, prezzo registrato 50,00 su listino 70,00,
+incasso reale 50,00 in tutto). Qromo ha quindi lo stesso quirk gia' noto di `gifts_offline`:
+**prezzo = totale riga, cogs = per unita'**. La prima versione di `v_margine_sku` (migr 0083)
+seguiva la nota allora presente in CONOSCENZA ("prezzo per unita'") e gonfiava il margine di marzo
+di 100,00 lordi: corretta dalla migr **0089**, e la nota di CONOSCENZA e' stata riscritta.
+Su questo ricavo il CE era ed e' corretto.
 
 ## 10. Modulo shipping_status (migr 0086, brief stato_tws_in_app, 01-08)
 
