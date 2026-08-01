@@ -34,9 +34,9 @@ Un INSERT/UPDATE che include una colonna generata FALLISCE (gia' successo: orpha
 
 - **`purchases`** (ACQUISTI, verita' del carico): data, codice, quantita, costo_unitario, `costo_totale` generato, fornitore, note.
 - **`shopify_orders`** + **`shopify_line_items`**: ordini (gross/net/discount/shipping/fees/refund, financial/fulfillment status, `fulfilled_at`, `discount_codes`) e righe (codice risolto, `cogs_snapshot`). Idempotenti su order_id.
-- **`qromo_sales`** (vendite negozio): `prezzo` = PAGATO per unita' (sconti inclusi), `cogs` snapshot, `resolver_status` (resolved/unresolved), `sale_id` con **UNIQUE parziale** `qromo_sales_live_saleid_uq` per source in (`qromo-direct`, `qromo-forward`) (migr 0036); i duplicati storici da ETL sono tollerati.
+- **`qromo_sales`** (vendite negozio): `prezzo` = TOTALE della riga gia' scontato (NON si moltiplica per la quantita'; confermato dall'owner 01-08 sul caso 3x CHAIN_TIGER, vedi §9), `cogs` = snapshot per UNITA' (si moltiplica per la quantita'; corretto nel CE dalla migr 0093), `resolver_status` (resolved/unresolved), `sale_id` con **UNIQUE parziale** `qromo_sales_live_saleid_uq` per source in (`qromo-direct`, `qromo-forward`) (migr 0036); i duplicati storici da ETL sono tollerati.
 - **`b2b_movements`**: conto_vendita/wholesale, tipo invio/reso/venduto, stato (le righe `annullato` sono ESCLUSE dal CE, migr 0028), incassi generati.
-- **`gifts_offline`**: regali/vendite offline; QUIRK: `prezzo` e' il TOTALE riga (non si moltiplica per qta), `cogs` e' per unita'.
+- **`gifts_offline`**: regali/vendite offline; QUIRK: `prezzo` e' il TOTALE riga (non si moltiplica per qta) e **anche `cogs` e' il totale di riga** (la nota precedente diceva "per unita'" ed era sbagliata, corretta 01-08: vedi le prove in §9). Nel CE Totale non va moltiplicato per la quantita'.
 - **`returns`** (migr 0018): resi/cambi su 3 canali; `rientra_stock` bool, `sostituito_con` per i cambi merce. Nel CE la riga resi e' nettata /1.22 dal 06-07 (migr 0038).
 - **`expenses`** (EXPENSES MASTER): `costo` NEGATIVO; `status` approved/pending/rejected con proposed_by/approved_by; `amimi` e `categoria_valid` generate.
 - **`counts`** (staging conte) + **`stock_adjustments`** (migr 0027): la conta scrive in counts e produce una rettifica firmata in stock_adjustments (delta calcolato lato server); `v_inventory` somma le rettifiche.
@@ -140,49 +140,60 @@ Rollback = `drop view public.v_margine_ordine; drop view public.v_margine_sku;`.
 
 `sum(margine_contribuzione)` di `v_margine_sku` contro `mc1` di `v_ce_amimi_summary`.
 Non coincidono, e non devono: mc1 contiene voci non attribuibili al singolo SKU. Lo scarto e'
-spiegato voce per voce, con residuo ZERO su tutti i mesi (2026, EUR):
+spiegato voce per voce, con residuo ZERO su tutti i mesi (2026, EUR; valori dopo la correzione
+del COGS della migr 0093):
 
-| Mese | margine SKU | mc1 CE | scarto | spedizione esclusa | qta COGS | logistica var | resi | arrotond. |
-|---|---|---|---|---|---|---|---|---|
-| 02 | 1.629,04 | 1.612,25 | 16,79 | 11,15 | 0,00 | 0,00 | 5,66 | -0,01 |
-| 03 | 5.501,09 | 4.866,59 | 634,50 | 238,11 | -28,66 | 425,07 | 0,00 | -0,03 |
-| 04 | 6.314,89 | 6.143,45 | 171,44 | 151,48 | 20,00 | 0,00 | 0,00 | -0,04 |
-| 05 | 7.831,90 | 6.482,97 | 1.348,93 | 58,11 | 0,00 | 1.015,42 | 275,41 | -0,01 |
-| 06 | 12.016,69 | 11.380,01 | 636,68 | 168,95 | -4,00 | 0,00 | 471,72 | 0,01 |
-| 07 | 11.218,01 | 11.124,19 | 93,82 | -191,80 | 0,00 | 0,00 | 285,69 | -0,07 |
+| Mese | margine SKU | mc1 CE | scarto | spedizione esclusa | logistica var | resi | arrotond. |
+|---|---|---|---|---|---|---|---|
+| 02 | 1.629,04 | 1.612,25 | 16,79 | 11,15 | 0,00 | 5,66 | -0,01 |
+| 03 | 5.501,09 | 4.837,93 | 663,16 | 238,11 | 425,07 | 0,00 | -0,03 |
+| 04 | 6.314,89 | 6.163,45 | 151,44 | 151,48 | 0,00 | 0,00 | -0,04 |
+| 05 | 7.831,90 | 6.482,97 | 1.348,93 | 58,11 | 1.015,42 | 275,41 | -0,01 |
+| 06 | 12.016,69 | 11.376,01 | 640,68 | 168,95 | 0,00 | 471,72 | 0,01 |
+| 07 | 11.218,01 | 11.124,19 | 93,82 | -191,80 | 0,00 | 285,69 | -0,07 |
+| 08 | 70,76 | 70,76 | 0,00 | 0,00 | 0,00 | 0,00 | 0,00 |
 
-Le quattro voci:
+Le tre voci:
 
 1. **Spedizione esclusa**: `(shipping_total + free_shipping_amt) / 1,22`. Il CE la include nel
    ricavo online, il margine no. A luglio la voce e' negativa perche' `free_shipping_amt` e'
    negativo: e' il candidato bug "free shipping sottratto due volte" gia' aperto in CONOSCENZA,
    non un effetto di queste viste.
-2. **Qta COGS**: differenza tra COGS moltiplicato per la quantita' e COGS sommato grezzo.
-3. **Logistica variabile**: spese di spedizione pagate, in mc1 e non nel margine di riga.
-4. **Resi**: `refund_amount / 1,22`, in mc1 e non nel margine per SKU.
+2. **Logistica variabile**: spese di spedizione pagate, in mc1 e non nel margine di riga.
+3. **Resi**: `refund_amount / 1,22`, in mc1 e non nel margine per SKU.
 
-### Il CE conta il COGS senza la quantita' (SEGNALAZIONE, non corretto qui)
+Fino al 2026-08-01 servivano DUE voci in piu', "qta COGS" e "qta Qromo", che non erano scelte di
+design del margine ma difetti del CE e delle prime viste del margine. Sono sparite entrambe: la
+loro scomparsa e' la prova incrociata che le correzioni (migr 0089 e 0093) sono giuste.
 
-La voce 2 non e' una scelta di design del margine: e' un difetto del CE. `v_ce_amimi` somma
-`shopify_line_items.cogs_snapshot` e `qromo_sales.cogs` **senza moltiplicarli per la quantita'**,
-mentre entrambe le colonne sono unitarie (`shopify-sync/index.ts` scrive il COGS di anagrafica per
-unita'; per Qromo lo conferma il match esatto con `products.cogs` sulla riga da 3 pezzi, 14,33 e
-non 42,99). Con 843 righe di vendita su 845 a quantita' 1 il difetto era finora invisibile. I tre
-casi reali:
+### Il CE contava il COGS senza la quantita' (CORRETTO il 2026-08-01, migr 0093)
 
-- **marzo 2026**: vendita Qromo 3x `CHAIN_TIGER`, COGS contato 14,33 invece di 42,99.
-  COGS sottostimato di **28,66**.
+`v_ce_amimi` e `v_ce_totale` sommavano `shopify_line_items.cogs_snapshot` e `qromo_sales.cogs`
+**senza moltiplicarli per la quantita'**, mentre entrambe le colonne sono unitarie
+(`shopify-sync/index.ts` scrive il COGS di anagrafica per unita'; per Qromo lo conferma il match
+esatto con `products.cogs` sulla riga da 3 pezzi, 14,33 e non 42,99). Con 843 righe di vendita su
+845 a quantita' 1 il difetto era rimasto invisibile per mesi. Trovato il 31-07 costruendo
+`v_margine_sku`, corretto il 01-08 su autorizzazione esplicita dell'owner.
+
+I tre casi reali e l'effetto su mc1, identico sui due CE:
+
+- **marzo 2026**: vendita Qromo 3x `CHAIN_TIGER`, COGS contato 14,33 invece di 42,99 -> **-28,66**.
 - **aprile 2026**: la riga Qromo neutralizzata dell'11-04 (quantita' 0, prezzo 0, nota "DOPPIONE
-  rimosso") ha `cogs` 20,00 e il CE lo conta lo stesso. COGS sovrastimato di **20,00**.
-- **giugno 2026**: ordine `#1394`, 2x `NINA_BAG_PEACH` a COGS 4,00 -> il CE conta 4,00 invece di
-  8,00. COGS sottostimato di **4,00**.
+  rimosso") portava comunque 20,00 di COGS -> **+20,00**.
+- **giugno 2026**: ordine `#1394`, 2x `NINA_BAG_PEACH` a COGS 4,00, contati 4,00 invece di 8,00
+  -> **-4,00**.
 
-Tutti e tre cadono in mesi CHIUSI (gen-giu 2026 in `ce_snapshots`). **L'owner ha autorizzato la
-correzione il 2026-08-01**, che pero' comporta di rimettere mano a `v_ce_amimi` e `v_ce_totale` e
-di RI-CHIUDERE i tre mesi: e' un lavoro a se', con brief dedicato
-(`_CLAUDE_CODE_INBOX/2026-08-01_CLAUDE_CODE_BRIEF_ce_cogs_quantita.md`), non un fix di passaggio.
-Effetto atteso su mc1: marzo 4.866,59 -> 4.837,93; aprile 6.143,45 -> 6.163,45;
-giugno 11.380,01 -> 11.376,01.
+I tre mesi erano CHIUSI e sono stati **ri-chiusi** dalla migr 0094 (3 mesi x 2 CE = 6 righe,
+`closed_by = 'reclose-cogs-quantita-2026-08-01'`), con guardia sull'invariante del ricavo netto:
+`delta_netto` e' rimasto 0,00 su tutte le righe, perche' la correzione tocca solo il COGS.
+`v_ce_drift` dopo la ri-chiusura e' 0 sia su netto sia su mc2.
+
+**`gifts_offline.cogs` NON e' stato toccato** (compare solo in `v_ce_totale`) e la sezione 3 di
+questo documento, che lo descriveva come "per unita'", era **sbagliata**: si comporta da TOTALE di
+riga. Prove: `ANNIE_BAG_PERSONALIZZAZIONE_MATRIMONIO` ha 14 pezzi e `cogs` 210,00, e anche
+`products.cogs` vale 210,00, cioe' il costo del LOTTO (moltiplicare darebbe 2.940,00); e 13 righe
+hanno quantita' 0 con `cogs` > 0 perche' sono rettifiche di conta per pezzi mancanti, dove il costo
+e' una perdita reale che moltiplicare azzererebbe. Su gifts il CE e' quindi corretto com'e'.
 
 ### Il RICAVO offline invece e' giusto nel CE
 
