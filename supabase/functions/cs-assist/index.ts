@@ -1,4 +1,19 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v24 (2026-08-01 notte, brief cs_assist_migliorie sezione "ESITO GIRO 2", spec v17): SCHEMA RAMI,
+//   dietro `app_flags.cs_rami_enabled` (nasce a FALSE). Al posto di tre varianti di TONO della
+//   stessa risposta, fino a tre ALTERNATIVE DI CONTENUTO = gli esiti possibili della richiesta,
+//   ognuna col suo titolo di massimo 5 parole, una sola dove i dati decidono. Dove la verita' la sa
+//   solo il team, la scelta della collega E' la risposta: risolve per costruzione anche le
+//   concessioni inventate (il ramo "omaggio" esiste, ma parte solo se una persona lo sceglie).
+//   PERIMETRO ESEGUITO: prompt (1), contratto JSON + tetto token (2), UI (4), ramo scelto su
+//   cs_drafts (5). NON eseguito il punto 3 (computeCaso/case_data che tornano l'ELENCO dei rami)
+//   e lo dico col motivo: il prototipo che ha VINTO il giro 2 usava il blocco CASO di produzione
+//   VERBATIM, parola "vincolante" compresa (`caso_txt` in SIM_round2.py), quindi riscriverlo qui
+//   avrebbe spostato la produzione FUORI dalla configurazione misurata; e i due difetti che quel
+//   punto voleva curare (verdetto su ordine gia' rimborsato, categoria che sovrasta il thread) sono
+//   gia' chiusi dalla v18, il cui testo sta dentro quel caso_txt. Se si vuole comunque, va misurato.
+//   Il tetto del primo giro sale a 6000 su ENTRAMBI gli schemi (sonda di varianza 01-08: 1.572
+//   token di solo ragionamento in media, che su questo endpoint contano dentro maxOutputTokens).
 // v23 (2026-08-01 notte, brief cs_reply_to_fonte_indipendente): la guardia cross-cliente di draft e
 //   refine usa lo stesso `emailCliente` di cs-send, e quel blocco ora legge anche
 //   `cs_messages.reply_to` (migr 0100), fonte che non passa dal corpo del messaggio. Copia
@@ -792,6 +807,31 @@ const langBlock = (lingua: unknown): string => (String(lingua ?? '') === 'en'
   ? `\nLINGUA: il cliente scrive in INGLESE, quindi la risposta va scritta TUTTA in inglese, dalla prima parola all'ultima, saluto di apertura incluso (mai "Ciao", mai parole italiane nel corpo). UNICA eccezione, voluta: la firma finale resta "Grazie, Team Amimi'".`
   : `\nLINGUA: rispondi in ITALIANO.`);
 
+// v24 (brief cs_assist_migliorie, sezione "ESITO GIRO 2"): SCHEMA RAMI, gated da
+// `app_flags.cs_rami_enabled`. Al posto di tre varianti di TONO della stessa risposta, fino a tre
+// ALTERNATIVE DI CONTENUTO = gli esiti possibili della richiesta, ognuna col suo titolo: dove la
+// verita' la sa solo il team (un restock arriva in tempo? si fa un'eccezione? si manda un omaggio?)
+// la scelta della collega E' la risposta. Testo portato VERBATIM da `SYSTEM_V2` del prototipo che
+// ha vinto il secondo giro alla cieca (15 casi, 2 giudici: 10-2-3 e 11-3-1), perche' il valore
+// misurato sta in quelle parole li': riscriverle "meglio" avrebbe buttato la misura.
+// DUE SCOSTAMENTI DICHIARATI dal prototipo, entrambi verso il comportamento gia' deciso dall'owner:
+//  - la firma in inglese resta "Grazie, Team Amimi'" (decisione owner 01-08, punto 10 dello stesso
+//    brief, gia' in produzione dalla v18): il prototipo diceva "Thanks, Team Amimi'", ma quel
+//    dettaglio non era sotto giudizio nel test, mentre la decisione dell'owner si';
+//  - `langBlock` e `chatBlock` restano appesi (il prototipo non li aveva perche' non aveva casi di
+//    chat ne' bisogno di rinforzare la lingua): sono additivi e dicono la stessa cosa di RAMI_RULES,
+//    toglierli avrebbe indebolito l'inglese e fatto uscire le bozze di chat in forma di email.
+// La rifinitura "mai richiedere dati gia' presenti nel thread" NON e' duplicata qui: e' gia' viva
+// in `app_flags.cs_ai_istruzioni` ("Se ha gia' scritto un dato... NON richiederglielo"), verificato
+// sul valore in produzione il 01-08.
+const RAMI_RULES = `NON proporre varianti di tono: proponi le possibili RISPOSTE DI CONTENUTO alla richiesta specifica di questa cliente, tutte pronte da ritoccare. NON inviarle.
+QUANTE ALTERNATIVE: chiediti quali sono gli ESITI possibili della richiesta. Se i DATI determinano da soli la risposta giusta, scrivi UNA sola alternativa, COMPLETA e precisa sulla policy (numeri e condizioni esatti dai DATI e dalla CONOSCENZA: se i giorni sono lavorativi, scrivi lavorativi, anche in inglese, dove si scrive "business days" e non "days"). Se la risposta dipende da qualcosa che il sistema non sa e solo il team conosce (un restock che arriva in tempo, un'eccezione, una disponibilita' fisica, una decisione commerciale), scrivi UNA alternativa per ESITO possibile, massimo 3: sara' la collega, che conosce la verita', a scegliere quella vera. Ogni alternativa e' una risposta COMPLETA e coerente col SOLO suo esito, mai un misto di esiti.
+TITOLO: ogni alternativa ha un titolo di MASSIMO 5 parole che dichiara l'esito (esempi: "Si', arriva in tempo" / "Niente restock: propongo simili" / "Serve una persona"), cosi' la collega sceglie dal titolo senza leggere i testi.
+REGISTRO: SEMPRE del tu, caldo, frasi corte, 1-2 emoji leggere al massimo, chiudi con "Grazie, Team Amimi'". Il lei SOLO se la cliente scrive in modo formale o e' arrabbiata. Se la conversazione e' in inglese, TUTTO in inglese; la firma finale resta "Grazie, Team Amimi'" anche li', ed e' voluta.
+REGOLA FERREA anti-invenzione: dentro ogni alternativa cita SOLO dati presenti nel BLOCCO DATI qui sotto. Un'alternativa puo' ASSUMERE l'esito dichiarato nel suo titolo anche se il sistema non lo conosce (es. che il restock arrivi in tempo, riprendendo la scadenza detta DALLA CLIENTE), ma NON puo' inventare numeri, date precise, prezzi, indirizzi o promesse operative: per quelli scrivi [DA VERIFICARE: cosa manca].
+MAI dire alla cliente che il suo ordine "non risulta" o "non e' nei sistemi", nemmeno come esito di un ramo: se un dato non si trova, il ramo dice che stiamo verificando e chiede UN dato utile (es. l'email usata per l'ordine).
+CASI DA NON CHIUDERE DA SOLA (in questi casi UNA delle alternative e' proprio il passaggio a una persona): difetto/garanzia -> NON negare mai il reso citando solo i 14 giorni del recesso (la garanzia legale dura 24 mesi), proponi riparazione/cambio o il contatto; disputa/chargeback/banca -> massima cautela + persona; reclamo/rivenditore/proposta B2B/preventivo cerimonia -> raccogli info e rimanda a una persona.`;
+
 const STYLE_RULES = `STILE: dai del tu (dai del lei solo se il cliente e' formale o arrabbiato), frasi corte, 1-2 emoji leggere al massimo, chiudi con "Grazie, Team Amimi'". Niente promesse su date/numeri non nei DATI.
 REGOLA FERREA anti-invenzione: cita SOLO dati presenti nel BLOCCO DATI qui sotto. Se ti serve un dato che NON c'e' (prezzo, data, indirizzo, tracking, condizione), NON inventarlo: scrivi il segnaposto [DA VERIFICARE: cosa manca].
 CASI DA NON CHIUDERE DA SOLA (scrivi una risposta PRUDENTE che raccoglie info e propone il contatto di una persona; non promettere e non rifiutare): difetto/garanzia -> NON negare mai il reso citando solo i 14 giorni del recesso (la garanzia legale dura 24 mesi), proponi riparazione/cambio o il contatto; disputa/chargeback/banca -> massima cautela + persona; reclamo/rivenditore/proposta B2B/preventivo cerimonia -> raccogli info e rimanda a una persona.`;
@@ -806,7 +846,7 @@ Deno.serve(async (req) => {
   const action = String(body.action || '');
 
   const flags: Record<string, string> = {};
-  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model_claude', 'cs_ai_istruzioni']);
+  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model_claude', 'cs_ai_istruzioni', 'cs_rami_enabled']);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
@@ -1014,9 +1054,19 @@ Riassunto (max 2 righe):`;
       casoTxt = casoBlock((conv.categoria as string) ?? null, cd);
     }
 
+    // v24: schema RAMI (alternative di CONTENUTO) contro schema TONI (breve/calda/formale).
+    // Interruttore in `app_flags.cs_rami_enabled`: a flag spento il prompt e il contratto JSON sono
+    // BYTE PER BYTE quelli di prima, cosi' il rollback non richiede un deploy.
+    const rami = flags.cs_rami_enabled === 'true';
+    const inChat = conv.canale === 'chat_notifica';
     // canale chat: la bozza verra' incollata nella chat di Shopify Inbox, non in una email
-    const chatBlock = conv.canale === 'chat_notifica' ? `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggi corti stile chat (anche la versione "formale" resta un messaggio di chat, solo piu' composto).` : '';
-    const system = `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi TRE versioni ALTERNATIVE della stessa risposta ${conv.canale === 'chat_notifica' ? 'in chat' : 'email'} al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.
+    const chatBlock = !inChat ? ''
+      : rami
+        ? `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggi corti stile chat. Vale per ogni alternativa.`
+        : `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggi corti stile chat (anche la versione "formale" resta un messaggio di chat, solo piu' composto).`;
+    const system = rami
+      ? `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). ${RAMI_RULES}${langBlock(conv.lingua)}${istruzioniBlock}${casoTxt}${chatBlock}`
+      : `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi TRE versioni ALTERNATIVE della stessa risposta ${inChat ? 'in chat' : 'email'} al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.
 LE TRE VERSIONI (usa esattamente questi tre "tono"): "breve" = 2-3 righe, dritta al punto, cordiale; "calda" = piu' empatica e personale, un pizzico di calore; "formale" = piu' completa e composta, adatta a casi delicati.
 ${STYLE_RULES}${langBlock(conv.lingua)}${istruzioniBlock}${casoTxt}${chatBlock}`;
     const user = `Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
@@ -1029,12 +1079,18 @@ ${datiBlock(ctx.dati)}
 ${ctx.tono.length ? `\nEsempi del NOSTRO tono (imita lo stile, non copiare i contenuti):\n${ctx.tono.map((t) => '- ' + t).join('\n')}` : ''}
 
 Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (nessun markdown, nessun **grassetto**):
-{"opzioni":[{"tono":"breve","testo":"..."},{"tono":"calda","testo":"..."},{"tono":"formale","testo":"..."}]}`;
+${rami
+  ? '{"alternative":[{"titolo":"...","testo":"..."}]}\n(da 1 a 3 alternative, in ordine dalla piu\' probabile)'
+  : '{"opzioni":[{"tono":"breve","testo":"..."},{"tono":"calda","testo":"..."},{"tono":"formale","testo":"..."}]}'}`;
 
     // pulizia bozza: via i titoli markdown tipo **BREVE** e i grassetti (la mail e' testo semplice)
     const tidy = (t: string) => t.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
-    let opzioni: { tono: string; testo: string }[] = [];
+    let opzioni: { tono: string; titolo?: string; testo: string }[] = [];
     let fallbackSingola = false;
+    // v24: col nuovo schema UNA sola alternativa e' un esito legittimo ("i dati decidono da soli"),
+    // non un giro andato male: la soglia di completezza scende a 1, altrimenti ogni caso deciso
+    // farebbe scattare un secondo giro inutile e poi il ripiego.
+    const minOpts = rami ? 1 : 3;
     // v19 (brief cs_bozze_troncate): diagnostica del giro (o dei giri) e motivo del ripiego, esposti.
     const diag: LLMDiag = {};
     let tentativi = 0, tetto = 0;
@@ -1046,22 +1102,32 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
       // rende TRE opzioni, o il modello dichiara MAX_TOKENS, si RIPROVA una volta con il doppio di
       // budget prima di degradare. Su Gemini Flash il costo di un secondo giro e' trascurabile
       // rispetto a un'operatrice che riceve una bozza monca.
+      // v24: il tetto del PRIMO giro sale da 4000 a 6000 su ENTRAMBI gli schemi. Non e' una scelta
+      // del nuovo contratto: la sonda di varianza del 01-08 (33 generazioni) ha misurato 1.572 token
+      // di ragionamento in media, che su questo endpoint contano DENTRO maxOutputTokens e ogni tanto
+      // se lo mangiano tutto (1 giro su 33 morto a 2.396/2.400). Alzare non costa nulla, i pensieri
+      // vengono generati e fatturati comunque: il tetto alto evita solo la morte a meta' JSON.
       const parseOpts = (raw: string) => {
-        let parsed: { opzioni?: { tono?: unknown; testo?: unknown }[] } = {};
+        let parsed: { opzioni?: { tono?: unknown; testo?: unknown }[]; alternative?: { titolo?: unknown; testo?: unknown }[] } = {};
         try { parsed = JSON.parse(cleanJson(raw)); }
         catch {   // JSON sporco/troncato: prova a estrarre il blocco { ... } piu' esterno
           const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
           if (a >= 0 && b > a) { try { parsed = JSON.parse(raw.slice(a, b + 1)); } catch { parsed = {}; } }
         }
+        if (rami) {
+          return (Array.isArray(parsed?.alternative) ? parsed.alternative : [])
+            .map((o) => ({ tono: 'ramo', titolo: tidy(String(o.titolo ?? '')).slice(0, 60), testo: tidy(String(o.testo ?? '')) }))
+            .filter((o) => o.testo);
+        }
         return (Array.isArray(parsed?.opzioni) ? parsed.opzioni : []).map((o) => ({ tono: String(o.tono ?? ''), testo: tidy(String(o.testo ?? '')) })).filter((o) => o.testo);
       };
-      for (const budget of [4000, 8000]) {
+      for (const budget of [6000, 10000]) {
         tentativi++; tetto = budget;
         const raw = await runLLM(system, user, budget, true, diag);
         opzioni = parseOpts(raw);
-        const complete = opzioni.length >= 3 && !opzioni.some((o) => sembraTroncata(o.testo));
+        const complete = opzioni.length >= minOpts && !opzioni.some((o) => sembraTroncata(o.testo));
         if (complete) break;
-        if (diag.finishReason && diag.finishReason !== 'MAX_TOKENS' && opzioni.length >= 3) break;   // corte ma finite di proposito
+        if (diag.finishReason && diag.finishReason !== 'MAX_TOKENS' && opzioni.length >= minOpts) break;   // corte ma finite di proposito
       }
     } catch { opzioni = []; }
     if (!opzioni.length) {
@@ -1071,9 +1137,17 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
       // risposta (stesso schema di `engine_fallback`) e la UI puo' dire cosa e' successo.
       fallbackSingola = true;
       try {
-        const sysSingle = system
-          .replace(/Scrivi TRE versioni ALTERNATIVE della stessa risposta [^\n]+? al cliente, con toni diversi, tutte pronte da ritoccare\. NON inviarle\./, 'Scrivi UNA bozza di risposta al cliente, pronta da ritoccare. NON inviarla.')
-          .replace(/LE TRE VERSIONI[^\n]*\n/, '');
+        // v24: col nuovo schema le frasi da sostituire sono altre. Se la sostituzione non
+        // agganciasse nulla, il ripiego chiederebbe ancora un JSON e uscirebbe di nuovo vuoto:
+        // ogni ramo ha la SUA coppia di regex, nessuna delle due lavora a vuoto.
+        const sysSingle = rami
+          ? system
+            .replace(/NON proporre varianti di tono: proponi le possibili RISPOSTE DI CONTENUTO alla richiesta specifica di questa cliente, tutte pronte da ritoccare\. NON inviarle\./, 'Scrivi UNA bozza di risposta al cliente, pronta da ritoccare. NON inviarla.')
+            .replace(/^QUANTE ALTERNATIVE:[^\n]*\n/m, '')
+            .replace(/^TITOLO:[^\n]*\n/m, '')
+          : system
+            .replace(/Scrivi TRE versioni ALTERNATIVE della stessa risposta [^\n]+? al cliente, con toni diversi, tutte pronte da ritoccare\. NON inviarle\./, 'Scrivi UNA bozza di risposta al cliente, pronta da ritoccare. NON inviarla.')
+            .replace(/LE TRE VERSIONI[^\n]*\n/, '');
         const usrSingle = user.replace(/Rispondi SOLO con JSON[\s\S]*$/, 'Scrivi SOLO la bozza (nessun JSON, nessun titolo, nessuna spiegazione, nessun markdown):');
         const single = await runLLM(sysSingle, usrSingle, 2000, false, diag);   // v19: 1000 era stretto quanto il tetto che stiamo curando
         if (single) opzioni = [{ tono: 'bozza', testo: tidy(single) }];
@@ -1084,22 +1158,29 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
     // consentiti. v13: il corpus usa il thread RAW (citazioni incluse), il prompt quello CLEAN.
     const lintCorpus = factKeys([
       threadRaw(lc.recent, conv.subject), datiBlock(ctx.dati), casoTxt, ctx.dati.fonti.join('\n'), ctx.tono.join('\n'),
-      aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''),
+      aiIstruzioni, rami ? RAMI_RULES : STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''),
       ctx.conoscenza.join('\n'), ctx.precedenti.join('\n'),   // v14: i valori di casa (14, 3.90, CAP...) sono fatti consentiti
     ].join('\n'));
     // v15: safety net sui segnaposto di LINK sopravvissuti alla generazione, per TIPO (v19).
     // Solo l'url del MIGLIOR match, mai quello di un altro prodotto (vedi assembleContext).
-    const options = opzioni.slice(0, 3).map((o) => {
+    const options = opzioni.slice(0, 3).map((o, i) => {
       const testo = scrubPlaceholders(scrubLinkPh(o.testo, ctx.linkUrls));
-      return { tono: o.tono, testo, da_verificare: countDaVerificare(testo), non_grounded: lintDraft(testo, lintCorpus), ...(sembraTroncata(testo) ? { troncata: true } : {}) };
+      // v24: se il modello lascia un titolo vuoto la scelta resterebbe senza etichetta, e la collega
+      // dovrebbe leggere tutti i testi per capire quale sia quale: si ripiega su un ordinale.
+      const titolo = o.titolo?.trim() || (rami ? `Alternativa ${i + 1}` : '');
+      return { tono: o.tono, ...(rami ? { titolo } : {}), testo, da_verificare: countDaVerificare(testo), non_grounded: lintDraft(testo, lintCorpus), ...(sembraTroncata(testo) ? { troncata: true } : {}) };
     });
     // v19: una bozza tagliata non arriva MAI muta all'operatrice.
     const troncate = options.filter((o) => o.troncata).length;
+    // v24: i titoli generati si conservano ANCHE quando nessuno sceglie (dice quali esiti il motore
+    // aveva visto). Il ramo scelto lo scrive dopo cs-api `draft_ramo`, all'invio.
+    const ramiTitoli = rami && !fallbackSingola ? options.map((o) => (o as { titolo?: string }).titolo ?? '') : null;
 
-    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: usedModel, source: draftSource }).select('id').single();
-    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length, tentativi, tetto_token: tetto, llm: diag, ...(troncate ? { troncate } : {}), ...(fallbackSingola ? { fallback_singola: true } : {}), ...(draftSource === 'eval' ? { source: 'eval', model: usedModel } : {}), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
+    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: usedModel, source: draftSource, rami: ramiTitoli }).select('id').single();
+    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length, tentativi, tetto_token: tetto, llm: diag, ...(ramiTitoli ? { schema: 'rami', rami: ramiTitoli } : {}), ...(troncate ? { troncate } : {}), ...(fallbackSingola ? { fallback_singola: true } : {}), ...(draftSource === 'eval' ? { source: 'eval', model: usedModel } : {}), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
     return json({
       ok: true, options, draft: options[0].testo, da_verificare: options[0].da_verificare,   // draft = retro-compat
+      schema: ramiTitoli ? 'rami' : 'toni',   // v24: la UI etichetta le scelte di conseguenza
       fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, draft_id: ins?.id, llm: diag,
       ...(claudeFellBack ? { engine_fallback: 'gemini' } : {}),
       ...(fallbackSingola ? { fallback_singola: true } : {}),

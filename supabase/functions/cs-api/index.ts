@@ -7,6 +7,10 @@
 //   Solo allora un client service_role esegue la scrittura + l'audit su cs_events.
 //
 // Azioni (v2, feedback owner 24-07):
+//   - draft_ramo (v9, 01-08 notte, brief cs_assist_migliorie spec v17 punto 5): registra QUALE ramo
+//       l'operatrice ha davvero usato, scritto all'INVIO (o alla copia in Inbox sul canale chat),
+//       non al click di anteprima: una bozza guardata non e' una bozza scelta. Idempotente, la
+//       prima scelta vince. Alza anche `used`, colonna prevista dalla migr 0053 e mai valorizzata.
 //   - set_categoria: correzione manuale della categoria (categoria_source='manuale').
 //   - set_stato: workflow della coda -> 'da_fare' (da iniziare) | 'in_corso' (presa in carico da chi)
 //       | 'fatto' (conclusa). Scrive stato + stato_by=chi + stato_at. cs_events 'stato'.
@@ -114,6 +118,28 @@ Deno.serve(async (req) => {
       dettaglio: { da: ex.stato, a: stato, da_by: ex.stato_by, by_email: email },
     });
     return json({ ok: true, stato, stato_by, chi });
+  }
+
+  // v9 (brief cs_assist_migliorie, spec v17 punto 5): quale RAMO ha davvero usato l'operatrice.
+  // Si scrive al momento dell'INVIO (o della copia in Inbox per il canale chat), non al click di
+  // anteprima: la richiesta dell'owner e' un dataset dei "casi predefiniti" reali, e un'anteprima
+  // non e' una scelta. `used` sale insieme, cosi' la colonna prevista dalla migr 0053 e mai
+  // valorizzata smette di essere morta. Additiva: nessuna riga di dati core toccata.
+  if (action === 'draft_ramo') {
+    const draftId = String(body.draft_id || '');
+    if (!UUID_RE.test(draftId)) return json({ error: 'draft_id non valido' }, 422);
+    const ramo = String(body.ramo || '').trim().slice(0, 60);
+    const { data: ex, error: se } = await sb.from('cs_drafts').select('id, conversation_id, ramo_scelto').eq('id', draftId).maybeSingle();
+    if (se) return json({ error: 'lettura fallita: ' + se.message }, 500);
+    if (!ex) return json({ error: 'bozza inesistente' }, 404);
+    if (ex.ramo_scelto) return json({ ok: true, gia_registrato: ex.ramo_scelto });   // idempotente: la prima scelta vince
+    const { error: ue } = await sb.from('cs_drafts').update({ ramo_scelto: ramo || null, used: true }).eq('id', draftId);
+    if (ue) return json({ error: 'scrittura fallita: ' + ue.message }, 500);
+    await sb.from('cs_events').insert({
+      conversation_id: ex.conversation_id, azione: 'draft_ramo', chi,
+      dettaglio: { draft_id: draftId, ramo: ramo || null, by_email: email },
+    });
+    return json({ ok: true, ramo: ramo || null });
   }
 
   if (action === 'add_noise') {

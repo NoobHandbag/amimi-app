@@ -341,11 +341,19 @@ CREATE TABLE IF NOT EXISTS "public"."cs_drafts" (
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "used" boolean DEFAULT false NOT NULL,
     "edited" boolean DEFAULT false NOT NULL,
-    "source" "text" DEFAULT 'app'::"text" NOT NULL
+    "source" "text" DEFAULT 'app'::"text" NOT NULL,
+    "rami" "jsonb",
+    "ramo_scelto" "text"
 );
 
 
 ALTER TABLE "public"."cs_drafts" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."cs_drafts"."rami" IS 'Titoli dei rami generati per questa bozza, nell''ordine proposto (jsonb array di stringhe). NULL quando la generazione e'' avvenuta col vecchio schema a toni o con il ripiego a bozza singola.';
+
+
+COMMENT ON COLUMN "public"."cs_drafts"."ramo_scelto" IS 'Titolo del ramo che l''operatrice ha effettivamente usato, scritto al momento dell''invio (o della copia in Inbox per il canale chat), non alla generazione: e'' la scelta impegnativa, non un click di anteprima. Nel tempo e'' il dataset dei casi predefiniti reali (richiesta owner 01-08).';
 
 
 COMMENT ON COLUMN "public"."cs_drafts"."source" IS 'app = bozza chiesta da operatrice; eval = generata dall''harness di valutazione (scripts/cs-eval.mjs, brief 29-07)';

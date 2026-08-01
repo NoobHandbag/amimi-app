@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato } from '../lib/csApi';
 
 // email in testo semplice: preserva gli a-capo (CSS pre-wrap) e collassa i vuoti multipli (feedback 24-07)
@@ -115,6 +115,10 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // sola. Prima non lo diceva nessuno e sembrava un capriccio del tool (caso S10 del benchmark).
   const [fallbackSingola, setFallbackSingola] = useState(false);
   const [troncate, setTroncate] = useState(0);   // v19: opzioni tagliate a meta' arrivate comunque
+  // v24 (schema RAMI): 'rami' = le alternative sono ESITI con un titolo, non toni. `draftId` serve a
+  // registrare, dopo l'invio, quale esito e' stato scelto davvero (dataset dei casi predefiniti).
+  const [schema, setSchema] = useState<'rami' | 'toni'>('toni');
+  const [draftId, setDraftId] = useState<string | null>(null);
   // guardia race (audit #7): le risposte async di un thread APERTO PRIMA non devono scrivere sul corrente
   const threadRef = useRef('');
   const [selIdx, setSelIdx] = useState(0);
@@ -238,6 +242,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       const r = await generateOptions(tid, ident, confirmDate || undefined);
       if (threadRef.current !== tid) return;   // thread cambiato nel frattempo: butta la risposta
       setOptions(r.options); setSelIdx(0); setBozzaText(r.options[0]?.testo ?? ''); setDaVer(r.options[0]?.da_verificare ?? 0); setNonGrounded(r.options[0]?.non_grounded ?? []); setFonti(r.fonti); setFallbackSingola(r.fallbackSingola); setTroncate(r.troncate);
+      setSchema(r.schema); setDraftId(r.draftId);
       if (!ctx) setCtx({ fonti: r.fonti, order_admin_url: r.order_admin_url, storia: r.storia });
     } catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
     if (threadRef.current === tid) setGenBozza(false);
@@ -267,6 +272,10 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // dove e' Inbox a consegnare (chat live o email al cliente).
   const copiaEApriInbox = async () => {
     const ok = await copiaNegliAppunti();
+    // v24: sul canale chat l'invio non passa da qui, quindi la copia riuscita E' il gesto
+    // impegnativo: e' li' che si registra il ramo scelto. Se la copia fallisce non si registra
+    // nulla, perche' non e' stato usato niente.
+    if (ok && schema === 'rami' && draftId) await recordRamo(draftId, options?.[selIdx]?.titolo ?? '', ident);
     // Inbox si apre comunque (il deep-link e' meta' del gesto), ma il messaggio dice la verita':
     // senza questo, si incollava in Inbox il contenuto vecchio degli appunti credendolo giusto.
     window.open(inboxUrlOf(msgs) ?? SHOPIFY_INBOX, '_blank', 'noopener');
@@ -286,6 +295,10 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       if (threadRef.current !== tid) return;
       setSendOpen(false); setSentTo(r.to);
       showToast(r.already_sent ? `Era già partita: inviata a ${r.to}` : `✓ Inviata a ${r.to}`);
+      // v24: il ramo si registra QUI, dopo un invio riuscito: e' la scelta impegnativa, non
+      // l'anteprima. Best-effort dentro recordRamo: non deve mai far sembrare fallito un invio
+      // che invece e' partito.
+      if (schema === 'rami' && draftId) await recordRamo(draftId, options?.[selIdx]?.titolo ?? '', ident);
       // la contabilita' post-invio fallita NON e' silenziosa: la mail e' partita, ma va controllato
       if (r.warnings.length) setErr('Email inviata, ma da controllare: ' + r.warnings.join(' · '));
       try {
@@ -615,7 +628,10 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
           <div className="cs-draftbox">
             {!options ? (
               <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doGenOptions} disabled={genBozza} type="button">
-                {genBozza ? 'Genero 3 proposte…' : '✍️ Genera 3 risposte con i dati reali'}
+                {/* v24: niente "3" nel bottone. Col nuovo schema il numero di alternative dipende dal
+                    caso (una sola quando i dati decidono), e la UI non sa quale schema e' attivo
+                    prima di generare: promettere tre e darne una sembrerebbe un guasto. */}
+                {genBozza ? 'Genero le proposte…' : '✍️ Genera le risposte con i dati reali'}
               </button>
             ) : (
               <>
@@ -623,14 +639,22 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   <div className="cs-opts">
                     {options.map((o, i) => (
                       <button key={i} className={'cs-opt' + (i === selIdx ? ' on' : '')} onClick={() => pickOption(i)} type="button">
-                        <span className="cs-opt-t">{TONO_LABEL[o.tono] ?? o.tono}</span>
+                        {/* v24: col nuovo schema l'etichetta e' l'ESITO ("Si', arriva in tempo"),
+                            non il tono: la collega sceglie leggendo i titoli, non i testi. */}
+                        <span className="cs-opt-t">{schema === 'rami' ? (o.titolo || `Alternativa ${i + 1}`) : (TONO_LABEL[o.tono] ?? o.tono)}</span>
                         <span className="cs-opt-p">{o.testo.slice(0, 90)}{o.testo.length > 90 ? '…' : ''}</span>
                       </button>
                     ))}
                   </div>
                 )}
+                {/* v24: col nuovo schema UNA sola alternativa e' un esito legittimo ("i dati
+                    decidono da soli"), non un giro andato male: il ripiego si annuncia solo se e'
+                    davvero un ripiego, altrimenti si allarmerebbe l'operatrice per niente. */}
                 {fallbackSingola && (
-                  <div className="cs-note">Una sola proposta: la generazione delle tre si è interrotta. Rigenera per riprovare.</div>
+                  <div className="cs-note">Una sola proposta: la generazione si è interrotta. Rigenera per riprovare.</div>
+                )}
+                {schema === 'rami' && !fallbackSingola && options.length === 1 && (
+                  <div className="cs-note">Una sola risposta possibile: i dati bastano a decidere, non ci sono esiti alternativi da scegliere.</div>
                 )}
                 {troncate > 0 && (
                   <div className="cs-note">⚠ {troncate === 1 ? 'Una proposta risulta tagliata a metà' : `${troncate} proposte risultano tagliate a metà`}: la generazione si è interrotta anche al secondo tentativo. Rigenera o completa a mano prima di inviare.</div>

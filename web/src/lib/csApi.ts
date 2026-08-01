@@ -162,6 +162,14 @@ export async function setStato(conversationId: string, stato: Stato, chi: string
   await callCsApi({ action: 'set_stato', conversation_id: conversationId, stato, chi });
 }
 
+/** v24 (schema RAMI): registra quale ESITO l'operatrice ha davvero usato. Si chiama DOPO l'invio
+ *  riuscito (o dopo la copia in Inbox sul canale chat), mai al click di anteprima: una bozza
+ *  guardata non e' una bozza scelta. Best-effort per costruzione: e' telemetria, e non deve mai
+ *  trasformare un invio riuscito in un errore a video. Idempotente lato edge (la prima scelta vince). */
+export async function recordRamo(draftId: string, ramo: string, chi: string): Promise<void> {
+  try { await callCsApi({ action: 'draft_ramo', draft_id: draftId, ramo, chi }); } catch { /* niente */ }
+}
+
 /** "Non e' un cliente": aggiunge il mittente alla denylist rumore (le prossime mail non entrano in coda)
  *  e sposta QUESTA conversazione nel Rumore. Reversibile a mano (denylist in app_flags, vista Rumore). */
 export async function addNoise(conversationId: string, sender: string, chi: string): Promise<void> {
@@ -186,7 +194,9 @@ export type CsContext = { fonti: string[]; gaps?: string[]; order_admin_url: str
 // non_grounded = linter di aderenza server-side: numeri/date/URL della bozza NON trovati nei dati reali
 // v19: `troncata` = il testo non finisce con punteggiatura o emoji, cioe' la generazione si e'
 // interrotta a meta'. Non e' un dettaglio estetico: e' testo che l'operatrice puo' inviare.
-export type DraftOption = { tono: string; testo: string; da_verificare: number; non_grounded?: string[]; troncata?: boolean };
+// v24 (schema RAMI, flag `cs_rami_enabled`): `titolo` = l'ESITO che l'alternativa assume, in massimo
+// 5 parole. Presente solo col nuovo schema; col vecchio la scelta resta l'etichetta di `tono`.
+export type DraftOption = { tono: string; titolo?: string; testo: string; da_verificare: number; non_grounded?: string[]; troncata?: boolean };
 
 // Header JWT dell'utente loggato (edge cs-assist verifica getUser + @amimi.it).
 async function jwtHeaders(): Promise<Record<string, string>> {
@@ -245,12 +255,16 @@ export async function fetchCaseData(conversationId: string, deliveredAt?: string
 /** Genera 3 opzioni di risposta (toni breve/calda/formale) con dati reali. JWT-gated; Gemini scrive usando
  *  SOLO il blocco DATI, con [DA VERIFICARE] dove un dato manca. Sui casi (reso/indirizzo) il verdetto del
  *  sistema VINCOLA la bozza; `deliveredAt` = data confermata dalla collega. NON invia (Fase 4). */
-export async function generateOptions(conversationId: string, chi: string, deliveredAt?: string): Promise<{ options: DraftOption[]; fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null; fallbackSingola: boolean; troncate: number }> {
+export async function generateOptions(conversationId: string, chi: string, deliveredAt?: string): Promise<{ options: DraftOption[]; fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null; fallbackSingola: boolean; troncate: number; schema: 'rami' | 'toni'; draftId: string | null }> {
   const j = await callAssist({ action: 'draft', conversation_id: conversationId, chi, ...(deliveredAt ? { delivered_at: deliveredAt } : {}) });
   const options = (j.options || []) as DraftOption[];
   return {
     options: options.length ? options : [{ tono: 'bozza', testo: String(j.draft || ''), da_verificare: Number(j.da_verificare || 0) }],
     fonti: (j.fonti || []) as string[], order_admin_url: (j.order_admin_url as string) ?? null, storia: (j.storia as OrderHistory) ?? null,
+    // v24: quale schema ha prodotto queste alternative (toni oppure rami), e l'id della bozza, che
+    // serve a registrare DOPO l'invio quale ramo e' stato davvero usato.
+    schema: j.schema === 'rami' ? 'rami' : 'toni',
+    draftId: (j.draft_id as string) ?? null,
     // cs-assist v17: la generazione a 3 opzioni si e' interrotta e si e' ripiegato su una bozza sola.
     // Serve dirlo: una opzione invece di tre, senza spiegazione, sembrava un capriccio del tool.
     fallbackSingola: j.fallback_singola === true,
