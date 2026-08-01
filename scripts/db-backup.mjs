@@ -1,7 +1,11 @@
 // Daily LOGICAL backup of the amimi-app Supabase DB.
 // Reads every business table via the PUBLIC publishable key (read-only — no secret) and writes
 // one JSON file per table. The SCHEMA (tables/views/functions) is versioned in supabase/migrations/.
-// RESTORE: recreate the schema from migrations, then re-insert each JSON via the service role
+// RESTORE: apply supabase/schema.sql (the STRUCTURE), then re-insert each JSON via the service role
+// NB (01-08): la struttura NON si ricrea piu' dalle migrazioni. Provato: 4 file mancavano, 2 avevano
+// lo stesso numero, 9 sono segnaposto, e la 0050 fa ROLLBACK su un DB vuoto (guardia sul CE, corretta).
+// La fonte della struttura e' `supabase/schema.sql`, aggiornato da `scripts/schema-dump.mjs`.
+// Il piano Supabase e' FREE: la piattaforma NON fa backup. Questa e' l'unica rete di sicurezza.
 // (same pattern as supabase/functions/etl-load). app_flags/app_config are intentionally NOT backed
 // up here (locked to service-role; they hold config/secrets, not business data).
 import { writeFileSync, mkdirSync } from 'node:fs';
