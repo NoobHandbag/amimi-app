@@ -488,6 +488,10 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         {c.canale !== 'rumore' && c.categoria && CASE_CATS.has(c.categoria) && caso && (
           <div className="cs-case">
             <div className="cs-case-h">{c.categoria === 'Modifica / correzione indirizzo' ? '📍 Caso indirizzo — calcolato dal sistema' : '↩️ Caso reso — calcolato dal sistema'}</div>
+            {/* stato TWS live (brief stato_tws_in_app): quando il sync spedizioni lo ha portato in app */}
+            {caso.stato_tws && (
+              <div className="cs-tws">🚚 Stato corriere (TWS): <b>{caso.stato_tws}</b>{caso.stato_tws_aggiornato ? <span className="muted"> · aggiornato al {caso.stato_tws_aggiornato}</span> : null}</div>
+            )}
             {c.categoria === 'Modifica / correzione indirizzo' ? (
               caso.indirizzo.caso === 'correggibile' ? (
                 <div className="cs-verdict cs-v-ok"><b>🚚 Non ancora ritirata dal corriere · ✅ correggibile</b><span>Chiedi l&#8217;indirizzo completo; correggi su Shopify e TWS prima del ritiro.</span></div>

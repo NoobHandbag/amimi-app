@@ -1,4 +1,13 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v16 (2026-08-01, brief stato_tws_in_app): lo stato VERO del corriere entra nelle bozze.
+//   `shipping_status` (migr 0086, scritta dal sync spedizioni via edge shipping-status-sync)
+//   viene letta per l'ordine verificato: BLOCCO DATI con "STATO SPEDIZIONE TWS: ..." (+ fonti),
+//   e nel motore dei verdetti del caso INDIRIZZO lo stato TWS decide da solo:
+//   CONSEGNATA -> 'consegnato' SENZA conferma manuale (delivered_at da shipping_status se noto;
+//   priorita': conferma della collega > TWS > shipment_status Shopify approssimato);
+//   NUOVA / IN ATTESA DI AFFIDO (pre-ritiro) -> 'correggibile' ANCHE a fulfillment presente
+//   (prima indistinguibile). Tabella vuota o ordine senza LDV = comportamento identico a prima.
+//   `case_data` espone stato_tws (+ updated_at) per la card della UI.
 // v15 (2026-08-01, brief cs_link_prodotto_torna_disponibile): il LINK della scheda prodotto entra
 //   nel BLOCCO DATI. Per ogni prodotto agganciato con riga in `shopify_catalog` (94/94 con handle)
 //   si costruisce `url` = SITE_URL + /products/ + handle (join case-insensitive su upper(codice),
@@ -216,25 +225,40 @@ async function fetchOrderMeta(orderNumber: unknown, token: string): Promise<OrdM
   } catch { return null; }
 }
 
+// v16: stato corrente del corriere TWS per l'ordine (shipping_status, migr 0086). La riga piu'
+// recente se l'ordine ha piu' colli. Tabella vuota / ordine senza LDV -> null (come prima).
+type Ship = { ldv: string; stato_tws: string; delivered_at: string | null; updated_at: string } | null;
+async function shippingStatus(sb: ReturnType<typeof createClient>, orderNumber: unknown): Promise<Ship> {
+  if (!orderNumber) return null;
+  const { data } = await sb.from('shipping_status').select('ldv,stato_tws,delivered_at,updated_at')
+    .eq('order_name', '#' + orderNumber).order('updated_at', { ascending: false }).limit(1);
+  const r = (data ?? [])[0] as Row | undefined;
+  return r ? { ldv: String(r.ldv), stato_tws: String(r.stato_tws), delivered_at: (r.delivered_at as string) ?? null, updated_at: String(r.updated_at) } : null;
+}
+
 // --- Motore dei verdetti (design Parte B 24-07): il CODICE decide il caso, l'AI scrive la frase ---
 const DIFETTO_RE = /difett|rott[oa]|scucit|staccat|danneggiat|rovinat|macchiat|non funziona|si (e'|è) (rotta|scucita|staccata|aperta)/i;
 const CASE_CATS = new Set(['Reso e rimborso', 'Cambio e prodotto errato', 'Modifica / correzione indirizzo']);
 type CasoReso = { ordine_del: string | null; delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'sconosciuto'; difetto_sospetto: boolean };
 type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 'verificare_tracking' | 'consegnato' | 'sconosciuto' };
 
-function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: string, finestra: number, confirmedDate: string | null): { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo } {
+function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: string, finestra: number, confirmedDate: string | null, ship: Ship = null): { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo } {
   // Guard (review 24-07): il numero ordine viene dal TESTO del cliente. L'ordine e' "verificato" solo se
   // abbiamo potuto agganciarlo all'email del cliente (lookupOrder gia' scarta i mismatch). Senza email,
   // nessun verdetto: SCONOSCIUTO, mai un caso calcolato sull'ordine di un terzo.
   const verificato = !!ordine && !!(conv.customer_email);
   const difetto = DIFETTO_RE.test(inbound);
+  // v16: stato corrente del corriere (solo a ordine VERIFICATO: mai verdetti sull'ordine di un terzo)
+  const shipStato = verificato && ship ? ship.stato_tws : null;
+  const PRE_RITIRO = new Set(['NUOVA', 'IN ATTESA DI AFFIDO']);
 
   // v14 (owner 31-07, allineato al sito): la finestra reso decorre dalla DATA DELL'ORDINE
   // (created_at_shop), non piu' dalla consegna. Verdetto quindi SEMPRE calcolabile a ordine
-  // verificato. La data di consegna (confermata dalla collega > shipment_status Shopify) resta
-  // in uso per il caso INDIRIZZO ('consegnato') e come info.
+  // verificato. La data di consegna resta in uso per il caso INDIRIZZO ('consegnato') e come info.
+  // Priorita' fonte (v16): conferma della collega > TWS (stato corriere) > shopify approssimata.
   let delivered: string | null = null, fonte: string | null = null;
   if (confirmedDate && /^\d{4}-\d{2}-\d{2}$/.test(confirmedDate)) { delivered = confirmedDate; fonte = 'confermata dalla collega'; }
+  else if (shipStato && shipStato.startsWith('CONSEGNATA')) { delivered = ship?.delivered_at ?? null; fonte = 'TWS (stato corriere)'; }
   else if (verificato && meta?.shipment_status === 'delivered' && meta.f_updated_at) { delivered = String(meta.f_updated_at).slice(0, 10); fonte = 'shopify (approssimata)'; }
   const ordineDel = verificato && ordine?.created_at_shop ? String(ordine.created_at_shop).slice(0, 10) : null;
   let giorni: number | null = null;
@@ -251,7 +275,11 @@ function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: stri
   const fulfPresente = fulf === 'fulfilled' || fulf === 'partial';
   let casoInd: CasoIndirizzo['caso'] = 'sconosciuto';
   if (verificato) {
-    if (!fulfPresente) casoInd = 'correggibile';
+    // v16: lo stato TWS, quando c'e', decide da solo. Pre-ritiro = correggibile ANCHE a
+    // fulfillment presente; CONSEGNATA = consegnato senza conferma manuale.
+    if (shipStato && PRE_RITIRO.has(shipStato)) casoInd = 'correggibile';
+    else if (shipStato && shipStato.startsWith('CONSEGNATA')) casoInd = 'consegnato';
+    else if (!fulfPresente) casoInd = 'correggibile';
     else if (delivered) casoInd = 'consegnato';
     else casoInd = 'verificare_tracking';
   }
@@ -364,7 +392,7 @@ async function purchaseHistory(sb: ReturnType<typeof createClient>, email: strin
   };
 }
 
-type Dati = { prodotti: Prod[]; ordine: Ord; tracking: OrdMeta['tracking']; standard: string[]; fonti: string[] };
+type Dati = { prodotti: Prod[]; ordine: Ord; tracking: OrdMeta['tracking']; ship: Ship; standard: string[]; fonti: string[] };
 type Ctx = { dati: Dati; tono: string[]; order_admin_url: string | null; storia: Storia | null; gapExtra: string[]; conoscenza: string[]; precedenti: string[] };
 
 // v14: conoscenza di casa (cs_knowledge, migr 0082): righe con categoria NULL sempre, piu' quelle
@@ -418,6 +446,8 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   const wantsTracking = categoria === 'Spedizione e stato ordine' || /tracking|spedizione|corriere|dov.?\s*e|arriv/i.test(inboundText);
   const meta = ordine ? await fetchOrderMeta(ordine.order_number, token) : null;
   const tracking = meta && wantsTracking ? meta.tracking : null;
+  // v16: stato corrente del corriere TWS (shipping_status); null se non c'e' = come prima
+  const ship = ordine ? await shippingStatus(sb, ordine.order_number) : null;
   const order_admin_url = meta?.adminId ? `https://admin.shopify.com/store/${SHOP}/orders/${meta.adminId}` : null;
   const { tono, standard: standardRaw } = await faqTono(sb, categoria, (conv.lingua as string) ?? null);
   // v15: i segnaposto di link si risolvono QUI, prima del prompt. SOLO l'URL del MIGLIOR match:
@@ -444,8 +474,9 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   for (const p of prodotti) if (p.url) fonti.push(`Link scheda ${p.item} ${p.variant}: ${p.url} (shopify_catalog)`);
   if (ordine) fonti.push(`Ordine #${ordine.order_number}: pagamento ${ordine.financial_status ?? 'n/d'}, evasione ${ordine.fulfillment_status ?? 'non evaso'}${ordine.fulfilled_at ? `, evaso il ${String(ordine.fulfilled_at).slice(0, 10)}` : ''} (shopify_orders)`);
   if (tracking) fonti.push(`Tracking ${tracking.corriere} ${tracking.numero} (Shopify Admin API, live)`);
+  if (ship) fonti.push(`Stato spedizione TWS: ${ship.stato_tws}, aggiornato al ${String(ship.updated_at).slice(0, 10)} (shipping_status)`);
   if (storia && storia.n_ordini > 0) fonti.push(`Cliente: ${storia.n_ordini} ordini, ${storia.totale}EUR totali (storico Shopify)`);
-  return { dati: { prodotti, ordine, tracking, standard, fonti }, tono, order_admin_url, storia, gapExtra, conoscenza, precedenti };
+  return { dati: { prodotti, ordine, tracking, ship, standard, fonti }, tono, order_admin_url, storia, gapExtra, conoscenza, precedenti };
 }
 
 function datiBlock(d: Dati): string {
@@ -464,6 +495,8 @@ function datiBlock(d: Dati): string {
   } else L.push('ORDINE: nessun ordine trovato per questo cliente.');
   if (d.tracking) L.push(`TRACKING: ${d.tracking.corriere} numero ${d.tracking.numero}, link ${d.tracking.url}.`);
   else L.push('TRACKING: non disponibile dai dati (usa [DA VERIFICARE: tracking] se serve).');
+  // v16: lo stato VERO del corriere (dal sistema spedizioni), quando c'e'
+  if (d.ship) L.push(`STATO SPEDIZIONE TWS (dal corriere, aggiornato al ${String(d.ship.updated_at).slice(0, 10)}): ${d.ship.stato_tws}${d.ship.delivered_at ? `, consegnata il ${d.ship.delivered_at}` : ''}.`);
   if (d.standard.length) L.push('RISPOSTE STANDARD DISPONIBILI:\n' + d.standard.map((s) => '- ' + s).join('\n'));
   return L.join('\n');
 }
@@ -608,14 +641,16 @@ Deno.serve(async (req) => {
     const conv = lc.conv;
     const ordine = await lookupOrder(sb, (conv.order_number as number) ?? null, (conv.customer_email as string) ?? null);
     const meta = ordine ? await fetchOrderMeta(ordine.order_number, token) : null;
+    const ship = ordine ? await shippingStatus(sb, ordine.order_number) : null;   // v16
     const finestra = Number(flags.cs_reso_finestra_giorni) || 14;
     const confirmed = String(body.delivered_at || '').trim() || null;
-    const cd = computeCaso(conv, ordine, meta, lc.inbound, finestra, confirmed);
+    const cd = computeCaso(conv, ordine, meta, lc.inbound, finestra, confirmed, ship);
     return json({
       ok: true, categoria: (conv.categoria as string) ?? null, verificato: cd.verificato,
       reso: cd.reso, indirizzo: cd.indirizzo,
       tracking_url: meta?.tracking?.url ?? null,
       order_admin_url: meta?.adminId ? `https://admin.shopify.com/store/${SHOP}/orders/${meta.adminId}` : null,
+      stato_tws: ship?.stato_tws ?? null, stato_tws_aggiornato: ship ? String(ship.updated_at).slice(0, 10) : null,   // v16: card UI
     });
   }
 
@@ -667,7 +702,7 @@ Riassunto (max 2 righe):`;
     let casoTxt = '';
     if (CASE_CATS.has(String(conv.categoria ?? ''))) {
       const meta2 = ctx.dati.ordine ? await fetchOrderMeta(ctx.dati.ordine.order_number, token) : null;
-      const cd = computeCaso(conv, ctx.dati.ordine, meta2, lc.inbound, Number(flags.cs_reso_finestra_giorni) || 14, String(body.delivered_at || '').trim() || null);
+      const cd = computeCaso(conv, ctx.dati.ordine, meta2, lc.inbound, Number(flags.cs_reso_finestra_giorni) || 14, String(body.delivered_at || '').trim() || null, ctx.dati.ship);
       casoTxt = casoBlock((conv.categoria as string) ?? null, cd);
     }
 

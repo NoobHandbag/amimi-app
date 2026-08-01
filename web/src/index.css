@@ -690,6 +690,7 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-inbox { display: inline-block; background: #5c4d9c; color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
 .cs-form { background: rgba(156,95,51,.08); border-radius: 8px; padding: 7px 9px; margin-bottom: 6px; font-size: 12.5px; line-height: 1.5; }
 .cs-formrow { display: flex; flex-wrap: wrap; gap: 4px 12px; background: rgba(156,95,51,.08); border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; font-size: 12px; line-height: 1.45; }
+.cs-tws { font-size: 12.5px; margin: 2px 0 8px; }
 .cs-formrow .cs-ff b { text-transform: capitalize; font-weight: 700; margin-right: 4px; }
 .cs-formrow .cs-ff a { color: var(--interactive-700); font-weight: 700; text-decoration: none; }
 

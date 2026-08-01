@@ -218,7 +218,7 @@ export const CASE_CATS = new Set(['Reso e rimborso', 'Cambio e prodotto errato',
 // e per il caso indirizzo ('consegnato', confermabile dalla collega dal tracking).
 export type CasoReso = { ordine_del: string | null; delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'sconosciuto'; difetto_sospetto: boolean };
 export type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 'verificare_tracking' | 'consegnato' | 'sconosciuto' };
-export type CaseData = { categoria: string | null; verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo; tracking_url: string | null; order_admin_url: string | null };
+export type CaseData = { categoria: string | null; verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo; tracking_url: string | null; order_admin_url: string | null; stato_tws?: string | null; stato_tws_aggiornato?: string | null };
 
 /** Verdetto del caso (reso/cambio/indirizzo), calcolato dal CODICE (nessuna AI). `deliveredAt` opzionale =
  *  data di consegna CONFERMATA dalla collega dal tracking (il verdetto resta deterministico). Se l'edge live
