@@ -207,7 +207,7 @@ Su questo ricavo il CE era ed e' corretto.
 
 ## 10. Modulo shipping_status (migr 0086, brief stato_tws_in_app, 01-08)
 
-- **`shipping_status`** (stato CORRENTE del corriere TWS per LDV, nessuno storico by design): `ldv` PK, `order_name` ('#NNNN'), `stato_tws` (UPPERCASE normalizzato), `stato_raw`, `shipped_date`, `delivered_at` (fissata alla PRIMA osservazione di CONSEGNATA, data Europe/Rome, approssimazione dichiarata), `updated_at`. Indice su `order_name`.
+- **`shipping_status`** (stato CORRENTE del corriere TWS per LDV, nessuno storico by design): `ldv` PK, `order_name` ('#NNNN'), `stato_tws` (UPPERCASE normalizzato), `stato_raw`, `shipped_date`, `seen_delivered_at` (migr 0095, era `delivered_at`: e' la data Europe/Rome in cui il sync ha OSSERVATO il passaggio a CONSEGNATA, NON la data del corriere, che TWS non espone; NULL se la riga era gia' consegnata alla prima osservazione), `updated_at`. Indice su `order_name`.
 - **Sicurezza:** RLS on, SELECT solo `authenticated` (pattern cs_*), anon NEGATO (test `set role anon` -> permission denied); scritture SOLO service-role via edge `shipping-status-sync` (PIN-gated).
 - **Chi scrive / chi legge:** scrive il sync spedizioni (Apps Script `SyncShopify.gs`, `pushShipStatusToApp_`, push clasp PENDENTE al 01-08); legge `cs-assist` v16 (BLOCCO DATI + caso indirizzo). Ciclo di vita stati: `NUOVA -> IN ATTESA DI AFFIDO -> IN PARTENZA TWS -> ... -> CONSEGNATA` (doc canonico: `Cowork12/docs/Spedizioni/Sistema_Spedizioni.md`).
 

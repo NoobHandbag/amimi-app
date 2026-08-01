@@ -1,4 +1,23 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v17 (2026-08-01 sera, brief cs_assist_migliorie dal benchmark bozze): quattro correzioni, le
+//   prime due su dati che arrivavano sbagliati alle clienti.
+//   - ORDINE TROVATO ANCHE PRIMA DEL 01-07: `lookupOrder` filtrava solo `order_number`, NULL su 433
+//     righe storiche, e il ramo di ripiego sull'email non scatta mai se un numero c'e' ma non
+//     trova nulla. Risultato: "nessun ordine trovato" su ogni ordine anteriore al 01-07, e con lui
+//     niente tracking, niente stato spedizione, nessun verdetto sulla finestra del reso. La migr
+//     0095 ha colmato il buco nei dati; qui c'e' il secondo tentativo su `order_id` come difesa.
+//   - LA DATA DI CONSEGNA NON SI INVENTA: `shipping_status.delivered_at` registrava quando il SYNC
+//     aveva visto la consegna, non quando il corriere aveva consegnato, e al caricamento iniziale
+//     tutte e 198 le spedizioni gia' consegnate avevano preso la data di quel giorno. La v16 la
+//     scriveva nel BLOCCO DATI e la bozza la riportava alla cliente ("consegnata in data
+//     2026-08-01" per un pacco arrivato il 10/07, peggio della risposta umana su un dato di fatto).
+//     La colonna e' ora `seen_delivered_at` (migr 0095), si valorizza solo sulle transizioni
+//     osservate, e qui passa un controllo di PLAUSIBILITA' (non prima della spedizione, non nel
+//     futuro) prima di poter finire in una frase. Senza data ci si ferma a "CONSEGNATA".
+//   - IL RIPIEGO A BOZZA SINGOLA NON E' PIU' MUTO: tetto token della `draft` da 2400 a 4000 (una
+//     risposta si e' interrotta a meta' della seconda opzione) e `fallback_singola` nella risposta.
+//   - DATE IN ITALIANO nel BLOCCO DATI (gg/mm/aaaa): le bozze scrivevano "2026-08-01" perche' e'
+//     cosi' che le leggevano. Neutro per il linter, che normalizza i due formati sulla stessa chiave.
 // v16 (2026-08-01, brief stato_tws_in_app): lo stato VERO del corriere entra nelle bozze.
 //   `shipping_status` (migr 0086, scritta dal sync spedizioni via edge shipping-status-sync)
 //   viene letta per l'ordine verificato: BLOCCO DATI con "STATO SPEDIZIONE TWS: ..." (+ fonti),
@@ -187,12 +206,24 @@ async function matchProducts(sb: ReturnType<typeof createClient>, text: string):
 
 type Ord = { order_number: unknown; financial_status: unknown; fulfillment_status: unknown; fulfilled_at: unknown; gross_total: unknown; email: unknown; order_id: unknown; created_at_shop: unknown; righe: { nome: string; qta: number }[] } | null;
 async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: number | null, email: string | null): Promise<Ord> {
-  let q = sb.from('shopify_orders').select('order_id,order_number,financial_status,fulfillment_status,fulfilled_at,gross_total,email,created_at_shop').order('created_at_shop', { ascending: false }).limit(1);
+  const COLS = 'order_id,order_number,financial_status,fulfillment_status,fulfilled_at,gross_total,email,created_at_shop';
+  const base = () => sb.from('shopify_orders').select(COLS).order('created_at_shop', { ascending: false }).limit(1);
+  let q = base();
   if (orderNumber) q = q.eq('order_number', orderNumber);
   else if (email) q = q.eq('email', email.toLowerCase());
   else return null;
   const { data } = await q;
-  const o = (data ?? [])[0] as Row | undefined;
+  let o = (data ?? [])[0] as Row | undefined;
+  // v17: difesa in profondita' (brief cs_assist_migliorie punto 1). `order_number` era NULL su 433
+  // righe storiche e il ramo `else if (email)` non scatta mai quando un numero c'e' ma non trova
+  // nulla: il tool rispondeva "nessun ordine trovato" su ogni ordine anteriore al 01-07. La migr
+  // 0095 ha colmato il buco, questo secondo tentativo su `order_id` regge se ricapita (import
+  // nuovo, riga arrivata da un'altra fonte). Citare un ordine sbagliato sarebbe peggio che non
+  // citarne nessuno, quindi la guardia cross-cliente qui sotto vale identica per entrambe le vie.
+  if (!o && orderNumber) {
+    const { data: d2 } = await base().eq('order_id', '#' + orderNumber);
+    o = (d2 ?? [])[0] as Row | undefined;
+  }
   if (!o) return null;
   // guard cross-cliente (audit 2026-07-24): il numero ordine e' estratto dal TESTO del cliente, quindi
   // puo' citare un ordine ALTRUI. Se conosciamo l'email del cliente, l'ordine deve essere suo (match
@@ -227,13 +258,29 @@ async function fetchOrderMeta(orderNumber: unknown, token: string): Promise<OrdM
 
 // v16: stato corrente del corriere TWS per l'ordine (shipping_status, migr 0086). La riga piu'
 // recente se l'ordine ha piu' colli. Tabella vuota / ordine senza LDV -> null (come prima).
-type Ship = { ldv: string; stato_tws: string; delivered_at: string | null; updated_at: string } | null;
+// v17 (brief cs_assist_migliorie punto 2): la colonna si chiama ora `seen_delivered_at` (migr 0095)
+// e vale solo per le transizioni OSSERVATE. `consegnata_il` e' il campo che il resto del codice puo'
+// scrivere a una cliente, ed e' valorizzato solo se la data supera il controllo di PLAUSIBILITA':
+// non prima della spedizione, non nel futuro. Una consegna non puo' precedere la partenza; una data
+// uguale su tutte le righe e pari al giorno del caricamento e' il seed, non un fatto. Il linter
+// anti-invenzione non poteva intercettare niente di tutto questo, perche' il numero non era
+// inventato: era sbagliato alla fonte e quindi grounded.
+type Ship = { ldv: string; stato_tws: string; consegnata_il: string | null; updated_at: string } | null;
+const plausibileConsegna = (d: string | null, shipped: string | null, oggi: string): string | null => {
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  if (d > oggi) return null;
+  if (shipped && d < shipped) return null;
+  return d;
+};
 async function shippingStatus(sb: ReturnType<typeof createClient>, orderNumber: unknown): Promise<Ship> {
   if (!orderNumber) return null;
-  const { data } = await sb.from('shipping_status').select('ldv,stato_tws,delivered_at,updated_at')
+  const { data } = await sb.from('shipping_status').select('ldv,stato_tws,seen_delivered_at,shipped_date,updated_at')
     .eq('order_name', '#' + orderNumber).order('updated_at', { ascending: false }).limit(1);
   const r = (data ?? [])[0] as Row | undefined;
-  return r ? { ldv: String(r.ldv), stato_tws: String(r.stato_tws), delivered_at: (r.delivered_at as string) ?? null, updated_at: String(r.updated_at) } : null;
+  if (!r) return null;
+  const oggi = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date());
+  const consegnata = plausibileConsegna((r.seen_delivered_at as string) ?? null, (r.shipped_date as string) ?? null, oggi);
+  return { ldv: String(r.ldv), stato_tws: String(r.stato_tws), consegnata_il: consegnata, updated_at: String(r.updated_at) };
 }
 
 // --- Motore dei verdetti (design Parte B 24-07): il CODICE decide il caso, l'AI scrive la frase ---
@@ -258,7 +305,7 @@ function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: stri
   // Priorita' fonte (v16): conferma della collega > TWS (stato corriere) > shopify approssimata.
   let delivered: string | null = null, fonte: string | null = null;
   if (confirmedDate && /^\d{4}-\d{2}-\d{2}$/.test(confirmedDate)) { delivered = confirmedDate; fonte = 'confermata dalla collega'; }
-  else if (shipStato && shipStato.startsWith('CONSEGNATA')) { delivered = ship?.delivered_at ?? null; fonte = 'TWS (stato corriere)'; }
+  else if (shipStato && shipStato.startsWith('CONSEGNATA')) { delivered = ship?.consegnata_il ?? null; fonte = 'TWS (stato corriere)'; }
   else if (verificato && meta?.shipment_status === 'delivered' && meta.f_updated_at) { delivered = String(meta.f_updated_at).slice(0, 10); fonte = 'shopify (approssimata)'; }
   const ordineDel = verificato && ordine?.created_at_shop ? String(ordine.created_at_shop).slice(0, 10) : null;
   let giorni: number | null = null;
@@ -472,12 +519,22 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   const fonti: string[] = [];
   for (const p of prodotti) fonti.push(`${p.item} ${p.variant}: disponibili ${p.disponibili}, giacenza ${p.giacenza}${p.prezzo != null ? `, prezzo ${p.prezzo}EUR` : ''}${p.on_shopify ? ', a catalogo' : ''} (v_inventory)`);
   for (const p of prodotti) if (p.url) fonti.push(`Link scheda ${p.item} ${p.variant}: ${p.url} (shopify_catalog)`);
-  if (ordine) fonti.push(`Ordine #${ordine.order_number}: pagamento ${ordine.financial_status ?? 'n/d'}, evasione ${ordine.fulfillment_status ?? 'non evaso'}${ordine.fulfilled_at ? `, evaso il ${String(ordine.fulfilled_at).slice(0, 10)}` : ''} (shopify_orders)`);
+  if (ordine) fonti.push(`Ordine #${ordine.order_number}: pagamento ${ordine.financial_status ?? 'n/d'}, evasione ${ordine.fulfillment_status ?? 'non evaso'}${ordine.fulfilled_at ? `, evaso il ${dmy(ordine.fulfilled_at)}` : ''} (shopify_orders)`);
   if (tracking) fonti.push(`Tracking ${tracking.corriere} ${tracking.numero} (Shopify Admin API, live)`);
   if (ship) fonti.push(`Stato spedizione TWS: ${ship.stato_tws}, aggiornato al ${String(ship.updated_at).slice(0, 10)} (shipping_status)`);
   if (storia && storia.n_ordini > 0) fonti.push(`Cliente: ${storia.n_ordini} ordini, ${storia.totale}EUR totali (storico Shopify)`);
   return { dati: { prodotti, ordine, tracking, ship, standard, fonti }, tono, order_admin_url, storia, gapExtra, conoscenza, precedenti };
 }
+
+// v17 (brief cs_assist_migliorie punto 7): le date del BLOCCO DATI in formato italiano. Le bozze
+// scrivevano "2026-08-01" a una cliente perche' e' cosi' che le leggevano qui: formattarle a monte
+// e' piu' solido che chiederlo al modello nelle istruzioni. Neutro per il linter, che normalizza
+// ISO e gg/mm sulla stessa chiave (vedi factKeys).
+const dmy = (v: unknown): string => {
+  const s = String(v ?? '').slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+};
 
 function datiBlock(d: Dati): string {
   const L: string[] = [];
@@ -490,13 +547,16 @@ function datiBlock(d: Dati): string {
     if (top && top.disponibili <= 0 && top.url) L.push(`NOTA RESTOCK: sulla scheda del prodotto esaurito (${top.url}) c'e' il bottone "Avvisami quando torna disponibile": nella risposta INDICA quel link come il posto dove iscriversi all'avviso ("qui puoi iscriverti per essere avvisata quando torna: ${top.url}").`);
   } else L.push('PRODOTTI: nessun prodotto identificato con certezza dal testo.');
   if (d.ordine) {
-    L.push(`ORDINE #${d.ordine.order_number}: pagamento ${d.ordine.financial_status ?? 'n/d'}, evasione ${d.ordine.fulfillment_status ?? 'non ancora evaso'}${d.ordine.fulfilled_at ? `, evaso il ${String(d.ordine.fulfilled_at).slice(0, 10)}` : ''}.`);
+    L.push(`ORDINE #${d.ordine.order_number}: pagamento ${d.ordine.financial_status ?? 'n/d'}, evasione ${d.ordine.fulfillment_status ?? 'non ancora evaso'}${d.ordine.fulfilled_at ? `, evaso il ${dmy(d.ordine.fulfilled_at)}` : ''}${d.ordine.created_at_shop ? `, ordinato il ${dmy(d.ordine.created_at_shop)}` : ''}.`);
     if (d.ordine.righe.length) L.push('  contenuto: ' + d.ordine.righe.map((r) => `${r.qta}x ${r.nome}`).join(', '));
   } else L.push('ORDINE: nessun ordine trovato per questo cliente.');
   if (d.tracking) L.push(`TRACKING: ${d.tracking.corriere} numero ${d.tracking.numero}, link ${d.tracking.url}.`);
   else L.push('TRACKING: non disponibile dai dati (usa [DA VERIFICARE: tracking] se serve).');
   // v16: lo stato VERO del corriere (dal sistema spedizioni), quando c'e'
-  if (d.ship) L.push(`STATO SPEDIZIONE TWS (dal corriere, aggiornato al ${String(d.ship.updated_at).slice(0, 10)}): ${d.ship.stato_tws}${d.ship.delivered_at ? `, consegnata il ${d.ship.delivered_at}` : ''}.`);
+  // v17: la data di consegna si stampa SOLO se plausibile e osservata davvero (vedi shippingStatus).
+  // Quando non c'e' ci si ferma a "CONSEGNATA", che e' vero, invece di dare una data che non e'
+  // quella del corriere. Il "aggiornato al" resta ed e' un'altra cosa: quando l'abbiamo guardato.
+  if (d.ship) L.push(`STATO SPEDIZIONE TWS (dal corriere, aggiornato al ${dmy(d.ship.updated_at)}): ${d.ship.stato_tws}${d.ship.consegnata_il ? `, consegnata il ${dmy(d.ship.consegnata_il)}` : ''}.`);
   if (d.standard.length) L.push('RISPOSTE STANDARD DISPONIBILI:\n' + d.standard.map((s) => '- ' + s).join('\n'));
   return L.join('\n');
 }
@@ -726,8 +786,14 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
     // pulizia bozza: via i titoli markdown tipo **BREVE** e i grassetti (la mail e' testo semplice)
     const tidy = (t: string) => t.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
     let opzioni: { tono: string; testo: string }[] = [];
+    let fallbackSingola = false;
     try {
-      const raw = await runLLM(system, user, 2400, true);   // Claude se configurato, altrimenti Gemini (1400 troncava, bug 24-07)
+      // v17 (brief cs_assist_migliorie punto 3): tetto a 4000. Con 2400 una risposta si e' interrotta
+      // a meta' della seconda opzione (caso S10 del benchmark): il JSON non chiudeva, il recupero del
+      // blocco piu' esterno falliva, e si finiva sul ripiego a bozza singola. Tre opzioni ben scritte
+      // stanno larghe in 4000; il costo di qualche token in piu' non e' paragonabile a un'operatrice
+      // che vede una sola bozza senza sapere perche'.
+      const raw = await runLLM(system, user, 4000, true);   // Claude se configurato, altrimenti Gemini (1400 troncava, bug 24-07)
       let parsed: { opzioni?: { tono?: unknown; testo?: unknown }[] } = {};
       try { parsed = JSON.parse(cleanJson(raw)); }
       catch {   // JSON sporco/troncato: prova a estrarre il blocco { ... } piu' esterno
@@ -738,6 +804,10 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
     } catch { opzioni = []; }
     if (!opzioni.length) {
       // fallback robusto: UNA sola bozza in testo semplice. NON chiede piu' "TRE versioni" (bug 24-07).
+      // v17: il ripiego non e' piu' SILENZIOSO. Prima l'operatrice vedeva una opzione invece di tre
+      // senza nessun segnale, e sembrava un capriccio del tool: ora esce `fallback_singola` nella
+      // risposta (stesso schema di `engine_fallback`) e la UI puo' dire cosa e' successo.
+      fallbackSingola = true;
       try {
         const sysSingle = system
           .replace(/Scrivi TRE versioni ALTERNATIVE della stessa risposta [^\n]+? al cliente, con toni diversi, tutte pronte da ritoccare\. NON inviarle\./, 'Scrivi UNA bozza di risposta al cliente, pronta da ritoccare. NON inviarla.')
@@ -766,6 +836,7 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
       ok: true, options, draft: options[0].testo, da_verificare: options[0].da_verificare,   // draft = retro-compat
       fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, draft_id: ins?.id,
       ...(claudeFellBack ? { engine_fallback: 'gemini' } : {}),
+      ...(fallbackSingola ? { fallback_singola: true } : {}),
     });
   }
 

@@ -239,12 +239,15 @@ export async function fetchCaseData(conversationId: string, deliveredAt?: string
 /** Genera 3 opzioni di risposta (toni breve/calda/formale) con dati reali. JWT-gated; Gemini scrive usando
  *  SOLO il blocco DATI, con [DA VERIFICARE] dove un dato manca. Sui casi (reso/indirizzo) il verdetto del
  *  sistema VINCOLA la bozza; `deliveredAt` = data confermata dalla collega. NON invia (Fase 4). */
-export async function generateOptions(conversationId: string, chi: string, deliveredAt?: string): Promise<{ options: DraftOption[]; fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null }> {
+export async function generateOptions(conversationId: string, chi: string, deliveredAt?: string): Promise<{ options: DraftOption[]; fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null; fallbackSingola: boolean }> {
   const j = await callAssist({ action: 'draft', conversation_id: conversationId, chi, ...(deliveredAt ? { delivered_at: deliveredAt } : {}) });
   const options = (j.options || []) as DraftOption[];
   return {
     options: options.length ? options : [{ tono: 'bozza', testo: String(j.draft || ''), da_verificare: Number(j.da_verificare || 0) }],
     fonti: (j.fonti || []) as string[], order_admin_url: (j.order_admin_url as string) ?? null, storia: (j.storia as OrderHistory) ?? null,
+    // cs-assist v17: la generazione a 3 opzioni si e' interrotta e si e' ripiegato su una bozza sola.
+    // Serve dirlo: una opzione invece di tre, senza spiegazione, sembrava un capriccio del tool.
+    fallbackSingola: j.fallback_singola === true,
   };
 }
 

@@ -795,12 +795,16 @@ CREATE TABLE IF NOT EXISTS "public"."shipping_status" (
     "stato_tws" "text" NOT NULL,
     "stato_raw" "text",
     "shipped_date" "date",
-    "delivered_at" "date",
+    "seen_delivered_at" "date",
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
 );
 
 
 ALTER TABLE "public"."shipping_status" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."shipping_status"."seen_delivered_at" IS 'Data (Europe/Rome) in cui il sync ha OSSERVATO il passaggio a CONSEGNATA. NON e'' la data di consegna del corriere: TWS non la espone. NULL quando la riga era gia'' consegnata alla prima osservazione.';
+
 
 
 CREATE TABLE IF NOT EXISTS "public"."shopify_catalog" (

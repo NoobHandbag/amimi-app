@@ -1,3 +1,14 @@
+// shipping-status-sync v2 (2026-08-01 sera, brief cs_assist_migliorie punto 2) — la data di
+// consegna non si inventa piu'. `delivered_at` si chiama ora `seen_delivered_at` (migr 0095) ed e'
+// quello che e' sempre stata: la data in cui NOI abbiamo visto la consegna, non quella del
+// corriere (il getList TWS espone solo la data di SPEDIZIONE). Il difetto vero era che la v1 la
+// fissava anche alla PRIMA osservazione, cioe' anche per una spedizione gia' consegnata da
+// settimane: al caricamento iniziale tutte e 198 le consegne hanno preso la data di quel giorno, e
+// cs-assist le scriveva alle clienti. Ora si valorizza SOLO quando la transizione la osserviamo
+// davvero (la riga esisteva gia' con un altro stato); alla prima osservazione resta NULL, perche'
+// quella data non la sappiamo. Resta il caso limite dichiarato: una consegna dopo mezzanotte viene
+// vista il giorno dopo, quindi con il sync orario il dato e' esatto al giorno tranne quel bordo.
+//
 // shipping-status-sync v1 (2026-08-01, brief stato_tws_in_app) — ingest dello stato TWS per LDV.
 // Canale di scrittura sanzionato della tabella `shipping_status` (migr 0086): il sync spedizioni
 // (Apps Script SyncShopify.gs, trigger orario) a fine giro POSTa il batch degli stati correnti.
@@ -9,8 +20,8 @@
 // Azione unica: { pin, stati: [{ order_name, ldv, stato, stato_raw?, date? }] } (cap 300).
 //   - upsert idempotente su ldv: re-POST identico = 0 aggiornamenti;
 //   - stato normalizzato UPPERCASE/trim in `stato_tws`, originale in `stato_raw`;
-//   - delivered_at: alla PRIMA osservazione di CONSEGNATA si fissa alla data corrente
-//     Europe/Rome (APPROSSIMAZIONE dichiarata: TWS non espone la data di consegna nel getList);
+//   - seen_delivered_at: si fissa alla data corrente Europe/Rome quando si OSSERVA il passaggio a
+//     CONSEGNATA (riga gia' nota con un altro stato); prima osservazione = NULL, vedi sopra;
 //   - telemetria: health_log 'shipping_status' (replace giornaliero) sempre; change_log UNA riga
 //     per run SOLO se qualcosa e' cambiato (conteggi, mai una riga per LDV: alta frequenza).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -23,7 +34,7 @@ async function sha256hex(s: string) {
 }
 
 const MAX_BATCH = 300;
-// data corrente in Europe/Rome (per delivered_at alla prima CONSEGNATA osservata)
+// data corrente in Europe/Rome (per seen_delivered_at, alla transizione a CONSEGNATA osservata)
 const todayRome = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date());
 // TWS date "dd-MM-yyyy" -> ISO; null se non parsabile (mai inventare date)
 const twsDateToIso = (d: string): string | null => {
@@ -46,9 +57,9 @@ Deno.serve(async (req) => {
 
   // stato corrente gia' a DB per confrontare (aggiornati = cambi VERI, non upsert ciechi)
   const ldvs = stati.map((s) => String(s.ldv ?? '').trim()).filter(Boolean);
-  const { data: existing } = await sb.from('shipping_status').select('ldv,stato_tws,delivered_at').in('ldv', ldvs);
-  const exByLdv = new Map<string, { stato_tws: string; delivered_at: string | null }>();
-  for (const e of (existing ?? []) as { ldv: string; stato_tws: string; delivered_at: string | null }[]) exByLdv.set(e.ldv, e);
+  const { data: existing } = await sb.from('shipping_status').select('ldv,stato_tws,seen_delivered_at').in('ldv', ldvs);
+  const exByLdv = new Map<string, { stato_tws: string; seen_delivered_at: string | null }>();
+  for (const e of (existing ?? []) as { ldv: string; stato_tws: string; seen_delivered_at: string | null }[]) exByLdv.set(e.ldv, e);
 
   let nuovi = 0, aggiornati = 0, invariati = 0, scartati = 0; const errors: string[] = [];
   for (const s of stati) {
@@ -67,9 +78,12 @@ Deno.serve(async (req) => {
     // shipped_date solo se il batch la porta: un POST senza data non azzera quella gia' salvata
     const iso = twsDateToIso(String(s.date ?? ''));
     if (iso) row.shipped_date = iso;
-    // prima osservazione di CONSEGNATA -> delivered_at = oggi Roma (approssimazione dichiarata);
-    // mai sovrascrivere un delivered_at gia' fissato
-    if (stato.startsWith('CONSEGNATA') && !ex?.delivered_at) row.delivered_at = todayRome();
+    // TRANSIZIONE osservata a CONSEGNATA -> seen_delivered_at = oggi Roma. `ex` esiste significa che
+    // la riga era gia' nota con uno stato DIVERSO (l'uguale e' gia' uscito come invariato qualche
+    // riga sopra): solo li' sappiamo davvero quando e' arrivata. Alla prima osservazione di una
+    // spedizione gia' consegnata NON si scrive niente: quella data non la conosciamo, e inventarla
+    // significa scriverla a una cliente (e' successo, brief cs_assist_migliorie punto 2).
+    if (stato.startsWith('CONSEGNATA') && ex && !ex.seen_delivered_at) row.seen_delivered_at = todayRome();
     const { error } = await sb.from('shipping_status').upsert(row, { onConflict: 'ldv' });
     if (error) { errors.push(ldv + ':' + error.message.slice(0, 60)); continue; }
     if (ex) aggiornati++; else nuovi++;
