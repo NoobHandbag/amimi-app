@@ -1,4 +1,13 @@
-// cs-send v4 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// cs-send v5 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// v5 (2026-08-01 notte, correzioni da una verifica avversariale del diff): (a) il thread VERO di
+//   Gmail e' `gmail_thread_id.split('#')[0]`, perche' dal 01-08 una conversazione nata da una
+//   raffica sul modulo porta il suffisso `#<msgid>` e passarlo all'API darebbe 404, cioe' una
+//   cliente non piu' rispondibile dall'app; (b) la regola del sollecito e' GATED SUL CANALE (le
+//   notifiche della chat arrivano anch'esse da un mittente wrapper, e due messaggi di chat
+//   ravvicinati sono la norma: senza cancello si spegneva il sollecito proprio li'). Nota di
+//   processo: la v4 era stata deployata PRIMA che il blocco `PURE:cs-sollecito` esistesse qui,
+//   quindi per qualche ora il commento "TRE SEDI, UNA REGOLA" descriveva una produzione che non
+//   c'era. Ora il sorgente vivo e' stato riletto e contiene il blocco.
 // v4 (2026-08-01 notte, subito dopo la v3, trovato da un audit): LA CINTURA DELLA v3 ERA CIECA
 //   PROPRIO SUL CANALE FORM. Leggeva `form_fields.Email` con la E maiuscola, mentre `cs-sync`
 //   scrive tutte le chiavi in minuscolo: sul form la lettura tornava sempre undefined e si
@@ -112,16 +121,23 @@ function emailCliente(m: { from_email?: string | null; form_fields?: Record<stri
 
 // ==== PURE:cs-sollecito BEGIN ====
 // La regola "2+ messaggi del cliente e nessuna nostra risposta = sollecito" e' giusta per la posta
-// normale, ma su una RAFFICA dal modulo (due invii a 43 secondi, che oggi finiscono nello stesso
-// thread) accende un'urgenza che nessuno ha sollecitato: e' successo davvero il 01-08.
-// La raffica si riconosce senza AI: almeno due messaggi in ingresso, TUTTI dal mittente wrapper del
-// modulo, e meno di 10 minuti fra il primo e l'ultimo. La soglia e' scelta a tavolino, non misurata:
-// serve solo a separare "due invii di fila" da "una cliente che risollecita ore dopo".
+// normale, ma su una RAFFICA dal modulo (due invii a 43 secondi, che finiscono nello stesso thread)
+// accende un'urgenza che nessuno ha sollecitato: e' successo davvero il 01-08.
+// GATED SUL CANALE, e non e' un dettaglio: le notifiche della CHAT del sito arrivano da
+// `no-reply@mailer.shopify.com`, che e' anch'esso un mittente wrapper, e due messaggi di chat
+// ravvicinati sono la norma. Senza il cancello sul canale questa regola spegnerebbe il sollecito
+// proprio quando la cliente e' collegata al sito e sta aspettando (trovato da una verifica
+// avversariale, con un caso gia' presente nei dati: due notifiche di chat a 23 secondi).
+// La raffica si riconosce senza AI: canale da modulo, almeno due messaggi in ingresso, TUTTI dal
+// mittente wrapper, e meno di 10 minuti fra il primo e l'ultimo. La soglia e' scelta a tavolino,
+// non misurata: serve solo a separare "due invii di fila" da "una cliente che risollecita ore dopo".
 // TRE SEDI, UNA REGOLA: questo blocco e' copia IDENTICA in cs-sync, cs-classify e cs-send.
 // `tests/cs_convkey.mjs` ne confronta l'impronta e diventa rosso se una sola delle tre cambia.
 const RAFFICA_MS = 10 * 60 * 1000;
+const isCanaleModulo = (c: unknown) => c === 'form_contatto' || c === 'form_evento';
 const isWrapperSender = (e: unknown) => /@(?:shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/.test(String(e ?? '').toLowerCase());
-function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[]): boolean {
+function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[], canale: unknown): boolean {
+  if (!isCanaleModulo(canale)) return false;
   if (!Array.isArray(inbound) || inbound.length < 2) return false;
   if (!inbound.every((m) => isWrapperSender(m.from_email))) return false;
   const ts = inbound.map((m) => Date.parse(String(m.sent_at ?? ''))).filter((n) => Number.isFinite(n));
@@ -334,8 +350,13 @@ Deno.serve(async (req) => {
     // reply NEL thread. Con lo scope di lettura: header veri dell'ultimo messaggio del thread.
     // Senza: threadId + Subject dal DB (Gmail accoda lo stesso), e lo si dichiara.
     let lastMsgId = '', lastRefs = '', lastSubj = '';
+    // v5: il thread VERO di Gmail. Dal 01-08 `gmail_thread_id` puo' portare il suffisso `#<msgid>`
+    // (conversazione nata da una raffica sul modulo, cs-sync v13): passarlo cosi' com'e' all'API
+    // darebbe 404 e renderebbe la cliente non piu' rispondibile dall'app. Regola gia' scritta in
+    // SCHEMA.md, qui applicata dove serve.
+    const threadReale = String(conv.gmail_thread_id).split('#')[0];
     if (readToken) {
-      const tr = await fetch(`${GMAIL}/threads/${encodeURIComponent(String(conv.gmail_thread_id))}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject`, { headers: { Authorization: `Bearer ${readToken}` } });
+      const tr = await fetch(`${GMAIL}/threads/${encodeURIComponent(threadReale)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject`, { headers: { Authorization: `Bearer ${readToken}` } });
       const tj = await tr.json().catch(() => ({}));
       if (!tr.ok) return await sendFail(502, `thread Gmail non leggibile (${tr.status}): risposta nel thread impossibile, invio bloccato`);
       const msgs = ((tj as { messages?: { labelIds?: string[]; payload?: { headers?: Hdr[] } }[] }).messages ?? [])
@@ -353,7 +374,7 @@ Deno.serve(async (req) => {
     if (!subjBase) return await sendFail(502, 'oggetto del thread sconosciuto: invio bloccato');
     subject = /^re:\s/i.test(subjBase) ? subjBase : 'Re: ' + subjBase;
     if (lastMsgId) { inReplyTo = lastMsgId; references = (lastRefs ? lastRefs + ' ' : '') + lastMsgId; }
-    threadId = String(conv.gmail_thread_id);
+    threadId = threadReale;
   } else {
     // form: email NUOVA al cliente, oggetto deterministico che richiama la richiesta (mai il wrapper)
     const en = conv.lingua === 'en';
@@ -440,7 +461,7 @@ Deno.serve(async (req) => {
       const reopened = String(c.stato) === 'fatto' && c.last_direction === 'in' && !!c.last_msg_at && (!c.stato_at || (c.last_msg_at as string) > (c.stato_at as string));
       // v13 di cs-sync, specchio: una raffica dal modulo non e' un sollecito (ramo irraggiungibile
       // dopo un invio, outCnt >= 1: si allinea perche' la regola e' UNA e vive in tre sedi)
-      const ruleUrg = reopened || (inCnt >= 2 && outCnt === 0 && !isRafficaModulo(inMsgs));
+      const ruleUrg = reopened || (inCnt >= 2 && outCnt === 0 && !isRafficaModulo(inMsgs, conv.canale));
       const ruleMotivo = reopened ? 'thread riaperto (sollecito)' : '2+ messaggi senza nostra risposta';
       const cflags: string[] = Array.isArray(c.flags) ? [...new Set((c.flags as unknown[]).map(String))] : [];
       const upd: Record<string, unknown> = {};

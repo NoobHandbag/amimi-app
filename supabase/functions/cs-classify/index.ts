@@ -162,16 +162,23 @@ const RE_INLOCO = /sono (qui|qua) (fuori|davanti|sotto)|sono al portone|sono dav
 type RuleUrg = { urgente: boolean; motivo: string; flags: string[] };
 // ==== PURE:cs-sollecito BEGIN ====
 // La regola "2+ messaggi del cliente e nessuna nostra risposta = sollecito" e' giusta per la posta
-// normale, ma su una RAFFICA dal modulo (due invii a 43 secondi, che oggi finiscono nello stesso
-// thread) accende un'urgenza che nessuno ha sollecitato: e' successo davvero il 01-08.
-// La raffica si riconosce senza AI: almeno due messaggi in ingresso, TUTTI dal mittente wrapper del
-// modulo, e meno di 10 minuti fra il primo e l'ultimo. La soglia e' scelta a tavolino, non misurata:
-// serve solo a separare "due invii di fila" da "una cliente che risollecita ore dopo".
+// normale, ma su una RAFFICA dal modulo (due invii a 43 secondi, che finiscono nello stesso thread)
+// accende un'urgenza che nessuno ha sollecitato: e' successo davvero il 01-08.
+// GATED SUL CANALE, e non e' un dettaglio: le notifiche della CHAT del sito arrivano da
+// `no-reply@mailer.shopify.com`, che e' anch'esso un mittente wrapper, e due messaggi di chat
+// ravvicinati sono la norma. Senza il cancello sul canale questa regola spegnerebbe il sollecito
+// proprio quando la cliente e' collegata al sito e sta aspettando (trovato da una verifica
+// avversariale, con un caso gia' presente nei dati: due notifiche di chat a 23 secondi).
+// La raffica si riconosce senza AI: canale da modulo, almeno due messaggi in ingresso, TUTTI dal
+// mittente wrapper, e meno di 10 minuti fra il primo e l'ultimo. La soglia e' scelta a tavolino,
+// non misurata: serve solo a separare "due invii di fila" da "una cliente che risollecita ore dopo".
 // TRE SEDI, UNA REGOLA: questo blocco e' copia IDENTICA in cs-sync, cs-classify e cs-send.
 // `tests/cs_convkey.mjs` ne confronta l'impronta e diventa rosso se una sola delle tre cambia.
 const RAFFICA_MS = 10 * 60 * 1000;
+const isCanaleModulo = (c: unknown) => c === 'form_contatto' || c === 'form_evento';
 const isWrapperSender = (e: unknown) => /@(?:shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/.test(String(e ?? '').toLowerCase());
-function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[]): boolean {
+function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[], canale: unknown): boolean {
+  if (!isCanaleModulo(canale)) return false;
   if (!Array.isArray(inbound) || inbound.length < 2) return false;
   if (!inbound.every((m) => isWrapperSender(m.from_email))) return false;
   const ts = inbound.map((m) => Date.parse(String(m.sent_at ?? ''))).filter((n) => Number.isFinite(n));
@@ -180,7 +187,7 @@ function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[])
 }
 // ==== PURE:cs-sollecito END ====
 
-function ruleUrgency(fullText: string, opts: { inboundCount: number; outboundCount: number; stato: string; lastDir: string | null; lastAt: string | null; statoAt: string | null; inbound?: { from_email?: unknown; sent_at?: unknown }[] }): RuleUrg {
+function ruleUrgency(fullText: string, opts: { inboundCount: number; outboundCount: number; stato: string; lastDir: string | null; lastAt: string | null; statoAt: string | null; inbound?: { from_email?: unknown; sent_at?: unknown }[]; canale?: unknown }): RuleUrg {
   const flags = new Set<string>();
   let urgente = false; let motivo = '';
   const set = (m: string) => { urgente = true; if (!motivo) motivo = m; };
@@ -190,7 +197,7 @@ function ruleUrgency(fullText: string, opts: { inboundCount: number; outboundCou
   if (reopened) { set('thread riaperto (sollecito)'); flags.add('sollecito'); }
   // v7: una RAFFICA dal modulo (due invii di fila, stesso thread) non e' un sollecito: nessuno ha
   // sollecitato, e' l'oggetto della notifica Shopify che ha granularita' al minuto.
-  else if (opts.inboundCount >= 2 && opts.outboundCount === 0 && !isRafficaModulo(opts.inbound ?? [])) { set('2+ messaggi senza nostra risposta'); flags.add('sollecito'); }
+  else if (opts.inboundCount >= 2 && opts.outboundCount === 0 && !isRafficaModulo(opts.inbound ?? [], opts.canale)) { set('2+ messaggi senza nostra risposta'); flags.add('sollecito'); }
   return { urgente, motivo, flags: [...flags] };
 }
 
@@ -259,7 +266,7 @@ Deno.serve(async (req) => {
 
     const rule = ruleUrgency([c.subject ?? '', fullInbound].join('\n'), {
       inboundCount: inbound.length, outboundCount, stato: String(c.stato ?? 'da_fare'), inbound,
-      lastDir: (c.last_direction as string) ?? null, lastAt: (c.last_msg_at as string) ?? null, statoAt: (c.stato_at as string) ?? null,
+      lastDir: (c.last_direction as string) ?? null, lastAt: (c.last_msg_at as string) ?? null, statoAt: (c.stato_at as string) ?? null, canale: c.canale,
     });
 
     const urgente = ai.urgente || rule.urgente;

@@ -123,6 +123,7 @@ try { M2 = await import(pathToFileURL(TMP2).href); }
 finally { try { unlinkSync(TMP2); } catch { /* niente */ } }
 const { decidiConv, normEmail, chiaveFratelli, isRafficaModulo } = M2;
 
+const CH_FORM = 'form_contatto', CH_CHAT = 'chat_notifica', CH_MAIL = 'email_diretta';
 const TH = 'thread123';
 const form = (email, id = 'c1') => ({ id, canale: 'form_contatto', customer_email: email });
 const msg = (o = {}) => ({ id: 'm1', threadId: TH, email: null, nuovaSubmission: false, ...o });
@@ -178,17 +179,38 @@ console.log('\n== raffica dal modulo: non e\' un sollecito ==');
 const W = 'mailer@shopify.com';
 const at = (min) => new Date(Date.UTC(2026, 7, 1, 17, min, 0)).toISOString();
 t('40 due notifiche del modulo a 43 secondi -> raffica',
-  isRafficaModulo([{ from_email: W, sent_at: at(38) }, { from_email: W, sent_at: '2026-08-01T17:38:43.000Z' }]));
+  isRafficaModulo([{ from_email: W, sent_at: at(38) }, { from_email: W, sent_at: '2026-08-01T17:38:43.000Z' }], CH_FORM));
 t('41 due notifiche a 4 ore -> NON raffica (e\' un sollecito vero)',
-  !isRafficaModulo([{ from_email: W, sent_at: at(0) }, { from_email: W, sent_at: new Date(Date.UTC(2026, 7, 1, 21, 0, 0)).toISOString() }]));
+  !isRafficaModulo([{ from_email: W, sent_at: at(0) }, { from_email: W, sent_at: new Date(Date.UTC(2026, 7, 1, 21, 0, 0)).toISOString() }], CH_FORM));
 t('42 una notifica e una mail della cliente -> NON raffica',
-  !isRafficaModulo([{ from_email: W, sent_at: at(38) }, { from_email: 'anna@x.it', sent_at: at(39) }]));
+  !isRafficaModulo([{ from_email: W, sent_at: at(38) }, { from_email: 'anna@x.it', sent_at: at(39) }], CH_FORM));
 t('43 due mail dirette della cliente -> NON raffica, il sollecito resta',
-  !isRafficaModulo([{ from_email: 'anna@x.it', sent_at: at(38) }, { from_email: 'anna@x.it', sent_at: at(39) }]));
+  !isRafficaModulo([{ from_email: 'anna@x.it', sent_at: at(38) }, { from_email: 'anna@x.it', sent_at: at(39) }], CH_FORM));
 t('44 sent_at mancante -> NON raffica (nel dubbio, la regola di prima)',
-  !isRafficaModulo([{ from_email: W, sent_at: null }, { from_email: W, sent_at: at(39) }]));
-t('45 un solo messaggio -> NON raffica', !isRafficaModulo([{ from_email: W, sent_at: at(38) }]));
-t('46 lista vuota -> NON raffica', !isRafficaModulo([]));
+  !isRafficaModulo([{ from_email: W, sent_at: null }, { from_email: W, sent_at: at(39) }], CH_FORM));
+t('45 un solo messaggio -> NON raffica', !isRafficaModulo([{ from_email: W, sent_at: at(38) }], CH_FORM));
+t('46 lista vuota -> NON raffica', !isRafficaModulo([], CH_FORM));
+
+// La CHAT del sito notifica da no-reply@mailer.shopify.com, che e' anch'esso un mittente wrapper, e
+// due messaggi di chat ravvicinati sono la norma: senza il cancello sul CANALE la regola spegnerebbe
+// il sollecito proprio quando la cliente e' collegata al sito e sta aspettando. Caso trovato da una
+// verifica avversariale, con un riscontro nei dati veri (due notifiche di chat a 23 secondi).
+const CHATW = 'no-reply@mailer.shopify.com';
+t('47 due notifiche di CHAT a 23 secondi -> NON raffica, il sollecito resta',
+  !isRafficaModulo([{ from_email: CHATW, sent_at: at(38) }, { from_email: CHATW, sent_at: '2026-08-01T17:38:23.000Z' }], CH_CHAT));
+t('48 gli stessi due messaggi su canale MODULO -> raffica (il cancello e sul canale, non sul mittente)',
+  isRafficaModulo([{ from_email: CHATW, sent_at: at(38) }, { from_email: CHATW, sent_at: at(39) }], CH_FORM));
+t('49 email_diretta -> NON raffica mai',
+  !isRafficaModulo([{ from_email: W, sent_at: at(38) }, { from_email: W, sent_at: at(39) }], CH_MAIL));
+t('50 canale nullo o sconosciuto -> NON raffica (nel dubbio, la regola di prima)',
+  !isRafficaModulo([{ from_email: W, sent_at: at(38) }, { from_email: W, sent_at: at(39) }], null)
+  && !isRafficaModulo([{ from_email: W, sent_at: at(38) }, { from_email: W, sent_at: at(39) }], 'rumore'));
+t('51 form_evento e un canale da modulo',
+  isRafficaModulo([{ from_email: W, sent_at: at(38) }, { from_email: W, sent_at: at(39) }], 'form_evento'));
+
+console.log('\n== il thread VERO di Gmail non ha il suffisso ==');
+t('52 dalla chiave suffissata si torna al thread', 'T1#MSG2'.split('#')[0] === 'T1');
+t('53 una chiave nuda resta se stessa', 'T1'.split('#')[0] === 'T1');
 
 console.log(`\n${ok}/${ok + ko} verdi` + (ko ? ` — ${ko} ROSSI` : ''));
 process.exitCode = ko ? 1 : 0;

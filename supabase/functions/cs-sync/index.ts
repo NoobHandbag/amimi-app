@@ -1,4 +1,4 @@
-// cs-sync v12 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v13 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
 // v12 (2026-08-01 notte, brief cs_uiux_rifiniture punto 2): lo stampo del modulo del sito arriva
 //   anche in INGLESE (il template segue la lingua della sessione del visitatore) e i marcatori
 //   erano solo italiani: sulle notifiche EN non scattava ne' il taglio del boilerplate ne'
@@ -411,16 +411,23 @@ function decidiConv(ex: Fratello | null, fratelli: Fratello[], msg: { id: string
 
 // ==== PURE:cs-sollecito BEGIN ====
 // La regola "2+ messaggi del cliente e nessuna nostra risposta = sollecito" e' giusta per la posta
-// normale, ma su una RAFFICA dal modulo (due invii a 43 secondi, che oggi finiscono nello stesso
-// thread) accende un'urgenza che nessuno ha sollecitato: e' successo davvero il 01-08.
-// La raffica si riconosce senza AI: almeno due messaggi in ingresso, TUTTI dal mittente wrapper del
-// modulo, e meno di 10 minuti fra il primo e l'ultimo. La soglia e' scelta a tavolino, non misurata:
-// serve solo a separare "due invii di fila" da "una cliente che risollecita ore dopo".
+// normale, ma su una RAFFICA dal modulo (due invii a 43 secondi, che finiscono nello stesso thread)
+// accende un'urgenza che nessuno ha sollecitato: e' successo davvero il 01-08.
+// GATED SUL CANALE, e non e' un dettaglio: le notifiche della CHAT del sito arrivano da
+// `no-reply@mailer.shopify.com`, che e' anch'esso un mittente wrapper, e due messaggi di chat
+// ravvicinati sono la norma. Senza il cancello sul canale questa regola spegnerebbe il sollecito
+// proprio quando la cliente e' collegata al sito e sta aspettando (trovato da una verifica
+// avversariale, con un caso gia' presente nei dati: due notifiche di chat a 23 secondi).
+// La raffica si riconosce senza AI: canale da modulo, almeno due messaggi in ingresso, TUTTI dal
+// mittente wrapper, e meno di 10 minuti fra il primo e l'ultimo. La soglia e' scelta a tavolino,
+// non misurata: serve solo a separare "due invii di fila" da "una cliente che risollecita ore dopo".
 // TRE SEDI, UNA REGOLA: questo blocco e' copia IDENTICA in cs-sync, cs-classify e cs-send.
 // `tests/cs_convkey.mjs` ne confronta l'impronta e diventa rosso se una sola delle tre cambia.
 const RAFFICA_MS = 10 * 60 * 1000;
+const isCanaleModulo = (c: unknown) => c === 'form_contatto' || c === 'form_evento';
 const isWrapperSender = (e: unknown) => /@(?:shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/.test(String(e ?? '').toLowerCase());
-function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[]): boolean {
+function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[], canale: unknown): boolean {
+  if (!isCanaleModulo(canale)) return false;
   if (!Array.isArray(inbound) || inbound.length < 2) return false;
   if (!inbound.every((m) => isWrapperSender(m.from_email))) return false;
   const ts = inbound.map((m) => Date.parse(String(m.sent_at ?? ''))).filter((n) => Number.isFinite(n));
@@ -513,7 +520,7 @@ Deno.serve(async (req) => {
   const RULE_MOTIVI = ['thread riaperto (sollecito)', '2+ messaggi senza nostra risposta'];
   const recomputeUrgency = async (convId: string): Promise<boolean> => {
     const { data: c } = await sb.from('cs_conversations')
-      .select('id, stato, stato_at, last_direction, last_msg_at, categoria_source, urgente, urgenza_motivo, flags')
+      .select('id, canale, stato, stato_at, last_direction, last_msg_at, categoria_source, urgente, urgenza_motivo, flags')
       .eq('id', convId).maybeSingle();
     if (!c || !c.categoria_source) return false;   // mai classificata: ci pensera' cs-classify alla pesca
     const { data: msgs } = await sb.from('cs_messages').select('direction,from_email,sent_at').eq('conversation_id', convId);
@@ -522,7 +529,7 @@ Deno.serve(async (req) => {
     const outCnt = (msgs ?? []).filter((m) => m.direction === 'out').length;
     const reopened = String(c.stato) === 'fatto' && c.last_direction === 'in' && !!c.last_msg_at && (!c.stato_at || (c.last_msg_at as string) > (c.stato_at as string));
     // v13: una RAFFICA dal modulo (due invii di fila nello stesso thread) non e' un sollecito
-    const ruleUrg = reopened || (inCnt >= 2 && outCnt === 0 && !isRafficaModulo(inMsgs));
+    const ruleUrg = reopened || (inCnt >= 2 && outCnt === 0 && !isRafficaModulo(inMsgs, c.canale));
     const ruleMotivo = reopened ? 'thread riaperto (sollecito)' : '2+ messaggi senza nostra risposta';
     const flags: string[] = Array.isArray(c.flags) ? [...new Set((c.flags as unknown[]).map(String))] : [];
     const upd: Record<string, unknown> = {};
@@ -565,8 +572,9 @@ Deno.serve(async (req) => {
     // mai una conversazione da un messaggio in uscita: quel principio non cambia.
     if (isFormCanale(conv.canale) && normEmail(to.email) && normEmail(to.email) !== normEmail(conv.customer_email)) {
       try {
-        const { data: frat } = await sb.from('cs_conversations')
+        const { data: frat, error: eFrat } = await sb.from('cs_conversations')
           .select('id, canale, last_msg_at, customer_email').like('gmail_thread_id', chiaveFratelli(threadId));
+        if (eFrat) throw new Error('fratelli_non_leggibili');   // ripiego: bersaglio di oggi
         const g = ((frat ?? []) as typeof conv[]).find((f) => f && normEmail(f.customer_email) === normEmail(to.email));
         if (g) conv = g;
       } catch { /* fail-soft */ }
@@ -783,8 +791,11 @@ Deno.serve(async (req) => {
     // significherebbe 'transient' e cursore Gmail fermo.
     if (ex && isFormCanale(ex.canale) && normEmail(cl.email) && normEmail(ex.customer_email) && normEmail(cl.email) !== normEmail(ex.customer_email)) {
       try {
-        const { data: frat } = await sb.from('cs_conversations')
+        const { data: frat, error: eFrat } = await sb.from('cs_conversations')
           .select('id,canale,categoria,last_msg_at,customer_email').like('gmail_thread_id', chiaveFratelli(threadId));
+        // se la lettura dei fratelli FALLISCE non si puo' decidere: senza quell'elenco decidiConv non
+        // trova il gemello e creerebbe una scheda in piu' ogni volta. Ripiego = comportamento di oggi.
+        if (eFrat) throw new Error('fratelli_non_leggibili');
         const d = decidiConv(ex, (frat ?? []) as Fratello[], { id: msg.id, threadId, email: cl.email, nuovaSubmission: msg.nuovaSubmission });
         if (d.modo === 'attach' && d.id !== ex.id) {
           const scelto = ((frat ?? []) as Fratello[]).find((f) => f.id === d.id);
