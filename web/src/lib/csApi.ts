@@ -224,7 +224,11 @@ export async function fetchContext(conversationId: string): Promise<CsContext> {
 export const CASE_CATS = new Set(['Reso e rimborso', 'Cambio e prodotto errato', 'Modifica / correzione indirizzo']);
 // v14: la finestra reso decorre dalla DATA DELL'ORDINE (ordine_del); delivered_at resta come info
 // e per il caso indirizzo ('consegnato', confermabile dalla collega dal tracking).
-export type CasoReso = { ordine_del: string | null; delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'sconosciuto'; difetto_sospetto: boolean };
+// v18: 'non_applicabile' = l'ordine e' agganciato ma la finestra non c'entra (rimborsato, annullato,
+// oppure merce ancora non ritirata dal corriere). Diverso da 'sconosciuto', che vuol dire "non so
+// di che ordine parliamo". Il campo puo' mancare se l'edge live e' ancora a una versione precedente.
+export type NonApplicabile = 'rimborsato' | 'rimborsato_parziale' | 'annullato' | 'pre_ritiro';
+export type CasoReso = { ordine_del: string | null; delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'non_applicabile' | 'sconosciuto'; non_applicabile?: NonApplicabile | null; stato_pagamento?: string | null; difetto_sospetto: boolean };
 export type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 'verificare_tracking' | 'consegnato' | 'sconosciuto' };
 export type CaseData = { categoria: string | null; verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo; tracking_url: string | null; order_admin_url: string | null; stato_tws?: string | null; stato_tws_aggiornato?: string | null };
 

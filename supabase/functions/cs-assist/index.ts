@@ -1,4 +1,24 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v18 (2026-08-01 notte, brief cs_assist_migliorie punti 8 e 10, aggiunta dopo la run post_v16):
+//   - NIENTE VERDETTO SULLA FINESTRA SE L'ORDINE E' GIA' RIMBORSATO. `computeCaso` guardava solo
+//     la data dell'ordine: sull'ordine #1499 (rimborsato, annullato e mai partito) calcolava 15
+//     giorni contro 14 ed emetteva 'fuori', che il blocco CASO dichiara "vincolante", e tutte e tre
+//     le bozze rifiutavano il reso a una cliente GIA' rimborsata. Ora `financial_status`
+//     refunded / partially_refunded / voided (e lo stato TWS pre-ritiro, cioe' merce non ancora
+//     partita) producono verdetto 'non_applicabile' con una riga di caso dedicata: si riconosce il
+//     rimborso, non si parla di finestra. Un verdetto calcolato su input parziali e poi dichiarato
+//     non discutibile e' piu' pericoloso di nessun verdetto.
+//     SCOSTAMENTO dal brief, motivato: il brief chiedeva la stessa regola per "ordine mai evaso",
+//     cioe' `fulfillment_status` diverso da fulfilled/partial. Non e' percorribile: 180 ordini su
+//     615 sono 'unfulfilled' e sono TUTTI fra il 18-02 e il 19-05 (zero righe in `shipping_status`),
+//     mentre gli ordini davvero non ancora evasi di oggi hanno la colonna NULL (11 righe, dal
+//     17-07). La colonna cambia significato da un'era di ETL all'altra: usarla avrebbe spento il
+//     verdetto su 180 ordini storici quasi certamente consegnati. Lo stato TWS pre-ritiro e' invece
+//     un'affermazione viva del corriere, ed e' il segnale che il caso #1499 aveva davvero.
+//   - LINGUA: le conversazioni `en` (110 su 305) aprivano con "Ciao <nome>!" e proseguivano in
+//     inglese. La lingua era una riga qualsiasi in fondo al messaggio utente: ora e' un'istruzione
+//     esplicita nel system prompt di draft e refine, con l'eccezione dichiarata della firma
+//     "Grazie, Team Amimi'", che resta in italiano per scelta.
 // v17 (2026-08-01 sera, brief cs_assist_migliorie dal benchmark bozze): quattro correzioni, le
 //   prime due su dati che arrivavano sbagliati alle clienti.
 //   - ORDINE TROVATO ANCHE PRIMA DEL 01-07: `lookupOrder` filtrava solo `order_number`, NULL su 433
@@ -286,7 +306,11 @@ async function shippingStatus(sb: ReturnType<typeof createClient>, orderNumber: 
 // --- Motore dei verdetti (design Parte B 24-07): il CODICE decide il caso, l'AI scrive la frase ---
 const DIFETTO_RE = /difett|rott[oa]|scucit|staccat|danneggiat|rovinat|macchiat|non funziona|si (e'|è) (rotta|scucita|staccata|aperta)/i;
 const CASE_CATS = new Set(['Reso e rimborso', 'Cambio e prodotto errato', 'Modifica / correzione indirizzo']);
-type CasoReso = { ordine_del: string | null; delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'sconosciuto'; difetto_sospetto: boolean };
+// v18: `non_applicabile` NON e' 'sconosciuto'. 'sconosciuto' vuol dire "non so di che ordine parliamo";
+// 'non_applicabile' vuol dire "l'ordine lo conosco benissimo, ed e' proprio per questo che la finestra
+// di reso non c'entra": rimborsato, annullato, o merce ancora ferma da noi.
+type NonApplicabile = 'rimborsato' | 'rimborsato_parziale' | 'annullato' | 'pre_ritiro';
+type CasoReso = { ordine_del: string | null; delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'non_applicabile' | 'sconosciuto'; non_applicabile: NonApplicabile | null; stato_pagamento: string | null; difetto_sospetto: boolean };
 type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 'verificare_tracking' | 'consegnato' | 'sconosciuto' };
 
 function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: string, finestra: number, confirmedDate: string | null, ship: Ship = null): { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo } {
@@ -314,7 +338,21 @@ function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: stri
     giorni = Math.floor((Date.now() - new Date(ordineDel + 'T12:00:00Z').getTime()) / 86400000);
     if (giorni >= 0) verdetto = giorni <= finestra ? 'entro' : 'fuori';
   }
-  const reso: CasoReso = { ordine_del: ordineDel, delivered_at: delivered, fonte: ordineDel ? 'data ordine (Shopify)' : fonte, giorni, finestra, verdetto, difetto_sospetto: difetto };
+  // v18 (brief punto 8): la finestra si conta sulla data dell'ordine, ma ci sono ordini su cui la
+  // finestra non e' proprio la domanda giusta. Rimborsato/annullato = il caso e' gia' chiuso a
+  // favore della cliente; pre-ritiro = la merce e' ancora da noi, non c'e' niente da rendere.
+  // In tutti e tre il verdetto entro/fuori si SPEGNE: meglio nessun verdetto che un rifiuto a
+  // qualcuno che e' gia' stato rimborsato (caso reale #1499, tutte e 3 le bozze sbagliate).
+  const finStat = String(ordine?.financial_status ?? '').toLowerCase().trim();
+  let nonApp: NonApplicabile | null = null;
+  if (verificato) {
+    if (finStat === 'refunded') nonApp = 'rimborsato';
+    else if (finStat === 'partially_refunded') nonApp = 'rimborsato_parziale';
+    else if (finStat === 'voided') nonApp = 'annullato';
+    else if (shipStato && PRE_RITIRO.has(shipStato)) nonApp = 'pre_ritiro';
+  }
+  if (nonApp) verdetto = 'non_applicabile';
+  const reso: CasoReso = { ordine_del: ordineDel, delivered_at: delivered, fonte: ordineDel ? 'data ordine (Shopify)' : fonte, giorni, finestra, verdetto, non_applicabile: nonApp, stato_pagamento: verificato && finStat ? finStat : null, difetto_sospetto: difetto };
 
   // INDIRIZZO: fulfillment ASSENTE = non ritirato (affidabile: ship-sync evade solo al ritiro) -> correggibile.
   // Fulfillment PRESENTE senza fonte delivered -> "verificare dal tracking" (MAI "in transito" secco, review 24-07).
@@ -333,6 +371,16 @@ function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: stri
   return { verificato, reso, indirizzo: { fulfillment_presente: fulfPresente, caso: casoInd } };
 }
 
+// v18: le righe di caso per gli ordini su cui la finestra di reso non e' la domanda giusta.
+// Sono istruzioni NEGATIVE (cosa non affermare) piu' che verdetti: il fatto lo dice il BLOCCO DATI,
+// qui si impedisce solo che il modello ci costruisca sopra un rifiuto.
+const NON_APPLICABILE_LINE: Record<NonApplicabile, string> = {
+  rimborsato: "- L'ordine risulta GIA' RIMBORSATO per intero (stato pagamento: refunded). NON parlare di finestra di reso, NON rifiutare nulla e NON chiedere di rispedire la merce: il caso e' gia' chiuso a favore della cliente. Riconosci il rimborso gia' effettuato e chiedi se serve altro. Se la cliente chiede quando vedra' l'accredito, usa [DA VERIFICARE: data dell'accredito].",
+  rimborsato_parziale: "- L'ordine risulta GIA' RIMBORSATO IN PARTE (stato pagamento: partially_refunded). NON emettere verdetti sulla finestra di reso. Riconosci il rimborso parziale gia' fatto SENZA dare per scontato a cosa si riferisce ne' a quanto ammonta (l'importo non e' nei DATI), e chiedi conferma di che cosa serve ancora.",
+  annullato: "- L'ordine risulta ANNULLATO (pagamento voided): non c'e' nessuna finestra di reso da calcolare. Riconosci l'annullamento e chiedi se serve altro.",
+  pre_ritiro: "- La merce NON e' ancora partita: il corriere non l'ha ancora ritirata (vedi lo stato spedizione nei DATI). Non c'e' niente da rendere, quindi NON parlare di finestra di reso ne' di spedizione di rientro a carico della cliente. Se vuole annullare o cambiare, raccogli la richiesta e passala a una persona.",
+};
+
 // Blocco CASO da iniettare nel prompt draft: vincolante, l'AI scrive DENTRO il caso, non lo decide.
 function casoBlock(categoria: string | null, cd: { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo }): string {
   if (!categoria || !CASE_CATS.has(categoria)) return '';
@@ -344,8 +392,12 @@ function casoBlock(categoria: string | null, cd: { verificato: boolean; reso: Ca
     else L.push('- Stato spedizione NON determinabile dai dati: niente verdetti, usa [DA VERIFICARE: stato spedizione].');
   } else {
     if (cd.reso.difetto_sospetto) L.push('- POSSIBILE DIFETTO segnalato dal cliente: la finestra reso NON si applica da sola (garanzia legale 24 mesi). Bozza prudente: chiedi una foto, proponi riparazione/cambio o contatto. MAI un rifiuto.');
-    else if (cd.reso.verdetto === 'entro') L.push(`- Reso AMMESSO: ordine del ${cd.reso.ordine_del} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla data dell'ordine). Istruzioni + link resi; spedizione di rientro a carico del cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` + (categoria === 'Cambio e prodotto errato' ? ' Per il CAMBIO: stessa finestra, spese a carico del cliente (salvo errore nostro: allora scuse e spese nostre).' : ''));
-    else if (cd.reso.verdetto === 'fuori') L.push(`- Reso NON ammesso: ordine del ${cd.reso.ordine_del}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra} dalla data dell'ordine). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto, cambia tutto: proponi il contatto.`);
+    // v18: il caso "gia' rimborsato / mai partito" viene PRIMA di qualunque conto sui giorni e
+    // convive col difetto (sono due fatti, non due verdetti in concorrenza).
+    if (cd.reso.non_applicabile) L.push(NON_APPLICABILE_LINE[cd.reso.non_applicabile]);
+    else if (cd.reso.difetto_sospetto) { /* la riga del difetto basta: nessun verdetto sulla finestra */ }
+    else if (cd.reso.verdetto === 'entro') L.push(`- Reso AMMESSO: ordine del ${dmy(cd.reso.ordine_del)} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla data dell'ordine). Istruzioni + link resi; spedizione di rientro a carico del cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` + (categoria === 'Cambio e prodotto errato' ? ' Per il CAMBIO: stessa finestra, spese a carico del cliente (salvo errore nostro: allora scuse e spese nostre).' : ''));
+    else if (cd.reso.verdetto === 'fuori') L.push(`- Reso NON ammesso: ordine del ${dmy(cd.reso.ordine_del)}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra} dalla data dell'ordine). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto, cambia tutto: proponi il contatto.`);
     else L.push(`- Ordine NON identificato con certezza: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla data dell'ordine in generale e usa [DA VERIFICARE: numero ordine].`);
   }
   return L.join('\n') + '\n';
@@ -561,6 +613,14 @@ function datiBlock(d: Dati): string {
   return L.join('\n');
 }
 
+// v18 (brief punto 10): la lingua era una riga in fondo al messaggio utente e una conversazione `en`
+// usciva con l'apertura in italiano ("Ciao <nome>! Thank you for reaching out"). Qui diventa
+// un'istruzione di sistema, con l'eccezione DICHIARATA della firma: quella resta in italiano perche'
+// e' una scelta di casa, non una dimenticanza.
+const langBlock = (lingua: unknown): string => (String(lingua ?? '') === 'en'
+  ? `\nLINGUA: il cliente scrive in INGLESE, quindi la risposta va scritta TUTTA in inglese, dalla prima parola all'ultima, saluto di apertura incluso (mai "Ciao", mai parole italiane nel corpo). UNICA eccezione, voluta: la firma finale resta "Grazie, Team Amimi'".`
+  : `\nLINGUA: rispondi in ITALIANO.`);
+
 const STYLE_RULES = `STILE: dai del tu (dai del lei solo se il cliente e' formale o arrabbiato), frasi corte, 1-2 emoji leggere al massimo, chiudi con "Grazie, Team Amimi'". Niente promesse su date/numeri non nei DATI.
 REGOLA FERREA anti-invenzione: cita SOLO dati presenti nel BLOCCO DATI qui sotto. Se ti serve un dato che NON c'e' (prezzo, data, indirizzo, tracking, condizione), NON inventarlo: scrivi il segnaposto [DA VERIFICARE: cosa manca].
 CASI DA NON CHIUDERE DA SOLA (scrivi una risposta PRUDENTE che raccoglie info e propone il contatto di una persona; non promettere e non rifiutare): difetto/garanzia -> NON negare mai il reso citando solo i 14 giorni del recesso (la garanzia legale dura 24 mesi), proponi riparazione/cambio o il contatto; disputa/chargeback/banca -> massima cautela + persona; reclamo/rivenditore/proposta B2B/preventivo cerimonia -> raccogli info e rimanda a una persona.`;
@@ -770,7 +830,7 @@ Riassunto (max 2 righe):`;
     const chatBlock = conv.canale === 'chat_notifica' ? `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggi corti stile chat (anche la versione "formale" resta un messaggio di chat, solo piu' composto).` : '';
     const system = `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi TRE versioni ALTERNATIVE della stessa risposta ${conv.canale === 'chat_notifica' ? 'in chat' : 'email'} al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.
 LE TRE VERSIONI (usa esattamente questi tre "tono"): "breve" = 2-3 righe, dritta al punto, cordiale; "calda" = piu' empatica e personale, un pizzico di calore; "formale" = piu' completa e composta, adatta a casi delicati.
-${STYLE_RULES}${istruzioniBlock}${casoTxt}${chatBlock}`;
+${STYLE_RULES}${langBlock(conv.lingua)}${istruzioniBlock}${casoTxt}${chatBlock}`;
     const user = `Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
 ${ctx.conoscenza.length ? `\nCONOSCENZA DI CASA (regole e fatti Amimi'; se un valore qui contraddice il BLOCCO DATI, vince il BLOCCO DATI):\n${ctx.conoscenza.map((k) => '- ' + k).join('\n')}\n` : ''}${ctx.precedenti.length ? `\nCONVERSAZIONI PRECEDENTI DI QUESTO CLIENTE (contesto: tienine conto nel tono e nei riferimenti, NON promettere nulla in base a queste):\n${ctx.precedenti.join('\n')}\n` : ''}
 Conversazione (il piu' recente e' del cliente):
@@ -855,7 +915,7 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
 
     const chatBlockR = conv.canale === 'chat_notifica' ? `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggio corto stile chat.` : '';
     const sysR = `Sei chi risponde al servizio clienti di "Amimi'". Ti do una BOZZA di risposta al cliente e una richiesta di modifica. Riscrivi la bozza applicando la modifica. NON inviarla.
-${STYLE_RULES}${istruzioniBlock}${chatBlockR}`;
+${STYLE_RULES}${langBlock(conv.lingua)}${istruzioniBlock}${chatBlockR}`;
     const usrR = `Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}.
 RICHIESTA DI MODIFICA (dalla collega): ${istruzione.slice(0, 400)}
 

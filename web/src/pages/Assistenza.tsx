@@ -39,6 +39,13 @@ function Avatar({ k, size = 30 }: { k: string; size?: number }) {
 const CANALI: Record<Canale, string> = { email_diretta: '✉️ email', form_contatto: '📝 form sito', form_evento: '💍 form evento', chat_notifica: '💬 chat sito', rumore: '🔕 rumore' };
 const BUCKETS: [string, string][] = [['oggi', 'Oggi'], ['ieri', 'Ieri'], ['sett', 'Questa settimana'], ['vecchie', 'Piu’ vecchie']];
 const TONO_LABEL: Record<string, string> = { breve: '⚡ Breve', calda: '💛 Calda', formale: '🎩 Formale', bozza: '✍️ Bozza' };
+// v18: perche' il sistema NON dice entro/fuori pur avendo l'ordine sotto gli occhi.
+const NON_APP_UI: Record<string, string> = {
+  rimborsato: 'Ordine gia’ rimborsato per intero: il caso e’ chiuso a favore della cliente. La bozza riconosce il rimborso e non parla di finestra.',
+  rimborsato_parziale: 'Ordine gia’ rimborsato in parte: la bozza riconosce il rimborso parziale senza dare per scontato a cosa si riferisce.',
+  annullato: 'Ordine annullato: niente finestra da calcolare. La bozza riconosce l’annullamento.',
+  pre_ritiro: 'Merce non ancora ritirata dal corriere: non c’e’ niente da rendere. La bozza non parla di reso ne’ di rientro.',
+};
 const SHOPIFY_INBOX = 'https://admin.shopify.com/store/amimi-10000/apps/inbox';
 // Fase 4: canali con INVIO dall'app (chat = solo copia + deep-link Inbox; rumore = niente)
 const CAN_SEND: Set<Canale> = new Set(['email_diretta', 'form_contatto', 'form_evento']);
@@ -571,7 +578,12 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 {caso.reso.difetto_sospetto && (
                   <div className="cs-verdict cs-v-warn"><b>⚠️ Possibile difetto segnalato</b><span>La finestra non si applica da sola (garanzia legale 24 mesi): bozza prudente, mai un rifiuto.</span></div>
                 )}
-                {caso.reso.verdetto === 'entro' ? (
+                {caso.reso.verdetto === 'non_applicabile' ? (
+                  <div className="cs-verdict cs-v-info">
+                    <b>🧾 Ordine del {caso.reso.ordine_del} · nessun verdetto sulla finestra</b>
+                    <span>{NON_APP_UI[caso.reso.non_applicabile ?? 'rimborsato']}</span>
+                  </div>
+                ) : caso.reso.verdetto === 'entro' ? (
                   <div className="cs-verdict cs-v-ok"><b>🧾 Ordine del {caso.reso.ordine_del} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
                 ) : caso.reso.verdetto === 'fuori' ? (
                   <div className="cs-verdict cs-v-no"><b>🧾 Ordine del {caso.reso.ordine_del} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
