@@ -1,4 +1,17 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v15 (2026-08-01, brief cs_link_prodotto_torna_disponibile): il LINK della scheda prodotto entra
+//   nel BLOCCO DATI. Per ogni prodotto agganciato con riga in `shopify_catalog` (94/94 con handle)
+//   si costruisce `url` = SITE_URL + /products/ + handle (join case-insensitive su upper(codice),
+//   Regola Ferrea 4: catalogo in Title_Case legacy, v_inventory MAIUSCOLO). I segnaposto di LINK
+//   delle risposte standard ([link], [link prodotto], [product link]) sono gli unici che il modello
+//   non puo' riempire: li risolve il CODICE prima del prompt (url reale se c'e', altrimenti
+//   [DA VERIFICARE: link scheda prodotto] — mai promettere "sulla pagina del prodotto" a vuoto).
+//   Safety net deterministico sui testi generati: un segnaposto link sopravvissuto viene risolto o
+//   rimosso; ogni altro token [tra parentesi] non-DA VERIFICARE finisce in non_grounded (evidenziato
+//   in UI). Prodotto esaurito ma a catalogo: il BLOCCO DATI dice esplicitamente che sulla scheda
+//   c'e' il bottone "Avvisami quando torna disponibile" (form Klaviyo live dal 19-06, non si tocca).
+//   In piu': allineato il flag rinominato dalla migr 0084 (`cs_ai_model` -> `cs_ai_model_claude`,
+//   residuo dichiarato del brief cs_ai_model_allineamento: la v14 leggeva una chiave morta).
 // v14 (2026-07-31 sera, richiesta owner "contesto massimo" + valori riconfermati dal sito):
 //   - THREAD INTERO nel prompt (ultimi 30 messaggi, prima 4): su conversazioni lunghe l'AI
 //     perdeva l'inizio; col piano Gemini a pagamento il costo e' spiccioli.
@@ -67,6 +80,7 @@ async function sha256hex(s: string) {
 }
 
 const SHOP = 'amimi-10000';
+const SITE_URL = 'https://amimi.it';   // dominio del sito: unico posto in cui e' scritto (v15)
 const MODEL_SUMMARY = 'gemini-flash-lite-latest';
 const MODEL_DRAFT = 'gemini-flash-latest';
 const MAX_SUMMARY_PER_RUN = 8;
@@ -80,6 +94,15 @@ const STOP = new Set(['bag', 'the', 'con', 'senza', 'and', 'borsa', 'mini', 'max
 type Row = Record<string, unknown>;
 const cleanJson = (t: string) => (t || '').trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
 const countDaVerificare = (t: string) => (t.match(/\[DA VERIFICARE[^\]]*\]/gi) || []).length;
+
+// v15: segnaposto di LINK nelle risposte standard ([link], [link prodotto], [product link]): il modello
+// non puo' riempirli, li risolve il CODICE. Nel prompt: URL reale se c'e', altrimenti [DA VERIFICARE]
+// (mai un rimando a vuoto). Sul testo GENERATO (safety net): URL reale o rimozione secca.
+const LINK_PH_RE = /\[(?:link(?:\s+prodotto)?|product\s+link)\]/gi;
+const resolveLinkPh = (t: string, url: string | null): string =>
+  (t || '').replace(LINK_PH_RE, url ?? '[DA VERIFICARE: link scheda prodotto]');
+const scrubLinkPh = (t: string, url: string | null): string =>
+  (t || '').replace(LINK_PH_RE, url ?? '').replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').trim();
 
 async function gemini(model: string, prompt: string, key: string, maxTokens: number, jsonMode = false): Promise<string> {
   const genCfg: Record<string, unknown> = { temperature: 0.3, maxOutputTokens: maxTokens };
@@ -108,7 +131,7 @@ async function claude(model: string, system: string, user: string, key: string, 
 }
 
 // --- Recupero DATI (deterministico) ---
-type Prod = { codice: string; item: string; variant: string; prezzo: number | null; giacenza: number; disponibili: number; on_shopify: boolean };
+type Prod = { codice: string; item: string; variant: string; prezzo: number | null; giacenza: number; disponibili: number; on_shopify: boolean; url: string | null };
 
 // match prodotti citati nel testo: modello (item) presente + overlap parole variante; fallback alias sito.
 async function matchProducts(sb: ReturnType<typeof createClient>, text: string): Promise<Prod[]> {
@@ -116,6 +139,13 @@ async function matchProducts(sb: ReturnType<typeof createClient>, text: string):
   if (tw.size === 0) return [];
   const { data: inv } = await sb.from('v_inventory').select('codice,item,variant,retail_price,giacenza_attuale,disponibili_da_vendere,on_shopify');
   const rows = (inv ?? []) as Row[];
+  // v15: link scheda da shopify_catalog.handle (join case-insensitive, Regola Ferrea 4:
+  // catalogo Title_Case legacy vs v_inventory MAIUSCOLO). Nessun handle = nessun URL, mai inventarlo.
+  const { data: cat } = await sb.from('shopify_catalog').select('codice,handle,on_shopify');
+  const handleByCod = new Map<string, string>();
+  for (const c of (cat ?? []) as Row[]) {
+    if (c.on_shopify === true && c.handle) handleByCod.set(String(c.codice).toUpperCase(), String(c.handle));
+  }
   const { data: aliases } = await sb.from('product_aliases').select('shopify_name_norm,codice');
   const aliasHit = new Set<string>();
   for (const a of (aliases ?? []) as Row[]) {
@@ -133,10 +163,12 @@ async function matchProducts(sb: ReturnType<typeof createClient>, text: string):
     const varHits = varWords.filter((w) => tw.has(w)).length;
     const isAlias = aliasHit.has(String(r.codice));
     if (!modelHit && !isAlias) continue;
+    const handle = handleByCod.get(String(r.codice).toUpperCase()) ?? null;
     const prod: Prod = {
       codice: String(r.codice), item, variant,
       prezzo: r.retail_price == null ? null : Number(r.retail_price),
       giacenza: Number(r.giacenza_attuale ?? 0), disponibili: Number(r.disponibili_da_vendere ?? 0), on_shopify: r.on_shopify === true,
+      url: handle ? `${SITE_URL}/products/${handle}` : null,
     };
     scored.push({ p: prod, score: (modelHit ? 2 : 0) + varHits * 3 + (isAlias ? 4 : 0) });
   }
@@ -293,6 +325,9 @@ function lintDraft(testo: string, corpus: Set<string>): string[] {
     const full = 'u:' + host + (m[2] ? m[2].replace(/[.,;:!?)]+$/, '').toLowerCase() : '');
     if (!corpus.has(full) && !corpus.has('u:' + host)) flag(m[0], full);
   }
+  // v15: un token [tra parentesi] sopravvissuto nella bozza (che non sia un [DA VERIFICARE], gia'
+  // rimosso da `clean`) e' un segnaposto non riempito: sempre segnalato all'operatrice.
+  for (const m of clean.matchAll(/\[[^\]\n]{1,60}\]/g)) flag(m[0], 'ph:' + m[0]);
   return missing.slice(0, 8);
 }
 
@@ -384,7 +419,11 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   const meta = ordine ? await fetchOrderMeta(ordine.order_number, token) : null;
   const tracking = meta && wantsTracking ? meta.tracking : null;
   const order_admin_url = meta?.adminId ? `https://admin.shopify.com/store/${SHOP}/orders/${meta.adminId}` : null;
-  const { tono, standard } = await faqTono(sb, categoria, (conv.lingua as string) ?? null);
+  const { tono, standard: standardRaw } = await faqTono(sb, categoria, (conv.lingua as string) ?? null);
+  // v15: i segnaposto di link si risolvono QUI, prima del prompt: il miglior prodotto agganciato
+  // con scheda a catalogo presta il suo URL; senza URL resta un [DA VERIFICARE] esplicito.
+  const bestUrl = prodotti.find((p) => p.url)?.url ?? null;
+  const standard = standardRaw.map((s) => resolveLinkPh(s, bestUrl));
   const storia = await purchaseHistory(sb, (conv.customer_email as string) ?? null);
   const conoscenza = await csKnowledge(sb, categoria);
   // v14: conversazioni PRECEDENTI dello stesso cliente (riassunti, max 5): l'AI sa se ha gia'
@@ -400,6 +439,7 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   }
   const fonti: string[] = [];
   for (const p of prodotti) fonti.push(`${p.item} ${p.variant}: disponibili ${p.disponibili}, giacenza ${p.giacenza}${p.prezzo != null ? `, prezzo ${p.prezzo}EUR` : ''}${p.on_shopify ? ', a catalogo' : ''} (v_inventory)`);
+  for (const p of prodotti) if (p.url) fonti.push(`Link scheda ${p.item} ${p.variant}: ${p.url} (shopify_catalog)`);
   if (ordine) fonti.push(`Ordine #${ordine.order_number}: pagamento ${ordine.financial_status ?? 'n/d'}, evasione ${ordine.fulfillment_status ?? 'non evaso'}${ordine.fulfilled_at ? `, evaso il ${String(ordine.fulfilled_at).slice(0, 10)}` : ''} (shopify_orders)`);
   if (tracking) fonti.push(`Tracking ${tracking.corriere} ${tracking.numero} (Shopify Admin API, live)`);
   if (storia && storia.n_ordini > 0) fonti.push(`Cliente: ${storia.n_ordini} ordini, ${storia.totale}EUR totali (storico Shopify)`);
@@ -410,7 +450,10 @@ function datiBlock(d: Dati): string {
   const L: string[] = [];
   if (d.prodotti.length) {
     L.push('PRODOTTI (giacenza/disponibilita/prezzo dal gestionale):');
-    for (const p of d.prodotti) L.push(`- ${p.item} ${p.variant}: disponibili da vendere ${p.disponibili}, giacenza ${p.giacenza}${p.prezzo != null ? `, prezzo ${p.prezzo} EUR` : ''}${p.on_shopify ? ', a catalogo sul sito' : ', non a catalogo'}`);
+    for (const p of d.prodotti) L.push(`- ${p.item} ${p.variant}: disponibili da vendere ${p.disponibili}, giacenza ${p.giacenza}${p.prezzo != null ? `, prezzo ${p.prezzo} EUR` : ''}${p.on_shopify ? ', a catalogo sul sito' : ', non a catalogo'}${p.url ? `, link scheda: ${p.url}` : p.on_shopify ? ', link scheda NON disponibile (non rimandare alla pagina del prodotto: se serve, usa [DA VERIFICARE: link scheda prodotto])' : ''}`);
+    // v15: prodotto esaurito ma con scheda a catalogo -> la bozza deve dare il link dell'avviso restock
+    const soldOutLink = d.prodotti.filter((p) => p.disponibili <= 0 && p.url);
+    if (soldOutLink.length) L.push('NOTA RESTOCK: sulla scheda del prodotto esaurito (link qui sopra) c\'e\' il bottone "Avvisami quando torna disponibile": nella risposta INDICA quel link come il posto dove iscriversi all\'avviso ("qui puoi iscriverti per essere avvisata quando torna: <link>").');
   } else L.push('PRODOTTI: nessun prodotto identificato con certezza dal testo.');
   if (d.ordine) {
     L.push(`ORDINE #${d.ordine.order_number}: pagamento ${d.ordine.financial_status ?? 'n/d'}, evasione ${d.ordine.fulfillment_status ?? 'non ancora evaso'}${d.ordine.fulfilled_at ? `, evaso il ${String(d.ordine.fulfilled_at).slice(0, 10)}` : ''}.`);
@@ -436,7 +479,7 @@ Deno.serve(async (req) => {
   const action = String(body.action || '');
 
   const flags: Record<string, string> = {};
-  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model', 'cs_ai_istruzioni']);
+  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model_claude', 'cs_ai_istruzioni']);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
@@ -461,7 +504,8 @@ Deno.serve(async (req) => {
   const key = flags.gemini_api_key;
   // Motore AI: Claude se c'e' anthropic_api_key (owner lo mette a mano, mai in repo/chat), altrimenti Gemini free.
   const claudeKey = (flags.anthropic_api_key || '').trim();
-  const claudeModel = (flags.cs_ai_model || 'claude-sonnet-5').trim();
+  // migr 0084: `cs_ai_model` -> `cs_ai_model_claude` (e' SOLO il nome del modello Claude, non il selettore di motore)
+  const claudeModel = (flags.cs_ai_model_claude || 'claude-sonnet-5').trim();
   // model_override (harness eval, brief 29-07): A/B sulle stesse conversazioni senza toccare i flag
   // globali, e baseline Gemini rigenerabile anche DOPO l'inserimento della chiave Anthropic. Vale solo
   // per draft/refine (rami JWT: qui siamo gia' oltre il gate), allowlist esplicita, e MAI fallback
@@ -673,7 +717,9 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
       aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''),
       ctx.conoscenza.join('\n'), ctx.precedenti.join('\n'),   // v14: i valori di casa (14, 3.90, CAP...) sono fatti consentiti
     ].join('\n'));
-    const options = opzioni.slice(0, 3).map((o) => ({ tono: o.tono, testo: o.testo, da_verificare: countDaVerificare(o.testo), non_grounded: lintDraft(o.testo, lintCorpus) }));
+    // v15: safety net sui segnaposto di LINK sopravvissuti alla generazione (url reale o rimozione)
+    const bestUrlD = ctx.dati.prodotti.find((p) => p.url)?.url ?? null;
+    const options = opzioni.slice(0, 3).map((o) => { const testo = scrubLinkPh(o.testo, bestUrlD); return { tono: o.tono, testo, da_verificare: countDaVerificare(testo), non_grounded: lintDraft(testo, lintCorpus) }; });
 
     const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: usedModel, source: draftSource }).select('id').single();
     await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length, ...(draftSource === 'eval' ? { source: 'eval', model: usedModel } : {}), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
@@ -718,6 +764,7 @@ Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown
     catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     if (!out) return json({ ok: false, error: 'bozza vuota' }, 502);
     out = out.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
+    out = scrubLinkPh(out, ctx.dati.prodotti.find((p) => p.url)?.url ?? null);   // v15: safety net link
     // linter di aderenza anche sulla riscrittura (la bozza di partenza NON e' fonte: potrebbe gia' inventare)
     // v13: corpus sul thread RAW (citazioni incluse), come su draft
     const lintCorpusR = factKeys([
