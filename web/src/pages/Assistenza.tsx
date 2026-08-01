@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato } from '../lib/csApi';
 
 // email in testo semplice: preserva gli a-capo (CSS pre-wrap) e collassa i vuoti multipli (feedback 24-07)
@@ -40,6 +40,8 @@ const CANALI: Record<Canale, string> = { email_diretta: '✉️ email', form_con
 const BUCKETS: [string, string][] = [['oggi', 'Oggi'], ['ieri', 'Ieri'], ['sett', 'Questa settimana'], ['vecchie', 'Piu’ vecchie']];
 const TONO_LABEL: Record<string, string> = { breve: '⚡ Breve', calda: '💛 Calda', formale: '🎩 Formale', bozza: '✍️ Bozza' };
 const SHOPIFY_INBOX = 'https://admin.shopify.com/store/amimi-10000/apps/inbox';
+// Fase 4: canali con INVIO dall'app (chat = solo copia + deep-link Inbox; rumore = niente)
+const CAN_SEND: Set<Canale> = new Set(['email_diretta', 'form_contatto', 'form_evento']);
 
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
 function bucketOf(iso: string | null): string {
@@ -114,6 +116,13 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [refineTxt, setRefineTxt] = useState('');
   const [refining, setRefining] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Fase 4: invio dall'app. sendKey (uuid) nasce all'apertura del dialog = anti doppio invio
+  // (doppio click / retry di rete portano la stessa chiave, la edge non spedisce due volte).
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendKey, setSendKey] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendErr, setSendErr] = useState('');
+  const [sentTo, setSentTo] = useState<string | null>(null);   // invio riuscito per QUESTO testo (si azzera se il testo cambia)
   const [convs, setConvs] = useState<CsConversation[] | null>(null);
   const [rumore, setRumore] = useState<CsConversation[] | null>(null);
   const [current, setCurrent] = useState<CsConversation | null>(null);
@@ -199,6 +208,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     threadRef.current = c.id;
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
     setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]); setMoreOpen(false);
+    setSendOpen(false); setSending(false); setSendErr(''); setSentTo(null);
     try { const m = await fetchMessages(c.id); if (threadRef.current === c.id) setMsgs(m); }
     catch (e) { if (threadRef.current === c.id) setErr((e as Error).message); }
     // Contesto (link ordine + storico acquisti): nessuna spesa AI, best-effort (non blocca il thread).
@@ -212,7 +222,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const doGenOptions = async () => {
     if (!current) return;
     const tid = current.id;
-    setGenBozza(true); setErr(''); setCopied(false);
+    setGenBozza(true); setErr(''); setCopied(false); setSentTo(null); setSendOpen(false);
     try {
       const r = await generateOptions(tid, ident, confirmDate || undefined);
       if (threadRef.current !== tid) return;   // thread cambiato nel frattempo: butta la risposta
@@ -221,17 +231,50 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     } catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
     if (threadRef.current === tid) setGenBozza(false);
   };
-  const pickOption = (i: number) => { if (!options?.[i]) return; setSelIdx(i); setBozzaText(options[i].testo); setDaVer(options[i].da_verificare); setNonGrounded(options[i].non_grounded ?? []); setCopied(false); };
+  const pickOption = (i: number) => { if (!options?.[i]) return; setSelIdx(i); setBozzaText(options[i].testo); setDaVer(options[i].da_verificare); setNonGrounded(options[i].non_grounded ?? []); setCopied(false); setSentTo(null); };
   // "Chiedi una modifica": l'AI riscrive la bozza corrente applicando l'istruzione, sempre sui dati reali.
   const doRefine = async () => {
     if (!current || !bozzaText.trim() || !refineTxt.trim()) return;
     const tid = current.id;
     setRefining(true); setErr(''); setCopied(false);
-    try { const r = await refineDraft(tid, ident, bozzaText, refineTxt); if (threadRef.current === tid) { setBozzaText(r.draft); setDaVer(r.da_verificare); setNonGrounded(r.non_grounded ?? []); setRefineTxt(''); } }
+    try { const r = await refineDraft(tid, ident, bozzaText, refineTxt); if (threadRef.current === tid) { setBozzaText(r.draft); setDaVer(r.da_verificare); setNonGrounded(r.non_grounded ?? []); setRefineTxt(''); setSentTo(null); } }
     catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
     if (threadRef.current === tid) setRefining(false);
   };
   const copiaBozza = async () => { try { await navigator.clipboard.writeText(bozzaText); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* no clipboard */ } };
+  // Fase 4 — chat del sito: NESSUN invio dall'app (decisione owner 01-08: un'email autonoma
+  // creerebbe due tracce). Copia il testo finale e apre la conversazione ESATTA in Inbox,
+  // dove e' Inbox a consegnare (chat live o email al cliente).
+  const copiaEApriInbox = async () => {
+    try { await navigator.clipboard.writeText(bozzaText); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* no clipboard */ }
+    window.open(inboxUrlOf(msgs) ?? SHOPIFY_INBOX, '_blank', 'noopener');
+    showToast('Copiata. Incolla in Inbox e chiudi lì la conversazione dopo la risposta.');
+  };
+  // Fase 4 — apertura del dialog di conferma: OGNI invio passa da qui (mai invio automatico).
+  // La send_key nasce adesso: doppio click e retry porteranno la stessa chiave (anti doppio invio).
+  const openSend = () => { setSendKey(crypto.randomUUID()); setSendErr(''); setSendOpen(true); };
+  const doSend = async () => {
+    if (!current || sending) return;
+    const tid = current.id;
+    setSending(true); setSendErr('');
+    try {
+      const r = await sendReply(tid, ident, bozzaText, sendKey);
+      if (threadRef.current !== tid) return;
+      setSendOpen(false); setSentTo(r.to);
+      showToast(r.already_sent ? `Era già partita: inviata a ${r.to}` : `✓ Inviata a ${r.to}`);
+      // la contabilita' post-invio fallita NON e' silenziosa: la mail e' partita, ma va controllato
+      if (r.warnings.length) setErr('Email inviata, ma da controllare: ' + r.warnings.join(' · '));
+      try {
+        const m = await fetchMessages(tid);
+        if (threadRef.current === tid) setMsgs(m);
+        const list = await fetchConversations();
+        setConvs(list);
+        const cur = list.find((x) => x.id === tid);
+        if (cur && threadRef.current === tid) setCurrent(cur);   // stato aggiornato (fatto/auto) in testata
+      } catch { /* refresh best-effort: l'invio resta riuscito */ }
+    } catch (e) { if (threadRef.current === tid) setSendErr((e as Error).message); }
+    if (threadRef.current === tid) setSending(false);
+  };
   const openRumore = async () => {
     pushSub();
     setView('rumore'); setErr('');
@@ -453,7 +496,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
           <div className="ds-aisum"><div className="ds-aisum-h">📝 In breve</div><p>{c.summary}</p></div>
         )}
         {c.canale === 'chat_notifica' && !draftMode && (
-          <div className="cs-banner">💬 Chat del sito (Shopify Inbox): Shopify non permette di rispondere da qui. Genera la bozza qui sotto, copiala e incollala nella conversazione.
+          <div className="cs-banner">💬 Chat del sito (Shopify Inbox): si risponde DENTRO Inbox, non da qui (una nostra email a parte creerebbe due tracce). Genera la bozza qui sotto, poi &#8220;Copia risposta e apri in Inbox&#8221;.
             <div style={{ marginTop: 8 }}><a className="cs-btn cs-inbox" href={inboxUrlOf(msgs) ?? SHOPIFY_INBOX} target="_blank" rel="noreferrer">{inboxUrlOf(msgs) ? 'Rispondi in Inbox ↗' : 'Apri Shopify Inbox ↗'}</a></div>
           </div>
         )}
@@ -562,7 +605,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   {daVer > 0 && <span className="cs-badge cs-warn">{daVer} da verificare</span>}
                   {nonGrounded.length > 0 && <span className="cs-badge cs-urg">⚠ {nonGrounded.length} non nel gestionale</span>}
                 </div>
-                <textarea className="cs-draft-ta" value={bozzaText} onChange={(e) => setBozzaText(e.target.value)} rows={8} />
+                <textarea className="cs-draft-ta" value={bozzaText} onChange={(e) => { setBozzaText(e.target.value); setSentTo(null); }} rows={8} />
                 {nonGrounded.length > 0 && (
                   <div className="cs-lint">⚠️ <b>Controlla questi dati</b> — l&#8217;AI li ha scritti ma NON risultano dal gestionale: {nonGrounded.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}</div>
                 )}
@@ -570,10 +613,21 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   <input className="cs-refine-in" value={refineTxt} onChange={(e) => setRefineTxt(e.target.value)} placeholder="Chiedi una modifica all’AI (es. più formale, aggiungi il reso)" onKeyDown={(e) => { if (e.key === 'Enter') doRefine(); }} disabled={refining} />
                   <button className="cs-btn cs-ghost" onClick={doRefine} disabled={refining || !refineTxt.trim()} type="button">{refining ? '…' : '✨ Applica'}</button>
                 </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                  <button className="cs-btn cs-primary" onClick={copiaBozza} type="button">{copied ? '✓ Copiata' : '📋 Copia'}</button>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                  {c.canale === 'chat_notifica' ? (
+                    /* Fase 4, decisione owner 01-08: la chat si risponde DENTRO Inbox (niente invio da qui) */
+                    <button className="cs-btn cs-primary" onClick={copiaEApriInbox} type="button">{copied ? '✓ Copiata' : '📋 Copia risposta e apri in Inbox ↗'}</button>
+                  ) : (
+                    CAN_SEND.has(c.canale) && c.customer_email && (
+                      <button className="cs-btn cs-primary" onClick={openSend} disabled={sending || !!sentTo || !bozzaText.trim()} type="button">{sentTo ? '✓ Inviata' : '✉️ Invia…'}</button>
+                    )
+                  )}
+                  {c.canale !== 'chat_notifica' && <button className="cs-btn cs-ghost" onClick={copiaBozza} type="button">{copied ? '✓ Copiata' : '📋 Copia'}</button>}
                   <button className="cs-btn cs-ghost" onClick={doGenOptions} disabled={genBozza} type="button">{genBozza ? '…' : '↻ Rigenera'}</button>
                 </div>
+                {CAN_SEND.has(c.canale) && !c.customer_email && (
+                  <div className="cs-note" style={{ textAlign: 'left', marginTop: 8 }}>Email del cliente non presente: l&#8217;invio da qui non &#232; possibile, rispondi dal thread Gmail.</div>
+                )}
                 {fonti.length > 0 && (
                   <div className="cs-fonti">
                     <div className="cs-fonti-h">Fonti (dati recuperati dal gestionale)</div>
@@ -582,7 +636,34 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 )}
               </>
             )}
-            <div className="cs-note">Le bozze usano SOLO i dati reali; dove manca un dato scrivono [DA VERIFICARE]. {c.canale === 'chat_notifica' ? 'Ritocca, copia e incolla nella chat (bottone "Rispondi in Inbox" qui sopra).' : 'Ritocca e copia nel thread Gmail.'} L&#8217;invio dal tool arriva in Fase 4.</div>
+            <div className="cs-note">Le bozze usano SOLO i dati reali; dove manca un dato scrivono [DA VERIFICARE]. {c.canale === 'chat_notifica' ? 'Copia e rispondi dentro Shopify Inbox (la chat non si invia da qui): chiudi lì la conversazione dopo la risposta.' : 'Controlla, ritocca e premi Invia: parte da info@amimi.it solo dopo la tua conferma.'}</div>
+            {/* Fase 4: dialog di conferma — destinatario, canale e warning del linter SEMPRE in vista */}
+            {sendOpen && (
+              <div className="cs-sendwrap" role="dialog" aria-modal="true" aria-label="Conferma invio">
+                <div className="cs-sendmodal">
+                  <div className="cs-send-h">✉️ Conferma invio</div>
+                  <div className="cs-send-row"><span className="k">A</span><b>{c.customer_email}</b></div>
+                  <div className="cs-send-row"><span className="k">Da</span><span>info@amimi.it{ident && IDENTS[ident] ? ` · firma ${IDENTS[ident].n}` : ''}</span></div>
+                  <div className="cs-send-row"><span className="k">Come</span><span>{c.canale === 'email_diretta' ? 'risposta nello stesso thread Gmail' : 'email nuova al cliente (il modulo del sito non è rispondibile)'}</span></div>
+                  {(() => {
+                    const dv = (bozzaText.match(/\[DA VERIFICARE[^\]]*\]/gi) || []).length;
+                    if (!dv && !nonGrounded.length) return null;
+                    return (
+                      <div className="cs-lint" style={{ marginTop: 10 }}>
+                        {dv > 0 && <div>⚠️ Il testo contiene ancora <b>{dv} [DA VERIFICARE]</b>: completalo o rimuovilo, oppure invia solo se è una scelta consapevole.</div>}
+                        {nonGrounded.length > 0 && <div style={{ marginTop: dv > 0 ? 6 : 0 }}>⚠️ Dati NON trovati nel gestionale (dall&#8217;ultima generazione): {nonGrounded.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}</div>}
+                      </div>
+                    );
+                  })()}
+                  <div className="cs-send-preview">{bozzaText}</div>
+                  {sendErr && <div className="err" style={{ marginTop: 10 }}>{sendErr}</div>}
+                  <div className="cs-send-actions">
+                    <button className="cs-btn cs-ghost" onClick={() => setSendOpen(false)} disabled={sending} type="button">Annulla</button>
+                    <button className="cs-btn cs-primary" onClick={doSend} disabled={sending} type="button">{sending ? 'Invio…' : '✓ Invia adesso'}</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

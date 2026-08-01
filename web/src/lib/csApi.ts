@@ -254,3 +254,28 @@ export async function refineDraft(conversationId: string, chi: string, testo: st
   const j = await callAssist({ action: 'refine', conversation_id: conversationId, chi, testo, istruzione });
   return { draft: String(j.draft || ''), da_verificare: Number(j.da_verificare || 0), non_grounded: (j.non_grounded || []) as string[] };
 }
+
+const CS_SEND_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/cs-send';
+
+export type SendResult = { to: string; subject: string; stato_auto: boolean; already_sent: boolean; warnings: string[] };
+/** FASE 4 — INVIO dall'app (edge dedicata cs-send, JWT). Parte SOLO dal dialog di conferma:
+ *  email_diretta = risposta nello stesso thread Gmail; form_contatto/form_evento = email nuova a
+ *  customer_email (mai al wrapper Shopify). `sendKey` (uuid, generata all'apertura del dialog) e'
+ *  l'anti doppio invio: doppio click o retry di rete con la stessa chiave non producono una
+ *  seconda email. `warnings` = contabilita' post-invio fallita (la mail e' comunque partita). */
+export async function sendReply(conversationId: string, chi: string, testo: string, sendKey: string): Promise<SendResult> {
+  const { data } = await csClient.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sessione scaduta: rientra.');
+  const r = await fetch(CS_SEND_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+    body: JSON.stringify({ action: 'send', conversation_id: conversationId, chi, testo, send_key: sendKey }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(j.error || ('Errore ' + r.status));
+  return {
+    to: String(j.to || ''), subject: String(j.subject || ''), stato_auto: j.stato_auto === true,
+    already_sent: j.already_sent === true, warnings: (j.warnings || []) as string[],
+  };
+}
