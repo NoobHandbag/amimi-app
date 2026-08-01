@@ -1,6 +1,15 @@
 // shopify-stock — THIRD FLOW. READ-ONLY pull of Shopify variant inventory into shopify_stock,
 // plus a GATED realign (sets Shopify available = gestionale "disponibili") behind
 // app_flags.shopify_write_enabled. Token in app_config (service-role). PIN-gated.
+//
+// 2026-08-01 (brief cs_assist_migliorie punto 5): lo stesso pull alimenta ora anche
+// `shopify_catalog` (handle della scheda + on_shopify), che fino a ieri era un seed del 24-06 mai
+// piu' aggiornato. Da quando `cs-assist` ci costruisce sopra il link alla scheda prodotto per le
+// risposte alle clienti, una tabella ferma e' un problema che si vede: 67 handle su 99 prodotti, e
+// in peggioramento a ogni prodotto nuovo. Il pull di products.json c'era gia': serviva solo
+// chiedere un campo in piu' e scrivere quello che si e' visto. Nessuno scope Shopify nuovo,
+// nessuna chiamata in piu', e lo STOCK non cambia di una virgola (Regola Ferrea 15: il writer
+// unico resta questo, e verso Shopify continua a scrivere solo il realign gated).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -40,7 +49,7 @@ Deno.serve(async (req) => {
     // (niente upsert ne' prune su un pull parziale); cap di sicurezza anti-loop, MAI silenzioso.
     // deno-lint-ignore no-explicit-any
     const products: any[] = [];
-    let pageUrl: string | null = `${API}/products.json?limit=250&fields=id,title,status,image,images,variants`;
+    let pageUrl: string | null = `${API}/products.json?limit=250&fields=id,title,handle,status,image,images,variants`;
     let pages = 0;
     while (pageUrl) {
       if (++pages > 20) return { error: 'Shopify: oltre 20 pagine di prodotti, pull abortito (cap di sicurezza)', status: 502 };
@@ -57,7 +66,7 @@ Deno.serve(async (req) => {
     // Quando PIU' prodotti Shopify mappano allo stesso codice (es. il doppione ritirato "DARK LEOPARD
     // PONY" in bozza + la "SAVANA" attiva), titolo/immagine/status vengono dal MIGLIORE:
     // attivo batte bozza/archiviato, SKU esatto batte l'alias sul titolo (feedback 06-07, item 19).
-    const byCodice = new Map<string, { qty: number; title: string; image: string | null; variant_id: string; items: string[]; status: string; score: number }>();
+    const byCodice = new Map<string, { qty: number; title: string; handle: string | null; image: string | null; variant_id: string; items: string[]; status: string; score: number }>();
     for (const p of products ?? []) {
       const status = String(p.status ?? 'active');
       for (const v of p.variants ?? []) {
@@ -75,11 +84,11 @@ Deno.serve(async (req) => {
         const score = (status === 'active' ? 2 : 0) + (bySku ? 1 : 0);
         const e = byCodice.get(codice);
         if (!e) {
-          byCodice.set(codice, { qty: Number(v.inventory_quantity ?? 0), title: p.title, image: image_url, variant_id: String(v.id), items: [String(v.inventory_item_id)], status, score });
+          byCodice.set(codice, { qty: Number(v.inventory_quantity ?? 0), title: p.title, handle: p.handle ?? null, image: image_url, variant_id: String(v.id), items: [String(v.inventory_item_id)], status, score });
         } else {
           if (!e.items.includes(String(v.inventory_item_id))) e.items.push(String(v.inventory_item_id));
           if (score > e.score) {
-            e.qty = Number(v.inventory_quantity ?? 0); e.title = p.title; e.image = image_url;
+            e.qty = Number(v.inventory_quantity ?? 0); e.title = p.title; e.handle = p.handle ?? null; e.image = image_url;
             e.variant_id = String(v.id); e.status = status; e.score = score;
           }
         }
@@ -106,7 +115,35 @@ Deno.serve(async (req) => {
         pruned = gone.length;
       }
     }
-    return { ok: true, synced: rows.length, pruned, pages, products: products.length, dual: rows.filter((r) => r.inventory_item_ids.length > 1).length };
+
+    // CATALOGO (01-08): stesso pull, stesse regole del mirror sopra. `shopify_catalog` da' a
+    // cs-assist l'handle con cui costruisce il link alla scheda nelle risposte alle clienti, e
+    // fino a ieri era un seed del 24-06 che nessuno aggiornava. Solo i codici con un handle: senza
+    // handle non c'e' URL, e un URL inventato finirebbe in una mail (Regola 1). `on_shopify` e' vera
+    // solo per le schede `active`: linkare una bozza manda la cliente su una pagina che non esiste.
+    let catalogo = 0, catalogoPruned = 0;
+    if (rows.length) {
+      const cat = [...byCodice.entries()]
+        .filter(([, e]) => !!e.handle)
+        .map(([codice, e]) => ({ codice, handle: e.handle, on_shopify: e.status === 'active', synced_at: new Date().toISOString() }));
+      if (cat.length) {
+        await sb.from('shopify_catalog').upsert(cat, { onConflict: 'codice' });
+        // Prune con la stessa logica dello stock: ci si arriva solo a pull completo e non vuoto,
+        // quindi "non vista" vuol dire davvero assente. Toglie anche le righe del vecchio seed che
+        // avevano una grafia diversa dal codice canonico, senza lasciare doppioni case-insensitive.
+        const vivi = new Set(cat.map((c) => c.codice));
+        const { data: esistenti } = await sb.from('shopify_catalog').select('codice');
+        const via = (esistenti ?? []).map((r) => r.codice as string).filter((c) => !vivi.has(c));
+        if (via.length) {
+          await sb.from('shopify_catalog').delete().in('codice', via);
+          catalogoPruned = via.length;
+        }
+        catalogo = cat.length;
+        if (catalogoPruned) await sb.from('change_log').insert({ tbl: 'shopify_catalog', row_id: 'sync', op: 'catalog_prune', after: { pruned: catalogoPruned, codici: via.slice(0, 40) }, chi: who, source: 'shopify-stock' });
+      }
+    }
+
+    return { ok: true, synced: rows.length, pruned, catalogo, catalogoPruned, pages, products: products.length, dual: rows.filter((r) => r.inventory_item_ids.length > 1).length };
   };
   if (action === 'sync') { const r = await doSync() as { status?: number }; return json(r, r.status ?? 200); }
 
