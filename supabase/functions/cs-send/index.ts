@@ -1,4 +1,9 @@
-// cs-send v1 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// cs-send v2 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// v2 (2026-08-01, durante il collaudo E2E): azione `diag` (PIN, nessun invio, nessuna PII, nessun
+//   segreto in risposta) che prova a ottenere il token Google scope per scope e dice QUALE e'
+//   autorizzato sulla domain-wide delegation. Nasce da un caso reale: Google risponde
+//   `unauthorized_client` senza dire quale scope manca, e un ritocco alla delegation aveva
+//   sostituito gmail.readonly con gmail.send spegnendo l'ingest di cs-sync in silenzio.
 // Brief: 2026-07-31_CLAUDE_CODE_BRIEF_cs_fase4_invio_dallapp.md (decisione owner 31-07/01-08).
 // EDGE DEDICATA (Regola Ferrea 19: mai innesti in edge vive). Nessun invio automatico: arriva qui
 // solo il click esplicito dell'operatrice DOPO il dialog di conferma (destinatario + testo +
@@ -49,8 +54,12 @@ async function sha256hex(s: string) {
 const GMAIL_USER = 'info@amimi.it';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-// send per spedire; readonly per leggere gli header del thread (In-Reply-To/References/Subject)
-const SCOPES = 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly';
+// send per spedire; readonly SOLO per leggere gli header del thread (In-Reply-To/References/Subject).
+// Si chiedono con DUE token distinti: una delegation che autorizza uno ma non l'altro rifiuta la
+// richiesta congiunta, e l'invio non deve dipendere dallo scope di lettura (v2, caso reale 01-08).
+const SCOPE_SEND = 'https://www.googleapis.com/auth/gmail.send';
+const SCOPE_READ = 'https://www.googleapis.com/auth/gmail.readonly';
+const SCOPES = `${SCOPE_SEND} ${SCOPE_READ}`;
 const TESTO_MAX = 12000;
 const DEDUP_WINDOW_MS = 10 * 60 * 1000;   // guardia soft: stesso testo, stessa conversazione, 10 minuti
 
@@ -71,11 +80,11 @@ function pemToPkcs8(pem: string): Uint8Array {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-async function googleAccessToken(sa: { client_email: string; private_key: string }): Promise<string> {
+async function googleAccessTokenFor(sa: { client_email: string; private_key: string }, scope: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const enc = new TextEncoder();
   const header = b64url(enc.encode(JSON.stringify({ alg: 'RS256', typ: 'JWT' })));
-  const claims = b64url(enc.encode(JSON.stringify({ iss: sa.client_email, sub: GMAIL_USER, scope: SCOPES, aud: TOKEN_URL, iat: now, exp: now + 3600 })));
+  const claims = b64url(enc.encode(JSON.stringify({ iss: sa.client_email, sub: GMAIL_USER, scope, aud: TOKEN_URL, iat: now, exp: now + 3600 })));
   const key = await crypto.subtle.importKey('pkcs8', pemToPkcs8(sa.private_key).buffer as ArrayBuffer, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
   const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, enc.encode(`${header}.${claims}`)));
   const r = await fetch(TOKEN_URL, {
@@ -110,19 +119,50 @@ Deno.serve(async (req) => {
   const anon = Deno.env.get('SUPABASE_ANON_KEY')!;
   const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-  // 1) autorizzazione: utente Supabase Auth reale, dominio @amimi.it (pattern cs-api)
-  const authz = req.headers.get('Authorization') || '';
-  const tk = authz.toLowerCase().startsWith('bearer ') ? authz.slice(7).trim() : '';
-  if (!tk) return json({ error: 'non autenticato' }, 401);
-  const { data: ures, error: uerr } = await createClient(url, anon).auth.getUser(tk);
-  const user = ures?.user;
-  if (uerr || !user) return json({ error: 'sessione non valida' }, 401);
-  const userEmail = (user.email || '').toLowerCase();
-  if (!userEmail.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
-
   const body = await req.json().catch(() => ({}));
-  if (String(body.action || 'send') !== 'send') return json({ error: 'azione sconosciuta' }, 422);
+  const action = String(body.action || 'send');
+  if (action !== 'send' && action !== 'diag') return json({ error: 'azione sconosciuta' }, 422);
   const sb = createClient(url, svc);
+
+  // 1) autorizzazione. `send` (tocca il cliente) = utente Supabase Auth reale @amimi.it, pattern
+  // cs-api. `diag` (solo tecnica: nessuna PII, nessun segreto, nessun invio) = PIN, come le azioni
+  // di servizio delle altre edge del modulo: deve restare invocabile anche senza sessione browser.
+  let userEmail = '';
+  if (action === 'diag') {
+    const { data: cfgD } = await sb.from('app_config').select('pin_hash').eq('id', 1).single();
+    if (!cfgD?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfgD.pin_hash) return json({ error: 'PIN errato' }, 401);
+  } else {
+    const authz = req.headers.get('Authorization') || '';
+    const tk = authz.toLowerCase().startsWith('bearer ') ? authz.slice(7).trim() : '';
+    if (!tk) return json({ error: 'non autenticato' }, 401);
+    const { data: ures, error: uerr } = await createClient(url, anon).auth.getUser(tk);
+    const user = ures?.user;
+    if (uerr || !user) return json({ error: 'sessione non valida' }, 401);
+    userEmail = (user.email || '').toLowerCase();
+    if (!userEmail.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+  }
+
+  // --- diag (v2): quali scope Gmail sono davvero autorizzati sulla domain-wide delegation? ---
+  // Nessun invio, nessuna PII, nessun segreto in risposta: solo ok/errore per scope. Serve quando
+  // Google risponde `unauthorized_client`, che NON dice quale scope manca (caso reale 01-08: un
+  // ritocco alla delegation aveva sostituito gmail.readonly con gmail.send, spegnendo l'ingest).
+  if (action === 'diag') {
+    const { data: fl } = await sb.from('app_flags').select('value').eq('key', 'cs_gmail_sa_key').maybeSingle();
+    if (!fl?.value) return json({ ok: false, error: 'chiave service account assente' }, 500);
+    let saD: { client_email?: string; private_key?: string; client_id?: string };
+    try { saD = JSON.parse(String(fl.value)); } catch { return json({ ok: false, error: 'chiave non valida' }, 500); }
+    const probes: Record<string, string> = {
+      readonly: 'https://www.googleapis.com/auth/gmail.readonly',
+      send: 'https://www.googleapis.com/auth/gmail.send',
+      entrambi: SCOPES,
+    };
+    const esiti: Record<string, string> = {};
+    for (const [nome, scope] of Object.entries(probes)) {
+      try { await googleAccessTokenFor(saD as { client_email: string; private_key: string }, scope); esiti[nome] = 'ok'; }
+      catch (e) { esiti[nome] = (e as Error).message.slice(0, 160); }
+    }
+    return json({ ok: true, service_account: saD.client_email, client_id: saD.client_id, scope_autorizzati: esiti });
+  }
 
   // 2) input: conversazione, chi firma, testo finale (fa fede il box, non la bozza), send_key
   const convId = String(body.conversation_id || '');
@@ -186,27 +226,47 @@ Deno.serve(async (req) => {
   let sa: { client_email?: string; private_key?: string };
   try { sa = JSON.parse(String(flag.value)); } catch { return await sendFail(500, 'chiave service account non valida (JSON)'); }
   if (!sa.client_email || !sa.private_key) return await sendFail(500, 'chiave service account incompleta');
+  // Due token SEPARATI, non uno solo con entrambi gli scope (v2, dopo il caso reale 01-08: una
+  // delegation con `gmail.send` ma senza `gmail.readonly` rifiuta la richiesta CONGIUNTA, quindi
+  // un token unico rendeva l'invio ostaggio di uno scope che serve solo a leggere gli header).
+  //   - send: OBBLIGATORIO. Senza, non si spedisce e si dice perche'.
+  //   - readonly: BEST-EFFORT, serve solo agli header di reply (In-Reply-To/References). Se manca,
+  //     si risponde comunque nel thread (threadId + Subject dal DB, che e' cio' che Gmail usa per
+  //     accodare) e lo si DICHIARA nei warning: il threading su client non-Gmail puo' risultare
+  //     meno solido. Mai silenzioso.
   let gtoken: string;
-  try { gtoken = await googleAccessToken(sa as { client_email: string; private_key: string }); }
-  catch (e) { return await sendFail(502, 'autenticazione Google fallita (scope gmail.send autorizzato sulla delegation?): ' + (e as Error).message.slice(0, 200)); }
+  try { gtoken = await googleAccessTokenFor(sa as { client_email: string; private_key: string }, SCOPE_SEND); }
+  catch (e) { return await sendFail(502, 'autenticazione Google fallita: lo scope gmail.send non risulta autorizzato sulla domain-wide delegation. ' + (e as Error).message.slice(0, 180)); }
+  let readToken: string | null = null;
+  try { readToken = await googleAccessTokenFor(sa as { client_email: string; private_key: string }, SCOPE_READ); }
+  catch { readToken = null; }
 
   // 8) costruzione del messaggio
   let subject: string;
   let inReplyTo = '', references = '', threadId: string | null = null;
+  const preWarn: string[] = [];
   if (canale === 'email_diretta') {
-    // reply NEL thread: servono gli header dell'ultimo messaggio reale del thread
-    const tr = await fetch(`${GMAIL}/threads/${encodeURIComponent(String(conv.gmail_thread_id))}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject`, { headers: { Authorization: `Bearer ${gtoken}` } });
-    const tj = await tr.json().catch(() => ({}));
-    if (!tr.ok) return await sendFail(502, `thread Gmail non leggibile (${tr.status}): risposta nel thread impossibile, invio bloccato`);
-    const msgs = ((tj as { messages?: { labelIds?: string[]; payload?: { headers?: Hdr[] } }[] }).messages ?? [])
-      .filter((m) => !(m.labelIds ?? []).includes('DRAFT') && !(m.labelIds ?? []).includes('TRASH'));
-    const last = msgs[msgs.length - 1];
-    if (!last) return await sendFail(502, 'thread Gmail vuoto: risposta nel thread impossibile, invio bloccato');
-    const H = last.payload?.headers;
-    const lastMsgId = hdr(H, 'message-id');
-    const lastRefs = hdr(H, 'references');
-    const lastSubj = hdr(H, 'subject') || String(conv.subject || '');
-    subject = /^re:\s/i.test(lastSubj) ? lastSubj : 'Re: ' + lastSubj;
+    // reply NEL thread. Con lo scope di lettura: header veri dell'ultimo messaggio del thread.
+    // Senza: threadId + Subject dal DB (Gmail accoda lo stesso), e lo si dichiara.
+    let lastMsgId = '', lastRefs = '', lastSubj = '';
+    if (readToken) {
+      const tr = await fetch(`${GMAIL}/threads/${encodeURIComponent(String(conv.gmail_thread_id))}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject`, { headers: { Authorization: `Bearer ${readToken}` } });
+      const tj = await tr.json().catch(() => ({}));
+      if (!tr.ok) return await sendFail(502, `thread Gmail non leggibile (${tr.status}): risposta nel thread impossibile, invio bloccato`);
+      const msgs = ((tj as { messages?: { labelIds?: string[]; payload?: { headers?: Hdr[] } }[] }).messages ?? [])
+        .filter((m) => !(m.labelIds ?? []).includes('DRAFT') && !(m.labelIds ?? []).includes('TRASH'));
+      const last = msgs[msgs.length - 1];
+      if (!last) return await sendFail(502, 'thread Gmail vuoto: risposta nel thread impossibile, invio bloccato');
+      const H = last.payload?.headers;
+      lastMsgId = hdr(H, 'message-id');
+      lastRefs = hdr(H, 'references');
+      lastSubj = hdr(H, 'subject');
+    } else {
+      preWarn.push('header di reply non impostati: lo scope gmail.readonly non e\' autorizzato sulla delegation (la risposta resta nel thread via threadId, ma su client non-Gmail il collegamento puo\' essere piu\' debole)');
+    }
+    const subjBase = lastSubj || String(conv.subject || '');
+    if (!subjBase) return await sendFail(502, 'oggetto del thread sconosciuto: invio bloccato');
+    subject = /^re:\s/i.test(subjBase) ? subjBase : 'Re: ' + subjBase;
     if (lastMsgId) { inReplyTo = lastMsgId; references = (lastRefs ? lastRefs + ' ' : '') + lastMsgId; }
     threadId = String(conv.gmail_thread_id);
   } else {
@@ -241,7 +301,7 @@ Deno.serve(async (req) => {
   const gmailMsgId = String((sj as { id?: string }).id ?? '');
   const gmailThreadId = String((sj as { threadId?: string }).threadId ?? '');
   const sentAt = nowIso();
-  const warnings: string[] = [];
+  const warnings: string[] = [...preWarn];
 
   // 10) contabilita' post-invio (ogni fallimento = warning esplicito, mai fake-failure)
   // riga `out` con is_via_tool/sent_by; se cs-sync ci ha battuto sul tempo (poll nel mezzo), la
