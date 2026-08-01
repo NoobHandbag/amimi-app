@@ -1,4 +1,14 @@
-// cs-sync v11 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v12 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v12 (2026-08-01 notte, brief cs_uiux_rifiniture punto 2): lo stampo del modulo del sito arriva
+//   anche in INGLESE (il template segue la lingua della sessione del visitatore) e i marcatori
+//   erano solo italiani: sulle notifiche EN non scattava ne' il taglio del boilerplate ne'
+//   l'estrazione dei campi, e in coda si vedevano card intestate "amimi' (Shopify)" con dentro il
+//   modulo intero. Aggiunti i marcatori EN presi dai messaggi VERI, non indovinati: testata
+//   "You received a new message from your online store..." (il brief ipotizzava "You've received",
+//   che non esiste), campo libero "Body:", coda "By Clicking Submit...". In piu' il NOME della
+//   cliente si prende dal campo "Name:" del modulo e batte quello del mittente della notifica:
+//   e' la vera causa di "amimi' (Shopify)" nelle card, e riguardava anche le notifiche italiane.
+//   `backfill_clean` ripara anche i nomi gia' scritti (`nomi_scritti` nella risposta).
 // v11 (2026-08-01, decisione owner in chat): i thread "Collaborazioni e B2B" NON tornano in coda
 //   quando arriva una nuova mail (la promozione rumore->cliente di ensureConv li esclude): il B2B
 //   si risponde su Gmail, in app non deve comparire. Uscita dalla coda: cs-classify v7 + migr 0091.
@@ -225,8 +235,8 @@ function extractFormFields(body: string): Record<string, string> {
   const lines = (body || '').replace(/\r\n?/g, '\n').split('\n').slice(0, 60);
   const LABEL_RE = /^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '/]{1,30})\s*:\s*$/;
   // 'corpo' e' il campo libero del form_contatto: il suo contenuto e' body_clean, non un campo
-  const SKIP_KEYS = new Set(['corpo']);
-  const keep = (k: string) => !SKIP_KEYS.has(k) && !k.includes('richiesta') && !k.includes('cliccando');
+  const SKIP_KEYS = new Set(['corpo', 'body']);   // v12: 'body' = il 'corpo' del template EN
+  const keep = (k: string) => !SKIP_KEYS.has(k) && !k.includes('richiesta') && !k.includes('cliccando') && !k.includes('clicking');
   for (let i = 0; i < lines.length; i++) {
     const same = lines[i].match(/^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ '/]{1,30}?)\s*:\s*(.+?)\s*$/);
     if (same) { const k = same[1].trim().toLowerCase(); if (keep(k) && !(k in out)) out[k] = same[2].trim().slice(0, 500); continue; }
@@ -244,17 +254,30 @@ function extractFormFields(body: string): Record<string, string> {
 // (es. la risposta del cliente nello stesso thread) non tocca nulla. Ritorna null = "non era uno
 // stampo riconoscibile" (il chiamante lascia il testo com'e', mai un taglio sbagliato); ritorna ''
 // = stampo riconosciuto ma SENZA testo libero (a valle diventa body_clean NULL, la UI usa il grezzo).
-const FORM_WRAP_RE = /Hai\s+ricevuto\s+un\s+nuovo\s+messaggio\s+dal\s+modulo\s+di\s+contatto/i;
+// v12 (brief cs_uiux_rifiniture punto 2): lo stampo arriva anche in INGLESE, perche' il template
+// segue la lingua della sessione del visitatore. Con i soli marcatori italiani non scattava niente:
+// ne' il taglio ne' l'estrazione dei campi, e in coda comparivano card intestate "amimi' (Shopify)"
+// con dentro il boilerplate. I marcatori EN sono presi dai messaggi VERI in `cs_messages`, non
+// indovinati: la testata reale e' "You received a new message..." (non "You've received", che era
+// l'ipotesi del brief), la coda e' "By Clicking Submit The User Declares...".
+const FORM_WRAP_RE = /(?:Hai\s+ricevuto\s+un\s+nuovo\s+messaggio\s+dal\s+modulo\s+di\s+contatto|You\s+(?:have\s+)?received\s+a\s+new\s+message\s+from\s+your\s+online\s+store)/i;
 function stripFormPrint(s: string): string | null {
   if (!FORM_WRAP_RE.test(s)) return null;
-  // coda: legalese "Cliccando Su Invia ..." fino in fondo (include il "SÌ" di consenso)
-  let t = s.replace(/(?:^|\n)\s*Cliccando\s+Su\s+Invia[\s\S]*$/i, '');
+  // coda: legalese di consenso fino in fondo (include il "SI'"/"Yes" finale), IT o EN
+  let t = s.replace(/(?:^|\n)\s*(?:Cliccando\s+Su\s+Invia|By\s+Clicking\s+Submit)[\s\S]*$/i, '');
   // testa: tutto fino all'etichetta del campo libero (tollerante al word-wrap: \s+ attraversa i newline)
-  const m = t.match(/(?:(?:^|\n)\s*Corpo|Nella\s+Casella\s+Della\s+Richiesta)\s*:\s*/i);
+  const m = t.match(/(?:(?:^|\n)\s*(?:Corpo|Body)|Nella\s+Casella\s+Della\s+Richiesta)\s*:\s*/i);
   if (!m || m.index == null) return null;   // wrapper presente ma formato ignoto: non tagliare
   t = t.slice(m.index + m[0].length);
   return t.trim();
 }
+// v12: il nome che il modulo ha raccolto dal campo "Name:". Senza, `classify` ripiega sul nome del
+// MITTENTE, che per le notifiche del modulo e' "amimi' (Shopify)": in coda si leggeva il nostro
+// nome al posto di quello della cliente. Vale IT ed EN (lo stampo italiano usa comunque "Name:").
+const nomeDalModulo = (ff: Record<string, string> | null): string | null => {
+  const v = String(ff?.name ?? ff?.nome ?? '').trim();
+  return v && v.length <= 80 ? v : null;
+};
 function extractOrderNumber(text: string): number | null {
   const m = text.match(/(?:ordine|order|#)\s*#?\s*(\d{3,6})/i);
   return m ? Number(m[1]) : null;
@@ -550,9 +573,14 @@ Deno.serve(async (req) => {
   if (action === 'backfill_clean') {
     const limit = Math.min(Number(body.limit) || 200, 400);
     const force = body.force === true;
-    const { data: convRows } = await sb.from('cs_conversations').select('id, canale');
+    const { data: convRows } = await sb.from('cs_conversations').select('id, canale, customer_name');
     const canaleOf = new Map<string, string>();
-    for (const c of (convRows ?? []) as { id: string; canale: string }[]) canaleOf.set(c.id, c.canale);
+    const nomeOf = new Map<string, string | null>();
+    for (const c of (convRows ?? []) as { id: string; canale: string; customer_name: string | null }[]) { canaleOf.set(c.id, c.canale); nomeOf.set(c.id, c.customer_name); }
+    // v12: un nome "amimi' (Shopify)" o vuoto su una conversazione da modulo e' il nome del MITTENTE
+    // della notifica, non della cliente: e' quello che la card mostrava al posto suo.
+    const nomeDaSostituire = (n: string | null) => !n || /shopify/i.test(n) || isAmimi(String(n).toLowerCase());
+    const nomiScritti: string[] = [];
     // keyset su id (le righe con clean legittimamente NULL restano NULL: senza keyset
     // occuperebbero per sempre la testa della coda non-force)
     let q = sb.from('cs_messages').select('id, conversation_id, direction, body_text, body_clean, form_fields').not('body_text', 'is', null).order('id', { ascending: true }).limit(limit);
@@ -573,6 +601,15 @@ Deno.serve(async (req) => {
         const ff = extractFormFields(m.body_text);
         if (Object.keys(ff).length) upd.form_fields = ff;
       }
+      // v12: e con i campi arriva anche il NOME della cliente, che sulla conversazione mancava
+      if ((canale === 'form_contatto' || canale === 'form_evento') && m.direction === 'in' && FORM_WRAP_RE.test(m.body_text)) {
+        const nome = nomeDalModulo((upd.form_fields as Record<string, string>) ?? m.form_fields ?? extractFormFields(m.body_text));
+        if (nome && nomeDaSostituire(nomeOf.get(m.conversation_id) ?? null)) {
+          const { error: ne } = await sb.from('cs_conversations').update({ customer_name: nome }).eq('id', m.conversation_id);
+          if (ne) errors.push(m.conversation_id + ':nome:' + ne.message.slice(0, 50));
+          else { nomeOf.set(m.conversation_id, nome); nomiScritti.push(m.conversation_id); }
+        }
+      }
       if (!Object.keys(upd).length) { invariati++; continue; }
       const { error: ue } = await sb.from('cs_messages').update(upd).eq('id', m.id);
       if (ue) { errors.push(m.id + ':' + ue.message.slice(0, 60)); continue; }
@@ -580,7 +617,7 @@ Deno.serve(async (req) => {
       if (upd.form_fields !== undefined) fieldsWrote++;
     }
     const { count: remaining } = await sb.from('cs_messages').select('id', { count: 'exact', head: true }).is('body_clean', null).not('body_text', 'is', null);
-    return json({ ok: true, scanned, clean_scritti: wrote, fields_scritti: fieldsWrote, invariati, last_id: lastId, remaining: remaining ?? 0, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
+    return json({ ok: true, scanned, clean_scritti: wrote, fields_scritti: fieldsWrote, nomi_scritti: nomiScritti.length, invariati, last_id: lastId, remaining: remaining ?? 0, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
   }
 
   // --- DRY RUN: classifica i messaggi recenti, ritorna SOLO conteggi, scrive NULLA ---
@@ -627,6 +664,9 @@ Deno.serve(async (req) => {
       // v8: i campi si estraggono solo dallo STAMPO vero (wrapper presente), mai dalle risposte
       // successive del cliente nello stesso thread; {} non si scrive (resta NULL, la UI non accende)
       const ff = isForm && FORM_WRAP_RE.test(bodyText) ? extractFormFields(bodyText) : {};
+      // v12: il nome scritto dalla cliente nel modulo batte quello del mittente della notifica
+      const nomeForm = isForm ? nomeDalModulo(ff) : null;
+      if (nomeForm) cl.name = nomeForm;
       return {
         cl, from, to, subject, bodyText,
         sentAt: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null,

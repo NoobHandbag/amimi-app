@@ -1,4 +1,14 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v21 (2026-08-01 notte, brief cs_form_thread_merge, difesa in profondita): DUE CLIENTI NELLA
+//   STESSA CONVERSAZIONE = NESSUNA BOZZA. Due invii dal modulo del sito nello stesso minuto
+//   producono notifiche con oggetto identico, Gmail le accoda nello stesso thread e cs-sync ne fa
+//   una conversazione sola: la bozza nascerebbe dal TESTO di una cliente e dai DATI dell'altra
+//   (ordine, storico acquisti, email), perche' il testo viene dall'ultimo messaggio mentre
+//   `customer_email` e `order_number` vengono dalla RIGA conversazione. La guardia del v11 non
+//   scatta, perche' un'email c'e': e' solo di un'altra persona. Ora `draft` e `refine` rispondono
+//   422 con l'elenco degli indirizzi, e `context` mostra il contesto (leggere serve) con l'avviso
+//   in testa ai gap. `emailCliente` e' copia DICHIARATA e identica di quella di cs-send v4: le due
+//   edge non condividono moduli, e la fixture ne confronta l'impronta per accorgersi se divergono.
 // v20 (2026-08-01 notte, brief cs_assist_migliorie punto 4): fra i prodotti candidati entrano quelli
 //   dell'ORDINE VERIFICATO, comunque la cliente li abbia scritti. Il brief proponeva di allargare il
 //   match alle sole parole della VARIANTE: riprovato sui due casi reali che cita, non ne risolve
@@ -171,6 +181,33 @@ const STOP = new Set(['bag', 'the', 'con', 'senza', 'and', 'borsa', 'mini', 'max
 type Row = Record<string, unknown>;
 const cleanJson = (t: string) => (t || '').trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
 const countDaVerificare = (t: string) => (t.match(/\[DA VERIFICARE[^\]]*\]/gi) || []).length;
+
+// ==== PURE:cs-emailcliente BEGIN ====
+// BLOCCO CONDIVISO, copia IDENTICA in cs-send e cs-assist (le due edge non condividono moduli):
+// se lo cambi qui, cambialo anche li'. `tests/cs_convkey.mjs` confronta l'impronta delle due copie
+// e diventa ROSSO se divergono, cosi' le due edge non possono mai essere in disaccordo silenzioso
+// su chi sia un cliente.
+// Chi e' il CLIENTE che ha scritto un messaggio in ingresso. La prima stesura della cintura leggeva
+// `form_fields.Email` con la E maiuscola, mentre `cs-sync` scrive TUTTE le chiavi in minuscolo
+// (`extractFormFields` fa `label.trim().toLowerCase()`): sul canale form la lettura tornava sempre
+// undefined e si ripiegava su `from_email`, che li' e' il wrapper `mailer@shopify.com` ed e'
+// escluso, quindi l'insieme restava vuoto e non bloccava nulla proprio sul canale per cui era nato.
+// Verificato sul DB il 01-08: le chiavi esistenti sono `email`, `name`, `country code`,
+// `prefisso internazionale`. Il valore passa poi da un estrattore, perche'
+// `nome@dominio<mailto:nome@dominio>` deve contare come UN indirizzo e non come uno diverso.
+const EMAIL_TOKEN_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/;
+const NON_CLIENTE_RE = /@(?:amimi\.it|shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/;
+function emailCliente(m: { from_email?: string | null; form_fields?: Record<string, string> | null }): string | null {
+  let v = '';
+  const ff = m.form_fields ?? null;
+  if (ff) for (const k of Object.keys(ff)) if (k.trim().toLowerCase() === 'email') { v = String(ff[k] ?? ''); break; }
+  if (!v.trim()) v = String(m.from_email ?? '');
+  const hit = v.toLowerCase().match(EMAIL_TOKEN_RE);
+  if (!hit) return null;
+  const e = hit[0];
+  return NON_CLIENTE_RE.test(e) ? null : e;   // wrapper Shopify e nostri indirizzi non sono clienti
+}
+// ==== PURE:cs-emailcliente END ====
 
 // v15: segnaposto di LINK nelle risposte standard: il modello non puo' riempirli, li risolve il CODICE.
 // v19 (brief cs_faq_indirizzo_e_link_resi problema 2): la regex del v15 copriva SOLO il link prodotto,
@@ -823,20 +860,28 @@ Deno.serve(async (req) => {
   // v13: ogni messaggio porta `testo` = body_clean (fallback: stripChat/raw). Il PROMPT usa
   // `testo` (meno rumore); il CORPUS del linter usa il RAW body_text (i numeri citati restano
   // fatti consentiti). body_text nei row NON viene piu' sovrascritto.
-  const loadConv = async (_withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[] } | null> => {
+  const loadConv = async (_withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[]; clienti: string[] } | null> => {
     const convId = String(body.conversation_id || '');
     const cols = 'id,canale,customer_email,customer_name,order_number,categoria,subject,lingua';
     const { data: conv } = await sb.from('cs_conversations').select(cols).eq('id', convId).maybeSingle();
     if (!conv) return null;
     // v14: THREAD INTERO (cap 30 messaggi, i piu' recenti): prima si vedevano solo gli ultimi 4
-    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,body_clean,form_fields,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(30);
+    // v20: e con loro l'elenco dei CLIENTI distinti che hanno scritto in questa conversazione.
+    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,body_clean,form_fields,from_email,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(30);
     const recent = ((msgs ?? []) as Row[]).slice().reverse().map((m): Row => ({
       ...m,
       testo: String(m.body_clean ?? '') || (conv.canale === 'chat_notifica' ? stripChat(String(m.body_text ?? '')) : String(m.body_text ?? '')),
     }));
     const lastIn = [...recent].reverse().find((m) => m.direction === 'in') as Row | undefined;
     const inbound = [conv.subject, lastIn?.testo, lastIn?.form_fields ? JSON.stringify(lastIn.form_fields) : ''].filter(Boolean).join(' ');
-    return { conv: conv as Row, inbound, recent };
+    // v20: i clienti DISTINTI che hanno scritto qui dentro. Serve perche' due invii dal modulo nello
+    // stesso minuto finiscono nello stesso thread Gmail e quindi, oggi, nella stessa conversazione:
+    // la bozza userebbe il TESTO di uno e l'ordine/email dell'ALTRO, e la guardia del v11 non
+    // scatta perche' un'email c'e', solo che e' di un'altra persona. Stessa funzione di cs-send v4.
+    const clienti = [...new Set(recent.filter((m) => m.direction === 'in')
+      .map((m) => emailCliente({ from_email: (m.from_email as string) ?? null, form_fields: (m.form_fields as Record<string, string>) ?? null }))
+      .filter((e): e is string => !!e))];
+    return { conv: conv as Row, inbound, recent, clienti };
   };
   // cronologia per il prompt (CLEAN) e per il corpus del linter (RAW, slice piu' larga: regex, zero AI)
   const threadClean = (recent: Row[], subject: unknown): string =>
@@ -850,7 +895,10 @@ Deno.serve(async (req) => {
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     const ctx = await assembleContext(sb, lc.conv, lc.inbound, token, (lc.conv.categoria as string) ?? null);
     // contratto di contesto: cosa manca per rispondere bene a QUESTA categoria (mostrato prima di generare)
-    const gaps = [...contractGaps((lc.conv.categoria as string) ?? null, ctx.dati), ...ctx.gapExtra];
+    const gaps = [...contractGaps((lc.conv.categoria as string) ?? null, ctx.dati), ...ctx.gapExtra,
+      // v20: il contesto si mostra lo stesso (l'operatrice deve poter LEGGERE), ma con l'avviso in
+      // testa. La bozza invece non si genera: vedi la guardia in draft/refine.
+      ...(lc.clienti.length > 1 ? [`ATTENZIONE: in questa conversazione hanno scritto ${lc.clienti.length} clienti diversi (${lc.clienti.join(', ')}). Le bozze sono disabilitate: rispondi a ciascuno separatamente dal thread Gmail.`] : [])];
     return json({ ok: true, fonti: ctx.dati.fonti, gaps, order_admin_url: ctx.order_admin_url, storia: ctx.storia, dati: ctx.dati });
   }
 
@@ -916,6 +964,12 @@ Riassunto (max 2 righe):`;
     if (!useClaude && !key) return json({ ok: false, needs_key: true, error: 'motore Gemini richiesto ma gemini_api_key assente.' });
     const lc = await loadConv(true);
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
+    // v20: due clienti nella stessa conversazione = nessuna bozza. Succede quando due invii dal
+    // modulo nello stesso minuto finiscono nello stesso thread Gmail: la bozza nascerebbe dal TESTO
+    // di uno e dai DATI dell'altro (ordine, storico, email), e sarebbe un dato di un terzo dentro
+    // una risposta. Meglio niente bozza di una bozza mescolata: cs-send rifiuterebbe comunque
+    // l'invio (v4), ma qui il dato non viene nemmeno assemblato.
+    if (lc.clienti.length > 1) return json({ ok: false, error: `questa conversazione contiene richieste di ${lc.clienti.length} clienti diversi (${lc.clienti.join(', ')}): nessuna bozza, rispondi a ciascuno separatamente dal thread Gmail.`, cross_cliente: lc.clienti }, 422);
     const conv = lc.conv;
     const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
     const threadTxt = threadClean(lc.recent, conv.subject);
@@ -1031,6 +1085,12 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
     if (!testo || !istruzione) return json({ error: 'servono testo e istruzione' }, 422);
     const lc = await loadConv(true);
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
+    // v20: due clienti nella stessa conversazione = nessuna bozza. Succede quando due invii dal
+    // modulo nello stesso minuto finiscono nello stesso thread Gmail: la bozza nascerebbe dal TESTO
+    // di uno e dai DATI dell'altro (ordine, storico, email), e sarebbe un dato di un terzo dentro
+    // una risposta. Meglio niente bozza di una bozza mescolata: cs-send rifiuterebbe comunque
+    // l'invio (v4), ma qui il dato non viene nemmeno assemblato.
+    if (lc.clienti.length > 1) return json({ ok: false, error: `questa conversazione contiene richieste di ${lc.clienti.length} clienti diversi (${lc.clienti.join(', ')}): nessuna bozza, rispondi a ciascuno separatamente dal thread Gmail.`, cross_cliente: lc.clienti }, 422);
     const conv = lc.conv;
     const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
 

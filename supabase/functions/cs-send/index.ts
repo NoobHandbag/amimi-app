@@ -1,4 +1,12 @@
-// cs-send v3 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// cs-send v4 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// v4 (2026-08-01 notte, subito dopo la v3, trovato da un audit): LA CINTURA DELLA v3 ERA CIECA
+//   PROPRIO SUL CANALE FORM. Leggeva `form_fields.Email` con la E maiuscola, mentre `cs-sync`
+//   scrive tutte le chiavi in minuscolo: sul form la lettura tornava sempre undefined e si
+//   ripiegava su `from_email`, che li' e' il wrapper `mailer@shopify.com` ed e' escluso, quindi
+//   l'insieme restava vuoto e non ha mai bloccato nulla. Ora la chiave si cerca senza distinzione
+//   di maiuscole e il valore passa da un estrattore, cosi' `nome@dominio<mailto:nome@dominio>`
+//   conta come UN indirizzo. La v3 non ha causato danni (non bloccava e basta), ma dichiarava una
+//   protezione che non c'era, che e' peggio di non averla.
 // v3 (2026-08-01 notte, brief cs_form_thread_merge punto 3, che il brief stesso indica come "il
 //   pezzo piu' importante"): CINTURA CROSS-CLIENTE. Se fra i messaggi in ingresso della
 //   conversazione compaiono email di CLIENTI DIVERSI, l'invio si rifiuta con 422 e l'elenco degli
@@ -74,6 +82,33 @@ const DEDUP_WINDOW_MS = 10 * 60 * 1000;   // guardia soft: stesso testo, stessa 
 const IDENT: Record<string, string> = { B: 'Benedetta', G: 'Ginevra', A: 'Ale' };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const countDaVerificare = (t: string) => (t.match(/\[DA VERIFICARE[^\]]*\]/gi) || []).length;
+
+// ==== PURE:cs-emailcliente BEGIN ====
+// BLOCCO CONDIVISO, copia IDENTICA in cs-send e cs-assist (le due edge non condividono moduli):
+// se lo cambi qui, cambialo anche li'. `tests/cs_convkey.mjs` confronta l'impronta delle due copie
+// e diventa ROSSO se divergono, cosi' le due edge non possono mai essere in disaccordo silenzioso
+// su chi sia un cliente.
+// Chi e' il CLIENTE che ha scritto un messaggio in ingresso. La prima stesura della cintura leggeva
+// `form_fields.Email` con la E maiuscola, mentre `cs-sync` scrive TUTTE le chiavi in minuscolo
+// (`extractFormFields` fa `label.trim().toLowerCase()`): sul canale form la lettura tornava sempre
+// undefined e si ripiegava su `from_email`, che li' e' il wrapper `mailer@shopify.com` ed e'
+// escluso, quindi l'insieme restava vuoto e non bloccava nulla proprio sul canale per cui era nato.
+// Verificato sul DB il 01-08: le chiavi esistenti sono `email`, `name`, `country code`,
+// `prefisso internazionale`. Il valore passa poi da un estrattore, perche'
+// `nome@dominio<mailto:nome@dominio>` deve contare come UN indirizzo e non come uno diverso.
+const EMAIL_TOKEN_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/;
+const NON_CLIENTE_RE = /@(?:amimi\.it|shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/;
+function emailCliente(m: { from_email?: string | null; form_fields?: Record<string, string> | null }): string | null {
+  let v = '';
+  const ff = m.form_fields ?? null;
+  if (ff) for (const k of Object.keys(ff)) if (k.trim().toLowerCase() === 'email') { v = String(ff[k] ?? ''); break; }
+  if (!v.trim()) v = String(m.from_email ?? '');
+  const hit = v.toLowerCase().match(EMAIL_TOKEN_RE);
+  if (!hit) return null;
+  const e = hit[0];
+  return NON_CLIENTE_RE.test(e) ? null : e;   // wrapper Shopify e nostri indirizzi non sono clienti
+}
+// ==== PURE:cs-emailcliente END ====
 
 // --- OAuth 2.0 JWT bearer grant (identico a cs-sync, scope diversi) ---
 function b64url(bytes: Uint8Array): string {
@@ -213,10 +248,8 @@ Deno.serve(async (req) => {
     .select('from_email, form_fields').eq('conversation_id', convId).eq('direction', 'in');
   const mittenti = new Set<string>();
   for (const m of (inMsgs ?? []) as { from_email: string | null; form_fields: Record<string, string> | null }[]) {
-    const raw = String(m.form_fields?.Email || m.from_email || '').trim().toLowerCase();
-    if (!raw.includes('@')) continue;
-    if (raw.endsWith('@amimi.it') || raw.endsWith('@shopify.com') || raw.endsWith('@mailer.shopify.com') || raw.endsWith('@shopifyemail.com')) continue;
-    mittenti.add(raw);
+    const e = emailCliente(m);
+    if (e) mittenti.add(e);
   }
   if (mittenti.size > 1) {
     return json({

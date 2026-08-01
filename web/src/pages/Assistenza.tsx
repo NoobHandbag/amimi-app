@@ -252,14 +252,27 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
     if (threadRef.current === tid) setRefining(false);
   };
-  const copiaBozza = async () => { try { await navigator.clipboard.writeText(bozzaText); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* no clipboard */ } };
+  // v19 (brief cs_uiux_rifiniture punto 1): la copia negli appunti puo' FALLIRE (permessi negati,
+  // documento non a fuoco) e prima il tool diceva "Copiata" lo stesso: l'operatrice incollava in
+  // Inbox il contenuto precedente senza saperlo. Ora l'esito e' quello vero.
+  const copiaNegliAppunti = async (): Promise<boolean> => {
+    try { await navigator.clipboard.writeText(bozzaText); setCopied(true); setTimeout(() => setCopied(false), 2000); return true; }
+    catch { return false; }
+  };
+  const copiaBozza = async () => {
+    if (!(await copiaNegliAppunti())) showToast('Copia non riuscita: seleziona il testo e copialo a mano.');
+  };
   // Fase 4 — chat del sito: NESSUN invio dall'app (decisione owner 01-08: un'email autonoma
   // creerebbe due tracce). Copia il testo finale e apre la conversazione ESATTA in Inbox,
   // dove e' Inbox a consegnare (chat live o email al cliente).
   const copiaEApriInbox = async () => {
-    try { await navigator.clipboard.writeText(bozzaText); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* no clipboard */ }
+    const ok = await copiaNegliAppunti();
+    // Inbox si apre comunque (il deep-link e' meta' del gesto), ma il messaggio dice la verita':
+    // senza questo, si incollava in Inbox il contenuto vecchio degli appunti credendolo giusto.
     window.open(inboxUrlOf(msgs) ?? SHOPIFY_INBOX, '_blank', 'noopener');
-    showToast('Copiata. Incolla in Inbox e chiudi lì la conversazione dopo la risposta.');
+    showToast(ok
+      ? 'Copiata. Incolla in Inbox e chiudi lì la conversazione dopo la risposta.'
+      : '⚠ Copia NON riuscita: gli appunti hanno ancora il contenuto di prima. Torna qui, seleziona la bozza e copiala a mano.');
   };
   // Fase 4 — apertura del dialog di conferma: OGNI invio passa da qui (mai invio automatico).
   // La send_key nasce adesso: doppio click e retry porteranno la stessa chiave (anti doppio invio).
@@ -667,13 +680,37 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   <div className="cs-send-row"><span className="k">A</span><b>{c.customer_email}</b></div>
                   <div className="cs-send-row"><span className="k">Da</span><span>info@amimi.it{ident && IDENTS[ident] ? ` · firma ${IDENTS[ident].n}` : ''}</span></div>
                   <div className="cs-send-row"><span className="k">Come</span><span>{c.canale === 'email_diretta' ? 'risposta nello stesso thread Gmail' : 'email nuova al cliente (il modulo del sito non è rispondibile)'}</span></div>
+                  {/* v19 (brief cs_uiux_rifiniture punto 3): risposta gia' partita? Benny e Ginni
+                      condividono account e coda, e il 01-08 la stessa cliente di test ha ricevuto
+                      due risposte quasi identiche a un'ora e mezza di distanza senza nessun avviso.
+                      Solo warning, mai blocco (decisione owner T12). */}
                   {(() => {
-                    const dv = (bozzaText.match(/\[DA VERIFICARE[^\]]*\]/gi) || []).length;
-                    if (!dv && !nonGrounded.length) return null;
+                    const ts = (d: string) => (msgs ?? []).filter((m) => m.direction === d && m.sent_at).map((m) => m.sent_at as string).sort().pop();
+                    const out = ts('out'), inn = ts('in');
+                    if (!out || (inn && inn > out)) return null;
+                    const quando = new Date(out).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
                     return (
                       <div className="cs-lint" style={{ marginTop: 10 }}>
-                        {dv > 0 && <div>⚠️ Il testo contiene ancora <b>{dv} [DA VERIFICARE]</b>: completalo o rimuovilo, oppure invia solo se è una scelta consapevole.</div>}
-                        {nonGrounded.length > 0 && <div style={{ marginTop: dv > 0 ? 6 : 0 }}>⚠️ Dati NON trovati nel gestionale (dall&#8217;ultima generazione): {nonGrounded.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}</div>}
+                        ⚠️ A questa cliente risulta <b>già inviata una risposta</b> il {quando}, e da allora non ha più scritto. Se è un secondo invio voluto va bene, altrimenti annulla.
+                      </div>
+                    );
+                  })()}
+                  {(() => {
+                    // v19 (punto 4): i segnaposto rimasti nel testo FINALE, elencati per esteso. Una
+                    // mail con [DA VERIFICARE: numero ordine] e [link resi] nel corpo e' partita
+                    // davvero il 01-08: il linter li segnalava in fase di bozza, ma al momento
+                    // dell'invio nessuno li rimetteva davanti agli occhi.
+                    const ph = bozzaText.match(/\[[^\]\n]{2,}\]/g) || [];
+                    if (!ph.length && !nonGrounded.length) return null;
+                    return (
+                      <div className="cs-lint" style={{ marginTop: 10 }}>
+                        {ph.length > 0 && (
+                          <div>
+                            ⚠️ Nel testo ci sono ancora <b>{ph.length} segnaposto</b>: {ph.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}
+                            <div style={{ marginTop: 4 }}>Completali o toglili. Invia solo se è una scelta consapevole.</div>
+                          </div>
+                        )}
+                        {nonGrounded.length > 0 && <div style={{ marginTop: ph.length > 0 ? 6 : 0 }}>⚠️ Dati NON trovati nel gestionale (dall&#8217;ultima generazione): {nonGrounded.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}</div>}
                       </div>
                     );
                   })()}
