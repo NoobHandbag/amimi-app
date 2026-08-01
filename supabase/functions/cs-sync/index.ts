@@ -1,4 +1,16 @@
-// cs-sync v8 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v9 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v9 (2026-08-01, brief cs_stato_automatico_e_rumore, PARTE A - decisione testuale owner "assolutamente
+//   deve essere automatico"): lo stato della coda segue la realta' della posta, senza gesti manuali.
+//   - nuovo `out` ingerito -> conversazione `fatto` con stato_by='auto' + evento cs_events 'stato_auto';
+//   - nuovo `in` su conversazione `fatto` chiusa DALL'AUTOMATISMO -> riapre a `da_fare` (stato_by='auto');
+//   - LA MANO UMANA VINCE SEMPRE: se stato_by e' un nome di persona l'automatismo non tocca nulla
+//     (protegge i "fatto senza risposta" = decisioni consapevoli; un thread chiuso a mano che riceve
+//     una replica NON viene riaperto, ma recomputeUrgency lo accende gia' come 'thread riaperto');
+//   - doppio out / stato gia' giusto -> zero scritture (niente eventi ridondanti);
+//   - azione `backfill_stato` (PIN, dry_run DEFAULT): una tantum, chiude con stato_by='auto' le
+//     conversazioni da_fare non marcate a mano il cui ULTIMO messaggio e' un nostro out. NB: "ha un
+//     out" NON basta (misurato 01-08: 28 con out ma solo 13 con l'out per ultimo; le altre 15 hanno
+//     una replica del cliente DOPO e devono restare aperte, e' cio' che la regola live produrrebbe).
 // v8 (2026-08-01, brief cs_pulizia_moduli_form): lo STAMPO dei moduli del sito (form_contatto /
 //   form_evento, wrapper "Hai ricevuto un nuovo messaggio dal modulo di contatto...") viene tolto
 //   da `body_clean` in modo deterministico, ZERO AI: testa fino all'etichetta del campo libero
@@ -316,7 +328,7 @@ Deno.serve(async (req) => {
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const action = String(body.action || 'poll');
-  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean') return json({ error: 'azione sconosciuta: ' + action }, 422);
+  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
   const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders']);
@@ -333,6 +345,41 @@ Deno.serve(async (req) => {
     await sb.from('health_log').delete().eq('day', today).eq('k', 'cs_sync');
     await sb.from('health_log').insert({ day: today, k: 'cs_sync', label, n, severity, created_at: new Date().toISOString() });
   };
+
+  // v9: transizione AUTOMATICA dello stato (Parte A). La mano umana vince sempre: se stato_by e'
+  // il nome di una persona non si tocca nulla; la riapertura vale solo per cio' che l'automatismo
+  // stesso ha chiuso; stato gia' giusto = zero scritture (niente eventi ridondanti).
+  const setStatoAuto = async (convId: string, nuovo: 'fatto' | 'da_fare', motivo: string): Promise<boolean> => {
+    const { data: c } = await sb.from('cs_conversations').select('id, stato, stato_by').eq('id', convId).maybeSingle();
+    if (!c) return false;
+    if (c.stato_by && c.stato_by !== 'auto') return false;   // marcatura umana: mai sovrascritta
+    if (c.stato === nuovo) return false;
+    if (nuovo === 'da_fare' && !(c.stato === 'fatto' && c.stato_by === 'auto')) return false;   // riapre solo cio' che ha chiuso da sola
+    const { error } = await sb.from('cs_conversations').update({ stato: nuovo, stato_by: 'auto', stato_at: new Date().toISOString() }).eq('id', convId);
+    if (error) return false;
+    await sb.from('cs_events').insert({ conversation_id: convId, azione: 'stato_auto', chi: 'cs-sync', dettaglio: { da: c.stato, a: nuovo, motivo } });
+    return true;
+  };
+
+  // --- BACKFILL stato (v9, una tantum, dry_run DEFAULT: si applica solo con apply:true) ---
+  // Chiude con stato_by='auto' le conversazioni non-rumore, da_fare, NON marcate a mano, il cui
+  // ULTIMO messaggio e' un nostro out. Solo DB, niente Gmail. Idempotente: re-run scrive 0.
+  if (action === 'backfill_stato') {
+    const apply = body.apply === true;
+    const { data: convs } = await sb.from('cs_conversations')
+      .select('id, subject, stato, stato_by')
+      .neq('canale', 'rumore').eq('stato', 'da_fare');
+    const candidates: { id: string; subject: string }[] = [];
+    for (const c of (convs ?? []) as { id: string; subject: string | null; stato: string; stato_by: string | null }[]) {
+      if (c.stato_by && c.stato_by !== 'auto') continue;
+      const { data: lastM } = await sb.from('cs_messages').select('direction').eq('conversation_id', c.id).not('sent_at', 'is', null).order('sent_at', { ascending: false }).limit(1);
+      if (lastM && lastM[0]?.direction === 'out') candidates.push({ id: c.id, subject: String(c.subject ?? '').slice(0, 80) });
+    }
+    if (!apply) return json({ ok: true, dry_run: true, chiudibili: candidates.length, elenco: candidates });
+    let closed = 0;
+    for (const c of candidates) if (await setStatoAuto(c.id, 'fatto', 'backfill: risposta gia\' inviata')) closed++;
+    return json({ ok: true, dry_run: false, chiusi: closed });
+  }
 
   // --- chiave service account ---
   if (!flags.cs_gmail_sa_key) { if (!dryRun) await writeHealth(1, 'chiave SA assente', 'error'); return json({ ok: false, needs_key: true }); }
@@ -416,6 +463,7 @@ Deno.serve(async (req) => {
         if (!conv.last_msg_at || (sentAt && sentAt > conv.last_msg_at)) {
           await sb.from('cs_conversations').update({ last_msg_at: sentAt, last_direction: 'out' }).eq('id', conv.id);
         }
+        await setStatoAuto(conv.id, 'fatto', 'risposta inviata');   // v9: abbiamo risposto -> chiusa da sola
         await recomputeUrgency(conv.id);
       }
       return 'done';
@@ -643,6 +691,9 @@ Deno.serve(async (req) => {
       if (count) {
         newMsg += count;
         await sb.from('cs_events').insert({ conversation_id: convId, azione: 'ingest', chi: 'cs-sync', dettaglio: { canale: p.cl.canale, message_id: id } });
+        // v9: il cliente ha replicato a una conversazione chiusa DALL'AUTOMATISMO -> si riapre
+        // (setStatoAuto la lascia intatta se e' stata chiusa a mano: la mano umana vince)
+        await setStatoAuto(convId, 'da_fare', 'nuovo messaggio del cliente dopo la risposta');
         // v6: su un NUOVO messaggio cliente di una conversazione gia' classificata, la regola
         // sollecito va rivalutata subito (senza AI, senza toccare categoria)
         await recomputeUrgency(convId);

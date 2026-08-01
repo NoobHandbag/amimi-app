@@ -368,7 +368,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   {CS_CATEGORIES.map((k) => <option key={k.label} value={k.label}>{k.emoji} {k.label}</option>)}
                 </select>
                 <span className={'cs-badge cs-state' + (c.stato === 'fatto' ? ' cs-state-done' : c.stato === 'in_corso' ? ' cs-state-prog' : '')}>
-                  {c.stato === 'fatto' ? `✓ conclusa${c.stato_by ? ' · ' + c.stato_by : ''}` : c.stato === 'in_corso' ? `✋ in corso · ${c.stato_by ?? ''}` : 'da iniziare'}
+                  {c.stato === 'fatto' ? (c.stato_by === 'auto' ? '✓ conclusa da sola (risposta inviata)' : `✓ conclusa${c.stato_by ? ' · ' + c.stato_by : ''}`) : c.stato === 'in_corso' ? `✋ in corso · ${c.stato_by ?? ''}` : 'da iniziare'}
                 </span>
                 {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
                 {(c.flags ?? []).filter((f) => f !== 'urgente' && FLAG_LABEL[f]).map((f) => (
@@ -621,6 +621,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       <div className="cs-badges">
         <span className="cs-badge cs-can">{CANALI[c.canale]}</span>
         {c.stato === 'in_corso' && <span className="cs-badge cs-state cs-state-prog">✋ {c.stato_by}</span>}
+        {/* brief stato_automatico: distinguere a colpo d'occhio chiusa-da-sola da chiusa-da-persona */}
+        {c.stato === 'fatto' && <span className="cs-badge cs-state cs-state-done">{c.stato_by === 'auto' ? '✓ chiusa da sola' : `✓ ${c.stato_by ?? 'conclusa'}`}</span>}
         {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">risposta in Inbox</span>}
         {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
       </div>
