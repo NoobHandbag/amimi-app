@@ -114,6 +114,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // cs-assist v17: la generazione a 3 opzioni si e' interrotta e la edge ha ripiegato su una bozza
   // sola. Prima non lo diceva nessuno e sembrava un capriccio del tool (caso S10 del benchmark).
   const [fallbackSingola, setFallbackSingola] = useState(false);
+  const [troncate, setTroncate] = useState(0);   // v19: opzioni tagliate a meta' arrivate comunque
   // guardia race (audit #7): le risposte async di un thread APERTO PRIMA non devono scrivere sul corrente
   const threadRef = useRef('');
   const [selIdx, setSelIdx] = useState(0);
@@ -236,7 +237,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     try {
       const r = await generateOptions(tid, ident, confirmDate || undefined);
       if (threadRef.current !== tid) return;   // thread cambiato nel frattempo: butta la risposta
-      setOptions(r.options); setSelIdx(0); setBozzaText(r.options[0]?.testo ?? ''); setDaVer(r.options[0]?.da_verificare ?? 0); setNonGrounded(r.options[0]?.non_grounded ?? []); setFonti(r.fonti); setFallbackSingola(r.fallbackSingola);
+      setOptions(r.options); setSelIdx(0); setBozzaText(r.options[0]?.testo ?? ''); setDaVer(r.options[0]?.da_verificare ?? 0); setNonGrounded(r.options[0]?.non_grounded ?? []); setFonti(r.fonti); setFallbackSingola(r.fallbackSingola); setTroncate(r.troncate);
       if (!ctx) setCtx({ fonti: r.fonti, order_admin_url: r.order_admin_url, storia: r.storia });
     } catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
     if (threadRef.current === tid) setGenBozza(false);
@@ -617,6 +618,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 )}
                 {fallbackSingola && (
                   <div className="cs-note">Una sola proposta: la generazione delle tre si è interrotta. Rigenera per riprovare.</div>
+                )}
+                {troncate > 0 && (
+                  <div className="cs-note">⚠ {troncate === 1 ? 'Una proposta risulta tagliata a metà' : `${troncate} proposte risultano tagliate a metà`}: la generazione si è interrotta anche al secondo tentativo. Rigenera o completa a mano prima di inviare.</div>
                 )}
                 <div className="cs-draft-h">
                   <span>✍️ Bozza (ritoccala o chiedi una modifica)</span>

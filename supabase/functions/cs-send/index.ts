@@ -1,4 +1,12 @@
-// cs-send v2 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// cs-send v3 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// v3 (2026-08-01 notte, brief cs_form_thread_merge punto 3, che il brief stesso indica come "il
+//   pezzo piu' importante"): CINTURA CROSS-CLIENTE. Se fra i messaggi in ingresso della
+//   conversazione compaiono email di CLIENTI DIVERSI, l'invio si rifiuta con 422 e l'elenco degli
+//   indirizzi. Serve perche' due invii dal form nello stesso minuto generano notifiche con oggetto
+//   identico, Gmail le accoda nello stesso thread e cs-sync (che chiave sul solo `gmail_thread_id`)
+//   ne fa una conversazione sola: il destinatario sarebbe quello del primo messaggio, e riceverebbe
+//   una risposta scritta anche sulla richiesta dell'altro. La cintura regge ANCHE se la chiave
+//   della conversazione sbaglia, che e' il punto: e' l'ultimo anello prima del cliente.
 // v2 (2026-08-01, durante il collaudo E2E): azione `diag` (PIN, nessun invio, nessuna PII, nessun
 //   segreto in risposta) che prova a ottenere il token Google scope per scope e dice QUALE e'
 //   autorizzato sulla domain-wide delegation. Nasce da un caso reale: Google risponde
@@ -192,6 +200,30 @@ Deno.serve(async (req) => {
     return json({ error: 'il destinatario risolto e\' il wrapper Shopify, non il cliente: invio bloccato' }, 422);
   }
   if (to.endsWith('@amimi.it')) return json({ error: 'il destinatario risolto e\' un indirizzo @amimi.it: invio bloccato' }, 422);
+
+  // 4-bis) CINTURA CROSS-CLIENTE (v3, brief cs_form_thread_merge punto 3). Due invii dal form nello
+  // stesso MINUTO producono notifiche Shopify con oggetto identico: Gmail le accoda nello stesso
+  // thread e cs-sync, che chiave sul solo `gmail_thread_id`, ne fa UNA conversazione con dentro le
+  // richieste di due clienti diversi. In quel caso il destinatario e' quello del PRIMO messaggio e
+  // riceverebbe una risposta scritta anche sul problema dell'altro: fuga di dati fra clienti.
+  // Questa e' la cintura che regge ANCHE se la chiave della conversazione sbaglia, e vale su tutti
+  // i canali (misurato il 01-08: bloccherebbe 1 sola conversazione in tutto il DB, ed e' `rumore`).
+  // Il wrapper Shopify e i nostri indirizzi non contano: non sono clienti.
+  const { data: inMsgs } = await sb.from('cs_messages')
+    .select('from_email, form_fields').eq('conversation_id', convId).eq('direction', 'in');
+  const mittenti = new Set<string>();
+  for (const m of (inMsgs ?? []) as { from_email: string | null; form_fields: Record<string, string> | null }[]) {
+    const raw = String(m.form_fields?.Email || m.from_email || '').trim().toLowerCase();
+    if (!raw.includes('@')) continue;
+    if (raw.endsWith('@amimi.it') || raw.endsWith('@shopify.com') || raw.endsWith('@mailer.shopify.com') || raw.endsWith('@shopifyemail.com')) continue;
+    mittenti.add(raw);
+  }
+  if (mittenti.size > 1) {
+    return json({
+      error: `questa conversazione contiene richieste di ${mittenti.size} clienti diversi (${[...mittenti].join(', ')}): invio bloccato per non mandare a uno la risposta scritta anche sull'altro. Rispondi dal thread Gmail, a ciascuno separatamente.`,
+      cross_cliente: [...mittenti],
+    }, 422);
+  }
 
   // 5) guardia soft anti doppio invio cross-key: stesso testo gia' uscito da poco in questa conversazione
   const { data: lastOuts } = await sb.from('cs_messages')

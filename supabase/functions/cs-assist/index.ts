@@ -1,4 +1,26 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v19 (2026-08-01 notte, brief cs_bozze_troncate + cs_faq_indirizzo_e_link_resi problema 2):
+//   - SEGNAPOSTO DI LINK PER TIPO. `[link resi]` (cs_faq id 13) non era coperto dalla regex del v15
+//     ed e' arrivato TALE E QUALE nella mail a una cliente ("Tutte le istruzioni sono disponibili su
+//     [link resi]", caso reale T6 del 01-08). Ora il segnaposto si riconosce per forma e si risolve
+//     per TIPO: resi -> `app_flags.cs_link_resi_url` (migr 0096, la pagina policy del sito, che
+//     l'owner puo' cambiare senza deploy), tracking -> l'URL gia' calcolato, prodotto -> la scheda
+//     del MIGLIOR match. Mai un tipo al posto di un altro: sarebbe il difetto che il v15 aveva gia'
+//     corretto una volta. Senza URL si degrada a [DA VERIFICARE: ...]. In piu' una CINTURA finale:
+//     ogni altro segnaposto rimasto ([nome], [misure], [dettaglio]...) diventa [DA VERIFICARE: ...],
+//     quindi entra nel conteggio del guardrail e nel dialog di conferma invece di sembrare testo.
+//     Cambio dichiarato rispetto al v15: il segnaposto senza URL non viene piu' CANCELLATO dal
+//     testo generato (spariva anche il segnale che li' mancava qualcosa), viene marcato.
+//   - BOZZE TRONCATE. Due generazioni indipendenti sulla stessa conversazione inglese sono uscite a
+//     145 e 137 caratteri, tagliate a meta' parola, con 1 opzione invece di 3; in tutto lo storico
+//     sono 5 casi, anche italiani, anche dopo l'aumento del tetto da 1400 a 2400 del 24-07. Tre
+//     mosse: (a) STRUMENTAZIONE, che il brief indica come prima cosa da fare e vale piu' di ogni
+//     ipotesi - `finishReason` e i token (thinking incluso) finiscono in `cs_events` e nella
+//     risposta; (b) RITENTATIVO: se il JSON non rende tre opzioni complete, o il modello dichiara
+//     MAX_TOKENS, si riprova UNA volta con 8000 prima di degradare; (c) MAI IN SILENZIO: una bozza
+//     che non finisce con punteggiatura o emoji esce marcata `troncata` e la UI lo dice. Alzati
+//     anche i tetti del ripiego singolo (1000 -> 2000) e di `refine` (800 -> 2000), che erano sotto
+//     la soglia di troncamento osservata.
 // v18 (2026-08-01 notte, brief cs_assist_migliorie punti 8 e 10, aggiunta dopo la run post_v16):
 //   - NIENTE VERDETTO SULLA FINESTRA SE L'ORDINE E' GIA' RIMBORSATO. `computeCaso` guardava solo
 //     la data dell'ordine: sull'ordine #1499 (rimborsato, annullato e mai partito) calcolava 15
@@ -143,16 +165,47 @@ type Row = Record<string, unknown>;
 const cleanJson = (t: string) => (t || '').trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
 const countDaVerificare = (t: string) => (t.match(/\[DA VERIFICARE[^\]]*\]/gi) || []).length;
 
-// v15: segnaposto di LINK nelle risposte standard ([link], [link prodotto], [product link]): il modello
-// non puo' riempirli, li risolve il CODICE. Nel prompt: URL reale se c'e', altrimenti [DA VERIFICARE]
-// (mai un rimando a vuoto). Sul testo GENERATO (safety net): URL reale o rimozione secca.
-const LINK_PH_RE = /\[(?:link(?:\s+prodotto)?|product\s+link)\]/gi;
-const resolveLinkPh = (t: string, url: string | null): string =>
-  (t || '').replace(LINK_PH_RE, url ?? '[DA VERIFICARE: link scheda prodotto]');
-const scrubLinkPh = (t: string, url: string | null): string =>
-  (t || '').replace(LINK_PH_RE, url ?? '').replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').trim();
+// v15: segnaposto di LINK nelle risposte standard: il modello non puo' riempirli, li risolve il CODICE.
+// v19 (brief cs_faq_indirizzo_e_link_resi problema 2): la regex del v15 copriva SOLO il link prodotto,
+// e `[link resi]` di cs_faq id 13 e' arrivato TALE E QUALE nella mail a una cliente (caso reale T6 del
+// 01-08). Ora il segnaposto si riconosce per FORMA e si risolve per TIPO: il link dei resi non e' il
+// link della scheda prodotto, e mettere l'uno al posto dell'altro sarebbe il difetto che il v15 aveva
+// gia' corretto una volta. Senza URL si degrada a [DA VERIFICARE: ...], mai a un rimando a vuoto.
+type LinkUrls = { prodotto: string | null; resi: string | null; tracking: string | null };
+const LINK_PH_RE = /\[[^\]\n]{0,30}\blinks?\b[^\]\n]{0,30}\]/gi;
+const linkKind = (ph: string): keyof LinkUrls =>
+  (/res[oi]|return|rimbors|refund/i.test(ph) ? 'resi' : /tracking|traccia|spedizion|shipment/i.test(ph) ? 'tracking' : 'prodotto');
+const LINK_PH_FALLBACK: Record<keyof LinkUrls, string> = {
+  prodotto: '[DA VERIFICARE: link scheda prodotto]', resi: '[DA VERIFICARE: link resi]', tracking: '[DA VERIFICARE: tracking]',
+};
+const resolveLinkPh = (t: string, u: LinkUrls): string =>
+  (t || '').replace(LINK_PH_RE, (m) => { const k = linkKind(m); return u[k] ?? LINK_PH_FALLBACK[k]; });
+// v19: il safety net sul testo GENERATO non CANCELLA piu' il segnaposto rimasto senza URL (v15 lo
+// toglieva, e spariva anche il segnale che li' mancava qualcosa): lo trasforma nel marcatore, che
+// finisce nel conteggio `da_verificare` e quindi nel dialog di conferma di cs-send.
+const scrubLinkPh = (t: string, u: LinkUrls): string =>
+  resolveLinkPh(t, u).replace(/\(\s*\)/g, '').replace(/[ \t]{2,}/g, ' ').trim();
+// v19 (stesso brief, punto 3): CINTURA finale. Qualunque altro segnaposto in parentesi quadre
+// sopravvissuto alla generazione ([nome], [misure], [dettaglio]... tutti gli stampi di cs_faq)
+// diventa un [DA VERIFICARE: ...]: cosi' e' contato dal guardrail invece di sembrare testo normale.
+// Solo token che iniziano per lettera e corti: "[1]" o una citazione del cliente non si toccano.
+const PH_ANY_RE = /\[(?!\s*DA VERIFICARE)([A-Za-z][^\]\n]{0,39})\]/g;
+const scrubPlaceholders = (t: string): string =>
+  (t || '').replace(PH_ANY_RE, (_m, inner: string) => `[DA VERIFICARE: ${inner.trim()}]`);
+// v19 (brief cs_bozze_troncate punto 3): una bozza che finisce a meta' parola non deve MAI arrivare
+// muta all'operatrice. Test deterministico: il testo finisce con punteggiatura di chiusura o emoji?
+const sembraTroncata = (t: string): boolean => {
+  const s = (t || '').trim();
+  if (!s) return true;
+  return !/[.!?…:;)\]"'»]$/u.test(s) && !/\p{Extended_Pictographic}$/u.test(s);
+};
 
-async function gemini(model: string, prompt: string, key: string, maxTokens: number, jsonMode = false): Promise<string> {
+// v19 (brief cs_bozze_troncate punto 1): `diag` raccoglie `finishReason` e i conteggi di token della
+// risposta, THINKING INCLUSO. Era la prima cosa che chiedeva il brief e vale piu' di qualunque
+// ipotesi: se `finishReason` e' MAX_TOKENS il tetto e' il vincolo, se invece e' STOP con pochi token
+// emessi il problema e' altrove. Finisce nel dettaglio di `cs_events` e nella risposta della draft.
+type LLMDiag = { finishReason?: string; prompt?: number; output?: number; thinking?: number; total?: number; raw_len?: number };
+async function gemini(model: string, prompt: string, key: string, maxTokens: number, jsonMode = false, diag?: LLMDiag): Promise<string> {
   const genCfg: Record<string, unknown> = { temperature: 0.3, maxOutputTokens: maxTokens };
   if (jsonMode) genCfg.responseMimeType = 'application/json';   // MAI thinkingConfig (400), gotcha CONOSCENZA
   const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
@@ -161,7 +214,18 @@ async function gemini(model: string, prompt: string, key: string, maxTokens: num
   });
   const gj = await g.json();
   if (!g.ok) throw new Error('Gemini ' + g.status + ': ' + JSON.stringify(gj).slice(0, 200));
-  return String(gj?.candidates?.[0]?.content?.parts?.[0]?.text ?? '').trim();
+  const cand = gj?.candidates?.[0];
+  const um = gj?.usageMetadata ?? {};
+  const text = String(cand?.content?.parts?.[0]?.text ?? '').trim();
+  if (diag) {
+    diag.finishReason = String(cand?.finishReason ?? 'n/d');
+    diag.prompt = Number(um.promptTokenCount ?? 0);
+    diag.output = Number(um.candidatesTokenCount ?? 0);
+    diag.thinking = Number(um.thoughtsTokenCount ?? 0);
+    diag.total = Number(um.totalTokenCount ?? 0);
+    diag.raw_len = text.length;
+  }
+  return text;
 }
 
 // Claude (Anthropic Messages API) — motore preferito per bozze/refine quando c'e' app_flags.anthropic_api_key
@@ -492,7 +556,7 @@ async function purchaseHistory(sb: ReturnType<typeof createClient>, email: strin
 }
 
 type Dati = { prodotti: Prod[]; ordine: Ord; tracking: OrdMeta['tracking']; ship: Ship; standard: string[]; fonti: string[] };
-type Ctx = { dati: Dati; tono: string[]; order_admin_url: string | null; storia: Storia | null; gapExtra: string[]; conoscenza: string[]; precedenti: string[] };
+type Ctx = { dati: Dati; tono: string[]; order_admin_url: string | null; storia: Storia | null; gapExtra: string[]; conoscenza: string[]; precedenti: string[]; linkUrls: LinkUrls };
 
 // v14: conoscenza di casa (cs_knowledge, migr 0082): righe con categoria NULL sempre, piu' quelle
 // della categoria della conversazione. Editabile a DB senza redeploy; cap prudente sul totale.
@@ -553,8 +617,16 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   // prendere il primo prodotto CON url darebbe il link di un'ALTRA borsa quando il top match non ha
   // la scheda (provato live: richiesta PURPLE_PATENT senza handle -> usciva il link della VERNICE
   // ROSSO). Meglio [DA VERIFICARE] di un link sbagliato.
-  const bestUrl = prodotti[0]?.url ?? null;
-  const standard = standardRaw.map((s) => resolveLinkPh(s, bestUrl));
+  // v19: gli URL risolvibili, per TIPO. `resi` arriva da app_flags (`cs_link_resi_url`, migr 0096):
+  // e' una pagina del sito, non un dato del gestionale, e l'owner deve poterla cambiare senza deploy.
+  // Se il flag manca o e' vuoto resta null e il segnaposto degrada a [DA VERIFICARE: link resi].
+  const { data: fResi } = await sb.from('app_flags').select('value').eq('key', 'cs_link_resi_url').maybeSingle();
+  const linkUrls: LinkUrls = {
+    prodotto: prodotti[0]?.url ?? null,
+    resi: String(fResi?.value ?? '').trim() || null,
+    tracking: tracking?.url ?? null,
+  };
+  const standard = standardRaw.map((s) => resolveLinkPh(s, linkUrls));
   const storia = await purchaseHistory(sb, (conv.customer_email as string) ?? null);
   const conoscenza = await csKnowledge(sb, categoria);
   // v14: conversazioni PRECEDENTI dello stesso cliente (riassunti, max 5): l'AI sa se ha gia'
@@ -575,7 +647,7 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   if (tracking) fonti.push(`Tracking ${tracking.corriere} ${tracking.numero} (Shopify Admin API, live)`);
   if (ship) fonti.push(`Stato spedizione TWS: ${ship.stato_tws}, aggiornato al ${String(ship.updated_at).slice(0, 10)} (shipping_status)`);
   if (storia && storia.n_ordini > 0) fonti.push(`Cliente: ${storia.n_ordini} ordini, ${storia.totale}EUR totali (storico Shopify)`);
-  return { dati: { prodotti, ordine, tracking, ship, standard, fonti }, tono, order_admin_url, storia, gapExtra, conoscenza, precedenti };
+  return { dati: { prodotti, ordine, tracking, ship, standard, fonti }, tono, order_admin_url, storia, gapExtra, conoscenza, precedenti, linkUrls };
 }
 
 // v17 (brief cs_assist_migliorie punto 7): le date del BLOCCO DATI in formato italiano. Le bozze
@@ -689,21 +761,21 @@ Deno.serve(async (req) => {
   // errore). Con override attivo OGNI fallback resta disattivato, anche il retry flash-lite: il
   // modello del run deve restare quello chiesto (integrita' dell'A/B), meglio un errore che un
   // dato falsato.
-  const runLLM = async (system: string, userMsg: string, maxTok: number, jsonMode: boolean): Promise<string> => {
+  const runLLM = async (system: string, userMsg: string, maxTok: number, jsonMode: boolean, diag?: LLMDiag): Promise<string> => {
     if (useClaude) {
       try { const out = await claude(effModel, system, userMsg, claudeKey, maxTok); usedModel = effModel; return out; }
       catch (e) {
         if (override || !key) throw e;
         claudeFellBack = (e as Error).message.slice(0, 150);
-        const out = await gemini(MODEL_DRAFT, system + '\n\n' + userMsg, key, maxTok, jsonMode);
+        const out = await gemini(MODEL_DRAFT, system + '\n\n' + userMsg, key, maxTok, jsonMode, diag);
         usedModel = MODEL_DRAFT;
         return out;
       }
     }
-    try { const out = await gemini(effModel, system + '\n\n' + userMsg, key, maxTok, jsonMode); usedModel = effModel; return out; }
+    try { const out = await gemini(effModel, system + '\n\n' + userMsg, key, maxTok, jsonMode, diag); usedModel = effModel; return out; }
     catch (e) {
       if (jsonMode || override) throw e;
-      const out = await gemini(MODEL_SUMMARY, system + '\n\n' + userMsg, key, maxTok, false);
+      const out = await gemini(MODEL_SUMMARY, system + '\n\n' + userMsg, key, maxTok, false, diag);
       usedModel = MODEL_SUMMARY;
       return out;
     }
@@ -847,20 +919,34 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
     const tidy = (t: string) => t.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
     let opzioni: { tono: string; testo: string }[] = [];
     let fallbackSingola = false;
+    // v19 (brief cs_bozze_troncate): diagnostica del giro (o dei giri) e motivo del ripiego, esposti.
+    const diag: LLMDiag = {};
+    let tentativi = 0, tetto = 0;
     try {
-      // v17 (brief cs_assist_migliorie punto 3): tetto a 4000. Con 2400 una risposta si e' interrotta
-      // a meta' della seconda opzione (caso S10 del benchmark): il JSON non chiudeva, il recupero del
-      // blocco piu' esterno falliva, e si finiva sul ripiego a bozza singola. Tre opzioni ben scritte
-      // stanno larghe in 4000; il costo di qualche token in piu' non e' paragonabile a un'operatrice
-      // che vede una sola bozza senza sapere perche'.
-      const raw = await runLLM(system, user, 4000, true);   // Claude se configurato, altrimenti Gemini (1400 troncava, bug 24-07)
-      let parsed: { opzioni?: { tono?: unknown; testo?: unknown }[] } = {};
-      try { parsed = JSON.parse(cleanJson(raw)); }
-      catch {   // JSON sporco/troncato: prova a estrarre il blocco { ... } piu' esterno
-        const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
-        if (a >= 0 && b > a) { try { parsed = JSON.parse(raw.slice(a, b + 1)); } catch { parsed = {}; } }
+      // v17: tetto a 4000 (con 2400 una risposta si era interrotta a meta' della seconda opzione).
+      // v19: 4000 NON basta sempre - due generazioni indipendenti sulla stessa conversazione inglese
+      // sono uscite a 145 e 137 caratteri, e in tutto lo storico ci sono 5 bozze tagliate a meta'
+      // parola, anche italiane. Quindi: un solo tentativo non e' piu' accettabile. Se il JSON non
+      // rende TRE opzioni, o il modello dichiara MAX_TOKENS, si RIPROVA una volta con il doppio di
+      // budget prima di degradare. Su Gemini Flash il costo di un secondo giro e' trascurabile
+      // rispetto a un'operatrice che riceve una bozza monca.
+      const parseOpts = (raw: string) => {
+        let parsed: { opzioni?: { tono?: unknown; testo?: unknown }[] } = {};
+        try { parsed = JSON.parse(cleanJson(raw)); }
+        catch {   // JSON sporco/troncato: prova a estrarre il blocco { ... } piu' esterno
+          const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+          if (a >= 0 && b > a) { try { parsed = JSON.parse(raw.slice(a, b + 1)); } catch { parsed = {}; } }
+        }
+        return (Array.isArray(parsed?.opzioni) ? parsed.opzioni : []).map((o) => ({ tono: String(o.tono ?? ''), testo: tidy(String(o.testo ?? '')) })).filter((o) => o.testo);
+      };
+      for (const budget of [4000, 8000]) {
+        tentativi++; tetto = budget;
+        const raw = await runLLM(system, user, budget, true, diag);
+        opzioni = parseOpts(raw);
+        const complete = opzioni.length >= 3 && !opzioni.some((o) => sembraTroncata(o.testo));
+        if (complete) break;
+        if (diag.finishReason && diag.finishReason !== 'MAX_TOKENS' && opzioni.length >= 3) break;   // corte ma finite di proposito
       }
-      opzioni = (Array.isArray(parsed?.opzioni) ? parsed.opzioni : []).map((o) => ({ tono: String(o.tono ?? ''), testo: tidy(String(o.testo ?? '')) })).filter((o) => o.testo);
     } catch { opzioni = []; }
     if (!opzioni.length) {
       // fallback robusto: UNA sola bozza in testo semplice. NON chiede piu' "TRE versioni" (bug 24-07).
@@ -873,7 +959,7 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
           .replace(/Scrivi TRE versioni ALTERNATIVE della stessa risposta [^\n]+? al cliente, con toni diversi, tutte pronte da ritoccare\. NON inviarle\./, 'Scrivi UNA bozza di risposta al cliente, pronta da ritoccare. NON inviarla.')
           .replace(/LE TRE VERSIONI[^\n]*\n/, '');
         const usrSingle = user.replace(/Rispondi SOLO con JSON[\s\S]*$/, 'Scrivi SOLO la bozza (nessun JSON, nessun titolo, nessuna spiegazione, nessun markdown):');
-        const single = await runLLM(sysSingle, usrSingle, 1000, false);
+        const single = await runLLM(sysSingle, usrSingle, 2000, false, diag);   // v19: 1000 era stretto quanto il tetto che stiamo curando
         if (single) opzioni = [{ tono: 'bozza', testo: tidy(single) }];
       } catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     }
@@ -885,18 +971,23 @@ Rispondi SOLO con JSON valido in questo formato ESATTO, niente altro testo (ness
       aiIstruzioni, STYLE_RULES, JSON.stringify(ctx.storia ?? ''), String(conv.order_number ?? ''),
       ctx.conoscenza.join('\n'), ctx.precedenti.join('\n'),   // v14: i valori di casa (14, 3.90, CAP...) sono fatti consentiti
     ].join('\n'));
-    // v15: safety net sui segnaposto di LINK sopravvissuti alla generazione (url reale o rimozione).
+    // v15: safety net sui segnaposto di LINK sopravvissuti alla generazione, per TIPO (v19).
     // Solo l'url del MIGLIOR match, mai quello di un altro prodotto (vedi assembleContext).
-    const bestUrlD = ctx.dati.prodotti[0]?.url ?? null;
-    const options = opzioni.slice(0, 3).map((o) => { const testo = scrubLinkPh(o.testo, bestUrlD); return { tono: o.tono, testo, da_verificare: countDaVerificare(testo), non_grounded: lintDraft(testo, lintCorpus) }; });
+    const options = opzioni.slice(0, 3).map((o) => {
+      const testo = scrubPlaceholders(scrubLinkPh(o.testo, ctx.linkUrls));
+      return { tono: o.tono, testo, da_verificare: countDaVerificare(testo), non_grounded: lintDraft(testo, lintCorpus), ...(sembraTroncata(testo) ? { troncata: true } : {}) };
+    });
+    // v19: una bozza tagliata non arriva MAI muta all'operatrice.
+    const troncate = options.filter((o) => o.troncata).length;
 
     const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: usedModel, source: draftSource }).select('id').single();
-    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length, ...(draftSource === 'eval' ? { source: 'eval', model: usedModel } : {}), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
+    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length, tentativi, tetto_token: tetto, llm: diag, ...(troncate ? { troncate } : {}), ...(fallbackSingola ? { fallback_singola: true } : {}), ...(draftSource === 'eval' ? { source: 'eval', model: usedModel } : {}), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
     return json({
       ok: true, options, draft: options[0].testo, da_verificare: options[0].da_verificare,   // draft = retro-compat
-      fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, draft_id: ins?.id,
+      fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, draft_id: ins?.id, llm: diag,
       ...(claudeFellBack ? { engine_fallback: 'gemini' } : {}),
       ...(fallbackSingola ? { fallback_singola: true } : {}),
+      ...(troncate ? { troncate } : {}),
     });
   }
 
@@ -930,11 +1021,11 @@ ${ctx.tono.length ? `\nEsempi del NOSTRO tono (imita lo stile, non copiare i con
 Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown):`;
 
     let out = '';
-    try { out = await runLLM(sysR, usrR, 800, false); }
+    try { out = await runLLM(sysR, usrR, 2000, false); }   // v19: 800 era sotto la soglia di troncamento osservata
     catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
     if (!out) return json({ ok: false, error: 'bozza vuota' }, 502);
     out = out.replace(/^\s*\*\*[^*\n]{2,24}\*\*\s*/i, '').replace(/\*\*/g, '').trim();
-    out = scrubLinkPh(out, ctx.dati.prodotti[0]?.url ?? null);   // v15: safety net link (solo il top match)
+    out = scrubPlaceholders(scrubLinkPh(out, ctx.linkUrls));   // v15/v19: link per tipo + cintura segnaposto
     // linter di aderenza anche sulla riscrittura (la bozza di partenza NON e' fonte: potrebbe gia' inventare)
     // v13: corpus sul thread RAW (citazioni incluse), come su draft
     const lintCorpusR = factKeys([
@@ -943,7 +1034,7 @@ Scrivi SOLO la nuova bozza (nessuna spiegazione, nessun oggetto, nessun markdown
       ctx.conoscenza.join('\n'),   // v14: i valori di casa sono fatti consentiti anche in riscrittura
     ].join('\n'));
     await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'refine', chi, dettaglio: { istruzione: istruzione.slice(0, 200), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
-    return json({ ok: true, draft: out, da_verificare: countDaVerificare(out), non_grounded: lintDraft(out, lintCorpusR), ...(claudeFellBack ? { engine_fallback: 'gemini' } : {}) });
+    return json({ ok: true, draft: out, da_verificare: countDaVerificare(out), non_grounded: lintDraft(out, lintCorpusR), ...(sembraTroncata(out) ? { troncata: true } : {}), ...(claudeFellBack ? { engine_fallback: 'gemini' } : {}) });
   }
 
   return json({ error: 'azione sconosciuta: ' + action }, 422);
