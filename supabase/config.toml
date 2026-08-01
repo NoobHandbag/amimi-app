@@ -1,0 +1,62 @@
+# Configurazione dello stack Supabase LOCALE (Docker), creata il 2026-08-01 per il brief
+# flows_test_non_tocchi_produzione. Serve SOLO a far girare i test contro un database usa-e-getta:
+# la produzione non si tocca e non si configura da qui.
+#
+# Avvio:  npx supabase start      (applica tutte le migrazioni di supabase/migrations)
+# Stop:   npx supabase stop
+# Reset:  npx supabase db reset   (ricrea il DB da zero + riapplica migrazioni + seed.sql)
+#
+# major_version allineata alla produzione (Postgres 17).
+
+project_id = "amimi-app-local"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[db.pooler]
+enabled = false
+
+# Dati di partenza del test: vedi seed.sql per il perche' di ogni riga.
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["https://127.0.0.1:3000"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = false
+enable_confirmations = false
+
+[edge_runtime]
+enabled = true
+policy = "oneshot"
+inspector_port = 8083
+
+[analytics]
+enabled = false
