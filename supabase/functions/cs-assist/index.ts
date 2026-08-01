@@ -1,4 +1,10 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v22 (2026-08-01 notte, segnalazione di un'altra sessione dalla prova A VIDEO): il rilevamento del
+//   troncamento della v19 dava FALSI POSITIVI sulle bozze scritte bene, perche' la firma di casa
+//   "Grazie, Team Amimi'" finisce con una lettera e la regola voleva punteggiatura o emoji. Ora una
+//   chiusura riconosciuta (la firma, "a presto", "thanks"...) vale quanto un punto. Difetto mio,
+//   trovato da chi ha guardato lo schermo: le fixture non potevano vederlo, perche' i quattro casi
+//   reali di bozza tagliata che avevo usato come input erano tutti veri troncamenti.
 // v21 (2026-08-01 notte, brief cs_form_thread_merge, difesa in profondita): DUE CLIENTI NELLA
 //   STESSA CONVERSAZIONE = NESSUNA BOZZA. Due invii dal modulo del sito nello stesso minuto
 //   producono notifiche con oggetto identico, Gmail le accoda nello stesso thread e cs-sync ne fa
@@ -238,9 +244,15 @@ const scrubPlaceholders = (t: string): string =>
   (t || '').replace(PH_ANY_RE, (_m, inner: string) => `[DA VERIFICARE: ${inner.trim()}]`);
 // v19 (brief cs_bozze_troncate punto 3): una bozza che finisce a meta' parola non deve MAI arrivare
 // muta all'operatrice. Test deterministico: il testo finisce con punteggiatura di chiusura o emoji?
+// v22: la FIRMA di casa e' "Grazie, Team Amimi'" e finisce con una LETTERA, quindi la prima
+// stesura marcava come tagliata ogni bozza scritta bene. Segnalato dalla prova a video di un'altra
+// sessione ("3 proposte risultano tagliate a meta'" su bozze che finivano regolarmente): falso
+// positivo mio, non un difetto del modello. Una chiusura riconosciuta vale quanto un punto.
+const CHIUSURA_RE = /(amim[iì]'?|thanks|thank you|a presto|cordiali saluti|best regards)\s*[.!]?\s*$/i;
 const sembraTroncata = (t: string): boolean => {
   const s = (t || '').trim();
   if (!s) return true;
+  if (CHIUSURA_RE.test(s)) return false;
   return !/[.!?…:;)\]"'»]$/u.test(s) && !/\p{Extended_Pictographic}$/u.test(s);
 };
 
