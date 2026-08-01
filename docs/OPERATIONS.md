@@ -50,7 +50,7 @@ Punto di partenza: **`health_log` di oggi** (il banner rosso in Home compare se 
 
 - **Chiusura mese:** edge `ce-guard` action `close_month` (year, month, chi) -> congela il CE in `ce_snapshots` (mai sovrascrive). Correzioni retroattive: `force` + motivo sulla write-api, poi ri-chiusura. Decisione contabile = owner.
 - **Realign stock manuale:** edge `shopify-stock` action `realign` (codici, chi), gated `shopify_write_enabled`.
-- **Deploy edge/migrazioni** (solo Claude Code, Regola 16): edge via Supabase MCP `deploy_edge_function`; migrazioni in `supabase/migrations/` via `apply_migration`. Frontend: `cd web && npm run build && npx gh-pages -d dist` (hard refresh della PWA dopo).
+- **Deploy edge/migrazioni** (solo Claude Code, Regola 16): edge con la **CLI**, `npx supabase functions deploy <nome> --project-ref imszbjeyplaiovylhkgl` dalla root del repo (aggiornato 02-08: la riga diceva "via Supabase MCP `deploy_edge_function`", che funziona ancora ma obbliga a ribattere l'intero sorgente; la CLI vuole solo il `SUPABASE_ACCESS_TOKEN` gia' sulla macchina, niente `supabase link`, niente Docker). Dopo ogni deploy edge: riverificare `verify_jwt` (un redeploy puo' rimetterlo a `true`) e leggere il **bundle vivo**, non il numero di versione, per sapere cosa e' davvero live. Migrazioni in `supabase/migrations/` via `apply_migration`. Frontend: `cd web && npm run build && npx gh-pages -d dist` (hard refresh della PWA dopo).
 - **Restore:** artifact JSON del backup GitHub Actions (90gg) per il ripristino; lo snapshot Drive e' la copia leggibile a occhio.
 
 ## 5. Chi fa cosa (confini)
