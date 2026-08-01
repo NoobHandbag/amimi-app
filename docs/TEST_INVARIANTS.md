@@ -156,3 +156,28 @@ in `shopify-stock` il controllo "token presente" precede il cancello di scrittur
 test non arriverebbe mai a verificare il cancello (Regola Ferrea 15). Il cancello e' prima della
 rete: `realign` risponde 403 senza chiamare Shopify. L'unica azione che tenta la rete e' `sync`, che
 con quel token si becca un 401 e aborta senza scrivere.
+
+## 11. Una conversazione = un cliente (dal 2026-08-01)
+
+Invariante del modulo Assistenza: dentro una `cs_conversations` deve esserci **una persona sola**.
+Non e' un fatto estetico: il destinatario dell'invio e i dati della bozza (ordine, storico acquisti)
+si prendono dalla RIGA conversazione, mentre il testo si prende dall'ultimo messaggio. Se dentro ci
+sono due clienti, la risposta parte a uno con il contenuto dell'altro.
+
+| Livello | Dove | Cosa garantisce |
+|---|---|---|
+| **DB** | `cs_conversations_gmail_thread_id_key` (UNIQUE su `gmail_thread_id`, migr 0053, **non toccato**) | una riga per chiave, quindi ogni `.eq(thread).maybeSingle()` trova al massimo una riga |
+| **Runtime** | `decidiConv` in cs-sync (blocco `PURE:cs-convkey`) | una raffica dal modulo con email diverse genera conversazioni distinte, con chiave `<thread>#<message_id>` |
+| **Guardia 1** | cintura cross-cliente in cs-send (`emailCliente`) | l'invio si rifiuta con 422 se fra i messaggi in ingresso ci sono clienti diversi |
+| **Guardia 2** | guardia in cs-assist `draft`/`refine` | la bozza non si genera nemmeno, cosi' il dato del terzo non viene assemblato |
+| **Test** | `tests/cs_convkey.mjs` (46 casi) | funzioni pure ritagliate dal sorgente, piu' il confronto d'impronta fra le copie duplicate |
+
+**Prova di schema, da rifare sullo stack locale se si tocca la chiave** (mai in produzione):
+inserire `TEST1` e `TEST1#abc` deve passare; il doppione di ciascuna deve dare `23505`; la lettura
+per `TEST1` deve tornare **una** riga; il filtro `like 'TEST1#%'` deve prendere solo le suffissate.
+Eseguita il 01-08: tutti e quattro verdi.
+
+**Perche' l'impronta e non un commento.** La stessa regola vive in piu' sedi (l'email del cliente in
+cs-send e cs-assist; la regola del sollecito in cs-sync, cs-classify e cs-send) perche' le edge non
+condividono moduli. Il test confronta lo `sha256` dei blocchi fra i marcatori `PURE:*`: se qualcuno
+ne cambia una sola, il test diventa rosso invece di lasciare due edge in disaccordo silenzioso.

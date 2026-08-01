@@ -1,4 +1,11 @@
 // cs-classify — tool assistenza clienti, FASE 2: auto-categorizzazione + urgenza.
+// v8 (2026-08-01 notte, brief cs_form_thread_merge): una RAFFICA dal modulo non e' un sollecito.
+//   La regola "2+ messaggi del cliente e nessuna nostra risposta" e' giusta per la posta normale,
+//   ma due invii dal modulo a 43 secondi (che finiscono nello stesso thread Gmail) accendevano
+//   l'urgenza senza che nessuno avesse sollecitato: e' successo davvero il 01-08. `isRafficaModulo`
+//   e' deterministica, zero AI, e vive IDENTICA in tre sedi (qui, cs-sync, cs-send) fra i marcatori
+//   `PURE:cs-sollecito`: `tests/cs_convkey.mjs` ne confronta l'impronta e diventa rosso se una sola
+//   delle tre cambia.
 // v7 (2026-08-01, decisione owner in chat): "Collaborazioni e B2B" si risponde su GMAIL, non in
 //   app -> appena classificata con confidenza la conversazione esce dalla coda (canale='rumore',
 //   categoria conservata sulla riga; gesto inverso in cs-api remove_noise). Storico: migr 0091.
