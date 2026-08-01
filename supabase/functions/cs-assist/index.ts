@@ -5,15 +5,18 @@
 //   ognuna col suo titolo di massimo 5 parole, una sola dove i dati decidono. Dove la verita' la sa
 //   solo il team, la scelta della collega E' la risposta: risolve per costruzione anche le
 //   concessioni inventate (il ramo "omaggio" esiste, ma parte solo se una persona lo sceglie).
-//   PERIMETRO ESEGUITO: prompt (1), contratto JSON + tetto token (2), UI (4), ramo scelto su
-//   cs_drafts (5). NON eseguito il punto 3 (computeCaso/case_data che tornano l'ELENCO dei rami)
-//   e lo dico col motivo: il prototipo che ha VINTO il giro 2 usava il blocco CASO di produzione
-//   VERBATIM, parola "vincolante" compresa (`caso_txt` in SIM_round2.py), quindi riscriverlo qui
-//   avrebbe spostato la produzione FUORI dalla configurazione misurata; e i due difetti che quel
-//   punto voleva curare (verdetto su ordine gia' rimborsato, categoria che sovrasta il thread) sono
-//   gia' chiusi dalla v18, il cui testo sta dentro quel caso_txt. Se si vuole comunque, va misurato.
-//   Il tetto del primo giro sale a 6000 su ENTRAMBI gli schemi (sonda di varianza 01-08: 1.572
-//   token di solo ragionamento in media, che su questo endpoint contano dentro maxOutputTokens).
+//   Punti 1, 2, 4, 5 della spec. Il tetto del primo giro sale a 6000 su ENTRAMBI gli schemi (sonda
+//   di varianza 01-08: 1.572 token di solo ragionamento in media, che su questo endpoint contano
+//   dentro maxOutputTokens).
+// v25 (2026-08-01 notte, punto 3 della spec, eseguito su decisione esplicita dell'owner dopo il
+//   referto): `computeCaso`/`case_data` restituiscono l'ELENCO dei rami ammessi (`casoRami`) invece
+//   del verdetto secco, e a schema rami il prompt riceve `casoBlockRami` con i titoli FISSI, cosi'
+//   `cs_drafts.ramo_scelto` diventa un dataset con una chiave stabile. Nessun ramo e' inventato:
+//   sono tutti gia' dentro il testo che `casoBlock` produce oggi, solo schiacciati in una riga.
+//   SCOSTAMENTO DICHIARATO, e va rimisurato: questo pezzo NON era nella configurazione che ha vinto
+//   il giro 2 alla cieca (li' il blocco CASO era quello di produzione, verbatim, parola
+//   "vincolante" compresa). L'ho segnalato all'owner, che ha scelto di farlo comunque.
+//   A flag spento `casoBlock` resta intatto e il prompt e' byte per byte quello di prima.
 // v23 (2026-08-01 notte, brief cs_reply_to_fonte_indipendente): la guardia cross-cliente di draft e
 //   refine usa lo stesso `emailCliente` di cs-send, e quel blocco ora legge anche
 //   `cs_messages.reply_to` (migr 0100), fonte che non passa dal corpo del messaggio. Copia
@@ -555,6 +558,90 @@ const NON_APPLICABILE_LINE: Record<NonApplicabile, string> = {
   pre_ritiro: "- La merce NON e' ancora partita: il corriere non l'ha ancora ritirata (vedi lo stato spedizione nei DATI). Non c'e' niente da rendere, quindi NON parlare di finestra di reso ne' di spedizione di rientro a carico della cliente. Se vuole annullare o cambiare, raccogli la richiesta e passala a una persona.",
 };
 
+// v25 (decisione owner 01-08 notte, punto 3 della spec v17: "fallo comunque"): il motore dei
+// verdetti smette di schiacciare i rami su uno solo e RESTITUISCE L'ELENCO dei rami ammessi.
+// Il principio e' dell'owner (`RAMI_Predefiniti_BOZZA_2026-08-01.md`, Rev. 2): **i rami si derivano
+// dalla DOMANDA, mai dalla disponibilita' dei dati**; i dati non sbloccano i rami, li PRESELEZIONANO
+// (fino a ridurli a uno quando il dato e' certo) e ne riempiono i dettagli.
+// Nessun ramo qui e' inventato: sono tutti gia' dentro il testo che `casoBlock` produce oggi, solo
+// che oggi convivono schiacciati in una riga sola e il modello ne sceglie uno a caso. I due casi in
+// cui la promozione vale davvero: `verificare_tracking`, dove il testo attuale chiede di restare
+// "PRUDENTE su entrambe le ipotesi" (una risposta sola che non afferma nulla, contro due risposte
+// nette fra cui scegliere) e `consegnato`, dove portineria e segnalazione al corriere sono due
+// esiti diversi. I titoli sono FISSI di proposito: `cs_drafts.ramo_scelto` diventa cosi' un dataset
+// con una chiave stabile, che era la ragione per cui l'owner ha chiesto di salvarlo.
+// SCOSTAMENTO DICHIARATO: questo pezzo NON era nella configurazione che ha vinto il giro 2 alla
+// cieca (li' il blocco CASO era quello di produzione, verbatim). E' stato aggiunto su richiesta
+// esplicita dell'owner dopo il referto, e va rimisurato al prossimo giro.
+// ==== PURE:cs-casorami BEGIN ====
+type Ramo = { titolo: string; istruzione: string };
+function casoRami(categoria: string | null, cd: { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo }): Ramo[] {
+  if (!categoria || !CASE_CATS.has(categoria)) return [];
+  const R: Ramo[] = [];
+  if (categoria === 'Modifica / correzione indirizzo') {
+    if (cd.indirizzo.caso === 'correggibile') {
+      R.push({ titolo: 'Correggo l\'indirizzo', istruzione: "Spedizione NON ancora ritirata dal corriere: la correzione E' POSSIBILE. Rassicura e chiedi l'indirizzo completo e corretto (via, civico, CAP, citta')." });
+    } else if (cd.indirizzo.caso === 'consegnato') {
+      // due esiti veri: il pacco salta fuori da un vicino, oppure si apre la verifica col corriere
+      R.push({ titolo: 'Consegnato: controlla in zona', istruzione: "Il pacco risulta GIA' CONSEGNATO: nessuna modifica possibile. Empatia + passi concreti (vicini, portineria, familiari) e chiedi di ricontrollare. Niente promesse impossibili." });
+      R.push({ titolo: 'Apriamo verifica col corriere', istruzione: 'Il pacco risulta consegnato ma la cliente non lo ha: raccogli i riferimenti e dichiara che apriamo una segnalazione al corriere, senza promettere tempi ne\' esiti.' });
+    } else if (cd.indirizzo.caso === 'verificare_tracking') {
+      // il caso per cui questa modifica esiste: oggi il prompt chiede una risposta sola che non
+      // afferma nessuna delle due ipotesi, e viene fuori una bozza che non dice niente.
+      R.push({ titolo: 'In viaggio: rientro e rispedizione', istruzione: "Ipotesi: la spedizione e' partita ed e' ancora in viaggio. Spiega che si puo' attendere il rientro al mittente e poi rispedire, con il costo di rispedizione a carico della cliente ([DA VERIFICARE: costo]). NON affermare che sia gia' consegnata." });
+      R.push({ titolo: 'Forse gia\' consegnata: controlla', istruzione: "Ipotesi: il pacco potrebbe risultare gia' consegnato. Chiedi di controllare vicini, portineria e familiari e di farci sapere. NON affermare che sia ancora in viaggio." });
+    } else {
+      R.push({ titolo: 'Sto verificando la spedizione', istruzione: 'Stato spedizione NON determinabile dai dati: niente verdetti, dichiara che stai verificando e usa [DA VERIFICARE: stato spedizione]. Mai dire che la spedizione "non risulta".' });
+    }
+    return R;
+  }
+  // --- reso / cambio ---
+  // Il DIFETTO viene prima di tutto: la garanzia legale dura 24 mesi e la finestra del recesso non
+  // c'entra. I due rami sono i due esiti che il testo di oggi tiene insieme in una riga sola.
+  if (cd.reso.difetto_sospetto) {
+    R.push({ titolo: 'Difetto: chiedo una foto', istruzione: "POSSIBILE DIFETTO segnalato dalla cliente: la finestra di reso NON si applica (garanzia legale 24 mesi). Dispiacere sincero, chiedi una foto del punto e dell'etichetta per capire cosa e' successo. MAI un rifiuto, nessuna promessa di esito." });
+    R.push({ titolo: 'Difetto: passo a una persona', istruzione: 'POSSIBILE DIFETTO: raccogli i riferimenti e passa il caso a una persona del team, che valutera\' riparazione o cambio. MAI negare il reso citando i giorni del recesso.' });
+    return R;
+  }
+  if (cd.reso.non_applicabile) {
+    const T: Record<NonApplicabile, string> = {
+      rimborsato: 'Gia\' rimborsato: confermo',
+      rimborsato_parziale: 'Rimborso parziale: confermo',
+      annullato: 'Ordine annullato: confermo',
+      pre_ritiro: 'Merce non ancora partita',
+    };
+    R.push({ titolo: T[cd.reso.non_applicabile], istruzione: NON_APPLICABILE_LINE[cd.reso.non_applicabile].replace(/^- /, '') });
+    return R;   // il dato e' certo: ramo unico, la preselezione l'ha fatta il codice
+  }
+  if (cd.reso.verdetto === 'entro') {
+    R.push({ titolo: 'Reso ammesso: istruzioni', istruzione: `Reso AMMESSO: ordine del ${dmy(cd.reso.ordine_del)} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla data dell'ordine). Istruzioni + link resi; spedizione di rientro a carico della cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` });
+    // Solo sul CAMBIO esiste un secondo esito che i dati non possono decidere: se la cliente e' a
+    // Milano, il cambio in showroom evita del tutto la spedizione. Lo sa il team, non la tabella.
+    if (categoria === 'Cambio e prodotto errato') {
+      R.push({ titolo: 'Cambio in showroom', istruzione: 'Cambio di persona su appuntamento in Via Plinio 43, se la cliente e\' a Milano: proponilo come alternativa alla spedizione, concordando giorno e fascia. Non darlo per scontato se non sai dove si trova.' });
+    }
+    return R;
+  }
+  if (cd.reso.verdetto === 'fuori') {
+    R.push({ titolo: 'Fuori finestra: alternativa', istruzione: `Reso NON ammesso: ordine del ${dmy(cd.reso.ordine_del)}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra} dalla data dell'ordine). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto cambia tutto, e allora proponi il contatto.` });
+    return R;
+  }
+  R.push({ titolo: 'Sto verificando l\'ordine', istruzione: `Ordine NON identificato con certezza: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla data dell'ordine in generale, dichiara che stai controllando e usa [DA VERIFICARE: numero ordine]. Mai dire che l'ordine "non risulta".` });
+  return R;
+}
+
+// v25: il blocco CASO in forma di RAMI. Sostituisce `casoBlock` SOLO a schema rami acceso: a flag
+// spento il prompt resta byte per byte quello di prima, e il rollback non richiede un deploy.
+function casoBlockRami(categoria: string | null, cd: { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo }): string {
+  const rami = casoRami(categoria, cd);
+  if (!rami.length) return '';
+  const testa = rami.length === 1
+    ? "CASO CALCOLATO DAL SISTEMA. I dati bastano a decidere: scrivi UNA SOLA alternativa, con esattamente questo titolo, e nessun'altra."
+    : `CASO CALCOLATO DAL SISTEMA. Gli esiti possibili sono ${rami.length}: scrivi UNA alternativa per ciascuno, con esattamente questi titoli, nello stesso ordine, e NESSUN altro ramo. Sara' la collega a scegliere quello vero.`;
+  return [testa, ...rami.map((r) => `- TITOLO "${r.titolo}": ${r.istruzione}`)].join('\n') + '\n';
+}
+// ==== PURE:cs-casorami END ====
+
 // Blocco CASO da iniettare nel prompt draft: vincolante, l'AI scrive DENTRO il caso, non lo decide.
 function casoBlock(categoria: string | null, cd: { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo }): string {
   if (!categoria || !CASE_CATS.has(categoria)) return '';
@@ -990,6 +1077,10 @@ Deno.serve(async (req) => {
     return json({
       ok: true, categoria: (conv.categoria as string) ?? null, verificato: cd.verificato,
       reso: cd.reso, indirizzo: cd.indirizzo,
+      // v25 (spec v17 punto 3): l'ELENCO dei rami ammessi, non solo il verdetto secco. Esposto
+      // SEMPRE, anche a flag rami spento: e' informazione in piu' e nessun client la usa ancora,
+      // ma da qui si vede cosa il motore ha davvero deciso senza dover leggere il prompt.
+      rami: casoRami((conv.categoria as string) ?? null, cd),
       tracking_url: meta?.tracking?.url ?? null,
       order_admin_url: meta?.adminId ? `https://admin.shopify.com/store/${SHOP}/orders/${meta.adminId}` : null,
       stato_tws: ship?.stato_tws ?? null, stato_tws_aggiornato: ship ? String(ship.updated_at).slice(0, 10) : null,   // v16: card UI
@@ -1043,6 +1134,12 @@ Riassunto (max 2 righe):`;
     // l'invio (v4), ma qui il dato non viene nemmeno assemblato.
     if (lc.clienti.length > 1) return json({ ok: false, error: `questa conversazione contiene richieste di ${lc.clienti.length} clienti diversi (${lc.clienti.join(', ')}): nessuna bozza, rispondi a ciascuno separatamente dal thread Gmail.`, cross_cliente: lc.clienti }, 422);
     const conv = lc.conv;
+    // v24: schema RAMI (alternative di CONTENUTO) contro schema TONI (breve/calda/formale).
+    // Interruttore in `app_flags.cs_rami_enabled`: a flag spento prompt, contratto JSON e blocco
+    // CASO sono BYTE PER BYTE quelli di prima, cosi' il rollback non richiede un deploy.
+    // Dichiarata qui in alto perche' dalla v25 decide anche la forma del blocco CASO, che si
+    // costruisce prima del prompt.
+    const rami = flags.cs_rami_enabled === 'true';
     const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
     const threadTxt = threadClean(lc.recent, conv.subject);
     // motore dei verdetti: sulle categorie a caso (reso/cambio/indirizzo) il CASO e' calcolato dal codice
@@ -1051,13 +1148,11 @@ Riassunto (max 2 righe):`;
     if (CASE_CATS.has(String(conv.categoria ?? ''))) {
       const meta2 = ctx.dati.ordine ? await fetchOrderMeta(ctx.dati.ordine.order_number, token) : null;
       const cd = computeCaso(conv, ctx.dati.ordine, meta2, lc.inbound, Number(flags.cs_reso_finestra_giorni) || 14, String(body.delivered_at || '').trim() || null, ctx.dati.ship);
-      casoTxt = casoBlock((conv.categoria as string) ?? null, cd);
+      // v25: a schema rami il caso arriva come ELENCO di rami ammessi invece che come verdetto secco;
+      // a flag spento resta `casoBlock`, byte per byte quello di prima.
+      casoTxt = rami ? casoBlockRami((conv.categoria as string) ?? null, cd) : casoBlock((conv.categoria as string) ?? null, cd);
     }
 
-    // v24: schema RAMI (alternative di CONTENUTO) contro schema TONI (breve/calda/formale).
-    // Interruttore in `app_flags.cs_rami_enabled`: a flag spento il prompt e il contratto JSON sono
-    // BYTE PER BYTE quelli di prima, cosi' il rollback non richiede un deploy.
-    const rami = flags.cs_rami_enabled === 'true';
     const inChat = conv.canale === 'chat_notifica';
     // canale chat: la bozza verra' incollata nella chat di Shopify Inbox, non in una email
     const chatBlock = !inChat ? ''

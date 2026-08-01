@@ -242,7 +242,10 @@ export const CASE_CATS = new Set(['Reso e rimborso', 'Cambio e prodotto errato',
 export type NonApplicabile = 'rimborsato' | 'rimborsato_parziale' | 'annullato' | 'pre_ritiro';
 export type CasoReso = { ordine_del: string | null; delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'non_applicabile' | 'sconosciuto'; non_applicabile?: NonApplicabile | null; stato_pagamento?: string | null; difetto_sospetto: boolean };
 export type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 'verificare_tracking' | 'consegnato' | 'sconosciuto' };
-export type CaseData = { categoria: string | null; verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo; tracking_url: string | null; order_admin_url: string | null; stato_tws?: string | null; stato_tws_aggiornato?: string | null };
+// v25: `rami` = gli ESITI ammessi dal motore dei verdetti per questo caso (uno solo quando i dati
+// decidono). Oggi nessuna schermata li mostra: servono a vedere cosa il motore ha deciso senza
+// dover leggere il prompt, e sono la stessa lista che finisce nel blocco CASO della bozza.
+export type CaseData = { categoria: string | null; verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo; rami?: { titolo: string; istruzione: string }[]; tracking_url: string | null; order_admin_url: string | null; stato_tws?: string | null; stato_tws_aggiornato?: string | null };
 
 /** Verdetto del caso (reso/cambio/indirizzo), calcolato dal CODICE (nessuna AI). `deliveredAt` opzionale =
  *  data di consegna CONFERMATA dalla collega dal tracking (il verdetto resta deterministico). Se l'edge live

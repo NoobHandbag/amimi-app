@@ -89,5 +89,109 @@ t('19 lo schema nuovo e gated da un flag, cosi il rollback non e un deploy',
 t('20 una sola alternativa e un esito legittimo, non un giro fallito',
   /const minOpts = rami \? 1 : 3/.test(SRC));
 
+// ---------------------------------------------------------------------------------------------
+// v25 (punto 3 della spec, "fallo comunque" dell'owner): il motore dei verdetti restituisce
+// l'ELENCO dei rami ammessi. Qui la funzione gira DAVVERO, ritagliata dal sorgente insieme alle
+// sue dipendenze: e' l'unico modo per accorgersi se un ramo sparisce o se ne compare uno di troppo.
+// ---------------------------------------------------------------------------------------------
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
+function ritagliaMarcato(nome) {
+  const b = `// ==== PURE:${nome} BEGIN ====`, e = `// ==== PURE:${nome} END ====`;
+  const a = SRC.indexOf(b), z = SRC.indexOf(e);
+  if (a < 0 || z < 0) throw new Error(`marcatori PURE:${nome} non trovati`);
+  return SRC.slice(a + b.length, z).trim();
+}
+function ritagliaBlocco(primaRiga) {
+  const i = SRC.indexOf(primaRiga);
+  if (i < 0) throw new Error(`blocco non trovato: ${primaRiga}`);
+  const j = SRC.indexOf('\n};', i);
+  return SRC.slice(i, j + 3);
+}
+function ritagliaRiga(primaRiga) {
+  const i = SRC.indexOf(primaRiga);
+  if (i < 0) throw new Error(`riga non trovata: ${primaRiga}`);
+  return SRC.slice(i, SRC.indexOf('\n', i));
+}
+
+const TMP = `${ROOT}tests/_casorami.tmp.ts`;
+writeFileSync(TMP, [
+  ritagliaRiga("const CASE_CATS = new Set(["),
+  ritagliaRiga("type NonApplicabile ="),
+  ritagliaRiga("type CasoReso ="),
+  ritagliaRiga("type CasoIndirizzo ="),
+  ritagliaBlocco("const NON_APPLICABILE_LINE"),
+  ritagliaBlocco("const dmy = "),
+  ritagliaMarcato('cs-casorami'),
+  'export { casoRami, casoBlockRami };',
+].join('\n'), 'utf8');
+let casoRami, casoBlockRami;
+try { ({ casoRami, casoBlockRami } = await import(pathToFileURL(TMP).href)); }
+finally { try { unlinkSync(TMP); } catch { /* niente */ } }
+
+const reso = (o = {}) => ({ ordine_del: '2026-07-24', delivered_at: null, fonte: null, giorni: 8, finestra: 14, verdetto: 'entro', non_applicabile: null, stato_pagamento: 'paid', difetto_sospetto: false, ...o });
+const ind = (caso) => ({ fulfillment_presente: true, caso });
+const cd = (r = {}, i = 'sconosciuto') => ({ verificato: true, reso: reso(r), indirizzo: ind(i) });
+const tit = (cat, c) => casoRami(cat, c).map((r) => r.titolo);
+const RESO = 'Reso e rimborso', CAMBIO = 'Cambio e prodotto errato', IND = 'Modifica / correzione indirizzo';
+
+console.log('\n== i rami ammessi al posto del verdetto secco ==');
+t('21 categoria fuori dalle tre a caso -> nessun ramo (il motore non si intromette)',
+  casoRami('Info prodotto', cd()).length === 0 && casoRami(null, cd()).length === 0);
+t('22 dato certo = UN ramo: entro finestra', JSON.stringify(tit(RESO, cd({ verdetto: 'entro' }))) === JSON.stringify(['Reso ammesso: istruzioni']));
+t('23 dato certo = UN ramo: fuori finestra', JSON.stringify(tit(RESO, cd({ verdetto: 'fuori' }))) === JSON.stringify(['Fuori finestra: alternativa']));
+t('24 gia\' rimborsato: ramo unico dedicato, e NON si parla di finestra (caso #1499)',
+  JSON.stringify(tit(RESO, cd({ verdetto: 'non_applicabile', non_applicabile: 'rimborsato' }))) === JSON.stringify(['Gia\' rimborsato: confermo'])
+  && /NON parlare di finestra di reso/.test(casoRami(RESO, cd({ verdetto: 'non_applicabile', non_applicabile: 'rimborsato' }))[0].istruzione));
+t('25 tutti e quattro i non-applicabile hanno il loro ramo, nessuno cade nel generico',
+  ['rimborsato', 'rimborsato_parziale', 'annullato', 'pre_ritiro']
+    .every((n) => tit(RESO, cd({ verdetto: 'non_applicabile', non_applicabile: n })).length === 1));
+t('26 il DIFETTO vince su tutto e NON emette verdetti sulla finestra (garanzia 24 mesi)',
+  JSON.stringify(tit(RESO, cd({ verdetto: 'fuori', difetto_sospetto: true }))) === JSON.stringify(['Difetto: chiedo una foto', 'Difetto: passo a una persona'])
+  && !casoRami(RESO, cd({ verdetto: 'fuori', difetto_sospetto: true })).some((r) => /Reso NON ammesso/.test(r.istruzione)));
+t('27 ordine non identificato: un ramo che verifica, e mai la frase "non risulta"',
+  tit(RESO, cd({ verdetto: 'sconosciuto' })).length === 1
+  && /non risulta/.test(casoRami(RESO, cd({ verdetto: 'sconosciuto' }))[0].istruzione));
+t('28 sul CAMBIO entro finestra si aggiunge lo showroom, che i dati non possono decidere',
+  JSON.stringify(tit(CAMBIO, cd({ verdetto: 'entro' }))) === JSON.stringify(['Reso ammesso: istruzioni', 'Cambio in showroom']));
+t('29 ma sul RESO lo showroom NON compare', !tit(RESO, cd({ verdetto: 'entro' })).includes('Cambio in showroom'));
+
+console.log('\n== indirizzo: e\' qui che due rami battono una risposta che non afferma niente ==');
+t('30 non ancora ritirato -> un ramo solo: si corregge', JSON.stringify(tit(IND, cd({}, 'correggibile'))) === JSON.stringify(['Correggo l\'indirizzo']));
+t('31 gia\' consegnato -> DUE esiti (in zona / verifica col corriere)',
+  JSON.stringify(tit(IND, cd({}, 'consegnato'))) === JSON.stringify(['Consegnato: controlla in zona', 'Apriamo verifica col corriere']));
+t('32 partito ma stato incerto -> DUE ipotesi nette invece di una prudente che non dice niente',
+  JSON.stringify(tit(IND, cd({}, 'verificare_tracking'))) === JSON.stringify(['In viaggio: rientro e rispedizione', 'Forse gia\' consegnata: controlla']));
+t('33 le due ipotesi si escludono a vicenda, e ognuna lo dice',
+  /NON affermare che sia gia' consegnata/.test(casoRami(IND, cd({}, 'verificare_tracking'))[0].istruzione)
+  && /NON affermare che sia ancora in viaggio/.test(casoRami(IND, cd({}, 'verificare_tracking'))[1].istruzione));
+t('34 stato sconosciuto -> un ramo che verifica', tit(IND, cd({}, 'sconosciuto')).length === 1);
+
+console.log('\n== le regole trasversali valgono su OGNI ramo generato ==');
+const TUTTI = [
+  ...['entro', 'fuori', 'sconosciuto'].map((v) => [RESO, cd({ verdetto: v })]),
+  ...['rimborsato', 'rimborsato_parziale', 'annullato', 'pre_ritiro'].map((n) => [RESO, cd({ verdetto: 'non_applicabile', non_applicabile: n })]),
+  [RESO, cd({ difetto_sospetto: true })], [CAMBIO, cd({ verdetto: 'entro' })],
+  ...['correggibile', 'consegnato', 'verificare_tracking', 'sconosciuto'].map((c) => [IND, cd({}, c)]),
+].flatMap(([cat, c]) => casoRami(cat, c));
+t(`35 ogni titolo sta entro le 5 parole della regola (${TUTTI.length} rami generati)`,
+  TUTTI.every((r) => r.titolo.trim().split(/\s+/).length <= 5), TUTTI.filter((r) => r.titolo.trim().split(/\s+/).length > 5).map((r) => r.titolo));
+t('36 nessun ramo e\' senza titolo o senza istruzione', TUTTI.every((r) => r.titolo.trim() && r.istruzione.trim()));
+t('37 mai piu\' di 3 rami, mai zero sulle categorie a caso', TUTTI.length > 0
+  && [RESO, CAMBIO, IND].every((cat) => ['entro', 'fuori', 'sconosciuto'].every((v) => { const n = casoRami(cat, cd({ verdetto: v })).length; return n >= 1 && n <= 3; })));
+
+console.log('\n== il blocco che finisce nel prompt ==');
+t('38 un ramo solo -> il prompt chiede UNA alternativa', /scrivi UNA SOLA alternativa/.test(casoBlockRami(RESO, cd({ verdetto: 'entro' }))));
+t('39 due rami -> il prompt li conta e li elenca con i titoli esatti', (() => {
+  const b = casoBlockRami(IND, cd({}, 'verificare_tracking'));
+  return /Gli esiti possibili sono 2/.test(b) && /TITOLO "In viaggio: rientro e rispedizione"/.test(b) && /TITOLO "Forse gia' consegnata: controlla"/.test(b);
+})());
+t('40 categoria non a caso -> blocco vuoto, il prompt non cambia', casoBlockRami('Info prodotto', cd()) === '');
+t('41 il blocco vecchio NON e\' stato toccato: a flag spento il prompt resta quello misurato',
+  /CASO CALCOLATO DAL SISTEMA \(vincolante: scrivi la risposta DENTRO questo caso, non metterlo in dubbio\)/.test(SRC));
+t('42 e i due blocchi convivono: casoBlock per lo schema toni, casoBlockRami per i rami',
+  /casoTxt = rami \? casoBlockRami\(/.test(SRC) && /: casoBlock\(/.test(SRC));
+
 console.log(`\n${ok}/${ok + ko} verdi` + (ko ? ` — ${ko} ROSSI` : ''));
 process.exitCode = ko ? 1 : 0;
