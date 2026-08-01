@@ -13,8 +13,9 @@
 - **Runtime**: check nel write path (write-api / edge) che rifiuta o corregge al volo.
 - **Guardia**: detector quotidiano (`v_health` via health-daily, `ce-guard` 06:30, guardia backup)
   che rende la violazione VISIBILE se accade comunque.
-- **Test**: regressione automatica in `tests/` (oggi `flows.mjs` + `features.mjs`, girano contro il
-  DB LIVE con marker ZZZTEST; l'ambiente isolato non esiste ancora).
+- **Test**: regressione automatica in `tests/` (oggi `flows.mjs` + `features.mjs`). Dal 2026-08-01
+  `flows.mjs` NON gira piu' sul DB live: ha il suo stack locale (vedi §10). `features.mjs` legge la
+  produzione, ma e' in sola lettura.
 - Stato: `OK` difeso, `DET` solo rilevato (non impedito), `APERTO` scoperto, `OWNER` attende azione
   dell'owner, `GAP` mai verificato.
 
@@ -97,7 +98,7 @@
 
 ## 8. Copertura test ATTUALE (per non riscrivere cio' che c'e')
 
-`tests/flows.mjs` (contro DB live, marker ZZZTEST): ordini fornitore multi-riga + stub + arrivi
+`tests/flows.mjs` (contro lo stack locale, marker ZZZTEST): ordini fornitore multi-riga + stub + arrivi
 parziali/completi + validazioni; product verification; expenses manual/propose/approve; sale
 correction (revert-safe); returns & exchanges; smoke third-flow e ask-data; integrita' Cruscotto.
 `tests/features.mjs`: pricing/SEO helpers puri; correttezza `v_ads_mensile`, `v_reorder`,
@@ -115,5 +116,43 @@ Non coprono: replay/idempotenza (D3/D5), mesi chiusi (C1), concorrenza (G1), res
    C1 (409 mese chiuso su mese sintetico chiuso ad hoc? NO su prod: usare force+cleanup con cautela,
    meglio aspettare l'ambiente), D1 (doppia delivery ZZZTEST poi cleanup), R4 (rinomina ZZZTEST),
    SEC1/SEC4 (sola lettura, sicuri da subito), C6 (confronto sola lettura).
-4. **Ambiente isolato** (design da fare: Supabase branch o stack locale + seed dal backup JSON):
-   sblocca C1 senza rischio, S2/S3 con fixture orfane, G1/G2/G5/G6, e la CI su ogni push.
+4. **Ambiente isolato** — FATTO il 2026-08-01, vedi §10. Ora si possono scrivere senza rischio i
+   test che prima erano bloccati: C1 (mese chiuso), S2/S3 con fixture orfane, G1/G2/G5/G6, e la CI
+   su ogni push (manca solo il runner: lo stack locale vuole Docker anche in CI).
+
+## 10. Ambiente isolato per `flows.mjs` (dal 2026-08-01)
+
+`flows.mjs` SCRIVE (ordini, arrivi, acquisti, spese) e fino al 31-07 scriveva nel database di
+produzione, con pulizia a mano. Ora ha un bersaglio usa-e-getta.
+
+**Come si lancia:**
+
+```
+npx supabase start
+AMIMI_TEST_URL=http://127.0.0.1:54321 AMIMI_TEST_KEY=<PUBLISHABLE_KEY di start> node tests/flows.mjs
+```
+
+**Le tre scelte, dichiarate:**
+
+1. **Stack locale in Docker, non un branch Supabase.** Il branch e' piu' fedele ma e' a pagamento;
+   lo stack locale e' gratis e la fedelta' la da' `schema.sql`, che e' un dump reale della
+   produzione.
+2. **Il DB si costruisce da `supabase/schema.sql` + `supabase/seed.sql`, non dalle migrazioni.**
+   `supabase/migrations` non sa ricreare il database da zero: 9 file sono segnaposto di soli
+   commenti e la `0050` ha una guardia sull'impronta delle viste CE che fa rollback su un DB senza
+   dati. Le migrazioni sono spente in `config.toml`; `local_bootstrap.sql` ricrea il solo registro
+   `supabase_migrations.schema_migrations`, che serve alla vista `v_digest_versioni`.
+3. **La suite si riazzera il bersaglio da sola** (`supabase db reset`) quando l'URL e' localhost.
+   Le asserzioni partono dallo stato del seed e i dati ZZZTEST restano nel DB: senza reset il
+   secondo giro fallisce mezzo FLOW 1 per dati vecchi, non per una regressione. Con il reset,
+   `node tests/flows.mjs` e' verde quante volte lo lanci. Si salta con `AMIMI_TEST_NO_RESET=1`.
+
+**Le due guardie** (test negativo eseguito, entrambe `exit 1`): senza `AMIMI_TEST_URL`/`AMIMI_TEST_KEY`
+la suite non parte; con l'URL della produzione si rifiuta di partire, e il controllo e' sul project
+ref, non sul nome. Il rifiuto viene PRIMA del reset: puntarla alla produzione non tocca niente.
+
+**Residuo dichiarato:** `app_config.shopify_token` nel seed e' un segnaposto finto e ci vuole, perche'
+in `shopify-stock` il controllo "token presente" precede il cancello di scrittura e senza token il
+test non arriverebbe mai a verificare il cancello (Regola Ferrea 15). Il cancello e' prima della
+rete: `realign` risponde 403 senza chiamare Shopify. L'unica azione che tenta la rete e' `sync`, che
+con quel token si becca un 401 e aborta senza scrivere.

@@ -2,9 +2,9 @@
 # flows_test_non_tocchi_produzione. Serve SOLO a far girare i test contro un database usa-e-getta:
 # la produzione non si tocca e non si configura da qui.
 #
-# Avvio:  npx supabase start      (applica tutte le migrazioni di supabase/migrations)
+# Avvio:  npx supabase start      (crea il DB da schema.sql + seed.sql, NON dalle migrazioni)
 # Stop:   npx supabase stop
-# Reset:  npx supabase db reset   (ricrea il DB da zero + riapplica migrazioni + seed.sql)
+# Reset:  npx supabase db reset   (ricrea il DB da zero, stessa catena schema.sql -> seed.sql)
 #
 # major_version allineata alla produzione (Postgres 17).
 
@@ -25,10 +25,19 @@ major_version = 17
 [db.pooler]
 enabled = false
 
-# Dati di partenza del test: vedi seed.sql per il perche' di ogni riga.
+# Le migrazioni NON si applicano allo stack locale. `supabase/migrations` non sa ricostruire il
+# database da zero: 9 file sono segnaposto di soli commenti, e la 0050 ha una guardia sull'impronta
+# delle viste CE che fa ROLLBACK su un database senza dati (e fa bene: e' li' per proteggere la
+# produzione). Il bersaglio si costruisce da `schema.sql`, che e' un dump reale dello schema.
+[db.migrations]
+enabled = false
+
+# Costruzione del bersaglio, in ordine: il ponte per il registro migrazioni (che qui non esiste,
+# vedi local_bootstrap.sql), poi lo schema (40 tabelle, 33 viste, 3 funzioni), poi i dati di
+# partenza del test. Vedi seed.sql per il perche' di ogni riga.
 [db.seed]
 enabled = true
-sql_paths = ["./seed.sql"]
+sql_paths = ["./local_bootstrap.sql", "./schema.sql", "./seed.sql"]
 
 [studio]
 enabled = true

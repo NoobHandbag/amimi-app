@@ -12,10 +12,19 @@
 // Senza quelle due variabili la suite NON parte. Se il bersaglio e' la produzione, si RIFIUTA di
 // partire (guardia sul project ref, non una convenzione sui nomi).
 //
-// COSA MANCA ANCORA: un bersaglio isolato da usare. Le due strade sono un branch Supabase effimero
-// (a pagamento) o uno stack locale con Docker (gratis ma va installato): decisione dell'owner,
-// ancora aperta al 01-08. Finche' non c'e', questa suite non gira — ed e' meglio che girasse
-// sui dati veri.
+// BERSAGLIO SCELTO (01-08 sera): lo STACK LOCALE in Docker, non un branch Supabase (a pagamento).
+//   npx supabase start
+//   AMIMI_TEST_URL=http://127.0.0.1:54321  AMIMI_TEST_KEY=<PUBLISHABLE_KEY stampata da start>
+// Il database si costruisce da `supabase/schema.sql` + `supabase/seed.sql`, NON dalle migrazioni
+// (vedi il commento in supabase/config.toml: `supabase/migrations` non sa ricreare il DB da zero).
+//
+// PERCHE' LA SUITE SI RIAZZERA IL BERSAGLIO DA SOLA: le asserzioni partono da uno stato noto (il
+// seed) e i dati ZZZTEST che crea restano nel database. Rilanciarla sullo stesso DB gia' sporco
+// fa fallire mezzo FLOW 1 (il prodotto stub esiste gia', gli ordini ZZZTEST sono due, le spese
+// pending sono otto): sarebbe un rosso che non parla di nessuna regressione. Su un bersaglio
+// usa-e-getta la risposta giusta e' che il DB pulito E' la fixture, quindi su localhost la suite
+// esegue `supabase db reset` prima di cominciare. Cosi' `node tests/flows.mjs` e' verde quante
+// volte vuoi, di fila. Per saltare il reset (bersaglio gia' pulito, o remoto): AMIMI_TEST_NO_RESET=1.
 //
 // Run: node tests/flows.mjs
 const PROD_REF = 'imszbjeyplaiovylhkgl';
@@ -33,6 +42,41 @@ if (BASE.includes(PROD_REF)) {
   console.error('Questa suite crea ordini, arrivi e spese finti: sulla produzione sporcherebbe');
   console.error('la contabilita\' viva a ogni esecuzione. Rifiuto di partire.\n');
   process.exit(1);
+}
+
+// ---- Bersaglio pulito prima di partire (solo stack locale) ----
+const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(BASE);
+if (isLocal && process.env.AMIMI_TEST_NO_RESET !== '1') {
+  const { spawnSync } = await import('node:child_process');
+  const { existsSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const path = await import('node:path');
+  // fileURLToPath e non URL.pathname: il repo sta in una cartella con gli spazi nel nome
+  // ("GESTIONALE AMI CLAUDE"), che in una URL sono %20 e come cwd non esistono.
+  const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+  // Docker Desktop su Windows non sempre finisce nel PATH della shell (su questo PC non c'e'):
+  // senza `docker`, `supabase db reset` fallisce con un errore che non dice perche'. Se manca,
+  // proviamo la cartella di installazione standard prima di arrendersi.
+  const env = { ...process.env };
+  const dockerBin = 'C:\\Program Files\\Docker\\Docker\\resources\\bin';
+  if (process.platform === 'win32' && existsSync(path.join(dockerBin, 'docker.exe'))) {
+    // La variabile va cercata senza badare alle maiuscole e va MODIFICATA QUELLA: a seconda della
+    // shell che ha lanciato node si chiama `Path` (cmd/PowerShell) o `PATH` (Git Bash). Aggiungerne
+    // una seconda con l'altro nome non serve a niente, il figlio ne legge una sola.
+    const k = Object.keys(env).find((n) => n.toLowerCase() === 'path') || 'Path';
+    env[k] = dockerBin + path.delimiter + (env[k] || '');
+  }
+
+  console.log('Reset del bersaglio locale (supabase db reset)...');
+  const r = spawnSync('npx', ['supabase', 'db', 'reset'], { cwd: repo, env, stdio: 'inherit', shell: true });
+  if (r.status !== 0) {
+    if (r.error) console.error('\n' + r.error.message);
+    console.error('\nSTOP: `supabase db reset` non e\' andato a buon fine (exit ' + r.status + ').');
+    console.error('Serve lo stack locale acceso: `npx supabase start` (e Docker Desktop avviato).');
+    console.error('Se il bersaglio e\' gia\' pulito e vuoi saltare questo passo: AMIMI_TEST_NO_RESET=1.\n');
+    process.exit(1);
+  }
 }
 
 // Date derivate dal mese CORRENTE, mai fisse: una data hardcoded finisce prima o poi in un mese
@@ -80,7 +124,10 @@ ok(pur.length === 2 && pur.some((p) => p.data === DATA_2) && pur.some((p) => p.d
 
 console.log('\n===== FLOW 2: product verification =====');
 ok((await call('product_verify', { payload: {} }))[0] === 422, 'verify rejects missing codice');
-const [pv] = await call('product_verify', { payload: { codice: 'ZZZTEST_NUOVA_X', item: 'Zzztest Nuova', variant: 'X', categoria: 'BAG', retail_price: 120, image_url: 'http://x/y.jpg', description: 'desc', seo_title: 'seo' } });
+// `cogs` fa parte del payload: dal v18 la write-api non considera verificato un prodotto senza
+// COGS > 0 (finisce in `mancanti` e resta in coda). Senza, questa asserzione fotografava una
+// regola che non esiste piu'.
+const [pv] = await call('product_verify', { payload: { codice: 'ZZZTEST_NUOVA_X', item: 'Zzztest Nuova', variant: 'X', categoria: 'BAG', retail_price: 120, cogs: 15, image_url: 'http://x/y.jpg', description: 'desc', seo_title: 'seo' } });
 const verified = await get('/products?codice=eq.ZZZTEST_NUOVA_X&select=verificato,retail_price,description');
 ok(pv === 200 && verified[0].verificato === true && Number(verified[0].retail_price) === 120, 'verify completes product');
 ok((await get('/v_products_todo?codice=eq.ZZZTEST_NUOVA_X&select=codice')).length === 0, 'verified product left the todo queue');
@@ -131,12 +178,17 @@ ok((await call('b2b', { payload: { codice: 'Lea_Bag_BLACK', quantita: 1, tipo_mo
 console.log('\n===== NEW: returns & exchanges =====');
 {
   const C = 'Lea_Bag_BLACK';
-  const g0 = Number((await get(`/v_inventory?codice=eq.${C}&select=giacenza_attuale`))[0]?.giacenza_attuale);
+  // Le LETTURE REST filtrano su `codice_norm`, non su `codice`: PostgREST confronta byte per byte,
+  // e il codice a catalogo e' `LEA_BAG_BLACK` maiuscolo. Filtrare per `codice=eq.Lea_Bag_BLACK`
+  // non trovava nessuna riga e la giacenza usciva NaN — l'asserzione era verde per finta.
+  // Le SCRITTURE restano in Title_Case apposta: li' il codice lo normalizza la write-api (Regola 4).
+  const INV = '/v_inventory?codice_norm=eq.' + C.toUpperCase() + '&select=giacenza_attuale';
+  const g0 = Number((await get(INV))[0]?.giacenza_attuale);
   ok((await call('return', { payload: { codice: C, quantita: 1, canale: 'qromo', importo_rimborsato: 50, rientra_stock: true, motivo: 'Difetto', data: DATA_1, note: 'ZZZTEST' } }))[0] === 200, 'return insert (re-enters stock)');
-  const g1 = Number((await get(`/v_inventory?codice=eq.${C}&select=giacenza_attuale`))[0]?.giacenza_attuale);
+  const g1 = Number((await get(INV))[0]?.giacenza_attuale);
   ok(g1 === g0 + 1, `return re-enters stock: ${g0} -> ${g1}`);
   await call('return', { payload: { codice: C, quantita: 1, canale: 'online', importo_rimborsato: 60, rientra_stock: false, motivo: 'Difetto', data: DATA_1, note: 'ZZZTEST' } });
-  const g2 = Number((await get(`/v_inventory?codice=eq.${C}&select=giacenza_attuale`))[0]?.giacenza_attuale);
+  const g2 = Number((await get(INV))[0]?.giacenza_attuale);
   ok(g2 === g1, 'discarded return does not re-enter stock');
   ok((await get(`/v_resi_mensile?year=eq.${OGGI.getUTCFullYear()}&month=eq.${OGGI.getUTCMonth()+1}&select=importo`))[0] != null, 'returns visible in v_resi_mensile');
   ok((await call('return', { payload: { codice: C, quantita: 0 } }))[0] === 422, 'return rejects qty 0');

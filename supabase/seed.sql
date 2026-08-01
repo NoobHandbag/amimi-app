@@ -7,13 +7,21 @@
 -- database pulito quelle asserzioni fallirebbero. Qui gli stessi presupposti sono ricreati in
 -- versione minima e DICHIARATA, cosi' il test verifica la LOGICA e non lo stato del negozio.
 --
--- Volutamente NON seminati: `gemini_api_key` (il test si aspetta che ask-data risponda needs_key)
--- e qualunque token Shopify (il test si aspetta che il realign sia gated).
+-- Volutamente NON seminato: `gemini_api_key` (il test si aspetta che ask-data risponda needs_key).
 
 -- PIN dell'app: il test chiama la write-api con pin 'x'.
-insert into public.app_config (id, pin_hash)
-values (1, '2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881')
-on conflict (id) do update set pin_hash = excluded.pin_hash;
+--
+-- `shopify_token` e' un SEGNAPOSTO FINTO, e ci vuole. In `shopify-stock` il controllo "token
+-- presente" viene PRIMA del cancello di scrittura: senza token l'azione realign muore con 500
+-- "token Shopify mancante" e il test non arriva mai a verificare il cancello, che e' la cosa che
+-- gli interessa (Regola Ferrea 15, unico writer dello stock). Con il token finto la funzione
+-- prosegue e risponde 403 gated, perche' `shopify_write_enabled` e' false: nessuna chiamata parte
+-- verso Shopify, il cancello e' PRIMA della rete. L'unica azione che tenta davvero la rete e'
+-- `sync`, che con questo token si becca un 401 da Shopify e aborta il giro senza scrivere niente
+-- (il test non asserisce nulla su quella riga).
+insert into public.app_config (id, pin_hash, shopify_token)
+values (1, '2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881', 'shpat_FINTO_STACK_LOCALE_NON_E_UN_TOKEN_VERO')
+on conflict (id) do update set pin_hash = excluded.pin_hash, shopify_token = excluded.shopify_token;
 
 -- Interruttori: autopush Shopify SPENTO -> l'azione realign deve rispondere 403 gated.
 insert into public.app_flags (key, value) values
