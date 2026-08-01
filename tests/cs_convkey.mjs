@@ -97,6 +97,68 @@ console.log('\n== il caso del brief: due submit nello stesso minuto ==');
 }
 
 // ---------------------------------------------------------------------------------------------
+// reply_to: la fonte INDIPENDENTE dal corpo (migr 0100, brief cs_reply_to_fonte_indipendente).
+// Le prime due fonti dipendono entrambe dal riconoscimento dello stampo dentro il corpo, quindi se
+// il template cambia lingua cadono INSIEME. Reply-To no: Shopify lo valorizza comunque.
+// ---------------------------------------------------------------------------------------------
+console.log('\n== reply_to: la cintura non dipende piu\' solo dal corpo ==');
+// stampo in una lingua che non riconosciamo: niente form_fields, mittente = wrapper. Prima: null.
+const FR = { form_fields: null, from_email: 'mailer@shopify.com', reply_to: 'chloe@example.fr' };
+t('54 stampo in una terza lingua: l\'email della cliente si recupera dal Reply-To',
+  emailCliente(FR) === 'chloe@example.fr');
+t('55 senza reply_to lo stesso messaggio resta muto (e\' il buco che stiamo chiudendo)',
+  emailCliente({ form_fields: null, from_email: 'mailer@shopify.com' }) === null);
+t('56 il campo del modulo VINCE sul Reply-To (nessun cambio di esito dove oggi funziona)',
+  emailCliente({ form_fields: { email: 'anna@example.com' }, from_email: 'mailer@shopify.com', reply_to: 'altro@example.com' }) === 'anna@example.com');
+t('57 su email_diretta il mittente VINCE sul Reply-To: un alias non e\' un secondo cliente',
+  emailCliente({ from_email: 'anna@gmail.com', reply_to: 'anna@lavoro.it' }) === 'anna@gmail.com');
+t('58 un Reply-To che e\' il wrapper o casa nostra non e\' un cliente',
+  emailCliente({ from_email: 'mailer@shopify.com', reply_to: 'mailer@shopify.com' }) === null
+  && emailCliente({ from_email: 'mailer@shopify.com', reply_to: 'info@amimi.it' }) === null);
+t('59 Reply-To spazzatura o vuoto -> null, non un finto indirizzo',
+  emailCliente({ from_email: 'mailer@shopify.com', reply_to: 'nessuna email qui' }) === null
+  && emailCliente({ from_email: 'mailer@shopify.com', reply_to: '' }) === null);
+t('60 il Reply-To passa dallo stesso estrattore (forma "Nome <mail>" e maiuscole)',
+  emailCliente({ from_email: 'mailer@shopify.com', reply_to: 'Chloe D <Chloe@Example.FR>' }) === 'chloe@example.fr');
+{
+  // IL CASO DEL BRIEF, versione cattiva: DUE invii dal modulo con lo stampo non riconosciuto.
+  // Prima del fix la cintura vedeva ZERO indirizzi e non bloccava, cioe' falliva proprio quando
+  // serviva: le due richieste restavano nella stessa conversazione E l'invio partiva lo stesso.
+  const inMsgs = [
+    { form_fields: null, from_email: 'mailer@shopify.com', reply_to: 'chloe@example.fr' },
+    { form_fields: null, from_email: 'mailer@shopify.com', reply_to: 'bea@example.com' },
+  ];
+  const set = new Set(inMsgs.map(emailCliente).filter(Boolean));
+  t('61 due clienti con lo stampo ignoto: la cintura ne vede DUE e blocca', set.size === 2, [...set]);
+  const senza = new Set(inMsgs.map(({ reply_to: _rt, ...m }) => emailCliente(m)).filter(Boolean));
+  t('62 gli stessi due messaggi senza reply_to: ZERO, cioe\' il fallimento silenzioso di prima', senza.size === 0);
+}
+{
+  // PROPRIETA' DI NON REGRESSIONE, il motivo per cui reply_to e' l'ULTIMA fonte e non la seconda:
+  // aggiungere un Reply-To qualsiasi non deve MAI cambiare un esito che oggi e' gia' un indirizzo.
+  const casi = [
+    { form_fields: { email: 'anna@example.com' }, from_email: 'mailer@shopify.com' },
+    { form_fields: { Email: 'anna@example.com' } },
+    { form_fields: { name: 'Anna' }, from_email: 'anna@example.com' },
+    { form_fields: { email: '   ' }, from_email: 'anna@example.com' },
+    { from_email: 'monica_s@hotmail.it<mailto:monica_s@hotmail.it>' },
+    { from_email: 'Anna Rossi <anna@example.com>' },
+    { from_email: 'info@amimi.it' },
+    { from_email: 'mailer@shopify.com' },
+    { from_email: 'nessuna email qui' },
+    {},
+  ];
+  const RT = ['terzo@example.org', '', null, undefined, 'mailer@shopify.com'];
+  const rotti = [];
+  for (const c of casi) {
+    const prima = emailCliente(c);
+    if (prima === null) continue;   // i null POSSONO riempirsi: e' tutto il senso del fix
+    for (const rt of RT) if (emailCliente({ ...c, reply_to: rt }) !== prima) rotti.push({ c, rt, prima });
+  }
+  t('63 additiva per costruzione: dove oggi c\'e\' un indirizzo, il Reply-To non lo cambia mai', rotti.length === 0, rotti.slice(0, 3));
+}
+
+// ---------------------------------------------------------------------------------------------
 // chiave della conversazione (cs-sync v13) e regola della raffica (tre sedi)
 // ---------------------------------------------------------------------------------------------
 function ritagliaMarcato(file, nome) {

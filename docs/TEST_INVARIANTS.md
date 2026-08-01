@@ -170,7 +170,23 @@ sono due clienti, la risposta parte a uno con il contenuto dell'altro.
 | **Runtime** | `decidiConv` in cs-sync (blocco `PURE:cs-convkey`) | una raffica dal modulo con email diverse genera conversazioni distinte, con chiave `<thread>#<message_id>` |
 | **Guardia 1** | cintura cross-cliente in cs-send (`emailCliente`) | l'invio si rifiuta con 422 se fra i messaggi in ingresso ci sono clienti diversi |
 | **Guardia 2** | guardia in cs-assist `draft`/`refine` | la bozza non si genera nemmeno, cosi' il dato del terzo non viene assemblato |
-| **Test** | `tests/cs_convkey.mjs` (46 casi) | funzioni pure ritagliate dal sorgente, piu' il confronto d'impronta fra le copie duplicate |
+| **Fonte indipendente** | `cs_messages.reply_to` (migr 0100), terza fonte di `emailCliente` | le guardie 1 e 2 non dipendono piu' SOLO dal corpo del messaggio |
+| **Sveglia** | `health_log` chiave `cs_stampo_ignoto` (cs-sync v14) | una notifica del modulo con un template non riconosciuto si vede dal cruscotto, non si scopre per caso |
+| **Test** | `tests/cs_convkey.mjs` (63 casi) | funzioni pure ritagliate dal sorgente, piu' il confronto d'impronta fra le copie duplicate |
+
+**Il buco chiuso il 01-08 notte (brief `cs_reply_to_fonte_indipendente`).** Il riconoscimento dello
+stampo del modulo dentro il CORPO faceva due lavori: decideva se separare due clienti (`decidiConv`,
+via `nuovaSubmission`) e forniva l'email per messaggio (`form_fields.email`, l'unica fonte utile sul
+canale modulo, dove `from_email` e' il wrapper Shopify). Dipendendo dalla stessa cosa, i due
+fallivano INSIEME e in silenzio: con un template in una terza lingua le due richieste restavano
+nella stessa scheda **e** la cintura non aveva gli indirizzi per accorgersene. Ora `emailCliente`
+legge anche `reply_to`, che Shopify valorizza a prescindere dalla lingua del corpo.
+**`reply_to` e' l'ULTIMA fonte, non la seconda:** su `email_diretta` un client di posta puo'
+legittimamente mettere un Reply-To diverso dal From, e anteporlo avrebbe potuto far scattare un
+blocco cross-cliente su una persona sola. In coda, la funzione e' additiva per costruzione.
+**Misurato dopo il backfill, sulle 408 righe in ingresso reali:** 152 con `reply_to`, **0 righe con
+esito cambiato**, **0 conversazioni passate da uno a due clienti** (l'unica gia' a due era e resta
+`rumore`). Il caso avversario e' a fixture, non a caso: test 61-62.
 
 **Prova di schema, da rifare sullo stack locale se si tocca la chiave** (mai in produzione):
 inserire `TEST1` e `TEST1#abc` deve passare; il doppione di ciascuna deve dare `23505`; la lettura

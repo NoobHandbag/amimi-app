@@ -1,4 +1,12 @@
-// cs-sync v13 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v14 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v14 (2026-08-01 notte, brief cs_reply_to_fonte_indipendente): il riconoscimento dello STAMPO del
+//   modulo dentro il corpo faceva due lavori (separare due clienti in due conversazioni; dare
+//   l'email di chi ha scritto quel messaggio) e, se sbagliava, li faceva fallire INSIEME e in
+//   silenzio. Ora l'header `Reply-To` si CONSERVA in `cs_messages.reply_to` (migr 0100): e' la
+//   stessa informazione, ma non passa dal corpo, quindi la cintura cross-cliente di cs-send ha una
+//   fonte che sopravvive a un cambio di template. In piu' un giro che incontra una notifica del
+//   modulo con uno stampo ignoto NON resta muto: scrive `cs_stampo_ignoto` in `health_log`.
+//   Azione nuova `backfill_replyto` per lo storico (rilegge il solo header da Gmail, a blocchi).
 // v12 (2026-08-01 notte, brief cs_uiux_rifiniture punto 2): lo stampo del modulo del sito arriva
 //   anche in INGLESE (il template segue la lingua della sessione del visitatore) e i marcatori
 //   erano solo italiani: sulle notifiche EN non scattava ne' il taglio del boilerplate ne'
@@ -354,6 +362,8 @@ type Parsed = {
   subject: string; bodyText: string; sentAt: string | null; snippet: string;
   formFields: Record<string, string> | null; order: number | null; lingua: string;
   nuovaSubmission: boolean;   // v13: questo messaggio E' un invio nuovo dal modulo del sito
+  replyTo: string | null;     // v14: header Reply-To, conservato (migr 0100)
+  stampoIgnoto: boolean;      // v14: notifica del modulo con un template che non riconosciamo
 };
 
 // ==== PURE:cs-convkey BEGIN ====
@@ -445,7 +455,7 @@ Deno.serve(async (req) => {
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const action = String(body.action || 'poll');
-  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato') return json({ error: 'azione sconosciuta: ' + action }, 422);
+  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
   const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders']);
@@ -461,6 +471,24 @@ Deno.serve(async (req) => {
     const today = new Date().toISOString().slice(0, 10);
     await sb.from('health_log').delete().eq('day', today).eq('k', 'cs_sync');
     await sb.from('health_log').insert({ day: today, k: 'cs_sync', label, n, severity, created_at: new Date().toISOString() });
+  };
+
+  // v14 (brief cs_reply_to_fonte_indipendente punto 5): chiave PROPRIA per gli stampi non
+  // riconosciuti, e ACCUMULA sulla giornata invece di sovrascrivere. Due dettagli che non sono
+  // dettagli: (a) se finisse dentro la chiave `cs_sync` il giro successivo la cancellerebbe, e la
+  // segnalazione durerebbe cinque minuti; (b) l'unique index e' (day,k), quindi un INSERT nudo al
+  // secondo giro della giornata fallirebbe e porterebbe via anche il resto della scrittura, che e'
+  // esattamente il modo in cui una guardia si spegne in silenzio (caso ce-guard, 29-07).
+  const writeStampoIgnoto = async (n: number, lingue: string[]) => {
+    if (n <= 0) return;   // zero non si scrive: la chiave esiste solo quando c'e' qualcosa da vedere
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: ex } = await sb.from('health_log').select('n').eq('day', today).eq('k', 'cs_stampo_ignoto').maybeSingle();
+    const tot = (Number(ex?.n) || 0) + n;
+    await sb.from('health_log').delete().eq('day', today).eq('k', 'cs_stampo_ignoto');
+    await sb.from('health_log').insert({
+      day: today, k: 'cs_stampo_ignoto', n: tot, severity: 'warn', created_at: new Date().toISOString(),
+      label: `notifiche dal modulo del sito con uno stampo NON riconosciuto (lingua sospetta: ${lingue.join(', ') || 'n/d'}): i campi del modulo non vengono estratti e due invii ravvicinati non si separano. Controllare il template Shopify e aggiungere i marcatori a FORM_WRAP_RE.`,
+    });
   };
 
   // v9: transizione AUTOMATICA dello stato (Parte A). La mano umana vince sempre: se stato_by e'
@@ -510,6 +538,10 @@ Deno.serve(async (req) => {
 
   const counts: Record<Canale, number> = { email_diretta: 0, form_contatto: 0, form_evento: 0, chat_notifica: 0, rumore: 0 };
   let parseFailed = 0;
+  // v14: notifiche del modulo con uno stampo che non riconosciamo. Contate qui, scritte a fine giro
+  // su una chiave PROPRIA di health_log: se finissero dentro `cs_sync` sparirebbero al giro dopo.
+  let stampoIgnoto = 0;
+  const lingueIgnote = new Set<string>();
   let outMsg = 0;
 
   // v6: ricalcolo DETERMINISTICO dell'urgenza. Replica ESATTAMENTE la regola sollecito di
@@ -720,6 +752,36 @@ Deno.serve(async (req) => {
     return json({ ok: true, scanned, clean_scritti: wrote, fields_scritti: fieldsWrote, nomi_scritti: nomiScritti.length, invariati, last_id: lastId, remaining: remaining ?? 0, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
   }
 
+  // --- BACKFILL reply_to (v14, brief cs_reply_to_fonte_indipendente punto 2) ---
+  // Rilegge da Gmail il SOLO header Reply-To dei messaggi in ingresso che ancora non ce l'hanno.
+  // Formato `metadata` con un header solo: la chiamata piu' leggera che Gmail offra. A blocchi, con
+  // keyset su id come `backfill_clean`, e per lo stesso motivo: la maggior parte della posta diretta
+  // NON ha un Reply-To, quindi quelle righe restano legittimamente NULL e senza keyset occuperebbero
+  // per sempre la testa della coda. Il giro finisce quando una pagina non torna piu' righe, non
+  // quando `remaining` va a zero. Idempotente: tocca solo cio' che e' NULL e scrive solo se trova.
+  // Un messaggio non piu' su Gmail (404) si salta e si dichiara: non e' un errore, e' storia.
+  if (action === 'backfill_replyto') {
+    const limit = Math.min(Number(body.limit) || 200, 400);
+    let q = sb.from('cs_messages').select('id, gmail_message_id').eq('direction', 'in').is('reply_to', null).order('id', { ascending: true }).limit(limit);
+    if (body.after_id) q = q.gt('id', String(body.after_id));
+    const { data: msgs, error: qe } = await q;
+    if (qe) return json({ ok: false, error: qe.message }, 500);
+    let scanned = 0, wrote = 0, senzaHeader = 0, spariti = 0; let lastId: string | null = null; const errors: string[] = [];
+    for (const m of (msgs ?? []) as { id: string; gmail_message_id: string }[]) {
+      scanned++; lastId = m.id;
+      const mg = await gGet(`/messages/${encodeURIComponent(m.gmail_message_id)}?format=metadata&metadataHeaders=Reply-To`, token);
+      if (mg.status === 404) { spariti++; continue; }
+      if (!mg.ok) { errors.push(m.id + ':gmail ' + mg.status); continue; }
+      const rt = parseAddr(hdr((mg.j as GMsg).payload?.headers, 'reply-to')).email;
+      if (!rt) { senzaHeader++; continue; }
+      const { error: ue } = await sb.from('cs_messages').update({ reply_to: rt }).eq('id', m.id);
+      if (ue) { errors.push(m.id + ':' + ue.message.slice(0, 60)); continue; }
+      wrote++;
+    }
+    const { count: remaining } = await sb.from('cs_messages').select('id', { count: 'exact', head: true }).eq('direction', 'in').is('reply_to', null);
+    return json({ ok: true, scanned, scritti: wrote, senza_header: senzaHeader, spariti_da_gmail: spariti, last_id: lastId, remaining: remaining ?? 0, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
+  }
+
   // --- DRY RUN: classifica i messaggi recenti, ritorna SOLO conteggi, scrive NULLA ---
   if (dryRun) {
     const lst = await gGet('/messages?maxResults=40&q=' + encodeURIComponent('in:inbox newer_than:30d'), token);
@@ -770,8 +832,17 @@ Deno.serve(async (req) => {
       // v13: questo messaggio e' un INVIO NUOVO dal modulo (non una risposta della cliente nello
       // stesso thread)? Le tre condizioni sono gia' tutte calcolate qui sopra: costo zero.
       const nuovaSubmission = isForm && FORM_WRAP_RE.test(bodyText) && isShopifySender(from.email);
+      // v14 (brief cs_reply_to_fonte_indipendente punto 5): NON restare muti su uno stampo ignoto.
+      // `classify` mette su canale modulo solo cio' che arriva dal mittente wrapper Shopify CON un
+      // reply-to cliente: se una riga cosi' non aggancia i marcatori IT/EN, il template e' cambiato
+      // (una terza lingua, o un ritocco di Shopify). Le risposte della cliente dentro lo stesso
+      // thread NON entrano qui: `classify` le manda su email_diretta, quindi isForm e' false.
+      // Misurato il 01-08 sui dati veri: 19 messaggi in ingresso su canale modulo, 19 con lo stampo,
+      // quindi oggi questo contatore vale zero, e vale zero per il motivo giusto.
+      const stampoIgnoto = isForm && !FORM_WRAP_RE.test(bodyText);
       return {
-        cl, from, to, subject, bodyText, nuovaSubmission,
+        cl, from, to, subject, bodyText, nuovaSubmission, stampoIgnoto,
+        replyTo: replyTo.email || null,
         sentAt: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null,
         snippet: stripNull((msg.snippet ?? '').slice(0, 300)),
         formFields: Object.keys(ff).length ? ff : null,
@@ -877,7 +948,7 @@ Deno.serve(async (req) => {
       const { error: me, count } = await sb.from('cs_messages').upsert({
         gmail_message_id: id, conversation_id: convId, direction: 'in',
         from_email: p.from.email || null, to_email: p.to.email || null, sent_at: p.sentAt, body_text: p.bodyText || null, form_fields: p.formFields,
-        body_clean: stripQuoted(p.bodyText, p.cl.canale),
+        body_clean: stripQuoted(p.bodyText, p.cl.canale), reply_to: p.replyTo,
       }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
       if (me) return 'transient';
       if (count) {
@@ -890,6 +961,7 @@ Deno.serve(async (req) => {
         // sollecito va rivalutata subito (senza AI, senza toccare categoria)
         await recomputeUrgency(convId);
       }
+      if (p.stampoIgnoto) { stampoIgnoto++; lingueIgnote.add(p.lingua); }
       counts[p.cl.canale]++; processed++;
       return 'done';
     } catch { return 'transient'; }   // errore DB recuperabile: cursore fermo, si riprova
@@ -946,6 +1018,7 @@ Deno.serve(async (req) => {
     stalled ? 'giro fermato su un messaggio, nessun avanzamento (si riprova)' : (parseFailed ? `giro ok, ${parseFailed} non interpretati` : 'giro ok'),
     stalled || parseFailed ? 'warn' : 'ok',
   );
+  await writeStampoIgnoto(stampoIgnoto, [...lingueIgnote]);
 
-  return json({ ok: true, processed, new_conversations: newConv, new_messages: newMsg, out_messages: outMsg, counts, parse_failed: parseFailed, historyId: newHistoryId, backlog: !drained, stalled });
+  return json({ ok: true, processed, new_conversations: newConv, new_messages: newMsg, out_messages: outMsg, counts, parse_failed: parseFailed, stampo_ignoto: stampoIgnoto, historyId: newHistoryId, backlog: !drained, stalled });
 });

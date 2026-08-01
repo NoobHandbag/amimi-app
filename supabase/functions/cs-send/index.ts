@@ -1,4 +1,10 @@
-// cs-send v5 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// cs-send v6 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// v6 (2026-08-01 notte, brief cs_reply_to_fonte_indipendente): la CINTURA cross-cliente aveva una
+//   sola fonte per sapere chi avesse scritto un messaggio del modulo, e quella fonte dipendeva dal
+//   riconoscimento dello stampo nel CORPO, cioe' dalla stessa cosa che decide se separare due
+//   clienti in due conversazioni. Se il template cambiava lingua cadevano insieme: due richieste
+//   nella stessa scheda E la cintura senza gli indirizzi per accorgersene. Ora `emailCliente` legge
+//   anche `cs_messages.reply_to` (migr 0100), come ULTIMA fonte: additiva per costruzione.
 // v5 (2026-08-01 notte, correzioni da una verifica avversariale del diff): (a) il thread VERO di
 //   Gmail e' `gmail_thread_id.split('#')[0]`, perche' dal 01-08 una conversazione nata da una
 //   raffica sul modulo porta il suffisso `#<msgid>` e passarlo all'API darebbe 404, cioe' una
@@ -105,17 +111,33 @@ const countDaVerificare = (t: string) => (t.match(/\[DA VERIFICARE[^\]]*\]/gi) |
 // Verificato sul DB il 01-08: le chiavi esistenti sono `email`, `name`, `country code`,
 // `prefisso internazionale`. Il valore passa poi da un estrattore, perche'
 // `nome@dominio<mailto:nome@dominio>` deve contare come UN indirizzo e non come uno diverso.
+//
+// TERZA FONTE, `reply_to` (migr 0100, brief cs_reply_to_fonte_indipendente). Le prime due fonti
+// dipendono ENTRAMBE dal riconoscimento dello stampo del modulo dentro il CORPO: `form_fields`
+// esiste solo se cs-sync ha agganciato i marcatori IT/EN, e sul canale modulo `from_email` e' il
+// wrapper Shopify, che non e' un cliente. Se il template cambia lingua o formula, le due cadono
+// INSIEME, e la cintura resta senza l'indirizzo con cui accorgersi che nella conversazione ci sono
+// due persone diverse: e' proprio il caso in cui servirebbe. L'header Reply-To non passa dal corpo,
+// Shopify lo valorizza comunque, e dalla migr 0100 cs-sync lo conserva su ogni riga.
+// E' l'ULTIMA risorsa DI PROPOSITO, non la seconda come proponeva il brief: su `email_diretta` un
+// client di posta puo' legittimamente mettere un Reply-To diverso dal From (alias, lista, gruppo),
+// e anteporlo cambierebbe la risposta su righe che oggi risolvono bene, fino a far scattare un
+// blocco cross-cliente su una persona sola. Messa in coda, la funzione e' ADDITIVA per costruzione:
+// ogni riga che oggi da' un indirizzo continua a dare LO STESSO, solo i null possono riempirsi.
 const EMAIL_TOKEN_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/;
 const NON_CLIENTE_RE = /@(?:amimi\.it|shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/;
-function emailCliente(m: { from_email?: string | null; form_fields?: Record<string, string> | null }): string | null {
+function emailCliente(m: { from_email?: string | null; form_fields?: Record<string, string> | null; reply_to?: string | null }): string | null {
   let v = '';
   const ff = m.form_fields ?? null;
   if (ff) for (const k of Object.keys(ff)) if (k.trim().toLowerCase() === 'email') { v = String(ff[k] ?? ''); break; }
   if (!v.trim()) v = String(m.from_email ?? '');
-  const hit = v.toLowerCase().match(EMAIL_TOKEN_RE);
-  if (!hit) return null;
-  const e = hit[0];
-  return NON_CLIENTE_RE.test(e) ? null : e;   // wrapper Shopify e nostri indirizzi non sono clienti
+  for (const cand of [v, String(m.reply_to ?? '')]) {
+    const hit = cand.toLowerCase().match(EMAIL_TOKEN_RE);
+    if (!hit) continue;
+    if (NON_CLIENTE_RE.test(hit[0])) continue;   // wrapper Shopify e nostri indirizzi non sono clienti
+    return hit[0];
+  }
+  return null;
 }
 // ==== PURE:cs-emailcliente END ====
 
@@ -281,9 +303,9 @@ Deno.serve(async (req) => {
   // i canali (misurato il 01-08: bloccherebbe 1 sola conversazione in tutto il DB, ed e' `rumore`).
   // Il wrapper Shopify e i nostri indirizzi non contano: non sono clienti.
   const { data: inMsgs } = await sb.from('cs_messages')
-    .select('from_email, form_fields').eq('conversation_id', convId).eq('direction', 'in');
+    .select('from_email, form_fields, reply_to').eq('conversation_id', convId).eq('direction', 'in');
   const mittenti = new Set<string>();
-  for (const m of (inMsgs ?? []) as { from_email: string | null; form_fields: Record<string, string> | null }[]) {
+  for (const m of (inMsgs ?? []) as { from_email: string | null; form_fields: Record<string, string> | null; reply_to: string | null }[]) {
     const e = emailCliente(m);
     if (e) mittenti.add(e);
   }

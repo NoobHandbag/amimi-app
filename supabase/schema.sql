@@ -447,7 +447,8 @@ CREATE TABLE IF NOT EXISTS "public"."cs_messages" (
     "is_via_tool" boolean DEFAULT false NOT NULL,
     "form_fields" "jsonb",
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    "body_clean" "text"
+    "body_clean" "text",
+    "reply_to" "text"
 );
 
 
@@ -455,6 +456,9 @@ ALTER TABLE "public"."cs_messages" OWNER TO "postgres";
 
 
 COMMENT ON COLUMN "public"."cs_messages"."body_clean" IS 'Corpo pulito deterministico (cs-sync stripQuoted): solo le parole del mittente, senza citazioni/firma/boilerplate. NULL = fallback su body_text.';
+
+
+COMMENT ON COLUMN "public"."cs_messages"."reply_to" IS 'Header Reply-To del messaggio Gmail, minuscolo, come arrivato (NULL se assente). Fonte dell''email cliente indipendente dal corpo: sul canale modulo Shopify lo valorizza con l''indirizzo di chi ha compilato, qualunque sia la lingua del template. Usato come ULTIMA risorsa da emailCliente() in cs-send e cs-assist, dopo form_fields.email e from_email, cosi'' non puo'' cambiare un esito gia'' corretto. Popolata all''ingest da cs-sync dal 2026-08-01; lo storico si riempie con l''azione backfill_replyto.';
 
 
 

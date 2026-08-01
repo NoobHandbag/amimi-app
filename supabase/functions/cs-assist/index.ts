@@ -1,4 +1,8 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v23 (2026-08-01 notte, brief cs_reply_to_fonte_indipendente): la guardia cross-cliente di draft e
+//   refine usa lo stesso `emailCliente` di cs-send, e quel blocco ora legge anche
+//   `cs_messages.reply_to` (migr 0100), fonte che non passa dal corpo del messaggio. Copia
+//   IDENTICA nelle due edge, impronta confrontata da `tests/cs_convkey.mjs`.
 // v22 (2026-08-01 notte, segnalazione di un'altra sessione dalla prova A VIDEO): il rilevamento del
 //   troncamento della v19 dava FALSI POSITIVI sulle bozze scritte bene, perche' la firma di casa
 //   "Grazie, Team Amimi'" finisce con una lettera e la regola voleva punteggiatura o emoji. Ora una
@@ -201,17 +205,33 @@ const countDaVerificare = (t: string) => (t.match(/\[DA VERIFICARE[^\]]*\]/gi) |
 // Verificato sul DB il 01-08: le chiavi esistenti sono `email`, `name`, `country code`,
 // `prefisso internazionale`. Il valore passa poi da un estrattore, perche'
 // `nome@dominio<mailto:nome@dominio>` deve contare come UN indirizzo e non come uno diverso.
+//
+// TERZA FONTE, `reply_to` (migr 0100, brief cs_reply_to_fonte_indipendente). Le prime due fonti
+// dipendono ENTRAMBE dal riconoscimento dello stampo del modulo dentro il CORPO: `form_fields`
+// esiste solo se cs-sync ha agganciato i marcatori IT/EN, e sul canale modulo `from_email` e' il
+// wrapper Shopify, che non e' un cliente. Se il template cambia lingua o formula, le due cadono
+// INSIEME, e la cintura resta senza l'indirizzo con cui accorgersi che nella conversazione ci sono
+// due persone diverse: e' proprio il caso in cui servirebbe. L'header Reply-To non passa dal corpo,
+// Shopify lo valorizza comunque, e dalla migr 0100 cs-sync lo conserva su ogni riga.
+// E' l'ULTIMA risorsa DI PROPOSITO, non la seconda come proponeva il brief: su `email_diretta` un
+// client di posta puo' legittimamente mettere un Reply-To diverso dal From (alias, lista, gruppo),
+// e anteporlo cambierebbe la risposta su righe che oggi risolvono bene, fino a far scattare un
+// blocco cross-cliente su una persona sola. Messa in coda, la funzione e' ADDITIVA per costruzione:
+// ogni riga che oggi da' un indirizzo continua a dare LO STESSO, solo i null possono riempirsi.
 const EMAIL_TOKEN_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/;
 const NON_CLIENTE_RE = /@(?:amimi\.it|shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/;
-function emailCliente(m: { from_email?: string | null; form_fields?: Record<string, string> | null }): string | null {
+function emailCliente(m: { from_email?: string | null; form_fields?: Record<string, string> | null; reply_to?: string | null }): string | null {
   let v = '';
   const ff = m.form_fields ?? null;
   if (ff) for (const k of Object.keys(ff)) if (k.trim().toLowerCase() === 'email') { v = String(ff[k] ?? ''); break; }
   if (!v.trim()) v = String(m.from_email ?? '');
-  const hit = v.toLowerCase().match(EMAIL_TOKEN_RE);
-  if (!hit) return null;
-  const e = hit[0];
-  return NON_CLIENTE_RE.test(e) ? null : e;   // wrapper Shopify e nostri indirizzi non sono clienti
+  for (const cand of [v, String(m.reply_to ?? '')]) {
+    const hit = cand.toLowerCase().match(EMAIL_TOKEN_RE);
+    if (!hit) continue;
+    if (NON_CLIENTE_RE.test(hit[0])) continue;   // wrapper Shopify e nostri indirizzi non sono clienti
+    return hit[0];
+  }
+  return null;
 }
 // ==== PURE:cs-emailcliente END ====
 
@@ -879,7 +899,7 @@ Deno.serve(async (req) => {
     if (!conv) return null;
     // v14: THREAD INTERO (cap 30 messaggi, i piu' recenti): prima si vedevano solo gli ultimi 4
     // v20: e con loro l'elenco dei CLIENTI distinti che hanno scritto in questa conversazione.
-    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,body_clean,form_fields,from_email,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(30);
+    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,body_clean,form_fields,from_email,reply_to,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(30);
     const recent = ((msgs ?? []) as Row[]).slice().reverse().map((m): Row => ({
       ...m,
       testo: String(m.body_clean ?? '') || (conv.canale === 'chat_notifica' ? stripChat(String(m.body_text ?? '')) : String(m.body_text ?? '')),
@@ -891,7 +911,7 @@ Deno.serve(async (req) => {
     // la bozza userebbe il TESTO di uno e l'ordine/email dell'ALTRO, e la guardia del v11 non
     // scatta perche' un'email c'e', solo che e' di un'altra persona. Stessa funzione di cs-send v4.
     const clienti = [...new Set(recent.filter((m) => m.direction === 'in')
-      .map((m) => emailCliente({ from_email: (m.from_email as string) ?? null, form_fields: (m.form_fields as Record<string, string>) ?? null }))
+      .map((m) => emailCliente({ from_email: (m.from_email as string) ?? null, form_fields: (m.form_fields as Record<string, string>) ?? null, reply_to: (m.reply_to as string) ?? null }))
       .filter((e): e is string => !!e))];
     return { conv: conv as Row, inbound, recent, clienti };
   };
