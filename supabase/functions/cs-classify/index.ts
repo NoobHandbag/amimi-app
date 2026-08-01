@@ -153,7 +153,27 @@ const RE_DISPUTA = /chargeback|contestazion|\bdisputa\b|rimborso non (ancora )?r
 const RE_INLOCO = /sono (qui|qua) (fuori|davanti|sotto)|sono al portone|sono davanti (al|allo) (negozio|showroom)|sono in negozio|vi aspetto (qui|fuori|sotto)|sono sotto (il |al )?(negozio|showroom|casa)/i;
 
 type RuleUrg = { urgente: boolean; motivo: string; flags: string[] };
-function ruleUrgency(fullText: string, opts: { inboundCount: number; outboundCount: number; stato: string; lastDir: string | null; lastAt: string | null; statoAt: string | null }): RuleUrg {
+// ==== PURE:cs-sollecito BEGIN ====
+// La regola "2+ messaggi del cliente e nessuna nostra risposta = sollecito" e' giusta per la posta
+// normale, ma su una RAFFICA dal modulo (due invii a 43 secondi, che oggi finiscono nello stesso
+// thread) accende un'urgenza che nessuno ha sollecitato: e' successo davvero il 01-08.
+// La raffica si riconosce senza AI: almeno due messaggi in ingresso, TUTTI dal mittente wrapper del
+// modulo, e meno di 10 minuti fra il primo e l'ultimo. La soglia e' scelta a tavolino, non misurata:
+// serve solo a separare "due invii di fila" da "una cliente che risollecita ore dopo".
+// TRE SEDI, UNA REGOLA: questo blocco e' copia IDENTICA in cs-sync, cs-classify e cs-send.
+// `tests/cs_convkey.mjs` ne confronta l'impronta e diventa rosso se una sola delle tre cambia.
+const RAFFICA_MS = 10 * 60 * 1000;
+const isWrapperSender = (e: unknown) => /@(?:shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/.test(String(e ?? '').toLowerCase());
+function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[]): boolean {
+  if (!Array.isArray(inbound) || inbound.length < 2) return false;
+  if (!inbound.every((m) => isWrapperSender(m.from_email))) return false;
+  const ts = inbound.map((m) => Date.parse(String(m.sent_at ?? ''))).filter((n) => Number.isFinite(n));
+  if (ts.length !== inbound.length) return false;
+  return Math.max(...ts) - Math.min(...ts) < RAFFICA_MS;
+}
+// ==== PURE:cs-sollecito END ====
+
+function ruleUrgency(fullText: string, opts: { inboundCount: number; outboundCount: number; stato: string; lastDir: string | null; lastAt: string | null; statoAt: string | null; inbound?: { from_email?: unknown; sent_at?: unknown }[] }): RuleUrg {
   const flags = new Set<string>();
   let urgente = false; let motivo = '';
   const set = (m: string) => { urgente = true; if (!motivo) motivo = m; };
@@ -161,7 +181,9 @@ function ruleUrgency(fullText: string, opts: { inboundCount: number; outboundCou
   if (RE_INLOCO.test(fullText)) { set('cliente in loco'); }
   const reopened = opts.stato === 'fatto' && opts.lastDir === 'in' && !!opts.lastAt && (!opts.statoAt || opts.lastAt > opts.statoAt);
   if (reopened) { set('thread riaperto (sollecito)'); flags.add('sollecito'); }
-  else if (opts.inboundCount >= 2 && opts.outboundCount === 0) { set('2+ messaggi senza nostra risposta'); flags.add('sollecito'); }
+  // v7: una RAFFICA dal modulo (due invii di fila, stesso thread) non e' un sollecito: nessuno ha
+  // sollecitato, e' l'oggetto della notifica Shopify che ha granularita' al minuto.
+  else if (opts.inboundCount >= 2 && opts.outboundCount === 0 && !isRafficaModulo(opts.inbound ?? [])) { set('2+ messaggi senza nostra risposta'); flags.add('sollecito'); }
   return { urgente, motivo, flags: [...flags] };
 }
 
@@ -209,7 +231,7 @@ Deno.serve(async (req) => {
   for (const c of convs) {
     // messaggi del thread: testo (per la classificazione) + conteggi direzione (per le regole)
     const { data: msgs } = await sb.from('cs_messages')
-      .select('direction,body_text,sent_at,form_fields').eq('conversation_id', c.id as string)
+      .select('direction,body_text,sent_at,form_fields,from_email').eq('conversation_id', c.id as string)
       .order('sent_at', { ascending: true, nullsFirst: true });
     const inbound = (msgs ?? []).filter((m) => m.direction === 'in');
     const outboundCount = (msgs ?? []).filter((m) => m.direction === 'out').length;
@@ -229,7 +251,7 @@ Deno.serve(async (req) => {
     }
 
     const rule = ruleUrgency([c.subject ?? '', fullInbound].join('\n'), {
-      inboundCount: inbound.length, outboundCount, stato: String(c.stato ?? 'da_fare'),
+      inboundCount: inbound.length, outboundCount, stato: String(c.stato ?? 'da_fare'), inbound,
       lastDir: (c.last_direction as string) ?? null, lastAt: (c.last_msg_at as string) ?? null, statoAt: (c.stato_at as string) ?? null,
     });
 

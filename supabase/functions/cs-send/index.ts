@@ -110,6 +110,26 @@ function emailCliente(m: { from_email?: string | null; form_fields?: Record<stri
 }
 // ==== PURE:cs-emailcliente END ====
 
+// ==== PURE:cs-sollecito BEGIN ====
+// La regola "2+ messaggi del cliente e nessuna nostra risposta = sollecito" e' giusta per la posta
+// normale, ma su una RAFFICA dal modulo (due invii a 43 secondi, che oggi finiscono nello stesso
+// thread) accende un'urgenza che nessuno ha sollecitato: e' successo davvero il 01-08.
+// La raffica si riconosce senza AI: almeno due messaggi in ingresso, TUTTI dal mittente wrapper del
+// modulo, e meno di 10 minuti fra il primo e l'ultimo. La soglia e' scelta a tavolino, non misurata:
+// serve solo a separare "due invii di fila" da "una cliente che risollecita ore dopo".
+// TRE SEDI, UNA REGOLA: questo blocco e' copia IDENTICA in cs-sync, cs-classify e cs-send.
+// `tests/cs_convkey.mjs` ne confronta l'impronta e diventa rosso se una sola delle tre cambia.
+const RAFFICA_MS = 10 * 60 * 1000;
+const isWrapperSender = (e: unknown) => /@(?:shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/.test(String(e ?? '').toLowerCase());
+function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[]): boolean {
+  if (!Array.isArray(inbound) || inbound.length < 2) return false;
+  if (!inbound.every((m) => isWrapperSender(m.from_email))) return false;
+  const ts = inbound.map((m) => Date.parse(String(m.sent_at ?? ''))).filter((n) => Number.isFinite(n));
+  if (ts.length !== inbound.length) return false;
+  return Math.max(...ts) - Math.min(...ts) < RAFFICA_MS;
+}
+// ==== PURE:cs-sollecito END ====
+
 // --- OAuth 2.0 JWT bearer grant (identico a cs-sync, scope diversi) ---
 function b64url(bytes: Uint8Array): string {
   let s = '';
@@ -413,11 +433,14 @@ Deno.serve(async (req) => {
       .select('id, stato, stato_at, last_direction, last_msg_at, categoria_source, urgente, urgenza_motivo, flags')
       .eq('id', convId).maybeSingle();
     if (c && c.categoria_source) {
-      const { data: msgs } = await sb.from('cs_messages').select('direction').eq('conversation_id', convId);
-      const inCnt = (msgs ?? []).filter((m) => m.direction === 'in').length;
+      const { data: msgs } = await sb.from('cs_messages').select('direction,from_email,sent_at').eq('conversation_id', convId);
+      const inMsgs = (msgs ?? []).filter((m) => m.direction === 'in');
+      const inCnt = inMsgs.length;
       const outCnt = (msgs ?? []).filter((m) => m.direction === 'out').length;
       const reopened = String(c.stato) === 'fatto' && c.last_direction === 'in' && !!c.last_msg_at && (!c.stato_at || (c.last_msg_at as string) > (c.stato_at as string));
-      const ruleUrg = reopened || (inCnt >= 2 && outCnt === 0);
+      // v13 di cs-sync, specchio: una raffica dal modulo non e' un sollecito (ramo irraggiungibile
+      // dopo un invio, outCnt >= 1: si allinea perche' la regola e' UNA e vive in tre sedi)
+      const ruleUrg = reopened || (inCnt >= 2 && outCnt === 0 && !isRafficaModulo(inMsgs));
       const ruleMotivo = reopened ? 'thread riaperto (sollecito)' : '2+ messaggi senza nostra risposta';
       const cflags: string[] = Array.isArray(c.flags) ? [...new Set((c.flags as unknown[]).map(String))] : [];
       const upd: Record<string, unknown> = {};

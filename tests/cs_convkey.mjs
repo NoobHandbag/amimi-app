@@ -96,5 +96,99 @@ console.log('\n== il caso del brief: due submit nello stesso minuto ==');
   t('22 una nostra mail nel thread non conta come secondo cliente', set.size === 1, [...set]);
 }
 
+// ---------------------------------------------------------------------------------------------
+// chiave della conversazione (cs-sync v13) e regola della raffica (tre sedi)
+// ---------------------------------------------------------------------------------------------
+function ritagliaMarcato(file, nome) {
+  const s = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  const b = `// ==== PURE:${nome} BEGIN ====`, e = `// ==== PURE:${nome} END ====`;
+  const a = s.indexOf(b), z = s.indexOf(e);
+  if (a < 0 || z < 0) throw new Error(`marcatori PURE:${nome} non trovati in ${file}`);
+  return s.slice(a + b.length, z).trim();
+}
+
+console.log('\n== la regola del sollecito vive in TRE sedi: devono restare identiche ==');
+const soll = {
+  'cs-sync': ritagliaMarcato(FN('cs-sync'), 'cs-sollecito'),
+  'cs-classify': ritagliaMarcato(FN('cs-classify'), 'cs-sollecito'),
+  'cs-send': ritagliaMarcato(FN('cs-send'), 'cs-sollecito'),
+};
+const impronte = Object.fromEntries(Object.entries(soll).map(([k, v]) => [k, h(v)]));
+t(`23 impronta identica nelle tre sedi (${impronte['cs-sync']})`, new Set(Object.values(impronte)).size === 1, impronte);
+
+const TMP2 = `${ROOT}tests/_convkey.tmp.ts`;
+writeFileSync(TMP2, `${ritagliaMarcato(FN('cs-sync'), 'cs-convkey')}\n${soll['cs-sync']}\nexport { decidiConv, normEmail, isFormCanale, chiaveFratelli, isRafficaModulo };\n`, 'utf8');
+let M2;
+try { M2 = await import(pathToFileURL(TMP2).href); }
+finally { try { unlinkSync(TMP2); } catch { /* niente */ } }
+const { decidiConv, normEmail, chiaveFratelli, isRafficaModulo } = M2;
+
+const TH = 'thread123';
+const form = (email, id = 'c1') => ({ id, canale: 'form_contatto', customer_email: email });
+const msg = (o = {}) => ({ id: 'm1', threadId: TH, email: null, nuovaSubmission: false, ...o });
+
+console.log('\n== decidiConv: cio\' che NON deve cambiare ==');
+t('24 thread nuovo -> si crea con la chiave = thread id (identico a oggi)',
+  JSON.stringify(decidiConv(null, [], msg({ email: 'a@x.it', nuovaSubmission: true }))) === JSON.stringify({ modo: 'create', key: TH }));
+t('25 email_diretta con due mittenti diversi -> NON si spezza',
+  decidiConv({ id: 'c1', canale: 'email_diretta', customer_email: 'a@x.it' }, [], msg({ email: 'b@x.it', nuovaSubmission: true })).modo === 'attach');
+t('26 chat_notifica -> non si spezza',
+  decidiConv({ id: 'c1', canale: 'chat_notifica', customer_email: 'a@x.it' }, [], msg({ email: 'b@x.it', nuovaSubmission: true })).modo === 'attach');
+t('27 rumore -> non si spezza',
+  decidiConv({ id: 'c1', canale: 'rumore', customer_email: 'a@x.it' }, [], msg({ email: 'b@x.it', nuovaSubmission: true })).modo === 'attach');
+t('28 stessa cliente -> UNA conversazione (comportamento dichiarato del brief)',
+  decidiConv(form('a@x.it'), [], msg({ email: 'a@x.it', nuovaSubmission: true })).modo === 'attach');
+t('29 stessa cliente scritta con altre maiuscole -> ancora una sola',
+  decidiConv(form('a@x.it'), [], msg({ email: 'A@X.it', nuovaSubmission: true })).modo === 'attach');
+t('30 email in arrivo sconosciuta -> attach, un dato mancante non spezza mai',
+  decidiConv(form('a@x.it'), [], msg({ email: null, nuovaSubmission: true })).modo === 'attach');
+t('31 conversazione senza customer_email -> attach',
+  decidiConv(form(null), [], msg({ email: 'b@x.it', nuovaSubmission: true })).modo === 'attach');
+t('32 follow-up da indirizzo mai visto che NON e\' uno stampo -> attach, niente frammentazione',
+  decidiConv(form('a@x.it'), [], msg({ email: 'b@x.it', nuovaSubmission: false })).modo === 'attach');
+
+console.log('\n== decidiConv: il caso del brief ==');
+{
+  const d = decidiConv(form('a@x.it'), [], msg({ id: 'MSG2', email: 'b@x.it', nuovaSubmission: true }));
+  t('33 due clienti, secondo invio dal modulo -> conversazione NUOVA con chiave suffissata',
+    d.modo === 'create' && d.key === `${TH}#MSG2`, d);
+  t('34 la chiave nuova e\' diversa dal thread: il vincolo UNIQUE regge', d.key !== TH);
+}
+{
+  const d = decidiConv(form('a@x.it'), [], msg({ id: 'MSG2', email: 'b@x.it', nuovaSubmission: true }));
+  const d2 = decidiConv(form('a@x.it'), [], msg({ id: 'MSG2', email: 'b@x.it', nuovaSubmission: true }));
+  t('35 stesso messaggio ripassato dal cursore -> stessa chiave (idempotente)', d.key === d2.key);
+}
+{
+  const fratelli = [form('b@x.it', 'c2')];
+  const d = decidiConv(form('a@x.it'), fratelli, msg({ id: 'MSG3', email: 'b@x.it', nuovaSubmission: true }));
+  t('36 terzo invio della stessa persona -> si attacca al fratello, niente terza scheda',
+    d.modo === 'attach' && d.id === 'c2', d);
+}
+{
+  const fratelli = [form('b@x.it', 'c2')];
+  const d = decidiConv(form('a@x.it'), fratelli, msg({ id: 'MSG4', email: 'b@x.it', nuovaSubmission: false }));
+  t('37 follow-up della seconda cliente -> atterra sulla SUA conversazione, non su quella della prima',
+    d.modo === 'attach' && d.id === 'c2', d);
+}
+t('38 il filtro dei fratelli e\' ancorato al thread', chiaveFratelli(TH) === TH + '#%');
+t('39 normEmail estrae anche dalla forma <mailto:>', normEmail('a@x.it<mailto:a@x.it>') === 'a@x.it');
+
+console.log('\n== raffica dal modulo: non e\' un sollecito ==');
+const W = 'mailer@shopify.com';
+const at = (min) => new Date(Date.UTC(2026, 7, 1, 17, min, 0)).toISOString();
+t('40 due notifiche del modulo a 43 secondi -> raffica',
+  isRafficaModulo([{ from_email: W, sent_at: at(38) }, { from_email: W, sent_at: '2026-08-01T17:38:43.000Z' }]));
+t('41 due notifiche a 4 ore -> NON raffica (e\' un sollecito vero)',
+  !isRafficaModulo([{ from_email: W, sent_at: at(0) }, { from_email: W, sent_at: new Date(Date.UTC(2026, 7, 1, 21, 0, 0)).toISOString() }]));
+t('42 una notifica e una mail della cliente -> NON raffica',
+  !isRafficaModulo([{ from_email: W, sent_at: at(38) }, { from_email: 'anna@x.it', sent_at: at(39) }]));
+t('43 due mail dirette della cliente -> NON raffica, il sollecito resta',
+  !isRafficaModulo([{ from_email: 'anna@x.it', sent_at: at(38) }, { from_email: 'anna@x.it', sent_at: at(39) }]));
+t('44 sent_at mancante -> NON raffica (nel dubbio, la regola di prima)',
+  !isRafficaModulo([{ from_email: W, sent_at: null }, { from_email: W, sent_at: at(39) }]));
+t('45 un solo messaggio -> NON raffica', !isRafficaModulo([{ from_email: W, sent_at: at(38) }]));
+t('46 lista vuota -> NON raffica', !isRafficaModulo([]));
+
 console.log(`\n${ok}/${ok + ko} verdi` + (ko ? ` — ${ko} ROSSI` : ''));
 process.exitCode = ko ? 1 : 0;

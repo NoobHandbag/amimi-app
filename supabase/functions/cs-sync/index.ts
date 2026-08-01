@@ -353,7 +353,81 @@ type Parsed = {
   from: { email: string; name: string }; to: { email: string; name: string };
   subject: string; bodyText: string; sentAt: string | null; snippet: string;
   formFields: Record<string, string> | null; order: number | null; lingua: string;
+  nuovaSubmission: boolean;   // v13: questo messaggio E' un invio nuovo dal modulo del sito
 };
+
+// ==== PURE:cs-convkey BEGIN ====
+// v13 (brief cs_form_thread_merge). L'oggetto della notifica del modulo ha granularita' al MINUTO
+// ("New customer message on 1 August 2026 at 17:38"): due invii nello stesso minuto danno oggetto,
+// mittente e destinatario identici, Gmail li accoda nello STESSO thread, e una conversazione sola
+// finisce per contenere le richieste di due persone diverse.
+//
+// SCELTA DI PROGETTO, e il motivo per cui non e' quella "pulita": il vincolo UNIQUE su
+// `gmail_thread_id` NON viene tolto. Toglierlo aprirebbe la condizione "due righe per thread", su
+// cui oggi si romperebbero cinque `.eq('gmail_thread_id', X).maybeSingle()` di questo file: con due
+// righe PostgREST non ritorna la prima, ritorna `data=null` piu' un errore PGRST116 che il codice
+// non destruttura, e l'esito sarebbe il cursore Gmail fermo (la posta smette di entrare) oppure la
+// nostra risposta scartata in silenzio. Quel percorso da qui non e' provabile end to end, perche'
+// serve il token Gmail. Quindi la conversazione nuova nasce con una chiave DIVERSA,
+// `<thread>#<gmail_message_id>`: per il database e' un valore nuovo, il vincolo UNIQUE resta valido,
+// e ogni lookup esistente per il thread vero continua a trovare esattamente una riga.
+// PREZZO DICHIARATO: `gmail_thread_id` smette di essere sempre un id Gmail puro. Chi lo usa per
+// chiamare l'API Gmail deve saltare le chiavi che contengono '#' (il thread vero e' `split('#')[0]`).
+// Verificato prima di scegliere: 0 conversazioni contengono gia' un '#', quindi non collide.
+const chiaveFratelli = (threadId: string) => threadId + '#%';
+const isFormCanale = (c: unknown) => c === 'form_contatto' || c === 'form_evento';
+const normEmail = (v: unknown): string | null => {
+  const hit = String(v ?? '').toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
+  return hit ? hit[0] : null;
+};
+type Fratello = { id: string; canale?: unknown; categoria?: unknown; last_msg_at?: unknown; customer_email?: unknown };
+type DecisioneConv = { modo: 'attach'; id: string } | { modo: 'create'; key: string };
+/**
+ * Decide DOVE va a finire un messaggio in ingresso. Funzione PURA: nessun IO, cosi' e' provabile.
+ * `ex` = la conversazione gia' presente sul thread (null se il thread e' nuovo).
+ * Ordine delle regole, e ognuna ha il suo perche':
+ *  1. thread nuovo -> si crea con la chiave = thread id: identico a oggi;
+ *  2. `ex` non e' una conversazione da modulo -> ci si attacca: email_diretta, chat_notifica e
+ *     rumore non cambiano di una virgola, li' il threading di Gmail e' quello giusto;
+ *  3. non sappiamo chi scrive, o non sapevamo chi era il primo, o e' la STESSA persona -> attach:
+ *     un dato mancante non deve mai spezzare una conversazione;
+ *  4. esiste gia' un "fratello" con quella email -> attach a lui: il terzo invio della stessa
+ *     persona non crea una terza scheda, e il suo follow-up atterra sulla SUA conversazione;
+ *  5. e' davvero un invio nuovo dal modulo, da un'altra persona -> si crea con chiave suffissata;
+ *  6. tutto il resto (un follow-up da un indirizzo mai visto, che non e' uno stampo del modulo)
+ *     -> attach: non si frammenta per un caso ambiguo, ci pensa la cintura di cs-send.
+ */
+function decidiConv(ex: Fratello | null, fratelli: Fratello[], msg: { id: string; threadId: string; email: string | null; nuovaSubmission: boolean }): DecisioneConv {
+  if (!ex) return { modo: 'create', key: msg.threadId };
+  if (!isFormCanale(ex.canale)) return { modo: 'attach', id: ex.id };
+  const mia = normEmail(msg.email), sua = normEmail(ex.customer_email);
+  if (!mia || !sua || mia === sua) return { modo: 'attach', id: ex.id };
+  const gemello = fratelli.find((f) => normEmail(f.customer_email) === mia);
+  if (gemello) return { modo: 'attach', id: gemello.id };
+  if (msg.nuovaSubmission) return { modo: 'create', key: `${msg.threadId}#${msg.id}` };
+  return { modo: 'attach', id: ex.id };
+}
+// ==== PURE:cs-convkey END ====
+
+// ==== PURE:cs-sollecito BEGIN ====
+// La regola "2+ messaggi del cliente e nessuna nostra risposta = sollecito" e' giusta per la posta
+// normale, ma su una RAFFICA dal modulo (due invii a 43 secondi, che oggi finiscono nello stesso
+// thread) accende un'urgenza che nessuno ha sollecitato: e' successo davvero il 01-08.
+// La raffica si riconosce senza AI: almeno due messaggi in ingresso, TUTTI dal mittente wrapper del
+// modulo, e meno di 10 minuti fra il primo e l'ultimo. La soglia e' scelta a tavolino, non misurata:
+// serve solo a separare "due invii di fila" da "una cliente che risollecita ore dopo".
+// TRE SEDI, UNA REGOLA: questo blocco e' copia IDENTICA in cs-sync, cs-classify e cs-send.
+// `tests/cs_convkey.mjs` ne confronta l'impronta e diventa rosso se una sola delle tre cambia.
+const RAFFICA_MS = 10 * 60 * 1000;
+const isWrapperSender = (e: unknown) => /@(?:shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/.test(String(e ?? '').toLowerCase());
+function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[]): boolean {
+  if (!Array.isArray(inbound) || inbound.length < 2) return false;
+  if (!inbound.every((m) => isWrapperSender(m.from_email))) return false;
+  const ts = inbound.map((m) => Date.parse(String(m.sent_at ?? ''))).filter((n) => Number.isFinite(n));
+  if (ts.length !== inbound.length) return false;
+  return Math.max(...ts) - Math.min(...ts) < RAFFICA_MS;
+}
+// ==== PURE:cs-sollecito END ====
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -442,11 +516,13 @@ Deno.serve(async (req) => {
       .select('id, stato, stato_at, last_direction, last_msg_at, categoria_source, urgente, urgenza_motivo, flags')
       .eq('id', convId).maybeSingle();
     if (!c || !c.categoria_source) return false;   // mai classificata: ci pensera' cs-classify alla pesca
-    const { data: msgs } = await sb.from('cs_messages').select('direction').eq('conversation_id', convId);
-    const inCnt = (msgs ?? []).filter((m) => m.direction === 'in').length;
+    const { data: msgs } = await sb.from('cs_messages').select('direction,from_email,sent_at').eq('conversation_id', convId);
+    const inMsgs = (msgs ?? []).filter((m) => m.direction === 'in');
+    const inCnt = inMsgs.length;
     const outCnt = (msgs ?? []).filter((m) => m.direction === 'out').length;
     const reopened = String(c.stato) === 'fatto' && c.last_direction === 'in' && !!c.last_msg_at && (!c.stato_at || (c.last_msg_at as string) > (c.stato_at as string));
-    const ruleUrg = reopened || (inCnt >= 2 && outCnt === 0);
+    // v13: una RAFFICA dal modulo (due invii di fila nello stesso thread) non e' un sollecito
+    const ruleUrg = reopened || (inCnt >= 2 && outCnt === 0 && !isRafficaModulo(inMsgs));
     const ruleMotivo = reopened ? 'thread riaperto (sollecito)' : '2+ messaggi senza nostra risposta';
     const flags: string[] = Array.isArray(c.flags) ? [...new Set((c.flags as unknown[]).map(String))] : [];
     const upd: Record<string, unknown> = {};
@@ -470,9 +546,9 @@ Deno.serve(async (req) => {
   // v6: ingest di un messaggio INVIATO. SOLO su thread gia' tracciato e non-rumore: un out non
   // crea mai una conversazione (fornitori/banca/commercialista restano fuori, design 8.1).
   const processOutbound = async (id: string, threadId: string): Promise<'done' | 'transient'> => {
-    let conv: { id: string; canale: string; last_msg_at: string | null } | null = null;
+    let conv: { id: string; canale: string; last_msg_at: string | null; customer_email?: string | null } | null = null;
     try {
-      const { data } = await sb.from('cs_conversations').select('id, canale, last_msg_at').eq('gmail_thread_id', threadId).maybeSingle();
+      const { data } = await sb.from('cs_conversations').select('id, canale, last_msg_at, customer_email').eq('gmail_thread_id', threadId).maybeSingle();
       conv = (data as typeof conv) ?? null;
     } catch { return 'transient'; }
     if (!conv || conv.canale === 'rumore') return 'done';
@@ -483,6 +559,18 @@ Deno.serve(async (req) => {
     const msg = mg.j as GMsg;
     const H = msg.payload?.headers;
     const to = parseAddr(hdr(H, 'to'));
+    // v13: se sul thread del modulo esistono schede separate (raffica), la nostra risposta va appesa
+    // a QUELLA della destinataria, non alla prima. Succede quando si risponde a mano da Gmail dentro
+    // il thread del wrapper. Fail-soft: qualunque intoppo lascia il bersaglio di oggi. Non si crea
+    // mai una conversazione da un messaggio in uscita: quel principio non cambia.
+    if (isFormCanale(conv.canale) && normEmail(to.email) && normEmail(to.email) !== normEmail(conv.customer_email)) {
+      try {
+        const { data: frat } = await sb.from('cs_conversations')
+          .select('id, canale, last_msg_at, customer_email').like('gmail_thread_id', chiaveFratelli(threadId));
+        const g = ((frat ?? []) as typeof conv[]).find((f) => f && normEmail(f.customer_email) === normEmail(to.email));
+        if (g) conv = g;
+      } catch { /* fail-soft */ }
+    }
     const sentAt = msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null;
     const rawBody = stripNull(extractBody(msg.payload));
     const bodyText = stripQuote(rawBody);
@@ -520,6 +608,10 @@ Deno.serve(async (req) => {
       .range(offset, offset + limit - 1);
     let scanned = 0, wrote = 0, updated = 0, urgFixed = 0; const errors: string[] = [];
     for (const c of (convs ?? []) as { id: string; gmail_thread_id: string; canale: string }[]) {
+      // v13: una chiave suffissata non e' un thread Gmail: la GET /threads/<chiave> darebbe 404 a
+      // ogni giro. Per il canale form questo backfill non serve comunque, perche' le nostre risposte
+      // ai moduli partono in un thread NUOVO e la riga out la scrive cs-send.
+      if (String(c.gmail_thread_id).includes('#')) continue;
       scanned++;
       let th: { ok: boolean; status: number; j: Record<string, unknown> };
       try { th = await gGet(`/threads/${encodeURIComponent(c.gmail_thread_id)}?format=full`, token); }
@@ -667,8 +759,11 @@ Deno.serve(async (req) => {
       // v12: il nome scritto dalla cliente nel modulo batte quello del mittente della notifica
       const nomeForm = isForm ? nomeDalModulo(ff) : null;
       if (nomeForm) cl.name = nomeForm;
+      // v13: questo messaggio e' un INVIO NUOVO dal modulo (non una risposta della cliente nello
+      // stesso thread)? Le tre condizioni sono gia' tutte calcolate qui sopra: costo zero.
+      const nuovaSubmission = isForm && FORM_WRAP_RE.test(bodyText) && isShopifySender(from.email);
       return {
-        cl, from, to, subject, bodyText,
+        cl, from, to, subject, bodyText, nuovaSubmission,
         sentAt: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null,
         snippet: stripNull((msg.snippet ?? '').slice(0, 300)),
         formFields: Object.keys(ff).length ? ff : null,
@@ -679,8 +774,33 @@ Deno.serve(async (req) => {
 
   // conversazione: idempotente su gmail_thread_id, non clobbera stato/stato_by; promuove un thread
   // gia' marcato rumore se arriva un messaggio cliente reale. Lancia su errore DB reale (-> transient).
-  const ensureConv = async (threadId: string, cl: Parsed['cl'], meta: { sentAt: string | null; subject: string; snippet: string; order: number | null; lingua: string }): Promise<string> => {
-    const { data: ex } = await sb.from('cs_conversations').select('id,canale,categoria,last_msg_at').eq('gmail_thread_id', threadId).maybeSingle();
+  const ensureConv = async (threadId: string, cl: Parsed['cl'], meta: { sentAt: string | null; subject: string; snippet: string; order: number | null; lingua: string }, msg: { id: string; nuovaSubmission: boolean } = { id: '', nuovaSubmission: false }): Promise<string> => {
+    const { data: ex0 } = await sb.from('cs_conversations').select('id,canale,categoria,last_msg_at,customer_email').eq('gmail_thread_id', threadId).maybeSingle();
+    let ex = ex0 as Fratello | null;
+    // v13: raffica dal modulo. Solo se la conversazione sul thread e' da MODULO e l'email in arrivo
+    // e' di un'ALTRA persona si va a vedere se serve una scheda a parte. Tutto il ramo e' FAIL-SOFT:
+    // qualunque intoppo ricade sul comportamento di oggi, e non lancia MAI, perche' un throw qui
+    // significherebbe 'transient' e cursore Gmail fermo.
+    if (ex && isFormCanale(ex.canale) && normEmail(cl.email) && normEmail(ex.customer_email) && normEmail(cl.email) !== normEmail(ex.customer_email)) {
+      try {
+        const { data: frat } = await sb.from('cs_conversations')
+          .select('id,canale,categoria,last_msg_at,customer_email').like('gmail_thread_id', chiaveFratelli(threadId));
+        const d = decidiConv(ex, (frat ?? []) as Fratello[], { id: msg.id, threadId, email: cl.email, nuovaSubmission: msg.nuovaSubmission });
+        if (d.modo === 'attach' && d.id !== ex.id) {
+          const scelto = ((frat ?? []) as Fratello[]).find((f) => f.id === d.id);
+          if (scelto) ex = scelto;
+        } else if (d.modo === 'create') {
+          const { data: ins2, error: e2 } = await sb.from('cs_conversations').insert({
+            gmail_thread_id: d.key, canale: cl.canale, customer_email: cl.email, customer_name: cl.name,
+            last_msg_at: meta.sentAt, last_direction: 'in', subject: meta.subject, snippet: meta.snippet, order_number: meta.order, lingua: meta.lingua,
+          }).select('id').single();
+          if (!e2 && ins2) { newConv++; return ins2.id as string; }
+          // la chiave e' unica per costruzione: qui la maybeSingle e' legittima
+          const { data: gia } = await sb.from('cs_conversations').select('id').eq('gmail_thread_id', d.key).maybeSingle();
+          if (gia) return gia.id as string;   // stesso messaggio ripassato dal cursore: idempotente
+        }
+      } catch { /* fail-soft: si prosegue sulla conversazione di oggi */ }
+    }
     if (ex) {
       const upd: Record<string, unknown> = {};
       // last_*/subject/snippet solo se il messaggio e' PIU' RECENTE: il re-processo (cursore che torna a
@@ -689,7 +809,10 @@ Deno.serve(async (req) => {
         upd.last_msg_at = meta.sentAt; upd.last_direction = 'in'; upd.subject = meta.subject; upd.snippet = meta.snippet;
       }
       if (meta.order) upd.order_number = meta.order;
-      if (cl.email) upd.customer_email = cl.email;
+      // v13: su una conversazione da MODULO che ha gia' una sua cliente, l'email non si sovrascrive
+      // piu' (prima l'ultimo messaggio vinceva e cambiava il destinatario dell'invio). Sugli altri
+      // canali resta il comportamento di oggi: li' il thread e' della stessa persona per costruzione.
+      if (cl.email && !(isFormCanale(ex.canale) && normEmail(ex.customer_email) && normEmail(ex.customer_email) !== normEmail(cl.email))) upd.customer_email = cl.email;
       if (cl.name) upd.customer_name = cl.name;
       // un cliente reale "promuove" un thread-rumore; ECCETTO i B2B (v11, owner 01-08: si
       // rispondono su Gmail, una nuova mail sullo stesso thread non li riporta in coda)
@@ -739,7 +862,7 @@ Deno.serve(async (req) => {
     const p = safeParse(mg.j as GMsg);
     if (!p) { parseFailed++; try { await antiLoss(threadId, id, {}); return 'done'; } catch { return 'transient'; } }
     try {
-      const convId = await ensureConv(threadId, p.cl, { sentAt: p.sentAt, subject: p.subject, snippet: p.snippet, order: p.order, lingua: p.lingua });
+      const convId = await ensureConv(threadId, p.cl, { sentAt: p.sentAt, subject: p.subject, snippet: p.snippet, order: p.order, lingua: p.lingua }, { id, nuovaSubmission: p.nuovaSubmission });
       const { error: me, count } = await sb.from('cs_messages').upsert({
         gmail_message_id: id, conversation_id: convId, direction: 'in',
         from_email: p.from.email || null, to_email: p.to.email || null, sent_at: p.sentAt, body_text: p.bodyText || null, form_fields: p.formFields,
