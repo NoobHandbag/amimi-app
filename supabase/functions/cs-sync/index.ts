@@ -401,6 +401,12 @@ function stripQuoted(t: string, canale?: string): string | null {
   }
   return s || null;
 }
+// v15: l'anteprima della card = le stesse parole della bolla, su una riga sola. `ripiego` e' lo
+// snippet di Gmail: si usa solo se dopo la pulizia non resta niente, cosi' una card non resta muta.
+function snippetDa(clean: string | null, ripiego: string): string {
+  const s = (clean || '').replace(/\s+/g, ' ').trim();
+  return (s || (ripiego || '').replace(/\s+/g, ' ').trim()).slice(0, 300);
+}
 // ==== PURE:cs-crop END ====
 
 async function gGet(path: string, token: string): Promise<{ ok: boolean; status: number; j: Record<string, unknown> }> {
@@ -508,7 +514,7 @@ Deno.serve(async (req) => {
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const action = String(body.action || 'poll');
-  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto') return json({ error: 'azione sconosciuta: ' + action }, 422);
+  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
   const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders']);
@@ -751,6 +757,32 @@ Deno.serve(async (req) => {
     return json({ ok: true, scanned, out_scritti: wrote, out_aggiornati: updated, urgenze_ricalcolate: urgFixed, offset, next_offset: offset + scanned, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
   }
 
+  // --- BACKFILL snippet (v15): l'anteprima delle card gia' in coda ---
+  // Le card mostravano il boilerplate del modulo perche' `snippet` veniva da Gmail. Qui si riallinea
+  // all'ULTIMO messaggio in ingresso della conversazione, che e' quello che l'anteprima rappresenta.
+  // `dry: true` conta e non scrive. Idempotente: rieseguito a regime scrive 0.
+  if (action === 'backfill_snippet') {
+    const dry = body.dry === true;
+    const { data: convRows } = await sb.from('cs_conversations').select('id, canale, snippet');
+    const convs = (convRows ?? []) as { id: string; canale: string; snippet: string | null }[];
+    let scanned = 0, wrote = 0, invariati = 0, senzaIn = 0; const errors: string[] = [];
+    for (const c of convs) {
+      scanned++;
+      const { data: mrows } = await sb.from('cs_messages')
+        .select('body_text, body_clean, sent_at').eq('conversation_id', c.id).eq('direction', 'in')
+        .order('sent_at', { ascending: false, nullsFirst: false }).limit(1);
+      const m = (mrows ?? [])[0] as { body_text: string | null; body_clean: string | null } | undefined;
+      if (!m) { senzaIn++; continue; }
+      const nuovo = snippetDa(m.body_clean ?? stripQuoted(m.body_text ?? '', c.canale), c.snippet ?? '');
+      if (!nuovo || nuovo === (c.snippet ?? '')) { invariati++; continue; }
+      if (dry) { wrote++; continue; }
+      const { error: ue } = await sb.from('cs_conversations').update({ snippet: nuovo }).eq('id', c.id);
+      if (ue) { errors.push(c.id.slice(0, 8) + ':' + ue.message.slice(0, 60)); continue; }
+      wrote++;
+    }
+    return json({ ok: true, ...(dry ? { dry: true } : {}), scanned, snippet_scritti: wrote, invariati, senza_messaggi_in: senzaIn, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
+  }
+
   // --- BACKFILL body_clean (v7): pulisce lo storico gia' ingerito con la STESSA stripQuoted ---
   // A blocchi (limit/offset su righe con body_clean NULL e body_text presente); body_text MAI
   // toccato; idempotente (ri-eseguito a coda vuota scrive 0). `force: true` ricalcola TUTTE le
@@ -919,7 +951,12 @@ Deno.serve(async (req) => {
         cl, from, to, subject, bodyText, nuovaSubmission, stampoIgnoto,
         replyTo: replyTo.email || null,
         sentAt: msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null,
-        snippet: stripNull((msg.snippet ?? '').slice(0, 300)),
+        // v15 (UAT 02-08): l'anteprima della card in coda mostrava ancora il boilerplate inglese del
+        // modulo ("You received a new message from your online store's contact form. Country Code:
+        // GB Name: ..."), mentre la bolla nel thread era gia' pulita: lo snippet arrivava da Gmail,
+        // che non sa niente di `body_clean`. Ora e' lo STESSO testo della bolla. Ripiego sullo
+        // snippet di Gmail se la pulizia non lascia niente: mai una card senza anteprima.
+        snippet: stripNull(snippetDa(stripQuoted(bodyText, cl.canale), msg.snippet ?? '')),
         formFields: Object.keys(ff).length ? ff : null,
         order: extractOrderNumber(subject + '\n' + bodyText), lingua: detectLingua(bodyText || subject),
       };

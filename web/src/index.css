@@ -715,9 +715,20 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-moremenu button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 11px 14px; font: inherit; font-size: 13px; font-weight: 700; color: var(--negative-700); cursor: pointer; }
 .cs-moremenu button:hover { background: var(--negative-tint); }
 /* strip "fatti" scorrevole (ordine / cliente / tracking) */
-.cs-facts { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 10px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
-.cs-facts::-webkit-scrollbar { display: none; }
-.cs-fact { flex: none; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 9px 12px; box-shadow: var(--e1); min-width: 128px; max-width: 235px; text-decoration: none; }
+/* INFO UTILI (brief cs_info_utili): blocco richiudibile che NASCE APERTO e resta a video anche a
+   bozze generate. Il triangolino ruota come quello di "Email completa": stesso gesto, stesso segno. */
+.cs-info { margin-bottom: 10px; }
+.cs-info > summary { list-style: none; cursor: pointer; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-muted); padding: 2px 0 6px; display: flex; align-items: center; gap: 6px; }
+.cs-info > summary::-webkit-details-marker { display: none; }
+.cs-info[open] > summary .cs-tri { transform: rotate(90deg); }
+.cs-info > summary .cs-tri { transition: transform .15s; display: inline-block; font-size: 9px; }
+/* 3.3 (UAT 02-08): la strip usciva dallo schermo. Era un carosello orizzontale senza affordance:
+   sul caso Elena si vedevano ORDINE e CLIENTE e la terza card era tagliata a meta' sul bordo
+   destro, quindi il terzo fatto semplicemente non esisteva per chi guardava. Ora VA A CAPO: le
+   card si dispongono su piu' righe e nessuna esce dal viewport, che e' anche il vincolo 5 del
+   brief cs_info_utili (mobile, mai scroll orizzontale della pagina). */
+.cs-facts { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 4px; margin-bottom: 10px; }
+.cs-fact { flex: 1 1 150px; min-width: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 9px 12px; box-shadow: var(--e1); text-decoration: none; }
 .cs-fact .fl { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-muted); }
 .cs-fact .fv { font-size: 13px; font-weight: 800; margin-top: 3px; white-space: nowrap; color: var(--ink); }
 .cs-fact .fs { font-size: 10.5px; color: var(--ink-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -725,8 +736,18 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-fact.warn { border-color: var(--warning); background: var(--warning-tint); }
 .cs-fact.warn .fv { color: var(--warning-700); }
 /* bolle: wrapper + intestazione + bolla; in = surface a sinistra, out = info-tint a destra */
+/* UAT 02-08: il testo del thread va SELEZIONABILE e copiabile. L'operatrice copia di continuo
+   numeri d'ordine e codici di tracking, e ribatterli a mano da uno schermo e' esattamente il gesto
+   in cui si sbaglia una cifra. Dichiarato qui perche' non dipenda da cosa fa lo user agent dentro
+   i contenitori cliccabili. */
+.cs-msg, .cs-mb, .cs-body, .cs-obody, .cs-facts, .cs-fact, .cs-verdict, .cs-send-preview { -webkit-user-select: text; user-select: text; }
 .cs-msg { max-width: 88%; margin: 10px 0; }
-.cs-mh { font-size: 10.5px; font-weight: 700; color: var(--ink-muted); margin: 0 4px 3px; }
+.cs-mh { font-size: 10.5px; font-weight: 700; color: var(--ink-muted); margin: 0 4px 3px; overflow-wrap: anywhere; }
+/* 3.2 (UAT 02-08, viewport 405px): le righe lunghe si tagliavano a destra invece di andare a capo
+   ("Via Anna Kuliscioff, 16/18 20152 - Milano (MI)" diventava "...Milano (M"). La bolla del testo
+   (.cs-body) era gia' a posto: mancava su tutto cio' che le sta INTORNO e che porta indirizzi,
+   email e numeri d'ordine. Meglio una riga in piu' che una parola tagliata. */
+.cs-mb, .cs-verdict, .cs-tws, .cs-gaps, .cs-formrow, .cs-formrow .cs-ff, .cs-fonti-row, .cs-note { min-width: 0; overflow-wrap: anywhere; }
 .cs-mb { border-radius: var(--r-lg); padding: 11px 13px; font-size: 13.5px; line-height: 1.5; box-shadow: var(--e1); }
 .cs-msg.in .cs-mb { background: var(--surface); border: 1px solid var(--border); border-top-left-radius: 5px; }
 .cs-msg.out { margin-left: auto; }

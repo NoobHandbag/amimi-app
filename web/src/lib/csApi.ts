@@ -190,7 +190,13 @@ export type OrderHistory = { n_ordini: number; totale: number; prima: string | n
 // dati gia' recuperati dal context (cs-assist assembleContext): alimentano la strip "fatti" della testata
 export type CtxOrdine = { order_number: number | null; gross_total: number | null; fulfillment_status: string | null; created_at_shop: string | null; righe: { nome: string; qta: number }[] };
 export type CtxTracking = { numero: string; url: string; corriere: string };
-export type CsContext = { fonti: string[]; gaps?: string[]; order_admin_url: string | null; storia: OrderHistory | null; ordine?: CtxOrdine | null; tracking?: CtxTracking | null };
+// brief cs_info_utili: il prodotto agganciato e lo stato del corriere. NON sono un recupero nuovo:
+// l'azione `context` di cs-assist restituisce gia' `dati` per intero (prodotti, ordine, tracking,
+// ship), era questo client a tenersi solo ordine e tracking e a buttare via il resto. Zero chiamate
+// in piu', zero costo AI: cambia solo cosa leggiamo della risposta che arriva gia'.
+export type CtxProdotto = { item: string; variant: string; prezzo: number | null; giacenza: number; disponibili: number; on_shopify: boolean; url: string | null };
+export type CtxShip = { stato_tws: string; consegnata_il: string | null; updated_at: string };
+export type CsContext = { fonti: string[]; gaps?: string[]; order_admin_url: string | null; storia: OrderHistory | null; ordine?: CtxOrdine | null; tracking?: CtxTracking | null; prodotti?: CtxProdotto[]; ship?: CtxShip | null };
 // non_grounded = linter di aderenza server-side: numeri/date/URL della bozza NON trovati nei dati reali
 // v19: `troncata` = il testo non finisce con punteggiatura o emoji, cioe' la generazione si e'
 // interrotta a meta'. Non e' un dettaglio estetico: e' testo che l'operatrice puo' inviare.
@@ -216,7 +222,7 @@ async function callAssist(bodyObj: Record<string, unknown>): Promise<Record<stri
  *  Chiamata all'apertura del thread per popolare la testata. */
 export async function fetchContext(conversationId: string): Promise<CsContext> {
   const j = await callAssist({ action: 'context', conversation_id: conversationId });
-  const dati = (j.dati ?? {}) as { ordine?: unknown; tracking?: unknown };
+  const dati = (j.dati ?? {}) as { ordine?: unknown; tracking?: unknown; prodotti?: unknown; ship?: unknown };
   const o = dati.ordine as Record<string, unknown> | null | undefined;
   const ordine: CtxOrdine | null = o ? {
     order_number: o.order_number == null ? null : Number(o.order_number),
@@ -229,6 +235,8 @@ export async function fetchContext(conversationId: string): Promise<CsContext> {
     fonti: (j.fonti || []) as string[], gaps: (j.gaps || []) as string[],
     order_admin_url: (j.order_admin_url as string) ?? null, storia: (j.storia as OrderHistory) ?? null,
     ordine, tracking: (dati.tracking as CtxTracking) ?? null,
+    prodotti: Array.isArray(dati.prodotti) ? (dati.prodotti as CtxProdotto[]) : [],
+    ship: (dati.ship as CtxShip) ?? null,
   };
 }
 
@@ -302,7 +310,14 @@ export async function sendReply(conversationId: string, chi: string, testo: stri
     body: JSON.stringify({ action: 'send', conversation_id: conversationId, chi, testo, send_key: sendKey }),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || !j.ok) throw new Error(j.error || ('Errore ' + r.status));
+  if (!r.ok || !j.ok) {
+    // cs-send v7: rifiuto STRUTTURALE = ripremere Invia dara' lo stesso esito. Il flag viaggia
+    // sull'errore perche' la UI possa spegnere il bottone invece di lasciarlo acceso sotto il
+    // messaggio rosso (brief cs_crop_e_dati_falsi 3.1).
+    const e = new Error(j.error || ('Errore ' + r.status)) as Error & { bloccante?: boolean };
+    if (j.bloccante === true) e.bloccante = true;
+    throw e;
+  }
   return {
     to: String(j.to || ''), subject: String(j.subject || ''), stato_auto: j.stato_auto === true,
     already_sent: j.already_sent === true, warnings: (j.warnings || []) as string[],

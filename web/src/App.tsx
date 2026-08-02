@@ -47,7 +47,7 @@ export default function App() {
         {navBtn('assistenza', 'chat', 'Assistenza')}
       </nav>
       {/* "Chiedi ad Amimì": overlay presente su ogni schermata, si auto-nasconde se ai_enabled = false */}
-      <AssistantPanel pin={pin} chi={chi} />
+      <AssistantPanel pin={pin} chi={chi} nascondiFab={tab === 'assistenza'} />
     </div>
   );
 }

@@ -68,6 +68,25 @@ function fmtWhen(iso: string | null): string {
   return d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
 }
 const nmeOf = (c: CsConversation) => c.customer_name || c.customer_email || '(senza nome)';
+// 3.5: le date del pannello CASO arrivano ISO ("2026-07-24") e comparivano cosi' a video, mentre
+// tutto il resto del tool (e le istruzioni AI) parla italiano. Solo presentazione: il dato non si tocca.
+const fmtData = (s: string | null | undefined): string => {
+  if (!s) return '';
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(s);
+};
+// 3.7: sulle chat del sito il nome della cliente non arriva (limite noto del canale) e al suo posto
+// finiva l'indirizzo email grezzo, ripetuto sopra ogni bolla. Meglio la parte prima della chiocciola,
+// che e' quasi sempre il nome: l'indirizzo per esteso resta nella testata della conversazione.
+const primoNomeOf = (c: CsConversation): string => {
+  const n = (c.customer_name || '').trim();
+  if (n) return n.split(' ')[0];
+  const mail = (c.customer_email || '').trim();
+  if (!mail) return 'Cliente';
+  const local = mail.split('@')[0].replace(/[._-]+/g, ' ').trim();
+  if (!local) return 'Cliente';
+  return local.length > 22 ? local.slice(0, 22) + '…' : local;
+};
 
 const FLAG_LABEL: Record<string, string> = { sollecito: '⏱ sollecito', reclamo_assistenza: '⚠️ reclamo', chiusura: '✅ chiusura' };
 const isUrg = (c: CsConversation) => c.urgente === true;
@@ -137,6 +156,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [sendKey, setSendKey] = useState('');
   const [sending, setSending] = useState(false);
   const [sendErr, setSendErr] = useState('');
+  // 3.1: il rifiuto e' STRUTTURALE (cs-send v7, `bloccante`)? Allora "Invia adesso" si spegne: nella
+  // UAT restava acceso sotto il messaggio rosso e l'operatrice ripremeva senza capire.
+  const [sendBloccato, setSendBloccato] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);   // invio riuscito per QUESTO testo (si azzera se il testo cambia)
   const [convs, setConvs] = useState<CsConversation[] | null>(null);
   const [rumore, setRumore] = useState<CsConversation[] | null>(null);
@@ -167,13 +189,27 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   // Back del browser / swipe-back: da un thread (o dal rumore) torna alla CODA, non fuori dall'app.
   // Push di uno stato quando si apre un sotto-livello; il popstate lo consuma riportando alla coda (feedback 24-07).
+  // UAT 02-08 ("Indietro riporta alla home"): la guardia `if (!state.csSub)` faceva pushare UN SOLO
+  // stato per tutta l'Assistenza, quindi aprire un thread DAL RUMORE non aggiungeva un livello: due
+  // schermate stavano su un gradino solo, un Indietro le scavalcava entrambe e il successivo usciva
+  // dalla sezione. Ora ogni sotto-livello ha il suo gradino e si risale UNO alla volta; "‹ Coda"
+  // srotola tutta la pila in un colpo, cosi' il bottone continua a fare quello che dice.
+  const subRef = useRef<('coda' | 'rumore')[]>([]);
   useEffect(() => {
-    const onPop = () => { setMenu(false); setView((v) => (v === 'thread' || v === 'rumore') ? 'coda' : v); };
+    const onPop = () => { setMenu(false); const prev = subRef.current.pop(); setView(prev ?? 'coda'); };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
-  const pushSub = () => { try { if (!window.history.state?.csSub) window.history.pushState({ csSub: true }, ''); } catch { /* no-op */ } };
-  const goCoda = () => { if (window.history.state?.csSub) window.history.back(); else setView('coda'); };
+  const pushSub = (da: 'coda' | 'rumore') => {
+    subRef.current.push(da);
+    try { window.history.pushState({ csSub: subRef.current.length }, ''); } catch { /* no-op */ }
+  };
+  const goCoda = () => {
+    const n = subRef.current.length;
+    subRef.current = [];
+    if (n > 0) { try { window.history.go(-n); return; } catch { /* no-op */ } }
+    setView('coda');
+  };
 
   useEffect(() => {
     if (session !== 'in' || !ident) return;
@@ -219,11 +255,11 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       .finally(() => { if (threadRef.current === tid) setCasoBusy(false); });
   };
   const openThread = async (c: CsConversation) => {
-    pushSub();
+    pushSub(view === 'rumore' ? 'rumore' : 'coda');
     threadRef.current = c.id;
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
     setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]); setMoreOpen(false);
-    setSendOpen(false); setSending(false); setSendErr(''); setSentTo(null);
+    setSendOpen(false); setSending(false); setSendErr(''); setSendBloccato(false); setSentTo(null);
     try { const m = await fetchMessages(c.id); if (threadRef.current === c.id) setMsgs(m); }
     catch (e) { if (threadRef.current === c.id) setErr((e as Error).message); }
     // Contesto (link ordine + storico acquisti): nessuna spesa AI, best-effort (non blocca il thread).
@@ -285,7 +321,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   };
   // Fase 4 — apertura del dialog di conferma: OGNI invio passa da qui (mai invio automatico).
   // La send_key nasce adesso: doppio click e retry porteranno la stessa chiave (anti doppio invio).
-  const openSend = () => { setSendKey(crypto.randomUUID()); setSendErr(''); setSendOpen(true); };
+  const openSend = () => { setSendKey(crypto.randomUUID()); setSendErr(''); setSendBloccato(false); setSendOpen(true); };
   const doSend = async () => {
     if (!current || sending) return;
     const tid = current.id;
@@ -309,11 +345,16 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         const cur = list.find((x) => x.id === tid);
         if (cur && threadRef.current === tid) setCurrent(cur);   // stato aggiornato (fatto/auto) in testata
       } catch { /* refresh best-effort: l'invio resta riuscito */ }
-    } catch (e) { if (threadRef.current === tid) setSendErr((e as Error).message); }
+    } catch (e) {
+      if (threadRef.current === tid) {
+        setSendErr((e as Error).message);
+        if ((e as { bloccante?: boolean }).bloccante === true) setSendBloccato(true);
+      }
+    }
     if (threadRef.current === tid) setSending(false);
   };
   const openRumore = async () => {
-    pushSub();
+    pushSub('coda');
     setView('rumore'); setErr('');
     if (!rumore) { try { setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); } }
   };
@@ -427,7 +468,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   if (view === 'thread' && current) {
     const c = current;
     const draftMode = options !== null;   // bozze generate: testata compressa, contesto lascia spazio (mockup frame 3)
-    const primoNome = (nmeOf(c).split(' ')[0] || 'Cliente');
+    const primoNome = primoNomeOf(c);
     const ordSub = ctx?.ordine ? [
       ctx.ordine.created_at_shop ? `${ctx.ordine.created_at_shop.slice(8, 10)}-${ctx.ordine.created_at_shop.slice(5, 7)}` : null,
       ctx.ordine.gross_total != null ? `${Math.round(ctx.ordine.gross_total)}€` : null,
@@ -445,8 +486,11 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
           <div className="cs-chead-r1">
             <div style={{ minWidth: 0, flex: 1 }}>
               <div className={'cs-tnm' + (draftMode ? ' sm' : '')}>{nmeOf(c)}</div>
+              {/* UAT 02-08 (badge sorgente): il canale c'e' SEMPRE, anche a bozze generate. Prima in
+                  draftMode lo sostituiva la categoria e non si capiva piu' se il messaggio fosse
+                  arrivato per email diretta o dal sito. */}
               <div className="cs-tem">{draftMode
-                ? `${c.order_number ? `#${c.order_number} · ` : ''}${c.categoria ? `${catEmoji(c.categoria)} ${c.categoria}` : CANALI[c.canale]}`
+                ? `${c.order_number ? `#${c.order_number} · ` : ''}${CANALI[c.canale]}${c.categoria ? ` · ${catEmoji(c.categoria)} ${c.categoria}` : ''}`
                 : `${c.customer_email || '—'} · ${CANALI[c.canale]}`}</div>
             </div>
             {isUrg(c) && <span className="cs-urgpill" title={c.urgenza_motivo || 'urgente'}>🚨 {c.urgenza_motivo || 'urgente'}</span>}
@@ -476,7 +520,12 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   <button className="cs-btn cs-ghost cs-morebtn" onClick={() => setMoreOpen((o) => !o)} type="button" aria-label="Altre azioni" aria-expanded={moreOpen}>⋯</button>
                   {moreOpen && (
                     <div className="cs-moremenu">
+                      {/* UAT 02-08: la domanda aperta dell'owner ("marcare non-cliente scrive in
+                          denylist?") ha una risposta nel codice, ed e' SI: cs-api `add_noise`
+                          aggiunge il mittente a `cs_noise_senders` e sposta la conversazione in
+                          rumore. Ora il gesto lo dichiara invece di lasciarlo indovinare. */}
                       <button type="button" disabled={savingStato} onClick={() => { setMoreOpen(false); doNoise(c); }}>🚫 Non è un cliente</button>
+                      <div className="cs-note" style={{ margin: '2px 8px 6px', textAlign: 'left' }}>Blocca anche i prossimi messaggi di questo mittente. Resta visibile in “Rumore”, da dove si può rimettere in coda.</div>
                     </div>
                   )}
                 </div>
@@ -487,43 +536,92 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             <div style={{ marginTop: 6 }}><span className="cs-badge cs-can">{CANALI[c.canale]}</span></div>
           )}
         </div>
-        {/* strip "fatti": ordine / cliente / tracking gia' recuperati dal context, zero recuperi nuovi */}
-        {!draftMode && c.canale !== 'rumore' && ctx && (ctx.ordine || ctx.order_admin_url || (ctx.storia && ctx.storia.n_ordini > 0)) && (
-          <div className="cs-facts">
-            {(ctx.ordine || ctx.order_admin_url) && (ctx.order_admin_url ? (
-              <a className="cs-fact link" href={ctx.order_admin_url} target="_blank" rel="noreferrer">
-                <span className="fl">Ordine</span>
-                <span className="fv">#{ctx.ordine?.order_number ?? c.order_number ?? ''} ↗</span>
-                {ordSub && <span className="fs">{ordSub}</span>}
-              </a>
-            ) : (
-              <div className="cs-fact">
-                <span className="fl">Ordine</span>
-                <span className="fv">#{ctx.ordine?.order_number ?? c.order_number ?? ''}</span>
-                {ordSub && <span className="fs">{ordSub}</span>}
-              </div>
-            ))}
-            {ctx.storia && ctx.storia.n_ordini > 0 && (
-              <div className="cs-fact">
-                <span className="fl">Cliente</span>
-                <span className="fv">{ctx.storia.n_ordini} {ctx.storia.n_ordini === 1 ? 'ordine' : 'ordini'}</span>
-                <span className="fs">{ctx.storia.totale}€ totali{ctx.storia.n_ordini > 1 ? ' · abituale' : ''}</span>
-              </div>
-            )}
-            {ctx.ordine && (ctx.tracking ? (
-              <a className="cs-fact link" href={ctx.tracking.url} target="_blank" rel="noreferrer">
-                <span className="fl">Tracking</span>
-                <span className="fv">{ctx.tracking.corriere} ↗</span>
-                <span className="fs">{ctx.tracking.numero}</span>
-              </a>
-            ) : (
-              <div className="cs-fact warn">
-                <span className="fl">Tracking</span>
-                <span className="fv">⚠ non disponibile</span>
-                <span className="fs">la bozza userà [DA VERIFICARE]</span>
-              </div>
-            ))}
-          </div>
+        {/* INFO UTILI (brief cs_info_utili, richiesta dell'owner). Quattro fatti che restano a video
+            ANCHE a bozze generate: prima la strip spariva nell'istante in cui `draftMode` diventava
+            true, cioe' esattamente quando l'operatrice smette di leggere e comincia a scrivere la
+            risposta che quei dati contiene. Richiudibile, ma nasce APERTO.
+            Zero recuperi nuovi: ordine, spedizione, prodotto e cliente vengono tutti dalla stessa
+            risposta di `context` gia' chiesta all'apertura del thread.
+            Lo stato del corriere NON dipende piu' dalla categoria: prima viveva dentro il pannello
+            CASO, gated su CASE_CATS, quindi su "Spedizione e stato ordine" - dove "a che punto e' il
+            mio pacco?" e' letteralmente la domanda - non compariva. */}
+        {c.canale !== 'rumore' && ctx && (ctx.ordine || ctx.order_admin_url || ctx.ship || ctx.tracking || (ctx.prodotti && ctx.prodotti.length > 0) || (ctx.storia && ctx.storia.n_ordini > 0)) && (
+          <details className="cs-info" open>
+            <summary><span className="cs-tri">▶</span> Info utili</summary>
+            <div className="cs-facts">
+              {(ctx.ordine || ctx.order_admin_url || c.order_number) && (ctx.order_admin_url ? (
+                <a className="cs-fact link" href={ctx.order_admin_url} target="_blank" rel="noreferrer">
+                  <span className="fl">Ordine</span>
+                  <span className="fv">#{ctx.ordine?.order_number ?? c.order_number ?? ''} ↗</span>
+                  {ordSub && <span className="fs">{ordSub}</span>}
+                </a>
+              ) : (
+                <div className="cs-fact">
+                  <span className="fl">Ordine</span>
+                  <span className="fv">#{ctx.ordine?.order_number ?? c.order_number ?? ''}</span>
+                  {ordSub && <span className="fs">{ordSub}</span>}
+                </div>
+              ))}
+              {/* Spedizione: lo stato TWS batte il solo numero di tracking, perche' e' la risposta
+                  alla domanda. Se manca si dice, come gia' faceva la strip per il tracking. */}
+              {ctx.ship ? (
+                ctx.tracking ? (
+                  <a className="cs-fact link" href={ctx.tracking.url} target="_blank" rel="noreferrer">
+                    <span className="fl">Spedizione</span>
+                    <span className="fv">🚚 {ctx.ship.stato_tws} ↗</span>
+                    <span className="fs">{ctx.tracking.numero} · aggiornato al {fmtData(ctx.ship.updated_at.slice(0, 10))}</span>
+                  </a>
+                ) : (
+                  <div className="cs-fact">
+                    <span className="fl">Spedizione</span>
+                    <span className="fv">🚚 {ctx.ship.stato_tws}</span>
+                    <span className="fs">aggiornato al {fmtData(ctx.ship.updated_at.slice(0, 10))}</span>
+                  </div>
+                )
+              ) : ctx.tracking ? (
+                <a className="cs-fact link" href={ctx.tracking.url} target="_blank" rel="noreferrer">
+                  <span className="fl">Spedizione</span>
+                  <span className="fv">{ctx.tracking.corriere} ↗</span>
+                  <span className="fs">{ctx.tracking.numero}</span>
+                </a>
+              ) : ctx.ordine ? (
+                <div className="cs-fact warn">
+                  <span className="fl">Spedizione</span>
+                  <span className="fv">⚠ non disponibile</span>
+                  <span className="fs">la bozza userà [DA VERIFICARE]</span>
+                </div>
+              ) : null}
+              {/* Prodotto: il dato ricco c'era gia' e finiva solo nel muro di testo delle FONTI. */}
+              {ctx.prodotti && ctx.prodotti.length > 0 && (() => {
+                const p = ctx.prodotti[0];
+                const sub = [
+                  `${p.disponibili} disponibil${p.disponibili === 1 ? 'e' : 'i'}`,
+                  p.prezzo != null ? `${p.prezzo}€` : null,
+                ].filter(Boolean).join(' · ');
+                const nome = `${p.item} ${p.variant}`.trim();
+                return p.url ? (
+                  <a className="cs-fact link" href={p.url} target="_blank" rel="noreferrer">
+                    <span className="fl">Prodotto</span>
+                    <span className="fv">{nome} ↗</span>
+                    <span className="fs">{sub}</span>
+                  </a>
+                ) : (
+                  <div className="cs-fact">
+                    <span className="fl">Prodotto</span>
+                    <span className="fv">{nome}</span>
+                    <span className="fs">{sub}{p.on_shopify ? '' : ' · non a catalogo'}</span>
+                  </div>
+                );
+              })()}
+              {ctx.storia && ctx.storia.n_ordini > 0 && (
+                <div className="cs-fact">
+                  <span className="fl">Cliente</span>
+                  <span className="fv">{ctx.storia.n_ordini} {ctx.storia.n_ordini === 1 ? 'ordine' : 'ordini'}</span>
+                  <span className="fs">{ctx.storia.totale}€ totali{ctx.storia.n_ordini > 1 ? ' · abituale' : ''}</span>
+                </div>
+              )}
+            </div>
+          </details>
         )}
         {c.canale !== 'rumore' && ctx?.gaps && ctx.gaps.length > 0 && (
           <div className="cs-gaps">⚠️ <b>Contesto incompleto:</b> {ctx.gaps.join(' · ')}. La bozza usera&#8217; [DA VERIFICARE], mai inventare.</div>
@@ -546,7 +644,11 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
               // bolla = body_clean (solo le parole del mittente); NULL -> grezzo come prima, senza expander
               const fallback = m.body_text ? (c.canale === 'chat_notifica' ? cleanChatBody(m.body_text) : cleanBody(m.body_text)) : '';
               const testo = m.body_clean ?? fallback;
-              const showOrig = !!m.body_clean && !!m.body_text && m.body_clean.trim() !== cleanBody(m.body_text).trim();
+              // 3.4: l'expander si mostra solo se dietro c'e' DAVVERO qualcosa in piu'. Il confronto
+              // ora usa lo stesso normalizzatore del fallback: sulle chat del sito confrontavamo il
+              // testo pulito col boilerplate della notifica, quindi differivano sempre e il bottone
+              // compariva anche sotto tre messaggi di due righe gia' puliti (thread Lavezzola).
+              const showOrig = !!m.body_clean && !!m.body_text && m.body_clean.trim() !== fallback.trim();
               return (
                 <div key={m.id} className={'cs-msg ' + (out ? 'out' : 'in')}>
                   <div className="cs-mh">{out ? `${fmtWhen(m.sent_at)} · ${m.sent_by || 'Amimi’'}` : `${primoNome} · ${fmtWhen(m.sent_at)}`}</div>
@@ -579,10 +681,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         {c.canale !== 'rumore' && c.categoria && CASE_CATS.has(c.categoria) && caso && (
           <div className="cs-case">
             <div className="cs-case-h">{c.categoria === 'Modifica / correzione indirizzo' ? '📍 Caso indirizzo — calcolato dal sistema' : '↩️ Caso reso — calcolato dal sistema'}</div>
-            {/* stato TWS live (brief stato_tws_in_app): quando il sync spedizioni lo ha portato in app */}
-            {caso.stato_tws && (
-              <div className="cs-tws">🚚 Stato corriere (TWS): <b>{caso.stato_tws}</b>{caso.stato_tws_aggiornato ? <span className="muted"> · aggiornato al {caso.stato_tws_aggiornato}</span> : null}</div>
-            )}
+            {/* lo stato TWS viveva qui: ora sta in INFO UTILI, dove si vede su OGNI conversazione con
+                una spedizione agganciata e non solo sulle tre categorie di CASE_CATS. Qui restano i
+                soli verdetti, che sono un'altra cosa (brief cs_info_utili, vincolo 2). */}
             {c.categoria === 'Modifica / correzione indirizzo' ? (
               caso.indirizzo.caso === 'correggibile' ? (
                 <div className="cs-verdict cs-v-ok"><b>🚚 Non ancora ritirata dal corriere · ✅ correggibile</b><span>Chiedi l&#8217;indirizzo completo; correggi su Shopify e TWS prima del ritiro.</span></div>
@@ -607,13 +708,13 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 )}
                 {caso.reso.verdetto === 'non_applicabile' ? (
                   <div className="cs-verdict cs-v-info">
-                    <b>🧾 Ordine del {caso.reso.ordine_del} · nessun verdetto sulla finestra</b>
+                    <b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · nessun verdetto sulla finestra</b>
                     <span>{NON_APP_UI[caso.reso.non_applicabile ?? 'rimborsato']}</span>
                   </div>
                 ) : caso.reso.verdetto === 'entro' ? (
-                  <div className="cs-verdict cs-v-ok"><b>🧾 Ordine del {caso.reso.ordine_del} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
+                  <div className="cs-verdict cs-v-ok"><b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
                 ) : caso.reso.verdetto === 'fuori' ? (
-                  <div className="cs-verdict cs-v-no"><b>🧾 Ordine del {caso.reso.ordine_del} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
+                  <div className="cs-verdict cs-v-no"><b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
                 ) : (
                   <div className="cs-verdict cs-v-info">
                     <b>Ordine non identificato con certezza</b>
@@ -740,9 +841,19 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   })()}
                   <div className="cs-send-preview">{bozzaText}</div>
                   {sendErr && <div className="err" style={{ marginTop: 10 }}>{sendErr}</div>}
+                  {/* 3.1: se il rifiuto e' strutturale il bottone si spegne e si dice cosa fare al
+                      suo posto. Lasciarlo acceso sotto un "invio bloccato" faceva ripremere a vuoto. */}
+                  {sendBloccato && (
+                    <div className="cs-note" style={{ textAlign: 'left', marginTop: 8 }}>
+                      L&#8217;invio da qui non &#232; possibile per questa conversazione: ripremere darebbe lo stesso esito.
+                      Copia la risposta e mandala dal thread Gmail.
+                    </div>
+                  )}
                   <div className="cs-send-actions">
-                    <button className="cs-btn cs-ghost" onClick={() => setSendOpen(false)} disabled={sending} type="button">Annulla</button>
-                    <button className="cs-btn cs-primary" onClick={doSend} disabled={sending} type="button">{sending ? 'Invio…' : '✓ Invia adesso'}</button>
+                    <button className="cs-btn cs-ghost" onClick={() => setSendOpen(false)} disabled={sending} type="button">{sendBloccato ? 'Chiudi' : 'Annulla'}</button>
+                    {sendBloccato
+                      ? <button className="cs-btn cs-ghost" onClick={copiaBozza} type="button">{copied ? '✓ Copiata' : '📋 Copia la risposta'}</button>
+                      : <button className="cs-btn cs-primary" onClick={doSend} disabled={sending} type="button">{sending ? 'Invio…' : '✓ Invia adesso'}</button>}
                   </div>
                 </div>
               </div>
@@ -782,7 +893,6 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const daf = (convs ?? []).filter((c) => c.stato === 'da_fare').length;
   const inc = (convs ?? []).filter((c) => c.stato === 'in_corso').length;
   const fatte = (convs ?? []).filter((c) => c.stato === 'fatto').length;
-  const urg = list.filter(isUrg).length;
   const rumCount = rumore?.length;
 
   const card = (c: CsConversation) => (
@@ -821,20 +931,19 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   return (
     <div className="screen">
       <header>
+        {/* UAT 02-08: via "aiutiamo dei clienti", resta il saluto. */}
         <button onClick={() => setMenu((m) => !m)} type="button" style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--dark)', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 9 }}>
           <Avatar k={ident} size={30} />
-          <span>Ciao {IDENTS[ident]?.n ?? ident}, aiutiamo dei clienti! <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 400 }}>▾</span></span>
+          <span>Ciao {IDENTS[ident]?.n ?? ident} <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 400 }}>▾</span></span>
         </button>
+        {/* UAT 02-08: "Aggiorna" in alto a destra. Stava in fondo alla riga dei conteggi, che non c'e' piu'. */}
+        <button onClick={doRefresh} disabled={refreshing} type="button" style={{ background: 'none', border: '1px solid var(--line)', borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, color: 'var(--rose)', cursor: 'pointer', opacity: refreshing ? 0.6 : 1 }}>{refreshing ? 'Aggiorno…' : '↻ Aggiorna'}</button>
       </header>
       {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
 
-      <div className="cs-stats">
-        <span className="cs-stat"><b>{daf}</b> da iniziare</span>
-        {inc > 0 && <span className="cs-stat"><b>{inc}</b> in corso</span>}
-        {urg > 0 && <span className="cs-stat cs-staturg"><b>{urg}</b> 🚨 urgenti</span>}
-        <span className="cs-stat"><b>{fatte}</b> concluse</span>
-        <button onClick={doRefresh} disabled={refreshing} type="button" style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--line)', borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, color: 'var(--rose)', cursor: 'pointer', opacity: refreshing ? 0.6 : 1 }}>{refreshing ? 'Aggiorno…' : '↻ Aggiorna'}</button>
-      </div>
+      {/* UAT 02-08: la riga di conteggi in cima e' sparita. Gli stessi numeri erano gia' sulle tre
+          pastiglie di filtro qui sotto: si leggeva due volte la stessa cosa. Gli urgenti non si
+          perdono, restano in cima alla coda col loro badge. */}
       <div className="cs-filterbar">
         {(([['dafare', 'Da iniziare', daf], ['incorso', 'In corso', inc], ['fatte', 'Concluse', fatte], ['tutte', 'Tutte', null]]) as [typeof filtro, string, number | null][]).map(([k, l, n]) => (
           <button key={k} className={'cs-fpill' + (filtro === k ? ' on' : '')} onClick={() => setFiltro(k)} type="button">

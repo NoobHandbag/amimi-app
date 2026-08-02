@@ -1,4 +1,12 @@
-// cs-send v6 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// cs-send v7 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// v7 (2026-08-02, brief cs_crop_e_dati_falsi punto 3.1): i rifiuti dicono ora se sono STRUTTURALI
+//   (`bloccante: true`), cioe' se ripremere Invia produrra' lo stesso esito. Nella UAT dell'owner
+//   la UI mostrava "oggetto del thread sconosciuto: invio bloccato" in rosso e teneva "✓ Invia
+//   adesso" acceso e cliccabile: o l'invio e' bloccato e il bottone si spegne, o non lo e'.
+//   Strutturali: canale non inviabile, destinatario mancante/wrapper/@amimi.it, cintura
+//   cross-cliente, chiave del service account assente o rotta, scope Google non autorizzato,
+//   thread vuoto, oggetto sconosciuto. NON strutturali (riprovare ha senso): Gmail irraggiungibile
+//   o che rifiuta con un 5xx, thread momentaneamente non leggibile.
 // v6 (2026-08-01 notte, brief cs_reply_to_fonte_indipendente): la CINTURA cross-cliente aveva una
 //   sola fonte per sapere chi avesse scritto un messaggio del modulo, e quella fonte dipendeva dal
 //   riconoscimento dello stampo nel CORPO, cioe' dalla stessa cosa che decide se separare due
@@ -77,6 +85,11 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// v7 (2026-08-02, brief cs_crop_e_dati_falsi 3.1): rifiuto STRUTTURALE, cioe' "ripremere Invia
+// produrra' esattamente lo stesso esito". La UI mostrava il rifiuto in rosso e lasciava "Invia
+// adesso" acceso e cliccabile: l'operatrice ripremeva e non capiva. Il flag distingue questi dal
+// caso transitorio (Gmail momentaneamente irraggiungibile), dove riprovare ha invece senso.
+const blocco = (msg: string, s = 422) => json({ error: msg, bloccante: true }, s);
 async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -279,20 +292,20 @@ Deno.serve(async (req) => {
   const { data: conv } = await sb.from('cs_conversations')
     .select('id, gmail_thread_id, canale, customer_email, customer_name, subject, lingua, stato, stato_by, last_msg_at')
     .eq('id', convId).maybeSingle();
-  if (!conv) return json({ error: 'conversazione inesistente' }, 404);
+  if (!conv) return blocco('conversazione inesistente', 404);
 
   // 3) canale: solo email_diretta e form_*; chat e rumore NON si inviano da qui (server-side, non solo UI)
   const canale = String(conv.canale);
-  if (canale === 'chat_notifica') return json({ error: 'le chat del sito si rispondono dentro Shopify Inbox (usa "Copia e apri in Inbox")' }, 422);
-  if (canale !== 'email_diretta' && canale !== 'form_contatto' && canale !== 'form_evento') return json({ error: `invio non disponibile per il canale "${canale}"` }, 422);
+  if (canale === 'chat_notifica') return blocco('le chat del sito si rispondono dentro Shopify Inbox (usa "Copia e apri in Inbox")');
+  if (canale !== 'email_diretta' && canale !== 'form_contatto' && canale !== 'form_evento') return blocco(`invio non disponibile per il canale "${canale}"`);
 
   // 4) destinatario: SEMPRE dal DB (customer_email), mai dal client; mai il wrapper, mai noi stessi
   const to = String(conv.customer_email || '').trim().toLowerCase();
-  if (!to || !to.includes('@')) return json({ error: 'email del cliente mancante: impossibile inviare da qui' }, 422);
+  if (!to || !to.includes('@')) return blocco('email del cliente mancante: impossibile inviare da qui');
   if (to === 'mailer@shopify.com' || to.endsWith('@shopify.com') || to.endsWith('@shopifyemail.com') || to.endsWith('@mailer.shopify.com')) {
-    return json({ error: 'il destinatario risolto e\' il wrapper Shopify, non il cliente: invio bloccato' }, 422);
+    return blocco('il destinatario risolto e\' il wrapper Shopify, non il cliente: invio bloccato');
   }
-  if (to.endsWith('@amimi.it')) return json({ error: 'il destinatario risolto e\' un indirizzo @amimi.it: invio bloccato' }, 422);
+  if (to.endsWith('@amimi.it')) return blocco('il destinatario risolto e\' un indirizzo @amimi.it: invio bloccato');
 
   // 4-bis) CINTURA CROSS-CLIENTE (v3, brief cs_form_thread_merge punto 3). Due invii dal form nello
   // stesso MINUTO producono notifiche Shopify con oggetto identico: Gmail le accoda nello stesso
@@ -311,6 +324,7 @@ Deno.serve(async (req) => {
   }
   if (mittenti.size > 1) {
     return json({
+      bloccante: true,
       error: `questa conversazione contiene richieste di ${mittenti.size} clienti diversi (${[...mittenti].join(', ')}): invio bloccato per non mandare a uno la risposta scritta anche sull'altro. Rispondi dal thread Gmail, a ciascuno separatamente.`,
       cross_cliente: [...mittenti],
     }, 422);
@@ -338,17 +352,20 @@ Deno.serve(async (req) => {
     // tentativo precedente fallito (o rimasto appeso): la stessa chiave riprova
     await sb.from('cs_sends').update({ status: 'sending', error: null, testo_sha: testoSha, updated_at: nowIso() }).eq('send_key', sendKey);
   }
-  const sendFail = async (status: number, msg: string) => {
+  // v7: `strutturale` = ripremere Invia dara' lo stesso esito (manca un dato o un'autorizzazione,
+  // non e' un inciampo di rete). La UI usa il flag per spegnere il bottone invece di lasciarlo
+  // acceso sotto un messaggio di errore.
+  const sendFail = async (status: number, msg: string, strutturale = false) => {
     await sb.from('cs_sends').update({ status: 'error', error: msg.slice(0, 500), updated_at: nowIso() }).eq('send_key', sendKey);
-    return json({ error: msg }, status);
+    return json({ error: msg, ...(strutturale ? { bloccante: true } : {}) }, status);
   };
 
   // 7) Gmail: token del service account (delegation con gmail.send, prerequisito owner)
   const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'cs_gmail_sa_key').maybeSingle();
-  if (!flag?.value) return await sendFail(500, 'chiave service account assente (app_flags.cs_gmail_sa_key)');
+  if (!flag?.value) return await sendFail(500, 'chiave service account assente (app_flags.cs_gmail_sa_key)', true);
   let sa: { client_email?: string; private_key?: string };
-  try { sa = JSON.parse(String(flag.value)); } catch { return await sendFail(500, 'chiave service account non valida (JSON)'); }
-  if (!sa.client_email || !sa.private_key) return await sendFail(500, 'chiave service account incompleta');
+  try { sa = JSON.parse(String(flag.value)); } catch { return await sendFail(500, 'chiave service account non valida (JSON)', true); }
+  if (!sa.client_email || !sa.private_key) return await sendFail(500, 'chiave service account incompleta', true);
   // Due token SEPARATI, non uno solo con entrambi gli scope (v2, dopo il caso reale 01-08: una
   // delegation con `gmail.send` ma senza `gmail.readonly` rifiuta la richiesta CONGIUNTA, quindi
   // un token unico rendeva l'invio ostaggio di uno scope che serve solo a leggere gli header).
@@ -359,7 +376,7 @@ Deno.serve(async (req) => {
   //     meno solido. Mai silenzioso.
   let gtoken: string;
   try { gtoken = await googleAccessTokenFor(sa as { client_email: string; private_key: string }, SCOPE_SEND); }
-  catch (e) { return await sendFail(502, 'autenticazione Google fallita: lo scope gmail.send non risulta autorizzato sulla domain-wide delegation. ' + (e as Error).message.slice(0, 180)); }
+  catch (e) { return await sendFail(502, 'autenticazione Google fallita: lo scope gmail.send non risulta autorizzato sulla domain-wide delegation. ' + (e as Error).message.slice(0, 180), true); }
   let readToken: string | null = null;
   try { readToken = await googleAccessTokenFor(sa as { client_email: string; private_key: string }, SCOPE_READ); }
   catch { readToken = null; }
@@ -384,7 +401,7 @@ Deno.serve(async (req) => {
       const msgs = ((tj as { messages?: { labelIds?: string[]; payload?: { headers?: Hdr[] } }[] }).messages ?? [])
         .filter((m) => !(m.labelIds ?? []).includes('DRAFT') && !(m.labelIds ?? []).includes('TRASH'));
       const last = msgs[msgs.length - 1];
-      if (!last) return await sendFail(502, 'thread Gmail vuoto: risposta nel thread impossibile, invio bloccato');
+      if (!last) return await sendFail(502, 'thread Gmail vuoto: risposta nel thread impossibile, invio bloccato', true);
       const H = last.payload?.headers;
       lastMsgId = hdr(H, 'message-id');
       lastRefs = hdr(H, 'references');
@@ -393,7 +410,7 @@ Deno.serve(async (req) => {
       preWarn.push('header di reply non impostati: lo scope gmail.readonly non e\' autorizzato sulla delegation (la risposta resta nel thread via threadId, ma su client non-Gmail il collegamento puo\' essere piu\' debole)');
     }
     const subjBase = lastSubj || String(conv.subject || '');
-    if (!subjBase) return await sendFail(502, 'oggetto del thread sconosciuto: invio bloccato');
+    if (!subjBase) return await sendFail(502, 'oggetto del thread sconosciuto: invio bloccato', true);
     subject = /^re:\s/i.test(subjBase) ? subjBase : 'Re: ' + subjBase;
     if (lastMsgId) { inReplyTo = lastMsgId; references = (lastRefs ? lastRefs + ' ' : '') + lastMsgId; }
     threadId = threadReale;

@@ -205,7 +205,14 @@ function PrintReport({ turn }: { turn: Turn }) {
   );
 }
 
-export default function AssistantPanel({ pin, chi }: { pin: string; chi: string }) {
+// `nascondiFab`: il bottone flottante non si mostra su questa schermata. Serve all'Assistenza
+// clienti (brief cs_crop_e_dati_falsi 3.6 + rifinitura del brief cs_info_utili): li' il pulsante
+// copriva meta' di "Genera le risposte con i dati reali", che e' l'azione principale della pagina,
+// e l'angolo in basso a destra delle card della coda (visto su desktop a 1489px, non solo su
+// mobile). Dentro l'Assistenza l'AI c'e' gia' ed e' quella che scrive le bozze, quindi il FAB
+// generale li' non aggiunge niente e toglie spazio. Il pannello resta raggiungibile da ogni altra
+// schermata: per rimetterlo anche qui basta togliere la prop in App.tsx.
+export default function AssistantPanel({ pin, chi, nascondiFab = false }: { pin: string; chi: string; nascondiFab?: boolean }) {
   const [enabled, setEnabled] = useState(false);
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -247,9 +254,11 @@ export default function AssistantPanel({ pin, chi }: { pin: string; chi: string 
 
   return (
     <>
-      <button className={`ai-fab ${open ? 'hide' : ''}`} onClick={() => setOpen(true)} type="button" aria-label="Apri assistente">
-        <Spark /> Chiedi ad Amimì
-      </button>
+      {!nascondiFab && (
+        <button className={`ai-fab ${open ? 'hide' : ''}`} onClick={() => setOpen(true)} type="button" aria-label="Apri assistente">
+          <Spark /> Chiedi ad Amimì
+        </button>
+      )}
       {open && <div className="ai-scrim" onClick={() => setOpen(false)} />}
       <div className={`ai-panel ${open ? 'open' : ''}`} role="dialog" aria-label="Assistente Amimì" aria-hidden={!open}>
         <div className="ai-grip" />
