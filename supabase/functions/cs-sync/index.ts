@@ -298,9 +298,28 @@ const nomeDalModulo = (ff: Record<string, string> | null): string | null => {
   const v = String(ff?.name ?? ff?.nome ?? '').trim();
   return v && v.length <= 80 ? v : null;
 };
+// v15 (brief cs_crop_e_dati_falsi Parte 5.1): il numero d'ordine si perdeva se scritto senza
+// cancelletto. Caso reale: "informazioni su spedizione ordine del 23 luglio 2026 n. 1538", scritto
+// TRE volte. La regex vecchia pretendeva le cifre SUBITO dopo "ordine|order|#": qui dopo "ordine"
+// c'e' " del 23 luglio...", quindi non agganciava niente e la conversazione restava senza numero.
+// I marcatori sono in ordine di esplicitezza e vince il primo che aggancia, cosi' in "il mio CAP e'
+// n. 20152 e l'ordine #1538" il cancelletto batte il "n.".
+const ORDER_PATTERNS: RegExp[] = [
+  /#\s*(\d{3,6})\b/,                                                              // #1538
+  /\b(?:ordine|ordinazione|order)\s*(?:numero|nr\.?|n[°.])?\s*#?\s*(\d{3,6})\b/i, // ordine 1538 / ordine n. 1538
+  /\b(?:numero|nr\.?|n[°.])\s*#?\s*(\d{3,6})\b/i,                                 // n. 1538 (senza la parola ordine)
+];
 function extractOrderNumber(text: string): number | null {
-  const m = text.match(/(?:ordine|order|#)\s*#?\s*(\d{3,6})/i);
-  return m ? Number(m[1]) : null;
+  for (let i = 0; i < ORDER_PATTERNS.length; i++) {
+    const m = text.match(ORDER_PATTERNS[i]);
+    if (!m) continue;
+    const n = Number(m[1]);
+    // l'ultimo marcatore e' il piu' debole (un "n." nudo): li' un 19xx/20xx e' quasi sempre un ANNO
+    // preso da una data, non un ordine. Con "#" o "ordine" davanti invece si crede al numero.
+    if (i === ORDER_PATTERNS.length - 1 && n >= 1900 && n <= 2099) continue;
+    return n;
+  }
+  return null;
 }
 const detectLingua = (t: string) => (/\b(the|your|order|hello|hi|please|thanks|would|available)\b/i.test(t) && !/\b(il|la|per|grazie|ordine|ciao|salve|vorrei|disponibile)\b/i.test(t) ? 'en' : 'it');
 
@@ -514,7 +533,7 @@ Deno.serve(async (req) => {
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const action = String(body.action || 'poll');
-  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet') return json({ error: 'azione sconosciuta: ' + action }, 422);
+  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet' && action !== 'backfill_order_number') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
   const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders']);
@@ -755,6 +774,40 @@ Deno.serve(async (req) => {
       }
     }
     return json({ ok: true, scanned, out_scritti: wrote, out_aggiornati: updated, urgenze_ricalcolate: urgFixed, offset, next_offset: offset + scanned, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
+  }
+
+  // --- BACKFILL order_number (v15, brief Parte 5.1): il numero che l'estrattore vecchio perdeva ---
+  // Rilegge il testo dei messaggi in ingresso col riconoscimento nuovo e riempie SOLO le
+  // conversazioni che oggi non hanno numero. Due guardie prima di scrivere, le stesse di
+  // `lookupOrder` in cs-assist: l'ordine deve ESISTERE, e se conosciamo l'email della cliente
+  // dev'essere il SUO. Attribuire l'ordine di un'altra persona sarebbe peggio del buco che
+  // stiamo chiudendo. `dry: true` conta e non scrive.
+  if (action === 'backfill_order_number') {
+    const dry = body.dry === true;
+    const { data: convRows } = await sb.from('cs_conversations')
+      .select('id, subject, customer_email, canale, order_number').is('order_number', null).neq('canale', 'rumore');
+    const convs = (convRows ?? []) as { id: string; subject: string | null; customer_email: string | null; canale: string }[];
+    let scanned = 0, trovati = 0, scritti = 0, ordineInesistente = 0, altroCliente = 0; const errors: string[] = [];
+    for (const c of convs) {
+      scanned++;
+      const { data: mrows } = await sb.from('cs_messages')
+        .select('body_clean, body_text').eq('conversation_id', c.id).eq('direction', 'in')
+        .order('sent_at', { ascending: true });
+      const testo = [c.subject ?? '', ...((mrows ?? []) as { body_clean: string | null; body_text: string | null }[])
+        .map((m) => m.body_clean ?? m.body_text ?? '')].join('\n');
+      const n = extractOrderNumber(testo);
+      if (!n) continue;
+      trovati++;
+      const { data: ord } = await sb.from('shopify_orders').select('order_number, email').eq('order_number', String(n)).maybeSingle();
+      if (!ord) { ordineInesistente++; continue; }
+      const mailOrd = String((ord as { email: string | null }).email ?? '').toLowerCase();
+      if (c.customer_email && mailOrd && mailOrd !== c.customer_email.toLowerCase()) { altroCliente++; continue; }
+      if (dry) { scritti++; continue; }
+      const { error: ue } = await sb.from('cs_conversations').update({ order_number: n }).eq('id', c.id);
+      if (ue) { errors.push(c.id.slice(0, 8) + ':' + ue.message.slice(0, 60)); continue; }
+      scritti++;
+    }
+    return json({ ok: true, ...(dry ? { dry: true } : {}), scanned, numeri_trovati: trovati, scritti, ordine_inesistente: ordineInesistente, ordine_di_altro_cliente: altroCliente, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
   }
 
   // --- BACKFILL snippet (v15): l'anteprima delle card gia' in coda ---

@@ -88,6 +88,19 @@ const primoNomeOf = (c: CsConversation): string => {
   return local.length > 22 ? local.slice(0, 22) + '…' : local;
 };
 
+// brief cs_crop_e_dati_falsi 5.2: le ALTRE conversazioni ancora aperte della stessa cliente.
+// Il caso che l'ha fatto emergere: una cliente ha scritto quattro volte in cinque giorni per lo
+// stesso ordine gia' evaso, le prime tre sono rimaste senza risposta, e nel tool erano tre card
+// separate che l'operatrice apriva come tre problemi diversi. Nessuna delle misure poteva vederlo,
+// perche' guardano una conversazione alla volta. Costo zero: la lista delle conversazioni e' gia'
+// tutta nel client, non serve nessun recupero.
+const altreAperte = (c: CsConversation, tutte: CsConversation[] | null): CsConversation[] => {
+  const mail = (c.customer_email || '').trim().toLowerCase();
+  if (!mail) return [];
+  return (tutte ?? []).filter((x) => x.id !== c.id && x.stato !== 'fatto' && x.canale !== 'rumore'
+    && (x.customer_email || '').trim().toLowerCase() === mail);
+};
+
 const FLAG_LABEL: Record<string, string> = { sollecito: '⏱ sollecito', reclamo_assistenza: '⚠️ reclamo', chiusura: '✅ chiusura' };
 const isUrg = (c: CsConversation) => c.urgente === true;
 // La coda mette gli urgenti in cima, poi per anzianita' del messaggio (piu' recente prima) (design 6.4).
@@ -623,6 +636,20 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             </div>
           </details>
         )}
+        {/* 5.2: la stessa cliente ha altre conversazioni aperte. Cliccabile: si passa di la' senza
+            tornare in coda a cercarla. */}
+        {c.canale !== 'rumore' && altreAperte(c, convs).length > 0 && (
+          <div className="cs-gaps">
+            👥 <b>Questa cliente ha altre {altreAperte(c, convs).length === 1 ? 'una conversazione aperta' : `${altreAperte(c, convs).length} conversazioni aperte`}</b>, probabilmente per lo stesso motivo. Guardale prima di rispondere, o le risponderai due volte.
+            <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {altreAperte(c, convs).map((a) => (
+                <button key={a.id} type="button" className="cs-btn cs-ghost" style={{ fontSize: 12 }} onClick={() => openThread(a)}>
+                  {fmtWhen(a.last_msg_at)} · {(a.snippet || a.subject || 'apri').slice(0, 40)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {c.canale !== 'rumore' && ctx?.gaps && ctx.gaps.length > 0 && (
           <div className="cs-gaps">⚠️ <b>Contesto incompleto:</b> {ctx.gaps.join(' · ')}. La bozza usera&#8217; [DA VERIFICARE], mai inventare.</div>
         )}
@@ -917,6 +944,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         {c.stato === 'fatto' && <span className="cs-badge cs-state cs-state-done">{c.stato_by === 'auto' ? '✓ chiusa da sola' : `✓ ${c.stato_by ?? 'conclusa'}`}</span>}
         {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">risposta in Inbox</span>}
         {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
+        {/* 5.2: si vede gia' dalla coda che questa persona e' su piu' card */}
+        {altreAperte(c, convs).length > 0 && <span className="cs-badge cs-urg">👥 altre {altreAperte(c, convs).length} di questa cliente</span>}
       </div>
     </button>
   );

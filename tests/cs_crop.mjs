@@ -36,9 +36,9 @@ let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra ? '  <- ' + JSON.stringify(extra).slice(0, 300) : '')); } };
 
 const TMP = `${ROOT}tests/_crop.tmp.ts`;
-writeFileSync(TMP, `${ritaglia(FN('cs-sync'))}\nexport { stripQuoted, stripQuote };\n`, 'utf8');
-let stripQuoted, stripQuote;
-try { ({ stripQuoted, stripQuote } = await import(pathToFileURL(TMP).href)); }
+writeFileSync(TMP, `${ritaglia(FN('cs-sync'))}\nexport { stripQuoted, stripQuote, extractOrderNumber };\n`, 'utf8');
+let stripQuoted, stripQuote, extractOrderNumber;
+try { ({ stripQuoted, stripQuote, extractOrderNumber } = await import(pathToFileURL(TMP).href)); }
 finally { try { unlinkSync(TMP); } catch { /* niente */ } }
 
 // ---------------------------------------------------------------------------------------------
@@ -172,6 +172,33 @@ t('32 stripQuote NON taglia la firma',
 
 t('33 stripQuote non torna mai null (e una string)',
   typeof stripQuote('') === 'string');
+
+// ---------------------------------------------------------------------------------------------
+console.log('\n== il numero d\'ordine scritto senza cancelletto (Parte 5.1) ==');
+// Caso reale: la cliente scrive TRE volte "ordine del 23 luglio 2026 n. 1538" e la conversazione
+// resta senza numero, perche' la regex pretendeva le cifre subito dopo "ordine".
+
+t('34 il caso del brief: "ordine del 23 luglio 2026 n. 1538"',
+  extractOrderNumber('informazioni su spedizione ordine del 23 luglio 2026 n. 1538') === 1538,
+  extractOrderNumber('informazioni su spedizione ordine del 23 luglio 2026 n. 1538'));
+
+t('35 "#1538" (nessuna regressione)', extractOrderNumber('il mio ordine #1538 e\' partito?') === 1538);
+t('36 "ordine 1538"', extractOrderNumber('buongiorno, ordine 1538, quando arriva?') === 1538);
+t('37 "ordine n. 1538"', extractOrderNumber('ordine n. 1538') === 1538);
+t('38 "ordine nr 1538"', extractOrderNumber('ordine nr 1538') === 1538);
+t('39 "numero 1538"', extractOrderNumber('vi scrivo per il numero 1538') === 1538);
+t('40 "n° 1538"', extractOrderNumber('n° 1538, grazie') === 1538);
+t('41 il cancelletto batte il "n." che viene prima',
+  extractOrderNumber('il mio CAP e\' n. 20152 e l\'ordine #1538 non arriva') === 1538,
+  extractOrderNumber('il mio CAP e\' n. 20152 e l\'ordine #1538 non arriva'));
+t('42 un ANNO dopo un "n." nudo non e\' un ordine',
+  extractOrderNumber('ho ordinato il 23 luglio, pratica n. 2026') === null,
+  extractOrderNumber('ho ordinato il 23 luglio, pratica n. 2026'));
+t('43 ma con "ordine" davanti al numero si crede al numero',
+  extractOrderNumber('ordine 2026') === 2026);
+t('44 nessun numero -> null', extractOrderNumber('vorrei sapere quando arriva la mia borsa') === null);
+t('45 una data non e\' un ordine', extractOrderNumber('ho ordinato il 23 luglio 2026') === null,
+  extractOrderNumber('ho ordinato il 23 luglio 2026'));
 
 console.log(`\n${ok}/${ok + ko} verdi` + (ko ? ` — ${ko} ROSSI` : ''));
 process.exitCode = ko ? 1 : 0;
