@@ -728,6 +728,115 @@ function pertinenzaBlock(categoria: string | null, recent: { direction?: unknown
 }
 // ==== PURE:cs-pertinenza END ====
 
+// v27 (rimisura cieca del 02-08): la regola astratta qui sopra NON BASTA sul caso piu' duro.
+// Misurato su C02 (`741c7f0e`, dove il team ha scritto "il rimborso verra' effettuato una volta che
+// il pacco sara' rientrato"): 8 generazioni su 8 hanno prodotto UNA sola alternativa, e tutte e otto
+// hanno negato il reso citando i 14 giorni. Il verdetto secco del caso, che e' concreto e pieno di
+// numeri, vince su una condizionale astratta; e la supremazia del verdetto e' ripetuta una seconda
+// volta in `cs_knowledge` id 8 e 13, che entrano nel prompt DOPO questo blocco.
+// Cambio di strategia: invece di CHIEDERE al modello di cercare l'impegno mentre scrive, glielo si
+// mette davanti gia' trovato e CITATO ALLA LETTERA. Una frase virgolettata copiata dalla nostra
+// risposta e' molto piu' difficile da ignorare di una regola condizionale.
+// L'estrazione la fa una chiamata PICCOLA e dedicata (flash-lite, un compito solo), ma la parola
+// finale ce l'ha il CODICE: `citazioneVerificata` controlla che la frase esista davvero, alla
+// lettera, dentro un messaggio `out`. Se non la trova, la scarta. Cosi' un'allucinazione del
+// classificatore non puo' arrivare alla bozza: il modello propone, il codice verifica.
+// ==== PURE:cs-impegno BEGIN ====
+// La punteggiatura diventa SPAZIO e non sparisce: cancellarla salderebbe la fine di una frase con
+// l'inizio della successiva, e una citazione potrebbe "esistere" a cavallo di un punto ("Il reso non
+// e' ammesso. Le offriamo un omaggio" -> "e' ammesso le offriamo un omaggio").
+// La punteggiatura di FINE FRASE diventa una barra: e' il confine che serve due volte. Impedisce a
+// una citazione di esistere a cavallo di un punto, e impedisce a una negazione della frase PRIMA di
+// squalificare una promessa della frase DOPO (falso positivo trovato da una fixture).
+const normImp = (s: string): string => (s || '').toLowerCase()
+  .replace(/[\u2018\u2019\u201b]/g, "'").replace(/[\u201c\u201d]/g, '"')
+  .replace(/[.;!?\n]+/g, ' | ').replace(/[,:()\[\]"]/g, ' ')
+  .replace(/\s+/g, ' ').trim();
+
+// Parole che ROVESCIANO il senso di cio' che segue. Se una di queste sta appena prima del punto in
+// cui la citazione aggancia, la citazione ha perso il pezzo che contava: "non possiamo accettare il
+// reso" contiene alla lettera "possiamo accettare il reso", e senza questo controllo l'azienda
+// finirebbe a promettere esattamente cio' che aveva rifiutato. E' il difetto piu' grave che una
+// verifica ingenua lascia passare, ed e' stato trovato su testo di produzione vero.
+// NB: `[^|]` e non `[^.]`. La negazione conta solo se sta nella STESSA frase della citazione.
+const CAPOVOLGE = /\b(non|mai|nessun\w*|senza|purtroppo|se|qualora|salvo|tranne|meno che|impossibile|escluso)\b[^|]{0,30}$/;
+
+// La citazione vale SOLO se compare, normalizzata, dentro UN SINGOLO messaggio nostro (mai a cavallo
+// di due, che sarebbero due frasi mai state vicine), con confini di parola, e senza una negazione o
+// una condizione subito prima. E' QUESTA funzione, non l'estrattore, la ragione per cui una
+// citazione inventata o mutilata non arriva alla bozza: il modello propone, il codice verifica.
+function citazioneVerificata(citazione: string, testiOut: string[]): string {
+  // i confini di frase in testa e in coda alla citazione non fanno parte della citazione
+  const c = normImp(citazione).replace(/^[|\s]+/, '').replace(/[|\s]+$/, '');
+  // sotto le 25 lettere e' troppo generica per essere un impegno ("va bene", "certo");
+  // sopra i 300 caratteri non e' piu' una citazione, e' mezzo messaggio con dentro di tutto.
+  if (c.replace(/[^a-z\u00e0-\u00ff]/g, '').length < 25 || c.length > 300) return '';
+  for (const t of testiOut) {
+    const fieno = normImp(t);
+    let i = fieno.indexOf(c);
+    while (i >= 0) {
+      const iniziaParola = i === 0 || !/[a-z\u00e0-\u00ff0-9']/.test(fieno[i - 1]);
+      const finisceParola = i + c.length >= fieno.length || !/[a-z\u00e0-\u00ff0-9']/.test(fieno[i + c.length]);
+      if (iniziaParola && finisceParola && !CAPOVOLGE.test(fieno.slice(Math.max(0, i - 40), i))) {
+        return citazione.trim().replace(/"/g, "'");   // le doppie virgolette romperebbero il blocco
+      }
+      i = fieno.indexOf(c, i + 1);
+    }
+  }
+  return '';
+}
+
+function impegnoBlock(citazione: string): string {
+  if (!citazione) return '';
+  return `IMPEGNO GIA' PRESO DAL TEAM IN QUESTO THREAD, copiato alla lettera dall'ULTIMA risposta che le abbiamo inviato:
+"${citazione}"
+Questo impegno VALE ed e' il punto di partenza della risposta. NON puoi negarlo, ritirarlo o dichiararlo scaduto, nemmeno se il caso calcolato qui sopra porta altrove: quel caso e' calcolato sulla riga ordine, questo invece lo abbiamo scritto noi alla cliente.
+Dell'impegno vale la DECISIONE, non i valori che contiene: indirizzi, importi, codici, date e finestre restano quelli del caso e della CONOSCENZA DI CASA, anche quando la frase qui sopra ne riporta di diversi (li' e' un refuso di chi ha scritto, non una cosa da confermare). E vale solo per l'ordine e la richiesta a cui rispondeva: non estenderlo ad altro.
+Se il caso porta altrove, NON scrivere una sola alternativa: la PRIMA parte dall'impegno e lo porta avanti, la SECONDA parte dal caso e dice cosa cambia, e sara' la collega a scegliere quella vera.
+`;
+}
+// ==== PURE:cs-impegno END ====
+
+// Estrattore: UN compito solo, modello piccolo, nessuna liberta' di scrittura.
+// TRE scelte di perimetro, tutte per non promettere cose che l'azienda non vuole promettere:
+//  - vede SOLO le nostre righe, mai quelle della cliente: "mi avevate detto" non e' un nostro
+//    impegno, ed e' esattamente il punto in cui un modello si farebbe ingannare;
+//  - vede SOLO L'ULTIMO messaggio nostro. Un impegno preso e poi corretto da una risposta successiva
+//    non deve poter risorgere (caso reale: "procediamo con il reso" seguito da "purtroppo non
+//    riusciamo per quella data"). L'ultimo messaggio e' l'unica cosa che il team sostiene ancora;
+//  - usa solo `body_clean`, mai il grezzo: nel grezzo c'e' la catena di citazioni, e dentro ci sono
+//    le frasi della CLIENTE, che tornerebbero indietro travestite da nostro impegno.
+// Torna stringa vuota molto volentieri: il default e' "non c'e' nessun impegno".
+async function estraiImpegno(recent: Row[], key: string): Promise<string> {
+  const nostri = recent.filter((m) => m.direction === 'out' && String(m.body_clean ?? '').trim());
+  const ultimo = nostri.length ? String(nostri[nostri.length - 1].body_clean ?? '').trim() : '';
+  if (!ultimo) return '';
+  const prompt = `Qui sotto c'e' l'ULTIMA risposta che il TEAM di un servizio clienti ha inviato a una cliente.
+Domanda: in questa risposta il team ha preso un IMPEGNO esplicito verso di lei? Contano come impegno: accettare un reso, promettere un rimborso, promettere un omaggio, un cambio o una riparazione, fissare un appuntamento, dare una scadenza.
+NON contano: frasi di cortesia, scuse, spiegazioni di policy generiche, domande.
+ATTENZIONE alle negazioni e alle condizioni: se la frase dice che una cosa NON si puo' fare, o la subordina a un "se", NON e' un impegno e devi rispondere con stringa vuota.
+Se c'e' un impegno, riporta la frase ESATTA che lo contiene, copiata PAROLA PER PAROLA, senza riscriverla, senza accorciarla e senza togliere eventuali "non". Una frase sola, la piu' esplicita, al massimo trenta parole.
+Se non c'e' nessun impegno, rispondi con stringa vuota. Nel dubbio, stringa vuota.
+
+ULTIMA RISPOSTA DEL TEAM:
+${ultimo.slice(0, 1200)}
+
+Rispondi SOLO con JSON: {"impegno":"..."}`;
+  try {
+    // tetto di 8 secondi: una chiamata appesa non deve tenere in ostaggio la bozza, che e' la cosa
+    // che l'operatrice sta aspettando. Allo scadere si degrada al comportamento v26.
+    const raw = await Promise.race([
+      gemini(MODEL_SUMMARY, prompt, key, 400, true),
+      new Promise<string>((r) => setTimeout(() => r(''), 8000)),
+    ]);
+    if (!raw) return '';
+    const j = JSON.parse(cleanJson(raw)) as { impegno?: unknown };
+    return citazioneVerificata(String(j?.impegno ?? ''), [ultimo]);
+  } catch {
+    return '';   // l'estrattore non deve MAI far fallire una bozza: senza impegno si torna alla v26
+  }
+}
+
 // --- Linter di aderenza ("ensure context" 24-07): controllo DETERMINISTICO post-bozza, ZERO AI ---
 // Estrae numeri/prezzi/date/URL dalla bozza e verifica che esistano nel CORPUS dei fatti consentiti
 // (messaggi del cliente + BLOCCO DATI + caso + fonti + risposte standard/tono + istruzioni team).
@@ -1001,7 +1110,7 @@ Deno.serve(async (req) => {
   // `flags.X` e non elencato qui vale sempre `undefined`, quindi la feature che governa e' morta in
   // silenzio: nessun errore, nessun test rosso, e una misura che sembra fatta e non lo e'.
   // `tests/cs_rami.mjs` confronta l'elenco con i `flags.` davvero consumati nel sorgente.
-  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model_claude', 'cs_ai_istruzioni', 'cs_rami_enabled', 'cs_thread_precede']);
+  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model_claude', 'cs_ai_istruzioni', 'cs_rami_enabled', 'cs_thread_precede', 'cs_impegno_esplicito']);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
@@ -1224,8 +1333,14 @@ Riassunto (max 2 righe):`;
       // problemi diversi, hanno ricevuto lo STESSO insieme di rami. `casoRami` resta viva e la
       // espone `case_data`; e' solo `casoBlockRami` che esce dal prompt.
       // In coda, e SOLO dove il cancello strutturale si accende, la precedenza del thread (Parte 1).
-      casoTxt = casoBlock((conv.categoria as string) ?? null, cd)
-        + (flags.cs_thread_precede === 'true' ? pertinenzaBlock((conv.categoria as string) ?? null, lc.recent) : '');
+      const coda = flags.cs_thread_precede === 'true' ? pertinenzaBlock((conv.categoria as string) ?? null, lc.recent) : '';
+      casoTxt = casoBlock((conv.categoria as string) ?? null, cd) + coda;
+      // v27: solo dove il cancello e' gia' scattato (poche conversazioni: 4-5 su 19 nel set EVAL),
+      // una chiamata piccola cerca l'impegno gia' preso e lo mette nel prompt CITATO ALLA LETTERA.
+      // La citazione passa da `citazioneVerificata`, quindi o esiste davvero nel thread o non entra.
+      if (coda && flags.cs_impegno_esplicito === 'true' && key) {
+        casoTxt += impegnoBlock(await estraiImpegno(lc.recent, key));
+      }
     }
 
     const inChat = conv.canale === 'chat_notifica';

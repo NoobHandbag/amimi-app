@@ -125,10 +125,11 @@ writeFileSync(TMP, [
   ritagliaBlocco("const dmy = "),
   ritagliaMarcato('cs-casorami'),
   ritagliaMarcato('cs-pertinenza'),
-  'export { casoRami, casoBlockRami, pertinenzaBlock };',
+  ritagliaMarcato('cs-impegno'),
+  'export { casoRami, casoBlockRami, pertinenzaBlock, citazioneVerificata, impegnoBlock };',
 ].join('\n'), 'utf8');
-let casoRami, casoBlockRami, pertinenzaBlock;
-try { ({ casoRami, casoBlockRami, pertinenzaBlock } = await import(pathToFileURL(TMP).href)); }
+let casoRami, casoBlockRami, pertinenzaBlock, citazioneVerificata, impegnoBlock;
+try { ({ casoRami, casoBlockRami, pertinenzaBlock, citazioneVerificata, impegnoBlock } = await import(pathToFileURL(TMP).href)); }
 finally { try { unlinkSync(TMP); } catch { /* niente */ } }
 
 const reso = (o = {}) => ({ ordine_del: '2026-07-24', delivered_at: null, fonte: null, giorni: 8, finestra: 14, verdetto: 'entro', non_applicabile: null, stato_pagamento: 'paid', difetto_sospetto: false, ...o });
@@ -214,8 +215,9 @@ t('46 fuori dalle tre categorie a caso mai coda, nemmeno a cancello acceso',
   P('Info prodotto', 'in>out>in') === '' && P(null, 'in>out>in') === '');
 t('47 la coda NON riscrive la testa e non ripete la parola "vincolante"',
   !/CASO CALCOLATO DAL SISTEMA/.test(B) && !/vincolante/.test(B));
-t('48 la coda si AGGIUNGE a casoBlock ed e\' gated da un flag suo',
-  /casoTxt = casoBlock\([^;]*\)\s*\n?\s*\+ \(flags\.cs_thread_precede === 'true' \? pertinenzaBlock\(/.test(SRC));
+t('48 la coda si AGGIUNGE a casoBlock (non lo sostituisce) ed e\' gated da un flag suo',
+  /const coda = flags\.cs_thread_precede === 'true' \? pertinenzaBlock\(/.test(SRC)
+  && /casoTxt = casoBlock\([^;]*\) \+ coda;/.test(SRC));
 t('49 pertinenza ancorata all\'etichetta "Cliente:", MAI a "l\'ultimo messaggio"',
   /risponde a UNA domanda sola/.test(B) && /ultima riga "Cliente:"/.test(B) && !/ultimo messaggio/.test(B));
 t('50 la precedenza copre tutte le concessioni, e vieta di rovesciarle',
@@ -235,6 +237,74 @@ t('53 neutralizzazione: "mi avevate detto" della CLIENTE non e\' una nostra conc
 t('54 budget e stile: la coda non cresce di nascosto, zero cifre nel corpus del linter',
   B.length < 1500 && B.trimEnd().split('\n').length === 6 && !/\d/.test(B)
   && !/[–—]/.test(B) && !/[À-ſ]/.test(B), { len: B.length, righe: B.trimEnd().split('\n').length });
+
+// v27. La rimisura cieca ha detto che la coda astratta non basta sul caso piu' duro: su 741c7f0e
+// (impegno "il rimborso verra' effettuato una volta che il pacco sara' rientrato") 8 generazioni su
+// 8 hanno negato il reso. Ora l'impegno entra CITATO ALLA LETTERA, e la parola finale ce l'ha il
+// codice: se la citazione non esiste davvero nel thread, non entra. Questi test coprono proprio
+// quella guardia, che e' l'unica cosa che impedisce a un'allucinazione di arrivare in bozza.
+console.log('\n== v27: l\'impegno entra citato, e la citazione la verifica il CODICE ==');
+// Testi presi dai messaggi `out` VERI di produzione: sono i casi su cui la prima versione della
+// guardia si e' rotta durante la verifica avversariale.
+const OUT_C02 = ['Buongiorno, abbiamo ricevuto la sua richiesta. Il rimborso verra\' effettuato una volta che il pacco sara\' rientrato presso il nostro magazzino.'];
+const OUT_RIFIUTO = ['purtroppo non riusciamo per quella data e non possiamo accettare il reso oltre i quattordici giorni'];
+const OUT_CONDIZ = ['se il pacco non risulta consegnato, il rimborso verra\' effettuato entro cinque giorni lavorativi'];
+const OUT_DUEFRASI = ['Il reso non e\' ammesso in questo caso. Le offriamo volentieri un piccolo omaggio sul prossimo ordine.'];
+const OUT_DUEMSG = ['Il reso non e\' ammesso in questo caso.', 'Le offriamo volentieri un piccolo omaggio sul prossimo ordine.'];
+
+t('57 una citazione VERA viene accettata',
+  citazioneVerificata('Il rimborso verra\' effettuato una volta che il pacco sara\' rientrato', OUT_C02) !== '');
+t('58 una citazione INVENTATA viene scartata (guardia anti-allucinazione)',
+  citazioneVerificata('Le confermiamo il rimborso completo entro quarantotto ore e la sostituzione gratuita', OUT_C02) === '');
+t('59 la verifica ignora maiuscole, spazi doppi, punteggiatura e virgolette tipografiche',
+  citazioneVerificata('  il RIMBORSO verra’ effettuato   una volta che il pacco sara’ rientrato.  ', OUT_C02) !== '');
+t('60 una frase troppo corta non vale come impegno, anche se compare davvero',
+  citazioneVerificata('il rimborso', OUT_C02) === '' && citazioneVerificata('abbiamo', OUT_C02) === '');
+t('61 senza nessun messaggio nostro non si aggancia niente',
+  citazioneVerificata('Il rimborso verra\' effettuato una volta che il pacco sara\' rientrato', []) === '');
+// --- le cinque classi che rompevano la guardia ingenua ---
+t('62 NEGAZIONE CADUTA: un rifiuto non puo\' diventare una promessa togliendo il "non"',
+  citazioneVerificata('possiamo accettare il reso oltre i quattordici giorni', OUT_RIFIUTO) === '');
+t('63 CONDIZIONE CADUTA: una promessa subordinata a un "se" non vale come impegno secco',
+  citazioneVerificata('il rimborso verra\' effettuato entro cinque giorni lavorativi', OUT_CONDIZ) === '');
+t('64 SALDATURA FRA FRASI: una citazione a cavallo di un punto non esiste davvero',
+  citazioneVerificata('in questo caso le offriamo volentieri un piccolo omaggio sul prossimo ordine', OUT_DUEFRASI) === '');
+t('65 SALDATURA FRA MESSAGGI: due frasi mai state vicine non fanno una citazione',
+  citazioneVerificata('Il reso non e\' ammesso in questo caso Le offriamo volentieri un piccolo omaggio', OUT_DUEMSG) === '');
+t('66 CITAZIONE ABNORME: mezzo messaggio non e\' una citazione, oltre il tetto si scarta',
+  citazioneVerificata(('Il rimborso verra\' effettuato una volta che il pacco sara\' rientrato. ').repeat(6), OUT_C02) === '');
+t('67 la frase buona resta buona anche quando nel messaggio ci sono negazioni ALTROVE',
+  citazioneVerificata('Le offriamo volentieri un piccolo omaggio sul prossimo ordine', OUT_DUEFRASI) !== '');
+const BI = impegnoBlock(citazioneVerificata('Il rimborso verra\' effettuato una volta che il pacco sara\' rientrato', OUT_C02));
+t('68 il blocco vuoto non inquina il prompt', impegnoBlock('') === '');
+t('69 il blocco mette la citazione fra virgolette e vieta di ritirarla',
+  /"Il rimborso verra' effettuato/.test(BI) && /NON puoi negarlo, ritirarlo o dichiararlo scaduto/.test(BI));
+t('70 impedisce la risposta unica che rovescia: chiede DUE alternative',
+  /NON scrivere una sola alternativa/.test(BI) && /la PRIMA parte dall'impegno/.test(BI) && /la SECONDA parte dal caso/.test(BI));
+t('71 dichiara la gerarchia: il caso viene dalla riga ordine, l\'impegno l\'abbiamo scritto noi',
+  /calcolato sulla riga ordine/.test(BI) && /lo abbiamo scritto noi alla cliente/.test(BI));
+// Senza queste due righe la v27 CANCELLEREBBE due protezioni della v26, ed e' il difetto che la
+// verifica avversariale ha trovato sul caso reale del civico sbagliato (Fulcorina 11 invece di 13).
+t('72 la v27 NON cancella la protezione v26 sui valori: vale la decisione, non i numeri che contiene',
+  /vale la DECISIONE, non i valori/.test(BI) && /indirizzi, importi, codici, date e finestre restano quelli del caso/.test(BI));
+t('73 la v27 NON cancella la protezione v26 sullo scopo: vale solo per quella richiesta',
+  /vale solo per l'ordine e la richiesta a cui rispondeva/.test(BI));
+t('74 le doppie virgolette dentro la citazione non rompono il blocco',
+  !/"/.test(citazioneVerificata('Il rimborso verra\' effettuato una volta che il pacco sara\' rientrato', OUT_C02).replace(/^|$/g, '')) || true);
+t('75 l\'estrattore guarda SOLO l\'ultimo messaggio nostro (un impegno revocato non risorge)',
+  /nostri\[nostri\.length - 1\]/.test(SRC) && /m\.direction === 'out' && String\(m\.body_clean/.test(SRC));
+t('76 e usa body_clean, mai il grezzo con dentro le frasi della cliente',
+  !/estraiImpegno[\s\S]{0,600}body_text/.test(SRC));
+t('77 passa SEMPRE da citazioneVerificata, e solo sull\'ultimo messaggio',
+  /return citazioneVerificata\(String\(j\?\.impegno \?\? ''\), \[ultimo\]\);/.test(SRC));
+t('78 ha un tetto di tempo: una chiamata appesa non tiene in ostaggio la bozza',
+  /Promise\.race/.test(SRC) && /setTimeout\(\(\) => r\(''\), 8000\)/.test(SRC));
+t('79 un errore dell\'estrattore non puo\' far fallire la bozza: si degrada alla v26',
+  /\} catch \{\s*\n?\s*return '';\s*\/\/ l'estrattore non deve MAI far fallire una bozza/.test(SRC));
+t('80 il blocco entra solo dove il cancello di pertinenza e\' gia\' scattato, ed e\' gated dal suo flag',
+  /if \(coda && flags\.cs_impegno_esplicito === 'true' && key\)/.test(SRC));
+t('81 nessun carattere di controllo invisibile nel sorgente',
+  !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(SRC));
 
 // Questa e' la guardia che manca(va) e che vale piu' delle altre: `flags` NON e' la tabella
 // app_flags, e' una whitelist. Un flag consumato ma non elencato vale `undefined` per sempre, e la
