@@ -142,6 +142,26 @@ Deno.serve(async (req) => {
     return json({ ok: true, ramo: ramo || null });
   }
 
+  // brief cs_crop_residui_e_versione parte 3: il testo su cui l'operatrice sta LAVORANDO.
+  // `cs_drafts.testo` conteneva solo `options[0]` come usciva dal modello: non l'alternativa scelta,
+  // non le riscritture chieste all'AI, non i ritocchi a mano. Ricaricare quella riga avrebbe
+  // restituito una cosa DIVERSA da quella che l'operatrice aveva davanti quando ha lasciato la
+  // conversazione, cioe' un modo silenzioso di buttarle via il lavoro. Qui si aggiorna la riga col
+  // testo vero, e `edited` distingue una bozza toccata da una appena generata.
+  if (action === 'draft_testo') {
+    const draftId = String(body.draft_id || '');
+    if (!UUID_RE.test(draftId)) return json({ error: 'draft_id non valido' }, 422);
+    const testo = String(body.testo ?? '');
+    if (!testo.trim()) return json({ error: 'testo vuoto' }, 422);
+    const { data: ex, error: se } = await sb.from('cs_drafts').select('id, conversation_id, testo').eq('id', draftId).maybeSingle();
+    if (se) return json({ error: 'lettura fallita: ' + se.message }, 500);
+    if (!ex) return json({ error: 'bozza inesistente' }, 404);
+    if (String(ex.testo ?? '') === testo) return json({ ok: true, invariato: true });
+    const { error: ue } = await sb.from('cs_drafts').update({ testo, edited: true }).eq('id', draftId);
+    if (ue) return json({ error: 'scrittura fallita: ' + ue.message }, 500);
+    return json({ ok: true });
+  }
+
   if (action === 'add_noise') {
     const convId = String(body.conversation_id || '');
     const ex = await loadConv(convId);

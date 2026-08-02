@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
 import { pushBack, popBack } from '../lib/backnav';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
-import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato, BozzaSalvata } from '../lib/csApi';
 
 // email in testo semplice: preserva gli a-capo (CSS pre-wrap) e collassa i vuoti multipli (feedback 24-07)
 const cleanBody = (t: string) => (t || '').replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -152,6 +152,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // registrare, dopo l'invio, quale esito e' stato scelto davvero (dataset dei casi predefiniti).
   const [schema, setSchema] = useState<'rami' | 'toni'>('toni');
   const [draftId, setDraftId] = useState<string | null>(null);
+  // parte 3: la bozza gia' salvata per questa conversazione. Si MOSTRA, non si carica da sola:
+  // ricaricarla d'ufficio sovrascriverebbe senza chiedere quello che l'operatrice sta guardando.
+  const [bozzaSalvata, setBozzaSalvata] = useState<BozzaSalvata | null>(null);
   // guardia race (audit #7): le risposte async di un thread APERTO PRIMA non devono scrivere sul corrente
   const threadRef = useRef('');
   const [selIdx, setSelIdx] = useState(0);
@@ -267,10 +270,13 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     entra('thread', view === 'rumore' ? 'rumore' : 'coda');
     threadRef.current = c.id;
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
-    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]); setMoreOpen(false);
+    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]); setMoreOpen(false); setBozzaSalvata(null);
     setSendOpen(false); setSending(false); setSendErr(''); setSendBloccato(false); setSentTo(null);
     try { const m = await fetchMessages(c.id); if (threadRef.current === c.id) setMsgs(m); }
     catch (e) { if (threadRef.current === c.id) setErr((e as Error).message); }
+    // parte 3: c'e' gia' una bozza per questa conversazione? Lettura diretta col JWT, nessuna spesa
+    // AI. Best-effort: se fallisce si continua come prima, con "Genera".
+    ultimaBozza(c.id).then((b) => { if (threadRef.current === c.id) setBozzaSalvata(b); }).catch(() => { /* niente */ });
     // Contesto (link ordine + storico acquisti): nessuna spesa AI, best-effort (non blocca il thread).
     // Vale anche per la chat del sito (dal 26-07): se il visitatore ha lasciato l'email, storia e ordine si agganciano.
     if (c.canale !== 'rumore') {
@@ -298,7 +304,15 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     if (!current || !bozzaText.trim() || !refineTxt.trim()) return;
     const tid = current.id;
     setRefining(true); setErr(''); setCopied(false);
-    try { const r = await refineDraft(tid, ident, bozzaText, refineTxt); if (threadRef.current === tid) { setBozzaText(r.draft); setDaVer(r.da_verificare); setNonGrounded(r.non_grounded ?? []); setRefineTxt(''); setSentTo(null); } }
+    try {
+      const r = await refineDraft(tid, ident, bozzaText, refineTxt);
+      if (threadRef.current === tid) {
+        setBozzaText(r.draft); setDaVer(r.da_verificare); setNonGrounded(r.non_grounded ?? []); setRefineTxt(''); setSentTo(null);
+        // parte 3: `refine` non persisteva NULLA. Senza questa riga, una riscrittura chiesta all'AI
+        // spariva alla chiusura del thread e "Riprendi" avrebbe restituito il testo di prima.
+        if (draftId) void salvaTestoBozza(draftId, r.draft);
+      }
+    }
     catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
     if (threadRef.current === tid) setRefining(false);
   };
@@ -330,7 +344,12 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   };
   // Fase 4 — apertura del dialog di conferma: OGNI invio passa da qui (mai invio automatico).
   // La send_key nasce adesso: doppio click e retry porteranno la stessa chiave (anti doppio invio).
-  const openSend = () => { setSendKey(crypto.randomUUID()); setSendErr(''); setSendBloccato(false); setSendOpen(true); };
+  const openSend = () => {
+    setSendKey(crypto.randomUUID()); setSendErr(''); setSendBloccato(false); setSendOpen(true);
+    // parte 3: il momento in cui si apre la conferma e' il punto in cui il testo e' quello buono.
+    // Salvandolo qui, una bozza ripresa domani e' quella vera e non il primo getto del modello.
+    if (draftId && bozzaText.trim()) void salvaTestoBozza(draftId, bozzaText);
+  };
   const doSend = async () => {
     if (!current || sending) return;
     const tid = current.id;
@@ -481,14 +500,14 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     const ordSub = ctx?.ordine ? [
       ctx.ordine.created_at_shop ? `${ctx.ordine.created_at_shop.slice(8, 10)}-${ctx.ordine.created_at_shop.slice(5, 7)}` : null,
       ctx.ordine.gross_total != null ? `${Math.round(ctx.ordine.gross_total)}€` : null,
-      ctx.ordine.righe[0]?.nome ? ctx.ordine.righe[0].nome.slice(0, 26) : null,
+      ctx.ordine.righe[0]?.nome ?? null,   // 4.1: niente slice(26): al contenimento pensa il CSS, che ora manda a capo
     ].filter(Boolean).join(' · ') : '';
     return (
       <div className="screen">
         <header>
           {/* l'etichetta dice dove si torna davvero: un thread aperto dal Rumore torna al Rumore */}
           <button className="badge" onClick={goCoda} type="button">{daDove === 'rumore' ? '‹ Rumore' : '‹ Coda'}</button>
-          <button onClick={() => setMenu((m) => !m)} type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} ▾</button>
+          <button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} ▾</button>
         </header>
         {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
         {/* testata: compatta; in modalita' bozza si comprime a nome + ordine/categoria + urgenza */}
@@ -751,6 +770,34 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         )}
         {c.canale !== 'rumore' && (
           <div className="cs-draftbox">
+            {/* parte 3: bozza gia' salvata. Si DICHIARA e si lascia scegliere: caricarla d'ufficio
+                cambierebbe sotto gli occhi quello che l'operatrice sta leggendo, e rigenerare
+                d'ufficio costa 30 secondi e una chiamata al modello ogni volta che si riapre.
+                Se dopo la bozza e' successo qualcosa (un messaggio nuovo della cliente, o una
+                risposta gia' partita) lo si dice: e' l'unico caso in cui la bozza vecchia inganna. */}
+            {!options && bozzaSalvata && (() => {
+              const q = bozzaSalvata.created_at;
+              const dopo = (msgs ?? []).filter((m) => m.sent_at && m.sent_at > q);
+              const inDopo = dopo.some((m) => m.direction === 'in');
+              const outDopo = dopo.some((m) => m.direction === 'out');
+              const stantia = inDopo || outDopo;
+              return (
+                <div className={stantia ? 'cs-lint' : 'cs-note'} style={{ textAlign: 'left', marginBottom: 8 }}>
+                  <b>C&#8217;&#232; gi&#224; una bozza</b> del {fmtData(q.slice(0, 10))} alle {new Date(q).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+                  {bozzaSalvata.edited ? ', con le tue modifiche' : ''}.
+                  {inDopo && <div style={{ marginTop: 4 }}>⚠️ Dopo quella bozza la cliente ha scritto di nuovo: rigenerala, o risponderai a un messaggio vecchio.</div>}
+                  {!inDopo && outDopo && <div style={{ marginTop: 4 }}>⚠️ Dopo quella bozza &#232; gi&#224; partita una risposta: controlla il thread prima di usarla.</div>}
+                  <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button className="cs-btn cs-ghost" type="button" onClick={() => {
+                      setOptions([{ tono: 'bozza', testo: bozzaSalvata.testo, da_verificare: 0 }]);
+                      setSchema('toni'); setDraftId(bozzaSalvata.id); setSelIdx(0);
+                      setBozzaText(bozzaSalvata.testo); setDaVer(0); setNonGrounded([]); setFonti(bozzaSalvata.fonti);
+                      setSentTo(null); setCopied(false);
+                    }}>↩ Riprendi questa bozza</button>
+                  </div>
+                </div>
+              );
+            })()}
             {!options ? (
               <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doGenOptions} disabled={genBozza} type="button">
                 {/* v24: niente "3" nel bottone. Col nuovo schema il numero di alternative dipende dal
@@ -958,7 +1005,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     <div className="screen">
       <header>
         {/* UAT 02-08: via "aiutiamo dei clienti", resta il saluto. */}
-        <button onClick={() => setMenu((m) => !m)} type="button" style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--dark)', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 9 }}>
+        <button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--dark)', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 9 }}>
           <Avatar k={ident} size={30} />
           <span>Ciao {IDENTS[ident]?.n ?? ident} <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 400 }}>▾</span></span>
         </button>

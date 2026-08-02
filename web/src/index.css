@@ -345,6 +345,23 @@ tr.dim { opacity: .6; }
 .whytag.under { color: var(--red); background: rgba(184,71,47,.1); }
 .whytag.over { color: var(--accent); background: rgba(156,95,51,.14); }
 
+.ds-versione { margin: 22px 2px 4px; text-align: center; font-size: 10.5px; color: var(--ink-muted, #8a7f76); font-variant-numeric: tabular-nums; }
+
+/* Avviso "versione nuova" (brief cs_crop_residui_e_versione parte 2). Sta SOPRA il bottone
+   flottante "Chiedi ad Amimì", che occupa da 74px a ~117px dal fondo: a 66px lo avrebbe coperto e
+   reso non cliccabile. z-index 45 = sopra il FAB (40) ma sotto scrim/pannello/dialog, cosi' non si
+   piazza mai davanti a una conferma d'invio. */
+.upd-banner { position: fixed; z-index: 45; left: 50%; transform: translateX(-50%); bottom: 124px;
+  max-width: min(92vw, 420px); display: flex; align-items: center; gap: 10px;
+  background: var(--dark, #2d2226); color: #fff; padding: 10px 12px 10px 16px; border-radius: 12px;
+  font-size: 13px; font-weight: 600; box-shadow: 0 10px 30px rgba(46,32,77,.32); }
+.upd-txt { flex: 1; min-width: 0; }
+.upd-go { flex: none; background: #fff; color: var(--dark, #2d2226); border: 0; border-radius: 999px;
+  padding: 8px 14px; font-size: 12.5px; font-weight: 800; cursor: pointer; min-height: 36px; }
+.upd-x { flex: none; background: none; border: 0; color: rgba(255,255,255,.65); font-size: 15px;
+  cursor: pointer; padding: 6px 4px; min-width: 32px; min-height: 32px; }
+@media print { .upd-banner { display: none; } }
+
 /* FLOW 6 v2: Assistente "Chiedi ad Amimì" — slide-in overlay on every screen */
 .ai-fab { position: fixed; z-index: 40; bottom: 74px; right: max(14px, calc(50vw - 380px + 14px));
   display: inline-flex; align-items: center; gap: 8px; padding: 11px 16px 11px 13px; border: 0; border-radius: 30px;
@@ -728,10 +745,16 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
    card si dispongono su piu' righe e nessuna esce dal viewport, che e' anche il vincolo 5 del
    brief cs_info_utili (mobile, mai scroll orizzontale della pagina). */
 .cs-facts { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 4px; margin-bottom: 10px; }
-.cs-fact { flex: 1 1 150px; min-width: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 9px 12px; box-shadow: var(--e1); text-decoration: none; }
+/* 4.1 (collaudo 02-08): il valore del fatto SBORDAVA dalla card invece di troncare. `.fv` aveva
+   white-space: nowrap senza overflow ne' text-overflow, quindi un nome lungo (102 prodotti su 180
+   superano i 22 caratteri, e nella card ce ne stanno ~21) usciva sopra la card accanto e, quando
+   capitava nella colonna destra, riapriva lo scroll orizzontale della pagina. Non era un problema
+   solo mobile: a 760px i quattro fatti hanno lo stesso identico spazio interno.
+   Il nome ora VA A CAPO, che e' il dato che serve leggere; il sottotitolo si ferma a due righe. */
+.cs-fact { flex: 1 1 150px; min-width: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 9px 12px; box-shadow: var(--e1); text-decoration: none; }
 .cs-fact .fl { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-muted); }
-.cs-fact .fv { font-size: 13px; font-weight: 800; margin-top: 3px; white-space: nowrap; color: var(--ink); }
-.cs-fact .fs { font-size: 10.5px; color: var(--ink-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-fact .fv { font-size: 13px; font-weight: 800; margin-top: 3px; color: var(--ink); overflow-wrap: anywhere; }
+.cs-fact .fs { font-size: 10.5px; color: var(--ink-muted); margin-top: 2px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .cs-fact.link .fv { color: var(--interactive-700); }
 .cs-fact.warn { border-color: var(--warning); background: var(--warning-tint); }
 .cs-fact.warn .fv { color: var(--warning-700); }
@@ -762,3 +785,9 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-obody { margin-top: 7px; background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 12px; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.55; color: var(--ink-muted); max-height: 190px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
 .cs-ofoot { font-size: 10px; color: var(--ink-muted); margin-top: 5px; }
 .cs-body { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+
+/* 4.2 (collaudo 02-08): i due comandi di navigazione piu' usati stavano sotto i 44px consigliati
+   ("‹ Coda" 54x22, l'identita' 90x18). Il ritocco e' mirato ai .badge che sono BOTTONI, cioe' solo
+   quelli dell'Assistenza: altrove .badge e' uno <span> decorativo e la densita' resta invariata. */
+button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-items: center; }
+.cs-identbtn { min-height: 40px; padding: 9px 6px; }

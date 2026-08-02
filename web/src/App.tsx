@@ -9,6 +9,7 @@ import Ordini from './pages/Ordini';
 import Inventory from './pages/Inventory';
 import Icon from './components/Icon';
 import AssistantPanel from './components/AssistantPanel';
+import UpdateBanner from './components/UpdateBanner';
 import { pushBack } from './lib/backnav';
 
 export default function App() {
@@ -48,6 +49,9 @@ export default function App() {
       </nav>
       {/* "Chiedi ad Amimì": overlay presente su ogni schermata, si auto-nasconde se ai_enabled = false */}
       <AssistantPanel pin={pin} chi={chi} nascondiFab={tab === 'assistenza'} />
+      {/* avvisa quando e' stata pubblicata una versione nuova: la PWA resta aperta per ore e
+          altrimenti si continua a lavorare su un bundle vecchio senza nessun segnale */}
+      <UpdateBanner />
     </div>
   );
 }

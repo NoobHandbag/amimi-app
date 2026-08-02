@@ -5,6 +5,7 @@ import type { Tab, Tile } from '../lib/people';
 import { nowMonth, nowYear, meseNome } from '../lib/helpers';
 import Icon from '../components/Icon';
 import HealthBanner from '../components/HealthBanner';
+import { VERSIONE_MIA } from '../lib/version';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 
@@ -174,6 +175,10 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
       )}
 
       {cfg.finance && <HealthBanner />}
+      {/* Versione in chiaro: serve a poter chiedere "che versione vedi?" quando qualcosa non torna.
+          Il 02-08 un difetto gia' corretto e' stato quasi consegnato come "non risolto" perche' la
+          scheda girava su un bundle vecchio e niente lo diceva. */}
+      <div className="ds-versione">versione {VERSIONE_MIA}</div>
     </div>
   );
 }

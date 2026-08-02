@@ -342,7 +342,17 @@ const QUOTE_MARKERS = [
   // NB: l'attribution nelle mail reali VA A CAPO nel mezzo (l'email wrappa su una riga nuova):
   // serve [\s\S] lazy, non '.', per attraversare i newline; e il wrap puo' cadere anche PRIMA di
   // "ha scritto"/"wrote", quindi \s al posto dello spazio.
-  /(?:^|[\s>])Il\s+(?:giorno\b|\d{1,2}\b)[\s\S]{0,220}?\sha\s+scritto:/i,   // Gmail/Thunderbird/Libero IT
+  // v16: l'attribution italiana si riconosce da DATA + ORA, non dalle parole che la aprono.
+  // La v15 accettava "giorno" oppure una cifra subito dopo "Il", e perdeva la forma piu' comune su
+  // Gmail mobile ("Il Gio 23 Lug 2026, 15:05 X <mail> ha scritto:"), dove dopo "Il" c'e' il giorno
+  // della settimana abbreviato. Allargare alle parole sarebbe stato peggio del buco: "Il mar. 4
+  // agosto 2026 il vicino mi ha scritto: pacco ritirato" e' prosa italiana plausibile e verrebbe
+  // AZZERATA, e la v15 aveva gia' lo stesso difetto latente su "il giorno dopo il corriere mi ha
+  // scritto:". Pretendere ANNO e ORA insieme separa le due cose in modo netto: le attribution vere
+  // li hanno sempre entrambi e in quest'ordine, una frase di conversazione quasi mai.
+  // Direzione di guasto scelta apposta: se un'attribution non ha l'ora non viene tagliata e resta
+  // una riga di troppo: meglio una riga in piu' che una frase della cliente buttata via.
+  /(?:^|[\s>])Il\s[\s\S]{0,60}?(?:19|20)\d{2}[\s\S]{0,40}?\d{1,2}[:.]\d{2}[\s\S]{0,120}?\sha\s+scritto:/i,   // Gmail/Thunderbird/Libero IT
   /(?:^|[\s>])On\s[\s\S]{0,220}?\swrote:/i,                                 // Gmail EN
   /(?:^|[\s>])-{2,}\s*(?:Original Message|Messaggio originale|Messaggio Inoltrato|Forwarded message)\s*-{2,}/i,
   /\r?\n_{5,}\r?\n/,                                       // divisore Outlook
@@ -850,6 +860,7 @@ Deno.serve(async (req) => {
     // di toccare lo storico.
     const dry = body.dry === true;
     const tagli: { id: string; da: number; a: number }[] = [];
+    const allungati: { id: string; da: number; a: number }[] = [];
     let sarebbeNull = 0;
     const { data: convRows } = await sb.from('cs_conversations').select('id, canale, customer_name');
     const canaleOf = new Map<string, string>();
@@ -877,6 +888,11 @@ Deno.serve(async (req) => {
         const da = (m.body_clean ?? m.body_text).length, a = (clean ?? '').length;
         if (clean === null && m.body_clean !== null) sarebbeNull++;
         if (a < da) tagli.push({ id: m.id, da, a });
+        // v16: un marcatore piu' STRETTO puo' far ALLUNGARE un messaggio (smette di tagliare dove
+        // tagliava). E' la direzione di regressione opposta e prima non la misurava nessuno: senza
+        // questo contatore, una modifica che riporta dentro un thread citato per intero passerebbe
+        // inosservata, perche' "tagli_piu_profondi" per costruzione guarda solo cio' che si accorcia.
+        if (a > da) allungati.push({ id: m.id, da, a });
       }
       if (dry) { if (Object.keys(upd).length) wrote++; else invariati++; continue; }
       // v8: ri-deriva anche form_fields (solo dove NULL/vuoto) sui messaggi 'in' col wrapper del modulo
@@ -906,6 +922,8 @@ Deno.serve(async (req) => {
       return json({
         ok: true, dry: true, scanned, cambierebbero: wrote, invariati, last_id: lastId,
         sarebbero_null: sarebbeNull,
+        allungherebbero: allungati.length,
+        allungamenti: allungati.slice(0, 10).map((x) => ({ id: x.id.slice(0, 8), da: x.da, a: x.a })),
         tagli_piu_profondi: tagli.slice(0, 15).map((x) => ({ id: x.id.slice(0, 8), da: x.da, a: x.a })),
       });
     }

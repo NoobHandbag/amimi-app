@@ -170,6 +170,27 @@ export async function recordRamo(draftId: string, ramo: string, chi: string): Pr
   try { await callCsApi({ action: 'draft_ramo', draft_id: draftId, ramo, chi }); } catch { /* niente */ }
 }
 
+/** Salva il testo su cui si sta lavorando dentro la bozza (brief cs_crop_residui_e_versione, parte 3).
+ *  Senza, `cs_drafts.testo` resta il primo getto del modello e una bozza ricaricata sarebbe DIVERSA
+ *  da quella che l'operatrice aveva davanti. Best-effort: se fallisce non si interrompe il lavoro. */
+export async function salvaTestoBozza(draftId: string, testo: string): Promise<void> {
+  try { await callCsApi({ action: 'draft_testo', draft_id: draftId, testo }); } catch { /* niente */ }
+}
+
+/** L'ultima bozza salvata per la conversazione, con la data. Lettura diretta da PostgREST col JWT
+ *  dell'utente (stessa via delle altre letture cs_*): nessuna spesa AI, nessuna edge. */
+export type BozzaSalvata = { id: string; testo: string; created_at: string; edited: boolean; fonti: string[] };
+export async function ultimaBozza(conversationId: string): Promise<BozzaSalvata | null> {
+  const { data, error } = await csClient.from('cs_drafts')
+    .select('id, testo, created_at, edited, dati_usati, source')
+    .eq('conversation_id', conversationId).eq('source', 'app')
+    .order('created_at', { ascending: false }).limit(1);
+  if (error || !data || !data.length) return null;
+  const r = data[0] as { id: string; testo: string | null; created_at: string; edited: boolean | null; dati_usati: { fonti?: string[] } | null };
+  if (!r.testo || !r.testo.trim()) return null;
+  return { id: r.id, testo: r.testo, created_at: r.created_at, edited: r.edited === true, fonti: r.dati_usati?.fonti ?? [] };
+}
+
 /** "Non e' un cliente": aggiunge il mittente alla denylist rumore (le prossime mail non entrano in coda)
  *  e sposta QUESTA conversazione nel Rumore. Reversibile a mano (denylist in app_flags, vista Rumore). */
 export async function addNoise(conversationId: string, sender: string, chi: string): Promise<void> {

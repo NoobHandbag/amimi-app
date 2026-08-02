@@ -56,6 +56,13 @@ t('3  "Il giorno ... ha scritto:" continua a funzionare (nessuna regressione)',
   stripQuoted('grazie mille\n\nIl giorno mer 30 lug 2026 alle ore 10:00 Assistenza <info@example.com> ha\nscritto:\n> vecchio')
   === 'grazie mille');
 
+t('3b "Il Gio 23 Lug 2026, 15:05 X <mail> ha scritto:" (Gmail mobile, i 3 residui del collaudo)',
+  stripQuoted('Grazie mille\n\nIl Gio 23 Lug 2026, 15:05 Assistenza <info@example.com> ha scritto:')
+  === 'Grazie mille', stripQuoted('Grazie mille\n\nIl Gio 23 Lug 2026, 15:05 Assistenza <info@example.com> ha scritto:'));
+
+t('3c la stessa forma col giorno in minuscolo e il punto',
+  stripQuoted('va bene\n\nIl lun. 20 Lug 2026, 10:16 amimi <info@example.com> ha scritto:') === 'va bene');
+
 t('4  l\'attribution che va a capo nel mezzo',
   stripQuoted('va bene\n\nIl 22/07/2026 10:13, Assistenza\n<info@example.com> ha scritto:\nvecchio testo')
   === 'va bene');
@@ -140,6 +147,17 @@ const NON_TOCCARE = [
     'The parcel was sent from my colleague in Rome, can you check?'],
   ['26 una data nel testo senza "ha scritto:"',
     'Ho ordinato Il 22/07/2026 e non ho ancora ricevuto niente, potete controllare?'],
+  // I tre casi qui sotto vengono da una verifica avversariale del 02-08 e sono il motivo per cui il
+  // marcatore pretende ANNO e ORA insieme. Il 26b e' un difetto LATENTE della v15 spedita stamattina:
+  // "il giorno" apriva l'alternativa e la frase veniva troncata a "Ho ricevuto il pacco,".
+  ['26a giorno della settimana + data completa, ma nessuna ora: e\' prosa',
+    'Il mar. 4 agosto 2026 il vicino mi ha scritto: pacco ritirato, tutto bene'],
+  ['26b REGRESSIONE v15: "il giorno dopo ... mi ha scritto:"',
+    'Ho ricevuto il pacco, il giorno dopo il corriere mi ha scritto: consegna riuscita'],
+  ['26c un\'ora senza anno non e\' un\'attribution',
+    'Il pacco e\' arrivato alle 15:30 e mia sorella mi ha scritto: tutto ok'],
+  ['26d "Il giorno" nudo senza data ne\' ora',
+    'Il giorno della consegna nessuno mi ha scritto: sono rimasta senza notizie'],
 ];
 for (const [nome, testo] of NON_TOCCARE) t(nome, stripQuoted(testo) === testo, { atteso: testo, avuto: stripQuoted(testo) });
 
