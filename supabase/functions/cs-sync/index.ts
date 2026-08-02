@@ -1,4 +1,15 @@
-// cs-sync v14 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync v15 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v15 (2026-08-02, brief cs_crop_e_dati_falsi Parte 1): il CROP delle email. Nella bolla comparivano
+//   ancora citazioni, forward, firme dei client di posta e la nostra mail precedente per intero:
+//   quindici righe per capirne sei. Non era un difetto ma QUATTRO cause distinte, tutte misurate su
+//   `cs_messages` (dettaglio sui marcatori piu' sotto): attribution italiana senza "giorno",
+//   marcatori che pretendevano un a capo (c'e' chi manda 1.062 caratteri su una riga sola, tagliati
+//   ZERO), "Messaggio Inoltrato" assente, firma tagliata solo a riga esattamente "--".
+//   Il taglio delle firme vive SOLO in `stripQuoted` (body_clean): `body_text` resta la rete di
+//   sicurezza e il contenuto di "Email completa". Test: `node tests/cs_crop.mjs` (33 casi, di cui
+//   11 sono la guardia opposta: il crop non deve mangiarsi il testo vero).
+//   `backfill_clean` accetta ora `dry: true`: misura l'impatto sullo storico senza scrivere e
+//   restituisce solo lunghezze, mai testo di clienti.
 // v14 (2026-08-01 notte, brief cs_reply_to_fonte_indipendente): il riconoscimento dello STAMPO del
 //   modulo dentro il corpo faceva due lavori (separare due clienti in due conversazioni; dare
 //   l'email di chi ha scritto quel messaggio) e, se sbagliava, li faceva fallire INSIEME e in
@@ -258,6 +269,7 @@ function extractFormFields(body: string): Record<string, string> {
   }
   return out;
 }
+// ==== PURE:cs-crop BEGIN ====
 // v8: riconoscimento + taglio dello stampo del modulo. Gated sul CONTENUTO: se il wrapper non c'e'
 // (es. la risposta del cliente nello stesso thread) non tocca nulla. Ritorna null = "non era uno
 // stampo riconoscibile" (il chiamante lascia il testo com'e', mai un taglio sbagliato); ritorna ''
@@ -296,22 +308,66 @@ const detectLingua = (t: string) => (/\b(the|your|order|hello|hi|please|thanks|w
 // tutto il quotato). Regola: taglio al PRIMO marcatore tipico (Gmail IT/EN, Outlook IT/EN, righe
 // quotate '>'), poi cap 8000 char. Prevedibile e documentata; meglio perdere una coda ambigua che
 // gonfiare corpi/classificatore/prompt col thread intero duplicato.
+// v15 (2026-08-02, brief cs_crop_e_dati_falsi Parte 1): quattro cause MISURATE su `cs_messages`
+// per cui la bolla mostrava ancora citazioni, forward e firme.
+//   (A) l'attribution italiana pretendeva la parola "giorno", che le mail vere NON scrivono:
+//       le forme reali sono "Il 22/07/2026 10:13, X ha scritto:" e "Il 31 Luglio 2026, alle
+//       17:14:05 UTC X<mail> ha scritto:". Ora basta una DATA dopo "Il". Il vincolo della data
+//       non e' cosmetico: senza, "Il corriere mi ha scritto:" mangerebbe il testo vero.
+//   (B) ogni marcatore pretendeva un a capo prima, e c'e' chi manda il corpo su UNA riga sola
+//       (misurato: 1.062 caratteri, zero \n, tagliato ZERO). L'ancora e' ora un confine, non un
+//       newline: i marcatori agganciano anche a meta' riga.
+//   (C) i forward italiani scrivono "Messaggio Inoltrato", che non era in lista.
+//   (D) la firma si tagliava solo se la riga era ESATTAMENTE "--". Vedi SIG_MARKERS.
 const QUOTE_MARKERS = [
-  // NB: "Il giorno <data> <nome> <email> ha scritto:" nelle mail reali VA A CAPO nel mezzo
-  // (l'email wrappa su una riga nuova): serve [\s\S] lazy, non '.', per attraversare i newline;
-  // e il wrap puo' cadere anche PRIMA di "ha scritto"/"wrote", quindi \s al posto dello spazio.
-  /\r?\nIl giorno [\s\S]{0,220}?\sha scritto:/i,   // Gmail IT
-  /\r?\nOn [\s\S]{0,220}?\swrote:/i,               // Gmail EN
-  /\r?\n-{2,}\s*(Original Message|Messaggio originale)\s*-{2,}/i,
-  /\r?\n_{5,}\r?\n/,                              // divisore Outlook
-  /\r?\nDa:\s.{1,120}\r?\n(Inviato|Data):/i,      // blocco header Outlook IT
-  /\r?\nFrom:\s.{1,120}\r?\nSent:/i,              // blocco header Outlook EN
-  /\r?\n>\s?(Il giorno|On|Da:|From:)\b/i,         // prima riga quotata col prefisso >
+  // NB: l'attribution nelle mail reali VA A CAPO nel mezzo (l'email wrappa su una riga nuova):
+  // serve [\s\S] lazy, non '.', per attraversare i newline; e il wrap puo' cadere anche PRIMA di
+  // "ha scritto"/"wrote", quindi \s al posto dello spazio.
+  /(?:^|[\s>])Il\s+(?:giorno\b|\d{1,2}\b)[\s\S]{0,220}?\sha\s+scritto:/i,   // Gmail/Thunderbird/Libero IT
+  /(?:^|[\s>])On\s[\s\S]{0,220}?\swrote:/i,                                 // Gmail EN
+  /(?:^|[\s>])-{2,}\s*(?:Original Message|Messaggio originale|Messaggio Inoltrato|Forwarded message)\s*-{2,}/i,
+  /\r?\n_{5,}\r?\n/,                                       // divisore Outlook
+  /(?:^|[\s>])Da:\s.{1,120}\r?\n\s*(?:Inviato|Data):/i,    // blocco header Outlook IT
+  /(?:^|[\s>])From:\s.{1,120}\r?\n\s*Sent:/i,              // blocco header Outlook EN
+  /(?:^|[\s>])>\s?(?:Il giorno|On|Da:|From:)\b/i,          // prima riga quotata col prefisso >
 ];
-function stripQuote(t: string): string {
+// v15 causa (D): le firme dei client di posta. Agganciano anche a meta' riga, perche' il caso
+// peggiore misurato non ha nemmeno un a capo. Vivono SOLO in stripQuoted (body_clean) e NON in
+// stripQuote (body_text): body_text resta la rete di sicurezza e il contenuto di "Email completa",
+// quindi la firma si vede ancora espandendo. Regola invariata: mai perdere testo.
+const SIG_MARKERS = [
+  // riga che comincia con "--", anche se prosegue. ESATTAMENTE due trattini: tre o piu' sono una
+  // riga divisoria (le notifiche Shopify sottolineano cosi' i titoli) e tagliarle li' butta via il
+  // corpo. Il delimitatore di firma della posta e' "--", non "-----".
+  /(?:^|\n)[ \t]*-{2}(?!-)(?=[ \t]|\r?\n|$)/,
+  /(?:^|[\s>])-{2,}[ \t]+(?=Inviato\b|Sent\b|Amim)/i,      // "-- Inviato da Libero Mail", "-- Amimi https://..."
+  /(?:^|[\s>])Inviato\s+da(?:l)?\s+(?:il\s+)?(?:mio\s+)?(?:iPhone|iPad|iPod|Android|Libero|Outlook|Yahoo|Samsung|Huawei|Windows|Mail\b)/i,
+  /(?:^|[\s>])Sent\s+from\s+(?:my\s+)?(?:iPhone|iPad|iPod|Android|Outlook|Yahoo|Samsung|Galaxy|Windows|Mail\b)/i,
+  /(?:^|[\s>])(?:Get|Scarica)\s+Outlook\s+(?:for|per)\s+(?:iOS|Android)/i,
+];
+// indice del primo marcatore che aggancia (o la fine): condiviso da stripQuote e stripQuoted, cosi'
+// le due funzioni non possono divergere sul punto di taglio.
+function firstMarker(t: string, markers: RegExp[]): number {
   let cut = t.length;
-  for (const re of QUOTE_MARKERS) { const m = t.match(re); if (m && m.index != null && m.index < cut) cut = m.index; }
-  return t.slice(0, cut).trim().slice(0, 8000);
+  for (const re of markers) { const m = t.match(re); if (m && m.index != null && m.index < cut) cut = m.index; }
+  return cut;
+}
+// v15 causa (D), seconda meta': le firme scritte come righe interamente fra asterischi in coda
+// ("*Cordiali Saluti*", "*Nome Cognome*", "*MAIL: ... *"). Si tolgono solo dalla CODA e solo se
+// resta qualcosa: un messaggio che e' tutto fra asterischi non deve sparire.
+function dropAsteriskTail(s: string): string {
+  const lines = s.split('\n');
+  let end = lines.length;
+  while (end > 0) {
+    const l = lines[end - 1].trim();
+    if (!l) { end--; continue; }
+    if (/^\*.+\*$/.test(l)) { end--; continue; }
+    break;
+  }
+  return end > 0 ? lines.slice(0, end).join('\n') : s;
+}
+function stripQuote(t: string): string {
+  return t.slice(0, firstMarker(t, QUOTE_MARKERS)).trim().slice(0, 8000);
 }
 
 // v7: pulizia COMPLETA per body_clean (funzione condivisa in/out, stessa famiglia di stripQuote:
@@ -325,21 +381,17 @@ function stripQuoted(t: string, canale?: string): string | null {
     const m = s.match(/new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox/i);
     if (m) s = m[1];
   }
-  // taglio alla prima attribution line; probe con \n iniettato per agganciare un marcatore a inizio corpo
-  const probe = '\n' + s;
-  let cut = s.length;
-  for (const re of QUOTE_MARKERS) {
-    const m = probe.match(re);
-    if (m && m.index != null && Math.max(0, m.index - 1) < cut) cut = Math.max(0, m.index - 1);
-  }
-  s = s.slice(0, cut);
+  // taglio alla prima attribution line (i marcatori agganciano a inizio corpo e a meta' riga: v15)
+  s = s.slice(0, firstMarker(s, QUOTE_MARKERS));
   const kept: string[] = [];
   for (const line of s.replace(/\r\n?/g, '\n').split('\n')) {
     if (/^\s*>/.test(line)) continue;          // riga quotata residua
-    if (/^--\s*$/.test(line)) break;           // firma: da qui in poi via
     kept.push(line);
   }
-  s = kept.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 8000);
+  // v15: la firma si taglia DOPO aver tolto le righe quotate, sulla stringa risultante
+  s = kept.join('\n');
+  s = dropAsteriskTail(s.slice(0, firstMarker(s, SIG_MARKERS)));
+  s = s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 8000);
   // v8: stampo del modulo del sito: via testa (campi) e coda (legalese), restano le parole della
   // cliente. DOPO il taglio citazioni: una NOSTRA risposta che quota il modulo ha gia' perso il
   // quotato qui sopra, quindi il wrapper non c'e' piu' e questo passo non la tocca.
@@ -349,6 +401,7 @@ function stripQuoted(t: string, canale?: string): string | null {
   }
   return s || null;
 }
+// ==== PURE:cs-crop END ====
 
 async function gGet(path: string, token: string): Promise<{ ok: boolean; status: number; j: Record<string, unknown> }> {
   const r = await fetch(`${GMAIL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -705,6 +758,14 @@ Deno.serve(async (req) => {
   if (action === 'backfill_clean') {
     const limit = Math.min(Number(body.limit) || 200, 400);
     const force = body.force === true;
+    // v15: prova a vuoto. Calcola esattamente cio' che scriverebbe e NON scrive niente, restituendo
+    // la distribuzione dell'impatto (quante righe cambiano, quante DIVENTEREBBERO NULL, i tagli piu'
+    // profondi) con le sole lunghezze: nessun testo di cliente esce da qui. Serve a misurare il
+    // rischio opposto al difetto - un crop troppo aggressivo che si mangia le parole vere - PRIMA
+    // di toccare lo storico.
+    const dry = body.dry === true;
+    const tagli: { id: string; da: number; a: number }[] = [];
+    let sarebbeNull = 0;
     const { data: convRows } = await sb.from('cs_conversations').select('id, canale, customer_name');
     const canaleOf = new Map<string, string>();
     const nomeOf = new Map<string, string | null>();
@@ -727,6 +788,12 @@ Deno.serve(async (req) => {
       const clean = stripQuoted(m.body_text, canale);
       const upd: Record<string, unknown> = {};
       if (clean !== m.body_clean) upd.body_clean = clean;
+      if (clean !== m.body_clean) {
+        const da = (m.body_clean ?? m.body_text).length, a = (clean ?? '').length;
+        if (clean === null && m.body_clean !== null) sarebbeNull++;
+        if (a < da) tagli.push({ id: m.id, da, a });
+      }
+      if (dry) { if (Object.keys(upd).length) wrote++; else invariati++; continue; }
       // v8: ri-deriva anche form_fields (solo dove NULL/vuoto) sui messaggi 'in' col wrapper del modulo
       if ((canale === 'form_contatto' || canale === 'form_evento') && m.direction === 'in'
         && (!m.form_fields || !Object.keys(m.form_fields).length) && FORM_WRAP_RE.test(m.body_text)) {
@@ -749,6 +816,14 @@ Deno.serve(async (req) => {
       if (upd.form_fields !== undefined) fieldsWrote++;
     }
     const { count: remaining } = await sb.from('cs_messages').select('id', { count: 'exact', head: true }).is('body_clean', null).not('body_text', 'is', null);
+    if (dry) {
+      tagli.sort((a, b) => (b.da - b.a) - (a.da - a.a));
+      return json({
+        ok: true, dry: true, scanned, cambierebbero: wrote, invariati, last_id: lastId,
+        sarebbero_null: sarebbeNull,
+        tagli_piu_profondi: tagli.slice(0, 15).map((x) => ({ id: x.id.slice(0, 8), da: x.da, a: x.a })),
+      });
+    }
     return json({ ok: true, scanned, clean_scritti: wrote, fields_scritti: fieldsWrote, nomi_scritti: nomiScritti.length, invariati, last_id: lastId, remaining: remaining ?? 0, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
   }
 
