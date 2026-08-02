@@ -305,6 +305,15 @@ t('80 il blocco entra solo dove il cancello di pertinenza e\' gia\' scattato, ed
   /if \(coda && flags\.cs_impegno_esplicito === 'true' && key\)/.test(SRC));
 t('81 nessun carattere di controllo invisibile nel sorgente',
   !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(SRC));
+// Il messaggio VERO di 741c7f0e, con gli a capo forzati dove li ha messi il client di posta.
+// La prima stesura trattava il ritorno a capo come fine frase: la citazione non combaciava mai e
+// veniva scartata SEMPRE, quindi la v27 era inerte proprio sul caso per cui era stata scritta.
+// Difetto trovato dalla misura sul campo, non dalle fixture: da qui in poi lo trova questo test.
+const OUT_ACAPO = ['Ciao Laura,\n\npotresti inviarci il tracking della spedizione, per favore?\n\nTi informiamo inoltre che il rimborso verra\' effettuato una volta che il\npacco sara\' rientrato presso il nostro magazzino. Al momento, infatti, non\nabbiamo ancora ricevuto il reso.\n\nGrazie e buona giornata!\nTeam amimi'];
+t('82 A CAPO FORZATO: la citazione combacia anche se la mail va a capo in mezzo alla frase',
+  citazioneVerificata('il rimborso verra\' effettuato una volta che il pacco sara\' rientrato presso il nostro magazzino', OUT_ACAPO) !== '');
+t('83 e la protezione sulle frasi diverse regge lo stesso (il "non" della frase dopo non conta)',
+  citazioneVerificata('abbiamo ancora ricevuto il reso e procediamo al rimborso', OUT_ACAPO) === '');
 
 // Questa e' la guardia che manca(va) e che vale piu' delle altre: `flags` NON e' la tabella
 // app_flags, e' una whitelist. Un flag consumato ma non elencato vale `undefined` per sempre, e la

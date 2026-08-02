@@ -750,8 +750,11 @@ function pertinenzaBlock(categoria: string | null, recent: { direction?: unknown
 // squalificare una promessa della frase DOPO (falso positivo trovato da una fixture).
 const normImp = (s: string): string => (s || '').toLowerCase()
   .replace(/[\u2018\u2019\u201b]/g, "'").replace(/[\u201c\u201d]/g, '"')
-  .replace(/[.;!?\n]+/g, ' | ').replace(/[,:()\[\]"]/g, ' ')
+  .replace(/[.;!?]+/g, ' | ').replace(/[,:()\[\]"]/g, ' ')
   .replace(/\s+/g, ' ').trim();
+// NB: il ritorno a capo NON e' un confine di frase, e' spazio. Le mail del team sono a capo forzato
+// ("una volta che il\npacco sara' rientrato"): trattandolo da fine frase la citazione non combaciava
+// piu' e veniva scartata sempre. Difetto vero, trovato dalla misura e non dalle fixture.
 
 // Parole che ROVESCIANO il senso di cio' che segue. Se una di queste sta appena prima del punto in
 // cui la citazione aggancia, la citazione ha perso il pezzo che contava: "non possiamo accettare il
