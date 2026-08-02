@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
+import { pushBack, popBack } from '../lib/backnav';
 import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato } from '../lib/csApi';
 
@@ -202,27 +203,22 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   // Back del browser / swipe-back: da un thread (o dal rumore) torna alla CODA, non fuori dall'app.
   // Push di uno stato quando si apre un sotto-livello; il popstate lo consuma riportando alla coda (feedback 24-07).
-  // UAT 02-08 ("Indietro riporta alla home"): la guardia `if (!state.csSub)` faceva pushare UN SOLO
-  // stato per tutta l'Assistenza, quindi aprire un thread DAL RUMORE non aggiungeva un livello: due
-  // schermate stavano su un gradino solo, un Indietro le scavalcava entrambe e il successivo usciva
-  // dalla sezione. Ora ogni sotto-livello ha il suo gradino e si risale UNO alla volta; "‹ Coda"
-  // srotola tutta la pila in un colpo, cosi' il bottone continua a fare quello che dice.
-  const subRef = useRef<('coda' | 'rumore')[]>([]);
-  useEffect(() => {
-    const onPop = () => { setMenu(false); const prev = subRef.current.pop(); setView(prev ?? 'coda'); };
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
-  const pushSub = (da: 'coda' | 'rumore') => {
-    subRef.current.push(da);
-    try { window.history.pushState({ csSub: subRef.current.length }, ''); } catch { /* no-op */ }
+  // UAT 02-08, "Indietro riporta alla home". LA CAUSA VERA, e non era la contabilita' dei livelli:
+  // questa pagina si era costruita una history PARALLELA (pushState + popstate propri) accanto alla
+  // pila condivisa dell'app (`lib/backnav.ts`), che ha un suo listener `popstate`. Entrando nella
+  // sezione, `go('assistenza')` registra in quella pila l'handler "torna alla home"; aprendo un
+  // thread, la pagina spingeva una entry di history SENZA dirlo alla pila. Alla prima "‹ Coda" il
+  // popstate svegliava ENTRAMBI i listener e backnav estraeva il suo unico handler, cioe' proprio
+  // "torna alla home", che vince perche' cambia tab e smonta la sezione. Ora i sotto-livelli
+  // dell'Assistenza usano il contratto condiviso: un handler per gradino, nell'ordine giusto, e chi
+  // esce dalla sezione resta in fondo alla pila dov'e' sempre stato.
+  const [daDove, setDaDove] = useState<'coda' | 'rumore'>('coda');
+  const entra = (sotto: 'thread' | 'rumore', da: 'coda' | 'rumore') => {
+    if (sotto === 'thread') setDaDove(da);
+    pushBack(() => { setMenu(false); setView(da); });
   };
-  const goCoda = () => {
-    const n = subRef.current.length;
-    subRef.current = [];
-    if (n > 0) { try { window.history.go(-n); return; } catch { /* no-op */ } }
-    setView('coda');
-  };
+  // il bottone di chiusura consuma la SUA entry (popBack), col ripiego se la pila e' gia' vuota
+  const goCoda = () => popBack(() => { setMenu(false); setView('coda'); });
 
   useEffect(() => {
     if (session !== 'in' || !ident) return;
@@ -268,7 +264,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       .finally(() => { if (threadRef.current === tid) setCasoBusy(false); });
   };
   const openThread = async (c: CsConversation) => {
-    pushSub(view === 'rumore' ? 'rumore' : 'coda');
+    entra('thread', view === 'rumore' ? 'rumore' : 'coda');
     threadRef.current = c.id;
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
     setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]); setMoreOpen(false);
@@ -367,7 +363,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     if (threadRef.current === tid) setSending(false);
   };
   const openRumore = async () => {
-    pushSub('coda');
+    entra('rumore', 'coda');
     setView('rumore'); setErr('');
     if (!rumore) { try { setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); } }
   };
@@ -490,7 +486,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     return (
       <div className="screen">
         <header>
-          <button className="badge" onClick={goCoda} type="button">‹ Coda</button>
+          {/* l'etichetta dice dove si torna davvero: un thread aperto dal Rumore torna al Rumore */}
+          <button className="badge" onClick={goCoda} type="button">{daDove === 'rumore' ? '‹ Rumore' : '‹ Coda'}</button>
           <button onClick={() => setMenu((m) => !m)} type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} ▾</button>
         </header>
         {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
