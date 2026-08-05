@@ -1,4 +1,16 @@
 // cs-sync v15 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v17 (2026-08-04, brief assistenza_4_fix punti C e D): tre cose, tutte misurate prima di scrivere.
+//   (C) Un "il" MINUSCOLO nella frase della cliente troncava il suo messaggio. Il marcatore
+//       dell'attribution italiana era case-insensitive, agganciava il "il" di "entro il 6 di
+//       agosto" e da li' scavalcava l'a capo fino all'attribution vera sotto: a DB restava "Salve
+//       sarebbe possibile farla arrivare entro". Ora quella "Il" e' maiuscola per forza.
+//   (C-bis) Lo scarto del wrapper Inbox era gated sul CANALE della conversazione, che pero' cambia
+//       dopo l'ingest: ricalcolando la stessa riga usciva tutto il boilerplate Shopify al posto
+//       della frase della cliente. Ora guarda il messaggio, non l'etichetta.
+//   (D) Pre-filtro rumore, `CASI_APERTI` n.15: le voci `@dominio` non coprivano i sottodomini e la
+//       stessa voce agganciava anche l'OGGETTO (una cliente che nomina booking.com finiva nel
+//       rumore). Ora la forma della voce decide la regola. Piu' l'azione `reapply_noise`, perche'
+//       la denylist non e' mai stata retroattiva.
 // v15 (2026-08-02, brief cs_crop_e_dati_falsi Parte 1): il CROP delle email. Nella bolla comparivano
 //   ancora citazioni, forward, firme dei client di posta e la nostra mail precedente per intero:
 //   quindici righe per capirne sei. Non era un difetto ma QUATTRO cause distinte, tutte misurate su

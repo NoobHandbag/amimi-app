@@ -1,4 +1,16 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// v28 (2026-08-04, brief assistenza_4_fix, punti A e B): la FORMA della bozza e l'IDENTIFICAZIONE
+//   del prodotto, due cose distinte che uscivano male insieme.
+//   (A) La bozza nasceva senza struttura di paragrafo: misurato sulle 6 email davvero partite dal
+//       tool, quattro con ZERO a capo e la firma attaccata al corpo. Non era l'invio (`cs-send`
+//       applica il wrap alla codifica base64, mai al testo): era che nessuna regola chiedeva le
+//       righe vuote. Blocco `FORMATO_EMAIL`, spento sul canale chat.
+//   (B) "E quella verde invece?" produceva UNA bozza che dava la verde per esaurita, e bastava
+//       un'altra variante verde disponibile perche' fosse falsa. Due cause: il catalogo e' in
+//       inglese e "verde" non ha mai combaciato con GREEN (mappa `SYN`, costruita sul lessico
+//       reale delle varianti); e tutte le altre Lea Bag restavano a pari merito col solo nome del
+//       modello, quindi le quattro mostrate uscivano a caso (`ordinaCandidati`: scarto dei
+//       fratelli, ordine deterministico, flag `pari` che accende il divieto di scegliere).
 // v26 (2026-08-02, brief cs_thread_vs_verdetto, DUE PARTI che vanno insieme perche' si toccano
 //   sulla stessa riga):
 //   - PARTE 2, e va prima perche' e' la piu' grossa: il blocco CASO torna a `casoBlock` VERBATIM su
@@ -354,7 +366,7 @@ async function claude(model: string, system: string, user: string, key: string, 
 // --- Recupero DATI (deterministico) ---
 type Prod = { codice: string; item: string; variant: string; prezzo: number | null; giacenza: number; disponibili: number; on_shopify: boolean; url: string | null; pari: boolean };
 
-// v27 (2026-08-04, brief assistenza_4_fix punto B): PONTE LESSICALE italiano -> catalogo.
+// v28 (2026-08-04, brief assistenza_4_fix punto B): PONTE LESSICALE italiano -> catalogo.
 // Il catalogo e' scritto in inglese, le clienti scrivono in italiano, e i due lessici non si
 // toccavano: "verde" non ha MAI combaciato con GREEN. Caso reale che ha aperto il brief ("E quella
 // verde invece?"): le tre Lea Bag verdi non prendevano un solo punto di variante, e vinceva
@@ -437,7 +449,7 @@ function ordinaCandidati<T extends Cand>(scored: T[], max = 4): T[] {
 // nulla. Il dato certo, in S5, era sotto il naso: l'ordine #1397 ha UNA riga, e risolve a
 // MARIA_BAG_ICE_BLUE_PIERCING. Cio' che la cliente ha comprato non si indovina, si legge.
 async function matchProducts(sb: ReturnType<typeof createClient>, text: string, codiciOrdine: string[] = []): Promise<Prod[]> {
-  // v27: le parole della cliente passano dal ponte lessicale PRIMA del confronto (vedi SYN).
+  // v28: le parole della cliente passano dal ponte lessicale PRIMA del confronto (vedi SYN).
   const tw = espandiSinonimi(words(text));
   // I codici dell'ordine bastano da soli: un messaggio senza parole utili ("come mai?") non deve
   // far sparire il prodotto che la cliente ha effettivamente comprato.
@@ -482,7 +494,7 @@ async function matchProducts(sb: ReturnType<typeof createClient>, text: string, 
     };
     scored.push({ p: prod, score: (modelHit ? 2 : 0) + varHits * 3 + (isAlias ? 4 : 0) + (isOrdine ? 10 : 0) });
   }
-  // v27 (brief assistenza_4_fix punto B): scarto dei fratelli solo-modello, ordine deterministico
+  // v28 (brief assistenza_4_fix punto B): scarto dei fratelli solo-modello, ordine deterministico
   // e rilevazione dell'ambiguita'. Nel caso reale erano ~30 Lea Bag tutte a pari merito, e le 4 che
   // finivano nel blocco DATI uscivano nell'ordine di lettura del DB, cioe' a caso: da li'
   // `LEA_BAG_MAXI`, che con la domanda non c'entrava niente. Logica in `ordinaCandidati`.
@@ -1073,7 +1085,7 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   // e' una pagina del sito, non un dato del gestionale, e l'owner deve poterla cambiare senza deploy.
   // Se il flag manca o e' vuoto resta null e il segnaposto degrada a [DA VERIFICARE: link resi].
   const { data: fResi } = await sb.from('app_flags').select('value').eq('key', 'cs_link_resi_url').maybeSingle();
-  // v27: e MAI quando il prodotto e' ambiguo. Il segnaposto risolve a un URL solo, quindi a pari
+  // v28: e MAI quando il prodotto e' ambiguo. Il segnaposto risolve a un URL solo, quindi a pari
   // merito sceglierebbe una variante a caso: esattamente il difetto che il ramo ambiguita' esiste
   // per evitare. Meglio degradare a [DA VERIFICARE: link scheda prodotto], che si vede.
   const linkUrls: LinkUrls = {
@@ -1120,7 +1132,7 @@ function datiBlock(d: Dati): string {
   if (d.prodotti.length) {
     L.push('PRODOTTI (giacenza/disponibilita/prezzo dal gestionale):');
     for (const p of d.prodotti) L.push(`- ${p.item} ${p.variant}: disponibili da vendere ${p.disponibili}, giacenza ${p.giacenza}${p.prezzo != null ? `, prezzo ${p.prezzo} EUR` : ''}${p.on_shopify ? ', a catalogo sul sito' : ', non a catalogo'}${p.url ? `, link scheda: ${p.url}` : p.on_shopify ? ', link scheda NON disponibile (non rimandare alla pagina del prodotto: se serve, usa [DA VERIFICARE: link scheda prodotto])' : ''}`);
-    // v27 (brief assistenza_4_fix punto B): l'ambiguita' si dichiara, non si risolve indovinando.
+    // v28 (brief assistenza_4_fix punto B): l'ambiguita' si dichiara, non si risolve indovinando.
     // Il caso che ha aperto il brief: "E quella verde invece?" produceva UNA bozza che dava la
     // verde per esaurita. Non e' un difetto di UX ma di correttezza: basta che esista un'altra
     // variante verde disponibile e la frase mandata alla cliente e' falsa. Il segnale arriva da
@@ -1132,7 +1144,7 @@ function datiBlock(d: Dati): string {
     }
     // v15: prodotto esaurito ma con scheda a catalogo -> la bozza deve dare il link dell'avviso
     // restock. Solo se e' il MIGLIOR match (il primo): mai suggerire la scheda di un'altra borsa.
-    // v27: e mai quando il prodotto e' ambiguo, altrimenti il link dell'avviso restock andrebbe a
+    // v28: e mai quando il prodotto e' ambiguo, altrimenti il link dell'avviso restock andrebbe a
     // una variante scelta a caso fra quelle a pari merito.
     const top = d.prodotti[0];
     if (pari.length < 2 && top && top.disponibili <= 0 && top.url) L.push(`NOTA RESTOCK: sulla scheda del prodotto esaurito (${top.url}) c'e' il bottone "Avvisami quando torna disponibile": nella risposta INDICA quel link come il posto dove iscriversi all'avviso ("qui puoi iscriverti per essere avvisata quando torna: ${top.url}").`);
@@ -1189,7 +1201,7 @@ const STYLE_RULES = `STILE: dai del tu (dai del lei solo se il cliente e' formal
 REGOLA FERREA anti-invenzione: cita SOLO dati presenti nel BLOCCO DATI qui sotto. Se ti serve un dato che NON c'e' (prezzo, data, indirizzo, tracking, condizione), NON inventarlo: scrivi il segnaposto [DA VERIFICARE: cosa manca].
 CASI DA NON CHIUDERE DA SOLA (scrivi una risposta PRUDENTE che raccoglie info e propone il contatto di una persona; non promettere e non rifiutare): difetto/garanzia -> NON negare mai il reso citando solo i 14 giorni del recesso (la garanzia legale dura 24 mesi), proponi riparazione/cambio o il contatto; disputa/chargeback/banca -> massima cautela + persona; reclamo/rivenditore/proposta B2B/preventivo cerimonia -> raccogli info e rimanda a una persona.`;
 
-// v27 (2026-08-04, brief assistenza_4_fix punto A): la bozza nasceva SENZA struttura di paragrafo.
+// v28 (2026-08-04, brief assistenza_4_fix punto A): la bozza nasceva SENZA struttura di paragrafo.
 // Misurato sulle 6 email davvero partite dal tool: QUATTRO con zero a capo, una con 1, una con 2,
 // firma sempre attaccata al corpo. Il difetto NON era nell'invio: `cs-send` applica il wrap a 76
 // colonne alla CODIFICA base64 e mai al testo leggibile (RFC 2045, `wrap76(b64(testo))`), quindi

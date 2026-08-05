@@ -329,7 +329,7 @@ t('55 nessun flags.X consumato fuori dalla whitelist della query', (() => {
 })());
 t('56 e cs_thread_precede e\' fra quelli caricati', /'cs_thread_precede'/.test(SRC.match(/\.in\('key',\s*\[([^\]]*)\]\)/)?.[1] ?? ''));
 
-// v27 (brief assistenza_4_fix punto A): la struttura di paragrafo dell'email. Il difetto misurato
+// v28 (brief assistenza_4_fix punto A): la struttura di paragrafo dell'email. Il difetto misurato
 // era che NESSUNA regola la chiedeva, quindi il modello scriveva un blocco unico dentro la stringa
 // JSON. Le tre asserzioni guardano le tre sedi che devono riceverla (draft rami, draft toni,
 // refine) piu' il cancello del canale: in chat i paragrafi con riga vuota sono fuori registro, e
