@@ -208,14 +208,46 @@ function parseAddr(v: string): { email: string; name: string } {
 type Canale = 'email_diretta' | 'form_contatto' | 'form_evento' | 'chat_notifica' | 'rumore';
 const isAmimi = (e: string) => e.endsWith('@amimi.it');
 const isShopifySender = (e: string) => e === 'mailer@shopify.com' || e.endsWith('@shopifyemail.com') || e.endsWith('@shopify.com');
+// ==== PURE:cs-deny BEGIN ====
 function isNoiseSender(from: string, subject: string, extraDeny: string[]): boolean {
   const s = subject.toLowerCase();
   if (/dmarc/.test(from) || /^report[\s_-]?domain/i.test(subject) || s.includes('dmarc aggregate')) return true;   // report DMARC
   if (from === 'mailer-daemon@googlemail.com' || from.startsWith('mailer-daemon@') || from.startsWith('postmaster@')) return true; // bounce
   if (from.endsWith('@send.klaviyo.com') || from.endsWith('@klaviyomail.com') || from.endsWith('@bounce.klaviyo.com')) return true; // newsletter/marketing
-  for (const d of extraDeny) { const t = d.trim().toLowerCase(); if (t && (from.includes(t) || s.includes(t))) return true; }  // denylist estendibile via app_flags.cs_noise_senders
+  for (const d of extraDeny) if (denyMatch(d, from, s)) return true;   // denylist da app_flags.cs_noise_senders
   return false;
 }
+// v17 (2026-08-04, brief assistenza_4_fix punto D = CASI_APERTI n.15 (b)): il match della denylist.
+// Prima era una sola substring sull'indirizzo INTERO oppure sull'oggetto, e sbagliava in due modi
+// opposti. Troppo stretto: `@booking.com` NON matcha `x@property.booking.com`, perche' la stringa
+// completa e' un'altra, quindi una notifica identica rientrava in coda il giorno dopo. Troppo
+// largo: la stessa voce matchava anche l'OGGETTO, quindi una cliente che scrive "ho prenotato su
+// booking.com" finiva nel rumore. Le due cose insieme rendevano la denylist inaffidabile in
+// entrambe le direzioni.
+// Ora la forma della voce decide la regola, e le tre forme sono quelle che l'owner scrive davvero:
+//   - `@dominio` o `dominio.tld`  -> regola di DOMINIO: dominio esatto O suo sottodominio, e solo
+//                                    sul MITTENTE, mai sull'oggetto;
+//   - `local@dominio.tld`         -> indirizzo ESATTO;
+//   - qualunque altra cosa        -> testo libero (es. "Report Domain: amimi.it"), substring su
+//                                    mittente e oggetto come prima: quelle voci sono nate per
+//                                    l'oggetto e toglierglielo le spegnerebbe.
+// Scostamento dichiarato: una voce di dominio non aggancia piu' l'OGGETTO. E' voluto, ed e'
+// esattamente il falso positivo descritto sopra: nominare un dominio non rende cliente-non-cliente.
+const dominioDi = (email: string) => { const i = email.lastIndexOf('@'); return i < 0 ? '' : email.slice(i + 1); };
+function denyMatch(voce: string, from: string, subject: string): boolean {
+  const t = (voce || '').trim().toLowerCase();
+  if (!t) return false;
+  const f = (from || '').toLowerCase(), s = (subject || '').toLowerCase();
+  const chiocciole = (t.match(/@/g) || []).length;
+  const testoLibero = /[\s:,;]/.test(t) || chiocciole > 1;
+  if (testoLibero) return f.includes(t) || s.includes(t);
+  if (chiocciole === 1 && !t.startsWith('@')) return f === t;            // indirizzo esatto
+  const dom = t.startsWith('@') ? t.slice(1) : t;
+  if (!dom.includes('.')) return f.includes(t) || s.includes(t);         // non e' un dominio: testo
+  const fd = dominioDi(f);
+  return fd === dom || fd.endsWith('.' + dom);                           // dominio o sottodominio
+}
+// ==== PURE:cs-deny END ====
 function classify(from: { email: string; name: string }, replyTo: { email: string; name: string }, subject: string, body: string, extraDeny: string[], bulk = false): { canale: Canale; email: string | null; name: string | null } {
   const fe = from.email, rt = replyTo.email;
   // 1) Notifica chat Shopify Inbox: no-reply@mailer.shopify.com, subject "New Message from <nome>".
@@ -567,7 +599,7 @@ Deno.serve(async (req) => {
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const action = String(body.action || 'poll');
-  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet' && action !== 'backfill_order_number') return json({ error: 'azione sconosciuta: ' + action }, 422);
+  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet' && action !== 'backfill_order_number' && action !== 'reapply_noise') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
   const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders']);
@@ -636,6 +668,51 @@ Deno.serve(async (req) => {
     let closed = 0;
     for (const c of candidates) if (await setStatoAuto(c.id, 'fatto', 'backfill: risposta gia\' inviata')) closed++;
     return json({ ok: true, dry_run: false, chiusi: closed });
+  }
+
+  // --- RE-APPLY del pre-filtro rumore allo storico (v17, CASI_APERTI n.15 (a)) ---
+  // La denylist NON e' mai stata retroattiva: `classify()` gira solo all'ingest, quindi una voce
+  // aggiunta oggi non tocca la posta gia' entrata. Effetto misurato il 02-08: mail non-cliente in
+  // coda come conversazioni vere, col tool che ci scriveva sopra risposte di assistenza, e
+  // `github.com` era GIA' in denylist - la mail era solo piu' vecchia della voce.
+  // Dry-run di DEFAULT: si applica solo con apply:true. Tre esclusioni, tutte deliberate:
+  //   - conversazioni con un nostro `out`: abbiamo gia' risposto, spostarle nel rumore
+  //     nasconderebbe un thread vivo (stessa esclusione della migr 0091);
+  //   - `Collaborazioni e B2B`: la regola v11 dell'owner le tiene fuori dal rumore per scelta;
+  //   - conversazioni gia' `rumore`: niente da fare.
+  // Idempotente: rieseguita a regime sposta 0.
+  if (action === 'reapply_noise') {
+    const apply = body.apply === true;
+    const { data: convs } = await sb.from('cs_conversations')
+      .select('id, subject, canale, categoria').neq('canale', 'rumore');
+    const candidati: { id: string; subject: string; mittente: string; canale: string }[] = [];
+    let conNostraRisposta = 0, b2bSaltate = 0;
+    for (const c of (convs ?? []) as { id: string; subject: string | null; canale: string; categoria: string | null }[]) {
+      if (c.categoria === 'Collaborazioni e B2B') { b2bSaltate++; continue; }
+      const { data: msgs } = await sb.from('cs_messages')
+        .select('direction, from_email').eq('conversation_id', c.id).order('sent_at', { ascending: true });
+      const righe = (msgs ?? []) as { direction: string; from_email: string | null }[];
+      if (righe.some((m) => m.direction === 'out')) { conNostraRisposta++; continue; }
+      const primo = righe.find((m) => m.direction === 'in');
+      const mittente = String(primo?.from_email ?? '').toLowerCase();
+      if (!mittente) continue;
+      const subject = String(c.subject ?? '');
+      // Solo il pre-filtro rumore: NON si rigioca `classify` intero, che rileggerebbe reply-to e
+      // corpo (qui non li abbiamo tutti) e potrebbe spostare un thread fra canali CLIENTE.
+      // Questa azione fa una cosa sola e in una direzione sola: verso il rumore.
+      if (isNoiseSender(mittente, subject, extraDeny)) {
+        candidati.push({ id: c.id, subject: subject.slice(0, 70), mittente, canale: c.canale });
+      }
+    }
+    if (!apply) return json({ ok: true, dry_run: true, da_spostare: candidati.length, con_nostra_risposta: conNostraRisposta, b2b_saltate: b2bSaltate, elenco: candidati });
+    let spostate = 0; const errori: string[] = [];
+    for (const c of candidati) {
+      const { error } = await sb.from('cs_conversations').update({ canale: 'rumore' }).eq('id', c.id);
+      if (error) { errori.push(`${c.id}: ${error.message}`); continue; }
+      spostate++;
+      await sb.from('cs_events').insert({ conversation_id: c.id, azione: 'canale_rumore', chi: 'cs-sync', dettaglio: { da: c.canale, a: 'rumore', motivo: 'reapply_noise: mittente in denylist', mittente: c.mittente } });
+    }
+    return json({ ok: true, dry_run: false, spostate, con_nostra_risposta: conNostraRisposta, b2b_saltate: b2bSaltate, ...(errori.length ? { errori: errori.slice(0, 10) } : {}) });
   }
 
   // --- chiave service account ---
