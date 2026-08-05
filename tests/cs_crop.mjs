@@ -181,6 +181,23 @@ t('26f e regge anche con PIU\' "il" minuscoli prima dell\'attribution',
 t('26g l\'attribution vera viene ancora tagliata quando NON c\'e\' un "il" prima',
   stripQuoted('perfetto grazie\nIl giorno ven 31 lug 2026 alle 15:19 amimi <info@example.com> ha scritto:\ntesto vecchio') === 'perfetto grazie');
 
+// ---------------------------------------------------------------------------------------------
+console.log('\n== v17: il wrapper Inbox si scarta per COM\'E\' FATTO il messaggio, non per l\'etichetta ==');
+// Il ramo era gated su canale === 'chat_notifica', ma il canale cambia DOPO l'ingest (il bottone
+// "non e' un cliente", una riclassificazione): ricalcolando la stessa riga usciva un body_clean
+// diverso, cioe' tutto il boilerplate Shopify al posto della frase della cliente. Trovato il
+// 04-08 da un backfill --force, su due righe passate a `rumore`: da 74 e 1 carattere all'intero
+// wrapper. Il difetto era latente da prima, non nuovo.
+const INBOX = 'amimi\n\nYou have a new message from Anna Rossi\n\nvorrei sapere se avete la borsa in nero\n\nSent via Inbox\n\nReply in Inbox\n( https://inbox.shopify.com/store/x/conversations/open/abc )\n\nWhy did I receive this notification?\n\n* You have email notifications turned on';
+t('27b il wrapper si scarta anche se la conversazione e\' passata a "rumore"',
+  stripQuoted(INBOX, 'rumore') === 'vorrei sapere se avete la borsa in nero', stripQuoted(INBOX, 'rumore'));
+t('27c e il risultato NON dipende piu\' dall\'etichetta: stesso testo, stesso esito',
+  stripQuoted(INBOX, 'rumore') === stripQuoted(INBOX, 'chat_notifica')
+  && stripQuoted(INBOX, 'chat_notifica') === stripQuoted(INBOX, 'email_diretta'));
+t('27d una email vera che parla di messaggi NON viene toccata dal marcatore Inbox',
+  stripQuoted('Ho visto il vostro new message from ieri ma non capisco, potete spiegarmi?')
+  === 'Ho visto il vostro new message from ieri ma non capisco, potete spiegarmi?');
+
 t('27a una riga divisoria di trattini NON e\' una firma (titolo sottolineato)',
   stripQuoted('Nuova disputa per l\'ordine aperta\n---------------------------------\nIl cliente ha presentato una disputa per l\'ordine #1506.')
   === 'Nuova disputa per l\'ordine aperta\n---------------------------------\nIl cliente ha presentato una disputa per l\'ordine #1506.',

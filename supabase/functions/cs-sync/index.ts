@@ -419,10 +419,21 @@ function stripQuote(t: string): string {
 // normalizzato. Ritorna NULL se non resta nulla: la UI fa fallback su body_text (mai perdere).
 function stripQuoted(t: string, canale?: string): string | null {
   let s = t || '';
-  if (canale === 'chat_notifica') {
-    const m = s.match(/new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox/i);
-    if (m) s = m[1];
-  }
+  // v17 (2026-08-04): lo scarto del wrapper Inbox dipende da COM'E' FATTO IL MESSAGGIO, non da come
+  // e' etichettata OGGI la conversazione. Prima era gated su `canale === 'chat_notifica'`, e quel
+  // canale puo' cambiare dopo l'ingest (il bottone "non e' un cliente", una riclassificazione):
+  // ricalcolando la stessa riga si otteneva un `body_clean` DIVERSO, cioe' l'intero boilerplate
+  // Shopify al posto della frase della cliente. Trovato da un `backfill_clean --force` in questa
+  // sessione: due righe di una conversazione poi passata a `rumore` sono tornate da 74 e 1
+  // carattere all'intero wrapper. Il difetto era latente da prima (verificato: la versione
+  // precedente del crop si comporta in modo identico), ma finche' nessuno ricalcolava non si
+  // vedeva. Il marcatore pretende "new message from" E "Sent via Inbox" insieme: una email vera
+  // non li contiene, e se una cliente ci inoltra quella notifica estrarre il messaggio dentro
+  // resta la cosa giusta.
+  // Il parametro `canale` resta nella firma per i punti di chiamata, ma non governa piu' questo
+  // ramo: una riga non deve cambiare significato perche' qualcuno ha spostato un'etichetta.
+  const inbox = s.match(/new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox/i);
+  if (inbox) s = inbox[1];
   // taglio alla prima attribution line (i marcatori agganciano a inizio corpo e a meta' riga: v15)
   s = s.slice(0, firstMarker(s, QUOTE_MARKERS));
   const kept: string[] = [];
