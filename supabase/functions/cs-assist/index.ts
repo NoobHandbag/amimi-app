@@ -352,7 +352,77 @@ async function claude(model: string, system: string, user: string, key: string, 
 }
 
 // --- Recupero DATI (deterministico) ---
-type Prod = { codice: string; item: string; variant: string; prezzo: number | null; giacenza: number; disponibili: number; on_shopify: boolean; url: string | null };
+type Prod = { codice: string; item: string; variant: string; prezzo: number | null; giacenza: number; disponibili: number; on_shopify: boolean; url: string | null; pari: boolean };
+
+// v27 (2026-08-04, brief assistenza_4_fix punto B): PONTE LESSICALE italiano -> catalogo.
+// Il catalogo e' scritto in inglese, le clienti scrivono in italiano, e i due lessici non si
+// toccavano: "verde" non ha MAI combaciato con GREEN. Caso reale che ha aperto il brief ("E quella
+// verde invece?"): le tre Lea Bag verdi non prendevano un solo punto di variante, e vinceva
+// LEA_BAG_CAVALLINO_VERDE_KAKI, che e' l'unica scritta in italiano, per caso.
+// Le parole a destra sono ESTRATTE dal lessico reale delle varianti (conteggio su `v_inventory`,
+// 2026-08-04), non scritte a memoria: un termine che il catalogo non usa non aggancia niente e
+// allarga solo la superficie di match. Per questo mancano oro, argento e turchese "corretto": il
+// catalogo scrive `turqoise`, con il refuso, ed e' quello che va agganciato.
+// Direzione di guasto scelta: allargare il VOCABOLARIO, mai abbassare la soglia. Una parola in piu'
+// che combacia porta punti solo al prodotto che quella parola ce l'ha davvero nella variante.
+// ==== PURE:cs-matchprod BEGIN ====
+const SYN: Record<string, string[]> = {
+  verde: ['green'], green: ['verde'], nero: ['black'], nera: ['black'], black: ['nero'],
+  bianco: ['white'], bianca: ['white'], rosso: ['red', 'rossa'], rossa: ['red'], red: ['rossa'],
+  rosa: ['pink', 'rose'], pink: ['rosa'], blu: ['blue', 'navy'], blue: ['blu'], navy: ['blu'],
+  azzurro: ['azure', 'blue', 'ice'], azzurra: ['azure', 'blue', 'ice'], celeste: ['azure', 'ice', 'light'],
+  giallo: ['yellow'], gialla: ['yellow'], marrone: ['brown', 'chocolate'], brown: ['marrone'],
+  cioccolato: ['chocolate'], grigio: ['grey'], grigia: ['grey'], arancione: ['orange'], arancio: ['orange'],
+  viola: ['purple'], purple: ['viola'], lilla: ['lilac'], lilac: ['lilla'], fucsia: ['pink', 'candy'],
+  beige: ['beige', 'nude'], cipria: ['cipria', 'nude'], nude: ['nude'], bordeaux: ['bordeaux'],
+  cachi: ['kaki'], khaki: ['kaki'], militare: ['military'], petrolio: ['petrol'],
+  pistacchio: ['pistacchio'], menta: ['mint'], corallo: ['coral'], turchese: ['turqoise'],
+  ciliegia: ['cherry'], fragola: ['strawberry'], pesca: ['peach'], sabbia: ['sand'], burro: ['butter', 'burro'],
+  scuro: ['dark', 'deep'], scura: ['dark', 'deep'], chiaro: ['light'], chiara: ['light'],
+  pelle: ['leather'], leather: ['pelle'], seta: ['silk'], silk: ['seta'], vernice: ['patent', 'vernice'],
+  camoscio: ['suede'], scamosciata: ['suede'], scamosciato: ['suede'], velluto: ['velvet'],
+  righe: ['stripes'], righine: ['stripes'], rigata: ['stripes'], strisce: ['stripes'], stripes: ['righe'],
+  quadretti: ['checks'], quadri: ['checks'], scacchi: ['checks'], checks: ['quadretti'],
+  pois: ['pois'], leopardo: ['leopardo', 'savana'], leopardato: ['leopardo', 'savana'],
+  zebrato: ['zebra'], zebrata: ['zebra'], tigre: ['tiger'], mucca: ['muccata'],
+  fiori: ['floral', 'flower'], fiorata: ['floral', 'flower'], floreale: ['floral', 'flower'],
+  ricamo: ['embroidery'], ricamata: ['embroidery'], ricamato: ['embroidery'],
+  paiettes: ['paillettes'], paillettes: ['paillettes'], perle: ['pearl', 'beads'], perla: ['pearl', 'beads'],
+  cristallo: ['crystal'], cavallino: ['cavallino', 'pony'], pony: ['cavallino'], cocco: ['cocco'],
+};
+const espandiSinonimi = (tw: Set<string>): Set<string> => {
+  const out = new Set(tw);
+  for (const w of tw) for (const s of (SYN[w] ?? [])) out.add(s);
+  return out;
+};
+
+// Scelta dei candidati da mostrare, separata dall'IO per poterla provare: `tests/cs_prodmatch.mjs`
+// ritaglia questo blocco dal sorgente che va in produzione.
+type Cand = { p: { codice: string; disponibili: number; on_shopify: boolean; pari: boolean }; score: number };
+// Punteggio di chi ha combaciato SOLO per il nome del modello (`modelHit` da solo, vedi sotto).
+const SOLO_MODELLO = 2;
+function ordinaCandidati<T extends Cand>(scored: T[], max = 4): T[] {
+  // (1) I candidati solo-modello sono FRATELLI, non prodotti nominati dalla cliente: si scartano
+  // quando esiste di meglio. Se pero' niente identifica la variante restano l'unica cosa che
+  // abbiamo, e vanno tenuti: meglio il modello giusto che il vuoto.
+  const forti = scored.filter((x) => x.score > SOLO_MODELLO);
+  const pool = forti.length ? forti : scored.slice();
+  // (2) A parita' di punteggio, ordine DETERMINISTICO: prima cio' che si puo' davvero comprare,
+  // poi la giacenza, poi il codice. Due giri sullo stesso messaggio devono dare la stessa lista, e
+  // la prima riga e' quella da cui si prende il link.
+  const vendibile = (c: Cand) => (c.p.on_shopify && c.p.disponibili > 0 ? 1 : 0);
+  pool.sort((a, b) => b.score - a.score
+    || vendibile(b) - vendibile(a)
+    || b.p.disponibili - a.p.disponibili
+    || a.p.codice.localeCompare(b.p.codice));
+  // (3) AMBIGUITA': due o piu' candidati a pari punteggio in cima = il testo non identifica una
+  // variante sola. Il flag e' su TUTTI quelli a pari merito, anche oltre il taglio, cosi' a valle
+  // si puo' dire quanti sono davvero e non solo quanti se ne vedono.
+  const top = pool.length ? pool[0].score : 0;
+  for (const x of pool) if (x.score === top) x.p.pari = true;
+  return pool.slice(0, max);
+}
+// ==== PURE:cs-matchprod END ====
 
 // match prodotti citati nel testo: modello (item) presente + overlap parole variante; fallback alias sito.
 //
@@ -367,7 +437,8 @@ type Prod = { codice: string; item: string; variant: string; prezzo: number | nu
 // nulla. Il dato certo, in S5, era sotto il naso: l'ordine #1397 ha UNA riga, e risolve a
 // MARIA_BAG_ICE_BLUE_PIERCING. Cio' che la cliente ha comprato non si indovina, si legge.
 async function matchProducts(sb: ReturnType<typeof createClient>, text: string, codiciOrdine: string[] = []): Promise<Prod[]> {
-  const tw = words(text);
+  // v27: le parole della cliente passano dal ponte lessicale PRIMA del confronto (vedi SYN).
+  const tw = espandiSinonimi(words(text));
   // I codici dell'ordine bastano da soli: un messaggio senza parole utili ("come mai?") non deve
   // far sparire il prodotto che la cliente ha effettivamente comprato.
   const ordSet = new Set(codiciOrdine.map((c) => c.toUpperCase()));
@@ -407,11 +478,15 @@ async function matchProducts(sb: ReturnType<typeof createClient>, text: string, 
       prezzo: r.retail_price == null ? null : Number(r.retail_price),
       giacenza: Number(r.giacenza_attuale ?? 0), disponibili: Number(r.disponibili_da_vendere ?? 0), on_shopify: r.on_shopify === true,
       url: handle ? `${SITE_URL}/products/${handle}` : null,
+      pari: false,
     };
     scored.push({ p: prod, score: (modelHit ? 2 : 0) + varHits * 3 + (isAlias ? 4 : 0) + (isOrdine ? 10 : 0) });
   }
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 4).map((x) => x.p);
+  // v27 (brief assistenza_4_fix punto B): scarto dei fratelli solo-modello, ordine deterministico
+  // e rilevazione dell'ambiguita'. Nel caso reale erano ~30 Lea Bag tutte a pari merito, e le 4 che
+  // finivano nel blocco DATI uscivano nell'ordine di lettura del DB, cioe' a caso: da li'
+  // `LEA_BAG_MAXI`, che con la domanda non c'entrava niente. Logica in `ordinaCandidati`.
+  return ordinaCandidati(scored).map((x) => x.p);
 }
 
 type Ord = { order_number: unknown; financial_status: unknown; fulfillment_status: unknown; fulfilled_at: unknown; gross_total: unknown; email: unknown; order_id: unknown; created_at_shop: unknown; righe: { nome: string; qta: number; codice: string | null }[] } | null;
@@ -998,8 +1073,11 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   // e' una pagina del sito, non un dato del gestionale, e l'owner deve poterla cambiare senza deploy.
   // Se il flag manca o e' vuoto resta null e il segnaposto degrada a [DA VERIFICARE: link resi].
   const { data: fResi } = await sb.from('app_flags').select('value').eq('key', 'cs_link_resi_url').maybeSingle();
+  // v27: e MAI quando il prodotto e' ambiguo. Il segnaposto risolve a un URL solo, quindi a pari
+  // merito sceglierebbe una variante a caso: esattamente il difetto che il ramo ambiguita' esiste
+  // per evitare. Meglio degradare a [DA VERIFICARE: link scheda prodotto], che si vede.
   const linkUrls: LinkUrls = {
-    prodotto: prodotti[0]?.url ?? null,
+    prodotto: prodotti.filter((p) => p.pari).length >= 2 ? null : (prodotti[0]?.url ?? null),
     resi: String(fResi?.value ?? '').trim() || null,
     tracking: tracking?.url ?? null,
   };
@@ -1042,10 +1120,22 @@ function datiBlock(d: Dati): string {
   if (d.prodotti.length) {
     L.push('PRODOTTI (giacenza/disponibilita/prezzo dal gestionale):');
     for (const p of d.prodotti) L.push(`- ${p.item} ${p.variant}: disponibili da vendere ${p.disponibili}, giacenza ${p.giacenza}${p.prezzo != null ? `, prezzo ${p.prezzo} EUR` : ''}${p.on_shopify ? ', a catalogo sul sito' : ', non a catalogo'}${p.url ? `, link scheda: ${p.url}` : p.on_shopify ? ', link scheda NON disponibile (non rimandare alla pagina del prodotto: se serve, usa [DA VERIFICARE: link scheda prodotto])' : ''}`);
+    // v27 (brief assistenza_4_fix punto B): l'ambiguita' si dichiara, non si risolve indovinando.
+    // Il caso che ha aperto il brief: "E quella verde invece?" produceva UNA bozza che dava la
+    // verde per esaurita. Non e' un difetto di UX ma di correttezza: basta che esista un'altra
+    // variante verde disponibile e la frase mandata alla cliente e' falsa. Il segnale arriva da
+    // `matchProducts` (candidati a pari punteggio in cima), quindi e' deterministico: non lo decide
+    // il modello. Qui si limita a vietargli di scegliere.
+    const pari = d.prodotti.filter((p) => p.pari);
+    if (pari.length >= 2) {
+      L.push(`PRODOTTO AMBIGUO: quello che ha scritto la cliente NON identifica una variante sola: ${pari.length} candidate combaciano allo stesso modo${d.prodotti.length < pari.length ? ' (qui sopra ne trovi solo le prime)' : ''}. NON sceglierne una e NON dichiarare esaurito o disponibile "il" prodotto: elenca le candidate qui sopra (massimo 3, con disponibilita' e link dove c'e') e chiedi alla cliente quale intende. Una variante senza scheda sul sito si puo' nominare, ma dicendo che non e' acquistabile online.`);
+    }
     // v15: prodotto esaurito ma con scheda a catalogo -> la bozza deve dare il link dell'avviso
     // restock. Solo se e' il MIGLIOR match (il primo): mai suggerire la scheda di un'altra borsa.
+    // v27: e mai quando il prodotto e' ambiguo, altrimenti il link dell'avviso restock andrebbe a
+    // una variante scelta a caso fra quelle a pari merito.
     const top = d.prodotti[0];
-    if (top && top.disponibili <= 0 && top.url) L.push(`NOTA RESTOCK: sulla scheda del prodotto esaurito (${top.url}) c'e' il bottone "Avvisami quando torna disponibile": nella risposta INDICA quel link come il posto dove iscriversi all'avviso ("qui puoi iscriverti per essere avvisata quando torna: ${top.url}").`);
+    if (pari.length < 2 && top && top.disponibili <= 0 && top.url) L.push(`NOTA RESTOCK: sulla scheda del prodotto esaurito (${top.url}) c'e' il bottone "Avvisami quando torna disponibile": nella risposta INDICA quel link come il posto dove iscriversi all'avviso ("qui puoi iscriverti per essere avvisata quando torna: ${top.url}").`);
   } else L.push('PRODOTTI: nessun prodotto identificato con certezza dal testo.');
   if (d.ordine) {
     L.push(`ORDINE #${d.ordine.order_number}: pagamento ${d.ordine.financial_status ?? 'n/d'}, evasione ${d.ordine.fulfillment_status ?? 'non ancora evaso'}${d.ordine.fulfilled_at ? `, evaso il ${dmy(d.ordine.fulfilled_at)}` : ''}${d.ordine.created_at_shop ? `, ordinato il ${dmy(d.ordine.created_at_shop)}` : ''}.`);
