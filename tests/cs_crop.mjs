@@ -161,6 +161,26 @@ const NON_TOCCARE = [
 ];
 for (const [nome, testo] of NON_TOCCARE) t(nome, stripQuoted(testo) === testo, { atteso: testo, avuto: stripQuoted(testo) });
 
+// ---------------------------------------------------------------------------------------------
+console.log('\n== v17: un "il" MINUSCOLO nella frase della cliente non apre l\'attribution ==');
+// Caso REALE del 2026-08-04 (ordine #1605; nomi e indirizzi cambiati, il repo e' pubblico).
+// Il marcatore italiano era case-insensitive, quindi "Il" agganciava il "il" di "entro il 6 di
+// agosto": da li' la finestra {0,60} scavalcava l'a capo, trovava anno e ora dell'attribution VERA
+// sotto, e il taglio partiva 18 caratteri troppo presto. A database restava "Salve sarebbe
+// possibile farla arrivare entro" e la domanda della cliente spariva dalla bolla.
+// E' il gemello di 26a/26b: li' una frase che SEMBRA un'attribution, qui una parola comune che fa
+// da falso ancoraggio a un'attribution vera poco piu' avanti.
+const IL_MINUSCOLO = 'Salve sarebbe possibile farla arrivare entro il 6 di agosto ??\nIl giorno ven 31 lug 2026 alle 15:19 amimi <info@example.com> ha scritto:\n\n> [image: amimi]\n> Ordine #1605\n> Grazie per il tuo ordine!';
+t('26e REGRESSIONE 04-08: la domanda della cliente resta INTERA e la citazione se ne va lo stesso',
+  stripQuoted(IL_MINUSCOLO) === 'Salve sarebbe possibile farla arrivare entro il 6 di agosto ??', stripQuoted(IL_MINUSCOLO));
+
+const IL_DUE_VOLTE = 'Volevo il nero ma ho preso il rosso, potete cambiarlo entro il 10 di settembre?\nIl 22/07/2026 10:13, Assistenza <info@example.com> ha scritto:\nvecchio testo';
+t('26f e regge anche con PIU\' "il" minuscoli prima dell\'attribution',
+  stripQuoted(IL_DUE_VOLTE) === 'Volevo il nero ma ho preso il rosso, potete cambiarlo entro il 10 di settembre?', stripQuoted(IL_DUE_VOLTE));
+
+t('26g l\'attribution vera viene ancora tagliata quando NON c\'e\' un "il" prima',
+  stripQuoted('perfetto grazie\nIl giorno ven 31 lug 2026 alle 15:19 amimi <info@example.com> ha scritto:\ntesto vecchio') === 'perfetto grazie');
+
 t('27a una riga divisoria di trattini NON e\' una firma (titolo sottolineato)',
   stripQuoted('Nuova disputa per l\'ordine aperta\n---------------------------------\nIl cliente ha presentato una disputa per l\'ordine #1506.')
   === 'Nuova disputa per l\'ordine aperta\n---------------------------------\nIl cliente ha presentato una disputa per l\'ordine #1506.',

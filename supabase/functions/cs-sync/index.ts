@@ -352,7 +352,20 @@ const QUOTE_MARKERS = [
   // li hanno sempre entrambi e in quest'ordine, una frase di conversazione quasi mai.
   // Direzione di guasto scelta apposta: se un'attribution non ha l'ora non viene tagliata e resta
   // una riga di troppo: meglio una riga in piu' che una frase della cliente buttata via.
-  /(?:^|[\s>])Il\s[\s\S]{0,60}?(?:19|20)\d{2}[\s\S]{0,40}?\d{1,2}[:.]\d{2}[\s\S]{0,120}?\sha\s+scritto:/i,   // Gmail/Thunderbird/Libero IT
+  // v17 (2026-08-04, brief assistenza_4_fix punto C): la "Il" che apre l'attribution e' MAIUSCOLA,
+  // e questo marcatore non puo' essere case-insensitive. Caso reale, ordine #1605: la cliente
+  // scrive "...farla arrivare entro il 6 di agosto ??" e a capo comincia l'attribution vera. Con
+  // /i il marcatore agganciava il "il" MINUSCOLO dentro la sua frase, poi la finestra {0,60}
+  // scavalcava l'a capo e trovava anno, ora e "ha scritto:" della riga sotto: il taglio partiva 18
+  // caratteri troppo presto e a database restava "Salve sarebbe possibile farla arrivare entro".
+  // La domanda della cliente spariva dalla bolla, e il tool rispondeva senza averla mai vista.
+  // E' la stessa famiglia dei casi 26a/26b (prosa italiana scambiata per attribution), presa dal
+  // lato opposto: non una frase che SEMBRA un'attribution, ma una parola comune che fa da falso
+  // ancoraggio a un'attribution vera poco piu' avanti. Il vincolo di riga iniziale non era
+  // percorribile: la v15 aveva gia' misurato corpi su UNA riga sola (causa B), dove l'attribution
+  // sta per forza a meta' riga. La maiuscola separa i due casi senza toccare quella misura.
+  // "ha scritto" resta tollerante al maiuscolo: e' la parte che cambia da client a client.
+  /(?:^|[\s>])Il\s[\s\S]{0,60}?(?:19|20)\d{2}[\s\S]{0,40}?\d{1,2}[:.]\d{2}[\s\S]{0,120}?\s[Hh]a\s+[Ss]critto:/,   // Gmail/Thunderbird/Libero IT
   /(?:^|[\s>])On\s[\s\S]{0,220}?\swrote:/i,                                 // Gmail EN
   /(?:^|[\s>])-{2,}\s*(?:Original Message|Messaggio originale|Messaggio Inoltrato|Forwarded message)\s*-{2,}/i,
   /\r?\n_{5,}\r?\n/,                                       // divisore Outlook
