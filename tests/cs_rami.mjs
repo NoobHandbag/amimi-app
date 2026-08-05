@@ -329,5 +329,18 @@ t('55 nessun flags.X consumato fuori dalla whitelist della query', (() => {
 })());
 t('56 e cs_thread_precede e\' fra quelli caricati', /'cs_thread_precede'/.test(SRC.match(/\.in\('key',\s*\[([^\]]*)\]\)/)?.[1] ?? ''));
 
+// v27 (brief assistenza_4_fix punto A): la struttura di paragrafo dell'email. Il difetto misurato
+// era che NESSUNA regola la chiedeva, quindi il modello scriveva un blocco unico dentro la stringa
+// JSON. Le tre asserzioni guardano le tre sedi che devono riceverla (draft rami, draft toni,
+// refine) piu' il cancello del canale: in chat i paragrafi con riga vuota sono fuori registro, e
+// una regola email applicata alla chat sarebbe una regressione silenziosa sull'altro canale.
+console.log('\n== struttura di paragrafo: presente su tutte le email, spenta in chat ==');
+t('84 il blocco FORMATO esiste e chiede davvero la riga vuota', /const FORMATO_EMAIL = `[\s\S]*?RIGA VUOTA[\s\S]*?`;/.test(SRC) && /\\\\n\\\\n/.test(SRC.match(/const FORMATO_EMAIL = `([\s\S]*?)`;/)?.[1] ?? ''));
+t('85 arriva a tutte e tre le sedi che generano testo (draft rami, draft toni, refine)',
+  (SRC.match(/\$\{[^}]*\?\s*''\s*:\s*FORMATO_EMAIL\}/g) ?? []).length === 3);
+t('86 e in chat e\' SPENTO in tutte e tre (mai una email finta dentro Shopify Inbox)',
+  (SRC.match(/\$\{inChat \? '' : FORMATO_EMAIL\}/g) ?? []).length === 2
+  && /\$\{conv\.canale === 'chat_notifica' \? '' : FORMATO_EMAIL\}/.test(SRC));
+
 console.log(`\n${ok}/${ok + ko} verdi` + (ko ? ` — ${ko} ROSSI` : ''));
 process.exitCode = ko ? 1 : 0;

@@ -1099,6 +1099,24 @@ const STYLE_RULES = `STILE: dai del tu (dai del lei solo se il cliente e' formal
 REGOLA FERREA anti-invenzione: cita SOLO dati presenti nel BLOCCO DATI qui sotto. Se ti serve un dato che NON c'e' (prezzo, data, indirizzo, tracking, condizione), NON inventarlo: scrivi il segnaposto [DA VERIFICARE: cosa manca].
 CASI DA NON CHIUDERE DA SOLA (scrivi una risposta PRUDENTE che raccoglie info e propone il contatto di una persona; non promettere e non rifiutare): difetto/garanzia -> NON negare mai il reso citando solo i 14 giorni del recesso (la garanzia legale dura 24 mesi), proponi riparazione/cambio o il contatto; disputa/chargeback/banca -> massima cautela + persona; reclamo/rivenditore/proposta B2B/preventivo cerimonia -> raccogli info e rimanda a una persona.`;
 
+// v27 (2026-08-04, brief assistenza_4_fix punto A): la bozza nasceva SENZA struttura di paragrafo.
+// Misurato sulle 6 email davvero partite dal tool: QUATTRO con zero a capo, una con 1, una con 2,
+// firma sempre attaccata al corpo. Il difetto NON era nell'invio: `cs-send` applica il wrap a 76
+// colonne alla CODIFICA base64 e mai al testo leggibile (RFC 2045, `wrap76(b64(testo))`), quindi
+// gli a capo a meta' frase visti in Gmail erano il soft wrap del client su un corpo di 232
+// caratteri scritto tutto su una riga. La causa stava qui: nessuna regola chiedeva le righe vuote,
+// e un modello che scrive dentro una stringa JSON non le mette mai di sua iniziativa.
+// Vale SOLO per le email: in chat i paragrafi separati da righe vuote sono fuori registro, e
+// infatti il blocco si spegne quando `chatBlock` e' acceso.
+const FORMATO_EMAIL = `
+FORMATO: e' una EMAIL, quindi si scrive a PARAGRAFI, mai in un blocco unico. Struttura minima, con una RIGA VUOTA fra i blocchi:
+"Ciao <nome>!" (o il saluto adatto al registro)
+<riga vuota>
+il corpo, uno o piu' paragrafi separati da una riga vuota
+<riga vuota>
+"Grazie," a capo "Team Amimi'"
+Dentro il JSON la riga vuota si scrive \\n\\n e l'a capo singolo si scrive \\n: mettili davvero. Una risposta tutta di seguito e' sbagliata anche quando il testo e' giusto.`;
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const url = Deno.env.get('SUPABASE_URL')!;
@@ -1353,10 +1371,10 @@ Riassunto (max 2 righe):`;
         ? `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggi corti stile chat. Vale per ogni alternativa.`
         : `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggi corti stile chat (anche la versione "formale" resta un messaggio di chat, solo piu' composto).`;
     const system = rami
-      ? `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). ${RAMI_RULES}${langBlock(conv.lingua)}${istruzioniBlock}${casoTxt}${chatBlock}`
+      ? `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). ${RAMI_RULES}${inChat ? '' : FORMATO_EMAIL}${langBlock(conv.lingua)}${istruzioniBlock}${casoTxt}${chatBlock}`
       : `Sei chi risponde al servizio clienti di "Amimi'" (borse artigianali, Milano). Scrivi TRE versioni ALTERNATIVE della stessa risposta ${inChat ? 'in chat' : 'email'} al cliente, con toni diversi, tutte pronte da ritoccare. NON inviarle.
 LE TRE VERSIONI (usa esattamente questi tre "tono"): "breve" = 2-3 righe, dritta al punto, cordiale; "calda" = piu' empatica e personale, un pizzico di calore; "formale" = piu' completa e composta, adatta a casi delicati.
-${STYLE_RULES}${langBlock(conv.lingua)}${istruzioniBlock}${casoTxt}${chatBlock}`;
+${STYLE_RULES}${inChat ? '' : FORMATO_EMAIL}${langBlock(conv.lingua)}${istruzioniBlock}${casoTxt}${chatBlock}`;
     const user = `Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}. Categoria: ${conv.categoria ?? 'n/d'}. Cliente: ${conv.customer_name ?? ''}.
 ${ctx.conoscenza.length ? `\nCONOSCENZA DI CASA (regole e fatti Amimi'; se un valore qui contraddice il BLOCCO DATI, vince il BLOCCO DATI):\n${ctx.conoscenza.map((k) => '- ' + k).join('\n')}\n` : ''}${ctx.precedenti.length ? `\nCONVERSAZIONI PRECEDENTI DI QUESTO CLIENTE (contesto: tienine conto nel tono e nei riferimenti, NON promettere nulla in base a queste):\n${ctx.precedenti.join('\n')}\n` : ''}
 Conversazione (il piu' recente e' del cliente):
@@ -1497,7 +1515,7 @@ ${rami
 
     const chatBlockR = conv.canale === 'chat_notifica' ? `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggio corto stile chat.` : '';
     const sysR = `Sei chi risponde al servizio clienti di "Amimi'". Ti do una BOZZA di risposta al cliente e una richiesta di modifica. Riscrivi la bozza applicando la modifica. NON inviarla.
-${STYLE_RULES}${langBlock(conv.lingua)}${istruzioniBlock}${chatBlockR}`;
+${STYLE_RULES}${conv.canale === 'chat_notifica' ? '' : FORMATO_EMAIL}${langBlock(conv.lingua)}${istruzioniBlock}${chatBlockR}`;
     const usrR = `Lingua: ${conv.lingua === 'en' ? 'inglese' : 'italiano'}.
 RICHIESTA DI MODIFICA (dalla collega): ${istruzione.slice(0, 400)}
 
