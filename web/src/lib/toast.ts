@@ -9,7 +9,7 @@ export function toast(message: string, type: 'ok' | 'err' = 'ok') {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.setAttribute('role', type === 'err' ? 'alert' : 'status');
-  el.textContent = (type === 'ok' ? '✓  ' : '✕  ') + message;
+  el.textContent = message;
   host.appendChild(el);
   requestAnimationFrame(() => el.classList.add('show'));
   const ttl = type === 'err' ? 4500 : 2600;

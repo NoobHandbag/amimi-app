@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import Icon from './Icon';
 import NumberStepper from './NumberStepper';
 import { writeApi, fetchInventory, clearProductCache } from '../lib/api';
 import type { InvFull } from '../lib/api';
@@ -77,7 +78,7 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
       {(model || variant) && (
         <div className={`codicebox ${codice && !valid ? 'bad' : ''}`}>
           <span>{codice || '—'}</span>
-          <span>{valid ? '✓' : codice ? '✗' : ''}</span>
+          <span>{valid ? <Icon name="check" size={16} /> : codice ? <Icon name="x" size={16} /> : null}</span>
         </div>
       )}
 
@@ -92,7 +93,7 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
       </div>
       {Number(cogs) > 0 ? (() => { const sug = suggestPrice(Number(cogs)); return (
         <button type="button" className="hintchip" onClick={() => setPrice(String(sug))}>
-          💡 Prezzo consigliato €{sug.toFixed(2)} · margine {Math.round(marginOf(sug, Number(cogs)) * 100)}%
+          <Icon name="bulb" size={14} /> Prezzo consigliato €{sug.toFixed(2)} · margine {Math.round(marginOf(sug, Number(cogs)) * 100)}%
         </button>); })() : null}
 
       <button className="submit" disabled={busy} onClick={submit}>{busy ? 'Salvo…' : 'Crea prodotto'}</button>

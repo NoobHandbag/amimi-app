@@ -31,9 +31,9 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
   // etichetta leggibile per le rettifiche: la conta deve VEDERSI (feedback 06-07 item 4)
   const adjLabel = (m: string | null) => {
     const mm = (m ?? '').toLowerCase();
-    if (mm.includes('conta')) return '🔢 Conta fisica';
-    if (mm.includes('cambio')) return '↔️ Cambio (sostituto uscito)';
-    return '🧮 Rettifica';
+    if (mm.includes('conta')) return 'Conta fisica';
+    if (mm.includes('cambio')) return 'Cambio (sostituto uscito)';
+    return 'Rettifica';
   };
   return (
     <div className="drawerwrap" onClick={onClose}>
@@ -41,7 +41,7 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
         <div className="drawerhead">
           <Tile url={p.image_url} label={p.item ?? p.codice} />
           <div className="grow"><div className="rt">{nome(p.item, p.variant)}</div><div className="rs">{p.codice}</div></div>
-          <button className="drawerx" onClick={onClose} type="button">✕</button>
+          <button className="drawerx" onClick={onClose} type="button" aria-label="Chiudi"><Icon name="x" size={16} /></button>
         </div>
         <div className="kpis">
           <div className={`kpi ${p.giacenza_attuale < 0 ? 'red' : 'accent'}`}><div className="v">{p.giacenza_attuale}</div><div className="k">Magazzino</div></div>
@@ -50,7 +50,7 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
         </div>
         {go && (
           <button className="bigadd" type="button" onClick={() => go('registra', `count:${p.codice}`)}>
-            🔢 Registra conta di questo prodotto
+            <Icon name="count" size={16} /> Registra conta di questo prodotto
           </button>
         )}
         <section className="card"><h2>Acquisti{purch ? ` · ${purch.reduce((s, a) => s + Number(a.quantita), 0)} pz` : ''}</h2>
@@ -74,8 +74,8 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
         <section className="card"><h2>Vendite{sales ? ` · ${sales.reduce((s, v) => s + Number(v.qty), 0)} pz` : ''}</h2>
           {sales == null ? <p className="muted center">…</p> : !sales.length ? <p className="muted center">Nessuna vendita.</p> : (
             <div className="list">{sales.map((s) => (
-              <div className="row" key={s.source + s.id}><div><div className="rt">{s.source === 'qromo' ? '🏬 QROMO' : '🌐 Shopify'} · {s.descr}</div>
-                <div className="rs">{s.data ?? ''}{s.price != null ? ` · ${eur(s.price)}` : ''}{s.adminUrl ? <> · <a href={s.adminUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>apri su Shopify ↗</a></> : ''}</div></div>
+              <div className="row" key={s.source + s.id}><div><div className="rt">{s.source === 'qromo' ? <><Icon name="store" size={13} /> QROMO</> : <><Icon name="globe" size={13} /> Shopify</>} · {s.descr}</div>
+                <div className="rs">{s.data ?? ''}{s.price != null ? ` · ${eur(s.price)}` : ''}{s.adminUrl ? <> · <a href={s.adminUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>apri su Shopify <Icon name="external" size={12} /></a></> : ''}</div></div>
                 <div className="giac neg">−{s.qty}</div></div>
             ))}</div>
           )}
@@ -124,7 +124,7 @@ function ReorderView({ pin, chi, goOrdini }: { pin: string; chi: string; goOrdin
       </button>
       <div className={`giac ${p.disponibili <= 0 ? 'neg' : ''}`}>{p.disponibili}</div>
       <button className="chip" type="button" disabled={busy === p.codice} title={archived ? 'Ripristina nel riordino' : 'Archivia (es. pelle finita): sparisce da qui, resta nell’archivio'}
-        onClick={() => setArch(p.codice, !archived)}>{busy === p.codice ? '…' : archived ? '↩︎' : '🗄️'}</button>
+        onClick={() => setArch(p.codice, !archived)}>{busy === p.codice ? '…' : <Icon name={archived ? 'undo' : 'archive'} size={16} />}</button>
     </div>
   );
 
@@ -132,17 +132,17 @@ function ReorderView({ pin, chi, goOrdini }: { pin: string; chi: string; goOrdin
     <>
       <div className="filters"><button className={`fchip ${soloVend ? 'on' : ''}`} onClick={() => setSoloVend(true)}>Solo venduti</button>
         <button className={`fchip ${!soloVend ? 'on' : ''}`} onClick={() => setSoloVend(false)}>Tutti</button></div>
-      <p className="note">Ordinati per urgenza (vendite 60g ÷ stock disponibile). Tocca una borsa per creare il riordino già precompilato; 🗄️ la sposta nell'archivio (es. pelle esaurita).</p>
+      <p className="note">Ordinati per urgenza (vendite 60g ÷ stock disponibile). Tocca una borsa per creare il riordino già precompilato; l'icona archivio la sposta nell'archivio (es. pelle esaurita).</p>
       <div className="card"><div className="list">
         {list.slice(0, 120).map((p) => riga(p, false))}
         {!list.length && <p className="muted center">Nessun prodotto.</p>}
       </div></div>
       {archiviati.length > 0 && (
         <section className="card ask">
-          <button className="askhead" type="button" onClick={() => setShowArch((s) => !s)}>🗄️ Archivio riordino · {archiviati.length} <span className="muted">{showArch ? '−' : '+'}</span></button>
+          <button className="askhead" type="button" onClick={() => setShowArch((s) => !s)}><Icon name="archive" size={15} /> Archivio riordino · {archiviati.length} <span className="muted">{showArch ? '−' : '+'}</span></button>
           {showArch && (
             <div className="askbody">
-              <p className="note">Prodotti messi da parte (pelle/materiale finito). Se il materiale ricompare, ↩︎ li riporta nel riordino.</p>
+              <p className="note">Prodotti messi da parte (pelle/materiale finito). Se il materiale ricompare, l'icona di ripristino li riporta nel riordino.</p>
               <div className="list">{archiviati.map((p) => riga(p, true))}</div>
             </div>
           )}
@@ -322,7 +322,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
           )}
 
           {lens === 'negozi' ? (
-            cvList.length === 0 ? <div className="card muted center">Nessuna merce in conto vendita. Registra un movimento B2B (invio) da Registra ▸ B2B.</div> : (
+            cvList.length === 0 ? <div className="card muted center">Nessuna merce in conto vendita. Registra un movimento B2B (invio) da Registra &gt; B2B.</div> : (
               cvList.map((r) => (
                 <button className="ds-prow" type="button" key={r.negozio + r.codice} onClick={() => go && go('registra', `b2b:${r.negozio}`)}>
                   <Thumb2 url={r.image_url} label={r.item ?? r.codice} />
@@ -343,7 +343,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
                     <Thumb2 url={p.image_url} label={p.item ?? p.codice} />
                     <div className="ds-pinfo">
                       <div className="ds-pn">{nome(p.item, p.variant)}</div>
-                      <div className="ds-psub">{p.giacenza_attuale} a magazzino{p.on_shopify && <> · 🌐 {shopQ(p) ?? '—'} su Shopify</>}{p.in_conto_vendita > 0 && <> · conto {p.in_conto_vendita}</>}</div>
+                      <div className="ds-psub">{p.giacenza_attuale} a magazzino{p.on_shopify && <> · <Icon name="globe" size={12} /> {shopQ(p) ?? '—'} su Shopify</>}{p.in_conto_vendita > 0 && <> · conto {p.in_conto_vendita}</>}</div>
                       {st && <span className={`ds-pbadge ${st.cls}`}>{st.label}</span>}
                     </div>
                     <div className="ds-gia">

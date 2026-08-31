@@ -67,7 +67,7 @@ export default function Report({ onBack }: { onBack?: () => void }) {
     setSyncing(true); setSyncMsg(null);
     try {
       const r = await syncShopify('x');
-      setSyncMsg(`✓ ${r.inserted ? r.inserted + ' nuovi ordini' : 'già aggiornato'}`);
+      setSyncMsg(`${r.inserted ? r.inserted + ' nuovi ordini' : 'già aggiornato'}`);
       setReload((x) => x + 1);
     } catch (e) {
       setSyncMsg((e as Error).message);
@@ -115,7 +115,7 @@ export default function Report({ onBack }: { onBack?: () => void }) {
           <span className="badge">replica</span>
         </div>
       </header>
-      {onBack && <button className="back" onClick={onBack}>← Home</button>}
+      {onBack && <button className="back" onClick={onBack}><Icon name="arrow-left" size={16} /> Home</button>}
 
       <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={doSync} disabled={syncing}>
         <Icon name="recycle" size={18} />{syncing ? 'Sincronizzo…' : (syncMsg || 'Sincronizza Shopify')}
@@ -145,10 +145,10 @@ export default function Report({ onBack }: { onBack?: () => void }) {
         <section className="card ds-funnel">
           <h2>Dal lordo all'utile</h2>
           <p className="note" style={{ marginTop: -4, marginBottom: 12 }}>Dove se ne va il valore, dai ricavi ai costi. MC su mesi chiusi.</p>
-          {funnelRow('Fatturato lordo', null, lordo, lordo, 'var(--grad-action)')}
-          {funnelRow('Fatturato netto', 'meno IVA', netto, lordo, 'var(--interactive)')}
-          {funnelRow('MC1', 'meno costi variabili', mc1, lordo, 'var(--sec-lavender)')}
-          {funnelRow('MC2 · Utile', 'meno costi fissi', mc2, lordo, 'var(--sec-cabaret)')}
+          {funnelRow('Fatturato lordo', null, lordo, lordo, 'var(--brand)')}
+          {funnelRow('Fatturato netto', 'meno IVA', netto, lordo, 'var(--brand)')}
+          {funnelRow('MC1', 'meno costi variabili', mc1, lordo, 'var(--accent)')}
+          {funnelRow('MC2 · Utile', 'meno costi fissi', mc2, lordo, 'var(--negative)')}
         </section>
       )}
 
@@ -326,7 +326,7 @@ function DealCalc() {
 
   return (
     <section className="card ask">
-      <button className="askhead" onClick={() => setOpen((o) => !o)}>🧮 Calcolatore offerte B2B <span className="muted">{open ? '−' : '+'}</span></button>
+      <button className="askhead" onClick={() => setOpen((o) => !o)}><Icon name="calculator" size={15} /> Calcolatore offerte B2B <span className="muted">{open ? '−' : '+'}</span></button>
       {open && (
         <div className="askbody">
           {picking ? <ProductPicker selected={null} onPick={add} /> : <button className="bigadd" onClick={() => setPicking(true)}>+ Aggiungi prodotto</button>}
@@ -340,7 +340,7 @@ function DealCalc() {
                   <div className="rs">COGS €{cogs} · whole {Math.round(mWhole * 100)}% · c/vendita €{cvNet.toFixed(0)}/pz</div></div>
                 <input className="qbox" type="number" value={l.qty} onChange={(e) => setLines((x) => x.map((y, j) => j === i ? { ...y, qty: Number(e.target.value) } : y))} />
                 <input className="cbox" type="number" placeholder="€/pz" value={l.sellin} onChange={(e) => setLines((x) => x.map((y, j) => j === i ? { ...y, sellin: e.target.value } : y))} />
-                <button className="x" onClick={() => setLines((x) => x.filter((_, j) => j !== i))}>✕</button>
+                <button className="x" onClick={() => setLines((x) => x.filter((_, j) => j !== i))} aria-label="Togli"><Icon name="x" size={15} /></button>
               </div>
             );
           })}

@@ -13,6 +13,7 @@
 // NON si ricarica MAI da soli: l'operatrice puo' avere una bozza aperta e a meta'. Si avvisa e si
 // lascia decidere a lei.
 import { useEffect, useState } from 'react';
+import Icon from './Icon';
 import { cEUnAggiornamento, ricaricaAggiornando, type Pubblicata } from '../lib/version';
 
 const OGNI = 15 * 60 * 1000;        // controllo periodico a scheda visibile
@@ -44,7 +45,7 @@ export default function UpdateBanner() {
     <div className="upd-banner" role="status">
       <span className="upd-txt">C&#8217;&#232; una versione nuova dell&#8217;app.</span>
       <button type="button" className="upd-go" onClick={() => ricaricaAggiornando(nuova.build)}>Ricarica</button>
-      <button type="button" className="upd-x" onClick={() => setChiuso(true)} aria-label="Nascondi l&#8217;avviso">✕</button>
+      <button type="button" className="upd-x" onClick={() => setChiuso(true)} aria-label="Nascondi l&#8217;avviso"><Icon name="x" size={15} /></button>
     </div>
   );
 }

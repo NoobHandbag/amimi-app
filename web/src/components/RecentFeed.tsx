@@ -1,24 +1,27 @@
 import { useEffect, useState } from 'react';
+import Icon from './Icon';
 import { fetchRecent } from '../lib/api';
 import type { Activity } from '../lib/api';
 
+// [icona, etichetta]. Le emoji sono uscite dall'interfaccia (DESIGN.md §1.6): il primo
+// campo e' ora il nome di un'icona a linea di <Icon>.
 const META: Record<string, [string, string]> = {
-  purchases: ['📦', 'Arrivo'], counts: ['🔢', 'Conta'], gifts_offline: ['🎁', 'Regalo'],
-  b2b_movements: ['🏬', 'B2B'], products: ['🏷️', 'Prodotto'],
-  supplier_orders: ['📦', 'Ordine fornitore'], expenses: ['💶', 'Spesa'], returns: ['↩️', 'Reso'],
-  qromo_sales: ['🛒', 'Vendita Qromo'], shopify_orders: ['🌐', 'Ordine online'], shopify_line_items: ['🌐', 'Ordine online'],
-  ce_snapshots: ['📸', 'Chiusura mese'], shopify_stock: ['🔄', 'Stock Shopify'], stock_adjustments: ['🧮', 'Rettifica stock'],
+  purchases: ['box', 'Arrivo'], counts: ['count', 'Conta'], gifts_offline: ['gift', 'Regalo'],
+  b2b_movements: ['store', 'B2B'], products: ['tag', 'Prodotto'],
+  supplier_orders: ['box', 'Ordine fornitore'], expenses: ['euro', 'Spesa'], returns: ['return', 'Reso'],
+  qromo_sales: ['bag', 'Vendita Qromo'], shopify_orders: ['globe', 'Ordine online'], shopify_line_items: ['globe', 'Ordine online'],
+  ce_snapshots: ['camera', 'Chiusura mese'], shopify_stock: ['refresh', 'Stock Shopify'], stock_adjustments: ['calculator', 'Rettifica stock'],
 };
 // op più specifici della tabella
 const OPMETA: Record<string, [string, string]> = {
-  close_month: ['📸', 'Chiusura mese'], stock_autopush: ['🔄', 'Stock → Shopify (auto)'],
-  shopify_realign: ['🔄', 'Stock → Shopify'], expense_approve: ['✅', 'Spesa verificata'],
-  expense_propose: ['💶', 'Spesa proposta'], expense_manual: ['💶', 'Spesa'],
-  count_apply: ['🔢', 'Conta'], product_verify: ['✅', 'Prodotto verificato'],
-  order_multi: ['📦', 'Ordine fornitore'], arrival: ['📦', 'Arrivo merce'], arrival_set: ['📦', 'Arrivo corretto'],
-  test_cleanup: ['🧹', 'Pulizia dati test'], orphan_cleanup: ['🧹', 'Pulizia anagrafica'],
-  sale_correct: ['🔁', 'Vendita ri-mappata'], guard_fix: ['🛡️', 'Fix della guardia'],
-  qromo_sale: ['🛒', 'Vendita Qromo'], gift: ['🎁', 'Regalo'], return: ['↩️', 'Reso'],
+  close_month: ['camera', 'Chiusura mese'], stock_autopush: ['refresh', 'Stock → Shopify (auto)'],
+  shopify_realign: ['refresh', 'Stock → Shopify'], expense_approve: ['check-circle', 'Spesa verificata'],
+  expense_propose: ['euro', 'Spesa proposta'], expense_manual: ['euro', 'Spesa'],
+  count_apply: ['count', 'Conta'], product_verify: ['check-circle', 'Prodotto verificato'],
+  order_multi: ['box', 'Ordine fornitore'], arrival: ['box', 'Arrivo merce'], arrival_set: ['box', 'Arrivo corretto'],
+  test_cleanup: ['broom', 'Pulizia dati test'], orphan_cleanup: ['broom', 'Pulizia anagrafica'],
+  sale_correct: ['swap', 'Vendita ri-mappata'], guard_fix: ['shield', 'Fix della guardia'],
+  qromo_sale: ['bag', 'Vendita Qromo'], gift: ['gift', 'Regalo'], return: ['return', 'Reso'],
 };
 const CHI: Record<string, string> = { 'qromo-forward': 'Qromo (auto)', 'shopify-sync': 'Shopify (auto)', cron: 'automatico', claude: 'assistente', Bene: 'Benny', Ginevra: 'Ginni' };
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n);
@@ -87,17 +90,17 @@ export default function RecentFeed() {
       <h2>Ultimi inserimenti</h2>
       <div className="list">
         {rows.map((r) => {
-          const m = (r.op && OPMETA[r.op]) || META[r.tbl] || ['•', r.tbl.replace(/_/g, ' ')];
+          const m = (r.op && OPMETA[r.op]) || META[r.tbl] || ['circle', r.tbl.replace(/_/g, ' ')];
           const sum = summarize(r);
           const isOpen = open === r.id;
           return (
             <div key={r.id}>
               <button type="button" className="row clickrow" style={{ width: '100%', textAlign: 'left' }} onClick={() => setOpen(isOpen ? null : r.id)}>
                 <div className="grow">
-                  <div className="rt">{m[0]} {m[1]}</div>
+                  <div className="rt" style={{ display: 'flex', alignItems: 'center', gap: 7 }}><span className="ds-itile" style={{ width: 26, height: 26 }}><Icon name={m[0]} size={15} /></span>{m[1]}</div>
                   <div className="rs">{sum || r.codice || ''}{r.chi ? ` · ${CHI[r.chi] ?? r.chi}` : ''}</div>
                 </div>
-                <div className="rs" style={{ whiteSpace: 'nowrap' }}>{ago(r.ts)} {isOpen ? '▴' : '▾'}</div>
+                <div className="rs" style={{ whiteSpace: 'nowrap' }}>{ago(r.ts)} <Icon name={isOpen ? 'chevron-up' : 'chevron-down'} size={14} /></div>
               </button>
               {isOpen && <DetailRows r={r} />}
             </div>

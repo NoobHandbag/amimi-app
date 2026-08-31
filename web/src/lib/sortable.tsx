@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import Icon from '../components/Icon';
 
 /** Click-to-sort for plain tables. Returns sorted rows + a <Th> that renders a sortable header. */
 export function useSort<T extends Record<string, unknown>>(rows: T[], initialKey?: keyof T, initialDir: 'asc' | 'desc' = 'asc') {
@@ -22,6 +23,6 @@ export function useSort<T extends Record<string, unknown>>(rows: T[], initialKey
     if (k === key) setDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else { setKey(k); setDir('asc'); }
   }
-  const arrow = (k: keyof T) => (key === k ? (dir === 'asc' ? ' ▲' : ' ▼') : '');
+  const arrow = (k: keyof T) => (key === k ? <span className="ar"><Icon name={dir === 'asc' ? 'chevron-up' : 'chevron-down'} size={12} /></span> : null);
   return { sorted, toggle, arrow };
 }

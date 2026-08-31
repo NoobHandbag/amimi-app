@@ -13,12 +13,12 @@ const AUTO = new Set(['qromo-forward', 'shopify-sync', 'cron', 'claude', 'ce-gua
 function avatar(chi: string | null): { i: string; bg: string; name: string } {
   const c = chi ?? '';
   const name = CHI[c] ?? (c || '—');
-  if (AUTO.has(c)) return { i: '•', bg: 'var(--ink-muted)', name };
+  if (AUTO.has(c)) return { i: 'circle', bg: 'var(--ink-muted)', name };
   const k = c.toLowerCase();
   if (k.startsWith('bene') || k.startsWith('benny')) return { i: 'B', bg: 'var(--positive)', name: 'Benny' };
-  if (k.startsWith('gin')) return { i: 'G', bg: 'var(--sec-cabaret)', name: 'Ginni' };
-  if (k.startsWith('ale') || k.startsWith('dan')) return { i: 'A', bg: 'var(--interactive)', name: 'Ale' };
-  return { i: (c || '?').slice(0, 1).toUpperCase(), bg: 'var(--sec-lavender)', name };
+  if (k.startsWith('gin')) return { i: 'G', bg: 'var(--negative)', name: 'Ginni' };
+  if (k.startsWith('ale') || k.startsWith('dan')) return { i: 'A', bg: 'var(--brand)', name: 'Ale' };
+  return { i: (c || '?').slice(0, 1).toUpperCase(), bg: 'var(--accent)', name };
 }
 
 const VERB: Record<string, string> = {
@@ -124,7 +124,7 @@ export default function ActivityFeed({ pin = 'x' }: { pin?: string }) {
               <div style={{ fontSize: 10.5, color: 'var(--ink-muted)', marginTop: 6 }}>Aggiornato {ago(sum.at)}</div>
             </>
           ) : sumErr ? (
-            <p style={{ fontSize: 12.5, color: 'var(--negative-700)' }}>{sumErr} <button type="button" className="linkbtn" onClick={genSummary} style={{ color: 'var(--interactive-700)', fontWeight: 700 }}>Riprova</button></p>
+            <p style={{ fontSize: 12.5, color: 'var(--negative-ink)' }}>{sumErr} <button type="button" className="linkbtn" onClick={genSummary} style={{ color: 'var(--brand-hover)', fontWeight: 700 }}>Riprova</button></p>
           ) : (
             <button type="button" className="ds-btn secondary sm" onClick={genSummary} disabled={sumBusy}>{sumBusy ? 'Genero…' : 'Genera riepilogo attività'}</button>
           )}

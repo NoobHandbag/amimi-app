@@ -1,120 +1,219 @@
 /* ============================================================================
-   Amimì su GEEIQ — Design tokens (single source of truth)
-   Redesign 2026-07-23. Vedi _CLAUDE_CODE_INBOX/_redesign_amimi_app/PIANO_BUILD §2.
-   Regola: usa SEMPRE i token, mai hex hardcoded nei componenti nuovi/toccati.
+   Amimì — Design System v2 · token (unica fonte di verità del colore)
+   Blocco :root copiato integralmente da DESIGN.md §2.5 (root del repo).
 
-   Ruoli colore (i "sei principi"): un accento per l'azione, esito verde/rosso.
-   - Viola  (--interactive / --info) = interazione: bottoni, tab attivi, focus, "nuovo".
-   - Coral  (--accent / --negative)  = accento/allarme + esito negativo/reso.
-   - Emerald(--positive)             = esito positivo/spedito.
-   - Orange (--warning)              = in lavorazione / attesa.
-   Tertiary (Emerald/Cerulean/Azure) SOLO nei grafici, salvo Emerald=positivo.
+   REGOLA: nessun altro file definisce colori. Nei componenti si usano SEMPRE i
+   token, mai un hex. Se serve una tinta che non c'è, si aggiorna DESIGN.md e poi
+   questo file — non si scrive un hex a mano nel componente.
+
+   Ruoli (i sei principi, DESIGN.md §1):
+   - rose      (--brand)     = l'unico colore di interazione: bottoni, tab attivi,
+                               focus, chip selezionati, link. Non esiste --info.
+   - caramel   (--accent)    = accento caldo. Accento, non azione.
+   - sage      (--positive)  = esito positivo.
+   - terracotta(--negative)  = esito negativo.
+   - ochre     (--warning)   = attenzione / in lavorazione.
+   - photo     (--surface-photo) = #E8E4DE, il fondo esatto delle foto Claid.
    ============================================================================ */
 :root {
-  /* ---- superfici / testo ---- */
-  --bg: #faf7f2;
-  --surface: #ffffff;
-  --surface-alt: #f3eee5;
-  --ink: #2e204d;
-  --ink-muted: #6b6580;
-  --border: #ece6db;
-  --border-strong: #e3dccf;
+  /* ---- superfici ---- */
+  --canvas: #FBF9F7;
+  --surface: #FFFFFF;
+  --surface-sunken: #F4F0EC;
+  --surface-photo: #E8E4DE;
+  --scrim: rgba(45, 34, 38, .44);
 
-  /* ---- interazione (viola) ---- */
-  --interactive: #7c68fb;
-  --interactive-600: #5b35f2;
-  --interactive-700: #4c23de;
-  --interactive-tint: #d5d5ff;
+  /* ---- inchiostro ---- */
+  --ink: #2D2226;
+  --ink-muted: #6B5C60;
+  --ink-subtle: #8A7B7F;
+  --on-brand: #FFFFFF;
+  --on-dark: #F7F3F1;
 
-  /* ---- accento / allarme (coral) ---- */
-  --accent-coral: #fc4f3f;
-  --accent-coral-700: #c51f10;
-  --accent-coral-tint: #ffcbc6;
+  /* ---- bordi (DESIGN.md §2.3 — NON intercambiabili) ----
+     --hairline 1.24:1 su canvas: solo decorativo, mai su un controllo.
+     --edge     3.34:1 su canvas: tutto ciò che l'utente deve vedere per operare. */
+  --hairline: #E7E0DB;
+  --edge: #95867F;
+
+  /* ---- brand / azione ---- */
+  --brand: #8B5E6B;
+  --brand-hover: #744C57;
+  --brand-pressed: #5E3D46;
+  --brand-tint: #F3EBED;
+  --brand-tint-strong: #E4D2D7;
+
+  /* ---- accento ---- */
+  --accent: #C4956A;
+  --accent-ink: #7A5433;
+  --accent-tint: #F6EDE3;
 
   /* ---- esito ---- */
-  --positive: #00bd9d;
-  --positive-700: #028371;
-  --positive-tint: #d8f5ec;
-  --negative: #fc4f3f;
-  --negative-700: #c51f10;
-  --negative-tint: #ffcbc6;
-  --warning: #ff8614;
-  --warning-700: #c74d07;
-  --warning-tint: #ffdea8;
-  --info: #7c68fb;
-  --info-700: #4c23de;
-  --info-tint: #d5d5ff;
+  --positive: #456B48;
+  --positive-ink: #35522F;
+  --positive-tint: #E9EFE9;
+  --negative: #9A3A2A;
+  --negative-ink: #7C2E20;
+  --negative-tint: #F7E9E5;
+  --warning: #B0761A;
+  --warning-ink: #8A5A0F;
+  --warning-tint: #F8F0DE;
 
-  /* ---- secondary (accenti card + gradienti) ---- */
-  --sec-lavender: #b380e5;
-  --sec-lavender-tint: #e9dbf9;
-  --sec-lavender-700: #7b3ab6;
-  --sec-cabaret: #e6476f;
-  --sec-cabaret-tint: #fad1d9;
-  --sec-cabaret-700: #b11f4e;
-  --sec-flush: #ff8614;
-  --sec-azure: #4678ec;
-  --sec-cerulean: #20acd8;
-
-  /* ---- sequenza grafici (categorico, primario prima) ---- */
-  --chart-1: #7c68fb;
-  --chart-2: #b380e5;
-  --chart-3: #00bd9d;
-  --chart-4: #ff8614;
-  --chart-5: #e6476f;
-  --chart-6: #4678ec;
-  --chart-7: #20acd8;
-  --chart-current: #fc4f3f; /* barra "corrente" = coral */
-
-  /* ---- gradienti decorativi ---- */
-  --grad-hero: linear-gradient(135deg, #7c68fb 0%, #b380e5 100%);
-  --grad-brand: linear-gradient(170deg, #2e204d 0%, #3a2668 45%, #4c23de 100%);
-  --grad-action: linear-gradient(135deg, #5b35f2 0%, #7c68fb 100%);
-  --grad-ai: linear-gradient(135deg, #efe9ff 0%, #f6efff 100%);
-
-  /* ---- raggi / ombre ---- */
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 14px;
-  --r-xl: 20px;
-  --e1: 0 1px 2px rgba(46,32,77,.05), 0 12px 30px rgba(46,32,77,.07);
-  --e2: 0 10px 24px rgba(124,104,251,.26);
+  /* ---- grafici (DESIGN.md §2.4) ---- */
+  --chart-1: #8B5E6B;
+  --chart-2: #C4956A;
+  --chart-3: #456B48;
+  --chart-4: #5C7080;
+  --chart-5: #6E4A5A;
+  --chart-6: #9A3A2A;
+  --chart-7: #B0761A;
+  --chart-8: #A08C84;
+  --chart-current: #C4956A;
+  --chart-grid: #E7E0DB;
 
   /* ---- tipografia ---- */
   --font-sans: "Roboto", -apple-system, "Segoe UI", Arial, sans-serif;
-  --font: var(--font-sans);
+  --font-display: "Amimi Numerals", "Fraunces Variable", Georgia, serif;
   --font-mono: ui-monospace, "SF Mono", Consolas, monospace;
+  --num: "tnum" 1, "lnum" 1;
+  --display-vf: "SOFT" 0, "WONK" 0;
 
-  /* ==========================================================================
-     BRIDGE — nomi legaci usati in tutta la vecchia index.css e nei componenti.
-     Ripuntati ai token GEEIQ cosi' l'app adotta subito la nuova palette; la
-     rifinitura semantica precisa avviene schermata per schermata.
-       rose  = colore primario/azione   -> viola (interactive)
-       accent= emphasis/attenzione calda -> arancio (warning)   [NB: il coral
-               della design system e' esposto come --negative / --accent-coral]
-     ========================================================================== */
-  --rose: var(--interactive);
-  --rose-deep: var(--interactive-700);
-  --dark: var(--ink);
-  --accent: var(--warning);
+  /* ---- raggi ---- */
+  --r-xs: 6px;
+  --r-sm: 9px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* ---- elevazione (neutra, mai colorata) ---- */
+  --e0: none;
+  --e1: 0 1px 2px rgba(45, 34, 38, .05);
+  --e2: 0 6px 18px rgba(45, 34, 38, .09);
+  --e3: 0 16px 40px rgba(45, 34, 38, .16);
+
+  /* ---- focus ---- */
+  --focus: var(--brand);
+  --focus-ring: 2px;
+  --focus-offset: 2px;
+
+  /* ---- spaziatura ---- */
+  --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
+  --s5: 20px; --s6: 24px; --s7: 32px; --s8: 40px;
+
+  /* ---- ergonomia ---- */
+  --tap: 44px;
+
+  /* ---- movimento ---- */
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --ease: cubic-bezier(.2, .6, .2, 1);
+}
+
+/* ============================================================================
+   "Amimi Numerals" — la garanzia STRUTTURALE della regola §3.2 di DESIGN.md:
+   nessun numero, valuta o percentuale finisce mai in Fraunces, nemmeno dentro un
+   heading composto a runtime ("Ordini evasi — 128"). La famiglia copre SOLO le
+   cifre e i segni che le accompagnano e punta a Roboto; messa PRIMA di Fraunces
+   in --font-display vince su quei codepoint e cede tutto il resto al serif.
+   Cosi' la regola non dipende dalla disciplina di chi scrive il markup.
+   ============================================================================ */
+@font-face {
+  font-family: 'Amimi Numerals';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: local('Roboto'), url('@fontsource/roboto/files/roboto-latin-400-normal.woff2') format('woff2');
+  /* % & ' ( ) * + , - . /  0-9  :  $ £ € */
+  unicode-range: U+0025-002F, U+0030-0039, U+003A, U+0024, U+00A3, U+20AC;
+}
+
+/* ============================================================================
+   BRIDGE — nomi legacy usati nella index.css storica e in qualche componente.
+   Ripuntati ai token v2 così l'app adotta la palette brand ovunque in un colpo
+   solo. Non aggiungere nuovi alias: nel codice nuovo si usano i nomi v2.
+   ============================================================================ */
+:root {
+  --bg: var(--canvas);
   --card: var(--surface);
-  --line: var(--border);
+  --line: var(--hairline);
+  --border: var(--hairline);
+  --dark: var(--ink);
   --muted: var(--ink-muted);
   --mut: var(--ink-muted);
+  --rose: var(--brand);
+  --rose-deep: var(--brand-hover);
   --green: var(--positive);
   --red: var(--negative);
 }
 
-/* Base tipografia + numeri tabellari (dati) */
+/* ============================================================================
+   Base tipografica (DESIGN.md §3)
+   Roboto per testo e dati, cifre tabellari ovunque. Fraunces SOLO sugli heading.
+   ============================================================================ */
 html {
   font-family: var(--font-sans);
 }
+/* I controlli non ereditano il font dallo user agent: senza questa riga bottoni,
+   input e select cadono su Arial e la nav in fondo non e' in Roboto. */
+button, input, select, textarea {
+  font-family: inherit;
+}
 body {
   font-family: var(--font-sans);
-  font-feature-settings: "tnum" 1, "lnum" 1;
+  font-feature-settings: var(--num);
 }
-/* opt-in per numeri allineati dove servono cifre pari */
+
+/* Display: h1/h2/h3 e .display. Nessun altro selettore monta Fraunces. */
+h1, h2, h3, .display {
+  font-family: var(--font-display);
+  font-variation-settings: var(--display-vf);
+  font-weight: 600;
+  letter-spacing: -.01em;
+  font-feature-settings: normal;
+}
+
+/* Blocchi interamente numerici: famiglia sans e cifre tabellari, anche dentro un
+   heading serif. (.num e' anche una classe di input legacy: qui si impone solo la
+   tipografia, nessuna geometria.) */
 .num,
-.tabnum {
-  font-variant-numeric: tabular-nums;
+.tabnum,
+.display .num,
+h1 .num, h2 .num, h3 .num {
+  font-family: var(--font-sans);
+  font-variation-settings: normal;
+  font-feature-settings: var(--num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0;
+}
+
+/* Eyebrow: l'etichetta piccola maiuscola NON e' un heading (DESIGN.md §3.3). */
+.eyebrow {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--ink-muted);
+}
+
+/* ---- Focus visibile ovunque (DESIGN.md §4) ---- */
+:focus-visible {
+  outline: var(--focus-ring) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+/* ---- Selezione ---- */
+::selection {
+  background: var(--brand-tint-strong);
+  color: var(--ink);
+}
+
+/* ---- prefers-reduced-motion: azzera il movimento (DESIGN.md §4) ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

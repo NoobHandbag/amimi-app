@@ -199,8 +199,8 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   return (
     <div className="form">
       <div className="ordtop">
-        <button className="chip on" onClick={() => { setForn(''); setLines([]); setQ(''); }}>{forn} ✕</button>
-        <label className="datepick">📅 <input type="date" value={dataOrd} onChange={(e) => setDataOrd(e.target.value)} /></label>
+        <button className="chip on" onClick={() => { setForn(''); setLines([]); setQ(''); }}>{forn} <Icon name="x" size={13} /></button>
+        <label className="datepick"><Icon name="calendar" size={15} /> <input type="date" value={dataOrd} onChange={(e) => setDataOrd(e.target.value)} /></label>
       </div>
 
       {lines.length > 0 && (
@@ -220,14 +220,14 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
                 <button type="button" className="linkbtn" style={{ fontSize: 11, padding: 0 }}
                   title="WIP = non so ancora quanti pezzi/che costo (es. affinamento pelle): si definisce all'arrivo"
                   onClick={() => setLines((p) => p.map((x, j) => j === i ? { ...x, wip: !x.wip } : x))}>
-                  {l.wip ? '⏳ WIP · quantità/costo da definire (tocca per annullare)' : 'non so la quantità? → segna WIP'}
+                  {l.wip ? 'WIP · quantità/costo da definire (tocca per annullare)' : 'non so la quantità? segna WIP'}
                 </button>
               </div>
               <input className="qbox" type="number" inputMode="numeric" placeholder="pezzi" value={l.wip ? '' : l.qty} disabled={l.wip}
                 onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, qty: e.target.value } : x))} />
               <input className="cbox" type="number" inputMode="decimal" placeholder="€/pz" value={l.costo}
                 onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, costo: e.target.value } : x))} />
-              <button className="x" onClick={() => setLines((p) => p.filter((_, j) => j !== i))}>✕</button>
+              <button className="x" onClick={() => setLines((p) => p.filter((_, j) => j !== i))} aria-label="Togli"><Icon name="x" size={15} /></button>
             </div>
           ))}
           <div className="carttot">{lines.length} borse · {tot} pezzi{lines.some((l) => l.wip) ? ' · + WIP' : ''}</div>
@@ -252,7 +252,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
                     ? `già ordinata ${h.storico.n_ordini} ${h.storico.n_ordini === 1 ? 'volta' : 'volte'}${h.storico.ultimo_costo != null ? ` · ultimo €${h.storico.ultimo_costo}` : ''}`
                     : 'mai ordinata da questo fornitore'}</span>
                 </span>
-                {already ? <span className="ds-pbadge pub">✓ nell’ordine</span> : <span className="ds-pbadge off">+ aggiungi</span>}
+                {already ? <span className="ds-pbadge pub"><Icon name="check" size={11} /> nell’ordine</span> : <span className="ds-pbadge off">+ aggiungi</span>}
               </button>
             );
           })}

@@ -74,7 +74,7 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLin
           {altri.length > 0 && (
             // fix b (31-07): il vero antidoto al doppio conteggio: chi registra VEDE che esistono
             // altre righe ordine aperte per la stessa borsa e controlla di essere su quella giusta.
-            <div style={{ background: '#fff4e0', border: '1px solid #eac07a', color: '#7a4d0b', borderRadius: 10, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}>
+            <div style={{ background: 'var(--warning-tint)', border: '1px solid var(--warning)', color: 'var(--warning-ink)', borderRadius: 'var(--r-md)', padding: '8px 10px', fontSize: 12, marginBottom: 8 }}>
               Attenzione: {altri.length === 1 ? "c'e' un altro ordine aperto" : `ci sono ${altri.length} altri ordini aperti`} per questa borsa
               ({altri.map((a) => `${a.fornitore ?? '?'}: ${a.wip ? '?' : a.mancano} mancano, ordine del ${String(a.data_ordine ?? '').slice(0, 10)}`).join(' · ')}).
               Controlla di registrare l'arrivo sulla riga giusta.
@@ -109,7 +109,7 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload, openByCodice }: 
   return (
     <div className="screen">
       <header><h1>{sup.fornitore}</h1></header>
-      <button className="back" onClick={onBack}>← Tutti i fornitori</button>
+      <button className="back" onClick={onBack}><Icon name="arrow-left" size={16} /> Tutti i fornitori</button>
       <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={onAdd}><Icon name="plus" size={17} /> Nuovo ordine per {sup.fornitore}</button>
       <div className="ds-seclb">In arrivo <span className="c">{open.length}</span></div>
       {/* fix d (31-07): niente riga auto-aperta: cosi' com'era, un tocco accidentale su "Segna
@@ -120,7 +120,7 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload, openByCodice }: 
         <>
           <button type="button" className="ds-more" style={{ marginTop: 8 }} onClick={() => setShowDone((s) => !s)}>
             <span>Già arrivati <span style={{ opacity: .7 }}>({done.length})</span></span>
-            <b>{showDone ? 'Nascondi ▲' : 'Mostra ›'}</b>
+            <b>{showDone ? <>Nascondi <Icon name="chevron-up" size={13} /></> : <>Mostra <Icon name="chevron-right" size={13} /></>}</b>
           </button>
           {showDone && <div style={{ marginTop: 10 }}>{done.map((l) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} />)}</div>}
         </>
@@ -179,7 +179,7 @@ export default function Ordini({ pin, chi, initial }: { pin: string; chi: string
   if (adding) return (
     <div className="screen">
       <header><h1>Nuovo ordine</h1></header>
-      <button className="back" onClick={() => { setAdding(false); setAddForn(undefined); setAddCodice(undefined); }}>← Ordini</button>
+      <button className="back" onClick={() => { setAdding(false); setAddForn(undefined); setAddCodice(undefined); }}><Icon name="arrow-left" size={16} /> Ordini</button>
       <SupplierOrderForm pin={pin} chi={chi} initialForn={addForn} initialCodice={addCodice} onDone={() => { setAdding(false); setAddForn(undefined); setAddCodice(undefined); load(); }} />
     </div>
   );
@@ -187,7 +187,7 @@ export default function Ordini({ pin, chi, initial }: { pin: string; chi: string
   if (forn) {
     const sup = byForn.find((s) => s.fornitore === forn);
     if (sup) return <SupplierDetail sup={sup} pin={pin} chi={chi} onBack={() => setForn(null)} onAdd={() => { setAddForn(forn ?? undefined); setAdding(true); }} reload={load} openByCodice={openByCodice} />;
-    return <div className="screen"><button className="back" onClick={() => setForn(null)}>← Ordini</button><div className="card muted center">Nessun ordine per {forn}.</div></div>;
+    return <div className="screen"><button className="back" onClick={() => setForn(null)}><Icon name="arrow-left" size={16} /> Ordini</button><div className="card muted center">Nessun ordine per {forn}.</div></div>;
   }
 
   return (
@@ -204,7 +204,7 @@ export default function Ordini({ pin, chi, initial }: { pin: string; chi: string
               <span className="r">{s.lines.length} righe</span>
             </div>
           </div>
-          <span className="chev" style={{ color: 'var(--ink-muted)', fontSize: 20 }}>›</span>
+          <span className="chev" style={{ color: 'var(--ink-muted)' }}><Icon name="chevron-right" size={17} /></span>
         </button>
       ))}
     </div>

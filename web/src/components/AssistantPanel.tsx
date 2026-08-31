@@ -1,6 +1,7 @@
 // FLOW 6 v2 — "Chiedi ad Amimì": slide-in assistant panel, present on every screen.
 // Read-only: calls the `assistant` edge (gated by ai_enabled). Self-gates — renders nothing when the flag is off.
 import { useEffect, useRef, useState } from 'react';
+import Icon from './Icon';
 import { createPortal } from 'react-dom';
 import { askAssistant, fetchOpsFlags, writeApi, type AsstResult, type AsstMsg, type AsstGrafico, type AsstProdotto, type AsstAzione } from '../lib/api';
 
@@ -26,7 +27,9 @@ function Chart({ g }: { g: AsstGrafico }) {
   const max = Math.max(1, ...vals.map((v) => Math.abs(v)));
   if (g.tipo === 'torta') {
     const tot = vals.reduce((a, b) => a + Math.abs(b), 0) || 1;
-    const cols = ['#9C5F33', '#C4956A', '#8B5E6B', '#B98A5E', '#6E3F4D', '#D2B48C', '#A8764A', '#7C5A45'];
+    // sequenza categorica del design system (DESIGN.md §2.4), letta dai token: nessun hex qui.
+    const cols = ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5', '--chart-6', '--chart-7', '--chart-8']
+      .map((t) => `var(${t})`);
     let acc = 0; const R = 52, C = 60;
     const seg = vals.map((v, i) => {
       const frac = Math.abs(v) / tot; const a0 = acc * 2 * Math.PI - Math.PI / 2; acc += frac; const a1 = acc * 2 * Math.PI - Math.PI / 2;
@@ -154,7 +157,7 @@ function ActionCard({ azione, pin, chi }: { azione: AsstAzione; pin: string; chi
     } catch (e) { setMsg((e as Error).message); setState('idle'); }
   }
 
-  if (state === 'done') return <div className="ai-a"><div className="ai-action-ok"><span className="ai-who-m"><Spark s={12} /></span> ✓ {msg}</div></div>;
+  if (state === 'done') return <div className="ai-a"><div className="ai-action-ok"><span className="ai-who-m"><Spark s={12} /></span> <Icon name="check" size={14} /> {msg}</div></div>;
   if (state === 'cancel') return <div className="ai-a"><div className="ai-action-cancel">Proposta annullata.</div></div>;
 
   return (
@@ -269,7 +272,7 @@ export default function AssistantPanel({ pin, chi, nascondiFab = false }: { pin:
             <span className="ai-chip"><span className="ai-dot" />dati live · sola lettura</span>
           </div>
           <span style={{ flex: 1 }} />
-          <button className="ai-x" onClick={() => setOpen(false)} type="button" aria-label="Chiudi">✕</button>
+          <button className="ai-x" onClick={() => setOpen(false)} type="button" aria-label="Chiudi"><Icon name="x" size={16} /></button>
         </div>
 
         <div className="ai-thread" ref={threadRef}>
@@ -300,7 +303,7 @@ export default function AssistantPanel({ pin, chi, nascondiFab = false }: { pin:
           <input className="ai-field" placeholder="Chiedi qualcosa sui tuoi dati…" value={q}
             onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask()} />
           <button className="ai-send" onClick={() => ask()} type="button" disabled={busy} aria-label="Invia">
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="var(--on-brand)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
         </div>
         <div className="ai-foot">Legge i tuoi dati in tempo reale · non modifica nulla</div>

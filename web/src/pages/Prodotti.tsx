@@ -70,7 +70,7 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
       const res = await verifyProduct({ codice: p.codice, item: itemUp, variant: variantUp, retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs), image_url: img, description: descr, seo_title: seo, ...(isVerifica && completo ? { confirm: true } : {}) }, pin, chi) as unknown as { codice?: string; renamed?: boolean; verificato?: boolean; warning?: string };
       // feedback esplicito (item 24): in call Benny non capiva dove fosse finito il prodotto salvato
       if (res.verificato) {
-        toast(`✓ Salvato — ${itemUp} ${variantUp} è completo: ora lo trovi in Magazzino.${res.renamed ? ` Codice definitivo: ${res.codice}.` : ''}${remaining != null && remaining > 0 ? ` Ne restano ${remaining} da sistemare.` : remaining === 0 ? ' Erano gli ultimi: tutto pulito! 🎉' : ''}`, 'ok');
+        toast(`Salvato — ${itemUp} ${variantUp} è completo: ora lo trovi in Magazzino.${res.renamed ? ` Codice definitivo: ${res.codice}.` : ''}${remaining != null && remaining > 0 ? ` Ne restano ${remaining} da sistemare.` : remaining === 0 ? ' Erano gli ultimi: tutto pulito.' : ''}`, 'ok');
       } else {
         toast(`Salvato. ${itemUp} ${variantUp} non è ancora completo: resta in lista.`, 'ok');
       }
@@ -80,7 +80,7 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
   }
   return (
     <div className="form">
-      <button className="back" onClick={onDone}>← {p.codice}</button>
+      <button className="back" onClick={onDone}><Icon name="arrow-left" size={16} /> {p.codice}</button>
       <div className="grid2">
         <div><label className="fl">Modello *</label><input className="txt" style={{ textTransform: 'uppercase' }} value={item} onChange={(e) => setItem(e.target.value)} /></div>
         <div><label className="fl">Variante *</label><input className="txt" style={{ textTransform: 'uppercase' }} value={variant} onChange={(e) => setVariant(e.target.value)} /></div>
@@ -102,7 +102,7 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
       <div className="lblrow"><label className="fl">SEO title</label>
         <button type="button" className="minibtn" onClick={() => setSeo(genSeoTitle(item, variant))} disabled={!item || !variant}>genera</button></div>
       <input className="txt" value={seo} onChange={(e) => setSeo(e.target.value)} placeholder="Borsa … AMIMI … Made in Italy" />
-      {seo && <div className="charcount">{seo.length} caratteri{seo.length >= 60 && seo.length <= 70 ? ' ✓' : ' (target 60–70)'}</div>}
+      {seo && <div className="charcount">{seo.length} caratteri{seo.length >= 60 && seo.length <= 70 ? ' — ok' : ' (target 60–70)'}</div>}
       {isVerifica && !completo && (
         <p className="note" style={{ marginTop: 12 }}>Per verificare mancano: <b>{bloccanti.join(', ')}</b>. Puoi comunque salvare quello che hai: resta in lista.</p>
       )}
@@ -127,7 +127,7 @@ export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
   useEffect(() => { load(); }, []);
   if (edit) return <ProdEdit p={edit} pin={pin} chi={chi} onDone={() => { popBack(() => setEdit(null)); load(); }}
     remaining={list.filter((x) => x.bucket !== 'pulizia' && x.codice !== edit.codice).length} />;
-  if (!list.length) return <div className="card muted center">Tutti i prodotti sono verificati. 🎉</div>;
+  if (!list.length) return <div className="card muted center">Tutti i prodotti sono verificati.</div>;
 
   // DESCR e' richiesta solo per i modelli NUOVI: per le varianti di item esistenti
   // la descrizione vive a livello di modello (gia' scritta), il tag sarebbe rumore.
@@ -146,7 +146,7 @@ export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
         </div>
         <div className="missrow">{miss(p).map((m) => <span key={m} className="misschip">{m}</span>)}</div>
       </div>
-      <span className="chev">›</span>
+      <span className="chev"><Icon name="chevron-right" size={16} /></span>
     </button>
   );
 
@@ -170,7 +170,7 @@ export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
         <section className="todogroup">
           <button type="button" className="todoghead clk" onClick={() => setShowClean((v) => !v)}>
             <span className="todogt dim">Pulizia anagrafica (facoltativa)</span>
-            <span className="todogn">{clean.length} {showClean ? '▲' : '▼'}</span>
+            <span className="todogn">{clean.length} <Icon name={showClean ? 'chevron-up' : 'chevron-down'} size={13} /></span>
           </button>
           {showClean && (
             <>
@@ -211,7 +211,7 @@ export function Publish() {
         La pubblicazione automatica su Shopify è disattivata per sicurezza e va riattivata da chi gestisce il sistema.
       </div>
       {ready == null ? <p className="muted center">…</p> : !ready.length ? (
-        <div className="card muted center">Niente da pubblicare. Tutti i prodotti completi sono già su Shopify (bozze incluse). 🎉</div>
+        <div className="card muted center">Niente da pubblicare. Tutti i prodotti completi sono già su Shopify (bozze incluse).</div>
       ) : (
         <div className="list">
           <p className="note">{ready.length} prodotti completi (scheda + foto) non ancora su Shopify, nemmeno in bozza.</p>
@@ -306,7 +306,7 @@ export function Catalog({ pin, chi }: { pin: string; chi: string }) {
                     {marg != null && <span className={`ds-dchip ${marg >= 0.65 ? 'marg' : 'marglow'}`}>margine {Math.round(marg * 100)}%</span>}
                   </div>
                 </div>
-                <span className="chev">›</span>
+                <span className="chev"><Icon name="chevron-right" size={16} /></span>
               </button>
             );
           })}

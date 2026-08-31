@@ -34,23 +34,25 @@ export type CsConversation = {
 // ANALISI casella 22-07: Spedizione 18%, Restock 14%, Ritiro 13%, Cambio 9%, Sconto 9%,
 // Personalizzazione 8%, Reso 7%, Collab 7%, Info 4%, Riparazione 2%, Pagamento/Gift/Altro 1-2%;
 // Modifica indirizzo = "frequente" dalla riunione 23-07, senza % storica: messa dopo Reso).
-export const CS_CATEGORIES: { label: string; emoji: string }[] = [
-  { label: 'Spedizione e stato ordine', emoji: '📦' },
-  { label: 'Restock e disponibilita', emoji: '🔁' },
-  { label: 'Ritiro, negozio, appuntamenti', emoji: '🏠' },
-  { label: 'Cambio e prodotto errato', emoji: '🔄' },
-  { label: 'Codice sconto', emoji: '💸' },
-  { label: 'Personalizzazione e cerimonia', emoji: '💍' },
-  { label: 'Reso e rimborso', emoji: '↩️' },
-  { label: 'Modifica / correzione indirizzo', emoji: '📍' },
-  { label: 'Collaborazioni e B2B', emoji: '📢' },
-  { label: 'Info prodotto', emoji: 'ℹ️' },
-  { label: 'Riparazione', emoji: '🔧' },
-  { label: 'Pagamento', emoji: '💳' },
-  { label: 'Gift card e account', emoji: '🎁' },
-  { label: 'Altro / richiesta varia', emoji: '💬' },
+// I label NON cambiano (tassonomia bloccata): cambia solo il pittogramma, da emoji a icona.
+export const CS_CATEGORIES: { label: string; icon: string }[] = [
+  { label: 'Spedizione e stato ordine', icon: 'truck' },
+  { label: 'Restock e disponibilita', icon: 'refresh' },
+  { label: 'Ritiro, negozio, appuntamenti', icon: 'store' },
+  { label: 'Cambio e prodotto errato', icon: 'swap' },
+  { label: 'Codice sconto', icon: 'percent' },
+  { label: 'Personalizzazione e cerimonia', icon: 'ring' },
+  { label: 'Reso e rimborso', icon: 'return' },
+  { label: 'Modifica / correzione indirizzo', icon: 'pin' },
+  { label: 'Collaborazioni e B2B', icon: 'megaphone' },
+  { label: 'Info prodotto', icon: 'info' },
+  { label: 'Riparazione', icon: 'wrench' },
+  { label: 'Pagamento', icon: 'card' },
+  { label: 'Gift card e account', icon: 'gift' },
+  { label: 'Altro / richiesta varia', icon: 'chat' },
 ];
-export const catEmoji = (label: string | null): string => CS_CATEGORIES.find((c) => c.label === label)?.emoji ?? '🏷️';
+// Icona a linea della categoria (DESIGN.md §5.10). Le emoji sono uscite dall'interfaccia.
+export const catIcon = (label: string | null): string => CS_CATEGORIES.find((c) => c.label === label)?.icon ?? 'tag';
 
 export type CsMessage = {
   id: string;

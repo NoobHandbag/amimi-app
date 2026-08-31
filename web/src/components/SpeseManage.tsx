@@ -83,7 +83,7 @@ export default function SpeseManage({ pin, chi }: { pin: string; chi: string }) 
           await approveExpense(e.id, 'approved', payload, pin, chi, true);
         } else throw err;
       }
-      toast('Spesa verificata ✓', 'ok');
+      toast('Spesa verificata', 'ok');
       setEdits((m) => { const n = { ...m }; delete n[e.id]; return n; });
       setRecoding((s) => { const n = new Set(s); n.delete(e.id); return n; });
       load();

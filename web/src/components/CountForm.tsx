@@ -77,7 +77,7 @@ export default function CountForm({ pin, chi, initialCodice }: { pin: string; ch
           {delta !== null && contati !== '' && (
             <>
               <div className={`deltabadge ${delta === 0 ? 'ok' : delta < 0 ? 'neg' : 'pos'}`}>
-                {delta === 0 ? 'Combacia ✓' : `Delta ${delta > 0 ? '+' : ''}${delta} ${delta < 0 ? '(ammanco)' : '(in più)'}`}
+                {delta === 0 ? 'Combacia' : `Delta ${delta > 0 ? '+' : ''}${delta} ${delta < 0 ? '(ammanco)' : '(in più)'}`}
               </div>
               {delta !== 0 && <p className="note">La giacenza verrà corretta da {sys} a {contati} pezzi.</p>}
             </>

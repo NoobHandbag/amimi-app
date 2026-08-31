@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Icon from './Icon';
 import ProductPicker from './ProductPicker';
 import NumberStepper from './NumberStepper';
 import { addReturn, fetchSalesByCodice, oggi } from '../lib/api';
@@ -69,19 +70,19 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
   // STEP 2 — the sale
   if (!sale) return (
     <div>
-      <button className="back" onClick={() => setProd(null)}>← {nm(prod)}</button>
+      <button className="back" onClick={() => setProd(null)}><Icon name="arrow-left" size={16} /> {nm(prod)}</button>
       <p className="note">Quale vendita di <b>{nm(prod)}</b> è stata resa?</p>
       {sales == null ? <p className="muted center">Carico vendite…</p>
         : !sales.length ? (
           <div className="card muted center">Nessuna vendita recente trovata.
-            <div style={{ marginTop: 10 }}><button className="chip" onClick={() => setSale({ source: 'qromo', id: '', data: oggi(), qty: 1, price: null, descr: 'Reso senza vendita collegata', ref: '' })}>Reso senza vendita →</button></div>
+            <div style={{ marginTop: 10 }}><button className="chip" onClick={() => setSale({ source: 'qromo', id: '', data: oggi(), qty: 1, price: null, descr: 'Reso senza vendita collegata', ref: '' })}>Reso senza vendita <Icon name="arrow-right" size={14} /></button></div>
           </div>
         ) : (
           <div className="list">{sales.map((s) => (
             <button key={s.source + s.id} className="salerow" onClick={() => { setSale(s); setQty(String(s.qty || 1)); setImporto(s.price != null ? String(s.price) : ''); }}>
               <Thumb p={prod} />
-              <div className="grow"><div className="rt">{s.descr}</div><div className="rs">{s.source === 'qromo' ? '🏬 QROMO' : '🌐 Shopify'} · {s.data ?? ''} · {s.qty}× {s.price != null ? eur(s.price) : ''}</div></div>
-              <span className="chev">›</span>
+              <div className="grow"><div className="rt">{s.descr}</div><div className="rs">{s.source === 'qromo' ? <><Icon name="store" size={13} /> QROMO</> : <><Icon name="globe" size={13} /> Shopify</>} · {s.data ?? ''} · {s.qty}× {s.price != null ? eur(s.price) : ''}</div></div>
+              <span className="chev"><Icon name="chevron-right" size={16} /></span>
             </button>
           ))}</div>
         )}
@@ -91,13 +92,13 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
   // STEP 3 — details
   return (
     <div className="form">
-      <button className="back" onClick={() => setSale(null)}>← vendite di {nm(prod)}</button>
+      <button className="back" onClick={() => setSale(null)}><Icon name="arrow-left" size={16} /> vendite di {nm(prod)}</button>
       <div className="picked">
         <Thumb p={prod} />
         <div className="pickedtxt">
           <div className="rt">{nm(prod)}</div>
           <div className="rs">{sale.descr} · {sale.source === 'qromo' ? 'QROMO' : 'Shopify'} · {sale.data ?? ''} · {sale.qty}× {sale.price != null ? eur(sale.price) : ''}
-            {sale.adminUrl ? <> · <a href={sale.adminUrl} target="_blank" rel="noreferrer">apri l'ordine su Shopify ↗</a></> : null}</div>
+            {sale.adminUrl ? <> · <a href={sale.adminUrl} target="_blank" rel="noreferrer">apri l'ordine su Shopify <Icon name="external" size={12} /></a></> : null}</div>
         </div>
       </div>
       {sale.source === 'shopify' && <p className="note">Il rimborso dei soldi si fa su Shopify (link qui sopra); qui registri il rientro fisico in magazzino. Non toccare lo stock su Shopify a mano: si riallinea da solo ogni ora.</p>}

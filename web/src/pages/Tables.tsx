@@ -70,7 +70,7 @@ function TableView({ cfg, onBack }: { cfg: TableCfg; onBack: () => void }) {
 
   return (
     <div>
-      <button className="back" onClick={onBack}>← Tutte le tabelle</button>
+      <button className="back" onClick={onBack}><Icon name="arrow-left" size={16} /> Tutte le tabelle</button>
       <div className="lblrow" style={{ marginBottom: 10 }}>
         <h2 className="sech" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}><Icon name={cfg.icon} size={20} /> {cfg.label}</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{rows != null && <span className="ds-dt-count">{sorted.length} righe</span>}<ExportBtn name={cfg.key} rows={() => sorted} /></div>
@@ -83,7 +83,7 @@ function TableView({ cfg, onBack }: { cfg: TableCfg; onBack: () => void }) {
             <div className="ds-dtwrap"><table className="ds-dt">
               <thead><tr>{cols.map((c) => (
                 <th key={c.field} className={isNum(c.field) ? 'num' : 'txt'} onClick={() => toggleSort(c.field)} title="Ordina">
-                  {c.label}{sort?.field === c.field && <span className="ar">{sort.asc ? '▲' : '▼'}</span>}
+                  {c.label}{sort?.field === c.field && <span className="ar"><Icon name={sort.asc ? 'chevron-up' : 'chevron-down'} size={12} /></span>}
                 </th>
               ))}</tr></thead>
               <tbody>{sorted.map((r, i) => (

@@ -20,8 +20,8 @@ const eur2 = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', 
 const num = (n: number) => new Intl.NumberFormat('it-IT').format(n || 0);
 const fmtDay = (d: string | null) => (d ? new Date(d + 'T00:00:00').toLocaleDateString('it-IT', { day: '2-digit', month: 'short' }) : '—');
 const trunc = (s: string | null, n: number) => (!s ? '—' : s.length > n ? s.slice(0, n) + '…' : s);
-const SEV_COLOR: Record<string, string> = { bad: 'var(--red, #c83c46)', error: 'var(--red, #c83c46)', warn: '#c98a1a', ok: 'var(--green, #2e9e5b)' };
-const sevColor = (s: string) => SEV_COLOR[s] ?? 'var(--muted, #8a7f84)';
+const SEV_COLOR: Record<string, string> = { bad: 'var(--negative)', error: 'var(--negative)', warn: 'var(--warning-ink)', ok: 'var(--positive)' };
+const sevColor = (s: string) => SEV_COLOR[s] ?? 'var(--ink-muted)';
 const sevRank = (s: string) => (s === 'bad' || s === 'error' ? 0 : s === 'warn' ? 1 : 2);
 
 // Edge-function versions: NOT in the database, so kept as a static reference updated at each release.
@@ -52,11 +52,11 @@ function deltaPct(cur: number, prev: number): number | null {
 }
 function Delta({ cur, prev, goodUp = true }: { cur: number; prev: number; goodUp?: boolean }) {
   const d = deltaPct(cur, prev);
-  if (d == null) return <span style={{ color: 'var(--muted, #8a7f84)', fontSize: 12 }}>—</span>;
+  if (d == null) return <span style={{ color: 'var(--ink-muted)', fontSize: 12 }}>—</span>;
   const up = d >= 0;
   const good = goodUp ? up : !up;
-  const color = d === 0 ? 'var(--muted, #8a7f84)' : good ? 'var(--green, #2e9e5b)' : 'var(--red, #c83c46)';
-  return <span style={{ color, fontSize: 12, fontWeight: 700 }}>{up ? '▲' : '▼'} {Math.abs(d * 100).toLocaleString('it-IT', { maximumFractionDigits: 0 })}%</span>;
+  const color = d === 0 ? 'var(--ink-muted)' : good ? 'var(--positive)' : 'var(--negative)';
+  return <span style={{ color, fontSize: 12, fontWeight: 700 }}><Icon name={up ? 'arrow-up' : 'arrow-down'} size={11} /> {Math.abs(d * 100).toLocaleString('it-IT', { maximumFractionDigits: 0 })}%</span>;
 }
 
 function Stat({ label, value, cur, prev, goodUp = true, sub, tone = 'accent' }: { label: string; value: string; cur?: number; prev?: number; goodUp?: boolean; sub?: string; tone?: string }) {
@@ -76,7 +76,7 @@ function DKpi({ id, open, setOpen, value, label, cur, prev, goodUp = true, sub, 
   return (
     <div className={`kpi ${tone} clickable${on ? ' on' : ''}`} role="button" tabIndex={0}
       onClick={toggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}>
-      <span className="tap">{on ? '▴' : '▾'}</span>
+      <span className="tap"><Icon name={on ? 'chevron-up' : 'chevron-down'} size={13} /></span>
       <div className="v">{value}</div>
       <div className="k">{label}</div>
       <div className="ksub">{cur != null && prev != null ? <Delta cur={cur} prev={prev} goodUp={goodUp} /> : null}{sub ? <span style={{ marginLeft: cur != null ? 6 : 0 }}>{sub}</span> : null}</div>
@@ -239,7 +239,7 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
         {alerts.length > 0 && (
           <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.6 }}>
             {alerts.map((r) => (
-              <li key={r.k} style={{ color: 'var(--dark, #2d2226)' }}>
+              <li key={r.k} style={{ color: 'var(--ink)' }}>
                 <span style={{ color: SEV_COLOR[r.severity], fontWeight: 700 }}>&bull;</span> {r.label}{r.n ? <strong> ({num(r.n)})</strong> : null}
               </li>
             ))}
@@ -251,9 +251,9 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
       {/* Voci cliccabili "da sistemare": portano dritto alla schermata giusta (§4.8) */}
       {go && (() => {
         const todos = [
-          speseReview > 0 && { n: speseReview, label: 'spese da verificare', icon: 'euro', tint: ['--warning-tint', '--warning-700'] as const, act: () => go('registra', 'spesa') },
-          m.soldout > 0 && { n: m.soldout, label: 'SKU pubblicati ma esauriti', icon: 'box', tint: ['--negative-tint', '--negative-700'] as const, act: () => go('magazzino') },
-          d.ben_todo > 0 && { n: d.ben_todo, label: 'prodotti da completare', icon: 'tag', tint: ['--interactive-tint', '--interactive-700'] as const, act: () => go('registra', 'pulizia') },
+          speseReview > 0 && { n: speseReview, label: 'spese da verificare', icon: 'euro', tint: ['--warning-tint', '--warning-ink'] as const, act: () => go('registra', 'spesa') },
+          m.soldout > 0 && { n: m.soldout, label: 'SKU pubblicati ma esauriti', icon: 'box', tint: ['--negative-tint', '--negative-ink'] as const, act: () => go('magazzino') },
+          d.ben_todo > 0 && { n: d.ben_todo, label: 'prodotti da completare', icon: 'tag', tint: ['--brand-tint', '--brand-hover'] as const, act: () => go('registra', 'pulizia') },
         ].filter(Boolean) as { n: number; label: string; icon: string; tint: readonly [string, string]; act: () => void }[];
         if (!todos.length) return null;
         return (
@@ -264,7 +264,7 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
                 <span className="ic" style={{ background: `var(${t.tint[0]})`, color: `var(${t.tint[1]})` }}><Icon name={t.icon} size={18} /></span>
                 <span className="tt">{t.label}</span>
                 <span className="tn" style={{ color: `var(${t.tint[1]})` }}>{t.n}</span>
-                <span className="chev">›</span>
+                <span className="chev"><Icon name="chevron-right" size={16} /></span>
               </button>
             ))}
           </>
@@ -350,7 +350,7 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
             <Flag on={flags.write} label="Scrittura Shopify" />
             <Flag on={flags.autopush} label="Autopush stock" />
             <Flag on={flags.hold_raises} label="Blocca rialzi" neutral />
-            <span className="pill" style={{ border: '1px solid var(--line, #e6ddd8)', borderRadius: 999, padding: '2px 10px', fontSize: 13, color: 'var(--muted, #8a7f84)' }}>Buffer esposizione: {flags.expose_buffer}</span>
+            <span className="pill" style={{ border: '1px solid var(--hairline)', borderRadius: 999, padding: '2px 10px', fontSize: 13, color: 'var(--ink-muted)' }}>Buffer esposizione: {flags.expose_buffer}</span>
           </div>
         )}
       </section>
@@ -378,10 +378,10 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
 }
 
 function Flag({ on, label, neutral = false }: { on: boolean; label: string; neutral?: boolean }) {
-  const color = neutral ? 'var(--muted, #8a7f84)' : on ? 'var(--green, #2e9e5b)' : 'var(--red, #c83c46)';
+  const color = neutral ? 'var(--ink-muted)' : on ? 'var(--positive)' : 'var(--negative)';
   return (
     <span className="pill" style={{ border: `1px solid ${color}`, color, borderRadius: 999, padding: '2px 10px', fontSize: 13, fontWeight: 700 }}>
-      {on ? '●' : '○'} {label}
+      <Icon name={on ? 'dot' : 'circle'} size={13} /> {label}
     </span>
   );
 }

@@ -70,7 +70,7 @@ export default function Ingest({ pin, chi, initial }: {
         </>
       ) : (
         <>
-          <button className="back" onClick={() => popBack(() => setSel(null))} type="button">← {cur?.label}</button>
+          <button className="back" onClick={() => popBack(() => setSel(null))} type="button"><Icon name="arrow-left" size={16} /> {cur?.label}</button>
           {sel === 'count' && <CountForm pin={pin} chi={chi} initialCodice={arg} />}
           {sel === 'product' && <NewProductForm pin={pin} chi={chi} />}
           {sel === 'gift' && <GiftForm pin={pin} chi={chi} />}
@@ -83,7 +83,7 @@ export default function Ingest({ pin, chi, initial }: {
           {sel === 'tabelle' && <DataTables initial={tableInit} />}
           {seeAll && (
             <button className="seeall" type="button" onClick={() => { setTableInit(seeAll.key); setSel('tabelle'); }}>
-              <Icon name="table" size={16} /> Vedi tutti {seeAll.label} →
+              <Icon name="table" size={16} /> Vedi tutti {seeAll.label} <Icon name="arrow-right" size={15} />
             </button>
           )}
         </>

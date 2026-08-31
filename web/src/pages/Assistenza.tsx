@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import Icon from '../components/Icon';
 import { csClient } from '../lib/csClient';
 import { pushBack, popBack } from '../lib/backnav';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catIcon, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato, BozzaSalvata } from '../lib/csApi';
 
 // email in testo semplice: preserva gli a-capo (CSS pre-wrap) e collassa i vuoti multipli (feedback 24-07)
@@ -37,9 +38,9 @@ function Avatar({ k, size = 30 }: { k: string; size?: number }) {
   if (err || !AVATAR_SRC[k]) return <span className={'cs-av ' + id.cls} style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}>{k}</span>;
   return <img className="cs-avimg" src={import.meta.env.BASE_URL + AVATAR_SRC[k]} alt={id.n} style={{ width: size, height: size }} onError={() => setErr(true)} />;
 }
-const CANALI: Record<Canale, string> = { email_diretta: '✉️ email', form_contatto: '📝 form sito', form_evento: '💍 form evento', chat_notifica: '💬 chat sito', rumore: '🔕 rumore' };
+const CANALI: Record<Canale, string> = { email_diretta: 'email', form_contatto: 'form sito', form_evento: 'form evento', chat_notifica: 'chat sito', rumore: 'rumore' };
 const BUCKETS: [string, string][] = [['oggi', 'Oggi'], ['ieri', 'Ieri'], ['sett', 'Questa settimana'], ['vecchie', 'Piu’ vecchie']];
-const TONO_LABEL: Record<string, string> = { breve: '⚡ Breve', calda: '💛 Calda', formale: '🎩 Formale', bozza: '✍️ Bozza' };
+const TONO_LABEL: Record<string, string> = { breve: 'Breve', calda: 'Calda', formale: 'Formale', bozza: 'Bozza' };
 // v18: perche' il sistema NON dice entro/fuori pur avendo l'ordine sotto gli occhi.
 const NON_APP_UI: Record<string, string> = {
   rimborsato: 'Ordine gia’ rimborsato per intero: il caso e’ chiuso a favore della cliente. La bozza riconosce il rimborso e non parla di finestra.',
@@ -102,7 +103,7 @@ const altreAperte = (c: CsConversation, tutte: CsConversation[] | null): CsConve
     && (x.customer_email || '').trim().toLowerCase() === mail);
 };
 
-const FLAG_LABEL: Record<string, string> = { sollecito: '⏱ sollecito', reclamo_assistenza: '⚠️ reclamo', chiusura: '✅ chiusura' };
+const FLAG_LABEL: Record<string, string> = { sollecito: 'sollecito', reclamo_assistenza: 'reclamo', chiusura: 'chiusura' };
 const isUrg = (c: CsConversation) => c.urgente === true;
 // La coda mette gli urgenti in cima, poi per anzianita' del messaggio (piu' recente prima) (design 6.4).
 const urgSort = (a: CsConversation, b: CsConversation) => {
@@ -115,9 +116,9 @@ function Badges({ c }: { c: CsConversation }) {
   const daConfermare = !c.categoria && c.categoria_source === 'ai_low';
   return (
     <div className="cs-badges">
-      {c.categoria && <span className="cs-badge cs-cat">{catEmoji(c.categoria)} {c.categoria}</span>}
-      {daConfermare && <span className="cs-badge cs-confirm">🏷️ da confermare</span>}
-      {isUrg(c) && <span className="cs-badge cs-urg">🚨 {c.urgenza_motivo || 'urgente'}</span>}
+      {c.categoria && <span className="cs-badge cs-cat"><Icon name={catIcon(c.categoria)} size={12} /> {c.categoria}</span>}
+      {daConfermare && <span className="cs-badge cs-confirm"><Icon name="tag" size={12} /> da confermare</span>}
+      {isUrg(c) && <span className="cs-badge cs-urg"><Icon name="alert" size={12} /> {c.urgenza_motivo || 'urgente'}</span>}
       {(c.flags ?? []).filter((f) => f !== 'urgente' && FLAG_LABEL[f]).map((f) => (
         <span key={f} className="cs-badge cs-flag">{FLAG_LABEL[f]}</span>
       ))}
@@ -340,7 +341,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     window.open(inboxUrlOf(msgs) ?? SHOPIFY_INBOX, '_blank', 'noopener');
     showToast(ok
       ? 'Copiata. Incolla in Inbox e chiudi lì la conversazione dopo la risposta.'
-      : '⚠ Copia NON riuscita: gli appunti hanno ancora il contenuto di prima. Torna qui, seleziona la bozza e copiala a mano.');
+      : 'Copia NON riuscita: gli appunti hanno ancora il contenuto di prima. Torna qui, seleziona la bozza e copiala a mano.');
   };
   // Fase 4 — apertura del dialog di conferma: OGNI invio passa da qui (mai invio automatico).
   // La send_key nasce adesso: doppio click e retry porteranno la stessa chiave (anti doppio invio).
@@ -358,7 +359,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       const r = await sendReply(tid, ident, bozzaText, sendKey);
       if (threadRef.current !== tid) return;
       setSendOpen(false); setSentTo(r.to);
-      showToast(r.already_sent ? `Era già partita: inviata a ${r.to}` : `✓ Inviata a ${r.to}`);
+      showToast(r.already_sent ? `Era già partita: inviata a ${r.to}` : `Inviata a ${r.to}`);
       // v24: il ramo si registra QUI, dopo un invio riuscito: e' la scelta impegnativa, non
       // l'anteprima. Best-effort dentro recordRamo: non deve mai far sembrare fallito un invio
       // che invece e' partito.
@@ -435,7 +436,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       setConvs((prevC) => prevC ? prevC.filter((x) => x.id !== c.id) : prevC);
       setRumore(null);   // la vista Rumore si ricarichera'
       goCoda();
-      showToast(`🚫 "${sender}" spostata nel Rumore`);
+      showToast(`"${sender}" spostata nel Rumore`);
     } catch (e) { setErr((e as Error).message); }
     setSavingStato(false);
   };
@@ -444,7 +445,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     suppressOpenRef.current = c.id;
     setTimeout(() => { if (suppressOpenRef.current === c.id) suppressOpenRef.current = ''; }, 450);
     void doStato(c, 'fatto');
-    showToast(`✓ "${nmeOf(c).slice(0, 22)}" tolta dalla coda`, () => doStato(c, 'da_fare'));
+    showToast(`"${nmeOf(c).slice(0, 22)}" tolta dalla coda`, () => doStato(c, 'da_fare'));
   };
 
   // ---- login gate ----
@@ -452,12 +453,14 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   if (session === 'out') return (
     <div className="screen">
-      <header><button className="badge" onClick={onBack} type="button">‹ Home app</button></header>
+      <header><button className="badge" onClick={onBack} type="button"><Icon name="chevron-left" size={14} /> Home app</button></header>
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; assistenza</span></div>
         <div className="cs-lt">Accedi con il tuo account Amimi&#8217;</div>
-        <button className="cs-btn" style={{ width: '100%', background: '#fff', border: '1px solid var(--line)', color: 'var(--dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }} onClick={doGoogle} disabled={busy} type="button">
-          <span aria-hidden="true" style={{ fontWeight: 800, fontFamily: 'Arial, sans-serif' }}><span style={{ color: '#4285F4' }}>G</span><span style={{ color: '#EA4335' }}>o</span><span style={{ color: '#FBBC05' }}>o</span><span style={{ color: '#4285F4' }}>g</span><span style={{ color: '#34A853' }}>l</span><span style={{ color: '#EA4335' }}>e</span></span>
+        {/* Il logo Google multicolore era l'ultima tavolozza estranea al design system.
+            Sostituito dall'icona a linea del sistema: il bottone dice gia' "Accedi con Google". */}
+        <button className="cs-btn cs-ghost" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }} onClick={doGoogle} disabled={busy} type="button">
+          <Icon name="mail" size={18} />
           <span>Accedi con Google</span>
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 4px', color: 'var(--muted)', fontSize: 12 }}>
@@ -477,7 +480,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // ---- "chi sei?" ----
   if (!ident) return (
     <div className="screen">
-      <header><button className="badge" onClick={onBack} type="button">‹ Home app</button><button className="badge" onClick={logout} type="button">Esci</button></header>
+      <header><button className="badge" onClick={onBack} type="button"><Icon name="chevron-left" size={14} /> Home app</button><button className="badge" onClick={logout} type="button">Esci</button></header>
       <div className="cs-login">
         <div className="cs-logo" style={{ fontSize: 24 }}>Chi sei?</div>
         <div className="cs-lt">L&#8217;identita&#8217; firma le tue risposte, il login no</div>
@@ -506,8 +509,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       <div className="screen">
         <header>
           {/* l'etichetta dice dove si torna davvero: un thread aperto dal Rumore torna al Rumore */}
-          <button className="badge" onClick={goCoda} type="button">{daDove === 'rumore' ? '‹ Rumore' : '‹ Coda'}</button>
-          <button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} ▾</button>
+          <button className="badge" onClick={goCoda} type="button"><Icon name="chevron-left" size={14} /> {daDove === 'rumore' ? 'Rumore' : 'Coda'}</button>
+          <button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} <Icon name="chevron-down" size={13} /></button>
         </header>
         {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
         {/* testata: compatta; in modalita' bozza si comprime a nome + ordine/categoria + urgenza */}
@@ -519,20 +522,20 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   draftMode lo sostituiva la categoria e non si capiva piu' se il messaggio fosse
                   arrivato per email diretta o dal sito. */}
               <div className="cs-tem">{draftMode
-                ? `${c.order_number ? `#${c.order_number} · ` : ''}${CANALI[c.canale]}${c.categoria ? ` · ${catEmoji(c.categoria)} ${c.categoria}` : ''}`
+                ? `${c.order_number ? `#${c.order_number} · ` : ''}${CANALI[c.canale]}${c.categoria ? ` · ${c.categoria}` : ''}`
                 : `${c.customer_email || '—'} · ${CANALI[c.canale]}`}</div>
             </div>
-            {isUrg(c) && <span className="cs-urgpill" title={c.urgenza_motivo || 'urgente'}>🚨 {c.urgenza_motivo || 'urgente'}</span>}
+            {isUrg(c) && <span className="cs-urgpill" title={c.urgenza_motivo || 'urgente'}><Icon name="alert" size={12} /> {c.urgenza_motivo || 'urgente'}</span>}
           </div>
           {!draftMode && c.canale !== 'rumore' && (
             <>
               <div className="cs-chiprow">
                 <select className="cs-catchip" value={c.categoria ?? ''} disabled={savingCat} onChange={(e) => applyCat(e.target.value || null)} aria-label="Categoria">
-                  <option value="">🏷️ da confermare</option>
-                  {CS_CATEGORIES.map((k) => <option key={k.label} value={k.label}>{k.emoji} {k.label}</option>)}
+                  <option value="">da confermare</option>
+                  {CS_CATEGORIES.map((k) => <option key={k.label} value={k.label}>{k.label}</option>)}
                 </select>
                 <span className={'cs-badge cs-state' + (c.stato === 'fatto' ? ' cs-state-done' : c.stato === 'in_corso' ? ' cs-state-prog' : '')}>
-                  {c.stato === 'fatto' ? (c.stato_by === 'auto' ? '✓ conclusa da sola (risposta inviata)' : `✓ conclusa${c.stato_by ? ' · ' + c.stato_by : ''}`) : c.stato === 'in_corso' ? `✋ in corso · ${c.stato_by ?? ''}` : 'da iniziare'}
+                  {c.stato === 'fatto' ? (c.stato_by === 'auto' ? 'conclusa da sola (risposta inviata)' : `conclusa${c.stato_by ? ' · ' + c.stato_by : ''}`) : c.stato === 'in_corso' ? `in corso · ${c.stato_by ?? ''}` : 'da iniziare'}
                 </span>
                 {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
                 {(c.flags ?? []).filter((f) => f !== 'urgente' && FLAG_LABEL[f]).map((f) => (
@@ -541,10 +544,10 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 {savingCat && <span className="muted" style={{ fontSize: 12 }}>salvo…</span>}
               </div>
               <div className="cs-actions-row">
-                {c.stato === 'da_fare' && <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'in_corso')} type="button">✋ Prendo io</button>}
+                {c.stato === 'da_fare' && <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'in_corso')} type="button"><Icon name="hand" size={15} /> Prendo io</button>}
                 {c.stato !== 'fatto'
-                  ? <button className="cs-btn cs-ghost cs-okbtn" disabled={savingStato} onClick={() => doStato(c, 'fatto')} type="button">✓ Conclusa</button>
-                  : <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'da_fare')} type="button">↩ Riapri</button>}
+                  ? <button className="cs-btn cs-ghost cs-okbtn" disabled={savingStato} onClick={() => doStato(c, 'fatto')} type="button"><Icon name="check" size={15} /> Conclusa</button>
+                  : <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'da_fare')} type="button"><Icon name="undo" size={15} /> Riapri</button>}
                 <div className="cs-more-wrap">
                   <button className="cs-btn cs-ghost cs-morebtn" onClick={() => setMoreOpen((o) => !o)} type="button" aria-label="Altre azioni" aria-expanded={moreOpen}>⋯</button>
                   {moreOpen && (
@@ -553,7 +556,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                           denylist?") ha una risposta nel codice, ed e' SI: cs-api `add_noise`
                           aggiunge il mittente a `cs_noise_senders` e sposta la conversazione in
                           rumore. Ora il gesto lo dichiara invece di lasciarlo indovinare. */}
-                      <button type="button" disabled={savingStato} onClick={() => { setMoreOpen(false); doNoise(c); }}>🚫 Non è un cliente</button>
+                      <button type="button" disabled={savingStato} onClick={() => { setMoreOpen(false); doNoise(c); }}><Icon name="ban" size={15} /> Non è un cliente</button>
                       <div className="cs-note" style={{ margin: '2px 8px 6px', textAlign: 'left' }}>Blocca anche i prossimi messaggi di questo mittente. Resta visibile in “Rumore”, da dove si può rimettere in coda.</div>
                     </div>
                   )}
@@ -576,12 +579,12 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             mio pacco?" e' letteralmente la domanda - non compariva. */}
         {c.canale !== 'rumore' && ctx && (ctx.ordine || ctx.order_admin_url || ctx.ship || ctx.tracking || (ctx.prodotti && ctx.prodotti.length > 0) || (ctx.storia && ctx.storia.n_ordini > 0)) && (
           <details className="cs-info" open>
-            <summary><span className="cs-tri">▶</span> Info utili</summary>
+            <summary><span className="cs-tri"><Icon name="chevron-right" size={11} /></span> Info utili</summary>
             <div className="cs-facts">
               {(ctx.ordine || ctx.order_admin_url || c.order_number) && (ctx.order_admin_url ? (
                 <a className="cs-fact link" href={ctx.order_admin_url} target="_blank" rel="noreferrer">
                   <span className="fl">Ordine</span>
-                  <span className="fv">#{ctx.ordine?.order_number ?? c.order_number ?? ''} ↗</span>
+                  <span className="fv">#{ctx.ordine?.order_number ?? c.order_number ?? ''} <Icon name="external" size={12} /></span>
                   {ordSub && <span className="fs">{ordSub}</span>}
                 </a>
               ) : (
@@ -597,26 +600,26 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 ctx.tracking ? (
                   <a className="cs-fact link" href={ctx.tracking.url} target="_blank" rel="noreferrer">
                     <span className="fl">Spedizione</span>
-                    <span className="fv">🚚 {ctx.ship.stato_tws} ↗</span>
+                    <span className="fv"><Icon name="truck" size={13} /> {ctx.ship.stato_tws} <Icon name="external" size={12} /></span>
                     <span className="fs">{ctx.tracking.numero} · aggiornato al {fmtData(ctx.ship.updated_at.slice(0, 10))}</span>
                   </a>
                 ) : (
                   <div className="cs-fact">
                     <span className="fl">Spedizione</span>
-                    <span className="fv">🚚 {ctx.ship.stato_tws}</span>
+                    <span className="fv"><Icon name="truck" size={13} /> {ctx.ship.stato_tws}</span>
                     <span className="fs">aggiornato al {fmtData(ctx.ship.updated_at.slice(0, 10))}</span>
                   </div>
                 )
               ) : ctx.tracking ? (
                 <a className="cs-fact link" href={ctx.tracking.url} target="_blank" rel="noreferrer">
                   <span className="fl">Spedizione</span>
-                  <span className="fv">{ctx.tracking.corriere} ↗</span>
+                  <span className="fv">{ctx.tracking.corriere} <Icon name="external" size={12} /></span>
                   <span className="fs">{ctx.tracking.numero}</span>
                 </a>
               ) : ctx.ordine ? (
                 <div className="cs-fact warn">
                   <span className="fl">Spedizione</span>
-                  <span className="fv">⚠ non disponibile</span>
+                  <span className="fv"><Icon name="alert" size={13} /> non disponibile</span>
                   <span className="fs">la bozza userà [DA VERIFICARE]</span>
                 </div>
               ) : null}
@@ -631,7 +634,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 return p.url ? (
                   <a className="cs-fact link" href={p.url} target="_blank" rel="noreferrer">
                     <span className="fl">Prodotto</span>
-                    <span className="fv">{nome} ↗</span>
+                    <span className="fv">{nome} <Icon name="external" size={12} /></span>
                     <span className="fs">{sub}</span>
                   </a>
                 ) : (
@@ -656,7 +659,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             tornare in coda a cercarla. */}
         {c.canale !== 'rumore' && altreAperte(c, convs).length > 0 && (
           <div className="cs-gaps">
-            👥 <b>Questa cliente ha altre {altreAperte(c, convs).length === 1 ? 'una conversazione aperta' : `${altreAperte(c, convs).length} conversazioni aperte`}</b>, probabilmente per lo stesso motivo. Guardale prima di rispondere, o le risponderai due volte.
+            <Icon name="chat" size={14} /> <b>Questa cliente ha altre {altreAperte(c, convs).length === 1 ? 'una conversazione aperta' : `${altreAperte(c, convs).length} conversazioni aperte`}</b>, probabilmente per lo stesso motivo. Guardale prima di rispondere, o le risponderai due volte.
             <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {altreAperte(c, convs).map((a) => (
                 <button key={a.id} type="button" className="cs-btn cs-ghost" style={{ fontSize: 12 }} onClick={() => openThread(a)}>
@@ -667,15 +670,15 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
           </div>
         )}
         {c.canale !== 'rumore' && ctx?.gaps && ctx.gaps.length > 0 && (
-          <div className="cs-gaps">⚠️ <b>Contesto incompleto:</b> {ctx.gaps.join(' · ')}. La bozza usera&#8217; [DA VERIFICARE], mai inventare.</div>
+          <div className="cs-gaps"><Icon name="alert" size={14} /> <b>Contesto incompleto:</b> {ctx.gaps.join(' · ')}. La bozza usera&#8217; [DA VERIFICARE], mai inventare.</div>
         )}
         {/* "In breve" (riassunto AI) subito sopra la conversazione */}
         {!draftMode && c.summary && (
-          <div className="ds-aisum"><div className="ds-aisum-h">📝 In breve</div><p>{c.summary}</p></div>
+          <div className="ds-aisum"><div className="ds-aisum-h"><Icon name="note" size={13} /> In breve</div><p>{c.summary}</p></div>
         )}
         {c.canale === 'chat_notifica' && !draftMode && (
-          <div className="cs-banner">💬 Chat del sito (Shopify Inbox): si risponde DENTRO Inbox, non da qui (una nostra email a parte creerebbe due tracce). Genera la bozza qui sotto, poi &#8220;Copia risposta e apri in Inbox&#8221;.
-            <div style={{ marginTop: 8 }}><a className="cs-btn cs-inbox" href={inboxUrlOf(msgs) ?? SHOPIFY_INBOX} target="_blank" rel="noreferrer">{inboxUrlOf(msgs) ? 'Rispondi in Inbox ↗' : 'Apri Shopify Inbox ↗'}</a></div>
+          <div className="cs-banner"><Icon name="chat" size={14} /> Chat del sito (Shopify Inbox): si risponde DENTRO Inbox, non da qui (una nostra email a parte creerebbe due tracce). Genera la bozza qui sotto, poi &#8220;Copia risposta e apri in Inbox&#8221;.
+            <div style={{ marginTop: 8 }}><a className="cs-btn cs-inbox" href={inboxUrlOf(msgs) ?? SHOPIFY_INBOX} target="_blank" rel="noreferrer">{inboxUrlOf(msgs) ? 'Rispondi in Inbox' : 'Apri Shopify Inbox'}</a></div>
           </div>
         )}
         {err && <div className="err">{err}</div>}
@@ -713,7 +716,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   </div>
                   {showOrig && (
                     <details className="cs-orig">
-                      <summary><span className="cs-tri">▶</span> Email completa <span style={{ fontWeight: 400 }}>(citazioni e riepilogo)</span></summary>
+                      <summary><span className="cs-tri"><Icon name="chevron-right" size={11} /></span> Email completa <span style={{ fontWeight: 400 }}>(citazioni e riepilogo)</span></summary>
                       <div className="cs-obody">{m.body_text}</div>
                       <div className="cs-ofoot">Testo originale conservato tale e quale: questa è solo una vista.</div>
                     </details>
@@ -723,22 +726,22 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             })}
         {c.canale !== 'rumore' && c.categoria && CASE_CATS.has(c.categoria) && caso && (
           <div className="cs-case">
-            <div className="cs-case-h">{c.categoria === 'Modifica / correzione indirizzo' ? '📍 Caso indirizzo — calcolato dal sistema' : '↩️ Caso reso — calcolato dal sistema'}</div>
+            <div className="cs-case-h">{c.categoria === 'Modifica / correzione indirizzo' ? 'Caso indirizzo — calcolato dal sistema' : 'Caso reso — calcolato dal sistema'}</div>
             {/* lo stato TWS viveva qui: ora sta in INFO UTILI, dove si vede su OGNI conversazione con
                 una spedizione agganciata e non solo sulle tre categorie di CASE_CATS. Qui restano i
                 soli verdetti, che sono un'altra cosa (brief cs_info_utili, vincolo 2). */}
             {c.categoria === 'Modifica / correzione indirizzo' ? (
               caso.indirizzo.caso === 'correggibile' ? (
-                <div className="cs-verdict cs-v-ok"><b>🚚 Non ancora ritirata dal corriere · ✅ correggibile</b><span>Chiedi l&#8217;indirizzo completo; correggi su Shopify e TWS prima del ritiro.</span></div>
+                <div className="cs-verdict cs-v-ok"><b><Icon name="truck" size={14} /> Non ancora ritirata dal corriere · correggibile</b><span>Chiedi l&#8217;indirizzo completo; correggi su Shopify e TWS prima del ritiro.</span></div>
               ) : caso.indirizzo.caso === 'consegnato' ? (
-                <div className="cs-verdict cs-v-no"><b>📬 Risulta gia&#8217; consegnata · nulla da fare sulla spedizione</b><span>Bozza: empatia + vicini/portineria, niente promesse impossibili.</span></div>
+                <div className="cs-verdict cs-v-no"><b><Icon name="inbox" size={14} /> Risulta gia&#8217; consegnata · nulla da fare sulla spedizione</b><span>Bozza: empatia + vicini/portineria, niente promesse impossibili.</span></div>
               ) : caso.indirizzo.caso === 'verificare_tracking' ? (
                 <div className="cs-verdict cs-v-warn">
-                  <b>🚚 Gia&#8217; partita: in viaggio o gia&#8217; consegnata?</b>
-                  <span>{caso.tracking_url ? <>Controlla dal <a href={caso.tracking_url} target="_blank" rel="noreferrer">tracking ↗</a> — se risulta consegnata, conferma qui la data.</> : 'Tracking non disponibile: la bozza resta prudente su entrambe le ipotesi.'}</span>
+                  <b><Icon name="truck" size={14} /> Gia&#8217; partita: in viaggio o gia&#8217; consegnata?</b>
+                  <span>{caso.tracking_url ? <>Controlla dal <a href={caso.tracking_url} target="_blank" rel="noreferrer">tracking <Icon name="external" size={11} /></a> — se risulta consegnata, conferma qui la data.</> : 'Tracking non disponibile: la bozza resta prudente su entrambe le ipotesi.'}</span>
                   <div className="cs-case-row">
                     <input type="date" value={confirmDate} onChange={(e) => setConfirmDate(e.target.value)} aria-label="Data di consegna" />
-                    <button className="cs-btn cs-ghost" type="button" disabled={!confirmDate || casoBusy} onClick={() => loadCaso(c.id, confirmDate)}>{casoBusy ? '…' : '✓ Consegnata in questa data'}</button>
+                    <button className="cs-btn cs-ghost" type="button" disabled={!confirmDate || casoBusy} onClick={() => loadCaso(c.id, confirmDate)}>{casoBusy ? '…' : 'Consegnata in questa data'}</button>
                   </div>
                 </div>
               ) : (
@@ -747,17 +750,17 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             ) : (
               <>
                 {caso.reso.difetto_sospetto && (
-                  <div className="cs-verdict cs-v-warn"><b>⚠️ Possibile difetto segnalato</b><span>La finestra non si applica da sola (garanzia legale 24 mesi): bozza prudente, mai un rifiuto.</span></div>
+                  <div className="cs-verdict cs-v-warn"><b><Icon name="alert" size={14} /> Possibile difetto segnalato</b><span>La finestra non si applica da sola (garanzia legale 24 mesi): bozza prudente, mai un rifiuto.</span></div>
                 )}
                 {caso.reso.verdetto === 'non_applicabile' ? (
                   <div className="cs-verdict cs-v-info">
-                    <b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · nessun verdetto sulla finestra</b>
+                    <b><Icon name="note" size={14} /> Ordine del {fmtData(caso.reso.ordine_del)} · nessun verdetto sulla finestra</b>
                     <span>{NON_APP_UI[caso.reso.non_applicabile ?? 'rimborsato']}</span>
                   </div>
                 ) : caso.reso.verdetto === 'entro' ? (
-                  <div className="cs-verdict cs-v-ok"><b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
+                  <div className="cs-verdict cs-v-ok"><b><Icon name="note" size={14} /> Ordine del {fmtData(caso.reso.ordine_del)} · {caso.reso.giorni} giorni fa · ENTRO i {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
                 ) : caso.reso.verdetto === 'fuori' ? (
-                  <div className="cs-verdict cs-v-no"><b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
+                  <div className="cs-verdict cs-v-no"><b><Icon name="note" size={14} /> Ordine del {fmtData(caso.reso.ordine_del)} · {caso.reso.giorni} giorni fa · FUORI dai {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
                 ) : (
                   <div className="cs-verdict cs-v-info">
                     <b>Ordine non identificato con certezza</b>
@@ -785,15 +788,15 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 <div className={stantia ? 'cs-lint' : 'cs-note'} style={{ textAlign: 'left', marginBottom: 8 }}>
                   <b>C&#8217;&#232; gi&#224; una bozza</b> del {fmtData(q.slice(0, 10))} alle {new Date(q).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
                   {bozzaSalvata.edited ? ', con le tue modifiche' : ''}.
-                  {inDopo && <div style={{ marginTop: 4 }}>⚠️ Dopo quella bozza la cliente ha scritto di nuovo: rigenerala, o risponderai a un messaggio vecchio.</div>}
-                  {!inDopo && outDopo && <div style={{ marginTop: 4 }}>⚠️ Dopo quella bozza &#232; gi&#224; partita una risposta: controlla il thread prima di usarla.</div>}
+                  {inDopo && <div style={{ marginTop: 4 }}><Icon name="alert" size={13} /> Dopo quella bozza la cliente ha scritto di nuovo: rigenerala, o risponderai a un messaggio vecchio.</div>}
+                  {!inDopo && outDopo && <div style={{ marginTop: 4 }}><Icon name="alert" size={13} /> Dopo quella bozza &#232; gi&#224; partita una risposta: controlla il thread prima di usarla.</div>}
                   <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <button className="cs-btn cs-ghost" type="button" onClick={() => {
                       setOptions([{ tono: 'bozza', testo: bozzaSalvata.testo, da_verificare: 0 }]);
                       setSchema('toni'); setDraftId(bozzaSalvata.id); setSelIdx(0);
                       setBozzaText(bozzaSalvata.testo); setDaVer(0); setNonGrounded([]); setFonti(bozzaSalvata.fonti);
                       setSentTo(null); setCopied(false);
-                    }}>↩ Riprendi questa bozza</button>
+                    }}><Icon name="undo" size={14} /> Riprendi questa bozza</button>
                   </div>
                 </div>
               );
@@ -803,7 +806,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 {/* v24: niente "3" nel bottone. Col nuovo schema il numero di alternative dipende dal
                     caso (una sola quando i dati decidono), e la UI non sa quale schema e' attivo
                     prima di generare: promettere tre e darne una sembrerebbe un guasto. */}
-                {genBozza ? 'Genero le proposte…' : '✍️ Genera le risposte con i dati reali'}
+                {genBozza ? 'Genero le proposte…' : 'Genera le risposte con i dati reali'}
               </button>
             ) : (
               <>
@@ -829,32 +832,32 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   <div className="cs-note">Una sola risposta possibile: i dati bastano a decidere, non ci sono esiti alternativi da scegliere.</div>
                 )}
                 {troncate > 0 && (
-                  <div className="cs-note">⚠ {troncate === 1 ? 'Una proposta risulta tagliata a metà' : `${troncate} proposte risultano tagliate a metà`}: la generazione si è interrotta anche al secondo tentativo. Rigenera o completa a mano prima di inviare.</div>
+                  <div className="cs-note"><Icon name="alert" size={13} /> {troncate === 1 ? 'Una proposta risulta tagliata a metà' : `${troncate} proposte risultano tagliate a metà`}: la generazione si è interrotta anche al secondo tentativo. Rigenera o completa a mano prima di inviare.</div>
                 )}
                 <div className="cs-draft-h">
-                  <span>✍️ Bozza (ritoccala o chiedi una modifica)</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name="pencil" size={14} /> Bozza (ritoccala o chiedi una modifica)</span>
                   {daVer > 0 && <span className="cs-badge cs-warn">{daVer} da verificare</span>}
-                  {nonGrounded.length > 0 && <span className="cs-badge cs-urg">⚠ {nonGrounded.length} non nel gestionale</span>}
+                  {nonGrounded.length > 0 && <span className="cs-badge cs-urg"><Icon name="alert" size={12} /> {nonGrounded.length} non nel gestionale</span>}
                 </div>
                 <textarea className="cs-draft-ta" value={bozzaText} onChange={(e) => { setBozzaText(e.target.value); setSentTo(null); }} rows={8} />
                 {nonGrounded.length > 0 && (
-                  <div className="cs-lint">⚠️ <b>Controlla questi dati</b> — l&#8217;AI li ha scritti ma NON risultano dal gestionale: {nonGrounded.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}</div>
+                  <div className="cs-lint"><Icon name="alert" size={14} /> <b>Controlla questi dati</b> — l&#8217;AI li ha scritti ma NON risultano dal gestionale: {nonGrounded.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}</div>
                 )}
                 <div className="cs-refine">
                   <input className="cs-refine-in" value={refineTxt} onChange={(e) => setRefineTxt(e.target.value)} placeholder="Chiedi una modifica all’AI (es. più formale, aggiungi il reso)" onKeyDown={(e) => { if (e.key === 'Enter') doRefine(); }} disabled={refining} />
-                  <button className="cs-btn cs-ghost" onClick={doRefine} disabled={refining || !refineTxt.trim()} type="button">{refining ? '…' : '✨ Applica'}</button>
+                  <button className="cs-btn cs-ghost" onClick={doRefine} disabled={refining || !refineTxt.trim()} type="button">{refining ? '…' : 'Applica'}</button>
                 </div>
                 <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                   {c.canale === 'chat_notifica' ? (
                     /* Fase 4, decisione owner 01-08: la chat si risponde DENTRO Inbox (niente invio da qui) */
-                    <button className="cs-btn cs-primary" onClick={copiaEApriInbox} type="button">{copied ? '✓ Copiata' : '📋 Copia risposta e apri in Inbox ↗'}</button>
+                    <button className="cs-btn cs-primary" onClick={copiaEApriInbox} type="button">{copied ? 'Copiata' : 'Copia risposta e apri in Inbox'}</button>
                   ) : (
                     CAN_SEND.has(c.canale) && c.customer_email && (
-                      <button className="cs-btn cs-primary" onClick={openSend} disabled={sending || !!sentTo || !bozzaText.trim()} type="button">{sentTo ? '✓ Inviata' : '✉️ Invia…'}</button>
+                      <button className="cs-btn cs-primary" onClick={openSend} disabled={sending || !!sentTo || !bozzaText.trim()} type="button">{sentTo ? 'Inviata' : 'Invia…'}</button>
                     )
                   )}
-                  {c.canale !== 'chat_notifica' && <button className="cs-btn cs-ghost" onClick={copiaBozza} type="button">{copied ? '✓ Copiata' : '📋 Copia'}</button>}
-                  <button className="cs-btn cs-ghost" onClick={doGenOptions} disabled={genBozza} type="button">{genBozza ? '…' : '↻ Rigenera'}</button>
+                  {c.canale !== 'chat_notifica' && <button className="cs-btn cs-ghost" onClick={copiaBozza} type="button">{copied ? 'Copiata' : 'Copia'}</button>}
+                  <button className="cs-btn cs-ghost" onClick={doGenOptions} disabled={genBozza} type="button">{genBozza ? '…' : 'Rigenera'}</button>
                 </div>
                 {CAN_SEND.has(c.canale) && !c.customer_email && (
                   <div className="cs-note" style={{ textAlign: 'left', marginTop: 8 }}>Email del cliente non presente: l&#8217;invio da qui non &#232; possibile, rispondi dal thread Gmail.</div>
@@ -862,7 +865,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 {fonti.length > 0 && (
                   <div className="cs-fonti">
                     <div className="cs-fonti-h">Fonti (dati recuperati dal gestionale)</div>
-                    {fonti.map((f, i) => <div key={i} className="cs-fonti-row">• {f}</div>)}
+                    {fonti.map((f, i) => <div key={i} className="cs-fonti-row">– {f}</div>)}
                   </div>
                 )}
               </>
@@ -872,7 +875,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             {sendOpen && (
               <div className="cs-sendwrap" role="dialog" aria-modal="true" aria-label="Conferma invio">
                 <div className="cs-sendmodal">
-                  <div className="cs-send-h">✉️ Conferma invio</div>
+                  <div className="cs-send-h"><Icon name="send" size={15} /> Conferma invio</div>
                   <div className="cs-send-row"><span className="k">A</span><b>{c.customer_email}</b></div>
                   <div className="cs-send-row"><span className="k">Da</span><span>info@amimi.it{ident && IDENTS[ident] ? ` · firma ${IDENTS[ident].n}` : ''}</span></div>
                   <div className="cs-send-row"><span className="k">Come</span><span>{c.canale === 'email_diretta' ? 'risposta nello stesso thread Gmail' : 'email nuova al cliente (il modulo del sito non è rispondibile)'}</span></div>
@@ -887,7 +890,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                     const quando = new Date(out).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
                     return (
                       <div className="cs-lint" style={{ marginTop: 10 }}>
-                        ⚠️ A questa cliente risulta <b>già inviata una risposta</b> il {quando}, e da allora non ha più scritto. Se è un secondo invio voluto va bene, altrimenti annulla.
+                        <Icon name="alert" size={13} /> A questa cliente risulta <b>già inviata una risposta</b> il {quando}, e da allora non ha più scritto. Se è un secondo invio voluto va bene, altrimenti annulla.
                       </div>
                     );
                   })()}
@@ -902,11 +905,11 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                       <div className="cs-lint" style={{ marginTop: 10 }}>
                         {ph.length > 0 && (
                           <div>
-                            ⚠️ Nel testo ci sono ancora <b>{ph.length} segnaposto</b>: {ph.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}
+                            <Icon name="alert" size={13} /> Nel testo ci sono ancora <b>{ph.length} segnaposto</b>: {ph.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}
                             <div style={{ marginTop: 4 }}>Completali o toglili. Invia solo se è una scelta consapevole.</div>
                           </div>
                         )}
-                        {nonGrounded.length > 0 && <div style={{ marginTop: ph.length > 0 ? 6 : 0 }}>⚠️ Dati NON trovati nel gestionale (dall&#8217;ultima generazione): {nonGrounded.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}</div>}
+                        {nonGrounded.length > 0 && <div style={{ marginTop: ph.length > 0 ? 6 : 0 }}><Icon name="alert" size={13} /> Dati NON trovati nel gestionale (dall&#8217;ultima generazione): {nonGrounded.map((t, i) => <span key={i} className="cs-lint-t">{t}</span>)}</div>}
                       </div>
                     );
                   })()}
@@ -923,8 +926,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   <div className="cs-send-actions">
                     <button className="cs-btn cs-ghost" onClick={() => setSendOpen(false)} disabled={sending} type="button">{sendBloccato ? 'Chiudi' : 'Annulla'}</button>
                     {sendBloccato
-                      ? <button className="cs-btn cs-ghost" onClick={copiaBozza} type="button">{copied ? '✓ Copiata' : '📋 Copia la risposta'}</button>
-                      : <button className="cs-btn cs-primary" onClick={doSend} disabled={sending} type="button">{sending ? 'Invio…' : '✓ Invia adesso'}</button>}
+                      ? <button className="cs-btn cs-ghost" onClick={copiaBozza} type="button">{copied ? 'Copiata' : 'Copia la risposta'}</button>
+                      : <button className="cs-btn cs-primary" onClick={doSend} disabled={sending} type="button">{sending ? 'Invio…' : 'Invia adesso'}</button>}
                   </div>
                 </div>
               </div>
@@ -939,7 +942,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   if (view === 'rumore') return (
     <div className="screen">
       <header>
-        <button className="badge" onClick={goCoda} type="button">‹ Coda</button>
+        <button className="badge" onClick={goCoda} type="button"><Icon name="chevron-left" size={14} /> Coda</button>
         <h1 style={{ fontSize: 18 }}>Rumore</h1>
         <span style={{ width: 40 }} />
       </header>
@@ -948,9 +951,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         rumore.length === 0 ? <div className="muted center" style={{ padding: 20 }}>Niente rumore.</div> :
           rumore.map((c) => (
             <div key={c.id} className="cs-card cs-quiet" onClick={() => openThread(c)} role="button" tabIndex={0}>
-              <div className="cs-ctop"><span className="cs-emoji">🔕</span><span className="cs-cn">{c.subject || nmeOf(c)}</span><span className="cs-cora">{fmtWhen(c.last_msg_at)}</span></div>
+              <div className="cs-ctop"><span className="cs-emoji"><Icon name="bell-off" size={16} /></span><span className="cs-cn">{c.subject || nmeOf(c)}</span><span className="cs-cora">{fmtWhen(c.last_msg_at)}</span></div>
               <div style={{ marginTop: 6 }}>
-                <button className="cs-btn cs-ghost" type="button" disabled={savingStato} onClick={(e) => { e.stopPropagation(); doUnNoise(c); }}>↩ È un cliente, riporta in coda</button>
+                <button className="cs-btn cs-ghost" type="button" disabled={savingStato} onClick={(e) => { e.stopPropagation(); doUnNoise(c); }}><Icon name="undo" size={15} /> È un cliente, riporta in coda</button>
               </div>
             </div>
           ))}
@@ -983,21 +986,21 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       <Badges c={c} />
       <div className="cs-badges">
         <span className="cs-badge cs-can">{CANALI[c.canale]}</span>
-        {c.stato === 'in_corso' && <span className="cs-badge cs-state cs-state-prog">✋ {c.stato_by}</span>}
+        {c.stato === 'in_corso' && <span className="cs-badge cs-state cs-state-prog"><Icon name="hand" size={12} /> {c.stato_by}</span>}
         {/* brief stato_automatico: distinguere a colpo d'occhio chiusa-da-sola da chiusa-da-persona */}
-        {c.stato === 'fatto' && <span className="cs-badge cs-state cs-state-done">{c.stato_by === 'auto' ? '✓ chiusa da sola' : `✓ ${c.stato_by ?? 'conclusa'}`}</span>}
+        {c.stato === 'fatto' && <span className="cs-badge cs-state cs-state-done"><Icon name="check" size={12} /> {c.stato_by === 'auto' ? 'chiusa da sola' : (c.stato_by ?? 'conclusa')}</span>}
         {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">risposta in Inbox</span>}
         {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
         {/* 5.2: si vede gia' dalla coda che questa persona e' su piu' card */}
-        {altreAperte(c, convs).length > 0 && <span className="cs-badge cs-urg">👥 altre {altreAperte(c, convs).length} di questa cliente</span>}
+        {altreAperte(c, convs).length > 0 && <span className="cs-badge cs-urg"><Icon name="chat" size={12} /> altre {altreAperte(c, convs).length} di questa cliente</span>}
       </div>
     </button>
   );
 
   // PER TEMA: le 13 categorie nell'ordine del design + "Da confermare" (ai_low/senza categoria)
   const temaGroups = [
-    ...CS_CATEGORIES.map((k) => ({ key: k.label, label: k.label, emoji: k.emoji, items: list.filter((c) => c.categoria === k.label) })),
-    { key: '__daconf__', label: 'Da confermare', emoji: '🏷️', items: list.filter((c) => !c.categoria) },
+    ...CS_CATEGORIES.map((k) => ({ key: k.label, label: k.label, icon: k.icon, items: list.filter((c) => c.categoria === k.label) })),
+    { key: '__daconf__', label: 'Da confermare', icon: 'tag', items: list.filter((c) => !c.categoria) },
   ].filter((g) => g.items.length > 0);
   const toggleCat = (key: string) => setCollapsed((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
 
@@ -1007,10 +1010,10 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         {/* UAT 02-08: via "aiutiamo dei clienti", resta il saluto. */}
         <button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--dark)', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 9 }}>
           <Avatar k={ident} size={30} />
-          <span>Ciao {IDENTS[ident]?.n ?? ident} <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 400 }}>▾</span></span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>Ciao {IDENTS[ident]?.n ?? ident} <Icon name="chevron-down" size={13} /></span>
         </button>
         {/* UAT 02-08: "Aggiorna" in alto a destra. Stava in fondo alla riga dei conteggi, che non c'e' piu'. */}
-        <button onClick={doRefresh} disabled={refreshing} type="button" style={{ background: 'none', border: '1px solid var(--line)', borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, color: 'var(--rose)', cursor: 'pointer', opacity: refreshing ? 0.6 : 1 }}>{refreshing ? 'Aggiorno…' : '↻ Aggiorna'}</button>
+        <button onClick={doRefresh} disabled={refreshing} type="button" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: '1px solid var(--edge)', borderRadius: 'var(--r-pill)', padding: '6px 12px', minHeight: 'var(--tap)', fontSize: 12.5, fontWeight: 700, color: 'var(--brand)', cursor: 'pointer', opacity: refreshing ? 0.5 : 1 }}><Icon name="refresh" size={14} />{refreshing ? 'Aggiorno…' : 'Aggiorna'}</button>
       </header>
       {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
 
@@ -1027,14 +1030,14 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       <div className="cs-sortrow">
         <span className="cs-sortlbl">Ordina per</span>
         <div className="cs-seg">
-          {([['tempo', '🕗 Data'], ['tema', '🏷️ Tema']] as const).map(([k, l]) => (
+          {([['tempo', 'Data'], ['tema', 'Tema']] as const).map(([k, l]) => (
             <button key={k} className={'cs-seg-btn' + (codaView === k ? ' on' : '')} onClick={() => setCodaView(k)} type="button">{l}</button>
           ))}
         </div>
       </div>
       {err && <div className="err">{err}</div>}
       {convs === null ? <div className="muted center" style={{ padding: 24 }}>Carico la coda…</div> :
-        list.length === 0 ? <div className="muted center" style={{ padding: 24 }}>Niente qui: coda pulita ✨</div> :
+        list.length === 0 ? <div className="muted center" style={{ padding: 24 }}>Niente qui: coda pulita</div> :
         codaView === 'tempo' ?
           BUCKETS.map(([bk, label]) => {
             const g = list.filter((c) => bucketOf(c.last_msg_at) === bk);
@@ -1053,14 +1056,14 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             return (
               <div key={grp.key}>
                 <button className="cs-sect cs-secttoggle" type="button" onClick={() => toggleCat(grp.key)}>
-                  <span>{grp.emoji} {grp.label}</span>
-                  <span className="cs-cnt">{nurg > 0 ? `${nurg}🚨 · ` : ''}{grp.items.length} {isColl ? '▸' : '▾'}</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Icon name={grp.icon} size={15} /> {grp.label}</span>
+                  <span className="cs-cnt">{nurg > 0 ? `${nurg} urgenti · ` : ''}{grp.items.length} <Icon name={isColl ? 'chevron-right' : 'chevron-down'} size={12} /></span>
                 </button>
                 {!isColl && grp.items.map(card)}
               </div>
             );
           })}
-      <button className="cs-rumore" onClick={openRumore} type="button">🔕 Rumore nascosto (notifiche Shopify, spam, DMARC){rumCount != null ? `: ${rumCount}` : ''} ›</button>
+      <button className="cs-rumore" onClick={openRumore} type="button"><Icon name="bell-off" size={14} /> Rumore nascosto (notifiche Shopify, spam, DMARC){rumCount != null ? `: ${rumCount}` : ''} <Icon name="chevron-right" size={13} /></button>
       {toast && (
         <div className="cs-toast" role="status">
           <span>{toast.msg}</span>
@@ -1105,12 +1108,12 @@ function AiSettings({ ident }: { ident: string }) {
   };
   const save = async () => {
     setSaving(true); setMsg('');
-    try { await setAiIstruzioni(txt, ident); setMsg('Salvato ✓'); } catch (e) { setMsg((e as Error).message); }
+    try { await setAiIstruzioni(txt, ident); setMsg('Salvato'); } catch (e) { setMsg((e as Error).message); }
     setSaving(false);
   };
   return (
     <div className="cs-aiset">
-      <button className="cs-aiset-h" type="button" onClick={expand}>⚙️ Come deve rispondere l&#8217;AI <span>{open ? '▾' : '▸'}</span></button>
+      <button className="cs-aiset-h" type="button" onClick={expand}><span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><Icon name="settings" size={15} /> Come deve rispondere l&#8217;AI</span><Icon name={open ? 'chevron-down' : 'chevron-right'} size={13} /></button>
       {open && (
         <div className="cs-aiset-b">
           {cfg && <div className="cs-note" style={{ marginTop: 0 }}>Motore attivo: <b>{cfg.provider === 'claude' ? 'Claude (' + cfg.model + ')' : 'Gemini (gratis)'}</b></div>}
