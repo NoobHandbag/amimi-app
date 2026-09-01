@@ -568,8 +568,8 @@ export async function fetchActiveFornitori(): Promise<string[]> {
 // edit/correct a registered arrival: set the arrived TOTAL (stock follows the delta);
 // costo opzionale per risolvere le righe WIP all'arrivo. confirmDup (fix a, 31-07): il server
 // blocca un possibile doppio arrivo in giornata; si supera solo dopo conferma dell'utente.
-export const setArrival = (orderId: string, qty: number, data: string, pin: string, chi: string, costo?: number | null, confirmDup = false) =>
-  writeApi('arrival_set', { order_id: orderId, qty, data, ...(costo != null ? { costo_unitario: costo } : {}), ...(confirmDup ? { confirm_duplicato: true } : {}) }, pin, chi);
+export const setArrival = (orderId: string, qty: number, data: string, pin: string, chi: string, costo?: number | null, confirmDup = false, force = false) =>
+  writeApi('arrival_set', { order_id: orderId, qty, data, ...(costo != null ? { costo_unitario: costo } : {}), ...(confirmDup ? { confirm_duplicato: true } : {}) }, pin, chi, force);
 
 // cancella una riga ordine fornitore (item 10); il server blocca se ha arrivi registrati
 export const deleteOrder = (orderId: string, pin: string, chi: string) =>

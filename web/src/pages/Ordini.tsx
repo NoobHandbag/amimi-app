@@ -22,22 +22,31 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLin
   async function save() {
     if (n === '' || isNaN(Number(n)) || Number(n) < 0) return toast('Valore non valido', 'err');
     setBusy(true);
-    try {
-      await setArrival(l.id, Number(n), d, pin, chi, costo !== '' ? Number(costo) : null);
-      toast(`Arrivo salvato · ${n}${l.wip ? '' : `/${l.qty_ordered}`}`, 'ok'); setOpen(false);
-    }
-    catch (e) {
-      // fix a (31-07): il server ha visto un arrivo GIA' registrato oggi per questo codice su
-      // un'altra riga (il meccanismo del doppio conteggio COCCO/TOASTED). Si procede solo su conferma.
-      if ((e as Error & { duplicato?: boolean }).duplicato) {
-        if (window.confirm((e as Error).message + '\n\nRegistrare COMUNQUE questo arrivo?')) {
-          try {
-            await setArrival(l.id, Number(n), d, pin, chi, costo !== '' ? Number(costo) : null, true);
-            toast(`Arrivo salvato · ${n}${l.wip ? '' : `/${l.qty_ordered}`}`, 'ok'); setOpen(false);
-          } catch (e2) { toast((e2 as Error).message, 'err'); }
+    // Un solo punto di scrittura, ritentabile: il server puo' rispondere con due guardie e la UI le
+    // scioglie con una conferma ciascuna (concatenabili, se scattano entrambe).
+    const doSave = async (force: boolean, confirmDup: boolean): Promise<void> => {
+      try {
+        await setArrival(l.id, Number(n), d, pin, chi, costo !== '' ? Number(costo) : null, confirmDup, force);
+        toast(`Arrivo salvato · ${n}${l.wip ? '' : `/${l.qty_ordered}`}`, 'ok'); setOpen(false);
+      }
+      catch (e) {
+        const err = e as Error & { closedMonth?: boolean; duplicato?: boolean };
+        // mese chiuso (protezione CE): non e' un blocco definitivo, si registra comunque su conferma
+        // esplicita (force). L'owner ha scelto la conferma al posto del blocco secco (2026-09-01).
+        if (err.closedMonth && !force) {
+          if (window.confirm(err.message + '\n\nRegistrare COMUNQUE questo arrivo?')) return doSave(true, confirmDup);
+          return;
         }
-      } else toast((e as Error).message, 'err');
-    }
+        // fix a (31-07): il server ha visto un arrivo GIA' registrato oggi per questo codice su
+        // un'altra riga (il meccanismo del doppio conteggio COCCO/TOASTED). Si procede solo su conferma.
+        if (err.duplicato && !confirmDup) {
+          if (window.confirm(err.message + '\n\nRegistrare COMUNQUE questo arrivo?')) return doSave(force, true);
+          return;
+        }
+        toast(err.message, 'err');
+      }
+    };
+    try { await doSave(false, false); }
     finally { setBusy(false); reload(); }
   }
 
