@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Tab } from './lib/people';
 import Home from './pages/Home';
 import Report from './pages/Report';
+import CeDetail from './pages/CeDetail';
 import Salute from './pages/Salute';
 import Assistenza from './pages/Assistenza';
 import Ingest from './pages/Ingest';
@@ -32,7 +33,8 @@ export default function App() {
     <div className="app">
       <main>
         {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} />}
-        {tab === 'cruscotto' && <Report onBack={() => go('home')} />}
+        {tab === 'cruscotto' && <Report onBack={() => go('home')} onDetail={() => go('ce')} />}
+        {tab === 'ce' && <CeDetail onBack={() => go('home')} />}
         {tab === 'salute' && <Salute onBack={() => go('home')} chi={chi} go={go} pin={pin} />}
         {tab === 'assistenza' && <Assistenza onBack={() => go('home')} />}
         {tab === 'registra' && <Ingest pin={pin} chi={chi} initial={param} />}

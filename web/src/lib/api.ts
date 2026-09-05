@@ -587,3 +587,73 @@ export async function fetchLastSaleMap(): Promise<Map<string, { date: string | n
     m.set(r.codice_norm, { date: r.last_date, price: r.last_price }));
   return m;
 }
+
+// ---------- CE dettagliato + drilldown (migr 0108) ----------
+// La griglia completa riga x mese, come il vecchio CE_Master, con drilldown reale su ogni cella.
+// I numeri arrivano dalle stesse viste del Cruscotto (parity-validate); le tre viste v_ce_drill_*
+// restituiscono le RIGHE che sommano alla cella (verificato diff 0,00, Amimì e Totale).
+export type CeFull = {
+  year: number; month: number;
+  online_lordo: number; online_netto: number; online_pezzi: number;
+  offline_lordo: number; offline_netto: number; offline_pezzi: number;
+  b2b_lordo: number; b2b_netto: number; b2b_pezzi: number;
+  omni_netto: number; cogs: number; packaging: number; commissioni: number;
+  logistica_var: number; resi: number; salari: number; tasse: number;
+  logistica_mag: number; opex: number; eventi: number; marketing: number;
+  mc1: number; mc2: number;
+};
+const CE_COLS = 'year,month,online_lordo,online_netto,online_pezzi,offline_lordo,offline_netto,offline_pezzi,b2b_lordo,b2b_netto,b2b_pezzi,omni_netto,cogs,packaging,commissioni,logistica_var,resi,salari,tasse,logistica_mag,opex,eventi,marketing,mc1,mc2';
+/** Full CE grid for the active scope. Amimì = v_ce_amimi_summary (brand), Totale = v_ce_totale. */
+export async function fetchCeGrid(scope: 'amimi' | 'totale'): Promise<CeFull[]> {
+  const view = scope === 'amimi' ? 'v_ce_amimi_summary' : 'v_ce_totale';
+  const { data, error } = await supabase.from(view).select(CE_COLS).eq('year', nowYear()).order('month');
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: Record<string, unknown>) => {
+    const o = {} as Record<string, number>;
+    CE_COLS.split(',').forEach((c) => { o[c] = Number(r[c] ?? 0); });
+    return o as unknown as CeFull;
+  });
+}
+
+export type DrillExp = { date_paid: string | null; operazione: string | null; categoria: string | null; sottocategoria: string | null; costo: number; amimi: boolean };
+/** Righe di spesa dietro una voce di costo (sal/tasse/opex/ev/mkt/lvar/lmag). amimiOnly per lo scope brand. */
+export async function fetchDrillExpense(ceLine: string, month: number, amimiOnly: boolean): Promise<DrillExp[]> {
+  let q = supabase.from('v_ce_drill_expense')
+    .select('date_paid,operazione,categoria,sottocategoria,costo,amimi')
+    .eq('ce_line', ceLine).eq('year', nowYear()).eq('month', month);
+  if (amimiOnly) q = q.eq('amimi', true);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as DrillExp[]).map((r) => ({ ...r, costo: Number(r.costo) })).sort((a, b) => a.costo - b.costo);
+}
+
+export type DrillCogs = { codice: string; item: string | null; variant: string | null; canale: string; qty: number; costo: number };
+/** COGS per codice (aggregato dalle righe di venduto). includeGift = scope Totale. */
+export async function fetchDrillCogs(month: number, includeGift: boolean): Promise<DrillCogs[]> {
+  const canali = includeGift ? ['online', 'offline', 'b2b', 'gift'] : ['online', 'offline', 'b2b'];
+  const { data, error } = await supabase.from('v_ce_drill_cogs')
+    .select('codice,item,variant,canale,qty,costo').eq('year', nowYear()).eq('month', month).in('canale', canali);
+  if (error) throw new Error(error.message);
+  // una riga per line item/vendita: aggrega per codice per una lista prodotti leggibile
+  const byC = new Map<string, DrillCogs>();
+  ((data ?? []) as DrillCogs[]).forEach((r) => {
+    const key = r.codice ?? '—';
+    const e = byC.get(key) ?? { codice: key, item: r.item, variant: r.variant, canale: r.canale, qty: 0, costo: 0 };
+    e.qty += Number(r.qty) || 0; e.costo += Number(r.costo) || 0;
+    if (!e.item && r.item) { e.item = r.item; e.variant = r.variant; }
+    byC.set(key, e);
+  });
+  return [...byC.values()].filter((r) => r.costo !== 0 || r.qty !== 0).sort((a, b) => a.costo - b.costo);
+}
+
+export type DrillSale = { canale: string; ref: string | null; descr: string | null; data: string | null; qty: number | null; lordo: number; commissioni: number; refund: number; is_gift: boolean };
+/** Righe di ricavo (ordini online, scontrini, gift, b2b) di un mese, per i canali richiesti. */
+export async function fetchDrillSales(canali: string[], month: number): Promise<DrillSale[]> {
+  const { data, error } = await supabase.from('v_ce_drill_sales')
+    .select('canale,ref,descr,data,qty,lordo,commissioni,refund,is_gift')
+    .eq('year', nowYear()).eq('month', month).in('canale', canali);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as DrillSale[]).map((r) => ({
+    ...r, qty: r.qty == null ? null : Number(r.qty), lordo: Number(r.lordo), commissioni: Number(r.commissioni), refund: Number(r.refund),
+  }));
+}

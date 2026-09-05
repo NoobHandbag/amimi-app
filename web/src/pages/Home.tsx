@@ -79,10 +79,10 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
     for (const t of [...cfg.tiles.slice(4), ...ALL_ACTIONS.filter((a) => GEST.has(keyOf(a)))]) {
       const k = keyOf(t);
       if (seen.has(k)) continue;
-      if (t.tab === 'cruscotto' && !cfg.finance) continue;
+      if ((t.tab === 'cruscotto' || t.tab === 'ce') && !cfg.finance) continue;
       seen.add(k); gest.push(t);
     }
-    const altro = ALL_ACTIONS.filter((t) => !seen.has(keyOf(t)) && (t.tab !== 'cruscotto' || cfg.finance));
+    const altro = ALL_ACTIONS.filter((t) => !seen.has(keyOf(t)) && ((t.tab !== 'cruscotto' && t.tab !== 'ce') || cfg.finance));
     return { quick, gestione: gest, altro };
   }, [cfg]);
 

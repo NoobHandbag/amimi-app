@@ -21,7 +21,7 @@ type Row = { month: number; netto: number; lordo: number; mc1: number; mc2: numb
 
 const CURRENT_MONTH = nowMonth(); // mese in corso, derivato dalla data (mai hardcoded)
 
-export default function Report({ onBack }: { onBack?: () => void }) {
+export default function Report({ onBack, onDetail }: { onBack?: () => void; onDetail?: () => void }) {
   const [ce, setCe] = useState<CE[]>([]);
   const [cet, setCet] = useState<CeTot[]>([]);
   const [inv, setInv] = useState<Inv[]>([]);
@@ -189,7 +189,10 @@ export default function Report({ onBack }: { onBack?: () => void }) {
       </section>
 
       <section className="card">
-        <h2>Conto Economico mensile</h2>
+        <div className="dethead">
+          <h2>Conto Economico mensile</h2>
+          {onDetail && <button className="ds-btn secondary" onClick={onDetail}>Vedi dettaglio ›</button>}
+        </div>
         <div className="tablewrap">
           <table className="sortable">
             <thead><tr>
