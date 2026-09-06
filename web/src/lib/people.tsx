@@ -1,7 +1,9 @@
 // Centralized people + persona-driven navigation. Dan removed (= Ale, same person).
 // The Home surfaces only the tiles relevant to each persona; Registra shows the same actions for everyone.
 
-export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'salute' | 'assistenza';
+export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza';
+/** Tab visibili SOLO alle persona con finance=true (Home le filtra). */
+export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti']);
 export type Tile = { icon: string; label: string; tab: Tab; param?: string; badge?: 'arrivi' | 'todo' };
 
 export const PEOPLE = ['Ale', 'Bene', 'Ginevra'] as const;
@@ -14,6 +16,8 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
       { icon: 'euro', label: 'CE dettagliato', tab: 'ce' },
       { icon: 'pulse', label: 'Salute & Movimenti', tab: 'salute' },
       { icon: 'bag', label: 'Registra vendita', tab: 'registra', param: 'gift' },
+      { icon: 'tag', label: 'Margini', tab: 'margini' },
+      { icon: 'handshake', label: 'Clienti', tab: 'clienti' },
       { icon: 'recycle', label: 'Cosa riprodurre', tab: 'magazzino', param: 'riordino' },
       { icon: 'sparkles', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
       { icon: 'box', label: 'Ordini in arrivo', tab: 'ordini', badge: 'arrivi' },
@@ -43,6 +47,8 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
 export const ALL_ACTIONS: Tile[] = [
   { icon: 'chart', label: 'Cruscotto finanze', tab: 'cruscotto' },
   { icon: 'euro', label: 'CE dettagliato', tab: 'ce' },
+  { icon: 'tag', label: 'Margini', tab: 'margini' },
+  { icon: 'handshake', label: 'Clienti', tab: 'clienti' },
   { icon: 'pulse', label: 'Salute & Movimenti', tab: 'salute' },
   { icon: 'bag', label: 'Registra vendita', tab: 'registra', param: 'gift' },
   { icon: 'return', label: 'Reso / Cambio', tab: 'registra', param: 'reso' },

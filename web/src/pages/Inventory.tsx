@@ -152,6 +152,44 @@ function ReorderView({ pin, chi, goOrdini }: { pin: string; chi: string; goOrdin
   );
 }
 
+/* Per linea · sell-through (audit 06-09): venduto / acquistato per modello. Il Foglio lo aveva, l'app no.
+   Trovato al 06-09: borse 68%, accessori 14% (371 pezzi fermi), 36 codici senza categoria. */
+function LineePanel({ inv, go }: { inv: InvFull[]; go?: (t: 'registra' | 'ordini', p?: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const byItem = new Map<string, { acq: number; vend: number; giac: number; valore: number; n: number }>();
+  inv.forEach((p) => {
+    const k = p.item ?? '(senza modello)';
+    const e = byItem.get(k) ?? { acq: 0, vend: 0, giac: 0, valore: 0, n: 0 };
+    e.acq += Number(p.qty_purchased) || 0;
+    e.vend += (Number(p.shopify_sold) || 0) + (Number(p.qromo_sold) || 0) + (Number(p.gift_sold) || 0) + (Number(p.b2b_venduto) || 0);
+    e.giac += Number(p.giacenza_attuale) || 0; e.valore += Number(p.valore) || 0; e.n += 1;
+    byItem.set(k, e);
+  });
+  const rows = [...byItem.entries()].map(([item, e]) => ({ item, ...e, st: e.acq > 0 ? e.vend / e.acq : null })).sort((a, b) => b.vend - a.vend);
+  const senzaCat = inv.filter((p) => !p.categoria).length;
+  const stCls = (st: number | null) => (st == null ? '' : st >= 0.8 ? 'pos' : st < 0.3 ? 'neg' : '');
+  return (
+    <section className="card ask">
+      <button className="askhead" type="button" onClick={() => setOpen((o) => !o)}>📈 Per linea · sell-through <span className="muted">{open ? '−' : '+'}</span></button>
+      {open && (
+        <div className="askbody">
+          <p className="note" style={{ marginTop: 0 }}>Venduto su acquistato per modello: sopra 80% forte domanda, sotto 30% slow mover. Non giudicare le linee lanciate da meno di 60-90 giorni.</p>
+          <div className="tablewrap"><table className="sortable">
+            <thead><tr><th>Modello</th><th>Acq.</th><th>Vend.</th><th>Giac.</th><th>Sell-through</th><th>Valore</th></tr></thead>
+            <tbody>{rows.map((r) => (
+              <tr key={r.item}><td className="l">{prettyName(r.item, null)} <span className="muted">({r.n})</span></td><td>{r.acq}</td><td>{r.vend}</td><td>{r.giac}</td><td className={stCls(r.st)}>{r.st == null ? '—' : Math.round(r.st * 100) + '%'}</td><td>{eur(r.valore)}</td></tr>
+            ))}</tbody>
+          </table></div>
+          {senzaCat > 0 && (
+            <p className="note">{senzaCat} codici senza categoria: gli aggregati per categoria li perdono.{' '}
+              {go && <button className="chip" type="button" onClick={() => go('registra', 'pulizia')}>Apri Pulizia dati</button>}</p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /* Shopify status of a product → badge (Pubblicato / Esaurito online / In stock da caricare). */
 function shopStatus(p: InvFull): { cls: string; label: string } | null {
   if (p.on_shopify) return p.giacenza_attuale > 0 ? { cls: 'pub', label: 'Pubblicato' } : { cls: 'out', label: 'Esaurito online' };
@@ -292,6 +330,8 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
           </div>
 
           {magNeg > 0 && <p className="note">{magNeg} varianti a giacenza negativa (in rosso): vendite senza carico registrato, da sistemare.</p>}
+
+          <LineePanel inv={inv} go={go} />
 
           <div className="ds-search">
             <Icon name="search" size={18} />

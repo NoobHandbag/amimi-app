@@ -76,6 +76,15 @@ Deno.serve(async (req) => {
   const { count: unres } = await sb.from('qromo_sales').select('*', { count: 'exact', head: true }).eq('resolver_status', 'unresolved');
   add('ce_qromo_unresolved', 'Vendite Qromo con prodotto non risolto', unres ?? 0);
 
+  // 2bis) FRESCHEZZA del canale Qromo (caso aperto n.15, audit dashboard 06-09). Il check sopra guarda
+  // le righe che CI SONO, questo guarda quelle che MANCANO: 32 giorni di buco (30-07 -> 31-08) sono
+  // passati inosservati perche' tutto restava verde. Il negozio vende a giorni alterni e chiude in
+  // agosto, quindi soglie larghe: warn da 10 giorni, error da 21. n = giorni di silenzio, 0 se sano.
+  const { data: lastQ } = await sb.from('qromo_sales').select('data').order('data', { ascending: false }).limit(1);
+  const lastQIso = lastQ?.[0]?.data ? String(lastQ[0].data).slice(0, 10) : null;
+  const qDays = lastQIso ? Math.floor((now.getTime() - new Date(lastQIso + 'T12:00:00Z').getTime()) / 86400000) : 9999;
+  add('ce_qromo_freschezza', `Ultima vendita Qromo ${lastQIso ?? 'mai'}: ${qDays} giorni fa (atteso <10)`, qDays >= 10 ? qDays : 0, qDays >= 21 ? 'error' : 'warn');
+
   // 3) COGS mancanti su vendite risolte (Shopify righe + Qromo)
   const { count: liNoCogs } = await sb.from('shopify_line_items').select('*', { count: 'exact', head: true }).not('codice', 'is', null).is('cogs_snapshot', null);
   const { count: qrNoCogs } = await sb.from('qromo_sales').select('*', { count: 'exact', head: true }).not('codice', 'is', null).is('cogs', null).neq('resolver_status', 'unresolved');

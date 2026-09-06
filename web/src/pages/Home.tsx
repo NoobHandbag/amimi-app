@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { PERSONA, PersonaPicker, personaName, ALL_ACTIONS } from '../lib/people';
+import { PERSONA, PersonaPicker, personaName, ALL_ACTIONS, FINANCE_TABS } from '../lib/people';
 import type { Tab, Tile } from '../lib/people';
 import { nowMonth, nowYear, meseNome } from '../lib/helpers';
+import { fetchNettoMtd } from '../lib/api';
 import Icon from '../components/Icon';
 import HealthBanner from '../components/HealthBanner';
 import { VERSIONE_MIA } from '../lib/version';
@@ -35,7 +36,7 @@ function sparkPoints(vals: number[], w = 150, h = 26): string {
 export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: string) => void; go: (t: Tab, p?: string) => void }) {
   const cfg = PERSONA[chi] ?? PERSONA.Ale;
   const [badges, setBadges] = useState({ arrivi: 0, todo: 0 });
-  const [fin, setFin] = useState<{ netto: number; deltaPct: number | null; mc2: number; spark: number[] } | null>(null);
+  const [fin, setFin] = useState<{ netto: number; deltaPct: number | null; giorno: number | null; mc2: number; spark: number[] } | null>(null);
   const [q, setQ] = useState('');
   const [showAll, setShowAll] = useState(() => localStorage.getItem('amimi_allact') !== '0');
   const toggleAll = () => setShowAll((v) => { localStorage.setItem('amimi_allact', v ? '0' : '1'); return !v; });
@@ -51,17 +52,21 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
         todo: (todo.data ?? []).filter((r: { bucket: string }) => r.bucket !== 'pulizia').length,
       });
       if (cfg.finance) {
-        const ce = await supabase.from('v_ce_amimi_summary').select('month,omni_netto,mc2').eq('year', nowYear());
+        const [ce, mtd] = await Promise.all([
+          supabase.from('v_ce_amimi_summary').select('month,omni_netto,mc2').eq('year', nowYear()),
+          fetchNettoMtd().catch(() => null),
+        ]);
         const rows = ((ce.data ?? []) as { month: number; omni_netto: number; mc2: number }[]).sort((a, b) => a.month - b.month);
         const m = nowMonth();
         const cur = rows.find((r) => r.month === m);
-        const prev = rows.find((r) => r.month === m - 1);
         const netto = cur ? Number(cur.omni_netto) : 0;
-        const pNet = prev ? Number(prev.omni_netto) : 0;
         const closed = rows.filter((r) => r.month < m).reduce((s, r) => s + Number(r.mc2), 0);
+        // Delta a PARI GIORNI (audit 06-09): i primi N giorni del mese contro i primi N del precedente.
+        // Prima confrontava il mese parziale col mese pieno: il 05-09 diceva "-71% vs agosto".
         setFin({
           netto,
-          deltaPct: pNet > 0 ? Math.round((netto - pNet) / pNet * 100) : null,
+          deltaPct: mtd && mtd.prev > 0 ? Math.round((mtd.cur - mtd.prev) / mtd.prev * 100) : null,
+          giorno: mtd?.day ?? null,
           mc2: closed,
           spark: rows.filter((r) => r.month <= m).map((r) => Number(r.omni_netto)),
         });
@@ -79,10 +84,10 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
     for (const t of [...cfg.tiles.slice(4), ...ALL_ACTIONS.filter((a) => GEST.has(keyOf(a)))]) {
       const k = keyOf(t);
       if (seen.has(k)) continue;
-      if ((t.tab === 'cruscotto' || t.tab === 'ce') && !cfg.finance) continue;
+      if (FINANCE_TABS.has(t.tab) && !cfg.finance) continue;
       seen.add(k); gest.push(t);
     }
-    const altro = ALL_ACTIONS.filter((t) => !seen.has(keyOf(t)) && ((t.tab !== 'cruscotto' && t.tab !== 'ce') || cfg.finance));
+    const altro = ALL_ACTIONS.filter((t) => !seen.has(keyOf(t)) && (!FINANCE_TABS.has(t.tab) || cfg.finance));
     return { quick, gestione: gest, altro };
   }, [cfg]);
 
@@ -136,7 +141,7 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
                 <div className="l">Netto {meseNome(nowMonth())}</div>
                 <div className="big">{eur(fin.netto)}</div>
                 {fin.deltaPct !== null && (
-                  <span className="chip">{fin.deltaPct >= 0 ? '▲' : '▼'} {fin.deltaPct >= 0 ? '+' : ''}{fin.deltaPct}% vs {meseNome(nowMonth() - 1)}</span>
+                  <span className="chip">{fin.deltaPct >= 0 ? '▲' : '▼'} {fin.deltaPct >= 0 ? '+' : ''}{fin.deltaPct}% vs primi {fin.giorno} gg di {meseNome(nowMonth() - 1)}</span>
                 )}
                 {fin.spark.length > 1 && (
                   <svg className="spark" width="150" height="26" viewBox="0 0 150 26" preserveAspectRatio="none" aria-hidden="true">

@@ -3,6 +3,8 @@ import type { Tab } from './lib/people';
 import Home from './pages/Home';
 import Report from './pages/Report';
 import CeDetail from './pages/CeDetail';
+import Margini from './pages/Margini';
+import Clienti from './pages/Clienti';
 import Salute from './pages/Salute';
 import Assistenza from './pages/Assistenza';
 import Ingest from './pages/Ingest';
@@ -35,6 +37,8 @@ export default function App() {
         {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} />}
         {tab === 'cruscotto' && <Report onBack={() => go('home')} onDetail={() => go('ce')} />}
         {tab === 'ce' && <CeDetail onBack={() => go('home')} />}
+        {tab === 'margini' && <Margini onBack={() => go('home')} />}
+        {tab === 'clienti' && <Clienti onBack={() => go('home')} />}
         {tab === 'salute' && <Salute onBack={() => go('home')} chi={chi} go={go} pin={pin} />}
         {tab === 'assistenza' && <Assistenza onBack={() => go('home')} />}
         {tab === 'registra' && <Ingest pin={pin} chi={chi} initial={param} />}

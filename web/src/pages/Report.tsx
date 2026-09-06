@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { syncShopify, fetchCeTotale, fetchAdsMensile } from '../lib/api';
-import type { CeTot, AdsMese, Product } from '../lib/api';
+import { syncShopify, fetchCeTotale, fetchAdsMensile, fetchFreschezza, fetchSconti, fetchMargineOrdini } from '../lib/api';
+import type { CeTot, AdsMese, Product, Freschezza, Sconto, MargOrdine } from '../lib/api';
 import ProductPicker from '../components/ProductPicker';
 import { useSort } from '../lib/sortable';
 import ExportBtn from '../components/ExportBtn';
@@ -274,6 +274,7 @@ export default function Report({ onBack, onDetail }: { onBack?: () => void; onDe
       </section>
 
       <AdsCard />
+      <ScontiCard />
       <DealCalc />
     </div>
   );
@@ -281,16 +282,26 @@ export default function Report({ onBack, onDetail }: { onBack?: () => void; onDe
 
 function AdsCard() {
   const [ads, setAds] = useState<AdsMese[] | null>(null);
-  useEffect(() => { fetchAdsMensile().then(setAds).catch(() => setAds([])); }, []);
+  const [fresh, setFresh] = useState<Freschezza | null>(null);
+  useEffect(() => { fetchAdsMensile().then(setAds).catch(() => setAds([])); fetchFreschezza().then(setFresh).catch(() => {}); }, []);
   const aSort = useSort((ads ?? []) as unknown as Record<string, unknown>[], 'month');
   if (!ads || !ads.length) return null;
   const spend = ads.reduce((s, r) => s + Number(r.spend), 0);
   const val = ads.reduce((s, r) => s + Number(r.purchase_value), 0);
   const purch = ads.reduce((s, r) => s + Number(r.purchases), 0);
   const roas = spend > 0 ? val / spend : 0;
+  // audit 06-09: meta_ads_daily non ha un ingest continuo (caso aperto n.12). Senza questo avviso
+  // la card mostrava giugno come se fosse oggi.
+  const lastDay = fresh?.meta_ads_ultimo_giorno ? String(fresh.meta_ads_ultimo_giorno).slice(0, 10) : null;
+  const staleDays = lastDay ? Math.floor((Date.now() - new Date(lastDay + 'T12:00:00').getTime()) / 86400000) : null;
   return (
     <section className="card">
       <h2>Meta Ads 2026</h2>
+      {staleDays != null && staleDays > 7 && (
+        <p className="note" style={{ color: 'var(--warning-700)', fontWeight: 600, marginTop: 0 }}>
+          ⚠ Dati Meta fermi al {lastDay} ({staleDays} giorni fa): non esiste un ingest continuo in app. La spesa e il ROAS recenti sono nel report settimanale (connettore Meta).
+        </p>
+      )}
       <div className="kpis">
         <Kpi label="Spesa ads" value={eur(spend)} tone="accent" />
         <Kpi label="ROAS" value={roas.toFixed(2) + '×'} tone={roas >= 1 ? 'green' : 'red'} />
@@ -309,6 +320,54 @@ function AdsCard() {
         ))}</tbody>
       </table></div>
       <p className="note">Totale {purch} acquisti attribuiti agli ads. ROAS = valore acquisti ÷ spesa.</p>
+    </section>
+  );
+}
+
+/* Sconti e fasce ordine (audit 06-09): 305 ordini su 721 nel 2026 avevano un codice e nessuna schermata
+   lo diceva. Per codice: ordini, netto, sconto, margine (v_sconti_codici su v_margine_ordine). Le fasce
+   sul lordo ordine servono a soglia spedizione gratis e bundle. */
+function ScontiCard() {
+  const [sc, setSc] = useState<Sconto[] | null>(null);
+  const [ord, setOrd] = useState<MargOrdine[] | null>(null);
+  useEffect(() => { fetchSconti().then(setSc).catch(() => setSc([])); fetchMargineOrdini().then(setOrd).catch(() => setOrd([])); }, []);
+  if (!sc || !ord || !ord.length) return null;
+  const byCode = new Map<string, { ordini: number; netto: number; sconto: number; margine: number }>();
+  sc.forEach((r) => {
+    const e = byCode.get(r.codice) ?? { ordini: 0, netto: 0, sconto: 0, margine: 0 };
+    e.ordini += r.ordini; e.netto += r.netto; e.sconto += r.sconto; e.margine += r.margine; byCode.set(r.codice, e);
+  });
+  const codes = [...byCode.entries()].sort((a, b) => b[1].ordini - a[1].ordini).slice(0, 8);
+  const conSconto = ord.filter((o) => o.sconto > 0).length;
+  const tot = ord.length;
+  const fasce: [string, (v: number) => boolean][] = [
+    ['< 60 €', (v) => v < 60], ['60–99 €', (v) => v >= 60 && v < 100], ['100–149 €', (v) => v >= 100 && v < 150],
+    ['150–249 €', (v) => v >= 150 && v < 250], ['250 € +', (v) => v >= 250],
+  ];
+  const counts = fasce.map(([lab, f]) => [lab, ord.filter((o) => f(o.ricavo_lordo)).length] as [string, number]);
+  const maxF = Math.max(1, ...counts.map(([, n]) => n));
+  return (
+    <section className="card">
+      <h2>Sconti e fasce ordine · {nowYear()}</h2>
+      <p className="note" style={{ marginTop: 0 }}>{conSconto} ordini su {tot} con uno sconto ({pct(conSconto / tot)}). Margine = contribuzione dopo COGS, commissioni, packaging e rimborsi.</p>
+      {codes.length > 0 && (
+        <div className="tablewrap"><table className="sortable">
+          <thead><tr><th>Codice</th><th>Ordini</th><th>Netto</th><th>Sconto</th><th>Margine</th><th>%</th></tr></thead>
+          <tbody>{codes.map(([c, v]) => (
+            <tr key={c}><td className="l">{c}</td><td>{v.ordini}</td><td>{eur(v.netto)}</td><td className="neg">{eur(-Math.abs(v.sconto))}</td><td className={v.margine < 0 ? 'neg' : ''}>{eur(v.margine)}</td><td>{v.netto ? pct(v.margine / v.netto) : '—'}</td></tr>
+          ))}</tbody>
+        </table></div>
+      )}
+      <div className="ds-funnel" style={{ marginTop: 10 }}>
+        {counts.map(([lab, n]) => (
+          <div className="fb" key={lab}>
+            <div className="fname">{lab}<small>{pct(n / tot)} degli ordini</small></div>
+            <div className="ftrack"><div className="ffill" style={{ width: `${Math.round(n / maxF * 100)}%`, background: 'var(--sec-lavender)' }} /></div>
+            <div className="fval">{n}</div>
+          </div>
+        ))}
+      </div>
+      <p className="note">Fasce sul lordo ordine (IVA inclusa). La soglia della spedizione gratis e i bundle si decidono guardando dove si addensano gli ordini.</p>
     </section>
   );
 }

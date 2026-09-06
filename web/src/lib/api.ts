@@ -74,11 +74,13 @@ export type InvFull = {
   codice: string; item: string | null; variant: string | null; categoria: string | null;
   giacenza_attuale: number; in_conto_vendita: number; disponibili_da_vendere: number;
   valore: number; retail_price: number | null; cogs: number | null; last_sale: string | null; on_shopify: boolean; image_url: string | null;
+  // audit 06-09: per il pannello "Per linea" (sell-through = venduto / acquistato)
+  qty_purchased: number; shopify_sold: number; qromo_sold: number; gift_sold: number; b2b_venduto: number;
 };
 export async function fetchInventory(): Promise<InvFull[]> {
   const { data, error } = await supabase
     .from('v_inventory')
-    .select('codice,item,variant,categoria,giacenza_attuale,in_conto_vendita,disponibili_da_vendere,valore,retail_price,cogs,last_sale,on_shopify,image_url')
+    .select('codice,item,variant,categoria,giacenza_attuale,in_conto_vendita,disponibili_da_vendere,valore,retail_price,cogs,last_sale,on_shopify,image_url,qty_purchased,shopify_sold,qromo_sold,gift_sold,b2b_venduto')
     .order('giacenza_attuale');
   if (error) throw new Error(error.message);
   return (data ?? []) as InvFull[];
@@ -656,4 +658,111 @@ export async function fetchDrillSales(canali: string[], month: number): Promise<
   return ((data ?? []) as DrillSale[]).map((r) => ({
     ...r, qty: r.qty == null ? null : Number(r.qty), lordo: Number(r.lordo), commissioni: Number(r.commissioni), refund: Number(r.refund),
   }));
+}
+
+// ---------- Audit dashboard 2026-09-06 (migr 0109): freschezza fonti, margini, clienti, spedizioni, sconti ----------
+// PostgREST consegna i numeric come stringhe: si convertono qui, una volta, mai nei componenti.
+function numify<T extends Record<string, unknown>>(r: T, keys: string[]): T {
+  const o = { ...r } as Record<string, unknown>;
+  for (const k of keys) o[k] = Number(o[k]) || 0;
+  return o as T;
+}
+
+export type Freschezza = {
+  ultimo_ordine_shopify: string | null; ultimo_sync_ordini: string | null; ultima_vendita_qromo: string | null;
+  meta_ads_ultimo_giorno: string | null; meta_ads_ultimo_pull: string | null; ultimo_batch_spedizioni: string | null;
+  ultimo_sync_stock: string | null; ultimo_health: string | null; ultima_spesa_pagata: string | null; ultimo_arrivo: string | null;
+};
+export async function fetchFreschezza(): Promise<Freschezza | null> {
+  const { data, error } = await supabase.from('v_fonti_freschezza').select('*').maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as Freschezza | null) ?? null;
+}
+
+/** Netto dei primi N giorni del mese in corso contro gli stessi N giorni del mese precedente (online + POS,
+ *  dalle righe di v_ce_drill_sales che ricostruiscono il lordo del CE). La Home confrontava il mese
+ *  parziale col mese pieno e a inizio mese scriveva "-71%". */
+export async function fetchNettoMtd(): Promise<{ cur: number; prev: number; day: number } | null> {
+  const now = new Date(); const y = now.getFullYear(); const m = now.getMonth() + 1; const day = now.getDate();
+  if (m < 2) return null;
+  const { data, error } = await supabase.from('v_ce_drill_sales').select('month,data,lordo')
+    .eq('year', y).in('month', [m, m - 1]).in('canale', ['online', 'offline']);
+  if (error) throw new Error(error.message);
+  let cur = 0, prev = 0;
+  (data ?? []).forEach((r: { month: number; data: string | null; lordo: number }) => {
+    const d = r.data ? Number(String(r.data).slice(8, 10)) : 0;
+    if (d < 1 || d > day) return;
+    if (Number(r.month) === m) cur += Number(r.lordo) || 0; else prev += Number(r.lordo) || 0;
+  });
+  return { cur: cur / 1.22, prev: prev / 1.22, day };
+}
+
+export type MargOrdine = {
+  order_id: string; order_number: string | null; created_at_shop: string | null; year: number; month: number;
+  pezzi: number; ricavo_lordo: number; sconto: number; ricavo_netto: number; cogs: number; commissioni: number; packaging: number;
+  spedizione_incassata: number; rimborso: number; margine_contribuzione: number; margine_pct: number; refunded: boolean; financial_status: string | null;
+};
+const MO_NUM = ['pezzi', 'ricavo_lordo', 'sconto', 'ricavo_netto', 'cogs', 'commissioni', 'packaging', 'spedizione_incassata', 'rimborso', 'margine_contribuzione', 'margine_pct', 'month', 'year'];
+export async function fetchMargineOrdini(): Promise<MargOrdine[]> {
+  const { data, error } = await supabase.from('v_margine_ordine').select('*').eq('year', nowYear()).order('created_at_shop', { ascending: false });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as MargOrdine[]).map((r) => numify(r, MO_NUM));
+}
+
+export type MargSku = {
+  codice: string; codice_norm: string; item: string | null; variant: string | null; year: number; month: number; canale: string;
+  pezzi: number; ricavo_lordo: number; sconto: number; ricavo_netto: number; cogs: number; commissioni: number; packaging: number;
+  margine_contribuzione: number; margine_pct: number; pezzi_in_ordini_rimborsati: number;
+};
+const MS_NUM = ['pezzi', 'ricavo_lordo', 'sconto', 'ricavo_netto', 'cogs', 'commissioni', 'packaging', 'margine_contribuzione', 'margine_pct', 'pezzi_in_ordini_rimborsati', 'month', 'year'];
+export async function fetchMargineSku(): Promise<MargSku[]> {
+  const { data, error } = await supabase.from('v_margine_sku').select('*').eq('year', nowYear());
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as MargSku[]).map((r) => numify(r, MS_NUM));
+}
+
+export type ClienteRfm = { email: string; primo_ordine: string | null; ultimo_ordine: string | null; recency_giorni: number; frequency: number; monetary: number; aov: number; segmento: string };
+export async function fetchClientiRfm(): Promise<ClienteRfm[]> {
+  const { data, error } = await supabase.from('v_clienti_rfm').select('*').order('monetary', { ascending: false });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as ClienteRfm[]).map((r) => numify(r, ['recency_giorni', 'frequency', 'monetary', 'aov']));
+}
+export type Coorte = { coorte: string; maturita_giorni: number; clienti: number; ricomprato_30gg: number; ricomprato_60gg: number; ricomprato_90gg: number; netto_medio_cliente: number };
+export async function fetchCoorti(): Promise<Coorte[]> {
+  const { data, error } = await supabase.from('v_clienti_coorti').select('*').order('coorte');
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Coorte[]).map((r) => numify(r, ['maturita_giorni', 'clienti', 'ricomprato_30gg', 'ricomprato_60gg', 'ricomprato_90gg', 'netto_medio_cliente']));
+}
+
+export type SpedEcc = { ldv: string | null; order_name: string | null; stato_tws: string | null; stato_raw: string | null; shipped_date: string | null; seen_delivered_at: string | null; updated_at: string | null; customer_name: string | null; data_ordine: string | null; classe: string };
+export async function fetchSpedizioniEccezioni(): Promise<SpedEcc[]> {
+  const { data, error } = await supabase.from('v_spedizioni_eccezioni').select('*').eq('classe', 'eccezione').order('updated_at', { ascending: false }).limit(100);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as SpedEcc[];
+}
+/** Giorni da ordine a spedizione per mese (migr 0110): data di spedizione TWS, con fulfilled_at solo come
+ *  ripiego. fulfilled_at non e' piu' scritto dal sync dopo il cutover (lug 3/175): senza il tracking la
+ *  metrica direbbe "nessun ordine evaso". Precisione a giorni interi perche' la fonte e' una DATA. */
+/** Spedizioni con data TWS negli ultimi 14 giorni e nei 14 precedenti: sostituisce "ordini evasi"
+ *  (gin_evasi14, da fulfilled_at) che dopo il cutover resta a zero. */
+export async function fetchSpediti14(): Promise<{ n14: number; n28: number }> {
+  const d = (n: number) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  const [a, b] = await Promise.all([
+    supabase.from('v_spedizioni_eccezioni').select('ldv', { count: 'exact', head: true }).gte('shipped_date', d(14)),
+    supabase.from('v_spedizioni_eccezioni').select('ldv', { count: 'exact', head: true }).gte('shipped_date', d(28)).lt('shipped_date', d(14)),
+  ]);
+  return { n14: a.count ?? 0, n28: b.count ?? 0 };
+}
+export type Evasione = { year: number; month: number; ordini: number; spediti: number; giorni_medi: number | null; giorni_mediani: number | null; oltre_3gg: number };
+export async function fetchEvasione(): Promise<Evasione[]> {
+  const { data, error } = await supabase.from('v_evasione_mensile').select('*').eq('year', nowYear()).order('month');
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Evasione[]).map((r) => ({ ...numify(r, ['year', 'month', 'ordini', 'spediti', 'oltre_3gg']), giorni_medi: r.giorni_medi == null ? null : Number(r.giorni_medi), giorni_mediani: r.giorni_mediani == null ? null : Number(r.giorni_mediani) }));
+}
+
+export type Sconto = { year: number; month: number; codice: string; ordini: number; netto: number; sconto: number; margine: number; margine_pct_medio: number };
+export async function fetchSconti(): Promise<Sconto[]> {
+  const { data, error } = await supabase.from('v_sconti_codici').select('*').eq('year', nowYear());
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Sconto[]).map((r) => numify(r, ['year', 'month', 'ordini', 'netto', 'sconto', 'margine', 'margine_pct_medio']));
 }

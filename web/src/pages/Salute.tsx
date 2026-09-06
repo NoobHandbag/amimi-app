@@ -3,11 +3,14 @@ import type { ReactNode } from 'react';
 import {
   fetchMovimenti14gg, fetchOpsFlags, fetchHealthLatest, fetchOpsExtra,
   fetchDigestPersone, fetchDigestVersioni, fetchDigestOrdini, fetchDigestPulizia, fetchDigestSpese, fetchDigestLogAttori,
-  fetchExpensesReview,
+  fetchExpensesReview, fetchFreschezza, fetchSpedizioniEccezioni, fetchEvasione, fetchSpediti14,
 } from '../lib/api';
-import type { Movimenti, OpsFlags, HealthRow, DigestPersone, DigestOrdine, DigestPulizia, DigestSpesa, DigestAttore } from '../lib/api';
+import type { Movimenti, OpsFlags, HealthRow, DigestPersone, DigestOrdine, DigestPulizia, DigestSpesa, DigestAttore, Freschezza, SpedEcc, Evasione } from '../lib/api';
+import { nowMonth, nowYear } from '../lib/helpers';
 import ActivityFeed from '../components/ActivityFeed';
 import Icon from '../components/Icon';
+
+const MESI_B = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 
 type Go = (t: 'registra' | 'magazzino', p?: string) => void;
 
@@ -96,6 +99,11 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
   const [pulizia, setPulizia] = useState<DigestPulizia[]>([]);
   const [spese, setSpese] = useState<DigestSpesa[]>([]);
   const [attori, setAttori] = useState<DigestAttore[]>([]);
+  // audit 06-09: freschezza delle fonti, spedizioni in eccezione (TWS), tempi di evasione
+  const [fresh, setFresh] = useState<Freschezza | null>(null);
+  const [sped, setSped] = useState<SpedEcc[]>([]);
+  const [evas, setEvas] = useState<Evasione[]>([]);
+  const [sped14, setSped14] = useState<{ n14: number; n28: number } | null>(null);
   const [persona, setPersona] = useState<Persona>(() => chiToPersona(chi ?? ''));
   const [open, setOpen] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -111,6 +119,10 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
         setM(mv); setFlags(fl); setHealth(hl); setExtra(ex);
         setD(dg); setMigr(vr.migr_n); setOrdini(or); setPulizia(pu); setSpese(sp); setAttori(la);
         fetchExpensesReview().then((r) => setSpeseReview(r.length)).catch(() => {});
+        fetchFreschezza().then(setFresh).catch(() => {});
+        fetchSpedizioniEccezioni().then(setSped).catch(() => setSped([]));
+        fetchEvasione().then(setEvas).catch(() => setEvas([]));
+        fetchSpediti14().then(setSped14).catch(() => {});
       } catch (e: unknown) {
         setErr(e instanceof Error ? e.message : String(e));
       } finally {
@@ -137,6 +149,7 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
   const healthSorted = [...health.rows].sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.k.localeCompare(b.k));
   const ceRows = healthSorted.filter((r) => /^ce_/.test(r.k) || r.k === 'period_mismatch');
   const aperti = extra?.unfulfilledRecent ?? 0;
+  const evCur = evas.find((e) => e.year === nowYear() && e.month === nowMonth()) ?? evas[evas.length - 1];
 
   const drill = (): ReactNode => {
     switch (open) {
@@ -148,8 +161,8 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
           {ordini.length > 50 && <p className="note">Mostrati i primi 50 di {ordini.length}.</p>}</>
       );
       case 'g_ev': return (
-        <><h3>Ordini evasi — {num(d.gin_evasi14)} negli ultimi 14gg</h3>
-          <p className="note">Conteggio per data di evasione (fulfilled_at). Periodo precedente: {num(d.gin_evasi28)}. La freschezza delle liste di spedizione (corriere TWS, senza API) è nel digest email di Cowork.</p></>
+        <><h3>Ordini spediti — {num(sped14?.n14 ?? 0)} negli ultimi 14gg</h3>
+          <p className="note">Conteggio per data di spedizione TWS (tracking). Periodo precedente: {num(sped14?.n28 ?? 0)}. Prima contava lo stato di evasione Shopify (fulfilled_at), che dopo il cutover non viene piu' scritto e restava a zero (audit 06-09).</p></>
       );
       case 'g_ap': return (
         <><h3>Aperti da evadere — {num(aperti)} recenti</h3>
@@ -158,6 +171,20 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
       case 'g_aov': return (
         <><h3>Scontrino medio online — {d.gin_aov14 != null ? eur(d.gin_aov14) : '—'}</h3>
           <p className="note">Lordo online degli ultimi 14gg diviso gli ordini online del periodo. IVA inclusa. Riguarda i soli ordini Shopify: le vendite in negozio sono nel “Polso vendite” più sotto.</p></>
+      );
+      case 'g_ecc': return (
+        <><h3>Spedizioni in eccezione — {num(sped.length)}</h3>
+          {sped.length ? (
+            <div className="dscroll"><table className="dtable"><thead><tr><th>Ordine</th><th>Cliente</th><th>Stato TWS</th><th>Spedita</th><th>Agg.</th></tr></thead>
+              <tbody>{sped.slice(0, 50).map((s, i) => (<tr key={s.ldv ?? i}><td>{s.order_name ?? '—'}</td><td>{s.customer_name ?? '—'}</td><td>{s.stato_tws ?? '—'}</td><td>{fmtDay(s.shipped_date ? String(s.shipped_date).slice(0, 10) : null)}</td><td>{fmtDay(s.updated_at ? String(s.updated_at).slice(0, 10) : null)}</td></tr>))}</tbody></table></div>
+          ) : <p className="note">Nessuna spedizione in eccezione.</p>}
+          <p className="note">Stati TWS diversi da consegnata e in transito: indirizzo errato, destinatario assente, rifiutata, giacenza. Sono le spedizioni da chiamare oggi. Fonte: tracking TWS sincronizzato ogni giorno (shipping_status).</p></>
+      );
+      case 'g_tempo': return (
+        <><h3>Tempo di spedizione — giorni da ordine a ritiro del corriere</h3>
+          <div className="dscroll"><table className="dtable"><thead><tr><th>Mese</th><th className="num">Ordini</th><th className="num">Spediti</th><th className="num">Giorni medi</th><th className="num">Mediana</th><th className="num">Oltre 3 gg</th></tr></thead>
+            <tbody>{evas.map((e) => (<tr key={`${e.year}-${e.month}`}><td>{MESI_B[e.month]} {e.year}</td><td className="num">{num(e.ordini)}</td><td className="num">{num(e.spediti)}</td><td className="num">{e.giorni_medi ?? '—'}</td><td className="num">{e.giorni_mediani ?? '—'}</td><td className="num">{num(e.oltre_3gg)}</td></tr>))}</tbody></table></div>
+          <p className="note">Dalla data ordine alla data di spedizione TWS (tracking), a giorni interi. La mediana pesa meno i casi estremi. Prima di giugno il tracking non c'era: quei mesi usano lo stato di evasione importato o restano vuoti. "Spediti" sotto "Ordini" nel mese in corso e' normale: mancano ancora i ritiri.</p></>
       );
       // ---- Benedetta ----
       case 'b_pul': return (
@@ -248,6 +275,9 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
         {!health.day && <p className="note">Nessun dato health_log disponibile.</p>}
       </section>
 
+      {/* Freschezza delle fonti (audit 06-09): un numero vale quanto la data del suo ultimo aggiornamento */}
+      {fresh && <FreschezzaCard f={fresh} />}
+
       {/* Voci cliccabili "da sistemare": portano dritto alla schermata giusta (§4.8) */}
       {go && (() => {
         const todos = [
@@ -286,9 +316,11 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
         <div className="kpis">
           {persona === 'Ginevra' && <>
             <DKpi id="g_ord" open={open} setOpen={setOpen} value={num(d.gin_ordini14)} label="Ordini aggiunti" cur={d.gin_ordini14} prev={d.gin_ordini28} sub="vs 14gg prec." tone="green" />
-            <DKpi id="g_ev" open={open} setOpen={setOpen} value={num(d.gin_evasi14)} label="Ordini evasi" cur={d.gin_evasi14} prev={d.gin_evasi28} sub="vs prec." tone="accent" />
+            <DKpi id="g_ev" open={open} setOpen={setOpen} value={num(sped14?.n14 ?? 0)} label="Ordini spediti" cur={sped14?.n14 ?? 0} prev={sped14?.n28 ?? 0} sub="TWS, vs prec." tone="accent" />
             <DKpi id="g_ap" open={open} setOpen={setOpen} value={num(aperti)} label="Aperti da evadere" sub="recenti (30gg)" tone="rose" />
             <DKpi id="g_aov" open={open} setOpen={setOpen} value={d.gin_aov14 != null ? eur(d.gin_aov14) : '—'} label="Scontrino medio" sub="AOV online" tone="accent" />
+            <DKpi id="g_ecc" open={open} setOpen={setOpen} value={num(sped.length)} label="Spedizioni in eccezione" sub="da chiamare" tone={sped.length > 0 ? 'red' : 'green'} />
+            <DKpi id="g_tempo" open={open} setOpen={setOpen} value={evCur && evCur.giorni_medi != null ? `${evCur.giorni_medi} gg` : '—'} label="Tempo di spedizione" sub="giorni medi, mese in corso" tone="accent" />
           </>}
           {persona === 'Benedetta' && <>
             <DKpi id="b_pul" open={open} setOpen={setOpen} value={num(d.ben_puliti14)} label="Nomi ripuliti" sub="pulizia catalogo" tone="green" />
@@ -313,7 +345,9 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
           <Stat label="Fatturato netto" value={eur(m.netto14)} cur={m.netto14} prev={m.netto28} sub="IVA esclusa" tone="accent" />
           <Stat label="Fatturato lordo" value={eur(m.lordo14)} cur={m.lordo14} prev={m.lordo28} sub="IVA incl." tone="rose" />
           <Stat label="Pezzi venduti" value={num(m.pezzi14)} cur={m.pezzi14} prev={m.pezzi28} sub={`${num(m.on_pezzi14)} online / ${num(m.off_pezzi14)} negozio`} tone="green" />
-          <Stat label="Ordini online" value={num(m.ordini14)} cur={m.ordini14} prev={m.ordini28} sub={m.aov_lordo14 != null ? `AOV ${eur(m.aov_lordo14)}` : undefined} tone="accent" />
+          {/* AOV = gin_aov14 (lordo online / ordini online). aov_lordo14 mescolava il lordo di TUTTI i canali
+              con i soli ordini Shopify: sulla stessa pagina c'erano due scontrini medi diversi (audit 06-09). */}
+          <Stat label="Ordini online" value={num(m.ordini14)} cur={m.ordini14} prev={m.ordini28} sub={d.gin_aov14 != null ? `AOV online ${eur(d.gin_aov14)}` : undefined} tone="accent" />
         </div>
         <div className="bar" style={{ marginTop: 6 }}>
           <div className="seg on" style={{ flex: m.on_lordo14 }} />
@@ -374,6 +408,51 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
       {/* Attività recente: feed "chi ha fatto cosa quando" dal change_log (§6) */}
       <ActivityFeed pin={pin} />
     </div>
+  );
+}
+
+function ageOf(iso: string | null): { txt: string; h: number } {
+  if (!iso) return { txt: 'mai', h: Infinity };
+  const s = String(iso);
+  const t = new Date(s.length === 10 ? s + 'T12:00:00' : s).getTime();
+  const h = (Date.now() - t) / 3600000;
+  const txt = h < 1 ? `${Math.max(0, Math.round(h * 60))} min fa` : h < 48 ? `${Math.round(h)} h fa` : `${Math.round(h / 24)} gg fa`;
+  return { txt, h };
+}
+
+/* Freschezza delle fonti: ultimo timestamp di ogni fonte con soglia. Rosso = ferma oltre l'atteso.
+   Nata dall'audit 06-09: la card Meta mostrava giugno come "oggi" e nessuno lo vedeva. */
+function FreschezzaCard({ f }: { f: Freschezza }) {
+  const rows: { label: string; iso: string | null; okH: number; warnH: number; nota?: string }[] = [
+    { label: 'Ordini Shopify (ultimo ordine)', iso: f.ultimo_ordine_shopify, okH: 48, warnH: 96 },
+    // synced_at avanza solo quando un ordine arriva o cambia: e' "ultimo aggiornamento", non "ultimo giro"
+    { label: 'Ordini Shopify (ultimo aggiornamento ricevuto)', iso: f.ultimo_sync_ordini, okH: 24, warnH: 72, nota: 'avanza quando arriva o cambia un ordine' },
+    { label: 'Stock Shopify (sync)', iso: f.ultimo_sync_stock, okH: 2, warnH: 6 },
+    { label: 'Vendite negozio (Qromo)', iso: f.ultima_vendita_qromo, okH: 24 * 10, warnH: 24 * 21, nota: 'saltuarie: qualche giorno a zero e’ normale' },
+    { label: 'Meta Ads (ultimo giorno di dati)', iso: f.meta_ads_ultimo_giorno, okH: 48, warnH: 24 * 7, nota: 'alimenta la card Ads del Cruscotto' },
+    // updated_at cambia solo se uno stato TWS cambia: un giro "232 invariati" non lo muove
+    { label: 'Spedizioni TWS (ultimo cambio di stato)', iso: f.ultimo_batch_spedizioni, okH: 48, warnH: 96, nota: 'giro giornaliero: la data avanza solo se uno stato cambia' },
+    { label: 'Guardiano contabile (health)', iso: f.ultimo_health, okH: 30, warnH: 72 },
+    { label: 'Spese (ultima pagata caricata)', iso: f.ultima_spesa_pagata, okH: 24 * 35, warnH: 24 * 60, nota: 'si caricano a mese chiuso' },
+    { label: 'Arrivi fornitore (ultimo)', iso: f.ultimo_arrivo, okH: 24 * 30, warnH: 24 * 60 },
+  ];
+  return (
+    <section className="card">
+      <h2>Freschezza delle fonti</h2>
+      <p className="note" style={{ marginTop: 0 }}>Prima di fidarti di un numero guarda quando la sua fonte si e' aggiornata. Rosso = ferma oltre l'atteso.</p>
+      <div className="list">
+        {rows.map((r) => {
+          const a = ageOf(r.iso);
+          const col = a.h <= r.okH ? 'var(--positive-700)' : a.h <= r.warnH ? 'var(--warning-700)' : 'var(--negative-700)';
+          return (
+            <div className="row" key={r.label}>
+              <div><div className="rt">{r.label}</div><div className="rs">{r.iso ? String(r.iso).slice(0, 16).replace('T', ' ') : '—'}{r.nota ? ` · ${r.nota}` : ''}</div></div>
+              <div className="giac" style={{ color: col, fontSize: 13 }}>{a.txt}</div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
