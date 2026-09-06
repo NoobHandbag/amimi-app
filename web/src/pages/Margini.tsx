@@ -56,8 +56,9 @@ export default function Margini({ onBack }: { onBack?: () => void }) {
 
   const netto = ordF.reduce((s, o) => s + o.ricavo_netto, 0);
   const margine = ordF.reduce((s, o) => s + o.margine_contribuzione, 0);
-  // ordini "vuoti" (netto 0 e margine 0: gift card, righe senza prodotto) non sono perdite
-  const perdita = ordF.filter((o) => o.margine_contribuzione < 0 || (o.margine_contribuzione === 0 && o.ricavo_netto > 0));
+  // un ordine con margine NON calcolabile (COGS mancante, gift card) non e' una perdita: e' un buco dati
+  const perdita = ordF.filter((o) => o.margine_noto && o.margine_contribuzione <= 0);
+  const senzaMargine = ordF.filter((o) => !o.margine_noto).length;
   const rimborsati = ordF.filter((o) => o.rimborso > 0).length;
   const motivo = (o: MargOrdine) => o.rimborso > 0 ? 'rimborso' : o.sconto > 0 ? 'sconto' : o.cogs >= o.ricavo_netto ? 'costo prodotto' : 'costi accessori';
 
@@ -87,7 +88,7 @@ export default function Margini({ onBack }: { onBack?: () => void }) {
       <div className="kpis">
         <div className="ds-kpi"><div className="v">{eur(netto)}</div><div className="l">Ricavo netto ordini</div><div className="s">{ordF.length} ordini online</div></div>
         <div className={`ds-kpi ${margine >= 0 ? 'pos' : 'neg'}`}><div className="v">{eur(margine)}</div><div className="l">Margine di contribuzione</div><div className="s">{netto ? pct(margine / netto) : '—'} sul netto</div></div>
-        <div className={`ds-kpi ${perdita.length ? 'neg' : 'pos'}`}><div className="v">{perdita.length}</div><div className="l">Ordini in perdita</div><div className="s">margine ≤ 0</div></div>
+        <div className={`ds-kpi ${perdita.length ? 'neg' : 'pos'}`}><div className="v">{perdita.length}</div><div className="l">Ordini in perdita</div><div className="s">margine ≤ 0{senzaMargine ? ` · ${senzaMargine} senza margine calcolabile` : ''}</div></div>
         <div className="ds-kpi accent"><div className="v">{rimborsati}</div><div className="l">Ordini con rimborso</div><div className="s">pesano sul margine</div></div>
       </div>
 

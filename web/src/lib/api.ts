@@ -701,12 +701,14 @@ export type MargOrdine = {
   order_id: string; order_number: string | null; created_at_shop: string | null; year: number; month: number;
   pezzi: number; ricavo_lordo: number; sconto: number; ricavo_netto: number; cogs: number; commissioni: number; packaging: number;
   spedizione_incassata: number; rimborso: number; margine_contribuzione: number; margine_pct: number; refunded: boolean; financial_status: string | null;
+  /** false = la vista non sa calcolare il margine (COGS mancante): non e' una perdita, e' un buco dati */
+  margine_noto: boolean;
 };
 const MO_NUM = ['pezzi', 'ricavo_lordo', 'sconto', 'ricavo_netto', 'cogs', 'commissioni', 'packaging', 'spedizione_incassata', 'rimborso', 'margine_contribuzione', 'margine_pct', 'month', 'year'];
 export async function fetchMargineOrdini(): Promise<MargOrdine[]> {
   const { data, error } = await supabase.from('v_margine_ordine').select('*').eq('year', nowYear()).order('created_at_shop', { ascending: false });
   if (error) throw new Error(error.message);
-  return ((data ?? []) as MargOrdine[]).map((r) => numify(r, MO_NUM));
+  return ((data ?? []) as MargOrdine[]).map((r) => ({ ...numify(r, MO_NUM), margine_noto: r.margine_contribuzione != null }));
 }
 
 export type MargSku = {
