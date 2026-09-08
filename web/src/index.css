@@ -826,3 +826,23 @@ button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-
 .lead-gancio p { margin: 4px 0 0; font-style: italic; }
 .lead-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .lead-pre { font-size: 11px; white-space: pre-wrap; word-break: break-word; background: var(--surface-alt); padding: 6px 8px; border-radius: 6px; margin: 4px 0 0; max-height: 220px; overflow: auto; }
+/* Negozi B2B: feed, vetrina, scala prezzi (08-09 sera) */
+.lead-links { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; margin-bottom: 8px; }
+.lead-links a { color: var(--interactive-700); }
+.lead-tagline { color: var(--ink-muted); font-size: 13px; margin: 0 0 10px; font-style: italic; }
+.lead-feed { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.lead-post { position: relative; display: block; aspect-ratio: 1; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); padding: 0; background: var(--surface-alt); cursor: pointer; }
+.lead-post img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lead-post span { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(46,32,77,.68); color: #fff; font-size: 10px; padding: 2px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.lead-post-bag { outline: 2px solid var(--accent-coral); outline-offset: -2px; }
+.lead-post-empty { background: repeating-linear-gradient(45deg, var(--surface-alt), var(--surface-alt) 6px, var(--border) 6px, var(--border) 12px); }
+.lead-scale { margin-top: 10px; }
+.lead-scale-lbl { font-size: 12px; color: var(--ink-muted); margin-bottom: 4px; }
+.lead-scale-bar { position: relative; height: 22px; background: var(--surface-alt); border-radius: 6px; overflow: hidden; }
+.lead-scale-store { position: absolute; top: 3px; height: 7px; background: var(--interactive-tint); border: 1px solid var(--interactive); border-radius: 4px; }
+.lead-scale-amimi { position: absolute; bottom: 3px; height: 7px; background: var(--accent-coral-tint); border: 1px solid var(--accent-coral); border-radius: 4px; }
+.lead-scale-med { position: absolute; top: 0; bottom: 0; width: 3px; background: var(--ink); }
+.lead-scale-leg { font-size: 11px; color: var(--ink-muted); margin-top: 4px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.lead-scale-leg i { display: inline-block; width: 14px; height: 8px; border-radius: 3px; }
+.lead-lightbox-cap { color: #fff; text-align: center; font-size: 13px; padding: 8px; }
+.lead-lightbox-cap a { color: #fff; text-decoration: underline; }

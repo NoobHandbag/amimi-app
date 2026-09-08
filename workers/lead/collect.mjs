@@ -11,7 +11,7 @@ import { supa, startRun, endRun, evidence, upload, num, sleep, UA, peerMatches, 
 
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, arr) => a.startsWith('--') ? [a.slice(2), arr[i + 1] && !arr[i + 1].startsWith('--') ? arr[i + 1] : true] : []).filter(Boolean));
 const LIMIT = Number(args.limit || 50);
-const ONLY = (args.only ? String(args.only).split(',') : ['site', 'ig', 'maps']);
+const ONLY = (args.only ? String(args.only).split(',') : ['site', 'ig', 'maps', 'press']);
 const STATO = args.stato || 'seed';
 const DRY = !!args.dry;
 
@@ -50,6 +50,20 @@ async function saveEv(acc, tipo, payload, note) {
 }
 const norm = (u) => { if (!u) return null; u = u.trim(); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; return u; };
 const domainOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return null; } };
+// scarica un'immagine (CDN Instagram/Shopify/Google) e la carica nel bucket; null se fallisce
+async function dlUpload(ctx, url, path, referer) {
+  try {
+    const r = await ctx.request.get(url, { headers: referer ? { referer } : {}, timeout: 20000 });
+    if (!r.ok()) return null;
+    const ct = r.headers()['content-type'] || 'image/jpeg';
+    const ext = /webp/.test(ct) ? 'webp' : /png/.test(ct) ? 'png' : 'jpg';
+    const full = `${path}.${ext}`;
+    if (DRY) return full;
+    await upload(sb, full, await r.body(), ct.split(';')[0]);
+    return full;
+  } catch { return null; }
+}
+const parseAltDate = (alt) => { const m = (alt || '').match(/on ([A-Z][a-z]+) (\d{1,2}), (\d{4})/); if (!m) return null; const mi = ['january','february','march','april','may','june','july','august','september','october','november','december'].indexOf(m[1].toLowerCase()); if (mi < 0) return null; return `${m[3]}-${String(mi + 1).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`; };
 
 // --------------------------------------------------------------------------- C1: sito
 async function stageSite(acc) {
@@ -96,6 +110,16 @@ async function stageSite(acc) {
           const bags = ps.filter((p) => BAG_WORDS.test(`${p.title} ${p.product_type || ''} ${(p.tags || []).join(' ')}`)).flatMap((p) => (p.variants || []).map((v) => parseFloat(v.price)).filter((x) => x > 0));
           const stats = (a) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return { n: s.length, min: s[0], mediana: s[Math.floor(s.length / 2)], max: s[s.length - 1] }; };
           prices = { n_prodotti: ps.length, tutti: stats(all), borse: stats(bags), fonte: 'products.json' };
+          // foto prodotto: prima le borse, poi il resto, max 12, immagini a 400px
+          const isBag = (p) => BAG_WORDS.test(`${p.title} ${p.product_type || ''} ${(p.tags || []).join(' ')}`);
+          const pick = [...ps.filter(isBag), ...ps.filter((p) => !isBag(p))].filter((p) => p.images?.[0]?.src).slice(0, 12);
+          const prods = [];
+          for (const [i, p] of pick.entries()) {
+            const src = p.images[0].src.replace(/(\.[a-z]+)(\?|$)/i, '_400x$1$2');
+            const path = await dlUpload(ctx, src, `${acc.id}/product_${Date.now()}_${i}`);
+            prods.push({ titolo: p.title, prezzo: parseFloat(p.variants?.[0]?.price) || null, vendor: p.vendor || null, tipo: p.product_type || null, borsa: isBag(p), url: new URL(`/products/${p.handle}`, url).toString(), asset_path: path });
+          }
+          if (prods.length) await saveEv(acc, 'site_products', { fonte: 'products.json', n: prods.length, n_borse: prods.filter((x) => x.borsa).length, prodotti: prods });
         }
       } catch { /* ignora */ }
     }
@@ -148,6 +172,16 @@ async function stageIg(acc, siteIg) {
     const bio = header.split('\n').slice(2).join(' | ').slice(0, 600);
     const posts = await page.locator('main img').evaluateAll((els) => els.map((e) => ({ alt: (e.getAttribute('alt') || '').slice(0, 200), src: e.getAttribute('src') || '' })).filter((x) => x.src && !/profilo|profile/i.test(x.alt) && !/storia in evidenza|highlight/i.test(x.alt)).slice(0, 12));
     const shot = await page.screenshot({ fullPage: false }).catch(() => null);
+    // feed: i primi 12 post (oltre serve il login), scaricati e caricati nel bucket
+    const postLinks = await page.locator('main a[href*="/p/"], main a[href*="/reel/"]').evaluateAll((els) => els.map((a) => { const img = a.querySelector('img'); return { href: a.getAttribute('href'), src: img?.getAttribute('src') || '', alt: (img?.getAttribute('alt') || '').slice(0, 300) }; }).filter((p) => p.src)).catch(() => []);
+    const igPosts = [];
+    for (const [i, p] of postLinks.slice(0, 12).entries()) {
+      const path = await dlUpload(ctx, p.src, `${acc.id}/igpost_${Date.now()}_${i}`, 'https://www.instagram.com/');
+      igPosts.push({ i, url: p.href ? `https://www.instagram.com${p.href}` : null, alt: p.alt, data: parseAltDate(p.alt), reel: /\/reel\//.test(p.href || ''), asset_path: path });
+    }
+    const dates = igPosts.map((x) => x.data).filter(Boolean).sort();
+    const cadenza = dates.length >= 2 ? { primo: dates[0], ultimo: dates[dates.length - 1], n: dates.length, giorni: Math.round((new Date(dates[dates.length - 1]) - new Date(dates[0])) / 86400000) } : null;
+    if (igPosts.length) await saveEv(acc, 'ig_posts', { handle, n: igPosts.length, n_scaricati: igPosts.filter((x) => x.asset_path).length, cadenza, post: igPosts });
     const payload = { handle, url: `https://www.instagram.com/${handle}/`, title, follower: m ? num(m[1]) : null, seguiti: m ? num(m[2]) : null, post: m ? num(m[3]) : null, og, bio, login_wall: loginWall, n_post_visibili: posts.length, post_alt: posts.map((p) => p.alt).filter(Boolean).slice(0, 12) };
     if (!m && !/• Foto e video di Instagram|Instagram photos and videos/i.test(title)) payload.errore = 'profilo non trovato o non leggibile';
     await saveShot(acc, 'screenshot_ig', shot, { handle });
@@ -190,6 +224,18 @@ async function stageMaps(acc) {
     const placeId = (url.match(/!1s(0x[0-9a-f]+:0x[0-9a-f]+)/i) || [])[1] || null;
     const coords = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
     const shot = await page.screenshot({ fullPage: false }).catch(() => null);
+    // recensioni (tab) e foto (tab), best effort
+    try {
+      const tab = page.getByRole('tab', { name: /Recensioni|Reviews/ }).first();
+      if (await tab.count()) {
+        await tab.click({ timeout: 3000 }); await page.waitForTimeout(3000);
+        for (const b of await page.getByRole('button', { name: /^Altro$|^More$/ }).all()) { await b.click({ timeout: 800 }).catch(() => {}); }
+        const revs = await page.locator('div[data-review-id]').evaluateAll((els) => { const seen = new Set(); const out = []; for (const e of els) { const id = e.getAttribute('data-review-id'); if (seen.has(id)) continue; seen.add(id); const stars = e.querySelector('[role="img"][aria-label*="stell"], [role="img"][aria-label*="star"]')?.getAttribute('aria-label') || null; const txt = e.innerText.replace(/\s+/g, ' ').trim(); if (txt.length > 20) out.push({ stelle: stars, testo: txt.slice(0, 500) }); } return out.slice(0, 6); }).catch(() => []);
+        if (revs.length) await saveEv(acc, 'maps_reviews', { n: revs.length, recensioni: revs });
+      }
+      const ftab = page.getByRole('tab', { name: /^Foto|^Photos/ }).first();
+      if (await ftab.count()) { await ftab.click({ timeout: 3000 }); await page.waitForTimeout(3000); const fshot = await page.screenshot({ fullPage: false }).catch(() => null); if (fshot) await saveShot(acc, 'screenshot_maps_photos', fshot, { query }); }
+    } catch { /* best effort */ }
     const payload = { query, nome_scheda: nameLine, rating: rating ? parseFloat(rating.replace(',', '.')) : null, recensioni: reviews ? num(reviews) : null, categoria: category, indirizzo: address, telefono: phone, orari: hours, sito: site, place_id: placeId, url: url.slice(0, 500), lat: coords ? parseFloat(coords[1]) : null, lng: coords ? parseFloat(coords[2]) : null, chiuso_definitivamente: /Chiuso definitivamente/i.test(main) };
     if (!rating && !address) payload.errore = 'scheda non riconosciuta (nessun rating ne\' indirizzo nel pannello)';
     await saveShot(acc, 'screenshot_maps', shot, { query });
@@ -207,6 +253,26 @@ async function stageMaps(acc) {
   }
 }
 
+// --------------------------------------------------------------------------- C4: stampa e web (DuckDuckGo html, niente chiavi)
+async function stagePress(acc) {
+  const ctx = await ctxNew(false);
+  try {
+    const q = `"${acc.nome}" ${acc.citta || ''}`.trim();
+    const r = await ctx.request.get('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q), { headers: { 'user-agent': UA }, timeout: 20000 });
+    if (!r.ok()) { await saveEv(acc, 'stampa', { query: q, errore: `ddg ${r.status()}` }); await ctx.close(); return 'err'; }
+    const h = await r.text();
+    const own = domainOf(norm(acc.website) || '') || '___';
+    const clean = (t) => t.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"');
+    const res = [...h.matchAll(/<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>(.*?)<\/a>[\s\S]*?class="result__snippet"[^>]*>(.*?)<\/a>/g)].map((m) => {
+      const u = decodeURIComponent((m[1].match(/uddg=([^&]+)/) || [])[1] || m[1]);
+      return { url: u, dominio: domainOf(u), titolo: clean(m[2]).slice(0, 120), snippet: clean(m[3]).slice(0, 220) };
+    }).filter((x) => x.dominio && !/instagram\.com|facebook\.com|google\.|duckduckgo|tiktok\.com|linkedin\.com|pinterest/.test(x.dominio) && x.dominio !== own).slice(0, 8);
+    await saveEv(acc, 'stampa', { query: q, n: res.length, risultati: res });
+    await ctx.close();
+    return res.length ? 'ok' : 'partial';
+  } catch (e) { await saveEv(acc, 'errore', { stage: 'press', msg: e.message.slice(0, 300) }); await ctx.close().catch(() => {}); return 'err'; }
+}
+
 // --------------------------------------------------------------------------- loop
 for (const acc of accounts) {
   const t0 = Date.now(); const res = {};
@@ -217,6 +283,7 @@ for (const acc of accounts) {
       if (!DRY) { const { data } = await sb.from('lead_evidence').select('payload').eq('account_id', acc.id).eq('tipo', 'site_meta').order('captured_at', { ascending: false }).limit(1); siteIg = data?.[0]?.payload?.ig_from_site || null; } }
     if (ONLY.includes('ig')) { res.ig = await stageIg(acc, siteIg); console.log(`   ig: ${res.ig}`); await sleep(15000 + Math.random() * 10000); }
     if (ONLY.includes('maps')) { res.maps = await stageMaps(acc); console.log(`   maps: ${res.maps}`); }
+    if (ONLY.includes('press')) { res.press = await stagePress(acc); console.log(`   press: ${res.press}`); }
     const anyOk = Object.values(res).some((v) => v === 'ok' || v === 'partial');
     if (!DRY && anyOk && acc.stato_ricerca === 'seed') await sb.from('lead_accounts').update({ stato_ricerca: 'enriched', updated_at: new Date().toISOString() }).eq('id', acc.id);
     if (!DRY && siteIg && !acc.ig_handle) await sb.from('lead_accounts').update({ ig_handle: siteIg }).eq('id', acc.id);

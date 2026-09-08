@@ -53,6 +53,14 @@ export type LeadDossier = {
   shot_home_mobile: string | null;
   shot_ig: string | null;
   shot_maps: string | null;
+  shot_maps_photos: string | null;
+  thumb: string | null;
+  ig_posts: { handle?: string; n?: number; n_scaricati?: number; cadenza?: { primo: string; ultimo: string; n: number; giorni: number } | null; post?: { i: number; url: string | null; alt: string; data: string | null; reel: boolean; asset_path: string | null }[] } | null;
+  maps_reviews: { n?: number; recensioni?: { stelle: string | null; testo: string }[] } | null;
+  site_products: { fonte?: string; n?: number; n_borse?: number; prodotti?: { titolo: string; prezzo: number | null; vendor: string | null; tipo: string | null; borsa: boolean; url: string; asset_path: string | null }[] } | null;
+  stampa: { query?: string; n?: number; risultati?: { url: string; dominio: string; titolo: string; snippet: string }[] } | null;
+  site_meta: { url?: string; title?: string; meta?: string | null; lang?: string | null; platform?: string | null; ecommerce?: boolean; emails?: string[]; piva?: string | null } | null;
+  about_text: { url?: string; testo?: string } | null;
   ig_metrics: { follower?: number | null; seguiti?: number | null; post?: number | null; bio?: string | null; login_wall?: boolean; errore?: string; post_alt?: string[] } | null;
   maps: { rating?: number | null; recensioni?: number | null; categoria?: string | null; indirizzo?: string | null; telefono?: string | null; orari?: string | null; sito?: string | null; errore?: string; chiuso_definitivamente?: boolean } | null;
   brands_carried: { fonte?: string; vendors?: string[] | null; peer_match?: string[]; lista_pagina?: string | null } | null;
@@ -124,6 +132,13 @@ export async function signedUrls(paths: string[]): Promise<Record<string, string
     for (const d of data ?? []) if (d.signedUrl && d.path) out[d.path] = d.signedUrl;
   }
   return out;
+}
+
+// Tutti i path immagine di un dossier (screenshot, feed IG, foto prodotto) per firmarli insieme.
+export function assetPathsOf(r: LeadDossier): string[] {
+  return [r.thumb, r.shot_ig, r.shot_home, r.shot_home_mobile, r.shot_maps, r.shot_maps_photos,
+    ...(r.ig_posts?.post ?? []).map((p) => p.asset_path), ...(r.site_products?.prodotti ?? []).map((p) => p.asset_path)]
+    .filter((p): p is string => !!p);
 }
 
 export async function addReview(r: { account_id: string; chi: string; azione: 'tier' | 'scarta' | 'ricontrolla' | 'nota'; tier?: 'A' | 'B' | 'C' | null; motivo?: string | null; nota?: string | null }) {
