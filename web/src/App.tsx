@@ -10,6 +10,7 @@ import Assistenza from './pages/Assistenza';
 import Ingest from './pages/Ingest';
 import Ordini from './pages/Ordini';
 import Inventory from './pages/Inventory';
+import Negozi from './pages/Negozi';
 import Icon from './components/Icon';
 import AssistantPanel from './components/AssistantPanel';
 import UpdateBanner from './components/UpdateBanner';
@@ -41,6 +42,7 @@ export default function App() {
         {tab === 'clienti' && <Clienti onBack={() => go('home')} />}
         {tab === 'salute' && <Salute onBack={() => go('home')} chi={chi} go={go} pin={pin} />}
         {tab === 'assistenza' && <Assistenza onBack={() => go('home')} />}
+        {tab === 'negozi' && <Negozi onBack={() => go('home')} chi={chi} />}
         {tab === 'registra' && <Ingest pin={pin} chi={chi} initial={param} />}
         {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} />}
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}

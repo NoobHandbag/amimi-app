@@ -1,0 +1,15 @@
+{
+  "name": "amimi-lead-collector",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Collector del modulo lead_* (ricerca negozi B2B): raccoglie sito, Instagram, Google Maps e screenshot per ogni account e scrive evidenze su Supabase. Zero modello: il giudizio lo fa la sessione Claude Code.",
+  "scripts": {
+    "collect": "node collect.mjs",
+    "seed": "node seed.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
+    "playwright": "^1.63.0"
+  }
+}
