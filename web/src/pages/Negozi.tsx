@@ -326,7 +326,7 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged }: { r: LeadDossier;
           <div><b>{r.n_evidenze}</b><span>evidenze raccolte</span></div>
         </div>
         {bc?.peer_match?.length ? <div className="chips" style={{ marginTop: 8 }}>{bc.peer_match.map((b) => <span key={b} className="chip on">{b}</span>)}</div> : null}
-        {mp?.categoria || mp?.orari || mp?.indirizzo ? <p className="note">{[mp?.categoria, mp?.orari, mp?.indirizzo].filter(Boolean).join(' · ')}</p> : null}
+        {mp?.categoria || mp?.orari || mp?.indirizzo ? <p className="note">{[mp?.categoria?.replace(/^[^A-Za-zÀ-ÿ]+|[^A-Za-zÀ-ÿ)]+$/g, ''), mp?.orari, mp?.indirizzo].filter(Boolean).join(' · ')}</p> : null}
         {posts.length === 0 && ig?.bio ? <p className="note">Bio IG: {short(ig.bio, 300)}</p> : null}
       </section>
 

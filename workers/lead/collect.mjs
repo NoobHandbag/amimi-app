@@ -218,7 +218,7 @@ async function stageMaps(acc) {
     const hasWord = (l) => /[A-Za-zÀ-ÿ]{3,}/.test(l);
     const nameLine = lines.find((l) => hasWord(l) && !/^Visualizza foto|^Risultati/i.test(l)) || null;
     const iRating = lines.findIndex((l) => l === rating);
-    const category = iRating > 0 ? (lines.slice(iRating + 1, iRating + 5).find((l) => hasWord(l) && !/^\(|^\d/.test(l) && l.length < 60) || null) : null;
+    const category = (iRating > 0 ? (lines.slice(iRating + 1, iRating + 5).find((l) => hasWord(l) && !/^\(|^\d/.test(l) && l.length < 60) || null) : null)?.replace(/^[·\s]+|[·\s]+$/g, '') || null;
     const site = lines.find((l) => /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(l)) || null;
     const url = page.url();
     const placeId = (url.match(/!1s(0x[0-9a-f]+:0x[0-9a-f]+)/i) || [])[1] || null;
@@ -233,8 +233,11 @@ async function stageMaps(acc) {
         const revs = await page.locator('div[data-review-id]').evaluateAll((els) => { const seen = new Set(); const out = []; for (const e of els) { const id = e.getAttribute('data-review-id'); if (seen.has(id)) continue; seen.add(id); const stars = e.querySelector('[role="img"][aria-label*="stell"], [role="img"][aria-label*="star"]')?.getAttribute('aria-label') || null; const txt = e.innerText.replace(/\s+/g, ' ').trim(); if (txt.length > 20) out.push({ stelle: stars, testo: txt.slice(0, 500) }); } return out.slice(0, 6); }).catch(() => []);
         if (revs.length) await saveEv(acc, 'maps_reviews', { n: revs.length, recensioni: revs });
       }
-      const ftab = page.getByRole('tab', { name: /^Foto|^Photos/ }).first();
-      if (await ftab.count()) { await ftab.click({ timeout: 3000 }); await page.waitForTimeout(3000); const fshot = await page.screenshot({ fullPage: false }).catch(() => null); if (fshot) await saveShot(acc, 'screenshot_maps_photos', fshot, { query }); }
+      // foto: non e' un tab ma il bottone sull'immagine di testata ("Visualizza foto" / "Tutte le foto")
+      await page.getByRole('tab', { name: /Panoramica|Overview/ }).first().click({ timeout: 2000 }).catch(() => {});
+      await page.waitForTimeout(800);
+      const fbtn = page.getByRole('button', { name: /Visualizza foto|Tutte le foto|Foto e video|See photos|All photos/ }).first();
+      if (await fbtn.count()) { await fbtn.click({ timeout: 3000 }); await page.waitForTimeout(3500); const fshot = await page.screenshot({ fullPage: false }).catch(() => null); if (fshot) await saveShot(acc, 'screenshot_maps_photos', fshot, { query }); }
     } catch { /* best effort */ }
     const payload = { query, nome_scheda: nameLine, rating: rating ? parseFloat(rating.replace(',', '.')) : null, recensioni: reviews ? num(reviews) : null, categoria: category, indirizzo: address, telefono: phone, orari: hours, sito: site, place_id: placeId, url: url.slice(0, 500), lat: coords ? parseFloat(coords[1]) : null, lng: coords ? parseFloat(coords[2]) : null, chiuso_definitivamente: /Chiuso definitivamente/i.test(main) };
     if (!rating && !address) payload.errore = 'scheda non riconosciuta (nessun rating ne\' indirizzo nel pannello)';
