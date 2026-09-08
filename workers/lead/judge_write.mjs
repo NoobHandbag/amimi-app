@@ -14,10 +14,13 @@ const runId = await startRun(sb, 'judge', rows.length, `rubrica v1 da ${file}`);
 let ok = 0, err = 0; const log = [];
 for (const r of rows) {
   try {
+    // gli id evidenza possono essere abbreviati (8 char): si risolvono al full id
+    const { data: evs } = await sb.from('lead_evidence').select('id').eq('account_id', r.account_id);
+    const full = (x) => (!x ? null : (evs ?? []).find((e) => e.id.startsWith(x))?.id ?? x);
     const criteri = {}; let sumP = 0, sumW = 0, nulls = 0;
     for (const [k, w] of Object.entries(PESI)) {
       const c = r.criteri?.[k] ?? {}; const p = c.punti == null ? null : Number(c.punti);
-      criteri[k] = { punti: p, peso: w, prova: c.prova ?? null, evidence_id: c.evidence_id ?? null };
+      criteri[k] = { punti: p, peso: w, prova: c.prova ?? null, evidence_id: full(c.evidence_id) };
       if (p == null) nulls++; else { sumP += (p / 10) * w; sumW += w; }
     }
     const bonusTot = Math.min(10, Object.values(r.bonus ?? {}).reduce((s, v) => s + Number(v || 0), 0));
@@ -28,7 +31,7 @@ for (const r of rows) {
     const { error } = await sb.from('lead_scores').insert(row); if (error) throw error;
     const upd = { stato_ricerca: r.esclusione ? 'rejected' : 'scored', updated_at: new Date().toISOString() };
     if (r.esclusione) upd.rejected_motivo = `esclusione secca: ${r.esclusione}`;
-    if (r.gancio && totale != null && totale >= 55) { upd.gancio = r.gancio; upd.gancio_evidence_id = r.gancio_evidence_id ?? null; }
+    if (r.gancio && totale != null && totale >= 55) { upd.gancio = r.gancio; upd.gancio_evidence_id = full(r.gancio_evidence_id); }
     // non sovrascrivere una decisione umana gia' presa (reviewed/rejected da persona)
     const { data: cur } = await sb.from('lead_accounts').select('stato_ricerca,tier').eq('id', r.account_id).single();
     if (cur?.stato_ricerca === 'reviewed' || (cur?.stato_ricerca === 'rejected' && !r.esclusione)) { delete upd.stato_ricerca; delete upd.rejected_motivo; }

@@ -7,7 +7,7 @@
 // Idempotente: ogni stage aggiunge evidenze nuove (append-only, con run_id); ri-lanciare un account
 // non cancella nulla e la vista v_lead_dossier mostra sempre l'ultima evidenza per tipo.
 import { chromium } from 'playwright';
-import { supa, startRun, endRun, evidence, upload, num, sleep, UA, PEER_BRANDS, BAG_WORDS } from './lib.mjs';
+import { supa, startRun, endRun, evidence, upload, num, sleep, UA, peerMatches, BAG_WORDS } from './lib.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, arr) => a.startsWith('--') ? [a.slice(2), arr[i + 1] && !arr[i + 1].startsWith('--') ? arr[i + 1] : true] : []).filter(Boolean));
 const LIMIT = Number(args.limit || 50);
@@ -30,7 +30,7 @@ let nOk = 0, nErr = 0;
 
 async function ctxNew(mobile = false) {
   return browser.newContext({
-    locale: 'it-IT', userAgent: UA,
+    locale: 'it-IT', userAgent: UA, ignoreHTTPSErrors: true,
     viewport: mobile ? { width: 390, height: 844 } : { width: 1280, height: 900 },
     isMobile: mobile, deviceScaleFactor: mobile ? 2 : 1,
   });
@@ -100,7 +100,7 @@ async function stageSite(acc) {
       } catch { /* ignora */ }
     }
     const textForMatch = `${brandsText || ''} ${(vendors || []).join(' ')} ${html.replace(/<[^>]+>/g, ' ')}`.toLowerCase();
-    const peer = PEER_BRANDS.filter((b) => textForMatch.includes(b));
+    const peer = peerMatches(textForMatch);
     await saveEv(acc, 'brands_carried', { fonte: brandsSource || (vendors ? 'shopify_vendors' : 'home_html'), lista_pagina: brandsText, vendors, peer_match: [...new Set(peer)] });
     if (prices) await saveEv(acc, 'price_band', prices);
 
@@ -138,6 +138,8 @@ async function stageIg(acc, siteIg) {
     await page.waitForTimeout(3500);
     await clickAny(page, ['Rifiuta i cookie facoltativi', 'Decline optional cookies', 'Rifiuta']);
     await page.waitForTimeout(2500);
+    // il modale "Vedi foto, video..." oscura la griglia nello screenshot: si chiude con la X
+    for (let i = 0; i < 2; i++) { const x = page.locator('[aria-label="Chiudi"], [aria-label="Close"]').first(); if (await x.count()) { await x.click({ timeout: 1500 }).catch(() => {}); await page.waitForTimeout(800); } }
     const og = await page.locator('meta[property="og:description"]').getAttribute('content').catch(() => null);
     const title = await page.title();
     const header = await page.locator('header').innerText().catch(() => '');
@@ -179,9 +181,10 @@ async function stageMaps(acc) {
     const address = lines.find((l) => /\d{5}\s+[A-Za-zÀ-ÿ' ]+/.test(l) && /,/.test(l)) || null;
     const phone = lines.find((l) => /^\+?\d[\d\s]{7,}$/.test(l)) || null;
     const hours = lines.find((l) => /^(Aperto|Chiuso|Apre|Chiude|Chiuso definitivamente|Chiuso temporaneamente)/i.test(l)) || null;
-    const nameLine = lines[0] === 'Visualizza foto' ? lines[1] : lines[0];
+    const hasWord = (l) => /[A-Za-zÀ-ÿ]{3,}/.test(l);
+    const nameLine = lines.find((l) => hasWord(l) && !/^Visualizza foto|^Risultati/i.test(l)) || null;
     const iRating = lines.findIndex((l) => l === rating);
-    const category = iRating > 0 ? (lines.slice(iRating + 1, iRating + 4).find((l) => !/^\(|^\d/.test(l) && l.length < 60) || null) : null;
+    const category = iRating > 0 ? (lines.slice(iRating + 1, iRating + 5).find((l) => hasWord(l) && !/^\(|^\d/.test(l) && l.length < 60) || null) : null;
     const site = lines.find((l) => /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(l)) || null;
     const url = page.url();
     const placeId = (url.match(/!1s(0x[0-9a-f]+:0x[0-9a-f]+)/i) || [])[1] || null;

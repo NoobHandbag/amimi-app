@@ -60,5 +60,9 @@ export function num(s) {
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 
-export const PEER_BRANDS = ['lisa corti', 'le orsine', 'mystylebag', 'my style bag', 'orciani', 'gianni chiarini', 'gum', 'la doublej', 'ladoublej', 'de siena', 'pelletteria marant', 'marant', 'euterpe', 'borse valentina', 'gamberini'];
+// Brand affini (piano cap. 3.1). Match a PAROLA INTERA (regex), mai substring: 'gum' e 'marant' da soli
+// pescavano dentro qualsiasi parola (gum -> argument, Isabel Marant e' luxury, non e' Pelletteria Marant).
+export const PEER_BRANDS = ['lisa corti', 'le orsine', 'mystylebag', 'my style bag', 'my style bags', 'orciani', 'gianni chiarini', 'gum by gianni chiarini', 'gum design', 'la doublej', 'ladoublej', 'de siena', 'pelletteria marant', 'euterpe studio', 'borse valentina', 'gamberini'];
+// I nomi in PEER_BRANDS sono solo lettere e spazi: nessun escape necessario.
+export const peerMatches = (text) => { const t = (text || '').toLowerCase(); return PEER_BRANDS.filter((b) => new RegExp('(^|[^a-z0-9])' + b + '([^a-z0-9]|$)').test(t)); };
 export const BAG_WORDS = /\b(bag|bags|borsa|borse|borsetta|pochette|clutch|tote|shopper|secchiello|tracolla|handbag|zaino|backpack|purse)\b/i;

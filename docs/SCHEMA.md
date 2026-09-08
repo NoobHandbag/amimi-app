@@ -243,3 +243,15 @@ Su questo ricavo il CE era ed e' corretto.
 - **Chi la legge:** solo `cs-assist`, con join case-insensitive su `upper(codice)` e filtro `on_shopify`. **Nessuna vista la usa** (verificato su `information_schema.views` prima di toccarla): CE, inventario e le 4 viste protette dalla Regola 19 non sono in gioco.
 - **`synced_at` serve a farla vedere:** e' rimasta indietro cinque settimane senza che nessuno se ne accorgesse. Con una data sopra, una tabella ferma si nota.
 - **Misurato il 01-08 dopo il primo giro:** 94 righe -> **224**, 93 righe morte rimosse, **copertura link da 67/99 a 99/99**, zero doppioni case-insensitive, cinque URL nuovi provati a mano (200). Secondo giro consecutivo: `catalogoPruned: 0`, idempotente. Impronta di `shopify_stock`, giacenze (798) e CE di agosto **identici** prima e dopo.
+
+## 14. Modulo lead_* : ricerca negozi B2B e outreach (migr 0111, 2026-09-08)
+
+Modulo additivo (Regola Ferrea 19) per la ricerca di negozi e gruppi multimarca da contattare (piano in `Cowork12/projects/B2B_Prospecting_2026-09/`). Core toccato solo in LETTURA (`negozi` via FK `lead_accounts.negozio_id`, valorizzata solo al primo ordine). Flag `app_flags.lead_enabled` = `false` (oggi non gata nulla: nessun cron).
+
+- **Tabelle**: `lead_accounts` (negozio/gruppo, `stato_ricerca` seed->enriched->scored->reviewed|rejected, `tier` deciso da persona, `gancio`), `lead_contacts` (persone, `opt_out`), `lead_evidence` (append-only: `tipo`, `payload` jsonb, `asset_path` nel bucket), `lead_scores` (valutazioni versionate, `rubrica_version`, `criteri` jsonb con prova per criterio, `totale`, `tier_proposto`), `lead_reviews` (decisione umana), `lead_runs` (ogni giro di collector/judge), piu' `lead_touches`, `lead_drafts`, `lead_knowledge` create vuote per la Fase 2 (outreach).
+- **Trigger** `lead_reviews_apply` (security definer): un INSERT in `lead_reviews` aggiorna `lead_accounts` (tier/reviewed, rejected con motivo, ricontrolla -> seed, nota).
+- **Viste** (security_invoker): `v_lead_dossier` (account + ultimo score + ultima review + ultimi screenshot e payload IG/Maps/brand/prezzi), `v_lead_pipeline`.
+- **Sicurezza**: RLS su tutte, SELECT solo `authenticated` con email `@amimi.it`, anon zero (test negativo `set role anon` = permission denied, verificato 08-09). Unica scrittura applicativa: INSERT su `lead_reviews` dall'utente loggato. Bucket Storage **`lead-assets` privato** (screenshot), lettura via URL firmati dalla PWA.
+- **Chi scrive**: il collector `amimi-app/workers/lead/` (Node + Playwright, service_role letta a runtime dalla Management API, mai su disco) scrive `lead_*` e il bucket; la sessione Claude Code scrive `lead_scores` con `judge_write.mjs`. Nessuna scrittura via write-api: e' telemetria del modulo, non dati core (lettura della Regola 19 data anche a cs-* e sales-guard).
+- **UI**: pagina "Negozi B2B" nella PWA (`web/src/pages/Negozi.tsx`, `lib/leadApi.ts`), login con lo stesso client dell'Assistenza.
+- **Test di non regressione 08-09**: `sum(giacenza_attuale)` = 865 e `mc1` settembre 2026 = 2825,73 prima e dopo la migrazione.
