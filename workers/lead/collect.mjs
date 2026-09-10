@@ -199,15 +199,18 @@ async function stageIg(acc, siteIg) {
 async function stageMaps(acc) {
   const query = `${acc.nome} ${acc.citta || ''}`.trim();
   if (!acc.citta && !acc.indirizzo) { await saveEv(acc, 'maps', { errore: 'nessuna citta\' o indirizzo: ricerca Maps non sensata', query }); return 'skip'; }
+  // se il seed porta gia' il google_maps_url (fonte maps), si va DRITTI sulla scheda giusta:
+  // evita il rischio di aprire un omonimo e prende il sito web che Google elenca per QUEL posto.
+  const placeUrl = acc.google_maps_url && /\/maps\/place\//.test(acc.google_maps_url) ? acc.google_maps_url : null;
   const ctx = await ctxNew(false); const page = await ctx.newPage();
   try {
-    await page.goto(`https://www.google.com/maps/search/${encodeURIComponent(query)}?hl=it`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(placeUrl || `https://www.google.com/maps/search/${encodeURIComponent(query)}?hl=it`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(2500);
     await clickAny(page, ['Rifiuta tutto', 'Reject all']);
     await page.waitForTimeout(3500);
-    // lista di risultati? apri il primo
-    const feed = page.locator('div[role="feed"] a[href*="/maps/place/"]').first();
-    if (await feed.count()) { await feed.click({ timeout: 3000 }).catch(() => {}); await page.waitForTimeout(3000); }
+    // solo in ricerca (no place url): lista di risultati, apri il primo
+    if (!placeUrl) { const feed = page.locator('div[role="feed"] a[href*="/maps/place/"]').first();
+      if (await feed.count()) { await feed.click({ timeout: 3000 }).catch(() => {}); await page.waitForTimeout(3000); } }
     const main = await page.locator('div[role="main"]').first().innerText().catch(() => '');
     const lines = main.split('\n').map((s) => s.trim()).filter(Boolean);
     const rating = (main.match(/\n(\d[.,]\d)\n/) || [])[1] || null;
@@ -239,12 +242,21 @@ async function stageMaps(acc) {
       const fbtn = page.getByRole('button', { name: /Visualizza foto|Tutte le foto|Foto e video|See photos|All photos/ }).first();
       if (await fbtn.count()) { await fbtn.click({ timeout: 3000 }); await page.waitForTimeout(3500); const fshot = await page.screenshot({ fullPage: false }).catch(() => null); if (fshot) await saveShot(acc, 'screenshot_maps_photos', fshot, { query }); }
     } catch { /* best effort */ }
-    const payload = { query, nome_scheda: nameLine, rating: rating ? parseFloat(rating.replace(',', '.')) : null, recensioni: reviews ? num(reviews) : null, categoria: category, indirizzo: address, telefono: phone, orari: hours, sito: site, place_id: placeId, url: url.slice(0, 500), lat: coords ? parseFloat(coords[1]) : null, lng: coords ? parseFloat(coords[2]) : null, chiuso_definitivamente: /Chiuso definitivamente/i.test(main) };
+    // sito web elencato da Google per la scheda: e' l'aggancio che accende stageSite (e via sito, Instagram)
+    // per gli account nati da Maps, che in anagrafica non hanno ne' website ne' ig_handle.
+    const siteNorm = site && !/instagram|facebook|tripadvisor|tiktok|wa\.me|whatsapp|google\.|maps\./i.test(site) ? norm(site) : null;
+    const payload = { query, nome_scheda: nameLine, rating: rating ? parseFloat(rating.replace(',', '.')) : null, recensioni: reviews ? num(reviews) : null, categoria: category, indirizzo: address, telefono: phone, orari: hours, sito: site, sito_persistito: siteNorm, place_id: placeId, url: url.slice(0, 500), lat: coords ? parseFloat(coords[1]) : null, lng: coords ? parseFloat(coords[2]) : null, chiuso_definitivamente: /Chiuso definitivamente/i.test(main) };
     if (!rating && !address) payload.errore = 'scheda non riconosciuta (nessun rating ne\' indirizzo nel pannello)';
     await saveShot(acc, 'screenshot_maps', shot, { query });
     await saveEv(acc, 'maps', payload);
-    if (!DRY && (placeId || coords) && !payload.errore) {
-      const upd = {}; if (placeId && !acc.google_place_id) upd.google_place_id = placeId; if (coords && acc.lat == null) { upd.lat = payload.lat; upd.lng = payload.lng; } if (!acc.google_maps_url) upd.google_maps_url = url.slice(0, 500);
+    if (!DRY && !payload.errore) {
+      const upd = {};
+      if (placeId && !acc.google_place_id) upd.google_place_id = placeId;
+      if (coords && acc.lat == null) { upd.lat = payload.lat; upd.lng = payload.lng; }
+      if (!acc.google_maps_url) upd.google_maps_url = url.slice(0, 500);
+      if (siteNorm && !acc.website) { upd.website = siteNorm; acc.website = siteNorm; } // acc.website in memoria: stageSite lo usa subito dopo
+      if (phone && !acc.telefono) upd.telefono = phone;
+      if (address && !acc.indirizzo) upd.indirizzo = address;
       if (Object.keys(upd).length) await sb.from('lead_accounts').update({ ...upd, updated_at: new Date().toISOString() }).eq('id', acc.id);
     }
     await ctx.close();
@@ -281,11 +293,13 @@ for (const acc of accounts) {
   const t0 = Date.now(); const res = {};
   console.log(`\n== ${acc.nome} (${acc.citta || acc.paese})`);
   try {
+    // ordine: MAPS prima (per gli account nati da Maps trova e persiste il website), poi SITO
+    // (che usa il website appena trovato e ne ricava l'handle Instagram), poi IG, poi press.
+    if (ONLY.includes('maps')) { res.maps = await stageMaps(acc); console.log(`   maps: ${res.maps}`); }
     let siteIg = null;
     if (ONLY.includes('site')) { res.site = await stageSite(acc); console.log(`   site: ${res.site}`);
       if (!DRY) { const { data } = await sb.from('lead_evidence').select('payload').eq('account_id', acc.id).eq('tipo', 'site_meta').order('captured_at', { ascending: false }).limit(1); siteIg = data?.[0]?.payload?.ig_from_site || null; } }
     if (ONLY.includes('ig')) { res.ig = await stageIg(acc, siteIg); console.log(`   ig: ${res.ig}`); await sleep(15000 + Math.random() * 10000); }
-    if (ONLY.includes('maps')) { res.maps = await stageMaps(acc); console.log(`   maps: ${res.maps}`); }
     if (ONLY.includes('press')) { res.press = await stagePress(acc); console.log(`   press: ${res.press}`); }
     const anyOk = Object.values(res).some((v) => v === 'ok' || v === 'partial');
     if (!DRY && anyOk && acc.stato_ricerca === 'seed') await sb.from('lead_accounts').update({ stato_ricerca: 'enriched', updated_at: new Date().toISOString() }).eq('id', acc.id);

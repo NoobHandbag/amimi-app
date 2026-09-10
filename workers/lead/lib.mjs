@@ -66,3 +66,36 @@ export const PEER_BRANDS = ['lisa corti', 'le orsine', 'mystylebag', 'my style b
 // I nomi in PEER_BRANDS sono solo lettere e spazi: nessun escape necessario.
 export const peerMatches = (text) => { const t = (text || '').toLowerCase(); return PEER_BRANDS.filter((b) => new RegExp('(^|[^a-z0-9])' + b + '([^a-z0-9]|$)').test(t)); };
 export const BAG_WORDS = /\b(bag|bags|borsa|borse|borsetta|pochette|clutch|tote|shopper|secchiello|tracolla|handbag|zaino|backpack|purse)\b/i;
+
+// Catene e monomarca da scartare in fase di seed (mai target: fast fashion, monomarca, franchising).
+// Match a PAROLA/FRASE contenuta nel nome normalizzato. Tenere qui la lista, non spargerla negli script.
+export const CHAIN_DENYLIST = [
+  // fast fashion / abbigliamento catena
+  'zara', 'ovs', 'h&m', 'h & m', 'mango', 'stradivarius', 'bershka', 'pull&bear', 'pull & bear', 'benetton',
+  'united colors', 'terranova', 'ter333', 'calliope', 'primark', 'uniqlo', 'kiabi', 'cisalfa', 'motivi',
+  'cos', 'arket', 'other stories', 'weekday', 'massimo dutti', 'oysho', 'zara home',
+  'oviesse', 'piazza italia', 'tally weijl', 'jysk', 'tezenis', 'intimissimi', 'calzedonia', 'yamamay',
+  // monomarca borse / pelletteria (concorrenti o monomarca)
+  'coccinelle', 'furla', 'carpisa', 'gabs', 'tuscany leather', 'the bridge', 'piquadro', 'braccialini',
+  'louis vuitton', 'gucci', 'prada', 'fendi', 'bottega veneta', 'longchamp', 'michael kors', 'liu jo', 'liu.jo',
+  'twinset', 'twin-set', 'pinko', 'guess', 'tods', "tod's", 'hogan', 'valextra',
+  // monomarca abbigliamento donna a insegna singola (NON marchi che compaiono nei nomi dei multimarca:
+  // niente 'max mara'/'iblues'/'kontatto' che sono spesso brand a scaffale di boutique vere)
+  'elena miro', 'luisa spagnoli', 'marella', 'marina rinaldi', 'nau', 'original marines', 'sisley',
+  // gioielli / cosmetica / ottica catena
+  'pandora', 'swarovski', 'stroili', 'morellato', 'kiko', 'sephora', 'douglas', 'the body shop', 'lush', 'rituals',
+  'grandvision', 'salmoiraghi', 'vistasi', 'optissimo',
+  // scarpe / sport catena
+  'geox', 'bata', 'scarpe&scarpe', 'scarpe & scarpe', 'nike store', 'adidas', 'foot locker', 'decathlon',
+  'cisalfa sport', 'snipes', 'aw lab', 'footlocker', 'primadonna',
+  // department / grande distribuzione / non-retail-moda
+  'rinascente', 'coin', 'upim', 'ikea', 'unieuro', 'mediaworld', 'euronics', 'leroy merlin',
+  'farmacia', 'pharmacy', 'supermercato', 'esselunga', 'carrefour', 'conad', 'lidl', 'eurospin',
+  'tabaccheria', 'edicola', 'ottica', 'parafarmacia',
+];
+export const normName = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+// match SOLO a parola/frase intera (bordo di parola via spazi), mai substring nuda: 'cos' non deve
+// pescare 'Cose', 'zara' non deve pescare 'Zarabetti'. Le voci multi-parola diventano sequenze di token.
+export const isChain = (name) => { const n = ` ${normName(name)} `; return CHAIN_DENYLIST.some((c) => n.includes(` ${normName(c)} `)); };
+// hint di tipologia dalla query Maps
+export const TYPE_BY_QUERY = { 'concept store': 'concept_store', 'boutique donna': 'boutique', 'boutique accessori': 'boutique', 'negozio borse artigianali': 'boutique', 'bijoux e accessori': 'boutique', 'negozio regali design': 'negozio_regalo' };
