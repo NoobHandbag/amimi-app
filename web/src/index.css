@@ -846,3 +846,6 @@ button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-
 .lead-scale-leg i { display: inline-block; width: 14px; height: 8px; border-radius: 3px; }
 .lead-lightbox-cap { color: #fff; text-align: center; font-size: 13px; padding: 8px; }
 .lead-lightbox-cap a { color: #fff; text-decoration: underline; }
+
+.lead-verd { border: 2px solid var(--interactive-tint); }
+.lead-verd-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }

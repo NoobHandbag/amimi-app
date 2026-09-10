@@ -29,6 +29,10 @@ export type LeadDossier = {
   rejected_motivo: string | null;
   lead_stage: string;
   tier: 'A' | 'B' | 'C' | null;
+  verdetto: 'da_contattare' | 'forse' | 'no' | null;
+  verdetto_motivo: string | null;
+  verdetto_chi: string | null;
+  verdetto_at: string | null;
   gancio: string | null;
   owner_note: string | null;
   contattato_prima: boolean;
@@ -80,7 +84,8 @@ export type LeadEvidence = {
 };
 
 export type LeadContact = { id: string; nome: string | null; ruolo: string | null; email: string | null; telefono: string | null; linkedin_url: string | null; fonte: string | null; opt_out: boolean; note: string | null };
-export type LeadReview = { id: string; chi: string; azione: string; tier: string | null; motivo: string | null; nota: string | null; created_at: string };
+export type LeadReview = { id: string; chi: string; azione: string; tier: string | null; verdetto: string | null; motivo: string | null; nota: string | null; created_at: string };
+export const VERDETTO_LABEL: Record<string, string> = { da_contattare: 'Da contattare', forse: 'Forse', no: 'No' };
 
 export const TIPO_LABEL: Record<string, string> = {
   boutique: 'Boutique', concept_store: 'Concept store', hotel_shop: 'Boutique hotel', gruppo_multimarca: 'Gruppo / catena',
@@ -115,7 +120,7 @@ export async function fetchContacts(accountId: string): Promise<LeadContact[]> {
 }
 
 export async function fetchReviews(accountId: string): Promise<LeadReview[]> {
-  const { data, error } = await csClient.from('lead_reviews').select('id,chi,azione,tier,motivo,nota,created_at').eq('account_id', accountId).order('created_at', { ascending: false });
+  const { data, error } = await csClient.from('lead_reviews').select('id,chi,azione,tier,verdetto,motivo,nota,created_at').eq('account_id', accountId).order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as LeadReview[];
 }
@@ -141,7 +146,7 @@ export function assetPathsOf(r: LeadDossier): string[] {
     .filter((p): p is string => !!p);
 }
 
-export async function addReview(r: { account_id: string; chi: string; azione: 'tier' | 'scarta' | 'ricontrolla' | 'nota'; tier?: 'A' | 'B' | 'C' | null; motivo?: string | null; nota?: string | null }) {
+export async function addReview(r: { account_id: string; chi: string; azione: 'tier' | 'scarta' | 'ricontrolla' | 'nota' | 'verdetto'; tier?: 'A' | 'B' | 'C' | null; verdetto?: 'da_contattare' | 'forse' | 'no' | null; motivo?: string | null; nota?: string | null }) {
   const { error } = await csClient.from('lead_reviews').insert(r);
   if (error) throw new Error(error.message);
 }

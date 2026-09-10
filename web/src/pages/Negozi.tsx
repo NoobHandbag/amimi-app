@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { fetchDossier, fetchEvidence, fetchContacts, fetchReviews, signedUrls, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER } from '../lib/leadApi';
+import { fetchDossier, fetchEvidence, fetchContacts, fetchReviews, signedUrls, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL } from '../lib/leadApi';
 import type { LeadDossier, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
 import { personaName } from '../lib/people';
 import { pushBack, popBack } from '../lib/backnav';
@@ -25,6 +25,7 @@ const postDate = (p: { alt: string; data: string | null }) => { const m = p.alt.
 // descrizione automatica di Instagram ("Potrebbe essere un'immagine raffigurante ...")
 const postDesc = (alt: string) => { const m = alt.match(/raffigurante (.+?)\.?$/) || alt.match(/may be an image of (.+?)\.?$/i); return m ? m[1] : ''; };
 const AMIMI_MIN = 50; const AMIMI_MAX = 190;
+const verdColor = (v: string | null | undefined) => (v === 'da_contattare' ? 'var(--positive)' : v === 'forse' ? 'var(--warning)' : v === 'no' ? 'var(--negative)' : 'var(--border-strong)');
 
 type View = 'lista' | 'tabella' | 'scheda';
 
@@ -39,6 +40,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
   const [fStato, setFStato] = useState<string>('attivi');
   const [fTier, setFTier] = useState<string>('tutti');
   const [fTipo, setFTipo] = useState<string>('tutti');
+  const [fVerd, setFVerd] = useState<string>('tutti');
   const [q, setQ] = useState('');
   const who = personaName(chi);
 
@@ -79,8 +81,9 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
       (fStato === 'tutti' || (fStato === 'attivi' ? r.stato_ricerca !== 'rejected' : r.stato_ricerca === fStato)) &&
       (fTier === 'tutti' || (fTier === 'senza' ? !r.tier && !r.tier_proposto : (r.tier ?? r.tier_proposto) === fTier)) &&
       (fTipo === 'tutti' || r.tipo === fTipo) &&
+      (fVerd === 'tutti' || (fVerd === 'senza' ? !r.verdetto : r.verdetto === fVerd)) &&
       (!s || `${r.nome} ${r.citta ?? ''} ${r.ig_handle ?? ''} ${(r.brands_carried?.peer_match ?? []).join(' ')} ${(r.brands_carried?.vendors ?? []).join(' ')}`.toLowerCase().includes(s)));
-  }, [rows, fStato, fTier, fTipo, q]);
+  }, [rows, fStato, fTier, fTipo, fVerd, q]);
 
   const openScheda = (r: LeadDossier) => { pushBack(() => { setCur(null); setView('lista'); }); setCur(r); setView('scheda'); };
   const closeScheda = () => popBack(() => { setCur(null); setView('lista'); });
@@ -124,7 +127,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
           <div className="kpis">
             <div className="ds-kpi"><div className="v">{rows.length}</div><div className="l">Profili nel database</div><div className="s">{byStato.get('rejected') ?? 0} scartati</div></div>
             <div className="ds-kpi"><div className="v">{byStato.get('scored') ?? 0}</div><div className="l">Valutati, da rivedere</div><div className="s">score pronto, decisione umana mancante</div></div>
-            <div className="ds-kpi pos"><div className="v">{rows.filter((r) => r.tier === 'A').length}</div><div className="l">Tier A decisi</div><div className="s">{rows.filter((r) => r.tier_proposto === 'A' && r.stato_ricerca !== 'rejected').length} proposti dal modello</div></div>
+            <div className="ds-kpi pos"><div className="v">{rows.filter((r) => r.verdetto === 'da_contattare').length}</div><div className="l">Da contattare</div><div className="s">{rows.filter((r) => r.verdetto === 'forse').length} forse · {rows.filter((r) => r.verdetto === 'no').length} no · {rows.filter((r) => !r.verdetto && r.stato_ricerca !== 'rejected').length} senza verdetto</div></div>
             <div className="ds-kpi"><div className="v">{byStato.get('reviewed') ?? 0}</div><div className="l">Rivisti</div><div className="s">{byStato.get('seed') ?? 0} ancora da raccogliere</div></div>
           </div>
 
@@ -138,6 +141,9 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
               <span style={{ width: 8 }} />
               {['tutti', ...tipi].map((t) => <button key={t} type="button" className={`chip ${fTipo === t ? 'on' : ''}`} onClick={() => setFTipo(t)}>{t === 'tutti' ? 'Ogni tipo' : TIPO_LABEL[t] ?? t}</button>)}
             </div>
+            <div className="chips" style={{ marginBottom: 6 }}>
+              {['tutti', 'da_contattare', 'forse', 'no', 'senza'].map((v) => <button key={v} type="button" className={`chip ${fVerd === v ? 'on' : ''}`} onClick={() => setFVerd(v)} style={v !== 'tutti' && v !== 'senza' && fVerd === v ? { background: verdColor(v), borderColor: verdColor(v), color: '#fff' } : undefined}>{v === 'tutti' ? 'Ogni verdetto' : v === 'senza' ? 'Senza verdetto' : VERDETTO_LABEL[v]}</button>)}
+            </div>
             <div className="seg" style={{ marginTop: 4 }}>
               <button type="button" className={view === 'lista' ? 'on' : ''} onClick={() => setView('lista')}>Schede</button>
               <button type="button" className={view === 'tabella' ? 'on' : ''} onClick={() => setView('tabella')}>Tabella</button>
@@ -147,11 +153,12 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
           {view === 'tabella' ? (
             <section className="card">
               <div className="tablewrap"><table className="sortable">
-                <thead><tr><th>Negozio</th><th>Citta&#8217;</th><th>Tipo</th><th>Stato</th><th>Score</th><th>Tier</th><th>Follower</th><th>Rating</th><th>Borse (mediana)</th><th>Brand affini</th><th>Evid.</th></tr></thead>
+                <thead><tr><th>Negozio</th><th>Citta&#8217;</th><th>Tipo</th><th>Stato</th><th>Score</th><th>Verdetto</th><th>Tier</th><th>Follower</th><th>Rating</th><th>Borse (mediana)</th><th>Brand affini</th><th>Evid.</th></tr></thead>
                 <tbody>{list.map((r) => (
                   <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => openScheda(r)}>
                     <td className="l">{r.nome}</td><td className="l">{r.citta ?? r.paese}</td><td className="l">{TIPO_LABEL[r.tipo] ?? r.tipo}</td><td className="l">{STATO_LABEL[r.stato_ricerca]}</td>
                     <td style={{ color: scoreColor(r.totale), fontWeight: 700 }}>{r.totale ?? '—'}</td>
+                    <td style={{ color: verdColor(r.verdetto), fontWeight: 700 }}>{r.verdetto ? VERDETTO_LABEL[r.verdetto] : '—'}</td>
                     <td>{r.tier ?? (r.tier_proposto ? `${r.tier_proposto}?` : '—')}</td>
                     <td>{fmtN(r.ig_metrics?.follower)}</td><td>{r.maps?.rating != null ? `${r.maps.rating} (${fmtN(r.maps.recensioni)})` : '—'}</td>
                     <td>{eur(r.price_band?.borse?.mediana)}</td><td className="l">{(r.brands_carried?.peer_match ?? []).join(', ') || '—'}</td><td>{r.n_evidenze}</td>
@@ -170,7 +177,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
                     <div className="lead-thumb" style={{ background: shot ? `url(${shot}) center / cover no-repeat` : 'var(--surface-alt)' }}>
                       {!shot && <span className="muted">nessuna immagine</span>}
                       <span className="lead-score" style={{ background: scoreColor(r.totale) }}>{r.totale ?? '—'}</span>
-                      {(r.tier || r.tier_proposto) && <span className="lead-tier" style={{ background: tierColor(r.tier ?? r.tier_proposto) }}>{r.tier ? `Tier ${r.tier}` : `${r.tier_proposto}?`}</span>}
+                      {r.verdetto ? <span className="lead-tier" style={{ background: verdColor(r.verdetto) }}>{VERDETTO_LABEL[r.verdetto]}</span> : (r.tier || r.tier_proposto) && <span className="lead-tier" style={{ background: tierColor(r.tier ?? r.tier_proposto) }}>{r.tier ? `Tier ${r.tier}` : `${r.tier_proposto}?`}</span>}
                     </div>
                     <div className="lead-body">
                       <div className="lead-name">{r.nome}</div>
@@ -181,7 +188,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
                         <span>borse {r.price_band?.borse ? `${eur(r.price_band.borse.min)}–${eur(r.price_band.borse.max)}` : '—'}</span>
                       </div>
                       {peer.length > 0 && <div className="chips" style={{ marginTop: 4 }}>{peer.slice(0, 4).map((b) => <span key={b} className="chip on" style={{ fontSize: 11 }}>{b}</span>)}</div>}
-                      {r.motivazione && <div className="lead-mot">{short(r.motivazione, 140)}</div>}
+                      {r.verdetto_motivo ? <div className="lead-mot" style={{ color: 'var(--ink)' }}>{short(r.verdetto_motivo, 140)}</div> : r.motivazione && <div className="lead-mot">{short(r.motivazione, 140)}</div>}
                       {r.esclusione && <div className="lead-mot" style={{ color: 'var(--negative)' }}>Esclusione: {r.esclusione}</div>}
                     </div>
                   </button>
@@ -205,6 +212,7 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged }: { r: LeadDossier;
   const [showAbout, setShowAbout] = useState(false);
   const [nota, setNota] = useState('');
   const [motivo, setMotivo] = useState('');
+  const [perche, setPerche] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [big, setBig] = useState<{ src: string; label: string; href?: string | null } | null>(null);
@@ -216,6 +224,18 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged }: { r: LeadDossier;
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [r.id]);
 
+  const classify = async (v: 'da_contattare' | 'forse' | 'no') => {
+    if (v === 'no' && !perche.trim()) { setMsg('Per un "no" scrivi il perche\u2019: serve a non ricontattarlo per sbaglio.'); return; }
+    setBusy(true); setMsg('');
+    try {
+      await addReview({ account_id: r.id, chi: who, azione: 'verdetto', verdetto: v, motivo: perche.trim() || null });
+      setPerche('');
+      await onChanged();
+      setReviews(await fetchReviews(r.id));
+      setMsg(`${VERDETTO_LABEL[v]} salvato (${who}).`);
+    } catch (e) { setMsg((e as Error).message); }
+    setBusy(false);
+  };
   const act = async (azione: 'tier' | 'scarta' | 'ricontrolla' | 'nota', tier?: 'A' | 'B' | 'C') => {
     if (azione === 'scarta' && !motivo.trim()) { setMsg('Scrivi il motivo dello scarto.'); return; }
     if (azione === 'nota' && !nota.trim()) { setMsg('La nota e’ vuota.'); return; }
@@ -261,7 +281,21 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged }: { r: LeadDossier;
         {(r.email_generica || r.site_meta?.emails?.[0]) && <a href={`mailto:${r.email_generica ?? r.site_meta?.emails?.[0]}`}>{r.email_generica ?? r.site_meta?.emails?.[0]}</a>}
         {(r.telefono || mp?.telefono) && <span>{r.telefono ?? mp?.telefono}</span>}
       </div>
-      {r.stato_ricerca === 'rejected' && <div className="card err">Scartato: {r.rejected_motivo}</div>}
+      <section className="card lead-verd">
+        <div className="lead-verd-head">
+          <h2 style={{ margin: 0 }}>Il vostro verdetto</h2>
+          {r.verdetto ? <span className="lead-tier" style={{ position: 'static', background: verdColor(r.verdetto) }}>{VERDETTO_LABEL[r.verdetto]}{r.verdetto_chi ? ` · ${r.verdetto_chi}` : ''}{r.verdetto_at ? ` · ${r.verdetto_at.slice(0, 10)}` : ''}</span> : <span className="muted" style={{ fontSize: 12 }}>non ancora classificato</span>}
+        </div>
+        {r.verdetto_motivo && <p style={{ margin: '6px 0 0' }}><b>Perche&#8217;:</b> {r.verdetto_motivo}</p>}
+        <div className="cs-fld" style={{ marginTop: 8 }}><label>Perche&#8217; (obbligatorio per il no)</label><textarea rows={2} value={perche} onChange={(e) => setPerche(e.target.value)} placeholder="es. troppo luxury per noi / perfetto, chiamare il titolare / da rivedere dopo la visita" /></div>
+        <div className="lead-actions">
+          <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'da_contattare' ? 'var(--positive)' : 'transparent', color: r.verdetto === 'da_contattare' ? '#fff' : 'var(--positive-700)', borderColor: 'var(--positive)' }} onClick={() => classify('da_contattare')}>Da contattare</button>
+          <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'forse' ? 'var(--warning)' : 'transparent', color: r.verdetto === 'forse' ? '#fff' : 'var(--warning-700)', borderColor: 'var(--warning)' }} onClick={() => classify('forse')}>Forse</button>
+          <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'no' ? 'var(--negative)' : 'transparent', color: r.verdetto === 'no' ? '#fff' : 'var(--negative-700)', borderColor: 'var(--negative)' }} onClick={() => classify('no')}>No</button>
+        </div>
+        {msg && <div className="note" style={{ marginTop: 6 }}>{msg}</div>}
+      </section>
+      {r.stato_ricerca === 'rejected' && !r.verdetto && <div className="card err">Scartato: {r.rejected_motivo}</div>}
       {r.site_meta?.meta && <p className="lead-tagline">{short(r.site_meta.meta, 220)}</p>}
 
       {posts.length > 0 && (
@@ -375,8 +409,8 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged }: { r: LeadDossier;
       </section>
 
       <section className="card">
-        <h2>Decisione</h2>
-        <p className="note">La tua decisione vince sul punteggio. Firmi come <b>{who}</b>.</p>
+        <h2>Tier e note</h2>
+        <p className="note">Il verdetto sopra e&#8217; quello che conta per l&#8217;outreach; qui il tier (priorita&#8217; fra i "da contattare") e le note. Firmi come <b>{who}</b>.</p>
         <div className="lead-actions">
           {(['A', 'B', 'C'] as const).map((t) => <button key={t} type="button" className="ds-btn" disabled={busy} style={{ borderColor: tierColor(t), color: r.tier === t ? '#fff' : tierColor(t), background: r.tier === t ? tierColor(t) : 'transparent' }} onClick={() => act('tier', t)}>Tier {t}</button>)}
           <button type="button" className="ds-btn" disabled={busy} onClick={() => act('ricontrolla')}>Ricontrolla</button>
@@ -387,7 +421,7 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged }: { r: LeadDossier;
         <button type="button" className="ds-btn" disabled={busy} onClick={() => act('nota')}>Salva nota</button>
         {msg && <div className="note" style={{ marginTop: 6 }}>{msg}</div>}
         {r.owner_note && <p className="note" style={{ marginTop: 8 }}><b>Nota attuale:</b> {r.owner_note}</p>}
-        {reviews.length > 0 && <div className="list" style={{ marginTop: 8 }}>{reviews.map((v) => <div key={v.id} className="row"><div><div className="rt">{v.azione}{v.tier ? ` ${v.tier}` : ''} · {v.chi}</div><div className="rs">{[v.motivo, v.nota].filter(Boolean).join(' · ')}</div></div><div className="muted" style={{ fontSize: 12 }}>{v.created_at.slice(0, 16).replace('T', ' ')}</div></div>)}</div>}
+        {reviews.length > 0 && <div className="list" style={{ marginTop: 8 }}>{reviews.map((v) => <div key={v.id} className="row"><div><div className="rt">{v.azione}{v.tier ? ` ${v.tier}` : ''}{v.verdetto ? ` ${VERDETTO_LABEL[v.verdetto]}` : ''} · {v.chi}</div><div className="rs">{[v.motivo, v.nota].filter(Boolean).join(' · ')}</div></div><div className="muted" style={{ fontSize: 12 }}>{v.created_at.slice(0, 16).replace('T', ' ')}</div></div>)}</div>}
       </section>
 
       <section className="card">
