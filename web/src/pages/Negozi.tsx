@@ -45,6 +45,16 @@ const postDate = (p: { alt: string; data: string | null }) => { const m = p.alt.
 // descrizione automatica di Instagram ("Potrebbe essere un'immagine raffigurante ...")
 const postDesc = (alt: string) => { const m = alt.match(/raffigurante (.+?)\.?$/) || alt.match(/may be an image of (.+?)\.?$/i); return m ? m[1] : ''; };
 const AMIMI_MIN = 50; const AMIMI_MAX = 190;
+// recensione Google grezza ("Nome Local Guide · 12 recensioni · 3 foto <icone> 3 mesi fa Testo... Altro Mi piace Condividi")
+// -> { autore, quando, testo }. Le icone sono glifi in area privata: via.
+const cleanReview = (raw: string) => {
+  const t = raw.replace(/[-\u{F0000}-\u{FFFFD}]/gu, '').replace(/\s+/g, ' ').trim();
+  const m = t.match(/^(.*?)\s((?:\d+|un|una)\s(?:anni|anno|mesi|mese|settimane|settimana|giorni|giorno|ore|ora|minuti)\s+fa)\s(.*)$/i);
+  const autore = (m ? m[1] : '').replace(/\s*Local Guide.*$/i, '').replace(/\s*\d+ recension[ei].*$/i, '').trim();
+  let testo = (m ? m[3] : t).replace(/\s*(…|\.\.\.)?\s*Altro\b.*$/s, '').replace(/\s*Mi piace\s*(\d+)?\s*Condividi.*$/s, '').replace(/\s*Traduzione di Google.*$/s, '').trim();
+  if (!testo) testo = '(solo stelle, senza testo)';
+  return { autore, quando: m ? m[2] : '', testo };
+};
 const verdColor = (v: string | null | undefined) => (v === 'da_contattare' ? 'var(--positive)' : v === 'forse' ? 'var(--warning)' : v === 'no' ? 'var(--negative)' : 'var(--border-strong)');
 
 type View = 'lista' | 'tabella' | 'scheda';
@@ -419,7 +429,7 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged }: { r: LeadDossier;
           <h2>Cosa si dice</h2>
           {revs.length > 0 && <>
             <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Recensioni Google (le prime {revs.length})</div>
-            <div className="list">{revs.map((v, i) => <div key={i} className="row" style={{ alignItems: 'flex-start' }}><div><div className="rt">{v.stelle ?? '—'}</div><div className="rs" style={{ whiteSpace: 'normal' }}>{short(v.testo.replace(/Traduzione di Google.*$/, '').replace(/Mi piace\s+Condividi\s*$/, ''), 320)}</div></div></div>)}</div>
+            <div className="list">{revs.map((v, i) => { const c = cleanReview(v.testo); return <div key={i} className="row" style={{ alignItems: 'flex-start' }}><div><div className="rt">{v.stelle ? '★'.repeat(parseInt(v.stelle) || 0) : '—'} <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>{[c.autore, c.quando].filter(Boolean).join(' · ')}</span></div><div className="rs" style={{ whiteSpace: 'normal' }}>{short(c.testo, 320)}</div></div></div>; })}</div>
           </>}
           {press.length > 0 && <>
             <div className="muted" style={{ fontSize: 12, margin: '10px 0 4px' }}>Sul web (ricerca &#8220;{r.stampa?.query}&#8221;)</div>

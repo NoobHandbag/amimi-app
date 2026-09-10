@@ -214,7 +214,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
 
 // ---------------------------------------------------------------------------------------------
 export function OutreachSequenze({ sequences, settings }: { sequences: LeadSequence[]; settings: Record<string, string> }) {
-  const codici = [...new Set(sequences.map((s) => s.codice))];
+  const codici = [...new Set(sequences.map((s) => s.codice))].sort((a, b) => (a.endsWith('_it') ? -1 : b.endsWith('_it') ? 1 : a.localeCompare(b)));
   return (
     <>
       {codici.map((c) => (

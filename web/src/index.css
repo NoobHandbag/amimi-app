@@ -848,6 +848,10 @@ button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-
 .lead-lightbox-cap a { color: #fff; text-decoration: underline; }
 
 .lead-verd { border: 2px solid var(--interactive-tint); }
+/* audit 10-09 (pagina vista loggati): textarea dei form lead in monospace da 167px e bottoni senza bordo */
+.lead-verd textarea, .cs-fld textarea, .or-form textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; line-height: 1.4; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); resize: vertical; }
+.lead-actions .ds-btn, .or-move .ds-btn, .or-form + .ds-btn { border: 1px solid var(--border-strong); border-radius: 10px; }
+.lead-verd .lead-actions .ds-btn { font-weight: 700; min-width: 120px; justify-content: center; }
 .lead-verd-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 /* Outreach (tappa 1, 10-09) */
 .or-nav { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 12px; }
