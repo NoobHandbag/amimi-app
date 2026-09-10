@@ -150,3 +150,68 @@ export async function addReview(r: { account_id: string; chi: string; azione: 't
   const { error } = await csClient.from('lead_reviews').insert(r);
   if (error) throw new Error(error.message);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Outreach, tappa 1 (migr 0114/0115): pipeline, tocchi, sequenze. Scrittura UI: INSERT su lead_touches.
+export type LeadStage = 'da_contattare' | 'contattato' | 'risposto' | 'interessato' | 'materiale_inviato' | 'appuntamento' | 'primo_ordine' | 'attivo' | 'chiuso_no' | 'opt_out';
+export const STAGES: { key: LeadStage; label: string }[] = [
+  { key: 'da_contattare', label: 'Da contattare' }, { key: 'contattato', label: 'Contattato' }, { key: 'risposto', label: 'Risposto' },
+  { key: 'interessato', label: 'Interessato' }, { key: 'materiale_inviato', label: 'Materiale inviato' }, { key: 'appuntamento', label: 'Appuntamento' },
+  { key: 'primo_ordine', label: 'Primo ordine' }, { key: 'attivo', label: 'Attivo' }, { key: 'chiuso_no', label: 'Chiuso no' }, { key: 'opt_out', label: 'Opt-out' },
+];
+export const STAGE_LABEL: Record<string, string> = Object.fromEntries(STAGES.map((s) => [s.key, s.label]));
+export const ESITI: { key: string; label: string }[] = [
+  { key: 'interessato', label: 'Interessato' }, { key: 'chiede_info', label: 'Chiede informazioni' }, { key: 'piu_avanti', label: 'Più avanti' },
+  { key: 'nessuna_risposta', label: 'Nessuna risposta' }, { key: 'no', label: 'No' }, { key: 'bounce', label: 'Email non valida' }, { key: 'opt_out', label: 'Opt-out (non contattare più)' }, { key: 'altro', label: 'Altro' },
+];
+
+export type LeadOutreach = {
+  id: string; nome: string; tipo: string; citta: string | null; provincia: string | null; paese: string;
+  website: string | null; ig_handle: string | null; email_generica: string | null; telefono: string | null;
+  lead_stage: LeadStage; verdetto: string | null; verdetto_motivo: string | null; tier: string | null; gancio: string | null;
+  prossima_azione: string | null; prossima_azione_at: string | null; owner_outreach: string | null; owner_note: string | null;
+  totale: number | null; tier_proposto: string | null;
+  ultimo_tocco_at: string | null; ultimo_canale: string | null; ultima_direzione: string | null; ultimo_esito: string | null; ultimo_chi: string | null;
+  n_tocchi: number; n_email_out: number; giorni_da_ultimo: number | null; scaduta: boolean; da_gestire: boolean;
+  thumb: string | null; follower: number | null; telefono_maps: string | null; email_sito: string | null; n_opt_out: number;
+};
+export type LeadTouch = {
+  id: string; account_id: string; contact_id: string | null; canale: string; direzione: 'in' | 'out'; subject: string | null; body_clean: string | null;
+  stage_prima: string | null; stage_dopo: string | null; esito: string | null; prossima_azione: string | null; prossima_azione_at: string | null;
+  sequenza_tocco: number | null; chi: string | null; at: string; created_at: string;
+};
+export type LeadSequence = { id: number; codice: string; tocco: number; giorni_attesa: number; canale: string; lingua: string; oggetto: string | null; corpo: string; chi_default: string | null; attiva: boolean };
+
+export async function fetchOutreach(): Promise<LeadOutreach[]> {
+  const { data, error } = await csClient.from('v_lead_outreach').select('*').order('prossima_azione_at', { ascending: true, nullsFirst: false }).order('totale', { ascending: false, nullsFirst: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LeadOutreach[];
+}
+export async function fetchTouches(accountId: string): Promise<LeadTouch[]> {
+  const { data, error } = await csClient.from('lead_touches').select('*').eq('account_id', accountId).order('at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LeadTouch[];
+}
+export async function addTouch(t: { account_id: string; canale: string; direzione: 'in' | 'out'; subject?: string | null; body_clean?: string | null; stage_prima?: string | null; stage_dopo?: string | null; esito?: string | null; prossima_azione?: string | null; prossima_azione_at?: string | null; sequenza_tocco?: number | null; chi: string; at?: string }) {
+  const { error } = await csClient.from('lead_touches').insert(t);
+  if (error) throw new Error(error.message);
+}
+export async function fetchSequences(): Promise<LeadSequence[]> {
+  const { data, error } = await csClient.from('lead_sequences').select('*').eq('attiva', true).order('codice').order('tocco');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LeadSequence[];
+}
+export async function fetchLeadSettings(): Promise<Record<string, string>> {
+  const { data, error } = await csClient.from('v_lead_settings').select('key,value');
+  if (error) return {};
+  return Object.fromEntries((data ?? []).map((r: { key: string; value: string }) => [r.key, r.value]));
+}
+// riempie i segnaposto del template con i dati del negozio; i buchi restano visibili fra parentesi quadre
+export function renderTemplate(tpl: string, r: { nome: string; citta?: string | null; gancio?: string | null }, referente: string | null, firma: string): string {
+  return tpl
+    .replace(/\{\{nome_negozio\}\}/g, r.nome)
+    .replace(/\{\{citta\}\}/g, r.citta ?? '[citta\u2019]')
+    .replace(/\{\{referente\}\}/g, referente?.trim() || `team di ${r.nome}`)
+    .replace(/\{\{gancio\}\}/g, r.gancio ?? '[GANCIO DA SCRIVERE: una cosa vera vista nel dossier]')
+    .replace(/\{\{firma\}\}/g, firma);
+}

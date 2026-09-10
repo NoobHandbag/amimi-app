@@ -18,7 +18,7 @@ import { pushBack } from './lib/backnav';
 
 export default function App() {
   // URL diretto: .../amimi-app/#negozi apre la sezione B2B (richiesta owner 10-09)
-  const [tab, setTab] = useState<Tab>(() => (window.location.hash === '#negozi' ? 'negozi' : 'home'));
+  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : 'home'));
   const [param, setParam] = useState<string | undefined>();
   const [chi, setChiS] = useState(() => localStorage.getItem('amimi_chi') || 'Ale');
   const setChi = (c: string) => { setChiS(c); localStorage.setItem('amimi_chi', c); };

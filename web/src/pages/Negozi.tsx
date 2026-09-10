@@ -3,8 +3,28 @@ import { csClient } from '../lib/csClient';
 import { fetchDossier, fetchEvidence, fetchContacts, fetchReviews, signedUrls, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL } from '../lib/leadApi';
 import type { LeadDossier, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
 import { personaName } from '../lib/people';
-import { pushBack, popBack } from '../lib/backnav';
 import ExportBtn from '../components/ExportBtn';
+import { fetchOutreach, fetchSequences, fetchLeadSettings } from '../lib/leadApi';
+import type { LeadOutreach, LeadSequence } from '../lib/leadApi';
+import { OutreachBoard, OutreachCoda, OutreachScheda, OutreachSequenze } from './Outreach';
+
+// Rotte hash della sezione (URL condivisibili): #negozi (lista), #negozi/outreach (pipeline),
+// #negozi/outreach/coda, #negozi/outreach/sequenze, #negozi/outreach/<id negozio>, #negozi/<id negozio> (dossier).
+type Route = { view: 'lista' | 'pipeline' | 'coda' | 'sequenze' | 'oscheda' | 'scheda'; id?: string };
+function parseHash(): Route {
+  const h = window.location.hash.replace(/^#/, '');
+  const p = h.split('/').filter(Boolean);
+  if (p[0] !== 'negozi') return { view: 'lista' };
+  if (p[1] === 'outreach') {
+    if (!p[2]) return { view: 'pipeline' };
+    if (p[2] === 'coda') return { view: 'coda' };
+    if (p[2] === 'sequenze') return { view: 'sequenze' };
+    return { view: 'oscheda', id: p[2] };
+  }
+  if (p[1]) return { view: 'scheda', id: p[1] };
+  return { view: 'lista' };
+}
+const routeHash = (r: Route) => r.view === 'lista' ? '#negozi' : r.view === 'pipeline' ? '#negozi/outreach' : r.view === 'coda' ? '#negozi/outreach/coda' : r.view === 'sequenze' ? '#negozi/outreach/sequenze' : r.view === 'oscheda' ? `#negozi/outreach/${r.id}` : `#negozi/${r.id}`;
 
 // Pagina "Negozi B2B" (modulo lead_*, migr 0111/0112). Mostra il dossier di ogni negozio o gruppo
 // raccolto dal collector (workers/lead) e valutato dalla sessione Claude con la rubrica v1
@@ -36,7 +56,14 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
   const [rows, setRows] = useState<LeadDossier[] | null>(null);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [view, setView] = useState<View>('lista');
-  const [cur, setCur] = useState<LeadDossier | null>(null);
+  const [route, setRoute] = useState<Route>(() => parseHash());
+  const [orows, setOrows] = useState<LeadOutreach[] | null>(null);
+  const [sequences, setSequences] = useState<LeadSequence[]>([]);
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const cur = useMemo(() => (route.view === 'scheda' && rows ? rows.find((x) => x.id === route.id) ?? null : null), [route, rows]);
+  const ocur = useMemo(() => (route.view === 'oscheda' && orows ? orows.find((x) => x.id === route.id) ?? null : null), [route, orows]);
+  const goRoute = (r: Route) => { window.location.hash = routeHash(r); };
+  useEffect(() => { const h = () => setRoute(parseHash()); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
   const [fStato, setFStato] = useState<string>('attivi');
   const [fTier, setFTier] = useState<string>('tutti');
   const [fTipo, setFTipo] = useState<string>('tutti');
@@ -57,7 +84,10 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
       const thumbs = r.flatMap((x) => [x.thumb, x.shot_ig, x.shot_home_mobile, x.shot_home]).filter((p): p is string => !!p);
       setUrls((u) => ({ ...u }));
       const signed = await signedUrls(thumbs); setUrls((u) => ({ ...u, ...signed }));
-      if (cur) setCur(r.find((x) => x.id === cur.id) ?? null);
+      const o = await fetchOutreach(); setOrows(o);
+      const oth = o.map((x) => x.thumb).filter((p): p is string => !!p && !signed[p]);
+      if (oth.length) { const s2 = await signedUrls(oth); setUrls((u) => ({ ...u, ...s2 })); }
+      if (!sequences.length) { setSequences(await fetchSequences()); setSettings(await fetchLeadSettings()); }
     } catch (e) { setErr((e as Error).message); }
   };
   useEffect(() => { if (session === 'in') load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [session]);
@@ -85,8 +115,17 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
       (!s || `${r.nome} ${r.citta ?? ''} ${r.ig_handle ?? ''} ${(r.brands_carried?.peer_match ?? []).join(' ')} ${(r.brands_carried?.vendors ?? []).join(' ')}`.toLowerCase().includes(s)));
   }, [rows, fStato, fTier, fTipo, fVerd, q]);
 
-  const openScheda = (r: LeadDossier) => { pushBack(() => { setCur(null); setView('lista'); }); setCur(r); setView('scheda'); };
-  const closeScheda = () => popBack(() => { setCur(null); setView('lista'); });
+  const openScheda = (r: LeadDossier) => goRoute({ view: 'scheda', id: r.id });
+  const closeScheda = () => goRoute({ view: 'lista' });
+  const nCoda = (orows ?? []).filter((r) => r.scaduta || r.da_gestire).length;
+  const nav = (
+    <div className="or-nav">
+      <button type="button" className={route.view === 'lista' || route.view === 'scheda' ? 'on' : ''} onClick={() => goRoute({ view: 'lista' })}>Negozi</button>
+      <button type="button" className={route.view === 'pipeline' || route.view === 'oscheda' ? 'on' : ''} onClick={() => goRoute({ view: 'pipeline' })}>Pipeline{orows ? ` · ${orows.length}` : ''}</button>
+      <button type="button" className={route.view === 'coda' ? 'on' : ''} onClick={() => goRoute({ view: 'coda' })}>Coda{nCoda ? ` · ${nCoda}` : ''}</button>
+      <button type="button" className={route.view === 'sequenze' ? 'on' : ''} onClick={() => goRoute({ view: 'sequenze' })}>Sequenze</button>
+    </div>
+  );
 
   if (session === '?') return <div className="screen"><header><h1>Negozi B2B</h1></header><p className="muted center">Controllo l&#8217;accesso…</p></div>;
   if (session === 'out') return (
@@ -105,7 +144,17 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
     </div>
   );
 
-  if (view === 'scheda' && cur) return <Scheda r={cur} urls={urls} signMore={signMore} who={who} onBack={closeScheda} onChanged={load} />;
+  if (route.view === 'scheda' && cur) return <Scheda r={cur} urls={urls} signMore={signMore} who={who} onBack={closeScheda} onChanged={load} />;
+  if (route.view === 'oscheda' && ocur) return <OutreachScheda r={ocur} urls={urls} who={who} sequences={sequences} settings={settings} onBack={() => goRoute({ view: 'pipeline' })} onOpenDossier={(id) => goRoute({ view: 'scheda', id })} onChanged={load} />;
+  if (route.view === 'pipeline' || route.view === 'coda' || route.view === 'sequenze' || (route.view === 'oscheda' && orows && !ocur)) return (
+    <div className="screen">
+      <header><h1>{route.view === 'coda' ? 'Coda' : route.view === 'sequenze' ? 'Sequenze' : 'Pipeline outreach'}</h1><div className="operbar"><button className="badge" onClick={load} type="button">Aggiorna</button></div></header>
+      {onBack && <button className="back" onClick={onBack} type="button">← Home</button>}
+      {nav}
+      {err && <div className="card err">Errore: {err}</div>}
+      {!orows ? <p className="muted center">Carico la pipeline…</p> : route.view === 'coda' ? <OutreachCoda rows={orows} onOpen={(id) => goRoute({ view: 'oscheda', id })} /> : route.view === 'sequenze' ? <OutreachSequenze sequences={sequences} settings={settings} /> : route.view === 'oscheda' ? <p className="muted">Negozio non in pipeline.</p> : <OutreachBoard rows={orows} urls={urls} onOpen={(id) => goRoute({ view: 'oscheda', id })} />}
+    </div>
+  );
 
   const counts = (k: keyof LeadDossier) => { const m = new Map<string, number>(); (rows ?? []).forEach((r) => { const v = String(r[k] ?? '—'); m.set(v, (m.get(v) ?? 0) + 1); }); return m; };
   const byStato = counts('stato_ricerca');
@@ -121,6 +170,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
         </div>
       </header>
       {onBack && <button className="back" onClick={onBack} type="button">← Home</button>}
+      {nav}
       {err && <div className="card err">Errore: {err}</div>}
       {!rows ? <p className="muted center">Carico i negozi…</p> : (
         <>
