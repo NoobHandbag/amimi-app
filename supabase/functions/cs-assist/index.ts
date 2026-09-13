@@ -220,6 +220,15 @@ async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+// 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 su ~4% delle letture delle edge (Regola
+// Ferrea 20). Una lettura e' idempotente: UN solo ritentativo dopo 1,5 s, poi si chiude (mai sulle scritture).
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
 
 const SHOP = 'amimi-10000';
 const SITE_URL = 'https://amimi.it';   // dominio del sito: unico posto in cui e' scritto (v15)
@@ -1319,14 +1328,19 @@ Deno.serve(async (req) => {
   // v13: ogni messaggio porta `testo` = body_clean (fallback: stripChat/raw). Il PROMPT usa
   // `testo` (meno rumore); il CORPUS del linter usa il RAW body_text (i numeri citati restano
   // fatti consentiti). body_text nei row NON viene piu' sovrascritto.
-  const loadConv = async (_withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[]; clienti: string[] } | null> => {
+  // 2026-09-13 (sweep incidente doppioni): ritorna una Response 503 se il thread non e' leggibile; i
+  // chiamanti la restituiscono tale e quale PRIMA di qualunque scrittura (cs_drafts/cs_events).
+  const loadConv = async (_withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[]; clienti: string[] } | null | Response> => {
     const convId = String(body.conversation_id || '');
     const cols = 'id,canale,customer_email,customer_name,order_number,categoria,subject,lingua';
     const { data: conv } = await sb.from('cs_conversations').select(cols).eq('id', convId).maybeSingle();
     if (!conv) return null;
     // v14: THREAD INTERO (cap 30 messaggi, i piu' recenti): prima si vedevano solo gli ultimi 4
     // v20: e con loro l'elenco dei CLIENTI distinti che hanno scritto in questa conversazione.
-    const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,body_clean,form_fields,from_email,reply_to,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(30);
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = thread vuoto = guardia due-clienti a vuoto
+    // e bozza generata dal solo subject. Ora: un ritentativo, poi 503 e nessuna bozza.
+    const { data: msgs, error: msgsErr } = await retryOnce(() => sb.from('cs_messages').select('direction,body_text,body_clean,form_fields,from_email,reply_to,sent_at').eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(30));
+    if (msgsErr) return json({ error: 'thread non leggibile, riprova: ' + msgsErr.message }, 503);
     const recent = ((msgs ?? []) as Row[]).slice().reverse().map((m): Row => ({
       ...m,
       testo: String(m.body_clean ?? '') || (conv.canale === 'chat_notifica' ? stripChat(String(m.body_text ?? '')) : String(m.body_text ?? '')),
@@ -1351,6 +1365,7 @@ Deno.serve(async (req) => {
   // ---------- context / dry_data: assembla il CONTESTO, nessun Gemini ----------
   if (action === 'context' || action === 'dry_data') {
     const lc = await loadConv();
+    if (lc instanceof Response) return lc;   // 2026-09-13 (sweep incidente doppioni): thread non leggibile = 503, niente contesto a vuoto
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     const ctx = await assembleContext(sb, lc.conv, lc.inbound, token, (lc.conv.categoria as string) ?? null);
     // contratto di contesto: cosa manca per rispondere bene a QUESTA categoria (mostrato prima di generare)
@@ -1366,6 +1381,7 @@ Deno.serve(async (req) => {
   // dal tracking (STEP 1 pragmatico): il verdetto resta deterministico, su un fatto umano.
   if (action === 'case_data') {
     const lc = await loadConv();
+    if (lc instanceof Response) return lc;   // 2026-09-13 (sweep incidente doppioni): thread non leggibile = 503, niente contesto a vuoto
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     const conv = lc.conv;
     const ordine = await lookupOrder(sb, (conv.order_number as number) ?? null, (conv.customer_email as string) ?? null);
@@ -1395,7 +1411,10 @@ Deno.serve(async (req) => {
     const { data: convs } = await sb.from('cs_conversations').select('id,customer_email,customer_name,subject,snippet,categoria').is('summary', null).neq('canale', 'rumore').eq('parse_failed', false).order('last_msg_at', { ascending: true, nullsFirst: true }).limit(limit);
     let done = 0, failed = 0;
     for (const c of (convs ?? []) as Row[]) {
-      const { data: msgs } = await sb.from('cs_messages').select('direction,body_text,body_clean').eq('conversation_id', c.id as string).order('sent_at', { ascending: true }).limit(12);
+      // 2026-09-13 (sweep incidente doppioni): lettura fallita = riassunto PERMANENTE dal solo subject
+      // (summary non nullo, mai rigenerato). Ora: un ritentativo, poi failed++ e si passa alla prossima.
+      const { data: msgs, error: msgsErr } = await retryOnce(() => sb.from('cs_messages').select('direction,body_text,body_clean').eq('conversation_id', c.id as string).order('sent_at', { ascending: true }).limit(12));
+      if (msgsErr) { failed++; continue; }
       const thread = ((msgs ?? []) as Row[]).map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${(String(m.body_clean ?? '') || String(m.body_text ?? '')).slice(0, 500)}`).join('\n');
       let storia = '';
       if (c.customer_email) {
@@ -1426,6 +1445,7 @@ Riassunto (max 2 righe):`;
     if (useClaude && !claudeKey) return json({ ok: false, needs_key: true, error: 'model_override Claude ma anthropic_api_key assente: nessun fallback.' });
     if (!useClaude && !key) return json({ ok: false, needs_key: true, error: 'motore Gemini richiesto ma gemini_api_key assente.' });
     const lc = await loadConv(true);
+    if (lc instanceof Response) return lc;   // 2026-09-13 (sweep incidente doppioni): thread non leggibile = 503, nessuna bozza dal solo subject
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     // v20: due clienti nella stessa conversazione = nessuna bozza. Succede quando due invii dal
     // modulo nello stesso minuto finiscono nello stesso thread Gmail: la bozza nascerebbe dal TESTO
@@ -1605,6 +1625,7 @@ ${rami
     const istruzione = String(body.istruzione || '').trim();
     if (!testo || !istruzione) return json({ error: 'servono testo e istruzione' }, 422);
     const lc = await loadConv(true);
+    if (lc instanceof Response) return lc;   // 2026-09-13 (sweep incidente doppioni): thread non leggibile = 503, nessuna bozza dal solo subject
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     // v20: due clienti nella stessa conversazione = nessuna bozza. Succede quando due invii dal
     // modulo nello stesso minuto finiscono nello stesso thread Gmail: la bozza nascerebbe dal TESTO

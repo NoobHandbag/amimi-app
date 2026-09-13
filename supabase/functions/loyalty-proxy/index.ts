@@ -1,4 +1,6 @@
-// loyalty-proxy v5 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// loyalty-proxy v6 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// v6 (2026-09-13, sweep incidente doppioni): letture con retryOnce e fail-closed 503 prima di ogni scrittura;
+//    insert audit su loyalty_events segnalato (warning + change_log) invece di ignorato. Happy path invariato.
 // Brief v1: _CLAUDE_CODE_INBOX/done/2026-07-23_CLAUDE_CODE_BRIEF_loyalty_app_proxy.md
 // Brief v5: _CLAUDE_CODE_INBOX/2026-07-24_CLAUDE_CODE_BRIEF_mimi_profilo_fase1.md (Mimi/Profilo, Fase 1+2)
 //
@@ -43,6 +45,17 @@ const cors = {
 };
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+
+// 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 su ~4% delle letture delle edge. Una lettura o
+// una riga di telemetria sono idempotenti: UN solo ritentativo dopo 1,5 s, poi ci si ferma (Regola Ferrea 20).
+// Mai sugli upsert/insert di punti ed eventi.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
 
 // anti-abuso clicker (design brief v1)
 const CAP_PER_GAME = 100;     // punti massimi da una singola partita
@@ -119,15 +132,19 @@ Deno.serve(async (req) => {
   const pathAction = last && last !== 'loyalty-proxy' ? last : '';
   const action = (params.get('action') || pathAction || (req.method === 'POST' ? 'add' : 'balance')).toLowerCase();
 
-  const readPoints = async (): Promise<number> => {
-    const { data } = await sb.from('loyalty_points').select('points').eq('shopify_customer_id', customerId).maybeSingle();
+  // 2026-09-13 (sweep incidente doppioni): lettura fallita = saldo 0 e l'upsert 0+delta azzerava il cliente. Ora null = fermarsi.
+  const readPoints = async (): Promise<number | null> => {
+    const { data, error } = await retryOnce(() => sb.from('loyalty_points').select('points').eq('shopify_customer_id', customerId).maybeSingle());
+    if (error) return null;
     return data?.points ?? 0;
   };
 
   type MimiState = { nanna: boolean; last_coccola: string | null; last_memory: string | null; worn: string | null };
-  const readMimi = async (): Promise<MimiState> => {
-    const { data } = await sb.from('mimi_state')
-      .select('nanna, last_coccola, last_memory, worn').eq('shopify_customer_id', customerId).maybeSingle();
+  // 2026-09-13 (sweep incidente doppioni): lettura fallita = guardia "1 volta al giorno" a vuoto. Ora null = fermarsi.
+  const readMimi = async (): Promise<MimiState | null> => {
+    const { data, error } = await retryOnce(() => sb.from('mimi_state')
+      .select('nanna, last_coccola, last_memory, worn').eq('shopify_customer_id', customerId).maybeSingle());
+    if (error) return null;
     return {
       nanna: Boolean(data?.nanna ?? false),
       last_coccola: (data?.last_coccola as string | null) ?? null,
@@ -142,16 +159,34 @@ Deno.serve(async (req) => {
     return !error;
   };
 
+  // 2026-09-13 (sweep incidente doppioni): insert audit su loyalty_events ignorato = rate-limit e cap giornaliero
+  // sottostimati nelle chiamate successive, con punti gia' accreditati. Niente retry sull'insert (non idempotente):
+  // si segnala in risposta (warning) e su change_log, cosi' il buco resta visibile.
+  let eventInsertFailed = false;
+  const noteEventFailed = async (delta: number, source: string, msg: string): Promise<void> => {
+    eventInsertFailed = true;
+    console.error('loyalty-proxy: insert loyalty_events fallito', { customerId, delta, source, msg });
+    try {
+      await retryOnce(() => sb.from('change_log').insert({
+        tbl: 'loyalty_events', row_id: customerId, op: 'event_insert_failed',
+        after: { delta, source, error: msg }, chi: 'loyalty-proxy', source: 'loyalty-proxy',
+      }));
+    } catch { /* telemetria: non deve mai bloccare un accredito gia' fatto */ }
+  };
+
   // Accredito a premio FISSO (coccola/memory). Nessun importo dal client, nessun cap giornaliero
   // del clicker: il cancello e' il "1 volta al giorno" del chiamante, piu' stretto.
   const award = async (delta: number, source: string): Promise<number> => {
     const points = await readPoints();
+    // 2026-09-13 (sweep incidente doppioni): saldo non letto = nessuna scrittura (prima: upsert di 0+delta)
+    if (points === null) throw new Error('read_failed');
     const newPoints = points + delta;
     const { error } = await sb.from('loyalty_points')
       .upsert({ shopify_customer_id: customerId, points: newPoints, updated_at: new Date().toISOString() },
         { onConflict: 'shopify_customer_id' });
     if (error) throw new Error('write_failed');
-    await sb.from('loyalty_events').insert({ shopify_customer_id: customerId, delta, source, meta: { fisso: true } });
+    const { error: evErr } = await sb.from('loyalty_events').insert({ shopify_customer_id: customerId, delta, source, meta: { fisso: true } });
+    if (evErr) await noteEventFailed(delta, source, evErr.message);
     return newPoints;
   };
 
@@ -211,12 +246,17 @@ Deno.serve(async (req) => {
   };
 
   if (action === 'balance') {
-    return json({ points: await readPoints() });
+    const points = await readPoints();
+    // 2026-09-13 (sweep incidente doppioni): saldo non letto = 503, non un finto 0
+    if (points === null) return json({ error: 'read_failed' }, 503);
+    return json({ points });
   }
 
   if (action === 'state') {
     const oggi = romeToday();
     const [points, mimi, guardaroba] = await Promise.all([readPoints(), readMimi(), wardrobe()]);
+    // 2026-09-13 (sweep incidente doppioni): saldo o stato Mimi non letti = 503, non un profilo finto (0 punti, tutto disponibile)
+    if (points === null || mimi === null) return json({ error: 'read_failed' }, 503);
     return json({
       points,
       nanna: mimi.nanna,
@@ -230,22 +270,30 @@ Deno.serve(async (req) => {
   if (action === 'coccola' || action === 'memory_win') {
     const oggi = romeToday();
     const mimi = await readMimi();
+    // 2026-09-13 (sweep incidente doppioni): guardia "1 volta al giorno" non valutabile = rifiuto (503), mai un secondo premio
+    if (mimi === null) return json({ error: 'read_failed' }, 503);
     const campo = action === 'coccola' ? 'last_coccola' : 'last_memory';
     const gia = action === 'coccola' ? mimi.last_coccola : mimi.last_memory;
-    if (gia === oggi) return json({ done_today: true, points: await readPoints() });
+    if (gia === oggi) {
+      const points = await readPoints();
+      if (points === null) return json({ error: 'read_failed' }, 503);
+      return json({ done_today: true, points });
+    }
 
     const delta = action === 'coccola' ? PREMIO_COCCOLA : PREMIO_MEMORY;
     const source = action === 'coccola' ? 'mimi_coccola' : 'game_memory';
     let points: number;
     try {
       points = await award(delta, source);
-    } catch {
+    } catch (e) {
+      // 2026-09-13 (sweep incidente doppioni): saldo non letto in award = 503 prima di ogni scrittura
+      if (e instanceof Error && e.message === 'read_failed') return json({ error: 'read_failed' }, 503);
       return json({ error: 'write_failed' }, 500);
     }
     // La data si segna DOPO l'accredito: se qui fallisse, il peggio e' un secondo premio piu' tardi,
     // mai un premio perso senza punti.
     if (!await saveMimi({ [campo]: oggi })) return json({ error: 'write_failed' }, 500);
-    return json({ points, added: delta });
+    return json({ points, added: delta, ...(eventInsertFailed ? { warning: 'event_insert_failed' } : {}) });
   }
 
   if (action === 'nanna') {
@@ -277,11 +325,15 @@ Deno.serve(async (req) => {
     const requested = Math.max(0, Math.floor(rawScore));       // quanto chiesto (post-arrotondamento)
     const score = Math.min(CAP_PER_GAME, requested);            // clamp a punteggio-partita
     const points = await readPoints();
+    // 2026-09-13 (sweep incidente doppioni): saldo non letto = 503 prima di ogni scrittura (prima: upsert di 0+added)
+    if (points === null) return json({ error: 'read_failed' }, 503);
 
     // rate-limit: ultimo evento del cliente entro RATE_LIMIT_SEC => niente scrittura
-    const { data: lastEv } = await sb.from('loyalty_events')
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = rate-limit a vuoto; ora la guardia non valutabile rifiuta
+    const { data: lastEv, error: lastErr } = await retryOnce(() => sb.from('loyalty_events')
       .select('created_at').eq('shopify_customer_id', customerId)
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      .order('created_at', { ascending: false }).limit(1).maybeSingle());
+    if (lastErr) return json({ error: 'read_failed' }, 503);
     if (lastEv?.created_at) {
       const ageSec = (Date.now() - new Date(lastEv.created_at as string).getTime()) / 1000;
       if (ageSec < RATE_LIMIT_SEC) return json({ capped: true, reason: 'rate', points });
@@ -289,8 +341,10 @@ Deno.serve(async (req) => {
 
     // cap giornaliero: somma dei delta positivi di oggi (UTC: comportamento storico del clicker)
     const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
-    const { data: todayEv } = await sb.from('loyalty_events')
-      .select('delta').eq('shopify_customer_id', customerId).gte('created_at', dayStart.toISOString());
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = cap giornaliero a vuoto; ora la guardia non valutabile rifiuta
+    const { data: todayEv, error: todayErr } = await retryOnce(() => sb.from('loyalty_events')
+      .select('delta').eq('shopify_customer_id', customerId).gte('created_at', dayStart.toISOString()));
+    if (todayErr) return json({ error: 'read_failed' }, 503);
     const todaySum = (todayEv ?? []).reduce((s, e) => s + Math.max(0, (e.delta as number) ?? 0), 0);
     const remaining = Math.max(0, DAILY_CAP - todaySum);
     const added = Math.min(score, remaining);
@@ -300,10 +354,12 @@ Deno.serve(async (req) => {
     const { error: upErr } = await sb.from('loyalty_points')
       .upsert({ shopify_customer_id: customerId, points: newPoints, updated_at: new Date().toISOString() }, { onConflict: 'shopify_customer_id' });
     if (upErr) return json({ error: 'write_failed' }, 500);
-    await sb.from('loyalty_events').insert({ shopify_customer_id: customerId, delta: added, source: 'game_click', meta: { score: requested } });
+    // 2026-09-13 (sweep incidente doppioni): insert audit ignorato = cap/rate-limit sottostimati; ora segnalato
+    const { error: evErr } = await sb.from('loyalty_events').insert({ shopify_customer_id: customerId, delta: added, source: 'game_click', meta: { score: requested } });
+    if (evErr) await noteEventFailed(added, 'game_click', evErr.message);
 
     // capped = abbiamo accreditato MENO di quanto chiesto (per clamp-partita o cap giornaliero)
-    return json({ points: newPoints, added, capped: added < requested });
+    return json({ points: newPoints, added, capped: added < requested, ...(eventInsertFailed ? { warning: 'event_insert_failed' } : {}) });
   }
 
   return json({ error: 'unknown_action', action }, 422);

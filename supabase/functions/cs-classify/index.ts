@@ -28,6 +28,17 @@ async function sha256hex(s: string) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 anche su letture banali (~4% delle chiamate
+// REST delle edge, quasi tutte nei primi secondi di ogni minuto, quando partono i cron). Una lettura e'
+// idempotente: UN solo ritentativo dopo 1,5 s, poi si dichiara il fallimento. Mai sulle scritture di dati.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
+
 const MODEL = 'gemini-flash-lite-latest';
 const MAX_PER_RUN = 10;          // sotto la quota free 15 RPM; il cron drena il backlog in pochi giri
 const CONF_THRESHOLD = 0.6;      // sotto = "da confermare" (categoria NULL, source ai_low)
@@ -244,9 +255,13 @@ Deno.serve(async (req) => {
 
   for (const c of convs) {
     // messaggi del thread: testo (per la classificazione) + conteggi direzione (per le regole)
-    const { data: msgs } = await sb.from('cs_messages')
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = thread vuoto, Gemini classificava dal solo
+    // OGGETTO e il verdetto veniva scritto per sempre (source valorizzato, mai ripescata; B2B -> canale rumore).
+    // Ora la conversazione si salta (failed++) e resta in coda per il giro successivo.
+    const { data: msgs, error: me } = await retryOnce(() => sb.from('cs_messages')
       .select('direction,body_text,sent_at,form_fields,from_email').eq('conversation_id', c.id as string)
-      .order('sent_at', { ascending: true, nullsFirst: true });
+      .order('sent_at', { ascending: true, nullsFirst: true }));
+    if (me) { failed++; continue; }
     const inbound = (msgs ?? []).filter((m) => m.direction === 'in');
     const outboundCount = (msgs ?? []).filter((m) => m.direction === 'out').length;
     const lastIn = inbound.length ? inbound[inbound.length - 1] : null;

@@ -12,6 +12,20 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
+// 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 anche su letture banali (~4% delle chiamate REST
+// delle edge, il 90% nei secondi :00-:03 di ogni minuto). Una lettura e' idempotente: UN solo ritentativo dopo
+// 1,5 s prima di dichiarare il fermo. Mai piu' di uno e MAI sugli insert/update/delete di dati (Regola Ferrea 20).
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
+// 2026-09-13 (sweep incidente doppioni): lettura fallita = guardia a vuoto. Le guardie condivise (closedMonth,
+// arriviOggiAltrove) lanciano questo errore e Deno.serve lo traduce in 503 fail-closed: i siti di chiamata non cambiano.
+class GuardReadError extends Error {}
+
 async function sha256hex(s: string): Promise<string> {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -68,6 +82,14 @@ function validate(action: string, p: Record<string, unknown>): string[] {
 }
 
 Deno.serve(async (req) => {
+  // 2026-09-13 (sweep incidente doppioni): una guardia non valutabile (GuardReadError) chiude la porta con 503
+  try { return await handle(req); } catch (e) {
+    if (e instanceof GuardReadError) return json({ error: e.message, guard_unavailable: true }, 503);
+    throw e;
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
@@ -100,7 +122,9 @@ Deno.serve(async (req) => {
   const closedMonth = async (y: unknown, m: unknown): Promise<boolean> => {
     const yy = Number(y), mm = Number(m);
     if (!yy || !mm) return false;
-    const { data } = await sb.from('ce_snapshots').select('id').eq('year', yy).eq('month', mm).limit(1);
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = mese chiuso visto come aperto (Regola 11 a vuoto)
+    const { data, error } = await retryOnce(() => sb.from('ce_snapshots').select('id').eq('year', yy).eq('month', mm).limit(1));
+    if (error) throw new GuardReadError(`guardia mesi chiusi non valutabile (ce_snapshots non leggibile: ${error.message}): scrittura rifiutata, riprova`);
     return !!(data && data.length);
   };
   const closedErr = (y: unknown, m: unknown) =>
@@ -114,11 +138,13 @@ Deno.serve(async (req) => {
   // non si vieta: il secondo arrivo legittimo nello stesso giorno esiste. La correzione sulla
   // STESSA riga (caso AGATA, target 3 -> 5) non scatta mai: la riga propria e' esclusa.
   const arriviOggiAltrove = async (codice: string, oid: string): Promise<Record<string, unknown>[]> => {
-    const { data } = await sb.from('change_log')
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = "nessun arrivo oggi" = guardia anti-doppione a vuoto
+    const { data, error } = await retryOnce(() => sb.from('change_log')
       .select('row_id, ts, chi, after')
       .eq('tbl', 'supplier_orders').in('op', ['arrival', 'arrival_set'])
       .gte('ts', today + 'T00:00:00Z').neq('row_id', oid)
-      .order('ts', { ascending: false }).limit(50);
+      .order('ts', { ascending: false }).limit(50));
+    if (error) throw new GuardReadError(`guardia anti-doppione non valutabile (change_log non leggibile: ${error.message}): arrivo rifiutato, riprova`);
     return (data ?? []).filter((r: Record<string, unknown>) => {
       const a = (r.after ?? {}) as Record<string, unknown>;
       return cnorm(a.codice) === cnorm(codice) && Number(a.qty ?? a.delta ?? 0) > 0;
@@ -150,7 +176,9 @@ Deno.serve(async (req) => {
     let costoEff: number | null = ord.costo_unitario != null ? Number(ord.costo_unitario) : null;
     let costoDaCogs = false;
     if (costoEff == null) {
-      const { data: pr } = await sb.from('products').select('cogs').eq('codice_norm', cnorm(ord.codice)).maybeSingle();
+      // 2026-09-13 (sweep incidente doppioni): lettura fallita = acquisto scritto a costo NULL in silenzio
+      const { data: pr, error: pre } = await retryOnce(() => sb.from('products').select('cogs').eq('codice_norm', cnorm(ord.codice)).maybeSingle());
+      if (pre) return json({ error: `lettura costo prodotto fallita (${pre.message}): arrivo NON registrato, riprova` }, 502);
       if (pr?.cogs != null && Number(pr.cogs) > 0) { costoEff = Number(pr.cogs); costoDaCogs = true; }
     }
     const newArr = Number(ord.qty_arrived) + qty;
@@ -201,7 +229,9 @@ Deno.serve(async (req) => {
     let costoEff: number | null = (updOrd.costo_unitario as number | undefined) ?? (ord.costo_unitario != null ? Number(ord.costo_unitario) : null);
     let costoDaCogs = false;
     if (delta !== 0 && costoEff == null) {
-      const { data: pr } = await sb.from('products').select('cogs').eq('codice_norm', cnorm(ord.codice)).maybeSingle();
+      // 2026-09-13 (sweep incidente doppioni): lettura fallita = acquisto scritto a costo NULL in silenzio
+      const { data: pr, error: pre } = await retryOnce(() => sb.from('products').select('cogs').eq('codice_norm', cnorm(ord.codice)).maybeSingle());
+      if (pre) return json({ error: `lettura costo prodotto fallita (${pre.message}): arrivo NON registrato, riprova` }, 502);
       if (pr?.cogs != null && Number(pr.cogs) > 0) { costoEff = Number(pr.cogs); costoDaCogs = true; }
     }
     const { error: ue } = await sb.from('supplier_orders').update(updOrd).eq('id', oid);
@@ -250,18 +280,23 @@ Deno.serve(async (req) => {
     // (non verificato, zero movimenti di magazzino), cancellalo. Senza questo lo stub resterebbe per
     // sempre nella lista "da verificare" anche se l'ordine che l'ha generato non esiste piu'.
     let stub_reaped: string | null = null;
+    let stub_reap_error: string | null = null;
     const { data: prod } = await sb.from('products')
       .select('id, codice, source, verificato').eq('codice', ord.codice).maybeSingle();
     if (prod && prod.verificato === false && prod.source === 'app-ordine') {
-      const { count: otherOrders } = await sb.from('supplier_orders')
-        .select('*', { count: 'exact', head: true }).eq('codice', ord.codice);
-      if (!otherOrders) {
-        const { data: inv } = await sb.from('v_inventory')
+      // 2026-09-13 (sweep incidente doppioni): conteggio/lettura falliti = "zero ordini, zero movimenti" = stub
+      // cancellato anche con storico; su errore il reap si SALTA (la riga ordine e' gia' cancellata) e si segnala
+      const { count: otherOrders, error: oce } = await retryOnce(() => sb.from('supplier_orders')
+        .select('*', { count: 'exact', head: true }).eq('codice', ord.codice));
+      if (oce) stub_reap_error = `conteggio ordini fallito: ${oce.message}`;
+      else if (!otherOrders) {
+        const { data: inv, error: ive } = await retryOnce(() => sb.from('v_inventory')
           .select('qty_purchased, shopify_sold, qromo_sold, gift_sold, b2b_venduto, resi_rientrati, aggiustamenti')
-          .eq('codice', ord.codice).maybeSingle();
+          .eq('codice', ord.codice).maybeSingle());
         const touched = !!inv && [inv.qty_purchased, inv.shopify_sold, inv.qromo_sold, inv.gift_sold,
           inv.b2b_venduto, inv.resi_rientrati, inv.aggiustamenti].some((v) => Number(v) !== 0);
-        if (!touched) {
+        if (ive) stub_reap_error = `lettura giacenza fallita: ${ive.message}`;
+        else if (!touched) {
           const { error: pde } = await sb.from('products').delete().eq('id', prod.id);
           if (!pde) {
             stub_reaped = prod.codice;
@@ -271,7 +306,7 @@ Deno.serve(async (req) => {
         }
       }
     }
-    return json({ ok: true, deleted: oid, stub_reaped });
+    return json({ ok: true, deleted: oid, stub_reaped, ...(stub_reap_error ? { stub_reap_error } : {}) });
   }
 
   // --- NEW (brief 2026-07-14): elimina una riga di anagrafica prodotto, guardrailed ---
@@ -289,22 +324,28 @@ Deno.serve(async (req) => {
     if (!prod) return json({ error: `Prodotto ${codice} non trovato` }, 404);
 
     // giacenza / conto vendita devono essere a zero: prima si porta a zero con una conta, poi si cancella.
-    const { data: invRow } = await sb.from('v_inventory')
-      .select('giacenza_attuale, in_conto_vendita').eq('codice', codice).maybeSingle();
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = giacenza 0 = guardia a vuoto
+    const { data: invRow, error: ive } = await retryOnce(() => sb.from('v_inventory')
+      .select('giacenza_attuale, in_conto_vendita').eq('codice', codice).maybeSingle());
+    if (ive) return json({ error: `guardia giacenza non valutabile (v_inventory non leggibile: ${ive.message}): eliminazione rifiutata, riprova` }, 503);
     const giac = Number(invRow?.giacenza_attuale ?? 0);
     const conto = Number(invRow?.in_conto_vendita ?? 0);
     if (giac !== 0 || conto !== 0)
       return json({ error: `Giacenza ${giac} / conto vendita ${conto}: porta a 0 con una conta prima di eliminare.`, giacenza: giac, in_conto_vendita: conto }, 409);
 
     // ordini fornitore ancora agganciati: eliminarli/smistarli prima (non orfanare righe d'ordine).
-    const { count: ordCount } = await sb.from('supplier_orders')
-      .select('*', { count: 'exact', head: true }).eq('codice', codice);
+    // 2026-09-13 (sweep incidente doppioni): conteggio fallito = 0 righe ordine = guardia a vuoto
+    const { count: ordCount, error: oce } = await retryOnce(() => sb.from('supplier_orders')
+      .select('*', { count: 'exact', head: true }).eq('codice', codice));
+    if (oce) return json({ error: `guardia ordini fornitore non valutabile (supplier_orders non leggibile: ${oce.message}): eliminazione rifiutata, riprova` }, 503);
     if (ordCount) return json({ error: `Ci sono ${ordCount} righe ordine fornitore su ${codice}: elimina o smista prima quelle.`, supplier_orders: ordCount }, 409);
 
     // aggancio Shopify: una riga shopify_stock su questo codice diventerebbe unmapped per l'autopush.
     // Blocco senza force (owner decide, brief): con force si procede e si segnala nel warning.
-    const { count: shopCount } = await sb.from('shopify_stock')
-      .select('*', { count: 'exact', head: true }).eq('codice', codice);
+    // 2026-09-13 (sweep incidente doppioni): conteggio fallito = "non su Shopify" = guardia a vuoto
+    const { count: shopCount, error: sce } = await retryOnce(() => sb.from('shopify_stock')
+      .select('*', { count: 'exact', head: true }).eq('codice', codice));
+    if (sce) return json({ error: `guardia Shopify non valutabile (shopify_stock non leggibile: ${sce.message}): eliminazione rifiutata, riprova` }, 503);
     if (shopCount && !force)
       return json({ error: `${codice} e' agganciato a Shopify (mirror shopify_stock): eliminarlo lo renderebbe unmapped per l'autopush. Passa force:true se e' voluto.`, on_shopify: true }, 409);
 
@@ -312,7 +353,9 @@ Deno.serve(async (req) => {
     const histTables = ['purchases', 'qromo_sales', 'shopify_line_items', 'gifts_offline', 'b2b_movements', 'returns', 'counts', 'stock_adjustments'];
     const movimenti: Record<string, number> = {};
     for (const t of histTables) {
-      const { count } = await sb.from(t).select('*', { count: 'exact', head: true }).eq('codice', codice);
+      // 2026-09-13 (sweep incidente doppioni): conteggio fallito = "nessun movimento" = delete senza non_product_codici
+      const { count, error: hce } = await retryOnce(() => sb.from(t).select('*', { count: 'exact', head: true }).eq('codice', codice));
+      if (hce) return json({ error: `guardia movimenti storici non valutabile (${t} non leggibile: ${hce.message}): eliminazione rifiutata, riprova` }, 503);
       if (count) movimenti[t] = count;
     }
     const hasHistory = Object.keys(movimenti).length > 0;
@@ -369,7 +412,9 @@ Deno.serve(async (req) => {
       const d = String(r.data ?? r.data_ordine ?? r.date_paid ?? '');
       return [Number(r.year ?? d.slice(0, 4)), Number(r.month ?? d.slice(5, 7))];
     };
-    const { data: snaps } = await sb.from('ce_snapshots').select('year, month');
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = closedSet vuoto = delete in mese chiuso senza force
+    const { data: snaps, error: sne } = await retryOnce(() => sb.from('ce_snapshots').select('year, month'));
+    if (sne) return json({ error: `guardia mesi chiusi non valutabile (ce_snapshots non leggibile: ${sne.message}): cancellazione rifiutata, riprova` }, 503);
     const closedSet = new Set((snaps ?? []).map((s: { year: number; month: number }) => `${s.year}-${s.month}`));
     const inChiuso = rows.filter((r: Record<string, unknown>) => {
       const [y, m] = rowYM(r);
@@ -577,14 +622,18 @@ Deno.serve(async (req) => {
       if (derived && !/^_|_$/.test(derived) && derived !== cur.codice) {
         // guardia B.4: codice gia' nel mirror Shopify (QUALSIASI status, bozze incluse) -> niente
         // rename: la cascata non tocca shopify_stock (Regola 15) e lo SKU divergerebbe in silenzio.
-        const { data: shopRows } = await sb.from('shopify_stock').select('codice');
-        const onShop = (shopRows || []).some((r: { codice: string }) => cnorm(r.codice) === cnorm(cur.codice));
+        // 2026-09-13 (sweep incidente doppioni): lettura fallita = "non su Shopify" = rename con lo SKU Shopify che
+        // punta a un codice sparito; su errore si tratta come agganciato (niente rename, verifica salvata comunque)
+        const { data: shopRows, error: she } = await retryOnce(() => sb.from('shopify_stock').select('codice'));
+        const onShop = !!she || (shopRows || []).some((r: { codice: string }) => cnorm(r.codice) === cnorm(cur.codice));
         // guardia B.4-bis: sui legacy non-app (etl/qromo-sale) item/variant a DB possono essere
         // segnaposto del seed -> il rename da DB vale solo per gli stub app-ordine; per gli altri
         // serve l'intento esplicito (item+variant ri-digitati nel payload).
         const explicitNames = payload.item != null && String(payload.item).trim() !== '' && payload.variant != null && String(payload.variant).trim() !== '';
         if (onShop) {
-          renameSkipped = `${cur.codice} e' gia' agganciato a Shopify: salvato senza rinomina (coordinare a mano se serve)`;
+          renameSkipped = she
+            ? `mirror Shopify non leggibile (${she.message}): salvato senza rinomina per prudenza (coordinare a mano se serve)`
+            : `${cur.codice} e' gia' agganciato a Shopify: salvato senza rinomina (coordinare a mano se serve)`;
         } else if (cur.source === 'app-ordine' || explicitNames) {
           const { data: clash } = await sb.from('products').select('id').eq('codice_norm', cnorm(derived)).neq('id', cur.id).maybeSingle();
           if (clash) {
@@ -606,16 +655,22 @@ Deno.serve(async (req) => {
 
     // cascata: le righe gia' scritte col codice provvisorio seguono il codice definitivo
     const cascata: Record<string, number> = {};
+    // 2026-09-13 (sweep incidente doppioni): errore per-tabella ingoiato = righe rimaste sotto il vecchio codice
+    // (giacenza spezzata su due codici) senza che nessuno lo sapesse. Le tabelle fallite si riportano in risposta
+    // e in change_log come cascata_fallita. Niente retry: e' un update (Regola Ferrea 20).
+    const cascata_fallita: Record<string, string> = {};
     if (newCodice) {
       // #cascade (v17): b2b_movements + product_aliases inclusi, altrimenti un rename orfana le vendite B2B / gli alias.
       for (const t of ['supplier_orders', 'purchases', 'qromo_sales', 'shopify_line_items', 'gifts_offline', 'returns', 'counts', 'stock_adjustments', 'b2b_movements', 'product_aliases']) {
         const { count, error: ce } = await sb.from(t).update({ codice: newCodice }, { count: 'exact' }).eq('codice', cur.codice);
-        if (!ce && count) cascata[t] = count;
+        if (ce) cascata_fallita[t] = ce.message;
+        else if (count) cascata[t] = count;
       }
     }
-    await logp('products', String(data.id), 'product_verify', { ...upd, ...(newCodice ? { codice_da: cur.codice, codice_a: newCodice, cascata } : {}) });
+    const cascataKo = Object.keys(cascata_fallita).length > 0;
+    await logp('products', String(data.id), 'product_verify', { ...upd, ...(newCodice ? { codice_da: cur.codice, codice_a: newCodice, cascata, ...(cascataKo ? { cascata_fallita } : {}) } : {}) });
     const warn = renameSkipped || (mancanti.length ? `Salvato. Mancano: ${mancanti.join(', ')} — non risulta ancora verificato e resta in lista.` : null);
-    return json({ ok: true, codice: newCodice ?? codice, renamed: !!newCodice, verificato: upd.verificato === true, ...(mancanti.length ? { mancanti } : {}), ...(warn ? { warning: warn } : {}) });
+    return json({ ok: true, codice: newCodice ?? codice, renamed: !!newCodice, verificato: upd.verificato === true, ...(mancanti.length ? { mancanti } : {}), ...(warn ? { warning: warn } : {}), ...(cascataKo ? { cascata_fallita, warning: `ATTENZIONE: rinominato in ${newCodice} ma la cascata e' FALLITA su ${Object.keys(cascata_fallita).join(', ')}: quelle righe restano sotto ${cur.codice}, da riallineare a mano.${warn ? ' ' + warn : ''}` } : {}) });
   }
 
   // --- FLOW 4/5: expenses (manual=approved, proposta=pending, approve/reject) ---
@@ -655,7 +710,11 @@ Deno.serve(async (req) => {
     // non si confermavano mai (il 409 veniva pure ingoiato dal client senza messaggio).
     const movesCE = edits.categoria != null || edits.costo != null || edits.amimi != null || edits.sottocategoria != null;
     if (decision !== 'rejected' && !force) {
-      const { data: exRow } = await sb.from('expenses').select('year, month, status').eq('id', id).single();
+      // 2026-09-13 (sweep incidente doppioni): lettura fallita = controllo mese chiuso saltato e approvazione scritta
+      // maybeSingle, non single: con single una riga assente e' un errore PGRST116 che retryOnce ritenterebbe a vuoto
+      const { data: exRow, error: exe } = await retryOnce(() => sb.from('expenses').select('year, month, status').eq('id', id).maybeSingle());
+      if (exe) return json({ error: `spesa non leggibile (${exe.message}): approvazione rifiutata, riprova` }, 503);
+      if (!exRow) return json({ error: 'spesa non trovata' }, 404);
       const noteOnly = !movesCE && exRow?.status === 'approved';
       if (exRow && !noteOnly && await closedMonth(exRow.year, exRow.month)) return closedErr(exRow.year, exRow.month);
     }
@@ -695,9 +754,13 @@ Deno.serve(async (req) => {
       .replace(/[^a-z0-9]+/g, ' ').trim();
 
     // mesi chiusi e spese esistenti: una lettura sola per tutto il carico, non una per riga
-    const { data: snaps } = await sb.from('ce_snapshots').select('year, month');
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = closedSet vuoto = spese approvate in mesi chiusi;
+    // dedup cieco = segnale duplicati muto. In entrambi i casi il carico si rifiuta (vale anche in dry_run).
+    const { data: snaps, error: sne } = await retryOnce(() => sb.from('ce_snapshots').select('year, month'));
+    if (sne) return json({ error: `guardia mesi chiusi non valutabile (ce_snapshots non leggibile: ${sne.message}): carico rifiutato, riprova` }, 503);
     const closedSet = new Set((snaps ?? []).map((s) => `${s.year}-${s.month}`));
-    const { data: exist } = await sb.from('expenses').select('id, year, month, date_paid, costo, operazione');
+    const { data: exist, error: exe } = await retryOnce(() => sb.from('expenses').select('id, year, month, date_paid, costo, operazione'));
+    if (exe) return json({ error: `dedup non valutabile (expenses non leggibile: ${exe.message}): carico rifiutato, riprova` }, 502);
 
     type Esito = { i: number; esito: 'inserita' | 'valida' | 'respinta'; descrizione?: string; motivo?: string; duplicato?: string; id?: string };
     const esiti: Esito[] = [];
@@ -797,7 +860,9 @@ Deno.serve(async (req) => {
     // Ri-snapshotta il COGS dal prodotto di destinazione (audit B17): prima cambiava solo il codice e
     // il CE teneva il COGS del prodotto SBAGLIATO. Il codice_norm di prodotti/righe e' generato.
     const nc = newCodice.toUpperCase().replace(/\s+/g, '_');
-    const { data: np } = await sb.from('products').select('cogs, item, variant').eq('codice_norm', nc).maybeSingle();
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = vendita ripuntata come 'unresolved' con COGS NULL
+    const { data: np, error: npe } = await retryOnce(() => sb.from('products').select('cogs, item, variant').eq('codice_norm', nc).maybeSingle());
+    if (npe) return json({ error: `lettura prodotto di destinazione fallita (${npe.message}): vendita NON ripuntata, riprova` }, 502);
     // #7 (audit 09-07): non ripuntare a un codice inesistente come se fosse risolto. Se il target non
     // e' a catalogo, la vendita resta ORFANA: shopify resolved=false, qromo resolver_status='unresolved'
     // (entra in qromo_orphan / Correggi vendita), invece di sparire con COGS nullo.
@@ -824,7 +889,10 @@ Deno.serve(async (req) => {
     const { data: r } = await sb.from('returns').select('*').eq('id', rid).single();
     if (!r) return json({ error: 'reso non trovato' }, 404);
     if (!force && await closedMonth(r.year, r.month)) return closedErr(r.year, r.month);
-    const { data: adjs } = await sb.from('stock_adjustments').delete().eq('return_id', rid).select('id');
+    // 2026-09-13 (sweep incidente doppioni): delete degli aggiustamenti fallita ma reso cancellato comunque = stock
+    // del sostituto scalato per sempre; ora ci si ferma PRIMA di cancellare il reso (niente retry: e' una delete)
+    const { data: adjs, error: ae } = await sb.from('stock_adjustments').delete().eq('return_id', rid).select('id');
+    if (ae) return json({ error: `aggiustamenti del sostituto NON revertiti (${ae.message}): reso NON cancellato, riprova` }, 400);
     const { error: de } = await sb.from('returns').delete().eq('id', rid);
     if (de) return json({ error: de.message }, 400);
     await logp('returns', rid, 'return_delete', { codice: r.codice, adjustments_reverted: (adjs || []).length });
@@ -910,11 +978,15 @@ Deno.serve(async (req) => {
     // lo manda; trovato dalla ce-guard 03-07: 5 vendite di luglio senza COGS).
     if (codice) {
       const cn = codice.toUpperCase().replace(/\s+/g, '_');
-      const { data: pr } = await sb.from('products').select('cogs').eq('codice_norm', cn).maybeSingle();
+      // 2026-09-13 (sweep incidente doppioni): lettura fallita = vendita corretta marcata 'unresolved' senza COGS;
+      // il forwarder dedupa su sale_id (indice qromo_sales_live_saleid_uq), quindi il replay dopo il 502 e' sicuro
+      const { data: pr, error: pre } = await retryOnce(() => sb.from('products').select('cogs').eq('codice_norm', cn).maybeSingle());
+      if (pre) return json({ error: `lettura prodotto fallita (${pre.message}): vendita NON registrata, riprova` }, 502);
       if (pr) {
         if (row.cogs == null && pr.cogs != null) row.cogs = Number(pr.cogs);
       } else if (payload.resolver_status == null) {
-        const { data: npc } = await sb.from('non_product_codici').select('codice');
+        const { data: npc, error: npe } = await retryOnce(() => sb.from('non_product_codici').select('codice'));
+        if (npe) return json({ error: `lettura non_product_codici fallita (${npe.message}): vendita NON registrata, riprova` }, 502);
         const isNonProd = (npc || []).some((n: { codice: string }) => String(n.codice).toUpperCase().replace(/\s+/g, '_') === cn);
         if (!isNonProd) row.resolver_status = 'unresolved';
       }
@@ -1000,4 +1072,4 @@ Deno.serve(async (req) => {
 
   await logp(table, String(data.id), 'insert', data);
   return json({ ok: true, id: data.id, row: data });
-});
+}

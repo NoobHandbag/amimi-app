@@ -90,6 +90,16 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 // adesso" acceso e cliccabile: l'operatrice ripremeva e non capiva. Il flag distingue questi dal
 // caso transitorio (Gmail momentaneamente irraggiungibile), dove riprovare ha invece senso.
 const blocco = (msg: string, s = 422) => json({ error: msg, bloccante: true }, s);
+// 2026-09-13 (sweep incidente doppioni, Regola Ferrea 20): PostgREST risponde 504 su ~4% delle letture delle
+// edge (soprattutto nei primi secondi di ogni minuto). Una lettura e' idempotente: UN solo ritentativo dopo
+// 1,5 s, poi si dichiara il fallimento. Mai sugli insert/update/delete (cs_sends, cs_messages, cs_conversations).
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
 async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -315,8 +325,11 @@ Deno.serve(async (req) => {
   // Questa e' la cintura che regge ANCHE se la chiave della conversazione sbaglia, e vale su tutti
   // i canali (misurato il 01-08: bloccherebbe 1 sola conversazione in tutto il DB, ed e' `rumore`).
   // Il wrapper Shopify e i nostri indirizzi non contano: non sono clienti.
-  const { data: inMsgs } = await sb.from('cs_messages')
-    .select('from_email, form_fields, reply_to').eq('conversation_id', convId).eq('direction', 'in');
+  // 2026-09-13 (sweep incidente doppioni): lettura fallita = cintura a vuoto (inMsgs null -> mittenti vuoto ->
+  // invio a customer_email). Ora 503 NON bloccante (riprovare ha senso) PRIMA della rivendica su cs_sends.
+  const { data: inMsgs, error: inErr } = await retryOnce(() => sb.from('cs_messages')
+    .select('from_email, form_fields, reply_to').eq('conversation_id', convId).eq('direction', 'in'));
+  if (inErr) return json({ error: 'verifica cross-cliente non eseguibile, riprova (' + inErr.message.slice(0, 120) + ')' }, 503);
   const mittenti = new Set<string>();
   for (const m of (inMsgs ?? []) as { from_email: string | null; form_fields: Record<string, string> | null; reply_to: string | null }[]) {
     const e = emailCliente(m);
@@ -331,9 +344,12 @@ Deno.serve(async (req) => {
   }
 
   // 5) guardia soft anti doppio invio cross-key: stesso testo gia' uscito da poco in questa conversazione
-  const { data: lastOuts } = await sb.from('cs_messages')
+  // 2026-09-13 (sweep incidente doppioni): lettura fallita = guardia a vuoto (lastOuts null -> nessun confronto ->
+  // doppio invio possibile). Ora 503 NON bloccante PRIMA della rivendica su cs_sends.
+  const { data: lastOuts, error: outErr } = await retryOnce(() => sb.from('cs_messages')
     .select('body_text, sent_at').eq('conversation_id', convId).eq('direction', 'out')
-    .order('sent_at', { ascending: false }).limit(5);
+    .order('sent_at', { ascending: false }).limit(5));
+  if (outErr) return json({ error: 'verifica anti doppio invio non eseguibile, riprova (' + outErr.message.slice(0, 120) + ')' }, 503);
   for (const m of (lastOuts ?? []) as { body_text: string | null; sent_at: string | null }[]) {
     if (!m.sent_at || Date.now() - new Date(m.sent_at).getTime() > DEDUP_WINDOW_MS) continue;
     if ((m.body_text || '').trim() === testo) return json({ error: 'questa identica risposta risulta gia\' inviata pochi minuti fa: doppio invio evitato' }, 409);

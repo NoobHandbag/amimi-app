@@ -16,6 +16,15 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
 const norm = (s: unknown) => (s ? String(s).toUpperCase().replace(/\s+/g, '_') : '');
+// 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 su ~4% delle letture delle edge; una lettura
+// e' idempotente, UN solo ritentativo dopo 1,5 s. Mai sugli insert (Regola Ferrea 20).
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -28,10 +37,13 @@ Deno.serve(async (req) => {
   // auth (difesa in profondita', v3): accetta il NOSTRO secret (in body.auth o ?key= nell'URL del
   // webhook) OPPURE il token che Qromo ha generato per il webhook "Amimi App Supabase" (2026-07-03,
   // salvato in app_flags.qromo_webhook_token) — cosi' l'auth regge anche se Qromo strippa la query string.
-  const { data: sf } = await sb.from('app_flags').select('key, value').in('key', ['qromo_webhook_secret', 'qromo_webhook_token']);
+  // 2026-09-13 (sweep incidente doppioni): lettura fallita = guardia a vuoto (auth disattivata, POST anonimi
+  // accettati). Fail closed con 503 cosi' Qromo ritenta; idem se nessuno dei due flag e' leggibile.
+  const { data: sf, error: sfErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['qromo_webhook_secret', 'qromo_webhook_token']));
   const flags = new Map((sf ?? []).map((r: Record<string, string>) => [r.key, r.value]));
   const secret = flags.get('qromo_webhook_secret');
   const qToken = flags.get('qromo_webhook_token');
+  if (sfErr || (!secret && !qToken)) return json({ ok: false, error: 'auth unavailable' }, 503);
   const urlKey = new URL(req.url).searchParams.get('key') ?? '';
   const bodyAuth = String(body.auth ?? '');
   const authed = (!!secret && (bodyAuth === secret || urlKey === secret)) || (!!qToken && bodyAuth === qToken);
@@ -51,9 +63,14 @@ Deno.serve(async (req) => {
   if (!items.length) return json({ ok: true, skipped: 'no_items' });
 
   // resolver maps: name -> canonical CODICE (products = PCP, product_aliases = PRODUCT_MAP)
-  const { data: prods } = await sb.from('products').select('codice, codice_norm, item, variant, cogs');
+  // 2026-09-13 (sweep incidente doppioni): lettura fallita = mappe vuote -> tutto l'ordine scritto 'unresolved'
+  // con cogs NULL, e il dedup su sale_id blocca il re-ingest corretto. Fail closed con 500 PRIMA del loop:
+  // il retry di Qromo e' idempotente (indice UNIQUE qromo_sales_live_saleid_uq).
+  const { data: prods, error: prodsErr } = await retryOnce(() => sb.from('products').select('codice, codice_norm, item, variant, cogs'));
+  if (prodsErr) return json({ ok: false, error: 'products read failed: ' + prodsErr.message }, 500);
   const byNorm = new Map((prods ?? []).map((r: Record<string, any>) => [r.codice_norm, r]));
-  const { data: al } = await sb.from('product_aliases').select('shopify_name_norm, codice');
+  const { data: al, error: alErr } = await retryOnce(() => sb.from('product_aliases').select('shopify_name_norm, codice'));
+  if (alErr) return json({ ok: false, error: 'product_aliases read failed: ' + alErr.message }, 500);
   const aliasMap = new Map((al ?? []).map((r: Record<string, any>) => [r.shopify_name_norm, r.codice]));
 
   const orderId = String(order.order_id ?? '');

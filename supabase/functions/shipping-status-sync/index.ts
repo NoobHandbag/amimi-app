@@ -34,6 +34,15 @@ async function sha256hex(s: string) {
 }
 
 const MAX_BATCH = 300;
+// 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 su ~4% delle letture delle edge (cron a :00).
+// Una lettura e' idempotente: UN solo ritentativo dopo 1,5 s, poi si fallisce chiuso. Mai sugli upsert.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
 // data corrente in Europe/Rome (per seen_delivered_at, alla transizione a CONSEGNATA osservata)
 const todayRome = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date());
 // TWS date "dd-MM-yyyy" -> ISO; null se non parsabile (mai inventare date)
@@ -57,7 +66,11 @@ Deno.serve(async (req) => {
 
   // stato corrente gia' a DB per confrontare (aggiornati = cambi VERI, non upsert ciechi)
   const ldvs = stati.map((s) => String(s.ldv ?? '').trim()).filter(Boolean);
-  const { data: existing } = await sb.from('shipping_status').select('ldv,stato_tws,seen_delivered_at').in('ldv', ldvs);
+  // 2026-09-13 (sweep incidente doppioni): lettura fallita = ogni LDV sembra nuova e la transizione a CONSEGNATA
+  // osservata in questo giro perde seen_delivered_at per sempre. Si fallisce chiuso PRIMA di qualunque upsert:
+  // l'Apps Script riprova all'ora successiva e la transizione viene osservata allora.
+  const { data: existing, error: exErr } = await retryOnce(() => sb.from('shipping_status').select('ldv,stato_tws,seen_delivered_at').in('ldv', ldvs));
+  if (exErr) return json({ error: 'lettura shipping_status fallita: ' + exErr.message.slice(0, 120) }, 500);
   const exByLdv = new Map<string, { stato_tws: string; seen_delivered_at: string | null }>();
   for (const e of (existing ?? []) as { ldv: string; stato_tws: string; seen_delivered_at: string | null }[]) exByLdv.set(e.ldv, e);
 

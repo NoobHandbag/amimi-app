@@ -28,6 +28,15 @@ async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+// 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 su ~4% delle letture delle edge (Regola Ferrea 20).
+// Una lettura e' idempotente: UN solo ritentativo dopo 1,5 s, poi la guardia si ferma a vuoto (mai su insert/update/delete).
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
 
 type Row = Record<string, unknown>;
 type Check = { k: string; label: string; n: number; severity: 'ok' | 'warn' | 'error' | 'info' };
@@ -43,13 +52,18 @@ Deno.serve(async (req) => {
   if (action !== 'run') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
-  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['sales_guard_enabled', 'ntfy_topic_sales', 'ntfy_topic', 'sales_guard_alert_state']);
+  // 2026-09-13 (sweep incidente doppioni): flag non letti = guardia che si crede spenta e non gira, in silenzio
+  const { data: frows, error: frowsErr } = await retryOnce(() => sb.from('app_flags').select('key,value').in('key', ['sales_guard_enabled', 'ntfy_topic_sales', 'ntfy_topic', 'sales_guard_alert_state']));
+  if (frowsErr) return json({ ok: false, error: 'lettura app_flags fallita, guardia non valutata: ' + frowsErr.message }, 503);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const source = String(body.source || 'manual');
   if (source === 'cron' && flags.sales_guard_enabled !== 'true') return json({ ok: true, skipped: 'disabled' });
   const dryRun = body.dryRun === true;
 
-  const { data: ruleRows } = await sb.from('alert_rules').select('metrica,soglia,finestra_giorni,severity,attivo');
+  // 2026-09-13 (sweep incidente doppioni): lettura fallita = zero checks, righe sales_* di oggi cancellate e non
+  // rimpiazzate, push falso "rientrato": si esce PRIMA di toccare health_log/app_flags/ntfy.
+  const { data: ruleRows, error: rulesErr } = await retryOnce(() => sb.from('alert_rules').select('metrica,soglia,finestra_giorni,severity,attivo'));
+  if (rulesErr) return json({ ok: false, error: 'lettura alert_rules fallita, guardia non valutata: ' + rulesErr.message }, 503);
   const rules = new Map<string, { soglia: number; finestra: number; severity: string; attivo: boolean }>();
   for (const r of (ruleRows ?? []) as Row[]) rules.set(String(r.metrica), { soglia: Number(r.soglia), finestra: Number(r.finestra_giorni), severity: String(r.severity), attivo: r.attivo === true });
 
@@ -59,8 +73,10 @@ Deno.serve(async (req) => {
   // corrente e' appena iniziato e non deve fare rumore)
   const r1 = rules.get('sales_zero_ordini');
   if (r1?.attivo) {
-    const { count } = await sb.from('shopify_orders').select('order_id', { count: 'exact', head: true })
-      .gte('created_at_shop', new Date(Date.now() - 24 * 3600 * 1000).toISOString());
+    // 2026-09-13 (sweep incidente doppioni): count fallito era letto come 0 ordini = push priorita' 5 falso + stato alert ribaltato.
+    const { count, error: cntErr } = await retryOnce(() => sb.from('shopify_orders').select('order_id', { count: 'exact', head: true })
+      .gte('created_at_shop', new Date(Date.now() - 24 * 3600 * 1000).toISOString()));
+    if (cntErr) return json({ ok: false, error: 'conteggio shopify_orders fallito, guardia non valutata: ' + cntErr.message }, 503);
     const n = count ?? 0;
     checks.push(n <= r1.soglia
       ? { k: 'sales_zero_ordini', label: `ZERO ordini nelle ultime 24 ore: probabile guasto (checkout, dominio, pagamenti), mai successo in 90 giorni`, n: 1, severity: 'error' }
@@ -68,7 +84,9 @@ Deno.serve(async (req) => {
   }
 
   // S2-S5: le liste correnti arrivano dalla vista (stesse soglie di alert_rules, un solo posto)
-  const { data: anom } = await sb.from('v_sales_anomalie').select('tipo,codice,dettaglio,valore');
+  // 2026-09-13 (sweep incidente doppioni): lettura fallita = liste vuote = S2-S5 tutti "ok" a vuoto in health_log.
+  const { data: anom, error: anomErr } = await retryOnce(() => sb.from('v_sales_anomalie').select('tipo,codice,dettaglio,valore'));
+  if (anomErr) return json({ ok: false, error: 'lettura v_sales_anomalie fallita, guardia non valutata: ' + anomErr.message }, 503);
   const byTipo = new Map<string, Row[]>();
   for (const a of (anom ?? []) as Row[]) {
     const t = String(a.tipo);

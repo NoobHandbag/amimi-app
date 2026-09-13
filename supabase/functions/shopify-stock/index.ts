@@ -2,6 +2,10 @@
 // plus a GATED realign (sets Shopify available = gestionale "disponibili") behind
 // app_flags.shopify_write_enabled. Token in app_config (service-role). PIN-gated.
 //
+// 2026-09-13 (v16, sweep incidente doppioni, minori residui, Regola Ferrea 20): `doSync` controlla l'esito dell'upsert
+// di shopify_stock (fallito = 502 prima del prune, niente "synced N" bugiardo); `realign_all` legge i 5 flag con
+// retryOnce e un flag non letto FERMA il giro (health_log error) invece di ricadere sui default aggressivi.
+//
 // 2026-09-13 (v15, sweep dell'incidente doppioni Shopify, OK owner): tre letture con l'errore ignorato che potevano
 // SCRIVERE su uno stato letto male, ora controllate. `doSync`: anagrafica non letta = mappe vuote -> mirror
 // ri-chiavato per SKU grezzo e prune delle righe canoniche; ora aborta (502) come una pagina Shopify fallita.
@@ -39,6 +43,10 @@ async function sha256hex(s: string) {
 }
 const SHOP = 'amimi-10000';
 const API = `https://${SHOP}.myshopify.com/admin/api/2024-01`;
+// 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 su ~4% delle chiamate REST (Regola Ferrea 20).
+// Una LETTURA fallita si ritenta una volta; le scritture mai (copiati da shopify-sync).
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => { const r = await fn(); if (!r.error) return r; await sleep(1500); return await fn(); };
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -130,7 +138,10 @@ Deno.serve(async (req) => {
     }));
     let pruned = 0;
     if (rows.length) {
-      await sb.from('shopify_stock').upsert(rows, { onConflict: 'codice' });
+      // 2026-09-13 (sweep incidente doppioni): upsert fallito = "synced N" bugiardo e prune/realign su un mirror stantio.
+      // Ora un upsert fallito aborta il giro (502) PRIMA del prune. Niente retry: e' una scrittura.
+      const { error: upErr } = await sb.from('shopify_stock').upsert(rows, { onConflict: 'codice' });
+      if (upErr) return { error: 'shopify_stock upsert fallito: ' + upErr.message, status: 502 };
       // PRUNE (brief 23-07): il mirror e' lo SPECCHIO di Shopify — una riga non piu' vista nel
       // pull va rimossa (prodotto eliminato da Shopify), altrimenti resta per sempre con
       // synced_at congelato e, se era active, tiene on_shopify=true in v_inventory (caso
@@ -184,18 +195,40 @@ Deno.serve(async (req) => {
   // con dati puliti Shopify deve rispecchiare lo stock reale). SKU non mappati mai toccati.
   // estratto in helper (who = attore per l'audit: 'cron' o l'utente); sync_now lo richiama a valle di doSync.
   const doRealignAll = async (dryRun: boolean, who: string) => {
-    const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'shopify_autopush_enabled').maybeSingle();
+    // 2026-09-13 (sweep incidente doppioni): gate non letto = "disattivato" silenzioso (skipped con ok:true). Ora e' un errore esplicito.
+    const { data: flag, error: gateErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'shopify_autopush_enabled').maybeSingle());
+    if (gateErr) {
+      const msg = 'autopush FERMATO: shopify_autopush_enabled non letto: ' + gateErr.message;
+      if (!dryRun) {
+        const today = new Date().toISOString().slice(0, 10);
+        await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
+        await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: msg, n: 1, severity: 'error' });
+      }
+      return { ok: false, error: msg, status: 503 };
+    }
     if (flag?.value !== 'true') return { ok: true, skipped: 'autopush disattivato (shopify_autopush_enabled != true)' };
 
-    const { data: locFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_location_id').maybeSingle();
+    const { data: locFlag, error: locErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'shopify_location_id').maybeSingle());
     const locationId = Number(locFlag?.value || '107986518343');
-    const { data: bufFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_expose_buffer').maybeSingle();
+    const { data: bufFlag, error: bufErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'shopify_expose_buffer').maybeSingle());
     const buffer = Number(bufFlag?.value ?? '0');
-    const { data: holdFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_hold_raises').maybeSingle();
+    const { data: holdFlag, error: holdErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'shopify_hold_raises').maybeSingle());
     const holdRaises = holdFlag?.value === 'true';
     // OPT-IN (default off): se un inventory item è tracked:false, riaccendi il tracking e ritenta. Mai gift card.
-    const { data: autoEnFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_autoenable_tracking').maybeSingle();
+    const { data: autoEnFlag, error: autoEnErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'shopify_autoenable_tracking').maybeSingle());
     const autoEnableTracking = autoEnFlag?.value === 'true';
+    // 2026-09-13 (sweep incidente doppioni): flag non letto = default AGGRESSIVO in silenzio (buffer 0, nessun hold,
+    // location hardcoded, tracking acceso/spento a caso). Ora il giro si FERMA e lo dice in health_log.
+    const flagErr = locErr ?? bufErr ?? holdErr ?? autoEnErr;
+    if (flagErr) {
+      const msg = 'autopush FERMATO: flag app_flags non letti: ' + flagErr.message;
+      if (!dryRun) {
+        const today = new Date().toISOString().slice(0, 10);
+        await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
+        await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: msg, n: 1, severity: 'error' });
+      }
+      return { ok: false, error: msg, status: 503 };
+    }
 
     // 2026-09-13 (sweep incidente doppioni): mirror o inventario non letti = giro a vuoto loggato 'ok' (classe B19).
     // Ora il giro si FERMA e lo dice in health_log, cosi' non si decide nulla su uno stato letto male.
@@ -208,7 +241,7 @@ Deno.serve(async (req) => {
         await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
         await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: msg, n: 1, severity: 'error' });
       }
-      return { ok: false, error: msg };
+      return { ok: false, error: msg, status: 503 };
     }
     const dispByCod = new Map((inv ?? []).map((r) => [r.codice, Math.max(0, Number(r.disponibili_da_vendere) || 0)]));
     const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
@@ -311,7 +344,7 @@ Deno.serve(async (req) => {
     }
     return { ok: true, ...summary };
   };
-  if (action === 'realign_all') return json(await doRealignAll(body.dryRun === true, 'cron'));
+  if (action === 'realign_all') { const r = await doRealignAll(body.dryRun === true, 'cron') as { status?: number }; return json(r, r.status ?? 200); }
 
   // ---- SYNC_NOW: giro completo on-demand (sync -> realign_all), come i cron :17 + :27 ma a comando ----
   // Regola Ferrea 15: unico writer stock = questa edge. Nessun segreto nel client (PIN 'x' gia' usato

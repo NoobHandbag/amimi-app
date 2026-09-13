@@ -29,6 +29,15 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 anche su letture banali (~4% delle chiamate
+// REST delle edge). Una lettura e' idempotente: UN solo ritentativo dopo 1,5 s, mai sulle scritture.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
 
 // Tassonomia (design 6.2 + 14a categoria "Modifica / correzione indirizzo" del 23-07):
 // la correzione manuale puo' solo assegnare una di queste, o svuotare.
@@ -172,7 +181,10 @@ Deno.serve(async (req) => {
     if (sender.endsWith('@amimi.it')) return json({ error: 'non puoi bloccare @amimi.it' }, 422);
 
     // append con dedup alla denylist (match substring su From+Subject in cs-sync, riletta a runtime)
-    const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'cs_noise_senders').maybeSingle();
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = denylist vuota -> l'upsert la riscriveva con
+    // il solo mittente nuovo (98 voci perse). Ora: un ritentativo, poi 503 senza scrivere nulla.
+    const { data: flag, error: flagErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'cs_noise_senders').maybeSingle());
+    if (flagErr) return json({ error: 'denylist non leggibile, riprova: ' + flagErr.message }, 503);
     const items = String(flag?.value ?? '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
     const already = items.some((x) => x.toLowerCase() === sender);
     if (!already) {
@@ -202,7 +214,10 @@ Deno.serve(async (req) => {
     // rimuove da sola: viene segnalata (rimuoverla riaprirebbe il flusso a TUTTO il dominio)
     let rimossoDaDenylist = false;
     let dominioCheBlocca: string | null = null;
-    const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'cs_noise_senders').maybeSingle();
+    // 2026-09-13 (sweep incidente doppioni): stessa cintura di add_noise, altrimenti la conversazione passa a
+    // email_diretta mentre il mittente resta in denylist e la prossima mail torna nel rumore
+    const { data: flag, error: flagErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'cs_noise_senders').maybeSingle());
+    if (flagErr) return json({ error: 'denylist non leggibile, riprova: ' + flagErr.message }, 503);
     const items = String(flag?.value ?? '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
     if (sender) {
       const kept = items.filter((x) => x.toLowerCase() !== sender);
