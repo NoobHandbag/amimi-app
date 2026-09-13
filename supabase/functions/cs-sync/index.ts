@@ -139,6 +139,16 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 sul ~4% delle letture delle edge (Regola
+// Ferrea 20). Una LETTURA e' idempotente: UN solo ritentativo dopo 1,5 s, poi si dichiara l'errore. Mai
+// sugli insert/update/upsert di dati: il fermo deve restare visibile, non mascherato.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
 async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -293,7 +303,40 @@ function denyMatch(voce: string, from: string, subject: string): boolean {
   return fd === dom || fd.endsWith('.' + dom);                           // dominio o sottodominio
 }
 // ==== PURE:cs-deny END ====
-function classify(from: { email: string; name: string }, replyTo: { email: string; name: string }, subject: string, body: string, extraDeny: string[], bulk = false): { canale: Canale; email: string | null; name: string | null } {
+// ==== PURE:cs-spam BEGIN ====
+// v19 (2026-09-13, richiesta owner): pre-filtro DETERMINISTICO dello spam "esperto e-commerce".
+// Sono bot che scrivono da gmail usa e getta (consulthub, ...growth, ...expert) con pitch commerciali
+// ("posso portarti 20 ordini al giorno, commissione del 2%", "ho analizzato il tuo negozio", "BFCM"),
+// spesso in lettere Unicode "matematiche" (i caratteri di 𝙋𝙤𝙨𝙨𝙤) per aggirare i filtri.
+// Il pre-filtro rumore per DOMINIO non li prende (arrivano da gmail.com, che NON si blocca per
+// dominio: i clienti veri usano gmail), e Gemini a valle vede solo il TESTO, non il mittente, quindi
+// scambia una sonda per un cliente ("Can you deliver my order?" da consistencyexpert14 -> Spedizione).
+// Qui il mittente E' visibile: e' il segnale che manca a valle.
+// PUNTEGGIO tarato su TUTTO lo storico (misura in SQL, 1057 conversazioni): soglia >= 3 flagga 27
+// conversazioni, TUTTE bot, ZERO clienti noti e ZERO contatti veri (il commercialista e le notifiche
+// Google restano a 2, sotto soglia). Il segnale "cifre nel local-part" da SOLO vale 1 di proposito:
+// mario1985@gmail.com e' un cliente vero, non uno spammer; serve un secondo segnale per superare 3.
+const SPAM_THRESHOLD = 3;
+const SPAM_MATH_RE = /[\u{1D400}-\u{1D7FF}][\s\S]*[\u{1D400}-\u{1D7FF}][\s\S]*[\u{1D400}-\u{1D7FF}]/u; // >= 3 lettere "fancy"
+const SPAM_PITCH_RE = /reviewed your store|checkout issue|abandoned cart|conversion rate|generate[a-z ]{0,15}(?:sales|revenue|orders)|\bbfcm\b|drive[a-z0-9 ,\u2013-]{0,20}(?:orders|store)|extra sales|vendite extra|aiutart[io] a (?:generare|aumentare|vendere)|commission(?:e del)?|analizzat[oa] (?:il|la|your|il tuo|il vostro)|posso mostrart|is this store live|store live|observation about your product|quick (?:idea|question) (?:for|about) your|your products?[a-z' ]{0,15}(?:has|have)[a-z' ]{0,15}potential|potenziale/i;
+const SPAM_TW_STRONG_RE = /(?:expert|growth|consult|agenc|ecom|sovereign|reviewteam|merchantservice|growthhack|salesexpert)[0-9]*@/i;
+const SPAM_TW_WEAK_RE = /(?:digital|marketing|media|prime|hub|seo|salesteam)[0-9]*@|[0-9]{3,}@gmail/i;
+// Punteggio + motivi (per l'audit in cs_events). PURA: nessun IO, cosi' e' provabile senza rete/DB.
+// L'esclusione "ordine che risolve / cliente gia' noto" NON vive qui: la fa il chiamante (classify usa
+// il solo numero d'ordine sincrono; reapply_spam controlla anche shopify_orders). Qui solo i segnali.
+function vendorSpamScore(fromEmail: string, subject: string, body: string): { score: number; reasons: string[] } {
+  const f = (fromEmail || '').toLowerCase();
+  const txt = ((subject || '') + ' ' + (body || '')).toLowerCase();
+  const reasons: string[] = [];
+  let score = 0;
+  if (SPAM_MATH_RE.test(body || '')) { score += 3; reasons.push('lettere unicode fancy'); }
+  if (SPAM_PITCH_RE.test(txt)) { score += 2; reasons.push('pitch commerciale'); }
+  if (SPAM_TW_STRONG_RE.test(f)) { score += 3; reasons.push('mittente usa e getta (parola)'); }
+  else if (SPAM_TW_WEAK_RE.test(f)) { score += 1; reasons.push('mittente sospetto (cifre/parola debole)'); }
+  return { score, reasons };
+}
+// ==== PURE:cs-spam END ====
+function classify(from: { email: string; name: string }, replyTo: { email: string; name: string }, subject: string, body: string, extraDeny: string[], bulk = false): { canale: Canale; email: string | null; name: string | null; spam?: boolean; spamReasons?: string[] } {
   const fe = from.email, rt = replyTo.email;
   // 1) Notifica chat Shopify Inbox: no-reply@mailer.shopify.com, subject "New Message from <nome>".
   //    Se il visitatore lascia l'email in chat, Shopify la usa come nome: catturarla in customer_email
@@ -319,6 +362,13 @@ function classify(from: { email: string; name: string }, replyTo: { email: strin
   if (bulk) return { canale: 'rumore', email: fe, name: from.name || null };
   // 5) Posta interna Amimi' (non e' un cliente)
   if (isAmimi(fe)) return { canale: 'rumore', email: fe, name: from.name || null };
+  // 5bis) v19: spam "esperto e-commerce" da gmail usa e getta. Guardia: un riferimento a un ordine
+  // (#NNNN / "ordine NNNN") NON e' mai spam - un cliente vero cita il suo ordine, un bot no. La
+  // verifica che l'ordine ESISTA sta a valle (reapply_spam col DB); qui basta il riferimento a farlo
+  // trattare come cliente. Il default cliente resta il ramo finale: si diventa rumore solo con prova.
+  const hasOrderRef = extractOrderNumber((subject || '') + '\n' + (body || '')) !== null;
+  const sp = vendorSpamScore(fe, subject, body);
+  if (!hasOrderRef && sp.score >= SPAM_THRESHOLD) return { canale: 'rumore', email: fe, name: from.name || null, spam: true, spamReasons: sp.reasons };
   // 6) Default: un umano ci ha scritto direttamente = cliente (incl. risposte alle mail transazionali)
   return { canale: 'email_diretta', email: fe, name: from.name || null };
 }
@@ -546,7 +596,7 @@ async function gGet(path: string, token: string): Promise<{ ok: boolean; status:
 }
 
 type Parsed = {
-  cl: { canale: Canale; email: string | null; name: string | null };
+  cl: { canale: Canale; email: string | null; name: string | null; spam?: boolean; spamReasons?: string[] };
   from: { email: string; name: string }; to: { email: string; name: string };
   subject: string; bodyText: string; sentAt: string | null; snippet: string;
   formFields: Record<string, string> | null; order: number | null; lingua: string;
@@ -681,7 +731,7 @@ Deno.serve(async (req) => {
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const action = String(body.action || 'poll');
-  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet' && action !== 'backfill_order_number' && action !== 'reapply_noise') return json({ error: 'azione sconosciuta: ' + action }, 422);
+  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet' && action !== 'backfill_order_number' && action !== 'reapply_noise' && action !== 'reapply_spam') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
   const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders', 'cs_stall_msg']);
@@ -797,6 +847,52 @@ Deno.serve(async (req) => {
     return json({ ok: true, dry_run: false, spostate, con_nostra_risposta: conNostraRisposta, b2b_saltate: b2bSaltate, ...(errori.length ? { errori: errori.slice(0, 10) } : {}) });
   }
 
+  // --- RE-APPLY del pre-filtro SPAM allo storico (v19) ---
+  // Come reapply_noise ma col punteggio vendorSpamScore (bot "esperto e-commerce" da gmail usa e
+  // getta), leggendo anche il PRIMO messaggio in ingresso per i segnali di contenuto (math/pitch).
+  // Ordine pensato per fare POCHE query: prima il punteggio (sul testo gia' in mano), e SOLO se >=
+  // soglia le esclusioni col DB. Esclusioni, tutte verso la sicurezza (mai un cliente nel rumore):
+  //   categoria corretta a mano; un nostro `out` gia' inviato; un riferimento d'ordine; un ordine
+  //   che RISOLVE in shopify_orders; un mittente gia' cliente in shopify_orders. Dry-run di DEFAULT.
+  if (action === 'reapply_spam') {
+    const apply = body.apply === true;
+    const { data: convs } = await sb.from('cs_conversations')
+      .select('id, subject, customer_email, canale, categoria_source, order_number').neq('canale', 'rumore');
+    const cand: { id: string; subject: string; mittente: string; score: number; reasons: string[] }[] = [];
+    let conNostraRisposta = 0, clienteNoto = 0, manuali = 0, conOrdine = 0;
+    for (const c of (convs ?? []) as { id: string; subject: string | null; customer_email: string | null; canale: string; categoria_source: string | null; order_number: number | null }[]) {
+      if (c.categoria_source === 'manuale') { manuali++; continue; }
+      const mittente = String(c.customer_email ?? '').toLowerCase();
+      if (!mittente) continue;
+      const { data: msgs } = await sb.from('cs_messages')
+        .select('direction, body_text').eq('conversation_id', c.id).order('sent_at', { ascending: true });
+      const righe = (msgs ?? []) as { direction: string; body_text: string | null }[];
+      if (righe.some((m) => m.direction === 'out')) { conNostraRisposta++; continue; }
+      const subject = String(c.subject ?? '');
+      const bodyIn = String(righe.find((m) => m.direction === 'in')?.body_text ?? '');
+      const sp = vendorSpamScore(mittente, subject, bodyIn);
+      if (sp.score < SPAM_THRESHOLD) continue;
+      // segnale forte, ora le esclusioni col DB (poche, solo sui candidati)
+      if (extractOrderNumber(subject + '\n' + bodyIn) !== null) { conOrdine++; continue; }
+      if (c.order_number != null) {
+        const { data: o } = await sb.from('shopify_orders').select('order_number').eq('order_number', String(c.order_number)).maybeSingle();
+        if (o) { conOrdine++; continue; }
+      }
+      const { data: kc } = await sb.from('shopify_orders').select('email').ilike('email', mittente).limit(1);
+      if (kc && kc.length) { clienteNoto++; continue; }
+      cand.push({ id: c.id, subject: subject.slice(0, 70), mittente, score: sp.score, reasons: sp.reasons });
+    }
+    if (!apply) return json({ ok: true, dry_run: true, da_spostare: cand.length, con_nostra_risposta: conNostraRisposta, cliente_noto: clienteNoto, con_ordine: conOrdine, manuali, elenco: cand });
+    let spostate = 0; const errori: string[] = [];
+    for (const c of cand) {
+      const { error } = await sb.from('cs_conversations').update({ canale: 'rumore' }).eq('id', c.id);
+      if (error) { errori.push(`${c.id}: ${error.message}`); continue; }
+      spostate++;
+      await sb.from('cs_events').insert({ conversation_id: c.id, azione: 'spam_prefiltro', chi: 'cs-sync', dettaglio: { motivo: 'reapply_spam', score: c.score, reasons: c.reasons, mittente: c.mittente } });
+    }
+    return json({ ok: true, dry_run: false, spostate, con_nostra_risposta: conNostraRisposta, cliente_noto: clienteNoto, con_ordine: conOrdine, manuali, ...(errori.length ? { errori: errori.slice(0, 10) } : {}) });
+  }
+
   // --- chiave service account ---
   if (!flags.cs_gmail_sa_key) { if (!dryRun) await writeHealth(1, 'chiave SA assente', 'error'); return json({ ok: false, needs_key: true }); }
   let sa: { client_email?: string; private_key?: string };
@@ -832,7 +928,10 @@ Deno.serve(async (req) => {
       .select('id, canale, stato, stato_at, last_direction, last_msg_at, categoria_source, urgente, urgenza_motivo, flags')
       .eq('id', convId).maybeSingle();
     if (!c || !c.categoria_source) return false;   // mai classificata: ci pensera' cs-classify alla pesca
-    const { data: msgs } = await sb.from('cs_messages').select('direction,from_email,sent_at').eq('conversation_id', convId);
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = in/out a zero e la regola SPEGNEVA un
+    // sollecito vivo (urgente=false, flag 'sollecito' via). Se non si puo' contare, non si tocca nulla.
+    const { data: msgs, error: msgsErr } = await retryOnce(() => sb.from('cs_messages').select('direction,from_email,sent_at').eq('conversation_id', convId));
+    if (msgsErr) return false;
     const inMsgs = (msgs ?? []).filter((m) => m.direction === 'in');
     const inCnt = inMsgs.length;
     const outCnt = (msgs ?? []).filter((m) => m.direction === 'out').length;
@@ -864,7 +963,11 @@ Deno.serve(async (req) => {
   const processOutbound = async (id: string, threadId: string): Promise<'done' | 'transient'> => {
     let conv: { id: string; canale: string; last_msg_at: string | null; customer_email?: string | null } | null = null;
     try {
-      const { data } = await sb.from('cs_conversations').select('id, canale, last_msg_at, customer_email').eq('gmail_thread_id', threadId).maybeSingle();
+      // 2026-09-13 (sweep incidente doppioni): lettura fallita = "thread non tracciato" = 'done', e il
+      // nostro SENT veniva scavalcato per sempre (niente 'fatto' automatico). Il catch non vede gli
+      // errori PostgREST (supabase-js non lancia): ora l'errore e' transitorio e la cintura fa il resto.
+      const { data, error: convErr } = await retryOnce(() => sb.from('cs_conversations').select('id, canale, last_msg_at, customer_email').eq('gmail_thread_id', threadId).maybeSingle());
+      if (convErr) { lastErr = 'db_conv_out: ' + String(convErr.message ?? '').slice(0, 250); return 'transient'; }
       conv = (data as typeof conv) ?? null;
     } catch (e) { lastErr = 'db_conv_out: ' + errText(e); return 'transient'; }
     if (!conv || conv.canale === 'rumore') return 'done';
@@ -986,7 +1089,7 @@ Deno.serve(async (req) => {
     const { data: convRows } = await sb.from('cs_conversations')
       .select('id, subject, customer_email, canale, order_number').is('order_number', null).neq('canale', 'rumore');
     const convs = (convRows ?? []) as { id: string; subject: string | null; customer_email: string | null; canale: string }[];
-    let scanned = 0, trovati = 0, scritti = 0, ordineInesistente = 0, altroCliente = 0; const errors: string[] = [];
+    let scanned = 0, trovati = 0, scritti = 0, ordineInesistente = 0, altroCliente = 0, letturaOrdineFallita = 0; const errors: string[] = [];
     for (const c of convs) {
       scanned++;
       const { data: mrows } = await sb.from('cs_messages')
@@ -997,7 +1100,10 @@ Deno.serve(async (req) => {
       const n = extractOrderNumber(testo);
       if (!n) continue;
       trovati++;
-      const { data: ord } = await sb.from('shopify_orders').select('order_number, email').eq('order_number', String(n)).maybeSingle();
+      // 2026-09-13 (sweep incidente doppioni): lettura fallita (504, o PGRST116 con righe doppie) contava
+      // come "ordine inesistente". Ora si conta a parte e si salta; limit(1) tollera un doppione residuo.
+      const { data: ord, error: ordErr } = await retryOnce(() => sb.from('shopify_orders').select('order_number, email').eq('order_number', String(n)).limit(1).maybeSingle());
+      if (ordErr) { letturaOrdineFallita++; errors.push(c.id.slice(0, 8) + ':ordine:' + String(ordErr.message ?? '').slice(0, 60)); continue; }
       if (!ord) { ordineInesistente++; continue; }
       const mailOrd = String((ord as { email: string | null }).email ?? '').toLowerCase();
       if (c.customer_email && mailOrd && mailOrd !== c.customer_email.toLowerCase()) { altroCliente++; continue; }
@@ -1006,7 +1112,7 @@ Deno.serve(async (req) => {
       if (ue) { errors.push(c.id.slice(0, 8) + ':' + ue.message.slice(0, 60)); continue; }
       scritti++;
     }
-    return json({ ok: true, ...(dry ? { dry: true } : {}), scanned, numeri_trovati: trovati, scritti, ordine_inesistente: ordineInesistente, ordine_di_altro_cliente: altroCliente, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
+    return json({ ok: true, ...(dry ? { dry: true } : {}), scanned, numeri_trovati: trovati, scritti, ordine_inesistente: ordineInesistente, ordine_di_altro_cliente: altroCliente, lettura_ordine_fallita: letturaOrdineFallita, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
   }
 
   // --- BACKFILL snippet (v15): l'anteprima delle card gia' in coda ---
@@ -1015,11 +1121,20 @@ Deno.serve(async (req) => {
   // `dry: true` conta e non scrive. Idempotente: rieseguito a regime scrive 0.
   if (action === 'backfill_snippet') {
     const dry = body.dry === true;
-    const { data: convRows } = await sb.from('cs_conversations').select('id, canale, snippet');
+    // 2026-09-13 (sweep incidente doppioni): la select senza limite si troncava al cap PostgREST (1000
+    // righe, la tabella e' gia' oltre) e una lettura fallita dava "scanned 0" senza errore. Ora keyset su
+    // id come backfill_clean (limit/after_id, `last_id` in risposta) e la lettura fallita e' un 502.
+    const limit = Math.min(Number(body.limit) || 200, 400);
+    const { data: convRows, error: convErr } = await retryOnce(() => {
+      let qc = sb.from('cs_conversations').select('id, canale, snippet').order('id', { ascending: true }).limit(limit);
+      if (body.after_id) qc = qc.gt('id', String(body.after_id));
+      return qc;
+    });
+    if (convErr) return json({ ok: false, error: 'cs_conversations non leggibile: ' + convErr.message }, 502);
     const convs = (convRows ?? []) as { id: string; canale: string; snippet: string | null }[];
-    let scanned = 0, wrote = 0, invariati = 0, senzaIn = 0; const errors: string[] = [];
+    let scanned = 0, wrote = 0, invariati = 0, senzaIn = 0; let lastId: string | null = null; const errors: string[] = [];
     for (const c of convs) {
-      scanned++;
+      scanned++; lastId = c.id;
       const { data: mrows } = await sb.from('cs_messages')
         .select('body_text, body_clean, sent_at').eq('conversation_id', c.id).eq('direction', 'in')
         .order('sent_at', { ascending: false, nullsFirst: false }).limit(1);
@@ -1032,7 +1147,7 @@ Deno.serve(async (req) => {
       if (ue) { errors.push(c.id.slice(0, 8) + ':' + ue.message.slice(0, 60)); continue; }
       wrote++;
     }
-    return json({ ok: true, ...(dry ? { dry: true } : {}), scanned, snippet_scritti: wrote, invariati, senza_messaggi_in: senzaIn, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
+    return json({ ok: true, ...(dry ? { dry: true } : {}), scanned, snippet_scritti: wrote, invariati, senza_messaggi_in: senzaIn, last_id: lastId, ...(errors.length ? { errors: errors.slice(0, 10) } : {}) });
   }
 
   // --- BACKFILL body_clean (v7): pulisce lo storico gia' ingerito con la STESSA stripQuoted ---
@@ -1051,10 +1166,13 @@ Deno.serve(async (req) => {
     const tagli: { id: string; da: number; a: number }[] = [];
     const allungati: { id: string; da: number; a: number }[] = [];
     let sarebbeNull = 0;
-    const { data: convRows } = await sb.from('cs_conversations').select('id, canale, customer_name');
+    // 2026-09-13 (sweep incidente doppioni): la mappa conversazione -> canale veniva da una select di
+    // TUTTA cs_conversations, senza limite ne' controllo dell'errore: oltre il cap PostgREST (1000 righe,
+    // la tabella e' gia' oltre) e su una lettura fallita `canale` restava undefined e body_clean veniva
+    // ricalcolato SENZA il taglio dello stampo del modulo. Ora si leggono solo le conversazioni della
+    // pagina di messaggi (piu' sotto, `.in('id', ...)`) e una lettura fallita e' un 502 prima di scrivere.
     const canaleOf = new Map<string, string>();
     const nomeOf = new Map<string, string | null>();
-    for (const c of (convRows ?? []) as { id: string; canale: string; customer_name: string | null }[]) { canaleOf.set(c.id, c.canale); nomeOf.set(c.id, c.customer_name); }
     // v12: un nome "amimi' (Shopify)" o vuoto su una conversazione da modulo e' il nome del MITTENTE
     // della notifica, non della cliente: e' quello che la card mostrava al posto suo.
     const nomeDaSostituire = (n: string | null) => !n || /shopify/i.test(n) || isAmimi(String(n).toLowerCase());
@@ -1066,6 +1184,17 @@ Deno.serve(async (req) => {
     if (body.after_id) q = q.gt('id', String(body.after_id));
     const { data: msgs, error: qe } = await q;
     if (qe) return json({ ok: false, error: qe.message }, 500);
+    // 2026-09-13 (sweep incidente doppioni): canale/nome delle SOLE conversazioni di questa pagina
+    const convIds = [...new Set(((msgs ?? []) as { conversation_id: string }[]).map((m) => m.conversation_id))];
+    if (convIds.length) {
+      // a blocchi di 100 id: una pagina da 400 messaggi puo' toccare quasi 400 conversazioni e un `in.(...)` di 400 uuid
+      // supera la lunghezza di URL che il gateway accetta
+      for (let i = 0; i < convIds.length; i += 100) {
+        const { data: convRows, error: convErr } = await retryOnce(() => sb.from('cs_conversations').select('id, canale, customer_name').in('id', convIds.slice(i, i + 100)));
+        if (convErr) return json({ ok: false, error: 'cs_conversations non leggibile: ' + convErr.message }, 502);
+        for (const c of (convRows ?? []) as { id: string; canale: string; customer_name: string | null }[]) { canaleOf.set(c.id, c.canale); nomeOf.set(c.id, c.customer_name); }
+      }
+    }
     let scanned = 0, wrote = 0, invariati = 0, fieldsWrote = 0; let lastId: string | null = null; const errors: string[] = [];
     for (const m of (msgs ?? []) as { id: string; conversation_id: string; direction: string; body_text: string; body_clean: string | null; form_fields: Record<string, string> | null }[]) {
       scanned++; lastId = m.id;
@@ -1226,7 +1355,12 @@ Deno.serve(async (req) => {
   // conversazione: idempotente su gmail_thread_id, non clobbera stato/stato_by; promuove un thread
   // gia' marcato rumore se arriva un messaggio cliente reale. Lancia su errore DB reale (-> transient).
   const ensureConv = async (threadId: string, cl: Parsed['cl'], meta: { sentAt: string | null; subject: string; snippet: string; order: number | null; lingua: string }, msg: { id: string; nuovaSubmission: boolean } = { id: '', nuovaSubmission: false }): Promise<string> => {
-    const { data: ex0 } = await sb.from('cs_conversations').select('id,canale,categoria,last_msg_at,customer_email').eq('gmail_thread_id', threadId).maybeSingle();
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = thread trattato come NUOVO: l'insert
+    // rimbalzava sull'UNIQUE e la rilettura dava l'id, ma il blocco di aggiornamento (last_msg_at,
+    // subject, snippet, customer_email, promozione rumore->cliente) veniva saltato. Ora si lancia:
+    // il chiamante lo tratta come transitorio (cursore fermo, si riprova; alla soglia la cintura).
+    const { data: ex0, error: e0 } = await retryOnce(() => sb.from('cs_conversations').select('id,canale,categoria,last_msg_at,customer_email').eq('gmail_thread_id', threadId).maybeSingle());
+    if (e0) throw new Error('conv_lookup_failed: ' + String(e0.message ?? '').slice(0, 250));
     let ex = ex0 as Fratello | null;
     // v13: raffica dal modulo. Solo se la conversazione sul thread e' da MODULO e l'email in arrivo
     // e' di un'ALTRA persona si va a vedere se serve una scheda a parte. Tutto il ramo e' FAIL-SOFT:
@@ -1325,7 +1459,7 @@ Deno.serve(async (req) => {
       if (me) { lastErr = 'db_upsert_in: ' + String(me.message ?? '').slice(0, 250); return 'transient'; }
       if (count) {
         newMsg += count;
-        await sb.from('cs_events').insert({ conversation_id: convId, azione: 'ingest', chi: 'cs-sync', dettaglio: { canale: p.cl.canale, message_id: id } });
+        await sb.from('cs_events').insert({ conversation_id: convId, azione: 'ingest', chi: 'cs-sync', dettaglio: { canale: p.cl.canale, message_id: id, ...(p.cl.spam ? { spam: true, spam_reasons: p.cl.spamReasons } : {}) } });
         // v9: il cliente ha replicato a una conversazione chiusa DALL'AUTOMATISMO -> si riapre
         // (setStatoAuto la lascia intatta se e' stata chiusa a mano: la mano umana vince)
         await setStatoAuto(convId, 'da_fare', 'nuovo messaggio del cliente dopo la risposta');
