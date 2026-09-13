@@ -1,4 +1,14 @@
 // cs-sync v15 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v18 (2026-09-13, brief cs_sync_stallo_dal_3_9): CINTURA ANTI-STALLO. Dal 01-09 sera al 13-09 il
+//   cursore Gmail e' rimasto fermo a 818185: `processMessage`/`processOutbound` ritornavano
+//   'transient' su QUALSIASI eccezione, scartando l'errore vero, e su 'transient' il record non si
+//   supera. Giusto per un hiccup, ma un errore RIPETIBILE su un singolo messaggio blocca la posta di
+//   tutti per sempre, e health_log restava 'warn' (nessuna push). Ora: (1) l'errore vero finisce in
+//   `cs_events` (`ingest_error` alla prima occorrenza) e nella label di health_log; (2) si contano i
+//   giri consecutivi fermi sullo STESSO messaggio (`app_flags.cs_stall_msg`); (3) alla soglia
+//   (STALL_SKIP_AFTER giri) il messaggio non e' piu' transitorio: placeholder `parse_failed` + evento
+//   `ingest_failed`, e il record si supera (mai scavalcato in silenzio); (4) stallo oltre 1h ->
+//   severity 'error'. Blocco PURE:cs-stallo, test `node tests/cs_stallo.mjs`.
 // v17 (2026-08-04, brief assistenza_4_fix punti C e D): tre cose, tutte misurate prima di scrivere.
 //   (C) Un "il" MINUSCOLO nella frase della cliente troncava il suo messaggio. Il marcatore
 //       dell'attribution italiana era case-insensitive, agganciava il "il" di "entro il 6 di
@@ -602,6 +612,43 @@ function isRafficaModulo(inbound: { from_email?: unknown; sent_at?: unknown }[],
 }
 // ==== PURE:cs-sollecito END ====
 
+// ==== PURE:cs-stallo BEGIN ====
+// v18 (2026-09-13, brief cs_sync_stallo_dal_3_9): la cintura anti-stallo. Un `catch` che ritorna
+// sempre 'transient' e' giusto per un hiccup (DB, rete, 5xx: al giro dopo passa da solo), ma
+// trasforma un errore RIPETIBILE su UN messaggio (Gmail che risponde sempre 4xx/5xx su quell'id, un
+// dato che Postgres rifiuta) in uno stallo infinito: il cursore resta fermo e la posta di tutti gli
+// altri clienti non entra piu'. E' successo dal 01-09 sera al 13-09 (cursore fermo a 818185).
+// Regola: si conta quante volte di fila il giro si ferma sullo STESSO messaggio (stato in
+// `app_flags.cs_stall_msg`, sopravvive fra un'invocazione e l'altra); alla soglia il messaggio NON
+// e' piu' transitorio e si scavalca CON placeholder (conversazione parse_failed + evento), mai in
+// silenzio. Oltre un'ora di stallo la health passa a severity 'error': un warn perenne non sveglia
+// nessuno (11 giorni di warn non hanno fatto scattare nessuna push).
+const STALL_SKIP_AFTER = 5;                    // giri consecutivi sullo stesso messaggio (cron */2 = ~10 minuti)
+const STALL_ERROR_AFTER_MS = 60 * 60 * 1000;   // stallo oltre 1h -> health_log severity 'error'
+type Stallo = { id: string; thread: string; dir: 'in' | 'out'; n: number; first_at: string; err: string };
+function contaStallo(prev: Stallo | null, cur: { id: string; thread: string; dir: 'in' | 'out'; err: string }, nowIso: string): Stallo {
+  const stesso = prev !== null && prev.id === cur.id;
+  return {
+    id: cur.id, thread: cur.thread, dir: cur.dir,
+    n: stesso ? prev.n + 1 : 1,
+    first_at: stesso ? prev.first_at : nowIso,
+    err: String(cur.err ?? '').slice(0, 300),
+  };
+}
+const stalloDaScavalcare = (s: Stallo): boolean => s.n >= STALL_SKIP_AFTER;
+const stalloSeverity = (s: Stallo, nowMs: number): 'warn' | 'error' => {
+  const t0 = Date.parse(s.first_at);
+  return Number.isFinite(t0) && nowMs - t0 >= STALL_ERROR_AFTER_MS ? 'error' : 'warn';
+};
+function leggiStallo(raw: unknown): Stallo | null {
+  try {
+    const o = JSON.parse(String(raw ?? '')) as Partial<Stallo> | null;
+    if (!o || typeof o.id !== 'string' || !o.id) return null;
+    return { id: o.id, thread: String(o.thread ?? ''), dir: o.dir === 'out' ? 'out' : 'in', n: Math.max(1, Number(o.n) || 1), first_at: String(o.first_at ?? ''), err: String(o.err ?? '') };
+  } catch { return null; }
+}
+// ==== PURE:cs-stallo END ====
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const body = await req.json().catch(() => ({}));
@@ -614,7 +661,7 @@ Deno.serve(async (req) => {
   if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet' && action !== 'backfill_order_number' && action !== 'reapply_noise') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
-  const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders']);
+  const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders', 'cs_stall_msg']);
   for (const r of rows ?? []) flags[r.key] = r.value ?? '';
 
   const enabled = flags.cs_enabled === 'true';
@@ -744,6 +791,12 @@ Deno.serve(async (req) => {
   let stampoIgnoto = 0;
   const lingueIgnote = new Set<string>();
   let outMsg = 0;
+  // v18: l'errore VERO dell'ultimo fallimento 'transient'. Prima il catch lo scartava, e uno stallo
+  // di 12 giorni non ha lasciato nessuna traccia di cosa avesse quel messaggio.
+  let lastErr = '';
+  let scavalcati = 0;
+  const errText = (e: unknown) => String((e as Error)?.message ?? e ?? 'errore sconosciuto').slice(0, 300);
+  const gmailErr = (mg: { status: number; j: Record<string, unknown> }) => `gmail_get ${mg.status}: ${JSON.stringify(mg.j ?? {}).slice(0, 200)}`;
 
   // v6: ricalcolo DETERMINISTICO dell'urgenza. Replica ESATTAMENTE la regola sollecito di
   // cs-classify (ruleUrgency, stessi motivi testuali) e la applica/spegne quando i conteggi
@@ -790,12 +843,12 @@ Deno.serve(async (req) => {
     try {
       const { data } = await sb.from('cs_conversations').select('id, canale, last_msg_at, customer_email').eq('gmail_thread_id', threadId).maybeSingle();
       conv = (data as typeof conv) ?? null;
-    } catch { return 'transient'; }
+    } catch (e) { lastErr = 'db_conv_out: ' + errText(e); return 'transient'; }
     if (!conv || conv.canale === 'rumore') return 'done';
     let mg: { ok: boolean; status: number; j: Record<string, unknown> };
-    try { mg = await gGet(`/messages/${id}?format=full`, token); } catch { return 'transient'; }
+    try { mg = await gGet(`/messages/${id}?format=full`, token); } catch (e) { lastErr = 'gmail_fetch_out: ' + errText(e); return 'transient'; }
     if (mg.status === 404) return 'done';
-    if (!mg.ok) return 'transient';
+    if (!mg.ok) { lastErr = gmailErr(mg); return 'transient'; }
     const msg = mg.j as GMsg;
     const H = msg.payload?.headers;
     const to = parseAddr(hdr(H, 'to'));
@@ -821,7 +874,7 @@ Deno.serve(async (req) => {
         from_email: GMAIL_USER, to_email: to.email || null, sent_at: sentAt, body_text: bodyText || null,
         body_clean: stripQuoted(rawBody, conv.canale),
       }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
-      if (me) return 'transient';
+      if (me) { lastErr = 'db_upsert_out: ' + String(me.message ?? '').slice(0, 250); return 'transient'; }
       if (count) {
         outMsg += count;
         await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'ingest', chi: 'cs-sync', dettaglio: { direction: 'out', message_id: id } });
@@ -832,7 +885,7 @@ Deno.serve(async (req) => {
         await recomputeUrgency(conv.id);
       }
       return 'done';
-    } catch { return 'transient'; }
+    } catch (e) { lastErr = 'out: ' + errText(e); return 'transient'; }
   };
 
   // --- BACKFILL una tantum (v6): porta dentro le risposte GIA' inviate sui thread noti ---
@@ -1234,11 +1287,11 @@ Deno.serve(async (req) => {
   // 'transient' = errore recuperabile (5xx/429/rete/DB) -> NON avanzare il cursore, si riprova.
   const processMessage = async (id: string, threadId: string): Promise<'done' | 'transient'> => {
     let mg: { ok: boolean; status: number; j: Record<string, unknown> };
-    try { mg = await gGet(`/messages/${id}?format=full`, token); } catch { return 'transient'; }
+    try { mg = await gGet(`/messages/${id}?format=full`, token); } catch (e) { lastErr = 'gmail_fetch: ' + errText(e); return 'transient'; }
     if (mg.status === 404) return 'done';   // messaggio rimosso da Gmail: niente da ingerire
-    if (!mg.ok) return 'transient';          // 5xx/429/...: riprova al giro dopo (cursore fermo)
+    if (!mg.ok) { lastErr = gmailErr(mg); return 'transient'; }   // 5xx/429/...: riprova al giro dopo (cursore fermo); alla soglia la cintura scavalca
     const p = safeParse(mg.j as GMsg);
-    if (!p) { parseFailed++; try { await antiLoss(threadId, id, {}); return 'done'; } catch { return 'transient'; } }
+    if (!p) { parseFailed++; try { await antiLoss(threadId, id, {}); return 'done'; } catch (e) { lastErr = 'antiloss: ' + errText(e); return 'transient'; } }
     try {
       const convId = await ensureConv(threadId, p.cl, { sentAt: p.sentAt, subject: p.subject, snippet: p.snippet, order: p.order, lingua: p.lingua }, { id, nuovaSubmission: p.nuovaSubmission });
       const { error: me, count } = await sb.from('cs_messages').upsert({
@@ -1246,7 +1299,7 @@ Deno.serve(async (req) => {
         from_email: p.from.email || null, to_email: p.to.email || null, sent_at: p.sentAt, body_text: p.bodyText || null, form_fields: p.formFields,
         body_clean: stripQuoted(p.bodyText, p.cl.canale), reply_to: p.replyTo,
       }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
-      if (me) return 'transient';
+      if (me) { lastErr = 'db_upsert_in: ' + String(me.message ?? '').slice(0, 250); return 'transient'; }
       if (count) {
         newMsg += count;
         await sb.from('cs_events').insert({ conversation_id: convId, azione: 'ingest', chi: 'cs-sync', dettaglio: { canale: p.cl.canale, message_id: id } });
@@ -1260,7 +1313,34 @@ Deno.serve(async (req) => {
       if (p.stampoIgnoto) { stampoIgnoto++; lingueIgnote.add(p.lingua); }
       counts[p.cl.canale]++; processed++;
       return 'done';
-    } catch { return 'transient'; }   // errore DB recuperabile: cursore fermo, si riprova
+    } catch (e) { lastErr = 'in: ' + errText(e); return 'transient'; }   // errore DB recuperabile: cursore fermo, si riprova
+  };
+
+  // v18: la cintura. Un fallimento 'transient' passa da qui: conta i giri consecutivi fermi sullo
+  // stesso messaggio, logga l'errore vero alla PRIMA occorrenza (un evento per stallo, non uno ogni
+  // due minuti), e alla soglia scavalca con placeholder. Ritorna true se il record puo' avanzare.
+  let stallo: Stallo | null = leggiStallo(flags.cs_stall_msg);
+  let stalloCorrente: Stallo | null = null;
+  const cinturaStallo = async (id: string, threadId: string, dir: 'in' | 'out'): Promise<boolean> => {
+    const s = contaStallo(stallo, { id, thread: threadId, dir, err: lastErr }, new Date().toISOString());
+    stallo = s; stalloCorrente = s;
+    await sb.from('app_flags').upsert({ key: 'cs_stall_msg', value: JSON.stringify(s) }, { onConflict: 'key' });
+    const convDi = async () => (await sb.from('cs_conversations').select('id').eq('gmail_thread_id', threadId).maybeSingle()).data?.id ?? null;
+    if (s.n === 1) {
+      await sb.from('cs_events').insert({ conversation_id: await convDi(), azione: 'ingest_error', chi: 'cs-sync', dettaglio: { message_id: id, thread_id: threadId, direction: dir, errore: s.err, tentativo: s.n } });
+    }
+    if (!stalloDaScavalcare(s)) return false;
+    // Soglia superata: non e' un hiccup. Regola anti-perdita: la posta in ingresso compare comunque
+    // come conversazione parse_failed (id Gmail conservato, si apre da Gmail); un out non crea mai
+    // una scheda, quindi li' si logga e basta. Se il DB non risponde nemmeno qui, resta transitorio.
+    if (dir === 'in') {
+      try { await antiLoss(threadId, id, { motivo: 'stallo', errore: s.err, tentativi: s.n }); }
+      catch (e) { lastErr = 'antiloss: ' + errText(e); return false; }
+    }
+    await sb.from('cs_events').insert({ conversation_id: await convDi(), azione: 'ingest_failed', chi: 'cs-sync', dettaglio: { message_id: id, thread_id: threadId, direction: dir, errore: s.err, tentativi: s.n, primo_fallimento: s.first_at, scavalcato: true } });
+    await sb.from('app_flags').delete().eq('key', 'cs_stall_msg');
+    stallo = null; stalloCorrente = null; scavalcati++;
+    return true;
   };
 
   let tip = startId, safeHid = startId;
@@ -1288,10 +1368,12 @@ Deno.serve(async (req) => {
         if (lbl.includes('DRAFT') || lbl.includes('TRASH')) continue;
         // v6: la posta INVIATA non si scarta piu': entra come 'out' sui soli thread gia' tracciati
         if (lbl.includes('SENT')) {
-          if (await processOutbound(ma.message.id, ma.message.threadId) === 'transient') { recOk = false; break; }
+          if (await processOutbound(ma.message.id, ma.message.threadId) === 'transient'
+            && !(await cinturaStallo(ma.message.id, ma.message.threadId, 'out'))) { recOk = false; break; }
           continue;
         }
-        if (await processMessage(ma.message.id, ma.message.threadId) === 'transient') { recOk = false; break; }
+        if (await processMessage(ma.message.id, ma.message.threadId) === 'transient'
+          && !(await cinturaStallo(ma.message.id, ma.message.threadId, 'in'))) { recOk = false; break; }
       }
       if (!recOk) { stopped = true; break; }   // non superare un record con un fallimento transitorio
       if (rec.id) safeHid = String(rec.id);     // record intero processato -> cursore sicuro avanza
@@ -1309,12 +1391,22 @@ Deno.serve(async (req) => {
   // un giro fermato da un errore ricorrente su un messaggio SENZA alcun avanzamento = potenziale stallo:
   // NON scriverlo verde (un singolo hiccup transitorio si autorisolve e torna 'ok' al giro dopo).
   const stalled = stopped && processed === 0;
+  // v18: un giro passato senza fermarsi mentre in app_flags c'era uno stallo = era un hiccup vero e
+  // si e' risolto da solo: il contatore si azzera, cosi' un futuro stallo sullo stesso id riparte da 1.
+  if (!stopped && stallo) { await sb.from('app_flags').delete().eq('key', 'cs_stall_msg'); stallo = null; }
+  const s = stalloCorrente as Stallo | null;   // il narrowing di TS non vede le assegnazioni dentro cinturaStallo
+  const labelStallo = s
+    ? `giro fermato sul messaggio ${s.id} (${s.dir}), tentativo ${s.n} di ${STALL_SKIP_AFTER} (dal ${s.first_at}): ${s.err || lastErr || 'errore non catturato'}`
+    : `giro fermato su un messaggio, nessun avanzamento (si riprova): ${lastErr || 'errore non catturato'}`;
+  const parti: string[] = [];
+  if (parseFailed) parti.push(`${parseFailed} non interpretati`);
+  if (scavalcati) parti.push(`${scavalcati} scavalcati dalla cintura anti-stallo (conversazione parse_failed + evento ingest_failed)`);
   await writeHealth(
-    stalled ? 1 : parseFailed,
-    stalled ? 'giro fermato su un messaggio, nessun avanzamento (si riprova)' : (parseFailed ? `giro ok, ${parseFailed} non interpretati` : 'giro ok'),
-    stalled || parseFailed ? 'warn' : 'ok',
+    stalled ? (s?.n ?? 1) : parseFailed + scavalcati,
+    (stalled ? labelStallo : (parti.length ? `giro ok, ${parti.join(', ')}` : 'giro ok')).slice(0, 400),
+    stalled ? (s ? stalloSeverity(s, Date.now()) : 'warn') : (parseFailed || scavalcati ? 'warn' : 'ok'),
   );
   await writeStampoIgnoto(stampoIgnoto, [...lingueIgnote]);
 
-  return json({ ok: true, processed, new_conversations: newConv, new_messages: newMsg, out_messages: outMsg, counts, parse_failed: parseFailed, stampo_ignoto: stampoIgnoto, historyId: newHistoryId, backlog: !drained, stalled });
+  return json({ ok: true, processed, new_conversations: newConv, new_messages: newMsg, out_messages: outMsg, counts, parse_failed: parseFailed, stampo_ignoto: stampoIgnoto, scavalcati, historyId: newHistoryId, backlog: !drained, stalled, ...(s ? { stallo: { message_id: s.id, direction: s.dir, tentativo: s.n, primo_fallimento: s.first_at, errore: s.err } } : {}) });
 });
