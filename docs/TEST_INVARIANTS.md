@@ -235,3 +235,11 @@ cliente vero deve mai finire nel rumore. Il 13-09 l'owner ne ha visti ~24 in cod
 **Lasciato di proposito a Gemini/denylist** (auto-nasconderli rischia un cliente): sonde a segnale
 singolo ("you send across countries?" da un throwaway debole), scam per DOMINIO (`web-reviewteam.com`
 -> denylist owner), notifiche personali legittime (IKEA/Poste/ristorante -> denylist di dominio).
+
+## 14. Una lettura fallita non e' "zero righe" (dal 2026-09-13)
+
+| Cosa | Dove | Nota |
+|---|---|---|
+| **Invariante** | ogni edge function | una lettura supabase-js da cui dipende una scrittura o una guardia destruttura `error`, ritenta UNA volta (`retryOnce`, 1,5 s) e poi FALLISCE CHIUSA (non-2xx, nessuna scrittura); mai retry sulle scritture di dati. Regola Ferrea 20, nata dall'incidente doppioni Shopify (504 PostgREST ignorato -> 756 ordini doppi, stock azzerato sul sito) |
+| **Test** | `tests/shopify_sync_guardie.mjs` (40 asserzioni), `tests/letture_controllate_guardie.mjs` (131 asserzioni su 11 funzioni) | sul SORGENTE, non a runtime: la classe compare solo quando il database risponde male, e un collaudo non lo fa mai. I frammenti attesi sono quelli dei fix del 13-09 (un agente per funzione, rivisto da un revisore indipendente), piu' una regex globale che vieta `retryOnce` su insert/update/upsert/delete non di telemetria |
+| **Non coperto** | letture solo-display (ask-data, assistant, contesti CS) e i siti elencati come `skipped` nel referto `Cowork12/projects/Incidente_Doppioni_Shopify_2026-09/REVIEW_SWEEP_2026-09-13.md` | direzione sicura (nessuna scrittura), lasciati per diff minimo; un modulo `_shared/db.ts` con gli helper e un RPC atomico per i punti fedelta' restano proposte |
