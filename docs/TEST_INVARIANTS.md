@@ -216,3 +216,22 @@ non entrava piu' nel tool.
 **Come si legge uno stallo in corso:** `app_flags.cs_stall_msg` presente = un messaggio sta fallendo
 da `n` giri (`first_at` dice da quando); `cs_events` con `azione='ingest_error'` porta l'errore e
 `message_id`/`thread_id` per aprirlo in Gmail. Flag assente = nessuno stallo. Non va scritta a mano.
+
+## 13. Un bot "esperto e-commerce" non e' un cliente (dal 2026-09-13)
+
+Invariante del modulo Assistenza: lo spam commerciale (bot da gmail usa e getta con pitch "ti porto
+ordini/commissione", spesso in lettere Unicode fancy) non deve occupare la coda clienti, MA nessun
+cliente vero deve mai finire nel rumore. Il 13-09 l'owner ne ha visti ~24 in coda su 60 conversazioni.
+
+| Livello | Dove | Cosa garantisce |
+|---|---|---|
+| **Pre-filtro** | `vendorSpamScore` in cs-sync (blocco `PURE:cs-spam`), soglia >= 3 | lo spam entra gia' come `rumore`, fuori dalla coda; il mittente (invisibile a Gemini) e' il segnale |
+| **Precisione** | punteggio tarato su TUTTO lo storico (misura SQL): a soglia 3, 0 clienti noti su 1057 conversazioni | il segnale "cifre nel local-part" da solo vale 1 (mario1985 e' un cliente); serve un secondo segnale |
+| **Guardia** | riferimento d'ordine (#NNNN / "ordine NNNN") nel testo | un cliente che cita il suo ordine non e' mai spam, qualunque altro segnale |
+| **Reversibile** | `canale='rumore'` + evento `cs_events` `spam_prefiltro` (score + motivi) + gesto `remove_noise` (cs-api) | un falso positivo si riporta in coda, e si vede PERCHE' era stato tolto |
+| **Backlog** | azione `reapply_spam` (dry-run default; esclude out/ordine/cliente-noto/manuale) | ripulisce lo storico con le stesse regole, idempotente |
+| **Test** | `tests/cs_spam.mjs` (23 casi) | funzione pura ritagliata dal sorgente; meta' dei casi e' la guardia opposta (cliente vero, commercialista, domanda su commissione PayPal) |
+
+**Lasciato di proposito a Gemini/denylist** (auto-nasconderli rischia un cliente): sonde a segnale
+singolo ("you send across countries?" da un throwaway debole), scam per DOMINIO (`web-reviewteam.com`
+-> denylist owner), notifiche personali legittime (IKEA/Poste/ristorante -> denylist di dominio).
