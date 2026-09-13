@@ -197,3 +197,22 @@ Eseguita il 01-08: tutti e quattro verdi.
 cs-send e cs-assist; la regola del sollecito in cs-sync, cs-classify e cs-send) perche' le edge non
 condividono moduli. Il test confronta lo `sha256` dei blocchi fra i marcatori `PURE:*`: se qualcuno
 ne cambia una sola, il test diventa rosso invece di lasciare due edge in disaccordo silenzioso.
+
+## 12. L'ingest non si ferma mai per sempre (dal 2026-09-13)
+
+Invariante del modulo Assistenza: un singolo messaggio che fallisce in modo RIPETIBILE non puo'
+tenere fermo il cursore Gmail di tutti gli altri. Dal 01-09 al 13-09 e' successo per 12 giorni
+(cs-sync v17): un `catch` che ritornava sempre `'transient'` scartava l'errore, e la posta cliente
+non entrava piu' nel tool.
+
+| Livello | Dove | Cosa garantisce |
+|---|---|---|
+| **Causa chiusa** | `sanitizeRow` in cs-sync (blocco `PURE:cs-jsonsafe`), su ogni scrittura verso `cs_conversations`/`cs_messages` | un surrogato UTF-16 spaiato (emoji o lettera "matematica" Unicode tagliata a meta' da uno slice) diventa U+FFFD invece di far rifiutare il payload a PostgREST ("Empty or invalid json"); il NUL resta coperto |
+| **Cintura** | `cinturaStallo` in cs-sync (blocco `PURE:cs-stallo`) + `app_flags.cs_stall_msg` | al 5o giro consecutivo fermo sullo STESSO messaggio, placeholder `parse_failed` + evento `ingest_failed` e il record si supera; mai scavalcato in silenzio |
+| **Diagnosi** | `cs_events` `ingest_error` (prima occorrenza) + label di `health_log` `cs_sync` | l'errore vero e' leggibile a DB, non scartato nel catch |
+| **Sveglia** | `health_log` `cs_sync` severity `error` oltre 1h di stallo | un warn perenne non ha svegliato nessuno per 11 giorni |
+| **Test** | `tests/cs_stallo.mjs` (23 casi), `tests/cs_jsonsafe.mjs` (16 casi) | funzioni pure ritagliate dal sorgente; meta' dei casi sono la guardia opposta (un hiccup vero, con id diversi, non scavalca mai) |
+
+**Come si legge uno stallo in corso:** `app_flags.cs_stall_msg` presente = un messaggio sta fallendo
+da `n` giri (`first_at` dice da quando); `cs_events` con `azione='ingest_error'` porta l'errore e
+`message_id`/`thread_id` per aprirlo in Gmail. Flag assente = nessuno stallo. Non va scritta a mano.
