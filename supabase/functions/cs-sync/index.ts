@@ -9,6 +9,10 @@
 //   (STALL_SKIP_AFTER giri) il messaggio non e' piu' transitorio: placeholder `parse_failed` + evento
 //   `ingest_failed`, e il record si supera (mai scavalcato in silenzio); (4) stallo oltre 1h ->
 //   severity 'error'. Blocco PURE:cs-stallo, test `node tests/cs_stallo.mjs`.
+//   CAUSA TROVATA con la cintura (evento ingest_error del 13-09 17:06): `conv_insert_failed: Empty
+//   or invalid json`, cioe' PostgREST che rifiuta il payload per un surrogato UTF-16 spaiato (emoji
+//   tagliata a meta' da uno slice). Fix: blocco PURE:cs-jsonsafe, `sanitizeRow` su ogni scrittura
+//   verso cs_conversations/cs_messages e `stripNull` che ripulisce anche i surrogati.
 // v17 (2026-08-04, brief assistenza_4_fix punti C e D): tre cose, tutte misurate prima di scrivere.
 //   (C) Un "il" MINUSCOLO nella frase della cliente troncava il suo messaggio. Il marcatore
 //       dell'attribution italiana era case-insensitive, agganciava il "il" di "entro il 6 di
@@ -217,7 +221,26 @@ function extractBody(payload: GMsg['payload']): string {
 const hdr = (headers: Hdr[] | undefined, name: string) => (headers ?? []).find((h) => h.name?.toLowerCase() === name)?.value ?? '';
 // Postgres text/jsonb RIFIUTANO il byte NUL (): un corpo che lo contiene (capita, quoted-printable/
 // base64) farebbe fallire deterministicamente ogni scrittura -> livelock del cursore. Si toglie a monte.
-const stripNull = (s: string) => s.replace(/\u0000/g, '');
+// ==== PURE:cs-jsonsafe BEGIN ====
+// v18 (2026-09-13, brief cs_sync_stallo_dal_3_9): la CAUSA dello stallo di 12 giorni. PostgREST
+// (Aeson) rifiuta con "Empty or invalid json" un corpo che contiene un surrogato UTF-16 SPAIATO, e
+// JSON.stringify ne produce uno ogni volta che uno `slice` taglia un'emoji a meta' (snippet a 300,
+// campi del modulo a 500, corpi a 8000/20000). Stessa classe del NUL: deterministico, quindi
+// livelock. `stripNull` lo toglie a monte, `sanitizeRow` e' la rete all'ULTIMO passo prima della
+// scrittura, dopo tutti i tagli: ogni payload verso cs_conversations/cs_messages passa di qui.
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+const jsonSafe = (s: string) => s.replace(/\u0000/g, '').replace(LONE_SURROGATE_RE, '\uFFFD');
+const stripNull = (s: string) => jsonSafe(s);
+function sanitizeRow<T extends Record<string, unknown>>(row: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (typeof v === 'string') out[k] = jsonSafe(v);
+    else if (v && typeof v === 'object' && !Array.isArray(v)) out[k] = sanitizeRow(v as Record<string, unknown>);
+    else out[k] = v;
+  }
+  return out as T;
+}
+// ==== PURE:cs-jsonsafe END ====
 function parseAddr(v: string): { email: string; name: string } {
   const m = v.match(/<([^>]+)>/);
   const email = (m ? m[1] : v).trim().toLowerCase();
@@ -869,11 +892,11 @@ Deno.serve(async (req) => {
     const rawBody = stripNull(extractBody(msg.payload));
     const bodyText = stripQuote(rawBody);
     try {
-      const { error: me, count } = await sb.from('cs_messages').upsert({
+      const { error: me, count } = await sb.from('cs_messages').upsert(sanitizeRow({
         gmail_message_id: id, conversation_id: conv.id, direction: 'out',
         from_email: GMAIL_USER, to_email: to.email || null, sent_at: sentAt, body_text: bodyText || null,
         body_clean: stripQuoted(rawBody, conv.canale),
-      }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
+      }), { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
       if (me) { lastErr = 'db_upsert_out: ' + String(me.message ?? '').slice(0, 250); return 'transient'; }
       if (count) {
         outMsg += count;
@@ -923,17 +946,17 @@ Deno.serve(async (req) => {
         const rawBody = stripNull(extractBody(m.payload));
         const bodyText = stripQuote(rawBody);
         const bodyClean = stripQuoted(rawBody, c.canale);
-        const { error: me, count } = await sb.from('cs_messages').upsert({
+        const { error: me, count } = await sb.from('cs_messages').upsert(sanitizeRow({
           gmail_message_id: m.id, conversation_id: c.id, direction: 'out',
           from_email: from.email || GMAIL_USER, to_email: to.email || null, sent_at: sentAt, body_text: bodyText || null,
           body_clean: bodyClean,
-        }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
+        }), { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
         if (me) { errors.push(m.id + ':' + me.message.slice(0, 60)); continue; }
         if (count) { wrote += count; convWrote += count; }
         else if (bodyText) {
           // riga gia' presente: CONVERGI corpo e clean se le regole di strip sono migliorate nel
           // frattempo (ri-derivati dalla fonte Gmail, idempotente); non conta come "scritto"
-          const { count: uc } = await sb.from('cs_messages').update({ body_text: bodyText, body_clean: bodyClean }, { count: 'exact' })
+          const { count: uc } = await sb.from('cs_messages').update(sanitizeRow({ body_text: bodyText, body_clean: bodyClean }), { count: 'exact' })
             .eq('gmail_message_id', m.id).eq('direction', 'out').neq('body_text', bodyText);
           if (uc) updated += uc;
         }
@@ -1005,7 +1028,7 @@ Deno.serve(async (req) => {
       const nuovo = snippetDa(m.body_clean ?? stripQuoted(m.body_text ?? '', c.canale), c.snippet ?? '');
       if (!nuovo || nuovo === (c.snippet ?? '')) { invariati++; continue; }
       if (dry) { wrote++; continue; }
-      const { error: ue } = await sb.from('cs_conversations').update({ snippet: nuovo }).eq('id', c.id);
+      const { error: ue } = await sb.from('cs_conversations').update(sanitizeRow({ snippet: nuovo })).eq('id', c.id);
       if (ue) { errors.push(c.id.slice(0, 8) + ':' + ue.message.slice(0, 60)); continue; }
       wrote++;
     }
@@ -1071,13 +1094,13 @@ Deno.serve(async (req) => {
       if ((canale === 'form_contatto' || canale === 'form_evento') && m.direction === 'in' && FORM_WRAP_RE.test(m.body_text)) {
         const nome = nomeDalModulo((upd.form_fields as Record<string, string>) ?? m.form_fields ?? extractFormFields(m.body_text));
         if (nome && nomeDaSostituire(nomeOf.get(m.conversation_id) ?? null)) {
-          const { error: ne } = await sb.from('cs_conversations').update({ customer_name: nome }).eq('id', m.conversation_id);
+          const { error: ne } = await sb.from('cs_conversations').update(sanitizeRow({ customer_name: nome })).eq('id', m.conversation_id);
           if (ne) errors.push(m.conversation_id + ':nome:' + ne.message.slice(0, 50));
           else { nomeOf.set(m.conversation_id, nome); nomiScritti.push(m.conversation_id); }
         }
       }
       if (!Object.keys(upd).length) { invariati++; continue; }
-      const { error: ue } = await sb.from('cs_messages').update(upd).eq('id', m.id);
+      const { error: ue } = await sb.from('cs_messages').update(sanitizeRow(upd)).eq('id', m.id);
       if (ue) { errors.push(m.id + ':' + ue.message.slice(0, 60)); continue; }
       if (upd.body_clean !== undefined) wrote++;
       if (upd.form_fields !== undefined) fieldsWrote++;
@@ -1221,10 +1244,10 @@ Deno.serve(async (req) => {
           const scelto = ((frat ?? []) as Fratello[]).find((f) => f.id === d.id);
           if (scelto) ex = scelto;
         } else if (d.modo === 'create') {
-          const { data: ins2, error: e2 } = await sb.from('cs_conversations').insert({
+          const { data: ins2, error: e2 } = await sb.from('cs_conversations').insert(sanitizeRow({
             gmail_thread_id: d.key, canale: cl.canale, customer_email: cl.email, customer_name: cl.name,
             last_msg_at: meta.sentAt, last_direction: 'in', subject: meta.subject, snippet: meta.snippet, order_number: meta.order, lingua: meta.lingua,
-          }).select('id').single();
+          })).select('id').single();
           if (!e2 && ins2) { newConv++; return ins2.id as string; }
           // la chiave e' unica per costruzione: qui la maybeSingle e' legittima
           const { data: gia } = await sb.from('cs_conversations').select('id').eq('gmail_thread_id', d.key).maybeSingle();
@@ -1248,13 +1271,13 @@ Deno.serve(async (req) => {
       // un cliente reale "promuove" un thread-rumore; ECCETTO i B2B (v11, owner 01-08: si
       // rispondono su Gmail, una nuova mail sullo stesso thread non li riporta in coda)
       if (cl.canale !== 'rumore' && ex.canale === 'rumore' && ex.categoria !== 'Collaborazioni e B2B') upd.canale = cl.canale;
-      if (Object.keys(upd).length) await sb.from('cs_conversations').update(upd).eq('id', ex.id as string);
+      if (Object.keys(upd).length) await sb.from('cs_conversations').update(sanitizeRow(upd)).eq('id', ex.id as string);
       return ex.id as string;
     }
-    const { data: ins, error } = await sb.from('cs_conversations').insert({
+    const { data: ins, error } = await sb.from('cs_conversations').insert(sanitizeRow({
       gmail_thread_id: threadId, canale: cl.canale, customer_email: cl.email, customer_name: cl.name,
       last_msg_at: meta.sentAt, last_direction: 'in', subject: meta.subject, snippet: meta.snippet, order_number: meta.order, lingua: meta.lingua,
-    }).select('id').single();
+    })).select('id').single();
     if (!error && ins) { newConv++; return ins.id as string; }
     const { data: again } = await sb.from('cs_conversations').select('id').eq('gmail_thread_id', threadId).maybeSingle();  // corsa UNIQUE: rileggi
     if (again) return again.id as string;
@@ -1294,11 +1317,11 @@ Deno.serve(async (req) => {
     if (!p) { parseFailed++; try { await antiLoss(threadId, id, {}); return 'done'; } catch (e) { lastErr = 'antiloss: ' + errText(e); return 'transient'; } }
     try {
       const convId = await ensureConv(threadId, p.cl, { sentAt: p.sentAt, subject: p.subject, snippet: p.snippet, order: p.order, lingua: p.lingua }, { id, nuovaSubmission: p.nuovaSubmission });
-      const { error: me, count } = await sb.from('cs_messages').upsert({
+      const { error: me, count } = await sb.from('cs_messages').upsert(sanitizeRow({
         gmail_message_id: id, conversation_id: convId, direction: 'in',
         from_email: p.from.email || null, to_email: p.to.email || null, sent_at: p.sentAt, body_text: p.bodyText || null, form_fields: p.formFields,
         body_clean: stripQuoted(p.bodyText, p.cl.canale), reply_to: p.replyTo,
-      }, { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
+      }), { onConflict: 'gmail_message_id', ignoreDuplicates: true, count: 'exact' });
       if (me) { lastErr = 'db_upsert_in: ' + String(me.message ?? '').slice(0, 250); return 'transient'; }
       if (count) {
         newMsg += count;
