@@ -17,11 +17,11 @@
 
 | Job | Orario | Cosa fa | Spia se fallisce |
 |---|---|---|---|
-| `shopify-sync-hourly` | :07 ogni ora | ordini Shopify nuovi + rimborsi/stato | `ce_shopify_reconcile`, `ce_sync_freshness` |
+| `shopify-sync-hourly` | :07 ogni ora | ordini Shopify nuovi + rimborsi/stato/evasione | chiave `shopify_sync` in `health_log` (dal 13-09: una riga al giorno, `error` = giro FERMATO per lettura fallita o cintura, nessun insert; ce-guard la rispecchia come `ce_shopify_sync` per il banner), `ce_shopify_doppioni`, `ce_shopify_reconcile` |
 | `shopify-stock-hourly` | :17 ogni ora | pull giacenze -> `shopify_stock` | `ce_sync_freshness` (warn se synced_at > 120 min) |
 | `shopify-autopush-hourly` | :27 ogni ora | push stock a Shopify (`realign_all`) | chiave `stock_autopush` in `health_log` (error se push falliti) |
 | `health-daily` | 06:00 | `refresh_health_log()` dai 14 detector di `v_health` | righe assenti in `health_log` per oggi |
-| `ce-guard-daily` | **`30 * * * *` = ogni ora al minuto :30** (il nome dice daily ma non lo e': verificato 31-07, 21 run in un giorno; il prefisso `ce_` delle chiavi esiste proprio per questo) | edge `ce-guard` action `run` (10 check `ce_*`) | righe `ce_*` assenti in `health_log` per oggi |
+| `ce-guard-daily` | **`30 * * * *` = ogni ora al minuto :30** (il nome dice daily ma non lo e': verificato 31-07, 21 run in un giorno; il prefisso `ce_` delle chiavi esiste proprio per questo) | edge `ce-guard` action `run` (17 check `ce_*` dal v5) | righe `ce_*` assenti in `health_log` per oggi; `ce_guard_letture` > 0 = un check di quel giro puo' essere verde per finta |
 | `cs-sync-poll` | `*/2` | ingest posta cliente -> `cs_*` (tool assistenza, Fase 1) | `cs_sync` in `health_log`; NO-OP se `cs_enabled!='true'` |
 | `cs-classify` | `*/5` | classificatore CS (categoria+urgenza, Fase 2) `cs-classify` | NO-OP se `cs_enabled!='true'`; decoupled dall'ingest |
 | `cs-assist-summary` | `*/7` | riassunto e storia cliente (Fase 3) `cs-assist` | NO-OP se `cs_enabled!='true'`; decoupled dagli altri due |
@@ -40,7 +40,10 @@ Punto di partenza: **`health_log` di oggi** (il banner rosso in Home compare se 
 | `ce_cogs_mancanti` | vendite risolte senza COGS | prodotto senza `cogs` in anagrafica: `product_verify` con cogs |
 | `ce_giacenze_negative` | `v_inventory` con giacenza < 0 | acquisto mai registrato o vendita mis-attribuita |
 | `stock_autopush` (error) | `health_log` + `change_log` (failedCodici) | push Shopify fallito: la riga resta STALE su Shopify e vende fantasmi, indagare subito |
-| `ce_shopify_token` / `ce_shopify_reconcile` | token in `app_config`, conteggio ordini API vs DB | token scaduto o pipeline morta silenziosa |
+| `ce_shopify_token` / `ce_shopify_reconcile` | token in `app_config`, conteggio ordini API vs DB | token scaduto o pipeline morta silenziosa; `db` > `api` = righe doppie (vedi sotto) |
+| `shopify_sync` / `ce_shopify_sync` (error) | label in `health_log` ("sync FERMATO (passo): ...") | una lettura e' fallita o e' scattata la cintura (> 50 ordini nuovi in un giro, pagina piena): NESSUN insert, si ritenta al giro dopo da solo. Se il tetto e' vero (backfill dopo un fermo lungo): `shopify-sync` `action:'backfill'` a mano |
+| `ce_shopify_doppioni` | `v_shopify_doppioni` | righe ordine oltre i distinti / gruppi di righe ripetute / ordini senza righe. Dopo la migr 0117 (UNIQUE) non deve piu' capitare: se scatta, fermare i cron :07 e :27 (`cron.alter_job`, come migr 0116), backup e dedup come nella 0117, mai a mano |
+| `ce_guard_letture` | label con l'elenco | ce-guard ha letto male una fonte in quel giro: i check che ne dipendono possono essere verdi per finta, rilanciare `run` e guardare i log PostgREST ("Thread killed by timeout manager") |
 | `ce_expenses_da_verificare` | `v_expenses_review` | spese in coda di approvazione |
 | `shopify_orphan` / `qromo_orphan` / `dup_codice` / `period_mismatch` | `v_health` (detector migr 0035) | righe vendita non agganciate a un prodotto, duplicati di casing, date fuori bucket |
 
@@ -50,6 +53,7 @@ Punto di partenza: **`health_log` di oggi** (il banner rosso in Home compare se 
 
 - **Chiusura mese:** edge `ce-guard` action `close_month` (year, month, chi) -> congela il CE in `ce_snapshots` (mai sovrascrive). Correzioni retroattive: `force` + motivo sulla write-api, poi ri-chiusura. Decisione contabile = owner.
 - **Realign stock manuale:** edge `shopify-stock` action `realign` (codici, chi), gated `shopify_write_enabled`.
+- **Backfill ordini Shopify (dal 13-09, v7):** `shopify-sync` `action:'backfill'` (`since` opzionale, tetto 250 per chiamata, mai dal cron) quando `shopify_sync` si e' fermato sulla cintura o sulla pagina piena per un motivo vero; `action:'backfill_line_ids'` (`dry_run` default true) per abbinare gli id riga Shopify alle righe storiche senza `shopify_line_id`.
 - **Deploy edge/migrazioni** (solo Claude Code, Regola 16): edge con la **CLI**, `npx supabase functions deploy <nome> --project-ref imszbjeyplaiovylhkgl` dalla root del repo (aggiornato 02-08: la riga diceva "via Supabase MCP `deploy_edge_function`", che funziona ancora ma obbliga a ribattere l'intero sorgente; la CLI vuole solo il `SUPABASE_ACCESS_TOKEN` gia' sulla macchina, niente `supabase link`, niente Docker). Dopo ogni deploy edge: riverificare `verify_jwt` (un redeploy puo' rimetterlo a `true`) e leggere il **bundle vivo**, non il numero di versione, per sapere cosa e' davvero live. Migrazioni in `supabase/migrations/` via `apply_migration`. Frontend: `cd web && npm run build && npx gh-pages -d dist` (hard refresh della PWA dopo).
 - **Restore:** artifact JSON del backup GitHub Actions (90gg) per il ripristino; lo snapshot Drive e' la copia leggibile a occhio.
 

@@ -12,6 +12,11 @@
 // categorie spese non valide, DRIFT dei mesi chiusi (vs ce_snapshots), riconciliazione
 // ESTERNA con Shopify Admin API (count ordini mese corrente + precedente), collegamento
 // app <-> Shopify (sku mismatch / sku non a catalogo / merce senza scheda).
+// v5 (2026-09-13, incidente doppioni 12-09): + `ce_shopify_doppioni` (righe ordine oltre i distinti, gruppi di
+// righe ripetute, ordini senza righe: vista v_shopify_doppioni, migr 0117), `ce_shopify_sync` (specchio della
+// telemetria `shopify_sync` di shopify-sync v7, cosi' un giro fermato arriva al banner e a ntfy) e
+// `ce_guard_letture` (letture fallite durante il run: prima un errore di lettura dava data=null -> 0 problemi ->
+// check VERDE per finta).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -33,6 +38,15 @@ Deno.serve(async (req) => {
   const action = body.action || 'run';
   const now = new Date();
   const YEAR = now.getUTCFullYear();
+  // v5: una lettura fallita NON deve produrre un check verde per finta. Prima ogni `const { data } = await ...`
+  // ignorava l'errore: data null -> 0 problemi -> 'ok'. Il 10-09 23:30 e' successo qui (label "db=null" in
+  // ce_shopify_reconcile). Ogni lettura che decide un check passa da read(): l'errore viene annotato e a fine
+  // run `ce_guard_letture` accende un error con l'elenco.
+  const failedReads: string[] = [];
+  const read = <T extends { error: { message: string } | null }>(name: string, res: T): T => {
+    if (res.error) failedReads.push(`${name}: ${res.error.message.slice(0, 80)}`);
+    return res;
+  };
 
   // ---- close_month: congela il CE del mese in ce_snapshots (mai sovrascrive in silenzio) ----
   if (action === 'close_month') {
@@ -55,6 +69,7 @@ Deno.serve(async (req) => {
   }
 
   // ---- run: tutti i check ----
+  const today = now.toISOString().slice(0, 10);
   const checks: { k: string; label: string; n: number; severity: string }[] = [];
   const add = (k: string, label: string, n: number, bad: 'warn' | 'error' = 'error') =>
     checks.push({ k, label, n, severity: n === 0 ? 'ok' : bad });
@@ -62,7 +77,7 @@ Deno.serve(async (req) => {
   // 1) invarianti MC1/MC2 su entrambi i CE (tolleranza 2 cent)
   let mcViol = 0; const mcDetails: string[] = [];
   for (const [ce, view] of [['amimi', 'v_ce_amimi_summary'], ['totale', 'v_ce_totale']] as const) {
-    const { data: rows } = await sb.from(view).select('*').eq('year', YEAR);
+    const { data: rows } = read(view, await sb.from(view).select('*').eq('year', YEAR));
     for (const r of rows ?? []) {
       const mc1c = N(r.omni_netto) + N(r.cogs) + N(r.packaging) + N(r.commissioni) + N(r.logistica_var) + N(r.resi);
       const mc2c = N(r.mc1) + N(r.salari) + N(r.tasse) + N(r.logistica_mag) + N(r.opex) + N(r.eventi) + N(r.marketing);
@@ -73,38 +88,38 @@ Deno.serve(async (req) => {
   add('ce_invarianti_mc', 'Invarianti MC1/MC2 (netto-variabili-fissi)' + (mcDetails.length ? ': ' + mcDetails.join(', ') : ''), mcViol);
 
   // 2) vendite Qromo non risolte
-  const { count: unres } = await sb.from('qromo_sales').select('*', { count: 'exact', head: true }).eq('resolver_status', 'unresolved');
+  const { count: unres } = read('qromo_sales unresolved', await sb.from('qromo_sales').select('*', { count: 'exact', head: true }).eq('resolver_status', 'unresolved'));
   add('ce_qromo_unresolved', 'Vendite Qromo con prodotto non risolto', unres ?? 0);
 
   // 2bis) FRESCHEZZA del canale Qromo (caso aperto n.15, audit dashboard 06-09). Il check sopra guarda
   // le righe che CI SONO, questo guarda quelle che MANCANO: 32 giorni di buco (30-07 -> 31-08) sono
   // passati inosservati perche' tutto restava verde. Il negozio vende a giorni alterni e chiude in
   // agosto, quindi soglie larghe: warn da 10 giorni, error da 21. n = giorni di silenzio, 0 se sano.
-  const { data: lastQ } = await sb.from('qromo_sales').select('data').order('data', { ascending: false }).limit(1);
+  const { data: lastQ } = read('qromo_sales ultima', await sb.from('qromo_sales').select('data').order('data', { ascending: false }).limit(1));
   const lastQIso = lastQ?.[0]?.data ? String(lastQ[0].data).slice(0, 10) : null;
   const qDays = lastQIso ? Math.floor((now.getTime() - new Date(lastQIso + 'T12:00:00Z').getTime()) / 86400000) : 9999;
   add('ce_qromo_freschezza', `Ultima vendita Qromo ${lastQIso ?? 'mai'}: ${qDays} giorni fa (atteso <10)`, qDays >= 10 ? qDays : 0, qDays >= 21 ? 'error' : 'warn');
 
   // 3) COGS mancanti su vendite risolte (Shopify righe + Qromo)
-  const { count: liNoCogs } = await sb.from('shopify_line_items').select('*', { count: 'exact', head: true }).not('codice', 'is', null).is('cogs_snapshot', null);
-  const { count: qrNoCogs } = await sb.from('qromo_sales').select('*', { count: 'exact', head: true }).not('codice', 'is', null).is('cogs', null).neq('resolver_status', 'unresolved');
+  const { count: liNoCogs } = read('shopify_line_items cogs', await sb.from('shopify_line_items').select('*', { count: 'exact', head: true }).not('codice', 'is', null).is('cogs_snapshot', null));
+  const { count: qrNoCogs } = read('qromo_sales cogs', await sb.from('qromo_sales').select('*', { count: 'exact', head: true }).not('codice', 'is', null).is('cogs', null).neq('resolver_status', 'unresolved'));
   add('ce_cogs_mancanti', 'Righe vendita risolte senza COGS (Shopify+Qromo)', (liNoCogs ?? 0) + (qrNoCogs ?? 0), 'warn');
 
   // 4) giacenze negative
-  const { data: inv } = await sb.from('v_inventory').select('codice, giacenza_attuale, disponibili_da_vendere');
+  const { data: inv } = read('v_inventory', await sb.from('v_inventory').select('codice, giacenza_attuale, disponibili_da_vendere'));
   const neg = (inv ?? []).filter((r) => N(r.giacenza_attuale) < 0).length;
   add('ce_giacenze_negative', 'Prodotti con giacenza negativa', neg);
 
   // 5) spese con categoria non valida
-  const { count: badCat } = await sb.from('expenses').select('*', { count: 'exact', head: true }).eq('categoria_valid', false);
+  const { count: badCat } = read('expenses categoria', await sb.from('expenses').select('*', { count: 'exact', head: true }).eq('categoria_valid', false));
   add('ce_expenses_categoria', 'Spese con CATEGORIA non valida', badCat ?? 0);
 
   // 6) spese in coda di revisione (informativo)
-  const { count: pend } = await sb.from('v_expenses_review').select('*', { count: 'exact', head: true });
+  const { count: pend } = read('v_expenses_review', await sb.from('v_expenses_review').select('*', { count: 'exact', head: true }));
   add('ce_expenses_da_verificare', 'Spese in coda di revisione', pend ?? 0, 'warn');
 
   // 7) DRIFT dei mesi chiusi: i numeri del passato NON devono muoversi
-  const { data: drift } = await sb.from('v_ce_drift').select('*');
+  const { data: drift } = read('v_ce_drift', await sb.from('v_ce_drift').select('*'));
   const drifted = (drift ?? []).filter((r) => Math.abs(N(r.delta_netto)) > 0.01 || Math.abs(N(r.delta_mc2)) > 0.01);
   // l'etichetta deve mostrare il delta che ha fatto scattare il filtro: prima stampava solo netto,
   // nascondendo il drift su mc2 (l'utile) — l'allarme diceva "netto +0" mentre 400 EUR si muovevano (A4).
@@ -131,7 +146,9 @@ Deno.serve(async (req) => {
           { headers: { 'X-Shopify-Access-Token': cfg.shopify_token } });
         if (!r.ok) { shopifyErr++; continue; }  // NON ingoiare: un token morto deve accendere ce_shopify_token (A10)
         const apiCount = (await r.json()).count ?? 0;
-        const { count: dbCount } = await sb.from('shopify_orders').select('*', { count: 'exact', head: true }).eq('year', y).eq('month', m);
+        const dbRes = read(`shopify_orders ${y}-${m}`, await sb.from('shopify_orders').select('*', { count: 'exact', head: true }).eq('year', y).eq('month', m));
+        if (dbRes.error) continue;  // conteggio DB non letto: lo riporta ce_guard_letture; non e' un mismatch (10-09: "db=null") ne' un guasto del token Shopify
+        const dbCount = dbRes.count;
         shopifyChecked++;
         if (apiCount !== (dbCount ?? 0)) { shopifyMismatch++; shopDetails.push(`${y}-${m}: api=${apiCount} db=${dbCount}`); }
       } catch { shopifyErr++; }
@@ -143,7 +160,7 @@ Deno.serve(async (req) => {
   add('ce_shopify_token', 'Chiamate Shopify fallite (token assente/scaduto o API giu)', shopifyErr);
 
   // 9) freschezza sync: se lo stock Shopify non si aggiorna da >2h, un cron/edge e' morto in silenzio (A10)
-  const { data: freshRow } = await sb.from('shopify_stock').select('synced_at').order('synced_at', { ascending: false }).limit(1);
+  const { data: freshRow } = read('shopify_stock synced_at', await sb.from('shopify_stock').select('synced_at').order('synced_at', { ascending: false }).limit(1));
   const lastSync = freshRow?.[0]?.synced_at ? new Date(freshRow[0].synced_at as string).getTime() : 0;
   const staleMin = lastSync ? Math.round((now.getTime() - lastSync) / 60000) : 99999;
   add('ce_sync_freshness', `Ultimo sync stock Shopify: ${staleMin} min fa (atteso <120)`, staleMin > 120 ? staleMin : 0);
@@ -161,8 +178,8 @@ Deno.serve(async (req) => {
   // funzione: s.toUpperCase().replace(/\s+/g,'_')), altrimenti il check e' cieco proprio sui titoli
   // con spazi doppi. Se una cambia, cambiano entrambe.
   const norm = (s: string | null | undefined) => (s ? s.toUpperCase().replace(/\s+/g, '_') : '');
-  const { data: stockRows } = await sb.from('shopify_stock').select('codice, shopify_title, shopify_status');
-  const { data: aliasRows } = await sb.from('product_aliases').select('shopify_name_norm, codice');
+  const { data: stockRows } = read('shopify_stock', await sb.from('shopify_stock').select('codice, shopify_title, shopify_status'));
+  const { data: aliasRows } = read('product_aliases', await sb.from('product_aliases').select('shopify_name_norm, codice'));
   // Map e non join SQL: product_aliases ha shopify_name_norm duplicati (14 al 29-07) e un join
   // moltiplicherebbe le righe, gonfiando i conteggi. Una entry per titolo, come fa shopify-stock.
   const aliasByTitle = new Map((aliasRows ?? []).map((r) => [r.shopify_name_norm as string, r.codice as string]));
@@ -203,7 +220,7 @@ Deno.serve(async (req) => {
   // C) stock_senza_scheda: merce disponibile che il sito non puo' vendere. INFORMATIVO, mai warn:
   // spesso e' una scelta di catalogo (prodotto mai pubblicato) e un warn qui sarebbe perenne.
   // Unico posto dove n > 0 con severity 'ok' e' voluto: e' un contatore, non un allarme.
-  const { data: ignFlag } = await sb.from('app_flags').select('value').eq('key', 'ceguard_no_shopify_ignore').maybeSingle();
+  const { data: ignFlag } = read('app_flags ceguard_no_shopify_ignore', await sb.from('app_flags').select('value').eq('key', 'ceguard_no_shopify_ignore').maybeSingle());
   const ignore = new Set(String(ignFlag?.value ?? '').split(',').map((c) => norm(c.trim())).filter(Boolean));
   const stockCodici = new Set((stockRows ?? []).map((s) => norm(s.codice as string)));
   const senzaScheda = (inv ?? []).filter((r) => N(r.disponibili_da_vendere) > 0 && !stockCodici.has(norm(r.codice as string)) && !ignore.has(norm(r.codice as string)));
@@ -216,8 +233,31 @@ Deno.serve(async (req) => {
     severity: 'ok',
   });
 
+  // 11) DOPPIONI (v5, incidente 12-09 -> 13-09): righe ordine oltre i distinti, gruppi di righe ripetute non
+  // distinte da uno shopify_line_id, ordini dal 01-07 senza righe (vista v_shopify_doppioni, migr 0117). Il
+  // doppione del 12-09 si e' visto solo di riflesso ("db=180" in ce_shopify_reconcile, giacenze negative 3 -> 49)
+  // due giorni dopo l'inizio: questo lo vede al primo giro, e ntfy parte al cambio dell'insieme degli error.
+  const { data: dopp } = read('v_shopify_doppioni', await sb.from('v_shopify_doppioni').select('*').single());
+  const dExtra = N(dopp?.ordini_righe_extra), dGruppi = N(dopp?.gruppi_righe_ripetute), dSenza = N(dopp?.ordini_senza_righe);
+  add('ce_shopify_doppioni', `Doppioni Shopify: ${dExtra} righe ordine oltre i distinti, ${dGruppi} gruppi di righe ripetute, ${dSenza} ordini senza righe`, dExtra + dGruppi + dSenza);
+
+  // 12) SYNC ORDINI (v5): shopify-sync v7 scrive la sua telemetria in health_log con chiave `shopify_sync` (una
+  // riga al giorno, 'error' = giro FERMATO per lettura fallita o cintura, nessun insert). Il banner rosso in Home
+  // legge SOLO le chiavi ce_* (HealthBanner.tsx), e la chiave non puo' chiamarsi ce_* perche' la delete a fine
+  // run la cancellerebbe ogni ora: quindi ce-guard la RISPECCHIA qui, e il fermo del sync arriva al banner e a ntfy.
+  // Anche un cron FERMO deve accendersi (v7 scrive `created_at` a ogni giro): nessun giro da piu' di 2 ore, oppure
+  // nessuna riga oggi dopo le 02:00 UTC (il primo giro del giorno e' alle 00:07), e' un sync morto o in pausa.
+  const { data: syncRow } = read('health_log shopify_sync', await sb.from('health_log').select('label, severity, created_at').eq('day', today).eq('k', 'shopify_sync').maybeSingle());
+  const syncAgeMin = syncRow?.created_at ? Math.round((now.getTime() - new Date(syncRow.created_at as string).getTime()) / 60000) : null;
+  const syncFermo = syncRow ? (syncAgeMin ?? 0) > 120 : now.getUTCHours() >= 2;
+  add('ce_shopify_sync',
+    syncRow ? `Sync ordini Shopify (${syncAgeMin} min fa${syncFermo ? ', FERMO: atteso ogni ora' : ''}): ${syncRow.label}` : 'Sync ordini Shopify: nessun giro registrato oggi' + (syncFermo ? ' (cron fermo?)' : ''),
+    (syncRow?.severity === 'error' || syncFermo) ? 1 : 0);
+
+  // 13) LETTURE FALLITE (v5): un check calcolato su una lettura fallita e' verde per finta; qui si vede.
+  add('ce_guard_letture', 'Letture fallite durante il run' + (failedReads.length ? ': ' + failedReads.join(', ') : ''), failedReads.length);
+
   // scrivi in health_log (sostituisce le chiavi ce_* di oggi)
-  const today = now.toISOString().slice(0, 10);
   await sb.from('health_log').delete().eq('day', today).like('k', 'ce_%');
   await sb.from('health_log').insert(checks.map((c) => ({ day: today, ...c })));
 

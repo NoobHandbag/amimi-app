@@ -2,6 +2,13 @@
 // plus a GATED realign (sets Shopify available = gestionale "disponibili") behind
 // app_flags.shopify_write_enabled. Token in app_config (service-role). PIN-gated.
 //
+// 2026-09-13 (v15, sweep dell'incidente doppioni Shopify, OK owner): tre letture con l'errore ignorato che potevano
+// SCRIVERE su uno stato letto male, ora controllate. `doSync`: anagrafica non letta = mappe vuote -> mirror
+// ri-chiavato per SKU grezzo e prune delle righe canoniche; ora aborta (502) come una pagina Shopify fallita.
+// `realign_all`: mirror/inventario non letti = giro a vuoto loggato 'ok'; ora si ferma e scrive health_log error.
+// `realign` (manuale): `?? 0` spingeva available = 0 su Shopify per ogni codice non presente nella lettura di
+// v_inventory, anche quando la lettura era FALLITA; ora lettura fallita = 502 e codice non letto = saltato.
+//
 // 2026-08-05 (brief varianti divergenti 04-08, migr 0106): l'autopush guarda ora la quantita' di
 // OGNI inventory item (`item_qtys`), non piu' il solo `shopify_qty` collassato sulla variante
 // "migliore". Il difetto chiuso: un codice puo' avere piu' item (48 codici / 109 item), il mirror
@@ -49,9 +56,13 @@ Deno.serve(async (req) => {
   // estratto in helper cosi' l'azione on-demand `sync_now` puo' rieseguire lo stesso identico giro.
   // `who` = attore per l'audit del prune in change_log ('cron' per i giri schedulati).
   const doSync = async (who = 'cron') => {
-    const { data: al } = await sb.from('product_aliases').select('shopify_name_norm, codice');
+    // 2026-09-13 (sweep dell'incidente doppioni): anagrafica non letta = mappe vuote, mirror ri-chiavato per SKU
+    // grezzo e PRUNE delle righe canoniche. Una lettura fallita ABORTA il giro, come una pagina Shopify fallita.
+    const { data: al, error: alErr } = await sb.from('product_aliases').select('shopify_name_norm, codice');
+    if (alErr) return { error: 'product_aliases non letta: ' + alErr.message, status: 502 };
     const aliasMap = new Map((al ?? []).map((r) => [r.shopify_name_norm, r.codice]));
-    const { data: prods } = await sb.from('products').select('codice, codice_norm');
+    const { data: prods, error: prErr } = await sb.from('products').select('codice, codice_norm');
+    if (prErr || !prods?.length) return { error: 'products non letta: ' + (prErr?.message ?? 'anagrafica vuota'), status: 502 };
     const byNorm = new Map((prods ?? []).map((r) => [r.codice_norm, r.codice]));
 
     // Pull con PAGINAZIONE cursor-based (brief 23-07): products.json e' cappato a 250 prodotti
@@ -186,8 +197,19 @@ Deno.serve(async (req) => {
     const { data: autoEnFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_autoenable_tracking').maybeSingle();
     const autoEnableTracking = autoEnFlag?.value === 'true';
 
-    const { data: stock } = await sb.from('shopify_stock').select('codice, shopify_qty, inventory_item_id, inventory_item_ids, item_qtys');
-    const { data: inv } = await sb.from('v_inventory').select('codice, disponibili_da_vendere');
+    // 2026-09-13 (sweep incidente doppioni): mirror o inventario non letti = giro a vuoto loggato 'ok' (classe B19).
+    // Ora il giro si FERMA e lo dice in health_log, cosi' non si decide nulla su uno stato letto male.
+    const { data: stock, error: stErr } = await sb.from('shopify_stock').select('codice, shopify_qty, inventory_item_id, inventory_item_ids, item_qtys');
+    const { data: inv, error: invErr } = await sb.from('v_inventory').select('codice, disponibili_da_vendere');
+    if (stErr || invErr) {
+      const msg = `autopush FERMATO: ${stErr ? 'shopify_stock non letta: ' + stErr.message : 'v_inventory non letta: ' + invErr!.message}`;
+      if (!dryRun) {
+        const today = new Date().toISOString().slice(0, 10);
+        await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
+        await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: msg, n: 1, severity: 'error' });
+      }
+      return { ok: false, error: msg };
+    }
     const dispByCod = new Map((inv ?? []).map((r) => [r.codice, Math.max(0, Number(r.disponibili_da_vendere) || 0)]));
     const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
     const { data: fresh } = await sb.from('counts').select('codice').gte('data_conta', cutoff);
@@ -328,13 +350,19 @@ Deno.serve(async (req) => {
     const { data: locFlag } = await sb.from('app_flags').select('value').eq('key', 'shopify_location_id').maybeSingle();
     const locationId = Number(locFlag?.value || '107986518343');
 
-    const { data: stock } = await sb.from('shopify_stock').select('codice, inventory_item_id, inventory_item_ids').in('codice', codici);
-    const { data: inv } = await sb.from('v_inventory').select('codice, disponibili_da_vendere').in('codice', codici);
+    // 2026-09-13 (sweep incidente doppioni): prima `target.get(s.codice) ?? 0` spingeva available = 0 su Shopify per
+    // ogni codice non presente in v_inventory, compreso il caso "lettura fallita" (PostgREST 504 al 4% delle chiamate).
+    // Ora una lettura fallita e' un 502 e un codice non letto viene SALTATO, mai azzerato.
+    const { data: stock, error: stErr } = await sb.from('shopify_stock').select('codice, inventory_item_id, inventory_item_ids').in('codice', codici);
+    if (stErr) return json({ error: 'shopify_stock non letta: ' + stErr.message }, 502);
+    const { data: inv, error: invErr } = await sb.from('v_inventory').select('codice, disponibili_da_vendere').in('codice', codici);
+    if (invErr) return json({ error: 'v_inventory non letta: ' + invErr.message }, 502);
     const target = new Map((inv ?? []).map((r) => [r.codice, Math.max(0, Number(r.disponibili_da_vendere) || 0)]));
 
     const results: Record<string, unknown>[] = [];
     for (const s of stock ?? []) {
-      const available = target.get(s.codice) ?? 0;
+      if (!target.has(s.codice)) { results.push({ codice: s.codice, ok: false, skipped: 'non in v_inventory: non si azzera un codice non letto' }); continue; }
+      const available = target.get(s.codice)!;
       // push to EVERY variant's inventory item (SC + CC share the codice's physical stock)
       const items: string[] = (s.inventory_item_ids && s.inventory_item_ids.length) ? s.inventory_item_ids : [s.inventory_item_id].filter(Boolean);
       let allOk = true; const errs: Record<string, unknown>[] = [];

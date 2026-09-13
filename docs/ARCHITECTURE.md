@@ -86,8 +86,10 @@ Colonne **generate, mai scrivere**: `codice_norm` (ovunque), `products.is_finali
   arrival_set, product_verify, expense_manual/propose/approve, sale_correct, return, qromo_sale.
   Ogni scrittura → change_log. Dal 06-07 BLOCCA le scritture nei mesi presenti in `ce_snapshots`
   senza `force`+motivo (risposta 409). Il COGS e' editabile via product_verify (Registra > Prodotti & prezzi).
-- **`shopify-sync`** (v4) — pull SOLA LETTURA dei nuovi ordini Shopify (idempotente su order_id);
-  dal 06-07 fallback resolver nome/CODICE/suffisso/SKU e re-sync rimborsi/stato (finestra 45gg).
+- **`shopify-sync`** (v7) — pull SOLA LETTURA dei nuovi ordini Shopify (idempotente su order_id);
+  dal 06-07 fallback resolver nome/CODICE/suffisso/SKU e re-sync rimborsi/stato (finestra 45gg);
+  dal 13-09 (incidente doppioni, migr 0117) letture controllate che FERMANO il giro se falliscono,
+  upsert sul vincolo UNIQUE(order_id), tetto 50 ordini nuovi per giro, telemetria `shopify_sync`.
 - **`shopify-stock`** (v9) — sync giacenze Shopify → `shopify_stock` + push stock: `realign` manuale
   (gated `shopify_write_enabled`) e `realign_all` autopush (cron :27, gated `shopify_autopush_enabled`).
   Policy "specchio del reale": target = disponibili da vendere, buffer 0, rialzi e ribassi liberi;
