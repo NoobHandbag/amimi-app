@@ -1,4 +1,12 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// sorgente v30 (2026-09-14, audit gate, finding B28): le letture supabase-js da cui dipende il BLOCCO
+//   DATI della bozza o il verdetto del reso ora destrutturano `error`, ritentano una volta (retryOnce)
+//   e FALLISCONO CHIUSE, invece di scartarlo. Un 504 transitorio di PostgREST faceva uscire bozze
+//   plausibili e sbagliate: "nessun ordine trovato", "prodotto non a catalogo", stato spedizione
+//   assente. Instradamento per azione (Regola Ferrea 20): sulle azioni singole (draft, refine,
+//   case_data, context) una lettura-fatto ancora ko dopo il retry LANCIA `LetturaFallita`, che il
+//   chiamante converte in 503; nel percorso batch summary l'item si conta failed e si salta (invariato);
+//   shopify_catalog serve solo ad arricchire coi link scheda, quindi DEGRADA (niente url) invece di 503.
 // v28 (2026-08-04, brief assistenza_4_fix, punti A e B): la FORMA della bozza e l'IDENTIFICAZIONE
 //   del prodotto, due cose distinte che uscivano male insieme.
 //   (A) La bozza nasceva senza struttura di paragrafo: misurato sulle 6 email davvero partite dal
@@ -228,6 +236,23 @@ const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>)
   if (!r.error) return r;
   await sleep(1500);
   return await fn();
+};
+
+// 2026-09-14 (audit gate, B28): marker di lettura-fatto fallita dopo il ritentativo. Non e' un errore
+// generico: dice "questa lettura, da cui dipende un dato mostrato o un verdetto, non e' andata a buon
+// fine" e va convertita in 503 dal chiamante, mai in un valore vuoto spacciato per fatto.
+class LetturaFallita extends Error {}
+// Wrapper per le letture da cui dipende una risposta con dati: ritenta UNA volta (retryOnce) e, se
+// ancora fallisce, LANCIA. Il chiamante fallisce chiuso. Solo SELECT: mai insert/update/upsert/delete.
+const leggiFatto = async <T>(tabella: string, fn: () => PromiseLike<{ data: T; error: { message: string } | null }>): Promise<T> => {
+  const { data, error } = await retryOnce(fn);
+  if (error) throw new LetturaFallita(`${tabella}: ${error.message}`);
+  return data;
+};
+// Converte la LetturaFallita nel 503 esplicito che l'azione deve restituire; rilancia ogni altro errore.
+const seLetturaFallita503 = (e: unknown): Response => {
+  if (e instanceof LetturaFallita) return json({ error: 'dati del cliente non leggibili, riprova: ' + (e as Error).message }, 503);
+  throw e;
 };
 
 const SHOP = 'amimi-10000';
@@ -468,9 +493,13 @@ async function matchProducts(sb: ReturnType<typeof createClient>, text: string, 
   const rows = (inv ?? []) as Row[];
   // v15: link scheda da shopify_catalog.handle (join case-insensitive, Regola Ferrea 4:
   // catalogo Title_Case legacy vs v_inventory MAIUSCOLO). Nessun handle = nessun URL, mai inventarlo.
-  const { data: cat } = await sb.from('shopify_catalog').select('codice,handle,on_shopify');
+  // 2026-09-14 (audit gate, B28): shopify_catalog serve SOLO ad arricchire i prodotti col link scheda;
+  // i fatti (stock, prezzo, disponibilita') arrivano da v_inventory qui sopra. Ritenta una volta e, se
+  // ancora fallisce, DEGRADA: mappa vuota, nessun url, ma i prodotti restano coi loro numeri veri. Non
+  // e' 503 perche' un link mancante non e' un fatto sbagliato, e' solo un arricchimento in meno.
+  const { data: cat, error: catErr } = await retryOnce(() => sb.from('shopify_catalog').select('codice,handle,on_shopify'));
   const handleByCod = new Map<string, string>();
-  for (const c of (cat ?? []) as Row[]) {
+  if (!catErr) for (const c of (cat ?? []) as Row[]) {
     if (c.on_shopify === true && c.handle) handleByCod.set(String(c.codice).toUpperCase(), String(c.handle));
   }
   const { data: aliases } = await sb.from('product_aliases').select('shopify_name_norm,codice');
@@ -514,11 +543,15 @@ type Ord = { order_number: unknown; financial_status: unknown; fulfillment_statu
 async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: number | null, email: string | null): Promise<Ord> {
   const COLS = 'order_id,order_number,financial_status,fulfillment_status,fulfilled_at,gross_total,email,created_at_shop';
   const base = () => sb.from('shopify_orders').select(COLS).order('created_at_shop', { ascending: false }).limit(1);
-  let q = base();
-  if (orderNumber) q = q.eq('order_number', orderNumber);
-  else if (email) q = q.eq('email', email.toLowerCase());
-  else return null;
-  const { data } = await q;
+  if (!orderNumber && !email) return null;
+  // 2026-09-14 (audit gate, B28): la ricerca dell'ordine alimenta verdetti e BLOCCO DATI. Un 504 non
+  // deve diventare "nessun ordine trovato" (verdetto SCONOSCIUTO, o bozza che nega un ordine reale):
+  // ritenta e se fallisce LANCIA, il chiamante risponde 503. `null` resta l'ordine davvero assente. Il
+  // builder si ricostruisce a ogni tentativo, perche' retryOnce invoca la funzione due volte.
+  const data = await leggiFatto('shopify_orders', () => {
+    const q = base();
+    return orderNumber ? q.eq('order_number', orderNumber) : q.eq('email', email!.toLowerCase());
+  });
   let o = (data ?? [])[0] as Row | undefined;
   // v17: difesa in profondita' (brief cs_assist_migliorie punto 1). `order_number` era NULL su 433
   // righe storiche e il ramo `else if (email)` non scatta mai quando un numero c'e' ma non trova
@@ -527,7 +560,8 @@ async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: num
   // nuovo, riga arrivata da un'altra fonte). Citare un ordine sbagliato sarebbe peggio che non
   // citarne nessuno, quindi la guardia cross-cliente qui sotto vale identica per entrambe le vie.
   if (!o && orderNumber) {
-    const { data: d2 } = await base().eq('order_id', '#' + orderNumber);
+    // 2026-09-14 (audit gate, B28): stesso obbligo del lookup principale, anche sul fallback order_id.
+    const d2 = await leggiFatto('shopify_orders', () => base().eq('order_id', '#' + orderNumber));
     o = (d2 ?? [])[0] as Row | undefined;
   }
   if (!o) return null;
@@ -537,7 +571,10 @@ async function lookupOrder(sb: ReturnType<typeof createClient>, orderNumber: num
   if (orderNumber && email && String(o.email ?? '').toLowerCase() !== email.toLowerCase()) return null;
   // v20: oltre al nome serve il CODICE risolto (`codice_norm`, 675/675 righe risolte): e' il
   // modo deterministico di sapere quale borsa ha in mano la cliente, senza dedurlo dal testo.
-  const { data: li } = await sb.from('shopify_line_items').select('lineitem_name,quantita,codice_norm').eq('order_id', o.order_id as string);
+  // 2026-09-14 (audit gate, B28): le righe dell'ordine dicono cosa ha comprato la cliente (BLOCCO DATI
+  // e match prodotto). Lettura fallita != ordine senza righe: ritenta e se fallisce LANCIA -> 503.
+  const oid = o.order_id as string;
+  const li = await leggiFatto('shopify_line_items', () => sb.from('shopify_line_items').select('lineitem_name,quantita,codice_norm').eq('order_id', oid));
   const righe = ((li ?? []) as Row[]).map((r) => ({ nome: String(r.lineitem_name ?? ''), qta: Number(r.quantita ?? 0), codice: r.codice_norm ? String(r.codice_norm) : null }));
   return { order_number: o.order_number, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status, fulfilled_at: o.fulfilled_at, gross_total: o.gross_total, email: o.email, order_id: o.order_id, created_at_shop: o.created_at_shop, righe };
 }
@@ -582,8 +619,11 @@ const plausibileConsegna = (d: string | null, shipped: string | null, oggi: stri
 };
 async function shippingStatus(sb: ReturnType<typeof createClient>, orderNumber: unknown): Promise<Ship> {
   if (!orderNumber) return null;
-  const { data } = await sb.from('shipping_status').select('ldv,stato_tws,seen_delivered_at,shipped_date,updated_at')
-    .eq('order_name', '#' + orderNumber).order('updated_at', { ascending: false }).limit(1);
+  // 2026-09-14 (audit gate, B28): lo stato TWS entra nel verdetto (pre-ritiro) e nel BLOCCO DATI. Un
+  // 504 non deve diventare "nessuno stato spedizione": ritenta e se fallisce LANCIA -> 503. `null`
+  // resta l'ordine senza riga di spedizione.
+  const data = await leggiFatto('shipping_status', () => sb.from('shipping_status').select('ldv,stato_tws,seen_delivered_at,shipped_date,updated_at')
+    .eq('order_name', '#' + orderNumber).order('updated_at', { ascending: false }).limit(1));
   const r = (data ?? [])[0] as Row | undefined;
   if (!r) return null;
   const oggi = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date());
@@ -1009,9 +1049,13 @@ function contractGaps(categoria: string | null, dati: Dati): string[] {
 type Storia = { n_ordini: number; totale: number; prima: string | null; ultima: string | null; recenti: { numero: unknown; data: string; totale: number; stato: unknown }[] };
 async function purchaseHistory(sb: ReturnType<typeof createClient>, email: string | null): Promise<Storia | null> {
   if (!email) return null;
-  const { data } = await sb.from('shopify_orders')
+  // 2026-09-14 (audit gate, B28): lo storico ("Cliente: N ordini, X EUR totali") e' un fatto citato in
+  // bozza. Un 504 non deve diventare "0 ordini" (cliente storico spacciato per nuovo): ritenta e se
+  // fallisce LANCIA -> 503.
+  const em = email.toLowerCase();
+  const data = await leggiFatto('shopify_orders', () => sb.from('shopify_orders')
     .select('order_number,created_at_shop,gross_total,financial_status')
-    .eq('email', email.toLowerCase()).order('created_at_shop', { ascending: false }).limit(30);
+    .eq('email', em).order('created_at_shop', { ascending: false }).limit(30));
   const orders = (data ?? []) as Row[];
   if (!orders.length) return { n_ordini: 0, totale: 0, prima: null, ultima: null, recenti: [] };
   const totale = orders.reduce((s, o) => s + Number(o.gross_total ?? 0), 0);
@@ -1109,10 +1153,13 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
   // chiesto resi/cambi/solleciti senza rileggere i thread interi. Contesto, non fonte di promesse.
   let precedenti: string[] = [];
   if (conv.customer_email && conv.id) {
-    const { data: altre } = await sb.from('cs_conversations')
+    // 2026-09-14 (audit gate, B28): le conversazioni precedenti orientano tono e riferimenti della
+    // bozza (es. "ha gia' chiesto un reso"). Un 504 le farebbe sparire e la bozza tratterebbe un
+    // cliente ricorrente come nuovo: ritenta e se fallisce LANCIA -> 503, mai contesto muto per errore.
+    const altre = await leggiFatto('cs_conversations', () => sb.from('cs_conversations')
       .select('subject,categoria,stato,last_msg_at,summary')
       .eq('customer_email', String(conv.customer_email)).neq('id', String(conv.id))
-      .order('last_msg_at', { ascending: false }).limit(5);
+      .order('last_msg_at', { ascending: false }).limit(5));
     precedenti = ((altre ?? []) as Row[]).map((a) =>
       `- ${String(a.last_msg_at ?? '').slice(0, 10)} [${a.categoria ?? '?'}${a.stato ? '/' + a.stato : ''}] ${String(a.subject ?? '').slice(0, 80)}${a.summary ? ': ' + String(a.summary).slice(0, 200) : ''}`);
   }
@@ -1333,7 +1380,11 @@ Deno.serve(async (req) => {
   const loadConv = async (_withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[]; clienti: string[] } | null | Response> => {
     const convId = String(body.conversation_id || '');
     const cols = 'id,canale,customer_email,customer_name,order_number,categoria,subject,lingua';
-    const { data: conv } = await sb.from('cs_conversations').select(cols).eq('id', convId).maybeSingle();
+    // 2026-09-14 (audit gate, B28): la conversazione e' la base di tutto. Un 504 la faceva sembrare
+    // INESISTENTE (404 permanente) invece che illeggibile ora: ritenta una volta, poi 503 esplicito.
+    // `null` (data senza error) resta l'id davvero inesistente -> 404 dal chiamante.
+    const { data: conv, error: convErr } = await retryOnce(() => sb.from('cs_conversations').select(cols).eq('id', convId).maybeSingle());
+    if (convErr) return json({ error: 'conversazione non leggibile, riprova: cs_conversations: ' + convErr.message }, 503);
     if (!conv) return null;
     // v14: THREAD INTERO (cap 30 messaggi, i piu' recenti): prima si vedevano solo gli ultimi 4
     // v20: e con loro l'elenco dei CLIENTI distinti che hanno scritto in questa conversazione.
@@ -1367,7 +1418,9 @@ Deno.serve(async (req) => {
     const lc = await loadConv();
     if (lc instanceof Response) return lc;   // 2026-09-13 (sweep incidente doppioni): thread non leggibile = 503, niente contesto a vuoto
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
-    const ctx = await assembleContext(sb, lc.conv, lc.inbound, token, (lc.conv.categoria as string) ?? null);
+    let ctx: Ctx;
+    try { ctx = await assembleContext(sb, lc.conv, lc.inbound, token, (lc.conv.categoria as string) ?? null); }
+    catch (e) { return seLetturaFallita503(e); }   // 2026-09-14 (audit gate, B28): lettura-fatto ko dopo retry = 503, mai contesto a vuoto
     // contratto di contesto: cosa manca per rispondere bene a QUESTA categoria (mostrato prima di generare)
     const gaps = [...contractGaps((lc.conv.categoria as string) ?? null, ctx.dati), ...ctx.gapExtra,
       // v20: il contesto si mostra lo stesso (l'operatrice deve poter LEGGERE), ma con l'avviso in
@@ -1384,9 +1437,14 @@ Deno.serve(async (req) => {
     if (lc instanceof Response) return lc;   // 2026-09-13 (sweep incidente doppioni): thread non leggibile = 503, niente contesto a vuoto
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
     const conv = lc.conv;
-    const ordine = await lookupOrder(sb, (conv.order_number as number) ?? null, (conv.customer_email as string) ?? null);
-    const meta = ordine ? await fetchOrderMeta(ordine.order_number, token) : null;
-    const ship = ordine ? await shippingStatus(sb, ordine.order_number) : null;   // v16
+    // 2026-09-14 (audit gate, B28): ordine e stato TWS decidono il verdetto. Se una lettura-fatto e'
+    // ko dopo il retry, LetturaFallita -> 503: mai un verdetto costruito su dati assenti.
+    let ordine: Ord, meta: OrdMeta | null, ship: Ship;
+    try {
+      ordine = await lookupOrder(sb, (conv.order_number as number) ?? null, (conv.customer_email as string) ?? null);
+      meta = ordine ? await fetchOrderMeta(ordine.order_number, token) : null;
+      ship = ordine ? await shippingStatus(sb, ordine.order_number) : null;   // v16
+    } catch (e) { return seLetturaFallita503(e); }
     const finestra = Number(flags.cs_reso_finestra_giorni) || 14;
     const confirmed = String(body.delivered_at || '').trim() || null;
     const cd = computeCaso(conv, ordine, meta, lc.inbound, finestra, confirmed, ship);
@@ -1461,7 +1519,9 @@ Riassunto (max 2 righe):`;
     // sempre). Governa solo lo SCHEMA delle bozze: regole, contratto JSON, soglia di completezza e
     // ripiego. Resta dichiarata qui in alto perche' la usano piu' punti piu' sotto.
     const rami = flags.cs_rami_enabled === 'true';
-    const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
+    let ctx: Ctx;
+    try { ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null); }
+    catch (e) { return seLetturaFallita503(e); }   // 2026-09-14 (audit gate, B28): lettura-fatto ko dopo retry = 503, nessuna bozza sul vuoto
     const threadTxt = threadClean(lc.recent, conv.subject);
     // motore dei verdetti: sulle categorie a caso (reso/cambio/indirizzo) il CASO e' calcolato dal codice
     // (con eventuale delivered_at confermata dalla collega) e VINCOLA la bozza. L'AI non decide, esegue.
@@ -1634,7 +1694,9 @@ ${rami
     // l'invio (v4), ma qui il dato non viene nemmeno assemblato.
     if (lc.clienti.length > 1) return json({ ok: false, error: `questa conversazione contiene richieste di ${lc.clienti.length} clienti diversi (${lc.clienti.join(', ')}): nessuna bozza, rispondi a ciascuno separatamente dal thread Gmail.`, cross_cliente: lc.clienti }, 422);
     const conv = lc.conv;
-    const ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null);
+    let ctx: Ctx;
+    try { ctx = await assembleContext(sb, conv, lc.inbound, token, (conv.categoria as string) ?? null); }
+    catch (e) { return seLetturaFallita503(e); }   // 2026-09-14 (audit gate, B28): lettura-fatto ko dopo retry = 503, nessuna riscrittura sul vuoto
 
     const chatBlockR = conv.canale === 'chat_notifica' ? `\nCANALE CHAT: la risposta verra' incollata nella CHAT del sito (Shopify Inbox), NON in una email: niente oggetto, niente intestazioni da email, messaggio corto stile chat.` : '';
     const sysR = `Sei chi risponde al servizio clienti di "Amimi'". Ti do una BOZZA di risposta al cliente e una richiesta di modifica. Riscrivi la bozza applicando la modifica. NON inviarla.

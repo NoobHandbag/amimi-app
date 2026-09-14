@@ -5,6 +5,15 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// 2026-09-14 (audit gate, B65): il PIN si legge da app_config; un 504 lo faceva uscire come "PIN errato".
+// Una lettura fallita si ritenta UNA volta dopo 1,5 s, poi si dichiara. Mai sulla upsert (Regola Ferrea 20).
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
 async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -15,7 +24,8 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-  const { data: cfg } = await sb.from('app_config').select('pin_hash').eq('id', 1).single();
+  const { data: cfg, error: cfgErr } = await retryOnce(() => sb.from('app_config').select('pin_hash').eq('id', 1).single());
+  if (cfgErr) return json({ error: 'lettura fallita, riprova: app_config: ' + cfgErr.message }, 503);
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const content = String(body.content ?? '');

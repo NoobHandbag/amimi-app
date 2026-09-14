@@ -1,10 +1,22 @@
 // activity-digest — §6 redesign. Riassume in italiano le ultime attività dal change_log con Gemini.
 // SOLA LETTURA (nessuna scrittura). PIN-gated come ask-data. Gemini key in app_flags.gemini_api_key (server-only).
 // Cache lato client (la pagina Salute salva l'ultimo riassunto in localStorage con timestamp).
+// v3 (2026-09-14, audit gate B65): letture controllate. Prima un 504 su change_log diventava "Nessuna
+// attivita' recente" (dato falso ma plausibile nel feed) e un 504 su app_config diventava "PIN errato".
+// Ora ogni lettura ritenta una volta e poi risponde 503 con errore esplicito (Regola Ferrea 20).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// 2026-09-14 (audit gate): una lettura fallita si ritenta UNA volta dopo 1,5 s, poi si dichiara. Mai su scritture (qui non ce ne sono).
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
+const readFailed = (tabella: string, msg: string) => json({ error: `lettura fallita, riprova: ${tabella}: ${msg}` }, 503);
 async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -33,14 +45,18 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-  const { data: cfg } = await sb.from('app_config').select('pin_hash').eq('id', 1).single();
+  const { data: cfg, error: cfgErr } = await retryOnce(() => sb.from('app_config').select('pin_hash').eq('id', 1).single());
+  if (cfgErr) return readFailed('app_config', cfgErr.message);
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
-  const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'gemini_api_key').single();
+  // maybeSingle: chiave assente = needs_key (come prima); chiave NON LEGGIBILE = 503.
+  const { data: flag, error: flagErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'gemini_api_key').maybeSingle());
+  if (flagErr) return readFailed('app_flags', flagErr.message);
   const key = flag?.value;
   if (!key) return json({ summary: null, needs_key: true }, 200);
 
-  const { data: rows } = await sb.from('change_log').select('tbl,op,chi,ts,after').order('ts', { ascending: false }).limit(25);
+  const { data: rows, error: rowsErr } = await retryOnce(() => sb.from('change_log').select('tbl,op,chi,ts,after').order('ts', { ascending: false }).limit(25));
+  if (rowsErr) return readFailed('change_log', rowsErr.message);
   if (!rows?.length) return json({ summary: 'Nessuna attività recente da riassumere.', generated_at: new Date().toISOString(), count: 0 });
 
   const lines = rows.map((r: { tbl: string; op: string | null; chi: string | null; after: Record<string, unknown> | null }) => {

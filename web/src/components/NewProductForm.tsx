@@ -2,12 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import NumberStepper from './NumberStepper';
 import { writeApi, fetchInventory, clearProductCache } from '../lib/api';
 import type { InvFull } from '../lib/api';
-import { suggestPrice, marginOf } from '../lib/helpers';
+import { suggestPrice, marginOf, tok, deriveCodice } from '../lib/helpers';
 import { toast } from '../lib/toast';
 
 const CATS = ['BAG', 'PELLE', 'TESSUTO', 'ACCESSORI', 'ALTRO'];
-const modelTok = (s: string) => s.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_]/g, '');
-const variantTok = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
 
 export default function NewProductForm({ pin, chi }: { pin: string; chi: string }) {
   const [inv, setInv] = useState<InvFull[]>([]);
@@ -32,8 +30,10 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
   }, [inv, mq]);
 
   // CODICE tutto MAIUSCOLO (decisione owner 06-07)
-  const codice = useMemo(() => (model && variant ? `${modelTok(model)}_${variantTok(variant)}`.toUpperCase() : ''), [model, variant]);
-  const valid = !!codice && !/\s/.test(codice) && !/_$/.test(codice);
+  // 2026-09-14 (audit gate, B43): ANTEPRIMA col tok v2 condiviso col server; il codice vero lo deriva
+  // write-api (v26) da model + variant e lo restituisce in row.codice.
+  const codice = useMemo(() => (model && variant ? deriveCodice(model, variant) : ''), [model, variant]);
+  const valid = !!codice && !!tok(model) && !!tok(variant);
 
   async function submit() {
     if (!model) return toast('Scegli o scrivi il modello', 'err');
@@ -42,11 +42,11 @@ export default function NewProductForm({ pin, chi }: { pin: string; chi: string 
     setBusy(true);
     try {
       // nomi in MAIUSCOLO (decisione call 06-07): item/model uppercase alla scrittura
-      await writeApi('product', {
-        codice, model: model.trim().toUpperCase(), item: model.trim().toUpperCase(), variant: variantTok(variant), categoria: cat,
+      const res = await writeApi('product', {
+        model: model.trim().toUpperCase(), item: model.trim().toUpperCase(), variant: tok(variant), categoria: cat,
         retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs),
-      }, pin, chi);
-      toast(`Prodotto creato · ${codice}`, 'ok');
+      }, pin, chi) as { ok: boolean; id: string; row?: { codice?: string } };
+      toast(`Prodotto creato · ${res.row?.codice ?? codice}`, 'ok');
       clearProductCache();
       setVariant(''); setPrice(''); setCogs('');
     } catch (e) {

@@ -2,7 +2,17 @@
 // Public anon key is read-only (writes revoked). PIN-gated; uses the service-role key to write,
 // logging every change to change_log. Handles inserts + the special flows (arrival, multi-order,
 // product verification, expenses, sale correction).
+//
+// v26 (2026-09-14, audit gate blocco 1): i valori numerici di soldi/stock passano tutti dall'helper puro num()
+// (Number(null)/''/[]  valeva 0: count azzerava un codice, arrival_set scriveva un acquisto negativo, finding A5);
+// le date passano da isoDate() e year/month da ymFromIso (new Date(x) le leggeva col fuso, B4/B18/B39); today e'
+// todayRome(). return: l'aggiustamento del sostituto e' controllato e su errore il reso viene annullato (A4).
+// gift/b2b dall'app: il server ignora year/month del client e mette il COGS da products (era NULL: CE a costo 0, A2).
+// product dall'insert generico: il CODICE lo deriva il server col tok v2 (B43). expense_approve legge sempre la riga
+// e blocca un reject su spesa approvata in mese chiuso (B2); categoria da VALID_CATEGORIE (B3). force vale solo
+// se === true e una scrittura forzata porta forced/motivo in change_log (B5). Helper puri in ./lib.ts.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { num, isoDate, todayRome, ymFromIso, tok, cnorm, VALID_CATEGORIE } from './lib.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -37,16 +47,9 @@ const TABLES: Record<string, string> = {
 };
 const noSpaces = (s: unknown) => typeof s === 'string' && s.length > 0 && !/\s/.test(s);
 
-// tok v2 (v21, brief 23-07): normalizzazione condivisa nome -> CODICE (order_multi + product_verify).
-// Piega gli accenti (NFD), converte OGNI sequenza non alfanumerica in UN '_' (la tok vecchia
-// strappava trattini/accenti senza sostituirli: 'Vernice-Nera' -> VERNICENERA, che non matchava
-// VERNICE_NERA a catalogo), trim degli underscore ai bordi.
-const tok = (s: unknown) => String(s ?? '')
-  .normalize('NFD').replace(/\p{M}/gu, '')
-  .toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-// identica alla colonna generata products.codice_norm (upper + spazi -> _)
-const cnorm = (s: unknown) => String(s ?? '').toUpperCase().replace(/\s+/g, '_');
-
+// tok v2 e cnorm sono ora in ./lib.ts (condivisi con i test). 'order' e 'count' non passano piu' da validate():
+// 'order' e' disabilitato (400 sotto) e 'count' ha il suo blocco dedicato, quindi qui restano solo i rami vivi
+// dell'insert generico. num()/isoDate() rifiutano null/''/[] e le date non ISO invece di coercerle (finding A5/B4).
 function validate(action: string, p: Record<string, unknown>): string[] {
   const e: string[] = [];
   const codice = p.codice as string | undefined;
@@ -54,29 +57,31 @@ function validate(action: string, p: Record<string, unknown>): string[] {
     if (!codice) e.push('CODICE mancante');
     else if (!noSpaces(codice)) e.push('CODICE contiene spazi — usa underscore');
   };
-  const qty = Number(p.quantita);
+  const reqQty = () => { if (num(p.quantita, { integer: true, min: 1 }) == null) e.push('quantità deve essere > 0'); };
   if (action === 'purchase') {
     reqCodice();
-    if (!(qty > 0)) e.push('quantità deve essere > 0');
-    if (p.costo_unitario != null && Number(p.costo_unitario) < 0) e.push('costo unitario negativo');
+    reqQty();
+    if (p.costo_unitario != null && p.costo_unitario !== '' && num(p.costo_unitario, { min: 0 }) == null) e.push('costo unitario non valido');
     if (!p.data) e.push('data mancante');
-  } else if (action === 'count') {
-    reqCodice();
-    if (p.contati == null || Number(p.contati) < 0) e.push('pezzi contati non validi');
+    else if (isoDate(p.data) == null) e.push('data non valida: atteso YYYY-MM-DD');
   } else if (action === 'gift') {
     reqCodice();
-    if (!(qty > 0)) e.push('quantità deve essere > 0');
+    reqQty();
+    if (p.prezzo != null && p.prezzo !== '' && num(p.prezzo, { min: 0 }) == null) e.push('prezzo non valido');
   } else if (action === 'b2b') {
     reqCodice();
-    if (!(qty > 0)) e.push('quantità deve essere > 0');
+    reqQty();
     if (!['invio', 'reso', 'venduto'].includes(String(p.tipo_movimento))) e.push('tipo_movimento non valido');
     if (!['conto_vendita', 'wholesale'].includes(String(p.modello))) e.push('modello non valido');
+    if (p.prezzo_retail != null && p.prezzo_retail !== '' && num(p.prezzo_retail, { min: 0 }) == null) e.push('prezzo retail non valido');
+    // B42: la quota negozio e' una frazione [0,1] (0,5 = 50%); 50 al posto di 0,5 = ricavo enormemente negativo.
+    if (String(p.tipo_movimento) === 'venduto' && num(p.perc_negozio, { min: 0, max: 1 }) == null) e.push('% negozio deve stare fra 0 e 1 (es. 0,5 = 50%)');
   } else if (action === 'product') {
-    reqCodice();
-    if (codice && /_$/.test(codice)) e.push('CODICE non finalizzato (termina con _)');
-  } else if (action === 'order') {
-    reqCodice();
-    if (!(Number(p.qty_ordered) > 0)) e.push('quantità ordinata deve essere > 0');
+    // B43: il CODICE lo deriva il server da model/item + variant; qui bastano i nomi (il codice del client e' ignorato).
+    if (!String(p.item ?? p.model ?? '').trim()) e.push('modello mancante');
+    if (!String(p.variant ?? '').trim()) e.push('variante mancante');
+    if (p.retail_price != null && p.retail_price !== '' && num(p.retail_price, { min: 0 }) == null) e.push('prezzo non valido');
+    if (p.cogs != null && p.cogs !== '' && num(p.cogs, { min: 0 }) == null) e.push('COGS non valido');
   }
   return e;
 }
@@ -93,9 +98,13 @@ async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
-  let body: { action?: string; payload?: Record<string, unknown>; pin?: string; chi?: string; force?: boolean; ctx?: string };
+  let body: { action?: string; payload?: Record<string, unknown>; pin?: string; chi?: string; force?: boolean; motivo?: string; ctx?: string };
   try { body = await req.json(); } catch { return json({ error: 'JSON non valido' }, 400); }
-  const { action = '', payload = {}, pin = '', chi = '', force = false } = body;
+  const { action = '', payload = {}, pin = '', chi = '' } = body;
+  // B5 (audit gate 14-09): force vale SOLO se === true. Prima era truthy, quindi la stringa 'false' (che arriva
+  // dai chiamanti che serializzano i JSON da template) scavalcava le guardie mesi chiusi in silenzio.
+  const force = body.force === true;
+  const motivo = typeof body.motivo === 'string' && body.motivo.trim() ? body.motivo.trim().slice(0, 300) : (typeof (payload as Record<string, unknown>).motivo === 'string' ? String((payload as Record<string, unknown>).motivo).trim().slice(0, 300) : null);
   // fix i (31-07): identificativo di CONTESTO accanto a chi. Su iOS l'app in home e la stessa app in
   // Safari hanno localStorage separati e possono firmare chi diversi: il ctx (uuid per contesto,
   // generato dal client) rende distinguibile "da quale istanza e' arrivata questa scrittura".
@@ -107,11 +116,17 @@ async function handle(req: Request): Promise<Response> {
   const ok = cfg?.pin_hash && pin && (await sha256hex(String(pin))) === cfg.pin_hash;
   if (!ok) return json({ error: 'PIN errato' }, 401);
 
-  const today = new Date().toISOString().slice(0, 10);
+  // B4/B39 (audit gate 14-09): la data di riferimento e' quella di Roma, non UTC. A cavallo di mezzanotte una
+  // scrittura senza data esplicita finiva nel giorno (e il primo del mese nel mese) sbagliato.
+  const today = todayRome();
+  // B5: quando force ha scavalcato una guardia, il change_log di quella richiesta porta forced:true e il motivo
+  // (se dato), cosi' una scrittura forzata resta diagnosticabile (il drift di maggio non lo era).
   const logp = (tbl: string, row_id: string, op: string, after: unknown) =>
     sb.from('change_log').insert({
       tbl, row_id, op,
-      after: (after && typeof after === 'object' && !Array.isArray(after)) ? { ...(after as Record<string, unknown>), ...(ctx ? { ctx } : {}) } : after,
+      after: (after && typeof after === 'object' && !Array.isArray(after))
+        ? { ...(after as Record<string, unknown>), ...(ctx ? { ctx } : {}), ...(force ? { forced: true, ...(motivo ? { motivo } : {}) } : {}) }
+        : after,
       chi: chi || null, source: 'write-api',
     });
 
@@ -159,9 +174,10 @@ async function handle(req: Request): Promise<Response> {
   // --- FLOW 1: mark an arrival against a supplier order (date editable) ---
   if (action === 'arrival') {
     const oid = payload.order_id as string;
-    const qty = Number(payload.qty);
-    const arrDate = (payload.data as string) || today;
-    if (!oid || !(qty > 0)) return json({ error: 'arrivo non valido' }, 422);
+    const qty = num(payload.qty, { integer: true, min: 1 });
+    const arrDate = payload.data != null && payload.data !== '' ? isoDate(payload.data) : today;
+    if (!oid || qty == null) return json({ error: 'arrivo non valido (serve order_id e quantità intera > 0)' }, 422);
+    if (arrDate == null) return json({ error: 'data non valida: atteso YYYY-MM-DD' }, 422);
     const { data: ord } = await sb.from('supplier_orders').select('*').eq('id', oid).single();
     if (!ord) return json({ error: 'ordine non trovato' }, 404);
     // fix h (31-07): un arrivo datato in un mese chiuso muove giacenze e COGS congelati
@@ -203,9 +219,10 @@ async function handle(req: Request): Promise<Response> {
   // --- FLOW 1b: SET the arrived total (edit/correct a registered arrival). Adjusts stock by the delta. ---
   if (action === 'arrival_set') {
     const oid = payload.order_id as string;
-    const target = Number(payload.qty);
-    const arrDate = (payload.data as string) || today;
-    if (!oid || isNaN(target) || target < 0) return json({ error: 'valore arrivo non valido' }, 422);
+    const target = num(payload.qty, { integer: true, min: 0 });
+    const arrDate = payload.data != null && payload.data !== '' ? isoDate(payload.data) : today;
+    if (!oid || target == null) return json({ error: 'valore arrivo non valido (intero >= 0)' }, 422);
+    if (arrDate == null) return json({ error: 'data non valida: atteso YYYY-MM-DD' }, 422);
     const { data: ord } = await sb.from('supplier_orders').select('*').eq('id', oid).single();
     if (!ord) return json({ error: 'ordine non trovato' }, 404);
     const current = Number(ord.qty_arrived) || 0;
@@ -220,9 +237,10 @@ async function handle(req: Request): Promise<Response> {
     }
     // costo opzionale all'arrivo (feedback 06-07 item 18): su una riga WIP il costo si scopre quando
     // le borse arrivano; se passato, aggiorna anche la riga ordine.
-    const costo = payload.costo_unitario != null && payload.costo_unitario !== '' ? Number(payload.costo_unitario) : null;
+    const costo = payload.costo_unitario != null && payload.costo_unitario !== '' ? num(payload.costo_unitario, { min: 0 }) : null;
+    if (payload.costo_unitario != null && payload.costo_unitario !== '' && costo == null) return json({ error: 'costo unitario non valido' }, 422);
     const updOrd: Record<string, unknown> = { qty_arrived: target, data_ultimo_arrivo: arrDate };
-    if (costo != null && Number.isFinite(costo) && costo >= 0) updOrd.costo_unitario = costo;
+    if (costo != null) updOrd.costo_unitario = costo;
     // riga WIP: quantita' ordinata ignota; l'arrivo la RISOLVE (ordinato = arrivato totale)
     if (ord.wip && target > 0) { updOrd.qty_ordered = target; updOrd.wip = false; }
     // fix c (31-07): mai un acquisto a costo NULL in silenzio; fallback su products.cogs
@@ -478,19 +496,24 @@ async function handle(req: Request): Promise<Response> {
   if (action === 'order_multi') {
     const fornitore = String(payload.fornitore || '').trim();
     const righe = (payload.righe as Record<string, unknown>[]) || [];
-    const dataOrdine = (payload.data_ordine as string) || today;
+    const dataOrdine = payload.data_ordine != null && payload.data_ordine !== '' ? isoDate(payload.data_ordine) : today;
     if (!fornitore) return json({ error: 'fornitore mancante' }, 422);
     if (!righe.length) return json({ error: 'nessuna riga' }, 422);
+    if (dataOrdine == null) return json({ error: 'data ordine non valida: atteso YYYY-MM-DD' }, 422);
     // fix h (31-07): niente ordini retrodatati in un mese chiuso senza force
     if (!force && await closedDate(dataOrdine)) return closedErr(dataOrdine.slice(0, 4), dataOrdine.slice(5, 7));
+    // A5 (audit gate 14-09): costo_unitario, se dato, deve essere un numero >= 0 (negativo/non numerico = 422 sulla riga).
+    const costoErrs = righe.filter((r) => r.costo_unitario != null && r.costo_unitario !== '' && num(r.costo_unitario, { min: 0 }) == null)
+      .map((r) => `"${r.codice || r.item || '?'}": costo unitario non valido`);
+    if (costoErrs.length) return json({ error: 'Righe non valide: ' + costoErrs.join(' · '), righe_non_valide: costoErrs }, 422);
     const raw = righe.map((r) => ({
       codice: String(r.codice || ''), item: (r.item as string) ?? null, variant: (r.variant as string) ?? null,
       // riga WIP (feedback 06-07 item 18): quantita'/costo ancora ignoti (es. affinamento pelle);
       // qty_ordered resta 0 e si risolve alla registrazione dell'arrivo.
       wip: r.wip === true,
-      qty_ordered: r.wip === true ? 0 : (Number(r.qty_ordered) || 0),
+      qty_ordered: r.wip === true ? 0 : (num(r.qty_ordered, { integer: true, min: 1 }) ?? 0),
       nuovo_riordino: (r.nuovo_riordino as string) ?? null,
-      costo_unitario: r.costo_unitario != null ? Number(r.costo_unitario) : null,
+      costo_unitario: r.costo_unitario != null && r.costo_unitario !== '' ? num(r.costo_unitario, { min: 0 }) : null,
       data_consegna: (r.data_consegna as string) ?? null, note: (r.note as string) ?? null,
     })).filter((r) => (r.codice || (r.item && r.variant)) && (r.qty_ordered > 0 || r.wip));
     if (!raw.length) return json({ error: 'righe non valide (CODICE o Modello+Variante, più quantità)' }, 422);
@@ -588,10 +611,20 @@ async function handle(req: Request): Promise<Response> {
     // nomi in MAIUSCOLO (decisione call 06-07): difesa server-side, qualunque client scriva
     if (typeof upd.item === 'string') upd.item = (upd.item as string).toUpperCase();
     if (typeof upd.variant === 'string') upd.variant = (upd.variant as string).toUpperCase();
-    if (payload.retail_price != null && payload.retail_price !== '') upd.retail_price = Number(payload.retail_price);
+    // A5 (audit gate 14-09): prezzo e COGS, se dati, devono essere numeri > 0 ('12,50' o '' o negativo = 422; prima
+    // Number('12,50') dava NaN, serializzato a null, che AZZERAVA il COGS di un prodotto verificato).
+    if (payload.retail_price != null && payload.retail_price !== '') {
+      const rp = num(payload.retail_price, { min: 0, nonZero: true });
+      if (rp == null) return json({ error: 'prezzo non valido (numero maggiore di 0)' }, 422);
+      upd.retail_price = rp;
+    }
     // COGS editabile dal catalogo (2026-07-04): cambia i margini FUTURI; le vendite passate
     // tengono il loro snapshot cogs — nessun ricalcolo retroattivo.
-    if (payload.cogs != null && payload.cogs !== '') upd.cogs = Number(payload.cogs);
+    if (payload.cogs != null && payload.cogs !== '') {
+      const cg = num(payload.cogs, { min: 0, nonZero: true });
+      if (cg == null) return json({ error: 'COGS non valido (numero maggiore di 0)' }, 422);
+      upd.cogs = cg;
+    }
 
     // Stato FINALE = payload sovrapposto al DB. COGS 0 NON verifica (#8 audit 09-07, tenuto:
     // le vendite future non devono snapshottare un costo nullo che sottostima il CE).
@@ -675,14 +708,17 @@ async function handle(req: Request): Promise<Response> {
 
   // --- FLOW 4/5: expenses (manual=approved, proposta=pending, approve/reject) ---
   if (action === 'expense_manual' || action === 'expense_propose') {
-    const costoRaw = Number(payload.costo);
-    if (!Number.isFinite(costoRaw) || costoRaw === 0) return json({ error: 'importo non valido' }, 422);
+    const costoRaw = num(payload.costo, { nonZero: true });
+    if (costoRaw == null) return json({ error: 'importo non valido (numero diverso da 0)' }, 422);
     const categoria = String(payload.categoria || '').toUpperCase();
-    const VALID = ['COGS', 'LOGISTICA', 'MARKETING', 'OPEX', 'PACKAGING', 'SALARI', 'TASSE'];
-    const datePaid = (payload.date_paid as string) || today;
-    const d = new Date(datePaid);
+    // B3 (audit gate 14-09): categoria obbligatoria e in VALID_CATEGORIE (prima la lista era dichiarata e mai usata:
+    // una categoria sbagliata sparisce da ogni riga del CE).
+    if (!VALID_CATEGORIE.includes(categoria)) return json({ error: `categoria non valida: "${payload.categoria}" (ammesse: ${VALID_CATEGORIE.join(', ')})` }, 422);
+    const datePaid = payload.date_paid != null && payload.date_paid !== '' ? isoDate(payload.date_paid) : today;
+    if (datePaid == null) return json({ error: 'data non valida: atteso YYYY-MM-DD' }, 422);
+    const ym = ymFromIso(datePaid);
     const row = {
-      year: d.getFullYear(), month: d.getMonth() + 1, date_reported: datePaid, date_paid: datePaid,
+      year: ym.year, month: ym.month, date_reported: datePaid, date_paid: datePaid,
       operazione: String(payload.operazione || '').trim() || 'Spesa', costo: -Math.abs(costoRaw),
       categoria, sottocategoria: (payload.sottocategoria as string) ?? null,
       amimi_raw: (payload.amimi === true || payload.amimi === 'si') ? 'si' : 'No',
@@ -709,18 +745,34 @@ async function handle(req: Request): Promise<Response> {
     // spesa GIA' approved) non muove il CE — era il caso delle 3 spese storiche "DA VERIFICARE" che
     // non si confermavano mai (il 409 veniva pure ingoiato dal client senza messaggio).
     const movesCE = edits.categoria != null || edits.costo != null || edits.amimi != null || edits.sottocategoria != null;
-    if (decision !== 'rejected' && !force) {
-      // 2026-09-13 (sweep incidente doppioni): lettura fallita = controllo mese chiuso saltato e approvazione scritta
-      // maybeSingle, non single: con single una riga assente e' un errore PGRST116 che retryOnce ritenterebbe a vuoto
-      const { data: exRow, error: exe } = await retryOnce(() => sb.from('expenses').select('year, month, status').eq('id', id).maybeSingle());
-      if (exe) return json({ error: `spesa non leggibile (${exe.message}): approvazione rifiutata, riprova` }, 503);
-      if (!exRow) return json({ error: 'spesa non trovata' }, 404);
-      const noteOnly = !movesCE && exRow?.status === 'approved';
-      if (exRow && !noteOnly && await closedMonth(exRow.year, exRow.month)) return closedErr(exRow.year, exRow.month);
+    // B3 (audit gate 14-09): se si cambia categoria in approvazione, deve essere valida.
+    if (edits.categoria != null && !VALID_CATEGORIE.includes(String(edits.categoria).toUpperCase()))
+      return json({ error: `categoria non valida: "${edits.categoria}" (ammesse: ${VALID_CATEGORIE.join(', ')})` }, 422);
+    // 2026-09-13 (sweep incidente doppioni): lettura fallita = controllo mese chiuso saltato e approvazione scritta.
+    // B2 (audit gate 14-09): la riga si legge SEMPRE, non solo su approvazione: un reject su una spesa GIA' approvata
+    // e datata in un mese chiuso ne toglie il costo dal CE congelato, e prima saltava del tutto la guardia.
+    // maybeSingle, non single: con single una riga assente e' un errore PGRST116 che retryOnce ritenterebbe a vuoto.
+    const { data: exRow, error: exe } = await retryOnce(() => sb.from('expenses').select('year, month, status, categoria').eq('id', id).maybeSingle());
+    if (exe) return json({ error: `spesa non leggibile (${exe.message}): approvazione rifiutata, riprova` }, 503);
+    if (!exRow) return json({ error: 'spesa non trovata' }, 404);
+    if (!force && await closedMonth(exRow.year, exRow.month)) {
+      if (decision === 'rejected') {
+        // una pending non e' ancora nel CE: rifiutarla non muove un mese chiuso. Una gia' approved si'.
+        if (exRow.status === 'approved') return closedErr(exRow.year, exRow.month);
+      } else {
+        // approvazione/modifica: blocca, salvo la conferma di una spesa gia' approved senza cambi contabili (noteOnly)
+        const noteOnly = !movesCE && exRow.status === 'approved';
+        if (!noteOnly) return closedErr(exRow.year, exRow.month);
+      }
     }
     const upd: Record<string, unknown> = { status: decision === 'rejected' ? 'rejected' : 'approved', approved_by: chi || null };
     for (const f of ['operazione', 'categoria', 'sottocategoria', 'note']) if (edits[f] != null) upd[f] = edits[f];
-    if (edits.costo != null) upd.costo = -Math.abs(Number(edits.costo));
+    if (upd.categoria != null) upd.categoria = String(upd.categoria).toUpperCase();
+    if (edits.costo != null) {
+      const c = num(edits.costo, { nonZero: true });
+      if (c == null) return json({ error: 'importo non valido (numero diverso da 0)' }, 422);
+      upd.costo = -Math.abs(c);
+    }
     if (edits.amimi != null) { upd.amimi_raw = (edits.amimi === true || edits.amimi === 'si') ? 'si' : 'No'; }
     const { data, error } = await sb.from('expenses').update(upd).eq('id', id).select().single();
     if (error) return json({ error: error.message }, 400);
@@ -745,10 +797,10 @@ async function handle(req: Request): Promise<Response> {
     if (!Array.isArray(rowsIn) || !rowsIn.length) return json({ error: 'nessuna riga: passa rows: [{data, descrizione, costo, categoria, amimi}]' }, 422);
     if (rowsIn.length > 200) return json({ error: `troppe righe: ${rowsIn.length} (max 200 per payload, una mensilita' sta ampiamente sotto)` }, 422);
 
-    // Le 8 categorie sono quelle della colonna generata expenses.categoria_valid, non le 7 del brief:
-    // EVENTI e' una categoria vera (1 spesa a catalogo, riga `eventi` in entrambi i CE). Escluderla
-    // avrebbe respinto spese legittime. La generata NON si scrive (Regola 14): si valida l'input.
-    const VALID = ['COGS', 'LOGISTICA', 'MARKETING', 'OPEX', 'PACKAGING', 'SALARI', 'TASSE', 'EVENTI'];
+    // Le 8 categorie vive in expenses (VALID_CATEGORIE, ./lib.ts), condivise con expense_manual/approve (B3).
+    // EVENTI e' una categoria vera (riga `eventi` in entrambi i CE); la colonna generata categoria_valid NON si
+    // scrive (Regola 14): si valida l'input.
+    const VALID = VALID_CATEGORIE;
     // confronto descrizioni per il dedup: minuscole, accenti piegati, ogni non-alfanumerico -> spazio
     const dnorm = (s: unknown) => String(s ?? '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
       .replace(/[^a-z0-9]+/g, ' ').trim();
@@ -774,18 +826,17 @@ async function handle(req: Request): Promise<Response> {
       // parser e il 7 agosto per un italiano. Su dati contabili un'ambiguita' del genere sposta una
       // spesa di mese in silenzio, quindi il formato non ISO si respinge invece di indovinare.
       const dataRaw = String(r.data ?? r.date_paid ?? '').trim();
-      const d = new Date(dataRaw);
-      if (!/^\d{4}-\d{2}-\d{2}/.test(dataRaw) || Number.isNaN(d.getTime())) {
+      const iso = isoDate(dataRaw);
+      if (iso == null) {
         return push('respinta', { motivo: `data non valida: "${dataRaw}" (atteso YYYY-MM-DD)` });
       }
-      const year = d.getFullYear(), month = d.getMonth() + 1;
-      const iso = d.toISOString().slice(0, 10);
+      const { year, month } = ymFromIso(iso);
 
       const descrizione = String(r.descrizione ?? r.operazione ?? '').trim();
       if (!descrizione) return push('respinta', { motivo: 'descrizione mancante (una spesa senza descrizione non e\' verificabile nel CE)' });
 
-      const costoRaw = Number(r.costo);
-      if (!Number.isFinite(costoRaw) || costoRaw === 0) return push('respinta', { motivo: `importo non valido: "${r.costo}"` });
+      const costoRaw = num(r.costo, { nonZero: true });  // A5: come expense_manual, num() rifiuta ''/null/'12,50'
+      if (costoRaw == null) return push('respinta', { motivo: `importo non valido: "${r.costo}"` });
       const costo = -Math.abs(costoRaw);  // come expense_manual: il COSTO in expenses e' sempre negativo
 
       const categoria = String(r.categoria ?? '').trim().toUpperCase();
@@ -902,18 +953,19 @@ async function handle(req: Request): Promise<Response> {
   // --- NEW: returns & exchanges (records money + stock effect) ---
   if (action === 'return') {
     const codice = String(payload.codice || '');
-    const qty = Number(payload.quantita);
+    const qty = num(payload.quantita, { integer: true, min: 1 });
     if (!codice) return json({ error: 'CODICE mancante' }, 422);
     if (!noSpaces(codice)) return json({ error: 'CODICE contiene spazi' }, 422);
-    if (!(qty > 0)) return json({ error: 'quantità deve essere > 0' }, 422);
-    const dt = (payload.data as string) || today;
-    const d = new Date(dt);
+    if (qty == null) return json({ error: 'quantità deve essere un intero > 0' }, 422);
+    const dt = payload.data != null && payload.data !== '' ? isoDate(payload.data) : today;
+    if (dt == null) return json({ error: 'data non valida: atteso YYYY-MM-DD' }, 422);
+    const ymR = ymFromIso(dt);
     // importo CON SEGNO (feedback 06-07 item 5): positivo = rimborso al cliente; NEGATIVO = il
-    // cliente ha pagato la differenza (cambio con borsa piu' cara). Prima Math.abs mangiava il segno.
-    const impRaw = payload.importo_rimborsato != null ? Number(payload.importo_rimborsato) : 0;
-    if (!Number.isFinite(impRaw)) return json({ error: 'importo rimborsato non valido' }, 422);
+    // cliente ha pagato la differenza (cambio con borsa piu' cara). num() accetta anche negativo e 0.
+    const impRaw = payload.importo_rimborsato != null && payload.importo_rimborsato !== '' ? num(payload.importo_rimborsato) : 0;
+    if (impRaw == null) return json({ error: 'importo rimborsato non valido' }, 422);
     const row = {
-      data: dt, year: d.getFullYear(), month: d.getMonth() + 1,
+      data: dt, year: ymR.year, month: ymR.month,
       codice, item: (payload.item as string) ?? null, variant: (payload.variant as string) ?? null,
       quantita: qty, canale: (payload.canale as string) ?? null,
       importo_rimborsato: impRaw,
@@ -934,13 +986,25 @@ async function handle(req: Request): Promise<Response> {
       // #5 (audit 09-07): quantita' del sostituto esplicita (default = qty resa; un cambio puo' essere
       // 1:N); valida che il sostituto sia a catalogo (altrimenti l'aggiustamento e' invisibile in
       // giacenza) e collega l'aggiustamento al reso via return_id per poterlo revertire (return_delete).
-      const qtySost = payload.qty_sostituto != null && Number(payload.qty_sostituto) > 0 ? Number(payload.qty_sostituto) : qty;
-      const sostNorm = sost.toUpperCase().replace(/\s+/g, '_');
+      const qtySost = num(payload.qty_sostituto, { integer: true, min: 1 }) ?? qty;
+      const sostNorm = cnorm(sost);
       const { data: sp } = await sb.from('products').select('id').eq('codice_norm', sostNorm).maybeSingle();
       if (!sp) sostituto_warning = `Il sostituto ${sost} non e' a catalogo: l'aggiustamento di stock resta ma non si vede in giacenza finche' il prodotto non esiste.`;
-      const { data: adj } = await sb.from('stock_adjustments').insert({
+      // A4 (audit gate 14-09): l'insert dell'aggiustamento del sostituto scartava l'errore: su un 504 il reso restava,
+      // la rettifica -qty non esisteva, e la risposta era ok:true con la borsa data in cambio ancora in giacenza per
+      // sempre. Ora su errore si ANNULLA il reso appena inserito e si risponde 4xx; se anche l'annullo fallisce, lo si
+      // dice a chiare lettere e si lascia una riga in change_log (da sistemare a mano).
+      const { data: adj, error: adjErr } = await sb.from('stock_adjustments').insert({
         codice: sost, qty_delta: -qtySost, motivo: 'cambio (sostituto uscito)', data: dt, chi: chi || null, source: 'app', return_id: data.id,
       }).select('id').single();
+      if (adjErr) {
+        const { error: undoErr } = await sb.from('returns').delete().eq('id', data.id);
+        if (undoErr) {
+          await logp('returns', String(data.id), 'return_sostituto_failed', { codice, sostituito_con: sost, adj_error: adjErr.message, undo_error: undoErr.message });
+          return json({ error: `Aggiustamento del sostituto NON scritto (${adjErr.message}) e reso ${data.id} NON annullato (${undoErr.message}): la borsa data in cambio resta in giacenza, da sistemare a mano.`, sostituto_adjustment_failed: true, return_id: data.id }, 500);
+        }
+        return json({ error: `Aggiustamento del sostituto NON scritto (${adjErr.message}): reso annullato, riprova.`, sostituto_adjustment_failed: true }, 502);
+      }
       sostituzione_id = adj?.id ?? null;
     }
     await logp('returns', String(data.id), 'return', { ...data, sostituzione_adjustment: sostituzione_id });
@@ -950,24 +1014,29 @@ async function handle(req: Request): Promise<Response> {
   // --- Qromo forward: a resolved DB_QROMO row pushed from the Apps Script sync (idempotent on sale_id) ---
   if (action === 'qromo_sale') {
     const codice = String(payload.codice || '');
-    const qty = Number(payload.quantita);
+    const qty = num(payload.quantita, { integer: true, min: 1 });
     const saleId = (payload.sale_id as string) || null;
     if (!codice) return json({ error: 'CODICE mancante' }, 422);
-    if (!(qty > 0)) return json({ error: 'quantità deve essere > 0' }, 422);
+    if (qty == null) return json({ error: 'quantità deve essere un intero > 0' }, 422);
+    const prezzo = payload.prezzo != null && payload.prezzo !== '' ? num(payload.prezzo, { min: 0 }) : null;
+    if (payload.prezzo != null && payload.prezzo !== '' && prezzo == null) return json({ error: 'prezzo non valido' }, 422);
+    const cogsIn = payload.cogs != null && payload.cogs !== '' ? num(payload.cogs, { min: 0 }) : null;
+    if (payload.cogs != null && payload.cogs !== '' && cogsIn == null) return json({ error: 'COGS non valido' }, 422);
     if (saleId) {
       const { data: ex } = await sb.from('qromo_sales').select('id').eq('sale_id', saleId).limit(1);
       if (ex && ex.length) return json({ ok: true, skipped: true, sale_id: saleId });
     }
-    const dt = (payload.data as string) || today;
-    const d = new Date(dt);
+    const dt = payload.data != null && payload.data !== '' ? isoDate(payload.data) : today;
+    if (dt == null) return json({ error: 'data non valida: atteso YYYY-MM-DD' }, 422);
+    const ymQ = ymFromIso(dt);
     const row = {
       sale_id: saleId, order_id: (payload.order_id as string) ?? null, data: dt,
-      year: d.getFullYear(), month: d.getMonth() + 1,
+      year: ymQ.year, month: ymQ.month,
       nome: (payload.nome as string) ?? null, cognome: (payload.cognome as string) ?? null,
       codice, item: (payload.item as string) ?? null, variant: (payload.variant as string) ?? null,
       quantita: qty, payment_method: (payload.payment_method as string) ?? null,
-      prezzo: payload.prezzo != null ? Number(payload.prezzo) : null,
-      cogs: payload.cogs != null ? Number(payload.cogs) : null,
+      prezzo,
+      cogs: cogsIn,
       resolver_status: (payload.resolver_status as string) ?? 'forwarded',
       source: 'qromo-forward', note: (payload.note as string) ?? null,
     };
@@ -1006,10 +1075,14 @@ async function handle(req: Request): Promise<Response> {
   // adjustment of exactly (contati - giacenza_live), so v_inventory shows == contati.
   if (action === 'count') {
     const codice = String(payload.codice || '');
-    const contati = Number(payload.contati);
+    // A5 (audit gate 14-09): Number(null)/''/[]  valeva 0 e la guardia respingeva solo NaN e negativi, quindi
+    // contati:'' azzerava lo stock del codice (delta = -giacenza) e l'autopush lo portava a 0 sul sito. num()
+    // accetta solo un intero >= 0.
+    const contati = num(payload.contati, { integer: true, min: 0 });
     if (!codice || !noSpaces(codice)) return json({ error: 'CODICE mancante o con spazi' }, 422);
-    if (isNaN(contati) || contati < 0) return json({ error: 'pezzi contati non validi' }, 422);
-    const dt = (payload.data_conta as string) || today;
+    if (contati == null) return json({ error: 'pezzi contati non validi (intero >= 0)' }, 422);
+    const dt = payload.data_conta != null && payload.data_conta !== '' ? isoDate(payload.data_conta) : today;
+    if (dt == null) return json({ error: 'data non valida: atteso YYYY-MM-DD' }, 422);
     // fix h (31-07): una conta retrodatata in un mese chiuso scrive un aggiustamento in quel mese
     if (!force && await closedDate(dt)) return closedErr(dt.slice(0, 4), dt.slice(5, 7));
     // recompute the delta SERVER-SIDE against the live giacenza (which already includes prior
@@ -1058,18 +1131,71 @@ async function handle(req: Request): Promise<Response> {
   const errs = validate(action, payload);
   if (errs.length) return json({ error: errs.join(' · '), validation: errs }, 422);
 
-  // gift/b2b portano year/month (derivati client-side): blocca la scrittura in un mese chiuso.
-  if (!force && await closedMonth((payload as Record<string, unknown>).year, (payload as Record<string, unknown>).month))
-    return closedErr((payload as Record<string, unknown>).year, (payload as Record<string, unknown>).month);
+  // B9 (audit gate 14-09): non si spargono chiavi arbitrarie del client su colonne di audit/derivate. Si parte da un
+  // oggetto pulito (id/created_at/source/chi/codice_norm/verificato/year/month/cogs li mette il server) e ogni azione
+  // aggiunge i suoi campi controllati.
+  const p = payload as Record<string, unknown>;
+  const STRIP = new Set(['id', 'created_at', 'source', 'chi', 'codice_norm', 'verificato', 'year', 'month', 'cogs']);
+  const row: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(p)) if (!STRIP.has(k)) row[k] = v;
+  row.source = 'app'; row.chi = chi || null;
+  let logExtra: Record<string, unknown> = {};
 
-  const row: Record<string, unknown> = { ...payload, source: 'app', chi: chi || null };
-  // #10 (audit 09-07): un prodotto creato dall'insert generico NON e' verificato da un umano ->
-  // nasce verificato=false (solo product_verify puo' portarlo a true). Senza questo il default DB
-  // (true) lo farebbe nascere "verificato" con eventuali buchi, saltando la lista da-completare.
-  if (action === 'product' && row.verificato == null) row.verificato = false;
+  if (action === 'purchase') {
+    const dt = isoDate(p.data);
+    if (dt == null) return json({ error: 'data non valida: atteso YYYY-MM-DD' }, 422);
+    if (!force && await closedDate(dt)) return closedErr(dt.slice(0, 4), dt.slice(5, 7));
+    row.data = dt;
+    row.quantita = num(p.quantita, { integer: true, min: 1 });
+    row.costo_unitario = p.costo_unitario != null && p.costo_unitario !== '' ? num(p.costo_unitario, { min: 0 }) : null;
+  } else if (action === 'gift' || action === 'b2b') {
+    // A2/B9 (audit gate 14-09): il server IGNORA year/month del client (li derivava il client dal fuso) e li ricava
+    // dalla data ISO. Il COGS lo mette il server dal listino: prima gift/vendite manuali e B2B dall'app entravano con
+    // cogs NULL e il CE li contava a costo 0. row.cogs e' il TOTALE di riga (SCHEMA.md sez. 3: le viste sommano
+    // gifts_offline.cogs / b2b_movements.cogs senza moltiplicare per la quantita').
+    const qtyG = num(p.quantita, { integer: true, min: 1 })!;
+    const dtG = p.data != null && p.data !== '' ? isoDate(p.data) : today;
+    if (dtG == null) return json({ error: 'data non valida: atteso YYYY-MM-DD' }, 422);
+    const ymG = ymFromIso(dtG);
+    row.data = dtG; row.year = ymG.year; row.month = ymG.month; row.quantita = qtyG;
+    let cogsUnit: number | null = null;
+    let cogsDaCatalogo = false;
+    if (p.cogs != null && p.cogs !== '') {
+      cogsUnit = num(p.cogs, { min: 0 });
+      if (cogsUnit == null) return json({ error: 'COGS non valido' }, 422);
+    } else {
+      const { data: pr, error: pre } = await retryOnce(() => sb.from('products').select('cogs').eq('codice_norm', cnorm(p.codice)).maybeSingle());
+      if (pre) return json({ error: `lettura costo prodotto fallita (${pre.message}): non registrato, riprova` }, 502);
+      cogsUnit = pr?.cogs != null ? Number(pr.cogs) : null;
+      cogsDaCatalogo = true;
+    }
+    if (cogsUnit == null || !(cogsUnit > 0)) return json({ error: `Prodotto ${p.codice} senza COGS a catalogo: completa l'anagrafica (Verifica prodotto) prima di registrare, oppure passa un cogs esplicito.`, needs_cogs: true }, 422);
+    row.cogs = Math.round(cogsUnit * qtyG * 100) / 100;
+    logExtra = { cogs_unitario: cogsUnit, cogs_da_catalogo: cogsDaCatalogo };
+    if (action === 'b2b') {
+      if (p.prezzo_retail != null && p.prezzo_retail !== '') row.prezzo_retail = num(p.prezzo_retail, { min: 0 });
+      if (String(p.tipo_movimento) === 'venduto') row.perc_negozio = num(p.perc_negozio, { min: 0, max: 1 });
+    } else if (p.prezzo != null && p.prezzo !== '') {
+      row.prezzo = num(p.prezzo, { min: 0 });
+    }
+    if (!force && await closedMonth(ymG.year, ymG.month)) return closedErr(ymG.year, ymG.month);
+  } else if (action === 'product') {
+    // B43 (audit gate 14-09): il CODICE lo deriva il server col tok v2 (come order_multi), non il client: due punti
+    // d'ingresso col vecchio tokenizer davano due codici per lo stesso Modello+Variante. item/model e variant
+    // obbligatori (validate), in MAIUSCOLO; il codice del client, se diverso, e' ignorato e tracciato in change_log.
+    const item = String(p.item ?? p.model ?? '').trim().toUpperCase();
+    const variant = String(p.variant ?? '').trim().toUpperCase();
+    const derived = `${tok(item)}_${tok(variant)}`;
+    if (!derived || /^_|_$/.test(derived)) return json({ error: 'Modello/Variante non validi per derivare il CODICE' }, 422);
+    if (p.codice != null && cnorm(p.codice) !== derived) logExtra = { codice_client: p.codice };
+    row.codice = derived; row.item = item; row.model = item; row.variant = variant; row.verificato = false;
+    if (p.retail_price != null && p.retail_price !== '') row.retail_price = num(p.retail_price, { min: 0, nonZero: true });
+    if (p.cogs != null && p.cogs !== '') row.cogs = num(p.cogs, { min: 0, nonZero: true });
+  }
+
   const { data, error } = await sb.from(table).insert(row).select().single();
   if (error) return json({ error: error.message }, 400);
 
-  await logp(table, String(data.id), 'insert', data);
+  await logp(table, String(data.id), 'insert', { ...data, ...logExtra });
   return json({ ok: true, id: data.id, row: data });
 }

@@ -11,6 +11,21 @@ const MODEL_ANSWER = 'gemini-flash-latest';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// 2026-09-14 (audit gate, B65): una lettura fallita si ritenta UNA volta dopo 1,5 s, poi si dichiara (503). Prima un
+// 504 su app_config/gemini_api_key/app_guides usciva come "PIN errato"/"guida non caricata" e uno su ask_select/
+// v_inventory come "nessun dato": risposte plausibili ma false. Nessuna scrittura qui (Regola Ferrea 20).
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
+const readFailed = (tabella: string, msg: string) => json({ error: `lettura fallita, riprova: ${tabella}: ${msg}` }, 503);
+// Un errore SQL della query generata (SQLSTATE 22/42/0A/P0 = guardie ask_select, 57 = timeout) e' un esito della
+// DOMANDA, non della lettura: risposta discorsiva come prima. Tutto il resto e' lettura fallita -> 503.
+type SqlErr = { message: string; code?: string };
+const isSqlErr = (e: SqlErr) => /^(22|42|0A|P0|57)/.test(String(e?.code ?? ''));
 async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -119,14 +134,17 @@ Deno.serve(async (req) => {
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
   // 0) gate + PIN
-  const { data: cfg } = await sb.from('app_config').select('pin_hash, ai_enabled, ai_actions_enabled').eq('id', 1).single();
+  const { data: cfg, error: cfgErr } = await retryOnce(() => sb.from('app_config').select('pin_hash, ai_enabled, ai_actions_enabled').eq('id', 1).single());
+  if (cfgErr) return readFailed('app_config', cfgErr.message);
   if (!cfg?.ai_enabled) return json({ ok: true, gated: true, testo: "L'assistente non è attivo." });
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const question = String(body.domanda ?? body.question ?? '').trim();
   if (!question) return json({ error: 'domanda mancante' }, 422);
 
-  const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'gemini_api_key').single();
+  // maybeSingle: chiave assente = needs_key (come prima); chiave NON LEGGIBILE = 503.
+  const { data: flag, error: flagErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'gemini_api_key').maybeSingle());
+  if (flagErr) return readFailed('app_flags', flagErr.message);
   const key = flag?.value;
   if (!key) return json({ ok: true, testo: 'Assistente non configurato (manca la chiave Gemini).', needs_key: true });
 
@@ -154,7 +172,8 @@ Deno.serve(async (req) => {
   // 1b) HOW-TO route: answer from the how-to corpus (no SQL, no data). Grounded only in the corpus;
   // if not covered -> honest pointer to the app section, never invented UI steps (design 4.4, Regola 1).
   if (/^howto\b/i.test(sql)) {
-    const { data: g } = await sb.from('app_guides').select('content').eq('id', 1).single();
+    const { data: g, error: gErr } = await retryOnce(() => sb.from('app_guides').select('content').eq('id', 1).maybeSingle());
+    if (gErr) return readFailed('app_guides', gErr.message);
     const corpus = String(g?.content ?? '');
     if (!corpus) return json({ ok: true, howto: true, testo: 'La guida non è ancora caricata. Dai un’occhiata alle sezioni Registra e Ordini della Home, oppure chiedimi qualcosa sui tuoi dati.' });
     const htPrompt = `Sei l'assistente dell'app gestionale "Amimì" (PWA per un e-commerce di borse artigianali). Rispondi alla domanda su COME USARE l'app usando SOLO le informazioni della GUIDA qui sotto. NON inventare schermate, bottoni o passaggi che non sono nella guida. Se la guida non copre la domanda, dillo con onestà e indica la sezione dell'app più probabile dove guardare (Home, Registra, Ordini, Magazzino, Tabelle). Rispondi in italiano, conciso, con passi numerati quando utile.
@@ -177,8 +196,15 @@ Domanda: ${question}`;
   }
 
   // 2) run through the guarded executor (SELECT-only, cap 200)
-  const { data: rowsRaw, error } = await sb.rpc('ask_select', { q: sql });
-  if (error) return json({ ok: true, testo: 'La query non ha funzionato: ' + error.message + '. Prova a riformulare la domanda.', sql, righe: [] });
+  // 2026-09-14 (audit gate, B65): un errore SQL della query generata resta una risposta discorsiva (la domanda va
+  // riformulata); un 504/connessione e' lettura fallita -> retryOnce e 503, non "nessun dato" per finta.
+  const runAsk = async (): Promise<{ data: unknown; error: SqlErr | null; sqlError: SqlErr | null }> => {
+    const r = await sb.rpc('ask_select', { q: sql });
+    return (r.error && isSqlErr(r.error)) ? { data: null, error: null, sqlError: r.error } : { data: r.data, error: r.error, sqlError: null };
+  };
+  const { data: rowsRaw, error, sqlError } = await retryOnce(runAsk);
+  if (sqlError) return json({ ok: true, testo: 'La query non ha funzionato: ' + sqlError.message + '. Prova a riformulare la domanda.', sql, righe: [] });
+  if (error) return readFailed('ask_select', error.message);
   const rows: Row[] = Array.isArray(rowsRaw) ? rowsRaw as Row[] : [];
   if (!rows.length) {
     return json({ ok: true, testo: 'Non ho trovato dati per questa domanda. Forse il nome non corrisponde, o non ci sono ancora movimenti: prova a riformulare.', sql, righe: [] });
@@ -240,9 +266,11 @@ Regole: metti "grafico" solo se una classifica/andamento aiuta (una classifica -
   if (pspec && typeof pspec === 'object') {
     const cc = String(pspec.codice_col ?? '');
     if (cols.includes(cc)) {
-      const { data: invRaw } = await sb.from('v_inventory')
-        .select('codice, codice_norm, item, variant, image_url, retail_price, giacenza_attuale, disponibili_da_vendere, status, shopify_sold, qromo_sold, b2b_venduto');
-      const inv = (invRaw ?? []) as Row[];
+      // 2026-09-14 (audit gate, B65): le schede prodotto sono un arricchimento del testo (i numeri sono gia' nelle
+      // righe); se v_inventory non e' leggibile dopo il ritentativo si OMETTONO le schede invece di mostrarle a vuoto.
+      const { data: invRaw, error: invErr } = await retryOnce(() => sb.from('v_inventory')
+        .select('codice, codice_norm, item, variant, image_url, retail_price, giacenza_attuale, disponibili_da_vendere, status, shopify_sold, qromo_sold, b2b_venduto'));
+      const inv = (invErr ? [] : (invRaw ?? [])) as Row[];
       const lut = new Map<string, Row>();
       for (const p of inv) { lut.set(norm(p.codice_norm), p); lut.set(norm(p.codice), p); }
       const vc = String(pspec.value_col ?? '');

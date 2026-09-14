@@ -1,8 +1,24 @@
 // Pricing + SEO helpers (pure logic, from the brand rules in CLAUDE.md).
 
+// 2026-09-14 (audit gate, B39): la data di riferimento e' quella di Roma, non UTC ne' il fuso del
+// telefono: fra le 00:00 e le 02:00 i form venivano retrodatati a ieri e il primo del mese la
+// scrittura cadeva nel mese prima (magari chiuso). Modulo PURO: niente import di api/supabase.
+export const todayRome = (now: Date = new Date()): string => {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+};
+export const oggi = (): string => todayRome();
+
 /** Current month (1-12) and year, derived from the clock — never hardcode (it rots at month/year change). */
-export const nowMonth = (): number => new Date().getMonth() + 1;
-export const nowYear = (): number => new Date().getFullYear();
+export const nowMonth = (): number => Number(todayRome().slice(5, 7));
+export const nowYear = (): number => Number(todayRome().slice(0, 4));
+
+// 2026-09-14 (audit gate, B43): tokenizer identico al tok v2 del server (write-api): NFD senza
+// diacritici, MAIUSCOLO, ogni sequenza non alfanumerica -> un solo '_', niente '_' ai bordi.
+// Il CODICE lo deriva il server; qui serve solo per l'anteprima nei form.
+export const tok = (s: unknown) => String(s ?? '').normalize('NFD').replace(/\p{M}/gu, '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+export const deriveCodice = (model: string, variant: string) => tok(model) + '_' + tok(variant);
 const MESI_FULL = ['', 'gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
 export const meseNome = (m: number): string => MESI_FULL[m] ?? '';
 

@@ -1,9 +1,8 @@
 // ce-guard — la guardia contabile. PIN-gated, gira OGNI ORA al minuto 30 (pg_cron job
 // 'ce-guard-daily', schedule '30 * * * *': il nome dice daily, la schedule dice orario) e on-demand.
-// Conseguenza da non dimenticare: le chiavi scritte qui DEVONO iniziare per `ce_`, altrimenti la
-// delete a fine run (che filtra `k like 'ce_%'`) non le ripulisce, il secondo giro del giorno
-// sbatte sull'unique index health_log(day,k) e l'insert intero fallisce -> la guardia smette di
-// scrivere per il resto della giornata, in silenzio.
+// Conseguenza da non dimenticare: le chiavi scritte qui DEVONO iniziare per `ce_`: il banner in Home legge solo
+// `ce_%` e il prune a fine run (che filtra `k like 'ce_%'`) ripulisce solo quelle; una chiave fuori namespace
+// resterebbe in health_log per sempre senza che nessuno la veda.
 // Azioni:
 //   run          -> esegue TUTTI i check e scrive l'esito in health_log (chiavi ce_*)
 //   close_month  -> {year, month, chi} congela il CE del mese (amimi+totale) in ce_snapshots
@@ -17,6 +16,11 @@
 // telemetria `shopify_sync` di shopify-sync v7, cosi' un giro fermato arriva al banner e a ntfy) e
 // `ce_guard_letture` (letture fallite durante il run: prima un errore di lettura dava data=null -> 0 problemi ->
 // check VERDE per finta).
+// v6 (2026-09-14, audit gate B13/B60): i verdetti vanno in health_log con UN upsert controllato su (day,k) al posto di
+// delete + insert non controllati (un 504 lasciava il giorno vuoto o i check di ieri, e il banner non lo diceva); se
+// fallisce -> 500, niente ntfy ne' ceguard_alert_state. Prune controllato (non fatale) delle chiavi ce_* non piu'
+// nell'insieme. La risposta di ntfy e' controllata: lo stato si aggiorna SOLO a push consegnata (res.ok), altrimenti
+// `ntfy_failed` in risposta e il giro dopo riprova.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -257,9 +261,15 @@ Deno.serve(async (req) => {
   // 13) LETTURE FALLITE (v5): un check calcolato su una lettura fallita e' verde per finta; qui si vede.
   add('ce_guard_letture', 'Letture fallite durante il run' + (failedReads.length ? ': ' + failedReads.join(', ') : ''), failedReads.length);
 
-  // scrivi in health_log (sostituisce le chiavi ce_* di oggi)
-  await sb.from('health_log').delete().eq('day', today).like('k', 'ce_%');
-  await sb.from('health_log').insert(checks.map((c) => ({ day: today, ...c })));
+  // scrivi in health_log: UN upsert controllato su (day,k), indice unico health_log_day_k.
+  // 2026-09-14 (audit gate, B13): prima delete + insert non controllati: un 504 sulla delete faceva fallire l'insert
+  // intero (unique) e un 504 sull'insert lasciava il giorno VUOTO, e il banner mostrava righe vecchie senza dirlo.
+  // Scrittura fallita = 500 esplicito e NIENTE ntfy/ceguard_alert_state: i verdetti precedenti restano, meglio di
+  // verdetti a meta'. Niente retry: e' una scrittura (Regola Ferrea 20).
+  const { error: hlErr } = await sb.from('health_log').upsert(checks.map((c) => ({ day: today, ...c })), { onConflict: 'day,k' });
+  if (hlErr) return json({ ok: false, error: 'health_log non scrivibile: ' + hlErr.message, checks }, 500);
+  // chiavi ce_* di oggi non piu' nell'insieme corrente (check rinominato o tolto): pulizia controllata, non fatale.
+  const { error: staleErr } = await sb.from('health_log').delete().eq('day', today).like('k', 'ce_%').not('k', 'in', `(${checks.map((c) => c.k).join(',')})`);
 
   const problems = checks.filter((c) => c.severity !== 'ok');
 
@@ -267,6 +277,10 @@ Deno.serve(async (req) => {
   // al topic ntfy del titolare (app sul telefono). "Solo su cambio" = niente spam orario; la firma
   // e' l'insieme delle CHIAVI error (non i conteggi) per non pingare sui flap di conteggio. Il topic
   // vive in app_flags.ntfy_topic (service-role); se assente -> no-op. Mai rompere la guardia.
+  // 2026-09-14 (audit gate, B60): la risposta di ntfy non era controllata: un 429/5xx perdeva la push ma lo stato
+  // veniva aggiornato come se fosse partita, e quell'allarme non suonava piu' fino al prossimo cambio di insieme.
+  // Lo stato si aggiorna SOLO a push consegnata (res.ok); altrimenti `ntfy_failed` in risposta e il giro dopo riprova.
+  let ntfyFailed: number | null = null; let ntfyError: string | null = null;
   try {
     const { data: tf } = await sb.from('app_flags').select('value').eq('key', 'ntfy_topic').maybeSingle();
     const topic = tf?.value as string | undefined;
@@ -279,14 +293,20 @@ Deno.serve(async (req) => {
         const hasProblems = sig !== '';
         const title = hasProblems ? `Amimi: ${errs.length} da controllare` : 'Amimi: tutto a posto';
         const message = hasProblems ? errs.map((c) => '- ' + c.label).join('\n') : 'I problemi segnalati sono rientrati.';
-        await fetch('https://ntfy.sh', {
+        const res = await fetch('https://ntfy.sh', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ topic, title, message, priority: hasProblems ? 4 : 3, tags: [hasProblems ? 'warning' : 'white_check_mark'], click: 'https://noobhandbag.github.io/amimi-app/' }),
         });
-        await sb.from('app_flags').upsert({ key: 'ceguard_alert_state', value: sig }, { onConflict: 'key' });
+        if (res.ok) await sb.from('app_flags').upsert({ key: 'ceguard_alert_state', value: sig }, { onConflict: 'key' });
+        else ntfyFailed = res.status;
       }
     }
-  } catch (_e) { /* la notifica non deve mai rompere la guardia contabile */ }
+  } catch (e) { ntfyError = e instanceof Error ? e.message : String(e); /* la notifica non deve mai rompere la guardia contabile */ }
 
-  return json({ ok: true, all_green: problems.length === 0, checks, problems });
+  return json({
+    ok: true, all_green: problems.length === 0, checks, problems,
+    ...(staleErr ? { stale_keys_error: staleErr.message } : {}),
+    ...(ntfyFailed !== null ? { ntfy_failed: ntfyFailed } : {}),
+    ...(ntfyError ? { ntfy_error: ntfyError } : {}),
+  });
 });

@@ -1,3 +1,7 @@
+// sales-guard v3 (2026-09-14, audit gate B13/B60): verdetti in health_log con UN upsert controllato su (day,k) al posto
+// di delete non controllata + insert (un 504 sulla delete faceva fallire l'insert sull'unique, il giorno restava senza
+// righe sales_*); fallito -> 500 e niente ntfy. Prune controllato (non fatale) delle chiavi sales_* non piu' nell'insieme.
+// Risposta di ntfy controllata: sales_guard_alert_state e `notified` solo a push consegnata, altrimenti `ntfy_failed`.
 // sales-guard v1 (2026-08-01, brief sales_guard_alerts A7) — la guardia delle VENDITE.
 // ce-guard sorveglia i conti, questa sorveglia le vendite: SOLO segnali deterministici e
 // azionabili, NIENTE anomaly detection sugli aggregati (scarto tipo settimanale 57%: qualunque
@@ -113,15 +117,25 @@ Deno.serve(async (req) => {
 
   if (dryRun) return json({ ok: true, dryRun: true, checks });
 
-  // scrivi in health_log (sostituisce le chiavi sales_* di oggi; refresh_health_log le esclude, migr 0087)
+  // scrivi in health_log: UN upsert controllato su (day,k), indice unico health_log_day_k (refresh_health_log esclude
+  // le sales_*, migr 0087). 2026-09-14 (audit gate, B13): prima delete NON controllata + insert: un 504 sulla delete
+  // faceva fallire l'insert intero (unique) e il giorno restava senza righe sales_*. Scrittura fallita = 500 e NIENTE
+  // ntfy: i verdetti precedenti restano. Niente retry: e' una scrittura (Regola Ferrea 20).
   const today = new Date().toISOString().slice(0, 10);
-  await sb.from('health_log').delete().eq('day', today).like('k', 'sales\\_%');
-  const { error: insErr } = await sb.from('health_log').insert(checks.map((c) => ({ day: today, ...c })));
-  if (insErr) return json({ ok: false, error: insErr.message }, 500);
+  const { error: insErr } = await sb.from('health_log').upsert(checks.map((c) => ({ day: today, ...c })), { onConflict: 'day,k' });
+  if (insErr) return json({ ok: false, error: 'health_log non scrivibile: ' + insErr.message }, 500);
+  // chiavi sales_* di oggi non piu' nell'insieme (regola disattivata in alert_rules): pulizia controllata, non fatale.
+  // Con zero checks (tutte le regole spente) si cancellano tutte, senza passare un `in.()` vuoto a PostgREST.
+  const keep = checks.map((c) => c.k);
+  const prune = sb.from('health_log').delete().eq('day', today).like('k', 'sales\\_%');
+  const { error: staleErr } = await (keep.length ? prune.not('k', 'in', `(${keep.join(',')})`) : prune);
 
   // push ntfy SOLO al cambio dell'insieme degli ERROR (pattern ce-guard, stato dedicato).
   // Topic dedicato ntfy_topic_sales, fallback su ntfy_topic; assente -> no-op. Mai rompere la guardia.
-  let notified = false;
+  // 2026-09-14 (audit gate, B60): la risposta di ntfy non era controllata: un 429/5xx perdeva la push ma lo stato
+  // veniva aggiornato come se fosse partita, e S1 non suonava piu' fino al prossimo cambio. Stato e `notified` SOLO
+  // a push consegnata (res.ok); altrimenti `ntfy_failed` in risposta e il giro dopo riprova.
+  let notified = false; let ntfyFailed: number | null = null; let ntfyError: string | null = null;
   try {
     const topic = (flags.ntfy_topic_sales || flags.ntfy_topic || '').trim();
     if (topic) {
@@ -131,16 +145,23 @@ Deno.serve(async (req) => {
       if (sig !== last) {
         const title = errs.length ? 'Vendite: serve un occhio' : 'Vendite: rientrato, tutto ok';
         const msg = errs.length ? checks.filter((c) => c.severity === 'error').map((c) => c.label).join('\n') : 'I problemi segnalati sono rientrati.';
-        await fetch('https://ntfy.sh', {
+        const res = await fetch('https://ntfy.sh', {
           method: 'POST',
           body: JSON.stringify({ topic, title, message: msg.slice(0, 800), priority: errs.length ? 5 : 3, tags: [errs.length ? 'rotating_light' : 'white_check_mark'] }),
           headers: { 'Content-Type': 'application/json' },
         });
-        await sb.from('app_flags').upsert({ key: 'sales_guard_alert_state', value: sig }, { onConflict: 'key' });
-        notified = true;
+        if (res.ok) {
+          await sb.from('app_flags').upsert({ key: 'sales_guard_alert_state', value: sig }, { onConflict: 'key' });
+          notified = true;
+        } else ntfyFailed = res.status;
       }
     }
-  } catch { /* la notifica non deve mai rompere la guardia */ }
+  } catch (e) { ntfyError = e instanceof Error ? e.message : String(e); /* la notifica non deve mai rompere la guardia */ }
 
-  return json({ ok: true, checks, notified });
+  return json({
+    ok: true, checks, notified,
+    ...(staleErr ? { stale_keys_error: staleErr.message } : {}),
+    ...(ntfyFailed !== null ? { ntfy_failed: ntfyFailed } : {}),
+    ...(ntfyError ? { ntfy_error: ntfyError } : {}),
+  });
 });

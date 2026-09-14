@@ -173,7 +173,8 @@ export async function syncShopify(pin: string) {
   return j as { ok: boolean; inserted?: number };
 }
 
-export const oggi = () => new Date().toISOString().slice(0, 10);
+// 2026-09-14 (audit gate, B39): data di Roma, definita nel modulo puro helpers (re-export per gli 8 import esistenti)
+export { oggi } from './helpers';
 
 // ---------- FLOW 1: multi-bag supplier orders ----------
 export type OrdLine = Ordine & { nuovo_riordino: string | null; costo_unitario: number | null; data_consegna: string | null; data_consegna_display: string | null; wip?: boolean };
@@ -355,17 +356,19 @@ export async function fetchShopifyAlign(): Promise<ShopAlign[]> {
   if (error) throw new Error(error.message);
   return ((data ?? []) as ShopAlign[]).sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
 }
+// 2026-09-14 (audit gate, B38): ogni non-2xx LANCIA. Prima il corpo dell'errore veniva restituito come
+// risposta e un sync_now fallito (502/503 fail-closed) diventava un toast verde "0 aggiornati".
 function fnCall(fn: string, body: Record<string, unknown>) {
   return fetch((import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/' + fn, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  }).then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok && !j.error) throw new Error('Errore ' + r.status); return j; });
+  }).then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Errore ' + r.status); return j; });
 }
 export const syncShopifyStock = (pin: string) => fnCall('shopify-stock', { action: 'sync', pin });
 export const realignShopify = (codici: string[], pin: string, chi: string) => fnCall('shopify-stock', { action: 'realign', codici, pin, chi });
 // giro completo on-demand (come i cron :17 + :27): pull mirror -> push Shopify := disponibili.
 // Unico writer stock = edge shopify-stock (Regola 15). Cooldown lato server (45s) + disable lato client.
 export type SyncNowResult = { ok?: boolean; skipped?: string; cooldown_s?: number; error?: string;
-  sync?: { synced?: number }; realign?: { skipped?: string; pushed?: number; held?: number; ok?: number; failed?: number; untracked?: string[]; unmapped?: string[] } };
+  sync?: { synced?: number }; realign?: { skipped?: string; error?: string; pushed?: number; held?: number; ok?: number; failed?: number; untracked?: string[]; unmapped?: string[] } };
 export const syncNowShopify = (pin: string, chi: string): Promise<SyncNowResult> =>
   fnCall('shopify-stock', { action: 'sync_now', pin, chi }) as Promise<SyncNowResult>;
 

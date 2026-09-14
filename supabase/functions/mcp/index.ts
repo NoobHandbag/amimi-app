@@ -1,6 +1,9 @@
 // mcp — MCP server for the Amimì app (Streamable HTTP / JSON-RPC). Reads open; writes need app_flags.mcp_token.
 // NB 2026-07-31: file riallineato alla v4 LIVE (il repo era rimasto alla v3: fix 'cerca' in-query
 // del 06-07 assente) prima di aggiungere delete_rows. Da qui in poi il repo e' la fonte.
+// v7 (2026-09-14, audit gate B65): letture controllate. Prima `const { data } = await q` e `data ?? []`
+// trasformavano un 504 PostgREST in "magazzino vuoto / niente da riordinare / CE vuoto", letto da Claude
+// come dato vero. Ora ogni lettura ritenta una volta e poi FALLISCE CHIUSA: tool result con isError.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const SB_URL = Deno.env.get('SUPABASE_URL')!;
@@ -10,6 +13,18 @@ const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const rpc = (id: unknown, result: unknown) => ({ jsonrpc: '2.0', id, result });
 const rpcErr = (id: unknown, code: number, message: string) => ({ jsonrpc: '2.0', id, error: { code, message } });
 const textResult = (obj: unknown) => ({ content: [{ type: 'text', text: typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2) }] });
+
+// 2026-09-14 (audit gate): una lettura fallita si ritenta UNA volta dopo 1,5 s, poi si dichiara. Mai su
+// insert/update/delete (Regola Ferrea 20); qui le scritture passano comunque dalla write-api.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await sleep(1500);
+  return await fn();
+};
+// Errore di lettura come tool result del protocollo (isError: true), lo stesso formato degli altri errori dei tool.
+const readFailed = (tabella: string, msg: string) => ({ ...textResult(`lettura fallita, riprova: ${tabella}: ${msg}`), isError: true });
 
 const TOOLS = [
   { name: 'list_inventory', description: 'Inventario: giacenza, disponibili-da-vendere, su Shopify, valore. Filtri opzionali.',
@@ -53,25 +68,32 @@ async function callTool(name: string, args: Record<string, unknown>) {
         const s = String(args.cerca).replace(/[%,()]/g, ' ').trim();
         if (s) q = q.or(`codice.ilike.%${s}%,item.ilike.%${s}%,variant.ilike.%${s}%`);
       }
-      const { data } = await q.limit(Number(args.limit) || 50);
+      const lim = Number(args.limit) || 50;
+      const { data, error } = await retryOnce(() => q.limit(lim));
+      if (error) return readFailed('v_inventory', error.message);
       return textResult(data ?? []);
     }
     case 'what_to_reorder': {
-      const { data } = await sb.from('v_reorder').select('codice,item,variant,giacenza,disponibili,venduto_60d,in_arrivo,giorni_stock').gt('venduto_60d', 0).order('venduto_60d', { ascending: false }).limit(Number(args.limit) || 25);
+      const lim = Number(args.limit) || 25;
+      const { data, error } = await retryOnce(() => sb.from('v_reorder').select('codice,item,variant,giacenza,disponibili,venduto_60d,in_arrivo,giorni_stock').gt('venduto_60d', 0).order('venduto_60d', { ascending: false }).limit(lim));
+      if (error) return readFailed('v_reorder', error.message);
       return textResult(data ?? []);
     }
     case 'sku_availability': {
-      const { data } = await sb.from('v_sku_availability').select('stato,codice,item,variant');
+      const { data, error } = await retryOnce(() => sb.from('v_sku_availability').select('stato,codice,item,variant'));
+      if (error) return readFailed('v_sku_availability', error.message);
       const rows = data ?? [];
       const by = (s: string) => rows.filter((r: Record<string, unknown>) => r.stato === s);
       return textResult({ acquistabili: by('acquistabile').length, in_stock_non_pubblicati: by('in_stock_non_pubblicato'), pubblicati_esauriti: by('pubblicato_esaurito') });
     }
     case 'pnl_summary': {
-      const { data } = await sb.from('v_ce_amimi_summary').select('month,omni_netto,mc1,mc2').eq('year', 2026).order('month');
+      const { data, error } = await retryOnce(() => sb.from('v_ce_amimi_summary').select('month,omni_netto,mc1,mc2').eq('year', 2026).order('month'));
+      if (error) return readFailed('v_ce_amimi_summary', error.message);
       return textResult(data ?? []);
     }
     case 'ads_summary': {
-      const { data } = await sb.from('v_ads_mensile').select('month,spend,purchases,purchase_value,roas').eq('year', 2026).order('month');
+      const { data, error } = await retryOnce(() => sb.from('v_ads_mensile').select('month,spend,purchases,purchase_value,roas').eq('year', 2026).order('month'));
+      if (error) return readFailed('v_ads_mensile', error.message);
       return textResult(data ?? []);
     }
     case 'ask_data': {
@@ -110,13 +132,16 @@ Deno.serve(async (req) => {
     : new Response(JSON.stringify(b), { headers: { ...cors, 'content-type': 'application/json', 'mcp-session-id': 'amimi' } });
 
   const READ = new Set(['list_inventory', 'what_to_reorder', 'sku_availability', 'pnl_summary', 'ads_summary', 'ask_data']);
-  const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'mcp_token').single();
+  // 2026-09-14 (audit gate): maybeSingle + error controllato. Token assente = non autenticato (come prima);
+  // token NON LEGGIBILE = errore JSON-RPC, non "non autenticato" per finta.
+  const { data: flag, error: flagErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'mcp_token').maybeSingle());
   const token = flag?.value;
   const authed = !!token && (req.headers.get('authorization') || '') === `Bearer ${token}`;
 
   let msg: { id?: unknown; method?: string; params?: Record<string, unknown> };
   try { msg = await req.json(); } catch { return respond(rpcErr(null, -32700, 'Parse error')); }
   const { id, method, params } = msg;
+  if (flagErr) return respond(rpcErr(id, -32000, 'lettura fallita, riprova: app_flags: ' + flagErr.message));
 
   if (method === 'initialize')
     return respond(rpc(id, { protocolVersion: (params?.protocolVersion as string) || '2025-06-18', capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'amimi-app', version: '1.0.2' } }));

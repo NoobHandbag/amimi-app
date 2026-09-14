@@ -15,6 +15,8 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
 const SYNC = read('supabase/functions/shopify-sync/index.ts');
 const GUARD = read('supabase/functions/ce-guard/index.ts');
+const SALES = read('supabase/functions/sales-guard/index.ts');
+const STOCK = read('supabase/functions/shopify-stock/index.ts');
 const MIG = read('supabase/migrations/0117_shopify_orders_dedup_unique.sql');
 // Audit gate 14-09 (finding B57): le catene che vanno a capo prima del `.select(` sfuggivano alle regex a riga
 // singola (una lettura di tutta la tabella scritta su due righe, la forma esatta dell'incidente v6, non veniva
@@ -94,6 +96,27 @@ console.log('\n== ce-guard: il doppione si vede al primo giro ==');
   t('24 il fermo del sync arriva al banner: ce_shopify_sync rispecchia health_log.shopify_sync prima della delete ce_%', /eq\('k', 'shopify_sync'\)/.test(RUN) && /add\('ce_shopify_sync'/.test(RUN) && RUN.indexOf("add('ce_shopify_sync'") < RUN.indexOf("delete().eq('day', today).like('k', 'ce_%')"));
   t('25 un cron del sync fermo/morto accende ce_shopify_sync (nessun giro da >120 min o nessuna riga dopo le 02 UTC)', /syncFermo/.test(RUN) && /> 120/.test(RUN) && /getUTCHours\(\) >= 2/.test(RUN));
   t('26 un conteggio DB non letto nel reconcile non finisce in ce_shopify_token', /if \(dbRes\.error\) continue;/.test(RUN));
+}
+
+console.log('\n== guardie: verdetti in health_log con upsert controllato (audit gate 14-09, B13/B60) ==');
+{
+  const flat = (s) => s.replace(/\)\s*\n\s*\./g, ').');
+  // ce-guard v6, sales-guard v3: un solo upsert su (day,k) con error destrutturato, niente piu' delete+insert non controllato
+  for (const [nome, src] of [['ce-guard', GUARD], ['sales-guard', SALES]]) {
+    const f = flat(src);
+    t(`27 ${nome}: verdetti scritti con upsert(..., { onConflict: 'day,k' }) e error destrutturato`,
+      /const \{ error: \w+ \} = await sb\.from\('health_log'\)\.upsert\(checks\.map/.test(f) && /onConflict: 'day,k'/.test(f), nome);
+    t(`28 ${nome}: la scrittura fallita ferma con errore e NON tocca ntfy`, /health_log non scrivibile/.test(src));
+    // ntfy: la fetch e' assegnata e .ok controllato prima di aggiornare lo stato dell'alert
+    t(`29 ${nome}: const res = await fetch(ntfy) e stato alert aggiornato solo se res.ok`,
+      /const res = await fetch\(/.test(src) && /res\.ok/.test(src) && /_alert_state/.test(src), nome);
+  }
+  // shopify-stock v17: un helper unico writeAutopushHealth con upsert; niente piu' delete su health_log
+  const fs = flat(STOCK);
+  t("30 shopify-stock: writeAutopushHealth fa upsert su (day,k) con error destrutturato",
+    /const writeAutopushHealth = async/.test(STOCK) && /const \{ error \} = await sb\.from\('health_log'\)\.upsert\(\{ day, k: 'stock_autopush'/.test(fs) && /onConflict: 'day,k'/.test(fs));
+  t("31 shopify-stock: nessun delete non controllato di health_log stock_autopush (sostituito dall'upsert)",
+    !/from\('health_log'\)\.delete\(\)\.eq\('day', today\)\.eq\('k', 'stock_autopush'\)/.test(fs));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);

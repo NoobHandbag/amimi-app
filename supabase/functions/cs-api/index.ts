@@ -1,4 +1,8 @@
-// cs-api — tool assistenza clienti: scritture dalla UI, gated dal JWT dell'utente loggato.
+// cs-api v11: tool assistenza clienti, scritture dalla UI, gated dal JWT dell'utente loggato.
+// v11 (2026-09-14, audit gate B35): `loadConv` distingue "non trovata" (404) da "lettura fallita" (503, riprova):
+//   prima scartava `error` e un 504 transitorio di PostgREST usciva come "conversazione inesistente" su
+//   set_categoria, set_stato, add_noise e remove_noise. Su errore, dopo retryOnce, lancia ConvReadError, che il
+//   wrapper di Deno.serve traduce in 503 senza scrivere nulla (stesso schema di write-api con GuardReadError).
 // Design 6.2 (categoria correggibile) + 3.4 (l'identita' che firma e' il selettore Benny/Ginni/Ale,
 // NON il login). AUTORIZZAZIONE (belt-and-suspenders): la UI non scrive mai diretto via RLS;
 //   1) l'Authorization header deve portare un access_token di un UTENTE Supabase Auth reale
@@ -38,6 +42,9 @@ const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>)
   await sleep(1500);
   return await fn();
 };
+// 2026-09-14 (audit gate, B35): lettura della conversazione fallita anche dopo il ritentativo: si esce con 503,
+// mai con 404 (che la UI legge come "sparita").
+class ConvReadError extends Error {}
 
 // Tassonomia (design 6.2 + 14a categoria "Modifica / correzione indirizzo" del 23-07):
 // la correzione manuale puo' solo assegnare una di queste, o svuotare.
@@ -52,6 +59,14 @@ const IDENT: Record<string, string> = { B: 'Benedetta', G: 'Ginevra', A: 'Ale' }
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 Deno.serve(async (req) => {
+  // 2026-09-14 (audit gate, B35): una conversazione non leggibile chiude la porta con 503, come write-api
+  try { return await handle(req); } catch (e) {
+    if (e instanceof ConvReadError) return json({ error: e.message }, 503);
+    throw e;
+  }
+});
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ error: 'method' }, 405);
 
@@ -77,7 +92,9 @@ Deno.serve(async (req) => {
 
   const loadConv = async (convId: string) => {
     if (!UUID_RE.test(convId)) return null;
-    const { data } = await sb.from('cs_conversations').select('id,categoria,categoria_source,stato,stato_by,canale,customer_email').eq('id', convId).maybeSingle();
+    // 2026-09-14 (audit gate, B35): `error` destrutturato e un ritentativo; null resta "non trovata", l'errore sale
+    const { data, error } = await retryOnce(() => sb.from('cs_conversations').select('id,categoria,categoria_source,stato,stato_by,canale,customer_email').eq('id', convId).maybeSingle());
+    if (error) throw new ConvReadError('conversazione non leggibile, riprova: ' + error.message);
     return data ?? null;
   };
 
@@ -262,4 +279,4 @@ Deno.serve(async (req) => {
   }
 
   return json({ error: 'azione sconosciuta: ' + action }, 422);
-});
+}

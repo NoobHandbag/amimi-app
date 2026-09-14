@@ -2,6 +2,11 @@
 // plus a GATED realign (sets Shopify available = gestionale "disponibili") behind
 // app_flags.shopify_write_enabled. Token in app_config (service-role). PIN-gated.
 //
+// 2026-09-14 (v17, audit gate B13): il verdetto `stock_autopush` in health_log era scritto in quattro punti con delete +
+// insert non controllati (un 504 sulla delete faceva fallire l'insert sull'unique health_log_day_k, uno sull'insert
+// lasciava il giorno senza riga: giro avvenuto ma invisibile). Ora un solo helper `writeAutopushHealth` con upsert
+// controllato su (day,k); se la scrittura fallisce la risposta porta `health_log_error` (il giro e' comunque avvenuto).
+//
 // 2026-09-13 (v16, sweep incidente doppioni, minori residui, Regola Ferrea 20): `doSync` controlla l'esito dell'upsert
 // di shopify_stock (fallito = 502 prima del prune, niente "synced N" bugiardo); `realign_all` legge i 5 flag con
 // retryOnce e un flag non letto FERMA il giro (health_log error) invece di ricadere sui default aggressivi.
@@ -195,16 +200,20 @@ Deno.serve(async (req) => {
   // con dati puliti Shopify deve rispecchiare lo stock reale). SKU non mappati mai toccati.
   // estratto in helper (who = attore per l'audit: 'cron' o l'utente); sync_now lo richiama a valle di doSync.
   const doRealignAll = async (dryRun: boolean, who: string) => {
+    // 2026-09-14 (audit gate, B13): unico punto di scrittura del verdetto `stock_autopush`, upsert controllato su (day,k)
+    // (indice unico health_log_day_k) al posto di delete + insert non controllati. Ritorna il messaggio d'errore, null se ok.
+    // Niente retry: e' una scrittura (Regola Ferrea 20).
+    const day = new Date().toISOString().slice(0, 10);
+    const writeAutopushHealth = async (row: { label: string; n: number; severity: string }) => {
+      const { error } = await sb.from('health_log').upsert({ day, k: 'stock_autopush', ...row }, { onConflict: 'day,k' });
+      return error ? error.message : null;
+    };
     // 2026-09-13 (sweep incidente doppioni): gate non letto = "disattivato" silenzioso (skipped con ok:true). Ora e' un errore esplicito.
     const { data: flag, error: gateErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'shopify_autopush_enabled').maybeSingle());
     if (gateErr) {
       const msg = 'autopush FERMATO: shopify_autopush_enabled non letto: ' + gateErr.message;
-      if (!dryRun) {
-        const today = new Date().toISOString().slice(0, 10);
-        await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
-        await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: msg, n: 1, severity: 'error' });
-      }
-      return { ok: false, error: msg, status: 503 };
+      const hlErr = dryRun ? null : await writeAutopushHealth({ label: msg, n: 1, severity: 'error' });
+      return { ok: false, error: msg, status: 503, ...(hlErr ? { health_log_error: hlErr } : {}) };
     }
     if (flag?.value !== 'true') return { ok: true, skipped: 'autopush disattivato (shopify_autopush_enabled != true)' };
 
@@ -222,12 +231,8 @@ Deno.serve(async (req) => {
     const flagErr = locErr ?? bufErr ?? holdErr ?? autoEnErr;
     if (flagErr) {
       const msg = 'autopush FERMATO: flag app_flags non letti: ' + flagErr.message;
-      if (!dryRun) {
-        const today = new Date().toISOString().slice(0, 10);
-        await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
-        await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: msg, n: 1, severity: 'error' });
-      }
-      return { ok: false, error: msg, status: 503 };
+      const hlErr = dryRun ? null : await writeAutopushHealth({ label: msg, n: 1, severity: 'error' });
+      return { ok: false, error: msg, status: 503, ...(hlErr ? { health_log_error: hlErr } : {}) };
     }
 
     // 2026-09-13 (sweep incidente doppioni): mirror o inventario non letti = giro a vuoto loggato 'ok' (classe B19).
@@ -236,12 +241,8 @@ Deno.serve(async (req) => {
     const { data: inv, error: invErr } = await sb.from('v_inventory').select('codice, disponibili_da_vendere');
     if (stErr || invErr) {
       const msg = `autopush FERMATO: ${stErr ? 'shopify_stock non letta: ' + stErr.message : 'v_inventory non letta: ' + invErr!.message}`;
-      if (!dryRun) {
-        const today = new Date().toISOString().slice(0, 10);
-        await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
-        await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: msg, n: 1, severity: 'error' });
-      }
-      return { ok: false, error: msg, status: 503 };
+      const hlErr = dryRun ? null : await writeAutopushHealth({ label: msg, n: 1, severity: 'error' });
+      return { ok: false, error: msg, status: 503, ...(hlErr ? { health_log_error: hlErr } : {}) };
     }
     const dispByCod = new Map((inv ?? []).map((r) => [r.codice, Math.max(0, Number(r.disponibili_da_vendere) || 0)]));
     const cutoff = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
@@ -333,16 +334,16 @@ Deno.serve(async (req) => {
       }
     }
     const summary = { pushed, held, ok: okCount, failed, failedCodici, untracked, unmapped, divergenti, dryRun, buffer, actions: actions.slice(0, 40) };
+    let healthLogError: string | null = null;
     if (!dryRun) {
-      const today = new Date().toISOString().slice(0, 10);
-      await sb.from('health_log').delete().eq('day', today).eq('k', 'stock_autopush');
       // severity riflette solo i fallimenti VERI (prima era hardcoded 'ok' -> un push fallito era invisibile, B19).
       // Gli `untracked` sono informativi e NON alzano la severity: niente warn perenne (brief 08-07).
-      await sb.from('health_log').insert({ day: today, k: 'stock_autopush', label: `autopush: ${pushed} push, ${held} hold, ${okCount} ok` + (failed ? `, ${failed} FALLITI: ${failedCodici.slice(0, 10).join(', ')}` : '') + (untracked.length ? `, ${untracked.length} untracked: ${untracked.slice(0, 10).join(', ')}` : '') + (divergenti.length ? `, ${divergenti.length} divergenti (varianti sorelle non allineate): ${divergenti.slice(0, 10).join(', ')}` : ''), n: failed, severity: failed > 0 ? 'warn' : 'ok' });
+      // 2026-09-14 (audit gate, B13): scrittura controllata; se fallisce il giro e' comunque avvenuto, la risposta lo dice.
+      healthLogError = await writeAutopushHealth({ label: `autopush: ${pushed} push, ${held} hold, ${okCount} ok` + (failed ? `, ${failed} FALLITI: ${failedCodici.slice(0, 10).join(', ')}` : '') + (untracked.length ? `, ${untracked.length} untracked: ${untracked.slice(0, 10).join(', ')}` : '') + (divergenti.length ? `, ${divergenti.length} divergenti (varianti sorelle non allineate): ${divergenti.slice(0, 10).join(', ')}` : ''), n: failed, severity: failed > 0 ? 'warn' : 'ok' });
       // logga anche i run con soli fallimenti/untracked/divergenti (prima: solo pushed||held -> giorni di soli errori senza traccia, brief 08-07)
       if (pushed || held || failed || untracked.length || divergenti.length) await sb.from('change_log').insert({ tbl: 'shopify_stock', row_id: 'realign_all', op: 'stock_autopush', after: summary, chi: who, source: 'shopify-stock' });
     }
-    return { ok: true, ...summary };
+    return { ok: true, ...summary, ...(healthLogError ? { health_log_error: healthLogError } : {}) };
   };
   if (action === 'realign_all') { const r = await doRealignAll(body.dryRun === true, 'cron') as { status?: number }; return json(r, r.status ?? 200); }
 

@@ -65,7 +65,7 @@ const MARKERS = {
     "const onShop = !!she ||",
     "const cascata_fallita: Record<string, string> = {};",
     "if (ce) cascata_fallita[t] = ce.message;",
-    "const { data: exRow, error: exe } = await retryOnce(() => sb.from('expenses').select('year, month, status').eq('id', id).maybeSingle());",
+    "const { data: exRow, error: exe } = await retryOnce(() => sb.from('expenses').select('year, month, status, categoria').eq('id', id).maybeSingle());",
     "if (exe) return json({ error: `spesa non leggibile (${exe.message}): approvazione rifiutata, riprova` }, 503);",
     "const { data: exist, error: exe } = await retryOnce(() => sb.from('expenses').select('id, year, month, date_paid, costo, operazione'));",
     "const { data: np, error: npe } = await retryOnce(() => sb.from('products').select('cogs, item, variant').eq('codice_norm', nc).maybeSingle());",

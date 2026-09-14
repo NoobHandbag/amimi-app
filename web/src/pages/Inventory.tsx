@@ -233,6 +233,9 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
     setNowBusy(true);
     try {
       const r = await syncNowShopify(pin, chi);
+      // 2026-09-14 (audit gate, B38): fnCall ora lancia sui non-2xx; qui resta il caso 200 con
+      // errore nel realign (gate non letto = 503 interno): mai un toast verde su un giro non fatto
+      if (r.error || r.realign?.error) throw new Error(r.error || r.realign?.error);
       if (r.skipped === 'cooldown') toast('Giro appena eseguito: riprova tra qualche secondo.', 'ok');
       else if (r.realign?.skipped) toast('Autopush Shopify disattivato (interruttore server).', 'err');
       else {

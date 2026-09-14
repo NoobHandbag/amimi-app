@@ -1,4 +1,7 @@
 // cs-sync v15 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v20 (2026-09-14, audit gate B21): setStatoAuto scartava l'errore della lettura di stato e tornava false in
+//   silenzio: su un 504 la conversazione chiusa 'auto' non veniva riaperta e la replica del cliente restava
+//   'fatto' per sempre. Ora retryOnce e, se la lettura fallisce, una riga cs_events 'stato_auto_read_failed'.
 // v18 (2026-09-13, brief cs_sync_stallo_dal_3_9): CINTURA ANTI-STALLO. Dal 01-09 sera al 13-09 il
 //   cursore Gmail e' rimasto fermo a 818185: `processMessage`/`processOutbound` ritornavano
 //   'transient' su QUALSIASI eccezione, scartando l'errore vero, e su 'transient' il record non si
@@ -771,7 +774,15 @@ Deno.serve(async (req) => {
   // il nome di una persona non si tocca nulla; la riapertura vale solo per cio' che l'automatismo
   // stesso ha chiuso; stato gia' giusto = zero scritture (niente eventi ridondanti).
   const setStatoAuto = async (convId: string, nuovo: 'fatto' | 'da_fare', motivo: string): Promise<boolean> => {
-    const { data: c } = await sb.from('cs_conversations').select('id, stato, stato_by').eq('id', convId).maybeSingle();
+    // B21 (audit gate 14-09): la lettura dello stato scartava l'errore e tornava false in silenzio, e la funzione gira
+    // una volta sola per messaggio: su un 504 la conversazione chiusa 'auto' NON veniva riaperta e la replica del
+    // cliente restava 'fatto' per sempre, senza che nessuno lo vedesse. Ora retryOnce e, se la lettura fallisce
+    // comunque, una riga cs_events 'stato_auto_read_failed' lo rende visibile (Regola Ferrea 20).
+    const { data: c, error: cErr } = await retryOnce(() => sb.from('cs_conversations').select('id, stato, stato_by').eq('id', convId).maybeSingle());
+    if (cErr) {
+      await sb.from('cs_events').insert({ conversation_id: convId, azione: 'stato_auto_read_failed', chi: 'cs-sync', dettaglio: { nuovo, motivo, error: String(cErr.message ?? '').slice(0, 200) } });
+      return false;
+    }
     if (!c) return false;
     if (c.stato_by && c.stato_by !== 'auto') return false;   // marcatura umana: mai sovrascritta
     if (c.stato === nuovo) return false;

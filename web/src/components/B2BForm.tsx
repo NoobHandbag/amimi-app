@@ -24,6 +24,11 @@ export default function B2BForm({ pin, chi, initialNegozio }: { pin: string; chi
     if (!prod) return toast('Scegli un prodotto', 'err');
     if (!negozio) return toast('Scegli il negozio', 'err');
     if (!(Number(qta) > 0)) return toast('Quantità non valida', 'err');
+    // 2026-09-14 (audit gate, B42): la quota negozio e' una frazione (0,5 = 50%); 50 al posto di 0,5
+    // scriveva un ricavo B2B enormemente negativo nel CE. Il server la rifiuta comunque con 422.
+    const p = Number(perc);
+    if (!Number.isFinite(p) || p < 0 || p > 1) return toast('% negozio deve stare fra 0 e 1 (es. 0,5 = 50%)', 'err');
+    if (prezzo !== '' && !(Number(prezzo) >= 0)) return toast('Prezzo retail non valido', 'err');
     setBusy(true);
     const d = new Date(data);
     try {
@@ -56,7 +61,7 @@ export default function B2BForm({ pin, chi, initialNegozio }: { pin: string; chi
             <div><label className="fl">Prezzo retail €</label><NumberStepper value={prezzo} onChange={setPrezzo} decimal step={5} placeholder="0,00" /></div>
           </div>
           <label className="fl">% negozio (0–1)</label>
-          <NumberStepper value={perc} onChange={setPerc} decimal step={0.05} />
+          <NumberStepper value={perc} onChange={setPerc} decimal step={0.05} min={0} />
           <label className="fl">Data</label>
           <input className="txt" type="date" value={data} onChange={(e) => setData(e.target.value)} />
           <button className="submit" disabled={busy} onClick={submit}>{busy ? 'Salvo…' : 'Salva movimento B2B'}</button>

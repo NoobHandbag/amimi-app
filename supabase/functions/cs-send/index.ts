@@ -1,4 +1,11 @@
-// cs-send v7 — tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// cs-send v9: tool assistenza clienti, FASE 4: INVIO della risposta dall'app.
+// v9 (2026-09-14, audit gate B35): le letture RESIDUE da cui dipende la decisione di invio (riga della
+//   conversazione, registro cs_sends dopo un claim fallito, chiave del service account) scartavano `error`: un 504
+//   transitorio di PostgREST usciva come "conversazione inesistente" con `bloccante: true` (la UI spegneva
+//   "Invia adesso") o come rifiuto STRUTTURALE sulla chiave. Ora retryOnce + 503 non bloccante (riprova); il 404 e i
+//   rifiuti strutturali restano solo quando la lettura e' riuscita e il dato manca davvero.
+// v8 (2026-09-13, sweep incidente doppioni, Regola Ferrea 20): retryOnce e 503 sulle letture della cintura
+//   cross-cliente e della guardia anti doppio invio, PRIMA della rivendica su cs_sends.
 // v7 (2026-08-02, brief cs_crop_e_dati_falsi punto 3.1): i rifiuti dicono ora se sono STRUTTURALI
 //   (`bloccante: true`), cioe' se ripremere Invia produrra' lo stesso esito. Nella UAT dell'owner
 //   la UI mostrava "oggetto del thread sconosciuto: invio bloccato" in rosso e teneva "✓ Invia
@@ -299,9 +306,13 @@ Deno.serve(async (req) => {
   const sendKey = String(body.send_key || '').toLowerCase();
   if (!UUID_RE.test(sendKey)) return json({ error: 'send_key mancante o non valida' }, 422);
 
-  const { data: conv } = await sb.from('cs_conversations')
+  // 2026-09-14 (audit gate, B35): la lettura scartava `error`, quindi un 504 transitorio usciva come 404
+  // "conversazione inesistente" con `bloccante: true` e la UI spegneva "Invia adesso" per un inciampo di rete.
+  // Ora retryOnce e 503 NON bloccante (riprovare ha senso); il 404 resta solo per riga assente a lettura riuscita.
+  const { data: conv, error: convErr } = await retryOnce(() => sb.from('cs_conversations')
     .select('id, gmail_thread_id, canale, customer_email, customer_name, subject, lingua, stato, stato_by, last_msg_at')
-    .eq('id', convId).maybeSingle();
+    .eq('id', convId).maybeSingle());
+  if (convErr) return json({ error: 'conversazione non leggibile, riprova: ' + convErr.message.slice(0, 120) }, 503);
   if (!conv) return blocco('conversazione inesistente', 404);
 
   // 3) canale: solo email_diretta e form_*; chat e rumore NON si inviano da qui (server-side, non solo UI)
@@ -360,7 +371,10 @@ Deno.serve(async (req) => {
   const nowIso = () => new Date().toISOString();
   const { error: claimErr } = await sb.from('cs_sends').insert({ send_key: sendKey, conversation_id: convId, chi, to_email: to, testo_sha: testoSha });
   if (claimErr) {
-    const { data: ex } = await sb.from('cs_sends').select('status, gmail_message_id, created_at').eq('send_key', sendKey).maybeSingle();
+    // 2026-09-14 (audit gate, B35): stessa classe: la rilettura del registro decide se la mail e' gia' partita,
+    // quindi si ritenta una volta e su errore si risponde 503 (riprova) senza toccare nulla.
+    const { data: ex, error: exErr } = await retryOnce(() => sb.from('cs_sends').select('status, gmail_message_id, created_at').eq('send_key', sendKey).maybeSingle());
+    if (exErr) return json({ error: 'registro invii non leggibile, riprova: ' + exErr.message.slice(0, 120) }, 503);
     if (!ex) return json({ error: 'registro invii non disponibile: invio bloccato (' + claimErr.message.slice(0, 120) + ')' }, 500);
     if (ex.status === 'sent') return json({ ok: true, already_sent: true, to, gmail_message_id: ex.gmail_message_id });
     const fresh = ex.created_at && Date.now() - new Date(ex.created_at as string).getTime() < 2 * 60 * 1000;
@@ -377,7 +391,11 @@ Deno.serve(async (req) => {
   };
 
   // 7) Gmail: token del service account (delegation con gmail.send, prerequisito owner)
-  const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'cs_gmail_sa_key').maybeSingle();
+  // 2026-09-14 (audit gate, B35): la lettura scartava `error`: un 504 transitorio diventava "chiave assente",
+  // rifiuto STRUTTURALE e status='error' sul claim. Ora retryOnce e 503 non strutturale: la stessa send_key
+  // riprova (il claim in 'error' viene riaperto al tentativo successivo, vedi sopra).
+  const { data: flag, error: flagErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'cs_gmail_sa_key').maybeSingle());
+  if (flagErr) return await sendFail(503, 'chiave service account non leggibile, riprova: ' + flagErr.message.slice(0, 120));
   if (!flag?.value) return await sendFail(500, 'chiave service account assente (app_flags.cs_gmail_sa_key)', true);
   let sa: { client_email?: string; private_key?: string };
   try { sa = JSON.parse(String(flag.value)); } catch { return await sendFail(500, 'chiave service account non valida (JSON)', true); }
