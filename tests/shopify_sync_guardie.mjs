@@ -16,7 +16,11 @@ const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
 const SYNC = read('supabase/functions/shopify-sync/index.ts');
 const GUARD = read('supabase/functions/ce-guard/index.ts');
 const MIG = read('supabase/migrations/0117_shopify_orders_dedup_unique.sql');
-const lines = SYNC.split('\n');
+// Audit gate 14-09 (finding B57): le catene che vanno a capo prima del `.select(` sfuggivano alle regex a riga
+// singola (una lettura di tutta la tabella scritta su due righe, la forma esatta dell'incidente v6, non veniva
+// contata). Le righe si esaminano dopo aver riattaccato le continuazioni.
+const flat = (src) => src.replace(/\)\s*\n\s*\./g, ').');
+const lines = flat(SYNC).split('\n');
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra ? '  <- ' + String(extra).slice(0, 200) : '')); } };
@@ -28,6 +32,10 @@ console.log('\n== shopify-sync: nessuna lettura di intere tabelle core ==');
   const li = lines.filter((l) => /from\('shopify_line_items'\)\s*\.select\(/.test(l));
   t(`2  shopify_line_items letta ${li.length} volte, sempre con .in/.limit/.eq`, li.every((l) => /\.(in|limit|eq)\(/.test(l)));
   t('3  guardia sul cap PostgREST per l\'anagrafica letta intera', /POSTGREST_CAP\s*=\s*1000/.test(SYNC) && /length >= POSTGREST_CAP/.test(SYNC));
+  // autocontrollo (finding B57): la forma dell'incidente v6 scritta su due righe deve essere VISTA dal test 1
+  const evil = "  const { data: ex0 } = await sb.from('shopify_orders')\n    .select('order_id, created_at_shop');";
+  const visto = flat(evil).split('\n').filter((l) => /from\('shopify_orders'\)\s*\.select\(/.test(l));
+  t('3b rilevatore: lettura intera su due righe contata e riconosciuta senza .in/.limit/.eq', visto.length === 1 && !/\.(in|limit|eq)\(/.test(visto[0]));
 }
 
 console.log('\n== shopify-sync: ogni lettura/scrittura core destruttura `error` ==');
@@ -37,7 +45,7 @@ console.log('\n== shopify-sync: ogni lettura/scrittura core destruttura `error` 
     const ops = lines.filter((l) => new RegExp(`await (retryOnce\\(\\(\\) => )?sb\\.from\\('${tbl}'\\)\\.(select|insert|upsert|update)\\(`).test(l) && !/\.delete\(/.test(l));
     const senzaErrore = ops.filter((l) => !/\{[^}]*\berror\b[^}]*\}\s*=\s*await (retryOnce\(\(\) => )?sb\.from/.test(l));
     t(`4  ${tbl}: ${ops.length} operazioni, tutte con error destrutturato`, ops.length > 0 && senzaErrore.length === 0, senzaErrore[0]);
-    const scritture = lines.filter((l) => new RegExp(`sb\\.from\\('${tbl}'\\)\\.(insert|upsert)\\(`).test(l));
+    const scritture = lines.filter((l) => new RegExp(`sb\\.from\\('${tbl}'\\)\\.(insert|upsert|update|delete)\\(`).test(l));
     t(`4b ${tbl}: nessun retry sulle scritture di dati (${scritture.length})`, scritture.every((l) => !/retryOnce/.test(l)), scritture.find((l) => /retryOnce/.test(l)));
   }
   t('5  una lettura fallita ferma il giro: helper fail() che scrive health_log e risponde errore', /const fail = async/.test(SYNC) && /return fail\('ultimo ordine'/.test(SYNC) && /return fail\('ordini esistenti'/.test(SYNC) && /return fail\('products'/.test(SYNC) && /return fail\('product_aliases'/.test(SYNC));

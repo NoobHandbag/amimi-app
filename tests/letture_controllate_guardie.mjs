@@ -150,6 +150,9 @@ const MARKERS = {
   ]
 };
 
+// Audit gate 14-09: le catene supabase-js spesso vanno a capo prima del `.select(`/`.upsert(`: senza questa
+// normalizzazione una scrittura ritentata scritta su due righe passava a vuoto (finding B57).
+const flat = (src) => src.replace(/\)\s*\n\s*\./g, ').');
 const TELEMETRIA = /'(health_log|cs_events|change_log)'/;
 const RETRY_SU_SCRITTURA = /retryOnce\(\(\) => sb\.from\('[^']+'\)\.(insert|update|upsert|delete)\(/;
 for (const [fn, snippets] of Object.entries(MARKERS)) {
@@ -157,8 +160,21 @@ for (const [fn, snippets] of Object.entries(MARKERS)) {
   console.log(`\n== ${fn} ==`);
   t(`${fn}: helper retryOnce presente`, /const retryOnce = async/.test(SRC));
   for (const s of snippets) t(`${fn}: ${s.slice(0, 90)}`, SRC.includes(s), 'frammento assente');
-  const retryScritture = SRC.split('\n').filter((l) => RETRY_SU_SCRITTURA.test(l) && !TELEMETRIA.test(l));
+  const retryScritture = flat(SRC).split('\n').filter((l) => RETRY_SU_SCRITTURA.test(l) && !TELEMETRIA.test(l));
   t(`${fn}: nessun retry su scritture di dati`, retryScritture.length === 0, retryScritture[0]);
+}
+
+console.log('\n== autocontrollo del rilevatore ==');
+{
+  const evil1 = "const { error } = await retryOnce(() => sb.from('loyalty_points').upsert({ a: 1 }));";
+  const evil2 = "const { error } = await retryOnce(() => sb.from('loyalty_points')\n      .upsert({ a: 1 }));";
+  const buona = "const { data } = await retryOnce(() => sb.from('cs_messages')\n      .select('id'));";
+  const tele = "await retryOnce(() => sb.from('health_log')\n  .upsert({ k: 'x' }, { onConflict: 'day,k' }));";
+  const hit = (s) => flat(s).split('\n').some((l) => RETRY_SU_SCRITTURA.test(l) && !TELEMETRIA.test(l));
+  t('rilevatore: retry su scrittura in una riga', hit(evil1));
+  t('rilevatore: retry su scrittura su DUE righe', hit(evil2));
+  t('rilevatore: retry su lettura su due righe non segnalato', !hit(buona));
+  t('rilevatore: telemetria ritentata non segnalata', !hit(tele));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);
