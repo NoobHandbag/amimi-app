@@ -264,6 +264,19 @@ function parseAddr(v: string): { email: string; name: string } {
 
 // --- classificazione deterministica dei flussi (design sez. 3, 5; niente AI) ---
 type Canale = 'email_diretta' | 'form_contatto' | 'form_evento' | 'chat_notifica' | 'rumore';
+// v34 (fix coda falsi positivi, CASI_APERTI n.22): rilevatore DETERMINISTICO di CHIUSURA sull'ultimo
+// inbound. Misurato il 14-09 su tutto lo storico: 0 falsi positivi sulle conversazioni aperte reali,
+// 21 "grazie" riconosciuti fra le gia' chiuse. Serve a NON riaprire una conversazione il cui ultimo
+// messaggio cliente e' solo un ringraziamento/conferma senza domanda (falso positivo n.1 sui clienti veri).
+// ==== PURE:cs-closure BEGIN ====
+const CLOSURE_YES = /(grazie|ringrazi|a presto|a prestissimo|gentiliss|perfett|va bene|buona giornata|buon lavoro|buona serata|thank|^\s*ok\b)/i;
+const CLOSURE_NO = /([?]|\bma\b|però|come |quando|dove |perch|quanto|potete|potrest|riusc|vorrei|posso |vi chiedo|reso|problem|rott|difett|rovinat|danneggiat|guast|sbagli|manca|non funz|aiuto|urgent|how |when |where |but |refund|return|broken|wrong|missing|help|issue)/i;
+function isClosure(text: string | null | undefined): boolean {
+  const t = String(text ?? '').trim();
+  if (!t || t.length >= 160) return false;   // i messaggi lunghi non sono chiusure secche
+  return CLOSURE_YES.test(t) && !CLOSURE_NO.test(t);
+}
+// ==== PURE:cs-closure END ====
 const isAmimi = (e: string) => e.endsWith('@amimi.it');
 const isShopifySender = (e: string) => e === 'mailer@shopify.com' || e.endsWith('@shopifyemail.com') || e.endsWith('@shopify.com');
 // ==== PURE:cs-deny BEGIN ====
@@ -734,10 +747,10 @@ Deno.serve(async (req) => {
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const action = String(body.action || 'poll');
-  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet' && action !== 'backfill_order_number' && action !== 'reapply_noise' && action !== 'reapply_spam') return json({ error: 'azione sconosciuta: ' + action }, 422);
+  if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet' && action !== 'backfill_order_number' && action !== 'reapply_noise' && action !== 'reapply_spam' && action !== 'chat_autoclose') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
-  const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders', 'cs_stall_msg']);
+  const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders', 'cs_stall_msg', 'cs_reopen_skip_closure', 'cs_chat_autoclose_days']);
   for (const r of rows ?? []) flags[r.key] = r.value ?? '';
 
   const enabled = flags.cs_enabled === 'true';
@@ -811,6 +824,27 @@ Deno.serve(async (req) => {
     let closed = 0;
     for (const c of candidates) if (await setStatoAuto(c.id, 'fatto', 'backfill: risposta gia\' inviata')) closed++;
     return json({ ok: true, dry_run: false, chiusi: closed });
+  }
+
+  // v34 (fix 1, CASI_APERTI n.22): auto-chiusura delle chat presumibilmente gia' gestite in Inbox.
+  // Le risposte in Shopify Inbox NON tornano su Gmail, quindi una chat_notifica resta da_fare per
+  // sempre. Azione ISOLATA (dry_run DEFAULT; la mano umana resta protetta da setStatoAuto): chiude le
+  // chat non-fatto senza nuovo messaggio cliente da N giorni. NON e' nel cron: si lancia a mano finche'
+  // l'owner non l'ha vista girare, poi si aggiunge alla cadenza. `giorni` dal body o da cs_chat_autoclose_days.
+  if (action === 'chat_autoclose') {
+    const giorni = Number(body.giorni ?? flags.cs_chat_autoclose_days ?? 7);
+    if (!Number.isFinite(giorni) || giorni <= 0) return json({ ok: false, error: 'giorni non valido (>0)' }, 422);
+    const apply = body.apply === true;
+    const soglia = new Date(Date.now() - giorni * 86400000).toISOString();
+    const { data: stali, error: se } = await sb.from('cs_conversations')
+      .select('id, subject, stato, stato_by, last_msg_at')
+      .eq('canale', 'chat_notifica').neq('stato', 'fatto').lt('last_msg_at', soglia).limit(200);
+    if (se) return json({ ok: false, error: 'lettura fallita, riprova: ' + se.message }, 503);
+    const cand = ((stali ?? []) as { id: string; subject: string | null; stato: string; stato_by: string | null; last_msg_at: string | null }[]).filter((c) => !c.stato_by || c.stato_by === 'auto');   // mano umana esclusa
+    if (!apply) return json({ ok: true, dry_run: true, giorni, chiudibili: cand.length, elenco: cand.map((c) => ({ id: c.id, subject: c.subject, last_msg_at: c.last_msg_at })) });
+    let closed = 0;
+    for (const c of cand) if (await setStatoAuto(c.id, 'fatto', `chat inattiva da ${giorni}g (presunta gestita in Inbox)`)) closed++;
+    return json({ ok: true, dry_run: false, giorni, chiusi: closed });
   }
 
   // --- RE-APPLY del pre-filtro rumore allo storico (v17, CASI_APERTI n.15 (a)) ---
@@ -1473,7 +1507,14 @@ Deno.serve(async (req) => {
         await sb.from('cs_events').insert({ conversation_id: convId, azione: 'ingest', chi: 'cs-sync', dettaglio: { canale: p.cl.canale, message_id: id, ...(p.cl.spam ? { spam: true, spam_reasons: p.cl.spamReasons } : {}) } });
         // v9: il cliente ha replicato a una conversazione chiusa DALL'AUTOMATISMO -> si riapre
         // (setStatoAuto la lascia intatta se e' stata chiusa a mano: la mano umana vince)
-        await setStatoAuto(convId, 'da_fare', 'nuovo messaggio del cliente dopo la risposta');
+        // v34 (fix 2, CASI_APERTI n.22, gated cs_reopen_skip_closure default OFF): se il nuovo
+        // messaggio e' una pura CHIUSURA ("grazie mille!"), NON riaprire: e' il falso positivo n.1
+        // sui clienti veri (misurato 14-09: 0 falsi positivi sul backlog aperto).
+        if (flags.cs_reopen_skip_closure === 'true' && isClosure(stripQuoted(p.bodyText, p.cl.canale) || p.bodyText)) {
+          await sb.from('cs_events').insert({ conversation_id: convId, azione: 'reopen_skipped_closure', chi: 'cs-sync', dettaglio: { message_id: id } });
+        } else {
+          await setStatoAuto(convId, 'da_fare', 'nuovo messaggio del cliente dopo la risposta');
+        }
         // v6: su un NUOVO messaggio cliente di una conversazione gia' classificata, la regola
         // sollecito va rivalutata subito (senza AI, senza toccare categoria)
         await recomputeUrgency(convId);
