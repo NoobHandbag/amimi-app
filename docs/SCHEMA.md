@@ -62,6 +62,7 @@ Un INSERT/UPDATE che include una colonna generata FALLISCE (gia' successo: orpha
 ## 5. Viste (logica derivata)
 
 - **`v_inventory`**: giacenza = acquisti - shopify - qromo - regali - b2b_venduto + resi_rientrati + aggiustamenti; espone anche in_conto_vendita, disponibili_da_vendere, valore, last_sale, on_shopify (da `shopify_stock` LIVE, migr 0021; dal 0041 SOLO status active: le bozze non contano come pubblicate), image_url con fallback Shopify.
+- **`v_ce_completezza`** / **`v_vendite_orfane`** (migr 0126/0127, 14-09): guardiani di CONSERVAZIONE letti da ce-guard v7. `v_ce_completezza`: per mese nativo, `spese_scoperte` = spese approvate meno (righe-spesa del CE + esclusioni COGS + PACKAGING); != 0 = una spesa senza bucket (come fu la logistica). `v_vendite_orfane`: righe di vendita con year/month NULL/invalido, invisibili al CE. Entrambe devono restare a 0.
 - **`v_ce_totale`**: dal 14-09 (migr 0123, audit gate B48) `logistica_var` = `COALESCE(m.logistica_var, ex.logistica_var, 0)`: le spese LOGISTICA con sottocategoria 'Spedizioni' entrano nel Totale anche da marzo in poi (prima solo gen/feb dal blocco manuale; logistica_mag continua a escludere le sped). Mar/apr ri-chiusi in ce_snapshots; maggio ha solo lo scostamento del caso 16.
 - **`v_ce_amimi`** / **`v_ce_amimi_summary`**: P&L brand per mese (online/offline/b2b netti /1.22, cogs, packaging, commissioni, logistica, resi /1.22 da migr 0038; MC1, MC2).
 - **`v_ce_totale`** / **`v_ce_totale_summary`** (migr 0028, DI RECORD per il Totale): calcolo live + blocco `ce_totale_manual`.

@@ -16,6 +16,10 @@
 // telemetria `shopify_sync` di shopify-sync v7, cosi' un giro fermato arriva al banner e a ntfy) e
 // `ce_guard_letture` (letture fallite durante il run: prima un errore di lettura dava data=null -> 0 problemi ->
 // check VERDE per finta).
+// v7 (2026-09-14, audit gate, guardiano di conservazione): due nuovi check `ce_completezza_spese` (v_ce_completezza:
+// ogni euro di spesa approvata di un mese nativo e' in una riga del CE o in un'esclusione dichiarata COGS/PACKAGING)
+// e `ce_completezza_ricavi` (v_vendite_orfane: nessuna vendita con periodo NULL/invalido). Nati dall'incidente
+// logistica: una categoria senza bucket spariva dal P&L in silenzio. Ora un buco del genere accende subito il banner.
 // v6 (2026-09-14, audit gate B13/B60): i verdetti vanno in health_log con UN upsert controllato su (day,k) al posto di
 // delete + insert non controllati (un 504 lasciava il giorno vuoto o i check di ieri, e il banner non lo diceva); se
 // fallisce -> 500, niente ntfy ne' ceguard_alert_state. Prune controllato (non fatale) delle chiavi ce_* non piu'
@@ -244,6 +248,21 @@ Deno.serve(async (req) => {
   const { data: dopp } = read('v_shopify_doppioni', await sb.from('v_shopify_doppioni').select('*').single());
   const dExtra = N(dopp?.ordini_righe_extra), dGruppi = N(dopp?.gruppi_righe_ripetute), dSenza = N(dopp?.ordini_senza_righe);
   add('ce_shopify_doppioni', `Doppioni Shopify: ${dExtra} righe ordine oltre i distinti, ${dGruppi} gruppi di righe ripetute, ${dSenza} ordini senza righe`, dExtra + dGruppi + dSenza);
+
+  // 11-bis) CONSERVAZIONE SPESE (2026-09-14, audit gate): nato dall'incidente logistica (una categoria x
+  // sottocategoria che non aveva NESSUN bucket nel CE e spariva per mesi in silenzio). v_ce_completezza verifica
+  // che, per ogni mese nativo, OGNI euro di spesa approvata sia o in una riga-spesa del CE o in un'esclusione
+  // dichiarata (COGS, PACKAGING). `spese_scoperte` != 0 = un euro che non e' ne' contato ne' escluso: un nuovo buco.
+  const { data: comp } = read('v_ce_completezza', await sb.from('v_ce_completezza').select('year, month, spese_scoperte'));
+  const scoperti = (comp ?? []).filter((r: { spese_scoperte: number }) => Math.abs(N(r.spese_scoperte)) > 0.01);
+  add('ce_completezza_spese',
+    'Spese non contate nel CE (ne\' escluse): ' + (scoperti.length ? scoperti.map((r: { year: number; month: number; spese_scoperte: number }) => `${r.year}-${r.month}: ${r.spese_scoperte}`).join(', ') : 'nessuna, ogni euro e\' contato o escluso (COGS/PACKAGING)'),
+    scoperti.length);
+  // righe di VENDITA con periodo NULL/invalido: sarebbero invisibili al CE (che raggruppa per year/month), lo
+  // stesso rischio dal lato ricavi. v_vendite_orfane conta le righe scoperte su shopify/qromo/gift/b2b.
+  const { data: orf } = read('v_vendite_orfane', await sb.from('v_vendite_orfane').select('*').single());
+  const nOrfani = N(orf?.totale);
+  add('ce_completezza_ricavi', nOrfani ? `${nOrfani} righe di vendita con periodo (year/month) mancante o invalido: invisibili al CE (${N(orf?.shopify)} shopify, ${N(orf?.qromo)} qromo, ${N(orf?.gift)} gift, ${N(orf?.b2b)} b2b)` : 'nessuna riga di vendita con periodo mancante', nOrfani);
 
   // 12) SYNC ORDINI (v5): shopify-sync v7 scrive la sua telemetria in health_log con chiave `shopify_sync` (una
   // riga al giorno, 'error' = giro FERMATO per lettura fallita o cintura, nessun insert). Il banner rosso in Home

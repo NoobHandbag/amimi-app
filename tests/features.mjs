@@ -66,5 +66,18 @@ console.log('\n===== v_sku_availability correctness (stato logic) =====');
   ok(rows.some((r) => r.stato === 'in_stock_non_pubblicato'), 'detects in-stock-not-published losses');
 }
 
+console.log('\n===== CONSERVAZIONE spese e ricavi (audit gate 14-09, guardiano anti-logistica) =====');
+{
+  // ogni euro di spesa approvata di un mese nativo e' in una riga del CE o in un'esclusione dichiarata (COGS/PACKAGING):
+  // spese_scoperte deve essere ~0 su OGNI mese. Se un domani una categoria/sottocategoria non ha bucket (come fu la
+  // logistica), qui diventa != 0 e il test e' rosso PRIMA che il P&L sbagli in silenzio.
+  const comp = await get('/v_ce_completezza?select=year,month,spese_scoperte');
+  const scoperti = comp.filter((r) => Math.abs(Number(r.spese_scoperte)) > 0.01);
+  ok(scoperti.length === 0, `spese: ogni euro contato o escluso su tutti i ${comp.length} mesi nativi (${scoperti.length} scoperti: ${scoperti.map((r) => `${r.year}-${r.month}:${r.spese_scoperte}`).join(', ')})`);
+  // nessuna riga di vendita con periodo NULL/invalido (sarebbe invisibile al CE, ricavo sparito)
+  const orf = (await get('/v_vendite_orfane?select=totale'))[0];
+  ok(Number(orf?.totale) === 0, `ricavi: nessuna vendita con periodo mancante (totale orfane = ${orf?.totale})`);
+}
+
 console.log(`\n===== ${pass} passed, ${fail} failed =====`);
 if (fail) { console.log('FAILURES:\n- ' + fails.join('\n- ')); process.exit(1); }

@@ -96,6 +96,9 @@ console.log('\n== ce-guard: il doppione si vede al primo giro ==');
   t('24 il fermo del sync arriva al banner: ce_shopify_sync rispecchia health_log.shopify_sync prima della delete ce_%', /eq\('k', 'shopify_sync'\)/.test(RUN) && /add\('ce_shopify_sync'/.test(RUN) && RUN.indexOf("add('ce_shopify_sync'") < RUN.indexOf("delete().eq('day', today).like('k', 'ce_%')"));
   t('25 un cron del sync fermo/morto accende ce_shopify_sync (nessun giro da >120 min o nessuna riga dopo le 02 UTC)', /syncFermo/.test(RUN) && /> 120/.test(RUN) && /getUTCHours\(\) >= 2/.test(RUN));
   t('26 un conteggio DB non letto nel reconcile non finisce in ce_shopify_token', /if \(dbRes\.error\) continue;/.test(RUN));
+  // 2026-09-14 (audit gate): il guardiano di conservazione delle spese (anti-logistica) e' cablato
+  t('26b ce-guard controlla la completezza spese (v_ce_completezza) e ricavi (v_vendite_orfane)',
+    /v_ce_completezza/.test(GUARD) && /add\('ce_completezza_spese'/.test(GUARD) && /v_vendite_orfane/.test(GUARD) && /add\('ce_completezza_ricavi'/.test(GUARD));
 }
 
 console.log('\n== guardie: verdetti in health_log con upsert controllato (audit gate 14-09, B13/B60) ==');
