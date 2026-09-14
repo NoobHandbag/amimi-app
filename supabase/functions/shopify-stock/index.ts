@@ -2,6 +2,11 @@
 // plus a GATED realign (sets Shopify available = gestionale "disponibili") behind
 // app_flags.shopify_write_enabled. Token in app_config (service-role). PIN-gated.
 //
+// 2026-09-14 (v18, audit gate A3): un RIALZO dell'autopush si fa solo se il DB e' allineato a Shopify (sync di oggi
+// non-error e recente, e nessun ordine Shopify non ancora ingerito): nella finestra :07/:17/:27 disponibili_da_vendere
+// e' troppo alto e la push rialzava uno stock appena venduto. Decisione ok/push/hold estratta nel modulo puro
+// decide.ts (test tests/autopush_decision.mjs). I ribassi passano sempre; una conta fisica fresca resta autorevole.
+//
 // 2026-09-14 (v17, audit gate B13): il verdetto `stock_autopush` in health_log era scritto in quattro punti con delete +
 // insert non controllati (un 504 sulla delete faceva fallire l'insert sull'unique health_log_day_k, uno sull'insert
 // lasciava il giorno senza riga: giro avvenuto ma invisibile). Ora un solo helper `writeAutopushHealth` con upsert
@@ -38,6 +43,7 @@
 // nessuna chiamata in piu', e lo STOCK non cambia di una virgola (Regola Ferrea 15: il writer
 // unico resta questo, e verso Shopify continua a scrivere solo il realign gated).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { decide } from './decide.ts';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -249,6 +255,28 @@ Deno.serve(async (req) => {
     const { data: fresh } = await sb.from('counts').select('codice').gte('data_conta', cutoff);
     const freshSet = new Set((fresh ?? []).map((r) => r.codice));
 
+    // A3 (audit gate 14-09): un RIALZO si fa solo se il DB e' allineato a Shopify. disponibili_da_vendere conosce
+    // solo gli ordini gia' ingeriti: nella finestra :07/:17/:27 (o con un sync fermo) il target e' troppo alto e la
+    // push rialzerebbe uno stock appena venduto (7 scritture sbagliate in 4 giorni sui best seller). Gate: il sync
+    // di oggi non e' error ed e' recente, e nessun ordine su Shopify e' piu' nuovo dell'ultimo ingerito. Se non
+    // passa: solo ribassi (sempre sicuri), i rialzi in HOLD. Una conta fisica fresca (hasFresh) resta autorevole.
+    let raisesAllowed = true; let raiseHoldReason = '';
+    {
+      const today2 = new Date().toISOString().slice(0, 10);
+      const { data: syncRow } = await retryOnce(() => sb.from('health_log').select('severity, created_at').eq('day', today2).eq('k', 'shopify_sync').maybeSingle());
+      const syncFresh = !!syncRow && syncRow.severity !== 'error' && (Date.now() - new Date(syncRow.created_at as string).getTime()) < 65 * 60 * 1000;
+      if (!syncFresh) { raisesAllowed = false; raiseHoldReason = 'sync ordini non fresco (health_log shopify_sync assente/vecchio/error)'; }
+      else {
+        const { data: lastOrd } = await retryOnce(() => sb.from('shopify_orders').select('created_at_shop').order('created_at_shop', { ascending: false }).limit(1).maybeSingle());
+        const since = lastOrd?.created_at_shop as string | undefined;
+        if (since) {
+          const cr = await fetch(`${API}/orders/count.json?status=any&created_at_min=${encodeURIComponent(new Date(since).toISOString())}`, { headers: SH });
+          if (!cr.ok) { raisesAllowed = false; raiseHoldReason = 'conteggio ordini Shopify non leggibile'; }
+          else { const cnt = Number((await cr.json())?.count ?? 0); if (cnt > 1) { raisesAllowed = false; raiseHoldReason = `${cnt - 1} ordini su Shopify non ancora ingeriti`; } }
+        }
+      }
+    }
+
     let pushed = 0, held = 0, okCount = 0, failed = 0; const actions: Record<string, unknown>[] = []; const unmapped: string[] = []; const failedCodici: string[] = []; const untracked: string[] = []; const divergenti: string[] = [];
     // helper: scrive lo stock su un inventory item; true = Shopify ha accettato
     const setStock = async (item: string, available: number) => (await fetch(`${API}/inventory_levels/set.json`, {
@@ -288,17 +316,19 @@ Deno.serve(async (req) => {
       // `item_qtys` NULL = riga mai ri-sincronizzata dopo la 0106: si ricade sul confronto vecchio,
       // mai peggio di prima, e si ripara al primo `sync`.
       const qtys = s.item_qtys as Record<string, number> | null;
-      const perItem = (qtys && items.length) ? items.map((it) => Number(qtys[it])) : null;
-      const perItemNoto = !!perItem && perItem.every((q) => Number.isFinite(q));
-      const allineato = perItemNoto ? perItem!.every((q) => q === target) : current === target;
-      if (allineato) { okCount++; continue; }
+      const perItemRaw = (qtys && items.length) ? items.map((it) => Number(qtys[it])) : null;
+      const perItemNoto = !!perItemRaw && perItemRaw.every((q) => Number.isFinite(q));
+      const perItem = perItemNoto ? perItemRaw : null;
+      // decisione estratta nel modulo puro decide.ts (audit gate A3), testata offline: ok / push / hold-rialzo
+      const d = decide({ target, current, perItem, hasFresh, holdRaises, raisesAllowed });
+      if (d === 'ok') { okCount++; continue; }
       // DIVERGENTI: il numero collassato diceva "a posto" ma un item sorella no. Sono ESATTAMENTE le
       // righe che il codice vecchio saltava in silenzio: si riportano a parte (come `untracked` e
       // `unmapped`) perche' il caso si veda invece di sparire dentro `ok`. Non alzano la severity:
       // la push che segue li sistema nello stesso giro; se fallisce, e' `failed` e quello alza warn.
       if (current === target) divergenti.push(s.codice);
-      // hold solo se richiesto esplicitamente (modo conservativo): non alzare senza conta fresca
-      if (holdRaises && target > current && !hasFresh) { held++; actions.push({ codice: s.codice, azione: 'HOLD (serve conta per alzare)', current, target }); continue; }
+      // A3: un rialzo si tiene se manca la conta fresca E (hold_raises esplicito OPPURE il sync non e' allineato).
+      if (d === 'hold') { held++; actions.push({ codice: s.codice, azione: `HOLD rialzo (${holdRaises ? 'hold_raises' : raiseHoldReason})`, current, target }); continue; }
       actions.push({ codice: s.codice, azione: dryRun ? 'PUSH (dry)' : 'PUSH', current, target, ...(perItemNoto ? { items_qty: perItem } : {}) });
       if (dryRun) { pushed++; continue; }
       const failedItems: string[] = [];
@@ -333,7 +363,7 @@ Deno.serve(async (req) => {
         }
       }
     }
-    const summary = { pushed, held, ok: okCount, failed, failedCodici, untracked, unmapped, divergenti, dryRun, buffer, actions: actions.slice(0, 40) };
+    const summary = { pushed, held, ok: okCount, failed, failedCodici, untracked, unmapped, divergenti, dryRun, buffer, raisesAllowed, ...(raiseHoldReason ? { raiseHoldReason } : {}), actions: actions.slice(0, 40) };
     let healthLogError: string | null = null;
     if (!dryRun) {
       // severity riflette solo i fallimenti VERI (prima era hardcoded 'ok' -> un push fallito era invisibile, B19).

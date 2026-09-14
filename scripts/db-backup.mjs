@@ -30,16 +30,20 @@ const manifest = { generated_at: new Date().toISOString(), source: URL, tables: 
 for (const t of TABLES) {
   try {
     const rows = [];
+    let failed = null;
     for (let from = 0; ; from += PAGE) {
       const r = await fetch(`${URL}/rest/v1/${t}?select=*`, {
         headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, Range: `${from}-${from + PAGE - 1}` },
       });
-      if (!r.ok) { if (from === 0) manifest.tables[t] = { skipped: r.status }; break; }
+      // 2026-09-14 (audit gate A7): un non-2xx su UNA QUALSIASI pagina e' un ERRORE, non solo sulla prima. Prima un
+      // 504 dopo la prima pagina usciva dal loop e il file veniva scritto TRONCO come se il backup fosse completo,
+      // e la guardia di completezza (che guarda solo `skipped`/`error`) non lo vedeva.
+      if (!r.ok) { failed = `HTTP ${r.status} a partire dalla riga ${from}`; break; }
       const batch = await r.json();
       rows.push(...batch);
       if (batch.length < PAGE) break;
     }
-    if (manifest.tables[t]?.skipped) { console.log(`${t}: skip (${manifest.tables[t].skipped})`); continue; }
+    if (failed) { manifest.tables[t] = { error: failed }; console.log(`${t}: ERRORE ${failed} (file NON scritto)`); continue; }
     writeFileSync(`db-backup/${t}.json`, JSON.stringify(rows));
     manifest.tables[t] = { rows: rows.length };
     console.log(`${t}: ${rows.length} rows`);
