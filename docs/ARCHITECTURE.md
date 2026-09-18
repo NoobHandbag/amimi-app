@@ -121,9 +121,17 @@ Colonne **generate, mai scrivere**: `codice_norm` (ovunque), `products.is_finali
 
 Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma (vedi §13).
 
-## 7. Frontend (6 sezioni)
+## 7. Frontend (7 sezioni)
 - **Cruscotto** (`Report.tsx`) — P&L Amimì/Totale con filtro mesi, trend per canale, "Chiedi ai dati"
-  (FLOW 6), card Meta Ads, calcolatore offerte B2B.
+  (FLOW 6), card Meta Ads (vecchia serie mensile a livello campagna, `v_ads_mensile`, ferma al 01-07: lo dichiara
+  e rimanda alla tab Ads), calcolatore offerte B2B.
+- **Ads** (`Ads.tsx`, tab `ads`, dal 18-09) — reportistica Meta a livello CREATIVITA' dalle viste
+  `v_ads_creative_status`, `v_ads_weekly_account`, `v_ads_set_inventory` (alimentate dall'edge `ads-sync`, cron
+  06:07 UTC): azioni proposte in testa, KPI 7 giorni con semafori CPA (target 45 / breakeven 76,70), settimane
+  con delta, creativita' ordinabili (spesa, acquisti, CPA/ROAS solo se ci sono acquisti, CTR vs settimana
+  precedente e vs 90g, frequency giornaliera, fatica, product set risolti/OOS, azione), product set vs inventario,
+  "Dati al ..." con avviso se il cron non gira, "Pull ora" (invoca `ads-sync`). Raggiungibile da `#ads` e dal
+  bottone nella card Meta Ads del Cruscotto (persona finance); NON e' nella nav ridotta (decisione 06-07).
 - **Salute & Movimenti** (`Salute.tsx`, tab `salute`, dal 06-07) — sola lettura: polso vendite online+offline
   14gg vs 14 precedenti, movimenti fornitori/resi, catalogo Shopify + flag operativi, semaforo salute da
   `health_log`. Numeri da `v_movimenti_14gg` (stessa finestra del digest Cowork); flag da `v_ops_flags`.

@@ -53,14 +53,17 @@ answers from an FAQ. New "Servizio Clienti" tab. Evidence: #0/#67/#114, IG_DM_cl
 ## 8. In-store / popup pickup analytics  [DESIGNED]
 Track ritiri-in-negozio + popup sales as a channel (count, MoM, geo). Dashboard card. Evidence: #23/#257.
 
-## 9. Meta Ads weekly card  [BACKEND BUILT 2026-09-18 — frontend tab TODO]
+## 9. Meta Ads weekly card  [BUILT 2026-09-18]
 Recurring light ad cadence (spend, ROAS, top creatives). New "Ads" tab; Meta MCP already connected.
 Evidence: #128/#218/#246/#91; analysis: Ads/Finance under-invested.
-2026-09-18: backend live (migr 0128-0131, edge `ads-sync` v1 + cron `ads-sync-daily` 06:07 UTC): tabelle a livello
+2026-09-18: backend live (migr 0128-0131, edge `ads-sync` v1.1 + cron `ads-sync-daily` 06:07 UTC): tabelle a livello
 ad/creativita', viste `v_ads_creative_status` (fatica, azione suggerita, inventario del product_set),
-`v_ads_creative_windows`, `v_ads_set_inventory`, `v_ads_weekly_account`; 90 giorni di storico. Resta la tab "Ads"
-nella PWA (dietro flag) che legge queste viste: finche' non c'e', `AdsCard` in Report.tsx legge ancora `v_ads_mensile`
-(livello campagna, ferma al 01-07). Vedi docs/EDGE_FUNCTIONS.md (ads-sync) e docs/SCHEMA.md sez. 15.
+`v_ads_creative_windows`, `v_ads_set_inventory`, `v_ads_weekly_account`; 90 giorni di storico. Tab "Ads" LIVE la sera
+stessa (`web/src/pages/Ads.tsx`: `#ads` + bottone nella card Meta Ads del Cruscotto). Restano, come miglioramenti:
+(a) la card mensile del Cruscotto legge ancora `v_ads_mensile` (livello campagna, ferma al 01-07, lo dichiara): da
+ripuntare a una vista mensile delle tabelle nuove quando Supabase e' libero; (b) frequency VERA a 7 giorni (oggi media
+della giornaliera, soglie tarate); (c) refresh di `schema.sql`. Vedi docs/EDGE_FUNCTIONS.md (ads-sync),
+docs/SCHEMA.md sez. 15, docs/ARCHITECTURE.md sez. 7.
 
 ## 10. Inventory valuation report  [DESIGNED — cheap]
 On-demand stock value at COGS and at retail, by line. Finance/dashboard report. Evidence: #297.
