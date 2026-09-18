@@ -147,6 +147,17 @@ const MARKERS = {
     "if (me) { failed++; continue; }",
     "const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {",
     "2026-09-13 (sweep incidente doppioni): lettura fallita = thread vuoto"
+  ],
+  // 2026-09-18 (audit gate feature Ads, finding A2): le letture di products/product_aliases da cui dipende
+  // codice_norm nella mappa product_set sono controllate e fail-closed, piu' la guardia sul cap PostgREST.
+  "ads-sync": [
+    "const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {",
+    "const { data: al, error: alErr } = await retryOnce(() => sb.from('product_aliases').select('shopify_name_norm, codice'));",
+    "if (alErr) return fail('product_aliases', alErr.message);",
+    "const { data: pr, error: prErr } = await retryOnce(() => sb.from('products').select('codice, codice_norm'));",
+    "if (prErr) return fail('products', prErr.message);",
+    "if (!pr?.length) return fail('products', 'anagrafica vuota: nessun prodotto letto');",
+    "if ((al ?? []).length >= POSTGREST_CAP || (pr ?? []).length >= POSTGREST_CAP) return fail('cap PostgREST',"
   ]
 };
 
