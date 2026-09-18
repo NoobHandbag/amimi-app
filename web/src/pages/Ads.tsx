@@ -60,7 +60,7 @@ export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: st
       .forEach((r) => { const k = r.product_set_id as string; const l = m.get(k) ?? []; if (l.length < 3) l.push(r.ad_name + (r.effective_status === 'ACTIVE' ? '' : ' (pausa)')); m.set(k, l); });
     return m;
   }, [rows]);
-  const sort = useSort(visibili as unknown as Record<string, unknown>[], 'spend_7');
+  const sort = useSort(visibili as unknown as Record<string, unknown>[], 'spend_7', 'desc'); // la creativita' che spende di piu' in cima
 
   const pull = async () => {
     setPulling(true); setPullMsg(null);
