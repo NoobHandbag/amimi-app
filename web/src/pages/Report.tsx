@@ -21,7 +21,7 @@ type Row = { month: number; netto: number; lordo: number; mc1: number; mc2: numb
 
 const CURRENT_MONTH = nowMonth(); // mese in corso, derivato dalla data (mai hardcoded)
 
-export default function Report({ onBack, onDetail }: { onBack?: () => void; onDetail?: () => void }) {
+export default function Report({ onBack, onDetail, onAds }: { onBack?: () => void; onDetail?: () => void; onAds?: () => void }) {
   const [ce, setCe] = useState<CE[]>([]);
   const [cet, setCet] = useState<CeTot[]>([]);
   const [inv, setInv] = useState<Inv[]>([]);
@@ -273,14 +273,14 @@ export default function Report({ onBack, onDetail }: { onBack?: () => void; onDe
         </div>
       </section>
 
-      <AdsCard />
+      <AdsCard onAds={onAds} />
       <ScontiCard />
       <DealCalc />
     </div>
   );
 }
 
-function AdsCard() {
+function AdsCard({ onAds }: { onAds?: () => void }) {
   const [ads, setAds] = useState<AdsMese[] | null>(null);
   const [fresh, setFresh] = useState<Freschezza | null>(null);
   useEffect(() => { fetchAdsMensile().then(setAds).catch(() => setAds([])); fetchFreschezza().then(setFresh).catch(() => {}); }, []);
@@ -297,11 +297,14 @@ function AdsCard() {
   return (
     <section className="card">
       <h2>Meta Ads 2026</h2>
+      {/* 18-09: l'ingest continuo esiste (edge ads-sync, tab Ads); questa tabella resta la vecchia serie mensile a livello
+          campagna (meta_ads_daily), ferma al 01-07, finche' non viene ripuntata a una vista mensile delle tabelle nuove. */}
       {staleDays != null && staleDays > 7 && (
         <p className="note" style={{ color: 'var(--warning-700)', fontWeight: 600, marginTop: 0 }}>
-          ⚠ Dati Meta fermi al {lastDay} ({staleDays} giorni fa): non esiste un ingest continuo in app. La spesa e il ROAS recenti sono nel report settimanale (connettore Meta).
+          ⚠ Questa tabella mensile e' la vecchia serie a livello campagna, ferma al {lastDay} ({staleDays} giorni fa). I dati vivi, per creativita' e aggiornati ogni mattina, sono nella tab Ads.
         </p>
       )}
+      {onAds && <p style={{ marginTop: 0 }}><button className="chip on" type="button" onClick={onAds}>Apri Ads per creativita' →</button></p>}
       <div className="kpis">
         <Kpi label="Spesa ads" value={eur(spend)} tone="accent" />
         <Kpi label="ROAS" value={roas.toFixed(2) + '×'} tone={roas >= 1 ? 'green' : 'red'} />

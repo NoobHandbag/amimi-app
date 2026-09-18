@@ -173,6 +173,47 @@ export async function syncShopify(pin: string) {
   return j as { ok: boolean; inserted?: number };
 }
 
+// ---------- Amimì Ads (2026-09-18): viste migr 0129/0130 alimentate dall'edge ads-sync ----------
+// I numeric arrivano da PostgREST come stringhe: la pagina li normalizza con Number(). Sola lettura via anon.
+export type AdsCreativeStatus = {
+  ad_id: string; as_of: string | null; ad_name: string | null; campaign_name: string | null; campaign_id: string | null; adset_id: string | null;
+  effective_status: string | null; product_set_id: string | null; thumbnail_url: string | null; link: string | null;
+  spend_7: number | string | null; purchases_7: number | string | null; value_7: number | string | null;
+  ctr_7: number | string | null; ctr_prev7: number | string | null; ctr_90: number | string | null; cpm_7: number | string | null;
+  freq_media_giornaliera_7: number | string | null; cpa_7: number | string | null; roas_7: number | string | null;
+  prodotti_nel_set: number | string | null; prodotti_risolti: number | string | null; prodotti_oos: number | string | null;
+  prodotti_non_su_shopify: number | string | null; pct_oos: number | string | null;
+  stato_fatica: string | null; azione_suggerita: string | null;
+};
+export type AdsWeekly = { settimana: string; spend: number | string | null; purchases: number | string | null; value: number | string | null; cpa: number | string | null; roas: number | string | null; spend_wow: number | string | null; purchases_wow: number | string | null };
+export type AdsSetInventory = { product_set_id: string; prodotti_nel_set: number | string; prodotti_risolti: number | string; prodotti_oos: number | string; prodotti_low_stock: number | string; prodotti_non_su_shopify: number | string; pct_oos: number | string | null };
+
+export async function fetchAdsCreativeStatus(): Promise<AdsCreativeStatus[]> {
+  const { data, error } = await supabase.from('v_ads_creative_status').select('*').order('spend_7', { ascending: false, nullsFirst: false });
+  if (error) throw error;
+  return (data ?? []) as AdsCreativeStatus[];
+}
+export async function fetchAdsWeekly(): Promise<AdsWeekly[]> {
+  const { data, error } = await supabase.from('v_ads_weekly_account').select('*').order('settimana', { ascending: false }).limit(16);
+  if (error) throw error;
+  return (data ?? []) as AdsWeekly[];
+}
+export async function fetchAdsSetInventory(): Promise<AdsSetInventory[]> {
+  const { data, error } = await supabase.from('v_ads_set_inventory').select('*').order('prodotti_nel_set', { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as AdsSetInventory[];
+}
+/** "Pull ora" della tab Ads: invoca l'edge ads-sync (pull di IERI + anagrafica creative + mappa product_set),
+ *  la stessa azione del cron delle 06:07 UTC. Senza token in app_config risponde {ok:true, skipped:'no_token'}. */
+export async function pullAds(pin: string, chi: string) {
+  const r = await fetch((import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/ads-sync', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin, chi, source: 'app' }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `Errore ${r.status}`);
+  return j as { ok: boolean; skipped?: string; dailyRows?: number; creativeRows?: number; mapRows?: number; sets?: number };
+}
+
 // 2026-09-14 (audit gate, B39): data di Roma, definita nel modulo puro helpers (re-export per gli 8 import esistenti)
 export { oggi } from './helpers';
 

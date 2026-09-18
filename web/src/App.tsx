@@ -11,14 +11,15 @@ import Ingest from './pages/Ingest';
 import Ordini from './pages/Ordini';
 import Inventory from './pages/Inventory';
 import Negozi from './pages/Negozi';
+import Ads from './pages/Ads';
 import Icon from './components/Icon';
 import AssistantPanel from './components/AssistantPanel';
 import UpdateBanner from './components/UpdateBanner';
 import { pushBack } from './lib/backnav';
 
 export default function App() {
-  // URL diretto: .../amimi-app/#negozi apre la sezione B2B (richiesta owner 10-09)
-  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : 'home'));
+  // URL diretto: .../amimi-app/#negozi apre la sezione B2B (richiesta owner 10-09); #ads la reportistica Meta (18-09)
+  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : 'home'));
   const [param, setParam] = useState<string | undefined>();
   const [chi, setChiS] = useState(() => localStorage.getItem('amimi_chi') || 'Ale');
   const setChi = (c: string) => { setChiS(c); localStorage.setItem('amimi_chi', c); };
@@ -37,7 +38,8 @@ export default function App() {
     <div className="app">
       <main>
         {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} />}
-        {tab === 'cruscotto' && <Report onBack={() => go('home')} onDetail={() => go('ce')} />}
+        {tab === 'cruscotto' && <Report onBack={() => go('home')} onDetail={() => go('ce')} onAds={() => go('ads')} />}
+        {tab === 'ads' && <Ads onBack={() => go('home')} pin={pin} chi={chi} />}
         {tab === 'ce' && <CeDetail onBack={() => go('home')} />}
         {tab === 'margini' && <Margini onBack={() => go('home')} />}
         {tab === 'clienti' && <Clienti onBack={() => go('home')} />}

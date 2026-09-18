@@ -1,9 +1,9 @@
 // Centralized people + persona-driven navigation. Dan removed (= Ale, same person).
 // The Home surfaces only the tiles relevant to each persona; Registra shows the same actions for everyone.
 
-export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi';
-/** Tab visibili SOLO alle persona con finance=true (Home le filtra). */
-export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti']);
+export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads';
+/** Tab visibili SOLO alle persona con finance=true (Home le filtra). 'ads' (18-09) si raggiunge dal Cruscotto o da #ads. */
+export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti', 'ads']);
 export type Tile = { icon: string; label: string; tab: Tab; param?: string; badge?: 'arrivi' | 'todo' };
 
 export const PEOPLE = ['Ale', 'Bene', 'Ginevra'] as const;
