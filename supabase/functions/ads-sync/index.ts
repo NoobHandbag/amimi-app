@@ -234,12 +234,20 @@ Deno.serve(async (req) => {
   if (prErr) return fail('products', prErr.message);
   if (!pr?.length) return fail('products', 'anagrafica vuota: nessun prodotto letto');
   if ((al ?? []).length >= POSTGREST_CAP || (pr ?? []).length >= POSTGREST_CAP) return fail('cap PostgREST', `anagrafica a ${POSTGREST_CAP}+ righe: la lettura e' troncata, serve la paginazione`);
+  // v1.1: il retailer_id del catalogo Meta (sync Shopify) e' il variant id Shopify -> shopify_stock.variant_id -> codice:
+  // risoluzione PRIMARIA, il nome resta il fallback (primo backfill: per nome solo 59% di 517 righe risolte).
+  const { data: sk, error: skErr } = await retryOnce(() => sb.from('shopify_stock').select('variant_id, codice'));
+  if (skErr) return fail('shopify_stock', skErr.message);
+  if ((sk ?? []).length >= POSTGREST_CAP) return fail('cap PostgREST', `shopify_stock a ${POSTGREST_CAP}+ righe: la lettura e' troncata, serve la paginazione`);
   try {
     const aliasMap = new Map((al ?? []).map((r: any) => [r.shopify_name_norm, r.codice]));
     const codiceByNorm = new Map((pr ?? []).map((r: any) => [r.codice_norm, r.codice]));
+    const variantMap = new Map((sk ?? []).filter((r: any) => r.variant_id && r.codice).map((r: any) => [String(r.variant_id), String(r.codice)]));
     // Risoluzione per nome prodotto normalizzato sull'anagrafica app (products/alias), come il resolver di
     // shopify-sync; retailer_id e nome restano salvati grezzi per un match migliore dopo.
     const resolveCodice_ = (name: string, retailer: string): string | null => {
+      const byVariant = variantMap.get(retailer);
+      if (byVariant) return norm(byVariant);
       const n1 = norm(name);
       if (aliasMap.has(n1)) return norm(aliasMap.get(n1)!);
       if (codiceByNorm.has(n1)) return n1;

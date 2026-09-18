@@ -157,7 +157,9 @@ const MARKERS = {
     "const { data: pr, error: prErr } = await retryOnce(() => sb.from('products').select('codice, codice_norm'));",
     "if (prErr) return fail('products', prErr.message);",
     "if (!pr?.length) return fail('products', 'anagrafica vuota: nessun prodotto letto');",
-    "if ((al ?? []).length >= POSTGREST_CAP || (pr ?? []).length >= POSTGREST_CAP) return fail('cap PostgREST',"
+    "if ((al ?? []).length >= POSTGREST_CAP || (pr ?? []).length >= POSTGREST_CAP) return fail('cap PostgREST',",
+    "const { data: sk, error: skErr } = await retryOnce(() => sb.from('shopify_stock').select('variant_id, codice'));",
+    "if (skErr) return fail('shopify_stock', skErr.message);"
   ]
 };
 

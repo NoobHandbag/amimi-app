@@ -15,6 +15,8 @@ const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
 const SRC = read('supabase/functions/ads-sync/index.ts');
 const M128 = read('supabase/migrations/0128_meta_ads_creative.sql');
 const M129 = read('supabase/migrations/0129_v_ads_creative.sql');
+// 0130 ridefinisce v_ads_creative_status con le soglie tarate sui dati reali: e' la definizione VIVA da controllare.
+const M130 = read('supabase/migrations/0130_v_ads_creative_status_taratura.sql');
 const noComments = (s) => s.replace(/\/\/[^\n]*/g, '');
 
 let ok = 0, ko = 0;
@@ -43,6 +45,7 @@ console.log('\n== B3/B4/B5/B6: guasti dichiarati, mai silenziosi ==');
   t('9  B6 dedup daily prima dell\'upsert', /new Map\(rows\.map\(\(r\) => \[r\.ad_id, r\]\)\)/.test(SRC) && /upsert\(dedup, \{ onConflict: 'date,ad_id' \}\)/.test(SRC));
   t('9b B6 dedup set-map prima dell\'upsert', /new Map\(rows\.map\(\(r\) => \[`\$\{r\.product_set_id\}\|\$\{r\.retailer_id\}`, r\]\)\)/.test(SRC) && /upsert\(dedupMap, \{ onConflict: 'product_set_id,retailer_id' \}\)/.test(SRC));
   t('10 C6 backfill a blocchi di max 30 giorni', /Math\.min\(30, Math\.max\(1, Number\(body\.days\)/.test(SRC) && /next_offset/.test(SRC));
+  t('10b v1.1 risoluzione primaria via shopify_stock.variant_id, con lettura controllata', /const byVariant = variantMap\.get\(retailer\)/.test(SRC) && /from\('shopify_stock'\)\.select\('variant_id, codice'\)/.test(SRC) && /if \(skErr\) return fail\('shopify_stock'/.test(SRC));
 }
 
 console.log('\n== B7: date di Roma con Intl, mai il trucco toLocaleString ==');
@@ -63,9 +66,9 @@ console.log('\n== B7: date di Roma con Intl, mai il trucco toLocaleString ==');
 console.log('\n== B1/B2/C2: viste e migrazione ==');
 {
   t('14 B1 la media della frequency giornaliera ha il suo nome (niente freq_7 che sembra a 7 giorni)', /freq_media_giornaliera_7/.test(M129) && !/\bfreq_7\b/.test(M129));
-  t('14b B1 soglie raggiungibili sulla media giornaliera (< 2,0, max osservato)', /freq_media_giornaliera_7,0\) >= 1\.8/.test(M129) && !/freq_media_giornaliera_7,0\) >= 3/.test(M129));
-  t('15 B2 "set scoperto" gated sulla copertura (>=3 risolti e >= meta\' del set)', /prodotti_risolti,0\) >= 3/.test(M129) && /0\.5 \* nullif\(prodotti_nel_set,0\)/.test(M129));
-  t('15b B2 il messaggio dice risolti/nel_set', /prodotti_risolti \|\| '\/' \|\| prodotti_nel_set/.test(M129));
+  t('14b B1 soglie tarate sui dati reali (max media 7g osservato 1,74): alta >= 1,7, mai >= 3', /freq_media_giornaliera_7,0\) >= 1\.7/.test(M130) && !/freq_media_giornaliera_7,0\) >= [23]/.test(M130) && /freq_media_giornaliera_7/.test(M130));
+  t('15 B2 "set scoperto" gated sulla copertura (>=3 risolti e >= meta\' del set) nella definizione viva', /prodotti_risolti,0\) >= 3/.test(M130) && /0\.5 \* nullif\(prodotti_nel_set,0\)/.test(M130));
+  t('15b B2 il messaggio dice risolti/nel_set', /prodotti_risolti \|\| '\/' \|\| prodotti_nel_set/.test(M130));
   t('16 C2 vincoli unici verificati dopo il create', /meta_ads_creative_daily_uk/.test(M128) && /meta_product_set_map_uk/.test(M128) && /raise exception/.test(M128));
   t('17 tabelle base senza grant anon (letture solo via viste)', !/grant select[^\n]*(meta_ads_creative_daily|meta_ad_creative|meta_product_set_map)[^\n]*anon/.test(M128));
   t('18 C7 as_of esposto dalle finestre', /r\.d as as_of/.test(M129) && /w\.as_of/.test(M129));
