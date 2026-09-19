@@ -1,88 +1,164 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchAdsCreativeStatus, fetchAdsWeekly, fetchAdsSetInventory, pullAds } from '../lib/api';
-import type { AdsCreativeStatus, AdsWeekly, AdsSetInventory } from '../lib/api';
-import { useSort } from '../lib/sortable';
+import { fetchAdsCreativeStatus, fetchAdsWeekly, fetchAdsSetModelli, fetchAdsCatalogoModelli, pullAds } from '../lib/api';
+import type { AdsCreativeStatus, AdsWeekly, AdsSetModello, AdsCatModello } from '../lib/api';
 
-// Pagina "Ads" (feature Amimì Ads, 2026-09-18): reportistica Meta a livello CREATIVITA'. Legge SOLO le viste
-// v_ads_creative_status / v_ads_weekly_account / v_ads_set_inventory (migr 0129/0130), alimentate dall'edge
-// ads-sync (cron 06:07 UTC). "Pull ora" invoca la stessa edge (pull di ieri + anagrafica + mappa product_set).
-// Soglie CPA dalla prior art (Apps Script 22-05): target 45, breakeven 76,70. Raggiungibile da #ads e dal Cruscotto.
+// Pagina "Ads" (redesign 2026-09-19, richiesta owner). Mostra l'ARCHITETTURA reale (solo le campagne con ad attivi:
+// COLD e SUPER HOT; le altre sono obsolete), con gli ASSET visibili (image_url, per i video il fotogramma
+// thumbnail), la fatica sulla frequency VERA a 7 giorni, e per ogni ad i MODELLI che pubblicizza con quante borse
+// sono LIVE. Legge solo le viste v_ads_* (anon). "Pull ora" invoca l'edge ads-sync. Soglie CPA dalla prior art.
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const eur2 = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const nz = (v: unknown): number | null => (v == null || v === '' ? null : num(v));
-const CPA_TARGET = 45;
-const CPA_BREAKEVEN = 76.7;
+const CPA_TARGET = 45, CPA_BREAKEVEN = 76.7;
 const cpaTone = (cpa: number | null) => (cpa == null ? '' : cpa <= CPA_TARGET ? 'green' : cpa <= CPA_BREAKEVEN ? 'accent' : 'red');
-const faticaClass = (s: string | null) => (s === 'alta' ? 'pill warn' : s === 'media' ? 'pill muted' : 'pill ok');
+const faticaCls = (s: string) => (s === 'alta' ? 'pill warn' : s === 'media' ? 'pill muted' : 'pill ok');
 const dmy = (iso: string) => { const d = new Date(iso.slice(0, 10) + 'T12:00:00'); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`; };
 
-function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone: string }) {
-  return <div className={`kpi ${tone}`}><div className="v">{value}</div><div className="k">{label}</div>{sub && <div className="ksub">{sub}</div>}</div>;
-}
-
-// riga normalizzata a NUMERI (PostgREST rende i numeric come stringhe): serve a ordinare e sommare bene
 type Row = {
-  ad_id: string; ad_name: string; campaign_name: string; effective_status: string; product_set_id: string | null; as_of: string | null;
+  ad_id: string; ad_name: string; campaign_name: string; adset_name: string; effective_status: string;
+  object_type: string; product_set_id: string | null; image_url: string | null; thumbnail_url: string | null; as_of: string | null;
   spend_7: number; purchases_7: number; value_7: number; cpa_7: number | null; roas_7: number | null;
-  ctr_7: number | null; ctr_prev7: number | null; ctr_90: number | null; freq: number | null;
-  risolti: number | null; nel_set: number | null; pct_oos: number | null; stato_fatica: string; azione: string | null;
+  ctr_7: number | null; ctr_prev7: number | null; ctr_90: number | null; freq_7g: number | null; freq_giorn: number | null;
+  stato_fatica: string; azione: string | null; nel_set: number | null; risolti: number | null; pct_oos: number | null;
 };
 const toRow = (r: AdsCreativeStatus): Row => ({
-  ad_id: r.ad_id, ad_name: r.ad_name ?? r.ad_id, campaign_name: r.campaign_name ?? '', effective_status: r.effective_status ?? '', product_set_id: r.product_set_id, as_of: r.as_of,
+  ad_id: r.ad_id, ad_name: r.ad_name ?? r.ad_id, campaign_name: r.campaign_name ?? '(?)', adset_name: r.adset_name ?? '(senza adset)',
+  effective_status: r.effective_status ?? '', object_type: r.object_type ?? '', product_set_id: r.product_set_id,
+  image_url: r.image_url, thumbnail_url: r.thumbnail_url, as_of: r.as_of,
   spend_7: num(r.spend_7), purchases_7: num(r.purchases_7), value_7: num(r.value_7), cpa_7: nz(r.cpa_7), roas_7: nz(r.roas_7),
-  ctr_7: nz(r.ctr_7), ctr_prev7: nz(r.ctr_prev7), ctr_90: nz(r.ctr_90), freq: nz(r.freq_media_giornaliera_7),
-  risolti: nz(r.prodotti_risolti), nel_set: nz(r.prodotti_nel_set), pct_oos: nz(r.pct_oos), stato_fatica: r.stato_fatica ?? 'ok', azione: r.azione_suggerita,
+  ctr_7: nz(r.ctr_7), ctr_prev7: nz(r.ctr_prev7), ctr_90: nz(r.ctr_90), freq_7g: nz(r.freq_7g), freq_giorn: nz(r.freq_media_giornaliera_7),
+  stato_fatica: r.stato_fatica ?? 'ok', azione: r.azione_suggerita, nel_set: nz(r.prodotti_nel_set), risolti: nz(r.prodotti_risolti), pct_oos: nz(r.pct_oos),
 });
+
+function AdThumb({ img, thumb, video }: { img: string | null; thumb: string | null; video: boolean }) {
+  const first = img || thumb;
+  const [src, setSrc] = useState<string | null>(first);
+  const [triedThumb, setTriedThumb] = useState(!img);
+  return (
+    <div className="adthumbwrap">
+      {src
+        ? <img className="adthumb" src={src} alt="" loading="lazy" referrerPolicy="no-referrer"
+            onError={() => { if (!triedThumb && thumb && thumb !== src) { setSrc(thumb); setTriedThumb(true); } else setSrc(null); }} />
+        : <div className="adthumb ph">nessuna<br />anteprima</div>}
+      {video && <span className="vtag">VIDEO</span>}
+    </div>
+  );
+}
+
+// riga metriche: CTR con freccia (7g vs settimana precedente)
+function ctrArrow(ctr: number | null, prev: number | null) {
+  if (ctr == null || prev == null) return null;
+  if (ctr > prev + 0.05) return <span className="arr-up"> ▲</span>;
+  if (ctr < prev - 0.05) return <span className="arr-dn"> ▼</span>;
+  return null;
+}
+
+function AdCardView({ r, modelli }: { r: Row; modelli: { modello: string; prodotti: number; live: number }[] }) {
+  const paused = r.effective_status !== 'ACTIVE';
+  const mods = modelli.filter((m) => m.modello !== '(non risolto)').sort((a, b) => b.prodotti - a.prodotti);
+  const liveSet = mods.reduce((s, m) => s + m.live, 0), prodSet = mods.reduce((s, m) => s + m.prodotti, 0);
+  return (
+    <div className={`adcard${paused ? ' paused' : ''}`}>
+      <AdThumb img={r.image_url} thumb={r.thumbnail_url} video={r.object_type === 'VIDEO'} />
+      <div className="adbody">
+        <div className="top">
+          <span className="nm">{r.ad_name}</span>
+          <span className={paused ? 'tag off' : 'tag live'}>{paused ? 'in pausa' : 'attivo'}</span>
+          {!paused && r.stato_fatica !== 'ok' && <span className={faticaCls(r.stato_fatica)}>fatica {r.stato_fatica}</span>}
+        </div>
+        <div className="admetrics">
+          <span>spesa 7g <b>{eur(r.spend_7)}</b></span>
+          <span>CPA <b className={r.cpa_7 != null && r.cpa_7 > CPA_BREAKEVEN ? 'neg' : ''}>{r.cpa_7 == null ? 'n/d' : eur2(r.cpa_7)}</b></span>
+          <span>ROAS <b>{r.roas_7 == null ? 'n/d' : r.roas_7.toFixed(1) + '×'}</b></span>
+          <span>CTR <b>{r.ctr_7 == null ? 'n/d' : r.ctr_7.toFixed(2) + '%'}</b>{ctrArrow(r.ctr_7, r.ctr_prev7)}<span className="muted"> (90g {r.ctr_90 == null ? '–' : r.ctr_90.toFixed(2)})</span></span>
+          <span>freq 7g <b>{r.freq_7g == null ? 'n/d' : r.freq_7g.toFixed(1)}</b></span>
+        </div>
+        {mods.length > 0 && (
+          <div className="admod">
+            Pubblicizza <b>{prodSet}</b> prodotti (<b>{liveSet}</b> live){mods.length ? ': ' : ''}
+            {mods.slice(0, 5).map((m, i) => (
+              <span key={m.modello}>{i > 0 ? ' · ' : ''}<span className={m.live < m.prodotti ? 'lo' : ''}>{m.modello} {m.live}/{m.prodotti}</span></span>
+            ))}
+            {mods.length > 5 ? ` · +${mods.length - 5}` : ''}
+          </div>
+        )}
+        {!paused && r.azione && <div className="adact">→ {r.azione}</div>}
+      </div>
+    </div>
+  );
+}
 
 export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: string; chi: string }) {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [weeks, setWeeks] = useState<AdsWeekly[] | null>(null);
-  const [sets, setSets] = useState<AdsSetInventory[] | null>(null);
+  const [setMod, setSetMod] = useState<AdsSetModello[] | null>(null);
+  const [catMod, setCatMod] = useState<AdsCatModello[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [pulling, setPulling] = useState(false);
   const [pullMsg, setPullMsg] = useState<string | null>(null);
-  const [soloAttive, setSoloAttive] = useState(true);
+  const [showPaused, setShowPaused] = useState(false);
 
   useEffect(() => {
-    Promise.all([fetchAdsCreativeStatus(), fetchAdsWeekly(), fetchAdsSetInventory()])
-      .then(([r, w, s]) => { setRows(r.map(toRow)); setWeeks(w); setSets(s); })
+    Promise.all([fetchAdsCreativeStatus(), fetchAdsWeekly(), fetchAdsSetModelli(), fetchAdsCatalogoModelli()])
+      .then(([r, w, sm, cm]) => { setRows(r.map(toRow)); setWeeks(w); setSetMod(sm); setCatMod(cm); })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [reload]);
 
-  const visibili = useMemo(() => (rows ?? []).filter((r) => (soloAttive ? r.effective_status === 'ACTIVE' : r.spend_7 > 0 || r.effective_status === 'ACTIVE')), [rows, soloAttive]);
-  const azioni = useMemo(() => (rows ?? []).filter((r) => r.azione && r.effective_status === 'ACTIVE'), [rows]);
-  const adsPerSet = useMemo(() => {
-    const m = new Map<string, string[]>();
-    (rows ?? []).filter((r) => r.product_set_id).sort((a, b) => (b.effective_status === 'ACTIVE' ? 1 : 0) - (a.effective_status === 'ACTIVE' ? 1 : 0) || b.spend_7 - a.spend_7)
-      .forEach((r) => { const k = r.product_set_id as string; const l = m.get(k) ?? []; if (l.length < 3) l.push(r.ad_name + (r.effective_status === 'ACTIVE' ? '' : ' (pausa)')); m.set(k, l); });
+  const modBySet = useMemo(() => {
+    const m = new Map<string, { modello: string; categoria: string; prodotti: number; live: number }[]>();
+    (setMod ?? []).forEach((r) => { const l = m.get(r.product_set_id) ?? []; l.push({ modello: r.modello, categoria: r.categoria, prodotti: num(r.prodotti), live: num(r.live) }); m.set(r.product_set_id, l); });
     return m;
+  }, [setMod]);
+  const catByModel = useMemo(() => {
+    const m = new Map<string, { live: number; prodotti: number; su_shopify: number; categoria: string }>();
+    (catMod ?? []).forEach((r) => m.set(r.modello, { live: num(r.live), prodotti: num(r.prodotti), su_shopify: num(r.su_shopify), categoria: r.categoria }));
+    return m;
+  }, [catMod]);
+
+  const arch = useMemo(() => {
+    if (!rows) return [];
+    const activeCamps = [...new Set(rows.filter((r) => r.effective_status === 'ACTIVE').map((r) => r.campaign_name))];
+    return activeCamps.map((camp) => {
+      const cr = rows.filter((r) => r.campaign_name === camp);
+      const adsets = [...new Set(cr.map((r) => r.adset_name))].map((a) => {
+        const ads = cr.filter((r) => r.adset_name === a).sort((x, y) => (y.effective_status === 'ACTIVE' ? 1 : 0) - (x.effective_status === 'ACTIVE' ? 1 : 0) || y.spend_7 - x.spend_7);
+        return { adset: a, ads, attivi: ads.filter((r) => r.effective_status === 'ACTIVE').length };
+      });
+      return { camp, spend7: cr.reduce((s, r) => s + r.spend_7, 0), attivi: cr.filter((r) => r.effective_status === 'ACTIVE').length, adsets };
+    }).sort((a, b) => b.spend7 - a.spend7);
   }, [rows]);
-  const sort = useSort(visibili as unknown as Record<string, unknown>[], 'spend_7', 'desc'); // la creativita' che spende di piu' in cima
+
+  const azioni = useMemo(() => (rows ?? []).filter((r) => r.azione && r.effective_status === 'ACTIVE'), [rows]);
+
+  const advModels = useMemo(() => {
+    if (!rows) return [];
+    const active = rows.filter((r) => r.effective_status === 'ACTIVE');
+    const map = new Map<string, { categoria: string; ads: Set<string> }>();
+    active.forEach((r) => { if (!r.product_set_id) return; (modBySet.get(r.product_set_id) ?? []).forEach((m) => { if (m.modello === '(non risolto)') return; const e = map.get(m.modello) ?? { categoria: m.categoria, ads: new Set<string>() }; e.ads.add(r.ad_name); map.set(m.modello, e); }); });
+    return [...map.entries()].map(([modello, v]) => { const c = catByModel.get(modello); return { modello, categoria: v.categoria, adCount: v.ads.size, live: c?.live ?? 0, prodotti: c?.prodotti ?? 0, su_shopify: c?.su_shopify ?? 0 }; })
+      .sort((a, b) => a.live - b.live || b.prodotti - a.prodotti);
+  }, [rows, modBySet, catByModel]);
 
   const pull = async () => {
     setPulling(true); setPullMsg(null);
     try {
       const j = await pullAds(pin, chi);
-      if (j.skipped === 'no_token') setPullMsg('Nessun token Meta in app_config: pull non eseguito (vedi SETUP_GUIDE_System_User_Token.md).');
-      else setPullMsg(`Aggiornato: ${j.dailyRows ?? 0} righe ad-giorno, ${j.creativeRows ?? 0} creativita', ${j.mapRows ?? 0} righe di set.`);
+      setPullMsg(j.skipped === 'no_token' ? 'Nessun token Meta in app_config: pull non eseguito.' : `Aggiornato: ${j.dailyRows ?? 0} righe, ${j.creativeRows ?? 0} creativita', ${j.mapRows ?? 0} set.`);
       setReload((n) => n + 1);
     } catch (e) { setPullMsg('Errore: ' + (e instanceof Error ? e.message : String(e))); }
     finally { setPulling(false); }
   };
 
   if (err) return <div className="screen"><header><h1>Ads</h1></header>{onBack && <button className="back" onClick={onBack}>← Home</button>}<div className="card err">Errore: {err}</div></div>;
-  if (!rows || !weeks || !sets) return <div className="screen"><header><h1>Ads</h1></header><p className="muted center">Carico le creativita'…</p></div>;
+  if (!rows || !weeks || !setMod || !catMod) return <div className="screen"><header><h1>Ads</h1></header><p className="muted center">Carico le creativita'…</p></div>;
 
   const asOf = rows.find((r) => r.as_of)?.as_of ?? null;
   const staleDays = asOf ? Math.floor((Date.now() - new Date(String(asOf).slice(0, 10) + 'T12:00:00').getTime()) / 86400000) : null;
-  const spend7 = rows.reduce((s, r) => s + r.spend_7, 0);
-  const purch7 = rows.reduce((s, r) => s + r.purchases_7, 0);
-  const val7 = rows.reduce((s, r) => s + r.value_7, 0);
-  const cpa7 = purch7 > 0 ? spend7 / purch7 : null;
-  const roas7 = spend7 > 0 ? val7 / spend7 : null;
+  const spend7 = rows.reduce((s, r) => s + r.spend_7, 0), purch7 = rows.reduce((s, r) => s + r.purchases_7, 0), val7 = rows.reduce((s, r) => s + r.value_7, 0);
+  const cpa7 = purch7 > 0 ? spend7 / purch7 : null, roas7 = spend7 > 0 ? val7 / spend7 : null;
   const inCorso = (s: string) => new Date(s.slice(0, 10) + 'T00:00:00').getTime() + 6 * 86400000 >= Date.now();
 
   return (
@@ -92,100 +168,90 @@ export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: st
 
       <p className="note" style={{ marginTop: 0 }}>
         Dati al <strong>{asOf ? String(asOf).slice(0, 10) : 'n/d'}</strong>
-        {staleDays != null && staleDays > 2 && <span className="err"> ({staleDays} giorni fa: il cron del mattino non ha girato, controlla Salute)</span>}
-        {' '}· aggiornamento automatico ogni mattina (Meta Marketing API).{' '}
+        {staleDays != null && staleDays > 2 && <span className="err"> ({staleDays} giorni fa: il cron non ha girato)</span>}
+        {' '}· ogni mattina.{' '}
         <button className="chip" type="button" onClick={pull} disabled={pulling}>{pulling ? 'Aggiorno…' : 'Pull ora'}</button>
+        {pullMsg && <span className="muted"> {pullMsg}</span>}
       </p>
-      {pullMsg && <p className="note">{pullMsg}</p>}
 
       <section className={`card ${azioni.length ? 'warn' : ''}`}>
         <h2>Azioni proposte</h2>
-        {azioni.length === 0 && <p className="muted" style={{ margin: 0 }}>Nessuna azione: nessuna creativita' attiva in fatica ne' product set scoperto.</p>}
-        {azioni.map((r) => (
-          <div key={r.ad_id} style={{ marginBottom: 6 }}><strong>{r.ad_name}</strong> <span className="muted">({r.campaign_name}, {eur(r.spend_7)} in 7g)</span><br />{r.azione}</div>
-        ))}
+        {azioni.length === 0 && <p className="muted" style={{ margin: 0 }}>Nessuna: nessun ad attivo in fatica ne' set scoperto.</p>}
+        {azioni.map((r) => (<div key={r.ad_id} style={{ marginBottom: 6 }}><strong>{r.ad_name}</strong> <span className="muted">({r.campaign_name}, {eur(r.spend_7)}/7g)</span><br />{r.azione}</div>))}
       </section>
 
       <div className="kpis">
-        <Kpi label="Spesa 7g" value={eur(spend7)} tone="accent" sub={weeks[1] ? `settimana precedente ${eur(num(weeks[1].spend))}` : undefined} />
+        <Kpi label="Spesa 7g" value={eur(spend7)} tone="accent" sub={weeks[1] ? `sett. prec. ${eur(num(weeks[1].spend))}` : undefined} />
         <Kpi label="Acquisti 7g" value={String(purch7)} tone="" sub={`valore ${eur(val7)}`} />
-        <Kpi label="CPA 7g" value={cpa7 == null ? 'n/d' : eur2(cpa7)} tone={cpaTone(cpa7)} sub={`target ${eur(CPA_TARGET)} · breakeven ${eur2(CPA_BREAKEVEN)}`} />
-        <Kpi label="ROAS 7g" value={roas7 == null ? 'n/d' : roas7.toFixed(2) + '×'} tone={roas7 == null ? '' : roas7 >= 1 ? 'green' : 'red'} sub="valore acquisti ÷ spesa" />
+        <Kpi label="CPA 7g" value={cpa7 == null ? 'n/d' : eur2(cpa7)} tone={cpaTone(cpa7)} sub={`target ${eur(CPA_TARGET)} · break ${eur2(CPA_BREAKEVEN)}`} />
+        <Kpi label="ROAS 7g" value={roas7 == null ? 'n/d' : roas7.toFixed(2) + '×'} tone={roas7 == null ? '' : roas7 >= 1 ? 'green' : 'red'} sub="valore ÷ spesa" />
       </div>
+
+      <section className="card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <h2 style={{ margin: 0 }}>Architettura</h2>
+          <button className={`chip ${showPaused ? 'on' : ''}`} type="button" onClick={() => setShowPaused((v) => !v)}>{showPaused ? 'nascondi in pausa' : 'mostra in pausa'}</button>
+        </div>
+        <p className="note" style={{ marginTop: 4 }}>Solo le campagne con ad attivi (le altre sono obsolete). Ogni ad con la sua anteprima, la fatica sulla frequency vera a 7 giorni, e i modelli che pubblicizza con quante borse sono live.</p>
+        {arch.map((c) => (
+          <div className="camp" key={c.camp}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+              <h3>{c.camp}</h3>
+              <span className="badge">{c.attivi} attivi</span>
+              <span className="muted" style={{ fontSize: 12 }}>{eur(c.spend7)} in 7g</span>
+            </div>
+            {c.adsets.map((a) => {
+              const visible = showPaused ? a.ads : a.ads.filter((r) => r.effective_status === 'ACTIVE');
+              const nascosti = a.ads.length - visible.length;
+              return (
+                <div key={a.adset}>
+                  <div className="adset">{a.adset} · {a.attivi} attivi{nascosti > 0 ? ` · ${nascosti} in pausa nascosti` : ''}</div>
+                  {visible.map((r) => <AdCardView key={r.ad_id} r={r} modelli={r.product_set_id ? (modBySet.get(r.product_set_id) ?? []) : []} />)}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </section>
+
+      <section className="card">
+        <h2>Modelli in advertising vs disponibilita'</h2>
+        <p className="note" style={{ marginTop: 4 }}>I modelli che gli ad attivi possono mostrare (dai loro product set), e quante borse di quel modello sono <strong>live</strong> (su Shopify e a stock) in catalogo. Poche borse live su un modello molto spinto = si pubblicizza qualcosa che non si puo' comprare.</p>
+        <div className="tablewrap"><table>
+          <thead><tr><th>Modello</th><th>Categoria</th><th>Live in catalogo</th><th>Su Shopify</th><th>Totali</th><th>Ad attivi</th></tr></thead>
+          <tbody>{advModels.map((m) => (
+            <tr key={m.modello}>
+              <td className="l"><strong>{m.modello}</strong></td>
+              <td>{m.categoria}</td>
+              <td className={m.live <= 2 ? 'neg' : ''}><strong>{m.live}</strong></td>
+              <td>{m.su_shopify}</td>
+              <td>{m.prodotti}</td>
+              <td>{m.adCount}</td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      </section>
 
       <section className="card">
         <h2>Settimane</h2>
         <div className="tablewrap"><table>
-          <thead><tr><th>Settimana</th><th>Spesa</th><th>Acq.</th><th>CPA</th><th>ROAS</th><th>Δ spesa</th><th>Δ acq.</th></tr></thead>
+          <thead><tr><th>Settimana</th><th>Spesa</th><th>Acq.</th><th>CPA</th><th>ROAS</th><th>Δ spesa</th></tr></thead>
           <tbody>{weeks.slice(0, 10).map((w) => {
-            const cpa = nz(w.cpa), roas = nz(w.roas), dS = nz(w.spend_wow), dP = nz(w.purchases_wow);
-            return (
-              <tr key={w.settimana}>
-                <td className="l">{dmy(w.settimana)}{inCorso(w.settimana) ? <span className="muted"> (in corso)</span> : ''}</td>
-                <td>{eur(num(w.spend))}</td><td>{num(w.purchases)}</td>
-                <td className={cpa != null && cpa > CPA_BREAKEVEN ? 'neg' : ''}>{cpa == null ? 'n/d' : eur2(cpa)}</td>
-                <td className={roas != null && roas < 1 ? 'neg' : ''}>{roas == null ? 'n/d' : roas.toFixed(2) + '×'}</td>
-                <td className={dS != null && dS < 0 ? 'neg' : ''}>{dS == null ? '' : (dS > 0 ? '+' : '') + eur(dS)}</td>
-                <td className={dP != null && dP < 0 ? 'neg' : ''}>{dP == null ? '' : (dP > 0 ? '+' : '') + dP}</td>
-              </tr>
-            );
+            const cpa = nz(w.cpa), roas = nz(w.roas), dS = nz(w.spend_wow);
+            return (<tr key={w.settimana}>
+              <td className="l">{dmy(w.settimana)}{inCorso(w.settimana) ? <span className="muted"> (in corso)</span> : ''}</td>
+              <td>{eur(num(w.spend))}</td><td>{num(w.purchases)}</td>
+              <td className={cpa != null && cpa > CPA_BREAKEVEN ? 'neg' : ''}>{cpa == null ? 'n/d' : eur2(cpa)}</td>
+              <td className={roas != null && roas < 1 ? 'neg' : ''}>{roas == null ? 'n/d' : roas.toFixed(1) + '×'}</td>
+              <td className={dS != null && dS < 0 ? 'neg' : ''}>{dS == null ? '' : (dS > 0 ? '+' : '') + eur(dS)}</td>
+            </tr>);
           })}</tbody>
         </table></div>
-        <p className="note">Settimane da lunedi'. Δ = differenza con la settimana precedente. La settimana in corso e' parziale.</p>
-      </section>
-
-      <section className="card">
-        <h2>Creativita' {soloAttive ? 'attive' : 'con dati'} <span className="badge">{visibili.length}</span></h2>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-          <button className={`chip ${soloAttive ? 'on' : ''}`} type="button" onClick={() => setSoloAttive(true)}>Attive</button>
-          <button className={`chip ${!soloAttive ? 'on' : ''}`} type="button" onClick={() => setSoloAttive(false)}>Tutte con spesa</button>
-        </div>
-        <div className="tablewrap"><table className="sortable">
-          <thead><tr>
-            <th onClick={() => sort.toggle('ad_name')}>Creativita'{sort.arrow('ad_name')}</th>
-            <th onClick={() => sort.toggle('spend_7')}>Spesa 7g{sort.arrow('spend_7')}</th>
-            <th onClick={() => sort.toggle('purchases_7')}>Acq.{sort.arrow('purchases_7')}</th>
-            <th onClick={() => sort.toggle('cpa_7')}>CPA{sort.arrow('cpa_7')}</th>
-            <th onClick={() => sort.toggle('roas_7')}>ROAS{sort.arrow('roas_7')}</th>
-            <th onClick={() => sort.toggle('ctr_7')}>CTR 7g{sort.arrow('ctr_7')}</th>
-            <th onClick={() => sort.toggle('freq')}>Freq/g{sort.arrow('freq')}</th>
-            <th>Fatica</th><th>Set (risolti · OOS)</th><th>Azione</th>
-          </tr></thead>
-          <tbody>{(sort.sorted as unknown as Row[]).map((r) => (
-            <tr key={r.ad_id}>
-              <td className="l"><strong>{r.ad_name}</strong><br /><span className="muted">{r.campaign_name}{r.effective_status !== 'ACTIVE' ? ` · ${r.effective_status.toLowerCase()}` : ''}</span></td>
-              <td>{eur(r.spend_7)}</td>
-              <td>{r.purchases_7}</td>
-              <td className={r.cpa_7 != null && r.cpa_7 > CPA_BREAKEVEN ? 'neg' : ''}>{r.cpa_7 == null ? <span className="muted">n/d</span> : eur2(r.cpa_7)}</td>
-              <td className={r.roas_7 != null && r.roas_7 < 1 && r.spend_7 > 0 ? 'neg' : ''}>{r.roas_7 == null ? <span className="muted">n/d</span> : r.roas_7.toFixed(2) + '×'}</td>
-              <td>{r.ctr_7 == null ? <span className="muted">n/d</span> : r.ctr_7.toFixed(2) + '%'}<br /><span className="muted">prec {r.ctr_prev7 == null ? '–' : r.ctr_prev7.toFixed(2)} · 90g {r.ctr_90 == null ? '–' : r.ctr_90.toFixed(2)}</span></td>
-              <td>{r.freq == null ? <span className="muted">n/d</span> : r.freq.toFixed(2)}</td>
-              <td><span className={faticaClass(r.stato_fatica)}>{r.stato_fatica}</span></td>
-              <td>{r.nel_set == null ? <span className="muted">nessun set</span> : <>{r.risolti ?? 0}/{r.nel_set}<br /><span className={r.pct_oos != null && r.pct_oos >= 30 ? 'neg' : 'muted'}>{r.pct_oos == null ? 'n/d' : r.pct_oos.toFixed(0) + '% OOS'}</span></>}</td>
-              <td className="l">{r.azione ? <strong>{r.azione}</strong> : ''}</td>
-            </tr>
-          ))}</tbody>
-        </table></div>
-        <p className="note">CPA e ROAS per creativita' solo se ci sono acquisti attribuiti nei 7 giorni, altrimenti n/d per volume: il giudizio "spengo o scalo" si fa sulla campagna. Fatica = media della frequency giornaliera e CTR sotto la settimana precedente (media) o sotto la media 90 giorni (alta), soglie tarate sui dati reali.</p>
-      </section>
-
-      <section className="card">
-        <h2>Product set e inventario</h2>
-        <div className="tablewrap"><table>
-          <thead><tr><th>Set (usato da)</th><th>Prodotti</th><th>Risolti</th><th>OOS</th><th>Scorta 1-2</th><th>Non su Shopify</th><th>% OOS</th></tr></thead>
-          <tbody>{sets.map((s) => {
-            const pct = nz(s.pct_oos);
-            return (
-              <tr key={s.product_set_id}>
-                <td className="l">{(adsPerSet.get(s.product_set_id) ?? []).join(', ') || <span className="muted">nessun ad con dati</span>}<br /><span className="muted">set …{s.product_set_id.slice(-6)}</span></td>
-                <td>{num(s.prodotti_nel_set)}</td><td>{num(s.prodotti_risolti)}</td><td>{num(s.prodotti_oos)}</td><td>{num(s.prodotti_low_stock)}</td><td>{num(s.prodotti_non_su_shopify)}</td>
-                <td className={pct != null && pct >= 30 ? 'neg' : ''}>{pct == null ? 'n/d' : pct.toFixed(0) + '%'}</td>
-              </tr>
-            );
-          })}</tbody>
-        </table></div>
-        <p className="note">Un set e' l'insieme di prodotti del catalogo Meta che un ad a catalogo puo' mostrare. "Risolti" = agganciati a un codice dell'app (i non risolti sono prodotti del catalogo Meta assenti dal mirror Shopify: archiviati o rimossi). % OOS sui risolti, da <code>v_inventory</code>. "Set scoperto" scatta solo con copertura sufficiente (almeno 3 risolti e almeno meta' del set).</p>
       </section>
     </div>
   );
+}
+
+function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone: string }) {
+  return <div className={`kpi ${tone}`}><div className="v">{value}</div><div className="k">{label}</div>{sub && <div className="ksub">{sub}</div>}</div>;
 }

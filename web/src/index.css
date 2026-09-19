@@ -521,6 +521,26 @@ tr.dim { opacity: .6; }
 .pill.ok { background: #e7f4ec; color: var(--green); }
 .pill.muted { background: #f0ecec; color: var(--muted); }
 
+/* --- Sezione Ads (redesign 2026-09-19): architettura con asset visibili + modelli --- */
+.camp { border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-bottom: 12px; background: var(--card); }
+.camp > h3 { margin: 0 0 2px; font-size: 16px; }
+.camp .adset { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin: 12px 0 6px; }
+.adcard { display: flex; gap: 11px; border: 1px solid var(--line); border-radius: 11px; padding: 9px; margin-bottom: 8px; background: #fff; }
+.adcard.paused { opacity: .62; }
+.adthumb { width: 76px; height: 76px; border-radius: 8px; object-fit: cover; background: #f0ecec; flex: 0 0 auto; position: relative; }
+.adthumb.ph { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 10px; text-align: center; line-height: 1.2; }
+.adthumbwrap { position: relative; flex: 0 0 auto; }
+.adthumbwrap .vtag { position: absolute; left: 4px; bottom: 4px; background: rgba(0,0,0,.6); color: #fff; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 5px; }
+.adbody { flex: 1 1 auto; min-width: 0; }
+.adbody .top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.adbody .nm { font-weight: 700; font-size: 13.5px; }
+.admetrics { display: flex; flex-wrap: wrap; gap: 3px 14px; font-size: 12px; margin-top: 5px; }
+.admetrics span b { font-weight: 700; }
+.admod { font-size: 11.5px; color: var(--dark); margin-top: 5px; line-height: 1.5; }
+.admod .lo { color: var(--red); font-weight: 700; }
+.adact { font-size: 12px; margin-top: 5px; font-weight: 600; color: var(--accent); }
+.arr-up { color: var(--green); } .arr-dn { color: var(--red); }
+
 /* --- sortable table headers --- */
 table.sortable thead th { cursor: pointer; user-select: none; }
 table.sortable thead th:hover { color: var(--rose); }
