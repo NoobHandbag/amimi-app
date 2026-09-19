@@ -54,7 +54,6 @@ create or replace view v_ads_creative_windows as
    r.d as as_of,
    max(d.ad_name) as ad_name,
    max(d.campaign_name) as campaign_name,
-   max(d.adset_name) as adset_name,
    sum(d.spend)          filter (where d.date >  r.d - 7)                        as spend_7,
    sum(d.impressions)    filter (where d.date >  r.d - 7)                        as impr_7,
    sum(d.clicks)         filter (where d.date >  r.d - 7)                        as clicks_7,
@@ -72,7 +71,9 @@ create or replace view v_ads_creative_windows as
    sum(d.clicks)         filter (where d.date >  r.d - 90)                       as clicks_90,
    sum(d.purchases)      filter (where d.date >  r.d - 90)                       as purchases_90,
    sum(d.purchase_value) filter (where d.date >  r.d - 90)                       as value_90,
-   count(distinct d.date) filter (where d.date > r.d - 90 and d.spend > 0)       as giorni_attivi_90
+   count(distinct d.date) filter (where d.date > r.d - 90 and d.spend > 0)       as giorni_attivi_90,
+   -- adset_name aggiunto IN CODA: create or replace view ammette solo colonne nuove alla fine (mai in mezzo).
+   max(d.adset_name) as adset_name
  from meta_ads_creative_daily d cross join ref r
  group by d.ad_id, r.d;
 grant select on v_ads_creative_windows to anon, authenticated;

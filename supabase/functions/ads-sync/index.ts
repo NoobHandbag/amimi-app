@@ -198,19 +198,24 @@ Deno.serve(async (req) => {
   // ---- frequency VERA a 7 giorni (punto 6): UNA chiamata insights sul 7d con reach DEDUPLICATA, non la somma dei
   // giornalieri (la media della giornaliera resta ~1-2 e non vede la fatica reale). Tabella "stato corrente" per ad,
   // sovrascritta a ogni giro. Secondaria: se fallisce warn, i daily sono gia' scritti. Errore redatto via health().
+  // Solo sul giro corrente o sul PRIMO blocco di backfill (offset 0): e' sempre lo stato 7d CORRENTE, ripullarlo a
+  // ogni blocco di un backfill sarebbe spreco (gate efficiency). Errore di upsert -> warn, come l'eccezione.
   let freqRows = 0;
-  try {
-    const since7 = romeDate_(7), until7 = romeDate_(1);
-    const tr7 = encodeURIComponent(JSON.stringify({ since: since7, until: until7 }));
-    const f = await metaGetAll_(token, `${GRAPH}/${AD_ACCOUNT}/insights?level=ad&time_range=${tr7}&fields=ad_id,frequency,reach,impressions&limit=200`);
-    const frows = f.map((r) => ({ ad_id: String(r.ad_id ?? ''), day: until7, freq_7d: num(r.frequency), reach_7d: num(r.reach), impressions_7d: num(r.impressions), updated_at: new Date().toISOString() })).filter((r) => r.ad_id);
-    if (frows.length) {
-      const dedup = [...new Map(frows.map((r) => [r.ad_id, r])).values()];
-      const { error } = await sb.from('meta_ad_freq7').upsert(dedup, { onConflict: 'ad_id' });
-      if (!error) freqRows = dedup.length;
+  if (!isBackfill || startOffset === 0) {
+    try {
+      const since7 = romeDate_(7), until7 = romeDate_(1);
+      const tr7 = encodeURIComponent(JSON.stringify({ since: since7, until: until7 }));
+      const f = await metaGetAll_(token, `${GRAPH}/${AD_ACCOUNT}/insights?level=ad&time_range=${tr7}&fields=ad_id,frequency,reach,impressions&limit=200`);
+      const frows = f.map((r) => ({ ad_id: String(r.ad_id ?? ''), day: until7, freq_7d: num(r.frequency), reach_7d: num(r.reach), impressions_7d: num(r.impressions), updated_at: new Date().toISOString() })).filter((r) => r.ad_id);
+      if (frows.length) {
+        const dedup = [...new Map(frows.map((r) => [r.ad_id, r])).values()];
+        const { error } = await sb.from('meta_ad_freq7').upsert(dedup, { onConflict: 'ad_id' });
+        if (error) await health(`daily ${dailyRows}, freq7 upsert FALLITO: ${error.message}`, 1, 'warn');
+        else freqRows = dedup.length;
+      }
+    } catch (e) {
+      await health(`daily ${dailyRows}, freq7 FALLITA: ${(e as Error).message}`, 1, 'warn');
     }
-  } catch (e) {
-    await health(`daily ${dailyRows}, freq7 FALLITA: ${(e as Error).message}`, 1, 'warn');
   }
 
   // ---- anagrafica creative: ads + creative (product_set_id, destinazione, thumbnail + immagine grande). Errori contati (B3). ----

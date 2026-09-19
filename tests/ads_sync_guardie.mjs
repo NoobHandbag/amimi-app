@@ -78,7 +78,8 @@ console.log('\n== B1/B2/C2: viste e migrazione ==');
 console.log('\n== redesign 0132: freq7 vera (punto 6), asset image_url, viste per modello ==');
 {
   t('19 punto 6: freq7 chiamata al 7d e upsert su ad_id', /fields=ad_id,frequency,reach,impressions/.test(SRC) && /from\('meta_ad_freq7'\)\.upsert\(dedup, \{ onConflict: 'ad_id' \}\)/.test(SRC));
-  t('19b freq7 secondaria: errore in warn via health(), non ferma il giro', /freq7 FALLITA/.test(SRC) && !/return fail\('freq/.test(SRC));
+  t('19b freq7 secondaria: gate su backfill, errore upsert e eccezione in warn, mai fail', /!isBackfill \|\| startOffset === 0/.test(SRC) && /freq7 upsert FALLITO/.test(SRC) && /freq7 FALLITA/.test(SRC) && !/return fail\('freq/.test(SRC));
+  t('19c 0132: adset_name in CODA a v_ads_creative_windows (create or replace append-only)', /as giorni_attivi_90,\s*(--[^\n]*\n\s*)?max\(d\.adset_name\) as adset_name/.test(M132) && !/as campaign_name,\s*max\(d\.adset_name\)/.test(M132));
   t('20 asset: image_url richiesto nella creative e salvato', /object_type,thumbnail_url,image_url,/.test(SRC) && /image_url: c\.image_url \?\? null/.test(SRC));
   t('21 0132: meta_ad_freq7 con RLS e senza grant anon (letture solo via viste)', /create table if not exists meta_ad_freq7/.test(M132) && /alter table meta_ad_freq7 enable row level security/.test(M132) && !/grant select[^\n]*meta_ad_freq7[^\n]*anon/.test(M132));
   t('22 0132: viste per modello con grant anon', /create or replace view v_ads_set_modelli/.test(M132) && /create or replace view v_ads_catalogo_modelli/.test(M132) && /grant select on v_ads_catalogo_modelli to anon/.test(M132));
