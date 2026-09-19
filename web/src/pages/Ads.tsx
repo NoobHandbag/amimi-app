@@ -41,7 +41,7 @@ function AdThumb({ img, thumb, video }: { img: string | null; thumb: string | nu
       {src
         ? <img className="adthumb" src={src} alt="" loading="lazy" referrerPolicy="no-referrer"
             onError={() => { if (!triedThumb && thumb && thumb !== src) { setSrc(thumb); setTriedThumb(true); } else setSrc(null); }} />
-        : <div className="adthumb ph">nessuna<br />anteprima</div>}
+        : <div className="adthumb ph" style={{ fontSize: video ? 22 : 11 }}>{video ? '▶' : 'no img'}</div>}
       {video && <span className="vtag">VIDEO</span>}
     </div>
   );
@@ -107,14 +107,28 @@ export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: st
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [reload]);
 
+  // Lo stesso modello puo' comparire su piu' categoria (BAG e ALTRO = categoria nulla in anagrafica): si SOMMA per
+  // modello, altrimenti il conteggio "live" si perde. categoria = quella vera (BAG/ACCESSORY) se c'e'.
+  const bestCat = (cur: string, next: string) => (next === 'BAG' || (next === 'ACCESSORY' && cur === 'ALTRO') ? next : cur);
   const modBySet = useMemo(() => {
-    const m = new Map<string, { modello: string; categoria: string; prodotti: number; live: number }[]>();
-    (setMod ?? []).forEach((r) => { const l = m.get(r.product_set_id) ?? []; l.push({ modello: r.modello, categoria: r.categoria, prodotti: num(r.prodotti), live: num(r.live) }); m.set(r.product_set_id, l); });
-    return m;
+    const bySet = new Map<string, Map<string, { modello: string; categoria: string; prodotti: number; live: number }>>();
+    (setMod ?? []).forEach((r) => {
+      const inner = bySet.get(r.product_set_id) ?? new Map();
+      const e = inner.get(r.modello) ?? { modello: r.modello, categoria: r.categoria, prodotti: 0, live: 0 };
+      e.prodotti += num(r.prodotti); e.live += num(r.live); e.categoria = bestCat(e.categoria, r.categoria);
+      inner.set(r.modello, e); bySet.set(r.product_set_id, inner);
+    });
+    const out = new Map<string, { modello: string; categoria: string; prodotti: number; live: number }[]>();
+    bySet.forEach((inner, k) => out.set(k, [...inner.values()]));
+    return out;
   }, [setMod]);
   const catByModel = useMemo(() => {
     const m = new Map<string, { live: number; prodotti: number; su_shopify: number; categoria: string }>();
-    (catMod ?? []).forEach((r) => m.set(r.modello, { live: num(r.live), prodotti: num(r.prodotti), su_shopify: num(r.su_shopify), categoria: r.categoria }));
+    (catMod ?? []).forEach((r) => {
+      const e = m.get(r.modello) ?? { live: 0, prodotti: 0, su_shopify: 0, categoria: r.categoria };
+      e.live += num(r.live); e.prodotti += num(r.prodotti); e.su_shopify += num(r.su_shopify); e.categoria = bestCat(e.categoria, r.categoria);
+      m.set(r.modello, e);
+    });
     return m;
   }, [catMod]);
 
@@ -138,7 +152,7 @@ export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: st
     const active = rows.filter((r) => r.effective_status === 'ACTIVE');
     const map = new Map<string, { categoria: string; ads: Set<string> }>();
     active.forEach((r) => { if (!r.product_set_id) return; (modBySet.get(r.product_set_id) ?? []).forEach((m) => { if (m.modello === '(non risolto)') return; const e = map.get(m.modello) ?? { categoria: m.categoria, ads: new Set<string>() }; e.ads.add(r.ad_name); map.set(m.modello, e); }); });
-    return [...map.entries()].map(([modello, v]) => { const c = catByModel.get(modello); return { modello, categoria: v.categoria, adCount: v.ads.size, live: c?.live ?? 0, prodotti: c?.prodotti ?? 0, su_shopify: c?.su_shopify ?? 0 }; })
+    return [...map.entries()].map(([modello, v]) => { const c = catByModel.get(modello); return { modello, categoria: c?.categoria ?? v.categoria, adCount: v.ads.size, live: c?.live ?? 0, prodotti: c?.prodotti ?? 0, su_shopify: c?.su_shopify ?? 0 }; })
       .sort((a, b) => a.live - b.live || b.prodotti - a.prodotti);
   }, [rows, modBySet, catByModel]);
 
