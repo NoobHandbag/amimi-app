@@ -195,10 +195,28 @@ Deno.serve(async (req) => {
     return fail('insights', (e as Error).message, 502);
   }
 
-  // ---- anagrafica creative: ads + creative (product_set_id, destinazione, thumbnail). Errori contati (B3). ----
+  // ---- frequency VERA a 7 giorni (punto 6): UNA chiamata insights sul 7d con reach DEDUPLICATA, non la somma dei
+  // giornalieri (la media della giornaliera resta ~1-2 e non vede la fatica reale). Tabella "stato corrente" per ad,
+  // sovrascritta a ogni giro. Secondaria: se fallisce warn, i daily sono gia' scritti. Errore redatto via health().
+  let freqRows = 0;
+  try {
+    const since7 = romeDate_(7), until7 = romeDate_(1);
+    const tr7 = encodeURIComponent(JSON.stringify({ since: since7, until: until7 }));
+    const f = await metaGetAll_(token, `${GRAPH}/${AD_ACCOUNT}/insights?level=ad&time_range=${tr7}&fields=ad_id,frequency,reach,impressions&limit=200`);
+    const frows = f.map((r) => ({ ad_id: String(r.ad_id ?? ''), day: until7, freq_7d: num(r.frequency), reach_7d: num(r.reach), impressions_7d: num(r.impressions), updated_at: new Date().toISOString() })).filter((r) => r.ad_id);
+    if (frows.length) {
+      const dedup = [...new Map(frows.map((r) => [r.ad_id, r])).values()];
+      const { error } = await sb.from('meta_ad_freq7').upsert(dedup, { onConflict: 'ad_id' });
+      if (!error) freqRows = dedup.length;
+    }
+  } catch (e) {
+    await health(`daily ${dailyRows}, freq7 FALLITA: ${(e as Error).message}`, 1, 'warn');
+  }
+
+  // ---- anagrafica creative: ads + creative (product_set_id, destinazione, thumbnail + immagine grande). Errori contati (B3). ----
   let creativeRows = 0, creativeErr = 0; const setIds = new Set<string>();
   try {
-    const creativeSub = 'creative{id,object_type,thumbnail_url,url_tags,product_set_id,object_story_spec{link_data{link,name}}}';
+    const creativeSub = 'creative{id,object_type,thumbnail_url,image_url,url_tags,product_set_id,object_story_spec{link_data{link,name}}}';
     const ads = await metaGetAll_(token, `${GRAPH}/${AD_ACCOUNT}/ads?fields=id,name,adset_id,campaign_id,effective_status,${creativeSub}&limit=100`);
     const anag = ads.map((ad) => {
       const c = ad.creative ?? {};
@@ -208,7 +226,7 @@ Deno.serve(async (req) => {
         ad_id: String(ad.id), creative_id: c.id ?? null, ad_name: ad.name ?? null,
         adset_id: ad.adset_id ?? null, campaign_id: ad.campaign_id ?? null,
         object_type: c.object_type ?? null, title: c.object_story_spec?.link_data?.name ?? null,
-        thumbnail_url: c.thumbnail_url ?? null, link: c.object_story_spec?.link_data?.link ?? null,
+        thumbnail_url: c.thumbnail_url ?? null, image_url: c.image_url ?? null, link: c.object_story_spec?.link_data?.link ?? null,
         url_tags: c.url_tags ?? null, product_set_id: psid, catalog_id: psid ? CATALOG_ID : null,
         effective_status: ad.effective_status ?? null, last_seen: new Date().toISOString(), updated_at: new Date().toISOString(),
       };
@@ -275,6 +293,6 @@ Deno.serve(async (req) => {
   }
 
   const sev = dailyErr || mapErr || creativeErr ? 'warn' : 'ok';
-  await health(`pull ${dates.length}g (${dates[0]} -> ${dates[dates.length - 1]}): ${dailyRows} righe ad-day, ${creativeRows} creative, ${mapRows} righe set-map, set ${setIds.size}` + (dailyErr || mapErr || creativeErr ? `, errori daily ${dailyErr} creative ${creativeErr} map ${mapErr}` : ''), dailyErr + mapErr + creativeErr, sev as 'ok' | 'warn');
-  return json({ ok: true, dates: dates.length, from: dates[0], to: dates[dates.length - 1], dailyRows, dailyErr, creativeRows, creativeErr, mapRows, mapErr, sets: setIds.size, next_offset: isBackfill ? startOffset + days : undefined });
+  await health(`pull ${dates.length}g (${dates[0]} -> ${dates[dates.length - 1]}): ${dailyRows} righe ad-day, ${creativeRows} creative, ${freqRows} freq7, ${mapRows} righe set-map, set ${setIds.size}` + (dailyErr || mapErr || creativeErr ? `, errori daily ${dailyErr} creative ${creativeErr} map ${mapErr}` : ''), dailyErr + mapErr + creativeErr, sev as 'ok' | 'warn');
+  return json({ ok: true, dates: dates.length, from: dates[0], to: dates[dates.length - 1], dailyRows, dailyErr, creativeRows, creativeErr, freqRows, mapRows, mapErr, sets: setIds.size, next_offset: isBackfill ? startOffset + days : undefined });
 });

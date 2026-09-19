@@ -17,6 +17,7 @@ const M128 = read('supabase/migrations/0128_meta_ads_creative.sql');
 const M129 = read('supabase/migrations/0129_v_ads_creative.sql');
 // 0130 ridefinisce v_ads_creative_status con le soglie tarate sui dati reali: e' la definizione VIVA da controllare.
 const M130 = read('supabase/migrations/0130_v_ads_creative_status_taratura.sql');
+const M132 = read('supabase/migrations/0132_ads_creative_redesign.sql');
 const noComments = (s) => s.replace(/\/\/[^\n]*/g, '');
 
 let ok = 0, ko = 0;
@@ -72,6 +73,15 @@ console.log('\n== B1/B2/C2: viste e migrazione ==');
   t('16 C2 vincoli unici verificati dopo il create', /meta_ads_creative_daily_uk/.test(M128) && /meta_product_set_map_uk/.test(M128) && /raise exception/.test(M128));
   t('17 tabelle base senza grant anon (letture solo via viste)', !/grant select[^\n]*(meta_ads_creative_daily|meta_ad_creative|meta_product_set_map)[^\n]*anon/.test(M128));
   t('18 C7 as_of esposto dalle finestre', /r\.d as as_of/.test(M129) && /w\.as_of/.test(M129));
+}
+
+console.log('\n== redesign 0132: freq7 vera (punto 6), asset image_url, viste per modello ==');
+{
+  t('19 punto 6: freq7 chiamata al 7d e upsert su ad_id', /fields=ad_id,frequency,reach,impressions/.test(SRC) && /from\('meta_ad_freq7'\)\.upsert\(dedup, \{ onConflict: 'ad_id' \}\)/.test(SRC));
+  t('19b freq7 secondaria: errore in warn via health(), non ferma il giro', /freq7 FALLITA/.test(SRC) && !/return fail\('freq/.test(SRC));
+  t('20 asset: image_url richiesto nella creative e salvato', /object_type,thumbnail_url,image_url,/.test(SRC) && /image_url: c\.image_url \?\? null/.test(SRC));
+  t('21 0132: meta_ad_freq7 con RLS e senza grant anon (letture solo via viste)', /create table if not exists meta_ad_freq7/.test(M132) && /alter table meta_ad_freq7 enable row level security/.test(M132) && !/grant select[^\n]*meta_ad_freq7[^\n]*anon/.test(M132));
+  t('22 0132: viste per modello con grant anon', /create or replace view v_ads_set_modelli/.test(M132) && /create or replace view v_ads_catalogo_modelli/.test(M132) && /grant select on v_ads_catalogo_modelli to anon/.test(M132));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);
