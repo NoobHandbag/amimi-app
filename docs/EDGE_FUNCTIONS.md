@@ -406,3 +406,22 @@ Dopo il blocco 1, su decisione owner:
 - **Collaudo live 18-09:** health ok (`Amì - Leads Ads`, EUR, status 1); backfill 90 giorni in 4 blocchi da 14/30/30/16 giorni (32-50 s l'uno): 623 righe ad-giorno (20-06 -> 17-09), 144 creative (9 ACTIVE), 517 righe di mappa su 9 product set, 0 errori. Ultimi 14 giorni: 386 EUR spesa, 22 acquisti, 2.816 EUR (ROAS ~7,3). `v_ads_creative_status` ha prodotto subito un'azione vera: l'ad principale `COLD_AD_2_v2_Lea Color` (184 EUR/7g, CPA 36,8) con product set al 31,6% OOS su 19/20 risolti.
 - **v1.2 / redesign (2026-09-19, owner):** l'edge pulla anche la **frequency VERA a 7 giorni** (una chiamata insights sul 7d con reach deduplicata -> tabella `meta_ad_freq7`, punto 6; secondaria, warn se fallisce, gate solo sul primo giro di backfill) e l'**`image_url`** dell'asset (immagine grande; thumbnail resta fallback). Migr 0132 (tabella freq7 + colonna image_url + viste `v_ads_set_modelli`/`v_ads_catalogo_modelli` + adset_name in windows) e 0133 (v_ads_creative_status v2: adset_name, object_type, image_url, freq_7g e fatica tarata sulla freq reale — max osservato 2,79). La tab Ads della PWA e' stata ridisegnata (architettura COLD/SUPER HOT con asset visibili e modelli vs disponibilita'). Audit gate: Gate 1 verde, `/code-review high` sul diff (4 finding chiusi, incluso il create-or-replace append-only sulle viste).
 - **Follow-up dichiarati:** anteprima **VIDEO**: il fotogramma Meta (`t15.5256`) da' **403 in hotlink** dal sito, quindi i video mostrano un segnaposto ▶ (le foto/share hanno l'immagine vera); per il frame video servirebbe salvarlo lato server (Storage). Refresh di `schema.sql` (le nuove tabelle/viste non sono nel dump). `ad_status`/`creative_id` sul daily riservati (C4).
+
+## loyalty-orders (Premia, dal 2026-09-18) — accredito punti sugli ACQUISTI
+
+Modulo ISOLATO (Regola 19), flag `loyalty_purchase_enabled` default OFF -> NO-OP. Legge gli ordini
+PAGATI dall'Admin API (stesso token `read_orders` di shopify-sync) e accredita
+`floor(subtotal_price * loyalty_euro_per_point)` UNA volta per ordine tramite la funzione atomica
+`loyalty_credit_order` (migr 0128: insert-gate su `loyalty_order_credits.shopify_order_id` =
+idempotenza a DB, Regola 20). Il client non decide MAI i punti. NON tocca CE / stock / Qromo
+(scrive solo `loyalty_*`, canale service_role come loyalty-proxy).
+
+- **action `run`** (giro normale): ordini aggiornati negli ultimi 3 giorni, pagati, creati DOPO
+  `app_flags.loyalty_orders_since` (watermark di lancio: niente retroattivo automatico). Tetto 50/giro.
+- **action `backfill`** (a mano, retroattivo storico): `{since}` esplicito, tetto 1000. BUG NOTO
+  (2026-09-18): il filtro dei candidati usa `loyalty_orders_since` invece di `since`, quindi
+  salterebbe i pre-lancio. DA CORREGGERE prima di usarlo per il retroattivo vero.
+- **dryRun**: anteprima senza scritture; oggi e' dietro il flag (dry-run richiede il flag ON) -
+  da spostare prima del gate in un prossimo deploy.
+- Flag: `loyalty_purchase_enabled` (OFF), `loyalty_euro_per_point` (1), `loyalty_orders_since` (lancio).
+- Deploy 2026-09-18 via `supabase functions deploy loyalty-orders --no-verify-jwt`. Cron NON ancora schedulato.
