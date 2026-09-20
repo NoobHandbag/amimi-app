@@ -49,22 +49,25 @@ Deno.serve(async (req) => {
   const SH = { 'X-Shopify-Access-Token': token };
 
   const isBackfill = body.action === 'backfill';
+  // Soglia inferiore dei candidati: il giro normale accredita solo dal lancio (niente retroattivo
+  // automatico); il backfill parte dal 'since' passato nel body (default = lancio). Prima il filtro
+  // usava sempre 'launch' anche in backfill, quindi non accreditava MAI gli ordini prima del lancio.
+  const floor = isBackfill ? String(body.since || launch) : launch;
   const fields = 'id,name,created_at,updated_at,financial_status,total_price,subtotal_price,customer';
 
   // --- pull ordini PAGATI ---
   const orders: Record<string, any>[] = [];
   if (isBackfill) {
-    const since = String(body.since || launch);
     let sinceId = 0;
     for (let page = 0; page < 8; page++) {
-      const r = await fetch(`${API}/orders.json?status=any&financial_status=paid&created_at_min=${encodeURIComponent(since)}&since_id=${sinceId}&limit=250&fields=${fields}`, { headers: SH });
+      const r = await fetch(`${API}/orders.json?status=any&financial_status=paid&created_at_min=${encodeURIComponent(floor)}&since_id=${sinceId}&limit=250&fields=${fields}`, { headers: SH });
       if (!r.ok) return fail('Shopify', r.status + ' ' + (await r.text()).slice(0, 200), 502);
       const batch: Record<string, any>[] = (await r.json()).orders ?? [];
       if (!batch.length) break;
       orders.push(...batch);
       for (const o of batch) sinceId = Math.max(sinceId, Number(o.id));
       if (batch.length < 250) break;
-      if (page === 7) return fail('backfill', `oltre 2000 ordini da ${since}: restringere con since`, 409);
+      if (page === 7) return fail('backfill', `oltre 2000 ordini da ${floor}: restringere con since`, 409);
     }
   } else {
     const updSince = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString();
@@ -73,13 +76,13 @@ Deno.serve(async (req) => {
     orders.push(...(((await r.json()).orders ?? []) as Record<string, any>[]));
   }
 
-  // candidati: pagati, con customer, creati DOPO il lancio (niente retroattivo automatico)
-  const paid = orders.filter((o) => String(o.financial_status) === 'paid' && o.customer?.id && String(o.created_at) >= launch);
+  // candidati: pagati, con customer, creati dopo la soglia (lancio nel giro normale, 'since' nel backfill)
+  const paid = orders.filter((o) => String(o.financial_status) === 'paid' && o.customer?.id && String(o.created_at) >= floor);
   const cap = isBackfill ? 1000 : MAX_CREDIT_RUN;
   if (paid.length > cap) return fail('cintura', `${paid.length} ordini da accreditare (tetto ${cap}): niente accredito. Retroattivo: action 'backfill' con since piu' stretto`, 409);
 
   if (body.dryRun) {
-    return json({ ok: true, dryRun: true, launch, fetched: orders.length, candidati: paid.length,
+    return json({ ok: true, dryRun: true, launch, floor, fetched: orders.length, candidati: paid.length,
       preview: paid.slice(0, 5).map((o) => ({ order: o.name, cust: String(o.customer.id), base: Number(o.subtotal_price ?? o.total_price), points: Math.floor(Number(o.subtotal_price ?? o.total_price) * euroPerPoint) })) });
   }
 
@@ -94,5 +97,5 @@ Deno.serve(async (req) => {
 
   const label = `orders: letti ${orders.length}, candidati ${paid.length}, accreditati ${credited} (+${added} pt), gia'/skip ${skipped}` + (errors.length ? `, ERRORI ${errors.length}: ${errors.slice(0, 3).join(' | ')}` : '');
   await health(label, errors.length, errors.length ? 'error' : 'ok');
-  return json({ ok: true, launch, fetched: orders.length, candidati: paid.length, credited, added, skipped, errors: errors.length ? errors : undefined });
+  return json({ ok: true, launch, floor, fetched: orders.length, candidati: paid.length, credited, added, skipped, errors: errors.length ? errors : undefined });
 });
