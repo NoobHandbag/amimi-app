@@ -3,8 +3,8 @@ import { fetchAdsCreativeStatus, fetchAdsWeekly, fetchAdsSetModelli, fetchAdsCat
 import type { AdsCreativeStatus, AdsWeekly, AdsSetModello, AdsCatModello } from '../lib/api';
 
 // Pagina "Ads" (redesign 2026-09-19, richiesta owner). Mostra l'ARCHITETTURA reale (solo le campagne con ad attivi:
-// COLD e SUPER HOT; le altre sono obsolete), con gli ASSET visibili (image_url, per i video il fotogramma
-// thumbnail), la fatica sulla frequency VERA a 7 giorni, e per ogni ad i MODELLI che pubblicizza con quante borse
+// COLD e SUPER HOT; le altre sono obsolete), con gli ASSET visibili (le foto da image_url, i video dal frame_url
+// risolto lato server, fallback al thumbnail 64px), la fatica sulla frequency VERA a 7 giorni, e per ogni ad i MODELLI che pubblicizza con quante borse
 // sono LIVE. Legge solo le viste v_ads_* (anon). "Pull ora" invoca l'edge ads-sync. Soglie CPA dalla prior art.
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
@@ -18,7 +18,7 @@ const dmy = (iso: string) => { const d = new Date(iso.slice(0, 10) + 'T12:00:00'
 
 type Row = {
   ad_id: string; ad_name: string; campaign_name: string; adset_name: string; effective_status: string;
-  object_type: string; product_set_id: string | null; image_url: string | null; thumbnail_url: string | null; as_of: string | null;
+  object_type: string; product_set_id: string | null; image_url: string | null; frame_url: string | null; thumbnail_url: string | null; as_of: string | null;
   spend_7: number; purchases_7: number; value_7: number; cpa_7: number | null; roas_7: number | null;
   ctr_7: number | null; ctr_prev7: number | null; ctr_90: number | null; freq_7g: number | null; freq_giorn: number | null;
   stato_fatica: string; azione: string | null; nel_set: number | null; risolti: number | null; pct_oos: number | null;
@@ -26,7 +26,7 @@ type Row = {
 const toRow = (r: AdsCreativeStatus): Row => ({
   ad_id: r.ad_id, ad_name: r.ad_name ?? r.ad_id, campaign_name: r.campaign_name ?? '(?)', adset_name: r.adset_name ?? '(senza adset)',
   effective_status: r.effective_status ?? '', object_type: r.object_type ?? '', product_set_id: r.product_set_id,
-  image_url: r.image_url, thumbnail_url: r.thumbnail_url, as_of: r.as_of,
+  image_url: r.image_url, frame_url: r.frame_url, thumbnail_url: r.thumbnail_url, as_of: r.as_of,
   spend_7: num(r.spend_7), purchases_7: num(r.purchases_7), value_7: num(r.value_7), cpa_7: nz(r.cpa_7), roas_7: nz(r.roas_7),
   ctr_7: nz(r.ctr_7), ctr_prev7: nz(r.ctr_prev7), ctr_90: nz(r.ctr_90), freq_7g: nz(r.freq_7g), freq_giorn: nz(r.freq_media_giornaliera_7),
   stato_fatica: r.stato_fatica ?? 'ok', azione: r.azione_suggerita, nel_set: nz(r.prodotti_nel_set), risolti: nz(r.prodotti_risolti), pct_oos: nz(r.pct_oos),
@@ -61,7 +61,7 @@ function AdCardView({ r, modelli }: { r: Row; modelli: { modello: string; prodot
   const liveSet = mods.reduce((s, m) => s + m.live, 0), prodSet = mods.reduce((s, m) => s + m.prodotti, 0);
   return (
     <div className={`adcard${paused ? ' paused' : ''}`}>
-      <AdThumb img={r.image_url} thumb={r.thumbnail_url} video={r.object_type === 'VIDEO'} />
+      <AdThumb img={r.frame_url ?? r.image_url} thumb={r.thumbnail_url} video={r.object_type === 'VIDEO'} />
       <div className="adbody">
         <div className="top">
           <span className="nm">{r.ad_name}</span>

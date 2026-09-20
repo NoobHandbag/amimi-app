@@ -18,6 +18,9 @@ const M129 = read('supabase/migrations/0129_v_ads_creative.sql');
 // 0130 ridefinisce v_ads_creative_status con le soglie tarate sui dati reali: e' la definizione VIVA da controllare.
 const M130 = read('supabase/migrations/0130_v_ads_creative_status_taratura.sql');
 const M132 = read('supabase/migrations/0132_ads_creative_redesign.sql');
+const M133 = read('supabase/migrations/0133_v_ads_creative_status_v2.sql');
+const M134 = read('supabase/migrations/0134_ads_frame_url.sql');
+const ADS = read('web/src/pages/Ads.tsx');
 const noComments = (s) => s.replace(/\/\/[^\n]*/g, '');
 
 let ok = 0, ko = 0;
@@ -83,6 +86,18 @@ console.log('\n== redesign 0132: freq7 vera (punto 6), asset image_url, viste pe
   t('20 asset: image_url richiesto nella creative e salvato', /object_type,thumbnail_url,image_url,/.test(SRC) && /image_url: c\.image_url \?\? null/.test(SRC));
   t('21 0132: meta_ad_freq7 con RLS e senza grant anon (letture solo via viste)', /create table if not exists meta_ad_freq7/.test(M132) && /alter table meta_ad_freq7 enable row level security/.test(M132) && !/grant select[^\n]*meta_ad_freq7[^\n]*anon/.test(M132));
   t('22 0132: viste per modello con grant anon', /create or replace view v_ads_set_modelli/.test(M132) && /create or replace view v_ads_catalogo_modelli/.test(M132) && /grant select on v_ads_catalogo_modelli to anon/.test(M132));
+  t('23 0133: status v2 su freq_7g reale, drop+create e regrant anon', /drop view if exists v_ads_creative_status/.test(M133) && /fq\.freq_7d as freq_7g/.test(M133) && /freq_7g >= 2\.5/.test(M133) && /grant select on v_ads_creative_status to anon/.test(M133));
+  t('23b 0133: la fatica ha il fallback sulla media giornaliera per gli ad senza delivery 7d', /freq_7g is null and coalesce\(freq_media_giornaliera_7,0\) >= 1\.7/.test(M133));
+}
+
+console.log('\n== frame video lato server (owner 2026-09-20): fotogramma grande per i video ==');
+{
+  const src = noComments(SRC);
+  t('24 edge: chiede il poster del video (video_data) e gli asset_feed videos', /video_data\{video_id,image_url\}/.test(src) && /asset_feed_spec\{videos\{video_id,thumbnail_url\}\}/.test(src));
+  t('25 edge: frame_url dal poster e risoluzione dal nodo video col thumbnail piu\' grande', /frame_url: poster/.test(src) && /\/\$\{it\.videoId\}\?fields=picture,thumbnails\{uri,width,height,is_preferred\}/.test(src) && /is_preferred && t\.uri/.test(src));
+  t('26 edge: fotogramma opzionale (try/catch, cap 20), non pesa sulla severity', /framesTried >= 20/.test(src) && /fotogramma opzionale/.test(SRC));
+  t('27 0134: colonna frame_url + vista che la espone + regrant anon', /alter table meta_ad_creative add column if not exists frame_url text/.test(M134) && /drop view if exists v_ads_creative_status/.test(M134) && /c\.object_type, c\.thumbnail_url, c\.image_url, c\.frame_url,/.test(M134) && /grant select on v_ads_creative_status to anon/.test(M134));
+  t('28 frontend: usa frame_url con fallback image_url poi thumbnail 64px', /img=\{r\.frame_url \?\? r\.image_url\}/.test(ADS) && /frame_url: r\.frame_url/.test(ADS));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);

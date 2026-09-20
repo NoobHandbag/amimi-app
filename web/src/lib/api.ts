@@ -179,7 +179,7 @@ export type AdsCreativeStatus = {
   ad_id: string; as_of: string | null; ad_name: string | null; campaign_name: string | null; adset_name: string | null;
   campaign_id: string | null; adset_id: string | null;
   effective_status: string | null; product_set_id: string | null; object_type: string | null;
-  thumbnail_url: string | null; image_url: string | null; link: string | null;
+  thumbnail_url: string | null; image_url: string | null; frame_url: string | null; link: string | null;
   spend_7: number | string | null; purchases_7: number | string | null; value_7: number | string | null;
   ctr_7: number | string | null; ctr_prev7: number | string | null; ctr_90: number | string | null; cpm_7: number | string | null;
   freq_media_giornaliera_7: number | string | null; freq_7g: number | string | null; cpa_7: number | string | null; roas_7: number | string | null;

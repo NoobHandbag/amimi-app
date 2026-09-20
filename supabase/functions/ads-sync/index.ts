@@ -219,23 +219,52 @@ Deno.serve(async (req) => {
   }
 
   // ---- anagrafica creative: ads + creative (product_set_id, destinazione, thumbnail + immagine grande). Errori contati (B3). ----
-  let creativeRows = 0, creativeErr = 0; const setIds = new Set<string>();
+  let creativeRows = 0, creativeErr = 0, framesResolved = 0, framesTried = 0; const setIds = new Set<string>();
   try {
-    const creativeSub = 'creative{id,object_type,thumbnail_url,image_url,url_tags,product_set_id,object_story_spec{link_data{link,name}}}';
+    // frame_url: fotogramma GRANDE del video (owner 2026-09-20). Le foto danno image_url grande, i video solo
+    // thumbnail_url 64px (renderizza ma minuscolo). Il poster del video (object_story_spec.video_data.image_url, o
+    // asset_feed_spec.videos per gli ad a catalogo/Advantage+) e' grande come una foto: lo prendo di qui. Se manca ma
+    // c'e' un video_id, lo risolvo dal nodo video sotto.
+    const creativeSub = 'creative{id,object_type,thumbnail_url,image_url,url_tags,product_set_id,object_story_spec{link_data{link,name},video_data{video_id,image_url}},asset_feed_spec{videos{video_id,thumbnail_url}}}';
     const ads = await metaGetAll_(token, `${GRAPH}/${AD_ACCOUNT}/ads?fields=id,name,adset_id,campaign_id,effective_status,${creativeSub}&limit=100`);
-    const anag = ads.map((ad) => {
+    const items = ads.map((ad) => {
       const c = ad.creative ?? {};
       const psid = c.product_set_id ?? null;
       if (psid) setIds.add(String(psid));
+      const vd = c.object_story_spec?.video_data ?? null;
+      const afv = c.asset_feed_spec?.videos?.[0] ?? null;
+      const isVideo = (c.object_type ?? '') === 'VIDEO' || !!vd || !!afv;
+      const poster = isVideo ? (vd?.image_url ?? afv?.thumbnail_url ?? null) : null; // grande, come una foto
       return {
-        ad_id: String(ad.id), creative_id: c.id ?? null, ad_name: ad.name ?? null,
-        adset_id: ad.adset_id ?? null, campaign_id: ad.campaign_id ?? null,
-        object_type: c.object_type ?? null, title: c.object_story_spec?.link_data?.name ?? null,
-        thumbnail_url: c.thumbnail_url ?? null, image_url: c.image_url ?? null, link: c.object_story_spec?.link_data?.link ?? null,
-        url_tags: c.url_tags ?? null, product_set_id: psid, catalog_id: psid ? CATALOG_ID : null,
-        effective_status: ad.effective_status ?? null, last_seen: new Date().toISOString(), updated_at: new Date().toISOString(),
+        row: {
+          ad_id: String(ad.id), creative_id: c.id ?? null, ad_name: ad.name ?? null,
+          adset_id: ad.adset_id ?? null, campaign_id: ad.campaign_id ?? null,
+          object_type: c.object_type ?? null, title: c.object_story_spec?.link_data?.name ?? null,
+          thumbnail_url: c.thumbnail_url ?? null, image_url: c.image_url ?? null, frame_url: poster,
+          link: c.object_story_spec?.link_data?.link ?? null,
+          url_tags: c.url_tags ?? null, product_set_id: psid, catalog_id: psid ? CATALOG_ID : null,
+          effective_status: ad.effective_status ?? null, last_seen: new Date().toISOString(), updated_at: new Date().toISOString(),
+        },
+        videoId: isVideo ? (vd?.video_id ?? afv?.video_id ?? null) : null,
+        needsFrame: isVideo && !poster,
       };
     });
+    // video senza poster: prendo il thumbnail piu' grande (o quello preferito) dal nodo video. Le URL fbcdn scadono,
+    // quindi si ririsolve a ogni giro come thumbnail_url/image_url. Opzionale: se fallisce, frame_url resta null e il
+    // frontend ripiega sul thumbnail 64px. Cap difensivo a 20 chiamate per non far esplodere il giro.
+    for (const it of items) {
+      if (!it.needsFrame || !it.videoId || framesTried >= 20) continue;
+      framesTried++;
+      try {
+        const v = await metaGetOne_(token, `${GRAPH}/${it.videoId}?fields=picture,thumbnails{uri,width,height,is_preferred}`);
+        const ths = (v.thumbnails?.data ?? []) as Array<{ uri?: string; width?: number; is_preferred?: boolean }>;
+        const pref = ths.find((t) => t.is_preferred && t.uri) ?? [...ths].filter((t) => t.uri).sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0];
+        const chosen = pref?.uri ?? (typeof v.picture === 'string' ? v.picture : null);
+        if (chosen) { it.row.frame_url = chosen; framesResolved++; }
+      } catch (_e) { /* fotogramma opzionale: il frontend ripiega sul thumbnail 64px */ }
+      await sleep(150);
+    }
+    const anag = items.map((it) => it.row);
     if (!anag.length) creativeErr++; // 0 ad = token senza ads_read o account vuoto: non e' "tutto ok"
     for (let i = 0; i < anag.length; i += 200) {
       const { error } = await sb.from('meta_ad_creative').upsert(anag.slice(i, i + 200), { onConflict: 'ad_id' });
@@ -298,6 +327,6 @@ Deno.serve(async (req) => {
   }
 
   const sev = dailyErr || mapErr || creativeErr ? 'warn' : 'ok';
-  await health(`pull ${dates.length}g (${dates[0]} -> ${dates[dates.length - 1]}): ${dailyRows} righe ad-day, ${creativeRows} creative, ${freqRows} freq7, ${mapRows} righe set-map, set ${setIds.size}` + (dailyErr || mapErr || creativeErr ? `, errori daily ${dailyErr} creative ${creativeErr} map ${mapErr}` : ''), dailyErr + mapErr + creativeErr, sev as 'ok' | 'warn');
-  return json({ ok: true, dates: dates.length, from: dates[0], to: dates[dates.length - 1], dailyRows, dailyErr, creativeRows, creativeErr, freqRows, mapRows, mapErr, sets: setIds.size, next_offset: isBackfill ? startOffset + days : undefined });
+  await health(`pull ${dates.length}g (${dates[0]} -> ${dates[dates.length - 1]}): ${dailyRows} righe ad-day, ${creativeRows} creative (frame ${framesResolved}/${framesTried}), ${freqRows} freq7, ${mapRows} righe set-map, set ${setIds.size}` + (dailyErr || mapErr || creativeErr ? `, errori daily ${dailyErr} creative ${creativeErr} map ${mapErr}` : ''), dailyErr + mapErr + creativeErr, sev as 'ok' | 'warn');
+  return json({ ok: true, dates: dates.length, from: dates[0], to: dates[dates.length - 1], dailyRows, dailyErr, creativeRows, creativeErr, framesResolved, framesTried, freqRows, mapRows, mapErr, sets: setIds.size, next_offset: isBackfill ? startOffset + days : undefined });
 });
