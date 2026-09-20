@@ -419,10 +419,12 @@ idempotenza a DB, Regola 20). Il client non decide MAI i punti. NON tocca CE / s
 
 - **action `run`** (giro normale): ordini aggiornati negli ultimi 3 giorni, pagati, creati DOPO
   `app_flags.loyalty_orders_since` (watermark di lancio: niente retroattivo automatico). Tetto 50/giro.
-- **action `backfill`** (a mano, retroattivo storico): `{since}` esplicito, tetto 1000. BUG NOTO
-  (2026-09-18): il filtro dei candidati usa `loyalty_orders_since` invece di `since`, quindi
-  salterebbe i pre-lancio. DA CORREGGERE prima di usarlo per il retroattivo vero.
+- **action `backfill`** (a mano, retroattivo storico): `{since}` esplicito, tetto 1000. Il filtro dei
+  candidati usa una soglia `floor` = `since` in backfill (= `loyalty_orders_since` nel giro normale),
+  quindi accredita anche i pre-lancio. CORRETTO 2026-09-20 (PR amimi-app): prima usava sempre il
+  lancio anche in backfill, quindi saltava i pre-lancio (retroattivo di fatto inutile). Verificato
+  con dryRun: backfill `since=2026-09-18T00:00` include #1776/#1777 (pre-lancio), il giro normale no.
 - **dryRun**: anteprima senza scritture; oggi e' dietro il flag (dry-run richiede il flag ON) -
-  da spostare prima del gate in un prossimo deploy.
+  da spostare prima del gate in un prossimo deploy. Le risposte (dryRun e reale) riportano `launch` e `floor` usati.
 - Flag: `loyalty_purchase_enabled` (OFF), `loyalty_euro_per_point` (1), `loyalty_orders_since` (lancio).
-- Deploy 2026-09-18 via `supabase functions deploy loyalty-orders --no-verify-jwt`. Cron NON ancora schedulato.
+- Deploy 2026-09-18 via `supabase functions deploy loyalty-orders --no-verify-jwt`; redeploy 2026-09-20 (fix backfill `floor`). Cron NON ancora schedulato.
