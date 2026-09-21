@@ -103,6 +103,22 @@ function romeToday(now = new Date()): string {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
 
+  // Area Membri (Premia): pagina HTML servita dalla edge separata loyalty-page, same-origin su
+  // amimi.it/apps/premia/club cosi' le fetch a /apps/premia/* portano il login. Rotta ISOLATA in
+  // early-return: NON tocca secret / firma / identita' / azioni sottostanti. Aggiunta 2026-09-20 (B1).
+  {
+    const _p = new URL(req.url).pathname.split('/').filter(Boolean);
+    if (req.method === 'GET' && (_p[_p.length - 1] ?? '') === 'club') {
+      try {
+        const _r = await fetch('https://imszbjeyplaiovylhkgl.supabase.co/functions/v1/loyalty-page');
+        const _ct = _r.headers.get('content-type') || 'application/liquid; charset=utf-8';
+        return new Response(await _r.text(), { status: 200, headers: { ...cors, 'Content-Type': _ct } });
+      } catch (_e) {
+        return new Response('Area Membri non disponibile, riprova.', { status: 503, headers: { ...cors, 'Content-Type': 'text/plain; charset=utf-8' } });
+      }
+    }
+  }
+
   const url = new URL(req.url);
   const params = url.searchParams;
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -360,6 +376,54 @@ Deno.serve(async (req) => {
 
     // capped = abbiamo accreditato MENO di quanto chiesto (per clamp-partita o cap giornaliero)
     return json({ points: newPoints, added, capped: added < requested, ...(eventInsertFailed ? { warning: 'event_insert_failed' } : {}) });
+  }
+
+  // --- RISCATTO (Premia Fase 3): punti -> premio. Modulo isolato (Regola 19), gated da
+  // loyalty_redeem_enabled (default OFF => {state:'off'}). Consegna SCOPE-FREE: pesca un codice sconto
+  // pre-generato dall'owner (pool loyalty_reward_codes). Pool vuoto => redemption 'pending' (evasione
+  // manuale). Migr 0135: loyalty_rewards/redemptions/reward_codes + RPC atomiche loyalty_redeem/claim_code.
+  if (action === 'rewards' || action === 'redeem') {
+    const { data: rflag } = await sb.from('app_flags').select('value').eq('key', 'loyalty_redeem_enabled').maybeSingle();
+    if (String(rflag?.value ?? 'false').trim().toLowerCase() !== 'true') return json({ state: 'off' });
+
+    if (action === 'rewards') {
+      const [{ data: cat }, { data: mine }] = await Promise.all([
+        sb.from('loyalty_rewards').select('key, label, cost_points, kind, value, sort').eq('active', true).order('sort'),
+        sb.from('loyalty_redemptions').select('reward_key, cost_points, status, discount_code, created_at')
+          .eq('shopify_customer_id', customerId).order('created_at', { ascending: false }).limit(20),
+      ]);
+      const points = await readPoints();
+      if (points === null) return json({ error: 'read_failed' }, 503);
+      return json({ points, rewards: cat ?? [], redemptions: mine ?? [] });
+    }
+
+    // action === 'redeem' (POST {reward, idemp})
+    const rbody = await req.json().catch(() => ({}));
+    const rewardKey = String((rbody as { reward?: unknown }).reward ?? '').trim();
+    const idemp = String((rbody as { idemp?: unknown }).idemp ?? '').trim();
+    if (!rewardKey || idemp.length < 8) return json({ error: 'invalid_request' }, 400);
+
+    // detrazione atomica + record idempotente (Regola 20). Il client NON decide mai i punti.
+    const { data: red, error: rErr } = await sb.rpc('loyalty_redeem', { p_customer: customerId, p_reward_key: rewardKey, p_idemp: idemp });
+    if (rErr) return json({ error: 'redeem_failed' }, 500);
+    const r = red as { ok?: boolean; reason?: string; status?: string; code?: string | null; new_balance?: number; redemption_id?: number; cost?: number };
+    if (!r?.ok) {
+      const pts = await readPoints();
+      return json({ ok: false, reason: r?.reason ?? 'error', points: pts ?? undefined }, r?.reason === 'insufficient' ? 409 : 400);
+    }
+    if (r.reason === 'already') {                                  // doppio invio: stato esistente, nessun doppio addebito
+      const pts = await readPoints();
+      return json({ ok: true, already: true, status: r.status, code: r.code ?? null, points: pts ?? undefined });
+    }
+
+    // consegna: pesca un codice libero dal pool (se presente); altrimenti la redemption resta 'pending'
+    let code: string | null = null;
+    try {
+      const { data: c } = await sb.rpc('loyalty_claim_code', { p_reward_key: rewardKey, p_customer: customerId, p_redemption_id: r.redemption_id });
+      code = (c as string | null) ?? null;
+    } catch { /* pool non disponibile: pending, l'owner la evade */ }
+
+    return json({ ok: true, status: code ? 'fulfilled' : 'pending', code, points: r.new_balance, cost: r.cost });
   }
 
   return json({ error: 'unknown_action', action }, 422);
