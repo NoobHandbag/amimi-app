@@ -69,3 +69,17 @@ inspector_port = 8083
 
 [analytics]
 enabled = false
+
+# Edge function Premia (Area Membri), quest audit 2026-09-21, finding T24. `supabase functions deploy` legge
+# questa sezione anche per il deploy REMOTO: senza, un deploy lanciato senza `--no-verify-jwt` rimette
+# verify_jwt=true e spegne l'App Proxy (Shopify non manda alcun JWT) e la pagina membri. Con questa sezione
+# il default e' quello giusto sempre, anche a mano libera. (CONOSCENZA 13-09: "un functions deploy senza
+# --no-verify-jwt rimette verify_jwt a true".)
+[functions.loyalty-proxy]
+verify_jwt = false
+
+[functions.loyalty-orders]
+verify_jwt = false
+
+[functions.loyalty-page]
+verify_jwt = false

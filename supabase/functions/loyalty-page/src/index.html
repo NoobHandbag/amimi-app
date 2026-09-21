@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Premia · Il mio profilo · Amimì</title>
+<!--
+  Area Membri "Premia" - PRODUZIONE (dati REALI via App Proxy).
+  Va servita SAME-ORIGIN su amimi.it (es. pagina/sezione storefront), cosi' le fetch a
+  /apps/premia/* portano il logged_in_customer_id firmato da Shopify (nessun secondo login).
+  Contratto edge live loyalty-proxy: state | balance | coccola | memory_win | nanna | wear.
+  Tiers e tessera sono calcolati lato client da CONFIG (nessun numero inventato lato server).
+  Servita da github.io o altro dominio NON funziona: il cookie di login e' su amimi.it.
+-->
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --cream:#faf7f3; --paper:#fffdfa; --sand:#e4ded7; --ink:#2a2724; --muted:#6f6862;
+    --cognac:#8a6d4b; --bordeaux:#7a2e3f; --gold:#c9a86a; --peach:#f6e3d5; --blush:#f3d9d3; --ok:#5c7150;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--cream);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);max-width:460px;margin:0 auto;padding:20px 16px 48px;min-height:100vh;position:relative;overflow-x:hidden}
+  .logo{font-family:"Cormorant Garamond",serif;font-style:italic;font-size:26px;color:var(--bordeaux);text-align:center;letter-spacing:1px}
+  h3.sec{font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--cognac);margin:26px 0 10px}
+  .tap{cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}.tap:active{opacity:.82}
+  .hidden{display:none!important}
+
+  /* stati (login / off / errore) */
+  .gate{text-align:center;padding:60px 20px}
+  .gate h2{font-family:"Cormorant Garamond",serif;font-size:30px;font-weight:600;margin-bottom:8px}
+  .gate p{font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.5}
+  .btn{display:inline-block;background:var(--bordeaux);color:#fff;font-size:13px;font-weight:700;padding:12px 22px;border-radius:99px;border:none;cursor:pointer;text-decoration:none}
+
+  /* mascotte Mimi */
+  .mimi{width:170px;height:170px;position:relative}
+  .mimi .handle{width:74px;height:52px;border:3px solid #3c2f28;border-bottom:none;border-radius:40px 40px 0 0;position:absolute;top:4px;left:48px}
+  .mimi .body{width:150px;height:118px;background:#fff;border:3px solid #3c2f28;border-radius:26px 26px 40px 40px;position:absolute;bottom:0;left:10px;box-shadow:inset 0 -14px 0 var(--blush)}
+  .mimi .clasp{width:22px;height:10px;background:var(--gold);border-radius:4px;position:absolute;bottom:104px;left:74px;border:2px solid #3c2f28;z-index:2}
+  .mimi .eye{width:12px;height:16px;background:#3c2f28;border-radius:50%;position:absolute;bottom:62px;animation:blink 4.5s infinite;z-index:2}
+  .mimi .eye.l{left:52px}.mimi .eye.r{right:52px}
+  .mimi .cheek{width:14px;height:8px;background:var(--blush);border-radius:50%;position:absolute;bottom:52px;z-index:2}
+  .mimi .cheek.l{left:38px}.mimi .cheek.r{right:38px}
+  .mimi .mouth{width:18px;height:9px;border:2.5px solid #3c2f28;border-top:none;border-radius:0 0 20px 20px;position:absolute;bottom:46px;left:76px;z-index:2}
+  .mimi .bow{position:absolute;top:44px;left:104px;z-index:3;display:none}
+  .mimi .bow i,.mimi .bow em{position:absolute;width:0;height:0;border-style:solid}
+  .mimi .bow i{border-width:9px 15px 9px 0;border-color:transparent var(--bordeaux) transparent transparent;left:-16px;top:-9px;transform:rotate(-8deg)}
+  .mimi .bow em{border-width:9px 0 9px 15px;border-color:transparent transparent transparent var(--bordeaux);left:1px;top:-9px;transform:rotate(8deg)}
+  .mimi .bow b{position:absolute;width:8px;height:8px;background:#5e2231;border-radius:50%;left:-5px;top:-4px}
+  .mimi.worn .bow{display:block}
+  @keyframes blink{0%,92%,96%,100%{transform:scaleY(1)}94%{transform:scaleY(.12)}}
+  @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+  @keyframes squee{0%{transform:scale(1)}30%{transform:scale(1.08) rotate(-2deg)}60%{transform:scale(.97) rotate(1.5deg)}100%{transform:scale(1)}}
+  .mimi.squee{animation:squee .7s ease}
+  .heart{position:absolute;z-index:70;pointer-events:none;animation:rise 1.3s ease-out forwards}
+  @keyframes rise{0%{opacity:0;transform:translateY(6px) scale(.7)}18%{opacity:1}100%{opacity:0;transform:translateY(-64px) scale(1.25)}}
+  .confetti{position:fixed;width:9px;height:14px;z-index:95;pointer-events:none;animation:fall linear forwards}
+  @keyframes fall{0%{opacity:1;transform:translateY(-10px) rotate(0)}100%{opacity:.9;transform:translateY(100vh) rotate(540deg)}}
+
+  /* profilo */
+  .hello{font-family:"Cormorant Garamond",serif;font-size:34px;font-weight:600;margin-top:14px;line-height:1.05}
+  .lvl{display:inline-flex;align-items:center;gap:7px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--cognac);margin-top:8px;background:var(--paper);border:1px solid var(--sand);padding:5px 11px;border-radius:99px}
+  .lvl .dot{width:8px;height:8px;border-radius:50%;background:var(--bordeaux)}
+  .tessera{background:var(--paper);border:1.5px dashed var(--cognac);border-radius:18px;padding:20px;margin-top:16px;position:relative}
+  .tessera:before,.tessera:after{content:"";position:absolute;width:22px;height:22px;background:var(--cream);border-radius:50%;top:50%;transform:translateY(-50%)}
+  .tessera:before{left:-13px}.tessera:after{right:-13px}
+  .pts{display:flex;align-items:baseline;gap:10px;justify-content:center}
+  .pts .n{font-family:"Cormorant Garamond",serif;font-size:50px;font-weight:600;color:var(--bordeaux);line-height:.9}
+  .pts .l{font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--muted)}
+  .stamps{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;margin:16px 6px 4px}
+  .stamp{aspect-ratio:1;border-radius:50%;border:1.5px solid var(--sand);display:flex;align-items:center;justify-content:center;font-size:18px;background:#fff;color:#cfc6ba;transition:all .35s}
+  .stamp.full{background:var(--bordeaux);border-color:var(--bordeaux);transform:rotate(-8deg)}
+  .cap{text-align:center;font-size:12px;color:var(--muted);margin-top:10px}.cap b{color:var(--bordeaux)}
+  .tierbar{height:7px;border-radius:7px;background:#f0e8dd;margin-top:14px;overflow:hidden}
+  .tierbar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--bordeaux));transition:width .8s cubic-bezier(.22,.9,.3,1)}
+  .tiernote{font-size:11px;color:var(--muted);margin-top:7px;text-align:center}.tiernote b{color:var(--bordeaux)}
+
+  /* stanza / azioni */
+  .scene{text-align:center;margin-top:8px;position:relative}
+  .scene .mimi{margin:0 auto;animation:floaty 3.5s ease-in-out infinite}
+  .mname{font-family:"Cormorant Garamond",serif;font-size:24px;font-weight:600;margin-top:4px}
+  .mmood{font-size:12.5px;color:#7d6a5c;max-width:300px;margin:2px auto 0;min-height:34px}
+  .acts{display:flex;gap:9px;margin-top:14px}
+  .act{flex:1;border-radius:13px;padding:12px 6px;text-align:center;font-size:12px;font-weight:700;transition:all .25s;border:none}
+  .act small{display:block;font-weight:500;font-size:9.5px;opacity:.85;margin-top:2px}
+  .act.main{background:var(--bordeaux);color:#fff}
+  .act.alt{background:#fff;color:var(--bordeaux);border:1.5px solid var(--bordeaux)}
+  .act.done{background:#efe8df;color:#9a8e80}
+  .ward{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .witem{background:#fff;border-radius:14px;padding:8px;box-shadow:0 4px 14px rgba(122,46,63,.06);text-align:center;border:2px solid transparent;transition:border-color .3s}
+  .witem.worn{border-color:var(--bordeaux)}
+  .witem img{width:100%;height:74px;object-fit:cover;border-radius:10px;background:var(--peach)}
+  .witem span{font-size:9.5px;color:var(--muted);display:block;margin-top:6px;line-height:1.3}
+  .witem .w{display:inline-block;font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--bordeaux);margin-top:3px}
+  .empty{background:#fff;border:1px dashed var(--sand);border-radius:14px;padding:18px;text-align:center;font-size:12px;color:var(--muted)}
+
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#2a2724;color:#fff;font-size:12.5px;padding:10px 18px;border-radius:99px;opacity:0;pointer-events:none;transition:all .3s;z-index:80;max-width:88%}
+  #toast.on{opacity:.95;transform:translateX(-50%) translateY(0)}
+
+  /* mini-gioco memory */
+  .modal{position:fixed;inset:0;background:rgba(42,39,36,.55);display:flex;align-items:center;justify-content:center;z-index:90;opacity:0;pointer-events:none;transition:opacity .25s;padding:20px}
+  .modal.on{opacity:1;pointer-events:auto}
+  .sheet{background:var(--cream);border-radius:22px;padding:22px 20px;width:100%;max-width:340px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+  .sheet h2{font-family:"Cormorant Garamond",serif;font-size:26px;font-weight:600}
+  .sheet p{font-size:12px;color:var(--muted);margin-top:4px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}
+  .card{aspect-ratio:3/4;border-radius:10px;background:var(--bordeaux);display:flex;align-items:center;justify-content:center;font-size:24px;cursor:pointer;color:transparent;transition:transform .25s, background .25s}
+  .card.up{background:var(--paper);color:initial;border:1.5px solid var(--sand)}
+  .card.done{background:var(--peach);color:initial;cursor:default}
+  .prizebig{font-family:"Cormorant Garamond",serif;font-size:44px;font-weight:700;color:var(--bordeaux);margin:6px 0}
+  .btnghost{background:none;border:none;color:var(--muted);font-size:12px;margin-top:8px;cursor:pointer;text-decoration:underline}
+
+  /* riscatto (punti -> codice sconto) */
+  .redeem{background:linear-gradient(135deg,var(--bordeaux),#5e2231);color:#fff;border-radius:18px;padding:18px 20px;margin-top:14px;box-shadow:0 10px 26px rgba(122,46,63,.22)}
+  .redeem h4{font-family:"Cormorant Garamond",serif;font-size:22px;font-weight:600;line-height:1.1}
+  .redeem .sub{font-size:12px;opacity:.88;margin:4px 0 12px}
+  .redeem .rbtn{background:var(--gold);color:#3c2f28;border:none;border-radius:99px;font-size:13px;font-weight:700;padding:13px 18px;cursor:pointer;width:100%;transition:transform .12s,opacity .2s}
+  .redeem .rbtn:active{transform:scale(.98)}
+  .redeem .rbtn[disabled]{background:rgba(255,255,255,.22);color:rgba(255,255,255,.7);cursor:default}
+  .codechip{display:flex;align-items:center;gap:8px;background:#fff;color:var(--bordeaux);border-radius:12px;padding:11px 12px}
+  .codechip .c{font-family:"Cormorant Garamond",serif;font-weight:700;font-size:19px;letter-spacing:.5px;flex:1;word-break:break-all}
+  .codechip .cp{background:var(--bordeaux);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;padding:8px 12px;cursor:pointer;white-space:nowrap}
+  .redeem .fine{font-size:10.5px;opacity:.82;margin-top:9px;text-align:center}
+</style>
+</head>
+<body>
+  <div class="logo">amìmì</div>
+
+  <!-- stato: caricamento -->
+  <div id="loading" class="gate"><p>Carico il tuo profilo Premia...</p></div>
+
+  <!-- stato: login richiesto / off -->
+  <div id="gate" class="gate hidden">
+    <h2 id="gateTitle"></h2>
+    <p id="gateMsg"></p>
+    <a id="gateBtn" class="btn" href="/account">Accedi</a>
+  </div>
+
+  <!-- profilo -->
+  <div id="app" class="hidden">
+    <div class="hello">Ciao,<br><span id="cName">amica</span></div>
+    <div><span class="lvl"><span class="dot"></span><span id="tierName">Amica</span></span></div>
+
+    <div class="tessera">
+      <div class="pts"><span class="n" id="pts">0</span><span class="l">punti</span></div>
+      <div class="stamps" id="stamps"></div>
+      <div class="cap" id="cap"></div>
+      <div class="tierbar"><i id="tierFill" style="width:0%"></i></div>
+      <div class="tiernote" id="tierNote"></div>
+    </div>
+
+    <div id="redeem" class="redeem hidden"></div>
+
+    <h3 class="sec">La stanza di Mimì</h3>
+    <div class="scene">
+      <div class="mimi" id="mimi"></div>
+      <div class="mname">Mimì</div>
+      <div class="mmood" id="mood"></div>
+    </div>
+    <div class="acts">
+      <button class="act main tap" id="btnCoccola"></button>
+      <button class="act alt tap" id="btnGame">Gioca<small>1 volta al giorno</small></button>
+      <button class="act alt tap" id="btnNanna"></button>
+    </div>
+
+    <h3 class="sec">Il guardaroba di Mimì</h3>
+    <div id="ward"></div>
+  </div>
+
+  <!-- mini-gioco memory -->
+  <div class="modal" id="gameModal"><div class="sheet">
+    <h2>Trova le coppie</h2>
+    <p>Abbina le borsine per vincere i punti di oggi.</p>
+    <div class="grid" id="grid"></div>
+    <button class="btnghost" id="gameClose">Chiudi</button>
+  </div></div>
+
+  <!-- reveal premio -->
+  <div class="modal" id="rewardModal"><div class="sheet">
+    <h2 id="rewardTitle">Complimenti!</h2>
+    <div class="prizebig" id="rewardPrize"></div>
+    <p id="rewardMsg"></p>
+    <button class="btn" id="rewardOk">Continua</button>
+  </div></div>
+
+  <div id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  // === CONFIG (tiers/tessera lato client; i punti veri vengono dall'edge) ===
+  const CONFIG = {
+    stampEvery: 20, stampsForReward: 10,
+    tiers: [ {key:'amica',name:'Amica',min:0},{key:'speciale',name:'Amica Speciale',min:150},{key:'cuore',name:"Amica del Cuore",min:400} ],
+  };
+  const PROXY = '/apps/premia';         // same-origin su amimi.it
+  const el = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));   // tutto cio' che entra in innerHTML passa da qui (audit T7)
+  let S = null;                          // stato reale dall'edge
+
+  // === API reale (rispecchia loyalty-proxy) ===
+  async function api(action, opts){
+    const o = opts || {};
+    const url = PROXY + '/' + action;
+    const init = { method: o.method || 'GET', headers: { 'Content-Type':'application/json' }, credentials:'include' };
+    if (o.body) init.body = JSON.stringify(o.body);
+    let r;
+    try { r = await fetch(url, init); } catch(e) { return { status:0, data:{ error:'network' } }; }   // offline o rete: gli handler mostrano "Riprova" (audit T30)
+    let data = {}; try { data = await r.json(); } catch(e){}
+    return { status:r.status, data };
+  }
+
+  function toast(m){ const t=el('toast'); t.textContent=m; t.classList.add('on'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('on'),2200); }
+  function mimiInner(){ return '<div class="handle"></div><div class="body"></div><div class="clasp"></div><div class="bow"><i></i><em></em><b></b></div><div class="eye l"></div><div class="eye r"></div><div class="cheek l"></div><div class="cheek r"></div><div class="mouth"></div>'; }
+  function tierOf(p){ let t=CONFIG.tiers[0]; for(const x of CONFIG.tiers) if(p>=x.min) t=x; return t; }
+  function nextTier(p){ for(const x of CONFIG.tiers) if(p<x.min) return x; return null; }
+  function hearts(host,n){ n=n||6; for(let k=0;k<n;k++){ (function(k){ setTimeout(()=>{ const h=document.createElement('div'); h.className='heart'; h.textContent='💛'; h.style.fontSize=(14+Math.random()*8)+'px'; h.style.left=(40+Math.random()*120)+'px'; h.style.top=(30+Math.random()*60)+'px'; host.appendChild(h); setTimeout(()=>h.remove(),1400); }, k*110); })(k);} }
+  function squee(){ const m=el('mimi'); m.classList.remove('squee'); void m.offsetWidth; m.classList.add('squee'); }
+  function confetti(){ const cols=['#7a2e3f','#c9a86a','#f3d9d3','#8a6d4b','#f6e3d5']; for(let i=0;i<70;i++){ const c=document.createElement('div'); c.className='confetti'; c.style.left=Math.random()*100+'%'; c.style.top='-10px'; c.style.background=cols[i%cols.length]; c.style.animationDuration=(1.6+Math.random()*1.3)+'s'; document.body.appendChild(c); setTimeout(()=>c.remove(),3200);} }
+  function countUp(node,to){ const from=Number(node.textContent)||0; if(from===to){node.textContent=to;return;} const t0=performance.now(); (function step(t){ const k=Math.min(1,(t-t0)/650); node.textContent=Math.round(from+(to-from)*(1-Math.pow(1-k,3))); if(k<1) requestAnimationFrame(step); })(performance.now()); }
+  function reward(title,prize,msg){ el('rewardTitle').textContent=title; el('rewardPrize').textContent=prize; el('rewardMsg').textContent=msg||''; el('rewardModal').classList.add('on'); confetti(); }
+
+  // === render ===
+  function showGate(title,msg,showLogin){ el('loading').classList.add('hidden'); el('app').classList.add('hidden'); const g=el('gate'); g.classList.remove('hidden'); el('gateTitle').textContent=title; el('gateMsg').textContent=msg; el('gateBtn').classList.toggle('hidden',!showLogin); }
+
+  function render(){
+    el('loading').classList.add('hidden'); el('gate').classList.add('hidden'); el('app').classList.remove('hidden');
+    const p = S.points||0, tier=tierOf(p), nt=nextTier(p);
+    countUp(el('pts'), p);
+    el('tierName').textContent = tier.name;
+    const timbri = Math.min(CONFIG.stampsForReward, Math.floor(p/CONFIG.stampEvery));
+    const sw = el('stamps'); sw.innerHTML='';
+    for(let i=1;i<=CONFIG.stampsForReward;i++){ const d=document.createElement('div'); const full=i<=timbri; d.className='stamp'+(full?' full':''); d.textContent=full?'💛':(i===CONFIG.stampsForReward?'🎁':'·'); sw.appendChild(d); }
+    el('cap').innerHTML='Un timbro ogni '+CONFIG.stampEvery+' punti · a '+CONFIG.stampsForReward+' timbri <b>il tuo sconto personale</b>';
+    if(nt){ const prog=Math.max(0,Math.min(1,(p-tier.min)/(nt.min-tier.min))); el('tierFill').style.width=(prog*100)+'%'; el('tierNote').innerHTML='Ti mancano <b>'+(nt.min-p)+' punti</b> per '+esc(nt.name)+' · il livello segue i punti disponibili'; }
+    else { el('tierFill').style.width='100%'; el('tierNote').innerHTML='Livello massimo: <b>'+esc(tier.name)+'</b> 💛 · il livello segue i punti disponibili'; }
+    // mimi
+    const m=el('mimi'); if(!m.innerHTML.trim()) m.innerHTML=mimiInner(); m.classList.toggle('worn', !!S.worn);
+    el('mood').textContent = S.nanna ? 'Dorme nel suo sacchettino. Shhh.' : (!S.coccola_disponibile ? 'Coccolata oggi. È al settimo cielo!' : 'Oggi ti aspetta per la sua coccola.');
+    // azioni
+    const bc=el('btnCoccola');
+    if(!S.coccola_disponibile){ bc.className='act done'; bc.innerHTML='Coccolata ✓<small>torna domani</small>'; }
+    else { bc.className='act main tap'; bc.innerHTML='Coccola Mimì<small>+5 punti · 1 al giorno</small>'; }
+    const bg=el('btnGame');
+    if(!S.memory_disponibile){ bg.className='act done'; bg.innerHTML='Giocato ✓<small>torna domani</small>'; }
+    else { bg.className='act alt tap'; bg.innerHTML='Gioca<small>+5 · 1 al giorno</small>'; }
+    el('btnNanna').innerHTML = S.nanna ? 'Svegliala 💤<small>è a nanna</small>' : 'Metti a nanna<small>nel sacchettino</small>';
+    // guardaroba (borse realmente possedute)
+    const w=el('ward'), items=S.wardrobe;
+    if(items===null){ w.className='empty'; w.innerHTML='Il guardaroba non è leggibile in questo momento: riprova fra poco.'; }   // null = non leggibile (audit), diverso da "nessun capo"
+    else if(!items||!items.length){ w.className='empty'; w.innerHTML='Le borse che acquisti appariranno qui, pronte da far indossare a Mimì.'; }
+    else { w.className='ward'; w.innerHTML=items.map(it=>{ const worn=S.worn===it.codice; return '<div class="witem tap'+(worn?' worn':'')+'" data-codice="'+esc(it.codice)+'"><img src="'+esc(it.img||'')+'" alt=""><span>'+esc(it.titolo||it.codice)+'</span><span class="w">'+(worn?'indossata':'indossa')+'</span></div>'; }).join(''); }
+    renderRedeem();
+  }
+
+  // === riscatto (punti -> codice sconto). Catalogo/riscatti dall'edge (azioni rewards/redeem). ===
+  function renderRedeem(){
+    const box=el('redeem'); const rd=S && S._rewards;
+    if(!rd || !Array.isArray(rd.rewards) || !rd.rewards.length){ box.classList.add('hidden'); return; }
+    const rw=rd.rewards[0];                                   // primo premio attivo ('tessera')
+    const p=S.points||0, reds=rd.redemptions||[];
+    const pending=reds.find(x=>x.status==='pending');
+    const last=reds.find(x=>x.status==='fulfilled' && x.discount_code);   // il piu' recente (lista gia' desc)
+    box.classList.remove('hidden');
+    let h='<h4>'+esc(rw.label)+'</h4>';
+    // azione: il riscatto e' RIPETIBILE ogni volta che la tessera si riempie
+    if(pending){
+      h+='<div class="sub">Riscatto ricevuto. Il tuo codice sta arrivando, ti avvisiamo.</div>';
+    } else if(p>=rw.cost_points){
+      h+='<div class="sub">Hai '+p+' punti: puoi riscattare il tuo sconto.</div>'
+        +'<button class="rbtn tap" id="rbtn" data-reward="'+rw.key+'">Riscatta '+(rw.value?rw.value+'%':'sconto')+' · '+rw.cost_points+' punti</button>'
+        +'<div class="fine">Scala '+rw.cost_points+' punti · non cumulabile</div>';
+    } else {
+      h+='<div class="sub">Il tuo sconto personale, a tessera piena.</div>'
+        +'<button class="rbtn" disabled>Ti mancano '+(rw.cost_points-p)+' punti</button>';
+    }
+    // ultimo codice ottenuto: resta sempre a portata di mano
+    if(last){
+      h+='<div class="fine" style="margin-top:12px;text-align:left">Il tuo ultimo codice</div>'
+        +'<div class="codechip" style="margin-top:6px"><span class="c">'+esc(last.discount_code)+'</span><button class="cp" data-code="'+esc(last.discount_code)+'">Copia</button></div>'
+        +'<div class="fine">'+(rw.value?rw.value+'% · ':'')+'non cumulabile · uso singolo</div>';
+    }
+    box.innerHTML=h;
+  }
+
+  async function refresh(animate){
+    const [st, rw] = await Promise.all([api('state'), api('rewards')]);   // rewards: OFF finche' il flag e' spento
+    const { status, data } = st;
+    if (data.state==='login_required') return showGate('Il tuo profilo Premia','Accedi con il tuo account Amimì per vedere i tuoi punti e prenderti cura di Mimì.', true);
+    if (data.state==='needs_secret' || data.state==='off') return showGate('Premia sta arrivando','Il programma fedeltà parte a breve. Torna presto!', false);
+    if (status===503 || data.error) return showGate('Un attimo...','Non riesco a leggere il profilo in questo momento. Riprova fra poco.', false);
+    S = data;
+    S._rewards = (rw && rw.data && Array.isArray(rw.data.rewards)) ? rw.data : null;
+    render();
+  }
+
+  // === azioni ===
+  el('btnCoccola').addEventListener('click', async ()=>{
+    if(!S || !S.coccola_disponibile) return;
+    const { data } = await api('coccola');
+    if(data.done_today){ toast('Mimì è già stata coccolata oggi 💛'); return; }
+    if(data.error){ toast('Riprova fra poco'); return; }
+    S.points=data.points; S.coccola_disponibile=false; squee(); hearts(el('scene'),6); render(); toast('+'+(data.added||5)+' punti · coccola di oggi ✓');
+  });
+
+  el('btnNanna').addEventListener('click', async ()=>{
+    if(!S) return; const { data } = await api('nanna',{method:'POST',body:{value:!S.nanna}});
+    if(typeof data.nanna==='boolean'){ S.nanna=data.nanna; render(); toast(S.nanna?'Mimì è a nanna 💤':'Buongiorno!'); }
+  });
+
+  el('ward').addEventListener('click', async e=>{
+    const it=e.target.closest('.witem'); if(!it||!S) return;
+    const { status, data } = await api('wear',{method:'POST',body:{codice:it.dataset.codice}});
+    if(status===409||data.error==='not_owned'){ toast('Puoi far indossare a Mimì solo le tue borse'); return; }
+    if(data.worn){ S.worn=data.worn; squee(); hearts(el('scene'),3); render(); }
+  });
+
+  // riscatto: copia codice oppure riscatta (bottone disabilitato subito = anti doppio-click; idemp lato server)
+  el('redeem').addEventListener('click', async e=>{
+    const cp=e.target.closest('.cp');
+    if(cp){ const code=cp.dataset.code||''; try{ await navigator.clipboard.writeText(code); toast('Codice copiato 💛'); }catch(_){ toast('Codice: '+code); } return; }
+    const btn=e.target.closest('#rbtn'); if(!btn||!S) return;
+    const rw=(S._rewards&&S._rewards.rewards&&S._rewards.rewards[0])||{};
+    const pct=rw.value?('-'+rw.value+'%'):'Sconto';
+    btn.disabled=true; btn.textContent='Riscatto...';
+    const idemp='r-'+Date.now()+'-'+Math.random().toString(36).slice(2,10);
+    const { data } = await api('redeem',{method:'POST',body:{reward:btn.dataset.reward, idemp}});
+    if(data && data.ok){
+      await refresh(false);
+      if(data.code) reward('Sconto sbloccato!', pct, 'Codice '+data.code+' · non cumulabile, usalo al checkout');
+      else toast('Riscatto ricevuto, codice in arrivo 💛');
+    } else if(data && data.reason==='insufficient'){ toast('Punti non sufficienti'); renderRedeem(); }
+    else { toast('Riprova fra poco'); btn.disabled=false; btn.textContent='Riprova'; }
+  });
+
+  // === mini-gioco memory: vinci -> chiama memory_win (premio deciso dall'edge) ===
+  const EMO=['👜','👛','🎀','👜','👛','🎀'];
+  el('btnGame').addEventListener('click', ()=>{ if(!S||!S.memory_disponibile){ toast('Torna domani per un nuovo gioco 🎀'); return; } startGame(); });
+  el('gameClose').addEventListener('click', ()=>el('gameModal').classList.remove('on'));
+  el('rewardOk').addEventListener('click', ()=>el('rewardModal').classList.remove('on'));
+  function startGame(){
+    const grid=el('grid'); grid.innerHTML='';
+    const cards=EMO.slice().sort(()=>Math.random()-0.5);
+    let up=[], matched=0, lock=false;
+    cards.forEach((emo,i)=>{ const c=document.createElement('div'); c.className='card'; c.dataset.emo=emo; c.textContent=emo;
+      c.addEventListener('click',()=>{
+        if(lock||c.classList.contains('up')||c.classList.contains('done'))return;
+        c.classList.add('up'); up.push(c);
+        if(up.length===2){ lock=true;
+          if(up[0].dataset.emo===up[1].dataset.emo){ up.forEach(x=>x.classList.add('done')); matched++; up=[]; lock=false;
+            if(matched===3) setTimeout(winGame,350);
+          } else setTimeout(()=>{ up.forEach(x=>x.classList.remove('up')); up=[]; lock=false; },700);
+        }
+      });
+      grid.appendChild(c);
+    });
+    el('gameModal').classList.add('on');
+  }
+  async function winGame(){
+    el('gameModal').classList.remove('on');
+    const { data } = await api('memory_win');
+    if(data.done_today){ toast('Hai già giocato oggi'); return; }
+    if(data.error){ toast('Riprova fra poco'); return; }
+    S.points=data.points; S.memory_disponibile=false; render();
+    reward('Hai vinto!', '+'+(data.added||5), 'punti aggiunti al tuo saldo 💛');
+  }
+
+  refresh(false);
+})();
+</script>
+</body>
+</html>
