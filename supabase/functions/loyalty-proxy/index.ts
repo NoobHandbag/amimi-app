@@ -1,4 +1,17 @@
-// loyalty-proxy v6 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// loyalty-proxy v11 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// v11 (2026-09-21, quest audit Area Membri, Fase 6 bundle C):
+//    T1  freschezza della firma: il `timestamp` firmato da Shopify deve stare entro MAX_SKEW_SEC, altrimenti 401
+//        stale_signature (una richiesta firmata catturata non e' piu' rigiocabile all'infinito);
+//    L3  coccola/memory_win via RPC loyalty_award_daily (migr 0136): cancello "1 al giorno" e accredito nella STESSA
+//        transazione (due tap concorrenti = un solo premio); la RPC e' idempotente per giorno, quindi ha il retryOnce;
+//    T9  `rewards` legge catalogo e storico con errori controllati: 503, mai un catalogo vuoto spacciato per vero;
+//    flag letti con retryOnce e 503 su errore (prima: errore di lettura = "off" silenzioso);
+//    S1  guardaroba dal DB (loyalty_order_credits.order_name -> shopify_line_items -> shopify_stock) invece di una
+//        REST per ogni caricamento pagina; ripiego Admin API GraphQL pinnata API_VERSION SOLO per un membro senza
+//        accrediti (T20: la 2024-01 era ritirata); T33 chiave capo = codice_norm (oggi identica a codice);
+//    `wardrobe: null` (non leggibile) distinto da `[]` (nessun capo) + `wardrobe_source` per l'osservabilita';
+//    visite in loyalty_visits (RPC loyalty_visit, migr 0137), mai bloccante.
+// v10 (2026-09-20): rotta /club (pagina Area Membri via loyalty-page), rewards/redeem (Premia Fase 3, migr 0135).
 // v6 (2026-09-13, sweep incidente doppioni): letture con retryOnce e fail-closed 503 prima di ogni scrittura;
 //    insert audit su loyalty_events segnalato (warning + change_log) invece di ignorato. Happy path invariato.
 // Brief v1: _CLAUDE_CODE_INBOX/done/2026-07-23_CLAUDE_CODE_BRIEF_loyalty_app_proxy.md
@@ -14,6 +27,7 @@
 //   Assente => `{state:'needs_secret'}` 200.
 //
 // Azione dedotta dal path (App Proxy `/apps/premia/<azione>` -> `/loyalty-proxy/<azione>`) o da `?action=`:
+//   - `club`       : GET, pagina HTML dell'Area Membri (edge loyalty-page), servita PRIMA della firma (e' pubblica).
 //   - `balance`    : {points} del cliente loggato (0 se assente). INVARIATA (retro-compat pagina clicker).
 //   - `add`        : clicker "Amimi Click". Dal v5 GATED dietro `app_flags.loyalty_click_enabled`
 //                    (default 'false' => `{state:'off'}` senza scritture). Acceso: comportamento IDENTICO a prima.
@@ -22,6 +36,8 @@
 //   - `memory_win` : +5, MAX 1 volta al giorno (Europe/Rome). E' il gioco pubblico al posto del clicker.
 //   - `nanna`      : POST {value:boolean} -> persiste lo stato "Mimi nel sacchettino".
 //   - `wear`       : POST {codice} -> veste Mimi con un capo REALMENTE acquistato dal cliente, altrimenti 409.
+//   - `rewards`    : catalogo premi attivi + ultimi riscatti del cliente (gated da loyalty_redeem_enabled).
+//   - `redeem`     : POST {reward, idemp} -> detrae i punti (RPC atomica) e consegna un codice dal pool.
 //
 // SCELTE DI PROGETTO (dichiarate come chiede il brief):
 //  * GIORNO = Europe/Rome per le azioni nuove (clientela italiana). `add` resta su UTC per non
@@ -31,11 +47,11 @@
 //  * coccola/memory NON passano dal DAILY_CAP del clicker: hanno un cancello piu' stretto (1/giorno
 //    ciascuna, +5). I loro delta restano pero' su loyalty_events, quindi CONSUMANO il cap giornaliero
 //    del clicker se l'owner lo riaccende. Scelta conservativa: mai piu' punti del previsto.
-//  * GUARDAROBA calcolato AL VOLO a ogni `state` (pochi ordini per cliente), nessuno snapshot da
-//    invalidare. Fonte: Admin API `orders.json?customer_id=` per sapere QUALI ordini sono suoi
-//    (l'App Proxy da' solo l'id numerico e `shopify_orders` NON ha il customer_id), poi le nostre
-//    tabelle per codice/titolo/immagine. Serve solo `read_orders`, gia' in uso da shopify-sync:
-//    NESSUNO scope nuovo, e l'app "Amimi Premia" resta a zero scope Admin API.
+//  * GUARDAROBA (v11) dal DB: gli ordini del cliente sono quelli accreditati da loyalty-orders
+//    (loyalty_order_credits.order_name, dopo il retroattivo = TUTTI gli ordini pagati), poi le nostre tabelle per
+//    codice/titolo/immagine. Zero chiamate Admin API per caricamento pagina; il bucket REST resta alle edge core.
+//    Ripiego (membro senza accrediti, es. primo ordine non ancora passato dal giro): Admin API GraphQL
+//    `orders(query:"customer_id:<id>")`. Mai dati di altri clienti: si parte dall'id firmato e non si allarga il filtro.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = {
@@ -48,7 +64,7 @@ const json = (b: unknown, s = 200) =>
 
 // 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 su ~4% delle letture delle edge. Una lettura o
 // una riga di telemetria sono idempotenti: UN solo ritentativo dopo 1,5 s, poi ci si ferma (Regola Ferrea 20).
-// Mai sugli upsert/insert di punti ed eventi.
+// Mai sugli upsert/insert di punti ed eventi (le RPC idempotenti per costruzione, come loyalty_award_daily, si').
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
   const r = await fn();
@@ -67,6 +83,8 @@ const PREMIO_COCCOLA = 5;
 const PREMIO_MEMORY = 5;
 
 const SHOP = 'amimi-10000';
+const API_VERSION = '2026-07';   // Admin API (solo ripiego guardaroba): stabile fino al 2027-07, ripinnare ogni trimestre (LOYALTY_RUNBOOK §10)
+const MAX_SKEW_SEC = 300;        // T1: eta' massima di una firma App Proxy (Shopify firma anche `timestamp`)
 
 // --- HMAC App Proxy: hex(HMAC-SHA256(secret, join_ordinato_dei_query_param_esclusa_signature)) ---
 // I valori multipli per la stessa chiave si uniscono con ','; le coppie key=value si concatenano SENZA
@@ -138,6 +156,11 @@ Deno.serve(async (req) => {
   const expected = await appProxyHmacHex(params, secret);
   if (!timingSafeEqualHex(signature.toLowerCase(), expected)) return json({ error: 'bad_signature' }, 401);
 
+  // --- v11 (T1): freschezza della firma. `timestamp` (secondi Unix) e' fra i param firmati: manometterlo rompe la
+  //     firma, quindi qui e' affidabile. Una richiesta firmata catturata vale al massimo MAX_SKEW_SEC.
+  const ts = Number(params.get('timestamp'));
+  if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > MAX_SKEW_SEC) return json({ error: 'stale_signature' }, 401);
+
   // --- identita': SOLO da params firmati, mai dal body ---
   const customerId = (params.get('logged_in_customer_id') ?? '').trim();
   if (!customerId) return json({ state: 'login_required' });
@@ -175,6 +198,13 @@ Deno.serve(async (req) => {
     return !error;
   };
 
+  // v11: flag letti con retryOnce; null = non leggibile (il chiamante risponde 503), mai "off" per un errore di rete.
+  const readFlag = async (key: string): Promise<boolean | null> => {
+    const { data, error } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', key).maybeSingle());
+    if (error) return null;
+    return String(data?.value ?? 'false').trim().toLowerCase() === 'true';
+  };
+
   // 2026-09-13 (sweep incidente doppioni): insert audit su loyalty_events ignorato = rate-limit e cap giornaliero
   // sottostimati nelle chiamate successive, con punti gia' accreditati. Niente retry sull'insert (non idempotente):
   // si segnala in risposta (warning) e su change_log, cosi' il buco resta visibile.
@@ -190,53 +220,58 @@ Deno.serve(async (req) => {
     } catch { /* telemetria: non deve mai bloccare un accredito gia' fatto */ }
   };
 
-  // Accredito a premio FISSO (coccola/memory). Nessun importo dal client, nessun cap giornaliero
-  // del clicker: il cancello e' il "1 volta al giorno" del chiamante, piu' stretto.
-  const award = async (delta: number, source: string): Promise<number> => {
-    const points = await readPoints();
-    // 2026-09-13 (sweep incidente doppioni): saldo non letto = nessuna scrittura (prima: upsert di 0+delta)
-    if (points === null) throw new Error('read_failed');
-    const newPoints = points + delta;
-    const { error } = await sb.from('loyalty_points')
-      .upsert({ shopify_customer_id: customerId, points: newPoints, updated_at: new Date().toISOString() },
-        { onConflict: 'shopify_customer_id' });
-    if (error) throw new Error('write_failed');
-    const { error: evErr } = await sb.from('loyalty_events').insert({ shopify_customer_id: customerId, delta, source, meta: { fisso: true } });
-    if (evErr) await noteEventFailed(delta, source, evErr.message);
-    return newPoints;
-  };
-
-  // --- GUARDAROBA: solo gli acquisti ONLINE del cliente loggato ---
-  // 1) Admin API: quali ordini sono di QUESTO customer id (unica fonte che lega id -> ordini).
-  // 2) Nostre tabelle: da quegli ordini -> codice/titolo/immagine gia' risolti.
-  // Mai dati di altri clienti: si parte dall'id firmato e non si allarga mai il filtro.
-  const wardrobe = async (): Promise<Array<Record<string, unknown>>> => {
-    const { data: cfg } = await sb.from('app_config').select('shopify_token').eq('id', 1).single();
-    const token = String(cfg?.shopify_token ?? '');
-    if (!token) return [];
-
-    const r = await fetch(
-      `https://${SHOP}.myshopify.com/admin/api/2024-01/orders.json?status=any&customer_id=${encodeURIComponent(customerId)}&fields=id,name,created_at&limit=250`,
-      { headers: { 'X-Shopify-Access-Token': token } },
-    );
-    if (!r.ok) return [];
-    const orders = ((await r.json())?.orders ?? []) as Array<{ name?: string; created_at?: string }>;
-    if (!orders.length) return [];
+  // --- GUARDAROBA (v11): solo gli acquisti del cliente loggato, dal DB ---
+  // items: null = non leggibile (503 dove serve decidere, "non disponibile" in pagina); [] = nessun capo.
+  type Ward = { items: Array<Record<string, unknown>> | null; source: 'db' | 'api' | 'none' | 'error' };
+  const wardrobe = async (): Promise<Ward> => {
+    const { data: creds, error: cErr } = await retryOnce(() => sb.from('loyalty_order_credits').select('order_name').eq('shopify_customer_id', customerId).not('order_name', 'is', null));
+    if (cErr) return { items: null, source: 'error' };
+    let names = [...new Set((creds ?? []).map((c) => String(c.order_name ?? '')).filter(Boolean))];
+    let source: Ward['source'] = 'db';
+    let dataOrdine = new Map<string, string>();
+    if (names.length) {
+      const { data: ords, error: oErr } = await retryOnce(() => sb.from('shopify_orders').select('order_id, created_at_shop').in('order_id', names));
+      if (oErr) return { items: null, source: 'error' };
+      dataOrdine = new Map((ords ?? []).map((o) => [String(o.order_id), String(o.created_at_shop ?? '').slice(0, 10)]));
+    } else {
+      // ripiego: membro senza accrediti (es. primo ordine non ancora passato dal giro di loyalty-orders)
+      source = 'api';
+      const { data: cfg, error: kErr } = await retryOnce(() => sb.from('app_config').select('shopify_token').eq('id', 1).single());
+      if (kErr) return { items: null, source: 'error' };
+      const token = String(cfg?.shopify_token ?? '');
+      if (!token) return { items: [], source: 'none' };
+      let orders: Array<{ name?: string; createdAt?: string }> = [];
+      try {
+        const r = await fetch(`https://${SHOP}.myshopify.com/admin/api/${API_VERSION}/graphql.json`, {
+          method: 'POST', headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: 'query($q: String!) { orders(first: 250, query: $q, sortKey: CREATED_AT, reverse: true) { nodes { name createdAt } } }',
+            variables: { q: `customer_id:${customerId}` },
+          }),
+        });
+        if (!r.ok) return { items: null, source: 'error' };
+        const j = await r.json();
+        if (j?.errors?.length) return { items: null, source: 'error' };
+        orders = (j?.data?.orders?.nodes ?? []) as Array<{ name?: string; createdAt?: string }>;
+      } catch { return { items: null, source: 'error' }; }
+      names = orders.map((o) => String(o.name ?? '')).filter(Boolean);
+      if (!names.length) return { items: [], source: 'none' };
+      dataOrdine = new Map(orders.map((o) => [String(o.name ?? ''), String(o.createdAt ?? '').slice(0, 10)]));
+    }
 
     // `shopify_line_items.order_id` tiene il NOME dell'ordine ('#1582'), non l'id numerico.
-    const names = orders.map((o) => String(o.name ?? '')).filter(Boolean);
-    const dataOrdine = new Map(orders.map((o) => [String(o.name ?? ''), String(o.created_at ?? '').slice(0, 10)]));
-    if (!names.length) return [];
+    const { data: items, error: iErr } = await retryOnce(() => sb.from('shopify_line_items')
+      .select('order_id, lineitem_name, codice, codice_norm').in('order_id', names));
+    if (iErr) return { items: null, source: 'error' };
+    if (!items?.length) return { items: [], source };
 
-    const { data: items } = await sb.from('shopify_line_items')
-      .select('order_id, lineitem_name, codice').in('order_id', names);
-    if (!items?.length) return [];
-
-    const codici = [...new Set(items.map((i) => String(i.codice ?? '')).filter(Boolean))];
+    const codeOf = (i: Record<string, unknown>) => String(i.codice_norm || i.codice || '');   // T33: la chiave canonica e' codice_norm
+    const codici = [...new Set(items.map(codeOf).filter(Boolean))];
     const imgs = new Map<string, { img: string | null; titolo: string | null }>();
     if (codici.length) {
-      const { data: stock } = await sb.from('shopify_stock')
-        .select('codice, image_url, shopify_title').in('codice', codici);
+      const { data: stock, error: sErr } = await retryOnce(() => sb.from('shopify_stock')
+        .select('codice, image_url, shopify_title').in('codice', codici));
+      if (sErr) return { items: null, source: 'error' };
       for (const s of stock ?? []) {
         imgs.set(String(s.codice), { img: (s.image_url as string | null) ?? null, titolo: (s.shopify_title as string | null) ?? null });
       }
@@ -245,7 +280,7 @@ Deno.serve(async (req) => {
     // un capo per codice (il piu' recente), niente doppioni nel guardaroba
     const perCodice = new Map<string, Record<string, unknown>>();
     for (const i of items) {
-      const codice = String(i.codice ?? '');
+      const codice = codeOf(i);
       if (!codice) continue;                                   // riga non risolta: non finisce nel guardaroba
       const data = dataOrdine.get(String(i.order_id)) ?? null;
       const prev = perCodice.get(codice);
@@ -258,7 +293,7 @@ Deno.serve(async (req) => {
         canale: 'online',
       });
     }
-    return [...perCodice.values()].sort((a, b) => String(b.data ?? '').localeCompare(String(a.data ?? '')));
+    return { items: [...perCodice.values()].sort((a, b) => String(b.data ?? '').localeCompare(String(a.data ?? ''))), source };
   };
 
   if (action === 'balance') {
@@ -270,7 +305,9 @@ Deno.serve(async (req) => {
 
   if (action === 'state') {
     const oggi = romeToday();
-    const [points, mimi, guardaroba] = await Promise.all([readPoints(), readMimi(), wardrobe()]);
+    // v11: visita registrata in loyalty_visits (idempotente per cliente e giorno, migr 0137): telemetria, mai bloccante
+    const visit = sb.rpc('loyalty_visit', { p_customer: customerId, p_day: oggi }).then(() => null, () => null);
+    const [points, mimi, ward] = await Promise.all([readPoints(), readMimi(), wardrobe(), visit]);
     // 2026-09-13 (sweep incidente doppioni): saldo o stato Mimi non letti = 503, non un profilo finto (0 punti, tutto disponibile)
     if (points === null || mimi === null) return json({ error: 'read_failed' }, 503);
     return json({
@@ -279,37 +316,24 @@ Deno.serve(async (req) => {
       coccola_disponibile: mimi.last_coccola !== oggi,
       memory_disponibile: mimi.last_memory !== oggi,
       worn: mimi.worn,
-      wardrobe: guardaroba,
+      wardrobe: ward.items,
+      wardrobe_source: ward.source,
     });
   }
 
   if (action === 'coccola' || action === 'memory_win') {
     const oggi = romeToday();
-    const mimi = await readMimi();
-    // 2026-09-13 (sweep incidente doppioni): guardia "1 volta al giorno" non valutabile = rifiuto (503), mai un secondo premio
-    if (mimi === null) return json({ error: 'read_failed' }, 503);
-    const campo = action === 'coccola' ? 'last_coccola' : 'last_memory';
-    const gia = action === 'coccola' ? mimi.last_coccola : mimi.last_memory;
-    if (gia === oggi) {
-      const points = await readPoints();
-      if (points === null) return json({ error: 'read_failed' }, 503);
-      return json({ done_today: true, points });
-    }
-
-    const delta = action === 'coccola' ? PREMIO_COCCOLA : PREMIO_MEMORY;
-    const source = action === 'coccola' ? 'mimi_coccola' : 'game_memory';
-    let points: number;
-    try {
-      points = await award(delta, source);
-    } catch (e) {
-      // 2026-09-13 (sweep incidente doppioni): saldo non letto in award = 503 prima di ogni scrittura
-      if (e instanceof Error && e.message === 'read_failed') return json({ error: 'read_failed' }, 503);
-      return json({ error: 'write_failed' }, 500);
-    }
-    // La data si segna DOPO l'accredito: se qui fallisse, il peggio e' un secondo premio piu' tardi,
-    // mai un premio perso senza punti.
-    if (!await saveMimi({ [campo]: oggi })) return json({ error: 'write_failed' }, 500);
-    return json({ points, added: delta, ...(eventInsertFailed ? { warning: 'event_insert_failed' } : {}) });
+    const kind = action === 'coccola' ? 'coccola' : 'memory';
+    const delta = kind === 'coccola' ? PREMIO_COCCOLA : PREMIO_MEMORY;
+    // v11 (L3): cancello "1 volta al giorno" e accredito nella STESSA transazione (RPC loyalty_award_daily, migr 0136):
+    // due tap concorrenti non producono piu' due premi. Il premio resta fisso e deciso qui, mai dal client. La RPC e'
+    // idempotente per giorno (seconda chiamata = done_today), quindi il retryOnce e' sicuro anche se la prima e' passata.
+    const { data: aw, error: awErr } = await retryOnce(() => sb.rpc('loyalty_award_daily', { p_customer: customerId, p_kind: kind, p_delta: delta, p_day: oggi }));
+    if (awErr) return json({ error: 'write_failed' }, 500);
+    const a = (aw ?? {}) as { ok?: boolean; done_today?: boolean; points?: number; added?: number; reason?: string };
+    if (!a.ok) return json({ error: a.reason ?? 'write_failed' }, 400);
+    if (a.done_today) return json({ done_today: true, points: a.points ?? 0 });
+    return json({ points: a.points, added: a.added ?? delta });
   }
 
   if (action === 'nanna') {
@@ -324,7 +348,9 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const codice = String((body as { codice?: unknown }).codice ?? '').trim();
     if (!codice) return json({ error: 'invalid_codice' }, 400);
-    const posseduti = new Set((await wardrobe()).map((w) => String(w.codice)));
+    const ward = await wardrobe();
+    if (ward.items === null) return json({ error: 'read_failed' }, 503);   // possesso non verificabile = niente scrittura
+    const posseduti = new Set(ward.items.map((w) => String(w.codice)));
     if (!posseduti.has(codice)) return json({ error: 'not_owned', codice }, 409);
     if (!await saveMimi({ worn: codice })) return json({ error: 'write_failed' }, 500);
     return json({ worn: codice });
@@ -332,8 +358,9 @@ Deno.serve(async (req) => {
 
   if (action === 'add') {
     // Clicker in RISERVA: spento per il pubblico finche' l'owner non accende il flag (decisione 24-07).
-    const { data: flag } = await sb.from('app_flags').select('value').eq('key', 'loyalty_click_enabled').maybeSingle();
-    if (String(flag?.value ?? 'false').trim().toLowerCase() !== 'true') return json({ state: 'off' });
+    const on = await readFlag('loyalty_click_enabled');
+    if (on === null) return json({ error: 'read_failed' }, 503);
+    if (!on) return json({ state: 'off' });
 
     const body = await req.json().catch(() => ({}));
     const rawScore = Number((body as { score?: unknown }).score);
@@ -381,19 +408,22 @@ Deno.serve(async (req) => {
   // --- RISCATTO (Premia Fase 3): punti -> premio. Modulo isolato (Regola 19), gated da
   // loyalty_redeem_enabled (default OFF => {state:'off'}). Consegna SCOPE-FREE: pesca un codice sconto
   // pre-generato dall'owner (pool loyalty_reward_codes). Pool vuoto => redemption 'pending' (evasione
-  // manuale). Migr 0135: loyalty_rewards/redemptions/reward_codes + RPC atomiche loyalty_redeem/claim_code.
+  // manuale). Migr 0135: loyalty_rewards/redemptions/reward_codes + RPC atomiche loyalty_redeem/claim_code;
+  // migr 0136: claim idempotente (mai un secondo codice) e ramo 'already' solo per il proprietario dell'idemp.
   if (action === 'rewards' || action === 'redeem') {
-    const { data: rflag } = await sb.from('app_flags').select('value').eq('key', 'loyalty_redeem_enabled').maybeSingle();
-    if (String(rflag?.value ?? 'false').trim().toLowerCase() !== 'true') return json({ state: 'off' });
+    const on = await readFlag('loyalty_redeem_enabled');
+    if (on === null) return json({ error: 'read_failed' }, 503);
+    if (!on) return json({ state: 'off' });
 
     if (action === 'rewards') {
-      const [{ data: cat }, { data: mine }] = await Promise.all([
-        sb.from('loyalty_rewards').select('key, label, cost_points, kind, value, sort').eq('active', true).order('sort'),
-        sb.from('loyalty_redemptions').select('reward_key, cost_points, status, discount_code, created_at')
-          .eq('shopify_customer_id', customerId).order('created_at', { ascending: false }).limit(20),
+      const [{ data: cat, error: catErr }, { data: mine, error: mineErr }, points] = await Promise.all([
+        retryOnce(() => sb.from('loyalty_rewards').select('key, label, cost_points, kind, value, sort').eq('active', true).order('sort')),
+        retryOnce(() => sb.from('loyalty_redemptions').select('reward_key, cost_points, status, discount_code, created_at')
+          .eq('shopify_customer_id', customerId).order('created_at', { ascending: false }).limit(20)),
+        readPoints(),
       ]);
-      const points = await readPoints();
-      if (points === null) return json({ error: 'read_failed' }, 503);
+      // v11 (T9): una lettura fallita del catalogo o dello storico non diventa un "nessun premio" / "nessun riscatto"
+      if (catErr || mineErr || points === null) return json({ error: 'read_failed' }, 503);
       return json({ points, rewards: cat ?? [], redemptions: mine ?? [] });
     }
 
@@ -416,7 +446,8 @@ Deno.serve(async (req) => {
       return json({ ok: true, already: true, status: r.status, code: r.code ?? null, points: pts ?? undefined });
     }
 
-    // consegna: pesca un codice libero dal pool (se presente); altrimenti la redemption resta 'pending'
+    // consegna: pesca un codice libero dal pool (se presente); altrimenti la redemption resta 'pending'.
+    // La claim e' idempotente (migr 0136): richiamarla restituisce lo stesso codice, mai un secondo.
     let code: string | null = null;
     try {
       const { data: c } = await sb.rpc('loyalty_claim_code', { p_reward_key: rewardKey, p_customer: customerId, p_redemption_id: r.redemption_id });

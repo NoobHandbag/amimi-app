@@ -195,6 +195,7 @@
   };
   const PROXY = '/apps/premia';         // same-origin su amimi.it
   const el = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));   // tutto cio' che entra in innerHTML passa da qui (audit T7)
   let S = null;                          // stato reale dall'edge
 
   // === API reale (rispecchia loyalty-proxy) ===
@@ -203,7 +204,8 @@
     const url = PROXY + '/' + action;
     const init = { method: o.method || 'GET', headers: { 'Content-Type':'application/json' }, credentials:'include' };
     if (o.body) init.body = JSON.stringify(o.body);
-    const r = await fetch(url, init);
+    let r;
+    try { r = await fetch(url, init); } catch(e) { return { status:0, data:{ error:'network' } }; }   // offline o rete: gli handler mostrano "Riprova" (audit T30)
     let data = {}; try { data = await r.json(); } catch(e){}
     return { status:r.status, data };
   }
@@ -230,8 +232,8 @@
     const sw = el('stamps'); sw.innerHTML='';
     for(let i=1;i<=CONFIG.stampsForReward;i++){ const d=document.createElement('div'); const full=i<=timbri; d.className='stamp'+(full?' full':''); d.textContent=full?'💛':(i===CONFIG.stampsForReward?'🎁':'·'); sw.appendChild(d); }
     el('cap').innerHTML='Un timbro ogni '+CONFIG.stampEvery+' punti · a '+CONFIG.stampsForReward+' timbri <b>il tuo sconto personale</b>';
-    if(nt){ const prog=Math.max(0,Math.min(1,(p-tier.min)/(nt.min-tier.min))); el('tierFill').style.width=(prog*100)+'%'; el('tierNote').innerHTML='Ti mancano <b>'+(nt.min-p)+' punti</b> per '+nt.name; }
-    else { el('tierFill').style.width='100%'; el('tierNote').innerHTML='Livello massimo: <b>'+tier.name+'</b> 💛'; }
+    if(nt){ const prog=Math.max(0,Math.min(1,(p-tier.min)/(nt.min-tier.min))); el('tierFill').style.width=(prog*100)+'%'; el('tierNote').innerHTML='Ti mancano <b>'+(nt.min-p)+' punti</b> per '+esc(nt.name)+' · il livello segue i punti disponibili'; }
+    else { el('tierFill').style.width='100%'; el('tierNote').innerHTML='Livello massimo: <b>'+esc(tier.name)+'</b> 💛 · il livello segue i punti disponibili'; }
     // mimi
     const m=el('mimi'); if(!m.innerHTML.trim()) m.innerHTML=mimiInner(); m.classList.toggle('worn', !!S.worn);
     el('mood').textContent = S.nanna ? 'Dorme nel suo sacchettino. Shhh.' : (!S.coccola_disponibile ? 'Coccolata oggi. È al settimo cielo!' : 'Oggi ti aspetta per la sua coccola.');
@@ -244,9 +246,10 @@
     else { bg.className='act alt tap'; bg.innerHTML='Gioca<small>+5 · 1 al giorno</small>'; }
     el('btnNanna').innerHTML = S.nanna ? 'Svegliala 💤<small>è a nanna</small>' : 'Metti a nanna<small>nel sacchettino</small>';
     // guardaroba (borse realmente possedute)
-    const w=el('ward'), items=S.wardrobe||[];
-    if(!items.length){ w.className='empty'; w.innerHTML='Le borse che acquisti appariranno qui, pronte da far indossare a Mimì.'; }
-    else { w.className='ward'; w.innerHTML=items.map(it=>{ const worn=S.worn===it.codice; return '<div class="witem tap'+(worn?' worn':'')+'" data-codice="'+it.codice+'"><img src="'+(it.img||'')+'" alt=""><span>'+(it.titolo||it.codice)+'</span><span class="w">'+(worn?'indossata':'indossa')+'</span></div>'; }).join(''); }
+    const w=el('ward'), items=S.wardrobe;
+    if(items===null){ w.className='empty'; w.innerHTML='Il guardaroba non è leggibile in questo momento: riprova fra poco.'; }   // null = non leggibile (audit), diverso da "nessun capo"
+    else if(!items||!items.length){ w.className='empty'; w.innerHTML='Le borse che acquisti appariranno qui, pronte da far indossare a Mimì.'; }
+    else { w.className='ward'; w.innerHTML=items.map(it=>{ const worn=S.worn===it.codice; return '<div class="witem tap'+(worn?' worn':'')+'" data-codice="'+esc(it.codice)+'"><img src="'+esc(it.img||'')+'" alt=""><span>'+esc(it.titolo||it.codice)+'</span><span class="w">'+(worn?'indossata':'indossa')+'</span></div>'; }).join(''); }
     renderRedeem();
   }
 
@@ -259,7 +262,7 @@
     const pending=reds.find(x=>x.status==='pending');
     const last=reds.find(x=>x.status==='fulfilled' && x.discount_code);   // il piu' recente (lista gia' desc)
     box.classList.remove('hidden');
-    let h='<h4>'+rw.label+'</h4>';
+    let h='<h4>'+esc(rw.label)+'</h4>';
     // azione: il riscatto e' RIPETIBILE ogni volta che la tessera si riempie
     if(pending){
       h+='<div class="sub">Riscatto ricevuto. Il tuo codice sta arrivando, ti avvisiamo.</div>';
@@ -274,7 +277,7 @@
     // ultimo codice ottenuto: resta sempre a portata di mano
     if(last){
       h+='<div class="fine" style="margin-top:12px;text-align:left">Il tuo ultimo codice</div>'
-        +'<div class="codechip" style="margin-top:6px"><span class="c">'+last.discount_code+'</span><button class="cp" data-code="'+last.discount_code+'">Copia</button></div>'
+        +'<div class="codechip" style="margin-top:6px"><span class="c">'+esc(last.discount_code)+'</span><button class="cp" data-code="'+esc(last.discount_code)+'">Copia</button></div>'
         +'<div class="fine">'+(rw.value?rw.value+'% · ':'')+'non cumulabile · uso singolo</div>';
     }
     box.innerHTML=h;
