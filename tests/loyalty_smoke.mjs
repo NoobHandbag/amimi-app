@@ -35,7 +35,7 @@ console.log('\n== Edge dirette (senza App Proxy: la firma manca o e\' falsa) =='
   const p = await get(EDGE + '/loyalty-page');
   t('6  loyalty-page diretta -> 200 application/liquid con il wrapper', p.status === 200 && /application\/liquid/.test(p.ct) && p.text.startsWith('{% layout none %}{% raw %}'), p.status + ' ' + p.ct);
   const o = await get(EDGE + '/loyalty-orders', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-  t('7  loyalty-orders risponde JSON (off a flag spento, o esito del giro se acceso)', o.status === 200 && (o.json?.state === 'off' || o.json?.ok === true || typeof o.json?.error === 'string'), o.status + ' ' + o.text.slice(0, 80));
+  t('7  loyalty-orders senza PIN -> 401 PIN errato (v3, T2: stessa posta delle altre edge del cron)', o.status === 401 && o.json?.error === 'PIN errato', o.status + ' ' + o.text.slice(0, 80));
   const g = await get(EDGE + '/loyalty-proxy-smoke');
   t('8  il clone smoke resta uno stub 410', g.status === 410, String(g.status));
 }
