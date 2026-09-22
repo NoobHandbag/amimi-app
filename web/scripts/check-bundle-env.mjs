@@ -3,6 +3,7 @@
 // La guardia in vite.config ferma la build senza env; questo ferma la PUBBLICAZIONE di un dist
 // vecchio, parziale o costruito altrove. Gira come `predeploy`, quindi non si puo' dimenticare.
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +13,32 @@ const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
 const ENVF = fileURLToPath(new URL('../.env.local', import.meta.url));
 
 const stop = (msg) => { console.error('\nPUBBLICAZIONE FERMATA: ' + msg + '\n'); process.exit(1); };
+
+// Quarto anello (2026-09-22): si pubblica SOLO da un HEAD che contiene origin/main. Quella sera tre
+// sessioni avevano tre branch di amimi-app: il deploy delle 23:03 da main e' stato sovrascritto alle
+// 23:40 da un deploy fatto da un branch partito dal main vecchio, e i fix appena pubblicati sono
+// spariti dal sito finche' qualcuno non ha rimergiato. `npm run deploy` non aveva nessuna guardia.
+// Sblocco esplicito, mai di default: AMIMI_DEPLOY_ALLOW_BEHIND=1 (e si scrive nel changelog perche').
+const REPO = fileURLToPath(new URL('../../', import.meta.url));
+const git = (args) => execSync('git ' + args, { cwd: REPO, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+let branch;
+try { branch = git('rev-parse --abbrev-ref HEAD'); }
+catch { stop('git non risponde nella cartella del repo: non posso verificare che HEAD contenga origin/main.'); }
+try { execSync('git fetch origin main', { cwd: REPO, stdio: 'ignore', timeout: 20000 }); }
+catch { console.warn('check main: fetch di origin/main non riuscito, confronto con la copia locale di origin/main'); }
+let contieneMain = false;
+try { git('merge-base --is-ancestor origin/main HEAD'); contieneMain = true; } catch { contieneMain = false; }
+if (!contieneMain) {
+  if (process.env.AMIMI_DEPLOY_ALLOW_BEHIND === '1') {
+    console.warn(`check main: HEAD (${branch}) NON contiene origin/main, ma AMIMI_DEPLOY_ALLOW_BEHIND=1: si procede, e la cosa va scritta nel changelog.`);
+  } else {
+    stop(`HEAD (${branch}) NON contiene origin/main: pubblicare da qui cancellerebbe dal sito i commit gia' su main.\n` +
+      'Fai il merge di origin/main in questo branch (o pubblica da main dopo il merge della PR) e riprova.\n' +
+      'Sblocco esplicito solo se sai cosa stai sovrascrivendo: AMIMI_DEPLOY_ALLOW_BEHIND=1 npm run deploy');
+  }
+} else {
+  console.log(`check main: ok, HEAD (${branch}) contiene origin/main`);
+}
 
 if (!existsSync(DIST)) stop('manca web/dist. Lancia prima `npm run build`.');
 

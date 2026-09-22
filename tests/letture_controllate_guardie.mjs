@@ -29,15 +29,20 @@ const MARKERS = {
     "const readPoints = async (): Promise<number | null> => {",
     "const { data, error } = await retryOnce(() => sb.from('mimi_state')",
     "const readMimi = async (): Promise<MimiState | null> => {",
-    "if (points === null) throw new Error('read_failed');",
-    "if (e instanceof Error && e.message === 'read_failed') return json({ error: 'read_failed' }, 503);",
-    "if (mimi === null) return json({ error: 'read_failed' }, 503);",
+    // v11 (21-09): balance risponde 503 direttamente, niente throw/catch
+    "if (points === null) return json({ error: 'read_failed' }, 503);",
+    // v11 (T9): catalogo premi o storico riscatti non letti = 503, non "nessun premio"
+    "if (catErr || mineErr || points === null) return json({ error: 'read_failed' }, 503);",
+    // v11: possesso non verificabile = niente scrittura (wear)
+    "if (ward.items === null) return json({ error: 'read_failed' }, 503);",
     "if (points === null || mimi === null) return json({ error: 'read_failed' }, 503);",
     "const { data: lastEv, error: lastErr } = await retryOnce(() => sb.from('loyalty_events')",
     "if (lastErr) return json({ error: 'read_failed' }, 503);",
     "const { data: todayEv, error: todayErr } = await retryOnce(() => sb.from('loyalty_events')",
     "if (todayErr) return json({ error: 'read_failed' }, 503);",
-    "const { error: evErr } = await sb.from('loyalty_events').insert({ shopify_customer_id: customerId, delta, source, meta: { fisso: true } });",
+    // v11 (L3): premio fisso via RPC idempotente loyalty_award_daily (migr 0136), scrittura fallita = 500 esplicito
+    "const { data: aw, error: awErr } = await retryOnce(() => sb.rpc('loyalty_award_daily', { p_customer: customerId, p_kind: kind, p_delta: delta, p_day: oggi }));",
+    "if (awErr) return json({ error: 'write_failed' }, 500);",
     "const { error: evErr } = await sb.from('loyalty_events').insert({ shopify_customer_id: customerId, delta: added, source: 'game_click', meta: { score: requested } });",
     "if (evErr) await noteEventFailed(",
     "tbl: 'loyalty_events', row_id: customerId, op: 'event_insert_failed',",
