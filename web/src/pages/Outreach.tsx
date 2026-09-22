@@ -157,17 +157,20 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     setBusy(false);
   };
 
-  const save = async (t: Parameters<typeof addTouch>[0], ok: string) => {
+  // torna true solo se il tocco e' stato scritto: chi chiama pulisce il modulo o avanza il tocco SOLO in quel caso
+  const save = async (t: Parameters<typeof addTouch>[0], ok: string): Promise<boolean> => {
     setBusy(true); setMsg('');
-    try { await addTouch(t); await onChanged(); await reload(); setMsg(ok); } catch (e) { setMsg((e as Error).message); }
+    let done = false;
+    try { await addTouch(t); await onChanged(); await reload(); setMsg(ok); done = true; } catch (e) { setMsg((e as Error).message); }
     setBusy(false);
+    return done;
   };
-  const registra = () => save({ account_id: r.id, canale, direzione: dir, subject: subject || null, body_clean: body || null, stage_prima: r.lead_stage, stage_dopo: stageDopo || null, esito: esito || null, prossima_azione: pa || null, prossima_azione_at: paAt || null, chi: who }, 'Tocco registrato.').then(() => { setSubject(''); setBody(''); setEsito(''); setStageDopo(''); setPa(''); setPaAt(''); });
+  const registra = () => save({ account_id: r.id, canale, direzione: dir, subject: subject || null, body_clean: body || null, stage_prima: r.lead_stage, stage_dopo: stageDopo || null, esito: esito || null, prossima_azione: pa || null, prossima_azione_at: paAt || null, chi: who }, 'Tocco registrato.').then((ok) => { if (!ok) return; setSubject(''); setBody(''); setEsito(''); setStageDopo(''); setPa(''); setPaAt(''); });
   const segnaInviata = () => {
     const next = sequences.find((s) => s.codice === codice && s.tocco === tocco + 1 && s.canale === 'email');
-    return save({ account_id: r.id, canale: seq?.canale ?? 'email', direzione: 'out', subject: oggetto || null, body_clean: testo, stage_prima: r.lead_stage, stage_dopo: r.lead_stage === 'da_contattare' ? 'contattato' : null, sequenza_tocco: tocco, prossima_azione: next ? `follow-up ${next.tocco} di 4` : 'chiusura: nessun altro tocco', prossima_azione_at: next ? addDays(next.giorni_attesa) : null, chi: who }, next ? `Registrata come inviata. Follow-up ${next.tocco} fra ${next.giorni_attesa} giorni.` : 'Registrata come inviata. Sequenza finita.').then(() => setTocco((t) => Math.min(4, t + 1)));
+    return save({ account_id: r.id, canale: seq?.canale ?? 'email', direzione: 'out', subject: oggetto || null, body_clean: testo, stage_prima: r.lead_stage, stage_dopo: r.lead_stage === 'da_contattare' ? 'contattato' : null, sequenza_tocco: tocco, prossima_azione: next ? `follow-up ${next.tocco} di 4` : 'chiusura: nessun altro tocco', prossima_azione_at: next ? addDays(next.giorni_attesa) : null, chi: who }, next ? `Registrata come inviata. Follow-up ${next.tocco} fra ${next.giorni_attesa} giorni.` : 'Registrata come inviata. Sequenza finita.').then((ok) => { if (ok) setTocco((t) => Math.min(4, t + 1)); });
   };
-  const sposta = () => moveTo && save({ account_id: r.id, canale: 'altro', direzione: 'out', body_clean: `Spostato a "${STAGE_LABEL[moveTo]}" da ${who}`, stage_prima: r.lead_stage, stage_dopo: moveTo, chi: who }, `Spostato in ${STAGE_LABEL[moveTo]}.`).then(() => setMoveTo(''));
+  const sposta = () => moveTo && save({ account_id: r.id, canale: 'altro', direzione: 'out', body_clean: `Spostato a "${STAGE_LABEL[moveTo]}" da ${who}`, stage_prima: r.lead_stage, stage_dopo: moveTo, chi: who }, `Spostato in ${STAGE_LABEL[moveTo]}.`).then((ok) => { if (ok) setMoveTo(''); });
   const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(oggetto)}&body=${encodeURIComponent(testo)}`;
   const copia = async () => { try { await navigator.clipboard.writeText(`${oggetto ? oggetto + '\n\n' : ''}${testo}`); setMsg('Testo copiato.'); } catch { setMsg('Copia non riuscita: seleziona e copia a mano.'); } };
 

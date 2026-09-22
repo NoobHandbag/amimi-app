@@ -20,7 +20,8 @@ finally { try { unlinkSync(TMP); } catch { /* niente */ } }
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra ? '  <- ' + JSON.stringify(extra) : '')); } };
-const body = 'Gentile team di Ivy,\nvi scrivo da Amimì Milano: borse artigianali fatte a mano, pelle Made in Italy. Vi va di fissare un appuntamento?';
+const OPT = 'Se preferisce non ricevere altre email da parte mia, mi risponda "no grazie" e non la contatterò più.';
+const body = 'Gentile team di Ivy,\nvi scrivo da Amimì Milano: borse artigianali fatte a mano, pelle Made in Italy. Vi va di fissare un appuntamento?\n\n' + OPT;
 const pulita = { to: 'info@negozio.it', oggetto: 'Amimì Milano per Ivy', testo: body };
 
 console.log('== invio: blocchi ==');
@@ -32,7 +33,7 @@ t('5  destinatario vuoto blocca', bloccantiInvio({ ...pulita, to: '' }).length =
 t('6  destinatario @amimi.it blocca', bloccantiInvio({ ...pulita, to: 'info@amimi.it' }).length === 1);
 t('7  destinatario malformato blocca', bloccantiInvio({ ...pulita, to: 'negozio.it' }).length === 1);
 t('8  oggetto vuoto blocca', bloccantiInvio({ ...pulita, oggetto: '  ' }).length === 1);
-t('9  testo troppo corto blocca', bloccantiInvio({ ...pulita, testo: 'Ciao' }).length === 1);
+t('9  testo troppo corto blocca', bloccantiInvio({ ...pulita, testo: 'Ciao' }).some((b) => b.includes('troppo corto')));
 t('10 segnapostoResidui trova entrambe le forme', segnapostoResidui('a [x] b {{y}}').length === 2);
 
 console.log('== completaTesto ==');
@@ -75,8 +76,19 @@ t('36 un tocco email in uscita per negozio anche a DB', /unique index[^;]*lead_t
 t('37 opt-out anche per INDIRIZZO, su tutti i negozi', /ilike\('email', to\.replace/.test(src));
 t('38 rete giu\' durante l\'invio = esito incerto, bozza resta bloccata', /incerto: true/.test(src));
 t('39 sblocca solo dopo 10 minuti e solo da in_invio', /\.eq\('stato', 'in_invio'\)\.lt\('updated_at', limite\)/.test(src));
-t('40 follow-up nel thread del tocco precedente, senza "Re:" finto se manca', /threadId \? oggetto : oggetto\.replace/.test(src));
+t('40 follow-up nel thread del tocco precedente, senza "Re:" finto se manca', /const oggettoInvio = threadId\s*\n\s*\?[^\n]*prev\?\.subject[\s\S]{0,200}: oggetto\.replace\(\/\^\\s\*\(re\|r\)/.test(src));
 t('41 id Gmail vuoto -> null, mai stringa vuota nella chiave UNIQUE', /\|\| null;/.test(src) && !/gmail_message_id: ''/.test(src));
+
+console.log('== Gate 3 sul codice unito (revisione 22-09 notte) ==');
+const chiusura4 = 'Gentile team,\nnon voglio disturbarla oltre. Le lascio il catalogo, se in futuro vorra’ inserire le nostre borse mi trova qui. Le auguro buon lavoro.\n\nBenedetta - Amimì Milano\nNon la contatterò ulteriormente salvo un suo cenno.';
+t('42 tocco 4: la chiusura definitiva NON riceve anche la riga "no grazie"', !/no grazie/.test(completaTesto(chiusura4, firma, 'it')));
+t('43 senza riga di opt-out l\'invio si blocca', bloccantiInvio({ ...pulita, testo: body.replace(OPT, '').trim() + ' Grazie.' }).some((b) => b.includes('opt-out')));
+t('44 la chiusura del tocco 4 vale come opt-out', !bloccantiInvio({ ...pulita, testo: chiusura4 }).some((b) => b.includes('opt-out')));
+t('45 tetto non numerico = invio fermo, non tetto disattivato', /Number\.isFinite\(tetto\)/.test(src) && !/Number\(flags\.lead_tetto_giornaliero/.test(src));
+t('46 negozio scartato dopo la bozza: invio bloccato', src.indexOf("acc.stato_ricerca === 'rejected'") > src.indexOf("acc.verdetto !== 'da_contattare'"));
+t('47 giorno di Roma indifferente ai secondi', inizioGiornoRoma(new Date('2026-09-22T22:30:45Z')) === '2026-09-22T22:00:00.000Z' && inizioGiornoRoma(new Date('2026-09-22T22:30:59.900Z')) === '2026-09-22T22:00:00.000Z');
+t('48 follow-up con In-Reply-To/References dal messaggio precedente (scope readonly)', /In-Reply-To: \$\{inReplyTo\}/.test(src) && /googleAccessToken\(sa, SCOPE_READ\)/.test(src) && /format=metadata&metadataHeaders=Message-ID/.test(src));
+t('49 header di reply mancanti = avviso, mai blocco dell\'invio', /warnings\.push\(`header di reply non impostati/.test(src));
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

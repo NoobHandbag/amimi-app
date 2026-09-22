@@ -37,6 +37,7 @@ const GMAIL_USER = 'info@amimi.it';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SCOPE_SEND = 'https://www.googleapis.com/auth/gmail.send';
+const SCOPE_READ = 'https://www.googleapis.com/auth/gmail.readonly';   // solo per leggere Message-ID/References del tocco precedente
 const MODEL = 'gemini-flash-latest';
 const MAX_TOKENS = 8000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -47,6 +48,8 @@ const FLAG_KEYS = ['lead_outreach_ai_enabled', 'lead_linesheet_url', 'lead_firma
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 const OPT_OUT_IT = 'Se preferisce non ricevere altre email da parte mia, mi risponda "no grazie" e non la contatterò più.';
 const OPT_OUT_EN = 'If you would rather not hear from me again, just reply "no thanks" and I will not contact you further.';
+// ogni email chiude con la riga di opt-out, oppure (tocco 4) con la chiusura definitiva "non la contatterò ulteriormente"
+const CHIUSURA_RE = /no grazie|no thanks|non la contatter[oò] ulteriormente|won'?t contact you again|will not contact you/i;
 function segnapostoResidui(t: string): string[] {
   const out: string[] = [];
   for (const m of t.matchAll(/\[[^\]\n]{1,200}\]|\{\{[^}\n]{1,60}\}\}/g)) out.push(m[0]);
@@ -63,6 +66,7 @@ function bloccantiInvio(p: { to: string; oggetto: string; testo: string }): stri
   if (p.testo.length > 6000) b.push('testo troppo lungo');
   const seg = segnapostoResidui(`${p.oggetto}\n${p.testo}`);
   if (seg.length) b.push(`restano ${seg.length} parti da completare fra parentesi: ${seg.slice(0, 3).join(' ')}`);
+  if (!CHIUSURA_RE.test(p.testo)) b.push('manca la riga di opt-out ("no grazie") o la chiusura definitiva del tocco 4');
   return b;
 }
 // garantisce firma e riga di opt-out anche se il modello le ha dimenticate (mai due volte)
@@ -71,7 +75,7 @@ function completaTesto(testo: string, firma: string, lingua: 'it' | 'en'): strin
   const f = firma.trim();
   if (f && !t.includes(f.split('\n')[0].trim())) t += `\n\n${f}`;
   const opt = lingua === 'en' ? OPT_OUT_EN : OPT_OUT_IT;
-  if (!/no grazie|no thanks/i.test(t)) t += `\n\n${opt}`;
+  if (!CHIUSURA_RE.test(t)) t += `\n\n${opt}`;
   return t;
 }
 // cotone = produzione India: mai "Italia" ne' "India" associati al cotone (CONOSCENZA sez. 1)
@@ -87,9 +91,10 @@ function avvisiContenuto(testo: string): string[] {
 }
 // mezzanotte di oggi a Roma, in ISO UTC (il tetto e' "al giorno" per chi lavora in Italia, non per UTC)
 function inizioGiornoRoma(now = new Date()): string {
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now).map((x) => [x.type, x.value]));
+  const base = new Date(now.getTime()); base.setUTCSeconds(0, 0);   // i secondi sfalserebbero l'offset di un minuto
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(base).map((x) => [x.type, x.value]));
   const romaComeUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
-  const offsetMin = Math.round((romaComeUtc - now.getTime()) / 60000);
+  const offsetMin = Math.round((romaComeUtc - base.getTime()) / 60000);
   return new Date(Date.UTC(+p.year, +p.month - 1, +p.day) - offsetMin * 60000).toISOString();
 }
 // ==== PURE:lead-guard END ====
@@ -235,7 +240,7 @@ Deno.serve(async (req) => {
       try { await googleAccessToken(JSON.parse(flags.cs_gmail_sa_key), SCOPE_SEND); sa = 'ok (gmail.send)'; }
       catch (e) { sa = (e as Error).message.slice(0, 160); }
     }
-    return json({ ok: true, enabled, gemini: !!flags.gemini_api_key, service_account: sa, linesheet: !!flags.lead_linesheet_url, firma: !!flags.lead_firma, tetto: Number(flags.lead_tetto_giornaliero || 20) });
+    return json({ ok: true, enabled, gemini: !!flags.gemini_api_key, service_account: sa, linesheet: !!flags.lead_linesheet_url, firma: !!flags.lead_firma, tetto: Number.parseInt(flags.lead_tetto_giornaliero || '20', 10) });
   }
   if (!enabled) return json({ error: 'Bozze e invio B2B spenti (app_flags.lead_outreach_ai_enabled = false).', bloccante: true }, 403);
 
@@ -328,6 +333,7 @@ Deno.serve(async (req) => {
   if (!acc) return json({ error: 'negozio inesistente', bloccante: true }, 404);
   if (acc.lead_stage === 'opt_out' || acc.lead_stage === 'chiuso_no') return json({ error: `negozio in stadio ${acc.lead_stage}: non si contatta`, bloccante: true }, 409);
   if (acc.verdetto !== 'da_contattare') return json({ error: 'serve il verdetto "Da contattare" prima di scrivere', bloccante: true }, 409);
+  if (acc.stato_ricerca === 'rejected') return json({ error: 'negozio scartato dopo la bozza: non si scrive', bloccante: true }, 409);
   const { count: nOpt, error: oErr } = await retryOnce(() => sb.from('lead_contacts').select('id', { count: 'exact', head: true }).eq('account_id', dr.account_id).eq('opt_out', true));
   if (oErr) return json({ error: 'lettura opt-out fallita, riprova: ' + oErr.message }, 503);
   if ((nOpt ?? 0) > 0) return json({ error: 'opt-out registrato su questo negozio: non si contatta', bloccante: true }, 409);
@@ -344,21 +350,46 @@ Deno.serve(async (req) => {
 
   // tetto giornaliero (Regola 20c) sul giorno di ROMA: inviate oggi + quelle in invio. Conteggio head:true.
   // Non atomico con il claim: due invii contemporanei all'ultimo posto passano entrambi (tetto morbido, accettato).
-  const tetto = Number(flags.lead_tetto_giornaliero || 20);
+  const tetto = Number.parseInt(flags.lead_tetto_giornaliero || '20', 10);
+  if (!Number.isFinite(tetto) || tetto < 0) return json({ error: 'app_flags.lead_tetto_giornaliero non e\' un numero: invio fermo finche\' non viene corretto' }, 500);
   const { count: nOggi, error: cErr } = await retryOnce(() => sb.from('lead_drafts').select('id', { count: 'exact', head: true }).or(`stato.eq.in_invio,sent_at.gte.${inizioGiornoRoma()}`));
   if (cErr) return json({ error: 'conteggio invii fallito, riprova: ' + cErr.message }, 503);
   if ((nOggi ?? 0) >= tetto) return json({ error: `tetto di ${tetto} invii al giorno raggiunto`, bloccante: true }, 429);
 
-  // follow-up nello stesso thread Gmail del tocco precedente (nella nostra casella); senza thread niente "Re:" finto
-  const { data: prevT, error: ptErr } = await retryOnce(() => sb.from('lead_touches').select('gmail_thread_id').eq('account_id', dr.account_id).eq('direzione', 'out').eq('canale', 'email').not('gmail_thread_id', 'is', null).order('at', { ascending: false }).limit(1));
+  // follow-up: stesso thread Gmail del tocco precedente (threadId, che vale solo nella NOSTRA casella) piu' gli header
+  // In-Reply-To/References letti dal messaggio precedente con lo scope readonly, come fa cs-send: senza quegli header il
+  // destinatario riceve un "Re:" che apre una conversazione nuova. Senza thread niente "Re:" finto; con thread, un
+  // oggetto che inizia per "Re:" riprende quello del primo invio (Gmail incrocia anche l'oggetto).
+  const warnings: string[] = [];
+  const { data: prevT, error: ptErr } = await retryOnce(() => sb.from('lead_touches').select('gmail_thread_id,gmail_message_id,subject').eq('account_id', dr.account_id).eq('direzione', 'out').eq('canale', 'email').not('gmail_thread_id', 'is', null).order('at', { ascending: false }).limit(1));
   if (ptErr) return json({ error: 'lettura thread fallita, riprova: ' + ptErr.message }, 503);
-  const threadId = tocco > 1 ? (prevT?.[0]?.gmail_thread_id ?? null) : null;
-  const oggettoInvio = threadId ? oggetto : oggetto.replace(/^\s*(re|r)\s*:\s*/i, '');
+  const prev = tocco > 1 ? (prevT?.[0] ?? null) : null;
+  const threadId: string | null = prev?.gmail_thread_id ?? null;
+  const oggettoInvio = threadId
+    ? (/^\s*(re|r)\s*:/i.test(oggetto) && prev?.subject ? 'Re: ' + String(prev.subject).replace(/^\s*(re|r)\s*:\s*/i, '') : oggetto)
+    : oggetto.replace(/^\s*(re|r)\s*:\s*/i, '');
 
   if (!flags.cs_gmail_sa_key) return json({ error: 'chiave service account assente (app_flags.cs_gmail_sa_key)' }, 500);
+  let sa: { client_email: string; private_key: string };
+  try { sa = JSON.parse(flags.cs_gmail_sa_key); } catch { return json({ error: 'chiave service account non valida' }, 500); }
   let gtoken = '';
-  try { gtoken = await googleAccessToken(JSON.parse(flags.cs_gmail_sa_key), SCOPE_SEND); }
+  try { gtoken = await googleAccessToken(sa, SCOPE_SEND); }
   catch (e) { return json({ error: 'autenticazione Google fallita: ' + (e as Error).message.slice(0, 180) }, 502); }
+  let inReplyTo = '', references = '';
+  if (threadId && prev?.gmail_message_id) {
+    try {
+      const rtoken = await googleAccessToken(sa, SCOPE_READ);
+      const mr = await fetch(`${GMAIL}/messages/${encodeURIComponent(String(prev.gmail_message_id))}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`, { headers: { Authorization: `Bearer ${rtoken}` } });
+      const mj = await mr.json().catch(() => ({}));
+      const hs = (mj?.payload?.headers ?? []) as { name?: string; value?: string }[];
+      const hdr = (n: string) => hs.find((h) => h.name?.toLowerCase() === n)?.value ?? '';
+      const mid = mr.ok ? hdr('message-id') : '';
+      if (mid) { inReplyTo = mid; references = (hdr('references') ? hdr('references') + ' ' : '') + mid; }
+      else warnings.push(`header di reply non impostati (Gmail ${mr.status}): il follow-up si vede come thread solo nella nostra casella`);
+    } catch (e) {
+      warnings.push('header di reply non impostati: ' + (e as Error).message.slice(0, 120));
+    }
+  }
 
   // claim atomico: solo UNA richiesta porta la bozza in 'in_invio'. L'indice unico (account, tocco) della
   // migr 0139 fa fallire qui il secondo invio dello stesso tocco allo stesso negozio.
@@ -375,6 +406,8 @@ Deno.serve(async (req) => {
     `From: ${encHdr('Amimì Milano')} <${GMAIL_USER}>`,
     `To: <${to}>`,
     `Subject: ${encHdr(oggettoInvio)}`,
+    ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
+    ...(references ? [`References: ${references}`] : []),
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset=UTF-8',
     'Content-Transfer-Encoding: base64',
@@ -400,7 +433,6 @@ Deno.serve(async (req) => {
     return json({ error: msg + (eErr ? ' (e la bozza e\' rimasta in invio: sbloccala)' : '') }, 502);
   }
   // da qui la mail E' PARTITA: gli errori successivi sono avvisi, mai un fallimento dell'invio
-  const warnings: string[] = [];
   const gmailMsgId = String((sj as { id?: string }).id ?? '') || null;
   const gmailThreadId = String((sj as { threadId?: string }).threadId ?? '') || null;
   if (!gmailMsgId) warnings.push('Gmail non ha restituito l\'id del messaggio: il tocco e\' registrato senza');
