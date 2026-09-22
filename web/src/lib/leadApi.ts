@@ -110,7 +110,8 @@ export async function fetchDossier(): Promise<LeadDossier[]> {
     const { data, error } = await csClient.from('v_lead_dossier').select('*').order('totale', { ascending: false, nullsFirst: false }).order('nome').order('id').range(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
     out.push(...((data ?? []) as LeadDossier[]));
-    if ((data ?? []).length < PAGE) return out;
+    // ci si ferma solo su una pagina VUOTA: un db-max-rows piu' basso di PAGE rifarebbe il taglio silenzioso
+    if (!(data ?? []).length) return out;
   }
 }
 
@@ -201,7 +202,8 @@ export async function fetchTouches(accountId: string): Promise<LeadTouch[]> {
 }
 export async function addTouch(t: { account_id: string; canale: string; direzione: 'in' | 'out'; subject?: string | null; body_clean?: string | null; stage_prima?: string | null; stage_dopo?: string | null; esito?: string | null; prossima_azione?: string | null; prossima_azione_at?: string | null; sequenza_tocco?: number | null; chi: string; at?: string }) {
   const { error } = await csClient.from('lead_touches').insert(t);
-  if (error) throw new Error(error.message);
+  // 23505 = indice unico lead_touches_tocco_out_uq (migr 0139): lo stesso tocco email risulta gia' registrato
+  if (error) throw new Error(error.code === '23505' ? `Il tocco ${t.sequenza_tocco ?? ''} risulta gia’ registrato per questo negozio: guarda la Timeline.` : error.message);
 }
 export async function fetchSequences(): Promise<LeadSequence[]> {
   const { data, error } = await csClient.from('lead_sequences').select('*').eq('attiva', true).order('codice').order('tocco');

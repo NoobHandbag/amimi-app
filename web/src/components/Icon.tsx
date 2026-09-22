@@ -8,6 +8,8 @@ import type { ReactNode } from 'react';
 const P: Record<string, ReactNode> = {
   home: <><path d="M3 11l9-8 9 8" /><path d="M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" /></>,
   plus: <><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></>,
+  // campionario di materiali (sezione Materie prime, 22-09): tre pelli a ventaglio
+  swatch: <><path d="M4 4h6v13a3 3 0 0 1-6 0z" /><path d="M10 9l4.5-3 3 5.2L10 16.5" /><path d="M13.5 20H20v-6l-3.2 1.8" /><circle cx="7" cy="17" r="1" /></>,
   box: <><path d="M4 8l8-4 8 4-8 4-8-4z" /><path d="M4 8v8l8 4 8-4V8" /><line x1="12" y1="12" x2="12" y2="20" /></>,
   inbox: <><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5 5h14l3 7v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-6z" /></>,
   chart: <><line x1="5" y1="20" x2="5" y2="11" /><line x1="10.5" y1="20" x2="10.5" y2="4" /><line x1="16" y1="20" x2="16" y2="14" /><line x1="21" y1="20" x2="21" y2="8" /></>,
