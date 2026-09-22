@@ -1,4 +1,15 @@
-// loyalty-proxy v11 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// loyalty-proxy v12 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// v12 (2026-09-22, brief M4b "profilo + compleanno, tier sui punti cumulati, bonus seconda borsa", migr 0140):
+//    due azioni NUOVE e additive, le altre non cambiano una riga:
+//    `profile` (GET)       : stato del profilo (giorno/mese, materiale, consenso, completo), compleanno oggi e premio gia'
+//                            dato, punti cumulati + tier cumulato, finestra del bonus seconda borsa; piu' i tre flag.
+//                            RPC loyalty_profile_state (una sola lettura). Flag OFF = campi a null, la pagina non mostra la card.
+//    `profile_save` (POST) : {birth_day, birth_month, materiale, consenso} -> RPC loyalty_profile_save (atomica: +10 una
+//                            sola volta a profilo completo, data bloccata dopo il primo salvataggio). Gated da
+//                            loyalty_profile_enabled ({state:'off'} senza scritture). Il client non decide mai i punti.
+//    Flag a VALORE (readFlagFor): 'true' = tutti, 'false' = nessuno, lista di customer id = solo loro (prova sull'account
+//    di test senza accendere per il pubblico). I giri +20 compleanno e +50 seconda borsa NON stanno qui: sono funzioni SQL
+//    su pg_cron (loyalty_birthday_run 06:20 UTC, loyalty_bonus_second_run 06:25 UTC), vedi migr 0140 e LOYALTY_RUNBOOK.
 // v11 (2026-09-21, quest audit Area Membri, Fase 6 bundle C):
 //    T1  freschezza della firma: il `timestamp` firmato da Shopify deve stare entro MAX_SKEW_SEC, altrimenti 401
 //        stale_signature (una richiesta firmata catturata non e' piu' rigiocabile all'infinito);
@@ -203,6 +214,16 @@ Deno.serve(async (req) => {
     const { data, error } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', key).maybeSingle());
     if (error) return null;
     return String(data?.value ?? 'false').trim().toLowerCase() === 'true';
+  };
+  // v12: flag a valore per il cliente loggato. 'true' = tutti; 'false' o vuoto = nessuno; altrimenti lista di
+  // shopify_customer_id separati da virgola = acceso solo per loro. null = non leggibile (503), mai "off" per un errore.
+  const readFlagFor = async (key: string): Promise<boolean | null> => {
+    const { data, error } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', key).maybeSingle());
+    if (error) return null;
+    const v = String(data?.value ?? 'false').trim().toLowerCase();
+    if (v === 'true') return true;
+    if (v === '' || v === 'false') return false;
+    return v.split(',').map((s) => s.trim()).includes(customerId);
   };
 
   // 2026-09-13 (sweep incidente doppioni): insert audit su loyalty_events ignorato = rate-limit e cap giornaliero
@@ -455,6 +476,46 @@ Deno.serve(async (req) => {
     } catch { /* pool non disponibile: pending, l'owner la evade */ }
 
     return json({ ok: true, status: code ? 'fulfilled' : 'pending', code, points: r.new_balance, cost: r.cost });
+  }
+
+  // --- PROFILO + COMPLEANNO, TIER CUMULATO, BONUS SECONDA BORSA (v12, brief M4b 22-09, migr 0140) ---
+  // Rami additivi: leggono i tre flag a valore e la RPC loyalty_profile_state; `profile_save` scrive SOLO via RPC atomica
+  // (gate a DB: +10 una volta, data bloccata). I giri +20/+50 girano su pg_cron, non qui.
+  if (action === 'profile') {
+    const [profOn, tierOn, bonusOn] = await Promise.all([
+      readFlagFor('loyalty_profile_enabled'), readFlagFor('loyalty_tier_lifetime_enabled'), readFlagFor('loyalty_bonus_second_enabled'),
+    ]);
+    if (profOn === null || tierOn === null || bonusOn === null) return json({ error: 'read_failed' }, 503);
+    const { data: st, error: stErr } = await retryOnce(() => sb.rpc('loyalty_profile_state', { p_customer: customerId, p_today: romeToday() }));
+    if (stErr) return json({ error: 'read_failed' }, 503);   // stato non letto = 503, mai una card vuota spacciata per vera
+    const s = (st ?? {}) as Record<string, unknown>;
+    return json({
+      profile_enabled: profOn, tier_lifetime_enabled: tierOn, bonus_second_enabled: bonusOn,
+      profile: profOn ? (s.profile ?? null) : null,
+      birthday_today: profOn ? Boolean(s.birthday_today) : false,
+      birthday_awarded: profOn ? Boolean(s.birthday_awarded) : false,
+      punti_cumulati: Number(s.punti_cumulati ?? 0),
+      tier_cumulato: (s.tier_cumulato as string | null) ?? null,
+      bonus_second: bonusOn ? (s.bonus_second ?? null) : null,
+    });
+  }
+
+  if (action === 'profile_save') {
+    const on = await readFlagFor('loyalty_profile_enabled');
+    if (on === null) return json({ error: 'read_failed' }, 503);
+    if (!on) return json({ state: 'off' });
+    const pb = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const num = (x: unknown): number | null => (x === null || x === undefined || x === '') ? null : Number(x);
+    const day = num(pb.birth_day), month = num(pb.birth_month);
+    if ((day !== null && !Number.isInteger(day)) || (month !== null && !Number.isInteger(month))) return json({ error: 'bad_date' }, 400);
+    const materiale = (pb.materiale === null || pb.materiale === undefined) ? null : String(pb.materiale).trim().slice(0, 40);
+    if (typeof pb.consenso !== 'boolean') return json({ error: 'invalid_value' }, 400);
+    // nessun retry: la RPC e' idempotente ma e' una scrittura (Regola 20d); un errore torna 500 e la pagina dice "riprova"
+    const { data: saved, error: svErr } = await sb.rpc('loyalty_profile_save', { p_customer: customerId, p_day: day, p_month: month, p_materiale: materiale, p_consenso: pb.consenso });
+    if (svErr) return json({ error: 'write_failed' }, 500);
+    const sv = (saved ?? {}) as { ok?: boolean; reason?: string; awarded?: boolean; added?: number; points?: number; birthday_locked?: boolean };
+    if (!sv.ok) return json({ error: sv.reason ?? 'write_failed' }, 400);
+    return json({ ok: true, awarded: Boolean(sv.awarded), added: sv.added ?? 0, points: sv.points ?? 0, birthday_locked: Boolean(sv.birthday_locked) });
   }
 
   return json({ error: 'unknown_action', action }, 422);

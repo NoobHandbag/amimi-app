@@ -8,8 +8,10 @@
   Area Membri "Premia" - PRODUZIONE (dati REALI via App Proxy).
   Va servita SAME-ORIGIN su amimi.it (es. pagina/sezione storefront), cosi' le fetch a
   /apps/premia/* portano il logged_in_customer_id firmato da Shopify (nessun secondo login).
-  Contratto edge live loyalty-proxy: state | balance | coccola | memory_win | nanna | wear.
-  Tiers e tessera sono calcolati lato client da CONFIG (nessun numero inventato lato server).
+  Contratto edge live loyalty-proxy: state | balance | coccola | memory_win | nanna | wear | rewards | redeem | profile | profile_save.
+  Tiers e tessera sono calcolati lato client da CONFIG (nessun numero inventato lato server). Dal 22-09 (v12) il livello
+  segue i punti cumulati (server, azione profile) quando il flag loyalty_tier_lifetime_enabled e' acceso, altrimenti il saldo.
+  Card "Il tuo profilo" (compleanno giorno+mese, materiale, consenso) e riga "seconda borsa" solo a flag acceso: a flag OFF la pagina e' identica a prima.
   Servita da github.io o altro dominio NON funziona: il cookie di login e' su amimi.it.
 -->
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,600&display=swap" rel="stylesheet">
@@ -120,6 +122,24 @@
   .codechip .c{font-family:"Cormorant Garamond",serif;font-weight:700;font-size:19px;letter-spacing:.5px;flex:1;word-break:break-all}
   .codechip .cp{background:var(--bordeaux);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;padding:8px 12px;cursor:pointer;white-space:nowrap}
   .redeem .fine{font-size:10.5px;opacity:.82;margin-top:9px;text-align:center}
+
+  /* compleanno, bonus seconda borsa, profilo (v12) */
+  .bday{background:linear-gradient(135deg,var(--peach),var(--blush));border-radius:16px;padding:14px 16px;margin-top:14px;text-align:center}
+  .bday b{font-family:"Cormorant Garamond",serif;font-size:22px;font-weight:600;color:var(--bordeaux);display:block}
+  .bday span{font-size:12px;color:#7d6a5c}
+  .bonus2{font-size:11.5px;color:var(--muted);margin-top:8px;text-align:center;border-top:1px dashed var(--sand);padding-top:9px}.bonus2 b{color:var(--bordeaux)}
+  .prof{background:var(--paper);border:1px solid var(--sand);border-radius:18px;padding:18px 16px}
+  .prof .row{display:flex;gap:8px;margin-top:10px}
+  .prof label{display:block;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--cognac);margin-bottom:4px}
+  .prof select{width:100%;border:1px solid var(--sand);border-radius:10px;background:#fff;padding:10px;font-size:14px;color:var(--ink)}
+  .prof select[disabled]{background:#f4efe9;color:var(--muted)}
+  .prof .chk{display:flex;gap:9px;align-items:flex-start;margin-top:12px;font-size:12px;color:var(--muted);line-height:1.4}
+  .prof .chk input{margin-top:2px;accent-color:var(--bordeaux)}
+  .prof .sbtn{width:100%;margin-top:14px;background:var(--bordeaux);color:#fff;border:none;border-radius:99px;font-size:13px;font-weight:700;padding:12px;cursor:pointer}
+  .prof .sbtn[disabled]{opacity:.55;cursor:default}
+  .prof .sum{font-size:13px;line-height:1.7;margin-top:8px}.prof .sum b{color:var(--bordeaux)}
+  .prof .got{display:inline-block;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ok);margin-top:8px}
+  .prof .note{font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.4}
 </style>
 </head>
 <body>
@@ -139,6 +159,7 @@
   <div id="app" class="hidden">
     <div class="hello">Ciao,<br><span id="cName">amica</span></div>
     <div><span class="lvl"><span class="dot"></span><span id="tierName">Amica</span></span></div>
+    <div id="bday" class="bday hidden"></div>
 
     <div class="tessera">
       <div class="pts"><span class="n" id="pts">0</span><span class="l">punti</span></div>
@@ -146,9 +167,15 @@
       <div class="cap" id="cap"></div>
       <div class="tierbar"><i id="tierFill" style="width:0%"></i></div>
       <div class="tiernote" id="tierNote"></div>
+      <div id="bonus2" class="bonus2 hidden"></div>
     </div>
 
     <div id="redeem" class="redeem hidden"></div>
+
+    <div id="profSec" class="hidden">
+      <h3 class="sec">Il tuo profilo</h3>
+      <div id="profilo" class="prof"></div>
+    </div>
 
     <h3 class="sec">La stanza di Mimì</h3>
     <div class="scene">
@@ -192,6 +219,8 @@
   const CONFIG = {
     stampEvery: 20, stampsForReward: 10,
     tiers: [ {key:'amica',name:'Amica',min:0},{key:'speciale',name:'Amica Speciale',min:150},{key:'cuore',name:"Amica del Cuore",min:400} ],
+    materiali: ['cavallino','cocco','vernice','pelle liscia','cotone','nessuna preferenza'],   // lista chiusa, uguale al check a DB (migr 0140)
+    mesi: ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'],
   };
   const PROXY = '/apps/premia';         // same-origin su amimi.it
   const el = id => document.getElementById(id);
@@ -225,15 +254,21 @@
 
   function render(){
     el('loading').classList.add('hidden'); el('gate').classList.add('hidden'); el('app').classList.remove('hidden');
-    const p = S.points||0, tier=tierOf(p), nt=nextTier(p);
+    const p = S.points||0, pr = S._profile;
+    // livello: sui punti CUMULATI (server, mai scendono per un riscatto) quando il flag e' acceso; altrimenti sul saldo
+    const lifetime = !!(pr && pr.tier_lifetime_enabled);
+    const tp = lifetime ? Math.max(p, Number(pr.punti_cumulati)||0) : p;
+    const tier=tierOf(tp), nt=nextTier(tp);
+    const tierCopy = lifetime ? 'il livello segue i punti cumulati: riscattare non lo abbassa' : 'il livello segue i punti disponibili';
     countUp(el('pts'), p);
     el('tierName').textContent = tier.name;
     const timbri = Math.min(CONFIG.stampsForReward, Math.floor(p/CONFIG.stampEvery));
     const sw = el('stamps'); sw.innerHTML='';
     for(let i=1;i<=CONFIG.stampsForReward;i++){ const d=document.createElement('div'); const full=i<=timbri; d.className='stamp'+(full?' full':''); d.textContent=full?'💛':(i===CONFIG.stampsForReward?'🎁':'·'); sw.appendChild(d); }
     el('cap').innerHTML='Un timbro ogni '+CONFIG.stampEvery+' punti · a '+CONFIG.stampsForReward+' timbri <b>il tuo sconto personale</b>';
-    if(nt){ const prog=Math.max(0,Math.min(1,(p-tier.min)/(nt.min-tier.min))); el('tierFill').style.width=(prog*100)+'%'; el('tierNote').innerHTML='Ti mancano <b>'+(nt.min-p)+' punti</b> per '+esc(nt.name)+' · il livello segue i punti disponibili'; }
-    else { el('tierFill').style.width='100%'; el('tierNote').innerHTML='Livello massimo: <b>'+esc(tier.name)+'</b> 💛 · il livello segue i punti disponibili'; }
+    if(nt){ const prog=Math.max(0,Math.min(1,(tp-tier.min)/(nt.min-tier.min))); el('tierFill').style.width=(prog*100)+'%'; el('tierNote').innerHTML='Ti mancano <b>'+(nt.min-tp)+' punti</b> per '+esc(nt.name)+' · '+tierCopy; }
+    else { el('tierFill').style.width='100%'; el('tierNote').innerHTML='Livello massimo: <b>'+esc(tier.name)+'</b> 💛 · '+tierCopy; }
+    renderBonus2(); renderBirthday(); renderProfile();
     // mimi
     const m=el('mimi'); if(!m.innerHTML.trim()) m.innerHTML=mimiInner(); m.classList.toggle('worn', !!S.worn);
     el('mood').textContent = S.nanna ? 'Dorme nel suo sacchettino. Shhh.' : (!S.coccola_disponibile ? 'Coccolata oggi. È al settimo cielo!' : 'Oggi ti aspetta per la sua coccola.');
@@ -283,14 +318,78 @@
     box.innerHTML=h;
   }
 
+  // === compleanno, seconda borsa, profilo (v12: azione profile; a flag OFF tutto resta nascosto) ===
+  function itDate(iso){ const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||'')); return m ? (m[3]+'/'+m[2]+'/'+m[1]) : ''; }
+  function renderBirthday(){
+    const b=el('bday'), pr=S._profile;
+    if(!pr || !pr.profile_enabled || !pr.birthday_today){ b.classList.add('hidden'); return; }
+    b.classList.remove('hidden');
+    b.innerHTML='<b>Buon compleanno! 🎀</b><span>Mimì ti fa tanti auguri'+(pr.birthday_awarded ? ' · <b style="display:inline;font-size:13px">+20 punti di regalo</b> sul tuo saldo' : '')+'</span>';
+  }
+  function renderBonus2(){
+    const b=el('bonus2'), pr=S._profile, bs=pr && pr.bonus_second_enabled ? pr.bonus_second : null;
+    if(!bs){ b.classList.add('hidden'); return; }
+    if(bs.awarded){ b.classList.remove('hidden'); b.innerHTML='Bonus seconda borsa ricevuto: <b>+50 punti</b> 💛'; return; }
+    if(bs.ordini===1 && bs.deadline){
+      const gg=Math.max(0, Math.ceil((new Date(bs.deadline+'T23:59:59')-Date.now())/86400000));
+      b.classList.remove('hidden');
+      b.innerHTML='Seconda borsa entro il <b>'+esc(itDate(bs.deadline))+'</b>: <b>+50 punti</b>'+(gg>0 ? ' · '+gg+(gg===1?' giorno':' giorni') : ' · oggi');
+      return;
+    }
+    b.classList.add('hidden');
+  }
+  function renderProfile(){
+    const sec=el('profSec'), box=el('profilo'), pr=S._profile;
+    if(!pr || !pr.profile_enabled){ sec.classList.add('hidden'); return; }
+    sec.classList.remove('hidden');
+    const P=pr.profile||{};
+    if(P.complete){
+      box.innerHTML='<div class="sum">Compleanno: <b>'+esc(P.birth_day)+' '+esc(CONFIG.mesi[(P.birth_month||1)-1]||'')+'</b><br>Materiale preferito: <b>'+esc(P.materiale_preferito||'')+'</b><br>Regalo di compleanno: <b>'+(P.consenso_compleanno?'sì':'no')+'</b></div>'
+        +'<span class="got">+10 punti ricevuti ✓</span>'
+        +'<div class="chk"><input type="checkbox" id="pConsenso" '+(P.consenso_compleanno?'checked':'')+'><label for="pConsenso" style="text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">Voglio il regalo di compleanno. Usiamo solo giorno e mese per farti un regalo di compleanno. Niente anno.</label></div>'
+        +'<button class="sbtn tap" id="pSave">Aggiorna</button>'
+        +'<div class="note">La data di compleanno non si modifica da qui: per una correzione scrivi all\'assistenza.</div>';
+      return;
+    }
+    const locked=!!P.birth_locked;
+    let days=''; for(let d=1;d<=31;d++) days+='<option value="'+d+'"'+(P.birth_day===d?' selected':'')+'>'+d+'</option>';
+    let months=''; CONFIG.mesi.forEach((m,i)=>{ months+='<option value="'+(i+1)+'"'+(P.birth_month===i+1?' selected':'')+'>'+esc(m)+'</option>'; });
+    let mats=''; CONFIG.materiali.forEach(m=>{ mats+='<option value="'+esc(m)+'"'+(P.materiale_preferito===m?' selected':'')+'>'+esc(m)+'</option>'; });
+    box.innerHTML='<div class="note" style="margin-top:0">Completa il profilo e ricevi <b>+10 punti</b>. Il giorno del tuo compleanno Mimì ti regala <b>+20 punti</b>.</div>'
+      +'<div class="row"><div style="flex:1"><label>Giorno</label><select id="pDay"'+(locked?' disabled':'')+'><option value="">-</option>'+days+'</select></div>'
+      +'<div style="flex:2"><label>Mese</label><select id="pMonth"'+(locked?' disabled':'')+'><option value="">-</option>'+months+'</select></div></div>'
+      +'<div class="row"><div style="flex:1"><label>Materiale preferito</label><select id="pMat"><option value="">-</option>'+mats+'</select></div></div>'
+      +'<div class="chk"><input type="checkbox" id="pConsenso" '+(P.consenso_compleanno?'checked':'')+'><label for="pConsenso" style="text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">Voglio il regalo di compleanno. Usiamo solo giorno e mese per farti un regalo di compleanno. Niente anno.</label></div>'
+      +'<button class="sbtn tap" id="pSave">Salva il profilo</button>'
+      +(locked ? '<div class="note">La data di compleanno è già salvata e non si modifica da qui.</div>' : '<div class="note">Il regalo di compleanno arriva se il profilo è salvato almeno 30 giorni prima.</div>');
+  }
+  el('profilo').addEventListener('click', async e=>{
+    const btn=e.target.closest('#pSave'); if(!btn||!S) return;
+    const day=el('pDay'), month=el('pMonth'), mat=el('pMat'), cons=el('pConsenso');
+    const body={ consenso: !!(cons && cons.checked) };
+    if(day && !day.disabled && day.value) body.birth_day=Number(day.value);
+    if(month && !month.disabled && month.value) body.birth_month=Number(month.value);
+    if(mat && mat.value) body.materiale=mat.value;
+    if(day && !day.disabled && ((body.birth_day && !body.birth_month) || (!body.birth_day && body.birth_month))){ toast('Scegli giorno e mese'); return; }
+    btn.disabled=true; btn.textContent='Salvo...';
+    const { data } = await api('profile_save',{method:'POST',body});
+    if(data && data.ok){
+      await refresh(false);
+      if(data.awarded) reward('Profilo completo!', '+10', 'punti aggiunti al tuo saldo 💛');
+      else toast(data.birthday_locked ? 'Profilo aggiornato (la data resta quella salvata)' : 'Profilo aggiornato 💛');
+    } else if(data && data.error==='bad_date'){ toast('Questa data non esiste'); btn.disabled=false; btn.textContent='Salva il profilo'; }
+    else { toast('Riprova fra poco'); btn.disabled=false; btn.textContent='Riprova'; }
+  });
+
   async function refresh(animate){
-    const [st, rw] = await Promise.all([api('state'), api('rewards')]);   // rewards: OFF finche' il flag e' spento
+    const [st, rw, pf] = await Promise.all([api('state'), api('rewards'), api('profile')]);   // rewards/profile: OFF finche' i flag sono spenti
     const { status, data } = st;
     if (data.state==='login_required') return showGate('Il tuo profilo Premia','Accedi con il tuo account Amimì per vedere i tuoi punti e prenderti cura di Mimì.', true);
     if (data.state==='needs_secret' || data.state==='off') return showGate('Premia sta arrivando','Il programma fedeltà parte a breve. Torna presto!', false);
     if (status===503 || data.error) return showGate('Un attimo...','Non riesco a leggere il profilo in questo momento. Riprova fra poco.', false);
     S = data;
     S._rewards = (rw && rw.data && Array.isArray(rw.data.rewards)) ? rw.data : null;
+    S._profile = (pf && pf.status===200 && pf.data && !pf.data.error && typeof pf.data.profile_enabled==='boolean') ? pf.data : null;   // non leggibile = come a flag OFF, mai una card finta
     render();
   }
 
