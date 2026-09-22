@@ -46,7 +46,7 @@ export default function App() {
       <main>
         {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} matEnabled={matEnabled} />}
         {tab === 'materiali' && (matEnabled
-          ? <Materiali onBack={() => go('home')} onProdotti={() => go('ordini')} />
+          ? <Materiali chi={chi} onBack={() => go('home')} onProdotti={() => go('ordini')} />
           : <div className="screen"><header><h1>Materie prime</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">Sezione non attiva (flag mat_enabled spento).</div></div>)}
         {tab === 'cruscotto' && <Report onBack={() => go('home')} onDetail={() => go('ce')} onAds={() => go('ads')} />}
         {tab === 'ads' && <Ads onBack={() => go('home')} pin={pin} chi={chi} />}

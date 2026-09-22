@@ -289,3 +289,11 @@ Registro SEPARATO dal core (Regola 19): le materie prime non hanno CODICE_AMIIMI
 - Sicurezza: RLS + REVOKE come `lead_*` (anon: niente; authenticated: SELECT con email @amimi.it; `mat_events` nemmeno a authenticated); bucket privato con policy SELECT @amimi.it (URL firmati dal client). Nessun grant di scrittura ai ruoli applicativi in Fase 1.
 - Scritture Fase 1: SOLO `etl/seed_mat.mjs` (service_role via Management API, dry-run di default, `--apply`), idempotente per chiave naturale (rilancio = 0 righe nuove, provato il 22-09). Fase 2: edge `mat-api` (postura cs-api) per form e foto dalla PWA.
 - Flag `mat_enabled` = `false` (rollback = flag OFF). Guardie sul sorgente: `tests/mat_guardie.mjs` (25).
+
+### 16b. Fase 2 (migr 0144, 2026-09-23): scritture dall'app e strato AI
+
+- **`ai_compila_log`**: una riga per chiamata a Gemini (chi, email, target, n_immagini, input_hash, testo, modello, ms, output, errore, esito `proposto|confermato|modificato|scartato|errore`, ref_tabella/ref_id, esito_at). RLS ON, nessun privilegio ai ruoli applicativi. Serve a misurare quanto l'AI aiuta.
+- Storage: policy `mat_assets_ins` (INSERT per authenticated @amimi.it, SOLO sotto `inbox/`); i file del seed restano del service_role.
+- Trigger `mat_suppliers_touch` / `mat_items_touch` (`updated_at` che si aggiorna davvero).
+- `v_mat_settings` espone ora tre chiavi: `mat_enabled` (sezione), `mat_write_enabled` (bottoni di scrittura, edge mat-api), `ai_compila_enabled` (bottone "Compila", edge ai-compila). Default dei due nuovi: `false`.
+- Scritture: SOLO edge `mat-api` (vedi EDGE_FUNCTIONS.md). Il client carica i file nel bucket e poi li registra con `asset_add`.

@@ -57,5 +57,54 @@ t('23 login gate: la pagina mostra il login se non c\'e\' sessione csClient', /c
 t('24 Tab materiali dichiarata e tile "Materie prime" per Ginevra', /'materiali'/.test(PEOPLE) && /label: 'Materie prime', tab: 'materiali'/.test(PEOPLE));
 t('25 App: rotta #materiali e pagina gated dal flag', /#materiali/.test(APP) && /matEnabled/.test(APP));
 
+// ---------------------------------------------------------------- Fase 2 (migr 0144, mat-api, ai-compila)
+const M2 = read('supabase/migrations/0144_mat_fase2.sql');
+const MAPI = read('supabase/functions/mat-api/index.ts');
+const AI = read('supabase/functions/ai-compila/index.ts');
+const PROMPT = read('supabase/functions/ai-compila/prompt.ts');
+const TOML = read('supabase/config.toml');
+const ORD = read('web/src/components/SupplierOrderForm.tsx');
+const mapi = noTs(MAPI), ai = noTs(AI);
+
+console.log('\n== Fase 2: migrazione 0144 ==');
+t('26 ai_compila_log con RLS e nessun privilegio ai ruoli applicativi', /create table if not exists ai_compila_log/.test(M2) && /alter table ai_compila_log enable row level security/.test(M2) && /revoke all on ai_compila_log from anon, authenticated/.test(M2));
+t('27 policy INSERT bucket solo @amimi.it e solo sotto inbox/', /create policy mat_assets_ins on storage\.objects for insert to authenticated/.test(M2) && /name like 'inbox\/%'/.test(M2) && /ilike '%@amimi\.it'/.test(M2));
+t('28 flag mat_write_enabled e ai_compila_enabled inseriti a false', /\('mat_write_enabled', 'false'\)/.test(M2) && /\('ai_compila_enabled', 'false'\)/.test(M2));
+t('29 nessun ALTER su tabelle core, nessun grant di scrittura a authenticated su mat_*', !/alter table (?!mat_|ai_compila)\w+/i.test(noSql(M2)) && !/grant (insert|update|delete|all) on mat_/i.test(noSql(M2)));
+t('30 v_mat_settings espone solo i tre flag del modulo', /where key in \('mat_enabled', 'mat_write_enabled', 'ai_compila_enabled'\)/.test(M2));
+
+console.log('\n== Fase 2: mat-api (scritture) ==');
+t('31 mat-api: getUser sul token utente, la anon key non basta, email @amimi.it', /auth\.getUser\(token\)/.test(mapi) && /endsWith\('@amimi\.it'\)/.test(mapi));
+t('32 mat-api: chi obbligatorio dal selettore (B/G/A)', /IDENT\[String\(body\.chi/.test(mapi) && /chi mancante/.test(mapi));
+t('33 mat-api: flag mat_write_enabled letto con errore controllato, OFF = state off', /'mat_write_enabled'/.test(mapi) && /throw new ReadError\('flag non leggibile/.test(mapi) && /return json\(\{ state: 'off' \}\)/.test(mapi));
+t('34 mat-api: scrive solo tabelle mat_* e ai_compila_log (mai core, write-api, change_log)', ![...mapi.matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]).some((tb) => !tb.startsWith('mat_') && tb !== 'ai_compila_log' && tb !== 'app_flags') && !/change_log|write-api|purchases|supplier_orders/.test(mapi));
+t('35 mat-api: nessun DELETE (non attivo al posto di cancellare)', !/\.delete\(/.test(mapi) && /item_set_attivo/.test(mapi));
+t('36 mat-api: ogni azione di scrittura passa da audit mat_events', (mapi.match(/await audit\(/g) ?? []).length >= 6 && /from\('mat_events'\)\.insert/.test(mapi));
+t('37 mat-api: 23505 trattato come gia\' presente (chiave naturale = UNIQUE a DB)', (mapi.match(/23505/g) ?? []).length >= 4);
+t('38 mat-api: asset_add solo sotto inbox/ e con file verificato nel bucket', /path\.startsWith\('inbox\/'\)/.test(mapi) && /storage\.from\('mat-assets'\)\.list\(/.test(mapi));
+t('39 mat-api: categoria e unita validate sulle liste, prezzo numerico >= 0', /CATEGORIE\.has\(categoria\)/.test(mapi) && /UNITA\.has\(/.test(mapi) && /n >= 0 \? n : 'bad'/.test(mapi));
+
+console.log('\n== Fase 2: ai-compila (sola lettura + Gemini) ==');
+t('40 ai-compila: stessa autorizzazione (getUser + @amimi.it)', /auth\.getUser\(token\)/.test(ai) && /endsWith\('@amimi\.it'\)/.test(ai));
+t('41 ai-compila: flag ai_compila_enabled, OFF = state off senza chiamare Gemini', /'ai_compila_enabled'/.test(ai) && ai.indexOf("return json({ state: 'off' })") < ai.indexOf('generativelanguage.googleapis.com'));
+t('42 ai-compila: scrive SOLO ai_compila_log', ![...ai.matchAll(/\.from\('([a-z_]+)'\)\.(insert|update|upsert|delete)/g)].some((m) => m[1] !== 'ai_compila_log'));
+t('43 ai-compila: structured output (responseSchema + JSON), temperatura 0, MAI thinkingConfig nel codice', /responseMimeType: 'application\/json'/.test(ai) && /responseSchema: responseSchema\(target\)/.test(ai) && /temperature: 0/.test(ai) && !/thinkingConfig/.test(ai + noTs(PROMPT)));
+t('44 ai-compila: tetti (4 immagini, 4 MB, testo 2000) e timeout 25 s', /MAX_IMG = 4/.test(ai) && /4 \* 1024 \* 1024/.test(ai) && /MAX_TESTO = 2000/.test(ai) && /TIMEOUT_MS = 25000/.test(ai));
+t('45 ai-compila: errore Gemini = 503 ai_failed, mai una proposta vuota', /return json\(\{ error: 'ai_failed'/.test(ai) && /ai_invalid/.test(ai));
+t('46 ai-compila: immagini solo da inbox/ o dagli asset registrati', /p\.startsWith\('inbox\/'\)/.test(ai) && /from\('mat_assets'\)\.select\('path'\)/.test(ai));
+t('47 prompt: Regola 1 nel prompt (numero solo se scritto, range in testo)', /SOLO se e' scritto nel documento/.test(PROMPT) && /vanno nel campo di testo fedele/.test(PROMPT));
+t('48 prompt: validaOutput rifiuta prezzo con valore E testo, categoria fuori lista', /prezzo con valore E testo insieme/.test(PROMPT) && /categoria fuori lista/.test(PROMPT));
+t('49 prompt.ts senza dipendenze Deno (importabile dal golden test in Node)', !/Deno\./.test(PROMPT) && !/from 'jsr:/.test(PROMPT));
+t('50 config.toml: verify_jwt = false pinnato per mat-api e ai-compila', /\[functions\.mat-api\]\s*\nverify_jwt = false/.test(TOML) && /\[functions\.ai-compila\]\s*\nverify_jwt = false/.test(TOML));
+
+console.log('\n== Fase 2: frontend ==');
+t('51 matApi: scritture solo via mat-api con il token utente, mai insert/update diretti', /functions\/v1\/\$\{name\}/.test(API) && /authorization: 'Bearer ' \+ token/.test(API) && !/\.(insert|update|upsert|delete)\(/.test(noTs(API)));
+t('52 matApi: upload solo sotto inbox/ nel bucket mat-assets', /`inbox\/\$\{chiKey\(chi\)\}\/\$\{day\}\/\$\{crypto\.randomUUID\(\)\}/.test(API) && /storage\.from\('mat-assets'\)\.upload/.test(API));
+t('53 pagina: bottoni di scrittura gated da settings.write, Compila da settings.ai', /settings\.write && <button/.test(PAGE) && /abilitato=\{settings\.ai\}/.test(PAGE));
+t('54 pagina: salvataggio solo dopo conferma umana (Conferma e salva), mai auto-save dopo Compila', /Conferma e salva/.test(PAGE) && !/onCompila[\s\S]{0,200}salva\(\)/.test(PAGE));
+t('55 pagina: confidenza bassa evidenziata (mat-low) e prezzo numerico validato', /mat-low/.test(PAGE) && /\^\\d\+\(\[\.,\]\\d\+\)\?\$/.test(PAGE));
+t('56 ordini: la proposta AI aggiunge SOLO varianti esistenti, le altre restano da confermare (nessuno stub automatico)', /nonTrovate\.push/.test(ORD) && !/nuovo: true, wip: false \}\]\);[\s\S]{0,80}aggiunte\+\+/.test(ORD) && /createOrderMulti\(forn, dataOrd, righe, pin, chi\)/.test(ORD));
+t('57 ordini: pannello AI gated dal flag e dal login csClient', /aiOn && \(/.test(ORD) && /aiLogged/.test(ORD) && /fetchMatSettings\(\)/.test(ORD));
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
