@@ -3,6 +3,11 @@ import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti
 import type { Supplier, FornProd, Product } from '../lib/api';
 import { toast } from '../lib/toast';
 import Icon from './Icon';
+import { csClient } from '../lib/csClient';
+import { aiCompila, fetchMatSettings, uploadInbox, v } from '../lib/matApi';
+import type { PropostaOrdine } from '../lib/matApi';
+
+const norm = (s: string | null | undefined) => (s ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 
 const modelTok = (s: string) => s.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_]/g, '');
 const variantTok = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
@@ -31,6 +36,14 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   const [flashCodice, setFlashCodice] = useState('');
   const flashTimer = useRef<number | undefined>(undefined);
   const searchRef = useRef<HTMLInputElement>(null);
+  // Strato AI "Compila" (brief materie prime Fase 2, estensione B): la foto della conferma d'ordine (chat, email) o una
+  // nota dettata diventano righe PROPOSTE nel carrello; la scrittura resta order_multi di write-api, invariata, con il
+  // codice derivato dal server. Serve il login @amimi.it della sezione Materie prime (csClient) e il flag ai_compila_enabled.
+  const [aiOn, setAiOn] = useState(false); const [aiLogged, setAiLogged] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false); const [aiFiles, setAiFiles] = useState<File[]>([]); const [aiTesto, setAiTesto] = useState(''); const [aiBusy, setAiBusy] = useState(false);
+  const [aiNonTrovate, setAiNonTrovate] = useState<{ modello: string; variante: string; quantita: number | null; costo: number | null }[]>([]);
+  const aiFileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { fetchMatSettings().then((s) => setAiOn(s.ai)).catch(() => {}); csClient.auth.getSession().then(({ data }) => setAiLogged(!!data.session)).catch(() => {}); }, []);
 
   useEffect(() => { fetchSuppliers().then(setSups).catch(() => {}); fetchProducts().then(setAll).catch(() => {}); fetchActiveFornitori().then((a) => setActive(new Set(a))).catch(() => {}); fetchModels().then((m) => setModelList(m.map((x) => x.model))).catch(() => {}); }, []);
 
@@ -135,6 +148,42 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
     setNm(''); setNv(''); setNewOpen(false); setNmFree(false);
   }
 
+  // "Compila da foto o nota": chiede la proposta e la porta nel carrello, riga per riga, SOLO sulle varianti che esistono
+  // gia' a catalogo. Le righe non trovate restano in una lista da cui si apre "+ Borsa nuova" con un tocco esplicito:
+  // uno stub prodotto non nasce mai da solo (Regola 4: i codici provvisori li decide Ginevra, non l'AI).
+  async function aiCompilaOrdine() {
+    if (!aiFiles.length && !aiTesto.trim()) return toast('Aggiungi una foto o una nota', 'err');
+    setAiBusy(true);
+    try {
+      const paths = await Promise.all(aiFiles.map((f) => uploadInbox(f, chi)));
+      const modelli = [...new Set(all.map((p) => p.item).filter((x): x is string => !!x))];
+      const varianti = [...new Set(all.map((p) => p.variant).filter((x): x is string => !!x))];
+      const fornitori = [...new Set([...active, ...sups.map((s) => s.name)])];
+      const r = await aiCompila<PropostaOrdine>(chi, 'ordine_prodotti', paths, aiTesto, { fornitori, modelli, varianti });
+      const p = r.proposta;
+      if (p.avviso) toast(p.avviso, 'err');
+      const fornProp = p.fornitore?.match_esistente || v(p.fornitore);
+      if (!forn && fornProp) setForn(fornProp);
+      const d = v(p.data_ordine); if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) setDataOrd(d);
+      const nonTrovate: typeof aiNonTrovate = [];
+      let aggiunte = 0;
+      for (const r0 of p.righe ?? []) {
+        const modello = norm(r0.modello?.match_esistente || v(r0.modello)), variante = norm(v(r0.variante));
+        if (!modello) continue;
+        const hit = all.find((x) => norm(x.item) === modello && (variante ? norm(x.variant) === variante : !x.variant));
+        const qty = v(r0.quantita), costo = v(r0.costo_unitario);
+        if (!hit) { nonTrovate.push({ modello: v(r0.modello) ?? modello, variante: v(r0.variante) ?? '', quantita: qty, costo }); continue; }
+        if (inCart.has(hit.codice) || lines.some((l) => l.codice === hit.codice)) continue;
+        setLines((prev) => prev.some((l) => l.codice === hit.codice) ? prev : [...prev, { codice: hit.codice, item: hit.item, variant: hit.variant, qty: qty != null ? String(qty) : '', costo: costo != null ? String(costo) : '', nuovo: false, wip: qty == null }]);
+        aggiunte++;
+      }
+      setAiNonTrovate(nonTrovate);
+      toast(`Proposta: ${aggiunte} righe nel carrello${nonTrovate.length ? `, ${nonTrovate.length} da confermare come nuove` : ''}. Controlla pezzi e costi.`, aggiunte ? 'ok' : 'err');
+      setAiFiles([]);
+    } catch (e) { toast((e as Error).message, 'err'); }
+    finally { setAiBusy(false); }
+  }
+
   async function submit() {
     if (!forn) return toast('Scegli il fornitore', 'err');
     if (!lines.length) return toast('Aggiungi almeno una borsa', 'err');
@@ -234,6 +283,32 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
         </div>
       )}
 
+      {aiOn && (
+        <div style={{ marginBottom: 10 }}>
+          {!aiOpen
+            ? <button className="addnew" type="button" onClick={() => setAiOpen(true)}><Icon name="sparkles" size={14} /> Compila da foto o nota (AI)</button>
+            : !aiLogged
+              ? <div className="muted" style={{ fontSize: 12 }}>Per la compilazione AI serve il login @amimi.it: aprilo dalla sezione Materie prime, poi torna qui.</div>
+              : (
+                <div className="mat-aibox">
+                  <input ref={aiFileRef} type="file" accept="image/*,application/pdf" capture="environment" multiple style={{ display: 'none' }}
+                    onChange={(e) => { setAiFiles((p) => [...p, ...[...(e.target.files ?? [])]].slice(0, 4)); e.target.value = ''; }} />
+                  <div className="mat-files">
+                    {aiFiles.map((f, i) => <span key={i} className="chip" onClick={() => setAiFiles((p) => p.filter((_, j) => j !== i))}>{f.name.slice(0, 22)} ✕</span>)}
+                    <button type="button" className="chip" onClick={() => aiFileRef.current?.click()} disabled={aiFiles.length >= 4}>+ foto conferma d'ordine</button>
+                  </div>
+                  <textarea className="txt" rows={2} value={aiTesto} onChange={(e) => setAiTesto(e.target.value)} placeholder={`Nota: es. "a ${forn} dieci Lea leopardo savana e cinque Agata nera"`} style={{ width: '100%', marginTop: 8 }} />
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                    <button type="button" className="ds-btn secondary full" disabled={aiBusy} onClick={aiCompilaOrdine}>{aiBusy ? 'Compilo…' : 'Proponi le righe'}</button>
+                    <button type="button" className="chip" onClick={() => { setAiOpen(false); setAiNonTrovate([]); }}>chiudi</button>
+                  </div>
+                  {aiNonTrovate.length > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 12 }}>
+                      <div className="muted">Non a catalogo (tocca per aprirle come borsa nuova, il codice resta provvisorio):</div>
+                      {aiNonTrovate.map((r, i) => <button key={i} type="button" className="linkbtn" style={{ display: 'block', padding: '4px 0', fontWeight: 700 }} onClick={() => { setNewOpen(true); setNmFree(true); setNm(r.modello); setNv(r.variante); }}>+ {r.modello} {r.variante}{r.quantita != null ? ` · ${r.quantita} pz` : ''}</button>)}
+                    </div>)}
+                </div>)}
+        </div>)}
       {/* search-first (decisione owner 1): si aggiunge SOLO dalla ricerca; barra vuota = nessuna lista */}
       <div className="ds-search" style={{ marginBottom: 8 }}>
         <Icon name="search" size={19} />

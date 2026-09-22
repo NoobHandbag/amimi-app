@@ -1,13 +1,16 @@
 import { csClient } from './csClient';
 import { supabase } from './supabase';
 
-// Letture della sezione "Materie prime" (modulo mat_*, migr 0140, Fase 1 = catalogo in sola lettura).
-// Tutto passa dal client con la sessione utente loggato (@amimi.it): la RLS `authenticated` nega ai non
-// loggati. Unica lettura col client anon: il flag mat_enabled (vista v_mat_settings), che la Home usa
-// per nascondere la tile a modulo spento. Nessuna scrittura da qui: la Fase 2 porta l'edge mat-api.
+// Sezione "Materie prime" (modulo mat_*, migr 0140 + 0144).
+// Letture: viste v_mat_* col client con la sessione utente loggato (@amimi.it): la RLS `authenticated` nega ai non loggati.
+// Unica lettura col client anon: i flag del modulo (vista v_mat_settings), per nascondere tile e bottoni a modulo spento.
+// Scritture (Fase 2): SOLO la edge mat-api, con l'access token dell'utente (getUser lato server, email @amimi.it,
+// service_role dentro la edge, audit in mat_events). Il client non scrive mai direttamente sulle tabelle.
+// Strato AI (Fase 2): la edge ai-compila PROPONE i campi da foto e nota; qui si porta la proposta nel form, l'umano conferma.
 
 export const CATEGORIE = ['Tessuto', 'Tessuto velluto', 'Animalier', 'Cocco', 'Vitello stampato', 'Pelle vitello', 'Vernice', 'Crosta/Velour', 'Nappa', 'Nastri', 'Accessori metallici'] as const;
 export type Categoria = typeof CATEGORIE[number];
+export const UNITA = ['mq', 'ml', 'mt', 'pz'] as const;
 
 // Segnaposto colorato per categoria (stessi colori del select Notion di Ginevra): le card senza foto restano leggibili.
 export const TINTA: Record<string, [string, string]> = {
@@ -49,13 +52,18 @@ export type MatAsset = {
   fonte: string | null; created_at: string; fornitore: string; item_materiale: string | null; item_colore: string | null; ordine_documento: string | null;
 };
 
-/** Flag del modulo, letto col client anon (v_mat_settings espone solo questa chiave). Errore o assenza = spento. */
-export async function fetchMatEnabled(): Promise<boolean> {
-  const { data, error } = await supabase.from('v_mat_settings').select('key,value').eq('key', 'mat_enabled').maybeSingle();
-  if (error) return false;
-  const v = String((data as { value?: string } | null)?.value ?? '').trim().toLowerCase();
-  return v === 'true' || v === '1' || v === 'on' || v === 'yes';
+export type MatSettings = { enabled: boolean; write: boolean; ai: boolean };
+const truthy = (v: unknown) => { const s = String(v ?? '').trim().toLowerCase(); return s === 'true' || s === '1' || s === 'on' || s === 'yes'; };
+
+/** Flag del modulo, letti col client anon (v_mat_settings espone solo queste chiavi). Errore o assenza = spento. */
+export async function fetchMatSettings(): Promise<MatSettings> {
+  const off = { enabled: false, write: false, ai: false };
+  const { data, error } = await supabase.from('v_mat_settings').select('key,value');
+  if (error) return off;
+  const m = new Map(((data ?? []) as { key: string; value: string }[]).map((r) => [r.key, r.value]));
+  return { enabled: truthy(m.get('mat_enabled')), write: truthy(m.get('mat_write_enabled')), ai: truthy(m.get('ai_compila_enabled')) };
 }
+export async function fetchMatEnabled(): Promise<boolean> { return (await fetchMatSettings()).enabled; }
 
 export async function fetchCatalogo(): Promise<MatCatalogo[]> {
   const { data, error } = await csClient.from('v_mat_catalogo').select('*').eq('attivo', true).order('fornitore').order('materiale').order('colore');
@@ -91,6 +99,60 @@ export async function signedUrls(paths: (string | null | undefined)[]): Promise<
   }
   return out;
 }
+
+// ---------------------------------------------------------------- scritture (edge mat-api) e strato AI (edge ai-compila)
+const FN = import.meta.env.VITE_SUPABASE_URL as string;
+async function userToken(): Promise<string> {
+  const { data } = await csClient.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sessione scaduta: rientra.');
+  return token;
+}
+async function callEdge(name: 'mat-api' | 'ai-compila', body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const token = await userToken();
+  const r = await fetch(`${FN}/functions/v1/${name}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({})) as Record<string, unknown>;
+  if (j.state === 'off') throw new Error(name === 'mat-api' ? 'Scritture spente (flag mat_write_enabled).' : 'Compilazione AI spenta (flag ai_compila_enabled).');
+  if (!r.ok || j.ok === false || j.error) throw new Error(String(j.error || j.detail || ('Errore ' + r.status)));
+  return j;
+}
+/** chi = selettore persona dell'app ('Ale' | 'Bene' | 'Ginevra') -> iniziale attesa dalla edge (A | B | G) */
+export const chiKey = (chi: string) => (chi === 'Bene' ? 'B' : chi === 'Ginevra' ? 'G' : 'A');
+
+export const matApi = (action: string, chi: string, body: Record<string, unknown>) => callEdge('mat-api', { action, chi: chiKey(chi), ...body });
+
+/** Carica un file nel bucket privato sotto inbox/ (policy INSERT solo @amimi.it e solo li'). Ritorna il path. */
+export async function uploadInbox(file: File, chi: string): Promise<string> {
+  const ext = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
+  const day = new Date().toISOString().slice(0, 10);
+  const path = `inbox/${chiKey(chi)}/${day}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await csClient.storage.from('mat-assets').upload(path, file, { contentType: file.type || undefined, upsert: false });
+  if (error) throw new Error('Upload fallito: ' + error.message);
+  return path;
+}
+
+export type AiCampo<T = string> = { valore: T | null; confidenza: number; fonte: string; match_esistente?: string | null };
+export type PropostaMateriale = {
+  avviso: string | null; fornitore: AiCampo; categoria: AiCampo; materiale: AiCampo; articolo_fornitore: AiCampo; colori: AiCampo[];
+  unita: AiCampo; prezzo: AiCampo<number> & { testo: string | null }; tipo: AiCampo; quantita: AiCampo<number>; disponibilita: AiCampo;
+  min_ordine: AiCampo; lead_time: AiCampo; condizioni_pagamento: AiCampo; data: AiCampo; documento_fonte: AiCampo; importo_totale: AiCampo<number>; note: AiCampo;
+};
+export type PropostaFornitore = {
+  avviso: string | null; nome: AiCampo; ragione_sociale: AiCampo; categoria_principale: AiCampo; email: AiCampo; telefono: AiCampo; referente: AiCampo;
+  indirizzo: AiCampo; piva_vat: AiCampo; deposito_luogo: AiCampo; condizioni_pagamento: AiCampo; note: AiCampo;
+};
+export type PropostaOrdine = {
+  avviso: string | null; fornitore: AiCampo; data_ordine: AiCampo;
+  righe: { modello: AiCampo; variante: AiCampo; quantita: AiCampo<number>; costo_unitario: AiCampo<number> }[]; note: AiCampo;
+};
+export type AiRisposta<T> = { ok: true; log_id: string; modello: string; proposta: T };
+
+export async function aiCompila<T>(chi: string, target: 'materiale' | 'fornitore' | 'ordine_prodotti', immagini: string[], testo: string, contesto: Record<string, string[]>): Promise<AiRisposta<T>> {
+  const j = await callEdge('ai-compila', { chi: chiKey(chi), target, immagini, testo, contesto });
+  return j as unknown as AiRisposta<T>;
+}
+export const v = <T,>(c: AiCampo<T> | undefined | null): T | null => (c && c.valore != null ? c.valore : null);
+export const bassa = (c: AiCampo<unknown> | undefined | null) => !!c && c.valore != null && Number(c.confidenza) < 0.7;
 
 // ---- helper di presentazione ----
 const nf = (n: number) => n.toLocaleString('it-IT', { minimumFractionDigits: n < 1 ? 3 : 2, maximumFractionDigits: n < 1 ? 3 : 2 });

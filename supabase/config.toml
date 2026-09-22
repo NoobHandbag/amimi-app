@@ -83,3 +83,11 @@ verify_jwt = false
 
 [functions.loyalty-page]
 verify_jwt = false
+
+# Materie prime Fase 2 (23-09): le due edge fanno da sole il controllo del JWT utente (getUser + @amimi.it),
+# quindi verify_jwt deve restare false anche con un deploy lanciato senza --no-verify-jwt.
+[functions.mat-api]
+verify_jwt = false
+
+[functions.ai-compila]
+verify_jwt = false
