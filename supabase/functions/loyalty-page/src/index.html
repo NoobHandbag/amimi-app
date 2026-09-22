@@ -262,7 +262,7 @@
     const tierCopy = lifetime ? 'il livello segue i punti cumulati: riscattare non lo abbassa' : 'il livello segue i punti disponibili';
     countUp(el('pts'), p);
     el('tierName').textContent = tier.name;
-    // tessera: 10 timbri = costo del premio ATTIVO (dal server: 200 con 'tessera', 100 con 'tessera12'); senza catalogo resta il CONFIG
+    // tessera: 10 timbri = costo del premio ATTIVO (dal server: 200 con 'tessera', 100 con 'amica12'); senza catalogo resta il CONFIG
     const rw0 = S._rewards && Array.isArray(S._rewards.rewards) ? S._rewards.rewards[0] : null;
     const stampEvery = (rw0 && Number(rw0.cost_points) > 0) ? Math.max(1, Math.round(Number(rw0.cost_points)/CONFIG.stampsForReward)) : CONFIG.stampEvery;
     const timbri = Math.min(CONFIG.stampsForReward, Math.floor(p/stampEvery));

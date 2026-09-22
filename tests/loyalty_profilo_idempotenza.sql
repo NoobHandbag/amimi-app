@@ -133,19 +133,19 @@ begin
 
   -- D (migr 0142): premio unico 100 punti = 12%. Attivo SOLO dentro questa transazione (poi tutto si annulla).
   --   Criterio del brief: membro con 108 punti riscatta, riceve un codice 12% e resta con 8; stessa chiamata = stesso codice; 99 punti = rifiuto.
-  update loyalty_rewards set active = (key = 'tessera12') where key in ('tessera', 'tessera12');
+  update loyalty_rewards set active = (key = 'amica12') where key in ('tessera', 'amica12');
   if (select count(*) from loyalty_rewards where active) <> 1 then raise exception 'D un solo premio attivo atteso'; end if;
-  insert into loyalty_reward_codes (code, reward_key) values ('PREMIA-TEST12', 'tessera12');
+  insert into loyalty_reward_codes (code, reward_key) values ('AMICA12-TEST01', 'amica12');
   insert into loyalty_points (shopify_customer_id, points) values ('TEST_0141_D108', 108), ('TEST_0141_D99', 99);
   insert into loyalty_events (shopify_customer_id, delta, source, meta) values ('TEST_0141_D108', 108, 'manual_adjust', '{"test":true}'), ('TEST_0141_D99', 99, 'manual_adjust', '{"test":true}');
-  r := loyalty_redeem('TEST_0141_D108', 'tessera12', 'idemp-test-0142-108');
+  r := loyalty_redeem('TEST_0141_D108', 'amica12', 'idemp-test-0142-108');
   if not (r->>'ok')::bool or (r->>'new_balance')::int <> 8 or (r->>'cost')::int <> 100 or (r->>'value')::numeric <> 12 then raise exception 'D riscatto 108: %', r; end if;
-  if loyalty_claim_code('tessera12', 'TEST_0141_D108', (r->>'redemption_id')::bigint) <> 'PREMIA-TEST12' then raise exception 'D codice non consegnato'; end if;
-  if loyalty_claim_code('tessera12', 'TEST_0141_D108', (r->>'redemption_id')::bigint) <> 'PREMIA-TEST12' then raise exception 'D seconda claim deve dare lo stesso codice'; end if;
-  r := loyalty_redeem('TEST_0141_D108', 'tessera12', 'idemp-test-0142-108');
-  if r->>'reason' <> 'already' or r->>'code' <> 'PREMIA-TEST12' then raise exception 'D stesso idemp doveva dare already con lo stesso codice: %', r; end if;
+  if loyalty_claim_code('amica12', 'TEST_0141_D108', (r->>'redemption_id')::bigint) <> 'AMICA12-TEST01' then raise exception 'D codice non consegnato'; end if;
+  if loyalty_claim_code('amica12', 'TEST_0141_D108', (r->>'redemption_id')::bigint) <> 'AMICA12-TEST01' then raise exception 'D seconda claim deve dare lo stesso codice'; end if;
+  r := loyalty_redeem('TEST_0141_D108', 'amica12', 'idemp-test-0142-108');
+  if r->>'reason' <> 'already' or r->>'code' <> 'AMICA12-TEST01' then raise exception 'D stesso idemp doveva dare already con lo stesso codice: %', r; end if;
   if (select points from loyalty_points where shopify_customer_id = 'TEST_0141_D108') <> 8 then raise exception 'D saldo dopo il doppio invio'; end if;
-  r := loyalty_redeem('TEST_0141_D99', 'tessera12', 'idemp-test-0142-099');
+  r := loyalty_redeem('TEST_0141_D99', 'amica12', 'idemp-test-0142-099');
   if (r->>'ok')::bool or r->>'reason' <> 'insufficient' then raise exception 'D 99 punti doveva essere insufficient: %', r; end if;
   r := loyalty_redeem('TEST_0141_D99', 'tessera', 'idemp-test-0142-old');
   if (r->>'ok')::bool or r->>'reason' <> 'reward_unknown' then raise exception 'D il vecchio premio spento non deve essere riscattabile: %', r; end if;

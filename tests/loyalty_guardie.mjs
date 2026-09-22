@@ -149,5 +149,12 @@ t('83 D: la edge non ha costi o percentuali fisse del premio (li legge la RPC da
 t('84 C3: profile_save valida intervallo giorno/mese e body nullo', /day < 1 \|\| day > 31/.test(P) && /month < 1 \|\| month > 12/.test(P) && /\?\? \{\}\) as Record<string, unknown>/.test(P));
 t('85 C4: la pagina usa days_left dal server (niente fuso del browser)', /Number\(bs\.days_left\)/.test(PAGE) && !/new Date\(bs\.deadline/.test(PAGE));
 
+// ---- migr 0143 (23-09): il premio 12% si chiama amica12 (owner: nome legato all'essere parte di Amimi) ----
+const M143 = read('supabase/migrations/0143_loyalty_premio_amica12.sql');
+console.log('\n== migr 0143: premio amica12 ==');
+t('86 esattamente una migrazione 0143_*', migs.filter((f) => f.startsWith('0143_')).length === 1);
+t('87 rename tessera12 -> amica12 con pre-check sulle FK, riga ancora spenta', /where key = 'tessera12'/.test(M143) && /set key = 'amica12'/.test(M143) && /raise exception 'pre-check: tessera12/.test(M143) && /'percentage', 12, false, 5\)/.test(M143));
+t('88 nessun tessera12 residuo fuori dalle migrazioni gia\' applicate', !/tessera12/.test(PAGE + P + read('tests/loyalty_profilo_idempotenza.sql') + read('docs/LOYALTY_RUNBOOK.md')));
+
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
