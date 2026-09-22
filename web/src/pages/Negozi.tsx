@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
+import { pushBack, popBack } from '../lib/backnav';
 import { fetchDossier, fetchEvidence, fetchContacts, fetchReviews, signedUrls, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL } from '../lib/leadApi';
 import type { LeadDossier, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
 import { personaName } from '../lib/people';
@@ -72,7 +73,21 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
   const [settings, setSettings] = useState<Record<string, string>>({});
   const cur = useMemo(() => (route.view === 'scheda' && rows ? rows.find((x) => x.id === route.id) ?? null : null), [route, rows]);
   const ocur = useMemo(() => (route.view === 'oscheda' && orows ? orows.find((x) => x.id === route.id) ?? null : null), [route, orows]);
-  const goRoute = (r: Route) => { window.location.hash = routeHash(r); };
+  // Navigazione (fix 22-09). Prima si scriveva `location.hash`, che genera un `popstate`: backnav lo prendeva per
+  // il gesto "indietro" e chiudeva la sezione, quindi entrando da Home ogni scheda aperta riportava alla Home con
+  // l'URL della scheda. Ora l'URL si aggiorna con replaceState (nessun popstate) e le schede passano dalla pila
+  // di backnav: indietro (tasto, swipe o bottone "‹") torna alla lista, alla stessa altezza di scroll.
+  const depth = useRef(0);
+  const setSection = (r: Route) => { history.replaceState(history.state, '', routeHash(r)); setRoute(r); };
+  const openDetail = (r: Route) => {
+    if (r.view === route.view && r.id === route.id) return;   // doppio tocco: una sola voce nella pila
+    const prev = route; const y = window.scrollY;
+    pushBack(() => { depth.current = Math.max(0, depth.current - 1); history.replaceState(history.state, '', routeHash(prev)); setRoute(prev); requestAnimationFrame(() => window.scrollTo(0, y)); });
+    depth.current++;
+    history.replaceState(history.state, '', routeHash(r)); setRoute(r); window.scrollTo(0, 0);
+  };
+  const closeDetail = (fallback: Route) => { if (depth.current > 0) popBack(); else setSection(fallback); };
+  const goRoute = (r: Route) => (r.view === 'scheda' || r.view === 'oscheda' ? openDetail(r) : setSection(r));
   useEffect(() => { const h = () => setRoute(parseHash()); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
   const [fStato, setFStato] = useState<string>('attivi');
   const [fTier, setFTier] = useState<string>('tutti');
@@ -126,7 +141,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
   }, [rows, fStato, fTier, fTipo, fVerd, q]);
 
   const openScheda = (r: LeadDossier) => goRoute({ view: 'scheda', id: r.id });
-  const closeScheda = () => goRoute({ view: 'lista' });
+  const closeScheda = () => closeDetail({ view: 'lista' });
   const nCoda = (orows ?? []).filter((r) => r.scaduta || r.da_gestire).length;
   const nav = (
     <div className="or-nav">
@@ -154,8 +169,11 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
     </div>
   );
 
-  if (route.view === 'scheda' && cur) return <Scheda r={cur} urls={urls} signMore={signMore} who={who} onBack={closeScheda} onChanged={load} />;
-  if (route.view === 'oscheda' && ocur) return <OutreachScheda r={ocur} urls={urls} who={who} sequences={sequences} settings={settings} onBack={() => goRoute({ view: 'pipeline' })} onOpenDossier={(id) => goRoute({ view: 'scheda', id })} onChanged={load} />;
+  if (route.view === 'scheda' && cur) return <Scheda r={cur} urls={urls} signMore={signMore} who={who} onBack={closeScheda} onChanged={load} onOutreach={orows?.some((x) => x.id === cur.id) ? () => goRoute({ view: 'oscheda', id: cur.id }) : undefined} />;
+  if (route.view === 'oscheda' && ocur) return <OutreachScheda key={ocur.id} r={ocur} urls={urls} who={who} sequences={sequences} settings={settings} onBack={() => closeDetail({ view: 'pipeline' })} onOpenDossier={(id) => goRoute({ view: 'scheda', id })} onChanged={load} />;
+  if (route.view === 'scheda' && rows && !cur) return (
+    <div className="screen"><header><button className="badge" onClick={closeScheda} type="button">‹ Negozi</button></header><p className="muted">Negozio non trovato (forse scartato o rinominato).</p></div>
+  );
   if (route.view === 'pipeline' || route.view === 'coda' || route.view === 'sequenze' || (route.view === 'oscheda' && orows && !ocur)) return (
     <div className="screen">
       <header><h1>{route.view === 'coda' ? 'Coda' : route.view === 'sequenze' ? 'Sequenze' : 'Pipeline outreach'}</h1><div className="operbar"><button className="badge" onClick={load} type="button">Aggiorna</button></div></header>
@@ -264,7 +282,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
 }
 
 // ---------------------------------------------------------------------------------------------
-function Scheda({ r, urls, signMore, who, onBack, onChanged }: { r: LeadDossier; urls: Record<string, string>; signMore: (p: string[]) => Promise<void>; who: string; onBack: () => void; onChanged: () => Promise<void> }) {
+function Scheda({ r, urls, signMore, who, onBack, onChanged, onOutreach }: { r: LeadDossier; urls: Record<string, string>; signMore: (p: string[]) => Promise<void>; who: string; onBack: () => void; onChanged: () => Promise<void>; onOutreach?: () => void }) {
   const [ev, setEv] = useState<LeadEvidence[] | null>(null);
   const [contacts, setContacts] = useState<LeadContact[]>([]);
   const [reviews, setReviews] = useState<LeadReview[]>([]);
@@ -279,7 +297,7 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged }: { r: LeadDossier;
 
   useEffect(() => {
     setEv(null);
-    signMore(assetPathsOf(r));
+    signMore(assetPathsOf(r)).catch((e: Error) => setMsg('Immagini non caricate: ' + e.message));
     Promise.all([fetchEvidence(r.id), fetchContacts(r.id), fetchReviews(r.id)]).then(([e, c, v]) => { setEv(e); setContacts(c); setReviews(v); }).catch((e: Error) => setMsg(e.message));
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [r.id]);
@@ -343,17 +361,20 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged }: { r: LeadDossier;
       </div>
       <section className="card lead-verd">
         <div className="lead-verd-head">
-          <h2 style={{ margin: 0 }}>Il vostro verdetto</h2>
-          {r.verdetto ? <span className="lead-tier" style={{ position: 'static', background: verdColor(r.verdetto) }}>{VERDETTO_LABEL[r.verdetto]}{r.verdetto_chi ? ` · ${r.verdetto_chi}` : ''}{r.verdetto_at ? ` · ${r.verdetto_at.slice(0, 10)}` : ''}</span> : <span className="muted" style={{ fontSize: 12 }}>non ancora classificato</span>}
+          <h2 style={{ margin: 0 }}>Verdetto</h2>
+          {r.verdetto ? <span className="lead-tier" style={{ position: 'static', background: verdColor(r.verdetto) }}>{VERDETTO_LABEL[r.verdetto]}{r.verdetto_chi ? ` · ${r.verdetto_chi}` : ''}{r.verdetto_at ? ` · ${r.verdetto_at.slice(0, 10)}` : ''}</span> : <span className="lead-tier" style={{ position: 'static', background: 'var(--ink-muted)' }}>Da decidere</span>}
         </div>
         {r.verdetto_motivo && <p style={{ margin: '6px 0 0' }}><b>Perche&#8217;:</b> {r.verdetto_motivo}</p>}
+        {!r.verdetto && <p className="note" style={{ margin: '6px 0 0' }}>Nessuno ha ancora deciso su questo negozio. Guarda il dossier qui sotto, poi scegli uno dei tre bottoni: &#8220;Da contattare&#8221; lo porta nella Pipeline, dove si prepara la prima email.</p>}
         <div className="cs-fld" style={{ marginTop: 8 }}><label>Perche&#8217; (obbligatorio per il no)</label><textarea rows={2} value={perche} onChange={(e) => setPerche(e.target.value)} placeholder="es. troppo luxury per noi / perfetto, chiamare il titolare / da rivedere dopo la visita" /></div>
+        <div className="muted" style={{ fontSize: 12, margin: '4px 0' }}>{r.verdetto ? 'Cambia verdetto:' : 'Il tuo verdetto:'}</div>
         <div className="lead-actions">
           <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'da_contattare' ? 'var(--positive)' : 'transparent', color: r.verdetto === 'da_contattare' ? '#fff' : 'var(--positive-700)', borderColor: 'var(--positive)' }} onClick={() => classify('da_contattare')}>Da contattare</button>
           <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'forse' ? 'var(--warning)' : 'transparent', color: r.verdetto === 'forse' ? '#fff' : 'var(--warning-700)', borderColor: 'var(--warning)' }} onClick={() => classify('forse')}>Forse</button>
           <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'no' ? 'var(--negative)' : 'transparent', color: r.verdetto === 'no' ? '#fff' : 'var(--negative-700)', borderColor: 'var(--negative)' }} onClick={() => classify('no')}>No</button>
         </div>
         {msg && <div className="note" style={{ marginTop: 6 }}>{msg}</div>}
+        {r.verdetto === 'da_contattare' && onOutreach && <button type="button" className="ds-btn" style={{ marginTop: 8, background: 'var(--positive)', color: '#fff', borderColor: 'var(--positive)' }} onClick={onOutreach}>Prepara la prima email ›</button>}
       </section>
       {r.stato_ricerca === 'rejected' && !r.verdetto && <div className="card err">Scartato: {r.rejected_motivo}</div>}
       {r.site_meta?.meta && <p className="lead-tagline">{short(r.site_meta.meta, 220)}</p>}
