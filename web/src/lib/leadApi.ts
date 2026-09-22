@@ -101,10 +101,17 @@ export const CRITERI_ORDER: { key: string; label: string; peso: number }[] = [
   { key: 'digitale', label: 'Presenza digitale', peso: 10 },
 ];
 
+// A pagine: PostgREST taglia a 1.000 righe SENZA errore (Regola Ferrea 20b). Il 22-09 la lista mostrava
+// "1000 profili" su 1.535, e i negozi oltre la millesima riga non si potevano ne' cercare ne' aprire.
+const PAGE = 1000;
 export async function fetchDossier(): Promise<LeadDossier[]> {
-  const { data, error } = await csClient.from('v_lead_dossier').select('*').order('totale', { ascending: false, nullsFirst: false }).order('nome');
-  if (error) throw new Error(error.message);
-  return (data ?? []) as LeadDossier[];
+  const out: LeadDossier[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await csClient.from('v_lead_dossier').select('*').order('totale', { ascending: false, nullsFirst: false }).order('nome').order('id').range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    out.push(...((data ?? []) as LeadDossier[]));
+    if ((data ?? []).length < PAGE) return out;
+  }
 }
 
 export async function fetchEvidence(accountId: string): Promise<LeadEvidence[]> {
@@ -206,6 +213,50 @@ export async function fetchLeadSettings(): Promise<Record<string, string>> {
   if (error) return {};
   return Object.fromEntries((data ?? []).map((r: { key: string; value: string }) => [r.key, r.value]));
 }
+// ---------------------------------------------------------------------------------------------
+// Bozze AI e invio dall'app (edge lead-outreach, migr 0139). La UI legge lead_drafts (RLS @amimi.it) e non ci
+// scrive mai: bozza e invio passano dalla edge, che verifica il JWT e fa le guardie (flag, verdetto, opt-out,
+// tetto giornaliero, segnaposto rimasti, un tocco per negozio).
+export type LeadDraft = {
+  id: string; account_id: string; lingua: string | null; oggetto: string | null; testo: string; to_email: string | null;
+  sequenza_tocco: number | null; stato: 'proposta' | 'approvata' | 'in_invio' | 'inviata' | 'errore' | 'scartata';
+  chi: string | null; sent_by: string | null; sent_at: string | null; errore: string | null; created_at: string;
+  fatti_usati: { fatti_usati?: string[]; avvisi?: string[] } | null;
+};
+export async function fetchDrafts(accountId: string): Promise<LeadDraft[]> {
+  const { data, error } = await csClient.from('lead_drafts').select('id,account_id,lingua,oggetto,testo,to_email,sequenza_tocco,stato,chi,sent_by,sent_at,errore,created_at,fatti_usati').eq('account_id', accountId).order('created_at', { ascending: false }).limit(20);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LeadDraft[];
+}
+const LEAD_OUTREACH_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/lead-outreach';
+async function callOutreach(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { data } = await csClient.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sessione scaduta: rientra.');
+  const r = await fetch(LEAD_OUTREACH_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(payload) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) {
+    const e = new Error(j.error || 'Errore ' + r.status) as Error & { bloccante?: boolean };
+    if (j.bloccante === true) e.bloccante = true;
+    throw e;
+  }
+  return j;
+}
+export type DraftResult = { draft_id: string; oggetto: string; testo: string; to: string; lingua: string; tocco: number; segnaposto: string[]; avvisi: string[] };
+export async function generaBozza(p: { account_id: string; tocco: number; referente?: string; lingua?: 'it' | 'en'; chi: string }): Promise<DraftResult> {
+  return (await callOutreach({ action: 'draft', ...p })) as unknown as DraftResult;
+}
+export type LeadSendResult = { to: string; oggetto: string; already_sent?: boolean; prossimo: string | null; warnings?: string[] };
+export async function inviaBozza(p: { draft_id: string; send_key: string; to: string; oggetto: string; testo: string; chi: string }): Promise<LeadSendResult> {
+  return (await callOutreach({ action: 'send', ...p })) as unknown as LeadSendResult;
+}
+// bozza rimasta 'in_invio' (esito incerto): si sblocca solo dopo aver controllato "Posta inviata" di info@
+export async function sbloccaBozza(p: { draft_id: string; chi: string }): Promise<void> {
+  await callOutreach({ action: 'sblocca', ...p });
+}
+// stessi segnaposto che la edge blocca: la UI li mostra PRIMA di premere Invia
+export const segnaposto = (s: string): string[] => [...s.matchAll(/\[[^\]\n]{1,200}\]|\{\{[^}\n]{1,60}\}\}/g)].map((m) => m[0]);
+
 // riempie i segnaposto del template con i dati del negozio; i buchi restano visibili fra parentesi quadre
 export function renderTemplate(tpl: string, r: { nome: string; citta?: string | null; gancio?: string | null }, referente: string | null, firma: string): string {
   return tpl
