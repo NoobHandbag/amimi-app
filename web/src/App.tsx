@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Tab } from './lib/people';
+import { fetchMatEnabled } from './lib/matApi';
+import Materiali from './pages/Materiali';
 import Home from './pages/Home';
 import Report from './pages/Report';
 import CeDetail from './pages/CeDetail';
@@ -18,9 +20,14 @@ import UpdateBanner from './components/UpdateBanner';
 import { pushBack } from './lib/backnav';
 
 export default function App() {
-  // URL diretto: .../amimi-app/#negozi apre la sezione B2B (richiesta owner 10-09); #ads la reportistica Meta (18-09)
-  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : 'home'));
+  // URL diretto: .../amimi-app/#negozi apre la sezione B2B (richiesta owner 10-09); #ads la reportistica Meta (18-09);
+  // #materiali il catalogo materie prime (22-09)
+  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : window.location.hash.startsWith('#materiali') ? 'materiali' : 'home'));
   const [param, setParam] = useState<string | undefined>();
+  // Modulo mat_* (materie prime): a flag spento la tile in Home non compare, Ordini non mostra il segmented e la
+  // pagina dice "non attiva". Rollback = spegnere app_flags.mat_enabled (Regola Ferrea 19). Letto una volta all'avvio.
+  const [matEnabled, setMatEnabled] = useState(false);
+  useEffect(() => { fetchMatEnabled().then(setMatEnabled).catch(() => setMatEnabled(false)); }, []);
   const [chi, setChiS] = useState(() => localStorage.getItem('amimi_chi') || 'Ale');
   const setChi = (c: string) => { setChiS(c); localStorage.setItem('amimi_chi', c); };
   const go = (t: Tab, p?: string) => {
@@ -37,7 +44,10 @@ export default function App() {
   return (
     <div className="app">
       <main>
-        {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} />}
+        {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} matEnabled={matEnabled} />}
+        {tab === 'materiali' && (matEnabled
+          ? <Materiali onBack={() => go('home')} onProdotti={() => go('ordini')} />
+          : <div className="screen"><header><h1>Materie prime</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">Sezione non attiva (flag mat_enabled spento).</div></div>)}
         {tab === 'cruscotto' && <Report onBack={() => go('home')} onDetail={() => go('ce')} onAds={() => go('ads')} />}
         {tab === 'ads' && <Ads onBack={() => go('home')} pin={pin} chi={chi} />}
         {tab === 'ce' && <CeDetail onBack={() => go('home')} />}
@@ -47,7 +57,7 @@ export default function App() {
         {tab === 'assistenza' && <Assistenza onBack={() => go('home')} />}
         {tab === 'negozi' && <Negozi onBack={() => go('home')} chi={chi} />}
         {tab === 'registra' && <Ingest pin={pin} chi={chi} initial={param} />}
-        {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} />}
+        {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} onMateriali={matEnabled ? () => go('materiali') : undefined} />}
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}
       </main>
       {/* nav ridotta (decisione call 06-07, item 13+28): Registra e Ordini vivono nella Home

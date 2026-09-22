@@ -138,7 +138,7 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload, openByCodice }: 
   );
 }
 
-export default function Ordini({ pin, chi, initial }: { pin: string; chi: string; initial?: string }) {
+export default function Ordini({ pin, chi, initial, onMateriali }: { pin: string; chi: string; initial?: string; onMateriali?: () => void }) {
   const [grp, setGrp] = useState<OrdGruppo[]>([]);
   // deep-link: 'new' apre il form vuoto; 'new:CODICE' lo apre precompilato (riordino da magazzino, item 21)
   const isNew = initial === 'new' || (initial ?? '').startsWith('new:');
@@ -201,6 +201,14 @@ export default function Ordini({ pin, chi, initial }: { pin: string; chi: string
 
   return (
     <div className="screen">
+      {/* Area Fornitori in due meta' (brief catalogo 22-09): PRODOTTI = questa pagina (borse finite, arrivi, stock);
+          MATERIE PRIME = catalogo pelli/tessuti (pagina Materiali). Il segmented compare solo a modulo acceso. */}
+      {onMateriali && (
+        <div className="seg" style={{ marginBottom: 12 }}>
+          <button type="button" className="on">Prodotti</button>
+          <button type="button" onClick={onMateriali}>Materie prime</button>
+        </div>
+      )}
       <header><h1>Ordini</h1><div className="hbtns"><PrintBtn /><ExportBtn name="ordini" rows={() => grp.flatMap((g) => g.righe).map((l) => ({ fornitore: l.fornitore, codice: l.codice, modello: l.item, variante: l.variant, ordinati: l.qty_ordered, arrivati: l.qty_arrived, mancano: l.mancano, completo: l.completo ? 'si' : 'no', data_ordine: l.data_ordine, data_consegna: l.data_consegna, costo_unitario: l.costo_unitario, tipo: l.nuovo_riordino }))} /></div></header>
       <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={() => setAdding(true)}><Icon name="plus" size={17} /> Nuovo ordine fornitore</button>
       {byForn.length === 0 && <div className="card muted center">Nessun ordine. Tocca “Nuovo ordine fornitore”.</div>}
