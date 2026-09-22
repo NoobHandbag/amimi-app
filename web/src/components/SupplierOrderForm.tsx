@@ -43,7 +43,13 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   const [aiOpen, setAiOpen] = useState(false); const [aiFiles, setAiFiles] = useState<File[]>([]); const [aiTesto, setAiTesto] = useState(''); const [aiBusy, setAiBusy] = useState(false);
   const [aiNonTrovate, setAiNonTrovate] = useState<{ modello: string; variante: string; quantita: number | null; costo: number | null }[]>([]);
   const aiFileRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { fetchMatSettings().then((s) => setAiOn(s.ai)).catch(() => {}); csClient.auth.getSession().then(({ data }) => setAiLogged(!!data.session)).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchMatSettings().then((s) => setAiOn(s.ai)).catch(() => {});
+    csClient.auth.getSession().then(({ data }) => setAiLogged(!!data.session)).catch(() => {});
+    // il login puo' arrivare DOPO il mount (Ginevra apre Materie prime, entra, torna qui): si ascolta il cambio di sessione
+    const { data: sub } = csClient.auth.onAuthStateChange((_e, s) => setAiLogged(!!s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
 
   useEffect(() => { fetchSuppliers().then(setSups).catch(() => {}); fetchProducts().then(setAll).catch(() => {}); fetchActiveFornitori().then((a) => setActive(new Set(a))).catch(() => {}); fetchModels().then((m) => setModelList(m.map((x) => x.model))).catch(() => {}); }, []);
 
@@ -166,19 +172,30 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
       if (!forn && fornProp) setForn(fornProp);
       const d = v(p.data_ordine); if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) setDataOrd(d);
       const nonTrovate: typeof aiNonTrovate = [];
-      let aggiunte = 0;
+      // righe proposte raccolte per codice (due righe dello stesso codice = pezzi sommati), poi UN solo setLines
+      const proposte = new Map<string, { hit: Product; qty: number | null; costo: number | null }>();
       for (const r0 of p.righe ?? []) {
         const modello = norm(r0.modello?.match_esistente || v(r0.modello)), variante = norm(v(r0.variante));
         if (!modello) continue;
         const hit = all.find((x) => norm(x.item) === modello && (variante ? norm(x.variant) === variante : !x.variant));
         const qty = v(r0.quantita), costo = v(r0.costo_unitario);
         if (!hit) { nonTrovate.push({ modello: v(r0.modello) ?? modello, variante: v(r0.variante) ?? '', quantita: qty, costo }); continue; }
-        if (inCart.has(hit.codice) || lines.some((l) => l.codice === hit.codice)) continue;
-        setLines((prev) => prev.some((l) => l.codice === hit.codice) ? prev : [...prev, { codice: hit.codice, item: hit.item, variant: hit.variant, qty: qty != null ? String(qty) : '', costo: costo != null ? String(costo) : '', nuovo: false, wip: qty == null }]);
-        aggiunte++;
+        const prev = proposte.get(hit.codice);
+        proposte.set(hit.codice, { hit, qty: prev ? (prev.qty ?? 0) + (qty ?? 0) || null : qty, costo: prev?.costo ?? costo });
       }
+      let aggiunte = 0, giaPresenti = 0;
+      setLines((prev) => {
+        const out = [...prev];
+        for (const [codice, pr] of proposte) {
+          if (out.some((l) => l.codice === codice)) { giaPresenti++; continue; }
+          out.push({ codice, item: pr.hit.item, variant: pr.hit.variant, qty: pr.qty != null ? String(pr.qty) : '', costo: pr.costo != null ? String(pr.costo) : '', nuovo: false, wip: pr.qty == null });
+          aggiunte++;
+        }
+        return out;
+      });
       setAiNonTrovate(nonTrovate);
-      toast(`Proposta: ${aggiunte} righe nel carrello${nonTrovate.length ? `, ${nonTrovate.length} da confermare come nuove` : ''}. Controlla pezzi e costi.`, aggiunte ? 'ok' : 'err');
+      toast(`Proposta: ${proposte.size} righe riconosciute${nonTrovate.length ? `, ${nonTrovate.length} da confermare come nuove` : ''}. Controlla pezzi e costi.`, proposte.size ? 'ok' : 'err');
+      void aggiunte; void giaPresenti;
       setAiFiles([]);
     } catch (e) { toast((e as Error).message, 'err'); }
     finally { setAiBusy(false); }

@@ -63,12 +63,28 @@ function AiBox({ files, setFiles, testo, setTesto, busy, onCompila, abilitato, a
 }
 const cls = (low: Set<string>, k: string) => `txt${low.has(k) ? ' mat-low' : ''}`;
 
+// Upload dei file scelti, una volta sola per file: la mappa File -> path sopravvive a Compila e Salva, quindi aggiungere
+// una foto dopo la prima compilazione carica SOLO quella (niente doppioni orfani sotto inbox/).
+function useUploader(chi: string) {
+  const done = useRef(new Map<File, string>());
+  return async (files: File[]): Promise<string[]> => {
+    const out: string[] = [];
+    for (const f of files) {
+      let p = done.current.get(f);
+      if (!p) { p = await uploadInbox(f, chi); done.current.set(f, p); }
+      out.push(p);
+    }
+    return out;
+  };
+}
+
 // ---- Nuovo materiale (con offerta iniziale e file) ----
 function NuovoMateriale({ chi, settings, fornitori, gruppi, onBack, onSaved }: { chi: string; settings: MatSettings; fornitori: MatFornitore[]; gruppi: MatGruppo[]; onBack: () => void; onSaved: () => void }) {
   const [files, setFiles] = useState<File[]>([]); const [testo, setTesto] = useState('');
   const [busy, setBusy] = useState(false); const [saving, setSaving] = useState(false);
   const [logId, setLogId] = useState<string | null>(null); const [prop, setProp] = useState<PropostaMateriale | null>(null);
-  const [paths, setPaths] = useState<string[]>([]); const [avviso, setAvviso] = useState<string | null>(null);
+  const [avviso, setAvviso] = useState<string | null>(null);
+  const carica = useUploader(chi);
   const [low, setLow] = useState<Set<string>>(new Set());
   const [f, setF] = useState({ fornitore: '', categoria: '', materiale: '', articolo: '', colori: '', unita: '', tipo: 'offerta', prezzo: '', prezzoText: '', disponibilita: '', minOrdine: '', leadTime: '', condizioni: '', data: oggi(), documento: '', note: '' });
   const set = (k: keyof typeof f, val: string) => setF((p) => ({ ...p, [k]: val }));
@@ -79,8 +95,7 @@ function NuovoMateriale({ chi, settings, fornitori, gruppi, onBack, onSaved }: {
   const compila = async () => {
     setBusy(true); setAvviso(null);
     try {
-      const up = paths.length === files.length ? paths : await Promise.all(files.map((fl) => uploadInbox(fl, chi)));
-      setPaths(up);
+      const up = await carica(files);
       const r = await aiCompila<PropostaMateriale>(chi, 'materiale', up, testo, { fornitori: nomiForn, materiali: nomiMat });
       const p = r.proposta; setProp(p); setLogId(r.log_id); setAvviso(p.avviso);
       const lowSet = new Set<string>();
@@ -114,7 +129,7 @@ function NuovoMateriale({ chi, settings, fornitori, gruppi, onBack, onSaved }: {
       const colori = f.colori.split(/[,;\n]/).map((c) => c.trim()).filter(Boolean);
       const offerta = (f.prezzo || f.prezzoText || f.disponibilita) ? { tipo: 'offerta', prezzo: f.prezzo ? Number(f.prezzo.replace(',', '.')) : null, prezzo_text: f.prezzo ? null : (f.prezzoText || null), unita: f.unita || null, disponibilita: f.disponibilita || null, min_ordine: f.minOrdine || null, lead_time: f.leadTime || null, data: f.data || null, documento_fonte: f.documento || null } : null;
       const res = await matApi('item_upsert', chi, { supplier_id: sup.id, categoria: f.categoria, materiale: mat, articolo_fornitore: f.articolo || null, colori: colori.length ? colori : [null], unita: f.unita || null, note: [f.note, f.tipo === 'acquistato' ? `Acquisto (registrazione acquisti in Fase 3): ${f.documento || ''}` : ''].filter(Boolean).join('. ') || null, offerta, ai_log_id: logId, ai_modificato: modificato });
-      const up = paths.length === files.length ? paths : await Promise.all(files.map((fl) => uploadInbox(fl, chi)));
+      const up = await carica(files);
       for (let i = 0; i < up.length; i++) {
         const fl = files[i];
         await matApi('asset_add', chi, { path: up[i], tipo: fl.type.startsWith('image/') ? 'foto' : 'scheda_tecnica', titolo: fl.name, supplier_id: sup.id, materiale: mat, fonte: `app, ${chi}, ${oggi()}` });
@@ -175,15 +190,16 @@ function NuovoMateriale({ chi, settings, fornitori, gruppi, onBack, onSaved }: {
 function NuovoFornitore({ chi, settings, fornitori, onBack, onSaved }: { chi: string; settings: MatSettings; fornitori: MatFornitore[]; onBack: () => void; onSaved: () => void }) {
   const [files, setFiles] = useState<File[]>([]); const [testo, setTesto] = useState('');
   const [busy, setBusy] = useState(false); const [saving, setSaving] = useState(false);
-  const [logId, setLogId] = useState<string | null>(null); const [avviso, setAvviso] = useState<string | null>(null); const [paths, setPaths] = useState<string[]>([]);
+  const [logId, setLogId] = useState<string | null>(null); const [avviso, setAvviso] = useState<string | null>(null);
   const [low, setLow] = useState<Set<string>>(new Set());
   const [f, setF] = useState({ nome: '', ragione_sociale: '', categoria_principale: '', email: '', telefono: '', referente: '', indirizzo: '', piva_vat: '', deposito_luogo: '', condizioni_pagamento: '', note: '' });
   const set = (k: keyof typeof f, val: string) => setF((p) => ({ ...p, [k]: val }));
   const esiste = fornitori.find((x) => x.nome.toLowerCase() === f.nome.trim().toLowerCase());
+  const carica = useUploader(chi);
   const compila = async () => {
     setBusy(true); setAvviso(null);
     try {
-      const up = paths.length === files.length ? paths : await Promise.all(files.map((fl) => uploadInbox(fl, chi))); setPaths(up);
+      const up = await carica(files);
       const r = await aiCompila<PropostaFornitore>(chi, 'fornitore', up, testo, { fornitori: fornitori.map((x) => x.nome) });
       const p = r.proposta; setLogId(r.log_id); setAvviso(p.avviso);
       const lowSet = new Set<string>();
@@ -196,7 +212,7 @@ function NuovoFornitore({ chi, settings, fornitori, onBack, onSaved }: { chi: st
     setSaving(true);
     try {
       const res = await matApi('supplier_upsert', chi, { ...f, nome: f.nome.trim(), ai_log_id: logId });
-      const up = paths.length === files.length ? paths : await Promise.all(files.map((fl) => uploadInbox(fl, chi)));
+      const up = await carica(files);
       for (let i = 0; i < up.length; i++) await matApi('asset_add', chi, { path: up[i], tipo: 'documento', titolo: files[i].name, supplier_id: res.id, fonte: `app, ${chi}, ${oggi()}` });
       toast(res.creato ? 'Fornitore creato' : 'Fornitore aggiornato', 'ok'); onSaved();
     } catch (e) { toast((e as Error).message, 'err'); } finally { setSaving(false); }
@@ -220,7 +236,6 @@ function Scheda({ g, acquisti, materialiFornitore, settings, chi, onBack, onChan
   const [assets, setAssets] = useState<MatAsset[] | null>(null);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [err, setErr] = useState('');
-  const [tick, setTick] = useState(0);
   const [offOpen, setOffOpen] = useState(false); const [off, setOff] = useState({ item: g.righe[0]?.item_id ?? '', prezzo: '', prezzoText: '', disponibilita: '', data: oggi(), documento: '' }); const [busy, setBusy] = useState(false);
   const fotoRef = useRef<HTMLInputElement>(null);
   const ids = useMemo(() => new Set(g.righe.map((r) => r.item_id)), [g]);
@@ -237,7 +252,8 @@ function Scheda({ g, acquisti, materialiFornitore, settings, chi, onBack, onChan
       setAssets(lista);
       setUrls(await signedUrls(lista.map((a) => a.path)));
     }).catch((e: Error) => setErr(e.message));
-  }, [g, ids, ordini, materialiFornitore, tick]);
+    // dopo una modifica il reload del catalogo produce un nuovo `g`: e' quello a far ripartire la lettura, una volta sola
+  }, [g, ids, ordini, materialiFornitore]);
   const r0 = g.righe[0];
   const isGenerale = (a: MatAsset) => !a.item_id && !a.order_id && (!a.materiale || a.materiale.toLowerCase() !== g.materiale.toLowerCase());
   const foto = (assets ?? []).filter((a) => isImg(a) && !isGenerale(a));
@@ -250,7 +266,7 @@ function Scheda({ g, acquisti, materialiFornitore, settings, chi, onBack, onChan
         const path = await uploadInbox(f, chi);
         await matApi('asset_add', chi, { path, tipo: f.type.startsWith('image/') ? 'foto' : 'scheda_tecnica', titolo: f.name, supplier_id: g.supplier_id, materiale: g.materiale, fonte: `app, ${chi}, ${oggi()}` });
       }
-      toast('Caricato', 'ok'); setTick((t) => t + 1); onChanged();
+      toast('Caricato', 'ok'); onChanged();
     } catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(false); }
   };
   const addOfferta = async () => {

@@ -143,9 +143,16 @@ async function handle(req: Request): Promise<Response> {
 
     // offerta opzionale, applicata a ogni colore
     let offerta: Record<string, unknown> | null = null;
+    let offertaIgnorata = false;
     if (body.offerta && typeof body.offerta === 'object') {
       const o = body.offerta as Record<string, unknown>;
       const prezzo = num(o.prezzo); if (prezzo === 'bad') return json({ error: 'offerta.prezzo non valido' }, 422);
+      // stessa guardia di offer_add: un'offerta senza prezzo, testo di prezzo o disponibilita' non e' un'offerta
+      if (prezzo == null && !str(o.prezzo_text, 300) && !str(o.disponibilita, 300)) { offertaIgnorata = true; }
+    }
+    if (body.offerta && typeof body.offerta === 'object' && !offertaIgnorata) {
+      const o = body.offerta as Record<string, unknown>;
+      const prezzo = num(o.prezzo) as number | null;
       const data = dateIso(o.data); if (data === 'bad') return json({ error: 'offerta.data non valida (YYYY-MM-DD)' }, 422);
       const ou = str(o.unita, 4); if (ou && !UNITA.has(ou)) return json({ error: 'offerta.unita non valida' }, 422);
       const tipo = str(o.tipo, 10) === 'listino' ? 'listino' : 'offerta';
@@ -190,7 +197,7 @@ async function handle(req: Request): Promise<Response> {
       }
     }
     await aiEsito(body.ai_log_id, body.ai_modificato ? 'modificato' : 'confermato', 'mat_items', items[0]?.id ?? '');
-    return json({ ok: true, items, offerte });
+    return json({ ok: true, items, offerte, ...(offertaIgnorata ? { nota: 'offerta ignorata: senza prezzo, testo di prezzo o disponibilita\'' } : {}) });
   }
 
   // ---------------------------------------------------------------- offerta su un item esistente

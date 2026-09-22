@@ -88,7 +88,7 @@ console.log('\n== Fase 2: ai-compila (sola lettura + Gemini) ==');
 t('40 ai-compila: stessa autorizzazione (getUser + @amimi.it)', /auth\.getUser\(token\)/.test(ai) && /endsWith\('@amimi\.it'\)/.test(ai));
 t('41 ai-compila: flag ai_compila_enabled, OFF = state off senza chiamare Gemini', /'ai_compila_enabled'/.test(ai) && ai.indexOf("return json({ state: 'off' })") < ai.indexOf('generativelanguage.googleapis.com'));
 t('42 ai-compila: scrive SOLO ai_compila_log', ![...ai.matchAll(/\.from\('([a-z_]+)'\)\.(insert|update|upsert|delete)/g)].some((m) => m[1] !== 'ai_compila_log'));
-t('43 ai-compila: JSON mode (responseMimeType), temperatura 0, MAI thinkingConfig', /responseMimeType: 'application\/json'/.test(ai) && /temperature: 0/.test(ai) && !/thinkingConfig/.test(ai + PROMPT));
+t('43 ai-compila: structured output (responseSchema + JSON), temperatura 0, MAI thinkingConfig nel codice', /responseMimeType: 'application\/json'/.test(ai) && /responseSchema: responseSchema\(target\)/.test(ai) && /temperature: 0/.test(ai) && !/thinkingConfig/.test(ai + noTs(PROMPT)));
 t('44 ai-compila: tetti (4 immagini, 4 MB, testo 2000) e timeout 25 s', /MAX_IMG = 4/.test(ai) && /4 \* 1024 \* 1024/.test(ai) && /MAX_TESTO = 2000/.test(ai) && /TIMEOUT_MS = 25000/.test(ai));
 t('45 ai-compila: errore Gemini = 503 ai_failed, mai una proposta vuota', /return json\(\{ error: 'ai_failed'/.test(ai) && /ai_invalid/.test(ai));
 t('46 ai-compila: immagini solo da inbox/ o dagli asset registrati', /p\.startsWith\('inbox\/'\)/.test(ai) && /from\('mat_assets'\)\.select\('path'\)/.test(ai));

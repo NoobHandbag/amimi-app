@@ -89,8 +89,11 @@ Deno.serve(async (req) => {
     const { data: blob, error: dErr } = await sb.storage.from('mat-assets').download(p);
     if (dErr || !blob) return json({ error: `immagine non leggibile: ${p}` }, 422);
     if (blob.size > MAX_BYTES) return json({ error: `immagine troppo grande (max 4 MB): ${p}` }, 422);
-    const mime = blob.type || (p.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
-    if (!MIME_OK.has(mime)) return json({ error: `formato non ammesso: ${mime}` }, 422);
+    // MIME: dal bucket se c'e', altrimenti dall'estensione (un png dichiarato jpeg confonde il modello)
+    const ext = (p.split('.').pop() ?? '').toLowerCase();
+    const byExt: Record<string, string> = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif' };
+    const mime = (blob.type && blob.type !== 'application/octet-stream') ? blob.type : (byExt[ext] ?? '');
+    if (!MIME_OK.has(mime)) return json({ error: `formato non ammesso: ${mime || ext}` }, 422);
     parts.push({ inline_data: { mime_type: mime, data: b64(new Uint8Array(await blob.arrayBuffer())) } });
   }
   for (const im of inline) {
