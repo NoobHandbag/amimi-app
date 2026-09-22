@@ -445,7 +445,7 @@ idempotenza a DB, Regola 20). Il client non decide MAI i punti. NON tocca CE / s
 - Flag: `loyalty_purchase_enabled` (OFF), `loyalty_euro_per_point` (1), `loyalty_orders_since` (lancio).
 - Deploy 2026-09-18 via `supabase functions deploy loyalty-orders --no-verify-jwt`; redeploy 2026-09-20 (fix backfill `floor`). Cron NON ancora schedulato.
 
-## lead-outreach (v2, DEPLOYATA 2026-09-23 00:20, flag OFF) - bozze AI e invio delle email B2B (modulo lead_*)
+## lead-outreach (v3, DEPLOYATA 2026-09-23 02:10, flag OFF) - bozze AI e invio delle email B2B (modulo lead_*)
 
 Missione M2 (call Dan + Benny 22-09). Edge NUOVA (Regola 19): riusa gli schemi di `cs-assist` (Gemini JSON mode, niente `thinkingConfig`, `maxOutputTokens` 8.000) e di `cs-send` (Gmail API da info@amimi.it col service account `app_flags.cs_gmail_sa_key`), senza toccarle. Tutte le azioni vogliono il JWT di un utente @amimi.it. Flag `lead_outreach_ai_enabled` (default OFF): spento = 403 su bozza e invio, rollback completo.
 
@@ -455,6 +455,7 @@ Missione M2 (call Dan + Benny 22-09). Edge NUOVA (Regola 19): riusa gli schemi d
 - **diag**: flag, presenza chiave Gemini, token del service account con `gmail.send`; nessun segreto ne' PII.
 - Idempotenza a DB (migr 0139): `lead_drafts.send_key` UNIQUE, un tocco per (negozio, tocco) fra le bozze `in_invio|inviata`, un tocco email in uscita per (negozio, tocco) in `lead_touches`. Test sul sorgente: `tests/lead_outreach_guardie.mjs` (41 asserzioni).
 - Frontend: compositore della scheda Pipeline (`web/src/pages/Outreach.tsx`): "Bozza con l'AI", destinatario modificabile, "Invia da info@amimi.it" con conferma, storico bozze con "Sblocca". Deploy: `npx supabase functions deploy lead-outreach --project-ref imszbjeyplaiovylhkgl --no-verify-jwt` (il JWT lo verifica la funzione).
+- **v3 (23-09 notte)**: chiave Gemini nell'header `x-goog-api-key` invece che nell'URL, e `scrub()` sui messaggi d'errore verso la UI: un errore di rete di Deno cita l'URL intero nel messaggio, chiave compresa (finding A1 della Gate 2 di ai-compila, stessa classe). Test 50. Le altre edge con `?key=` nell'URL (cs-assist, cs-classify, ask-data, assistant, activity-digest, ai-compila) sono da allineare: aperto.
 - **v2 (22-09 notte, Gate 3 sul codice unito; revisore indipendente: 0 A, 3 B, 7 C)**: (B1) i follow-up portano `In-Reply-To`/`References` letti dal messaggio precedente via `messages.get?format=metadata` con lo scope `gmail.readonly` (come cs-send; se la lettura fallisce e' un `warning`, non un blocco) e un oggetto che inizia per "Re:" riprende quello del primo invio; (B3) `lead_tetto_giornaliero` non numerico = 500 e invio fermo, non tetto disattivato; (C4/C5) la riga di opt-out e' OBBLIGATORIA all'invio (blocco) e la chiusura definitiva del tocco 4 ("non la contattero' ulteriormente") vale come opt-out senza doppioni; (C8) negozio scartato dopo la bozza = blocco; (C10) il giorno di Roma azzera i secondi. Lato web (B2, C7): "Segna come inviata" su un tocco gia' registrato mostra un messaggio chiaro e non avanza il tocco; la lista si ferma solo su una pagina vuota. Rinunciati: etichetta dei bottoni indietro dopo salti scheda-scheda (cosmetico, C6); reinvio dello stesso tocco dopo un bounce (C9, serve una migrazione: Blocco 2). Test 41 -> 49.
 
 ## mat-api (v1, DEPLOYATA 2026-09-23, flag OFF) - scritture del modulo materie prime dalla UI

@@ -89,6 +89,7 @@ t('46 negozio scartato dopo la bozza: invio bloccato', src.indexOf("acc.stato_ri
 t('47 giorno di Roma indifferente ai secondi', inizioGiornoRoma(new Date('2026-09-22T22:30:45Z')) === '2026-09-22T22:00:00.000Z' && inizioGiornoRoma(new Date('2026-09-22T22:30:59.900Z')) === '2026-09-22T22:00:00.000Z');
 t('48 follow-up con In-Reply-To/References dal messaggio precedente (scope readonly)', /In-Reply-To: \$\{inReplyTo\}/.test(src) && /googleAccessToken\(sa, SCOPE_READ\)/.test(src) && /format=metadata&metadataHeaders=Message-ID/.test(src));
 t('49 header di reply mancanti = avviso, mai blocco dell\'invio', /warnings\.push\(`header di reply non impostati/.test(src));
+t('50 chiave Gemini nell\'header, mai nell\'URL; errori ripuliti prima di arrivare alla UI (Gate 2 mat, A1)', /'x-goog-api-key': key/.test(src) && !/generateContent\?key=/.test(src.replace(/^\s*\/\/[^\n]*$/gm, '')) && /scrub\(\(e as Error\)\.message/.test(src));
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
