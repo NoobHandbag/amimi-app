@@ -1,5 +1,5 @@
 // loyalty-proxy v12 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
-// v12 (2026-09-22, brief M4b "profilo + compleanno, tier sui punti cumulati, bonus seconda borsa", migr 0140):
+// v12 (2026-09-22, brief M4b "profilo + compleanno, tier sui punti cumulati, bonus seconda borsa", migr 0141):
 //    due azioni NUOVE e additive, le altre non cambiano una riga:
 //    `profile` (GET)       : stato del profilo (giorno/mese, materiale, consenso, completo), compleanno oggi e premio gia'
 //                            dato, punti cumulati + tier cumulato, finestra del bonus seconda borsa; piu' i tre flag.
@@ -9,7 +9,7 @@
 //                            loyalty_profile_enabled ({state:'off'} senza scritture). Il client non decide mai i punti.
 //    Flag a VALORE (readFlagFor): 'true' = tutti, 'false' = nessuno, lista di customer id = solo loro (prova sull'account
 //    di test senza accendere per il pubblico). I giri +20 compleanno e +50 seconda borsa NON stanno qui: sono funzioni SQL
-//    su pg_cron (loyalty_birthday_run 06:20 UTC, loyalty_bonus_second_run 06:25 UTC), vedi migr 0140 e LOYALTY_RUNBOOK.
+//    su pg_cron (loyalty_birthday_run 06:20 UTC, loyalty_bonus_second_run 06:25 UTC), vedi migr 0141 e LOYALTY_RUNBOOK.
 // v11 (2026-09-21, quest audit Area Membri, Fase 6 bundle C):
 //    T1  freschezza della firma: il `timestamp` firmato da Shopify deve stare entro MAX_SKEW_SEC, altrimenti 401
 //        stale_signature (una richiesta firmata catturata non e' piu' rigiocabile all'infinito);
@@ -478,7 +478,7 @@ Deno.serve(async (req) => {
     return json({ ok: true, status: code ? 'fulfilled' : 'pending', code, points: r.new_balance, cost: r.cost });
   }
 
-  // --- PROFILO + COMPLEANNO, TIER CUMULATO, BONUS SECONDA BORSA (v12, brief M4b 22-09, migr 0140) ---
+  // --- PROFILO + COMPLEANNO, TIER CUMULATO, BONUS SECONDA BORSA (v12, brief M4b 22-09, migr 0141) ---
   // Rami additivi: leggono i tre flag a valore e la RPC loyalty_profile_state; `profile_save` scrive SOLO via RPC atomica
   // (gate a DB: +10 una volta, data bloccata). I giri +20/+50 girano su pg_cron, non qui.
   if (action === 'profile') {

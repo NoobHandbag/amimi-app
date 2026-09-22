@@ -90,13 +90,13 @@ t('41 pagina: guardaroba non leggibile (null) mostrato come tale', /items===null
 console.log('\n== config.toml: verify_jwt pinnato per le tre edge ==');
 for (const fn of ['loyalty-proxy', 'loyalty-orders', 'loyalty-page']) t('42 [functions.' + fn + '] verify_jwt = false', new RegExp('\\[functions\\.' + fn + '\\]\\s*\\n(?:[^\\[\\n]*\\n)*?verify_jwt = false').test(TOML));
 
-console.log('\n== migrazioni: una sola 0135, 0136, 0137 e 0140 ==');
+console.log('\n== migrazioni: una sola 0135, 0136, 0137 e 0141 ==');
 const migs = readdirSync(ROOT + 'supabase/migrations');
-for (const n of ['0135_', '0136_', '0137_', '0140_']) t('43 esattamente una migrazione ' + n + '*', migs.filter((f) => f.startsWith(n)).length === 1, migs.filter((f) => f.startsWith(n)).join(','));
+for (const n of ['0135_', '0136_', '0137_', '0141_']) t('43 esattamente una migrazione ' + n + '*', migs.filter((f) => f.startsWith(n)).length === 1, migs.filter((f) => f.startsWith(n)).join(','));
 
-// ---- v12 (2026-09-22, brief M4b): profilo + compleanno, tier cumulato, bonus seconda borsa (migr 0140) ----
-const M140 = read('supabase/migrations/0140_loyalty_profilo_tier_bonus.sql');
-console.log('\n== migr 0140: flag OFF, UNIQUE a DB, privacy, cron dopo le 06:12 ==');
+// ---- v12 (2026-09-22, brief M4b): profilo + compleanno, tier cumulato, bonus seconda borsa (migr 0141) ----
+const M140 = read('supabase/migrations/0141_loyalty_profilo_tier_bonus.sql');
+console.log('\n== migr 0141: flag OFF, UNIQUE a DB, privacy, cron dopo le 06:12 ==');
 t('44 tre flag nuovi a false + cursore since vuoto', /\('loyalty_profile_enabled',\s+'false'\)/.test(M140) && /\('loyalty_tier_lifetime_enabled',\s+'false'\)/.test(M140) && /\('loyalty_bonus_second_enabled',\s+'false'\)/.test(M140) && /\('loyalty_bonus_second_since',\s+''\)/.test(M140));
 t('45 loyalty_profiles senza anno di nascita (solo birth_day/birth_month)', /birth_day\s+smallint/.test(M140) && /birth_month\s+smallint/.test(M140) && !/birth_year/.test(M140) && !/data_nascita|birth_date/.test(M140));
 t('46 check sulla data valida (31/02 rifiutato) e materiale su lista chiusa', /when 2 then 29 when 4 then 30 when 6 then 30 when 9 then 30 when 11 then 30 else 31/.test(M140) && /'cavallino', 'cocco', 'vernice', 'pelle liscia', 'cotone', 'nessuna preferenza'/.test(M140));

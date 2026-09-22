@@ -1,4 +1,4 @@
--- tests/loyalty_profilo_idempotenza.sql — prova VIVA e SENZA RESIDUI delle RPC della migr 0140 (Premia: profilo,
+-- tests/loyalty_profilo_idempotenza.sql — prova VIVA e SENZA RESIDUI delle RPC della migr 0141 (Premia: profilo,
 -- compleanno, bonus seconda borsa) sull'account di test 10147859530055.
 --   Si lancia con il connettore Supabase (execute_sql) o con psql: e' un unico blocco DO che scrive, verifica e alla
 --   fine ALZA SEMPRE un'eccezione, cosi' ogni scrittura viene annullata (rollback) e il DB resta com'era.
@@ -35,10 +35,10 @@ begin
   r := loyalty_profile_save(c, 5, 5, null, true);
   if not (r->>'birthday_locked')::bool then raise exception 'A1 la data doveva risultare bloccata: %', r; end if;
   if (select birth_day from loyalty_profiles where shopify_customer_id = c) <> 29 then raise exception 'A1 la data e'' cambiata'; end if;
-  r := loyalty_profile_save('TEST_0140_X', 31, 2, 'cocco', true);   -- 31/02 non esiste
+  r := loyalty_profile_save('TEST_0141_X', 31, 2, 'cocco', true);   -- 31/02 non esiste
   if (r->>'ok')::bool or r->>'reason' <> 'bad_date' then raise exception 'A1 31/02 doveva essere bad_date: %', r; end if;
-  if exists (select 1 from loyalty_profiles where shopify_customer_id = 'TEST_0140_X') then raise exception 'A1 una data rifiutata non deve creare la riga'; end if;
-  r := loyalty_profile_save('TEST_0140_X', 1, 1, 'seta', true);
+  if exists (select 1 from loyalty_profiles where shopify_customer_id = 'TEST_0141_X') then raise exception 'A1 una data rifiutata non deve creare la riga'; end if;
+  r := loyalty_profile_save('TEST_0141_X', 1, 1, 'seta', true);
   if (r->>'ok')::bool or r->>'reason' <> 'bad_materiale' then raise exception 'A1 materiale fuori lista doveva essere bad_materiale: %', r; end if;
   if exists (select 1 from v_loyalty_ledger_drift where diff <> 0) then raise exception 'L drift dopo A1'; end if;
 
@@ -60,16 +60,16 @@ begin
   if (r->>'credited')::int <> 1 then raise exception 'A2 2028 bisestile doveva accreditare 1: %', r; end if;
   -- anticipo di 30 giorni: un profilo salvato "oggi" con compleanno fra 10 giorni non incassa quest''anno
   d := (now() at time zone 'Europe/Rome')::date + 10; y := extract(year from d)::int;
-  r := loyalty_profile_save('TEST_0140_Y', extract(day from d)::int, extract(month from d)::int, 'cotone', true);
-  update app_flags set value = c || ',TEST_0140_Y' where key = 'loyalty_profile_enabled';
+  r := loyalty_profile_save('TEST_0141_Y', extract(day from d)::int, extract(month from d)::int, 'cotone', true);
+  update app_flags set value = c || ',TEST_0141_Y' where key = 'loyalty_profile_enabled';
   r := loyalty_birthday_run(d);
   if (r->>'credited')::int <> 0 then raise exception 'A2 anticipo < 30 giorni doveva accreditare 0: %', r; end if;
   if (select loyalty_birthday_in_year(2, 29, 2027)) <> '2027-02-28' or (select loyalty_birthday_in_year(2, 29, 2028)) <> '2028-02-29' then raise exception 'A2 loyalty_birthday_in_year'; end if;
   if exists (select 1 from v_loyalty_ledger_drift where diff <> 0) then raise exception 'L drift dopo A2'; end if;
 
-  -- A3: flag a lista: il cliente TEST_0140_Z ha compleanno oggi ma non e'' in lista -> niente
-  r := loyalty_profile_save('TEST_0140_Z', extract(day from current_date)::int, extract(month from current_date)::int, 'cocco', true);
-  update loyalty_profiles set birth_set_at = now() - interval '60 days' where shopify_customer_id = 'TEST_0140_Z';
+  -- A3: flag a lista: il cliente TEST_0141_Z ha compleanno oggi ma non e'' in lista -> niente
+  r := loyalty_profile_save('TEST_0141_Z', extract(day from current_date)::int, extract(month from current_date)::int, 'cocco', true);
+  update loyalty_profiles set birth_set_at = now() - interval '60 days' where shopify_customer_id = 'TEST_0141_Z';
   r := loyalty_birthday_run();
   if (r->>'credited')::int <> 0 then raise exception 'A3 cliente fuori lista accreditato: %', r; end if;
   update app_flags set value = 'true' where key = 'loyalty_profile_enabled';
@@ -82,15 +82,15 @@ begin
   --     giorni l''ordine per data e'' O1, O2, #1781: primo = O1, secondo = O2, ma 100 giorni > 90 -> nessun bonus.
   select points into p0 from loyalty_points where shopify_customer_id = c;
   insert into loyalty_order_credits (shopify_order_id, shopify_customer_id, points, order_total, order_name, created_at)
-    values ('TEST_0140_O1', c, 100, 100, '#TEST_0140_1', now() - interval '200 days'),
-           ('TEST_0140_O2', c, 80, 80, '#TEST_0140_2', now() - interval '100 days');
+    values ('TEST_0141_O1', c, 100, 100, '#TEST_0141_1', now() - interval '200 days'),
+           ('TEST_0141_O2', c, 80, 80, '#TEST_0141_2', now() - interval '100 days');
   select n_ordini into n from v_loyalty_second_order where shopify_customer_id = c;
   if n <> 3 then raise exception 'C1 n_ordini = % (atteso 3: 2 finti + #1781)', n; end if;
   r := loyalty_bonus_second_run();
   if not (r->>'ok')::bool or (r->>'credited')::int <> 0 then raise exception 'C1 fuori dai 90 giorni doveva dare 0: %', r; end if;
   -- O1 a -40 e O2 a -5 giorni: 35 giorni, entro la finestra; ma con since nel futuro non e'' retroattivo -> 0
-  update loyalty_order_credits set created_at = now() - interval '40 days' where shopify_order_id = 'TEST_0140_O1';
-  update loyalty_order_credits set created_at = now() - interval '5 days' where shopify_order_id = 'TEST_0140_O2';
+  update loyalty_order_credits set created_at = now() - interval '40 days' where shopify_order_id = 'TEST_0141_O1';
+  update loyalty_order_credits set created_at = now() - interval '5 days' where shopify_order_id = 'TEST_0141_O2';
   update app_flags set value = '2099-01-01T00:00:00Z' where key = 'loyalty_bonus_second_since';
   r := loyalty_bonus_second_run();
   if (r->>'credited')::int <> 0 then raise exception 'C1 con since nel futuro doveva dare 0: %', r; end if;

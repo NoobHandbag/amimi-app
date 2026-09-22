@@ -1,4 +1,4 @@
--- 0140 (Premia, brief M4b del 2026-09-22): A profilo + compleanno, B tier sui punti cumulati, C bonus seconda borsa.
+-- 0141 (Premia, brief M4b del 2026-09-22): A profilo + compleanno, B tier sui punti cumulati, C bonus seconda borsa.
 -- ADDITIVA (Regola Ferrea 19): tabelle nuove col prefisso loyalty_*, core solo in LETTURA (shopify_orders.created_at_shop
 -- per la data del 2° ordine), nessuna colonna su tabelle core, nessuna azione write-api, tre flag default OFF
 -- (rollback = flag OFF). Idempotenza a DB (Regola 20): ogni accredito nuovo ha un vincolo UNIQUE (tabella di stato con
@@ -418,10 +418,10 @@ select cron.schedule('loyalty-bonus-second-daily', '25 6 * * *', $$ select publi
 insert into change_log (tbl, row_id, op, after, chi, source) values
   ('cron.job', 'loyalty-birthday-daily', 'cron_create',
    jsonb_build_object('schedule', '20 6 * * *', 'fn', 'loyalty_birthday_run', 'motivo', 'Premia: +20 al compleanno (brief M4b 22-09), NO-OP a loyalty_profile_enabled=false'),
-   'claude-code', 'migration_0140'),
+   'claude-code', 'migration_0141'),
   ('cron.job', 'loyalty-bonus-second-daily', 'cron_create',
    jsonb_build_object('schedule', '25 6 * * *', 'fn', 'loyalty_bonus_second_run', 'motivo', 'Premia: +50 seconda borsa entro 90 gg (brief M4b 22-09), NO-OP a loyalty_bonus_second_enabled=false'),
-   'claude-code', 'migration_0140'),
-  ('loyalty_points', 'migr_0140', 'schema',
-   '{"migr":"0140_loyalty_profilo_tier_bonus","parti":["A loyalty_profiles + loyalty_birthday_awards + loyalty_profile_state/save + loyalty_birthday_run","B v_loyalty_members.punti_cumulati/tier_cumulato","C loyalty_bonus_second + v_loyalty_second_order + loyalty_bonus_second_run"],"flag":["loyalty_profile_enabled","loyalty_tier_lifetime_enabled","loyalty_bonus_second_enabled"],"default":"false"}'::jsonb,
-   'claude-code', 'migration_0140');
+   'claude-code', 'migration_0141'),
+  ('loyalty_points', 'migr_0141', 'schema',
+   '{"migr":"0141_loyalty_profilo_tier_bonus","parti":["A loyalty_profiles + loyalty_birthday_awards + loyalty_profile_state/save + loyalty_birthday_run","B v_loyalty_members.punti_cumulati/tier_cumulato","C loyalty_bonus_second + v_loyalty_second_order + loyalty_bonus_second_run"],"flag":["loyalty_profile_enabled","loyalty_tier_lifetime_enabled","loyalty_bonus_second_enabled"],"default":"false"}'::jsonb,
+   'claude-code', 'migration_0141');
