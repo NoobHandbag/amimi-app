@@ -114,5 +114,15 @@ t('53 "Compila" compare solo con aiOn; Salva scrive via mat-api con ai_log_id', 
 t('54 matApi chiama le edge con il JWT di sessione (Bearer), mai con la anon key', /authorization: 'Bearer ' \+ token/.test(API) && /functions\/v1\/mat-api/.test(API) && /functions\/v1\/ai-compila/.test(API));
 t('55 la pagina legge i flag da v_mat_settings via csClient e gata i bottoni', /csClient\.from\('v_mat_settings'\)/.test(API) && /canWrite = settings\.mat_write_enabled === 'true'/.test(PAGE) && /aiOn = canWrite && settings\.ai_compila_enabled === 'true'/.test(PAGE));
 
+console.log('\n== Gate 2 del 23-09 (fix fissati) ==');
+const LO = read('supabase/functions/lead-outreach/index.ts');
+t('56 A1: la chiave Gemini viaggia nell\'header x-goog-api-key, mai nell\'URL, e gli errori sono ripuliti (ai-compila)', /'x-goog-api-key': flags\.gemini_api_key/.test(AIC) && !/generateContent\?key=/.test(noTs(AIC)) && /const scrub = /.test(AIC) && /errore = scrub\(/.test(AIC));
+t('57 A1: idem per lead-outreach (draft)', /'x-goog-api-key': key/.test(LO) && !/generateContent\?key=/.test(noTs(LO)) && /scrub\(\(e as Error\)\.message/.test(LO));
+t('58 B5: num("1.000") = 1000 (migliaio italiano), "1.000,5" = 1000.5, "1.5" = 1.5', G.num('1.000') === 1000 && G.num('1.000,5') === 1000.5 && G.num('1.5') === 1.5 && G.num('12.345.678') === 12345678);
+t('59 A2/B4: upload agganciato al File (identita\'), non alla posizione; niente capture forzato', /c\.file === f/.test(NUOVO) && /cs\.filter\(\(c\) => f\.includes\(c\.file\)\)/.test(NUOVO) && !/capture="environment"/.test(noTs(NUOVO)));
+t('60 B1/B2/B3: foto di un documento non e\' "foto"; righe non attive raggiungibili; offerte doppie contate', /docTipo === 'proforma' \|\| docTipo === 'fattura'\) return 'proforma'/.test(NUOVO) && !/\.eq\('attivo', true\)/.test(API) && /tipo === 'inattivi'/.test(PAGE) && /offerteDup\+\+/.test(NUOVO) && /dataOfferta = docData \|\| new Date\(\)/.test(NUOVO));
+t('61 C1/C3: mime mai octet-stream (estensione), item_upsert vuoto = 500, log AI solo sulla prima riga di materiale', /application\/octet-stream/.test(API) && /mimeDaNome\(nome\)/.test(MAPI) && /materiale non creato e non ritrovato/.test(MAPI) && /\.\.\.\(i === 0 \? aiExtra : \{\}\)/.test(NUOVO) && !/supplier_upsert', \{ nome: nomeForn, \.\.\.aiExtra/.test(NUOVO));
+t('62 C2/C4: tetti del bucket in 0144, search_path sul trigger', /file_size_limit = 10485760/.test(M2) && /allowed_mime_types = array\[/.test(M2) && /language plpgsql set search_path = public/.test(M2));
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

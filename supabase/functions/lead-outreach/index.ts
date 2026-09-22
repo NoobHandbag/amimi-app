@@ -139,14 +139,17 @@ const b64 = (s: string): string => {
 const wrap76 = (s: string): string => s.replace(/(.{76})/g, '$1\r\n');
 const encHdr = (s: string): string => (/[^\x20-\x7e]/.test(s) ? `=?UTF-8?B?${b64(s)}?=` : s);
 
+// nessun segreto in un messaggio d'errore (Gate 2 del 23-09, A1): la chiave sta nell'header, non nell'URL, perche' un
+// errore di rete di Deno cita l'URL intero nel messaggio, e quel messaggio arriva alla UI
+const scrub = (s: string) => s.replace(/key=[^&\s)]+/gi, 'key=***').replace(/AIza[0-9A-Za-z_-]{20,}/g, '***');
 async function gemini(prompt: string, key: string): Promise<{ text: string; finish: string }> {
   // MAI thinkingConfig (400); tetto alto perche' il ragionamento consuma lo stesso budget (CONOSCENZA 01-08)
-  const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+  const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.4, maxOutputTokens: MAX_TOKENS, responseMimeType: 'application/json' } }),
   });
   const gj = await g.json();
-  if (!g.ok) throw new Error('Gemini ' + g.status + ': ' + JSON.stringify(gj).slice(0, 200));
+  if (!g.ok) throw new Error(scrub('Gemini ' + g.status + ': ' + JSON.stringify(gj).slice(0, 200)));
   const cand = gj?.candidates?.[0];
   return { text: String(cand?.content?.parts?.[0]?.text ?? '').trim(), finish: String(cand?.finishReason ?? 'n/d') };
 }
@@ -277,7 +280,7 @@ Deno.serve(async (req) => {
       finish = g.finish;
       parsed = JSON.parse(g.text);
     } catch (e) {
-      return json({ error: 'generazione non riuscita: ' + (e as Error).message.slice(0, 200) + (finish ? ` (${finish})` : '') }, 502);
+      return json({ error: 'generazione non riuscita: ' + scrub((e as Error).message.slice(0, 200)) + (finish ? ` (${finish})` : '') }, 502);
     }
     // la misura va fatta PRIMA di aggiungere firma e opt-out, che da sole superano qualunque soglia
     const grezzo = String(parsed?.testo ?? '').trim();

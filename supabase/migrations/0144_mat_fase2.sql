@@ -37,7 +37,7 @@ revoke all on ai_compila_log from anon, authenticated;      -- lo legge e lo scr
 -- updated_at che si aggiorna davvero (in Fase 1 la colonna c'era ma restava ferma)
 -- ---------------------------------------------------------------------------
 create or replace function mat_touch_updated_at() returns trigger
-language plpgsql as $$
+language plpgsql set search_path = public as $$
 begin
   new.updated_at := now();
   return new;
@@ -51,6 +51,10 @@ create trigger mat_items_touch before update on mat_items for each row execute f
 -- Storage: l'utente loggato @amimi.it puo' CARICARE (mai leggere fuori dal SELECT gia' esistente, mai cancellare)
 -- solo sotto inbox/ del bucket privato mat-assets. I file del seed restano scrivibili solo dal service_role.
 -- ---------------------------------------------------------------------------
+-- tetti del bucket (valgono per gli upload nuovi): 10 MB per file e solo i tipi che il modulo sa trattare
+update storage.buckets set file_size_limit = 10485760,
+  allowed_mime_types = array['image/jpeg','image/png','image/webp','image/heic','image/heif','application/pdf','application/vnd.oasis.opendocument.text','application/octet-stream']
+where id = 'mat-assets';
 drop policy if exists mat_assets_ins on storage.objects;
 create policy mat_assets_ins on storage.objects for insert to authenticated
   with check (bucket_id = 'mat-assets' and (auth.jwt() ->> 'email') ilike '%@amimi.it' and name like 'inbox/%');

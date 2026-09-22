@@ -42,19 +42,23 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // stringa ripulita e troncata; vuota = null (mai '' a DB)
 const str = (v: unknown, max = 200): string | null => { const t = String(v ?? '').replace(/\u0000/g, '').trim(); return t ? t.slice(0, max) : null; };
-// numero da input umano ("48,44", "1.000,00", 48.44); assente = null; non numerico = NaN (chi chiama rifiuta)
+// numero da input umano ("48,44", "1.000,00", "1.000", 48.44); assente = null; non numerico = NaN (chi chiama rifiuta).
+// "1.000" senza decimali e' un migliaio italiano, non 1: il punto seguito da esattamente 3 cifre e' un separatore.
 const num = (v: unknown): number | null => {
   if (v === null || v === undefined || v === '') return null;
   if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
   let t = String(v).trim().replace(/\s|€|eur/gi, '');
-  if (/,\d{1,4}$/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); else t = t.replace(/,/g, '');
+  if (/,\d{1,4}$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  else t = t.replace(/,/g, '');
   const n = Number(t);
   return Number.isFinite(n) ? n : NaN;
 };
 const chiDa = (v: unknown): string => { const t = str(v, 40) ?? ''; return IDENT[t.slice(0, 1).toUpperCase()] && t.length <= 10 ? IDENT[t.slice(0, 1).toUpperCase()] : (t || 'ignoto'); };
 const dataOk = (v: unknown): string | null => { const t = str(v, 10); if (!t) return null; return DATE_RE.test(t) && !Number.isNaN(Date.parse(t)) ? t : 'INVALIDA'; };
-// escape per ilike: `_` e `%` sono jolly (un fornitore "M_M" non deve trovare "MLM")
-const ilikeEsc = (t: string) => t.replace(/[\\%_]/g, '\\$&');
+// escape per ilike: `_` e `%` sono jolly (un fornitore "M_M" non deve trovare "MLM"); PostgREST traduce `*` in `%`, quindi via
+const ilikeEsc = (t: string) => t.replace(/\*/g, '').replace(/[\\%_]/g, '\\$&');
+const mimeDaNome = (n: string): string => /\.pdf$/i.test(n) ? 'application/pdf' : /\.png$/i.test(n) ? 'image/png' : /\.webp$/i.test(n) ? 'image/webp' : /\.hei[cf]$/i.test(n) ? 'image/heic' : /\.odt$/i.test(n) ? 'application/vnd.oasis.opendocument.text' : 'image/jpeg';
 // ==== PURE:mat-api-guard END ====
 
 type Row = Record<string, unknown>;
@@ -179,7 +183,9 @@ async function handle(req: Request): Promise<Response> {
         if (ex2) items.push({ item_id: ex2.id, colore, creato: false });
       }
     }
-    if (items.length) await esitoAi(esitoScrittura, 'mat_items', items[0].item_id);
+    // nessuna riga ne' creata ne' ritrovata = qualcosa non torna (Gate 2, C3): errore esplicito, mai un ok vuoto
+    if (!items.length) return json({ error: 'materiale non creato e non ritrovato: riprova o controlla il catalogo' }, 500);
+    await esitoAi(esitoScrittura, 'mat_items', items[0].item_id);
     return json({ ok: true, supplier_id: forn.id, items });
   }
 
@@ -233,7 +239,10 @@ async function handle(req: Request): Promise<Response> {
     if (oErr) throw new ReadError('verifica del file nel bucket fallita, riprova: ' + oErr.message);
     const found = (obj ?? []).find((o: { name: string }) => o.name === nome);
     if (!found) return json({ error: 'file non trovato nel bucket: ricarica la foto' }, 422);
-    const riga = { supplier_id: forn.id, item_id: itemId, materiale: str(body.materiale, 200), order_id: orderId, path, tipo, titolo: str(body.titolo, 200) ?? nome, mime: str(body.mime, 80) ?? (found as { metadata?: { mimetype?: string } }).metadata?.mimetype ?? null, bytes: num(body.bytes) || (found as { metadata?: { size?: number } }).metadata?.size || null, fonte: str(body.fonte, 200) ?? `app ${new Date().toISOString().slice(0, 10)} ${chi}`, chi };
+    // mime: quello dichiarato dal client, altrimenti quello del bucket, ma mai application/octet-stream (File senza type): estensione
+    const mimeBucket = (found as { metadata?: { mimetype?: string } }).metadata?.mimetype;
+    const mime = str(body.mime, 80) ?? (mimeBucket && mimeBucket !== 'application/octet-stream' ? mimeBucket : mimeDaNome(nome));
+    const riga = { supplier_id: forn.id, item_id: itemId, materiale: str(body.materiale, 200), order_id: orderId, path, tipo, titolo: str(body.titolo, 200) ?? nome, mime, bytes: num(body.bytes) || (found as { metadata?: { size?: number } }).metadata?.size || null, fonte: str(body.fonte, 200) ?? `app ${new Date().toISOString().slice(0, 10)} ${chi}`, chi };
     const { data: ins, error } = await sb.from('mat_assets').insert(riga).select('id').single();
     if (error) return error.code === '23505' ? json({ error: 'file gia\' registrato' }, 409) : json({ error: 'asset non salvato: ' + error.message }, 500);
     await audit('asset_insert', 'mat_assets', ins.id, null, riga);

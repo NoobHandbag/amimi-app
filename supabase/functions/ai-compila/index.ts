@@ -144,9 +144,11 @@ function normalizza(target: string, raw: Row, contesto: Contesto): Row {
 // ==== PURE:ai-compila END ====
 
 async function sha256hex(bytes: Uint8Array): Promise<string> {
-  const d = await crypto.subtle.digest('SHA-256', bytes.buffer as ArrayBuffer);
+  const d = await crypto.subtle.digest('SHA-256', bytes as BufferSource);
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+// nessun segreto in un messaggio d'errore: la chiave viaggia in un header, ma un errore di rete puo' citare URL e body
+const scrub = (s: string) => s.replace(/key=[^&\s)]+/gi, 'key=***').replace(/AIza[0-9A-Za-z_-]{20,}/g, '***');
 function b64(bytes: Uint8Array): string {
   let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
@@ -204,7 +206,8 @@ Deno.serve(async (req) => {
       const { data: blob, error } = await sb.storage.from('mat-assets').download(p);
       if (error || !blob) return json({ error: 'file non leggibile dal bucket: ' + (error?.message ?? 'vuoto') }, 422);
       bytes = new Uint8Array(await blob.arrayBuffer());
-      mime = mime || blob.type || mimeDaNome(p);
+      // un File senza type sale come application/octet-stream: allora fa fede l'estensione del path
+      mime = mime || (blob.type && blob.type !== 'application/octet-stream' ? blob.type : mimeDaNome(p));
     } else if (typeof im.data === 'string' && im.data) {
       try { bytes = b64decode(im.data); } catch { return json({ error: 'base64 non valido' }, 422); }
       mime = mime || (im.data.startsWith('data:') ? im.data.slice(5, im.data.indexOf(';')) : 'image/jpeg');
@@ -222,15 +225,17 @@ Deno.serve(async (req) => {
   const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   let raw = ''; let finish = ''; let errore: string | null = null;
   try {
-    const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modello}:generateContent?key=${flags.gemini_api_key}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl.signal,
+    // chiave nell'header x-goog-api-key, MAI nell'URL: un errore di rete di Deno cita l'URL intero nel messaggio,
+    // e quel messaggio finisce nel log e sullo schermo (Gate 2 del 23-09, finding A1)
+    const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modello}:generateContent`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': flags.gemini_api_key }, signal: ctrl.signal,
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, ...parti.map((p) => ({ inlineData: { mimeType: p.mime, data: b64(p.data) } }))] }], generationConfig: { temperature: 0, maxOutputTokens: MAX_TOKENS, responseMimeType: 'application/json' } }),
     });
     const gj = await g.json();
-    if (!g.ok) errore = `Gemini ${g.status}: ${JSON.stringify(gj).slice(0, 200)}`;
+    if (!g.ok) errore = scrub(`Gemini ${g.status}: ${JSON.stringify(gj).slice(0, 200)}`);
     else { const cand = gj?.candidates?.[0]; raw = String(cand?.content?.parts?.[0]?.text ?? '').trim(); finish = String(cand?.finishReason ?? ''); if (!raw) errore = `risposta vuota (${finish || 'n/d'})`; }
   } catch (e) {
-    errore = (e as Error).name === 'AbortError' ? `timeout dopo ${TIMEOUT_MS / 1000} s` : (e as Error).message.slice(0, 200);
+    errore = (e as Error).name === 'AbortError' ? `timeout dopo ${TIMEOUT_MS / 1000} s` : scrub((e as Error).message.slice(0, 200));
   } finally { clearTimeout(timer); }
   const ms = Date.now() - t0;
   let proposta: Row | null = null;

@@ -20,16 +20,27 @@ const n = (c: Campo<number> | undefined) => (c && c.v != null ? String(c.v).repl
 // giallo = l'AI non e' sicura (confidenza sotto soglia) o non ha trovato il dato: da controllare a vista
 const stile = (c: Campo<unknown> | undefined, valore: string) => (c && valore && c.c < SOGLIA ? { background: '#fff3c4' } : undefined);
 const tip = (c: Campo<unknown> | undefined) => (c?.f ? `Fonte: ${c.f}` : undefined);
-const tipoFile = (f: { mime: string; name: string }, docTipo: string) => (/pdf$/i.test(f.mime) || /\.pdf$/i.test(f.name) ? (docTipo === 'scheda_tecnica' ? 'scheda_tecnica' : docTipo === 'proforma' || docTipo === 'fattura' ? 'proforma' : 'documento') : 'foto');
+// tipo dell'allegato: SOLO la foto di un campione e' "foto" (diventa la miniatura in catalogo); la foto di una proforma,
+// di un listino o di una scheda tecnica e' un documento anche se e' un jpeg (Gate 2 del 23-09, B1)
+const tipoFile = (f: { mime: string; name: string }, docTipo: string) => {
+  const pdf = /pdf$/i.test(f.mime) || /\.pdf$/i.test(f.name);
+  if (docTipo === 'scheda_tecnica') return 'scheda_tecnica';
+  if (docTipo === 'proforma' || docTipo === 'fattura') return 'proforma';
+  if (docTipo === 'listino' || docTipo === 'email' || docTipo === 'altro') return 'documento';
+  return pdf ? 'documento' : 'foto';
+};
 
-type Caricato = { path: string; mime: string; bytes: number; name: string };
+// un file caricato resta agganciato al suo File (identita'), non alla posizione nella lista: togliere un allegato
+// dopo "Compila" non scambia i path (Gate 2 del 23-09, A2)
+type Caricato = { file: File; path: string; mime: string; bytes: number; name: string };
 
 function Allegati({ files, setFiles, disabled }: { files: File[]; setFiles: (f: File[]) => void; disabled: boolean }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <div className="cs-fld">
       <label htmlFor="mat-file">Foto o documento (fotocamera, galleria, PDF)</label>
-      <input id="mat-file" ref={ref} type="file" accept="image/*,application/pdf" capture="environment" multiple disabled={disabled} onChange={(e) => setFiles([...files, ...Array.from(e.target.files ?? [])].slice(0, 4))} />
+      {/* niente `capture`: su Android forzerebbe la fotocamera e nasconderebbe galleria e PDF; il picker del telefono offre comunque la fotocamera */}
+      <input id="mat-file" ref={ref} type="file" accept="image/*,application/pdf" multiple disabled={disabled} onChange={(e) => setFiles([...files, ...Array.from(e.target.files ?? [])].slice(0, 4))} />
       {files.length > 0 && <div className="chips" style={{ marginTop: 6 }}>{files.map((f, i) => <button key={i} type="button" className="chip on" disabled={disabled} onClick={() => setFiles(files.filter((_, j) => j !== i))} title="togli">{f.name.slice(0, 28)} ✕</button>)}</div>}
       <div className="note" style={{ marginTop: 4 }}>Al massimo 4 file, 4 MB l&#8217;uno. Le foto grandi vengono accettate cosi&#8217; come sono.</div>
     </div>
@@ -51,16 +62,15 @@ export function NuovoMateriale({ chi, aiOn, fornitori, onDone, onBack }: { chi: 
   const [docData, setDocData] = useState('');
   const [righe, setRighe] = useState<Riga[]>([rigaVuota()]);
   const [conf, setConf] = useState<Partial<Record<string, Campo>>>({});
-  const [esito, setEsito] = useState<{ fornitore: string; materiali: number; offerte: number; asset: number; creato: boolean } | null>(null);
+  const [esito, setEsito] = useState<{ fornitore: string; materiali: number; offerte: number; offerteDup: number; asset: number; creato: boolean } | null>(null);
   const touch = () => { if (aiLog) setModificato(true); };
   // anche la ragione sociale: una proforma porta la conceria, il catalogo il marchio (Vicenza Pelli = Conceria San Biagio)
   const ctxFornitori = useMemo(() => fornitori.map((f) => ({ id: f.id, nome: f.nome, ragione_sociale: f.ragione_sociale })), [fornitori]);
 
-  // i file si caricano UNA volta (sotto inbox/), poi lo stesso path serve a "Compila" e a "Salva"
+  // ogni File sale UNA volta (sotto inbox/), agganciato per identita': lo stesso path serve a "Compila" e a "Salva"
   const assicuraUpload = async (): Promise<Caricato[]> => {
-    const nuovi = files.slice(caricati.length);
-    const out = [...caricati];
-    for (const f of nuovi) { const u = await uploadInbox(f, chi); out.push({ ...u, name: f.name }); }
+    const out = caricati.filter((c) => files.includes(c.file));
+    for (const f of files) if (!out.some((c) => c.file === f)) { const u = await uploadInbox(f, chi); out.push({ ...u, file: f, name: f.name }); }
     setCaricati(out);
     return out;
   };
@@ -78,7 +88,8 @@ export function NuovoMateriale({ chi, aiOn, fornitori, onDone, onBack }: { chi: 
       setConf({ fornitore: p.fornitore ?? vuoto(), documento_numero: p.documento_numero ?? vuoto(), documento_data: p.documento_data ?? vuoto() });
       const rr = (p.righe.length ? p.righe : [{} as PropostaRiga]).map((x) => ({ ...rigaVuota(s(x.categoria)), materiale: s(x.materiale), articolo: s(x.articolo_fornitore), colore: s(x.colore), unita: s(x.unita), quantita: n(x.quantita), prezzo: n(x.prezzo), prezzo_text: s(x.prezzo_text), disponibilita: s(x.disponibilita), min_ordine: s(x.min_ordine), lead_time: s(x.lead_time), conf: x as unknown as Partial<Record<string, Campo>> }));
       setRighe(rr);
-      const bassi = rr.reduce((k, x) => k + Object.values(x.conf).filter((c) => c && c.v != null && c.c < SOGLIA).length, 0);
+      const VISIBILI = ['categoria', 'materiale', 'articolo_fornitore', 'colore', 'unita', 'quantita', 'prezzo', 'prezzo_text'];
+      const bassi = rr.reduce((k, x) => k + VISIBILI.filter((f) => { const c = x.conf[f]; return c && c.v != null && c.c < SOGLIA; }).length, 0);
       setMsg(`Compilato dall’AI in ${(r.ms / 1000).toFixed(1)} s (${r.modello}). ${rr.length} ${rr.length === 1 ? 'riga' : 'righe'}${bassi ? `, ${bassi} campi in giallo da controllare` : ''}. Rileggi tutto: e’ una proposta.`);
     } catch (e) { setMsg((e as Error).message); }
     setBusy('');
@@ -93,6 +104,7 @@ export function NuovoMateriale({ chi, aiOn, fornitori, onDone, onBack }: { chi: 
     if (!valide.length) { setMsg('Serve almeno una riga con il nome del materiale.'); return; }
     for (const r of valide) if (!CATEGORIE.includes(r.categoria as typeof CATEGORIE[number])) { setMsg(`Scegli la categoria per "${r.materiale}".`); return; }
     setBusy('salva'); setMsg('');
+    // il log dell'AI si chiude sulla PRIMA riga di materiale (la proposta era un materiale), non sul fornitore
     const aiExtra = aiLog ? { ai_log_id: aiLog, ai_modificato: modificato } : {};
     try {
       const up = await assicuraUpload();
@@ -100,20 +112,21 @@ export function NuovoMateriale({ chi, aiOn, fornitori, onDone, onBack }: { chi: 
       let creato = false;
       const esistente = fornitori.find((f) => f.nome.toLowerCase() === nomeForn.toLowerCase());
       if (!supplierId && esistente) supplierId = esistente.id;
-      if (!supplierId) { const r = await matWrite('supplier_upsert', { nome: nomeForn, ...aiExtra }, chi); supplierId = String(r.supplier_id); creato = r.creato === true; }
-      let materiali = 0, offerte = 0, asset = 0;
+      if (!supplierId) { const r = await matWrite('supplier_upsert', { nome: nomeForn }, chi); supplierId = String(r.supplier_id); creato = r.creato === true; }
+      let materiali = 0, offerte = 0, offerteDup = 0, asset = 0;
       const fonte = [docTipo, docNumero].filter(Boolean).join(' ') || null;
+      const dataOfferta = docData || new Date().toISOString().slice(0, 10);   // senza data la chiave (item, data, fonte) collide a ogni salvataggio
       const materialiDistinti = new Set(valide.map((r) => r.materiale.trim().toLowerCase()));
-      for (const r of valide) {
-        const it = await matWrite('item_upsert', { supplier: supplierId, categoria: r.categoria, materiale: r.materiale.trim(), articolo_fornitore: r.articolo || null, colori: r.colore ? [r.colore] : [], unita: r.unita || null, ...aiExtra }, chi);
+      for (const [i, r] of valide.entries()) {
+        const it = await matWrite('item_upsert', { supplier: supplierId, categoria: r.categoria, materiale: r.materiale.trim(), articolo_fornitore: r.articolo || null, colori: r.colore ? [r.colore] : [], unita: r.unita || null, ...(i === 0 ? aiExtra : {}) }, chi);
         const items = (it.items ?? []) as { item_id: string; creato: boolean }[];
         materiali += items.filter((x) => x.creato).length;
         const itemId = items[0]?.item_id;
         if (itemId && (r.prezzo.trim() || r.prezzo_text.trim())) {
           try {
-            await matWrite('offer_add', { item_id: itemId, tipo: docTipo === 'listino' ? 'listino' : 'offerta', prezzo: r.prezzo.trim() || null, prezzo_text: r.prezzo_text.trim() || null, unita: r.unita || null, data: docData || null, documento_fonte: fonte, disponibilita: r.disponibilita || null, min_ordine: r.min_ordine || null, lead_time: r.lead_time || null, ...aiExtra }, chi);
+            await matWrite('offer_add', { item_id: itemId, tipo: docTipo === 'listino' ? 'listino' : 'offerta', prezzo: r.prezzo.trim() || null, prezzo_text: r.prezzo_text.trim() || null, unita: r.unita || null, data: dataOfferta, documento_fonte: fonte, disponibilita: r.disponibilita || null, min_ordine: r.min_ordine || null, lead_time: r.lead_time || null }, chi);
             offerte++;
-          } catch (e) { if ((e as Error & { status?: number }).status !== 409) throw e; }   // offerta gia' registrata: non e' un errore
+          } catch (e) { if ((e as Error & { status?: number }).status === 409) offerteDup++; else throw e; }   // stessa data e fonte: gia' registrata, e lo diciamo
         }
       }
       for (const f of up) {
@@ -122,7 +135,7 @@ export function NuovoMateriale({ chi, aiOn, fornitori, onDone, onBack }: { chi: 
           asset++;
         } catch (e) { if ((e as Error & { status?: number }).status !== 409) throw e; }
       }
-      setEsito({ fornitore: nomeForn, materiali, offerte, asset, creato });
+      setEsito({ fornitore: nomeForn, materiali, offerte, offerteDup, asset, creato });
       await onDone();
     } catch (e) { setMsg((e as Error).message); }
     setBusy('');
@@ -133,6 +146,7 @@ export function NuovoMateriale({ chi, aiOn, fornitori, onDone, onBack }: { chi: 
       <header><h1 style={{ fontSize: 20 }}>Salvato</h1></header>
       <div className="card">
         <p><b>{esito.fornitore}</b>{esito.creato ? ' (fornitore nuovo)' : ''}: {esito.materiali} {esito.materiali === 1 ? 'materiale nuovo' : 'materiali nuovi'}, {esito.offerte} {esito.offerte === 1 ? 'offerta' : 'offerte'}, {esito.asset} {esito.asset === 1 ? 'file' : 'file'}.</p>
+        {esito.offerteDup > 0 && <p className="note" style={{ color: 'var(--warning-700)' }}>{esito.offerteDup} {esito.offerteDup === 1 ? 'offerta era' : 'offerte erano'} gia&#8217; {esito.offerteDup === 1 ? 'registrata' : 'registrate'} con la stessa data e fonte: non {esito.offerteDup === 1 ? 'e&#8217; stata' : 'sono state'} riscritta. Per un prezzo nuovo cambia la data o la fonte.</p>}
         <p className="note">I materiali gia&#8217; presenti non sono stati duplicati. Tutto e&#8217; nel catalogo, con la foto.</p>
         <div className="lead-actions"><button type="button" className="ds-btn" onClick={onBack}>Torna al catalogo</button></div>
       </div>
@@ -144,7 +158,7 @@ export function NuovoMateriale({ chi, aiOn, fornitori, onDone, onBack }: { chi: 
       <header><h1 style={{ fontSize: 20 }}>Nuovo materiale</h1></header>
       <button className="back" onClick={onBack} type="button">← Catalogo</button>
       <div className="card">
-        <Allegati files={files} setFiles={(f) => { setFiles(f); if (f.length < caricati.length) setCaricati(caricati.slice(0, f.length)); }} disabled={busy !== ''} />
+        <Allegati files={files} setFiles={(f) => { setFiles(f); setCaricati((cs) => cs.filter((c) => f.includes(c.file))); }} disabled={busy !== ''} />
         <div className="cs-fld"><label htmlFor="mat-nota">Nota (detta con il microfono della tastiera)</label><textarea id="mat-nota" rows={3} value={nota} onChange={(e) => setNota(e.target.value)} placeholder="es. cocco stampato nero di Damapel, 40-45 al metro quadro, in deposito" /></div>
         {aiOn && <div className="lead-actions"><button type="button" className="ds-btn" style={{ background: 'var(--interactive)', color: '#fff' }} disabled={busy !== ''} onClick={compila}>{busy === 'compila' ? 'Leggo il documento…' : aiLog ? 'Ricompila' : 'Compila'}</button>{aiLog && <button type="button" className="ds-btn" disabled={busy !== ''} onClick={scarta}>Scarta la proposta</button>}</div>}
         {msg && <div className="note" style={{ marginTop: 6 }}>{msg}</div>}
@@ -205,8 +219,8 @@ export function NuovoFornitore({ chi, aiOn, fornitori, onDone, onBack }: { chi: 
     if (!files.length && !nota.trim()) { setMsg('Serve almeno una foto (biglietto, email, intestazione) o una nota.'); return; }
     setBusy('compila'); setMsg('');
     try {
-      const nuovi = files.slice(caricati.length); const up = [...caricati];
-      for (const x of nuovi) { const u = await uploadInbox(x, chi); up.push({ ...u, name: x.name }); }
+      const up = caricati.filter((c) => files.includes(c.file));
+      for (const x of files) if (!up.some((c) => c.file === x)) { const u = await uploadInbox(x, chi); up.push({ ...u, file: x, name: x.name }); }
       setCaricati(up);
       const r = await aiCompila<PropostaFornitore>({ target: 'fornitore', immagini: up.map((u) => ({ path: u.path })), testo: nota, contesto: { fornitori: fornitori.map((x) => ({ id: x.id, nome: x.nome, ragione_sociale: x.ragione_sociale })) }, chi });
       const p = r.proposta; setAiLog(r.ai_log_id); setModificato(false);
@@ -237,7 +251,7 @@ export function NuovoFornitore({ chi, aiOn, fornitori, onDone, onBack }: { chi: 
       <header><h1 style={{ fontSize: 20 }}>Nuovo fornitore</h1></header>
       <button className="back" onClick={onBack} type="button">← Fornitori</button>
       <div className="card">
-        <Allegati files={files} setFiles={(x) => { setFiles(x); if (x.length < caricati.length) setCaricati(caricati.slice(0, x.length)); }} disabled={busy !== ''} />
+        <Allegati files={files} setFiles={(x) => { setFiles(x); setCaricati((cs) => cs.filter((c) => x.includes(c.file))); }} disabled={busy !== ''} />
         <div className="cs-fld"><label htmlFor="mat-nota-f">Nota</label><textarea id="mat-nota-f" rows={2} value={nota} onChange={(e) => setNota(e.target.value)} placeholder="es. Damapel, pellami, referente Marco, pagamento 30 giorni" /></div>
         {aiOn && <div className="lead-actions"><button type="button" className="ds-btn" style={{ background: 'var(--interactive)', color: '#fff' }} disabled={busy !== ''} onClick={compila}>{busy === 'compila' ? 'Leggo…' : 'Compila'}</button></div>}
         {msg && <div className="note" style={{ marginTop: 6 }}>{msg}</div>}
@@ -292,7 +306,7 @@ export function SchedaAzioni({ g, chi, onChanged }: { g: MatGruppo; chi: string;
       <div className="rl" style={{ marginBottom: 6 }}>Aggiorna</div>
       <div className="lead-actions">
         <button type="button" className="ds-btn" disabled={busy !== ''} onClick={() => fotoRef.current?.click()}>{busy === 'foto' ? 'Carico…' : '+ Foto o documento'}</button>
-        <input ref={fotoRef} type="file" accept="image/*,application/pdf" capture="environment" multiple hidden onChange={(e) => aggiungiFoto(e.target.files)} />
+        <input ref={fotoRef} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => aggiungiFoto(e.target.files)} />
         <button type="button" className="ds-btn" disabled={busy !== ''} onClick={() => setOfferta(offerta ? null : { item_id: g.righe[0].item_id, prezzo: '', prezzo_text: '', data: new Date().toISOString().slice(0, 10), fonte: '' })}>+ Offerta</button>
         {attivi > 0 ? <button type="button" className="ds-btn" disabled={busy !== ''} onClick={() => setAttivo(false)}>Segna non attivo</button> : <button type="button" className="ds-btn" disabled={busy !== ''} onClick={() => setAttivo(true)}>Riattiva</button>}
       </div>

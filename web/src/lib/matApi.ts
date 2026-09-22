@@ -57,8 +57,9 @@ export async function fetchMatEnabled(): Promise<boolean> {
   return v === 'true' || v === '1' || v === 'on' || v === 'yes';
 }
 
+// anche le righe non attive: dalla Fase 2 si possono disattivare e riattivare dall'app, e "Riattiva" deve poterle trovare
 export async function fetchCatalogo(): Promise<MatCatalogo[]> {
-  const { data, error } = await csClient.from('v_mat_catalogo').select('*').eq('attivo', true).order('fornitore').order('materiale').order('colore');
+  const { data, error } = await csClient.from('v_mat_catalogo').select('*').order('fornitore').order('materiale').order('colore');
   if (error) throw new Error(error.message);
   return (data ?? []) as MatCatalogo[];
 }
@@ -119,14 +120,19 @@ async function callEdge(url: string, payload: Record<string, unknown>): Promise<
 export type MatAction = 'supplier_upsert' | 'item_upsert' | 'offer_add' | 'asset_add' | 'item_set_attivo' | 'ai_scarta';
 export const matWrite = (action: MatAction, payload: Record<string, unknown>, chi: string) => callEdge(MAT_API_URL, { action, chi, ...payload });
 
-/** Upload nel bucket privato sotto inbox/<chi>/<data>/<uuid>.<ext>. Torna il path da passare a ai-compila e asset_add. */
+export const mimeDaNome = (n: string): string => /\.pdf$/i.test(n) ? 'application/pdf' : /\.png$/i.test(n) ? 'image/png' : /\.webp$/i.test(n) ? 'image/webp' : /\.hei[cf]$/i.test(n) ? 'image/heic' : 'image/jpeg';
+/** Upload nel bucket privato sotto inbox/<chi>/<data>/<uuid>.<ext>. Torna il path da passare a ai-compila e asset_add.
+ *  Un File senza type (succede con alcuni picker) salirebbe come application/octet-stream: si rimpacchetta in un Blob col
+ *  tipo dedotto dall'estensione, cosi' bucket, AI e catalogo vedono un'immagine. */
 export async function uploadInbox(file: File, chi: string): Promise<{ path: string; mime: string; bytes: number }> {
   const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5) || 'jpg';
   const who = chi.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'app';
+  const mime = file.type && file.type !== 'application/octet-stream' ? file.type : mimeDaNome(file.name);
+  const body: Blob = file.type === mime ? file : new Blob([file], { type: mime });
   const path = `inbox/${who}/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${ext}`;
-  const { error } = await csClient.storage.from('mat-assets').upload(path, file, { contentType: file.type || undefined, upsert: false });
+  const { error } = await csClient.storage.from('mat-assets').upload(path, body, { contentType: mime, upsert: false });
   if (error) throw new Error('upload non riuscito: ' + error.message);
-  return { path, mime: file.type, bytes: file.size };
+  return { path, mime, bytes: file.size };
 }
 
 export type Campo<T = string> = { v: T | null; c: number; f: string | null };
@@ -149,15 +155,17 @@ export const groupKey = (r: { fornitore: string; materiale: string }) => `${r.fo
 
 export type MatGruppo = {
   key: string; fornitore: string; supplier_id: string; categoria: string; materiale: string; articolo_fornitore: string | null;
-  righe: MatCatalogo[]; foto_path: string | null; acquistato: boolean; prezzo: string; unita: string | null; n_foto: number;
+  righe: MatCatalogo[]; foto_path: string | null; acquistato: boolean; prezzo: string; unita: string | null; n_foto: number; attivo: boolean;
 };
-/** Una card per materiale (decisione D3): le righe colore dello stesso materiale si fondono, i prezzi si riassumono. */
+/** Una card per materiale (decisione D3): le righe colore dello stesso materiale si fondono, i prezzi si riassumono.
+ *  `attivo` = almeno un colore attivo: i gruppi spenti restano raggiungibili dal filtro "Non attivi" (Fase 2). */
 export function raggruppa(rows: MatCatalogo[]): MatGruppo[] {
   const m = new Map<string, MatGruppo>();
   for (const r of rows) {
     const k = groupKey(r);
-    const g = m.get(k) ?? { key: k, fornitore: r.fornitore, supplier_id: r.supplier_id, categoria: r.categoria, materiale: r.materiale, articolo_fornitore: r.articolo_fornitore, righe: [], foto_path: null, acquistato: false, prezzo: '', unita: r.unita_rif, n_foto: 0 };
+    const g = m.get(k) ?? { key: k, fornitore: r.fornitore, supplier_id: r.supplier_id, categoria: r.categoria, materiale: r.materiale, articolo_fornitore: r.articolo_fornitore, righe: [], foto_path: null, acquistato: false, prezzo: '', unita: r.unita_rif, n_foto: 0, attivo: false };
     g.righe.push(r);
+    g.attivo = g.attivo || r.attivo;
     if (!g.foto_path && r.foto_path) g.foto_path = r.foto_path;
     g.acquistato = g.acquistato || r.acquistato;
     g.n_foto = Math.max(g.n_foto, Number(r.n_foto ?? 0));

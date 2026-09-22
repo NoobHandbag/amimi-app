@@ -34,7 +34,7 @@ function Card({ g, url, onOpen }: { g: MatGruppo; url: string | undefined; onOpe
         <div className="mat-nm">{g.materiale}</div>
         <div className="mat-sup">{g.fornitore}</div>
         <div className="mat-price">{g.prezzo}</div>
-        <span className={`mat-badge ${g.acquistato ? 'acq' : ''}`}>{g.acquistato ? 'acquistato' : 'offerta'}</span>
+        <span className={`mat-badge ${g.acquistato ? 'acq' : ''}`}>{!g.attivo ? 'non attivo' : g.acquistato ? 'acquistato' : 'offerta'}</span>
         {g.n_foto > 1 && <span className="mat-badge" style={{ marginLeft: 4 }}>{g.n_foto} foto</span>}
         {colori.length > 0 && <div className="mat-colors">{colori.slice(0, 4).map((c) => <span key={c}>{c}</span>)}{colori.length > 4 && <span>+{colori.length - 4}</span>}</div>}
       </div>
@@ -166,7 +166,7 @@ export default function Materiali({ onBack, onProdotti, chi }: { onBack: () => v
   const [forn, setForn] = useState<MatFornitore[]>([]);
   const [acquisti, setAcquisti] = useState<MatAcquisto[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
-  const [cat, setCat] = useState<string>(''); const [fSup, setFSup] = useState<string>(''); const [tipo, setTipo] = useState<'' | 'acq' | 'off'>('');
+  const [cat, setCat] = useState<string>(''); const [fSup, setFSup] = useState<string>(''); const [tipo, setTipo] = useState<'' | 'acq' | 'off' | 'inattivi'>('');
   const [q, setQ] = useState('');
   const [sel, setSel] = useState<string | null>(null);
 
@@ -206,10 +206,14 @@ export default function Materiali({ onBack, onProdotti, chi }: { onBack: () => v
   const gruppi = useMemo(() => (rows ? raggruppa(rows) : []), [rows]);
   const fornitoriNomi = useMemo(() => [...new Set(gruppi.map((g) => g.fornitore))].sort(), [gruppi]);
   const query = q.trim().toLowerCase();
+  const nInattivi = useMemo(() => gruppi.filter((g) => !g.attivo).length, [gruppi]);
   const visibili = useMemo(() => gruppi.filter((g) =>
-    (!cat || g.categoria === cat) && (!fSup || g.fornitore === fSup) && (!tipo || (tipo === 'acq' ? g.acquistato : !g.acquistato)) &&
+    (tipo === 'inattivi' ? !g.attivo : g.attivo) &&
+    (!cat || g.categoria === cat) && (!fSup || g.fornitore === fSup) && (!tipo || tipo === 'inattivi' || (tipo === 'acq' ? g.acquistato : !g.acquistato)) &&
     (!query || g.materiale.toLowerCase().includes(query) || g.fornitore.toLowerCase().includes(query) || (g.articolo_fornitore ?? '').toLowerCase().includes(query) || g.righe.some((r) => (r.colore ?? '').toLowerCase().includes(query)))
   ), [gruppi, cat, fSup, tipo, query]);
+  // il contatore del segmented conta solo i materiali attivi, come in Fase 1
+  const nAttivi = useMemo(() => gruppi.filter((g) => g.attivo).length, [gruppi]);
   const selected = sel ? gruppi.find((g) => g.key === sel) : null;
   const materialiDelFornitore = useMemo(() => new Set(selected ? gruppi.filter((g) => g.supplier_id === selected.supplier_id).map((g) => g.materiale.toLowerCase()) : []), [gruppi, selected]);
 
@@ -252,7 +256,7 @@ export default function Materiali({ onBack, onProdotti, chi }: { onBack: () => v
       <header><h1>Materie prime</h1><button className="badge" onClick={onBack} type="button">‹ Home</button></header>
       {segmented}
       <div className="seg wrap" style={{ marginBottom: 10 }}>
-        <button type="button" className={view === 'catalogo' ? 'on' : ''} onClick={() => setView('catalogo')}>Catalogo{rows ? ` (${gruppi.length})` : ''}</button>
+        <button type="button" className={view === 'catalogo' ? 'on' : ''} onClick={() => setView('catalogo')}>Catalogo{rows ? ` (${nAttivi})` : ''}</button>
         <button type="button" className={view === 'fornitori' ? 'on' : ''} onClick={() => setView('fornitori')}>Fornitori{forn.length ? ` (${forn.length})` : ''}</button>
       </div>
       {err && <div className="card err">Errore: {err}</div>}
@@ -267,6 +271,7 @@ export default function Materiali({ onBack, onProdotti, chi }: { onBack: () => v
             <button type="button" className={`chip ${tipo === '' ? 'on' : ''}`} onClick={() => setTipo('')}>Tutti</button>
             <button type="button" className={`chip ${tipo === 'acq' ? 'on' : ''}`} onClick={() => setTipo('acq')}>Acquistati</button>
             <button type="button" className={`chip ${tipo === 'off' ? 'on' : ''}`} onClick={() => setTipo('off')}>Offerte</button>
+            {nInattivi > 0 && <button type="button" className={`chip ${tipo === 'inattivi' ? 'on' : ''}`} onClick={() => setTipo(tipo === 'inattivi' ? '' : 'inattivi')}>Non attivi ({nInattivi})</button>}
           </div>
           <div className="mat-filters">
             <button type="button" className={`chip ${cat === '' ? 'on' : ''}`} onClick={() => setCat('')}>Tutte le categorie</button>
