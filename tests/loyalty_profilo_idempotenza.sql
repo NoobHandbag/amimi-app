@@ -128,5 +128,29 @@ begin
   r := loyalty_bonus_second_run(); if r->>'state' <> 'off' then raise exception 'flag OFF bonus: %', r; end if;
   if (select severity from health_log where day = current_date and k = 'loyalty_birthday') <> 'ok' then raise exception 'health_log loyalty_birthday'; end if;
 
-  raise exception 'TEST_OK: profilo, compleanno, bonus seconda borsa, ledger in quadra (rollback voluto)';
+  -- A1 (Gate 2, migr 0142): l''evento birthday non porta la data, solo l''anno
+  if exists (select 1 from loyalty_events where source = 'birthday' and meta ? 'birthday') then raise exception 'A1 meta birthday contiene la data'; end if;
+
+  -- D (migr 0142): premio unico 100 punti = 12%. Attivo SOLO dentro questa transazione (poi tutto si annulla).
+  --   Criterio del brief: membro con 108 punti riscatta, riceve un codice 12% e resta con 8; stessa chiamata = stesso codice; 99 punti = rifiuto.
+  update loyalty_rewards set active = (key = 'tessera12') where key in ('tessera', 'tessera12');
+  if (select count(*) from loyalty_rewards where active) <> 1 then raise exception 'D un solo premio attivo atteso'; end if;
+  insert into loyalty_reward_codes (code, reward_key) values ('PREMIA-TEST12', 'tessera12');
+  insert into loyalty_points (shopify_customer_id, points) values ('TEST_0141_D108', 108), ('TEST_0141_D99', 99);
+  insert into loyalty_events (shopify_customer_id, delta, source, meta) values ('TEST_0141_D108', 108, 'manual_adjust', '{"test":true}'), ('TEST_0141_D99', 99, 'manual_adjust', '{"test":true}');
+  r := loyalty_redeem('TEST_0141_D108', 'tessera12', 'idemp-test-0142-108');
+  if not (r->>'ok')::bool or (r->>'new_balance')::int <> 8 or (r->>'cost')::int <> 100 or (r->>'value')::numeric <> 12 then raise exception 'D riscatto 108: %', r; end if;
+  if loyalty_claim_code('tessera12', 'TEST_0141_D108', (r->>'redemption_id')::bigint) <> 'PREMIA-TEST12' then raise exception 'D codice non consegnato'; end if;
+  if loyalty_claim_code('tessera12', 'TEST_0141_D108', (r->>'redemption_id')::bigint) <> 'PREMIA-TEST12' then raise exception 'D seconda claim deve dare lo stesso codice'; end if;
+  r := loyalty_redeem('TEST_0141_D108', 'tessera12', 'idemp-test-0142-108');
+  if r->>'reason' <> 'already' or r->>'code' <> 'PREMIA-TEST12' then raise exception 'D stesso idemp doveva dare already con lo stesso codice: %', r; end if;
+  if (select points from loyalty_points where shopify_customer_id = 'TEST_0141_D108') <> 8 then raise exception 'D saldo dopo il doppio invio'; end if;
+  r := loyalty_redeem('TEST_0141_D99', 'tessera12', 'idemp-test-0142-099');
+  if (r->>'ok')::bool or r->>'reason' <> 'insufficient' then raise exception 'D 99 punti doveva essere insufficient: %', r; end if;
+  r := loyalty_redeem('TEST_0141_D99', 'tessera', 'idemp-test-0142-old');
+  if (r->>'ok')::bool or r->>'reason' <> 'reward_unknown' then raise exception 'D il vecchio premio spento non deve essere riscattabile: %', r; end if;
+  if (select membri_con_tessera_piena from v_loyalty_redeem_rate) <> (select count(*) from loyalty_points where points >= 100) then raise exception 'D KPI tessera piena sul premio attivo'; end if;
+  if exists (select 1 from v_loyalty_ledger_drift where diff <> 0) then raise exception 'L drift dopo D'; end if;
+
+  raise exception 'TEST_OK: profilo, compleanno, bonus seconda borsa, premio 12%%, ledger in quadra (rollback voluto)';
 end $$;

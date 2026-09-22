@@ -133,5 +133,21 @@ t('71 pagina: escape sui valori del profilo', /esc\(P\.materiale_preferito/.test
 t('72 pagina: profile_save via POST con consenso booleano', /api\('profile_save',\{method:'POST',body\}\)/.test(PAGE) && /consenso: !!\(cons && cons\.checked\)/.test(PAGE));
 t('73 pagina: nessun em dash nei testi', !/—/.test(PAGE));
 
+// ---- migr 0142 (22-09 sera): Gate 2 sulla 0141 + Parte D (premio unico 100 pt = 12%) ----
+const M142 = read('supabase/migrations/0142_loyalty_gate2_premio12.sql');
+console.log('\n== migr 0142: Gate 2 chiuso a codice, premio 12% spento ==');
+t('74 esattamente una migrazione 0142_*', migs.filter((f) => f.startsWith('0142_')).length === 1);
+t('75 A1: evento birthday con SOLO anno nel meta (ask_ro legge loyalty_events.meta)', /'birthday', jsonb_build_object\('year', r\.year, 'fisso', true\)/.test(M142) && !/'birthday', r\.bday/.test(M142));
+t('76 B1: storno del bonus sull\'ordine salvato (second_order_id), non sul rn=2 della vista', /join loyalty_order_credits c on c\.shopify_order_id = b\.second_order_id/.test(M142) && /left join loyalty_order_reversals rv on rv\.shopify_order_id = b\.second_order_id/.test(M142));
+t('77 B2: cursore since fissato PRIMA del blocco exception e mai sovrascritto', M142.indexOf("key = 'loyalty_bonus_second_since'") < M142.indexOf('begin\n    for r in\n      select s.shopify_customer_id') && /do update set value = excluded\.value where coalesce\(trim\(app_flags\.value\), ''\) = ''/.test(M142));
+t('78 B3: finestra 90 giorni e deadline su date Europe/Rome + days_left', /s\.order_day <= f\.order_day \+ 90/.test(M142) && /\(f\.order_day \+ 90\) as deadline/.test(M142) && /'days_left', case when v_n = 1/.test(M142));
+t('79 C1/C2: second_fully_refunded mai null, n=0 in errore', /coalesce\(s\.points_reversed >= s\.points or/.test(M142) && (M142.match(/v_sev := 'error'; v_done := 0/g) || []).length === 2);
+t('80 D: riga tessera12 (100 pt, 12%) inserita SPENTA, nessuna cancellazione, tessera invariata', /\('tessera12', '[^']*', 100, 'percentage', 12, false, 5\)/.test(M142) && !/delete from loyalty_rewards|update loyalty_rewards set active = \(key = 'tessera12'\)/.test(M142.replace(/^\s*--[^\n]*$/gm, '')));
+t('81 D: KPI tessera piena sul premio attivo (niente 200 fisso)', /p\.points >= coalesce\(\(select min\(w\.cost_points\) from loyalty_rewards w where w\.active\), 200\)/.test(M142));
+t('82 D: la pagina deriva i timbri dal costo del premio attivo (10 timbri = cost_points)', /Math\.round\(Number\(rw0\.cost_points\)\/CONFIG\.stampsForReward\)/.test(PAGE) && /Un timbro ogni '\+stampEvery\+' punti/.test(PAGE));
+t('83 D: la edge non ha costi o percentuali fisse del premio (li legge la RPC dalla riga attiva)', !/cost_points: 200|cost: 200|value: 20\b|value: 12\b/.test(P));
+t('84 C3: profile_save valida intervallo giorno/mese e body nullo', /day < 1 \|\| day > 31/.test(P) && /month < 1 \|\| month > 12/.test(P) && /\?\? \{\}\) as Record<string, unknown>/.test(P));
+t('85 C4: la pagina usa days_left dal server (niente fuso del browser)', /Number\(bs\.days_left\)/.test(PAGE) && !/new Date\(bs\.deadline/.test(PAGE));
+
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

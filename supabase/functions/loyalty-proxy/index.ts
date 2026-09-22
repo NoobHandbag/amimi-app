@@ -504,10 +504,11 @@ Deno.serve(async (req) => {
     const on = await readFlagFor('loyalty_profile_enabled');
     if (on === null) return json({ error: 'read_failed' }, 503);
     if (!on) return json({ state: 'off' });
-    const pb = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const pb = ((await req.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;   // body `null` = vuoto, non un crash
     const num = (x: unknown): number | null => (x === null || x === undefined || x === '') ? null : Number(x);
     const day = num(pb.birth_day), month = num(pb.birth_month);
-    if ((day !== null && !Number.isInteger(day)) || (month !== null && !Number.isInteger(month))) return json({ error: 'bad_date' }, 400);
+    // intero nel suo intervallo (la RPC ricontrolla il calendario, es. 31/02): qui si evita un 500 su valori assurdi
+    if ((day !== null && (!Number.isInteger(day) || day < 1 || day > 31)) || (month !== null && (!Number.isInteger(month) || month < 1 || month > 12))) return json({ error: 'bad_date' }, 400);
     const materiale = (pb.materiale === null || pb.materiale === undefined) ? null : String(pb.materiale).trim().slice(0, 40);
     if (typeof pb.consenso !== 'boolean') return json({ error: 'invalid_value' }, 400);
     // nessun retry: la RPC e' idempotente ma e' una scrittura (Regola 20d); un errore torna 500 e la pagina dice "riprova"
