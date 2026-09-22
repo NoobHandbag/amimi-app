@@ -1,0 +1,91 @@
+# Gate 1 automatica (audit gate, 2026-09-13/14): i test OFFLINE di amimi-app girano da soli a ogni
+# push o PR che tocca le edge function, le migrazioni, i test o il frontend. Nessun segreto, nessuna
+# scrittura. E' l'equivalente della Action scoped di Telaio (principio 10: "una guardia che gira solo
+# quando una sessione se ne ricorda non e' una guardia"). Node 24 serve al parser TypeScript di tests/edge_syntax.mjs.
+#
+# Difetto trovato dall'audit del 14-09 sulla prima stesura: `node "$t" | tail -3` con `set -e` e senza
+# pipefail restituiva l'exit di tail, cioe' un test rosso restava verde. Ora: `shell: bash` (GitHub
+# aggiunge -eo pipefail), nessuna pipe, output intero, exit esplicito.
+#
+# NOTA per chi pusha: il token gh di NoobHandbag non ha lo scope `workflow`: la prima volta questo
+# file si pusha dopo `gh auth refresh -s workflow` (owner), altrimenti GitHub rifiuta il push intero.
+# Prova del cancello dopo il primo push: un commit che rompe un'asserzione deve far diventare rosso il run.
+name: amimi-app tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/functions/**"
+      - "supabase/migrations/**"
+      - "supabase/snippets/**"
+      - "tests/**"
+      - "web/src/**"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - ".github/workflows/amimi-app-tests.yml"
+  pull_request:
+    paths:
+      - "supabase/functions/**"
+      - "supabase/migrations/**"
+      - "supabase/snippets/**"
+      - "tests/**"
+      - "web/src/**"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - ".github/workflows/amimi-app-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Sintassi delle edge function (parser TypeScript di Node 24; node --check e' cieco sui .ts con import, 22-09)
+        shell: bash
+        run: node tests/edge_syntax.mjs
+      - name: loyalty-page generata dalla sorgente (quest audit Premia 2026-09-21, finding T25)
+        shell: bash
+        run: node supabase/functions/loyalty-page/build.mjs --check
+      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate)
+        shell: bash
+        run: |
+          set -eo pipefail
+          fail=0
+          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/lead_outreach_guardie.mjs; do
+            echo "== $t"
+            node "$t" || { echo "::error::suite KO: $t"; fail=1; }
+          done
+          exit $fail
+      - name: Build del frontend (tsc -b + vite) e lint
+        shell: bash
+        working-directory: web
+        run: |
+          set -eo pipefail
+          npm ci
+          npm run build
+          npm run lint
+
+  # Invarianti in SOLA LETTURA sulle viste di produzione con la chiave PUBBLICA (gia' nel bundle
+  # e in uptime.yml). Separato e non bloccante: dipende dalla rete e dai 504 di PostgREST
+  # (CASI_APERTI n.19), non dal codice.
+  invarianti-produzione:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: tests/features.mjs (read-only)
+        shell: bash
+        run: node tests/features.mjs
+      - name: tests/loyalty_smoke.mjs (read-only, App Proxy ed edge Premia)
+        shell: bash
+        run: node tests/loyalty_smoke.mjs
