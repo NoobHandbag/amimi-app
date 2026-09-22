@@ -445,7 +445,7 @@ idempotenza a DB, Regola 20). Il client non decide MAI i punti. NON tocca CE / s
 - Flag: `loyalty_purchase_enabled` (OFF), `loyalty_euro_per_point` (1), `loyalty_orders_since` (lancio).
 - Deploy 2026-09-18 via `supabase functions deploy loyalty-orders --no-verify-jwt`; redeploy 2026-09-20 (fix backfill `floor`). Cron NON ancora schedulato.
 
-## lead-outreach (v1, 2026-09-22, NON ancora deployata) - bozze AI e invio delle email B2B (modulo lead_*)
+## lead-outreach (v1, DEPLOYATA 2026-09-22 23:00, flag OFF) - bozze AI e invio delle email B2B (modulo lead_*)
 
 Missione M2 (call Dan + Benny 22-09). Edge NUOVA (Regola 19): riusa gli schemi di `cs-assist` (Gemini JSON mode, niente `thinkingConfig`, `maxOutputTokens` 8.000) e di `cs-send` (Gmail API da info@amimi.it col service account `app_flags.cs_gmail_sa_key`), senza toccarle. Tutte le azioni vogliono il JWT di un utente @amimi.it. Flag `lead_outreach_ai_enabled` (default OFF): spento = 403 su bozza e invio, rollback completo.
 
