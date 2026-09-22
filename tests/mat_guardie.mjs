@@ -48,7 +48,8 @@ t('17 seed: dry-run di default, --apply esplicito, 23505 = gia\' presente, somma
 t('18 seed: letture con error destrutturato e stop (20a)', /const \{ data: found, error: e1 \}/.test(SEED) && /if \(e1\) throw/.test(SEED));
 
 console.log('\n== Frontend: sola lettura col client loggato ==');
-t('19 matApi non importa il client anon per i dati (solo v_mat_settings)', !/from '\.\/supabase'/.test(noTs(API).replace(/fetchMatEnabled[\s\S]*?\n}\n/, '')) || (noTs(API).match(/supabase\.from\(/g) ?? []).length === 1 && /supabase\.from\('v_mat_settings'\)/.test(API));
+const anonReads = noTs(API).match(/\bsupabase\.from\('([^']+)'\)/g) ?? [];
+t('19 matApi usa il client anon per UNA sola lettura, v_mat_settings (il flag)', anonReads.length === 1 && anonReads[0] === "supabase.from('v_mat_settings')", anonReads.join(','));
 t('20 matApi legge le viste v_mat_* via csClient', /csClient\.from\('v_mat_catalogo'\)/.test(API) && /csClient\.from\('v_mat_fornitori'\)/.test(API) && /csClient\.from\('v_mat_acquisti'\)/.test(API) && /csClient\.from\('v_mat_assets'\)/.test(API));
 t('21 matApi: URL firmati dal bucket mat-assets (mai URL pubblici)', /storage\.from\('mat-assets'\)\.createSignedUrls/.test(API) && !/getPublicUrl/.test(API));
 t('22 la pagina non importa il client anon e non scrive (nessun insert/update/delete)', !/lib\/supabase'/.test(PAGE) && !/\.(insert|update|delete|upsert)\(/.test(noTs(PAGE)));

@@ -166,13 +166,7 @@ select
   coalesce(a.prezzo_unitario, o.prezzo) as prezzo_rif,
   case when a.prezzo_unitario is not null then null else o.prezzo_text end as prezzo_rif_text,
   coalesce(a.unita, o.unita, i.unita) as unita_rif,
-  f.path as foto_path,
-  (select count(*) from mat_assets x where x.tipo = 'foto'
-     and (x.item_id = i.id or (x.item_id is null and x.order_id is null and x.supplier_id = i.supplier_id
-          and lower(coalesce(x.materiale, '')) = lower(i.materiale)))) as n_foto,
-  (select count(*) from mat_assets x where x.tipo in ('scheda_tecnica','documento')
-     and (x.item_id = i.id or (x.item_id is null and x.order_id is null and x.supplier_id = i.supplier_id
-          and lower(coalesce(x.materiale, '')) = lower(i.materiale)))) as n_schede,
+  f.foto_path, f.n_foto, f.n_schede,
   s.condizioni_pagamento, s.deposito_luogo, s.email as fornitore_email, s.telefono as fornitore_telefono,
   s.referente as fornitore_referente
 from mat_items i
@@ -186,11 +180,16 @@ left join lateral (
   where l.item_id = i.id and r.stato <> 'annullato'
   order by r.data_documento desc nulls last, l.created_at desc limit 1
 ) a on true
+-- asset del materiale in UNA passata: agganciati al colore (item_id) o a tutti i colori (materiale);
+-- la foto del colore vince su quella generica (coalesce: item_id NULL non deve finire primo per il DESC)
 left join lateral (
-  select x.path from mat_assets x where x.tipo = 'foto'
-    and (x.item_id = i.id or (x.item_id is null and x.order_id is null and x.supplier_id = i.supplier_id
-         and lower(coalesce(x.materiale, '')) = lower(i.materiale)))
-  order by (x.item_id = i.id) desc, x.created_at asc limit 1
+  select
+    count(*) filter (where x.tipo = 'foto') as n_foto,
+    count(*) filter (where x.tipo in ('scheda_tecnica','documento')) as n_schede,
+    (array_agg(x.path order by coalesce(x.item_id = i.id, false) desc, x.created_at asc) filter (where x.tipo = 'foto'))[1] as foto_path
+  from mat_assets x
+  where x.item_id = i.id or (x.item_id is null and x.order_id is null and x.supplier_id = i.supplier_id
+        and lower(coalesce(x.materiale, '')) = lower(i.materiale))
 ) f on true;
 
 create or replace view v_mat_fornitori with (security_invoker = on) as

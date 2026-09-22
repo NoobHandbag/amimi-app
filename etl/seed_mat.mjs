@@ -47,12 +47,13 @@ const numIt = (v) => { const t = nz(v); if (t == null) return null; const m = St
 const numEn = (v) => { const t = nz(v); if (t == null) return null; return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : null; };
 // "11/06/2026" -> 2026-06-11; "07-08/09/2026" (intervallo) -> primo giorno; altro -> null
 const dateIt = (v) => { const t = nz(v); if (!t) return null; const m = t.match(/^(\d{1,2})(?:-\d{1,2})?\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null; };
-// prezzo: numero singolo ("24,00", "0,656 (sconto 3%)" -> 0.656 + sconto) oppure testo fedele
+// prezzo: numero singolo ("24,00", "0,656 (sconto 3%)" -> 0.656 + sconto, "30/mq" -> 30 + unita) oppure testo fedele
+// (range "40-45/mq", scaglioni, "n/d"): un valore certo diventa numero, tutto il resto resta testo (Regola 1).
 function prezzo(v) {
-  const t = nz(v); if (t == null) return { prezzo: null, prezzo_text: null, sconto_text: null };
-  const m = t.match(/^(\d+(?:[.,]\d+)?)\s*(?:\(sconto ([^)]+)\))?$/);
-  if (m) return { prezzo: Number(m[1].replace(',', '.')), prezzo_text: null, sconto_text: m[2] ? `sconto ${m[2]}` : null };
-  return { prezzo: null, prezzo_text: t, sconto_text: null };
+  const t = nz(v); if (t == null) return { prezzo: null, prezzo_text: null, sconto_text: null, unita: null };
+  const m = t.match(/^(\d+(?:[.,]\d+)?)\s*(?:\/(mq|ml|mt|pz))?\s*(?:\(sconto ([^)]+)\))?$/i);
+  if (m) return { prezzo: Number(m[1].replace(',', '.')), prezzo_text: null, sconto_text: m[3] ? `sconto ${m[3]}` : null, unita: m[2] ? m[2].toLowerCase() : null };
+  return { prezzo: null, prezzo_text: t, sconto_text: null, unita: null };
 }
 const unita = (v) => { const t = nz(v); return t && ['mq', 'ml', 'mt', 'pz'].includes(t.toLowerCase()) ? t.toLowerCase() : null; };
 const slug = (s) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -115,7 +116,7 @@ for (const r of matRows) {
 const offers = matRows.filter((r) => r.tipo === 'Offerta').map((r) => {
   const p = prezzo(r.prezzo_text);
   return { key: itemKey(r.fornitore, r.materiale, nz(r.colore)), tipo: /listino/i.test(r.numero_documento) ? 'listino' : 'offerta', prezzo: p.prezzo, prezzo_text: p.prezzo_text,
-    unita: unita(r.unita), disponibilita: nz(r.disponibilita_offerta), data: dateIt(r.data), documento_fonte: nz(r.numero_documento), note: nz(r.note), chi: CHI };
+    unita: unita(r.unita) ?? p.unita, disponibilita: nz(r.disponibilita_offerta), data: dateIt(r.data), documento_fonte: nz(r.numero_documento), note: nz(r.note), chi: CHI };
 });
 const orders = new Map();
 const lines = [];
@@ -170,14 +171,13 @@ const stat = { nuovi: {}, esistenti: {} };
 const conta = (t, nuovo) => { const b = nuovo ? stat.nuovi : stat.esistenti; b[t] = (b[t] ?? 0) + 1; };
 // Regola 20a: ogni lettura con error destrutturato; su errore ci si ferma, mai un default vuoto.
 async function findOrInsert(table, find, row) {
-  const q = sb.from(table).select('id');
-  for (const [col, op, val] of find) q.filter(col, op, val);
-  const { data: found, error: e1 } = await q.limit(1);
+  const build = () => { const q = sb.from(table).select('id'); for (const [col, op, val] of find) q.filter(col, op, val); return q.limit(1); };
+  const { data: found, error: e1 } = await build();
   if (e1) throw new Error(`lettura ${table}: ${e1.message}`);
   if (found?.length) { conta(table, false); return found[0].id; }
   const { data: ins, error: e2 } = await sb.from(table).insert(row).select('id').single();
-  if (e2 && e2.code === '23505') {          // corsa persa: e' gia' dentro, rileggo
-    const { data: again, error: e3 } = await q.limit(1);
+  if (e2 && e2.code === '23505') {          // corsa persa: e' gia' dentro, rileggo con una query nuova
+    const { data: again, error: e3 } = await build();
     if (e3 || !again?.length) throw new Error(`rilettura ${table}: ${e3?.message ?? 'vuota'}`);
     conta(table, false); return again[0].id;
   }

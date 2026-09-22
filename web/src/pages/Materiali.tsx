@@ -40,7 +40,7 @@ function Card({ g, url, onOpen }: { g: MatGruppo; url: string | undefined; onOpe
   );
 }
 
-function Scheda({ g, acquisti, onBack }: { g: MatGruppo; acquisti: MatAcquisto[]; onBack: () => void }) {
+function Scheda({ g, acquisti, materialiFornitore, onBack }: { g: MatGruppo; acquisti: MatAcquisto[]; materialiFornitore: Set<string>; onBack: () => void }) {
   const [assets, setAssets] = useState<MatAsset[] | null>(null);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [err, setErr] = useState('');
@@ -52,14 +52,17 @@ function Scheda({ g, acquisti, onBack }: { g: MatGruppo; acquisti: MatAcquisto[]
     fetchAssets(g.supplier_id).then(async (all) => {
       // asset del materiale (per colore o per tutti i colori), proforma dei suoi acquisti, documenti generali del fornitore
       const mine = all.filter((a) => (a.item_id && ids.has(a.item_id)) || (!a.item_id && !a.order_id && a.materiale && a.materiale.toLowerCase() === g.materiale.toLowerCase()) || (a.order_id && ordini.has(a.order_id)));
-      const generali = all.filter((a) => !a.item_id && !a.order_id && !a.materiale);
+      // "del fornitore": documenti generali (materiale vuoto) e materiali senza riga a catalogo (es. foto di un
+      // articolo ordinato ma non ancora nel Notion): altrimenti non sarebbero raggiungibili da nessuna schermata
+      const generali = all.filter((a) => !a.item_id && !a.order_id && (!a.materiale || !materialiFornitore.has(a.materiale.toLowerCase())));
       const lista = [...mine, ...generali];
       setAssets(lista);
       setUrls(await signedUrls(lista.map((a) => a.path)));
     }).catch((e: Error) => setErr(e.message));
-  }, [g, ids, ordini]);
+  }, [g, ids, ordini, materialiFornitore]);
   const r0 = g.righe[0];
-  const foto = (assets ?? []).filter((a) => isImg(a) && !(!a.item_id && !a.order_id && !a.materiale));
+  const isGenerale = (a: MatAsset) => !a.item_id && !a.order_id && (!a.materiale || a.materiale.toLowerCase() !== g.materiale.toLowerCase());
+  const foto = (assets ?? []).filter((a) => isImg(a) && !isGenerale(a));
   const docs = (assets ?? []).filter((a) => !foto.includes(a));
   return (
     <div className="screen">
@@ -85,10 +88,10 @@ function Scheda({ g, acquisti, onBack }: { g: MatGruppo; acquisti: MatAcquisto[]
         <table className="mat-tbl"><thead><tr><th>Colore</th><th>Prezzo</th><th>Disponibilita'</th><th>Ultimo acquisto</th></tr></thead>
           <tbody>{g.righe.map((r) => (
             <tr key={r.item_id}>
-              <td>{r.colore ?? '—'}</td>
+              <td>{r.colore ?? 'n/d'}</td>
               <td>{fmtPrezzo(r.prezzo_rif, r.prezzo_rif_text, r.unita_rif)}{r.acquistato && r.offerta_prezzo_text ? <div className="muted" style={{ fontSize: 11 }}>offerta: {r.offerta_prezzo_text}</div> : null}</td>
-              <td>{r.disponibilita ?? (r.acquistato ? '' : '—')}{r.min_ordine ? <div className="muted" style={{ fontSize: 11 }}>min {r.min_ordine}</div> : null}{r.lead_time ? <div className="muted" style={{ fontSize: 11 }}>{r.lead_time}</div> : null}</td>
-              <td>{r.acquistato ? <>{num(r.acquisto_quantita)} {r.acquisto_unita ?? ''}<div className="muted" style={{ fontSize: 11 }}>{fmtD(r.acquisto_data)}</div></> : '—'}</td>
+              <td>{r.disponibilita ?? (r.acquistato ? '' : 'n/d')}{r.min_ordine ? <div className="muted" style={{ fontSize: 11 }}>min {r.min_ordine}</div> : null}{r.lead_time ? <div className="muted" style={{ fontSize: 11 }}>{r.lead_time}</div> : null}</td>
+              <td>{r.acquistato ? <>{num(r.acquisto_quantita)} {r.acquisto_unita ?? ''}<div className="muted" style={{ fontSize: 11 }}>{fmtD(r.acquisto_data)}</div></> : ''}</td>
             </tr>))}</tbody></table>
         {g.righe.some((r) => r.offerta_fonte || r.note) && (
           <div className="mat-kv" style={{ marginTop: 8 }}>
@@ -115,7 +118,7 @@ function Scheda({ g, acquisti, onBack }: { g: MatGruppo; acquisti: MatAcquisto[]
             <div key={a.id} className="mat-doc">
               <span className="mat-badge">{a.tipo.replace('_', ' ')}</span>
               {urls[a.path] ? <a href={urls[a.path]} target="_blank" rel="noreferrer">{a.titolo ?? a.path.split('/').pop()}</a> : <span>{a.titolo ?? a.path}</span>}
-              {(!a.item_id && !a.order_id && !a.materiale) && <span className="muted" style={{ fontSize: 11 }}>del fornitore</span>}
+              {isGenerale(a) && <span className="muted" style={{ fontSize: 11 }}>{a.materiale ? `del fornitore: ${a.materiale}` : 'del fornitore'}</span>}
             </div>))}
         </div>)}
     </div>
@@ -126,19 +129,20 @@ function Fornitori({ rows, onPick }: { rows: MatFornitore[]; onPick: (nome: stri
   return (
     <div>
       {rows.map((f) => (
-        <button className="ds-scard" key={f.id} type="button" onClick={() => onPick(f.nome)} style={{ alignItems: 'flex-start' }}>
+        // card non cliccabile nel suo insieme: i link mailto/tel non possono stare dentro un <button>
+        <div className="ds-scard" key={f.id} style={{ alignItems: 'flex-start', cursor: 'default' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="sn">{f.nome}{!f.attivo && <span className="mat-badge" style={{ marginLeft: 6 }}>da verificare</span>}</div>
             <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{f.categorie ?? f.categoria_principale ?? ''} · {f.n_materiali} materiali{f.n_ordini > 0 ? ` · ${f.n_ordini} acquisti (${eur(f.tot_imponibile)} imponibile)` : ' · solo offerte'}</div>
-            <div style={{ fontSize: 12, marginTop: 4 }}>
-              {f.email && f.email.split(/[;,]\s*/).map((e) => <a key={e} href={`mailto:${e}`} onClick={(ev) => ev.stopPropagation()} style={{ marginRight: 8 }}>{e}</a>)}
-              {f.telefono && <a href={`tel:${f.telefono.replace(/[^+\d]/g, '')}`} onClick={(ev) => ev.stopPropagation()}>{f.telefono}</a>}
+            <div className="mat-kv" style={{ fontSize: 12, marginTop: 4 }}>
+              {f.email && f.email.split(/[;,]\s*/).map((e) => <a key={e} href={`mailto:${e}`} style={{ marginRight: 8 }}>{e}</a>)}
+              {f.telefono && <a href={`tel:${f.telefono.replace(/[^+\d]/g, '')}`}>{f.telefono}</a>}
             </div>
             {(f.deposito_luogo || f.condizioni_pagamento) && <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>{[f.deposito_luogo, f.condizioni_pagamento].filter(Boolean).join(' · ')}</div>}
             {f.ultimo_acquisto && <div className="muted" style={{ fontSize: 11 }}>ultimo acquisto {fmtD(f.ultimo_acquisto)}</div>}
           </div>
-          <span className="chev" style={{ color: 'var(--ink-muted)', fontSize: 20 }}>›</span>
-        </button>))}
+          <button type="button" className="chip" onClick={() => onPick(f.nome)} disabled={f.n_materiali === 0}>Catalogo ›</button>
+        </div>))}
     </div>
   );
 }
@@ -179,7 +183,8 @@ export default function Materiali({ onBack, onProdotti }: { onBack: () => void; 
   };
   const doGoogle = async () => {
     setBusy(true); setErr('');
-    const { error } = await csClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin + import.meta.env.BASE_URL + '#materiali', queryParams: { hd: 'amimi.it', prompt: 'select_account' } } });
+    // redirectTo SENZA hash: Supabase appende la sessione come fragment (#access_token=...), un hash nostro lo romperebbe
+    const { error } = await csClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin + import.meta.env.BASE_URL, queryParams: { hd: 'amimi.it', prompt: 'select_account' } } });
     if (error) { setBusy(false); setErr('Google non attivo: accedi con email e password.'); }
   };
 
@@ -191,6 +196,7 @@ export default function Materiali({ onBack, onProdotti }: { onBack: () => void; 
     (!query || g.materiale.toLowerCase().includes(query) || g.fornitore.toLowerCase().includes(query) || (g.articolo_fornitore ?? '').toLowerCase().includes(query) || g.righe.some((r) => (r.colore ?? '').toLowerCase().includes(query)))
   ), [gruppi, cat, fSup, tipo, query]);
   const selected = sel ? gruppi.find((g) => g.key === sel) : null;
+  const materialiDelFornitore = useMemo(() => new Set(selected ? gruppi.filter((g) => g.supplier_id === selected.supplier_id).map((g) => g.materiale.toLowerCase()) : []), [gruppi, selected]);
 
   const segmented = (
     <div className="seg" style={{ marginBottom: 12 }}>
@@ -222,7 +228,7 @@ export default function Materiali({ onBack, onProdotti }: { onBack: () => void; 
     </div>
   );
 
-  if (selected) return <Scheda g={selected} acquisti={acquisti} onBack={() => setSel(null)} />;
+  if (selected) return <Scheda g={selected} acquisti={acquisti} materialiFornitore={materialiDelFornitore} onBack={() => setSel(null)} />;
 
   return (
     <div className="screen">
