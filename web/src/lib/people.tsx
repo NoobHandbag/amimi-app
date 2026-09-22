@@ -1,7 +1,7 @@
 // Centralized people + persona-driven navigation. Dan removed (= Ale, same person).
 // The Home surfaces only the tiles relevant to each persona; Registra shows the same actions for everyone.
 
-export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads';
+export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads' | 'materiali';
 /** Tab visibili SOLO alle persona con finance=true (Home le filtra). 'ads' (18-09) si raggiunge dal Cruscotto o da #ads. */
 export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti', 'ads']);
 export type Tile = { icon: string; label: string; tab: Tab; param?: string; badge?: 'arrivi' | 'todo' };
@@ -39,6 +39,7 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
     tiles: [
       { icon: 'plus', label: 'Nuovo ordine fornitore', tab: 'ordini', param: 'new' },
       { icon: 'inbox', label: 'Registra arrivi', tab: 'ordini' },
+      { icon: 'swatch', label: 'Materie prime', tab: 'materiali' },
       { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },
     ],
   },
@@ -65,6 +66,8 @@ export const ALL_ACTIONS: Tile[] = [
   { icon: 'table', label: 'Tabelle (dati grezzi)', tab: 'registra', param: 'tabelle' },
   { icon: 'plus', label: 'Nuovo ordine fornitore', tab: 'ordini', param: 'new' },
   { icon: 'inbox', label: 'Ordini e arrivi', tab: 'ordini', badge: 'arrivi' },
+  // Materie prime (modulo mat_*, 22-09): la Home la mostra solo a flag mat_enabled acceso
+  { icon: 'swatch', label: 'Materie prime (catalogo fornitori)', tab: 'materiali' },
   // Magazzino e Disponibilita' tolti dai quick-link (feedback 06-07 item 12): gia' in bottom-nav.
   { icon: 'recycle', label: 'Cosa riprodurre', tab: 'magazzino', param: 'riordino' },
 ];

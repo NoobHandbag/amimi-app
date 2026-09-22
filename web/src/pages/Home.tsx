@@ -33,7 +33,7 @@ function sparkPoints(vals: number[], w = 150, h = 26): string {
   return vals.map((v, i) => `${(i / (vals.length - 1) * w).toFixed(1)},${(h - 3 - ((v - min) / span) * (h - 6)).toFixed(1)}`).join(' ');
 }
 
-export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: string) => void; go: (t: Tab, p?: string) => void }) {
+export default function Home({ chi, setChi, go, matEnabled = false }: { chi: string; setChi: (c: string) => void; go: (t: Tab, p?: string) => void; matEnabled?: boolean }) {
   const cfg = PERSONA[chi] ?? PERSONA.Ale;
   const [badges, setBadges] = useState({ arrivi: 0, todo: 0 });
   const [fin, setFin] = useState<{ netto: number; deltaPct: number | null; giorno: number | null; mc2: number; spark: number[] } | null>(null);
@@ -77,19 +77,22 @@ export default function Home({ chi, setChi, go }: { chi: string; setChi: (c: str
   const badge = (b?: 'arrivi' | 'todo') => (b === 'arrivi' ? badges.arrivi : b === 'todo' ? badges.todo : 0);
 
   const { quick, gestione, altro } = useMemo(() => {
-    const quick = cfg.tiles.slice(0, 4);
+    // Materie prime (modulo mat_*): la tile esiste solo a flag acceso, per ogni persona
+    const tiles = cfg.tiles.filter((t) => matEnabled || t.tab !== 'materiali');
+    const actions = ALL_ACTIONS.filter((t) => matEnabled || t.tab !== 'materiali');
+    const quick = tiles.slice(0, 4);
     const qk = new Set(quick.map(keyOf));
     const gest: Tile[] = [];
     const seen = new Set(qk);
-    for (const t of [...cfg.tiles.slice(4), ...ALL_ACTIONS.filter((a) => GEST.has(keyOf(a)))]) {
+    for (const t of [...tiles.slice(4), ...actions.filter((a) => GEST.has(keyOf(a)))]) {
       const k = keyOf(t);
       if (seen.has(k)) continue;
       if (FINANCE_TABS.has(t.tab) && !cfg.finance) continue;
       seen.add(k); gest.push(t);
     }
-    const altro = ALL_ACTIONS.filter((t) => !seen.has(keyOf(t)) && (!FINANCE_TABS.has(t.tab) || cfg.finance));
+    const altro = actions.filter((t) => !seen.has(keyOf(t)) && (!FINANCE_TABS.has(t.tab) || cfg.finance));
     return { quick, gestione: gest, altro };
-  }, [cfg]);
+  }, [cfg, matEnabled]);
 
   const query = q.trim().toLowerCase();
   const matches = useMemo(() => {
