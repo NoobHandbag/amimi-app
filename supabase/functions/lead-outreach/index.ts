@@ -380,8 +380,7 @@ Deno.serve(async (req) => {
     'Content-Transfer-Encoding: base64',
     '',
     wrap76(b64(testo)),
-  ].join('
-');
+  ].join('\r\n');
   let sr: Response;
   try {
     sr = await fetch(`${GMAIL}/messages/send`, {
@@ -392,22 +391,22 @@ Deno.serve(async (req) => {
   } catch (e) {
     // esito INCERTO (la richiesta puo' essere arrivata a Gmail): la bozza resta 'in_invio' e blocca il tocco.
     // Si sblocca a mano dopo aver guardato "Posta inviata" (azione sblocca), mai con un reinvio automatico.
-    return json({ error: 'Rete giu' durante l'invio: esito incerto. Controlla "Posta inviata" di info@amimi.it prima di riprovare. ' + (e as Error).message.slice(0, 120), bloccante: true, incerto: true }, 504);
+    return json({ error: 'Rete giu\' durante l\'invio: esito incerto. Controlla "Posta inviata" di info@amimi.it prima di riprovare. ' + (e as Error).message.slice(0, 120), bloccante: true, incerto: true }, 504);
   }
   const sj = await sr.json().catch(() => ({}));
   if (!sr.ok) {
     const msg = `Gmail ha rifiutato l'invio (${sr.status}): ${JSON.stringify(sj).slice(0, 250)}`;
     const { error: eErr } = await sb.from('lead_drafts').update({ stato: 'errore', errore: msg, updated_at: new Date().toISOString() }).eq('id', draftId);
-    return json({ error: msg + (eErr ? ' (e la bozza e' rimasta in invio: sbloccala)' : '') }, 502);
+    return json({ error: msg + (eErr ? ' (e la bozza e\' rimasta in invio: sbloccala)' : '') }, 502);
   }
   // da qui la mail E' PARTITA: gli errori successivi sono avvisi, mai un fallimento dell'invio
   const warnings: string[] = [];
   const gmailMsgId = String((sj as { id?: string }).id ?? '') || null;
   const gmailThreadId = String((sj as { threadId?: string }).threadId ?? '') || null;
-  if (!gmailMsgId) warnings.push('Gmail non ha restituito l'id del messaggio: il tocco e' registrato senza');
+  if (!gmailMsgId) warnings.push('Gmail non ha restituito l\'id del messaggio: il tocco e\' registrato senza');
   const nowIso = new Date().toISOString();
   const { error: upErr } = await sb.from('lead_drafts').update({ stato: 'inviata', sent_at: nowIso, gmail_message_id: gmailMsgId, gmail_thread_id: gmailThreadId, updated_at: nowIso }).eq('id', draftId);
-  if (upErr) warnings.push('email partita, ma lo stato della bozza non e' stato aggiornato: ' + upErr.message);
+  if (upErr) warnings.push('email partita, ma lo stato della bozza non e\' stato aggiornato: ' + upErr.message);
 
   const codice = dr.lingua === 'en' ? 'boutique_en' : 'boutique_it';
   const { data: next, error: nErr } = await sb.from('lead_sequences').select('tocco,giorni_attesa').eq('codice', codice).eq('tocco', tocco + 1).eq('attiva', true).maybeSingle();
@@ -421,8 +420,7 @@ Deno.serve(async (req) => {
   const { error: tErr } = gmailMsgId
     ? await sb.from('lead_touches').upsert(touch, { onConflict: 'gmail_message_id', ignoreDuplicates: true })
     : await sb.from('lead_touches').insert(touch);
-  if (tErr) warnings.push('email partita, ma il tocco non e' stato registrato: registralo a mano. ' + tErr.message);
+  if (tErr) warnings.push('email partita, ma il tocco non e\' stato registrato: registralo a mano. ' + tErr.message);
 
   return json({ ok: true, to, oggetto: oggettoInvio, gmail_message_id: gmailMsgId, prossimo: nextAt, ...(warnings.length ? { warnings } : {}) });
-});
 });
