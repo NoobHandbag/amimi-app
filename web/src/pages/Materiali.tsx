@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { CATEGORIE, TINTA, fetchAcquisti, fetchAssets, fetchCatalogo, fetchFornitori, fmtPrezzo, raggruppa, signedUrls } from '../lib/matApi';
+import { CATEGORIE, TINTA, fetchAcquisti, fetchAssets, fetchCatalogo, fetchFornitori, fetchMatSettings, fmtPrezzo, raggruppa, signedUrls } from '../lib/matApi';
 import type { MatAcquisto, MatAsset, MatCatalogo, MatFornitore, MatGruppo } from '../lib/matApi';
+import { personaName } from '../lib/people';
+import { NuovoFornitore, NuovoMateriale, SchedaAzioni } from './MaterialiNuovo';
 import Icon from '../components/Icon';
 
 // Sezione "Materie prime" (modulo mat_*, migr 0140, Fase 1): il catalogo dei materiali offerti o acquistati
@@ -40,7 +42,7 @@ function Card({ g, url, onOpen }: { g: MatGruppo; url: string | undefined; onOpe
   );
 }
 
-function Scheda({ g, acquisti, materialiFornitore, onBack }: { g: MatGruppo; acquisti: MatAcquisto[]; materialiFornitore: Set<string>; onBack: () => void }) {
+function Scheda({ g, acquisti, materialiFornitore, onBack, chi, canWrite, onChanged }: { g: MatGruppo; acquisti: MatAcquisto[]; materialiFornitore: Set<string>; onBack: () => void; chi: string; canWrite: boolean; onChanged: () => Promise<void> }) {
   const [assets, setAssets] = useState<MatAsset[] | null>(null);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [err, setErr] = useState('');
@@ -99,6 +101,7 @@ function Scheda({ g, acquisti, materialiFornitore, onBack }: { g: MatGruppo; acq
             {[...new Set(g.righe.map((r) => r.note).filter(Boolean))].map((n) => <div key={n as string} style={{ fontSize: 12 }}>{n}</div>)}
           </div>)}
       </div>
+      {canWrite && <SchedaAzioni g={g} chi={chi} onChanged={onChanged} />}
       {acq.length > 0 && (
         <div className="card">
           <div className="rl" style={{ marginBottom: 6 }}>Acquisti</div>
@@ -147,8 +150,15 @@ function Fornitori({ rows, onPick }: { rows: MatFornitore[]; onPick: (nome: stri
   );
 }
 
-export default function Materiali({ onBack, onProdotti }: { onBack: () => void; onProdotti: () => void }) {
+export default function Materiali({ onBack, onProdotti, chi }: { onBack: () => void; onProdotti: () => void; chi: string }) {
   const [session, setSession] = useState<'loading' | 'in' | 'out'>('loading');
+  // Fase 2: i flag decidono cosa si puo' fare (scritture, Compila); la persona che firma e' il selettore di Home.
+  // Il client non scrive MAI sulle tabelle mat_*: le scritture passano dalla edge mat-api (vedi MaterialiNuovo.tsx).
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [nuovo, setNuovo] = useState<'' | 'materiale' | 'fornitore'>('');
+  const who = personaName(chi);
+  const canWrite = settings.mat_write_enabled === 'true';
+  const aiOn = canWrite && settings.ai_compila_enabled === 'true';
   const [email, setEmail] = useState(''); const [pwd, setPwd] = useState(''); const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [view, setView] = useState<'catalogo' | 'fornitori'>('catalogo');
@@ -165,14 +175,19 @@ export default function Materiali({ onBack, onProdotti }: { onBack: () => void; 
     const { data: sub } = csClient.auth.onAuthStateChange((_e, s) => setSession(s ? 'in' : 'out'));
     return () => sub.subscription.unsubscribe();
   }, []);
-  useEffect(() => {
-    if (session !== 'in') return;
+  const reload = async () => {
     setErr('');
-    Promise.all([fetchCatalogo(), fetchFornitori(), fetchAcquisti()]).then(async ([c, f, a]) => {
-      setRows(c); setForn(f); setAcquisti(a);
+    try {
+      const [c, f, a, st] = await Promise.all([fetchCatalogo(), fetchFornitori(), fetchAcquisti(), fetchMatSettings()]);
+      setRows(c); setForn(f); setAcquisti(a); setSettings(st);
       // firma solo la prima foto di ogni materiale (poche decine di URL): la scheda firma tutto il suo materiale quando si apre
       setUrls(await signedUrls([...new Set(c.map((r) => r.foto_path))]));
-    }).catch((e: Error) => setErr(e.message));
+    } catch (e) { setErr((e as Error).message); }
+  };
+  useEffect(() => {
+    if (session !== 'in') return;
+    reload();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [session]);
 
   const doLogin = async () => {
@@ -228,7 +243,9 @@ export default function Materiali({ onBack, onProdotti }: { onBack: () => void; 
     </div>
   );
 
-  if (selected) return <Scheda g={selected} acquisti={acquisti} materialiFornitore={materialiDelFornitore} onBack={() => setSel(null)} />;
+  if (nuovo === 'materiale') return <NuovoMateriale chi={who} aiOn={aiOn} fornitori={forn} onDone={reload} onBack={() => setNuovo('')} />;
+  if (nuovo === 'fornitore') return <NuovoFornitore chi={who} aiOn={aiOn} fornitori={forn} onDone={reload} onBack={() => { setNuovo(''); setView('fornitori'); }} />;
+  if (selected) return <Scheda g={selected} acquisti={acquisti} materialiFornitore={materialiDelFornitore} onBack={() => setSel(null)} chi={who} canWrite={canWrite} onChanged={reload} />;
 
   return (
     <div className="screen">
@@ -240,9 +257,11 @@ export default function Materiali({ onBack, onProdotti }: { onBack: () => void; 
       </div>
       {err && <div className="card err">Errore: {err}</div>}
       {rows === null && !err && <div className="muted center" style={{ padding: 30 }}>Carico il catalogo…</div>}
+      {view === 'fornitori' && canWrite && <div className="lead-actions" style={{ marginBottom: 10 }}><button type="button" className="ds-btn" style={{ background: 'var(--positive-700)', color: '#fff' }} onClick={() => setNuovo('fornitore')}>+ Fornitore</button></div>}
       {view === 'fornitori' && <Fornitori rows={forn} onPick={(nome) => { setFSup(nome); setView('catalogo'); }} />}
       {view === 'catalogo' && rows !== null && (
         <>
+          {canWrite && <div className="lead-actions" style={{ marginBottom: 10 }}><button type="button" className="ds-btn" style={{ background: 'var(--positive-700)', color: '#fff' }} onClick={() => setNuovo('materiale')}>+ Materiale{aiOn ? ' (foto e Compila)' : ''}</button></div>}
           <input className="txt" placeholder="Cerca materiale, colore, fornitore…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: '100%', marginBottom: 8 }} />
           <div className="mat-filters">
             <button type="button" className={`chip ${tipo === '' ? 'on' : ''}`} onClick={() => setTipo('')}>Tutti</button>
@@ -260,7 +279,7 @@ export default function Materiali({ onBack, onProdotti }: { onBack: () => void; 
           {visibili.length === 0
             ? <div className="card muted center">Nessun materiale con questi filtri.</div>
             : <div className="mat-grid">{visibili.map((g) => <Card key={g.key} g={g} url={g.foto_path ? urls[g.foto_path] : undefined} onOpen={() => setSel(g.key)} />)}</div>}
-          <p className="muted" style={{ fontSize: 11, marginTop: 14 }}><Icon name="search" size={12} /> Catalogo in sola lettura (Fase 1). Nuovi materiali, offerte e foto arrivano con la Fase 2; fino ad allora si inseriscono nel Notion di Ginevra.</p>
+          <p className="muted" style={{ fontSize: 11, marginTop: 14 }}><Icon name="search" size={12} /> {canWrite ? `Nuovi materiali, offerte e foto si inseriscono da qui (firmi come ${who}); l'AI compila, tu confermi.` : 'Catalogo in sola lettura. Le scritture dall’app sono spente: fino all’accensione si inserisce nel Notion di Ginevra.'}</p>
         </>
       )}
     </div>

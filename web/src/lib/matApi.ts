@@ -92,6 +92,51 @@ export async function signedUrls(paths: (string | null | undefined)[]): Promise<
   return out;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Fase 2 (migr 0144): scritture via edge mat-api e strato AI via edge ai-compila, entrambe con il JWT dell'utente
+// loggato. La UI non scrive MAI diretto sulle tabelle mat_*: l'unica scrittura del client e' l'upload nel bucket
+// privato mat-assets sotto inbox/ (policy INSERT della 0144), e il file diventa un asset solo con asset_add.
+export async function fetchMatSettings(): Promise<Record<string, string>> {
+  const { data, error } = await csClient.from('v_mat_settings').select('key,value');
+  if (error) return {};
+  return Object.fromEntries((data ?? []).map((r: { key: string; value: string }) => [r.key, r.value]));
+}
+const MAT_API_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/mat-api';
+const AI_COMPILA_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/ai-compila';
+async function callEdge(url: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { data } = await csClient.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sessione scaduta: rientra.');
+  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(payload) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.ok === false) {
+    const e = new Error(j.error || 'Errore ' + r.status) as Error & { state?: string; status?: number };
+    e.state = j.state; e.status = r.status;
+    throw e;
+  }
+  return j;
+}
+export type MatAction = 'supplier_upsert' | 'item_upsert' | 'offer_add' | 'asset_add' | 'item_set_attivo' | 'ai_scarta';
+export const matWrite = (action: MatAction, payload: Record<string, unknown>, chi: string) => callEdge(MAT_API_URL, { action, chi, ...payload });
+
+/** Upload nel bucket privato sotto inbox/<chi>/<data>/<uuid>.<ext>. Torna il path da passare a ai-compila e asset_add. */
+export async function uploadInbox(file: File, chi: string): Promise<{ path: string; mime: string; bytes: number }> {
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5) || 'jpg';
+  const who = chi.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'app';
+  const path = `inbox/${who}/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await csClient.storage.from('mat-assets').upload(path, file, { contentType: file.type || undefined, upsert: false });
+  if (error) throw new Error('upload non riuscito: ' + error.message);
+  return { path, mime: file.type, bytes: file.size };
+}
+
+export type Campo<T = string> = { v: T | null; c: number; f: string | null };
+export type PropostaRiga = { categoria: Campo; materiale: Campo; articolo_fornitore: Campo; colore: Campo; unita: Campo; quantita: Campo<number>; prezzo: Campo<number>; prezzo_text: Campo; sconto_text: Campo; importo: Campo<number>; disponibilita: Campo; min_ordine: Campo; lead_time: Campo };
+export type PropostaMateriale = { fornitore: Campo; match_fornitore_id: string | null; documento_tipo: Campo; documento_numero: Campo; documento_data: Campo; condizioni_pagamento: Campo; deposito_luogo: Campo; righe: PropostaRiga[]; totale_imponibile: Campo<number>; totale_documento: Campo<number>; note: Campo };
+export type PropostaFornitore = { match_fornitore_id: string | null; nome: Campo; ragione_sociale: Campo; email: Campo; telefono: Campo; referente: Campo; indirizzo: Campo; piva_vat: Campo; deposito_luogo: Campo; condizioni_pagamento: Campo; categoria_principale: Campo; note: Campo };
+export async function aiCompila<T>(p: { target: 'materiale' | 'fornitore'; immagini: { path: string }[]; testo: string; contesto: { fornitori: { id: string; nome: string; ragione_sociale?: string | null }[] }; chi: string }): Promise<{ ai_log_id: string | null; proposta: T; modello: string; ms: number }> {
+  return (await callEdge(AI_COMPILA_URL, p)) as unknown as { ai_log_id: string | null; proposta: T; modello: string; ms: number };
+}
+
 // ---- helper di presentazione ----
 const nf = (n: number) => n.toLocaleString('it-IT', { minimumFractionDigits: n < 1 ? 3 : 2, maximumFractionDigits: n < 1 ? 3 : 2 });
 /** "66,00 €/mq" da un numero, oppure il testo fedele ("40-45/mq") quando il prezzo e' un range o a scaglioni. */
