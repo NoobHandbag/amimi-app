@@ -65,8 +65,11 @@ export async function fetchMatSettings(): Promise<MatSettings> {
 }
 export async function fetchMatEnabled(): Promise<boolean> { return (await fetchMatSettings()).enabled; }
 
-export async function fetchCatalogo(): Promise<MatCatalogo[]> {
-  const { data, error } = await csClient.from('v_mat_catalogo').select('*').eq('attivo', true).order('fornitore').order('materiale').order('colore');
+/** Catalogo: solo i colori attivi, oppure tutti (per rivedere e riattivare cio' che e' stato segnato non attivo). */
+export async function fetchCatalogo(anchePassivi = false): Promise<MatCatalogo[]> {
+  let q = csClient.from('v_mat_catalogo').select('*');
+  if (!anchePassivi) q = q.eq('attivo', true);
+  const { data, error } = await q.order('fornitore').order('materiale').order('colore');
   if (error) throw new Error(error.message);
   return (data ?? []) as MatCatalogo[];
 }

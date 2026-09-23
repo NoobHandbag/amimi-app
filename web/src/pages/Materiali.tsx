@@ -35,6 +35,7 @@ function Card({ g, url, onOpen }: { g: MatGruppo; url: string | undefined; onOpe
         <div className="mat-price">{g.prezzo}</div>
         <span className={`mat-badge ${g.acquistato ? 'acq' : ''}`}>{g.acquistato ? 'acquistato' : 'offerta'}</span>
         {g.n_foto > 1 && <span className="mat-badge" style={{ marginLeft: 4 }}>{g.n_foto} foto</span>}
+        {g.righe.some((r) => !r.attivo) && <span className="mat-badge" style={{ marginLeft: 4, background: '#fde2e2', color: '#8a2a2a' }}>{g.righe.every((r) => !r.attivo) ? 'non attivo' : 'colori non attivi'}</span>}
         {colori.length > 0 && <div className="mat-colors">{colori.slice(0, 4).map((c) => <span key={c}>{c}</span>)}{colori.length > 4 && <span>+{colori.length - 4}</span>}</div>}
       </div>
     </button>
@@ -47,7 +48,8 @@ function AiBox({ files, setFiles, testo, setTesto, busy, onCompila, abilitato, a
   return (
     <div className="mat-aibox">
       <div className="rl">Foto o documento</div>
-      <input ref={ref} type="file" accept="image/*,application/pdf" capture="environment" multiple style={{ display: 'none' }}
+      {/* niente `capture`: su Android forzerebbe la fotocamera e nasconderebbe galleria e PDF (i documenti arrivano quasi tutti via email) */}
+      <input ref={ref} type="file" accept="image/*,application/pdf" multiple style={{ display: 'none' }}
         onChange={(e) => { const nf = [...(e.target.files ?? [])]; setFiles([...files, ...nf].slice(0, 4)); e.target.value = ''; }} />
       <div className="mat-files">
         {files.map((f, i) => <span key={i} className="chip" onClick={() => setFiles(files.filter((_, j) => j !== i))}>{f.name.slice(0, 22)} ✕</span>)}
@@ -87,8 +89,14 @@ function NuovoMateriale({ chi, settings, fornitori, gruppi, onBack, onSaved }: {
   const carica = useUploader(chi);
   const [low, setLow] = useState<Set<string>>(new Set());
   const [f, setF] = useState({ fornitore: '', categoria: '', materiale: '', articolo: '', colori: '', unita: '', tipo: 'offerta', prezzo: '', prezzoText: '', disponibilita: '', minOrdine: '', leadTime: '', condizioni: '', data: oggi(), documento: '', note: '' });
+  // le immagini allegate sono campioni (foto del materiale, diventano la miniatura) o documenti (proforma, listino: NON in vetrina)
+  const [immaginiSono, setImmaginiSono] = useState<'campioni' | 'documenti'>('campioni');
   const set = (k: keyof typeof f, val: string) => setF((p) => ({ ...p, [k]: val }));
   const nomiForn = useMemo(() => fornitori.map((x) => x.nome), [fornitori]);
+  // contesto per l'AI: nome corto + ragione sociale (la proforma Vicenza Pelli e' intestata "Conceria San Biagio srl");
+  // il match_esistente torna con la stringa completa e va riportato al nome corto
+  const ctxForn = useMemo(() => fornitori.map((x) => x.ragione_sociale && x.ragione_sociale.toLowerCase() !== x.nome.toLowerCase() ? `${x.nome} (${x.ragione_sociale})` : x.nome), [fornitori]);
+  const toNome = (s: string | null | undefined) => { if (!s) return null; const i = ctxForn.indexOf(s); return i >= 0 ? fornitori[i].nome : s; };
   const nomiMat = useMemo(() => [...new Set(gruppi.map((g) => g.materiale))], [gruppi]);
   const fornEsiste = nomiForn.some((n) => n.toLowerCase() === f.fornitore.trim().toLowerCase());
 
@@ -96,11 +104,13 @@ function NuovoMateriale({ chi, settings, fornitori, gruppi, onBack, onSaved }: {
     setBusy(true); setAvviso(null);
     try {
       const up = await carica(files);
-      const r = await aiCompila<PropostaMateriale>(chi, 'materiale', up, testo, { fornitori: nomiForn, materiali: nomiMat });
+      const r = await aiCompila<PropostaMateriale>(chi, 'materiale', up, testo, { fornitori: ctxForn, materiali: nomiMat });
       const p = r.proposta; setProp(p); setLogId(r.log_id); setAvviso(p.avviso);
       const lowSet = new Set<string>();
       const pick = (k: keyof typeof f, c: { valore: unknown; confidenza: number } | undefined, val: string | null) => { if (val != null && val !== '') { set(k, val); if (bassa(c as never)) lowSet.add(k); } };
-      pick('fornitore', p.fornitore, p.fornitore?.match_esistente || v(p.fornitore));
+      pick('fornitore', p.fornitore, toNome(p.fornitore?.match_esistente) || v(p.fornitore));
+      // una proforma o una fattura fotografata non e' un campione: non deve diventare la miniatura del materiale
+      if (v(p.tipo) === 'acquistato') setImmaginiSono('documenti');
       pick('categoria', p.categoria, v(p.categoria)); pick('materiale', p.materiale, p.materiale?.match_esistente || v(p.materiale));
       pick('articolo', p.articolo_fornitore, v(p.articolo_fornitore));
       const colori = (p.colori ?? []).map((c) => c.valore).filter(Boolean).join(', '); if (colori) { set('colori', colori); if ((p.colori ?? []).some((c) => bassa(c))) lowSet.add('colori'); }
@@ -132,7 +142,8 @@ function NuovoMateriale({ chi, settings, fornitori, gruppi, onBack, onSaved }: {
       const up = await carica(files);
       for (let i = 0; i < up.length; i++) {
         const fl = files[i];
-        await matApi('asset_add', chi, { path: up[i], tipo: fl.type.startsWith('image/') ? 'foto' : 'scheda_tecnica', titolo: fl.name, supplier_id: sup.id, materiale: mat, fonte: `app, ${chi}, ${oggi()}` });
+        const tipoAsset = !fl.type.startsWith('image/') ? 'scheda_tecnica' : immaginiSono === 'documenti' ? (f.tipo === 'acquistato' ? 'proforma' : 'documento') : 'foto';
+        await matApi('asset_add', chi, { path: up[i], tipo: tipoAsset, titolo: fl.name, supplier_id: sup.id, materiale: mat, fonte: `app, ${chi}, ${oggi()}` });
       }
       const items = (res.items as { creato: boolean }[]) ?? [];
       toast(`Salvato: ${items.filter((i) => i.creato).length} colori nuovi, ${items.length - items.filter((i) => i.creato).length} gia' presenti, ${up.length} file`, 'ok');
@@ -146,6 +157,12 @@ function NuovoMateriale({ chi, settings, fornitori, gruppi, onBack, onSaved }: {
       <header><h1>Nuovo materiale</h1></header>
       <button className="back" onClick={onBack} type="button">← Catalogo</button>
       <AiBox files={files} setFiles={setFiles} testo={testo} setTesto={setTesto} busy={busy} onCompila={compila} abilitato={settings.ai} avviso={avviso} />
+      {files.some((fl) => fl.type.startsWith('image/')) && (
+        <div className="chips" style={{ marginTop: -6, marginBottom: 10, alignItems: 'center' }}>
+          <span className="muted" style={{ fontSize: 12 }}>Le immagini sono:</span>
+          <button type="button" className={`chip ${immaginiSono === 'campioni' ? 'on' : ''}`} onClick={() => setImmaginiSono('campioni')}>campioni (in vetrina)</button>
+          <button type="button" className={`chip ${immaginiSono === 'documenti' ? 'on' : ''}`} onClick={() => setImmaginiSono('documenti')}>documenti (proforma, listino)</button>
+        </div>)}
       <div className="card mat-form">
         <label className="fl">Fornitore {f.fornitore && !fornEsiste && <span className="mat-badge">nuovo</span>}</label>
         <input className={cls(low, 'fornitore')} list="mat-forn" value={f.fornitore} onChange={(e) => set('fornitore', e.target.value)} placeholder="Es. Damapel" />
@@ -196,14 +213,16 @@ function NuovoFornitore({ chi, settings, fornitori, onBack, onSaved }: { chi: st
   const set = (k: keyof typeof f, val: string) => setF((p) => ({ ...p, [k]: val }));
   const esiste = fornitori.find((x) => x.nome.toLowerCase() === f.nome.trim().toLowerCase());
   const carica = useUploader(chi);
+  const ctxForn = useMemo(() => fornitori.map((x) => x.ragione_sociale && x.ragione_sociale.toLowerCase() !== x.nome.toLowerCase() ? `${x.nome} (${x.ragione_sociale})` : x.nome), [fornitori]);
+  const toNome = (s: string | null | undefined) => { if (!s) return null; const i = ctxForn.indexOf(s); return i >= 0 ? fornitori[i].nome : s; };
   const compila = async () => {
     setBusy(true); setAvviso(null);
     try {
       const up = await carica(files);
-      const r = await aiCompila<PropostaFornitore>(chi, 'fornitore', up, testo, { fornitori: fornitori.map((x) => x.nome) });
+      const r = await aiCompila<PropostaFornitore>(chi, 'fornitore', up, testo, { fornitori: ctxForn });
       const p = r.proposta; setLogId(r.log_id); setAvviso(p.avviso);
       const lowSet = new Set<string>();
-      for (const k of Object.keys(f) as (keyof typeof f)[]) { const c = (p as unknown as Record<string, AiCampo | undefined>)[k]; const val = k === 'nome' ? (c?.match_esistente || c?.valore) : c?.valore; if (val) { set(k, val); if (bassa(c)) lowSet.add(k); } }
+      for (const k of Object.keys(f) as (keyof typeof f)[]) { const c = (p as unknown as Record<string, AiCampo | undefined>)[k]; const val = k === 'nome' ? (toNome(c?.match_esistente) || c?.valore) : c?.valore; if (val) { set(k, val); if (bassa(c)) lowSet.add(k); } }
       setLow(lowSet); toast('Proposta pronta: controlla e conferma', 'ok');
     } catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(false); }
   };
@@ -275,7 +294,9 @@ function Scheda({ g, acquisti, materialiFornitore, settings, chi, onBack, onChan
     if (off.prezzo && !/^\d+([.,]\d+)?$/.test(off.prezzo.trim())) return toast('Prezzo: un numero, oppure il campo testo', 'err');
     setBusy(true);
     try {
-      await matApi('offer_add', chi, { item_id: off.item, prezzo: off.prezzo ? Number(off.prezzo.replace(',', '.')) : null, prezzo_text: off.prezzo ? null : off.prezzoText, disponibilita: off.disponibilita || null, data: off.data || null, documento_fonte: off.documento || null });
+      const r = await matApi('offer_add', chi, { item_id: off.item, prezzo: off.prezzo ? Number(off.prezzo.replace(',', '.')) : null, prezzo_text: off.prezzo ? null : off.prezzoText, disponibilita: off.disponibilita || null, data: off.data || null, documento_fonte: off.documento || null });
+      // stessa data e stessa fonte di un'offerta esistente = non scritta (chiave naturale): va detto, non finto "aggiunta"
+      if (r.creato === false) { toast(String(r.nota ?? 'Offerta gia\' presente con questa data e fonte: cambia la data o la fonte'), 'err'); return; }
       toast('Offerta aggiunta', 'ok'); setOffOpen(false); onChanged();
     } catch (e) { toast((e as Error).message, 'err'); } finally { setBusy(false); }
   };
@@ -295,7 +316,7 @@ function Scheda({ g, acquisti, materialiFornitore, settings, chi, onBack, onChan
         : <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 12 }}><Segno cat={g.categoria} label={`${g.categoria} · nessuna foto ancora`} big /></div>}
       {settings.write && (
         <div className="chips" style={{ marginBottom: 12 }}>
-          <input ref={fotoRef} type="file" accept="image/*,application/pdf" capture="environment" multiple style={{ display: 'none' }} onChange={(e) => { addFoto(e.target.files); e.target.value = ''; }} />
+          <input ref={fotoRef} type="file" accept="image/*,application/pdf" multiple style={{ display: 'none' }} onChange={(e) => { addFoto(e.target.files); e.target.value = ''; }} />
           <button type="button" className="chip" disabled={busy} onClick={() => fotoRef.current?.click()}>+ Foto o scheda</button>
           <button type="button" className="chip" disabled={busy} onClick={() => setOffOpen((o) => !o)}>+ Offerta</button>
         </div>)}
@@ -335,7 +356,9 @@ function Scheda({ g, acquisti, materialiFornitore, settings, chi, onBack, onChan
               <td>{fmtPrezzo(r.prezzo_rif, r.prezzo_rif_text, r.unita_rif)}{r.acquistato && r.offerta_prezzo_text ? <div className="muted" style={{ fontSize: 11 }}>offerta: {r.offerta_prezzo_text}</div> : null}</td>
               <td>{r.disponibilita ?? (r.acquistato ? '' : 'n/d')}{r.min_ordine ? <div className="muted" style={{ fontSize: 11 }}>min {r.min_ordine}</div> : null}{r.lead_time ? <div className="muted" style={{ fontSize: 11 }}>{r.lead_time}</div> : null}</td>
               <td>{r.acquistato ? <>{num(r.acquisto_quantita)} {r.acquisto_unita ?? ''}<div className="muted" style={{ fontSize: 11 }}>{fmtD(r.acquisto_data)}</div></> : ''}</td>
-              {settings.write && <td><button type="button" className="linkbtn" style={{ fontSize: 11 }} disabled={busy} onClick={() => setAttivo(r.item_id, false)}>non attivo</button></td>}
+              {settings.write && <td>{r.attivo
+                ? <button type="button" className="linkbtn" style={{ fontSize: 11 }} disabled={busy} onClick={() => setAttivo(r.item_id, false)}>non attivo</button>
+                : <button type="button" className="linkbtn" style={{ fontSize: 11, color: 'var(--positive-700)' }} disabled={busy} onClick={() => setAttivo(r.item_id, true)}>riattiva</button>}</td>}
             </tr>))}</tbody></table>
         {g.righe.some((r) => r.offerta_fonte || r.note) && (
           <div className="mat-kv" style={{ marginTop: 8 }}>
@@ -406,6 +429,7 @@ export default function Materiali({ chi, onBack, onProdotti }: { chi: string; on
   const [q, setQ] = useState('');
   const [sel, setSel] = useState<string | null>(null);
   const [gen, setGen] = useState(0);
+  const [anchePassivi, setAnchePassivi] = useState(false);   // "non attivo" e' reversibile solo se gli inattivi si vedono da qualche parte
 
   useEffect(() => {
     csClient.auth.getSession().then(({ data }) => setSession(data.session ? 'in' : 'out'));
@@ -416,12 +440,12 @@ export default function Materiali({ chi, onBack, onProdotti }: { chi: string; on
   useEffect(() => {
     if (session !== 'in') return;
     setErr('');
-    Promise.all([fetchCatalogo(), fetchFornitori(), fetchAcquisti()]).then(async ([c, f, a]) => {
+    Promise.all([fetchCatalogo(anchePassivi), fetchFornitori(), fetchAcquisti()]).then(async ([c, f, a]) => {
       setRows(c); setForn(f); setAcquisti(a);
       // firma solo la prima foto di ogni materiale (poche decine di URL): la scheda firma tutto il suo materiale quando si apre
       setUrls(await signedUrls([...new Set(c.map((r) => r.foto_path))]));
     }).catch((e: Error) => setErr(e.message));
-  }, [session, gen]);
+  }, [session, gen, anchePassivi]);
   const reload = () => setGen((g) => g + 1);
 
   const doLogin = async () => {
@@ -500,6 +524,7 @@ export default function Materiali({ chi, onBack, onProdotti }: { chi: string; on
             <button type="button" className={`chip ${tipo === '' ? 'on' : ''}`} onClick={() => setTipo('')}>Tutti</button>
             <button type="button" className={`chip ${tipo === 'acq' ? 'on' : ''}`} onClick={() => setTipo('acq')}>Acquistati</button>
             <button type="button" className={`chip ${tipo === 'off' ? 'on' : ''}`} onClick={() => setTipo('off')}>Offerte</button>
+            {settings.write && <button type="button" className={`chip ${anchePassivi ? 'on' : ''}`} onClick={() => setAnchePassivi((x) => !x)}>{anchePassivi ? 'anche non attivi' : 'mostra non attivi'}</button>}
           </div>
           <div className="mat-filters">
             <button type="button" className={`chip ${cat === '' ? 'on' : ''}`} onClick={() => setCat('')}>Tutte le categorie</button>

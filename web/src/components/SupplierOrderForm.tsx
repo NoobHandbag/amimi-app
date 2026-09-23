@@ -308,7 +308,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
               ? <div className="muted" style={{ fontSize: 12 }}>Per la compilazione AI serve il login @amimi.it: aprilo dalla sezione Materie prime, poi torna qui.</div>
               : (
                 <div className="mat-aibox">
-                  <input ref={aiFileRef} type="file" accept="image/*,application/pdf" capture="environment" multiple style={{ display: 'none' }}
+                  <input ref={aiFileRef} type="file" accept="image/*,application/pdf" multiple style={{ display: 'none' }}
                     onChange={(e) => { setAiFiles((p) => [...p, ...[...(e.target.files ?? [])]].slice(0, 4)); e.target.value = ''; }} />
                   <div className="mat-files">
                     {aiFiles.map((f, i) => <span key={i} className="chip" onClick={() => setAiFiles((p) => p.filter((_, j) => j !== i))}>{f.name.slice(0, 22)} ✕</span>)}

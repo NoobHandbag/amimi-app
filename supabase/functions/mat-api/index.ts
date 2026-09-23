@@ -38,7 +38,16 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // input: stringa pulita (null se vuota) con tetto; numero >= 0 o null; data ISO o null
 const str = (v: unknown, max = 500): string | null => { const s = v == null ? '' : String(v).trim(); return s ? s.slice(0, max) : null; };
-const num = (v: unknown): number | null | 'bad' => { if (v == null || v === '') return null; const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) && n >= 0 ? n : 'bad'; };
+// numero >= 0 o null; accetta "1000", "0,656", "0.656" e il migliaio italiano "1.000" / "1.000,50" (punto = separatore delle migliaia
+// SOLO quando ha esattamente 3 cifre dopo e nessun altro punto, altrimenti "1.5" resta un decimale)
+const num = (v: unknown): number | null | 'bad' => {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') return Number.isFinite(v) && v >= 0 ? v : 'bad';
+  let s = String(v).trim();
+  if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, '');
+  const n = Number(s.replace(',', '.'));
+  return Number.isFinite(n) && n >= 0 ? n : 'bad';
+};
 const dateIso = (v: unknown): string | null | 'bad' => { const s = str(v, 10); if (!s) return null; return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s)) ? s : 'bad'; };
 
 Deno.serve(async (req) => {
