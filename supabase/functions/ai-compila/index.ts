@@ -118,8 +118,9 @@ Deno.serve(async (req) => {
   const chiama = async (): Promise<string> => {
     const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
     try {
-      const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modello}:generateContent?key=${key}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ac.signal,
+      // chiave nell'HEADER, mai nell'URL: un TypeError di rete di Deno cita l'URL intero e finirebbe nel log e nella 503
+      const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modello}:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, signal: ac.signal,
         body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0, maxOutputTokens: MAX_OUTPUT_TOKENS, responseMimeType: 'application/json', responseSchema: responseSchema(target) } }),
       });
       const gj = await g.json();
@@ -136,7 +137,9 @@ Deno.serve(async (req) => {
     raw = await chiama();
     try { proposta = JSON.parse(cleanJson(raw)); } catch { raw = await chiama(); try { proposta = JSON.parse(cleanJson(raw)); } catch { proposta = null; } }
   } catch (e) {
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'timeout Gemini' : e.message) : String(e);
+    // cintura e bretelle: se la chiave comparisse comunque in un messaggio (URL, body d'errore), viene oscurata
+    const scrub = (s: string) => s.split(key).join('***').replace(/key=[^&\s)]+/gi, 'key=***');
+    const msg = scrub(e instanceof Error ? (e.name === 'AbortError' ? 'timeout Gemini' : e.message) : String(e));
     await chiudi({ esito: 'errore', errore: msg.slice(0, 500) });
     return json({ error: 'ai_failed', detail: msg.slice(0, 200), log_id: logId }, 503);
   }

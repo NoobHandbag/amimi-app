@@ -31,8 +31,8 @@ async function compila(key, target, files, testo, ctx) {
   for (const f of files) parts.push({ inline_data: { mime_type: MIME[f.split('.').pop().toLowerCase()] ?? 'application/octet-stream', data: readFileSync(join(INBOX, 'mat_assets', f)).toString('base64') } });
   // stessa chiamata della edge: structured output (responseSchema) + un ritentativo se il JSON non si legge
   const chiama = async () => {
-    const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODELLO}:generateContent?key=${key}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODELLO}:generateContent`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0, maxOutputTokens: MAX_OUTPUT_TOKENS, responseMimeType: 'application/json', responseSchema: responseSchema(target) } }),
     });
     const gj = await g.json();
@@ -91,6 +91,9 @@ console.log(`\n== golden set ai-compila, modello ${MODELLO} ==`);
   const p = await compila(key, 'materiale', ['Ego_Vernice_scheda_tecnica.pdf'], '', CTX);
   t('5a Ego scheda: prezzo NON inventato (null)', p.prezzo?.valore == null, JSON.stringify(p.prezzo));
   t('5b Ego scheda: categoria Vernice, tipo offerta', p.categoria?.valore === 'Vernice' && p.tipo?.valore === 'offerta', JSON.stringify([p.categoria, p.tipo]));
+  // gli scaglioni stavano nel corpo dell'email, non nel PDF: dettati come nota devono finire in prezzo_text, mai in un numero singolo
+  const q = await compila(key, 'materiale', ['Ego_Vernice_scheda_tecnica.pdf'], 'Ego vernice: 49,16 al mq sotto le 6 pelli per colore, 46,66 da 6 pelli a 30 mq, 44,16 oltre i 30 mq', CTX);
+  t('5c Ego scheda + nota a scaglioni: valore null, scaglioni nel testo', q.prezzo?.valore == null && has(q.prezzo?.testo, '49,16') && has(q.prezzo?.testo, '44,16'), JSON.stringify(q.prezzo));
 }
 { // 6. foto del cocco Damapel + nota con scaglioni: prezzo in testo, mai un numero singolo
   const p = await compila(key, 'materiale', ['Damapel_Cocco_stampato_nero_foto.jpeg'], 'Damapel cocco nero, 45 al mq per piccole quantita e 40 se prendo tutto lo stock', CTX);
