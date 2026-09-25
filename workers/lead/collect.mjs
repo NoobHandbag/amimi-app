@@ -3,7 +3,7 @@
 // ZERO modello: il giudizio (lead_scores) lo fa la sessione Claude Code leggendo le evidenze.
 // Protocollo: Cowork12/projects/B2B_Prospecting_2026-09/PROTOCOLLO_Ricerca_Profilo.md (stadi C1-C3).
 //
-// Uso:  node collect.mjs [--limit N] [--id <uuid>] [--stato seed|enriched] [--only site,ig,maps] [--dry]
+// Uso:  node collect.mjs [--limit N] [--id <uuid>] [--ids <uuid,uuid,...>] [--stato seed|enriched] [--only site,ig,maps] [--dry]
 // Idempotente: ogni stage aggiunge evidenze nuove (append-only, con run_id); ri-lanciare un account
 // non cancella nulla e la vista v_lead_dossier mostra sempre l'ultima evidenza per tipo.
 import { chromium } from 'playwright';
@@ -17,7 +17,7 @@ const DRY = !!args.dry;
 
 const sb = await supa();
 let q = sb.from('lead_accounts').select('*').order('created_at');
-if (args.id) q = q.eq('id', args.id); else q = q.eq('stato_ricerca', STATO).limit(LIMIT);
+if (args.id) q = q.eq('id', args.id); else if (args.ids) q = q.in('id', String(args.ids).split(',')); else q = q.eq('stato_ricerca', STATO).limit(LIMIT);
 const { data: accounts, error } = await q;
 if (error) throw error;
 console.log(`[collect] ${accounts.length} account, stage: ${ONLY.join('+')}${DRY ? ' (DRY: niente scritture)' : ''}`);
