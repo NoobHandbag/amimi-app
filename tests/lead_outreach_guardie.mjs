@@ -90,6 +90,15 @@ t('47 giorno di Roma indifferente ai secondi', inizioGiornoRoma(new Date('2026-0
 t('48 follow-up con In-Reply-To/References dal messaggio precedente (scope readonly)', /In-Reply-To: \$\{inReplyTo\}/.test(src) && /googleAccessToken\(sa, SCOPE_READ\)/.test(src) && /format=metadata&metadataHeaders=Message-ID/.test(src));
 t('49 header di reply mancanti = avviso, mai blocco dell\'invio', /warnings\.push\(`header di reply non impostati/.test(src));
 t('50 chiave Gemini nell\'header, mai nell\'URL; errori ripuliti prima di arrivare alla UI (Gate 2 mat, A1)', /'x-goog-api-key': key/.test(src) && !/generateContent\?key=/.test(src.replace(/^\s*\/\/[^\n]*$/gm, '')) && /scrub\(\(e as Error\)\.message/.test(src));
+// v4 (25-09): {{linesheet}} nei template viene dal flag; senza flag resta un [DA VERIFICARE], che bloccantiInvio ferma
+const webApi = readFileSync(`${ROOT}web/src/lib/leadApi.ts`, 'utf8').replace(/\r\n/g, '\n');
+t('51 {{linesheet}}: edge e compositore lo riempiono dal flag lead_linesheet_url, e senza flag resta un segnaposto bloccante', /linesheet: flags\.lead_linesheet_url \|\| '\[DA VERIFICARE: link line sheet\]'/.test(src) && /linesheet \|\| '\[LINK LINE SHEET: manca app_flags\.lead_linesheet_url\]'/.test(webApi) && bloccantiInvio({ ...pulita, testo: body + ' [DA VERIFICARE: link line sheet]' }).length === 1);
+const mig145 = readFileSync(`${ROOT}supabase/migrations/0145_lead_outreach_contenuti.sql`, 'utf8').replace(/\r\n/g, '\n');
+const mig145Sql = mig145.replace(/^\s*--[^\n]*$/gm, '');   // i commenti raccontano cosa si e' tolto: si valuta solo l'SQL
+const [mig145Tpl, mig145Know = ''] = mig145Sql.split('insert into lead_knowledge');
+t('52 migr 0145: template con il link (IT 1 e 4, EN 1 e 4), senza allegati, senza "come anticipato", senza prezzi promessi in pagina, senza minimi; knowledge senza percentuali ne listino; insert rieseguibile', (mig145Tpl.match(/\{\{linesheet\}\}/g) ?? []).length >= 4 && !/allego|come anticipato|catalogo wholesale/.test(mig145Sql) && !/con i prezzi|colori e prezzi|and prices/.test(mig145Tpl) && !/ordine minimo|minimo d.ordine|rischio zero|un paio di pezzi/.test(mig145Tpl) && !/\d+\s?%/.test(mig145Sql.replace(/100% naturale/g, '')) && !/\d+ \/ \d+/.test(mig145Know) && /lead_linesheet_url/.test(mig145Sql) && /where not exists/.test(mig145Know));
+const tpl145 = [...mig145Tpl.matchAll(/E'((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'").replace(/\\n/g, '\n').replace(/\{\{[a-z_]+\}\}/g, 'x'));
+t('53 migr 0145: nessun template fa scattare avvisiContenuto (cotone/Italia, condizioni, allegati, percentuali)', tpl145.length >= 9 && tpl145.every((x) => avvisiContenuto(x).length === 0));
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

@@ -953,3 +953,12 @@ a.ds-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .mat-form .fl { display: block; margin: 8px 0 4px; }
 .mat-form .chips { margin-bottom: 8px; }
 .mat-low, .chip.mat-low { background: #fff4c2 !important; border-color: #e0b400 !important; }
+
+/* Negozi B2B, audit UI/UX 22-09: bottone "indietro" leggibile (prima un badge arancio 11px a 2,27:1), persona che firma,
+   compositore per primo su telefono, pill di navigazione e titoli con la tinta -700 (WCAG AA) */
+.lead-back { background: none; border: 0; color: var(--interactive-700); font-weight: 700; font-size: 14px; padding: 8px 2px; cursor: pointer; min-height: 40px; }
+.lead-who { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-muted); }
+.lead-who select { font: inherit; font-weight: 700; color: var(--ink); border: 1px solid var(--border); border-radius: 999px; padding: 6px 10px; background: var(--surface); min-height: 36px; }
+.or-nav button.on { background: var(--interactive-700); border-color: var(--interactive-700); }
+.lead-verd h2, .or-two .card h2 { color: var(--interactive-700); }
+@media (max-width: 860px) { .or-compositore { order: -1; } }

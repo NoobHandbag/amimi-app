@@ -260,11 +260,13 @@ export async function sbloccaBozza(p: { draft_id: string; chi: string }): Promis
 export const segnaposto = (s: string): string[] => [...s.matchAll(/\[[^\]\n]{1,200}\]|\{\{[^}\n]{1,60}\}\}/g)].map((m) => m[0]);
 
 // riempie i segnaposto del template con i dati del negozio; i buchi restano visibili fra parentesi quadre
-export function renderTemplate(tpl: string, r: { nome: string; citta?: string | null; gancio?: string | null }, referente: string | null, firma: string): string {
+// (e bloccano l'invio dall'app). {{linesheet}} = app_flags.lead_linesheet_url (migr 0145).
+export function renderTemplate(tpl: string, r: { nome: string; citta?: string | null; gancio?: string | null }, referente: string | null, firma: string, linesheet = ''): string {
   return tpl
     .replace(/\{\{nome_negozio\}\}/g, r.nome)
     .replace(/\{\{citta\}\}/g, r.citta ?? '[citta\u2019]')
     .replace(/\{\{referente\}\}/g, referente?.trim() || `team di ${r.nome}`)
     .replace(/\{\{gancio\}\}/g, r.gancio ?? '[GANCIO DA SCRIVERE: una cosa vera vista nel dossier]')
+    .replace(/\{\{linesheet\}\}/g, linesheet || '[LINK LINE SHEET: manca app_flags.lead_linesheet_url]')
     .replace(/\{\{firma\}\}/g, firma);
 }

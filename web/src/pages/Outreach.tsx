@@ -108,6 +108,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const [oggetto, setOggetto] = useState('');
   const [moveTo, setMoveTo] = useState('');
   const firma = settings.lead_firma ?? 'Benedetta - Amimì Milano';
+  const linesheet = settings.lead_linesheet_url ?? '';
   const [to, setTo] = useState(r.email_generica ?? r.email_sito ?? '');
   // bozza AI (edge lead-outreach): quando c'e' una bozza aperta il template non sovrascrive piu' il testo
   const aiOn = settings.lead_outreach_ai_enabled === 'true';
@@ -124,10 +125,10 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   useEffect(() => {
     if (draftId) return;
     if (!seq) { setTesto(''); setOggetto(''); return; }
-    setTesto(renderTemplate(seq.corpo, r, referente, firma));
-    setOggetto(seq.oggetto ? renderTemplate(seq.oggetto, r, referente, firma) : '');
+    setTesto(renderTemplate(seq.corpo, r, referente, firma, linesheet));
+    setOggetto(seq.oggetto ? renderTemplate(seq.oggetto, r, referente, firma, linesheet) : '');
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
-  }, [seq?.id, referente, r.id, draftId]);
+  }, [seq?.id, referente, r.id, draftId, firma, linesheet]);
 
   const bozzaAI = async () => {
     if (seq?.canale !== 'email') { setMsg('La bozza AI e’ per i tocchi email (1-4).'); return; }
@@ -177,8 +178,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   return (
     <div className="screen">
       <header>
-        <button className="badge" onClick={onBack} type="button">‹ Pipeline</button>
-        <span className="badge" style={{ background: 'var(--interactive)', color: '#fff' }}>{STAGE_LABEL[r.lead_stage]}</span>
+        <button className="lead-back" onClick={onBack} type="button">‹ Pipeline</button>
+        <span className="badge" style={{ background: 'var(--interactive-700)', color: '#fff' }}>{STAGE_LABEL[r.lead_stage]}</span>
       </header>
       <div className="or-head">
         {r.thumb && urls[r.thumb] ? <img src={urls[r.thumb]} alt="" /> : <span className="or-thumb-empty big" />}
@@ -199,10 +200,11 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
       {r.gancio && <div className="lead-gancio"><b>Gancio dal dossier</b><p>{r.gancio}</p></div>}
       <div className="or-next">
         <div><b>Prossima azione:</b> {r.prossima_azione ? `${r.prossima_azione}${r.prossima_azione_at ? ` entro il ${fmtD(r.prossima_azione_at)}` : ''}` : 'nessuna pianificata'}{r.owner_outreach ? ` · segue ${r.owner_outreach}` : ''}</div>
-        <div className="or-move"><select value={moveTo} onChange={(e) => setMoveTo(e.target.value)}><option value="">Sposta a…</option>{STAGES.map((s) => <option key={s.key} value={s.key} disabled={s.key === r.lead_stage}>{s.label}</option>)}</select><button type="button" className="ds-btn" disabled={!moveTo || busy} onClick={sposta}>Sposta</button></div>
+        <div className="or-move"><select value={moveTo} aria-label="Sposta in un altro stadio" onChange={(e) => setMoveTo(e.target.value)}><option value="">Sposta a…</option>{STAGES.map((s) => <option key={s.key} value={s.key} disabled={s.key === r.lead_stage}>{s.label}</option>)}</select><button type="button" className="ds-btn" disabled={!moveTo || busy} onClick={sposta}>Sposta</button></div>
       </div>
       {msg && <div className="note" style={{ margin: '4px 0' }}>{msg}</div>}
 
+      {/* su telefono il compositore viene PRIMA della timeline (CSS order): e' il passo che serve per la prima email */}
       <div className="or-two">
         <section className="card">
           <h2>Timeline</h2>
@@ -229,7 +231,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
           <button type="button" className="ds-btn" disabled={busy} onClick={registra}>Registra ({who})</button>
         </section>
 
-        <section className="card">
+        <section className="card or-compositore">
           <h2>Compositore</h2>
           <div className="or-form">
             <label>Sequenza<select value={codice} onChange={(e) => setCodice(e.target.value)}>{[...new Set(sequences.map((s) => s.codice))].map((c) => <option key={c} value={c}>{c === 'boutique_it' ? 'Boutique · italiano' : c === 'boutique_en' ? 'Boutique · English' : c}</option>)}</select></label>
@@ -242,14 +244,14 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
           {aiOn ? (
             <div className="or-ai">
               <div className="lead-actions">
-                <button type="button" className="ds-btn" disabled={aiBusy || busy || seq?.canale !== 'email'} onClick={bozzaAI}>{aiBusy ? 'Scrivo la bozza…' : draftId ? 'Rigenera bozza AI' : `Bozza con l’AI (tocco ${tocco})`}</button>
+                <button type="button" className="ds-btn" disabled={aiBusy || busy || seq?.canale !== 'email'} style={{ background: 'var(--interactive-700)', color: '#fff', borderColor: 'var(--interactive-700)' }} onClick={bozzaAI}>{aiBusy ? 'Scrivo la bozza…' : draftId ? 'Rigenera bozza AI' : `Bozza con l’AI (tocco ${tocco})`}</button>
                 {draftId && <button type="button" className="ds-btn" disabled={busy} onClick={() => { setDraftId(null); setAvvisi([]); }}>Torna al template</button>}
               </div>
               {avvisi.length > 0 && <div className="err" style={{ marginTop: 6 }}>Da controllare: {avvisi.join(' · ')}</div>}
               {draftId && <>
                 <label className="cs-fld" style={{ display: 'block', marginTop: 8 }}>Destinatario<input type="email" value={to} onChange={(e) => setTo(e.target.value.trim())} placeholder="email del negozio" /></label>
                 {residui.length > 0 && <p className="note">Prima di inviare completa: {residui.slice(0, 4).join(' ')}</p>}
-                <button type="button" className="ds-btn" disabled={busy || !to || residui.length > 0 || r.n_opt_out > 0} style={{ marginTop: 6, background: 'var(--positive)', color: '#fff', borderColor: 'var(--positive)' }} onClick={invia}>{busy ? 'Invio…' : 'Invia da info@amimi.it'}</button>
+                <button type="button" className="ds-btn" disabled={busy || !to || residui.length > 0 || r.n_opt_out > 0} style={{ marginTop: 6, background: 'var(--positive-700)', color: '#fff', borderColor: 'var(--positive-700)' }} onClick={invia}>{busy ? 'Invio…' : 'Invia da info@amimi.it'}</button>
               </>}
             </div>
           ) : <p className="note">Bozza AI e invio dall&#8217;app spenti (flag lead_outreach_ai_enabled). Per ora: template, Gmail e &#8220;Segna come inviata&#8221;.</p>}
@@ -257,7 +259,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
           {!draftId && <div className="lead-actions">
             {seq?.canale === 'email' && to && <a className="ds-btn" href={gmailUrl} target="_blank" rel="noreferrer">Apri in Gmail</a>}
             <button type="button" className="ds-btn" onClick={copia}>Copia testo</button>
-            <button type="button" className="ds-btn" disabled={busy || !testo} style={{ background: 'var(--positive)', color: '#fff', borderColor: 'var(--positive)' }} onClick={segnaInviata}>{seq?.canale === 'telefono' ? 'Segna come fatta' : 'Segna come inviata'}</button>
+            {/* secondaria (bordo, non pieno): registra un invio fatto altrove, non lo esegue */}
+            <button type="button" className="ds-btn" disabled={busy || !testo} style={{ color: 'var(--positive-700)', borderColor: 'var(--positive-700)' }} onClick={segnaInviata}>{seq?.canale === 'telefono' ? 'Segna come fatta' : 'Segna come inviata'}</button>
           </div>}
           {!to && seq?.canale === 'email' && <p className="note">Nessuna email in anagrafica: "Apri in Gmail" compare quando c&#8217;e&#8217; un destinatario.</p>}
         </section>
