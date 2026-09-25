@@ -269,7 +269,8 @@ Deno.serve(async (req) => {
 
     const firma = flags.lead_firma || '[DA VERIFICARE: firma]';
     const referente = String(body.referente || '').trim().slice(0, 80);
-    const vars = { nome_negozio: String(d.nome), citta: String(d.citta ?? ''), referente: referente || (lingua === 'en' ? `${d.nome} team` : `team di ${d.nome}`), gancio: String(d.gancio ?? '[DA VERIFICARE: gancio]'), firma };
+    // v4: {{linesheet}} nei template = link della pagina riservata; senza flag resta un [DA VERIFICARE] che blocca l'invio
+    const vars = { nome_negozio: String(d.nome), citta: String(d.citta ?? ''), referente: referente || (lingua === 'en' ? `${d.nome} team` : `team di ${d.nome}`), gancio: String(d.gancio ?? '[DA VERIFICARE: gancio]'), firma, linesheet: flags.lead_linesheet_url || '[DA VERIFICARE: link line sheet]' };
     const template = { oggetto: fill(String(seq.oggetto ?? ''), vars), corpo: fill(String(seq.corpo), vars) };
     const prompt = buildPrompt({ lingua, negozio: fattiNegozio(d), template, knowledge: (kn ?? []) as { titolo: string; contenuto: string }[], linesheet: flags.lead_linesheet_url || '', firma, referente, tocco });
 

@@ -55,7 +55,7 @@ export default function App() {
         {tab === 'clienti' && <Clienti onBack={() => go('home')} />}
         {tab === 'salute' && <Salute onBack={() => go('home')} chi={chi} go={go} pin={pin} />}
         {tab === 'assistenza' && <Assistenza onBack={() => go('home')} />}
-        {tab === 'negozi' && <Negozi onBack={() => go('home')} chi={chi} />}
+        {tab === 'negozi' && <Negozi onBack={() => go('home')} chi={chi} setChi={setChi} />}
         {tab === 'registra' && <Ingest pin={pin} chi={chi} initial={param} />}
         {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} onMateriali={matEnabled ? () => go('materiali') : undefined} />}
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}

@@ -3,7 +3,7 @@ import { csClient } from '../lib/csClient';
 import { pushBack, popBack } from '../lib/backnav';
 import { fetchDossier, fetchEvidence, fetchContacts, fetchReviews, signedUrls, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL } from '../lib/leadApi';
 import type { LeadDossier, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
-import { personaName } from '../lib/people';
+import { PEOPLE, personaName } from '../lib/people';
 import ExportBtn from '../components/ExportBtn';
 import { fetchOutreach, fetchSequences, fetchLeadSettings } from '../lib/leadApi';
 import type { LeadOutreach, LeadSequence } from '../lib/leadApi';
@@ -37,8 +37,10 @@ const routeHash = (r: Route) => r.view === 'lista' ? '#negozi' : r.view === 'pip
 const fmtN = (n: number | null | undefined) => (n == null ? '—' : new Intl.NumberFormat('it-IT').format(n));
 const eur = (n: number | null | undefined) => (n == null ? '—' : `${Math.round(n)}€`);
 const short = (s: string | null | undefined, n = 110) => (!s ? '' : s.length > n ? s.slice(0, n - 1) + '…' : s);
-const tierColor = (t: string | null | undefined) => (t === 'A' ? 'var(--positive)' : t === 'B' ? 'var(--warning)' : t === 'C' ? 'var(--ink-muted)' : 'var(--border-strong)');
-const scoreColor = (n: number | null | undefined) => (n == null ? 'var(--border-strong)' : n >= 75 ? 'var(--positive)' : n >= 55 ? 'var(--warning)' : 'var(--negative)');
+// tinte -700: le piene (--positive, --warning, --negative) non reggono ne' il bianco sopra (2,4:1) ne' se stesse su
+// bianco; le -700 passano WCAG AA in entrambi i versi (audit UI/UX 22-09)
+const tierColor = (t: string | null | undefined) => (t === 'A' ? 'var(--positive-700)' : t === 'B' ? 'var(--warning-700)' : t === 'C' ? 'var(--ink-muted)' : 'var(--border-strong)');
+const scoreColor = (n: number | null | undefined) => (n == null ? 'var(--border-strong)' : n >= 75 ? 'var(--positive-700)' : n >= 55 ? 'var(--warning-700)' : 'var(--negative-700)');
 const MESI = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
 const fmtD = (iso: string | null | undefined) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${Number(d)} ${MESI[Number(m) - 1]} ${y}`; };
 // la data del post sta nell'alt di Instagram ("Photo by X on September 06, 2026."): piu' affidabile del campo calcolato
@@ -56,11 +58,14 @@ const cleanReview = (raw: string) => {
   if (!testo) testo = '(solo stelle, senza testo)';
   return { autore, quando: m ? m[2] : '', testo };
 };
-const verdColor = (v: string | null | undefined) => (v === 'da_contattare' ? 'var(--positive)' : v === 'forse' ? 'var(--warning)' : v === 'no' ? 'var(--negative)' : 'var(--border-strong)');
+const verdColor = (v: string | null | undefined) => (v === 'da_contattare' ? 'var(--positive-700)' : v === 'forse' ? 'var(--warning-700)' : v === 'no' ? 'var(--negative-700)' : 'var(--border-strong)');
 
 type View = 'lista' | 'tabella' | 'scheda';
 
-export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: string }) {
+// `chi` = persona scelta in Home (Ale / Benny / Ginni): e' lei che firma verdetti e tocchi. Il login e' condiviso
+// (solo info@ e support@ esistono nel dominio), quindi l'email non dice chi sta lavorando: per questo la persona si
+// puo' cambiare anche qui, in testa alla sezione (audit UI/UX 22-09).
+export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; chi: string; setChi?: (c: string) => void }) {
   const [session, setSession] = useState<'?' | 'in' | 'out'>('?');
   const [email, setEmail] = useState(''); const [pwd, setPwd] = useState(''); const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -112,7 +117,9 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
       const o = await fetchOutreach(); setOrows(o);
       const oth = o.map((x) => x.thumb).filter((p): p is string => !!p && !signed[p]);
       if (oth.length) { const s2 = await signedUrls(oth); setUrls((u) => ({ ...u, ...s2 })); }
-      if (!sequences.length) { setSequences(await fetchSequences()); setSettings(await fetchLeadSettings()); }
+      // sequenze e settings insieme, in un solo render: il compositore rende il template con firma e link gia' noti,
+      // altrimenti al primo giro scriveva il segnaposto del link (Gate 2 del 25-09, B3)
+      if (!sequences.length) { const [sq, st] = await Promise.all([fetchSequences(), fetchLeadSettings()]); setSettings(st); setSequences(sq); }
     } catch (e) { setErr((e as Error).message); }
   };
   useEffect(() => { if (session === 'in') load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [session]);
@@ -133,7 +140,8 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
   const list = useMemo(() => {
     const s = q.trim().toLowerCase();
     return (rows ?? []).filter((r) =>
-      (fStato === 'tutti' || (fStato === 'attivi' ? r.stato_ricerca !== 'rejected' : r.stato_ricerca === fStato)) &&
+      // "Attivi" = con dati: fuori gli scartati e i 1.400 seed vuoti di Maps (hanno il loro chip "Da raccogliere")
+      (fStato === 'tutti' || (fStato === 'attivi' ? r.stato_ricerca !== 'rejected' && r.stato_ricerca !== 'seed' : r.stato_ricerca === fStato)) &&
       (fTier === 'tutti' || (fTier === 'senza' ? !r.tier && !r.tier_proposto : (r.tier ?? r.tier_proposto) === fTier)) &&
       (fTipo === 'tutti' || r.tipo === fTipo) &&
       (fVerd === 'tutti' || (fVerd === 'senza' ? !r.verdetto : r.verdetto === fVerd)) &&
@@ -155,7 +163,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
   if (session === '?') return <div className="screen"><header><h1>Negozi B2B</h1></header><p className="muted center">Controllo l&#8217;accesso…</p></div>;
   if (session === 'out') return (
     <div className="screen">
-      <header><button className="badge" onClick={onBack} type="button">‹ Home app</button></header>
+      <header><button className="lead-back" onClick={onBack} type="button">‹ Home app</button></header>
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; negozi B2B</span></div>
         <div className="cs-lt">Accedi con il tuo account Amimi&#8217; (dati di terzi: serve il login)</div>
@@ -172,7 +180,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
   if (route.view === 'scheda' && cur) return <Scheda r={cur} urls={urls} signMore={signMore} who={who} onBack={closeScheda} onChanged={load} onOutreach={orows?.some((x) => x.id === cur.id) ? () => goRoute({ view: 'oscheda', id: cur.id }) : undefined} />;
   if (route.view === 'oscheda' && ocur) return <OutreachScheda key={ocur.id} r={ocur} urls={urls} who={who} sequences={sequences} settings={settings} onBack={() => closeDetail({ view: 'pipeline' })} onOpenDossier={(id) => goRoute({ view: 'scheda', id })} onChanged={load} />;
   if (route.view === 'scheda' && rows && !cur) return (
-    <div className="screen"><header><button className="badge" onClick={closeScheda} type="button">‹ Negozi</button></header><p className="muted">Negozio non trovato (forse scartato o rinominato).</p></div>
+    <div className="screen"><header><button className="lead-back" onClick={closeScheda} type="button">‹ Negozi</button></header><p className="muted">Negozio non trovato (forse scartato o rinominato).</p></div>
   );
   if (route.view === 'pipeline' || route.view === 'coda' || route.view === 'sequenze' || (route.view === 'oscheda' && orows && !ocur)) return (
     <div className="screen">
@@ -193,6 +201,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
       <header>
         <h1>Negozi B2B</h1>
         <div className="operbar">
+          {setChi && <label className="lead-who">Firmi come <select value={chi} onChange={(e) => setChi(e.target.value)}>{PEOPLE.map((p) => <option key={p} value={p}>{personaName(p)}</option>)}</select></label>}
           <button className="badge" onClick={load} type="button">Aggiorna</button>
           <ExportBtn name="negozi_b2b" rows={() => list.map((r) => ({ nome: r.nome, tipo: r.tipo, citta: r.citta, paese: r.paese, stato: r.stato_ricerca, totale: r.totale, tier_proposto: r.tier_proposto, tier: r.tier, follower: r.ig_metrics?.follower ?? null, rating: r.maps?.rating ?? null, recensioni: r.maps?.recensioni ?? null, borse_mediana: r.price_band?.borse?.mediana ?? null, brand_affini: (r.brands_carried?.peer_match ?? []).join(' '), sito: r.website, instagram: r.ig_handle, email: r.email_generica, telefono: r.telefono ?? r.maps?.telefono ?? null, gancio: r.gancio, nota: r.owner_note }))} />
         </div>
@@ -210,7 +219,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
           </div>
 
           <section className="card">
-            <div className="ds-search" style={{ marginBottom: 8 }}><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca nome, citta', Instagram, brand a catalogo…" aria-label="Cerca negozio" /></div>
+            <div className="ds-search" style={{ marginBottom: 8 }}><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca negozio, citta', brand…" aria-label="Cerca negozio, citta', Instagram o brand a catalogo" /></div>
             <div className="chips" style={{ marginBottom: 6 }}>
               {['attivi', 'scored', 'reviewed', 'seed', 'enriched', 'rejected', 'tutti'].map((s) => <button key={s} type="button" className={`chip ${fStato === s ? 'on' : ''}`} onClick={() => setFStato(s)}>{s === 'tutti' ? 'Tutti' : s === 'attivi' ? 'Attivi' : STATO_LABEL[s]}{byStato.get(s) ? ` · ${byStato.get(s)}` : ''}</button>)}
             </div>
@@ -267,7 +276,7 @@ export default function Negozi({ onBack, chi }: { onBack?: () => void; chi: stri
                       </div>
                       {peer.length > 0 && <div className="chips" style={{ marginTop: 4 }}>{peer.slice(0, 4).map((b) => <span key={b} className="chip on" style={{ fontSize: 11 }}>{b}</span>)}</div>}
                       {r.verdetto_motivo ? <div className="lead-mot" style={{ color: 'var(--ink)' }}>{short(r.verdetto_motivo, 140)}</div> : r.motivazione && <div className="lead-mot">{short(r.motivazione, 140)}</div>}
-                      {r.esclusione && <div className="lead-mot" style={{ color: 'var(--negative)' }}>Esclusione: {r.esclusione}</div>}
+                      {r.esclusione && <div className="lead-mot" style={{ color: 'var(--negative-700)' }}>Esclusione: {r.esclusione}</div>}
                     </div>
                   </button>
                 );
@@ -347,7 +356,7 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged, onOutreach }: { r: 
   return (
     <div className="screen">
       <header>
-        <button className="badge" onClick={onBack} type="button">‹ Negozi</button>
+        <button className="lead-back" onClick={onBack} type="button">‹ Negozi</button>
         <span className="badge" style={{ background: tierColor(r.tier ?? r.tier_proposto), color: '#fff' }}>{r.tier ? `Tier ${r.tier}` : r.tier_proposto ? `Proposto ${r.tier_proposto}` : STATO_LABEL[r.stato_ricerca]}</span>
       </header>
       <h1 style={{ margin: '4px 0 0' }}>{r.nome}</h1>
@@ -366,15 +375,15 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged, onOutreach }: { r: 
         </div>
         {r.verdetto_motivo && <p style={{ margin: '6px 0 0' }}><b>Perche&#8217;:</b> {r.verdetto_motivo}</p>}
         {!r.verdetto && <p className="note" style={{ margin: '6px 0 0' }}>Nessuno ha ancora deciso su questo negozio. Guarda il dossier qui sotto, poi scegli uno dei tre bottoni: &#8220;Da contattare&#8221; lo porta nella Pipeline, dove si prepara la prima email.</p>}
-        <div className="cs-fld" style={{ marginTop: 8 }}><label>Perche&#8217; (obbligatorio per il no)</label><textarea rows={2} value={perche} onChange={(e) => setPerche(e.target.value)} placeholder="es. troppo luxury per noi / perfetto, chiamare il titolare / da rivedere dopo la visita" /></div>
+        <div className="cs-fld" style={{ marginTop: 8 }}><label htmlFor="lead-perche">Perche&#8217; (obbligatorio per il no)</label><textarea id="lead-perche" rows={2} value={perche} onChange={(e) => setPerche(e.target.value)} placeholder="es. troppo luxury per noi / perfetto, chiamare il titolare / da rivedere dopo la visita" /></div>
         <div className="muted" style={{ fontSize: 12, margin: '4px 0' }}>{r.verdetto ? 'Cambia verdetto:' : 'Il tuo verdetto:'}</div>
         <div className="lead-actions">
-          <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'da_contattare' ? 'var(--positive)' : 'transparent', color: r.verdetto === 'da_contattare' ? '#fff' : 'var(--positive-700)', borderColor: 'var(--positive)' }} onClick={() => classify('da_contattare')}>Da contattare</button>
-          <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'forse' ? 'var(--warning)' : 'transparent', color: r.verdetto === 'forse' ? '#fff' : 'var(--warning-700)', borderColor: 'var(--warning)' }} onClick={() => classify('forse')}>Forse</button>
-          <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'no' ? 'var(--negative)' : 'transparent', color: r.verdetto === 'no' ? '#fff' : 'var(--negative-700)', borderColor: 'var(--negative)' }} onClick={() => classify('no')}>No</button>
+          <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'da_contattare' ? 'var(--positive-700)' : 'transparent', color: r.verdetto === 'da_contattare' ? '#fff' : 'var(--positive-700)', borderColor: 'var(--positive-700)' }} onClick={() => classify('da_contattare')}>Da contattare</button>
+          <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'forse' ? 'var(--warning-700)' : 'transparent', color: r.verdetto === 'forse' ? '#fff' : 'var(--warning-700)', borderColor: 'var(--warning-700)' }} onClick={() => classify('forse')}>Forse</button>
+          <button type="button" className="ds-btn" disabled={busy} style={{ background: r.verdetto === 'no' ? 'var(--negative-700)' : 'transparent', color: r.verdetto === 'no' ? '#fff' : 'var(--negative-700)', borderColor: 'var(--negative-700)' }} onClick={() => classify('no')}>No</button>
         </div>
         {msg && <div className="note" style={{ marginTop: 6 }}>{msg}</div>}
-        {r.verdetto === 'da_contattare' && onOutreach && <button type="button" className="ds-btn" style={{ marginTop: 8, background: 'var(--positive)', color: '#fff', borderColor: 'var(--positive)' }} onClick={onOutreach}>Prepara la prima email ›</button>}
+        {r.verdetto === 'da_contattare' && onOutreach && <button type="button" className="ds-btn" style={{ marginTop: 8, background: 'var(--positive-700)', color: '#fff', borderColor: 'var(--positive-700)' }} onClick={onOutreach}>Prepara la prima email ›</button>}
       </section>
       {r.stato_ricerca === 'rejected' && !r.verdetto && <div className="card err">Scartato: {r.rejected_motivo}</div>}
       {r.site_meta?.meta && <p className="lead-tagline">{short(r.site_meta.meta, 220)}</p>}
@@ -476,7 +485,7 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged, onOutreach }: { r: 
               {CRITERI_ORDER.map((c) => { const k = crit[c.key]; const p = k?.punti; return (
                 <div key={c.key} className="lead-critrow">
                   <div className="lead-critlbl"><span>{c.label}</span><b>{p == null ? '—' : `${p}/10`}<i> · peso {c.peso}</i></b></div>
-                  <div className="lead-bar"><div style={{ width: `${((p ?? 0) / 10) * 100}%`, background: p == null ? 'var(--border-strong)' : p >= 7 ? 'var(--positive)' : p >= 4 ? 'var(--warning)' : 'var(--negative)' }} /></div>
+                  <div className="lead-bar"><div style={{ width: `${((p ?? 0) / 10) * 100}%`, background: p == null ? 'var(--border-strong)' : p >= 7 ? 'var(--positive-700)' : p >= 4 ? 'var(--warning-700)' : 'var(--negative-700)' }} /></div>
                   {k?.prova && <div className="lead-prova">{k.prova}</div>}
                 </div>
               ); })}
@@ -496,9 +505,9 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged, onOutreach }: { r: 
           {(['A', 'B', 'C'] as const).map((t) => <button key={t} type="button" className="ds-btn" disabled={busy} style={{ borderColor: tierColor(t), color: r.tier === t ? '#fff' : tierColor(t), background: r.tier === t ? tierColor(t) : 'transparent' }} onClick={() => act('tier', t)}>Tier {t}</button>)}
           <button type="button" className="ds-btn" disabled={busy} onClick={() => act('ricontrolla')}>Ricontrolla</button>
         </div>
-        <div className="cs-fld" style={{ marginTop: 8 }}><label>Motivo scarto</label><input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="es. monomarca, chiuso, fuori target…" /></div>
-        <button type="button" className="ds-btn" disabled={busy} style={{ color: 'var(--negative)', borderColor: 'var(--negative)' }} onClick={() => act('scarta')}>Scarta</button>
-        <div className="cs-fld" style={{ marginTop: 10 }}><label>Nota</label><textarea rows={2} value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Una nota per voi due (resta sulla scheda)" /></div>
+        <div className="cs-fld" style={{ marginTop: 8 }}><label htmlFor="lead-motivo">Motivo scarto</label><input id="lead-motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="es. monomarca, chiuso, fuori target…" /></div>
+        <button type="button" className="ds-btn" disabled={busy} style={{ color: 'var(--negative-700)', borderColor: 'var(--negative-700)' }} onClick={() => act('scarta')}>Scarta</button>
+        <div className="cs-fld" style={{ marginTop: 10 }}><label htmlFor="lead-nota">Nota</label><textarea id="lead-nota" rows={2} value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Una nota per voi due (resta sulla scheda)" /></div>
         <button type="button" className="ds-btn" disabled={busy} onClick={() => act('nota')}>Salva nota</button>
         {msg && <div className="note" style={{ marginTop: 6 }}>{msg}</div>}
         {r.owner_note && <p className="note" style={{ marginTop: 8 }}><b>Nota attuale:</b> {r.owner_note}</p>}
