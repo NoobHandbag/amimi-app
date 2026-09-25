@@ -83,7 +83,10 @@ async function stageSite(acc) {
     const emails = [...new Set((html.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) || []).map((e) => e.toLowerCase()).filter((e) => !/\.(png|jpe?g|svg|webp|gif|css|js)$/i.test(e) && !/example|sentry|wixpress|schema\.org/.test(e)))];
     const phones = [...new Set((html.replace(/<[^>]+>/g, ' ').match(/(?:\+39|0039)?\s?0?\d{2,4}[\s./-]?\d{5,8}\b/g) || []).map((p) => p.trim()).filter((p) => p.replace(/\D/g, '').length >= 9 && p.replace(/\D/g, '').length <= 13))].slice(0, 6);
     const piva = (html.match(/(?:P\.?\s?IVA|VAT|Partita IVA)[^0-9]{0,20}(IT)?\s?(\d{11})/i) || [])[2] || null;
-    const ig = links.find((l) => /instagram\.com\/[^/?]+/i.test(l.h))?.h.match(/instagram\.com\/([^/?#]+)/i)?.[1] || null;
+    // link a un post, reel o pagina di servizio (instagram.com/p/..., /reel/..., /explore/...) non sono un profilo:
+    // il 25-09 V17, ZSAZSAZSU e OVERCUT avevano handle 'reel'/'p' e il collector leggeva l'account di Instagram stesso
+    const IG_NON_PROFILO = /^(p|reel|reels|tv|explore|stories|accounts|share|direct|about|legal)$/i;
+    const ig = links.map((l) => l.h.match(/instagram\.com\/([^/?#]+)/i)?.[1]).find((h) => h && !IG_NON_PROFILO.test(h)) || null;
     const fb = links.find((l) => /facebook\.com\//i.test(l.h))?.h || null;
     const ecommerce = /\/cart|\/checkout|add[-_ ]to[-_ ]cart|aggiungi al carrello|\/products?\//i.test(html);
     const platform = /cdn\.shopify\.com|Shopify\.theme/i.test(html) ? 'shopify' : /wp-content/i.test(html) ? (/woocommerce/i.test(html) ? 'woocommerce' : 'wordpress') : /squarespace/i.test(html) ? 'squarespace' : /wixstatic|wix\.com/i.test(html) ? 'wix' : null;
