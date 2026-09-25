@@ -104,7 +104,9 @@ t('53 pagina: bottoni di scrittura gated da settings.write, Compila da settings.
 t('54 pagina: salvataggio solo dopo conferma umana (Conferma e salva), mai auto-save dopo Compila', /Conferma e salva/.test(PAGE) && !/onCompila[\s\S]{0,200}salva\(\)/.test(PAGE));
 t('55 pagina: confidenza bassa evidenziata (mat-low) e prezzo numerico validato', /mat-low/.test(PAGE) && /\^\\d\+\(\[\.,\]\\d\+\)\?\$/.test(PAGE));
 t('56 ordini: la proposta AI aggiunge SOLO varianti esistenti, le altre restano da confermare (nessuno stub automatico)', /nonTrovate\.push/.test(ORD) && !/nuovo: true, wip: false \}\]\);[\s\S]{0,80}aggiunte\+\+/.test(ORD) && /createOrderMulti\(forn, dataOrd, righe, pin, chi\)/.test(ORD));
-t('57 ordini: pannello AI gated dal flag e dal login csClient', /aiOn && \(/.test(ORD) && /aiLogged/.test(ORD) && /fetchMatSettings\(\)/.test(ORD));
+t('57 ordini: pannello AI gated dal flag e dal login csClient', /const aiPanel = aiOn \?/.test(ORD) && /aiLogged/.test(ORD) && /fetchMatSettings\(\)/.test(ORD));
+t('58 ordini: pannello AI anche al primo passo (prima della scelta del fornitore) e al secondo', (ORD.match(/\{aiPanel\}/g) ?? []).length === 2 && ORD.indexOf('{aiPanel}') < ORD.indexOf('<label className="fl">Fornitore</label>'));
+t('59 ordini: senza sessione login in linea (csClient), niente rimando che fa perdere l ordine in corso', /csClient\.auth\.signInWithPassword/.test(ORD) && !/aprilo dalla sezione Materie prime/.test(ORD));
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

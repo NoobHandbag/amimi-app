@@ -43,6 +43,15 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   const [aiOpen, setAiOpen] = useState(false); const [aiFiles, setAiFiles] = useState<File[]>([]); const [aiTesto, setAiTesto] = useState(''); const [aiBusy, setAiBusy] = useState(false);
   const [aiNonTrovate, setAiNonTrovate] = useState<{ modello: string; variante: string; quantita: number | null; costo: number | null }[]>([]);
   const aiFileRef = useRef<HTMLInputElement>(null);
+  // login in linea (test del 23-09): prima il pannello rimandava alla sezione Materie prime e chi ci andava perdeva
+  // l'ordine in corso. Stesso client e stessa sessione di Materie prime e Assistenza (csClient, RLS @amimi.it).
+  const [lgEmail, setLgEmail] = useState(''); const [lgPwd, setLgPwd] = useState(''); const [lgBusy, setLgBusy] = useState(false); const [lgErr, setLgErr] = useState('');
+  async function aiLogin() {
+    setLgBusy(true); setLgErr('');
+    const { error } = await csClient.auth.signInWithPassword({ email: lgEmail.trim(), password: lgPwd });
+    setLgBusy(false);
+    if (error) setLgErr('Accesso non riuscito. Controlla email e password.'); else setLgPwd('');
+  }
   useEffect(() => {
     fetchMatSettings().then((s) => setAiOn(s.ai)).catch(() => {});
     csClient.auth.getSession().then(({ data }) => setAiLogged(!!data.session)).catch(() => {});
@@ -170,6 +179,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
       if (p.avviso) toast(p.avviso, 'err');
       const fornProp = p.fornitore?.match_esistente || v(p.fornitore);
       if (!forn && fornProp) setForn(fornProp);
+      if (!forn && !fornProp) toast('Fornitore non riconosciuto: sceglilo qui sotto, le righe proposte restano nel carrello', 'err');
       const d = v(p.data_ordine); if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) setDataOrd(d);
       const nonTrovate: typeof aiNonTrovate = [];
       // righe proposte raccolte per codice (due righe dello stesso codice = pezzi sommati), poi UN solo setLines
@@ -219,6 +229,46 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   }
 
   // STEP 1 — fornitore: ricerca in alto + attivi come chip compatte (decisione owner 4).
+  // Pannello "Compila da foto o nota", lo stesso ai due passi: al primo l'AI propone anche il fornitore dalla foto
+  // (il gesto naturale e' "foto prima di tutto"), al secondo aggiunge righe al carrello del fornitore scelto.
+  const aiPanel = aiOn ? (
+    <div style={{ marginBottom: 10 }}>
+      {!aiOpen
+        ? <button className="addnew" type="button" onClick={() => setAiOpen(true)}><Icon name="sparkles" size={14} /> Compila da foto o nota (AI)</button>
+        : !aiLogged
+          ? (
+            <div className="mat-aibox">
+              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Per la compilazione AI serve il login @amimi.it (una volta per dispositivo). L'ordine in corso resta qui.</div>
+              <input className="txt" type="email" autoCapitalize="none" autoCorrect="off" value={lgEmail} onChange={(e) => setLgEmail(e.target.value)} placeholder="Email @amimi.it" style={{ width: '100%', marginBottom: 6 }} />
+              <input className="txt" type="password" value={lgPwd} onChange={(e) => setLgPwd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') aiLogin(); }} placeholder="Password" style={{ width: '100%', marginBottom: 6 }} />
+              {lgErr && <div className="err" style={{ marginBottom: 6 }}>{lgErr}</div>}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className="ds-btn secondary full" disabled={lgBusy || !lgEmail.trim() || !lgPwd} onClick={aiLogin}>{lgBusy ? 'Accesso…' : 'Entra'}</button>
+                <button type="button" className="chip" onClick={() => setAiOpen(false)}>chiudi</button>
+              </div>
+            </div>)
+          : (
+            <div className="mat-aibox">
+              <input ref={aiFileRef} type="file" accept="image/*,application/pdf" multiple style={{ display: 'none' }}
+                onChange={(e) => { setAiFiles((p) => [...p, ...[...(e.target.files ?? [])]].slice(0, 4)); e.target.value = ''; }} />
+              <div className="mat-files">
+                {aiFiles.map((f, i) => <span key={i} className="chip" onClick={() => setAiFiles((p) => p.filter((_, j) => j !== i))}>{f.name.slice(0, 22)} ✕</span>)}
+                <button type="button" className="chip" onClick={() => aiFileRef.current?.click()} disabled={aiFiles.length >= 4}>+ foto conferma d'ordine</button>
+              </div>
+              <textarea className="txt" rows={2} value={aiTesto} onChange={(e) => setAiTesto(e.target.value)} placeholder={`Nota: es. "a ${forn || 'Francesco'} dieci Lea leopardo savana e cinque Agata nera"`} style={{ width: '100%', marginTop: 8 }} />
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <button type="button" className="ds-btn secondary full" disabled={aiBusy} onClick={aiCompilaOrdine}>{aiBusy ? 'Compilo…' : forn ? 'Proponi le righe' : 'Proponi fornitore e righe'}</button>
+                <button type="button" className="chip" onClick={() => { setAiOpen(false); setAiNonTrovate([]); }}>chiudi</button>
+              </div>
+              {aiNonTrovate.length > 0 && (
+                <div style={{ marginTop: 8, fontSize: 12 }}>
+                  <div className="muted">Non a catalogo (tocca per aprirle come borsa nuova, il codice resta provvisorio):</div>
+                  {aiNonTrovate.map((r, i) => <button key={i} type="button" className="linkbtn" style={{ display: 'block', padding: '4px 0', fontWeight: 700 }} onClick={() => { setNewOpen(true); setNmFree(true); setNm(r.modello); setNv(r.variante); }}>+ {r.modello} {r.variante}{r.quantita != null ? ` · ${r.quantita} pz` : ''}</button>)}
+                </div>)}
+            </div>)}
+    </div>
+  ) : null;
+
   // Fonte attivi invariata: set `active` da supplier_orders, NON intersecato con `suppliers`
   // (un fornitore ordinato ma assente dal catalogo suppliers sparirebbe). I vecchi si vedono
   // cercando o dietro il toggle. Testo senza match esatto -> "Crea fornitore {testo}".
@@ -230,6 +280,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
     const exact = [...active, ...vecchiTutti].some((n) => n.toLowerCase() === fs);
     return (
       <div className="form">
+        {aiPanel}
         <label className="fl">Fornitore</label>
         <div className="ds-search">
           <Icon name="search" size={19} />
@@ -300,32 +351,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
         </div>
       )}
 
-      {aiOn && (
-        <div style={{ marginBottom: 10 }}>
-          {!aiOpen
-            ? <button className="addnew" type="button" onClick={() => setAiOpen(true)}><Icon name="sparkles" size={14} /> Compila da foto o nota (AI)</button>
-            : !aiLogged
-              ? <div className="muted" style={{ fontSize: 12 }}>Per la compilazione AI serve il login @amimi.it: aprilo dalla sezione Materie prime, poi torna qui.</div>
-              : (
-                <div className="mat-aibox">
-                  <input ref={aiFileRef} type="file" accept="image/*,application/pdf" multiple style={{ display: 'none' }}
-                    onChange={(e) => { setAiFiles((p) => [...p, ...[...(e.target.files ?? [])]].slice(0, 4)); e.target.value = ''; }} />
-                  <div className="mat-files">
-                    {aiFiles.map((f, i) => <span key={i} className="chip" onClick={() => setAiFiles((p) => p.filter((_, j) => j !== i))}>{f.name.slice(0, 22)} ✕</span>)}
-                    <button type="button" className="chip" onClick={() => aiFileRef.current?.click()} disabled={aiFiles.length >= 4}>+ foto conferma d'ordine</button>
-                  </div>
-                  <textarea className="txt" rows={2} value={aiTesto} onChange={(e) => setAiTesto(e.target.value)} placeholder={`Nota: es. "a ${forn} dieci Lea leopardo savana e cinque Agata nera"`} style={{ width: '100%', marginTop: 8 }} />
-                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                    <button type="button" className="ds-btn secondary full" disabled={aiBusy} onClick={aiCompilaOrdine}>{aiBusy ? 'Compilo…' : 'Proponi le righe'}</button>
-                    <button type="button" className="chip" onClick={() => { setAiOpen(false); setAiNonTrovate([]); }}>chiudi</button>
-                  </div>
-                  {aiNonTrovate.length > 0 && (
-                    <div style={{ marginTop: 8, fontSize: 12 }}>
-                      <div className="muted">Non a catalogo (tocca per aprirle come borsa nuova, il codice resta provvisorio):</div>
-                      {aiNonTrovate.map((r, i) => <button key={i} type="button" className="linkbtn" style={{ display: 'block', padding: '4px 0', fontWeight: 700 }} onClick={() => { setNewOpen(true); setNmFree(true); setNm(r.modello); setNv(r.variante); }}>+ {r.modello} {r.variante}{r.quantita != null ? ` · ${r.quantita} pz` : ''}</button>)}
-                    </div>)}
-                </div>)}
-        </div>)}
+      {aiPanel}
       {/* search-first (decisione owner 1): si aggiunge SOLO dalla ricerca; barra vuota = nessuna lista */}
       <div className="ds-search" style={{ marginBottom: 8 }}>
         <Icon name="search" size={19} />
