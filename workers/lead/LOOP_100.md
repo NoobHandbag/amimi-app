@@ -23,11 +23,15 @@ Punteggio del seed = resa della fonte x area x segnale Maps x nome.
 Da `workers/lead/` del checkout di amimi-app, con `SUPABASE_ACCESS_TOKEN` nell'ambiente (variabile utente Windows).
 
 1. `node progress.mjs`: se exit 0, STOP (target raggiunto).
-2. `node next_batch.mjs --n 20 --collect`: sceglie il lotto, lo salva in `out/lotto_<ts>.json` e lancia `collect.mjs --ids ...`. Si rifiuta di partire (exit 2) se ci sono account `enriched` non giudicati: prima si chiude il lotto precedente.
-3. `node judge_digest.mjs --stato enriched > out/digest_<ts>.txt`: leggi il digest; per i candidati sopra 55 apri almeno tre immagini (feed IG, home mobile, foto Maps) con `judge_dump.mjs` o dal bucket.
-4. Scrivi `out/scores_<ts>.json` (formato nella testata di `judge_write.mjs`) con la **rubrica v1** qui sotto, poi `node judge_write.mjs out/scores_<ts>.json`.
-5. Per i nuovi A/B senza email: cerca un'email aziendale pubblicata (sito, bio IG, pagina contatti) e aggiungila come evidenza `contatti_trovati`. Mai email dedotte.
-6. Una riga nel log del giro (`out/LOOP_100_<data>.md`): ora, lotto, pronti prima e dopo, errori del collector.
+2. **Triage per nome** (dal giro 2, 25-09): `node next_batch.mjs --n 45` senza `--collect` propone i candidati; la sessione mette in `out/triage_skip.json` quelli palesemente fuori target dal nome (arredo, cucine, catene, store ufficiali, monomarca, vintage, laboratori: restano `seed` nel DB, solo saltati) e lancia `node collect.mjs --ids <i 20 scelti>`. Nel giro 1 senza triage 6 profili su 20 erano fuori categoria gia' dal nome, 80 secondi l'uno buttati. `next_batch.mjs` si rifiuta di partire (exit 2) se ci sono account `enriched` non giudicati.
+Dal punto 3 in poi e' lo **stesso iter del pilota dei primi 20** (`PROTOCOLLO_Ricerca_Profilo.md` dell'08-09), per OGNI profilo del lotto:
+
+3. `node judge_dump.mjs` (dossier completo + screenshot in `out/judge/<slug>/`) e `node judge_digest.mjs --stato enriched` come indice.
+4. **C2 fallback Instagram da Chrome** (Claude in Chrome, browser DAN WORK PC, account loggato): per ogni profilo con `no_ig`, IG in errore o griglia vuota, apri il profilo in una tab Chrome e leggi header (post, follower, bio, link, "seguito da" con i brand affini), data dell'ultimo post, stile del feed, brand taggati. Se l'handle manca, cercalo dal sito o dalla ricerca IG. Ritmo: un profilo ogni 20-30 secondi. Scrivi l'evidenza `ig_metrics` o `ig_sessione` con `session_write.mjs`.
+5. **C4 stampa e stockist** (sessione): se il dossier lo merita, articoli e presenza negli stockist dei brand affini (`stockist_match`).
+6. **Giudizio (stadio D)**: leggi `evidence.json` e ALMENO tre immagini per profilo (feed IG, home mobile, foto Maps), scrivi `out/scores_<ts>.json` (formato nella testata di `judge_write.mjs`) con la **rubrica v1** qui sotto, poi `node judge_write.mjs out/scores_<ts>.json`.
+7. **Stadio F persone** (solo totale 55+): titolare o buyer con ruolo da sito, bio IG, LinkedIn pubblico, registro imprese; email nominativa solo se pubblicata; email generica pubblicata se non c'e' di meglio. In `lead_contacts` con `fonte`, via `session_write.mjs`. Email dedotte solo in `note` con `[DA VERIFICARE]`.
+8. Una riga nel log del giro (`out/LOOP_100_<data>.md`): ora, lotto, pronti prima e dopo, errori del collector.
 
 **Stop-loss** (ci si ferma e si scrive perche'): errori del collector sopra il 20% in un lotto; muro di login Instagram su 5+ profili di fila o errori 429 (pausa 2 ore); 3 lotti di fila con meno di 2 pronti nuovi (la coda buona e' finita: serve un nuovo sweep, vedi sotto); `judge_write` fallisce.
 

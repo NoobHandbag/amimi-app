@@ -3,8 +3,10 @@
 // Si ferma PRIMA di scegliere se ci sono account `enriched` non ancora giudicati: il giudizio del lotto
 // precedente va chiuso prima di raccoglierne un altro (altrimenti judge_digest mescola i lotti).
 // Uso: node next_batch.mjs [--n 20] [--tetto-citta 5] [--fonte "maps:concept store"] [--collect]
+// Triage: `--n 40` senza --collect, la sessione mette i nomi palesemente fuori target in out/triage_skip.json,
+// poi `node collect.mjs --ids <i 20 scelti>`.
 import { spawnSync } from 'node:child_process';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { supa } from './lib.mjs';
 import { leggiStato } from './stato100.mjs';
 import { scegliLotto, resaFonte } from './priority.mjs';
@@ -20,7 +22,9 @@ if (pendenti.length) {
   console.log(`STOP: ${pendenti.length} account in enriched non ancora giudicati. Chiudi prima il giudizio (judge_digest -> judge_write).`);
   process.exit(2);
 }
-let seeds = accounts.filter((a) => a.stato_ricerca === 'seed' && !tentati.has(a.id));
+// triage per nome della sessione (out/triage_skip.json: [{id, nome, motivo}]): saltati, restano seed nel DB
+const SKIP = existsSync('out/triage_skip.json') ? new Set(JSON.parse(readFileSync('out/triage_skip.json', 'utf8')).map((x) => x.id)) : new Set();
+let seeds = accounts.filter((a) => a.stato_ricerca === 'seed' && !tentati.has(a.id) && !SKIP.has(a.id));
 if (args.fonte) seeds = seeds.filter((a) => a.fonte_seed === args.fonte);
 if (!seeds.length) { console.log('Nessun seed in coda: serve un nuovo sweep (seed_maps.mjs).'); process.exit(4); }
 

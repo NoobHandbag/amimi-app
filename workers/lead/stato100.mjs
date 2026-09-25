@@ -1,5 +1,5 @@
 // Lettura condivisa per il loop "100 pronti": account + ultimo score per account, e la definizione di PRONTO.
-// Pronto = stato scored, ultimo score tier A o B, dati_incompleti false, almeno una email (anagrafica o evidenze).
+// Pronto = stato scored, ultimo score tier A o B, dati_incompleti false, almeno una email (anagrafica, evidenze o lead_contacts).
 // Solo letture.
 
 async function all(q) {
@@ -18,6 +18,8 @@ export async function leggiStato(sb) {
   const ultimo = new Map(); for (const s of scores) ultimo.set(s.account_id, s);
   const emailEv = await all(() => sb.from('lead_evidence').select('account_id,payload').in('tipo', ['site_meta', 'contatti_trovati']));
   const conEmail = new Set(emailEv.filter((e) => Array.isArray(e.payload?.emails) && e.payload.emails.length).map((e) => e.account_id));
+  const contatti = await all(() => sb.from('lead_contacts').select('account_id,email').not('email', 'is', null).eq('opt_out', false));
+  for (const c of contatti) conEmail.add(c.account_id);
   // seed gia' tentati dal collector senza successo (evidenza `errore`): next_batch non li ripesca
   const errEv = await all(() => sb.from('lead_evidence').select('account_id').eq('tipo', 'errore'));
   const tentati = new Set(errEv.map((e) => e.account_id));
