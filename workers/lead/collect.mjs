@@ -247,7 +247,9 @@ async function stageMaps(acc) {
     } catch { /* best effort */ }
     // sito web elencato da Google per la scheda: e' l'aggancio che accende stageSite (e via sito, Instagram)
     // per gli account nati da Maps, che in anagrafica non hanno ne' website ne' ig_handle.
-    const siteNorm = site && !/instagram|facebook|tripadvisor|tiktok|wa\.me|whatsapp|google\.|maps\./i.test(site) ? norm(site) : null;
+    // gli aggregatori di link (linktr.ee e simili) non sono il sito del negozio: il 25-09 Annarita Vitali ha preso
+    // come 'sito' la home di Linktree e come Instagram @linktr.ee
+    const siteNorm = site && !/instagram|facebook|tripadvisor|tiktok|wa\.me|whatsapp|google\.|maps\.|linktr\.ee|linkin\.bio|beacons\.ai|lnk\.bio|taplink/i.test(site) ? norm(site) : null;
     const payload = { query, nome_scheda: nameLine, rating: rating ? parseFloat(rating.replace(',', '.')) : null, recensioni: reviews ? num(reviews) : null, categoria: category, indirizzo: address, telefono: phone, orari: hours, sito: site, sito_persistito: siteNorm, place_id: placeId, url: url.slice(0, 500), lat: coords ? parseFloat(coords[1]) : null, lng: coords ? parseFloat(coords[2]) : null, chiuso_definitivamente: /Chiuso definitivamente/i.test(main) };
     if (!rating && !address) payload.errore = 'scheda non riconosciuta (nessun rating ne\' indirizzo nel pannello)';
     await saveShot(acc, 'screenshot_maps', shot, { query });
