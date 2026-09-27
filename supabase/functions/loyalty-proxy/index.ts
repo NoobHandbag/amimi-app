@@ -1,4 +1,6 @@
-// loyalty-proxy v12 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// loyalty-proxy v13 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// v13 (2026-09-27, dashboard Premia Fase 2, migr 0146): azione NUOVA e additiva `track` (POST {events:[{e, el}]}) ->
+//    RPC loyalty_track (flag loyalty_track_enabled, liste chiuse, tetti). Le altre azioni non cambiano una riga.
 // v12 (2026-09-22, brief M4b "profilo + compleanno, tier sui punti cumulati, bonus seconda borsa", migr 0141):
 //    due azioni NUOVE e additive, le altre non cambiano una riga:
 //    `profile` (GET)       : stato del profilo (giorno/mese, materiale, consenso, completo), compleanno oggi e premio gia'
@@ -49,6 +51,7 @@
 //   - `wear`       : POST {codice} -> veste Mimi con un capo REALMENTE acquistato dal cliente, altrimenti 409.
 //   - `rewards`    : catalogo premi attivi + ultimi riscatti del cliente (gated da loyalty_redeem_enabled).
 //   - `redeem`     : POST {reward, idemp} -> detrae i punti (RPC atomica) e consegna un codice dal pool.
+//   - `track`      : POST {events:[{e, el}]} -> eventi di interfaccia (v13), gated da loyalty_track_enabled nella RPC.
 //
 // SCELTE DI PROGETTO (dichiarate come chiede il brief):
 //  * GIORNO = Europe/Rome per le azioni nuove (clientela italiana). `add` resta su UTC per non
@@ -476,6 +479,24 @@ Deno.serve(async (req) => {
     } catch { /* pool non disponibile: pending, l'owner la evade */ }
 
     return json({ ok: true, status: code ? 'fulfilled' : 'pending', code, points: r.new_balance, cost: r.cost });
+  }
+
+  // --- TRACCIAMENTO UI (v13, migr 0146): eventi di interfaccia della pagina, in lotti. Telemetria pura: nessun punto,
+  // nessun effetto sul resto. Flag, liste chiuse e tetti (20 per chiamata, 300 per cliente al giorno) stanno nella RPC
+  // loyalty_track: qui solo metodo, dimensione del body e identita' firmata. Nessun retry (insert, Regola 20d); un
+  // errore torna {ok:false} con 200 perche' la pagina non deve mai gestirlo. Flag spento = {state:'off'}, la pagina smette.
+  if (action === 'track') {
+    if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+    const raw = await req.text().catch(() => '');
+    if (raw.length > 4000) return json({ error: 'too_large' }, 413);
+    let tb: Record<string, unknown> = {};
+    try { tb = (JSON.parse(raw || '{}') ?? {}) as Record<string, unknown>; } catch { return json({ error: 'invalid_value' }, 400); }
+    if (!Array.isArray(tb.events)) return json({ error: 'invalid_value' }, 400);
+    const { data: tr, error: trErr } = await sb.rpc('loyalty_track', { p_customer: customerId, p_events: tb.events.slice(0, 20) });
+    if (trErr) { console.error('loyalty-proxy: track fallito', { msg: trErr.message }); return json({ ok: false }); }
+    const tv = (tr ?? {}) as { ok?: boolean; reason?: string; inserted?: number; capped?: boolean };
+    if (tv.reason === 'off') return json({ state: 'off' });
+    return json({ ok: Boolean(tv.ok), inserted: tv.inserted ?? 0, capped: Boolean(tv.capped) });
   }
 
   // --- PROFILO + COMPLEANNO, TIER CUMULATO, BONUS SECONDA BORSA (v12, brief M4b 22-09, migr 0141) ---
