@@ -73,7 +73,8 @@ function Funnel({ steps }: { steps: [string, number][] }) {
     <div>
       {steps.map(([label, v], i) => (
         <div key={label} style={{ margin: '6px 0' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{label}</span><strong>{num(v)}{i > 0 ? <span style={{ color: 'var(--muted)', fontWeight: 400 }}> · {pct(v, steps[i - 1][1])}</span> : null}</strong></div>
+          {/* popolazioni diverse (aperture = tutte, passaggi tracciati = solo chi e' tracciato): oltre il 100% la percentuale non ha senso */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{label}</span><strong>{num(v)}{i > 0 && v <= steps[i - 1][1] ? <span style={{ color: 'var(--muted)', fontWeight: 400 }}> · {pct(v, steps[i - 1][1])}</span> : null}</strong></div>
           <div style={{ height: 8, borderRadius: 4, background: 'var(--line, #eee)' }}><div style={{ width: Math.min(100, (v / top) * 100) + '%', height: 8, borderRadius: 4, background: 'var(--rose, #8b5e6b)' }} /></div>
         </div>
       ))}
@@ -95,8 +96,11 @@ export default function Premia({ onBack }: { onBack: () => void }) {
   }, []);
   useEffect(() => {
     if (session !== 'in') return;
+    // cambio periodo rapido: una risposta vecchia non sovrascrive quella nuova
+    let vivo = true;
     setErr(''); setD(null);
-    fetchPremiaDashboard(days).then(setD).catch((e: Error) => setErr(e.message));
+    fetchPremiaDashboard(days).then((x) => { if (vivo) setD(x); }).catch((e: Error) => { if (vivo) setErr(e.message); });
+    return () => { vivo = false; };
   }, [session, days]);
 
   const doLogin = async () => {
@@ -166,16 +170,18 @@ export default function Premia({ onBack }: { onBack: () => void }) {
   // ---- uso ----
   const k = d.kpi_daily;
   const sum = (f: (r: KpiDay) => number) => k.reduce((s, r) => s + (f(r) || 0), 0);
-  const visite = sum((r) => r.visite_clienti), coccole = sum((r) => r.coccole), memory = sum((r) => r.memory), riscatti = sum((r) => r.riscatti);
+  const visite = sum((r) => r.visite_clienti), coccole = sum((r) => r.coccole), memory = sum((r) => r.memory), riscatti = sum((r) => r.riscatti), riscattiKo = sum((r) => r.riscatti_falliti);
 
   // ---- premio ----
   const pool = d.pool[0];
-  const ritmo = pool && pool.riscatti_14gg > 0 ? pool.riscatti_14gg / 14 : 0;
+  // giorni_ritmo = giorni effettivi della finestra (un premio attivo da 4 giorni non si divide per 14)
+  const ritmo = pool && pool.riscatti_14gg > 0 ? pool.riscatti_14gg / Math.max(1, pool.giorni_ritmo ?? 14) : 0;
   const giorniPool = pool && ritmo > 0 ? Math.floor(pool.liberi / ritmo) : null;
   const a = d.amica12;
 
   // ---- funnel ----
   const trackOff = (d.flags.loyalty_track_enabled ?? 'off') === 'off';
+  const trackTest = d.flags.loyalty_track_enabled === 'test';
   const f = d.funnel;
 
   return (
@@ -202,7 +208,7 @@ export default function Premia({ onBack }: { onBack: () => void }) {
           <Kpi v={num(d.visitatori.periodo)} k="Clienti che l'hanno aperta" sub={`${num(d.visitatori.totale)} da quando esiste (${fmtDay(d.visitatori.dal)})`} tone="rose" />
           <Kpi v={num(visite)} k="Visite (cliente-giorno)" />
           <Kpi v={num(coccole + memory)} k="Coccole e giochi" sub={`${num(coccole)} coccole, ${num(memory)} giochi`} />
-          <Kpi v={num(riscatti)} k="Riscatti" />
+          <Kpi v={num(riscatti)} k="Richieste di riscatto" sub={riscattiKo ? `di cui ${num(riscattiKo)} non riuscite` : 'tutte con il codice'} />
         </div>
         <Barre rows={k} />
       </section>
@@ -251,15 +257,18 @@ export default function Premia({ onBack }: { onBack: () => void }) {
         {trackOff && f.eventi === 0 ? (
           <p className="note" style={{ marginTop: 0 }}>Il tracciamento dei tap e&#8217; <strong>spento</strong> (flag loyalty_track_enabled): per ora si vedono solo aperture, riscatti e ordini. Si accende con l&#8217;OK dell&#8217;owner.</p>
         ) : null}
+        {trackTest ? (
+          <p className="note" style={{ marginTop: 0 }}>Tracciamento <strong>solo per gli account di prova</strong>: i passaggi 2-4 contano solo loro, aperture e riscatti contano tutte le clienti. Non confrontarli fra loro.</p>
+        ) : null}
         <Funnel steps={[
           ['Hanno aperto l’area', f.aperture],
           ['Hanno visto la card del premio', f.visto_premio],
           ['...con punti sufficienti', f.premio_pronto],
           ['Hanno toccato Riscatta', f.tap_riscatta],
           ['Hanno riscattato', f.riscatti],
-          ['Ordini con AMICA12', f.ordini_amica12],
+          ['Ordini pagati con AMICA12 (ordini)', f.ordini_amica12],
         ]} />
-        <p className="note">Clienti distinti per ogni passaggio. I passaggi 2-4 vengono dal tracciamento{f.dal ? ` (dati dal ${fmtDay(f.dal)})` : ''}; aperture e riscatti ci sono sempre.</p>
+        <p className="note">Clienti distinti per ogni passaggio, tranne l&#8217;ultimo che conta ordini. I passaggi 2-4 vengono dal tracciamento{f.dal ? ` (dati dal ${fmtDay(f.dal)})` : ''}; aperture e riscatti ci sono sempre.</p>
         {d.elementi.length > 0 && (
           <table className="dtable" style={{ marginTop: 10 }}><thead><tr><th>Elemento</th><th style={R}>Volte</th><th style={R}>Clienti</th></tr></thead>
             <tbody>{d.elementi.map((e) => (<tr key={e.event + (e.element ?? '')}><td>{ELEMENTO[e.element ?? ''] ?? `${e.event} ${e.element ?? ''}`}</td><td style={R}>{num(e.n)}</td><td style={R}>{num(e.clienti)}</td></tr>))}</tbody></table>

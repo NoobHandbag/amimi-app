@@ -1,4 +1,4 @@
--- Test della migr 0146 (dashboard Premia + tracciamento Area Membri). Gira in produzione senza lasciare tracce:
+-- Test delle migr 0146 e 0147 (dashboard Premia + tracciamento Area Membri, Gate 2). Gira in produzione senza lasciare tracce:
 -- il blocco finisce SEMPRE con raise 'TEST_OK ...' (o con l'errore del controllo fallito), quindi tutto torna indietro,
 -- flag compreso. Lanciare con execute_sql o psql; atteso: ERROR "TEST_OK loyalty 0146".
 do $$
@@ -82,6 +82,23 @@ begin
   if n < 1 or exists (select 1 from loyalty_ui_events where shopify_customer_id = c and day < (now() at time zone 'Europe/Rome')::date - 180)
     then raise exception 'J: purge non ha tolto le righe vecchie'; end if;
   if not exists (select 1 from loyalty_ui_events where shopify_customer_id = c) then raise exception 'J: purge ha tolto righe recenti'; end if;
+
+  -- K (0147, Gate 2 n.7). capped = true solo se si scartano eventi VALIDI: un altro cliente di prova, payload con 1 valido e 5 invalidi
+  update app_flags set value = c || ',TEST_TRACK_0147' where key = 'loyalty_track_enabled';
+  r := loyalty_track('TEST_TRACK_0147', '[{"e":"page_open"},{"e":"x"},{"e":"x"},{"e":"x"},{"e":"x"},{"e":"x"}]'::jsonb);
+  if (r ->> 'inserted')::int <> 1 or (r ->> 'capped')::boolean then raise exception 'K: capped acceso su soli invalidi: %', r; end if;
+
+  -- L (0147, Gate 2 n.1). le label di health_log arrivano alla dashboard con le sequenze di 5+ cifre oscurate
+  insert into health_log (day, k, label, n, severity) values (current_date, 'loyalty_test0147', 'LEDGER FUORI QUADRA per 2 membri: 10147859530055,987654321', 2, 'error')
+    on conflict (day, k) do update set label = excluded.label;
+  r := loyalty_dashboard(30);
+  if r::text like '%10147859530055%' or r::text like '%987654321%' then raise exception 'L: id cliente visibile nelle label della dashboard'; end if;
+  if not exists (select 1 from jsonb_array_elements(r -> 'health') h where h ->> 'k' = 'loyalty_test0147' and h ->> 'label' like '%membri: %') then raise exception 'L: label oscurata sparita'; end if;
+
+  -- M (0147, Gate 2 n.10). vista in security_invoker e leggibile da ask_ro (grant a colonne su loyalty_redemptions, senza codici)
+  if not exists (select 1 from pg_class where relname = 'v_loyalty_funnel_daily' and array_to_string(reloptions, ',') ~ 'security_invoker=(on|true)') then raise exception 'M: vista senza security_invoker'; end if;
+  if has_column_privilege('ask_ro', 'public.loyalty_redemptions', 'discount_code', 'select') then raise exception 'M: ask_ro legge i codici sconto'; end if;
+  if not has_column_privilege('ask_ro', 'public.loyalty_redemptions', 'status', 'select') then raise exception 'M: ask_ro non legge status'; end if;
 
   raise exception 'TEST_OK loyalty 0146';
 end $$;

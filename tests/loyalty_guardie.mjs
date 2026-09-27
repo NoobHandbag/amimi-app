@@ -183,5 +183,19 @@ const trackNames = [...PAGE.matchAll(/track\('(view|tap)','([a-z0-9_]+)'\)|watch
 const allowed = (M146c.match(/c_views\s+constant text\[\] := array\[([^\]]+)\]/)?.[1] + ',' + M146c.match(/c_taps\s+constant text\[\] := array\[([^\]]+)\]/)?.[1]).replace(/'/g, '').split(',').map((s) => s.trim());
 t('105 pagina: ogni elemento tracciato e\' nella lista chiusa della RPC', trackNames.length >= 10 && trackNames.every((n) => allowed.includes(n)), trackNames.filter((n) => !allowed.includes(n)).join(','));
 
+// ---- migr 0147 (27-09): Gate 2 sulla 0146 ----
+const M147 = read('supabase/migrations/0147_loyalty_dashboard_gate2.sql').replace(/^\s*--[^\n]*$/gm, '');
+const PREMIA = read('web/src/pages/Premia.tsx');
+console.log('\n== migr 0147: Gate 2 della dashboard ==');
+t('106 esattamente una migrazione 0147_*', migs.filter((f) => f.startsWith('0147_')).length === 1);
+t('107 G2-1: label di health_log con le sequenze di 5+ cifre oscurate', /regexp_replace\(coalesce\(h\.label, ''\), '\[0-9\]\{5,\}', '…', 'g'\)/.test(M147));
+t('108 G2-2: ritmo del pool sui giorni effettivi (giorni_ritmo) usato dalla pagina', /'giorni_ritmo'/.test(M147) && /pool\.riscatti_14gg \/ Math\.max\(1, pool\.giorni_ritmo \?\? 14\)/.test(PREMIA));
+t('109 G2-3: visita contata solo se iniziata prima dell\'ordine', /v\.first_at < o\.created_at_shop/.test(M147) && !/v\.day between/.test(M147));
+t('110 G2-5: ordini filtrati sugli stati pagati come v_loyalty_uplift', (M147.match(/financial_status = any\(v_paid\)/g) || []).length >= 7 && /financial_status in \('paid', 'partially_refunded', 'refunded'\)/.test(M147));
+t('111 G2-7: capped sui soli eventi validi', /'capped', v_valid > v_room/.test(M147));
+t('112 G2-10: vista funnel in security_invoker, ask_ro a colonne senza discount_code', /v_loyalty_funnel_daily with \(security_invoker = on\)/.test(M147) && /grant select \(id, shopify_customer_id, reward_key, cost_points, status, created_at, fulfilled_at\) on loyalty_redemptions to ask_ro/.test(M147));
+t('113 G2-8/9: vista con soglia anche per card alte; tap Gioca solo se disponibile', /x\.intersectionRect\.height>=window\.innerHeight\*0\.4/.test(PAGE) && /S\.memory_disponibile\)\{ toast\('Torna domani per un nuovo gioco [^']*'\); return; \} track\('tap','gioco'\)/.test(PAGE));
+t('114 G2-4/11/12: percentuali del funnel solo fra popolazioni omogenee, risposta vecchia ignorata, tab fra quelle finance', /i > 0 && v <= steps\[i - 1\]\[1\]/.test(PREMIA) && /if \(vivo\) setD\(x\)/.test(PREMIA) && /'ads', 'premia'\]/.test(read('web/src/lib/people.tsx')));
+
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

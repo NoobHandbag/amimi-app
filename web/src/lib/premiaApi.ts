@@ -9,7 +9,7 @@ export type KpiDay = {
   day: string; visite_clienti: number; visite_hits: number; clienti_attivi: number; coccole: number; memory: number;
   accrediti_acquisto: number; punti_guadagnati: number; punti_riscattati: number; riscatti: number; riscatti_falliti: number;
 };
-export type PoolRow = { reward: string; label: string; cost_points: number; active: boolean; liberi: number; usati: number; pending: number; riscatti_14gg: number };
+export type PoolRow = { reward: string; label: string; cost_points: number; active: boolean; liberi: number; usati: number; pending: number; riscatti_14gg: number; giorni_ritmo: number | null };
 export type PremiaDash = {
   generated_at: string; days: number; from: string; to: string;
   health: HealthItem[];

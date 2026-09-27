@@ -257,7 +257,8 @@
       .then(r=>r.json()).then(d=>{ if(d && d.state==='off'){ T.off=true; T.q=[]; } else if(T.q.length) flush(); }).catch(()=>{});
   }
   document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') flush(); });
-  const io = ('IntersectionObserver' in window) ? new IntersectionObserver(es=>{ es.forEach(x=>{ if(x.isIntersecting && x.target.dataset.trk) track('view', x.target.dataset.trk); }); }, { threshold:0.5 }) : null;
+  // "vista" = meta' della card a schermo, oppure almeno 40% dello schermo occupato (una card piu' alta di due schermi, es. un guardaroba lungo, non arriva mai al 50%)
+  const io = ('IntersectionObserver' in window) ? new IntersectionObserver(es=>{ es.forEach(x=>{ if(x.isIntersecting && x.target.dataset.trk && (x.intersectionRatio>=0.5 || x.intersectionRect.height>=window.innerHeight*0.4)) track('view', x.target.dataset.trk); }); }, { threshold:[0,0.25,0.5] }) : null;
   function watch(id, name){ const n=el(id); if(!n || !io) return; if(name) n.dataset.trk=name; io.observe(n); }
   function trackStart(){
     if(T.started) return; T.started=true;
@@ -469,7 +470,7 @@
 
   // === mini-gioco memory: vinci -> chiama memory_win (premio deciso dall'edge) ===
   const EMO=['👜','👛','🎀','👜','👛','🎀'];
-  el('btnGame').addEventListener('click', ()=>{ track('tap','gioco'); if(!S||!S.memory_disponibile){ toast('Torna domani per un nuovo gioco 🎀'); return; } startGame(); });
+  el('btnGame').addEventListener('click', ()=>{ if(!S||!S.memory_disponibile){ toast('Torna domani per un nuovo gioco 🎀'); return; } track('tap','gioco'); startGame(); });
   el('gameClose').addEventListener('click', ()=>el('gameModal').classList.remove('on'));
   el('rewardOk').addEventListener('click', ()=>el('rewardModal').classList.remove('on'));
   function startGame(){
