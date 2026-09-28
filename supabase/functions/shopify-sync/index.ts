@@ -29,11 +29,37 @@
 // differiva fra le copie: NULL all'ingest, evaso dopo); nuova colonna `shopify_line_id` sulle righe (unica
 // dove presente) + azione `backfill_line_ids` per lo storico; telemetria giornaliera in health_log chiave
 // `shopify_sync` (come `stock_autopush` in shopify-stock). Guardie sul sorgente: tests/shopify_sync_guardie.mjs.
+//
+// 2026-09-28 v8 (brief Bambi 27-09): il resolver guarda PRIMA lo SKU. La riga #1810 (titolo "LEA BAG BAMBI PONY",
+// SKU LEA_BAG_PONY_BAMBI) era finita sul codice doppione LEA_BAG_BAMBI_PONY perche' il titolo == un codice a
+// catalogo vinceva sullo SKU: la vendita scalava un codice a -1 mentre shopify-stock (che mappa per SKU) spingeva
+// sul sito un pezzo in piu' del reale. Ora vendite e stock usano la stessa chiave. Blocco PURE:sync-resolver,
+// test `node tests/shopify_sync_resolver.mjs`.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// ==== PURE:sync-resolver BEGIN ====
 const norm = (s: string | null | undefined) => (s ? s.toUpperCase().replace(/\s+/g, '_') : '');
+// Resolver riga d'ordine -> CODICE. Ordine (v8): 1) SKU esatto a catalogo, come shopify-stock, cosi' la vendita
+// scala lo stesso codice su cui viene spinto lo stock; 2) alias del titolo; 3) titolo == CODICE; 4) titolo senza
+// il descrittore " - Senza Catena" (alias, poi codice). Il titolo resta il ripiego per SKU vuoti o non a catalogo
+// (custom item, SKU legacy). aliasMap: shopify_name_norm -> codice; codiceByNorm: codice_norm -> codice.
+function resolveCodiceWith(aliasMap: Map<string, string>, codiceByNorm: Map<string, string>, nm: string, sku?: string | null): string | null {
+  const ns = norm(sku ?? '');
+  if (ns && codiceByNorm.has(ns)) return codiceByNorm.get(ns)!;
+  const n1 = norm(nm);
+  if (aliasMap.has(n1)) return aliasMap.get(n1)!;
+  if (codiceByNorm.has(n1)) return codiceByNorm.get(n1)!;
+  const base = String(nm ?? '').split(/\s[-–]\s/)[0];
+  const n2 = norm(base);
+  if (n2 && n2 !== n1) {
+    if (aliasMap.has(n2)) return aliasMap.get(n2)!;
+    if (codiceByNorm.has(n2)) return codiceByNorm.get(n2)!;
+  }
+  return null;
+}
+// ==== PURE:sync-resolver END ====
 async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -186,23 +212,8 @@ Deno.serve(async (req) => {
   const cogsByNorm = new Map((pr ?? []).map((r) => [r.codice_norm, r.cogs]));
   const codiceByNorm = new Map((pr ?? []).map((r) => [r.codice_norm, r.codice]));
 
-  // Resolver con FALLBACK (audit A5/C25): prima l'alias, poi il nome Shopify == CODICE, poi il nome
-  // senza il descrittore " - Senza Catena", infine lo SKU. Prima esisteva SOLO il lookup alias esatto,
-  // quindi un titolo rinominato o con suffisso lasciava codice=null -> ricavo con COGS 0 e stock non scalato.
-  const resolveCodice = (nm: string, sku?: string): string | null => {
-    const n1 = norm(nm);
-    if (aliasMap.has(n1)) return aliasMap.get(n1)!;
-    if (codiceByNorm.has(n1)) return codiceByNorm.get(n1)!;
-    const base = String(nm).split(/\s[-–]\s/)[0];
-    const n2 = norm(base);
-    if (n2 && n2 !== n1) {
-      if (aliasMap.has(n2)) return aliasMap.get(n2)!;
-      if (codiceByNorm.has(n2)) return codiceByNorm.get(n2)!;
-    }
-    const ns = norm(sku ?? '');
-    if (ns && codiceByNorm.has(ns)) return codiceByNorm.get(ns)!;
-    return null;
-  };
+  // Resolver con FALLBACK (audit A5/C25, SKU per primo dalla v8): blocco PURE:sync-resolver in cima al file.
+  const resolveCodice = (nm: string, sku?: string): string | null => resolveCodiceWith(aliasMap, codiceByNorm, nm, sku);
 
   // niente `order=`: orders.json non lo onora e restituisce i piu' RECENTI. Nel giro di cron, con created_at_min =
   // ultimo ordine noto, arrivano TUTTI i nuovi finche' sono meno di 250; a 250 la pagina puo' essere incompleta e
