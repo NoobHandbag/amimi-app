@@ -239,6 +239,33 @@
     return { status:r.status, data };
   }
 
+  // === tracciamento (loyalty-proxy v13, migr 0146): apertura, card viste, tap. Solo nome dell'evento e dell'elemento,
+  // in lotti (max 20, invio dopo 4 s o quando la pagina va in background), max 60 per caricamento pagina. A flag
+  // loyalty_track_enabled spento il server risponde {state:'off'} e la pagina smette di mandare. Mai bloccante, mai un toast.
+  const T = { q:[], sent:0, off:false, seen:{}, timer:null, started:false, MAX:60 };
+  function track(e, name){
+    if(T.off || T.sent + T.q.length >= T.MAX) return;
+    if(e==='view'){ if(T.seen[name]) return; T.seen[name]=1; }
+    T.q.push(name ? { e:e, el:name } : { e:e });
+    if(!T.timer) T.timer=setTimeout(flush, 4000);
+  }
+  function flush(){
+    clearTimeout(T.timer); T.timer=null;
+    if(T.off || !T.q.length) return;
+    const batch=T.q.splice(0,20); T.sent+=batch.length;
+    fetch(PROXY+'/track', { method:'POST', headers:{ 'Content-Type':'application/json' }, credentials:'include', keepalive:true, body:JSON.stringify({ events:batch }) })
+      .then(r=>r.json()).then(d=>{ if(d && d.state==='off'){ T.off=true; T.q=[]; } else if(T.q.length) flush(); }).catch(()=>{});
+  }
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') flush(); });
+  // "vista" = meta' della card a schermo, oppure almeno 40% dello schermo occupato (una card piu' alta di due schermi, es. un guardaroba lungo, non arriva mai al 50%)
+  const io = ('IntersectionObserver' in window) ? new IntersectionObserver(es=>{ es.forEach(x=>{ if(x.isIntersecting && x.target.dataset.trk && (x.intersectionRatio>=0.5 || x.intersectionRect.height>=window.innerHeight*0.4)) track('view', x.target.dataset.trk); }); }, { threshold:[0,0.25,0.5] }) : null;
+  function watch(id, name){ const n=el(id); if(!n || !io) return; if(name) n.dataset.trk=name; io.observe(n); }
+  function trackStart(){
+    if(T.started) return; T.started=true;
+    track('page_open');
+    watch('redeem'); watch('profSec','profilo'); watch('mimi','mimi'); watch('ward','guardaroba'); watch('bonus2','bonus2'); watch('bday','bday');
+  }
+
   function toast(m){ const t=el('toast'); t.textContent=m; t.classList.add('on'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('on'),2200); }
   function mimiInner(){ return '<div class="handle"></div><div class="body"></div><div class="clasp"></div><div class="bow"><i></i><em></em><b></b></div><div class="eye l"></div><div class="eye r"></div><div class="cheek l"></div><div class="cheek r"></div><div class="mouth"></div>'; }
   function tierOf(p){ let t=CONFIG.tiers[0]; for(const x of CONFIG.tiers) if(p>=x.min) t=x; return t; }
@@ -300,6 +327,7 @@
     const pending=reds.find(x=>x.status==='pending');
     const last=reds.find(x=>x.status==='fulfilled' && x.discount_code);   // il piu' recente (lista gia' desc)
     box.classList.remove('hidden');
+    box.dataset.trk = pending ? 'redeem_pending' : (p>=rw.cost_points ? 'redeem_ready' : 'redeem_locked');   // letto dal tracciamento quando la card entra in vista
     let h='<h4>'+esc(rw.label)+'</h4>';
     // azione: il riscatto e' RIPETIBILE ogni volta che la tessera si riempie
     if(pending){
@@ -368,6 +396,7 @@
   }
   el('profilo').addEventListener('click', async e=>{
     const btn=e.target.closest('#pSave'); if(!btn||!S) return;
+    track('tap','profile_save');
     const day=el('pDay'), month=el('pMonth'), mat=el('pMat'), cons=el('pConsenso');
     const body={ consenso: !!(cons && cons.checked) };
     if(day && !day.disabled && day.value) body.birth_day=Number(day.value);
@@ -394,11 +423,13 @@
     S._rewards = (rw && rw.data && Array.isArray(rw.data.rewards)) ? rw.data : null;
     S._profile = (pf && pf.status===200 && pf.data && !pf.data.error && typeof pf.data.profile_enabled==='boolean') ? pf.data : null;   // non leggibile = come a flag OFF, mai una card finta
     render();
+    trackStart();
   }
 
   // === azioni ===
   el('btnCoccola').addEventListener('click', async ()=>{
     if(!S || !S.coccola_disponibile) return;
+    track('tap','coccola');
     const { data } = await api('coccola');
     if(data.done_today){ toast('Mimì è già stata coccolata oggi 💛'); return; }
     if(data.error){ toast('Riprova fra poco'); return; }
@@ -406,12 +437,13 @@
   });
 
   el('btnNanna').addEventListener('click', async ()=>{
-    if(!S) return; const { data } = await api('nanna',{method:'POST',body:{value:!S.nanna}});
+    if(!S) return; track('tap','nanna'); const { data } = await api('nanna',{method:'POST',body:{value:!S.nanna}});
     if(typeof data.nanna==='boolean'){ S.nanna=data.nanna; render(); toast(S.nanna?'Mimì è a nanna 💤':'Buongiorno!'); }
   });
 
   el('ward').addEventListener('click', async e=>{
     const it=e.target.closest('.witem'); if(!it||!S) return;
+    track('tap','wear');
     const { status, data } = await api('wear',{method:'POST',body:{codice:it.dataset.codice}});
     if(status===409||data.error==='not_owned'){ toast('Puoi far indossare a Mimì solo le tue borse'); return; }
     if(data.worn){ S.worn=data.worn; squee(); hearts(el('scene'),3); render(); }
@@ -420,8 +452,9 @@
   // riscatto: copia codice oppure riscatta (bottone disabilitato subito = anti doppio-click; idemp lato server)
   el('redeem').addEventListener('click', async e=>{
     const cp=e.target.closest('.cp');
-    if(cp){ const code=cp.dataset.code||''; try{ await navigator.clipboard.writeText(code); toast('Codice copiato 💛'); }catch(_){ toast('Codice: '+code); } return; }
+    if(cp){ track('tap','copy_code'); const code=cp.dataset.code||''; try{ await navigator.clipboard.writeText(code); toast('Codice copiato 💛'); }catch(_){ toast('Codice: '+code); } return; }
     const btn=e.target.closest('#rbtn'); if(!btn||!S) return;
+    track('tap','redeem');
     const rw=(S._rewards&&S._rewards.rewards&&S._rewards.rewards[0])||{};
     const pct=rw.value?('-'+rw.value+'%'):'Sconto';
     btn.disabled=true; btn.textContent='Riscatto...';
@@ -437,7 +470,7 @@
 
   // === mini-gioco memory: vinci -> chiama memory_win (premio deciso dall'edge) ===
   const EMO=['👜','👛','🎀','👜','👛','🎀'];
-  el('btnGame').addEventListener('click', ()=>{ if(!S||!S.memory_disponibile){ toast('Torna domani per un nuovo gioco 🎀'); return; } startGame(); });
+  el('btnGame').addEventListener('click', ()=>{ if(!S||!S.memory_disponibile){ toast('Torna domani per un nuovo gioco 🎀'); return; } track('tap','gioco'); startGame(); });
   el('gameClose').addEventListener('click', ()=>el('gameModal').classList.remove('on'));
   el('rewardOk').addEventListener('click', ()=>el('rewardModal').classList.remove('on'));
   function startGame(){

@@ -1,9 +1,9 @@
 // Centralized people + persona-driven navigation. Dan removed (= Ale, same person).
 // The Home surfaces only the tiles relevant to each persona; Registra shows the same actions for everyone.
 
-export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads' | 'materiali';
+export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads' | 'materiali' | 'premia';
 /** Tab visibili SOLO alle persona con finance=true (Home le filtra). 'ads' (18-09) si raggiunge dal Cruscotto o da #ads. */
-export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti', 'ads']);
+export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti', 'ads', 'premia']);
 export type Tile = { icon: string; label: string; tab: Tab; param?: string; badge?: 'arrivi' | 'todo' };
 
 export const PEOPLE = ['Ale', 'Bene', 'Ginevra'] as const;
@@ -18,6 +18,7 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
       { icon: 'bag', label: 'Registra vendita', tab: 'registra', param: 'gift' },
       { icon: 'tag', label: 'Margini', tab: 'margini' },
       { icon: 'handshake', label: 'Clienti', tab: 'clienti' },
+      { icon: 'gift', label: 'Premia', tab: 'premia' },
       { icon: 'store', label: 'Negozi B2B', tab: 'negozi' },
       { icon: 'recycle', label: 'Cosa riprodurre', tab: 'magazzino', param: 'riordino' },
       { icon: 'sparkles', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
@@ -53,6 +54,7 @@ export const ALL_ACTIONS: Tile[] = [
   { icon: 'tag', label: 'Margini', tab: 'margini' },
   { icon: 'handshake', label: 'Clienti', tab: 'clienti' },
   { icon: 'pulse', label: 'Salute & Movimenti', tab: 'salute' },
+  { icon: 'gift', label: 'Premia (programma fedeltà)', tab: 'premia' },
   { icon: 'bag', label: 'Registra vendita', tab: 'registra', param: 'gift' },
   { icon: 'return', label: 'Reso / Cambio', tab: 'registra', param: 'reso' },
   { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },

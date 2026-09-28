@@ -14,6 +14,7 @@ import Ordini from './pages/Ordini';
 import Inventory from './pages/Inventory';
 import Negozi from './pages/Negozi';
 import Ads from './pages/Ads';
+import Premia from './pages/Premia';
 import Icon from './components/Icon';
 import AssistantPanel from './components/AssistantPanel';
 import UpdateBanner from './components/UpdateBanner';
@@ -21,8 +22,8 @@ import { pushBack } from './lib/backnav';
 
 export default function App() {
   // URL diretto: .../amimi-app/#negozi apre la sezione B2B (richiesta owner 10-09); #ads la reportistica Meta (18-09);
-  // #materiali il catalogo materie prime (22-09)
-  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : window.location.hash.startsWith('#materiali') ? 'materiali' : 'home'));
+  // #materiali il catalogo materie prime (22-09); #premia la dashboard del programma fedeltà (27-09)
+  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : window.location.hash.startsWith('#materiali') ? 'materiali' : window.location.hash.startsWith('#premia') ? 'premia' : 'home'));
   const [param, setParam] = useState<string | undefined>();
   // Modulo mat_* (materie prime): a flag spento la tile in Home non compare, Ordini non mostra il segmented e la
   // pagina dice "non attiva". Rollback = spegnere app_flags.mat_enabled (Regola Ferrea 19). Letto una volta all'avvio.
@@ -55,6 +56,7 @@ export default function App() {
         {tab === 'clienti' && <Clienti onBack={() => go('home')} />}
         {tab === 'salute' && <Salute onBack={() => go('home')} chi={chi} go={go} pin={pin} />}
         {tab === 'assistenza' && <Assistenza onBack={() => go('home')} />}
+        {tab === 'premia' && <Premia onBack={() => go('home')} />}
         {tab === 'negozi' && <Negozi onBack={() => go('home')} chi={chi} setChi={setChi} />}
         {tab === 'registra' && <Ingest pin={pin} chi={chi} initial={param} />}
         {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} onMateriali={matEnabled ? () => go('materiali') : undefined} />}

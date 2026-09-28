@@ -156,5 +156,46 @@ t('86 esattamente una migrazione 0143_*', migs.filter((f) => f.startsWith('0143_
 t('87 rename tessera12 -> amica12 con pre-check sulle FK, riga ancora spenta', /where key = 'tessera12'/.test(M143) && /set key = 'amica12'/.test(M143) && /raise exception 'pre-check: tessera12/.test(M143) && /'percentage', 12, false, 5\)/.test(M143));
 t('88 nessun tessera12 residuo fuori dalle migrazioni gia\' applicate', !/tessera12/.test(PAGE + P + read('tests/loyalty_profilo_idempotenza.sql') + read('docs/LOYALTY_RUNBOOK.md')));
 
+// ---- migr 0146 (27-09): dashboard Premia nell'app (Fase 1) + tracciamento Area Membri (Fase 2) ----
+const M146 = read('supabase/migrations/0146_loyalty_dashboard_tracking.sql');
+const M146c = M146.replace(/^\s*--[^\n]*$/gm, '');
+const dashFn = M146c.slice(M146c.indexOf('create or replace function public.loyalty_dashboard'));
+const trackFn = M146c.slice(M146c.indexOf('create or replace function public.loyalty_track'), M146c.indexOf('create or replace function public.loyalty_ui_events_purge'));
+console.log('\n== migr 0146: dashboard e tracciamento ==');
+t('89 esattamente una migrazione 0146_*', migs.filter((f) => f.startsWith('0146_')).length === 1);
+t('90 flag loyalty_track_enabled nasce spento', /\('loyalty_track_enabled', 'false'\)\s*on conflict \(key\) do nothing/.test(M146c));
+t('91 loyalty_ui_events: RLS accesa, chiusa ad anon/authenticated, eventi e elementi vincolati', /alter table loyalty_ui_events enable row level security/.test(M146c) && /revoke all on loyalty_ui_events from anon, authenticated/.test(M146c) && /check \(event in \('page_open', 'view', 'tap'\)\)/.test(M146c) && /element ~ '\^\[a-z0-9_\]\{1,32\}\$'/.test(M146c));
+t('92 loyalty_track: solo service_role, flag ricontrollato dentro, tetti 20 e 300, lock per cliente', /revoke all on function public\.loyalty_track\(text, jsonb\) from anon, authenticated, public/.test(M146c) && /grant execute on function public\.loyalty_track\(text, jsonb\) to service_role/.test(M146c) && /loyalty_flag_on\('loyalty_track_enabled', p_customer\)/.test(trackFn) && /c_max_call constant int := 20/.test(trackFn) && /c_max_day  constant int := 300/.test(trackFn) && /pg_advisory_xact_lock/.test(trackFn));
+t('93 loyalty_track: liste chiuse di elementi (view e tap), payload solo array', /s\.element = any\(c_views\)/.test(trackFn) && /s\.element = any\(c_taps\)/.test(trackFn) && /jsonb_typeof\(p_events\) <> 'array'/.test(trackFn));
+t('94 loyalty_dashboard: cancello @amimi.it (42501) prima di ogni lettura', dashFn.indexOf("ilike '%@amimi.it'") > 0 && dashFn.indexOf("errcode = '42501'") > 0 && dashFn.indexOf("errcode = '42501'") < dashFn.indexOf('select jsonb_build_object('));
+t('95 loyalty_dashboard: execute solo ad authenticated, mai anon', /revoke all on function public\.loyalty_dashboard\(integer\) from anon, public/.test(M146c) && /grant execute on function public\.loyalty_dashboard\(integer\) to authenticated/.test(M146c) && !/loyalty_dashboard\(integer\) to anon/.test(M146c));
+t('96 loyalty_dashboard: nessun codice sconto e nessun id cliente nel risultato', !/discount_code[^s]/.test(dashFn) && !/'shopify_customer_id'/.test(dashFn) && !/'code'/.test(dashFn));
+t('97 loyalty_dashboard: flag esposti solo come on/off/test (mai la lista di id di prova)', /else 'test' end/.test(dashFn) && !/'value', f\.value|f\.key, f\.value/.test(dashFn));
+t('98 v_loyalty_funnel_daily chiusa ad anon/authenticated', /revoke all on v_loyalty_funnel_daily from anon, authenticated/.test(M146c));
+t('99 purge a 180 giorni con tetto 5000 righe e cron dopo le 06:12 UTC', /- 180 order by id limit 5000/.test(M146c) && /'loyalty-ui-events-purge', '35 6 \* \* \*'/.test(M146c));
+const trackBranch = P.slice(P.indexOf("if (action === 'track')"), P.indexOf("if (action === 'profile')"));
+t('100 loyalty-proxy v13: track solo POST, body max 4000, max 20 eventi, nessun retry', /req\.method !== 'POST'\) return json\(\{ error: 'method_not_allowed' \}, 405\)/.test(trackBranch) && /raw\.length > 4000/.test(trackBranch) && /tb\.events\.slice\(0, 20\)/.test(trackBranch) && !/retryOnce/.test(trackBranch));
+t('101 loyalty-proxy v13: identita\' del track dal param firmato, errore = {ok:false} 200, off = {state:off}', /p_customer: customerId/.test(trackBranch) && /return json\(\{ ok: false \}\)/.test(trackBranch) && /tv\.reason === 'off'\) return json\(\{ state: 'off' \}\)/.test(trackBranch));
+t('102 pagina: tracciamento in lotti con keepalive, tetto 60, si ferma a state off', /keepalive:true/.test(PAGE) && /MAX:60/.test(PAGE) && /d\.state==='off'\)\{ T\.off=true; T\.q=\[\]; \}/.test(PAGE) && /T\.q\.splice\(0,20\)/.test(PAGE));
+t('103 pagina: il payload porta solo nome evento ed elemento', /T\.q\.push\(name \? \{ e:e, el:name \} : \{ e:e \}\)/.test(PAGE) && /body:JSON\.stringify\(\{ events:batch \}\)/.test(PAGE));
+t('104 pagina: tap sul riscatto e card del premio con lo stato (ready/locked/pending)', /track\('tap','redeem'\)/.test(PAGE) && /track\('tap','copy_code'\)/.test(PAGE) && /'redeem_pending' : \(p>=rw\.cost_points \? 'redeem_ready' : 'redeem_locked'\)/.test(PAGE));
+const trackNames = [...PAGE.matchAll(/track\('(view|tap)','([a-z0-9_]+)'\)|watch\('[a-zA-Z0-9]+','([a-z0-9_]+)'\)/g)].map((m) => m[2] || m[3]);
+const allowed = (M146c.match(/c_views\s+constant text\[\] := array\[([^\]]+)\]/)?.[1] + ',' + M146c.match(/c_taps\s+constant text\[\] := array\[([^\]]+)\]/)?.[1]).replace(/'/g, '').split(',').map((s) => s.trim());
+t('105 pagina: ogni elemento tracciato e\' nella lista chiusa della RPC', trackNames.length >= 10 && trackNames.every((n) => allowed.includes(n)), trackNames.filter((n) => !allowed.includes(n)).join(','));
+
+// ---- migr 0147 (27-09): Gate 2 sulla 0146 ----
+const M147 = read('supabase/migrations/0147_loyalty_dashboard_gate2.sql').replace(/^\s*--[^\n]*$/gm, '');
+const PREMIA = read('web/src/pages/Premia.tsx');
+console.log('\n== migr 0147: Gate 2 della dashboard ==');
+t('106 esattamente una migrazione 0147_*', migs.filter((f) => f.startsWith('0147_')).length === 1);
+t('107 G2-1: label di health_log con le sequenze di 5+ cifre oscurate', /regexp_replace\(coalesce\(h\.label, ''\), '\[0-9\]\{5,\}', '…', 'g'\)/.test(M147));
+t('108 G2-2: ritmo del pool sui giorni effettivi (giorni_ritmo) usato dalla pagina', /'giorni_ritmo'/.test(M147) && /pool\.riscatti_14gg \/ Math\.max\(1, pool\.giorni_ritmo \?\? 14\)/.test(PREMIA));
+t('109 G2-3: visita contata solo se iniziata prima dell\'ordine', /v\.first_at < o\.created_at_shop/.test(M147) && !/v\.day between/.test(M147));
+t('110 G2-5: ordini filtrati sugli stati pagati come v_loyalty_uplift', (M147.match(/financial_status = any\(v_paid\)/g) || []).length >= 7 && /financial_status in \('paid', 'partially_refunded', 'refunded'\)/.test(M147));
+t('111 G2-7: capped sui soli eventi validi', /'capped', v_valid > v_room/.test(M147));
+t('112 G2-10: vista funnel in security_invoker, ask_ro a colonne senza discount_code', /v_loyalty_funnel_daily with \(security_invoker = on\)/.test(M147) && /grant select \(id, shopify_customer_id, reward_key, cost_points, status, created_at, fulfilled_at\) on loyalty_redemptions to ask_ro/.test(M147));
+t('113 G2-8/9: vista con soglia anche per card alte; tap Gioca solo se disponibile', /x\.intersectionRect\.height>=window\.innerHeight\*0\.4/.test(PAGE) && /S\.memory_disponibile\)\{ toast\('Torna domani per un nuovo gioco [^']*'\); return; \} track\('tap','gioco'\)/.test(PAGE));
+t('114 G2-4/11/12: percentuali del funnel solo fra popolazioni omogenee, risposta vecchia ignorata, tab fra quelle finance', /i > 0 && v <= steps\[i - 1\]\[1\]/.test(PREMIA) && /if \(vivo\) setD\(x\)/.test(PREMIA) && /'ads', 'premia'\]/.test(read('web/src/lib/people.tsx')));
+
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
