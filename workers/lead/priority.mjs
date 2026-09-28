@@ -55,3 +55,12 @@ export function scegliLotto(seeds, stats, n = 20, tettoCitta = 5) {
   for (const a of resto) { if (out.length >= n) break; out.push(a); }
   return out;
 }
+
+// Email segnaposto dei template dei siti (xxx@xxx.xxx, tu@email.address, john.doe@...), PEC, DPO e indirizzi tecnici
+// (sentry, wixpress): il collector li raccoglie dal sito ma non sono un canale commerciale. Un account con sole email
+// di questo tipo NON e' pronto (visto il 27-09: Continued Shop contato pronto per xxx@xxx.xxx).
+const EMAIL_NON_COMMERCIALE = /^(xxx@|tu@email|tua@email|tua-email@|your@email|iltuo@|john\.doe@|mymail@mailservice|nome@gmail|u003e)|@(example|esempio|dominio|email)\.(com|it|address)$|sentry|wixpress|@pec\.|legalmail|^dpo@/i;
+export function emailCommerciale(e) {
+  const s = String(e ?? '').trim();
+  return /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(s) && !EMAIL_NON_COMMERCIALE.test(s);
+}
