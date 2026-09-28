@@ -72,8 +72,10 @@ t('18 valori vuoti o null ignorati', gruppiParoleInvertite(['', null, undefined,
 
 console.log('\n== il wiring nel sorgente ==');
 t('19 la push usa decidiAlert e messaggioAlert', /decidiAlert\(errs, prev,/.test(s) && /messaggioAlert\(errs, dec\.nuovi\)/.test(s));
-t('20 lo stato si aggiorna solo a push consegnata (res.ok)', /if \(res\.ok\) await sb\.from\('app_flags'\)\.upsert\(\[\{ key: 'ceguard_alert_state', value: dec\.sig \}, \.\.\.detailRow\]/.test(s));
+t('20 lo stato si aggiorna solo a push consegnata (res.ok)', /if \(res\.ok\) \{\s*const \{ error: stErr \} = await sb\.from\('app_flags'\)\.upsert\(\[\{ key: 'ceguard_alert_state', value: dec\.sig \}, \.\.\.detailRow\]/.test(s));
 t('21 lettura dello stato notifiche controllata (errore -> niente push)', /if \(lfErr\) throw new Error/.test(s));
+t('21b topic ntfy letto con error destrutturato', /if \(tfErr\) throw new Error/.test(s));
+t('21c le due scritture di app_flags riportano l\'errore in ntfy_error', /if \(stErr\) ntfyError =/.test(s) && /if \(dtErr\) ntfyError =/.test(s));
 t('22 elenco negativi solo da una lettura riuscita', /const alertDetail: AlertDetail \| null = inv \?/.test(s));
 t('23 ce_codici_doppi e\' WARN', /add\('ce_codici_doppi',[\s\S]*?doppi\.length, 'warn'\)/.test(s));
 

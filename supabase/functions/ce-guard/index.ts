@@ -374,7 +374,8 @@ Deno.serve(async (req) => {
   // Lo stato si aggiorna SOLO a push consegnata (res.ok); altrimenti `ntfy_failed` in risposta e il giro dopo riprova.
   let ntfyFailed: number | null = null; let ntfyError: string | null = null;
   try {
-    const { data: tf } = await sb.from('app_flags').select('value').eq('key', 'ntfy_topic').maybeSingle();
+    const { data: tf, error: tfErr } = await sb.from('app_flags').select('value').eq('key', 'ntfy_topic').maybeSingle();
+    if (tfErr) throw new Error('topic ntfy non leggibile: ' + tfErr.message);
     const topic = tf?.value as string | undefined;
     if (topic) {
       const errs = checks.filter((c) => c.severity === 'error');
@@ -394,11 +395,14 @@ Deno.serve(async (req) => {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ topic, title, message, priority: hasProblems ? 4 : 3, tags: [hasProblems ? 'warning' : 'white_check_mark'], click: 'https://noobhandbag.github.io/amimi-app/' }),
         });
-        if (res.ok) await sb.from('app_flags').upsert([{ key: 'ceguard_alert_state', value: dec.sig }, ...detailRow], { onConflict: 'key' });
-        else ntfyFailed = res.status;
+        if (res.ok) {
+          const { error: stErr } = await sb.from('app_flags').upsert([{ key: 'ceguard_alert_state', value: dec.sig }, ...detailRow], { onConflict: 'key' });
+          if (stErr) ntfyError = 'push partita ma stato non salvato (il giro dopo la ripete): ' + stErr.message;
+        } else ntfyFailed = res.status;
       } else if (detailRow.length && detailRow[0].value !== JSON.stringify(prevDetail ?? null)) {
         // nessuna push (numero sceso o invariato): si aggiorna l'elenco, cosi' un codice che esce e poi rientra notifica
-        await sb.from('app_flags').upsert(detailRow, { onConflict: 'key' });
+        const { error: dtErr } = await sb.from('app_flags').upsert(detailRow, { onConflict: 'key' });
+        if (dtErr) ntfyError = 'elenco negativi non salvato: ' + dtErr.message;
       }
     }
   } catch (e) { ntfyError = e instanceof Error ? e.message : String(e); /* la notifica non deve mai rompere la guardia contabile */ }
