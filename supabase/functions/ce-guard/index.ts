@@ -25,7 +25,68 @@
 // fallisce -> 500, niente ntfy ne' ceguard_alert_state. Prune controllato (non fatale) delle chiavi ce_* non piu'
 // nell'insieme. La risposta di ntfy e' controllata: lo stato si aggiorna SOLO a push consegnata (res.ok), altrimenti
 // `ntfy_failed` in risposta e il giro dopo riprova.
+// v8 (2026-09-28, brief Bambi 27-09): (a) push anche quando un check ERROR PEGGIORA senza cambiare l'insieme delle
+// chiavi: per `ce_giacenze_negative` si ricorda l'elenco dei codici (app_flags.ceguard_alert_detail, JSON) e un codice
+// NUOVO manda la push col suo nome; se il numero scende non si manda nulla (come prima). Il 27-09 i negativi erano
+// passati da 6 a 7 per una vendita su un codice doppione e la firma, fatta solo di chiavi, non era cambiata: nessuna
+// push. (b) nuovo check WARN `ce_codici_doppi`: codici a catalogo con le stesse parole in ordine diverso
+// (LEA_BAG_BAMBI_PONY / LEA_BAG_PONY_BAMBI). (c) l'etichetta dei negativi elenca i codici. Blocchi PURE:ceguard-alert
+// e PURE:ceguard-doppi, test `node tests/ceguard_alert.mjs`.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+
+// ==== PURE:ceguard-alert BEGIN ====
+type AlertCheck = { k: string; label: string; n: number; severity: string };
+type AlertDetail = Record<string, string[]>;
+// Decide la push ntfy. Si manda se cambia l'insieme delle chiavi ERROR (comportamento v3) OPPURE se un check ERROR
+// tracciato per elenco ha un codice che al giro notificato prima non c'era. Un numero che scende non notifica.
+// prevDetail null = elenco mai registrato (primo giro dopo il deploy v8): si registra senza dichiarare "nuovo" nulla,
+// altrimenti tutti i negativi gia' noti sembrerebbero nuovi.
+function decidiAlert(errs: AlertCheck[], prevSig: string, curDetail: AlertDetail, prevDetail: AlertDetail | null) {
+  const sig = errs.map((c) => c.k).sort().join(',');
+  const nuovi: AlertDetail = {};
+  if (prevDetail) {
+    for (const [k, codici] of Object.entries(curDetail)) {
+      if (!errs.some((c) => c.k === k)) continue;
+      const prima = new Set(prevDetail[k] ?? []);
+      const add = codici.filter((c) => !prima.has(c));
+      if (add.length) nuovi[k] = add;
+    }
+  }
+  return { sig, nuovi, push: sig !== prevSig || Object.keys(nuovi).length > 0 };
+}
+function messaggioAlert(errs: AlertCheck[], nuovi: AlertDetail): string {
+  if (!errs.length) return 'I problemi segnalati sono rientrati.';
+  const righeNuovi = Object.entries(nuovi).map(([k, codici]) => `NUOVI in ${k}: ${codici.join(', ')}`);
+  return [...righeNuovi, ...errs.map((c) => '- ' + c.label)].join('\n');
+}
+function leggiDetail(v: unknown): AlertDetail | null {
+  if (typeof v !== 'string' || !v.trim()) return null;
+  try {
+    const o = JSON.parse(v);
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    const out: AlertDetail = {};
+    for (const [k, a] of Object.entries(o)) if (Array.isArray(a)) out[k] = a.map(String);
+    return out;
+  } catch { return null; }
+}
+// ==== PURE:ceguard-alert END ====
+
+// ==== PURE:ceguard-doppi BEGIN ====
+// Gruppi di codici con le STESSE parole in ordine diverso (LEA_BAG_BAMBI_PONY / LEA_BAG_PONY_BAMBI): quasi sempre la
+// stessa borsa registrata due volte, con giacenza spezzata fra i due. Case-insensitive; un codice ripetuto identico
+// non fa gruppo. Lo "stesso titolo Shopify" NON e' un criterio: i 48 codici dual SC/CC lo condividono per scelta.
+function gruppiParoleInvertite(codici: string[]): string[][] {
+  const perChiave = new Map<string, Set<string>>();
+  for (const c of codici) {
+    const n = String(c ?? '').toUpperCase().trim();
+    if (!n) continue;
+    const k = n.split('_').filter(Boolean).sort().join('_');
+    if (!perChiave.has(k)) perChiave.set(k, new Set());
+    perChiave.get(k)!.add(n);
+  }
+  return [...perChiave.values()].filter((s) => s.size > 1).map((s) => [...s].sort()).sort((a, b) => a[0].localeCompare(b[0]));
+}
+// ==== PURE:ceguard-doppi END ====
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -115,8 +176,20 @@ Deno.serve(async (req) => {
 
   // 4) giacenze negative
   const { data: inv } = read('v_inventory', await sb.from('v_inventory').select('codice, giacenza_attuale, disponibili_da_vendere'));
-  const neg = (inv ?? []).filter((r) => N(r.giacenza_attuale) < 0).length;
-  add('ce_giacenze_negative', 'Prodotti con giacenza negativa', neg);
+  const negRows = (inv ?? []).filter((r) => N(r.giacenza_attuale) < 0);
+  const neg = negRows.length;
+  const negCodici = negRows.map((r) => String(r.codice).toUpperCase()).sort();
+  add('ce_giacenze_negative', 'Prodotti con giacenza negativa'
+    + (neg ? ': ' + negRows.slice(0, 10).map((r) => `${r.codice} (${N(r.giacenza_attuale)})`).join(', ') + (neg > 10 ? ` e altri ${neg - 10}` : '') : ''), neg);
+  // elenco per la push "peggiorato" (v8): solo se la lettura e' riuscita, altrimenti un elenco vuoto per finta
+  // farebbe sembrare NUOVI tutti i negativi al giro dopo
+  const alertDetail: AlertDetail | null = inv ? { ce_giacenze_negative: negCodici } : null;
+
+  // 4-bis) CODICI DOPPI (v8, WARN): stesse parole in ordine diverso. Il caso Bambi (27-09): la vendita Shopify era
+  // finita sul doppione (-1) e l'arrivo sull'altro codice, cosi' il sito esponeva un pezzo in piu' del reale.
+  const doppi = gruppiParoleInvertite((inv ?? []).map((r) => String(r.codice)));
+  add('ce_codici_doppi', 'Codici doppi a catalogo (stesse parole in ordine diverso)'
+    + (doppi.length ? ': ' + doppi.slice(0, 5).map((g) => g.join(' = ')).join(' | ') : ''), doppi.length, 'warn');
 
   // 5) spese con categoria non valida
   const { count: badCat } = read('expenses categoria', await sb.from('expenses').select('*', { count: 'exact', head: true }).eq('categoria_valid', false));
@@ -305,19 +378,27 @@ Deno.serve(async (req) => {
     const topic = tf?.value as string | undefined;
     if (topic) {
       const errs = checks.filter((c) => c.severity === 'error');
-      const sig = errs.map((c) => c.k).sort().join(',');
-      const { data: lf } = await sb.from('app_flags').select('value').eq('key', 'ceguard_alert_state').maybeSingle();
-      const prev = (lf?.value as string | undefined) ?? '';
-      if (sig !== prev) {
-        const hasProblems = sig !== '';
+      // lettura fallita = stato precedente vuoto = push spuria o elenco azzerato: si salta la notifica (ntfy_error)
+      const { data: lf, error: lfErr } = await sb.from('app_flags').select('key, value').in('key', ['ceguard_alert_state', 'ceguard_alert_detail']);
+      if (lfErr) throw new Error('stato notifiche non leggibile: ' + lfErr.message);
+      const prev = ((lf ?? []).find((r) => r.key === 'ceguard_alert_state')?.value as string | undefined) ?? '';
+      const prevDetail = leggiDetail((lf ?? []).find((r) => r.key === 'ceguard_alert_detail')?.value);
+      const dec = decidiAlert(errs, prev, alertDetail ?? {}, alertDetail ? prevDetail : null);
+      // l'elenco si salva solo se letto bene; a push non partita si lascia com'era, cosi' il giro dopo riprova
+      const detailRow = alertDetail ? [{ key: 'ceguard_alert_detail', value: JSON.stringify(alertDetail) }] : [];
+      if (dec.push) {
+        const hasProblems = dec.sig !== '';
         const title = hasProblems ? `Amimi: ${errs.length} da controllare` : 'Amimi: tutto a posto';
-        const message = hasProblems ? errs.map((c) => '- ' + c.label).join('\n') : 'I problemi segnalati sono rientrati.';
+        const message = messaggioAlert(errs, dec.nuovi);
         const res = await fetch('https://ntfy.sh', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ topic, title, message, priority: hasProblems ? 4 : 3, tags: [hasProblems ? 'warning' : 'white_check_mark'], click: 'https://noobhandbag.github.io/amimi-app/' }),
         });
-        if (res.ok) await sb.from('app_flags').upsert({ key: 'ceguard_alert_state', value: sig }, { onConflict: 'key' });
+        if (res.ok) await sb.from('app_flags').upsert([{ key: 'ceguard_alert_state', value: dec.sig }, ...detailRow], { onConflict: 'key' });
         else ntfyFailed = res.status;
+      } else if (detailRow.length && detailRow[0].value !== JSON.stringify(prevDetail ?? null)) {
+        // nessuna push (numero sceso o invariato): si aggiorna l'elenco, cosi' un codice che esce e poi rientra notifica
+        await sb.from('app_flags').upsert(detailRow, { onConflict: 'key' });
       }
     }
   } catch (e) { ntfyError = e instanceof Error ? e.message : String(e); /* la notifica non deve mai rompere la guardia contabile */ }
