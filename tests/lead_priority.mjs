@@ -1,6 +1,6 @@
 // tests/lead_priority.mjs — priorita' dei seed del loop "100 pronti" (workers/lead/priority.mjs), tutto offline.
 //   node tests/lead_priority.mjs
-import { parseMapsNote, resaFonte, fattoreMaps, prioritaSeed, scegliLotto } from '../workers/lead/priority.mjs';
+import { parseMapsNote, resaFonte, fattoreMaps, prioritaSeed, scegliLotto, emailCommerciale } from '../workers/lead/priority.mjs';
 
 let ok = 0, ko = 0;
 const eq = (name, got, exp) => {
@@ -45,6 +45,17 @@ eq('lotto di 6', l1.length, 6);
 eq('Como e Pavia entrano prima del 4o di Milano', l1.slice(0, 5).map((a) => a.citta).sort(), ['Como', 'Milano', 'Milano', 'Milano', 'Pavia']);
 eq('solo Milano: il tetto non lascia il lotto corto', scegliLotto(tuttiMilano, stats, 6, 3).length, 6);
 eq('a parita\' vince il seed piu\' vecchio', scegliLotto(tuttiMilano, stats, 1, 3)[0].id, 'id0');
+
+console.log('\n== email commerciale: i segnaposto dei template e le PEC non rendono un account pronto ==');
+eq('email vera', emailCommerciale('info@bhwoman.it'), true);
+eq('gmail vera', emailCommerciale('lagraste@gmail.com'), true);
+eq('segnaposto xxx', emailCommerciale('xxx@xxx.xxx'), false);
+eq('segnaposto tu@email.address', emailCommerciale('tu@email.address'), false);
+eq('segnaposto example.com', emailCommerciale('email@example.com'), false);
+eq('PEC', emailCommerciale('leblonsrl@pec.it'), false);
+eq('legalmail', emailCommerciale('pontaccio7@legalmail.it'), false);
+eq('sentry', emailCommerciale('605a7b@sentry-next.wixpress.com'), false);
+eq('vuota', emailCommerciale(null), false);
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

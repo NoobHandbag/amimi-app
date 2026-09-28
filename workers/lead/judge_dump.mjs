@@ -8,7 +8,7 @@ import { supa, BUCKET } from './lib.mjs';
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, arr) => a.startsWith('--') ? [a.slice(2), arr[i + 1] && !arr[i + 1].startsWith('--') ? arr[i + 1] : true] : []).filter(Boolean));
 const sb = await supa();
 let q = sb.from('lead_accounts').select('*').order('created_at');
-if (args.id) q = q.eq('id', args.id); else q = q.eq('stato_ricerca', args.stato || 'enriched');
+if (args.ids) q = q.in('id', String(args.ids).split(',')); else if (args.id) q = q.eq('id', args.id); else q = q.eq('stato_ricerca', args.stato || 'enriched');
 const { data: accounts, error } = await q; if (error) throw error;
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 const index = [];
