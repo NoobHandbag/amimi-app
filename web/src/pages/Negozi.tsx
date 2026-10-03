@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
-import { pushBack, popBack } from '../lib/backnav';
+import { pushBack, popBack, killBack } from '../lib/backnav';
 import { fetchDossier, fetchEvidence, fetchContacts, fetchReviews, signedUrls, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL } from '../lib/leadApi';
 import type { LeadDossier, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
 import { PEOPLE, personaName } from '../lib/people';
@@ -83,11 +83,16 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
   // l'URL della scheda. Ora l'URL si aggiorna con replaceState (nessun popstate) e le schede passano dalla pila
   // di backnav: indietro (tasto, swipe o bottone "‹") torna alla lista, alla stessa altezza di scroll.
   const depth = useRef(0);
+  // uscendo dalla sezione con una scheda aperta (barra in basso), le voci rimaste nella pila di backnav non devono
+  // piu' fare nulla: "indietro" le scavalca (finding C della revisione del Blocco 1)
+  const pushed = useRef<(() => void)[]>([]);
+  useEffect(() => { const p = pushed.current; return () => killBack(p); }, []);
   const setSection = (r: Route) => { history.replaceState(history.state, '', routeHash(r)); setRoute(r); };
   const openDetail = (r: Route) => {
     if (r.view === route.view && r.id === route.id) return;   // doppio tocco: una sola voce nella pila
     const prev = route; const y = window.scrollY;
-    pushBack(() => { depth.current = Math.max(0, depth.current - 1); history.replaceState(history.state, '', routeHash(prev)); setRoute(prev); requestAnimationFrame(() => window.scrollTo(0, y)); });
+    const chiudi = () => { depth.current = Math.max(0, depth.current - 1); history.replaceState(history.state, '', routeHash(prev)); setRoute(prev); requestAnimationFrame(() => window.scrollTo(0, y)); };
+    pushBack(chiudi); pushed.current.push(chiudi);
     depth.current++;
     history.replaceState(history.state, '', routeHash(r)); setRoute(r); window.scrollTo(0, 0);
   };
@@ -150,7 +155,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
 
   const openScheda = (r: LeadDossier) => goRoute({ view: 'scheda', id: r.id });
   const closeScheda = () => closeDetail({ view: 'lista' });
-  const nCoda = (orows ?? []).filter((r) => r.scaduta || r.da_gestire).length;
+  const nCoda = (orows ?? []).filter((r) => r.scaduta || r.da_gestire || r.bozza_auto_tocco != null).length;
   const nav = (
     <div className="or-nav">
       <button type="button" className={route.view === 'lista' || route.view === 'scheda' ? 'on' : ''} onClick={() => goRoute({ view: 'lista' })}>Negozi</button>

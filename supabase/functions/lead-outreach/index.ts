@@ -13,6 +13,17 @@
 //          sulla bozza, e ogni segnaposto fra parentesi quadre rimasto nel testo lo BLOCCA.
 //   sblocca (JWT @amimi.it) bozza rimasta in_invio da >10 min (esito incerto) -> errore, dopo controllo di Posta inviata.
 //   diag   (JWT @amimi.it) stato dei flag e del service account, senza segreti ne' PII.
+//   scarta (JWT @amimi.it) v5: una bozza non ancora partita passa a 'scartata' (il cron non la riscrive).
+//   cron   (senza JWT, come gli altri cron; migr 0148) v5, Blocco 2. NO-OP finche' app_flags.lead_enabled non e' 'true'.
+//          1) RISPOSTE: per ogni thread Gmail di un nostro tocco email, i messaggi non nostri e non ancora in
+//             lead_touches entrano come tocco 'in' (upsert ignoreDuplicates su gmail_message_id). Una risposta vera
+//             porta il negozio a "risposto" e ferma la sequenza; "no grazie" = opt-out; bounce e risposte automatiche
+//             sono riconosciuti dal CODICE (blocco PURE:lead-inbound), mai dal modello.
+//          2) FOLLOW-UP: negozio "contattato" con la prossima azione scaduta e nessuna risposta -> bozza AI del tocco
+//             N+1 in lead_drafts ('proposta', origine 'auto'). L'INVIO RESTA UN CLICK UMANO: il cron non spedisce mai.
+//          Se la lettura delle risposte fallisce, il giro NON propone follow-up (non sa chi ha risposto).
+//          Tetti per giro (Regola 20c): MAX_THREAD thread letti, MAX_IN risposte scritte, MAX_BOZZE bozze.
+//          Risponde solo con conteggi: nessun dato di terzi a chi chiama senza JWT.
 //
 // Idempotenza (Regola Ferrea 20): claim atomico sulla riga della bozza (UPDATE ... WHERE stato IN (...)), poi
 // vincoli a DB della migr 0139: send_key UNIQUE e UN tocco per (negozio, numero di tocco) fra le bozze in
@@ -41,7 +52,67 @@ const SCOPE_READ = 'https://www.googleapis.com/auth/gmail.readonly';   // solo p
 const MODEL = 'gemini-flash-latest';
 const MAX_TOKENS = 8000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const FLAG_KEYS = ['lead_outreach_ai_enabled', 'lead_linesheet_url', 'lead_firma', 'lead_tetto_giornaliero', 'gemini_api_key', 'cs_gmail_sa_key'];
+const FLAG_KEYS = ['lead_enabled', 'lead_outreach_ai_enabled', 'lead_linesheet_url', 'lead_firma', 'lead_tetto_giornaliero', 'gemini_api_key', 'cs_gmail_sa_key'];
+// tetti del giro automatico (Regola 20c)
+const MAX_THREAD = 100;        // thread Gmail letti per giro
+const MAX_IN = 25;             // risposte scritte per giro
+const MAX_BOZZE = 3;           // bozze di follow-up per giro (una chiamata Gemini ciascuna)
+const MAX_CAND = 30;           // negozi esaminati per i follow-up
+const FINESTRA_GG = 120;       // si guardano i thread dei tocchi inviati negli ultimi N giorni
+const BUDGET_MS = 90_000;      // oltre, il giro si ferma e riprende al prossimo
+
+// ==== PURE:lead-inbound BEGIN ====
+// Lettura delle risposte, pura e testata in tests/lead_outreach_guardie.mjs. Classifica il CODICE, non il modello.
+function indirizzoDi(from: string): string {
+  const m = /<([^<>\s]+@[^<>\s]+)>/.exec(from) ?? /([^\s<>"']+@[^\s<>"']+)/.exec(from);
+  return (m ? m[1] : '').trim().toLowerCase();
+}
+// toglie il testo citato (la nostra email sotto la risposta): senza, il nostro "mi risponda no grazie" citato
+// farebbe scattare un opt-out a ogni risposta
+function tagliaCitazione(t: string): string {
+  const s = t.replace(/\r\n/g, '\n');
+  const tagli = [
+    /(^|\n)[ \t]*>/,
+    /(^|\n)(Il giorno|Il|On)\b[^\n]{0,240}\n?[^\n]{0,120}(ha scritto|wrote)\s*:/i,
+    /(^|\n)-{2,}\s*(Messaggio originale|Original Message|Messaggio inoltrato|Forwarded message)/i,
+    /(^|\n)_{5,}/,
+    /(^|\n)(Da|From):[^\n]*@[^\n]*\n(Inviato|Sent|Data|Date):/i,
+  ];
+  let cut = s.length;
+  for (const re of tagli) { const m = re.exec(s); if (m && m.index < cut) cut = m.index; }
+  return s.slice(0, cut).trim();
+}
+// 'bounce' | 'risposta_automatica' | 'opt_out' | null (= risposta vera, la gestisce una persona)
+function classificaInbound(p: { from: string; subject: string; autoSubmitted: string; testo: string }): string | null {
+  const from = indirizzoDi(p.from);
+  const sub = p.subject.trim();
+  if (/^(mailer-daemon|postmaster)@/.test(from) || /delivery status notification|undeliver|mail delivery (failed|subsystem)|delivery (has )?failed|mancat[oa] (recapito|consegna)|non recapitabil|returned mail|address not found|indirizzo non trovato/i.test(sub)) return 'bounce';
+  const auto = p.autoSubmitted.trim().toLowerCase();
+  if ((auto && auto !== 'no') || /^(risposta automatica|automatic reply|auto[- ]?reply|autoreply|out of (the )?office|fuori sede|fuori ufficio|assenza)/i.test(sub)) return 'risposta_automatica';
+  const pulito = tagliaCitazione(p.testo);
+  if (pulito.length <= 300 && /\bno,?\s+grazie\b|\bno,?\s+thanks?\b|\bnon\s+(mi|ci)?\s*(contatt|scriv)\w*|\bunsubscribe\b|\bcancella(te|mi|temi)\b|\brimuov\w+/i.test(pulito)) return 'opt_out';
+  return null;
+}
+// PostgREST rifiuta il NUL e un surrogato UTF-16 spaiato (CONOSCENZA 13-09): pulizia all'ULTIMO passo, dopo i tagli
+function jsonSafe(s: string): string {
+  return s.replace(/\u0000/g, '').replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+// oggi a Roma, YYYY-MM-DD (le scadenze sono date di chi lavora in Italia)
+function oggiRoma(now = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+}
+// il follow-up da proporre, o il motivo per cui NON si propone. `tocchi` = tutti i tocchi del negozio.
+function prossimoFollowUp(tocchi: { direzione: string; canale: string; sequenza_tocco: number | null; esito: string | null; at: string }[]): { tocco: number } | { salta: string } {
+  const out = tocchi.filter((t) => t.direzione === 'out' && t.canale === 'email' && t.sequenza_tocco != null);
+  if (!out.length) return { salta: 'nessun tocco email registrato' };
+  const last = out.reduce((a, b) => (Number(b.sequenza_tocco) > Number(a.sequenza_tocco) ? b : a));
+  const n = Number(last.sequenza_tocco);
+  if (n >= 4) return { salta: 'sequenza finita' };
+  const dopo = tocchi.filter((t) => t.direzione === 'in' && Date.parse(t.at) > Date.parse(last.at) && t.esito !== 'risposta_automatica');
+  if (dopo.length) return { salta: dopo.some((t) => t.esito === 'bounce') ? 'email non valida' : 'il negozio ha risposto' };
+  return { tocco: n + 1 };
+}
+// ==== PURE:lead-inbound END ====
 
 // ==== PURE:lead-guard BEGIN ====
 // Regole di invio, pure e testate in tests/lead_outreach_guardie.mjs. Un blocco qui = l'email NON parte.
@@ -210,6 +281,241 @@ function buildPrompt(p: { lingua: 'it' | 'en'; negozio: Record<string, unknown>;
   ].join('\n');
 }
 
+// bozza di UN tocco per UN negozio: usata dall'azione draft (persona) e dal giro cron (follow-up automatico)
+// deno-lint-ignore no-explicit-any
+async function creaBozza(sb: any, flags: Flags, p: { accountId: string; tocco: number; lingua?: string; referente?: string; chi: string; origine: 'manuale' | 'auto' }): Promise<{ status: number; body: Record<string, unknown> }> {
+  const { accountId, tocco } = p;
+  if (!flags.gemini_api_key) return { status: 500, body: { error: 'gemini_api_key assente' } };
+
+  const { data: d, error: dErr } = await retryOnce(() => sb.from('v_lead_dossier').select('*').eq('id', accountId).maybeSingle());
+  if (dErr) return { status: 503, body: { error: 'lettura dossier fallita, riprova: ' + dErr.message } };
+  if (!d) return { status: 404, body: { error: 'negozio inesistente' } };
+  if (d.verdetto === 'no' || d.stato_ricerca === 'rejected') return { status: 409, body: { error: 'negozio con verdetto "no" o scartato: niente bozza', bloccante: true } };
+  const lingua: 'it' | 'en' = p.lingua === 'en' || (p.lingua !== 'it' && d.paese && d.paese !== 'IT') ? 'en' : 'it';
+  const codice = lingua === 'en' ? 'boutique_en' : 'boutique_it';
+
+  const { data: seq, error: sErr } = await retryOnce(() => sb.from('lead_sequences').select('oggetto,corpo,canale').eq('codice', codice).eq('tocco', tocco).eq('attiva', true).maybeSingle());
+  if (sErr) return { status: 503, body: { error: 'lettura sequenza fallita, riprova: ' + sErr.message } };
+  if (!seq || seq.canale !== 'email') return { status: 404, body: { error: `nessun template email attivo per ${codice} tocco ${tocco}` } };
+  const { data: kn, error: kErr } = await retryOnce(() => sb.from('lead_knowledge').select('titolo,contenuto').eq('attiva', true).order('id').limit(40));
+  if (kErr) return { status: 503, body: { error: 'lettura lead_knowledge fallita, riprova: ' + kErr.message } };
+
+  const firma = flags.lead_firma || '[DA VERIFICARE: firma]';
+  const referente = String(p.referente || '').trim().slice(0, 80);
+  // v4: {{linesheet}} nei template = link della pagina riservata; senza flag resta un [DA VERIFICARE] che blocca l'invio
+  const vars = { nome_negozio: String(d.nome), citta: String(d.citta ?? ''), referente: referente || (lingua === 'en' ? `${d.nome} team` : `team di ${d.nome}`), gancio: String(d.gancio ?? '[DA VERIFICARE: gancio]'), firma, linesheet: flags.lead_linesheet_url || '[DA VERIFICARE: link line sheet]' };
+  const template = { oggetto: fill(String(seq.oggetto ?? ''), vars), corpo: fill(String(seq.corpo), vars) };
+  const prompt = buildPrompt({ lingua, negozio: fattiNegozio(d), template, knowledge: (kn ?? []) as { titolo: string; contenuto: string }[], linesheet: flags.lead_linesheet_url || '', firma, referente, tocco });
+
+  let parsed: { oggetto?: string; testo?: string; fatti_usati?: string[] } | null = null;
+  let finish = '';
+  try {
+    const g = await gemini(prompt, flags.gemini_api_key);
+    finish = g.finish;
+    parsed = JSON.parse(g.text);
+  } catch (e) {
+    return { status: 502, body: { error: 'generazione non riuscita: ' + scrub((e as Error).message.slice(0, 200)) + (finish ? ` (${finish})` : '') } };
+  }
+  // la misura va fatta PRIMA di aggiungere firma e opt-out, che da sole superano qualunque soglia
+  const grezzo = String(parsed?.testo ?? '').trim();
+  if (grezzo.length < 80) return { status: 502, body: { error: `bozza vuota o troncata (${finish}): riprova` } };
+  const testo = completaTesto(grezzo, flags.lead_firma || '', lingua);
+  const oggetto = String(parsed?.oggetto ?? template.oggetto).trim().slice(0, 200);
+  const to = String(d.email_generica ?? '') || (((d.site_meta ?? {}) as { emails?: string[] }).emails ?? [])[0] || '';
+
+  const { data: ins, error: iErr } = await sb.from('lead_drafts').insert({
+    account_id: accountId, lingua, testo, oggetto, to_email: to || null, sequenza_tocco: tocco, model: MODEL,
+    fatti_usati: { fatti_usati: parsed?.fatti_usati ?? [], avvisi: avvisiContenuto(testo) }, stato: 'proposta', chi: p.chi, origine: p.origine,
+  }).select('id').single();
+  // 23505 = lead_drafts_auto_uq (migr 0148): la bozza automatica di questo tocco esiste gia'
+  if (iErr) return { status: iErr.code === '23505' ? 409 : 500, body: { error: iErr.code === '23505' ? 'bozza automatica già presente per questo tocco' : 'salvataggio bozza fallito: ' + iErr.message, doppione: iErr.code === '23505' } };
+  return { status: 200, body: { ok: true, draft_id: ins.id, oggetto, testo, to, lingua, tocco, segnaposto: segnapostoResidui(`${oggetto}\n${testo}`), avvisi: avvisiContenuto(testo) } };
+}
+
+// ------------------------------------------------------------------------------------------- cron
+// testo leggibile di un messaggio Gmail: text/plain se c'e', altrimenti l'HTML senza tag
+type GPart = { mimeType?: string; body?: { data?: string }; parts?: GPart[] };
+function b64urlToText(data: string): string {
+  const bin = atob(data.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
+}
+function corpoMessaggio(payload: GPart | undefined): string {
+  const trova = (p: GPart | undefined, mime: string): string => {
+    if (!p) return '';
+    if (p.mimeType === mime && p.body?.data) return b64urlToText(p.body.data);
+    for (const c of p.parts ?? []) { const t = trova(c, mime); if (t) return t; }
+    return '';
+  };
+  const plain = trova(payload, 'text/plain');
+  if (plain) return plain;
+  const html = trova(payload, 'text/html');
+  return html.replace(/<(style|script)[\s\S]*?<\/\1>/gi, '').replace(/<br\s*\/?>|<\/p>|<\/div>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\n{3,}/g, '\n\n');
+}
+
+// deno-lint-ignore no-explicit-any
+async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito: Record<string, number | boolean | string>; sospesi: Set<string> }> {
+  const esito: Record<string, number | boolean | string> = { thread: 0, thread_troncati: false, nuove: 0, risposte: 0, opt_out: 0, bounce: 0, automatiche: 0, rimandate: 0, illeggibili: 0 };
+  // negozi con una risposta arrivata ma NON ancora scritta (oltre il tetto, o messaggio illeggibile): niente follow-up per loro
+  const sospesi = new Set<string>();
+  const fine = () => ({ esito, sospesi });
+  const dal = new Date(Date.now() - FINESTRA_GG * 864e5).toISOString();
+  const { data: outs, error: oErr } = await retryOnce(() => sb.from('lead_touches').select('account_id,gmail_thread_id,at')
+    .eq('direzione', 'out').eq('canale', 'email').not('gmail_thread_id', 'is', null).gte('at', dal).order('at', { ascending: false }).limit(MAX_THREAD * 4 + 1));
+  if (oErr) throw new Error('lettura tocchi inviati fallita: ' + oErr.message);
+  const threadAcc = new Map<string, string>();
+  for (const r of (outs ?? []) as { account_id: string; gmail_thread_id: string }[]) if (!threadAcc.has(r.gmail_thread_id)) threadAcc.set(r.gmail_thread_id, r.account_id);
+  if (!threadAcc.size) return fine();
+  const threads = [...threadAcc.keys()].slice(0, MAX_THREAD);
+  esito.thread_troncati = threadAcc.size > MAX_THREAD || (outs ?? []).length > MAX_THREAD * 4;
+
+  if (!flags.cs_gmail_sa_key) throw new Error('chiave service account assente (app_flags.cs_gmail_sa_key)');
+  const token = await googleAccessToken(JSON.parse(flags.cs_gmail_sa_key), SCOPE_READ);
+  const auth = { headers: { Authorization: `Bearer ${token}` } };
+
+  // 1) quali messaggi non nostri ci sono in quei thread (format=minimal: solo id ed etichette)
+  const cand: { id: string; threadId: string; accountId: string; at: number }[] = [];
+  for (const th of threads) {
+    if (Date.now() - t0 > BUDGET_MS) { esito.thread_troncati = true; break; }
+    const r = await fetch(`${GMAIL}/threads/${encodeURIComponent(th)}?format=minimal`, auth);
+    if (r.status === 404) continue;   // thread cancellato dalla casella: niente da leggere
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`Gmail threads.get ${r.status}: ${JSON.stringify(j).slice(0, 160)}`);
+    esito.thread = Number(esito.thread) + 1;
+    for (const m of ((j as { messages?: { id: string; labelIds?: string[]; internalDate?: string }[] }).messages ?? [])) {
+      const lbl = m.labelIds ?? [];
+      if (lbl.includes('SENT') || lbl.includes('DRAFT')) continue;
+      cand.push({ id: m.id, threadId: th, accountId: threadAcc.get(th)!, at: Number(m.internalDate ?? Date.now()) });
+    }
+  }
+  if (!cand.length) return fine();
+
+  // 2) quali sono gia' in lead_touches: .in() sui soli id da controllare (Regola 20b), a blocchi
+  const noti = new Set<string>();
+  for (let i = 0; i < cand.length; i += 100) {
+    const ids = cand.slice(i, i + 100).map((c) => c.id);
+    const { data: ex, error: exErr } = await retryOnce(() => sb.from('lead_touches').select('gmail_message_id').in('gmail_message_id', ids));
+    if (exErr) throw new Error('lettura tocchi esistenti fallita: ' + exErr.message);
+    for (const r of (ex ?? []) as { gmail_message_id: string }[]) noti.add(r.gmail_message_id);
+  }
+  const nuovi = cand.filter((c) => !noti.has(c.id)).sort((a, b) => a.at - b.at);
+  esito.rimandate = Math.max(0, nuovi.length - MAX_IN);
+  for (const c of nuovi.slice(MAX_IN)) sospesi.add(c.accountId);
+  const lotto = nuovi.slice(0, MAX_IN);
+  if (!lotto.length) return fine();
+
+  const accIds = [...new Set(lotto.map((c) => c.accountId))];
+  const { data: accs, error: aErr } = await retryOnce(() => sb.from('lead_accounts').select('id,lead_stage').in('id', accIds));
+  if (aErr) throw new Error('lettura stadio negozi fallita: ' + aErr.message);
+  const stage = new Map<string, string>(((accs ?? []) as { id: string; lead_stage: string }[]).map((a) => [a.id, a.lead_stage]));
+
+  // 3) un tocco 'in' per messaggio, in ordine di arrivo. Lo stadio lo aggiorna il trigger lead_touches_apply:
+  //    qui lo si segue in locale solo per non riportare indietro un negozio con un stage_dopo stantio.
+  const oggi = oggiRoma();
+  for (const c of lotto) {
+    if (Date.now() - t0 > BUDGET_MS) { esito.rimandate = Number(esito.rimandate) + 1; sospesi.add(c.accountId); continue; }
+    // un messaggio che non si legge o non si scrive NON ferma il giro (sarebbe uno stallo sullo stesso record a ogni
+    // giro, CONOSCENZA 13-09): si conta, si segnala in health_log, si riprova al prossimo, e quel negozio resta sospeso
+    const illeggibile = (perche: string) => { esito.illeggibili = Number(esito.illeggibili) + 1; sospesi.add(c.accountId); if (!esito.primo_errore) esito.primo_errore = perche.slice(0, 200); };
+    const r = await fetch(`${GMAIL}/messages/${encodeURIComponent(c.id)}?format=full`, auth);
+    const m = await r.json().catch(() => ({}));
+    if (!r.ok) { illeggibile(`Gmail messages.get ${r.status}`); continue; }
+    const hs = ((m as { payload?: { headers?: { name?: string; value?: string }[] } }).payload?.headers ?? []);
+    const hdr = (n: string) => hs.find((h) => h.name?.toLowerCase() === n)?.value ?? '';
+    const from = hdr('from');
+    // un messaggio da @amimi.it nel thread (collega in copia, inoltro interno) non e' una risposta del negozio
+    if (indirizzoDi(from).endsWith('@amimi.it')) continue;
+    const testo = corpoMessaggio((m as { payload?: GPart }).payload);
+    const tipo = classificaInbound({ from, subject: hdr('subject'), autoSubmitted: hdr('auto-submitted'), testo });
+    const st = stage.get(c.accountId) ?? null;
+    const pulito = tagliaCitazione(testo) || testo.trim();
+    const base = {
+      account_id: c.accountId, canale: 'email', direzione: 'in', gmail_message_id: c.id, gmail_thread_id: c.threadId,
+      subject: jsonSafe(hdr('subject').slice(0, 300)) || null, body_clean: jsonSafe(`${indirizzoDi(from)}\n${pulito}`.slice(0, 4000)),
+      stage_prima: st, chi: 'auto', at: new Date(c.at).toISOString(), esito: tipo,
+    };
+    const riga = tipo === 'risposta_automatica' ? { ...base, stage_dopo: st }   // non ferma la sequenza, non tocca la scadenza
+      : tipo === 'bounce' ? { ...base, stage_dopo: st, prossima_azione: 'email non valida: cercare un altro indirizzo', prossima_azione_at: oggi }
+      : tipo === 'opt_out' ? { ...base, prossima_azione: 'opt-out: non contattare più' }   // stadio e contatti: trigger
+      : { ...base, prossima_azione: 'rispondere al negozio', prossima_azione_at: oggi };
+    const { data: ins, error: iErr } = await sb.from('lead_touches').upsert(riga, { onConflict: 'gmail_message_id', ignoreDuplicates: true }).select('id');
+    if (iErr) { illeggibile('scrittura della risposta fallita: ' + iErr.message); continue; }
+    if (!ins?.length) continue;   // gia' scritta da un giro concorrente
+    esito.nuove = Number(esito.nuove) + 1;
+    if (tipo === 'bounce') esito.bounce = Number(esito.bounce) + 1;
+    else if (tipo === 'risposta_automatica') esito.automatiche = Number(esito.automatiche) + 1;
+    else if (tipo === 'opt_out') { esito.opt_out = Number(esito.opt_out) + 1; stage.set(c.accountId, 'opt_out'); }
+    else { esito.risposte = Number(esito.risposte) + 1; if (st === 'da_contattare' || st === 'contattato') stage.set(c.accountId, 'risposto'); }
+  }
+  return fine();
+}
+
+// deno-lint-ignore no-explicit-any
+async function proponiFollowUp(sb: any, flags: Flags, t0: number, sospesi: Set<string>): Promise<Record<string, number | string>> {
+  const esito: Record<string, number | string> = { candidati: 0, proposte: 0, saltati: 0, errori: 0 };
+  const { data: accs, error: aErr } = await retryOnce(() => sb.from('lead_accounts').select('id,paese')
+    .eq('lead_stage', 'contattato').eq('verdetto', 'da_contattare').neq('stato_ricerca', 'rejected')
+    .lte('prossima_azione_at', oggiRoma()).order('prossima_azione_at', { ascending: true }).limit(MAX_CAND));
+  if (aErr) throw new Error('lettura negozi in scadenza fallita: ' + aErr.message);
+  esito.candidati = (accs ?? []).length;
+  for (const a of (accs ?? []) as { id: string; paese: string | null }[]) {
+    if (Number(esito.proposte) >= MAX_BOZZE || Date.now() - t0 > BUDGET_MS) break;
+    if (sospesi.has(a.id)) { esito.saltati = Number(esito.saltati) + 1; continue; }
+    const { data: tocchi, error: tErr } = await retryOnce(() => sb.from('lead_touches').select('direzione,canale,sequenza_tocco,esito,at').eq('account_id', a.id).order('at', { ascending: false }).limit(200));
+    if (tErr) throw new Error('lettura tocchi fallita: ' + tErr.message);
+    const fu = prossimoFollowUp((tocchi ?? []) as { direzione: string; canale: string; sequenza_tocco: number | null; esito: string | null; at: string }[]);
+    if ('salta' in fu) { esito.saltati = Number(esito.saltati) + 1; continue; }
+    const { count: nOpt, error: oErr } = await retryOnce(() => sb.from('lead_contacts').select('id', { count: 'exact', head: true }).eq('account_id', a.id).eq('opt_out', true));
+    if (oErr) throw new Error('lettura opt-out fallita: ' + oErr.message);
+    if ((nOpt ?? 0) > 0) { esito.saltati = Number(esito.saltati) + 1; continue; }
+    // bozze del negozio: una automatica per tocco (vincolo a DB), e niente doppione di una bozza gia' scritta da una persona
+    const { data: bozze, error: bErr } = await retryOnce(() => sb.from('lead_drafts').select('stato,origine,lingua,sequenza_tocco,sent_at').eq('account_id', a.id).order('created_at', { ascending: false }).limit(100));
+    if (bErr) throw new Error('lettura bozze fallita: ' + bErr.message);
+    const bz = (bozze ?? []) as { stato: string; origine: string; lingua: string | null; sequenza_tocco: number | null; sent_at: string | null }[];
+    if (bz.some((b) => b.sequenza_tocco === fu.tocco && (b.origine === 'auto' || ['proposta', 'approvata', 'in_invio', 'inviata'].includes(b.stato)))) { esito.saltati = Number(esito.saltati) + 1; continue; }
+    // lingua: quella dell'ultima email partita dall'app, altrimenti dal paese
+    const lingua = bz.find((b) => b.stato === 'inviata' && b.lingua)?.lingua ?? undefined;
+    const r = await creaBozza(sb, flags, { accountId: a.id, tocco: fu.tocco, lingua, chi: 'auto', origine: 'auto' });
+    if (r.status === 200) esito.proposte = Number(esito.proposte) + 1;
+    else if (r.body.doppione) esito.saltati = Number(esito.saltati) + 1;
+    else {
+      esito.errori = Number(esito.errori) + 1;
+      if (!esito.primo_errore) esito.primo_errore = String(r.body.error ?? '').slice(0, 200);
+      if (r.status === 502 || r.status === 503) break;   // Gemini o DB in difficolta': si riprova al prossimo giro
+    }
+  }
+  return esito;
+}
+
+// deno-lint-ignore no-explicit-any
+async function giroCron(sb: any): Promise<Response> {
+  const t0 = Date.now();
+  const { data: frows, error: ferr } = await retryOnce(() => sb.from('app_flags').select('key,value').in('key', FLAG_KEYS));
+  if (ferr) return json({ error: 'lettura flag fallita' }, 503);
+  const flags: Flags = Object.fromEntries(((frows ?? []) as { key: string; value: string | null }[]).map((r) => [r.key, r.value ?? '']));
+  // NO-OP a flag spento (Regola 19): niente Gmail, niente scritture, nemmeno in health_log
+  if (flags.lead_enabled !== 'true') return json({ ok: true, skipped: 'lead_enabled spento' });
+
+  let inbound: Record<string, number | boolean | string> | null = null;
+  let sospesi = new Set<string>();
+  let followup: Record<string, number | string> | null = null;
+  const errori: string[] = [];
+  try { const r = await leggiRisposte(sb, flags, t0); inbound = r.esito; sospesi = r.sospesi; }
+  catch (e) { errori.push('risposte: ' + scrub((e as Error).message.slice(0, 200))); }
+  // senza una lettura COMPLETA delle risposte non si sa chi ha risposto: nessun follow-up in questo giro
+  if (inbound && !inbound.thread_troncati && flags.lead_outreach_ai_enabled === 'true') {
+    try { followup = await proponiFollowUp(sb, flags, t0, sospesi); }
+    catch (e) { errori.push('follow-up: ' + scrub((e as Error).message.slice(0, 200))); }
+  }
+  const fuErr = (followup?.primo_errore ? `; errore bozza: ${followup.primo_errore}` : '') + (inbound?.illeggibili ? `; ${inbound.illeggibili} risposte non lette: ${inbound.primo_errore ?? ''}` : '');
+  const label = errori.length ? errori.join(' | ')
+    : `risposte ${inbound?.nuove ?? 0} (vere ${inbound?.risposte ?? 0}, opt-out ${inbound?.opt_out ?? 0}, bounce ${inbound?.bounce ?? 0}, automatiche ${inbound?.automatiche ?? 0}), follow-up proposti ${followup?.proposte ?? 0}${inbound?.thread_troncati || inbound?.rimandate ? '; giro troncato, il resto al prossimo' : ''}${fuErr}`;
+  const sev = errori.length ? 'error' : (inbound?.thread_troncati || inbound?.rimandate || fuErr) ? 'warn' : 'ok';
+  const { error: hErr } = await sb.from('health_log').upsert({ day: oggiRoma(), k: 'lead_cron', label: jsonSafe(label.slice(0, 500)), n: Number(inbound?.nuove ?? 0) + Number(followup?.proposte ?? 0), severity: sev, created_at: new Date().toISOString() }, { onConflict: 'day,k' });
+  return json({ ok: !errori.length, inbound: inbound ? { ...inbound, primo_errore: undefined } : null, followup: followup ? { ...followup, primo_errore: undefined } : null, errori: errori.length, health: hErr ? 'non scritto' : sev, ms: Date.now() - t0 }, errori.length ? 500 : 200);
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ error: 'method' }, 405);
@@ -219,7 +525,9 @@ Deno.serve(async (req) => {
   const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || '');
-  if (!['draft', 'send', 'sblocca', 'diag'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
+  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
+  // giro automatico: nessun JWT (lo chiama pg_cron), nessun dato di terzi in risposta, NO-OP a lead_enabled spento
+  if (action === 'cron') return await giroCron(createClient(url, svc));
 
   // 1) autorizzazione: utente reale @amimi.it (dati di terzi e invio a terzi)
   const authz = req.headers.get('Authorization') || '';
@@ -243,7 +551,7 @@ Deno.serve(async (req) => {
       try { await googleAccessToken(JSON.parse(flags.cs_gmail_sa_key), SCOPE_SEND); sa = 'ok (gmail.send)'; }
       catch (e) { sa = (e as Error).message.slice(0, 160); }
     }
-    return json({ ok: true, enabled, gemini: !!flags.gemini_api_key, service_account: sa, linesheet: !!flags.lead_linesheet_url, firma: !!flags.lead_firma, tetto: Number.parseInt(flags.lead_tetto_giornaliero || '20', 10) });
+    return json({ ok: true, enabled, cron: flags.lead_enabled === 'true', gemini: !!flags.gemini_api_key, service_account: sa, linesheet: !!flags.lead_linesheet_url, firma: !!flags.lead_firma, tetto: Number.parseInt(flags.lead_tetto_giornaliero || '20', 10) });
   }
   if (!enabled) return json({ error: 'Bozze e invio B2B spenti (app_flags.lead_outreach_ai_enabled = false).', bloccante: true }, 403);
 
@@ -252,50 +560,21 @@ Deno.serve(async (req) => {
     const accountId = String(body.account_id || '');
     if (!UUID_RE.test(accountId)) return json({ error: 'account_id non valido' }, 422);
     const tocco = Math.max(1, Math.min(4, Number(body.tocco || 1)));
-    if (!flags.gemini_api_key) return json({ error: 'gemini_api_key assente' }, 500);
+    const r = await creaBozza(sb, flags, { accountId, tocco, lingua: body.lingua, referente: body.referente, chi, origine: 'manuale' });
+    return json(r.body, r.status);
+  }
 
-    const { data: d, error: dErr } = await retryOnce(() => sb.from('v_lead_dossier').select('*').eq('id', accountId).maybeSingle());
-    if (dErr) return json({ error: 'lettura dossier fallita, riprova: ' + dErr.message }, 503);
-    if (!d) return json({ error: 'negozio inesistente' }, 404);
-    if (d.verdetto === 'no' || d.stato_ricerca === 'rejected') return json({ error: 'negozio con verdetto "no" o scartato: niente bozza', bloccante: true }, 409);
-    const lingua: 'it' | 'en' = body.lingua === 'en' || (body.lingua !== 'it' && d.paese && d.paese !== 'IT') ? 'en' : 'it';
-    const codice = lingua === 'en' ? 'boutique_en' : 'boutique_it';
-
-    const { data: seq, error: sErr } = await retryOnce(() => sb.from('lead_sequences').select('oggetto,corpo,canale').eq('codice', codice).eq('tocco', tocco).eq('attiva', true).maybeSingle());
-    if (sErr) return json({ error: 'lettura sequenza fallita, riprova: ' + sErr.message }, 503);
-    if (!seq || seq.canale !== 'email') return json({ error: `nessun template email attivo per ${codice} tocco ${tocco}` }, 404);
-    const { data: kn, error: kErr } = await retryOnce(() => sb.from('lead_knowledge').select('titolo,contenuto').eq('attiva', true).order('id').limit(40));
-    if (kErr) return json({ error: 'lettura lead_knowledge fallita, riprova: ' + kErr.message }, 503);
-
-    const firma = flags.lead_firma || '[DA VERIFICARE: firma]';
-    const referente = String(body.referente || '').trim().slice(0, 80);
-    // v4: {{linesheet}} nei template = link della pagina riservata; senza flag resta un [DA VERIFICARE] che blocca l'invio
-    const vars = { nome_negozio: String(d.nome), citta: String(d.citta ?? ''), referente: referente || (lingua === 'en' ? `${d.nome} team` : `team di ${d.nome}`), gancio: String(d.gancio ?? '[DA VERIFICARE: gancio]'), firma, linesheet: flags.lead_linesheet_url || '[DA VERIFICARE: link line sheet]' };
-    const template = { oggetto: fill(String(seq.oggetto ?? ''), vars), corpo: fill(String(seq.corpo), vars) };
-    const prompt = buildPrompt({ lingua, negozio: fattiNegozio(d), template, knowledge: (kn ?? []) as { titolo: string; contenuto: string }[], linesheet: flags.lead_linesheet_url || '', firma, referente, tocco });
-
-    let parsed: { oggetto?: string; testo?: string; fatti_usati?: string[] } | null = null;
-    let finish = '';
-    try {
-      const g = await gemini(prompt, flags.gemini_api_key);
-      finish = g.finish;
-      parsed = JSON.parse(g.text);
-    } catch (e) {
-      return json({ error: 'generazione non riuscita: ' + scrub((e as Error).message.slice(0, 200)) + (finish ? ` (${finish})` : '') }, 502);
-    }
-    // la misura va fatta PRIMA di aggiungere firma e opt-out, che da sole superano qualunque soglia
-    const grezzo = String(parsed?.testo ?? '').trim();
-    if (grezzo.length < 80) return json({ error: `bozza vuota o troncata (${finish}): riprova` }, 502);
-    const testo = completaTesto(grezzo, flags.lead_firma || '', lingua);
-    const oggetto = String(parsed?.oggetto ?? template.oggetto).trim().slice(0, 200);
-    const to = String(d.email_generica ?? '') || (((d.site_meta ?? {}) as { emails?: string[] }).emails ?? [])[0] || '';
-
-    const { data: ins, error: iErr } = await sb.from('lead_drafts').insert({
-      account_id: accountId, lingua, testo, oggetto, to_email: to || null, sequenza_tocco: tocco, model: MODEL,
-      fatti_usati: { fatti_usati: parsed?.fatti_usati ?? [], avvisi: avvisiContenuto(testo) }, stato: 'proposta', chi,
-    }).select('id').single();
-    if (iErr) return json({ error: 'salvataggio bozza fallito: ' + iErr.message }, 500);
-    return json({ ok: true, draft_id: ins.id, oggetto, testo, to, lingua, tocco, segnaposto: segnapostoResidui(`${oggetto}\n${testo}`), avvisi: avvisiContenuto(testo) });
+  // ----------------------------------------------------------------------------------------- scarta
+  // v5: una bozza non partita esce dalla Coda. Mai su una bozza in invio o inviata.
+  if (action === 'scarta') {
+    const id = String(body.draft_id || '');
+    if (!UUID_RE.test(id)) return json({ error: 'draft_id non valido' }, 422);
+    const { data: sc, error: scErr } = await sb.from('lead_drafts')
+      .update({ stato: 'scartata', errore: `scartata da ${chi}`, updated_at: new Date().toISOString() })
+      .eq('id', id).in('stato', ['proposta', 'approvata', 'errore']).select('id');
+    if (scErr) return json({ error: 'scarto fallito: ' + scErr.message }, 500);
+    if (!sc?.length) return json({ error: 'niente da scartare: la bozza è già partita o già scartata', bloccante: true }, 409);
+    return json({ ok: true, scartata: id });
   }
 
   // ---------------------------------------------------------------------------------------- sblocca

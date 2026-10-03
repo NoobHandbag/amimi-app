@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, sbloccaBozza, segnaposto } from '../lib/leadApi';
+import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, sbloccaBozza, scartaBozza, segnaposto } from '../lib/leadApi';
 import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft } from '../lib/leadApi';
 
 // Sezione Outreach (tappa 1 del PIANO_Outreach_CRM.md): pipeline per stadio, coda del giorno, scheda con
@@ -14,6 +14,7 @@ const CANALI: Record<string, string> = { email: 'Email', telefono: 'Telefono', i
 
 function Due({ r }: { r: LeadOutreach }) {
   if (r.da_gestire) return <span className="or-due late">risposta da gestire</span>;
+  if (r.bozza_auto_tocco != null) return <span className="or-due late">follow-up {r.bozza_auto_tocco} pronto da rivedere</span>;
   if (r.scaduta) return <span className="or-due late">{r.prossima_azione ?? 'azione'} · scaduta {fmtD(r.prossima_azione_at)}</span>;
   if (r.prossima_azione_at) return <span className="or-due">{r.prossima_azione ?? 'prossima azione'} · {fmtD(r.prossima_azione_at)}</span>;
   if (r.lead_stage === 'da_contattare' && !r.n_tocchi) return <span className="or-due">{r.telefono_maps || r.telefono ? 'telefono prima' : r.email_generica || r.email_sito ? 'email 1 da scrivere' : 'nessun contatto: cercarlo'}</span>;
@@ -64,8 +65,10 @@ export function OutreachBoard({ rows, urls, onOpen }: { rows: LeadOutreach[]; ur
 // ---------------------------------------------------------------------------------------------
 export function OutreachCoda({ rows, onOpen }: { rows: LeadOutreach[]; onOpen: (id: string) => void }) {
   const risposte = rows.filter((r) => r.da_gestire);
-  const scadute = rows.filter((r) => r.scaduta && !r.da_gestire);
-  const inScadenza = rows.filter((r) => !r.scaduta && r.prossima_azione_at && r.prossima_azione_at <= addDays(2));
+  // follow-up gia' scritti dal giro automatico (migr 0148): manca solo la rilettura e il click di invio
+  const pronti = rows.filter((r) => r.bozza_auto_tocco != null && !r.da_gestire);
+  const scadute = rows.filter((r) => r.scaduta && !r.da_gestire && r.bozza_auto_tocco == null);
+  const inScadenza = rows.filter((r) => !r.scaduta && r.bozza_auto_tocco == null && r.prossima_azione_at && r.prossima_azione_at <= addDays(2));
   const nuovi = rows.filter((r) => r.lead_stage === 'da_contattare' && !r.n_tocchi);
   const Row = ({ r, icon, what }: { r: LeadOutreach; icon: string; what: string }) => (
     <button type="button" className="or-row" onClick={() => onOpen(r.id)}>
@@ -74,11 +77,12 @@ export function OutreachCoda({ rows, onOpen }: { rows: LeadOutreach[]; onOpen: (
       <span className="or-go">Apri ›</span>
     </button>
   );
-  const empty = !risposte.length && !scadute.length && !inScadenza.length && !nuovi.length;
+  const empty = !risposte.length && !pronti.length && !scadute.length && !inScadenza.length && !nuovi.length;
   return (
     <>
       {empty && <section className="card"><p className="muted">Niente da fare oggi. Bel lavoro.</p></section>}
       {risposte.length > 0 && <section className="card"><h2>Risposte da gestire · {risposte.length}</h2><div className="or-list">{risposte.map((r) => <Row key={r.id} r={r} icon="📩" what={`${CANALI[r.ultimo_canale ?? ''] ?? ''} ricevuta ${fmtD(r.ultimo_tocco_at)}${r.ultimo_esito ? ` · ${ESITI.find((e) => e.key === r.ultimo_esito)?.label ?? r.ultimo_esito}` : ''}`} />)}</div></section>}
+      {pronti.length > 0 && <section className="card"><h2>Follow-up pronti da rivedere · {pronti.length}</h2><div className="or-list">{pronti.map((r) => <Row key={r.id} r={r} icon="✍️" what={`bozza del follow-up ${r.bozza_auto_tocco} di 4 gia’ scritta: rileggila e inviala`} />)}</div></section>}
       {scadute.length > 0 && <section className="card"><h2>Azioni scadute · {scadute.length}</h2><div className="or-list">{scadute.map((r) => <Row key={r.id} r={r} icon="⏰" what={`${r.prossima_azione ?? 'azione'} · scaduta il ${fmtD(r.prossima_azione_at)} · ${r.owner_outreach ?? ''}`} />)}</div></section>}
       {inScadenza.length > 0 && <section className="card"><h2>In scadenza entro 2 giorni · {inScadenza.length}</h2><div className="or-list">{inScadenza.map((r) => <Row key={r.id} r={r} icon="📅" what={`${r.prossima_azione ?? 'azione'} · ${fmtD(r.prossima_azione_at)}`} />)}</div></section>}
       {nuovi.length > 0 && <section className="card"><h2>Da contattare, mai toccati · {nuovi.length}</h2><div className="or-list">{nuovi.map((r) => <Row key={r.id} r={r} icon={r.telefono_maps || r.telefono ? '📞' : '✍️'} what={r.telefono_maps || r.telefono ? `telefonata di qualifica (${r.telefono ?? r.telefono_maps})` : r.email_generica || r.email_sito ? `email 1 a ${r.email_generica ?? r.email_sito}` : 'nessun contatto trovato: cercare email o telefono'} />)}</div></section>}
@@ -118,8 +122,29 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const [avvisi, setAvvisi] = useState<string[]>([]);
   const [aiBusy, setAiBusy] = useState(false);
 
-  const reload = async () => { setTouches(await fetchTouches(r.id)); setDrafts(await fetchDrafts(r.id)); };
-  useEffect(() => { setTouches(null); setDraftId(null); reload().catch((e: Error) => setMsg(e.message)); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [r.id]);
+  const apriBozza = (d: LeadDraft) => {
+    if (d.sequenza_tocco != null) setTocco(d.sequenza_tocco);
+    if (d.lingua === 'en' || d.lingua === 'it') setCodice(d.lingua === 'en' ? 'boutique_en' : 'boutique_it');
+    setDraftId(d.id); setSendKey(crypto.randomUUID());
+    setOggetto(d.oggetto ?? ''); setTesto(d.testo); if (d.to_email) setTo(d.to_email);
+    setAvvisi(d.fatti_usati?.avvisi ?? []);
+  };
+  const reload = async () => { setTouches(await fetchTouches(r.id)); const ds = await fetchDrafts(r.id); setDrafts(ds); return ds; };
+  // all'apertura: se il giro automatico ha gia' scritto il follow-up di questo negozio, il compositore parte da li'
+  useEffect(() => {
+    setTouches(null); setDraftId(null);
+    reload().then((ds) => {
+      const auto = r.bozza_auto_tocco != null ? ds.find((d) => d.origine === 'auto' && d.stato === 'proposta' && d.sequenza_tocco === r.bozza_auto_tocco) : undefined;
+      if (auto) { apriBozza(auto); setMsg(`Follow-up ${auto.sequenza_tocco} scritto in automatico alla scadenza: rileggilo, correggilo e invialo (o scartalo).`); }
+    }).catch((e: Error) => setMsg(e.message));
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [r.id]);
+  const scarta = async () => {
+    if (!draftId) return;
+    setBusy(true); setMsg('');
+    try { await scartaBozza({ draft_id: draftId, chi: who }); setDraftId(null); setAvvisi([]); await onChanged(); await reload(); setMsg('Bozza scartata.'); } catch (e) { setMsg((e as Error).message); }
+    setBusy(false);
+  };
 
   const seq = useMemo(() => sequences.find((s) => s.codice === codice && s.tocco === tocco) ?? null, [sequences, codice, tocco]);
   useEffect(() => {
@@ -246,6 +271,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               <div className="lead-actions">
                 <button type="button" className="ds-btn" disabled={aiBusy || busy || seq?.canale !== 'email'} style={{ background: 'var(--interactive-700)', color: '#fff', borderColor: 'var(--interactive-700)' }} onClick={bozzaAI}>{aiBusy ? 'Scrivo la bozza…' : draftId ? 'Rigenera bozza AI' : `Bozza con l’AI (tocco ${tocco})`}</button>
                 {draftId && <button type="button" className="ds-btn" disabled={busy} onClick={() => { setDraftId(null); setAvvisi([]); }}>Torna al template</button>}
+                {draftId && <button type="button" className="ds-btn" disabled={busy} onClick={scarta}>Scarta bozza</button>}
               </div>
               {avvisi.length > 0 && <div className="err" style={{ marginTop: 6 }}>Da controllare: {avvisi.join(' · ')}</div>}
               {draftId && <>
@@ -255,7 +281,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               </>}
             </div>
           ) : <p className="note">Bozza AI e invio dall&#8217;app spenti (flag lead_outreach_ai_enabled). Per ora: template, Gmail e &#8220;Segna come inviata&#8221;.</p>}
-          {drafts.length > 0 && <details style={{ marginTop: 8 }}><summary style={{ cursor: 'pointer', fontSize: 13 }}>Bozze di questo negozio ({drafts.length})</summary><div className="list">{drafts.map((d) => <div key={d.id} className="row"><div><div className="rt">Tocco {d.sequenza_tocco ?? '—'} · {d.stato}{d.sent_by ? ` · ${d.sent_by}` : d.chi ? ` · ${d.chi}` : ''}</div><div className="rs">{d.oggetto ?? ''}{d.errore ? ` · ${d.errore}` : ''}</div>{d.stato === 'in_invio' && <button type="button" className="or-link" disabled={busy} onClick={async () => { if (!window.confirm('Hai controllato "Posta inviata" di info@amimi.it e questa email NON c’e’? Solo in quel caso sbloccala.')) return; try { await sbloccaBozza({ draft_id: d.id, chi: who }); setMsg('Bozza sbloccata: si puo’ reinviare.'); await reload(); } catch (e) { setMsg((e as Error).message); } }}>Sblocca (esito incerto)</button>}</div><div className="muted" style={{ fontSize: 12 }}>{fmtD(d.sent_at ?? d.created_at)}</div></div>)}</div></details>}
+          {drafts.length > 0 && <details style={{ marginTop: 8 }}><summary style={{ cursor: 'pointer', fontSize: 13 }}>Bozze di questo negozio ({drafts.length})</summary><div className="list">{drafts.map((d) => <div key={d.id} className="row"><div><div className="rt">Tocco {d.sequenza_tocco ?? '—'} · {d.stato}{d.origine === 'auto' ? ' · automatica' : ''}{d.sent_by ? ` · ${d.sent_by}` : d.chi ? ` · ${d.chi}` : ''}</div><div className="rs">{d.oggetto ?? ''}{d.errore ? ` · ${d.errore}` : ''}</div>{aiOn && (d.stato === 'proposta' || d.stato === 'errore') && d.id !== draftId && <button type="button" className="or-link" disabled={busy} onClick={() => apriBozza(d)}>Apri nel compositore</button>}{d.stato === 'in_invio' && <button type="button" className="or-link" disabled={busy} onClick={async () => { if (!window.confirm('Hai controllato "Posta inviata" di info@amimi.it e questa email NON c’e’? Solo in quel caso sbloccala.')) return; try { await sbloccaBozza({ draft_id: d.id, chi: who }); setMsg('Bozza sbloccata: si puo’ reinviare.'); await reload(); } catch (e) { setMsg((e as Error).message); } }}>Sblocca (esito incerto)</button>}</div><div className="muted" style={{ fontSize: 12 }}>{fmtD(d.sent_at ?? d.created_at)}</div></div>)}</div></details>}
           {!draftId && <div className="lead-actions">
             {seq?.canale === 'email' && to && <a className="ds-btn" href={gmailUrl} target="_blank" rel="noreferrer">Apri in Gmail</a>}
             <button type="button" className="ds-btn" onClick={copia}>Copia testo</button>
@@ -289,10 +315,10 @@ export function OutreachSequenze({ sequences, settings }: { sequences: LeadSeque
       <section className="card">
         <h2>Impostazioni</h2>
         <div className="list">
-          <div className="row"><div className="rt">Casella</div><div className="rs">wholesale@amimi.it (da creare nel Workspace; inbound automatico = tappa 2)</div></div>
+          <div className="row"><div className="rt">Casella</div><div className="rs">le email partono da info@amimi.it; le risposte nello stesso thread le legge il giro automatico (wholesale@ e&#8217; un gruppo che arriva su info@)</div></div>
           <div className="row"><div className="rt">Firma</div><div className="rs" style={{ whiteSpace: 'pre-line' }}>{settings.lead_firma ?? '—'}</div></div>
           <div className="row"><div className="rt">Tetto invii al giorno</div><div className="rs">{settings.lead_tetto_giornaliero ?? '20'}</div></div>
-          <div className="row"><div className="rt">Modulo (flag)</div><div className="rs">lead_enabled = {settings.lead_enabled ?? 'false'} (gata i cron delle tappe 2-4; la tappa 1 e' manuale e funziona comunque)</div></div>
+          <div className="row"><div className="rt">Modulo (flag)</div><div className="rs">lead_enabled = {settings.lead_enabled ?? 'false'}: {settings.lead_enabled === 'true' ? 'ogni 30 minuti il giro automatico legge le risposte dei negozi e, alla scadenza, scrive la bozza del follow-up nella Coda. L’invio resta sempre un tuo click.' : 'giro automatico spento: risposte e follow-up si registrano a mano. Acceso, legge le risposte e propone i follow-up in Coda (mai invii automatici).'}</div></div>
           <div className="row"><div className="rt">Regole</div><div className="rs">Massimo 4 tocchi email, poi stop. Opt-out onorato dal database (esito "Opt-out" su un tocco). Contatto 1:1 personalizzato, riga di opt-out in ogni email.</div></div>
         </div>
         <p className="note">I testi vivono nella tabella lead_sequences: per cambiarli, chiedi a Claude Code o modifica a DB. La firma e il tetto in app_flags (lead_firma, lead_tetto_giornaliero).</p>

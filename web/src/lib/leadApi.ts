@@ -170,7 +170,7 @@ export const STAGES: { key: LeadStage; label: string }[] = [
 export const STAGE_LABEL: Record<string, string> = Object.fromEntries(STAGES.map((s) => [s.key, s.label]));
 export const ESITI: { key: string; label: string }[] = [
   { key: 'interessato', label: 'Interessato' }, { key: 'chiede_info', label: 'Chiede informazioni' }, { key: 'piu_avanti', label: 'Più avanti' },
-  { key: 'nessuna_risposta', label: 'Nessuna risposta' }, { key: 'no', label: 'No' }, { key: 'bounce', label: 'Email non valida' }, { key: 'opt_out', label: 'Opt-out (non contattare più)' }, { key: 'altro', label: 'Altro' },
+  { key: 'nessuna_risposta', label: 'Nessuna risposta' }, { key: 'no', label: 'No' }, { key: 'bounce', label: 'Email non valida' }, { key: 'opt_out', label: 'Opt-out (non contattare più)' }, { key: 'risposta_automatica', label: 'Risposta automatica' }, { key: 'altro', label: 'Altro' },
 ];
 
 export type LeadOutreach = {
@@ -182,6 +182,7 @@ export type LeadOutreach = {
   ultimo_tocco_at: string | null; ultimo_canale: string | null; ultima_direzione: string | null; ultimo_esito: string | null; ultimo_chi: string | null;
   n_tocchi: number; n_email_out: number; giorni_da_ultimo: number | null; scaduta: boolean; da_gestire: boolean;
   thumb: string | null; follower: number | null; telefono_maps: string | null; email_sito: string | null; n_opt_out: number;
+  bozza_auto_tocco: number | null;   // migr 0148: follow-up gia' scritto dal cron, da rivedere e inviare
 };
 export type LeadTouch = {
   id: string; account_id: string; contact_id: string | null; canale: string; direzione: 'in' | 'out'; subject: string | null; body_clean: string | null;
@@ -224,9 +225,10 @@ export type LeadDraft = {
   sequenza_tocco: number | null; stato: 'proposta' | 'approvata' | 'in_invio' | 'inviata' | 'errore' | 'scartata';
   chi: string | null; sent_by: string | null; sent_at: string | null; errore: string | null; created_at: string;
   fatti_usati: { fatti_usati?: string[]; avvisi?: string[] } | null;
+  origine: 'manuale' | 'auto';
 };
 export async function fetchDrafts(accountId: string): Promise<LeadDraft[]> {
-  const { data, error } = await csClient.from('lead_drafts').select('id,account_id,lingua,oggetto,testo,to_email,sequenza_tocco,stato,chi,sent_by,sent_at,errore,created_at,fatti_usati').eq('account_id', accountId).order('created_at', { ascending: false }).limit(20);
+  const { data, error } = await csClient.from('lead_drafts').select('id,account_id,lingua,oggetto,testo,to_email,sequenza_tocco,stato,chi,sent_by,sent_at,errore,created_at,fatti_usati,origine').eq('account_id', accountId).order('created_at', { ascending: false }).limit(20);
   if (error) throw new Error(error.message);
   return (data ?? []) as LeadDraft[];
 }
@@ -255,6 +257,18 @@ export async function inviaBozza(p: { draft_id: string; send_key: string; to: st
 // bozza rimasta 'in_invio' (esito incerto): si sblocca solo dopo aver controllato "Posta inviata" di info@
 export async function sbloccaBozza(p: { draft_id: string; chi: string }): Promise<void> {
   await callOutreach({ action: 'sblocca', ...p });
+}
+// una bozza non partita esce dalla Coda (il cron non la riscrive: una bozza automatica per tocco)
+export async function scartaBozza(p: { draft_id: string; chi: string }): Promise<void> {
+  await callOutreach({ action: 'scarta', ...p });
+}
+// "da fare" del B2B per il badge nella barra in basso: risposte da gestire, azioni scadute, follow-up da rivedere.
+// Senza sessione (la sezione vuole il login @amimi.it) o su errore torna 0: il badge e' un aiuto, mai un blocco.
+export async function fetchLeadTodo(): Promise<number> {
+  const { data } = await csClient.auth.getSession();
+  if (!data.session) return 0;
+  const { count, error } = await csClient.from('v_lead_outreach').select('id', { count: 'exact', head: true }).or('scaduta.eq.true,da_gestire.eq.true,bozza_auto_tocco.not.is.null');
+  return error ? 0 : count ?? 0;
 }
 // stessi segnaposto che la edge blocca: la UI li mostra PRIMA di premere Invia
 export const segnaposto = (s: string): string[] => [...s.matchAll(/\[[^\]\n]{1,200}\]|\{\{[^}\n]{1,60}\}\}/g)].map((m) => m[0]);

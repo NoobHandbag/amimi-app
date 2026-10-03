@@ -19,6 +19,7 @@ import Icon from './components/Icon';
 import AssistantPanel from './components/AssistantPanel';
 import UpdateBanner from './components/UpdateBanner';
 import { pushBack } from './lib/backnav';
+import { fetchLeadTodo } from './lib/leadApi';
 
 export default function App() {
   // URL diretto: .../amimi-app/#negozi apre la sezione B2B (richiesta owner 10-09); #ads la reportistica Meta (18-09);
@@ -29,6 +30,14 @@ export default function App() {
   // pagina dice "non attiva". Rollback = spegnere app_flags.mat_enabled (Regola Ferrea 19). Letto una volta all'avvio.
   const [matEnabled, setMatEnabled] = useState(false);
   useEffect(() => { fetchMatEnabled().then(setMatEnabled).catch(() => setMatEnabled(false)); }, []);
+  // badge del bottone B2B nella barra: "da fare" dell'outreach (0 senza login). Si rilegge a ogni cambio di tab e ogni 5 minuti.
+  const [leadTodo, setLeadTodo] = useState(0);
+  useEffect(() => {
+    const leggi = () => { fetchLeadTodo().then(setLeadTodo).catch(() => setLeadTodo(0)); };
+    leggi();
+    const id = window.setInterval(leggi, 5 * 60000);
+    return () => window.clearInterval(id);
+  }, [tab]);
   const [chi, setChiS] = useState(() => localStorage.getItem('amimi_chi') || 'Ale');
   const setChi = (c: string) => { setChiS(c); localStorage.setItem('amimi_chi', c); };
   const go = (t: Tab, p?: string) => {
@@ -69,6 +78,7 @@ export default function App() {
         <button className={tab === 'registra' && (param ?? '').startsWith('tabelle') ? 'on' : ''} onClick={() => go('registra', 'tabelle')} type="button"><span><Icon name="table" size={22} /></span>Tabelle</button>
         {navBtn('magazzino', 'chart', 'Magazzino')}
         {navBtn('assistenza', 'chat', 'Assistenza')}
+        <button className={tab === 'negozi' ? 'on' : ''} onClick={() => go('negozi')} type="button" aria-label={leadTodo ? `B2B, ${leadTodo} da fare` : 'B2B'}><span className="navico"><Icon name="store" size={22} />{leadTodo > 0 && <i className="navbdg">{leadTodo > 99 ? '99+' : leadTodo}</i>}</span>B2B</button>
       </nav>
       {/* "Chiedi ad Amimì": overlay presente su ogni schermata, si auto-nasconde se ai_enabled = false */}
       <AssistantPanel pin={pin} chi={chi} nascondiFab={tab === 'assistenza'} />
