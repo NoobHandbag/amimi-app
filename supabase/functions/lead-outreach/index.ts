@@ -117,7 +117,7 @@ function pemToPkcs8(pem: string): Uint8Array {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-async function googleAccessToken(sa: { client_email: string; private_key: string }, scope: string): Promise<string> {
+async function googleAccessToken(sa: { client_email: string; private_key: string }, scope: string, signal?: AbortSignal): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const enc = new TextEncoder();
   const header = b64url(enc.encode(JSON.stringify({ alg: 'RS256', typ: 'JWT' })));
@@ -128,6 +128,7 @@ async function googleAccessToken(sa: { client_email: string; private_key: string
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${header}.${claims}.${b64url(sig)}` }),
+    ...(signal ? { signal } : {}),
   });
   const j = await r.json();
   if (!r.ok || !j.access_token) throw new Error(`google_token ${r.status}: ${JSON.stringify(j).slice(0, 200)}`);
@@ -135,13 +136,16 @@ async function googleAccessToken(sa: { client_email: string; private_key: string
 }
 // Gmail riscrive in silenzio il From se l'alias non e' fra i sendAs verificati della casella: lo si controlla
 // prima, cosi' la UI dice il mittente vero. Qualunque dubbio (alias assente, non verificato, Gmail giu') = info@.
+// Tetto di 5 secondi sulle due chiamate: gira PRIMA del claim e non deve tenere appeso l'invio.
 async function mittente(sa: { client_email: string; private_key: string }): Promise<{ from: string; avviso: string }> {
   try {
-    const rtoken = await googleAccessToken(sa, SCOPE_READ);
-    const r = await fetch(`${GMAIL}/settings/sendAs/${encodeURIComponent(FROM_ALIAS)}`, { headers: { Authorization: `Bearer ${rtoken}` } });
+    const signal = AbortSignal.timeout(5000);
+    const rtoken = await googleAccessToken(sa, SCOPE_READ, signal);
+    const r = await fetch(`${GMAIL}/settings/sendAs/${encodeURIComponent(FROM_ALIAS)}`, { headers: { Authorization: `Bearer ${rtoken}` }, signal });
     const j = await r.json().catch(() => ({}));
     if (r.ok && j?.verificationStatus === 'accepted') return { from: FROM_ALIAS, avviso: '' };
-    return { from: GMAIL_USER, avviso: `alias ${FROM_ALIAS} non verificato in Gmail (${r.status}${j?.verificationStatus ? ', ' + j.verificationStatus : ''}): inviata da ${GMAIL_USER}` };
+    const perche = r.ok ? `non verificato in Gmail (${j?.verificationStatus ?? 'stato assente'})` : `non leggibile in Gmail (${r.status})`;
+    return { from: GMAIL_USER, avviso: `alias ${FROM_ALIAS} ${perche}: inviata da ${GMAIL_USER}` };
   } catch (e) {
     return { from: GMAIL_USER, avviso: `alias ${FROM_ALIAS} non controllabile (${scrub((e as Error).message).slice(0, 100)}): inviata da ${GMAIL_USER}` };
   }
