@@ -66,6 +66,11 @@ jobs:
       - name: Build del frontend (tsc -b + vite) e lint
         shell: bash
         working-directory: web
+        # La guardia in vite.config.ts pretende le due VITE_*: qui la chiave PUBBLICA (publishable), la stessa
+        # gia' nel repo in tests/features.mjs e uptime.yml e nel bundle live. Nessun segreto.
+        env:
+          VITE_SUPABASE_URL: https://imszbjeyplaiovylhkgl.supabase.co
+          VITE_SUPABASE_ANON_KEY: sb_publishable_DP66FFObEGagJknhGOz8xw_8KO8WIgD
         run: |
           set -eo pipefail
           npm ci
