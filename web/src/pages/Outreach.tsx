@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, sbloccaBozza, scartaBozza, segnaposto } from '../lib/leadApi';
+import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, sbloccaBozza, scartaBozza, segnaposto, LEAD_MITTENTE } from '../lib/leadApi';
 import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft } from '../lib/leadApi';
 
 // Sezione Outreach (tappa 1 del PIANO_Outreach_CRM.md): pipeline per stadio, coda del giorno, scheda con
@@ -171,11 +171,11 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const residui = segnaposto(`${oggetto}\n${testo}`);
   const invia = async () => {
     if (!draftId) return;
-    if (!window.confirm(`Inviare adesso da info@amimi.it?\n\nA: ${to}\nOggetto: ${oggetto}\n\nL'email parte davvero e non si puo' richiamare.`)) return;
+    if (!window.confirm(`Inviare adesso da ${LEAD_MITTENTE}?\n\nA: ${to}\nOggetto: ${oggetto}\n\nL'email parte davvero e non si puo' richiamare.`)) return;
     setBusy(true); setMsg('');
     try {
       const res = await inviaBozza({ draft_id: draftId, send_key: sendKey, to, oggetto, testo, chi: who });
-      setMsg(`${res.already_sent ? 'Gia’ inviata prima' : 'Inviata'} a ${res.to}.${res.prossimo ? ` Follow-up in coda per il ${fmtD(res.prossimo)}.` : ''}${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}`);
+      setMsg(`${res.already_sent ? 'Gia’ inviata prima' : 'Inviata'} a ${res.to}${res.from ? ` da ${res.from}` : ''}.${res.prossimo ? ` Follow-up in coda per il ${fmtD(res.prossimo)}.` : ''}${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}`);
       setDraftId(null); setAvvisi([]);
       await onChanged(); await reload();
       setTocco((t) => Math.min(4, t + 1));
@@ -277,7 +277,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               {draftId && <>
                 <label className="cs-fld" style={{ display: 'block', marginTop: 8 }}>Destinatario<input type="email" value={to} onChange={(e) => setTo(e.target.value.trim())} placeholder="email del negozio" /></label>
                 {residui.length > 0 && <p className="note">Prima di inviare completa: {residui.slice(0, 4).join(' ')}</p>}
-                <button type="button" className="ds-btn" disabled={busy || !to || residui.length > 0 || r.n_opt_out > 0} style={{ marginTop: 6, background: 'var(--positive-700)', color: '#fff', borderColor: 'var(--positive-700)' }} onClick={invia}>{busy ? 'Invio…' : 'Invia da info@amimi.it'}</button>
+                <button type="button" className="ds-btn" disabled={busy || !to || residui.length > 0 || r.n_opt_out > 0} style={{ marginTop: 6, background: 'var(--positive-700)', color: '#fff', borderColor: 'var(--positive-700)' }} onClick={invia}>{busy ? 'Invio…' : `Invia da ${LEAD_MITTENTE}`}</button>
               </>}
             </div>
           ) : <p className="note">Bozza AI e invio dall&#8217;app spenti (flag lead_outreach_ai_enabled). Per ora: template, Gmail e &#8220;Segna come inviata&#8221;.</p>}
@@ -315,7 +315,7 @@ export function OutreachSequenze({ sequences, settings }: { sequences: LeadSeque
       <section className="card">
         <h2>Impostazioni</h2>
         <div className="list">
-          <div className="row"><div className="rt">Casella</div><div className="rs">le email partono da info@amimi.it; le risposte nello stesso thread le legge il giro automatico (wholesale@ e&#8217; un gruppo che arriva su info@)</div></div>
+          <div className="row"><div className="rt">Casella</div><div className="rs">le email partono come {LEAD_MITTENTE} (alias della casella info@, con ripiego su info@ se l&#8217;alias non e&#8217; attivo); le risposte nello stesso thread le legge il giro automatico</div></div>
           <div className="row"><div className="rt">Firma</div><div className="rs" style={{ whiteSpace: 'pre-line' }}>{settings.lead_firma ?? '—'}</div></div>
           <div className="row"><div className="rt">Tetto invii al giorno</div><div className="rs">{settings.lead_tetto_giornaliero ?? '20'}</div></div>
           <div className="row"><div className="rt">Modulo (flag)</div><div className="rs">lead_enabled = {settings.lead_enabled ?? 'false'}: {settings.lead_enabled === 'true' ? 'ogni 30 minuti il giro automatico legge le risposte dei negozi e, alla scadenza, scrive la bozza del follow-up nella Coda. L’invio resta sempre un tuo click.' : 'giro automatico spento: risposte e follow-up si registrano a mano. Acceso, legge le risposte e propone i follow-up in Coda (mai invii automatici).'}</div></div>

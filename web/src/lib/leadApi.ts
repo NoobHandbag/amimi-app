@@ -250,7 +250,8 @@ export type DraftResult = { draft_id: string; oggetto: string; testo: string; to
 export async function generaBozza(p: { account_id: string; tocco: number; referente?: string; lingua?: 'it' | 'en'; chi: string }): Promise<DraftResult> {
   return (await callOutreach({ action: 'draft', ...p })) as unknown as DraftResult;
 }
-export type LeadSendResult = { to: string; oggetto: string; already_sent?: boolean; prossimo: string | null; warnings?: string[] };
+export const LEAD_MITTENTE = 'wholesale@amimi.it';   // alias sendAs di info@: la edge ripiega su info@ se non e' verificato
+export type LeadSendResult = { to: string; from?: string; oggetto: string; already_sent?: boolean; prossimo: string | null; warnings?: string[] };
 export async function inviaBozza(p: { draft_id: string; send_key: string; to: string; oggetto: string; testo: string; chi: string }): Promise<LeadSendResult> {
   return (await callOutreach({ action: 'send', ...p })) as unknown as LeadSendResult;
 }
