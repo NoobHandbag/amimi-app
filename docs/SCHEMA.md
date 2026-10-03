@@ -250,7 +250,7 @@ Su questo ricavo il CE era ed e' corretto.
 
 ## 14. Modulo lead_* : ricerca negozi B2B e outreach (migr 0111, 2026-09-08)
 
-Modulo additivo (Regola Ferrea 19) per la ricerca di negozi e gruppi multimarca da contattare (piano in `Cowork12/projects/B2B_Prospecting_2026-09/`). Core toccato solo in LETTURA (`negozi` via FK `lead_accounts.negozio_id`, valorizzata solo al primo ordine). Flag `app_flags.lead_enabled` = `false` (dalla migr 0148 gata il giro automatico di `lead-outreach`: risposte e follow-up).
+Modulo additivo (Regola Ferrea 19) per la ricerca di negozi e gruppi multimarca da contattare (piano in `Cowork12/projects/B2B_Prospecting_2026-09/`). Core toccato solo in LETTURA (`negozi` via FK `lead_accounts.negozio_id`, valorizzata solo al primo ordine). Flag `app_flags.lead_enabled` = `true` dal 03-10 (richiesta owner; default `false`; dalla migr 0148 gata il giro automatico di `lead-outreach`: risposte e follow-up).
 
 - **Tabelle**: `lead_accounts` (negozio/gruppo, `stato_ricerca` seed->enriched->scored->reviewed|rejected, `tier` deciso da persona, `gancio`), `lead_contacts` (persone, `opt_out`), `lead_evidence` (append-only: `tipo`, `payload` jsonb, `asset_path` nel bucket), `lead_scores` (valutazioni versionate, `rubrica_version`, `criteri` jsonb con prova per criterio, `totale`, `tier_proposto`), `lead_reviews` (decisione umana), `lead_runs` (ogni giro di collector/judge), piu' `lead_touches`, `lead_drafts`, `lead_knowledge` create vuote per la Fase 2 (outreach).
 - **Trigger** `lead_reviews_apply` (security definer): un INSERT in `lead_reviews` aggiorna `lead_accounts` (tier/reviewed, rejected con motivo, ricontrolla -> seed, nota).
