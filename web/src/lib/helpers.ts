@@ -37,6 +37,25 @@ export function prettyName(item: string | null, variant: string | null, codice?:
   return [it, va].filter(Boolean).join(' ').trim() || deUnder(codice ?? '') || '—';
 }
 
+// 2026-10-03: nel pannello arrivi il numero che si scrive e' quanto e' arrivato ADESSO; il server (arrival_set)
+// vuole il TOTALE della riga. Fino al 03-10 il campo chiedeva il totale, e "10 arrivate oggi" scritto su una riga
+// con 20 gia' arrivate ne toglieva 10 dal magazzino (LEA BAG COCCO GREEN, 02-10). Il totale si scrive solo in
+// modo 'totale' (correzione esplicita). Modulo PURO: lo prova tests/arrivo_adesso.mjs.
+export type ModoArrivo = 'adesso' | 'totale';
+export const ARRIVO_MAX_PEZZI = 9999;
+export type PianoArrivo = { ok: true; target: number; delta: number } | { ok: false; errore: string };
+export function pianoArrivo(modo: ModoArrivo, valore: string, giaArrivati: number): PianoArrivo {
+  const s = valore.trim();
+  if (!/^\d+$/.test(s)) return { ok: false, errore: 'Scrivi un numero intero di pezzi' };
+  const v = Number(s);
+  if (v > ARRIVO_MAX_PEZZI) return { ok: false, errore: `Numero troppo alto (massimo ${ARRIVO_MAX_PEZZI} pezzi): controlla` };
+  if (modo === 'adesso') {
+    if (v < 1) return { ok: false, errore: 'Scrivi quanti pezzi sono arrivati adesso (almeno 1)' };
+    return { ok: true, target: giaArrivati + v, delta: v };
+  }
+  return { ok: true, target: v, delta: v - giaArrivati };
+}
+
 /** Suggest a VAT-inclusive retail price from COGS at a target net margin. Prices are IVA 22% inclusive. */
 export function suggestPrice(cogs: number, margin = 0.62): number {
   if (!(cogs > 0)) return 0;

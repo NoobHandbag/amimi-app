@@ -1,33 +1,74 @@
 import { useEffect, useMemo, useState } from 'react';
 import SupplierOrderForm from '../components/SupplierOrderForm';
-import { fetchOrdiniGruppi, oggi, setArrival, deleteOrder } from '../lib/api';
+import { fetchOrdiniGruppi, fetchOrderArrived, oggi, setArrival, deleteOrder } from '../lib/api';
 import type { OrdGruppo, OrdLine } from '../lib/api';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
 import NumberStepper from '../components/NumberStepper';
 import Icon from '../components/Icon';
-import { prettyName } from '../lib/helpers';
+import { prettyName, pianoArrivo } from '../lib/helpers';
+import type { ModoArrivo } from '../lib/helpers';
 import { toast } from '../lib/toast';
+
+// valore di partenza del campo: in 'adesso' i pezzi che mancano (come prima, quando era precompilato l'ordinato),
+// in 'totale' il totale gia' registrato
+const campoIniziale = (m: ModoArrivo, gia: number, mancano: number, wip: boolean, done: boolean) =>
+  m === 'totale' ? String(gia) : (wip || done || mancano <= 0 ? '' : String(mancano));
 
 /* register an arrival against one order line */
 function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLine; pin: string; chi: string; reload: () => void; defaultOpen?: boolean; altri?: OrdLine[] }) {
   const [open, setOpen] = useState(defaultOpen ?? false);
-  const [n, setN] = useState(String(l.completo ? l.qty_arrived : (l.wip ? '' : l.qty_ordered)));
+  const done = l.completo;
+  const wip = !!l.wip;
+  const gia = Number(l.qty_arrived) || 0;
+  const mancano = Number(l.mancano) || 0;
+  // null = quantita' ordinata ignota (riga WIP, o riga legacy senza ordinato): niente "su N", niente confronto
+  const ordinati = wip || l.qty_ordered == null ? null : Number(l.qty_ordered);
+  // 03-10: il campo chiede i pezzi arrivati ADESSO e li somma al gia' arrivato. Il totale si tocca solo in
+  // "Correggi il totale" (una riga gia' completa si apre li': non aspetta altri arrivi).
+  const modoBase: ModoArrivo = done ? 'totale' : 'adesso';
+  const [modo, setModo] = useState<ModoArrivo>(modoBase);
+  const [n, setN] = useState(campoIniziale(modoBase, gia, mancano, wip, done));
   const [d, setD] = useState(oggi());
   const [costo, setCosto] = useState(l.costo_unitario != null ? String(l.costo_unitario) : '');
   const [busy, setBusy] = useState(false);
-  const done = l.completo;
+  // la riga e' cambiata (arrivo appena salvato, o registrato da un altro telefono): il campo riparte dal
+  // nuovo stato, altrimenti resterebbe precompilato con il numero dell'arrivo precedente
+  useEffect(() => {
+    setModo(modoBase); setN(campoIniziale(modoBase, gia, mancano, wip, done));
+  }, [modoBase, gia, mancano, wip, done]);
+  const cambiaModo = (m: ModoArrivo) => { setModo(m); setN(campoIniziale(m, gia, mancano, wip, done)); };
+  // il pannello si apre sempre nel modo di default: una correzione lasciata a meta' non deve restare
+  // attiva per l'arrivo successivo (era l'equivoco di partenza, a rovescio). Se il modo e' gia' quello,
+  // il numero digitato resta: un tocco per sbaglio sull'intestazione non lo deve cancellare.
+  const tornaAlModoBase = () => { if (modo !== modoBase) cambiaModo(modoBase); };
+  const apriChiudi = () => { setOpen((o) => !o); tornaAlModoBase(); };
 
-  // set the arrived TOTAL — registers a new arrival AND edits/corrects one already registered
+  const piano = pianoArrivo(modo, n, gia);
+
+  // un arrivo (modo 'adesso') o una correzione del totale (modo 'totale'): al server va sempre il TOTALE
   async function save() {
-    if (n === '' || isNaN(Number(n)) || Number(n) < 0) return toast('Valore non valido', 'err');
+    if (!piano.ok) return toast(piano.errore, 'err');
+    const { target, delta } = piano;
+    // chi era abituato al campo "totale" scrive 30 su una riga 20/40: la somma (50) supera l'ordinato
+    const pz = (k: number) => (k === 1 ? '1 pezzo' : `${k} pezzi`);
+    if (modo === 'adesso' && ordinati != null && target > ordinati
+      && !window.confirm(`Con questo arrivo il totale arrivato diventa ${target}, più dei ${ordinati} ordinati.\n\nQui si scrivono i pezzi arrivati ADESSO, non il totale.\n\nConfermi un arrivo di ${pz(delta)} adesso?`)) return;
+    if (modo === 'totale' && delta < 0
+      && !window.confirm(`Stai TOGLIENDO ${pz(-delta)} dal magazzino: il totale arrivato passa da ${gia} a ${target}.\n\nConfermi la correzione?`)) return;
     setBusy(true);
     // Un solo punto di scrittura, ritentabile: il server puo' rispondere con due guardie e la UI le
     // scioglie con una conferma ciascuna (concatenabili, se scattano entrambe).
     const doSave = async (force: boolean, confirmDup: boolean): Promise<void> => {
       try {
-        await setArrival(l.id, Number(n), d, pin, chi, costo !== '' ? Number(costo) : null, confirmDup, force);
-        toast(`Arrivo salvato · ${n}${l.wip ? '' : `/${l.qty_ordered}`}`, 'ok'); setOpen(false);
+        // riga riletta a ogni tentativo: se un altro telefono ha registrato nel frattempo, il totale calcolato
+        // qui annullerebbe quell'arrivo (o lo conterebbe due volte). Ci si ferma e si mostra lo stato nuovo.
+        const vivo = await fetchOrderArrived(l.id);
+        if (vivo !== gia) return toast(`Questa riga è cambiata: ora risultano ${vivo} arrivati, qui ne vedevi ${gia}. Niente è stato salvato: controlla i numeri aggiornati e ripeti.`, 'err');
+        await setArrival(l.id, target, d, pin, chi, costo !== '' ? Number(costo) : null, confirmDup, force);
+        const tot = `${target}${ordinati == null ? '' : `/${ordinati}`}`;
+        toast(modo === 'adesso' ? `Arrivo salvato · +${delta} (totale ${tot})` : delta === 0 ? `Salvato · totale invariato (${tot})` : `Totale corretto · da ${gia} a ${tot}`, 'ok');
+        setOpen(false); tornaAlModoBase();
       }
       catch (e) {
         const err = e as Error & { closedMonth?: boolean; duplicato?: boolean };
@@ -64,7 +105,7 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLin
 
   return (
     <div className={`ds-lrow ${done ? 'done' : ''}`}>
-      <button className="ds-lhead" type="button" onClick={() => setOpen((o) => !o)}>
+      <button className="ds-lhead" type="button" onClick={apriChiudi}>
         {l.image_url ? <span className="ds-thumb"><img src={l.image_url} alt="" /></span> : <span className="ds-thumb">{(l.item ?? l.codice).slice(0, 2).toUpperCase()}</span>}
         <div className="ds-lname">
           <div className="lm">{prettyName(l.item, l.variant, l.codice)}{l.wip && <span className="wip" title="quantità/costo da definire: si risolvono all'arrivo">WIP</span>}</div>
@@ -89,16 +130,25 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLin
               Controlla di registrare l'arrivo sulla riga giusta.
             </div>
           )}
-          <div className="rl">{l.wip ? 'Arrivati in totale (WIP: diventa la quantità ordinata)' : `Arrivati in totale (su ${l.qty_ordered} ordinati)`}</div>
+          <div className="rl">{modo === 'totale' ? 'Totale arrivati finora (correzione)' : wip ? 'Arrivati adesso (WIP: diventa la quantità ordinata)' : 'Arrivati adesso'}</div>
           <div className="ds-recvrow">
-            <NumberStepper value={n} onChange={setN} min={0} />
+            <NumberStepper value={n} onChange={setN} min={modo === 'adesso' ? 1 : 0} />
             <input className="ds-recvdate" type="date" value={d} onChange={(e) => setD(e.target.value)} />
-            <button className="ds-segna" disabled={busy} onClick={save}>{busy ? '…' : 'Segna arrivati'}</button>
+            <button className="ds-segna" disabled={busy} onClick={save}>{busy ? '…' : modo === 'totale' ? 'Salva totale' : 'Segna arrivati'}</button>
+          </div>
+          {/* il conto in chiaro: e' cio' che toglie l'equivoco fra "arrivati adesso" e "arrivati in totale" */}
+          <div style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.4 }}>
+            {modo === 'adesso'
+              ? <>Già arrivati <b>{gia}</b>{ordinati == null ? '' : ` su ${ordinati}`}.{piano.ok && <> Con questo arrivo il totale diventa <b>{piano.target}</b>{ordinati == null ? '' : piano.target < ordinati ? ` (da ricevere ancora: ${ordinati - piano.target})` : piano.target === ordinati ? ': riga completa' : `: ${piano.target - ordinati} in più degli ordinati`}.</>}</>
+              : <>Ora risultano arrivati <b>{gia}</b>{ordinati == null ? '' : ` su ${ordinati}`}.{piano.ok && (piano.delta === 0 ? ' Il magazzino non cambia.' : <> Salvando il totale diventa <b>{piano.target}</b>: magazzino {piano.delta > 0 ? '+' : '−'}{Math.abs(piano.delta)}.</>)}</>}
           </div>
           {(l.wip || l.costo_unitario == null) && (
             <input className="ds-recvdate" style={{ marginTop: 8, flexBasis: '100%', width: '100%' }} type="number" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="€ al pezzo (se ora lo sai)" />
           )}
-          <div className="ds-recvfoot">
+          <div className="ds-recvfoot" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <button type="button" className="linkbtn" style={{ textDecoration: 'underline', color: 'var(--ink-muted)', fontSize: 12 }} disabled={busy} onClick={() => cambiaModo(modo === 'adesso' ? 'totale' : 'adesso')}>
+              {modo === 'adesso' ? 'Correggi il totale' : done ? 'Registra un altro arrivo' : 'Registra un arrivo'}
+            </button>
             <button type="button" className="ds-del" disabled={busy} onClick={remove}><Icon name="trash" size={14} /> Elimina riga</button>
           </div>
         </div>
