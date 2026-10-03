@@ -45,6 +45,29 @@ where a.verdetto = 'da_contattare' or a.lead_stage <> 'da_contattare' or a.owner
 revoke all on v_lead_outreach from anon;
 grant select on v_lead_outreach to authenticated;
 
+-- v_lead_followup_due: i negozi a cui il giro automatico puo' proporre il follow-up N+1. Le esclusioni stanno QUI
+-- (non solo nella edge) perche' un negozio saltato a ogni giro non deve occupare per sempre i primi posti della
+-- lettura: bounce, opt-out, risposta arrivata, bozza gia' scritta (automatica in qualunque stato, o di una persona
+-- se ancora viva), ultimo tocco registrato a mano (senza thread le risposte non si leggono). La edge rifa' gli
+-- stessi controlli (prossimoFollowUp) come seconda cintura. Solo service_role: nessun grant ai ruoli applicativi.
+create or replace view v_lead_followup_due with (security_invoker = on) as
+select a.id, a.paese, a.prossima_azione_at, lo.sequenza_tocco as ultimo_tocco, lo.gmail_thread_id
+from lead_accounts a
+join lateral (
+  select t.sequenza_tocco, t.gmail_thread_id, t.at from lead_touches t
+  where t.account_id = a.id and t.direzione = 'out' and t.canale = 'email' and t.sequenza_tocco is not null
+  order by t.sequenza_tocco desc limit 1) lo on true
+where a.lead_stage = 'contattato' and a.verdetto = 'da_contattare' and a.stato_ricerca <> 'rejected'
+  and a.prossima_azione_at <= (now() at time zone 'Europe/Rome')::date
+  and lo.sequenza_tocco < 4 and lo.gmail_thread_id is not null
+  and not exists (select 1 from lead_contacts c where c.account_id = a.id and c.opt_out)
+  and not exists (select 1 from lead_touches i where i.account_id = a.id and i.direzione = 'in'
+    and i.esito is distinct from 'risposta_automatica'
+    and i.at > lo.at - (case when i.esito = 'bounce' then interval '10 minutes' else interval '0' end))
+  and not exists (select 1 from lead_drafts d where d.account_id = a.id and d.sequenza_tocco = lo.sequenza_tocco + 1
+    and (d.origine = 'auto' or d.stato in ('proposta', 'approvata', 'in_invio', 'inviata')));
+revoke all on v_lead_followup_due from anon, authenticated, public;
+
 -- cron del modulo: ogni 30 minuti ai :20 e :50, lontano dai secondi :00-:03 e dagli altri giri
 -- (:07 shopify-sync, :10/:25/:40/:55 loyalty-orders, :17 e :27 shopify-stock, :30 ce-guard).
 -- Stesso pattern degli altri cron (0138): net.http_post col PIN neutro. Il giro e' NO-OP finche'

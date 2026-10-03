@@ -91,3 +91,7 @@ verify_jwt = false
 
 [functions.ai-compila]
 verify_jwt = false
+
+# il cron (migr 0148) chiama la edge senza JWT; le azioni di una persona lo verificano nel codice
+[functions.lead-outreach]
+verify_jwt = false

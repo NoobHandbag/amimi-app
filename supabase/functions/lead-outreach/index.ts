@@ -54,7 +54,7 @@ const MAX_TOKENS = 8000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FLAG_KEYS = ['lead_enabled', 'lead_outreach_ai_enabled', 'lead_linesheet_url', 'lead_firma', 'lead_tetto_giornaliero', 'gemini_api_key', 'cs_gmail_sa_key'];
 // tetti del giro automatico (Regola 20c)
-const MAX_THREAD = 100;        // thread Gmail letti per giro
+const MAX_THREAD = 150;        // thread Gmail letti per giro
 const MAX_IN = 25;             // risposte scritte per giro
 const MAX_BOZZE = 3;           // bozze di follow-up per giro (una chiamata Gemini ciascuna)
 const MAX_CAND = 30;           // negozi esaminati per i follow-up
@@ -90,7 +90,9 @@ function classificaInbound(p: { from: string; subject: string; autoSubmitted: st
   const auto = p.autoSubmitted.trim().toLowerCase();
   if ((auto && auto !== 'no') || /^(risposta automatica|automatic reply|auto[- ]?reply|autoreply|out of (the )?office|fuori sede|fuori ufficio|assenza)/i.test(sub)) return 'risposta_automatica';
   const pulito = tagliaCitazione(p.testo);
-  if (pulito.length <= 300 && /\bno,?\s+grazie\b|\bno,?\s+thanks?\b|\bnon\s+(mi|ci)?\s*(contatt|scriv)\w*|\bunsubscribe\b|\bcancella(te|mi|temi)\b|\brimuov\w+/i.test(pulito)) return 'opt_out';
+  // opt-out solo se il rifiuto APRE un messaggio breve e senza indirizzi: "Perché no, grazie, passi giovedì" e
+  // "non mi scriva qui ma a acquisti@..." restano a una persona. Sbagliare verso l'opt-out chiude un negozio interessato.
+  if (pulito.length <= 160 && !pulito.includes('@') && /^[\s\W]*(buongiorno|buonasera|salve|gentile \w+|hello|hi|dear \w+)?[\s\W]*(no,?\s+(grazie|thanks|thank you)|unsubscribe|cancellatemi|rimuovetemi|(per favore|per cortesia|vi prego di|la prego di|please)?\s*(non|do not|don'?t)\s+(ci\s+|mi\s+)?(contatt|scriv|contact|email|write))/i.test(pulito)) return 'opt_out';
   return null;
 }
 // PostgREST rifiuta il NUL e un surrogato UTF-16 spaiato (CONOSCENZA 13-09): pulizia all'ULTIMO passo, dopo i tagli
@@ -102,15 +104,19 @@ function oggiRoma(now = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 // il follow-up da proporre, o il motivo per cui NON si propone. `tocchi` = tutti i tocchi del negozio.
-function prossimoFollowUp(tocchi: { direzione: string; canale: string; sequenza_tocco: number | null; esito: string | null; at: string }[]): { tocco: number } | { salta: string } {
+function prossimoFollowUp(tocchi: { direzione: string; canale: string; sequenza_tocco: number | null; esito: string | null; at: string; gmail_thread_id?: string | null }[]): { tocco: number; thread: string } | { salta: string } {
   const out = tocchi.filter((t) => t.direzione === 'out' && t.canale === 'email' && t.sequenza_tocco != null);
   if (!out.length) return { salta: 'nessun tocco email registrato' };
   const last = out.reduce((a, b) => (Number(b.sequenza_tocco) > Number(a.sequenza_tocco) ? b : a));
   const n = Number(last.sequenza_tocco);
   if (n >= 4) return { salta: 'sequenza finita' };
-  const dopo = tocchi.filter((t) => t.direzione === 'in' && Date.parse(t.at) > Date.parse(last.at) && t.esito !== 'risposta_automatica');
+  // un tocco registrato a mano ("Segna come inviata") non ha thread: le sue risposte non si possono leggere
+  if (!last.gmail_thread_id) return { salta: 'ultimo tocco inviato fuori dall’app: risposte non leggibili' };
+  // un bounce immediato porta l'orario di Gmail, che puo' precedere di poco la registrazione del nostro tocco
+  const tLast = Date.parse(last.at);
+  const dopo = tocchi.filter((t) => t.direzione === 'in' && t.esito !== 'risposta_automatica' && Date.parse(t.at) > tLast - (t.esito === 'bounce' ? 600_000 : 0));
   if (dopo.length) return { salta: dopo.some((t) => t.esito === 'bounce') ? 'email non valida' : 'il negozio ha risposto' };
-  return { tocco: n + 1 };
+  return { tocco: n + 1, thread: last.gmail_thread_id };
 }
 // ==== PURE:lead-inbound END ====
 
@@ -355,11 +361,13 @@ function corpoMessaggio(payload: GPart | undefined): string {
 }
 
 // deno-lint-ignore no-explicit-any
-async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito: Record<string, number | boolean | string>; sospesi: Set<string> }> {
+async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito: Record<string, number | boolean | string>; sospesi: Set<string>; letti: Set<string> }> {
   const esito: Record<string, number | boolean | string> = { thread: 0, thread_troncati: false, nuove: 0, risposte: 0, opt_out: 0, bounce: 0, automatiche: 0, rimandate: 0, illeggibili: 0 };
   // negozi con una risposta arrivata ma NON ancora scritta (oltre il tetto, o messaggio illeggibile): niente follow-up per loro
   const sospesi = new Set<string>();
-  const fine = () => ({ esito, sospesi });
+  // thread letti fino in fondo in questo giro: un follow-up si propone solo se il thread dell'ultimo tocco e' qui
+  const letti = new Set<string>();
+  const fine = () => ({ esito, sospesi, letti });
   const dal = new Date(Date.now() - FINESTRA_GG * 864e5).toISOString();
   const { data: outs, error: oErr } = await retryOnce(() => sb.from('lead_touches').select('account_id,gmail_thread_id,at')
     .eq('direzione', 'out').eq('canale', 'email').not('gmail_thread_id', 'is', null).gte('at', dal).order('at', { ascending: false }).limit(MAX_THREAD * 4 + 1));
@@ -367,27 +375,43 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
   const threadAcc = new Map<string, string>();
   for (const r of (outs ?? []) as { account_id: string; gmail_thread_id: string }[]) if (!threadAcc.has(r.gmail_thread_id)) threadAcc.set(r.gmail_thread_id, r.account_id);
   if (!threadAcc.size) return fine();
-  const threads = [...threadAcc.keys()].slice(0, MAX_THREAD);
+  // stadio dei negozi: prima i thread dei "contattato" (li' una risposta ferma la sequenza), poi gli altri per recenza.
+  // Senza questa precedenza, oltre MAX_THREAD thread i piu' vecchi (quelli in scadenza) non verrebbero mai letti.
+  const stage = new Map<string, string>();
+  const tuttiAcc = [...new Set(threadAcc.values())];
+  for (let i = 0; i < tuttiAcc.length; i += 100) {
+    const ids = tuttiAcc.slice(i, i + 100);
+    const { data: accs, error: aErr } = await retryOnce(() => sb.from('lead_accounts').select('id,lead_stage').in('id', ids));
+    if (aErr) throw new Error('lettura stadio negozi fallita: ' + aErr.message);
+    for (const a of (accs ?? []) as { id: string; lead_stage: string }[]) stage.set(a.id, a.lead_stage);
+  }
+  const inSequenza = (th: string) => Number(stage.get(threadAcc.get(th)!) === 'contattato');
+  const threads = [...threadAcc.keys()].sort((a, b) => inSequenza(b) - inSequenza(a)).slice(0, MAX_THREAD);
   esito.thread_troncati = threadAcc.size > MAX_THREAD || (outs ?? []).length > MAX_THREAD * 4;
 
   if (!flags.cs_gmail_sa_key) throw new Error('chiave service account assente (app_flags.cs_gmail_sa_key)');
   const token = await googleAccessToken(JSON.parse(flags.cs_gmail_sa_key), SCOPE_READ);
   const auth = { headers: { Authorization: `Bearer ${token}` } };
 
-  // 1) quali messaggi non nostri ci sono in quei thread (format=minimal: solo id ed etichette)
+  // 1) quali messaggi non nostri ci sono in quei thread (format=metadata: id, etichette e mittente, niente corpo)
   const cand: { id: string; threadId: string; accountId: string; at: number }[] = [];
   for (const th of threads) {
     if (Date.now() - t0 > BUDGET_MS) { esito.thread_troncati = true; break; }
-    const r = await fetch(`${GMAIL}/threads/${encodeURIComponent(th)}?format=minimal`, auth);
-    if (r.status === 404) continue;   // thread cancellato dalla casella: niente da leggere
+    const r = await fetch(`${GMAIL}/threads/${encodeURIComponent(th)}?format=metadata&metadataHeaders=From`, auth);
+    if (r.status === 404) { letti.add(th); continue; }   // thread cancellato dalla casella: niente da leggere
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(`Gmail threads.get ${r.status}: ${JSON.stringify(j).slice(0, 160)}`);
     esito.thread = Number(esito.thread) + 1;
-    for (const m of ((j as { messages?: { id: string; labelIds?: string[]; internalDate?: string }[] }).messages ?? [])) {
+    for (const m of ((j as { messages?: { id: string; labelIds?: string[]; internalDate?: string; payload?: { headers?: { name?: string; value?: string }[] } }[] }).messages ?? [])) {
       const lbl = m.labelIds ?? [];
       if (lbl.includes('SENT') || lbl.includes('DRAFT')) continue;
+      // un messaggio da @amimi.it (collega in copia, inoltro interno) non e' una risposta: scartato QUI, cosi' non
+      // occupa a ogni giro un posto fra le risposte da scrivere
+      const da = (m.payload?.headers ?? []).find((h) => h.name?.toLowerCase() === 'from')?.value ?? '';
+      if (indirizzoDi(da).endsWith('@amimi.it')) continue;
       cand.push({ id: m.id, threadId: th, accountId: threadAcc.get(th)!, at: Number(m.internalDate ?? Date.now()) });
     }
+    letti.add(th);
   }
   if (!cand.length) return fine();
 
@@ -404,11 +428,6 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
   for (const c of nuovi.slice(MAX_IN)) sospesi.add(c.accountId);
   const lotto = nuovi.slice(0, MAX_IN);
   if (!lotto.length) return fine();
-
-  const accIds = [...new Set(lotto.map((c) => c.accountId))];
-  const { data: accs, error: aErr } = await retryOnce(() => sb.from('lead_accounts').select('id,lead_stage').in('id', accIds));
-  if (aErr) throw new Error('lettura stadio negozi fallita: ' + aErr.message);
-  const stage = new Map<string, string>(((accs ?? []) as { id: string; lead_stage: string }[]).map((a) => [a.id, a.lead_stage]));
 
   // 3) un tocco 'in' per messaggio, in ordine di arrivo. Lo stadio lo aggiorna il trigger lead_touches_apply:
   //    qui lo si segue in locale solo per non riportare indietro un negozio con un stage_dopo stantio.
@@ -438,7 +457,8 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
     const riga = tipo === 'risposta_automatica' ? { ...base, stage_dopo: st }   // non ferma la sequenza, non tocca la scadenza
       : tipo === 'bounce' ? { ...base, stage_dopo: st, prossima_azione: 'email non valida: cercare un altro indirizzo', prossima_azione_at: oggi }
       : tipo === 'opt_out' ? { ...base, prossima_azione: 'opt-out: non contattare più' }   // stadio e contatti: trigger
-      : { ...base, prossima_azione: 'rispondere al negozio', prossima_azione_at: oggi };
+      : (st === 'da_contattare' || st === 'contattato' || st === 'risposto') ? { ...base, prossima_azione: 'rispondere al negozio', prossima_azione_at: oggi }
+      : base;   // stadi avanzati: la prossima azione l'ha decisa una persona, non si sovrascrive
     const { data: ins, error: iErr } = await sb.from('lead_touches').upsert(riga, { onConflict: 'gmail_message_id', ignoreDuplicates: true }).select('id');
     if (iErr) { illeggibile('scrittura della risposta fallita: ' + iErr.message); continue; }
     if (!ins?.length) continue;   // gia' scritta da un giro concorrente
@@ -452,20 +472,23 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
 }
 
 // deno-lint-ignore no-explicit-any
-async function proponiFollowUp(sb: any, flags: Flags, t0: number, sospesi: Set<string>): Promise<Record<string, number | string>> {
+async function proponiFollowUp(sb: any, flags: Flags, t0: number, sospesi: Set<string>, letti: Set<string>): Promise<Record<string, number | string>> {
   const esito: Record<string, number | string> = { candidati: 0, proposte: 0, saltati: 0, errori: 0 };
-  const { data: accs, error: aErr } = await retryOnce(() => sb.from('lead_accounts').select('id,paese')
-    .eq('lead_stage', 'contattato').eq('verdetto', 'da_contattare').neq('stato_ricerca', 'rejected')
-    .lte('prossima_azione_at', oggiRoma()).order('prossima_azione_at', { ascending: true }).limit(MAX_CAND));
+  // v_lead_followup_due (migr 0148) esclude A MONTE chi non va riproposto (risposta o bounce, opt-out, bozza gia' scritta,
+  // ultimo tocco a mano): cosi' i negozi saltati non occupano per sempre i primi MAX_CAND posti. I controlli qui sotto
+  // restano come seconda cintura, sulla stessa regola (prossimoFollowUp).
+  const { data: accs, error: aErr } = await retryOnce(() => sb.from('v_lead_followup_due').select('id,paese').order('prossima_azione_at', { ascending: true }).limit(MAX_CAND));
   if (aErr) throw new Error('lettura negozi in scadenza fallita: ' + aErr.message);
   esito.candidati = (accs ?? []).length;
   for (const a of (accs ?? []) as { id: string; paese: string | null }[]) {
     if (Number(esito.proposte) >= MAX_BOZZE || Date.now() - t0 > BUDGET_MS) break;
     if (sospesi.has(a.id)) { esito.saltati = Number(esito.saltati) + 1; continue; }
-    const { data: tocchi, error: tErr } = await retryOnce(() => sb.from('lead_touches').select('direzione,canale,sequenza_tocco,esito,at').eq('account_id', a.id).order('at', { ascending: false }).limit(200));
+    const { data: tocchi, error: tErr } = await retryOnce(() => sb.from('lead_touches').select('direzione,canale,sequenza_tocco,esito,at,gmail_thread_id').eq('account_id', a.id).order('at', { ascending: false }).limit(200));
     if (tErr) throw new Error('lettura tocchi fallita: ' + tErr.message);
-    const fu = prossimoFollowUp((tocchi ?? []) as { direzione: string; canale: string; sequenza_tocco: number | null; esito: string | null; at: string }[]);
+    const fu = prossimoFollowUp((tocchi ?? []) as { direzione: string; canale: string; sequenza_tocco: number | null; esito: string | null; at: string; gmail_thread_id: string | null }[]);
     if ('salta' in fu) { esito.saltati = Number(esito.saltati) + 1; continue; }
+    // il thread dell'ultimo tocco non e' stato letto in questo giro: non si sa se hanno risposto, si riprova al prossimo
+    if (!letti.has(fu.thread)) { esito.saltati = Number(esito.saltati) + 1; continue; }
     const { count: nOpt, error: oErr } = await retryOnce(() => sb.from('lead_contacts').select('id', { count: 'exact', head: true }).eq('account_id', a.id).eq('opt_out', true));
     if (oErr) throw new Error('lettura opt-out fallita: ' + oErr.message);
     if ((nOpt ?? 0) > 0) { esito.saltati = Number(esito.saltati) + 1; continue; }
@@ -496,21 +519,28 @@ async function giroCron(sb: any): Promise<Response> {
   const flags: Flags = Object.fromEntries(((frows ?? []) as { key: string; value: string | null }[]).map((r) => [r.key, r.value ?? '']));
   // NO-OP a flag spento (Regola 19): niente Gmail, niente scritture, nemmeno in health_log
   if (flags.lead_enabled !== 'true') return json({ ok: true, skipped: 'lead_enabled spento' });
+  // l'azione non chiede JWT: chiunque la chiami, parte al massimo un giro ogni 5 minuti
+  const { data: ult, error: uErr } = await retryOnce(() => sb.from('health_log').select('created_at').eq('k', 'lead_cron').order('created_at', { ascending: false }).limit(1));
+  if (uErr) return json({ error: 'lettura ultimo giro fallita' }, 503);
+  const ultimo = (ult ?? [])[0]?.created_at as string | undefined;
+  if (ultimo && Date.now() - Date.parse(ultimo) < 5 * 60000) return json({ ok: true, skipped: 'giro recente' });
 
   let inbound: Record<string, number | boolean | string> | null = null;
   let sospesi = new Set<string>();
+  let letti = new Set<string>();
   let followup: Record<string, number | string> | null = null;
   const errori: string[] = [];
-  try { const r = await leggiRisposte(sb, flags, t0); inbound = r.esito; sospesi = r.sospesi; }
+  try { const r = await leggiRisposte(sb, flags, t0); inbound = r.esito; sospesi = r.sospesi; letti = r.letti; }
   catch (e) { errori.push('risposte: ' + scrub((e as Error).message.slice(0, 200))); }
-  // senza una lettura COMPLETA delle risposte non si sa chi ha risposto: nessun follow-up in questo giro
-  if (inbound && !inbound.thread_troncati && flags.lead_outreach_ai_enabled === 'true') {
-    try { followup = await proponiFollowUp(sb, flags, t0, sospesi); }
+  // senza una lettura riuscita delle risposte non si sa chi ha risposto: nessun follow-up in questo giro. A lettura
+  // riuscita il follow-up e' deciso negozio per negozio: thread letto in questo giro e nessuna risposta in sospeso.
+  if (inbound && flags.lead_outreach_ai_enabled === 'true') {
+    try { followup = await proponiFollowUp(sb, flags, t0, sospesi, letti); }
     catch (e) { errori.push('follow-up: ' + scrub((e as Error).message.slice(0, 200))); }
   }
   const fuErr = (followup?.primo_errore ? `; errore bozza: ${followup.primo_errore}` : '') + (inbound?.illeggibili ? `; ${inbound.illeggibili} risposte non lette: ${inbound.primo_errore ?? ''}` : '');
   const label = errori.length ? errori.join(' | ')
-    : `risposte ${inbound?.nuove ?? 0} (vere ${inbound?.risposte ?? 0}, opt-out ${inbound?.opt_out ?? 0}, bounce ${inbound?.bounce ?? 0}, automatiche ${inbound?.automatiche ?? 0}), follow-up proposti ${followup?.proposte ?? 0}${inbound?.thread_troncati || inbound?.rimandate ? '; giro troncato, il resto al prossimo' : ''}${fuErr}`;
+    : `risposte ${inbound?.nuove ?? 0} (vere ${inbound?.risposte ?? 0}, opt-out ${inbound?.opt_out ?? 0}, bounce ${inbound?.bounce ?? 0}, automatiche ${inbound?.automatiche ?? 0}), follow-up proposti ${followup?.proposte ?? 0}${followup?.saltati ? ` (${followup.saltati} rimandati)` : ''}${inbound?.thread_troncati || inbound?.rimandate ? '; giro troncato, il resto al prossimo' : ''}${fuErr}`;
   const sev = errori.length ? 'error' : (inbound?.thread_troncati || inbound?.rimandate || fuErr) ? 'warn' : 'ok';
   const { error: hErr } = await sb.from('health_log').upsert({ day: oggiRoma(), k: 'lead_cron', label: jsonSafe(label.slice(0, 500)), n: Number(inbound?.nuove ?? 0) + Number(followup?.proposte ?? 0), severity: sev, created_at: new Date().toISOString() }, { onConflict: 'day,k' });
   return json({ ok: !errori.length, inbound: inbound ? { ...inbound, primo_errore: undefined } : null, followup: followup ? { ...followup, primo_errore: undefined } : null, errori: errori.length, health: hErr ? 'non scritto' : sev, ms: Date.now() - t0 }, errori.length ? 500 : 200);
