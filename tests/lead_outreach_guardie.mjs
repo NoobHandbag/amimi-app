@@ -163,5 +163,15 @@ t('88 B4 i messaggi da @amimi.it si scartano alla lettura del thread, prima del 
 t('89 azione cron senza JWT: al massimo un giro ogni 5 minuti, e verify_jwt pinnato in config.toml', /skipped: 'giro recente'/.test(cronFn) && cronFn.indexOf("skipped: 'giro recente'") < cronFn.indexOf('leggiRisposte(') && /\[functions\.lead-outreach\]\nverify_jwt = false/.test(cfg));
 t('90 una risposta in uno stadio avanzato non sovrascrive la prossima azione decisa da una persona', /st === 'da_contattare' \|\| st === 'contattato' \|\| st === 'risposto'\) \? \{ \.\.\.base, prossima_azione: 'rispondere al negozio'/.test(src));
 
+console.log('== v7 (migr 0149): line sheet del 02-10 pubblicata con listino e condizioni ==');
+const mig149 = readFileSync(`${ROOT}supabase/migrations/0149_lead_linesheet_0210.sql`, 'utf8').replace(/\r\n/g, '\n');
+const sql149 = mig149.replace(/^\s*--[^\n]*$/gm, '');
+t('v7-1 knowledge: listino nuovo (51/135, 71/185, 73/190, 19/50, 29/77) e nessun prezzo del listino vecchio', /51 e 135/.test(sql149) && /71 e 185/.test(sql149) && /73 e 190/.test(sql149) && /19 e 50/.test(sql149) && /29 e 77/.test(sql149) && !/\b(55|76|68|32)\b e \d/.test(sql149));
+t('v7-2 knowledge: condizioni definite, vendita ferma, niente conto vendita; nessuna nota interna (fido, formula, margine)', /vendita ferma: il conto vendita non c''e'' piu''/.test(sql149) && /12 pezzi e almeno 400 euro netto/.test(sql149) && !/fido|1\.500|2,6|COGS|margine sotto|BOZZA/i.test(sql149));
+t('v7-3 knowledge e template: nessuna percentuale, cotone mai accostato all\'Italia, India mai', !/\d+\s?%/.test(sql149) && avvisiContenuto(sql149.replace(/conto vendita|ordine minimo|non allegati/g, '')).length === 0, avvisiContenuto(sql149.replace(/conto vendita|ordine minimo|non allegati/g, '')));
+t('v7-4 template: il listino non e\' piu\' "all\'appuntamento", si rimanda al link; controllo finale con RAISE', /listino wholesale e condizioni: \{\{linesheet\}\}/.test(sql149) && /wholesale prices and terms: \{\{linesheet\}\}/.test(sql149) && (sql149.match(/raise exception/g) ?? []).length === 3);
+t('v7-5 prompt: regola 4 rimanda alla line sheet, vieta di riscrivere il listino e il conto vendita; niente "non sono ancora decise"', /'4\. Listino wholesale e condizioni commerciali sono pubblicati nella line sheet/.test(src) && /NON riscrivere il listino/.test(src) && /Il conto vendita non esiste piu/.test(src) && !/non sono ancora decise/.test(src));
+t('v7-6 gli avvisi su percentuali e minimi restano attivi (la persona li vede prima di inviare)', avvisiContenuto('sconto del 10%').length === 1 && avvisiContenuto('ordine minimo di 12 pezzi').length === 1 && avvisiContenuto('possiamo fare conto vendita').length === 1);
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

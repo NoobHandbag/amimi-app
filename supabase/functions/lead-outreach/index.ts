@@ -3,6 +3,8 @@
 // Riusa i loro SCHEMI, non il loro codice: Gemini in JSON mode come cs-assist (MAI thinkingConfig, tetto
 // token alto: i token di ragionamento contano dentro maxOutputTokens), Gmail API da info@amimi.it col
 // service account di cs-send (app_flags.cs_gmail_sa_key, domain-wide delegation con gmail.send).
+// v7 (2026-10-03, migr 0149): listino e condizioni sono pubblici sulla line sheet (owner 03-10); la regola 4 del prompt
+// non dice piu' "non ancora decise" ma "rimanda al link, non riscrivere il listino"; gli avvisi restano, col testo nuovo.
 // v5 (2026-10-03): il From e' wholesale@amimi.it, alias "Invia messaggio come" della casella info@
 // (Google Group che inoltra a info@). Se l'alias non risulta verificato si ripiega su info@ con un avviso.
 //
@@ -164,8 +166,8 @@ function avvisiContenuto(testo: string): string[] {
   const low = testo.toLowerCase();
   if (/\bindia\b/.test(low)) a.push('il testo nomina l\'India: non si dice mai');
   if (/cotone[^.\n]{0,80}(made in italy|in italia|italian)|(made in italy|in italia)[^.\n]{0,80}cotone/.test(low)) a.push('il testo associa il cotone all\'Italia: vale solo per la pelle');
-  if (/\d+\s?%/.test(testo)) a.push('il testo contiene una percentuale: le condizioni commerciali non sono ancora decise');
-  if (/ordine minimo|minimo d.ordine|conto vendita|consignment|minimum order/.test(low)) a.push('il testo cita minimi d\'ordine o conto vendita: condizioni non ancora decise');
+  if (/\d+\s?%/.test(testo)) a.push('il testo contiene una percentuale: nelle email non si scrivono sconti ne\' supplementi, si rimanda alla line sheet');
+  if (/ordine minimo|minimo d.ordine|conto vendita|consignment|minimum order/.test(low)) a.push('il testo cita minimi d\'ordine o conto vendita: controlla che coincida con la line sheet (primo ordine 12 pezzi e 400 euro netto; il conto vendita non c\'e\' piu\')');
   if (/alleg|attach/.test(low)) a.push('il testo parla di un allegato: l\'email parte senza allegati');
   return a;
 }
@@ -285,7 +287,7 @@ function buildPrompt(p: { lingua: 'it' | 'en'; negozio: Record<string, unknown>;
     '1. Usa SOLO i fatti nei blocchi NEGOZIO, AMIMI e LINK. Nessun numero, prezzo, condizione, nome o data che non sia scritto li\'.',
     '2. Una sola frase personale sul negozio, presa dal NEGOZIO (gancio, brand affini, stile). Se non c\'e\' niente di specifico, scrivi [DA VERIFICARE: gancio personale] al suo posto.',
     '3. Obiettivo della email: fargli guardare la line sheet e fissare un appuntamento (in negozio o in showroom a Milano). Chiudi con una domanda semplice.',
-    '4. Condizioni commerciali (sconti, percentuali, margini, minimi d\'ordine, conto vendita, prezzi all\'ingrosso): NON scriverle, non sono ancora decise, ANCHE SE il template le cita. Si possono citare solo i prezzi AL PUBBLICO se sono in AMIMI.',
+    '4. Listino wholesale e condizioni commerciali sono pubblicati nella line sheet (v7, migr 0149): nell\'email rimanda al link e NON riscrivere il listino, ANCHE SE il template lo fa. Puoi citare al massimo UN dato delle condizioni, solo se e\' scritto identico nel blocco AMIMI (per esempio il primo ordine da 12 pezzi). Mai sconti, percentuali, margini o credito al negozio. Il conto vendita non esiste piu\': non proporlo.',
     '4b. L\'email parte SENZA allegati: non scrivere "in allegato" o "le allego". Non dare per scontata una telefonata precedente ("come anticipato", "come da telefonata"), anche se il template lo dice.',
     '5. Il cotone NON e\' fatto in Italia: "Made in Italy" o "in Italia" solo per la pelle. Non nominare mai l\'India.',
     `6. Line sheet: ${p.linesheet ? `inserisci questo link esatto: ${p.linesheet}` : 'il link non esiste ancora: scrivi [DA VERIFICARE: link line sheet] dove andrebbe'}.`,
