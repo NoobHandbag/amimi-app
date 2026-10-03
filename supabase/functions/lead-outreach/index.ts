@@ -3,6 +3,8 @@
 // Riusa i loro SCHEMI, non il loro codice: Gemini in JSON mode come cs-assist (MAI thinkingConfig, tetto
 // token alto: i token di ragionamento contano dentro maxOutputTokens), Gmail API da info@amimi.it col
 // service account di cs-send (app_flags.cs_gmail_sa_key, domain-wide delegation con gmail.send).
+// v5 (2026-10-03): il From e' wholesale@amimi.it, alias "Invia messaggio come" della casella info@
+// (Google Group che inoltra a info@). Se l'alias non risulta verificato si ripiega su info@ con un avviso.
 //
 // Azioni:
 //   draft  (JWT @amimi.it) bozza della email di un tocco della sequenza per UN negozio -> lead_drafts 'proposta'.
@@ -33,7 +35,8 @@ const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>)
   return await fn();
 };
 
-const GMAIL_USER = 'info@amimi.it';
+const GMAIL_USER = 'info@amimi.it';        // casella impersonata: Posta inviata e thread vivono qui
+const FROM_ALIAS = 'wholesale@amimi.it';   // mittente mostrato al negozio (alias sendAs di GMAIL_USER)
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SCOPE_SEND = 'https://www.googleapis.com/auth/gmail.send';
@@ -129,6 +132,19 @@ async function googleAccessToken(sa: { client_email: string; private_key: string
   const j = await r.json();
   if (!r.ok || !j.access_token) throw new Error(`google_token ${r.status}: ${JSON.stringify(j).slice(0, 200)}`);
   return j.access_token as string;
+}
+// Gmail riscrive in silenzio il From se l'alias non e' fra i sendAs verificati della casella: lo si controlla
+// prima, cosi' la UI dice il mittente vero. Qualunque dubbio (alias assente, non verificato, Gmail giu') = info@.
+async function mittente(sa: { client_email: string; private_key: string }): Promise<{ from: string; avviso: string }> {
+  try {
+    const rtoken = await googleAccessToken(sa, SCOPE_READ);
+    const r = await fetch(`${GMAIL}/settings/sendAs/${encodeURIComponent(FROM_ALIAS)}`, { headers: { Authorization: `Bearer ${rtoken}` } });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j?.verificationStatus === 'accepted') return { from: FROM_ALIAS, avviso: '' };
+    return { from: GMAIL_USER, avviso: `alias ${FROM_ALIAS} non verificato in Gmail (${r.status}${j?.verificationStatus ? ', ' + j.verificationStatus : ''}): inviata da ${GMAIL_USER}` };
+  } catch (e) {
+    return { from: GMAIL_USER, avviso: `alias ${FROM_ALIAS} non controllabile (${scrub((e as Error).message).slice(0, 100)}): inviata da ${GMAIL_USER}` };
+  }
 }
 const b64 = (s: string): string => {
   const bytes = new TextEncoder().encode(s);
@@ -238,12 +254,16 @@ Deno.serve(async (req) => {
   const enabled = flags.lead_outreach_ai_enabled === 'true';
 
   if (action === 'diag') {
-    let sa = 'assente';
+    let sa = 'assente', mitt = GMAIL_USER, mittAvviso = '';
     if (flags.cs_gmail_sa_key) {
-      try { await googleAccessToken(JSON.parse(flags.cs_gmail_sa_key), SCOPE_SEND); sa = 'ok (gmail.send)'; }
+      try {
+        const k = JSON.parse(flags.cs_gmail_sa_key);
+        await googleAccessToken(k, SCOPE_SEND); sa = 'ok (gmail.send)';
+        const m = await mittente(k); mitt = m.from; mittAvviso = m.avviso;
+      }
       catch (e) { sa = (e as Error).message.slice(0, 160); }
     }
-    return json({ ok: true, enabled, gemini: !!flags.gemini_api_key, service_account: sa, linesheet: !!flags.lead_linesheet_url, firma: !!flags.lead_firma, tetto: Number.parseInt(flags.lead_tetto_giornaliero || '20', 10) });
+    return json({ ok: true, enabled, mittente: mitt, ...(mittAvviso ? { mittente_avviso: mittAvviso } : {}), gemini: !!flags.gemini_api_key, service_account: sa, linesheet: !!flags.lead_linesheet_url, firma: !!flags.lead_firma, tetto: Number.parseInt(flags.lead_tetto_giornaliero || '20', 10) });
   }
   if (!enabled) return json({ error: 'Bozze e invio B2B spenti (app_flags.lead_outreach_ai_enabled = false).', bloccante: true }, 403);
 
@@ -379,6 +399,8 @@ Deno.serve(async (req) => {
   let gtoken = '';
   try { gtoken = await googleAccessToken(sa, SCOPE_SEND); }
   catch (e) { return json({ error: 'autenticazione Google fallita: ' + (e as Error).message.slice(0, 180) }, 502); }
+  const mitt = await mittente(sa);
+  if (mitt.avviso) warnings.push(mitt.avviso);
   let inReplyTo = '', references = '';
   if (threadId && prev?.gmail_message_id) {
     try {
@@ -407,7 +429,7 @@ Deno.serve(async (req) => {
   if (!claimed?.length) return json({ error: 'la bozza e\' cambiata nel frattempo (gia\' in invio?): ricarica', bloccante: true }, 409);
 
   const mime = [
-    `From: ${encHdr('Amimì Milano')} <${GMAIL_USER}>`,
+    `From: ${encHdr('Amimì Milano')} <${mitt.from}>`,
     `To: <${to}>`,
     `Subject: ${encHdr(oggettoInvio)}`,
     ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
@@ -458,5 +480,5 @@ Deno.serve(async (req) => {
     : await sb.from('lead_touches').insert(touch);
   if (tErr) warnings.push('email partita, ma il tocco non e\' stato registrato: registralo a mano. ' + tErr.message);
 
-  return json({ ok: true, to, oggetto: oggettoInvio, gmail_message_id: gmailMsgId, prossimo: nextAt, ...(warnings.length ? { warnings } : {}) });
+  return json({ ok: true, to, from: mitt.from, oggetto: oggettoInvio, gmail_message_id: gmailMsgId, prossimo: nextAt, ...(warnings.length ? { warnings } : {}) });
 });
