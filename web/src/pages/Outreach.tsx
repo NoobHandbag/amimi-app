@@ -49,9 +49,11 @@ export function OutreachBoard({ rows, urls, onOpen }: { rows: LeadOutreach[]; ur
         <div className={`ds-kpi ${risposti.length ? 'pos' : ''}`}><div className="v">{contattati.length ? `${Math.round((risposti.length / contattati.length) * 100)}%` : '—'}</div><div className="l">Tasso di risposta</div><div className="s">{risposti.length} su {contattati.length} contattati</div></div>
         <div className={`ds-kpi ${rows.some((r) => r.scaduta || r.da_gestire) ? 'neg' : ''}`}><div className="v">{rows.filter((r) => r.scaduta || r.da_gestire).length}</div><div className="l">Da fare oggi</div><div className="s">{rows.filter((r) => r.scaduta).length} scadute · {rows.filter((r) => r.da_gestire).length} risposte</div></div>
       </div>
+      {/* su telefono (sotto i 700 px, index.css) il kanban diventa una lista unica per stadio: gli stadi vuoti spariscono */}
+      {!rows.length && <p className="muted or-solo-tel">Nessun negozio in pipeline.</p>}
       <div className="or-board">
         {cols.map((s) => { const list = rows.filter((r) => r.lead_stage === s.key); return (
-          <div key={s.key} className="or-col">
+          <div key={s.key} className={list.length ? 'or-col' : 'or-col empty'}>
             <h3><span>{s.label}</span><span>{list.length}</span></h3>
             {list.map((r) => <Card key={r.id} r={r} urls={urls} onOpen={onOpen} />)}
           </div>
