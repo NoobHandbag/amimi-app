@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import SupplierOrderForm from '../components/SupplierOrderForm';
-import { fetchOrdiniGruppi, fetchOrderArrived, oggi, setArrival, deleteOrder } from '../lib/api';
+import { fetchOrdiniGruppi, oggi, setArrival, deleteOrder } from '../lib/api';
 import type { OrdGruppo, OrdLine } from '../lib/api';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
@@ -61,11 +61,10 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLin
     // scioglie con una conferma ciascuna (concatenabili, se scattano entrambe).
     const doSave = async (force: boolean, confirmDup: boolean): Promise<void> => {
       try {
-        // riga riletta a ogni tentativo: se un altro telefono ha registrato nel frattempo, il totale calcolato
-        // qui annullerebbe quell'arrivo (o lo conterebbe due volte). Ci si ferma e si mostra lo stato nuovo.
-        const vivo = await fetchOrderArrived(l.id);
-        if (vivo !== gia) return toast(`Questa riga è cambiata: ora risultano ${vivo} arrivati, qui ne vedevi ${gia}. Niente è stato salvato: controlla i numeri aggiornati e ripeti.`, 'err');
-        await setArrival(l.id, target, d, pin, chi, costo !== '' ? Number(costo) : null, confirmDup, force);
+        // `gia` va al server come totale atteso (write-api v27): se un altro telefono ha registrato nel
+        // frattempo, il totale calcolato qui annullerebbe quell'arrivo o lo conterebbe due volte. Il server
+        // risponde 409 senza scrivere, il messaggio finisce nel toast qui sotto e il reload mostra lo stato nuovo.
+        await setArrival(l.id, target, gia, d, pin, chi, costo !== '' ? Number(costo) : null, confirmDup, force);
         const tot = `${target}${ordinati == null ? '' : `/${ordinati}`}`;
         toast(modo === 'adesso' ? `Arrivo salvato · +${delta} (totale ${tot})` : delta === 0 ? `Salvato · totale invariato (${tot})` : `Totale corretto · da ${gia} a ${tot}`, 'ok');
         setOpen(false); tornaAlModoBase();
