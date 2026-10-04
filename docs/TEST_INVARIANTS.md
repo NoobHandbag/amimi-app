@@ -31,6 +31,7 @@
 | S6 | Dopo un arrivo, stock e riga ordine sono coerenti (il purchase esiste sse qty_arrived cresce) | B16 | previsto: `purchases.order_id` + ricalcolo | previsto: inversione insert-poi-update | - | da scrivere (replay + crash simulato) | APERTO, design in `DESIGN_IDEMPOTENZA_WRITE_API.md` §4.5 |
 | S7 | Un solo writer dello stock Shopify, gate `shopify_write_enabled`/`autopush` rispettati | Regola Ferrea 15 | - | flag check in shopify-stock | `stock_autopush` in health_log con severity reale (v9, B19) | da scrivere: push fallito produce severity != ok | OK |
 | S8 | Un push stock fallito non resta verde ne' si ri-emette per sempre identico | B19, C32 | - | v9: contatore failed + severity | health_log | da scrivere | OK (autopush); C32 (endpoint `realign` risponde ok anche su fallimenti parziali) APERTO, basso: export frontend morto |
+| S9 | Il numero scritto nel pannello arrivi si SOMMA al gia' arrivato; il totale si cambia solo da "Correggi il totale", con conferma se scende | caso COCCO 02-10 (amimi-app#29) | - | web: `pianoArrivo` + rilettura di `qty_arrived` prima di `arrival_set` (lato client, non atomica: due telefoni nello stesso secondo restano possibili) | conferma oltre l'ordinato e al ribasso | `tests/arrivo_adesso.mjs` (in CI) | OK |
 
 ## 2. CE (il P&L dice il vero e i mesi chiusi restano chiusi)
 
