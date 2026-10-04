@@ -244,16 +244,18 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
 
           {view === 'tabella' ? (
             <section className="card">
-              <div className="tablewrap"><table className="sortable">
-                <thead><tr><th>Negozio</th><th>Citta&#8217;</th><th>Tipo</th><th>Stato</th><th>Score</th><th>Verdetto</th><th>Tier</th><th>Follower</th><th>Rating</th><th>Borse (mediana)</th><th>Brand affini</th><th>Evid.</th></tr></thead>
+              {/* colonna Negozio ferma mentre si scorre di lato; su telefono Rating, Brand affini ed Evid. non si mostrano
+                  (stanno nelle schede): classi lead-table e lead-tel-no in index.css */}
+              <div className="tablewrap" role="region" aria-label="Tabella negozi: scorri di lato per le altre colonne" tabIndex={0}><table className="sortable lead-table">
+                <thead><tr><th>Negozio</th><th>Citta&#8217;</th><th>Tipo</th><th>Stato</th><th>Score</th><th>Verdetto</th><th>Tier</th><th>Follower</th><th className="lead-tel-no">Rating</th><th>Borse (mediana)</th><th className="lead-tel-no">Brand affini</th><th className="lead-tel-no">Evid.</th></tr></thead>
                 <tbody>{list.map((r) => (
                   <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => openScheda(r)}>
                     <td className="l">{r.nome}</td><td className="l">{r.citta ?? r.paese}</td><td className="l">{TIPO_LABEL[r.tipo] ?? r.tipo}</td><td className="l">{STATO_LABEL[r.stato_ricerca]}</td>
                     <td style={{ color: scoreColor(r.totale), fontWeight: 700 }}>{r.totale ?? '—'}</td>
                     <td style={{ color: verdColor(r.verdetto), fontWeight: 700 }}>{r.verdetto ? VERDETTO_LABEL[r.verdetto] : '—'}</td>
                     <td>{r.tier ?? (r.tier_proposto ? `${r.tier_proposto}?` : '—')}</td>
-                    <td>{fmtN(r.ig_metrics?.follower)}</td><td>{r.maps?.rating != null ? `${r.maps.rating} (${fmtN(r.maps.recensioni)})` : '—'}</td>
-                    <td>{eur(r.price_band?.borse?.mediana)}</td><td className="l">{(r.brands_carried?.peer_match ?? []).join(', ') || '—'}</td><td>{r.n_evidenze}</td>
+                    <td>{fmtN(r.ig_metrics?.follower)}</td><td className="lead-tel-no">{r.maps?.rating != null ? `${r.maps.rating} (${fmtN(r.maps.recensioni)})` : '—'}</td>
+                    <td>{eur(r.price_band?.borse?.mediana)}</td><td className="l lead-tel-no">{(r.brands_carried?.peer_match ?? []).join(', ') || '—'}</td><td className="lead-tel-no">{r.n_evidenze}</td>
                   </tr>
                 ))}</tbody>
               </table></div>
