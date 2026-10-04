@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import SupplierOrderForm from '../components/SupplierOrderForm';
+import FoglioOrdine from '../components/FoglioOrdine';
+import { fetchMatSettings } from '../lib/matApi';
 import { fetchOrdiniGruppi, oggi, setArrival, deleteOrder } from '../lib/api';
 import type { OrdGruppo, OrdLine } from '../lib/api';
 import ExportBtn from '../components/ExportBtn';
@@ -108,6 +110,7 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLin
         {l.image_url ? <span className="ds-thumb"><img src={l.image_url} alt="" /></span> : <span className="ds-thumb">{(l.item ?? l.codice).slice(0, 2).toUpperCase()}</span>}
         <div className="ds-lname">
           <div className="lm">{prettyName(l.item, l.variant, l.codice)}{l.wip && <span className="wip" title="quantità/costo da definire: si risolvono all'arrivo">WIP</span>}</div>
+          {l.note && <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 2 }}>{l.note}</div>}
         </div>
         {done
           ? <div className="ds-miss done"><Icon name="check" size={15} /><small>arrivato</small></div>
@@ -195,6 +198,10 @@ export default function Ordini({ pin, chi, initial, onMateriali }: { pin: string
   const [addCodice, setAddCodice] = useState<string | undefined>((initial ?? '').startsWith('new:') ? initial!.slice(4) : undefined);
   const [forn, setForn] = useState<string | null>(initial && !isNew ? initial : null);
   const [addForn, setAddForn] = useState<string | undefined>(undefined);
+  // ordine da foglio scritto a mano (04-10): stesso flag della compilazione AI
+  const [foglio, setFoglio] = useState(false);
+  const [aiOn, setAiOn] = useState(false);
+  useEffect(() => { fetchMatSettings().then((s) => setAiOn(s.ai)).catch(() => {}); }, []);
   const [err, setErr] = useState<string | null>(null);
   const load = () => { fetchOrdiniGruppi().then(setGrp).catch((e) => setErr(e.message)); };
   useEffect(load, []);
@@ -242,6 +249,13 @@ export default function Ordini({ pin, chi, initial, onMateriali }: { pin: string
     </div>
   );
 
+  if (foglio) return (
+    <div className="screen">
+      <header><h1>Ordine da foglio</h1></header>
+      <FoglioOrdine pin={pin} chi={chi} onCancel={() => setFoglio(false)} onDone={() => { setFoglio(false); load(); }} />
+    </div>
+  );
+
   if (forn) {
     const sup = byForn.find((s) => s.fornitore === forn);
     if (sup) return <SupplierDetail sup={sup} pin={pin} chi={chi} onBack={() => setForn(null)} onAdd={() => { setAddForn(forn ?? undefined); setAdding(true); }} reload={load} openByCodice={openByCodice} />;
@@ -259,7 +273,8 @@ export default function Ordini({ pin, chi, initial, onMateriali }: { pin: string
         </div>
       )}
       <header><h1>Ordini</h1><div className="hbtns"><PrintBtn /><ExportBtn name="ordini" rows={() => grp.flatMap((g) => g.righe).map((l) => ({ fornitore: l.fornitore, codice: l.codice, modello: l.item, variante: l.variant, ordinati: l.qty_ordered, arrivati: l.qty_arrived, mancano: l.mancano, completo: l.completo ? 'si' : 'no', data_ordine: l.data_ordine, data_consegna: l.data_consegna, costo_unitario: l.costo_unitario, tipo: l.nuovo_riordino }))} /></div></header>
-      <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={() => setAdding(true)}><Icon name="plus" size={17} /> Nuovo ordine fornitore</button>
+      <button className="ds-btn secondary full" style={{ marginBottom: aiOn ? 8 : 14 }} onClick={() => setAdding(true)}><Icon name="plus" size={17} /> Nuovo ordine fornitore</button>
+      {aiOn && <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={() => setFoglio(true)}><Icon name="sparkles" size={17} /> Ordine da foglio (foto)</button>}
       {byForn.length === 0 && <div className="card muted center">Nessun ordine. Tocca “Nuovo ordine fornitore”.</div>}
       {byForn.map((s) => (
         <button className="ds-scard" key={s.fornitore} onClick={() => setForn(s.fornitore)} type="button">

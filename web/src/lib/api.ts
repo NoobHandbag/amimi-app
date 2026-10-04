@@ -232,13 +232,13 @@ export async function pullAds(pin: string, chi: string) {
 export { oggi } from './helpers';
 
 // ---------- FLOW 1: multi-bag supplier orders ----------
-export type OrdLine = Ordine & { nuovo_riordino: string | null; costo_unitario: number | null; data_consegna: string | null; data_consegna_display: string | null; wip?: boolean };
+export type OrdLine = Ordine & { nuovo_riordino: string | null; costo_unitario: number | null; data_consegna: string | null; data_consegna_display: string | null; wip?: boolean; note?: string | null };
 export type OrdGruppo = { gruppo: string; fornitore: string | null; data_ordine: string | null; righe: OrdLine[]; mancano: number; completo: boolean };
 
 export async function fetchOrdiniGruppi(): Promise<OrdGruppo[]> {
   const { data, error } = await supabase
     .from('v_ordini_arrivo')
-    .select('id,gruppo,codice,item,variant,fornitore,qty_ordered,qty_arrived,mancano,completo,nuovo_riordino,costo_unitario,data_consegna,data_consegna_display,data_ordine,image_url,wip')
+    .select('id,gruppo,codice,item,variant,fornitore,qty_ordered,qty_arrived,mancano,completo,nuovo_riordino,costo_unitario,data_consegna,data_consegna_display,data_ordine,image_url,wip,note')
     .order('data_ordine', { ascending: false });
   if (error) throw new Error(error.message);
   const byG = new Map<string, OrdGruppo>();
