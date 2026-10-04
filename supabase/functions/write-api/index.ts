@@ -11,6 +11,10 @@
 // product dall'insert generico: il CODICE lo deriva il server col tok v2 (B43). expense_approve legge sempre la riga
 // e blocca un reject su spesa approvata in mese chiuso (B2); categoria da VALID_CATEGORIE (B3). force vale solo
 // se === true e una scrittura forzata porta forced/motivo in change_log (B5). Helper puri in ./lib.ts.
+//
+// v27 (2026-10-04): arrival_set accetta `attesi` (opzionale), il totale arrivato che il client aveva a schermo:
+// se a DB e' un altro risponde 409 `riga_cambiata` senza scrivere, e l'update della riga ordine e' un
+// compare-and-set su quel valore. Senza `attesi` il comportamento e' quello della v26.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { num, isoDate, todayRome, ymFromIso, tok, cnorm, VALID_CATEGORIE } from './lib.ts';
 
@@ -226,6 +230,16 @@ async function handle(req: Request): Promise<Response> {
     const { data: ord } = await sb.from('supplier_orders').select('*').eq('id', oid).single();
     if (!ord) return json({ error: 'ordine non trovato' }, 404);
     const current = Number(ord.qty_arrived) || 0;
+    // v27 (04-10): `attesi` = il totale arrivato che il client aveva a schermo quando ha calcolato `qty` (il
+    // pannello Ordini manda gia' arrivati + arrivati adesso). Se a DB il totale e' un altro, quel `qty` e'
+    // costruito su un numero superato: salvarlo annullerebbe o raddoppierebbe l'arrivo registrato nel frattempo.
+    // Opzionale: chi non lo manda (client vecchi, Cowork) passa come prima.
+    const haAttesi = payload.attesi != null && payload.attesi !== '';
+    const attesi = haAttesi ? num(payload.attesi, { integer: true, min: 0 }) : null;
+    if (haAttesi && attesi == null) return json({ error: 'attesi non valido (intero >= 0)' }, 422);
+    if (attesi != null && attesi !== current) {
+      return json({ error: `Questa riga e' cambiata: ora risultano ${current} arrivati, tu ne vedevi ${attesi}. Niente e' stato salvato: controlla i numeri aggiornati e ripeti.`, riga_cambiata: true, arrived: current }, 409);
+    }
     const delta = target - current;
     // fix h (31-07): mesi chiusi sulla data dell'arrivo (solo se la scrittura muove qualcosa)
     if (delta !== 0 && !force && await closedDate(arrDate)) return closedErr(arrDate.slice(0, 4), arrDate.slice(5, 7));
@@ -252,8 +266,15 @@ async function handle(req: Request): Promise<Response> {
       if (pre) return json({ error: `lettura costo prodotto fallita (${pre.message}): arrivo NON registrato, riprova` }, 502);
       if (pr?.cogs != null && Number(pr.cogs) > 0) { costoEff = Number(pr.cogs); costoDaCogs = true; }
     }
-    const { error: ue } = await sb.from('supplier_orders').update(updOrd).eq('id', oid);
+    // v27: con `attesi` l'update e' un compare-and-set sul totale visto dal client. Il confronto qui sopra legge
+    // e poi scrive: se un'altra scrittura passa nel mezzo, questo update non tocca nessuna riga e ci si ferma
+    // PRIMA dell'acquisto (due telefoni nello stesso secondo: il secondo non scrive niente).
+    const updQ = sb.from('supplier_orders').update(updOrd).eq('id', oid);
+    const { data: toccate, error: ue } = attesi != null ? await updQ.eq('qty_arrived', attesi).select('id') : await updQ;
     if (ue) return json({ error: ue.message }, 400);
+    if (attesi != null && (toccate ?? []).length !== 1) {
+      return json({ error: `Questa riga e' stata modificata da un altro dispositivo proprio adesso. Niente e' stato salvato: controlla i numeri aggiornati e ripeti.`, riga_cambiata: true }, 409);
+    }
     // fix f (31-07): INSERT controllato + rollback della riga ordine se l'acquisto non entra
     // (prima tornava ok:true con qty_arrived gia' aggiornato e nessun purchases: stock sballato).
     let purchaseId: string | null = null;
@@ -265,13 +286,16 @@ async function handle(req: Request): Promise<Response> {
         fornitore: ord.fornitore, source: 'app-arrivo-edit', chi: chi || null,
       }).select('id').single();
       if (pe) {
-        await sb.from('supplier_orders').update({ qty_arrived: current, data_ultimo_arrivo: ord.data_ultimo_arrivo, costo_unitario: ord.costo_unitario, qty_ordered: ord.qty_ordered, wip: ord.wip }).eq('id', oid);
+        // v27: con `attesi` anche l'annullamento e' condizionato: riporta indietro solo il totale scritto qui
+        // sopra, non quello di un'altra scrittura arrivata nel frattempo
+        const undoQ = sb.from('supplier_orders').update({ qty_arrived: current, data_ultimo_arrivo: ord.data_ultimo_arrivo, costo_unitario: ord.costo_unitario, qty_ordered: ord.qty_ordered, wip: ord.wip }).eq('id', oid);
+        await (attesi != null ? undoQ.eq('qty_arrived', target) : undoQ);
         return json({ error: `acquisto NON registrato (${pe.message}): arrivo annullato, riprova` }, 400);
       }
       purchaseId = pur?.id ?? null;
     }
     // fix g (31-07): purchase_id nel change_log (l'indagine del 31-07 ne ha sofferto l'assenza)
-    await logp('supplier_orders', String(oid), 'arrival_set', { codice: ord.codice, target, delta, data: arrDate, costo: updOrd.costo_unitario ?? null, wip_resolved: !!(ord.wip && target > 0), purchase_id: purchaseId, ...(costoDaCogs ? { costo_da_cogs: costoEff } : {}) });
+    await logp('supplier_orders', String(oid), 'arrival_set', { codice: ord.codice, target, delta, data: arrDate, costo: updOrd.costo_unitario ?? null, wip_resolved: !!(ord.wip && target > 0), purchase_id: purchaseId, ...(attesi != null ? { attesi } : {}), ...(costoDaCogs ? { costo_da_cogs: costoEff } : {}) });
     return json({ ok: true, arrived: target, ordered: (updOrd.qty_ordered as number | undefined) ?? ord.qty_ordered });
   }
 

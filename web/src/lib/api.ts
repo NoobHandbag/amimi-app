@@ -628,20 +628,10 @@ export async function fetchActiveFornitori(): Promise<string[]> {
 // edit/correct a registered arrival: set the arrived TOTAL (stock follows the delta);
 // costo opzionale per risolvere le righe WIP all'arrivo. confirmDup (fix a, 31-07): il server
 // blocca un possibile doppio arrivo in giornata; si supera solo dopo conferma dell'utente.
-export const setArrival = (orderId: string, qty: number, data: string, pin: string, chi: string, costo?: number | null, confirmDup = false, force = false) =>
-  writeApi('arrival_set', { order_id: orderId, qty, data, ...(costo != null ? { costo_unitario: costo } : {}), ...(confirmDup ? { confirm_duplicato: true } : {}) }, pin, chi, force);
-
-// qty_arrived VIVO di una riga ordine, riletto subito prima di scrivere un arrivo (03-10): il totale mandato al
-// server e' "gia' arrivati + arrivati adesso", e su una schermata vecchia la somma partirebbe da un numero
-// superato. Lettura che decide cosa si scrive: se fallisce ci si ferma (Regola Ferrea 20a), mai un default.
-export async function fetchOrderArrived(orderId: string): Promise<number> {
-  const { data, error } = await supabase.from('supplier_orders').select('qty_arrived').eq('id', orderId).maybeSingle();
-  if (error) throw new Error(`Non riesco a rileggere la riga ordine (${error.message}): arrivo NON registrato, riprova`);
-  if (!data) throw new Error('Riga ordine non trovata (eliminata da un altro dispositivo?): arrivo NON registrato');
-  const q = Number(data.qty_arrived);
-  if (!Number.isFinite(q)) throw new Error('Riga ordine riletta senza un totale arrivato valido: arrivo NON registrato, riprova');
-  return q;
-}
+// attesi (04-10, write-api v27): il totale arrivato che la schermata mostrava quando qty e' stato calcolato
+// (gia' arrivati + arrivati adesso). Se a DB e' un altro, il server risponde 409 e non scrive niente.
+export const setArrival = (orderId: string, qty: number, attesi: number, data: string, pin: string, chi: string, costo?: number | null, confirmDup = false, force = false) =>
+  writeApi('arrival_set', { order_id: orderId, qty, attesi, data, ...(costo != null ? { costo_unitario: costo } : {}), ...(confirmDup ? { confirm_duplicato: true } : {}) }, pin, chi, force);
 
 // cancella una riga ordine fornitore (item 10); il server blocca se ha arrivi registrati
 export const deleteOrder = (orderId: string, pin: string, chi: string) =>
