@@ -968,16 +968,16 @@ a.ds-btn { text-decoration: none; display: inline-flex; align-items: center; }
 /* Negozi B2B su telefono (report UI/UX 22-09, righe "Alta"; Blocco 2). Tabella: la colonna Negozio resta ferma mentre
    si scorre di lato (prima, dopo il primo scorrimento, non si sapeva piu' di quale negozio fosse la riga) e sotto i
    700 px spariscono Rating, Brand affini ed Evid., che stanno gia' nelle schede. Pipeline: sotto i 700 px il kanban a
-   9 colonne (se ne vedeva una e mezza) diventa una lista unica per stadio, con gli stadi vuoti nascosti. Il filo a
-   destra della cella ferma e' nel fondo (gradiente): con border-collapse un bordo vero resterebbe attaccato alla
-   griglia e scorrerebbe via, e box-shadow sulle celle non si applica. */
+   9 colonne (se ne vedeva una e mezza) diventa una lista unica per stadio, con gli stadi vuoti nascosti. Su telefono il
+   filo a destra della cella ferma e' nel fondo (gradiente): con border-collapse un bordo vero resta attaccato alla
+   griglia e scorre via, un'ombra esterna (1px 0 0) qui non si vedeva e una inset raddoppiava la riga sotto. */
 .or-solo-tel { display: none; }
-.lead-table th:first-child, .lead-table td:first-child { position: sticky; left: 0; z-index: 1; background: linear-gradient(to left, var(--line) 1px, transparent 1px) var(--card); }
+.lead-table th:first-child, .lead-table td:first-child { position: sticky; left: 0; z-index: 1; background: var(--card); }
 @media (max-width: 699px) {
   .or-board { display: block; overflow-x: visible; padding-bottom: 0; }
   .or-col { min-height: 0; margin-bottom: 10px; }
   .or-col.empty { display: none; }
   .or-solo-tel { display: block; }
   .lead-tel-no { display: none; }
-  .lead-table th:first-child, .lead-table td:first-child { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; }
+  .lead-table th:first-child, .lead-table td:first-child { max-width: 42vw; overflow: hidden; text-overflow: ellipsis; background: linear-gradient(to left, var(--line) 1px, transparent 1px) var(--card); }
 }

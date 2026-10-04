@@ -250,7 +250,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
                 <thead><tr><th>Negozio</th><th>Citta&#8217;</th><th>Tipo</th><th>Stato</th><th>Score</th><th>Verdetto</th><th>Tier</th><th>Follower</th><th className="lead-tel-no">Rating</th><th>Borse (mediana)</th><th className="lead-tel-no">Brand affini</th><th className="lead-tel-no">Evid.</th></tr></thead>
                 <tbody>{list.map((r) => (
                   <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => openScheda(r)}>
-                    <td className="l">{r.nome}</td><td className="l">{r.citta ?? r.paese}</td><td className="l">{TIPO_LABEL[r.tipo] ?? r.tipo}</td><td className="l">{STATO_LABEL[r.stato_ricerca]}</td>
+                    <td className="l" title={r.nome}>{r.nome}</td><td className="l">{r.citta ?? r.paese}</td><td className="l">{TIPO_LABEL[r.tipo] ?? r.tipo}</td><td className="l">{STATO_LABEL[r.stato_ricerca]}</td>
                     <td style={{ color: scoreColor(r.totale), fontWeight: 700 }}>{r.totale ?? '—'}</td>
                     <td style={{ color: verdColor(r.verdetto), fontWeight: 700 }}>{r.verdetto ? VERDETTO_LABEL[r.verdetto] : '—'}</td>
                     <td>{r.tier ?? (r.tier_proposto ? `${r.tier_proposto}?` : '—')}</td>
