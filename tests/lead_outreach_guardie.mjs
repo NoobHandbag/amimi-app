@@ -173,5 +173,20 @@ t('v7-4 template: il listino non e\' piu\' "all\'appuntamento", si rimanda al li
 t('v7-5 prompt: regola 4 rimanda alla line sheet, vieta di riscrivere il listino e il conto vendita; niente "non sono ancora decise"', /'4\. Listino wholesale e condizioni commerciali sono pubblicati nella line sheet/.test(src) && /NON riscrivere il listino/.test(src) && /Il conto vendita non esiste piu/.test(src) && !/non sono ancora decise/.test(src));
 t('v7-6 gli avvisi su percentuali e minimi restano attivi (la persona li vede prima di inviare)', avvisiContenuto('sconto del 10%').length === 1 && avvisiContenuto('ordine minimo di 12 pezzi').length === 1 && avvisiContenuto('possiamo fare conto vendita').length === 1);
 
+console.log('== Blocco 2, layout telefono (04-10): Pipeline a lista sotto i 700 px, tabella con colonna Negozio ferma ==');
+// La misura vera (375 px e 1024 px, dati finti) sta in web/e2e/negozi-layout.spec.ts; qui si tiene fermo il sorgente.
+const css = readFileSync(`${ROOT}web/src/index.css`, 'utf8').replace(/\r\n/g, '\n');
+const webNeg = readFileSync(`${ROOT}web/src/pages/Negozi.tsx`, 'utf8').replace(/\r\n/g, '\n');
+// tutti i blocchi a 699 px, in qualunque punto del file (non solo il primo)
+const telBlocchi = [...css.matchAll(/@media \(max-width: 699px\) \{\n((?:[ \t]+[^\n]*\n)+)\}/g)];
+const tel = telBlocchi.map((m) => m[1]).join('');
+const tabella = webNeg.match(/<table className="sortable lead-table">[\s\S]*?<\/table>/)?.[0] ?? '';
+t('L1 sotto i 700 px la Pipeline non e\' piu\' un kanban a scorrimento laterale e gli stadi vuoti spariscono', /\.or-board \{ display: block; overflow-x: visible;/.test(tel) && /\.or-col\.empty \{ display: none; \}/.test(tel));
+t('L2 il kanban resta su schermo largo: griglia a colonne fuori dal blocco telefono, nessun display:none sugli stadi vuoti', /\n\.or-board \{ display: grid; grid-auto-flow: column;/.test(css) && !/\.or-col\.empty/.test(telBlocchi.reduce((c, m) => c.replace(m[0], ''), css)));
+t('L3 OutreachBoard marca gli stadi vuoti e dice quando la pipeline e\' vuota', /className=\{list\.length \? 'or-col' : 'or-col empty'\}/.test(webOut) && /!rows\.length && <p className="muted or-solo-tel">/.test(webOut) && /\.or-solo-tel \{ display: block; \}/.test(tel));
+t('L4 colonna Negozio ferma a ogni larghezza, con fondo pieno (senza, le altre celle si leggono sotto); su telefono troncata con il filo a destra e il nome intero nel title', /\n\.lead-table th:first-child, \.lead-table td:first-child \{ position: sticky; left: 0; z-index: 1; background: var\(--card\); \}/.test(css) && /\.lead-table th:first-child, \.lead-table td:first-child \{ max-width: 42vw; overflow: hidden; text-overflow: ellipsis; background: linear-gradient\(to left, var\(--line\) 1px, transparent 1px\) var\(--card\); \}/.test(tel) && /<td className=\"l\" title=\{r\.nome\}>\{r\.nome\}<\/td>/.test(tabella));
+t('L5 su telefono spariscono Rating, Brand affini ed Evid., in testata e nelle righe, e nient\'altro', /\.lead-tel-no \{ display: none; \}/.test(tel) && !/\.lead-tel-no/.test(telBlocchi.reduce((c, m) => c.replace(m[0], ''), css)) && [...tabella.matchAll(/<th className="lead-tel-no">([^<]+)<\/th>/g)].map((m) => m[1]).join('|') === 'Rating|Brand affini|Evid.' && (tabella.match(/<td className="(?:l )?lead-tel-no">/g) ?? []).length === 3 && (tabella.match(/lead-tel-no/g) ?? []).length === 6);
+t('L6 il contenitore che scorre e\' raggiungibile da tastiera e dice che si scorre di lato', /<div className="tablewrap" role="region" aria-label="Tabella negozi: scorri di lato per le altre colonne" tabIndex=\{0\}><table className="sortable lead-table">/.test(webNeg));
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
