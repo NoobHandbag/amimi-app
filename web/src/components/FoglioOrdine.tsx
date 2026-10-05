@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { fetchProducts, fetchInventory, fetchActiveFornitori, fetchSuppliers, fetchLastOrder, fetchLastPurchase, createOrderMulti, oggi } from '../lib/api';
+import { fetchProducts, fetchFotoProdotti, fetchActiveFornitori, fetchSuppliers, fetchLastOrder, fetchLastPurchase, createOrderMulti, oggi } from '../lib/api';
 import type { Product } from '../lib/api';
 import { csClient } from '../lib/csClient';
 import { aiCompila, matApi, preparaFoto, uploadInbox, v } from '../lib/matApi';
@@ -25,7 +25,7 @@ type Riga = {
   key: string; foglioId: string; posizione: number; box: number[] | null; modello: string;
   descr: string; scritto: string | null; candidati: string[];
   scelta: Scelta | null; primoScelto: boolean;
-  wip: boolean; qty: string; interno: string; nota: string; costo: string; inclusa: boolean;
+  wip: boolean; qty: string; interno: string; nota: string; costo: string; costoAuto: boolean; inclusa: boolean;
   qtyBassa: boolean; internoBassa: boolean;
   proposta: { wip: boolean; qty: string; interno: string };
 };
@@ -66,6 +66,7 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
   const [forn, setForn] = useState(''); const [fq, setFq] = useState('');
   const [dataOrd, setDataOrd] = useState(oggi());
   const [busy, setBusy] = useState(false);
+  const [preparo, setPreparo] = useState(false);
   const [cerca, setCerca] = useState<{ key: string; q: string } | null>(null);
   const [nuova, setNuova] = useState<{ key: string; v: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -74,7 +75,7 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
 
   useEffect(() => {
     fetchProducts().then(setAll).catch(() => toast('Catalogo non letto: ricarica la pagina', 'err'));
-    fetchInventory().then((inv) => setImg(new Map(inv.filter((r) => r.image_url).map((r) => [r.codice, r.image_url as string])))).catch(() => {});
+    fetchFotoProdotti().then(setImg).catch(() => {});
     Promise.all([fetchActiveFornitori().catch(() => [] as string[]), fetchSuppliers().catch(() => [])])
       .then(([a, s]) => setFornitori({ attivi: [...a].sort((x, y) => x.localeCompare(y)), tutti: [...new Set([...a, ...s.map((x) => x.name)])] }));
     csClient.auth.getSession().then(({ data }) => setLogged(!!data.session)).catch(() => setLogged(false));
@@ -98,15 +99,24 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
     if (error) setLgErr('Accesso non riuscito. Controlla email e password.'); else setLgPwd('');
   }
 
+  // la preparazione dura qualche secondo: bottone fermo intanto (un secondo tocco aggiungerebbe fogli doppi) e
+  // tetto applicato sullo stato vero al momento dell'aggiunta
   async function aggiungiFoto(files: File[]) {
-    const posto = MAX_FOGLI - fogli.length;
-    if (files.length > posto) toast(`Al massimo ${MAX_FOGLI} fogli per ordine`, 'err');
-    const nuovi: Foglio[] = [];
-    for (const f of files.slice(0, posto)) {
-      const p = await preparaFoto(f);
-      nuovi.push({ id: crypto.randomUUID(), file: p.file, url: URL.createObjectURL(p.file), w: p.w, h: p.h, stato: 'attesa' });
-    }
-    setFogli((x) => [...x, ...nuovi]);
+    if (!files.length || preparo) return;
+    setPreparo(true);
+    try {
+      const nuovi: Foglio[] = [];
+      for (const f of files.slice(0, MAX_FOGLI)) {
+        const p = await preparaFoto(f);
+        nuovi.push({ id: crypto.randomUUID(), file: p.file, url: URL.createObjectURL(p.file), w: p.w, h: p.h, stato: 'attesa' });
+      }
+      setFogli((x) => {
+        const posto = Math.max(0, MAX_FOGLI - x.length);
+        nuovi.slice(posto).forEach((f) => URL.revokeObjectURL(f.url));
+        return [...x, ...nuovi.slice(0, posto)];
+      });
+      if (fogliRef.current.length + nuovi.length > MAX_FOGLI) toast(`Al massimo ${MAX_FOGLI} fogli per ordine`, 'err');
+    } finally { setPreparo(false); }
   }
   const togliFoto = (id: string) => setFogli((x) => { const f = x.find((y) => y.id === id); if (f) URL.revokeObjectURL(f.url); return x.filter((y) => y.id !== id); });
   const patchFoglio = (id: string, p: Partial<Foglio>) => setFogli((x) => x.map((f) => (f.id === id ? { ...f, ...p } : f)));
@@ -125,7 +135,7 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
     return {
       key: `${f.id}:${x.posizione}:${Math.random().toString(36).slice(2, 7)}`, foglioId: f.id, posizione: x.posizione, box: x.box, modello,
       descr: x.campione?.descrizione ?? '', scritto: x.campione?.scritto ?? null, candidati,
-      scelta: null, primoScelto: false, wip: !!x.tutta, qty, interno, nota, costo: '', inclusa: true,
+      scelta: null, primoScelto: false, wip: !!x.tutta, qty, interno, nota, costo: '', costoAuto: false, inclusa: true,
       qtyBassa: !x.tutta && (qtyLetta == null || Number(x.quantita?.confidenza) < BASSA), internoBassa: !interno || Number(x.interno?.confidenza) < BASSA,
       proposta: { wip: !!x.tutta, qty, interno },
     };
@@ -139,7 +149,9 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
       const r = await aiCompila<PropostaFoglio>(chi, 'foglio_ordine', [path], '', { catalogo, fornitori: fornitori.tutti });
       const p = r.proposta;
       patchFoglio(f.id, { stato: 'ok', logId: r.log_id, avviso: p.avviso, nota: v(p.note) });
-      const fp = p.fornitore?.match_esistente || v(p.fornitore);
+      // solo un fornitore che ESISTE gia' (il campo e' testo libero: un nome letto dal foglio creerebbe un doppione)
+      const letto = (p.fornitore?.match_esistente || v(p.fornitore) || '').trim().toLowerCase();
+      const fp = letto ? fornitori.tutti.find((n) => n.toLowerCase() === letto) : undefined;
       if (fp) setForn((x) => x || fp);
       const nuove = [...(p.righe ?? [])].sort((a, b) => a.posizione - b.posizione).map((x) => daRiga(f, x));
       setRighe((prev) => [...prev.filter((x) => x.foglioId !== f.id), ...nuove]);
@@ -149,14 +161,15 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
   const leggiTutti = () => Promise.all(fogli.filter((f) => f.stato === 'attesa' || f.stato === 'errore').map(leggi));
 
   const patch = (key: string, p: Partial<Riga>) => setRighe((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)));
-  // costo dallo storico (ultimo ordine, poi ultimo acquisto) solo se il campo e' ancora vuoto: mai bloccante.
+  // costo dallo storico (ultimo ordine, poi ultimo acquisto) solo se il campo e' ancora vuoto e la riga ha ANCORA
+  // quella variante (la risposta arriva dopo: nel frattempo la scelta puo' essere cambiata): mai bloccante.
   // Uno storico a 0 (righe legacy) non e' un costo: il campo resta vuoto.
   const prefillCosto = (key: string, codice: string) => {
-    const metti = (c: number | null | undefined) => { const okc = c != null && Number(c) > 0; if (okc) setRighe((rs) => rs.map((r) => (r.key === key && r.costo === '' ? { ...r, costo: String(c) } : r))); return okc; };
+    const metti = (c: number | null | undefined) => { const okc = c != null && Number(c) > 0; if (okc) setRighe((rs) => rs.map((r) => (r.key === key && r.costo === '' && r.scelta?.tipo === 'esistente' && r.scelta.codice === codice ? { ...r, costo: String(c), costoAuto: true } : r))); return okc; };
     fetchLastOrder(codice).then((lo) => { if (!metti(lo?.costo_unitario)) fetchLastPurchase(codice).then((lp) => metti(lp?.costo_unitario)).catch(() => {}); }).catch(() => {});
   };
   const scegli = (r: Riga, p: Product) => {
-    patch(r.key, { scelta: { tipo: 'esistente', codice: p.codice, item: p.item, variant: p.variant }, primoScelto: r.candidati[0] === p.codice, costo: '' });
+    patch(r.key, { scelta: { tipo: 'esistente', codice: p.codice, item: p.item, variant: p.variant }, primoScelto: r.candidati[0] === p.codice, ...(r.costoAuto ? { costo: '', costoAuto: false } : {}) });
     setCerca(null); setNuova(null);
     prefillCosto(r.key, p.codice);
   };
@@ -243,7 +256,7 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
             {f.stato === 'attesa' && <button type="button" className="linkbtn" onClick={() => togliFoto(f.id)} aria-label="Togli foto">✕</button>}
           </span>
         ))}
-        {fogli.length < MAX_FOGLI && <button type="button" className="chip" onClick={() => fileRef.current?.click()}>+ foto foglio</button>}
+        {fogli.length < MAX_FOGLI && <button type="button" className="chip" disabled={preparo} onClick={() => fileRef.current?.click()}>{preparo ? 'Preparo le foto…' : '+ foto foglio'}</button>}
       </div>
       {daLeggere > 0 && (
         <button type="button" className="ds-btn secondary full" style={{ marginBottom: 12 }} disabled={!all.length || logged === null || fogli.some((f) => f.stato === 'leggo')} onClick={leggiTutti}>
@@ -329,7 +342,7 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
                         </div>
                         <div>
                           <div style={LAB}>€ al pezzo</div>
-                          <input className="txt" style={{ width: 80 }} type="number" inputMode="decimal" value={r.costo} onChange={(e) => patch(r.key, { costo: e.target.value })} placeholder="€/pz" />
+                          <input className="txt" style={{ width: 80 }} type="number" inputMode="decimal" value={r.costo} onChange={(e) => patch(r.key, { costo: e.target.value, costoAuto: false })} placeholder="€/pz" />
                         </div>
                       </div>
                       <div style={LAB}>Nota</div>

@@ -257,6 +257,8 @@ export function normalizzaOutput(target: Target, p: unknown, ctx?: Contesto): un
       // TUTTA con un numero in quantita': quel numero e' la stima, mai i pezzi ordinati (decisione owner 04-10)
       const q = r.quantita as { valore?: unknown } | undefined;
       if (r.tutta === true && q && q.valore != null) { if (r.stima_pezzi == null) r.stima_pezzi = q.valore; q.valore = null; }
+      // una quantita' letta male (zero, decimale) non deve far rifiutare tutto il foglio: resta vuota, la compila l'operatrice
+      if (q && q.valore != null && !(typeof q.valore === 'number' && Number.isInteger(q.valore) && q.valore > 0)) q.valore = null;
       const st = Number(r.stima_pezzi);
       r.stima_pezzi = r.stima_pezzi != null && Number.isFinite(st) && st > 0 ? st : null;
       const mod = r.modello as { valore?: unknown; match_esistente?: unknown } | undefined;

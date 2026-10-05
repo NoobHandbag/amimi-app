@@ -163,7 +163,8 @@ export type AiRisposta<T> = { ok: true; log_id: string; modello: string; propost
  *  decodificarla (HEIC fuori da Safari) resta l'originale. w/h servono a ritagliare le righe a video (0 = ignote). */
 export async function preparaFoto(file: File, lato = 2000): Promise<{ file: File; w: number; h: number }> {
   try {
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    // un browser che non accetta le opzioni non deve far saltare la riduzione: senza, la foto intera supera i 4 MB
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => createImageBitmap(file));
     const k = Math.min(1, lato / Math.max(bmp.width, bmp.height));
     const w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
     const c = document.createElement('canvas'); c.width = w; c.height = h;

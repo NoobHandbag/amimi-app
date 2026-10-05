@@ -60,6 +60,11 @@ t('10 validaOutput: candidati mancanti = rifiutata', /candidati/.test(validaOutp
   t('19 modello di default del foglio = flash (misura del 04-10)', MODELLO_FOGLIO_DEFAULT === 'gemini-flash-latest');
 }
 
+{
+  const p = norm(proposta([riga({ quantita: campo(2.5) }), riga({ quantita: campo(0) }), riga({ quantita: campo(7) })]));
+  t('19b quantita letta male (decimale, zero): resta vuota e il foglio resta valido, le altre righe non si perdono', p.righe[0].quantita.valore === null && p.righe[1].quantita.valore === null && p.righe[2].quantita.valore === 7 && validaOutput('foglio_ordine', p) === null);
+}
+
 console.log('\n== foglio_ordine: guardie sul sorgente ==');
 const AI = readFileSync(new URL('../supabase/functions/ai-compila/index.ts', import.meta.url), 'utf8');
 const UI = readFileSync(new URL('../web/src/components/FoglioOrdine.tsx', import.meta.url), 'utf8');
@@ -75,6 +80,12 @@ t('27 schermata: inserimento bloccato senza variante, quantita o fornitore, e co
 t('28 schermata: un foglio per chiamata AI', /aiCompila<PropostaFoglio>\(chi, 'foglio_ordine', \[path\]/.test(UI));
 t('29 schermata: varianti nuove solo su tocco esplicito, codice provvisorio derivato', /tipo: 'nuova', variant: nuova\.v\.trim\(\)/.test(UI) && /deriveCodice\(r\.modello, s\.variant\)/.test(UI));
 t('30 Ordini: bottone "Ordine da foglio" solo a flag AI acceso; nota della riga visibile in lista', /\{aiOn && <button[\s\S]{0,160}setFoglio\(true\)/.test(ORD) && /\{l\.note && </.test(ORD));
+
+t('31 schermata: il costo dallo storico entra solo se la riga ha ancora QUELLA variante', /r\.costo === '' && r\.scelta\?\.tipo === 'esistente' && r\.scelta\.codice === codice/.test(UI));
+t('32 schermata: il fornitore proposto dall\'AI vale solo se esiste gia\' (niente etichette nuove da una lettura)', /fornitori\.tutti\.find\(\(n\) => n\.toLowerCase\(\) === letto\)/.test(UI) && !/setForn\(\(x\) => x \|\| v\(/.test(UI));
+t('33 schermata: bottone foto fermo mentre prepara, tetto fogli sullo stato vero', /disabled=\{preparo\}/.test(UI) && /MAX_FOGLI - x\.length/.test(UI));
+t('34 schermata: un costo scritto a mano non viene azzerato dalla scelta della variante', /r\.costoAuto \? \{ costo: '', costoAuto: false \} : \{\}/.test(UI));
+t('35 foto: riduzione ritentata senza opzioni prima di ripiegare sull\'originale', /createImageBitmap\(file, \{ imageOrientation: 'from-image' \}\)\.catch\(\(\) => createImageBitmap\(file\)\)/.test(readFileSync(new URL('../web/src/lib/matApi.ts', import.meta.url), 'utf8')));
 
 console.log(`\n== ${ok} ok, ${ko} KO ==`);
 process.exit(ko ? 1 : 0);
