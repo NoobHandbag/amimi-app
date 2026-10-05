@@ -148,9 +148,39 @@ export type PropostaOrdine = {
   avviso: string | null; fornitore: AiCampo; data_ordine: AiCampo;
   righe: { modello: AiCampo; variante: AiCampo; quantita: AiCampo<number>; costo_unitario: AiCampo<number> }[]; note: AiCampo;
 };
+// Foglio d'ordine scritto a mano (target foglio_ordine): una riga per riga della tabella, la variante NON e' scritta
+// (e' il campione spillato) e arriva come candidati; box = rettangolo della riga sulla foto, scala 0-1000.
+export type RigaFoglio = {
+  foglio: number; posizione: number; modello: AiCampo; campione: { descrizione: string; scritto: string | null }; candidati: string[];
+  quantita: AiCampo<number>; tutta: boolean; stima_pezzi: number | null; quantita_scritta: string; interno: AiCampo; note: string | null;
+  box: number[] | null;
+};
+export type PropostaFoglio = { avviso: string | null; fornitore: AiCampo; data_ordine: AiCampo; righe: RigaFoglio[]; note: AiCampo };
 export type AiRisposta<T> = { ok: true; log_id: string; modello: string; proposta: T };
 
-export async function aiCompila<T>(chi: string, target: 'materiale' | 'fornitore' | 'ordine_prodotti', immagini: string[], testo: string, contesto: Record<string, string[]>): Promise<AiRisposta<T>> {
+/** Foto di un foglio pronta per la lettura: lato lungo al massimo 2000 px, JPEG (il golden del 04-10 e' su foto di
+ *  1125x2000; la foto intera del telefono rallenta l'upload e puo' superare i 4 MB della edge). Se il browser non sa
+ *  decodificarla (HEIC fuori da Safari) resta l'originale. w/h servono a ritagliare le righe a video (0 = ignote). */
+export async function preparaFoto(file: File, lato = 2000): Promise<{ file: File; w: number; h: number }> {
+  try {
+    // un browser che non accetta le opzioni non deve far saltare la riduzione: senza, la foto intera supera i 4 MB
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => createImageBitmap(file));
+    const k = Math.min(1, lato / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d')!.drawImage(bmp, 0, 0, w, h); bmp.close();
+    const blob = await new Promise<Blob | null>((res) => c.toBlob(res, 'image/jpeg', 0.85));
+    if (!blob) throw new Error('toBlob');
+    return { file: new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }), w, h };
+  } catch {
+    const url = URL.createObjectURL(file);
+    try { const im = new Image(); im.src = url; await im.decode(); return { file, w: im.naturalWidth, h: im.naturalHeight }; }
+    catch { return { file, w: 0, h: 0 }; }
+    finally { URL.revokeObjectURL(url); }
+  }
+}
+
+export async function aiCompila<T>(chi: string, target: 'materiale' | 'fornitore' | 'ordine_prodotti' | 'foglio_ordine', immagini: string[], testo: string, contesto: Record<string, string[]>): Promise<AiRisposta<T>> {
   const j = await callEdge('ai-compila', { chi: chiKey(chi), target, immagini, testo, contesto });
   return j as unknown as AiRisposta<T>;
 }

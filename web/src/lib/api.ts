@@ -86,6 +86,13 @@ export async function fetchInventory(): Promise<InvFull[]> {
   return (data ?? []) as InvFull[];
 }
 
+/** Foto per codice (solo le due colonne che servono a chi mostra miniature, es. l'ordine da foglio). */
+export async function fetchFotoProdotti(): Promise<Map<string, string>> {
+  const { data, error } = await supabase.from('v_inventory').select('codice,image_url').not('image_url', 'is', null);
+  if (error) throw new Error(error.message);
+  return new Map((data ?? []).map((r: { codice: string; image_url: string }) => [r.codice, r.image_url]));
+}
+
 export type CV = { negozio: string; codice: string; item: string | null; variant: string | null; image_url: string | null; pezzi: number };
 export async function fetchContoVendita(): Promise<CV[]> {
   const { data, error } = await supabase
@@ -232,13 +239,13 @@ export async function pullAds(pin: string, chi: string) {
 export { oggi } from './helpers';
 
 // ---------- FLOW 1: multi-bag supplier orders ----------
-export type OrdLine = Ordine & { nuovo_riordino: string | null; costo_unitario: number | null; data_consegna: string | null; data_consegna_display: string | null; wip?: boolean };
+export type OrdLine = Ordine & { nuovo_riordino: string | null; costo_unitario: number | null; data_consegna: string | null; data_consegna_display: string | null; wip?: boolean; note?: string | null };
 export type OrdGruppo = { gruppo: string; fornitore: string | null; data_ordine: string | null; righe: OrdLine[]; mancano: number; completo: boolean };
 
 export async function fetchOrdiniGruppi(): Promise<OrdGruppo[]> {
   const { data, error } = await supabase
     .from('v_ordini_arrivo')
-    .select('id,gruppo,codice,item,variant,fornitore,qty_ordered,qty_arrived,mancano,completo,nuovo_riordino,costo_unitario,data_consegna,data_consegna_display,data_ordine,image_url,wip')
+    .select('id,gruppo,codice,item,variant,fornitore,qty_ordered,qty_arrived,mancano,completo,nuovo_riordino,costo_unitario,data_consegna,data_consegna_display,data_ordine,image_url,wip,note')
     .order('data_ordine', { ascending: false });
   if (error) throw new Error(error.message);
   const byG = new Map<string, OrdGruppo>();

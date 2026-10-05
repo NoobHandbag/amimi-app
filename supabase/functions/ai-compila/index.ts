@@ -1,4 +1,6 @@
-// ai-compila v1 (2026-09-23): strato AI "Compila" del modulo materie prime (e degli ordini prodotti, target ordine_prodotti).
+// ai-compila v2 (2026-10-04): strato AI "Compila" del modulo materie prime (e degli ordini prodotti, target ordine_prodotti).
+// v2: target foglio_ordine (fogli d'ordine scritti a mano col fornitore: righe, quantita', interno, candidati variante),
+// con modello e timeout propri (app_flags.ai_foglio_model). Resta sola lettura: la scrittura e' order_multi di write-api.
 // Brief: Cowork12/docs/Codice_e_Automazione/BRIEF_materie_prime_fase2_ai_compila_2026-09-23.md
 //
 // Cosa fa: riceve immagini (path nel bucket privato mat-assets, caricate dal client sotto inbox/, oppure base64) e la
@@ -13,7 +15,7 @@
 // mai una proposta vuota spacciata per "niente trovato" (Regola 20a).
 // Tetti: 4 immagini, 4 MB l'una, testo 2.000 caratteri.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import { buildPrompt, validaOutput, normalizzaOutput, responseSchema, MODELLO_DEFAULT, MAX_OUTPUT_TOKENS } from './prompt.ts';
+import { buildPrompt, validaOutput, normalizzaOutput, responseSchema, MODELLO_DEFAULT, MODELLO_FOGLIO_DEFAULT, MAX_OUTPUT_TOKENS } from './prompt.ts';
 import type { Target, Contesto } from './prompt.ts';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -23,8 +25,10 @@ const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>)
   const r = await fn(); if (!r.error) return r; await sleep(1500); return await fn();
 };
 const MAX_IMG = 4, MAX_BYTES = 4 * 1024 * 1024, MAX_TESTO = 2000, TIMEOUT_MS = 25000;
+// foglio_ordine usa un modello che ragiona: misurati fino a 21 s per un foglio solo (04-10), il tetto comune non basta
+const TIMEOUT_FOGLIO_MS = 50000;
 const IDENT: Record<string, string> = { B: 'Benedetta', G: 'Ginevra', A: 'Ale' };
-const TARGETS = new Set<Target>(['materiale', 'fornitore', 'ordine_prodotti']);
+const TARGETS = new Set<Target>(['materiale', 'fornitore', 'ordine_prodotti', 'foglio_ordine']);
 const MIME_OK = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf']);
 
 async function sha256hex(s: string) {
@@ -60,17 +64,18 @@ Deno.serve(async (req) => {
   const chi = IDENT[String(body.chi || '').toUpperCase()] || 'ignoto';
 
   // 2) flag e chiave: letture controllate (null = 503, mai "off" per un errore di rete)
-  const { data: flags, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['ai_compila_enabled', 'gemini_api_key', 'ai_compila_model']));
+  const { data: flags, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['ai_compila_enabled', 'gemini_api_key', 'ai_compila_model', 'ai_foglio_model']));
   if (fErr) return json({ error: 'read_failed' }, 503);
   const fmap = new Map((flags ?? []).map((r) => [r.key, String(r.value ?? '')]));
   if (fmap.get('ai_compila_enabled')?.trim().toLowerCase() !== 'true') return json({ state: 'off' });
   const key = (fmap.get('gemini_api_key') ?? '').trim();
   if (!key) return json({ ok: false, needs_key: true, error: 'Gemini non configurato (app_flags.gemini_api_key).' });
-  const modello = (fmap.get('ai_compila_model') ?? '').trim() || MODELLO_DEFAULT;
 
   // 3) input
   const target = String(body.target || '') as Target;
   if (!TARGETS.has(target)) return json({ error: 'target non valido' }, 422);
+  const foglio = target === 'foglio_ordine';
+  const modello = foglio ? ((fmap.get('ai_foglio_model') ?? '').trim() || MODELLO_FOGLIO_DEFAULT) : ((fmap.get('ai_compila_model') ?? '').trim() || MODELLO_DEFAULT);
   const testo = String(body.testo || '').slice(0, MAX_TESTO);
   const ctx = (body.contesto && typeof body.contesto === 'object' ? body.contesto : {}) as Contesto;
   const paths: string[] = Array.isArray(body.immagini) ? body.immagini.map((p: unknown) => String(p)).filter(Boolean) : [];
@@ -116,7 +121,7 @@ Deno.serve(async (req) => {
   // 5) Gemini structured output (responseSchema = JSON valido per costruzione; mai thinkingConfig), con timeout.
   //    Una chiamata all'AI e' una lettura idempotente: UN ritentativo se il JSON non si legge (Regola 20d).
   const chiama = async (): Promise<string> => {
-    const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
+    const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), foglio ? TIMEOUT_FOGLIO_MS : TIMEOUT_MS);
     try {
       // chiave nell'HEADER, mai nell'URL: un TypeError di rete di Deno cita l'URL intero e finirebbe nel log e nella 503
       const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modello}:generateContent`, {
@@ -143,7 +148,7 @@ Deno.serve(async (req) => {
     await chiudi({ esito: 'errore', errore: msg.slice(0, 500) });
     return json({ error: 'ai_failed', detail: msg.slice(0, 200), log_id: logId }, 503);
   }
-  if (proposta) proposta = normalizzaOutput(target, proposta);
+  if (proposta) proposta = normalizzaOutput(target, proposta, ctx);
   const problema = proposta ? validaOutput(target, proposta) : 'JSON non leggibile';
   if (problema) {
     await chiudi({ esito: 'errore', errore: problema, output: proposta ?? { raw: raw.slice(0, 2000) } });

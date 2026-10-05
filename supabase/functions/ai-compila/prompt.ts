@@ -4,12 +4,17 @@
 
 export const CATEGORIE = ['Tessuto', 'Tessuto velluto', 'Animalier', 'Cocco', 'Vitello stampato', 'Pelle vitello', 'Vernice', 'Crosta/Velour', 'Nappa', 'Nastri', 'Accessori metallici'] as const;
 export const UNITA = ['mq', 'ml', 'mt', 'pz'] as const;
-export type Target = 'materiale' | 'fornitore' | 'ordine_prodotti';
+export type Target = 'materiale' | 'fornitore' | 'ordine_prodotti' | 'foglio_ordine';
 
 // D6 decisa dal golden set del 23-09: il lite legge bene le proforma (prezzi, quantita', categorie) e non va in
 // MAX_TOKENS; il flash consuma il tetto di output col ragionamento interno (thinkingConfig e' vietato dal gotcha
 // CONOSCENZA) e si e' fermato su una proforma di 2 pagine. Override senza deploy: app_flags.ai_compila_model.
 export const MODELLO_DEFAULT = 'gemini-flash-lite-latest';
+// foglio_ordine (misura del 04-10 su tre fogli veri, 20 righe, tests/foglio_ordine_golden.mjs): quantita' e interni li
+// leggono bene entrambi, ma i candidati variante del lite sono poveri (zero o uno, spesso fuori strada), quelli del
+// flash sono una rosa sensata. Il flash ragiona (fino a 3.900 token e 21 s per foglio): un foglio per chiamata e
+// timeout dedicato nella edge. Override senza deploy: app_flags.ai_foglio_model.
+export const MODELLO_FOGLIO_DEFAULT = 'gemini-flash-latest';
 
 const REGOLE_COMUNI = `Sei l'assistente di inserimento dati di Amimi Milano, un piccolo brand di borse. Leggi le immagini (proforma, fatture, schede tecniche, email, foto di campioni, screenshot di chat) e la nota scritta dall'operatrice, e proponi i campi di un modulo.
 Rispondi SOLO con un oggetto JSON valido, senza testo attorno, con la struttura richiesta.
@@ -70,7 +75,32 @@ export const SCHEMA_ORDINE = `{
   "note": { "valore": string | null, "confidenza": number, "fonte": string }
 }`;
 
-export type Contesto = { fornitori?: string[]; materiali?: string[]; modelli?: string[]; varianti?: string[] };
+// Foglio d'ordine scritto a mano col fornitore (04-10): la variante NON e' scritta, e' il campione spillato sul foglio.
+// L'AI legge quantita', interno e note, descrive il campione e propone al massimo 3 varianti candidate della lista:
+// la variante la sceglie l'operatrice. "box" e' il rettangolo della riga, per mostrarle il ritaglio accanto alla proposta.
+export const SCHEMA_FOGLIO = `{
+  "avviso": string | null,
+  "fornitore": { "valore": string | null, "confidenza": number, "fonte": string, "match_esistente": string | null },
+  "data_ordine": { "valore": "YYYY-MM-DD" | null, "confidenza": number, "fonte": string },
+  "righe": [ {
+    "foglio": number,
+    "posizione": number,
+    "modello": { "valore": string | null, "confidenza": number, "fonte": string, "match_esistente": string | null },
+    "campione": { "descrizione": string, "scritto": string | null },
+    "candidati": [ string ],
+    "quantita": { "valore": number | null, "confidenza": number, "fonte": string },
+    "tutta": boolean,
+    "stima_pezzi": number | null,
+    "quantita_scritta": string,
+    "interno": { "valore": string | null, "confidenza": number, "fonte": string },
+    "note": string | null,
+    "box": [ ymin, xmin, ymax, xmax ]
+  } ],
+  "note": { "valore": string | null, "confidenza": number, "fonte": string }
+}`;
+
+// catalogo: righe "MODELLO | VARIANTE" (solo foglio_ordine: i candidati si scelgono fra le varianti del modello del foglio)
+export type Contesto = { fornitori?: string[]; materiali?: string[]; modelli?: string[]; varianti?: string[]; catalogo?: string[] };
 
 // responseSchema per Gemini (structured output, decodifica vincolata): con il solo responseMimeType il modello
 // puo' ancora produrre JSON rotto (una virgoletta non escapata dentro un testo copiato dal documento: successo sul
@@ -114,6 +144,23 @@ export function responseSchema(target: Target): GSchema {
     },
     required: ['avviso', 'nome', 'email', 'telefono'],
   };
+  if (target === 'foglio_ordine') return {
+    type: 'OBJECT',
+    properties: {
+      avviso: { type: 'STRING', nullable: true }, fornitore: campo('STRING', {}, true), data_ordine: campo('STRING'),
+      righe: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
+        foglio: { type: 'INTEGER' }, posizione: { type: 'INTEGER' },
+        modello: campo('STRING', {}, true),
+        campione: { type: 'OBJECT', properties: { descrizione: { type: 'STRING' }, scritto: { type: 'STRING', nullable: true } }, required: ['descrizione', 'scritto'] },
+        candidati: { type: 'ARRAY', items: { type: 'STRING' } },
+        quantita: campo('NUMBER'), tutta: { type: 'BOOLEAN' }, stima_pezzi: { type: 'NUMBER', nullable: true }, quantita_scritta: { type: 'STRING' },
+        interno: campo('STRING'), note: { type: 'STRING', nullable: true },
+        box: { type: 'ARRAY', items: { type: 'NUMBER' } },
+      }, required: ['foglio', 'posizione', 'modello', 'campione', 'candidati', 'quantita', 'tutta', 'stima_pezzi', 'quantita_scritta', 'interno', 'note', 'box'] } },
+      note: campo('STRING'),
+    },
+    required: ['avviso', 'fornitore', 'data_ordine', 'righe'],
+  };
   return {
     type: 'OBJECT',
     properties: {
@@ -124,6 +171,8 @@ export function responseSchema(target: Target): GSchema {
     required: ['avviso', 'fornitore', 'data_ordine', 'righe'],
   };
 }
+
+const catalogo = (ctx?: Contesto): string[] => (Array.isArray(ctx?.catalogo) ? ctx.catalogo.map((x) => String(x)) : []);
 
 export function buildPrompt(target: Target, testo: string, ctx: Contesto): string {
   const lista = (t: string, xs?: string[]) => xs?.length ? `\n${t} gia' presenti (se il documento ne cita uno, metti il nome ESATTO di questa lista in "match_esistente"):\n- ${xs.slice(0, 300).join('\n- ')}` : '';
@@ -151,6 +200,29 @@ Nota dell'operatrice: ${testo ? JSON.stringify(testo) : '(nessuna)'}
 Struttura JSON richiesta:
 ${SCHEMA_FORNITORE}`;
   }
+  if (target === 'foglio_ordine') {
+    return `${REGOLE_COMUNI}
+
+TARGET: uno o piu' FOGLI D'ORDINE scritti a mano col fornitore di borse. Ogni immagine e' un foglio: in alto il MODELLO (es. "LEA BAG", "LEA BAG MAXI"; le scritte fra parentesi accanto al titolo, come "(1 A COLORE)", sono annotazioni e non fanno parte del modello), sotto una tabella con una riga per variante. Ogni riga ha tre zone: a sinistra il CAMPIONE del materiale spillato sul foglio (a volte, al posto del campione o sotto, il nome scritto a mano); al centro la QUANTITA'; a destra il colore dell'INTERNO della borsa, che e' un nome di colore ("MARRONE", "NERO") oppure un codice numerico ("88", "91", "123").
+Regole di questo target:
+a. Una riga per ogni riga della tabella, nell'ordine dall'alto in basso. "foglio" e' il numero dell'immagine (1 la prima), "posizione" quello della riga nel foglio (1 la prima in alto).
+b. Le scritte CANCELLATE (barrate o scarabocchiate) si ignorano: vale quello che e' scritto accanto o sotto.
+c. Quantita': se e' scritto un numero di pezzi, "quantita.valore" e' quel numero e "tutta" e' false. Se e' scritto "TUTTA" o "TUTTO" (tutta la pelle disponibile: i pezzi si sapranno all'arrivo), "tutta" e' true e "quantita.valore" e' null; un numero fra parentesi accanto ("(10)", "(40 pezzi)") e' la stima e va in "stima_pezzi", mai in "quantita". I metri quadri ("2,2 mq disp") non sono pezzi.
+d. "quantita_scritta" riporta la cella della quantita' com'e' scritta, senza le parti cancellate.
+e. "interno.valore" e' la cella di destra com'e' scritta ("91", "MARRONE").
+f. "note": le altre annotazioni della riga ("con asole"), null se non ce ne sono. Una stella o un asterisco accanto al campione si riporta come "stella".
+g. "campione.descrizione": cosa si vede del campione, in poche parole (materiale, colore, fantasia: "cavallino zebrato bianco e nero", "cocco verde lucido"). "campione.scritto": il nome scritto nella prima colonna, se c'e' ed e' leggibile, altrimenti null.
+h. "candidati": le varianti del MODELLO di quel foglio che possono corrispondere al campione, al massimo 3, la piu' probabile per prima, con il nome ESATTO della lista qui sotto (solo la parte dopo la barra). Se nessuna corrisponde in modo plausibile, lista vuota: il campione puo' essere una variante nuova. Mai un nome fuori lista.
+i. "box": il rettangolo che contiene l'intera riga (campione, quantita', interno) nell'immagine, come [ymin, xmin, ymax, xmax] su scala 0-1000.
+l. Una riga senza quantita' (per esempio "da cercare") non e' una riga d'ordine: non metterla in "righe", riportala nella "note" generale.
+m. Fornitore e data si compilano solo se sono scritti sul foglio o nella nota dell'operatrice.
+${lista('Fornitori', ctx.fornitori)}${catalogo(ctx).length ? `\nCatalogo, una riga per variante nella forma MODELLO | VARIANTE (per "modello.match_esistente" usa il MODELLO esatto, per "candidati" la VARIANTE esatta):\n- ${catalogo(ctx).slice(0, 600).join('\n- ')}` : ''}
+
+Nota dell'operatrice: ${testo ? JSON.stringify(testo) : '(nessuna)'}
+
+Struttura JSON richiesta:
+${SCHEMA_FOGLIO}`;
+  }
   return `${REGOLE_COMUNI}
 
 TARGET: un ordine di BORSE FINITE a un fornitore o a una sarta (da una conferma d'ordine, una chat, una nota dettata). Ogni riga e' un modello con la sua variante, i pezzi e, se scritto, il costo al pezzo. Usa i nomi ESATTI delle liste quando il documento li cita, anche se scritti in modo diverso (es. "lea leopardo" = modello "LEA", variante "LEOPARDO SAVANA" solo se una variante della lista lo permette senza inventare). Se una variante non e' nella lista, riportala come scritta e lascia "match_esistente" null.
@@ -168,9 +240,35 @@ export const MAX_OUTPUT_TOKENS = 16384;
 
 // Normalizzazione CONSERVATIVA prima della validazione (Regola 1): se il modello mette un prezzo numerico E un testo
 // insieme, il numero non e' "singolo e certo" -> resta solo il testo. Le confidenze fuori [0,1] si riportano nel range.
-export function normalizzaOutput(target: Target, p: unknown): unknown {
+const nk = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+export function normalizzaOutput(target: Target, p: unknown, ctx?: Contesto): unknown {
   if (!p || typeof p !== 'object') return p;
   const o = p as Record<string, unknown>;
+  if (target === 'foglio_ordine' && Array.isArray(o.righe)) {
+    // varianti ammesse per modello, dal catalogo del contesto (Regola 1: mai un candidato fuori lista)
+    const perModello = new Map<string, Map<string, string>>();
+    for (const riga of catalogo(ctx)) {
+      const i = riga.indexOf('|'); if (i < 0) continue;
+      const m = nk(riga.slice(0, i)), va = riga.slice(i + 1).trim(); if (!va) continue;
+      if (!perModello.has(m)) perModello.set(m, new Map());
+      perModello.get(m)!.set(nk(va), va);
+    }
+    for (const r of o.righe as Array<Record<string, unknown>>) {
+      // TUTTA con un numero in quantita': quel numero e' la stima, mai i pezzi ordinati (decisione owner 04-10)
+      const q = r.quantita as { valore?: unknown } | undefined;
+      if (r.tutta === true && q && q.valore != null) { if (r.stima_pezzi == null) r.stima_pezzi = q.valore; q.valore = null; }
+      // una quantita' letta male (zero, decimale) non deve far rifiutare tutto il foglio: resta vuota, la compila l'operatrice
+      if (q && q.valore != null && !(typeof q.valore === 'number' && Number.isInteger(q.valore) && q.valore > 0)) q.valore = null;
+      const st = Number(r.stima_pezzi);
+      r.stima_pezzi = r.stima_pezzi != null && Number.isFinite(st) && st > 0 ? st : null;
+      const mod = r.modello as { valore?: unknown; match_esistente?: unknown } | undefined;
+      const ammesse = perModello.get(nk(String(mod?.match_esistente ?? mod?.valore ?? '')));
+      const cand = (Array.isArray(r.candidati) ? r.candidati : []).map((c) => String(c).split('|').pop()!.trim()).filter(Boolean);
+      r.candidati = catalogo(ctx).length ? [...new Set(cand.map((c) => ammesse?.get(nk(c))).filter((c): c is string => !!c))].slice(0, 3) : cand.slice(0, 3);
+      const b = Array.isArray(r.box) ? r.box.map(Number) : [];
+      r.box = b.length === 4 && b.every((n) => Number.isFinite(n)) && b[2] > b[0] && b[3] > b[1] ? b.map((n) => Math.min(1000, Math.max(0, n))) : null;
+    }
+  }
   const fix = (c: unknown) => { if (c && typeof c === 'object' && 'confidenza' in (c as object)) { const x = c as { confidenza: unknown }; const n = Number(x.confidenza); x.confidenza = Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0; } };
   for (const v of Object.values(o)) { if (Array.isArray(v)) v.forEach((e) => { fix(e); if (e && typeof e === 'object') Object.values(e as object).forEach(fix); }); else fix(v); }
   if (target === 'materiale' && o.prezzo && typeof o.prezzo === 'object') {
@@ -202,6 +300,17 @@ export function validaOutput(target: Target, p: unknown): string | null {
     if (cat != null && !(CATEGORIE as readonly string[]).includes(String(cat))) return `categoria fuori lista: ${String(cat)}`;
   } else if (target === 'fornitore') {
     for (const k of ['nome', 'email', 'telefono']) if (!campo(k)) return `manca il campo ${k}`;
+  } else if (target === 'foglio_ordine') {
+    for (const k of ['fornitore', 'data_ordine']) if (!campo(k)) return `manca il campo ${k}`;
+    if (!Array.isArray(o.righe)) return 'manca righe[]';
+    for (const r of o.righe as Array<Record<string, unknown>>) {
+      if (!r.modello || typeof r.modello !== 'object') return 'manca il modello della riga';
+      if (typeof r.tutta !== 'boolean') return 'tutta non booleano';
+      if (!Array.isArray(r.candidati)) return 'manca candidati[]';
+      const q = (r.quantita as { valore?: unknown } | undefined)?.valore;
+      if (q != null && (typeof q !== 'number' || q <= 0 || !Number.isInteger(q))) return 'quantita non intera positiva';
+      if (r.tutta && q != null) return 'riga TUTTA con una quantita (la stima va in stima_pezzi)';
+    }
   } else {
     for (const k of ['fornitore', 'data_ordine']) if (!campo(k)) return `manca il campo ${k}`;
     if (!Array.isArray(o.righe)) return 'manca righe[]';
