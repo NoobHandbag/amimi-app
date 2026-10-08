@@ -255,6 +255,13 @@ export type LeadSendResult = { to: string; from?: string; oggetto: string; alrea
 export async function inviaBozza(p: { draft_id: string; send_key: string; to: string; oggetto: string; testo: string; chi: string }): Promise<LeadSendResult> {
   return (await callOutreach({ action: 'send', ...p })) as unknown as LeadSendResult;
 }
+// prova (edge v8): il testo del compositore alla casella di chi e' loggato, con "[PROVA]" nell'oggetto. Il destinatario
+// lo decide la edge dal login; bozza, tocchi e tetto non cambiano. L'invio vero rifiuta gli indirizzi @amimi.it.
+export type LeadProvaResult = { to: string; from?: string; segnaposto?: number; warnings?: string[] };
+export async function inviaProva(p: { oggetto: string; testo: string }): Promise<LeadProvaResult> {
+  return (await callOutreach({ action: 'prova', ...p })) as unknown as LeadProvaResult;
+}
+export const indirizzoInterno = (to: string): boolean => /@amimi\.it$/i.test(to.trim());
 // bozza rimasta 'in_invio' (esito incerto): si sblocca solo dopo aver controllato "Posta inviata" di info@
 export async function sbloccaBozza(p: { draft_id: string; chi: string }): Promise<void> {
   await callOutreach({ action: 'sblocca', ...p });
