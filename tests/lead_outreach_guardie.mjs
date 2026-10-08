@@ -13,9 +13,9 @@ const mig = readFileSync(`${ROOT}supabase/migrations/0139_lead_outreach_ai.sql`,
 const a = src.indexOf(BEGIN), b = src.indexOf(END);
 if (a < 0 || b < 0) { console.error('marcatori PURE:lead-guard non trovati in lead-outreach'); process.exit(1); }
 const TMP = `${ROOT}tests/_leadguard.tmp.ts`;
-writeFileSync(TMP, `${src.slice(a + BEGIN.length, b).trim()}\nexport { bloccantiInvio, completaTesto, avvisiContenuto, segnapostoResidui, inizioGiornoRoma };\n`, 'utf8');
-let bloccantiInvio, completaTesto, avvisiContenuto, segnapostoResidui, inizioGiornoRoma;
-try { ({ bloccantiInvio, completaTesto, avvisiContenuto, segnapostoResidui, inizioGiornoRoma } = await import(pathToFileURL(TMP).href)); }
+writeFileSync(TMP, `${src.slice(a + BEGIN.length, b).trim()}\nexport { bloccantiInvio, bloccantiProva, pulisciOggetto, completaTesto, avvisiContenuto, segnapostoResidui, inizioGiornoRoma };\n`, 'utf8');
+let bloccantiInvio, bloccantiProva, pulisciOggetto, completaTesto, avvisiContenuto, segnapostoResidui, inizioGiornoRoma;
+try { ({ bloccantiInvio, bloccantiProva, pulisciOggetto, completaTesto, avvisiContenuto, segnapostoResidui, inizioGiornoRoma } = await import(pathToFileURL(TMP).href)); }
 finally { try { unlinkSync(TMP); } catch { /* niente */ } }
 
 let ok = 0, ko = 0;
@@ -137,7 +137,9 @@ t('68 follow-up: una risposta PRIMA dell\'ultimo invio non lo ferma (confronto p
 const cronFn = src.slice(src.indexOf('async function giroCron'), src.indexOf('Deno.serve('));
 const iGate = cronFn.indexOf("flags.lead_enabled !== 'true'");
 t('69 cron NO-OP a lead_enabled spento: esce prima di Gmail e di ogni scrittura', iGate > 0 && iGate < cronFn.indexOf('leggiRisposte(') && iGate < cronFn.indexOf("from('health_log')"));
-t('70 il cron non spedisce MAI: un solo messages/send, dentro l\'azione send', src.split('/messages/send').length === 2 && src.indexOf('/messages/send') > src.indexOf('Deno.serve('));
+// v8: i messages/send sono due (send e prova). La regola resta la stessa: nessuno prima di Deno.serve (cioe' nessuno
+// nelle funzioni del giro automatico) e nessuno prima del controllo del JWT.
+t('70 il cron non spedisce MAI: i soli messages/send stanno nelle azioni send e prova, dopo il JWT', src.split('/messages/send').length === 3 && src.indexOf('/messages/send') > src.indexOf('Deno.serve(') && src.indexOf('/messages/send') > src.indexOf("return json({ error: 'dominio non ammesso' }, 403)") && !cronFn.includes('/messages/send'));
 t('71 senza lettura riuscita niente follow-up; per negozio: thread letto in questo giro e nessuna risposta non scritta', /if \(inbound && flags\.lead_outreach_ai_enabled === 'true'\)/.test(cronFn) && /if \(sospesi\.has\(a\.id\)\)/.test(src) && /if \(!letti\.has\(fu\.thread\)\)/.test(src) && src.split('letti.add(th)').length === 3);
 t('72 risposta scritta con upsert ignoreDuplicates su gmail_message_id; esistenza con .in() sui soli id', /from\('lead_touches'\)\.upsert\(riga, \{ onConflict: 'gmail_message_id', ignoreDuplicates: true \}\)/.test(src) && /\.in\('gmail_message_id', ids\)/.test(src));
 t('73 tetti per giro dichiarati e usati (thread, risposte, bozze)', /const MAX_THREAD = \d+/.test(src) && /const MAX_IN = \d+/.test(src) && /const MAX_BOZZE = \d+/.test(src) && /slice\(0, MAX_THREAD\)/.test(src) && /slice\(0, MAX_IN\)/.test(src) && /esito\.proposte\) >= MAX_BOZZE/.test(src));
@@ -187,6 +189,46 @@ t('L3 OutreachBoard marca gli stadi vuoti e dice quando la pipeline e\' vuota', 
 t('L4 colonna Negozio ferma a ogni larghezza, con fondo pieno (senza, le altre celle si leggono sotto); su telefono troncata con il filo a destra e il nome intero nel title', /\n\.lead-table th:first-child, \.lead-table td:first-child \{ position: sticky; left: 0; z-index: 1; background: var\(--card\); \}/.test(css) && /\.lead-table th:first-child, \.lead-table td:first-child \{ max-width: 42vw; overflow: hidden; text-overflow: ellipsis; background: linear-gradient\(to left, var\(--line\) 1px, transparent 1px\) var\(--card\); \}/.test(tel) && /<td className=\"l\" title=\{r\.nome\}>\{r\.nome\}<\/td>/.test(tabella));
 t('L5 su telefono spariscono Rating, Brand affini ed Evid., in testata e nelle righe, e nient\'altro', /\.lead-tel-no \{ display: none; \}/.test(tel) && !/\.lead-tel-no/.test(telBlocchi.reduce((c, m) => c.replace(m[0], ''), css)) && [...tabella.matchAll(/<th className="lead-tel-no">([^<]+)<\/th>/g)].map((m) => m[1]).join('|') === 'Rating|Brand affini|Evid.' && (tabella.match(/<td className="(?:l )?lead-tel-no">/g) ?? []).length === 3 && (tabella.match(/lead-tel-no/g) ?? []).length === 6);
 t('L6 il contenitore che scorre e\' raggiungibile da tastiera e dice che si scorre di lato', /<div className="tablewrap" role="region" aria-label="Tabella negozi: scorri di lato per le altre colonne" tabIndex=\{0\}><table className="sortable lead-table">/.test(webNeg));
+
+console.log('== v8 (08-10): prova alla casella di chi e\' loggato, esito accanto ai bottoni del compositore ==');
+// Origine: una prova mandata a info@ dal compositore e' tornata 422 (destinatario @amimi.it) e il messaggio, in cima
+// alla scheda, non si vedeva: e' sembrata un'email mai arrivata.
+const BM = '// ==== PURE:lead-mime BEGIN ====', EM = '// ==== PURE:lead-mime END ====';
+const am = src.indexOf(BM), bm = src.indexOf(EM);
+if (am < 0 || bm < 0) { console.error('marcatori PURE:lead-mime non trovati in lead-outreach'); process.exit(1); }
+const TMP3 = `${ROOT}tests/_leadmime.tmp.ts`;
+writeFileSync(TMP3, `${src.slice(am + BM.length, bm).trim()}\nexport { encHdr };\n`, 'utf8');
+let encHdr;
+try { ({ encHdr } = await import(pathToFileURL(TMP3).href)); }
+finally { try { unlinkSync(TMP3); } catch { /* niente */ } }
+const iProva = src.indexOf("if (action === 'prova') {");
+const iSend = src.search(/\n  \/\/ -+ send\n/);
+const provaFn = src.slice(iProva, iSend);
+const sendFn = src.slice(iSend);
+t('v8-1 la prova passa anche con segnaposto rimasti e senza riga di opt-out (serve a vedere l\'email mentre la si sistema)', bloccantiProva({ oggetto: 'Amimì Milano per [nome]', testo: 'Gentile team, [DA VERIFICARE: gancio personale]' }).length === 0);
+t('v8-2 prova: oggetto vuoto, testo vuoto e testi oltre i limiti bloccano', bloccantiProva({ oggetto: ' ', testo: 'x' }).length === 1 && bloccantiProva({ oggetto: 'x', testo: '  ' }).length === 1 && bloccantiProva({ oggetto: 'x'.repeat(201), testo: 'x' }).length === 1 && bloccantiProva({ oggetto: 'x', testo: 'x'.repeat(6001) }).length === 1);
+t('v8-3 oggetto: a capo e caratteri di controllo diventano uno spazio, all\'ingresso di bozza, prova e invio', pulisciOggetto('Ciao\r\nBcc: altro@negozio.it') === 'Ciao Bcc: altro@negozio.it' && pulisciOggetto('  Amimì Milano per Ivy\t') === 'Amimì Milano per Ivy' && (src.match(/const oggetto = pulisciOggetto\(String\(body\.oggetto \|\| ''\)\);/g) ?? []).length === 2 && /const oggetto = pulisciOggetto\(String\(parsed\?\.oggetto \?\? template\.oggetto\)\)\.slice\(0, 200\);/.test(src));
+// Gate 2 (C): la cintura vera sugli header e' encHdr, che prima non aveva un test. Tutto cio' che non e' ASCII stampabile
+// (a capo compresi) esce in base64: un oggetto non puo' aprire un secondo header, nemmeno quello riletto dal DB.
+const hdr = encHdr('Re: ciao\r\nBcc: altro@negozio.it');
+t('v8-3b encHdr: un a capo non arriva mai nudo in un header; ASCII semplice resta leggibile; ogni Subject passa da encHdr', !/[\r\n]/.test(hdr) && hdr.startsWith('=?UTF-8?B?') && !/[\t\u007f]/.test(encHdr('a\tb\u007f')) && encHdr('Resto a disposizione') === 'Resto a disposizione' && encHdr('Amimì Milano').startsWith('=?UTF-8?B?') && (src.match(/`Subject: \$\{encHdr\(/g) ?? []).length === 2 && (src.match(/`Subject: /g) ?? []).length === 2);
+const campiProva = [...provaFn.matchAll(/body\.(\w+)/g)].map((m) => m[1]);
+t('v8-4 la prova va SOLO all\'email del JWT: dal client arrivano solo oggetto e testo, nessun Cc/Bcc, nessun thread, oggetto marcato [PROVA]', iProva > 0 && iSend > iProva && provaFn.includes('`To: <${userEmail}>`') && campiProva.length === 2 && campiProva.every((c) => c === 'oggetto' || c === 'testo') && !/\b(cc|bcc):/i.test(provaFn) && !/threadId/.test(provaFn) && /if \(!EMAIL_RE\.test\(userEmail\)\) return json\(/.test(provaFn) && provaFn.indexOf('EMAIL_RE.test(userEmail)') < provaFn.indexOf('/messages/send') && /const PROVA_PREFISSO = '\[PROVA\] '/.test(src) && /const oggettoProva = PROVA_PREFISSO \+ oggetto/.test(provaFn) && provaFn.includes('`Subject: ${encHdr(oggettoProva)}`'));
+t('v8-5 la prova non legge e non scrive i dati: nessun accesso a DB nel blocco, nessun claim', !/sb\.from\(|\.rpc\(/.test(provaFn) && !/in_invio|lead_touches|lead_drafts/.test(provaFn));
+t('v8-6 la prova sta dopo il JWT e dopo il flag lead_outreach_ai_enabled', iProva > src.indexOf("return json({ error: 'dominio non ammesso' }, 403)") && iProva > src.indexOf('if (!enabled) return json('));
+t('v8-7 stesse intestazioni dell\'invio vero: From col nome, text/plain UTF-8, base64 a 76 colonne', src.split('`From: ${encHdr(\'Amimì Milano\')} <${mitt.from}>`').length === 3 && src.split("'Content-Type: text/plain; charset=UTF-8'").length === 3 && src.split("'Content-Transfer-Encoding: base64'").length === 3 && src.split('wrap76(b64(testo))').length === 3);
+// Gate 2 (B1): il test 23 confronta la PRIMA occorrenza del filtro (che e' in `scarta`) e non fissava il claim dell'invio.
+// Qui si guarda dentro l'azione send: l'update a 'in_invio' filtrato per id e per stato, prima dell'unico messages/send.
+const claimRe = /\.update\(\{ stato: 'in_invio'[^\n]*\n\s*\.eq\('id', draftId\)\.in\('stato', \['proposta', 'approvata', 'errore'\]\)\.select\('id'\)/;
+t('v8-8 invio vero: claim atomico (update a in_invio filtrato per id e stato) PRIMA dell\'unico messages/send dell\'azione; la mail parte solo se il claim ha preso una riga', claimRe.test(sendFn) && sendFn.search(claimRe) < sendFn.indexOf('/messages/send') && sendFn.split('/messages/send').length === 2 && sendFn.indexOf('if (!claimed?.length) return json(') > sendFn.search(claimRe) && sendFn.indexOf('if (!claimed?.length) return json(') < sendFn.indexOf('/messages/send') && /from: mitt\.from/.test(sendFn));
+const inviaFn = webOut.slice(webOut.indexOf('const invia = async'), webOut.indexOf('const prova = async'));
+const provaWeb = webOut.slice(webOut.indexOf('const prova = async'), webOut.indexOf('// torna true solo se il tocco'));
+t('v8-9 web: bottone "Manda una prova a me" che manda solo oggetto e testo (mai un destinatario)', /onClick=\{prova\}>\{provaBusy \? 'Mando la prova…' : 'Manda una prova a me'\}<\/button>/.test(webOut) && /inviaProva\(\{ oggetto, testo \}\)/.test(webOut) && /inviaProva\(p: \{ oggetto: string; testo: string \}\)/.test(webApi) && /action: 'prova'/.test(webApi));
+t('v8-10 web: l\'esito di invio, prova e bozza sta IN FONDO al compositore, in una regione live sempre montata, e un errore e\' rosso', webOut.indexOf('<div className="or-esito" aria-live="polite">{cmsg && <div className={cmsg.err ? \'err\' : \'note\'}') > webOut.indexOf('className="card or-compositore"') && webOut.indexOf('<div className="or-esito"') > webOut.indexOf('onClick={invia}') && inviaFn.length > 0 && /catch \(e\) \{ dire\(\(e as Error\)\.message, true\); \}/.test(inviaFn) && !/setMsg\(/.test(inviaFn));
+t('v8-11 web: un destinatario @amimi.it ferma il bottone Invia e dice di usare la prova', /export const indirizzoInterno = \(to: string\): boolean => \/@amimi\\\.it\$\/i\.test\(to\.trim\(\)\)/.test(webApi) && /disabled=\{busy \|\| provaBusy \|\| !to \|\| toInterno \|\|/.test(webOut) && /\{toInterno && <p className="note">/.test(webOut));
+t('v8-12 (Gate 2, B2) durante una prova il bottone Invia non dice "Invio…": la prova ha il suo stato e non tocca busy', provaWeb.length > 0 && /setProvaBusy\(true\)/.test(provaWeb) && /setProvaBusy\(false\)/.test(provaWeb) && !/setBusy\(/.test(provaWeb) && /onClick=\{invia\}>\{busy \? 'Invio…' : `Invia da \$\{LEAD_MITTENTE\}`\}<\/button>/.test(webOut));
+t('v8-13 (Gate 2, B3) un invio riuscito non diventa un errore se il ricarico della scheda fallisce: il ricarico non lancia mai', /const ricarica = async \(\): Promise<string> => \{ try \{ await onChanged\(\); await reload\(\); return ''; \} catch \{ return ' /.test(webOut) && webOut.split('await onChanged()').length === 2 && /\$\{await ricarica\(\)\}/.test(inviaFn) && inviaFn.indexOf('setDraftId(null)') < inviaFn.indexOf('await ricarica()') && /dire\('Bozza scartata\.' \+ \(await ricarica\(\)\)\)/.test(webOut) && /await addTouch\(t\); done = true; out\(ok \+ \(await ricarica\(\)\)\);/.test(webOut));
+t('v8-14 (Gate 2, B4) l\'esito non resta sotto un\'altra bozza: si azzera aprendo una bozza, tornando al template, cambiando tocco o sequenza', /const apriBozza = \(d: LeadDraft\) => \{\n\s*setCmsg\(null\);/.test(webOut) && /setDraftId\(null\); setAvvisi\(\[\]\); setCmsg\(null\); \}\}>Torna al template</.test(webOut) && /setTocco\(Number\(e\.target\.value\)\); setCmsg\(null\);/.test(webOut) && /setCodice\(e\.target\.value\); setCmsg\(null\);/.test(webOut));
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

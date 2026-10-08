@@ -3,6 +3,9 @@
 // Riusa i loro SCHEMI, non il loro codice: Gemini in JSON mode come cs-assist (MAI thinkingConfig, tetto
 // token alto: i token di ragionamento contano dentro maxOutputTokens), Gmail API da info@amimi.it col
 // service account di cs-send (app_flags.cs_gmail_sa_key, domain-wide delegation con gmail.send).
+// v8 (2026-10-08): azione `prova`. L'invio vero rifiuta i destinatari @amimi.it, quindi una prova mandata a info@
+// tornava 422 e non partiva; la prova manda il testo del compositore alla casella di chi e' loggato, senza toccare
+// bozza, tocchi ne' tetto. A capo e caratteri di controllo dell'oggetto diventano uno spazio (bozza, prova, invio).
 // v7 (2026-10-03, migr 0149): listino e condizioni sono pubblici sulla line sheet (owner 03-10); la regola 4 del prompt
 // non dice piu' "non ancora decise" ma "rimanda al link, non riscrivere il listino"; gli avvisi restano, col testo nuovo.
 // v5 (2026-10-03): il From e' wholesale@amimi.it, alias "Invia messaggio come" della casella info@
@@ -18,7 +21,9 @@
 //   sblocca (JWT @amimi.it) bozza rimasta in_invio da >10 min (esito incerto) -> errore, dopo controllo di Posta inviata.
 //   diag   (JWT @amimi.it) stato dei flag e del service account, senza segreti ne' PII.
 //   scarta (JWT @amimi.it) v6: una bozza non ancora partita passa a 'scartata' (il cron non la riscrive).
-//   cron   (senza JWT, come gli altri cron; migr 0148) v6, Blocco 2. NO-OP finche' app_flags.lead_enabled non e' 'true'.
+//   prova  (JWT @amimi.it) v8: il testo del compositore, con "[PROVA]" nell'oggetto, alla casella di chi e' loggato
+//          (l'email del JWT: il destinatario non arriva mai dal client). Nessuna lettura ne' scrittura sui dati lead_*.
+//   cron  (senza JWT, come gli altri cron; migr 0148) v6, Blocco 2. NO-OP finche' app_flags.lead_enabled non e' 'true'.
 //          1) RISPOSTE: per ogni thread Gmail di un nostro tocco email, i messaggi non nostri e non ancora in
 //             lead_touches entrano come tocco 'in' (upsert ignoreDuplicates su gmail_message_id). Una risposta vera
 //             porta il negozio a "risposto" e ferma la sequenza; "no grazie" = opt-out; bounce e risposte automatiche
@@ -137,11 +142,28 @@ function segnapostoResidui(t: string): string[] {
   for (const m of t.matchAll(/\[[^\]\n]{1,200}\]|\{\{[^}\n]{1,60}\}\}/g)) out.push(m[0]);
   return out;
 }
+// v8: a capo e caratteri di controllo dell'oggetto diventano uno spazio, all'ingresso di bozza, prova e invio. Negli
+// header non arrivano comunque nudi (encHdr li codifica in base64): qui si toglie cio' che il campo Oggetto del
+// compositore non mostra, cosi' quello che parte e' quello che la persona ha letto.
+function pulisciOggetto(s: string): string {
+  return s.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+}
+// v8: la prova va solo a chi e' loggato e non entra in pipeline. Segnaposto e riga di opt-out NON la bloccano:
+// serve a vedere l'email mentre la si sta ancora sistemando.
+const PROVA_PREFISSO = '[PROVA] ';
+function bloccantiProva(p: { oggetto: string; testo: string }): string[] {
+  const b: string[] = [];
+  if (!p.oggetto.trim()) b.push('oggetto vuoto');
+  if (p.oggetto.length > 200) b.push('oggetto troppo lungo');
+  if (!p.testo.trim()) b.push('testo vuoto');
+  if (p.testo.length > 6000) b.push('testo troppo lungo');
+  return b;
+}
 function bloccantiInvio(p: { to: string; oggetto: string; testo: string }): string[] {
   const b: string[] = [];
   const to = p.to.trim().toLowerCase();
   if (!EMAIL_RE.test(to)) b.push('destinatario mancante o non valido');
-  else if (to.endsWith('@amimi.it')) b.push('il destinatario e\' un indirizzo @amimi.it');
+  else if (to.endsWith('@amimi.it')) b.push('il destinatario e\' un indirizzo @amimi.it: l\'invio vero va solo ai negozi (per vedere l\'email usa "Manda una prova a me")');
   if (!p.oggetto.trim()) b.push('oggetto vuoto');
   if (p.oggetto.length > 200) b.push('oggetto troppo lungo');
   if (p.testo.trim().length < 80) b.push('testo troppo corto');
@@ -229,6 +251,8 @@ async function mittente(sa: { client_email: string; private_key: string }): Prom
     return { from: GMAIL_USER, avviso: `alias ${FROM_ALIAS} non controllabile (${scrub((e as Error).message).slice(0, 100)}): inviata da ${GMAIL_USER}` };
   }
 }
+// ==== PURE:lead-mime BEGIN ====
+// Testato in tests/lead_outreach_guardie.mjs: encHdr e' cio' che tiene un a capo fuori dagli header (v8).
 const b64 = (s: string): string => {
   const bytes = new TextEncoder().encode(s);
   let bin = '';
@@ -237,6 +261,7 @@ const b64 = (s: string): string => {
 };
 const wrap76 = (s: string): string => s.replace(/(.{76})/g, '$1\r\n');
 const encHdr = (s: string): string => (/[^\x20-\x7e]/.test(s) ? `=?UTF-8?B?${b64(s)}?=` : s);
+// ==== PURE:lead-mime END ====
 
 // nessun segreto in un messaggio d'errore (Gate 2 del 23-09, A1): la chiave sta nell'header, non nell'URL, perche' un
 // errore di rete di Deno cita l'URL intero nel messaggio, e quel messaggio arriva alla UI
@@ -348,7 +373,7 @@ async function creaBozza(sb: any, flags: Flags, p: { accountId: string; tocco: n
   const grezzo = String(parsed?.testo ?? '').trim();
   if (grezzo.length < 80) return { status: 502, body: { error: `bozza vuota o troncata (${finish}): riprova` } };
   const testo = completaTesto(grezzo, flags.lead_firma || '', lingua);
-  const oggetto = String(parsed?.oggetto ?? template.oggetto).trim().slice(0, 200);
+  const oggetto = pulisciOggetto(String(parsed?.oggetto ?? template.oggetto)).slice(0, 200);
   const to = String(d.email_generica ?? '') || (((d.site_meta ?? {}) as { emails?: string[] }).emails ?? [])[0] || '';
 
   const { data: ins, error: iErr } = await sb.from('lead_drafts').insert({
@@ -577,7 +602,7 @@ Deno.serve(async (req) => {
   const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || '');
-  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
+  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'prova', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
   // giro automatico: nessun JWT (lo chiama pg_cron), nessun dato di terzi in risposta, NO-OP a lead_enabled spento
   if (action === 'cron') return await giroCron(createClient(url, svc));
 
@@ -649,12 +674,57 @@ Deno.serve(async (req) => {
     return json({ ok: true, sbloccata: id });
   }
 
+  // ------------------------------------------------------------------------------------------ prova
+  // v8: il testo del compositore mandato ALLA CASELLA DI CHI E' LOGGATO, per vederlo in una casella vera prima
+  // dell'invio. Il destinatario e' l'email del JWT (gia' verificata @amimi.it) e non arriva mai dal client: non e'
+  // un secondo canale di invio. Mittente, tipo e codifica sono quelli dell'invio vero; in piu' un follow-up vero
+  // parte dentro il thread del tocco precedente (In-Reply-To, References, oggetto del primo invio), la prova no.
+  // Nessuna lettura ne' scrittura sui dati: bozza, tocchi, stadio e tetto restano come sono.
+  if (action === 'prova') {
+    if (!EMAIL_RE.test(userEmail)) return json({ error: 'email del login non valida: prova non inviata', bloccante: true }, 422);
+    const oggetto = pulisciOggetto(String(body.oggetto || ''));
+    const testo = String(body.testo || '').replace(/\r\n/g, '\n').trim();
+    const blocchi = bloccantiProva({ oggetto, testo });
+    if (blocchi.length) return json({ error: 'Prova non inviata: ' + blocchi.join('; '), bloccante: true }, 422);
+    if (!flags.cs_gmail_sa_key) return json({ error: 'chiave service account assente (app_flags.cs_gmail_sa_key)' }, 500);
+    let sa: { client_email: string; private_key: string };
+    try { sa = JSON.parse(flags.cs_gmail_sa_key); } catch { return json({ error: 'chiave service account non valida' }, 500); }
+    let gtoken = '';
+    try { gtoken = await googleAccessToken(sa, SCOPE_SEND); }
+    catch (e) { return json({ error: 'autenticazione Google fallita: ' + (e as Error).message.slice(0, 180) }, 502); }
+    const mitt = await mittente(sa);
+    const oggettoProva = PROVA_PREFISSO + oggetto;
+    const mimeProva = [
+      `From: ${encHdr('Amimì Milano')} <${mitt.from}>`,
+      `To: <${userEmail}>`,
+      `Subject: ${encHdr(oggettoProva)}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      wrap76(b64(testo)),
+    ].join('\r\n');
+    let pr: Response;
+    try {
+      pr = await fetch(`${GMAIL}/messages/send`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${gtoken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw: b64url(new TextEncoder().encode(mimeProva)) }),
+      });
+    } catch (e) {
+      return json({ error: 'Rete giu\' durante la prova: riprova. ' + scrub((e as Error).message).slice(0, 120) }, 504);
+    }
+    const pj = await pr.json().catch(() => ({}));
+    if (!pr.ok) return json({ error: `Gmail ha rifiutato la prova (${pr.status}): ${JSON.stringify(pj).slice(0, 250)}` }, 502);
+    return json({ ok: true, prova: true, to: userEmail, from: mitt.from, oggetto: oggettoProva, segnaposto: segnapostoResidui(`${oggetto}\n${testo}`).length, ...(mitt.avviso ? { warnings: [mitt.avviso] } : {}) });
+  }
+
   // ------------------------------------------------------------------------------------------- send
   const draftId = String(body.draft_id || '');
   const sendKey = String(body.send_key || '');
   if (!UUID_RE.test(draftId) || !UUID_RE.test(sendKey)) return json({ error: 'draft_id o send_key non validi' }, 422);
   const to = String(body.to || '').trim().toLowerCase();
-  const oggetto = String(body.oggetto || '').trim();
+  const oggetto = pulisciOggetto(String(body.oggetto || ''));
   const testo = String(body.testo || '').replace(/\r\n/g, '\n').trim();
   const blocchi = bloccantiInvio({ to, oggetto, testo });
   if (blocchi.length) return json({ error: 'Invio bloccato: ' + blocchi.join('; '), bloccante: true }, 422);

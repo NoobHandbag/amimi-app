@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, sbloccaBozza, scartaBozza, segnaposto, LEAD_MITTENTE } from '../lib/leadApi';
+import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, inviaProva, indirizzoInterno, sbloccaBozza, scartaBozza, segnaposto, LEAD_MITTENTE } from '../lib/leadApi';
 import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft } from '../lib/leadApi';
 
 // Sezione Outreach (tappa 1 del PIANO_Outreach_CRM.md): pipeline per stadio, coda del giorno, scheda con
@@ -123,8 +123,14 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const [sendKey, setSendKey] = useState('');
   const [avvisi, setAvvisi] = useState<string[]>([]);
   const [aiBusy, setAiBusy] = useState(false);
+  // esito delle azioni del compositore, mostrato IN FONDO al compositore, accanto ai bottoni: `msg` sta in cima alla
+  // scheda, e con il bottone Invia a schermo non si vede (08-10: un invio rifiutato e' sembrato un'email mai arrivata)
+  const [cmsg, setCmsg] = useState<{ t: string; err: boolean } | null>(null);
+  const dire = (t: string, err = false) => setCmsg(t ? { t, err } : null);
+  const [provaBusy, setProvaBusy] = useState(false);
 
   const apriBozza = (d: LeadDraft) => {
+    setCmsg(null);   // l'esito della bozza di prima non deve restare sotto il bottone Invia di questa
     if (d.sequenza_tocco != null) setTocco(d.sequenza_tocco);
     if (d.lingua === 'en' || d.lingua === 'it') setCodice(d.lingua === 'en' ? 'boutique_en' : 'boutique_it');
     setDraftId(d.id); setSendKey(crypto.randomUUID());
@@ -132,9 +138,12 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     setAvvisi(d.fatti_usati?.avvisi ?? []);
   };
   const reload = async () => { setTouches(await fetchTouches(r.id)); const ds = await fetchDrafts(r.id); setDrafts(ds); return ds; };
+  // dopo una scrittura RIUSCITA la scheda si ricarica: se il ricarico fallisce l'azione resta fatta, e l'esito lo dice
+  // invece di sembrare un errore dell'azione (un invio partito non deve mai leggersi come fallito)
+  const ricarica = async (): Promise<string> => { try { await onChanged(); await reload(); return ''; } catch { return ' La scheda non si e’ aggiornata: ricarica la pagina per vedere la timeline.'; } };
   // all'apertura: se il giro automatico ha gia' scritto il follow-up di questo negozio, il compositore parte da li'
   useEffect(() => {
-    setTouches(null); setDraftId(null);
+    setTouches(null); setDraftId(null); setCmsg(null);
     reload().then((ds) => {
       const auto = r.bozza_auto_tocco != null ? ds.find((d) => d.origine === 'auto' && d.stato === 'proposta' && d.sequenza_tocco === r.bozza_auto_tocco) : undefined;
       if (auto) { apriBozza(auto); setMsg(`Follow-up ${auto.sequenza_tocco} scritto in automatico alla scadenza: rileggilo, correggilo e invialo (o scartalo).`); }
@@ -143,8 +152,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   }, [r.id]);
   const scarta = async () => {
     if (!draftId) return;
-    setBusy(true); setMsg('');
-    try { await scartaBozza({ draft_id: draftId, chi: who }); setDraftId(null); setAvvisi([]); await onChanged(); await reload(); setMsg('Bozza scartata.'); } catch (e) { setMsg((e as Error).message); }
+    setBusy(true); dire('');
+    try { await scartaBozza({ draft_id: draftId, chi: who }); setDraftId(null); setAvvisi([]); dire('Bozza scartata.' + (await ricarica())); } catch (e) { dire((e as Error).message, true); }
     setBusy(false);
   };
 
@@ -158,49 +167,59 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   }, [seq?.id, referente, r.id, draftId, firma, linesheet]);
 
   const bozzaAI = async () => {
-    if (seq?.canale !== 'email') { setMsg('La bozza AI e’ per i tocchi email (1-4).'); return; }
-    setAiBusy(true); setMsg('');
+    if (seq?.canale !== 'email') { dire('La bozza AI e’ per i tocchi email (1-4).', true); return; }
+    setAiBusy(true); dire('');
     try {
       const d = await generaBozza({ account_id: r.id, tocco, referente: referente || undefined, lingua: codice.endsWith('_en') ? 'en' : 'it', chi: who });
       setDraftId(d.draft_id); setSendKey(crypto.randomUUID());
       setOggetto(d.oggetto); setTesto(d.testo); if (d.to && !to) setTo(d.to);
       setAvvisi(d.avvisi ?? []);
-      setMsg(d.segnaposto.length ? `Bozza pronta. Completa le ${d.segnaposto.length} parti fra parentesi quadre prima di inviare.` : 'Bozza pronta: rileggila e correggila prima di inviare.');
+      dire(d.segnaposto.length ? `Bozza pronta. Completa le ${d.segnaposto.length} parti fra parentesi quadre prima di inviare.` : 'Bozza pronta: rileggila e correggila prima di inviare.');
       setDrafts(await fetchDrafts(r.id));
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { dire((e as Error).message, true); }
     setAiBusy(false);
   };
   const residui = segnaposto(`${oggetto}\n${testo}`);
+  const toInterno = indirizzoInterno(to);
   const invia = async () => {
     if (!draftId) return;
     if (!window.confirm(`Inviare adesso da ${LEAD_MITTENTE}?\n\nA: ${to}\nOggetto: ${oggetto}\n\nL'email parte davvero e non si puo' richiamare.`)) return;
-    setBusy(true); setMsg('');
+    setBusy(true); dire('');
     try {
       const res = await inviaBozza({ draft_id: draftId, send_key: sendKey, to, oggetto, testo, chi: who });
-      setMsg(`${res.already_sent ? 'Gia’ inviata prima' : 'Inviata'} a ${res.to}${res.from ? ` da ${res.from}` : ''}.${res.prossimo ? ` Follow-up in coda per il ${fmtD(res.prossimo)}.` : ''}${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}`);
       setDraftId(null); setAvvisi([]);
-      await onChanged(); await reload();
+      dire(`${res.already_sent ? 'Gia’ inviata prima' : 'Inviata'} a ${res.to}${res.from ? ` da ${res.from}` : ''}.${res.prossimo ? ` Follow-up in coda per il ${fmtD(res.prossimo)}.` : ''}${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}${await ricarica()}`);
       setTocco((t) => Math.min(4, t + 1));
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { dire((e as Error).message, true); }
     setBusy(false);
+  };
+  // prova: il testo che c'e' ADESSO nel box, alla casella di chi e' loggato. Non e' un invio: niente tocco, niente tetto.
+  // Stato suo (provaBusy): durante una prova il bottone Invia non deve leggere "Invio…".
+  const prova = async () => {
+    setProvaBusy(true); dire('');
+    try {
+      const res = await inviaProva({ oggetto, testo });
+      dire(`Prova inviata a ${res.to}${res.from ? ` da ${res.from}` : ''}: la trovi in Posta in arrivo con “[PROVA]” nell’oggetto. Non conta come invio: bozza, tocchi e tetto restano come prima.${res.segnaposto ? ` Nel testo restano ${res.segnaposto} parti fra parentesi da completare.` : ''}${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}`);
+    } catch (e) { dire((e as Error).message, true); }
+    setProvaBusy(false);
   };
 
   // torna true solo se il tocco e' stato scritto: chi chiama pulisce il modulo o avanza il tocco SOLO in quel caso
-  const save = async (t: Parameters<typeof addTouch>[0], ok: string): Promise<boolean> => {
-    setBusy(true); setMsg('');
+  const save = async (t: Parameters<typeof addTouch>[0], ok: string, out: (s: string, err?: boolean) => void = setMsg): Promise<boolean> => {
+    setBusy(true); out('');
     let done = false;
-    try { await addTouch(t); await onChanged(); await reload(); setMsg(ok); done = true; } catch (e) { setMsg((e as Error).message); }
+    try { await addTouch(t); done = true; out(ok + (await ricarica())); } catch (e) { out((e as Error).message, true); }
     setBusy(false);
     return done;
   };
   const registra = () => save({ account_id: r.id, canale, direzione: dir, subject: subject || null, body_clean: body || null, stage_prima: r.lead_stage, stage_dopo: stageDopo || null, esito: esito || null, prossima_azione: pa || null, prossima_azione_at: paAt || null, chi: who }, 'Tocco registrato.').then((ok) => { if (!ok) return; setSubject(''); setBody(''); setEsito(''); setStageDopo(''); setPa(''); setPaAt(''); });
   const segnaInviata = () => {
     const next = sequences.find((s) => s.codice === codice && s.tocco === tocco + 1 && s.canale === 'email');
-    return save({ account_id: r.id, canale: seq?.canale ?? 'email', direzione: 'out', subject: oggetto || null, body_clean: testo, stage_prima: r.lead_stage, stage_dopo: r.lead_stage === 'da_contattare' ? 'contattato' : null, sequenza_tocco: tocco, prossima_azione: next ? `follow-up ${next.tocco} di 4` : 'chiusura: nessun altro tocco', prossima_azione_at: next ? addDays(next.giorni_attesa) : null, chi: who }, next ? `Registrata come inviata. Follow-up ${next.tocco} fra ${next.giorni_attesa} giorni.` : 'Registrata come inviata. Sequenza finita.').then((ok) => { if (ok) setTocco((t) => Math.min(4, t + 1)); });
+    return save({ account_id: r.id, canale: seq?.canale ?? 'email', direzione: 'out', subject: oggetto || null, body_clean: testo, stage_prima: r.lead_stage, stage_dopo: r.lead_stage === 'da_contattare' ? 'contattato' : null, sequenza_tocco: tocco, prossima_azione: next ? `follow-up ${next.tocco} di 4` : 'chiusura: nessun altro tocco', prossima_azione_at: next ? addDays(next.giorni_attesa) : null, chi: who }, next ? `Registrata come inviata. Follow-up ${next.tocco} fra ${next.giorni_attesa} giorni.` : 'Registrata come inviata. Sequenza finita.', dire).then((ok) => { if (ok) setTocco((t) => Math.min(4, t + 1)); });
   };
   const sposta = () => moveTo && save({ account_id: r.id, canale: 'altro', direzione: 'out', body_clean: `Spostato a "${STAGE_LABEL[moveTo]}" da ${who}`, stage_prima: r.lead_stage, stage_dopo: moveTo, chi: who }, `Spostato in ${STAGE_LABEL[moveTo]}.`).then((ok) => { if (ok) setMoveTo(''); });
   const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(oggetto)}&body=${encodeURIComponent(testo)}`;
-  const copia = async () => { try { await navigator.clipboard.writeText(`${oggetto ? oggetto + '\n\n' : ''}${testo}`); setMsg('Testo copiato.'); } catch { setMsg('Copia non riuscita: seleziona e copia a mano.'); } };
+  const copia = async () => { try { await navigator.clipboard.writeText(`${oggetto ? oggetto + '\n\n' : ''}${testo}`); dire('Testo copiato.'); } catch { dire('Copia non riuscita: seleziona e copia a mano.', true); } };
 
   return (
     <div className="screen">
@@ -261,8 +280,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
         <section className="card or-compositore">
           <h2>Compositore</h2>
           <div className="or-form">
-            <label>Sequenza<select value={codice} onChange={(e) => setCodice(e.target.value)}>{[...new Set(sequences.map((s) => s.codice))].map((c) => <option key={c} value={c}>{c === 'boutique_it' ? 'Boutique · italiano' : c === 'boutique_en' ? 'Boutique · English' : c}</option>)}</select></label>
-            <label>Tocco<select value={tocco} onChange={(e) => setTocco(Number(e.target.value))}>{sequences.filter((s) => s.codice === codice).map((s) => <option key={s.tocco} value={s.tocco}>{s.tocco === 0 ? '0 · telefonata' : `${s.tocco} · ${s.canale}${s.giorni_attesa ? ` (+${s.giorni_attesa} gg)` : ''}`}</option>)}</select></label>
+            <label>Sequenza<select value={codice} onChange={(e) => { setCodice(e.target.value); setCmsg(null); }}>{[...new Set(sequences.map((s) => s.codice))].map((c) => <option key={c} value={c}>{c === 'boutique_it' ? 'Boutique · italiano' : c === 'boutique_en' ? 'Boutique · English' : c}</option>)}</select></label>
+            <label>Tocco<select value={tocco} onChange={(e) => { setTocco(Number(e.target.value)); setCmsg(null); }}>{sequences.filter((s) => s.codice === codice).map((s) => <option key={s.tocco} value={s.tocco}>{s.tocco === 0 ? '0 · telefonata' : `${s.tocco} · ${s.canale}${s.giorni_attesa ? ` (+${s.giorni_attesa} gg)` : ''}`}</option>)}</select></label>
             <label className="wide">Referente (nome)<input value={referente} onChange={(e) => setReferente(e.target.value)} placeholder="es. Valentina · vuoto = team di …" /></label>
             {oggetto !== '' || seq?.canale === 'email' ? <label className="wide">Oggetto<input value={oggetto} onChange={(e) => setOggetto(e.target.value)} /></label> : null}
             <label className="wide">Testo<textarea rows={14} value={testo} onChange={(e) => setTesto(e.target.value)} /></label>
@@ -272,18 +291,20 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
             <div className="or-ai">
               <div className="lead-actions">
                 <button type="button" className="ds-btn" disabled={aiBusy || busy || seq?.canale !== 'email'} style={{ background: 'var(--interactive-700)', color: '#fff', borderColor: 'var(--interactive-700)' }} onClick={bozzaAI}>{aiBusy ? 'Scrivo la bozza…' : draftId ? 'Rigenera bozza AI' : `Bozza con l’AI (tocco ${tocco})`}</button>
-                {draftId && <button type="button" className="ds-btn" disabled={busy} onClick={() => { setDraftId(null); setAvvisi([]); }}>Torna al template</button>}
+                {draftId && <button type="button" className="ds-btn" disabled={busy} onClick={() => { setDraftId(null); setAvvisi([]); setCmsg(null); }}>Torna al template</button>}
                 {draftId && <button type="button" className="ds-btn" disabled={busy} onClick={scarta}>Scarta bozza</button>}
+                {seq?.canale === 'email' && <button type="button" className="ds-btn" disabled={busy || aiBusy || provaBusy || !oggetto.trim() || !testo.trim()} title="Manda questo testo alla tua casella, con [PROVA] nell’oggetto: non conta come invio" onClick={prova}>{provaBusy ? 'Mando la prova…' : 'Manda una prova a me'}</button>}
               </div>
               {avvisi.length > 0 && <div className="err" style={{ marginTop: 6 }}>Da controllare: {avvisi.join(' · ')}</div>}
               {draftId && <>
                 <label className="cs-fld" style={{ display: 'block', marginTop: 8 }}>Destinatario<input type="email" value={to} onChange={(e) => setTo(e.target.value.trim())} placeholder="email del negozio" /></label>
+                {toInterno && <p className="note">Gli indirizzi @amimi.it non ricevono l’invio vero, che va solo ai negozi. Per vedere l’email nella tua casella usa “Manda una prova a me”.</p>}
                 {residui.length > 0 && <p className="note">Prima di inviare completa: {residui.slice(0, 4).join(' ')}</p>}
-                <button type="button" className="ds-btn" disabled={busy || !to || residui.length > 0 || r.n_opt_out > 0} style={{ marginTop: 6, background: 'var(--positive-700)', color: '#fff', borderColor: 'var(--positive-700)' }} onClick={invia}>{busy ? 'Invio…' : `Invia da ${LEAD_MITTENTE}`}</button>
+                <button type="button" className="ds-btn" disabled={busy || provaBusy || !to || toInterno || residui.length > 0 || r.n_opt_out > 0} style={{ marginTop: 6, background: 'var(--positive-700)', color: '#fff', borderColor: 'var(--positive-700)' }} onClick={invia}>{busy ? 'Invio…' : `Invia da ${LEAD_MITTENTE}`}</button>
               </>}
             </div>
           ) : <p className="note">Bozza AI e invio dall&#8217;app spenti (flag lead_outreach_ai_enabled). Per ora: template, Gmail e &#8220;Segna come inviata&#8221;.</p>}
-          {drafts.length > 0 && <details style={{ marginTop: 8 }}><summary style={{ cursor: 'pointer', fontSize: 13 }}>Bozze di questo negozio ({drafts.length})</summary><div className="list">{drafts.map((d) => <div key={d.id} className="row"><div><div className="rt">Tocco {d.sequenza_tocco ?? '—'} · {d.stato}{d.origine === 'auto' ? ' · automatica' : ''}{d.sent_by ? ` · ${d.sent_by}` : d.chi ? ` · ${d.chi}` : ''}</div><div className="rs">{d.oggetto ?? ''}{d.errore ? ` · ${d.errore}` : ''}</div>{aiOn && (d.stato === 'proposta' || d.stato === 'errore') && d.id !== draftId && <button type="button" className="or-link" disabled={busy} onClick={() => apriBozza(d)}>Apri nel compositore</button>}{d.stato === 'in_invio' && <button type="button" className="or-link" disabled={busy} onClick={async () => { if (!window.confirm('Hai controllato "Posta inviata" di info@amimi.it e questa email NON c’e’? Solo in quel caso sbloccala.')) return; try { await sbloccaBozza({ draft_id: d.id, chi: who }); setMsg('Bozza sbloccata: si puo’ reinviare.'); await reload(); } catch (e) { setMsg((e as Error).message); } }}>Sblocca (esito incerto)</button>}</div><div className="muted" style={{ fontSize: 12 }}>{fmtD(d.sent_at ?? d.created_at)}</div></div>)}</div></details>}
+          {drafts.length > 0 && <details style={{ marginTop: 8 }}><summary style={{ cursor: 'pointer', fontSize: 13 }}>Bozze di questo negozio ({drafts.length})</summary><div className="list">{drafts.map((d) => <div key={d.id} className="row"><div><div className="rt">Tocco {d.sequenza_tocco ?? '—'} · {d.stato}{d.origine === 'auto' ? ' · automatica' : ''}{d.sent_by ? ` · ${d.sent_by}` : d.chi ? ` · ${d.chi}` : ''}</div><div className="rs">{d.oggetto ?? ''}{d.errore ? ` · ${d.errore}` : ''}</div>{aiOn && (d.stato === 'proposta' || d.stato === 'errore') && d.id !== draftId && <button type="button" className="or-link" disabled={busy} onClick={() => apriBozza(d)}>Apri nel compositore</button>}{d.stato === 'in_invio' && <button type="button" className="or-link" disabled={busy} onClick={async () => { if (!window.confirm('Hai controllato "Posta inviata" di info@amimi.it e questa email NON c’e’? Solo in quel caso sbloccala.')) return; try { await sbloccaBozza({ draft_id: d.id, chi: who }); dire('Bozza sbloccata: si puo’ reinviare.'); await reload(); } catch (e) { dire((e as Error).message, true); } }}>Sblocca (esito incerto)</button>}</div><div className="muted" style={{ fontSize: 12 }}>{fmtD(d.sent_at ?? d.created_at)}</div></div>)}</div></details>}
           {!draftId && <div className="lead-actions">
             {seq?.canale === 'email' && to && <a className="ds-btn" href={gmailUrl} target="_blank" rel="noreferrer">Apri in Gmail</a>}
             <button type="button" className="ds-btn" onClick={copia}>Copia testo</button>
@@ -291,6 +312,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
             <button type="button" className="ds-btn" disabled={busy || !testo} style={{ color: 'var(--positive-700)', borderColor: 'var(--positive-700)' }} onClick={segnaInviata}>{seq?.canale === 'telefono' ? 'Segna come fatta' : 'Segna come inviata'}</button>
           </div>}
           {!to && seq?.canale === 'email' && <p className="note">Nessuna email in anagrafica: "Apri in Gmail" compare quando c&#8217;e&#8217; un destinatario.</p>}
+          {/* contenitore sempre montato: una regione live che compare gia' piena spesso non viene letta */}
+          <div className="or-esito" aria-live="polite">{cmsg && <div className={cmsg.err ? 'err' : 'note'} style={{ marginTop: 8 }}>{cmsg.t}</div>}</div>
         </section>
       </div>
     </div>
