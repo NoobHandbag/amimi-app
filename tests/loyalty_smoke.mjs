@@ -26,6 +26,8 @@ console.log('\n== App Proxy (firma vera aggiunta da Shopify, nessun cliente logg
   const a = await get(SITE + '/club?anteprima=1');
   t('2c /apps/premia/club?anteprima=1 -> pagina nuova (punti Mimì, percorso, nessun timbro)', a.status === 200 && /I tuoi punti Mimì/.test(a.text) && /id="walk"/.test(a.text) && !/stampsForReward/.test(a.text), a.status + ' ' + a.text.slice(0, 80));
   t('2d la Mimì e\' dentro la pagina nuova (segnaposto riempito dal build)', /data:image\/webp;base64,/.test(a.text) && !/__MIMI_DATA_URI__/.test(a.text));
+  const q = await get(SITE + '/club?evento=SMOKE0000');
+  t('2e /apps/premia/club?evento=... -> sempre la pagina nuova (quella di prima ignorerebbe il QR)', q.status === 200 && /I tuoi punti Mimì/.test(q.text) && !/stampsForReward/.test(q.text), q.status + ' ' + q.text.slice(0, 80));
   const dk = await get(SITE + '/deck');
   t('3b /apps/premia/deck senza login -> login_required', dk.status === 200 && dk.json?.state === 'login_required', dk.status + ' ' + dk.text.slice(0, 80));
   const ck = await get(SITE + '/checkin', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"code":"SMOKE0000"}' });

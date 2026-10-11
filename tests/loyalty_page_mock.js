@@ -46,6 +46,19 @@
     riscatto_poco:  base(130, { redeemMode: 'insufficient' }),
     premi_off:      base(180, { rewardsOff: true }),
     premio_fisso:   base(120, { rewards: [{ key: 'omaggio', label: 'un portacarte in omaggio', cost_points: 100, kind: 'gift', value: null, sort: 1 }] }),
+    // premio a IMPORTO (non a percentuale): la pagina non deve mai scrivere "10%"
+    premio_importo: base(120, { rewards: [{ key: 'dieci', label: '10 euro di sconto', cost_points: 100, kind: 'amount', value: 10, sort: 1 }],
+                                redemptions: [{ reward_key: 'dieci', cost_points: 100, status: 'fulfilled', discount_code: 'DIECI-ABC123', created_at: '2026-10-01T10:00:00+00:00', created_day: '2026-10-01', kind: 'amount', value: 10, used_at: null, used_day: null }] }),
+    // risposta PERSA: il server scala i punti e consegna il codice, ma alla pagina arriva un 502 senza JSON.
+    // Il "Riprova" deve rimandare lo stesso idemp e trovare il riscatto gia' fatto, senza scalare due volte.
+    riscatto_perso: base(250, { redeemMode: 'lost' }),
+    // gateway rotto: risposte non JSON che NON devono sembrare un profilo o un premio
+    gateway:        { stateRaw: true },
+    coccola_502:    base(250, { coccolaMode: 'raw502' }),
+    memory_502:     base(250, { memoryMode: 'raw502' }),
+    senza_saldo:    { state: { nanna: false, coccola_disponibile: true, memory_disponibile: true, wardrobe: [] } },
+    // mezzanotte: un riscatto delle 00:30 di Roma e' del giorno 12, anche se in UTC e' ancora l'11
+    mezzanotte:     base(40, { redemptions: [{ reward_key: 'amica12', cost_points: 100, status: 'fulfilled', discount_code: 'AMICA12-NOTTE1', created_at: '2026-10-11T22:30:00+00:00', created_day: '2026-10-12', kind: 'percentage', value: 12, used_at: '2026-10-12T22:40:00+00:00', used_day: '2026-10-13' }] }),
     // azioni del giorno
     fatti:        base(60, { coccola: false, memory: false }),
     coccola_gia:  base(60, { coccolaMode: 'done' }),
@@ -88,17 +101,22 @@
   window.__mock = { name: name, db: db, scenari: Object.keys(SC) };
 
   function reply(data, status) { return { data: data, status: status || 200 }; }
+  var RAW502 = { raw: '<html><body><h1>502 Bad Gateway</h1></body></html>', status: 502 };   // corpo non JSON, come un gateway rotto
+  var fatti = {};                                                // idemp -> riscatto gia' eseguito (come il ramo already del server)
   function handle(action, body) {
+    if (db.stateRaw && (action === 'state' || action === 'rewards' || action === 'profile')) return RAW502;
     if (db.state && (action === 'state' || action === 'rewards' || action === 'profile')) return reply(db.state, db.stateStatus || 200);
     if (action === 'state') return reply({ points: db.points, nanna: false, coccola_disponibile: db.coccola, memory_disponibile: db.memory, worn: null, wardrobe: db.wardrobe, wardrobe_source: 'db' });
     if (action === 'rewards') return db.rewardsOff ? reply({ state: 'off' }) : reply({ points: db.points, rewards: db.rewards, redemptions: db.redemptions });
     if (action === 'profile') { var p = JSON.parse(JSON.stringify(db.profile)); if (db.old) delete p.checkin_enabled; return reply(p); }
     if (action === 'coccola') {
       if (db.coccolaMode === 'error') return reply({ error: 'write_failed' }, 500);
+      if (db.coccolaMode === 'raw502') return RAW502;
       if (db.coccolaMode === 'done' || !db.coccola) return reply({ done_today: true, points: db.points });
       db.points += 5; db.coccola = false; return reply({ points: db.points, added: 5 });
     }
     if (action === 'memory_win') {
+      if (db.memoryMode === 'raw502') return RAW502;
       if (db.memoryMode === 'done' || !db.memory) return reply({ done_today: true, points: db.points });
       db.points += 5; db.memory = false; return reply({ points: db.points, added: 5 });
     }
@@ -110,10 +128,14 @@
     if (action === 'redeem') {
       if (db.redeemMode === 'error') return reply({ error: 'redeem_failed' }, 500);
       if (db.redeemMode === 'insufficient') return reply({ ok: false, reason: 'insufficient', points: db.points }, 409);
+      var idemp = body && body.idemp;
+      if (idemp && fatti[idemp]) return reply({ ok: true, already: true, status: 'fulfilled', code: fatti[idemp], points: db.points });   // stesso token: nessun secondo addebito
       var rw = db.rewards[0]; db.points -= rw.cost_points;
       if (db.redeemMode === 'pending') { db.redemptions.unshift({ reward_key: rw.key, cost_points: rw.cost_points, status: 'pending', discount_code: null, created_at: new Date().toISOString(), kind: rw.kind, value: rw.value, used_at: null }); return reply({ ok: true, status: 'pending', code: null, points: db.points, cost: rw.cost_points }); }
       var code = 'AMICA12-' + Math.random().toString(36).slice(2, 8).toUpperCase();
       db.redemptions.unshift({ reward_key: rw.key, cost_points: rw.cost_points, status: 'fulfilled', discount_code: code, created_at: new Date().toISOString(), kind: rw.kind, value: rw.value, used_at: null });
+      if (idemp) fatti[idemp] = code;
+      if (db.redeemMode === 'lost') { db.redeemMode = ''; return RAW502; }   // fatto a DB, risposta persa
       return reply({ ok: true, status: 'fulfilled', code: code, points: db.points, cost: rw.cost_points });
     }
     if (action === 'checkin') {
@@ -143,7 +165,10 @@
       if (db.network) return Promise.reject(new TypeError('rete assente (finta)'));
       var r = handle(action, body);
       return new Promise(function (res) {
-        setTimeout(function () { res(new Response(JSON.stringify(r.data), { status: r.status, headers: { 'Content-Type': 'application/json' } })); }, Number(qs.get('lento')) || 40);
+        setTimeout(function () {
+          if (r.raw !== undefined) res(new Response(r.raw, { status: r.status, headers: { 'Content-Type': 'text/html' } }));
+          else res(new Response(JSON.stringify(r.data), { status: r.status, headers: { 'Content-Type': 'application/json' } }));
+        }, Number(qs.get('lento')) || 40);
       });
     }
     return real.apply(this, arguments);

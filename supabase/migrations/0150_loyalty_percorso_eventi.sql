@@ -1,6 +1,6 @@
 -- 0150 (Premia, 2026-10-11, call del 09-10): pagina a soli punti con percorso, QR agli eventi (+20), elenco dei codici
 -- riscattati con lo stato "usato", memory con le foto vere delle borse.
--- ADDITIVA (Regola Ferrea 19): due tabelle nuove col prefisso loyalty_*, quattro funzioni nuove, una funzione del modulo
+-- ADDITIVA (Regola Ferrea 19): due tabelle nuove col prefisso loyalty_*, tre funzioni nuove, una funzione del modulo
 -- ridefinita (loyalty_track: solo le due liste chiuse si allungano), due flag default OFF. Core solo in LETTURA
 -- (shopify_orders.discount_codes per sapere se un codice e' stato usato, shopify_stock per le foto). Nessuna colonna su
 -- tabelle core, nessuna azione write-api, nessun dato riscritto. Rollback = flag OFF (loyalty_checkin_enabled,
@@ -46,7 +46,10 @@ create table if not exists loyalty_checkin_events (
 );
 alter table loyalty_checkin_events enable row level security;
 revoke all on loyalty_checkin_events from anon, authenticated;
+-- lettura interna: ask_ro non scavalca la RLS (rolbypassrls = false), quindi il solo GRANT leggerebbe zero righe senza
+-- errore (Gate 2 dell'11-10: e' cosi' per le tabelle loyalty_* piu' vecchie, caso aperto a parte). Qui grant + policy.
 grant select on loyalty_checkin_events to ask_ro;
+create policy loyalty_checkin_events_ask_ro on loyalty_checkin_events for select to ask_ro using (true);
 
 create table if not exists loyalty_checkins (
   event_code          text not null references loyalty_checkin_events (code),
@@ -59,6 +62,7 @@ create index if not exists loyalty_checkins_cust_idx on loyalty_checkins (shopif
 alter table loyalty_checkins enable row level security;
 revoke all on loyalty_checkins from anon, authenticated;
 grant select on loyalty_checkins to ask_ro;
+create policy loyalty_checkins_ask_ro on loyalty_checkins for select to ask_ro using (true);
 
 create unique index if not exists loyalty_events_event_checkin_uq
   on loyalty_events (shopify_customer_id, (meta->>'event')) where source = 'event_checkin';
@@ -112,25 +116,32 @@ end; $function$;
 revoke all on function public.loyalty_checkin(text, text) from anon, authenticated, public;
 grant execute on function public.loyalty_checkin(text, text) to service_role;
 
--- 4. Tutti i codici riscattati di un cliente, con il valore del premio di allora e la data in cui il codice compare
---    in un ordine (usato). Un codice del pool e' monouso: se e' in un ordine non e' piu' spendibile, qualunque sia lo
---    stato dell'ordine. Sola lettura; il confronto e' per posizione (nessun carattere jolly dal dato).
+-- 4. I codici riscattati di un cliente (in attesa o consegnati, gli ultimi 60), con tipo e valore della riga del premio
+--    e la data in cui il codice compare in un ordine (usato). Un codice del pool e' monouso: se e' in un ordine non e'
+--    piu' spendibile, qualunque sia lo stato dell'ordine. Sola lettura. Il confronto e' ESATTO sul codice intero (il
+--    campo degli ordini viene spezzato su ogni carattere che non puo' stare in un codice): un codice contenuto in un
+--    altro non lo segna come usato, e dal dato non arriva nessun carattere jolly. I giorni escono gia' in Europe/Rome.
+--    Il valore e' quello della riga del premio OGGI: per cambiare un premio si crea una chiave nuova (come amica12 al
+--    posto di tessera), non si modifica il valore di una riga gia' riscattata.
 create or replace function public.loyalty_redemptions_for(p_customer text) returns jsonb
 language sql stable security definer set search_path to 'public' as $function$
   select coalesce(jsonb_agg(jsonb_build_object(
            'reward_key', r.reward_key, 'cost_points', r.cost_points, 'status', r.status,
            'discount_code', r.discount_code, 'created_at', r.created_at,
-           'kind', w.kind, 'value', w.value, 'used_at', u.used_at)
+           'created_day', (r.created_at at time zone 'Europe/Rome')::date,
+           'kind', w.kind, 'value', w.value,
+           'used_at', u.used_at, 'used_day', (u.used_at at time zone 'Europe/Rome')::date)
          order by r.created_at desc), '[]'::jsonb)
   from (select reward_key, cost_points, status, discount_code, created_at
-        from loyalty_redemptions where shopify_customer_id = p_customer
+        from loyalty_redemptions
+        where shopify_customer_id = p_customer and status in ('pending', 'fulfilled')
         order by created_at desc limit 60) r
   left join loyalty_rewards w on w.key = r.reward_key
   left join lateral (
     select min(o.created_at_shop) as used_at
     from shopify_orders o
     where r.discount_code is not null and length(r.discount_code) >= 6
-      and position(upper(r.discount_code) in upper(coalesce(o.discount_codes, ''))) > 0
+      and upper(r.discount_code) = any(regexp_split_to_array(upper(coalesce(o.discount_codes, '')), '[^A-Z0-9_-]+'))
   ) u on true
 $function$;
 revoke all on function public.loyalty_redemptions_for(text) from anon, authenticated, public;
@@ -160,9 +171,9 @@ create or replace function public.loyalty_track(p_customer text, p_events jsonb)
 language plpgsql security definer set search_path to 'public' as $$
 declare
   c_views    constant text[] := array['redeem_ready', 'redeem_locked', 'redeem_pending', 'profilo', 'mimi', 'guardaroba', 'bonus2', 'bday',
-                                      'percorso', 'codici', 'regole', 'evento'];
+                                      'codici', 'regole', 'evento'];
   c_taps     constant text[] := array['redeem', 'copy_code', 'coccola', 'gioco', 'nanna', 'wear', 'profile_save',
-                                      'regole', 'codici_tutti', 'shop'];
+                                      'codici_tutti', 'shop'];
   c_max_call constant int := 20;
   c_max_day  constant int := 300;
   v_day   date := (now() at time zone 'Europe/Rome')::date;

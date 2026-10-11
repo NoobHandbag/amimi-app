@@ -104,6 +104,8 @@
     await until(()=>c.calls('state').length===n+1 && c.vis('#gate'), 3000, 'seconda lettura e cancello di nuovo');
   });
   await test('stato: rete assente', async()=>{ const c=await open('rete'); assert(c.vis('#gate') && c.vis('#gateRetry'), 'cancello con Riprova'); });
+  await test('stato: gateway rotto (502 senza JSON) non diventa un profilo a zero punti', async()=>{ const c=await open('gateway'); assert(c.vis('#gate') && c.vis('#gateRetry') && !c.vis('#app'), 'cancello con Riprova, nessun profilo'); });
+  await test('stato: risposta senza saldo non diventa un profilo', async()=>{ const c=await open('senza_saldo'); assert(c.vis('#gate') && c.vis('#gateRetry') && !c.vis('#app'), 'cancello con Riprova'); });
   await test('stato: firma scaduta (401)', async()=>{ const c=await open('firma'); assert(c.vis('#gate') && c.vis('#gateRetry'), 'cancello con Riprova'); });
   await test('stato: caricamento lento mostra la sagoma', async()=>{
     const c=await open('p257',{lento:900, raw:true});
@@ -175,6 +177,21 @@
     await until(()=>c.txt('#rbtn')==='Riprova' && !c.$('#rbtn').disabled, 3000, 'bottone Riprova'); await until(()=>c.txt('#pts')==='130', 2000, 'saldo invariato a 130');
   });
   await test('riscatto: punti non sufficienti', async()=>{ const c=await open('riscatto_poco'); c.$('#rbtn').click(); await until(()=>/non sufficienti/.test(c.toast()), 3000, 'avviso'); });
+  await test('riscatto: risposta persa, il Riprova rimanda lo stesso token e i punti scendono una volta sola', async()=>{
+    const c=await open('riscatto_perso'); c.$('#rbtn').click();
+    await until(()=>c.$('#rbtn') && c.txt('#rbtn')==='Riprova' && !c.$('#rbtn').disabled, 3000, 'bottone Riprova dopo la risposta persa');
+    c.$('#rbtn').click(); await until(()=>c.$('#rewardModal').classList.contains('on'), 3000, 'finestra del premio al secondo tentativo');
+    const k=c.calls('redeem'); assert(k.length===2 && k[0].body.idemp===k[1].body.idemp,'due chiamate con lo STESSO idemp ('+k.map(x=>x.body.idemp).join(' / ')+')');
+    assert(/^AMICA12-/.test(c.txt('#rewardCode .c')),'il codice del primo tentativo arriva al secondo'); c.$('#rewardOk').click();
+    await until(()=>c.txt('#pts')==='150', 2000, 'saldo 150: scalati 100 punti una volta sola (non 50)'); assert(c.$$('#codici .cod').length===1,'un solo codice');
+    c.$('#rbtn').click(); await until(()=>c.calls('redeem').length===3, 2000, 'terzo riscatto, voluto'); assert(c.calls('redeem')[2].body.idemp!==k[0].body.idemp,'un riscatto nuovo ha un token nuovo');
+  });
+  await test('premio a importo: mai una percentuale', async()=>{
+    const c=await open('premio_importo');
+    has(c.txt('#pathStatus'),'Hai 1 premio da riscattare'); has(c.txt('#rbtn'),'Riscatta il premio · 100 punti'); has(c.txt('#regoleNota'),'10 euro di sconto');
+    has(c.txt('#codici'),'DIECI-ABC123'); assert(!/10%/.test(c.$('#app').textContent),'nessun "10%" in pagina');
+  });
+  await test('codici: i giorni sono quelli di Roma mandati dal server', async()=>{ const c=await open('mezzanotte'); has(c.txt('#codici'),'usato il 13/10/2026'); assert(!/12\/10\/2026/.test(c.txt('#codici')),'non la data UTC'); });
   await test('riscatto spento: restano solo i punti', async()=>{
     const c=await open('premi_off');
     await until(()=>c.txt('#pts')==='180', 2000, 'saldo 180'); assert(!c.vis('#walk') && c.txt('#pathStatus')==='' && !c.$('#rbtn') && c.txt('#regoleNota')==='','solo il saldo');
@@ -195,6 +212,16 @@
   });
   await test('coccola: gia\' fatta altrove', async()=>{ const c=await open('coccola_gia'); c.$('#btnCoccola').click(); await until(()=>/già stata coccolata/.test(c.toast()), 3000, 'avviso'); });
   await test('coccola: errore', async()=>{ const c=await open('coccola_ko'); c.$('#btnCoccola').click(); await until(()=>/Riprova fra poco/.test(c.toast()), 3000, 'avviso'); await until(()=>c.txt('#pts')==='60', 2000, 'saldo invariato a 60'); assert(!c.$('#btnCoccola').classList.contains('done'),'coccola ancora disponibile'); });
+  await test('coccola: 502 senza JSON non regala punti a schermo', async()=>{
+    const c=await open('coccola_502'); await until(()=>c.txt('#pts')==='250', 2000, 'saldo 250'); c.$('#btnCoccola').click();
+    await until(()=>/Riprova fra poco/.test(c.toast()), 3000, 'avviso di errore'); await sleep(1000);
+    assert(c.txt('#pts')==='250' && !c.$('#btnCoccola').classList.contains('done'),'saldo invariato e coccola ancora disponibile'); assert(!/\+5/.test(c.toast()),'nessun "+5"');
+  });
+  await test('coccola: due tap veloci, una sola chiamata', async()=>{ const c=await open('p45',{lento:300}); c.$('#btnCoccola').click(); c.$('#btnCoccola').click(); await until(()=>c.txt('#pts')==='50', 4000, 'saldo 50'); assert(c.calls('coccola').length===1,'una sola chiamata coccola'); });
+  await test('memory: 502 senza JSON alla vittoria non regala punti a schermo', async()=>{
+    const c=await open('memory_502'); await playMemory(c, false); await until(()=>/Riprova fra poco/.test(c.toast()), 4000, 'avviso di errore'); await sleep(1000);
+    assert(c.txt('#pts')==='250' && !c.$('#rewardModal').classList.contains('on'),'saldo invariato, nessun premio');
+  });
   await test('azioni gia\' fatte oggi', async()=>{
     const c=await open('fatti');
     assert(c.$('#btnCoccola').classList.contains('done') && c.$('#btnGame').classList.contains('done'),'entrambe fatte');
@@ -268,12 +295,12 @@
   await test('evento: finito', async()=>{ const c=await open('evento_finito',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'Evento finito'); assert(localStorage.getItem('mimi_evento')===null,'attesa svuotata'); });
   await test('evento: punti esauriti', async()=>{ const c=await open('evento_pieno',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'Punti esauriti'); });
   await test('evento: QR sconosciuto', async()=>{ const c=await open('evento_ignoto',{evento:'BOH1234'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'QR non valido'); });
-  await test('evento: presenze spente, nessun avviso', async()=>{ const c=await open('evento_spento',{evento:'GALLIANO22'}); await until(()=>c.calls('checkin').length===1, 3000, 'checkin fatta'); await sleep(200); assert(!c.vis('#evento'),'nessun avviso'); assert(localStorage.getItem('mimi_evento')===null,'attesa svuotata'); });
+  await test('evento: presenze spente, avviso chiaro', async()=>{ const c=await open('evento_spento',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'Presenze non attive'); assert(!c.vis('#evtRetry'),'niente Riprova'); assert(localStorage.getItem('mimi_evento')===null,'attesa svuotata'); });
   await test('evento: errore del server, Riprova', async()=>{ const c=await open('evento_ko',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'Presenza non registrata'); c.$('#evtRetry').click(); await until(()=>c.calls('checkin').length===2, 2000, 'seconda checkin'); });
   await test('evento: codice malformato ignorato', async()=>{ const c=await open('evento_ok',{evento:'<script>x'}); await sleep(400); assert(c.calls('checkin').length===0 && !c.vis('#evento'),'nessuna checkin'); assert(localStorage.getItem('mimi_evento')===null,'niente in attesa'); });
   await test('evento: prima l\'accesso, poi la presenza dal codice in attesa', async()=>{
     let c=await open('login',{evento:'GALLIANO22'});
-    has(c.txt('#gateTitle'),'Accedi e prendi i punti dell\'evento'); has(c.$('#gateBtn').getAttribute('href'),encodeURIComponent('?s=login&evento=GALLIANO22'),'il ritorno porta il codice evento');
+    has(c.txt('#gateTitle'),'Accedi per registrare la tua presenza'); has(c.txt('#gateMsg'),'Se l\'evento è in corso'); has(c.$('#gateBtn').getAttribute('href'),encodeURIComponent('?s=login&evento=GALLIANO22'),'il ritorno porta il codice evento');
     assert(c.calls('checkin').length===0,'nessuna checkin senza accesso');
     c=await open('evento_ok',{keepStore:true});
     await until(()=>c.calls('checkin').length===1 && c.calls('checkin')[0].body.code==='GALLIANO22', 3000, 'checkin dal codice in attesa');
@@ -296,7 +323,7 @@
   await test('tracciamento: lotto con page_open e solo nomi previsti', async()=>{
     const c=await open('p257'); await until(()=>c.calls('track').length>=1, 6000, 'primo lotto');
     const ev=c.calls('track')[0].body.events; assert(ev[0].e==='page_open' && !('el' in ev[0]),'page_open senza elemento');
-    const lista=['redeem_ready','redeem_locked','redeem_pending','profilo','mimi','guardaroba','bonus2','bday','percorso','codici','regole','evento','redeem','copy_code','coccola','gioco','profile_save','codici_tutti','shop'];
+    const lista=['redeem_ready','redeem_locked','redeem_pending','profilo','mimi','guardaroba','bonus2','bday','codici','regole','evento','redeem','copy_code','coccola','gioco','profile_save','codici_tutti','shop'];
     assert(ev.every(x=>Object.keys(x).every(k=>k==='e'||k==='el') && (x.e==='page_open' || lista.indexOf(x.el)>=0)),'solo e/el e nomi della lista chiusa: '+JSON.stringify(ev));
   });
 

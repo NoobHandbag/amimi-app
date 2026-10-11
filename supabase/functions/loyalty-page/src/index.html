@@ -310,7 +310,9 @@
     if (o.body) init.body = JSON.stringify(o.body);
     let r;
     try { r = await fetch(url, init); } catch(e) { return { status:0, data:{ error:'network' } }; }   // offline o rete: gli handler mostrano "Riprova" (audit T30)
-    let data = {}; try { data = await r.json(); } catch(e){}
+    let data = null; try { data = await r.json(); } catch(e){}
+    if(!data || typeof data!=='object') data = { error:'bad_response' };                              // corpo non JSON (502 del gateway, pagina HTML): mai scambiarlo per una risposta buona
+    else if(!r.ok && !data.error && !data.reason && !data.state) data.error = 'http_'+r.status;         // errore senza un motivo dichiarato
     return { status:r.status, data };
   }
 
@@ -382,6 +384,7 @@
 
   // === render ===
   function reward0(){ const rd=S && S._rewards; return (rd && Array.isArray(rd.rewards) && rd.rewards.length) ? rd.rewards[0] : null; }   // primo premio attivo (oggi 'amica12')
+  function percento(o){ return (o && (o.kind==null || o.kind==='percentage') && Number(o.value)>0) ? Number(o.value) : 0; }           // "%" solo per un premio a percentuale; 0 = premio di altro tipo
 
   function render(){
     el('loading').classList.add('hidden'); el('gate').classList.add('hidden'); el('app').classList.remove('hidden');
@@ -433,16 +436,16 @@
     if(!rw){ out.innerHTML=''; st.innerHTML=''; delete box.dataset.trk; return; }
     const p=S.points||0, reds=rd.redemptions||[], cost=Number(rw.cost_points), k=Math.floor(p/cost), manca=cost-(p%cost);
     const pending=reds.find(x=>x.status==='pending');
-    const punti = manca===1 ? '1 punto' : manca+' punti';
+    const punti = manca===1 ? '1 punto' : manca+' punti', pc=percento(rw);
     box.dataset.trk = pending ? 'redeem_pending' : (p>=rw.cost_points ? 'redeem_ready' : 'redeem_locked');   // letto dal tracciamento quando la card entra in vista
     if(pending){ st.innerHTML='Riscatto ricevuto. Il tuo codice sta arrivando.'; out.innerHTML=''; return; }
     if(p>=rw.cost_points){
       // il riscatto e' RIPETIBILE: uno sconto ogni <cost> punti
-      const cosa = rw.value ? (k===1 ? '1 sconto del '+esc(rw.value)+'%' : k+' sconti del '+esc(rw.value)+'%') : (k===1 ? '1 premio' : k+' premi');
+      const cosa = pc ? (k===1 ? '1 sconto del '+pc+'%' : k+' sconti del '+pc+'%') : (k===1 ? '1 premio' : k+' premi');
       st.innerHTML='Hai <b>'+cosa+'</b> da riscattare. Il prossimo fra '+punti+'.';
-      out.innerHTML='<button class="rbtn tap" type="button" id="rbtn" data-reward="'+esc(rw.key)+'">Riscatta '+(rw.value ? 'il '+esc(rw.value)+'%' : 'il premio')+' · '+cost+' punti</button>';
+      out.innerHTML='<button class="rbtn tap" type="button" id="rbtn" data-reward="'+esc(rw.key)+'">Riscatta '+(pc ? 'il '+pc+'%' : 'il premio')+' · '+cost+' punti</button>';
     } else {
-      st.innerHTML=(manca===1 ? 'Ti manca' : 'Ti mancano')+' <b>'+punti+'</b> '+(rw.value ? 'allo sconto del '+esc(rw.value)+'%' : 'al premio')+'.';
+      st.innerHTML=(manca===1 ? 'Ti manca' : 'Ti mancano')+' <b>'+punti+'</b> '+(pc ? 'allo sconto del '+pc+'%' : 'al premio')+'.';
       out.innerHTML='';
     }
   }
@@ -457,10 +460,11 @@
     const list=reds.slice().sort((a,b)=> rank(a)-rank(b) || String(b.created_at||'').localeCompare(String(a.created_at||'')));
     const vis = tuttiICodici ? list : list.slice(0, CONFIG.codiciVisibili);
     ul.innerHTML=vis.map(x=>{
-      const val = Number(x.value)>0 ? x.value : ((rw && x.reward_key===rw.key) ? rw.value : null);   // il valore di ALLORA, se il server lo manda
-      const cosa = val ? esc(val)+'% di sconto' : 'Sconto';
-      if(x.status==='pending') return '<li class="cod"><div class="cod-main"><span class="cod-c">In arrivo</span><span class="cod-m">'+cosa+', riscattato il '+esc(itDate(x.created_at))+'</span></div><span class="chip">In preparazione</span></li>';
-      if(x.used_at) return '<li class="cod used"><div class="cod-main"><span class="cod-c">'+esc(x.discount_code)+'</span><span class="cod-m">'+cosa+', usato il '+esc(itDate(x.used_at))+'</span></div><span class="chip">Usato</span></li>';
+      const pc = percento(x) || ((x.kind==null && rw && x.reward_key===rw.key) ? percento(rw) : 0);   // tipo e valore dal server; un server v13 non li manda: allora quelli del premio attivo, se e' lo stesso
+      const cosa = pc ? pc+'% di sconto' : 'Sconto';
+      // i giorni arrivano dal server gia' in Europe/Rome (created_day, used_day); col server v13 si ripiega sulla data UTC
+      if(x.status==='pending') return '<li class="cod"><div class="cod-main"><span class="cod-c">In arrivo</span><span class="cod-m">'+cosa+', riscattato il '+esc(itDate(x.created_day||x.created_at))+'</span></div><span class="chip">In preparazione</span></li>';
+      if(x.used_at) return '<li class="cod used"><div class="cod-main"><span class="cod-c">'+esc(x.discount_code)+'</span><span class="cod-m">'+cosa+', usato il '+esc(itDate(x.used_day||x.used_at))+'</span></div><span class="chip">Usato</span></li>';
       return '<li class="cod"><div class="cod-main"><span class="cod-c">'+esc(x.discount_code)+'</span><span class="cod-m">'+cosa+', da usare al checkout</span></div><button class="cp tap" type="button" data-code="'+esc(x.discount_code)+'">Copia</button></li>';
     }).join('');
     if(list.length>CONFIG.codiciVisibili){ more.classList.remove('hidden'); more.textContent = tuttiICodici ? 'Mostra meno' : 'Mostra tutti ('+list.length+')'; }
@@ -475,7 +479,7 @@
     const rows=[['Compri su amimi.it','1 punto per ogni euro'],['Coccoli Mimì','+5 al giorno'],['Giochi al memory','+5 al giorno']];
     if(pr && pr.checkin_enabled) rows.push(['Vieni a un evento Amimì','+20 con il QR']);
     el('regole').innerHTML=rows.map(r=>'<li><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></li>').join('');
-    el('regoleNota').innerHTML = rw ? 'Ogni <b>'+esc(rw.cost_points)+' punti Mimì</b> sblocchi '+(rw.value ? 'uno sconto del <b>'+esc(rw.value)+'%</b>' : esc(rw.label))+' su un ordine. Quando lo riscatti i punti si scalano. Il codice vale una volta e non si somma ad altri sconti.' : '';
+    el('regoleNota').innerHTML = rw ? 'Ogni <b>'+esc(rw.cost_points)+' punti Mimì</b> sblocchi '+(percento(rw) ? 'uno sconto del <b>'+percento(rw)+'%</b>' : esc(rw.label))+' su un ordine. Quando lo riscatti i punti si scalano. Il codice vale una volta e non si somma ad altri sconti.' : '';
   }
   el('ward').addEventListener('click', e=>{ if(e.target.closest('#shopLink')) track('tap','shop'); });
 
@@ -546,9 +550,9 @@
   async function refresh(animate){
     const [st, rw, pf] = await Promise.all([api('state'), api('rewards'), api('profile')]);   // rewards/profile: OFF finche' i flag sono spenti
     const { status, data } = st;
-    if (data.state==='login_required') return showGate(EVT ? 'Accedi e prendi i punti dell\'evento' : 'I tuoi punti Mimì', EVT ? 'Entra con il tuo account Amimì, oppure creane uno in un minuto: i punti dell\'evento arrivano subito dopo.' : 'Accedi con il tuo account Amimì per vedere i tuoi punti e coccolare Mimì.', 'login');
+    if (data.state==='login_required') return showGate(EVT ? 'Accedi per registrare la tua presenza' : 'I tuoi punti Mimì', EVT ? 'Entra con il tuo account Amimì, oppure creane uno in un minuto. Se l\'evento è in corso, i punti arrivano subito dopo.' : 'Accedi con il tuo account Amimì per vedere i tuoi punti e coccolare Mimì.', 'login');
     if (data.state==='needs_secret' || data.state==='off') return showGate('I punti Mimì stanno arrivando','Il programma parte a breve. Torna presto!', '');
-    if (status===503 || data.error) return showGate('Un attimo...','Non riesco a leggere i tuoi punti in questo momento.', 'retry');
+    if (status===503 || data.error || typeof data.points!=='number') return showGate('Un attimo...','Non riesco a leggere i tuoi punti in questo momento.', 'retry');   // senza un saldo vero non si disegna nessun profilo
     S = data;
     S._rewards = (rw && rw.data && Array.isArray(rw.data.rewards)) ? rw.data : null;
     S._profile = (pf && pf.status===200 && pf.data && !pf.data.error && typeof pf.data.profile_enabled==='boolean') ? pf.data : null;   // non leggibile = come a flag OFF, mai una card finta
@@ -579,7 +583,7 @@
     const { data } = await api('checkin',{method:'POST',body:{code:EVT}});
     evtBusy=false;
     const nome = data && data.label ? String(data.label) : 'questo evento';
-    if(data && data.state==='off'){ evtClear(); return; }                               // presenze spente: niente da mostrare
+    if(data && data.state==='off'){ evtClear(); evtNote('Presenze non attive', 'In questo momento i punti degli eventi non si possono prendere.'); return; }
     if(data && data.ok && !data.already){
       evtClear(); S.points=data.points; render();
       evtNote('Presenza registrata', '+'+(data.added||0)+' punti Mimì per '+nome+'.');
@@ -596,29 +600,40 @@
   }
 
   // === azioni ===
+  let coccolaInCorso=false;                                                               // un tap alla volta: il secondo non parte finche' il primo non ha risposta
   el('btnCoccola').addEventListener('click', async ()=>{
-    if(!S || !S.coccola_disponibile) return;
-    track('tap','coccola');
+    if(!S || !S.coccola_disponibile || coccolaInCorso) return;
+    coccolaInCorso=true; track('tap','coccola');
     const { data } = await api('coccola');
-    if(data.done_today){ toast('Mimì è già stata coccolata oggi'); return; }
-    if(data.error){ toast('Riprova fra poco'); return; }
+    coccolaInCorso=false;
+    if(data.done_today){ S.coccola_disponibile=false; if(typeof data.points==='number') S.points=data.points; render(); toast('Mimì è già stata coccolata oggi'); return; }
+    if(data.error || typeof data.points!=='number'){ toast('Riprova fra poco'); return; }   // solo un saldo vero dal server muove i punti
     S.points=data.points; S.coccola_disponibile=false; squee(); sparkles(el('mimi'),7); render(); toast('+'+(data.added||5)+' punti Mimì, coccola di oggi fatta');
   });
 
-  // riscatto (bottone disabilitato subito = anti doppio-click; idemp lato server)
+  // riscatto (bottone disabilitato subito = anti doppio-click; idemp lato server).
+  // UN solo token per tentativo: se la risposta si perde (rete, 5xx) il "Riprova" rimanda LO STESSO token, cosi' il
+  // server riconosce il riscatto gia' fatto (ramo already) e non scala i punti una seconda volta. Il token si butta solo
+  // davanti a una risposta definitiva del server (riuscito, oppure rifiutato con un motivo).
+  let idempRiscatto=null;
   el('redeem').addEventListener('click', async e=>{
     const btn=e.target.closest('#rbtn'); if(!btn||!S) return;
     track('tap','redeem');
     const rw=reward0()||{};
-    const pct=rw.value?('-'+rw.value+'%'):'Sconto';
+    const pct=percento(rw)?('-'+percento(rw)+'%'):'Premio';
     btn.disabled=true; btn.textContent='Riscatto...';
-    const idemp='r-'+Date.now()+'-'+Math.random().toString(36).slice(2,10);
+    const idemp = idempRiscatto || (idempRiscatto='r-'+Date.now()+'-'+Math.random().toString(36).slice(2,10));
     const { data } = await api('redeem',{method:'POST',body:{reward:btn.dataset.reward, idemp}});
     if(data && data.ok){
+      idempRiscatto=null;
       await refresh(false);
-      if(data.code) reward('Sconto sbloccato!', pct, 'Usalo al checkout. Vale una volta e non si somma ad altri sconti.', data.code);
+      if(data.code) reward(percento(rw) ? 'Sconto sbloccato!' : 'Premio sbloccato!', pct, 'Usalo al checkout. Vale una volta e non si somma ad altri sconti.', data.code);
       else toast('Riscatto ricevuto, codice in arrivo');
-    } else if(data && data.reason==='insufficient'){ toast('Punti non sufficienti'); renderRedeem(); }
+    } else if(data && data.reason){
+      idempRiscatto=null;                                                                 // rifiuto con motivo: i punti non sono stati toccati
+      if(typeof data.points==='number') S.points=data.points;
+      toast(data.reason==='insufficient' ? 'Punti non sufficienti' : 'Riscatto non disponibile in questo momento'); render();
+    }
     else { toast('Riprova fra poco'); btn.disabled=false; btn.textContent='Riprova'; }
   });
 
@@ -673,8 +688,8 @@
   async function winGame(){
     closeModal('gameModal');
     const { data } = await api('memory_win');
-    if(data.done_today){ toast('Hai già giocato oggi'); return; }
-    if(data.error){ toast('Riprova fra poco'); return; }
+    if(data.done_today){ S.memory_disponibile=false; if(typeof data.points==='number') S.points=data.points; render(); toast('Hai già giocato oggi'); return; }
+    if(data.error || typeof data.points!=='number'){ toast('Riprova fra poco'); return; }   // solo un saldo vero dal server muove i punti
     S.points=data.points; S.memory_disponibile=false; render();
     reward('Hai vinto!', '+'+(data.added||5), 'punti Mimì aggiunti al tuo saldo');
   }

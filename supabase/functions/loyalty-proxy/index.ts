@@ -1,7 +1,9 @@
 // loyalty-proxy v14 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
 // v14 (2026-10-11, call del 09-10: pagina a soli punti con percorso, migr 0150). Tutto additivo:
-//    rotta `club`   : serve la pagina nuova con `?anteprima=1` oppure a flag loyalty_page_v2 = 'true'; altrimenti la
-//                     pagina di sempre. Flag non leggibile = pagina di sempre. Rollback = flag a 'false'.
+//    rotta `club`   : serve la pagina nuova con `?anteprima=1`, con `?evento=` (QR) oppure a flag loyalty_page_v2 =
+//                     'true'; altrimenti la pagina di sempre. Flag non leggibile = pagina di sempre. Rollback = flag.
+//    ORDINE DI DEPLOY: prima la migr 0150, poi loyalty-page, poi questa edge. `rewards` chiama una RPC della 0150
+//                     anche per la pagina di prima: senza la migrazione risponderebbe 503 a tutte.
 //    `rewards`      : lo storico riscatti arriva dalla RPC loyalty_redemptions_for (fino a 60, con valore del premio e
 //                     `used_at` = data dell'ordine in cui il codice compare). Stessa forma di prima, campi in piu'.
 //    `deck` (GET)   : foto vere di borse per il memory (RPC loyalty_memory_deck). Solo lettura, nessun punto.
@@ -154,13 +156,15 @@ Deno.serve(async (req) => {
     const _p = _u.pathname.split('/').filter(Boolean);
     if (req.method === 'GET' && (_p[_p.length - 1] ?? '') === 'club') {
       // v14: quale pagina. `?anteprima=1` = la nuova per chi ha il link (l'HTML e' pubblico, i dati chiedono comunque il
-      // login); altrimenti decide il flag loyalty_page_v2. Lettura fallita o flag assente = pagina di sempre: questa
-      // lettura sceglie solo un file statico, non decide nessuna scrittura.
-      let _v2 = _u.searchParams.get('anteprima') === '1';
+      // login). Anche `?evento=` porta sempre alla nuova: la pagina di prima non sa cosa sia un QR e lo ignorerebbe in
+      // silenzio. Altrimenti decide il flag loyalty_page_v2, letto con un ritentativo (le letture delle edge prendono
+      // un 504 ogni tanto); se resta illeggibile si serve la pagina di sempre: questa lettura sceglie solo un file
+      // statico, non decide nessuna scrittura.
+      let _v2 = _u.searchParams.get('anteprima') === '1' || _u.searchParams.has('evento');
       if (!_v2) {
         try {
           const _sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-          const { data: _f, error: _fErr } = await _sb.from('app_flags').select('value').eq('key', 'loyalty_page_v2').maybeSingle();
+          const { data: _f, error: _fErr } = await retryOnce(() => _sb.from('app_flags').select('value').eq('key', 'loyalty_page_v2').maybeSingle());
           _v2 = !_fErr && String(_f?.value ?? '').trim().toLowerCase() === 'true';
         } catch (_e) { _v2 = false; }
       }

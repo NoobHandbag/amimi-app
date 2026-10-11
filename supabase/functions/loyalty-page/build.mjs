@@ -27,7 +27,7 @@ const wrap = (file, withMimi) => {
     if (html.split(MIMI_TOKEN).length !== 2) fail(file + ' deve contenere il segnaposto ' + MIMI_TOKEN + ' una volta sola');
     html = html.replace(MIMI_TOKEN, 'data:image/webp;base64,' + readFileSync(DIR + 'src/mimi.webp').toString('base64'));
   }
-  if (html.includes('{% endraw %}')) fail(file + ' contiene {% endraw %}, la pagina si romperebbe');
+  if (/\{%-?\s*endraw\s*-?%\}/.test(html)) fail(file + ' contiene un tag endraw di Liquid, la pagina si romperebbe');
   return '{% layout none %}{% raw %}' + html + '{% endraw %}';
 };
 const body = wrap('index.html', true);
