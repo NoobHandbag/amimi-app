@@ -89,6 +89,14 @@ jobs:
           mkdir -p full
           npx --yes supabase@latest db dump --linked --data-only --use-copy --exclude public.app_config -f full/data.sql
           cp db-backup/schema.sql full/schema.sql
+          # Prova di restore dell'11-10-2026: senza i ruoli (ask_ro) e senza supabase_migrations (lo legge
+          # la vista v_digest_versioni) schema.sql da solo non si applica per intero a un database vuoto.
+          npx --yes supabase@latest db dump --linked --role-only -f full/roles.sql
+          npx --yes supabase@latest db dump --linked --schema supabase_migrations -f full/migrations_schema.sql
+          npx --yes supabase@latest db dump --linked --data-only --use-copy --schema supabase_migrations -f full/migrations_data.sql
+          for f in roles.sql migrations_schema.sql migrations_data.sql; do
+            [ -s "full/$f" ] || { echo "::error::$f e' vuoto"; exit 1; }
+          done
           node scripts/backup-full-check.mjs full/schema.sql full/data.sql
           date -u +%Y-%m-%dT%H:%M:%SZ > full/generated_at.txt
           tar czf full.tar.gz -C full .
