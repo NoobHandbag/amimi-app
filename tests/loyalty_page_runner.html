@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>Prove pagina Area Membri</title>
+<!--
+  tests/loyalty_page_runner.html: prove automatiche della pagina Area Membri sul server finto (tests/loyalty_page_mock.js).
+  Lo copia tests/loyalty_page_harness.mjs come run.html accanto a index.html. Si apre nel browser: ogni prova carica la
+  pagina in un iframe, fa i gesti (tap, partita, riscatto) e controlla il risultato. Esito in testa: "N ok, M KO".
+  ?solo=<testo> lancia solo le prove il cui nome contiene quel testo.
+-->
+<style>
+  /* l'iframe resta SEMPRE a schermo (sticky): un iframe fuori vista non riceve requestAnimationFrame e il contatore dei punti non arriva in fondo */
+  body{font:14px system-ui,sans-serif;margin:0;padding:12px;color:#222;display:grid;grid-template-columns:minmax(340px,1fr) auto;gap:14px;align-items:start}
+  #log{min-width:0}
+  h1{font-size:18px;margin:0 0 6px}
+  #sum{font-size:16px;font-weight:700;margin:6px 0}
+  #out{white-space:pre-wrap;font:12px ui-monospace,Consolas,monospace;line-height:1.45}
+  .ko{color:#b00020;font-weight:700}.ok{color:#1b6b3a}
+  iframe{position:sticky;top:8px;border:1px solid #ccc;height:calc(100vh - 24px);display:block;max-width:none}
+</style>
+</head>
+<body>
+<div id="log">
+  <h1>Prove pagina Area Membri</h1>
+  <div id="sum">in corso...</div>
+  <div id="out"></div>
+</div>
+<iframe id="f" title="pagina in prova"></iframe>
+<script>
+(async function(){
+  'use strict';
+  const f=document.getElementById('f'), out=document.getElementById('out'), sum=document.getElementById('sum');
+  const only=new URLSearchParams(location.search).get('solo');
+  let ok=0, ko=0, last=null; const fails=[];
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const line=(t,c)=>{ const d=document.createElement('div'); d.className=c; d.textContent=t; out.appendChild(d); };
+  async function until(fn, ms, what){ const t0=Date.now(); for(;;){ let v=false; try{ v=fn(); }catch(_){ v=false; } if(v) return v; if(Date.now()-t0>ms) throw new Error('attesa scaduta: '+what); await sleep(30); } }
+  function assert(c, what){ if(!c) throw new Error(what); }
+  function has(t, part, what){ assert(String(t).indexOf(part)>=0, (what||'testo')+': atteso "'+part+'", trovato "'+t+'"'); }
+
+  async function open(s, o){
+    o=o||{};
+    if(!o.keepStore){ try{ localStorage.removeItem('mimi_evento'); }catch(_){} }
+    f.style.width=(o.w||375)+'px';
+    const q='index.html?s='+encodeURIComponent(s)+(o.evento!==undefined?'&evento='+encodeURIComponent(o.evento):'')+(o.lento?'&lento='+o.lento:'')+'&_='+Date.now()+Math.random();
+    await new Promise(r=>{ f.onload=r; f.src=q; });
+    const win=f.contentWindow, doc=win.document;
+    const $=sel=>doc.querySelector(sel), $$=sel=>Array.from(doc.querySelectorAll(sel));
+    const c={ win, doc, $, $$,
+      vis:sel=>{ const n=$(sel); return !!n && n.getClientRects().length>0 && win.getComputedStyle(n).visibility!=='hidden'; },
+      txt:sel=>{ const n=$(sel); return n ? n.textContent.replace(/\s+/g,' ').trim() : ''; },
+      calls:a=>win.__calls.filter(x=>x.action===a),
+      toast:()=>($('#toast').classList.contains('on') ? $('#toast').textContent : ''),
+    };
+    last=c;
+    if(!o.raw) await until(()=>$('#loading').classList.contains('hidden'), 6000, 'fine caricamento ('+s+')');
+    return c;
+  }
+  async function test(name, fn){
+    if(only && name.indexOf(only)<0) return;
+    last=null;
+    try{
+      await fn();
+      if(last && last.win.__errs && last.win.__errs.length) throw new Error('errori JS in pagina: '+last.win.__errs.join(' | '));
+      ok++; line('ok  '+name,'ok');
+    }catch(e){ ko++; fails.push(name); line('KO  '+name+'  <- '+((e && e.message) || e),'ko'); }
+    sum.textContent=ok+' ok, '+ko+' KO (in corso...)';
+  }
+  async function playMemory(c, sbaglia){
+    c.$('#btnGame').click();
+    await until(()=>c.$('#gameModal').classList.contains('on'), 1500, 'memory aperto');
+    await until(()=>c.$$('#grid .card').length===6 && c.$$('#grid .card:not([disabled])').length===6, 12000, 'sei carte pronte');
+    const by={}; c.$$('#grid .card').forEach(x=>{ (by[x.dataset.k]=by[x.dataset.k]||[]).push(x); });
+    const ks=Object.keys(by);
+    assert(ks.length===3 && ks.every(k=>by[k].length===2), 'tre coppie di carte');
+    if(sbaglia){
+      by[ks[0]][0].click(); by[ks[1]][0].click(); await sleep(150);
+      assert(by[ks[0]][0].classList.contains('up') && by[ks[1]][0].classList.contains('up'), 'due carte diverse girate');
+      by[ks[2]][0].click(); await sleep(60);
+      assert(!by[ks[2]][0].classList.contains('up'), 'terza carta bloccata mentre due sono girate');
+      await until(()=>!by[ks[0]][0].classList.contains('up') && !by[ks[1]][0].classList.contains('up'), 2500, 'carte diverse tornano coperte');
+    }
+    for(const k of ks){ by[k][0].click(); await sleep(60); by[k][1].click(); await sleep(140); assert(by[k][0].classList.contains('done') && by[k][1].classList.contains('done'), 'coppia trovata'); }
+    return by;
+  }
+
+  // ---------- stati della pagina ----------
+  await test('stato: accesso richiesto', async()=>{
+    const c=await open('login');
+    assert(c.vis('#gate') && !c.vis('#app'), 'cancello visibile, area nascosta');
+    has(c.txt('#gateTitle'),'I tuoi punti Mimì'); assert(c.vis('#gateBtn') && !c.vis('#gateRetry'), 'solo il bottone Accedi');
+    has(c.$('#gateBtn').getAttribute('href'),'/customer_authentication/login?return_to=','link di accesso con ritorno');
+    assert(c.$('#gate img').getAttribute('src').indexOf('data:image/webp')===0, 'Mimì nel cancello');
+  });
+  await test('stato: programma spento', async()=>{
+    const c=await open('spento');
+    assert(c.vis('#gate') && !c.vis('#gateBtn') && !c.vis('#gateRetry'), 'messaggio senza bottoni'); has(c.txt('#gateTitle'),'stanno arrivando');
+  });
+  await test('stato: errore del server, Riprova richiama', async()=>{
+    const c=await open('errore');
+    assert(c.vis('#gate') && c.vis('#gateRetry') && !c.vis('#gateBtn'), 'solo Riprova'); has(c.txt('#gateMsg'),'Non riesco a leggere');
+    const n=c.calls('state').length; c.$('#gateRetry').click();
+    await until(()=>c.calls('state').length===n+1 && c.vis('#gate'), 3000, 'seconda lettura e cancello di nuovo');
+  });
+  await test('stato: rete assente', async()=>{ const c=await open('rete'); assert(c.vis('#gate') && c.vis('#gateRetry'), 'cancello con Riprova'); });
+  await test('stato: gateway rotto (502 senza JSON) non diventa un profilo a zero punti', async()=>{ const c=await open('gateway'); assert(c.vis('#gate') && c.vis('#gateRetry') && !c.vis('#app'), 'cancello con Riprova, nessun profilo'); });
+  await test('stato: risposta senza saldo non diventa un profilo', async()=>{ const c=await open('senza_saldo'); assert(c.vis('#gate') && c.vis('#gateRetry') && !c.vis('#app'), 'cancello con Riprova'); });
+  await test('stato: firma scaduta (401)', async()=>{ const c=await open('firma'); assert(c.vis('#gate') && c.vis('#gateRetry'), 'cancello con Riprova'); });
+  await test('stato: caricamento lento mostra la sagoma', async()=>{
+    const c=await open('p257',{lento:900, raw:true});
+    assert(c.vis('#loading') && !c.vis('#app'), 'sagoma visibile durante il caricamento');
+    await until(()=>c.vis('#app') && !c.vis('#loading'), 5000, 'area visibile dopo il caricamento');
+  });
+
+  // ---------- punti e percorso ----------
+  await test('punti: 0', async()=>{
+    const c=await open('zero');
+    assert(c.txt('#pts')==='0','saldo 0'); has(c.txt('#pathStatus'),'Ti mancano 100 punti allo sconto del 12%.');
+    assert(!c.$('#rbtn'),'nessun bottone di riscatto'); assert(!c.vis('#codiciSec'),'nessun codice');
+    assert(c.$$('#walk .ms').map(m=>m.lastElementChild.textContent).join()==='100,200,300','traguardi 100,200,300');
+    assert(c.$$('#walk .ms.on').length===0,'nessuna bandierina raggiunta'); has(c.txt('#ward'),'appariranno qui');
+    assert(c.$('#redeem').dataset.trk==='redeem_locked','stato tracciato locked');
+  });
+  await test('punti: 45, Mimì al 15% del percorso', async()=>{
+    const c=await open('p45'); await sleep(1200);
+    has(c.txt('#pathStatus'),'Ti mancano 55 punti'); assert(c.$('#walk .walker').style.left==='15%','walker al 15% ('+c.$('#walk .walker').style.left+')');
+    has(c.$('#walk').getAttribute('aria-label'),'Hai 45 punti Mimì. Prossima bandierina a 100 punti.');
+  });
+  await test('punti: 99, singolare', async()=>{ const c=await open('p99'); has(c.txt('#pathStatus'),'Ti manca 1 punto allo sconto del 12%.'); });
+  await test('punti: 100, uno sconto pronto', async()=>{
+    const c=await open('p100');
+    has(c.txt('#pathStatus'),'Hai 1 sconto del 12% da riscattare. Il prossimo fra 100 punti.'); has(c.txt('#rbtn'),'Riscatta il 12% · 100 punti');
+    assert(c.$$('#walk .ms.on').length===1,'una bandierina raggiunta'); assert(c.$('#redeem').dataset.trk==='redeem_ready','stato tracciato ready');
+  });
+  await test('punti: 257, due sconti, codici in ordine', async()=>{
+    const c=await open('p257');
+    has(c.txt('#pathStatus'),'Hai 2 sconti del 12% da riscattare. Il prossimo fra 43 punti.'); assert(c.$$('#walk .ms.on').length===2,'due bandierine');
+    const li=c.$$('#codici .cod'); assert(li.length===2,'due codici');
+    has(li[0].textContent,'AMICA12-KTQWJJ'); has(li[0].textContent,'12% di sconto, da usare al checkout'); assert(!!li[0].querySelector('.cp'),'Copia sul codice da usare');
+    has(li[1].textContent,'PREMIA-T20-6KQ4ZM'); has(li[1].textContent,'20% di sconto, usato il 28/09/2026'); assert(li[1].classList.contains('used') && !li[1].querySelector('.cp'),'codice usato senza Copia');
+    assert(!c.vis('#codiciTutti'),'niente "Mostra tutti" con due codici');
+  });
+  await test('punti: 980, finestra che scorre e 25 codici', async()=>{
+    const c=await open('p980');
+    has(c.txt('#pathStatus'),'Hai 9 sconti del 12%'); assert(c.$$('#walk .ms').map(m=>m.lastElementChild.textContent).join()==='800,900,1000','traguardi 800,900,1000');
+    assert(c.$$('#walk .ms.on').length===2,'800 e 900 raggiunte'); assert(c.$$('#codici .cod').length===3,'tre codici visibili');
+    assert(c.$$('#codici .cod.used').length===0,'i primi tre sono da usare'); has(c.txt('#codiciTutti'),'Mostra tutti (25)');
+    c.$('#codiciTutti').click(); assert(c.$$('#codici .cod').length===25,'25 codici dopo il tap'); has(c.txt('#codiciTutti'),'Mostra meno');
+    const usati=c.$$('#codici .cod').map(x=>x.classList.contains('used')); assert(usati.indexOf(true)>usati.lastIndexOf(false),'tutti i da usare prima degli usati');
+    c.$('#codiciTutti').click(); assert(c.$$('#codici .cod').length===3,'di nuovo tre');
+  });
+
+  // ---------- riscatto ----------
+  await test('riscatto: codice consegnato, punti scalati, un solo invio col doppio tap', async()=>{
+    const c=await open('p100'); const b=c.$('#rbtn'); b.click(); b.click();
+    await until(()=>c.$('#rewardModal').classList.contains('on'), 3000, 'finestra del premio');
+    assert(c.calls('redeem').length===1,'una sola chiamata redeem ('+c.calls('redeem').length+')');
+    const body=c.calls('redeem')[0].body; assert(body.reward==='amica12' && String(body.idemp).length>=8 && !('points' in body),'body: reward + idemp, mai punti');
+    has(c.txt('#rewardPrize'),'-12%'); const code=c.txt('#rewardCode .c'); assert(/^AMICA12-/.test(code),'codice nella finestra ('+code+')');
+    assert(c.$('#rewardModal').getAttribute('aria-hidden')==='false','aria-hidden false'); await sleep(140); assert(c.doc.activeElement===c.$('#rewardOk'),'fuoco sul bottone Continua');
+    c.$('#rewardCode .cp').click(); await sleep(250); assert(/copiato|Codice: AMICA12-/i.test(c.toast()),'copia: esito a schermo ('+c.toast()+')');
+    c.$('#rewardOk').click(); assert(!c.$('#rewardModal').classList.contains('on'),'finestra chiusa');
+    assert(c.doc.activeElement===c.$('#redeem'),'fuoco tornato alla card dei punti');
+    assert(c.txt('#pts')==='0' || (await until(()=>c.txt('#pts')==='0',1500,'saldo a 0')),'saldo a 0');
+    has(c.txt('#codici'),code,'codice nella lista'); has(c.txt('#pathStatus'),'Ti mancano 100 punti');
+  });
+  await test('riscatto: in attesa di codice (pool vuoto)', async()=>{
+    const c=await open('riscatto_vuoto'); c.$('#rbtn').click();
+    await until(()=>/codice in arrivo/.test(c.toast()), 3000, 'avviso codice in arrivo');
+    has(c.txt('#pathStatus'),'Riscatto ricevuto'); assert(!c.$('#rbtn'),'niente secondo riscatto finche\' e\' in attesa'); has(c.txt('#codici'),'In arrivo');
+    assert(c.$('#redeem').dataset.trk==='redeem_pending','stato tracciato pending');
+  });
+  await test('riscatto: gia\' in attesa al caricamento', async()=>{ const c=await open('pending'); has(c.txt('#pathStatus'),'Riscatto ricevuto'); has(c.txt('#codici .cod'),'In preparazione'); });
+  await test('riscatto: errore del server, si puo\' riprovare', async()=>{
+    const c=await open('riscatto_ko'); c.$('#rbtn').click();
+    await until(()=>c.txt('#rbtn')==='Riprova' && !c.$('#rbtn').disabled, 3000, 'bottone Riprova'); await until(()=>c.txt('#pts')==='130', 2000, 'saldo invariato a 130');
+  });
+  await test('riscatto: punti non sufficienti', async()=>{ const c=await open('riscatto_poco'); c.$('#rbtn').click(); await until(()=>/non sufficienti/.test(c.toast()), 3000, 'avviso'); });
+  await test('riscatto: risposta persa, il Riprova rimanda lo stesso token e i punti scendono una volta sola', async()=>{
+    const c=await open('riscatto_perso'); c.$('#rbtn').click();
+    await until(()=>c.$('#rbtn') && c.txt('#rbtn')==='Riprova' && !c.$('#rbtn').disabled, 3000, 'bottone Riprova dopo la risposta persa');
+    c.$('#rbtn').click(); await until(()=>c.$('#rewardModal').classList.contains('on'), 3000, 'finestra del premio al secondo tentativo');
+    const k=c.calls('redeem'); assert(k.length===2 && k[0].body.idemp===k[1].body.idemp,'due chiamate con lo STESSO idemp ('+k.map(x=>x.body.idemp).join(' / ')+')');
+    assert(/^AMICA12-/.test(c.txt('#rewardCode .c')),'il codice del primo tentativo arriva al secondo'); c.$('#rewardOk').click();
+    await until(()=>c.txt('#pts')==='150', 2000, 'saldo 150: scalati 100 punti una volta sola (non 50)'); assert(c.$$('#codici .cod').length===1,'un solo codice');
+    c.$('#rbtn').click(); await until(()=>c.calls('redeem').length===3, 2000, 'terzo riscatto, voluto'); assert(c.calls('redeem')[2].body.idemp!==k[0].body.idemp,'un riscatto nuovo ha un token nuovo');
+  });
+  await test('premio a importo: mai una percentuale', async()=>{
+    const c=await open('premio_importo');
+    has(c.txt('#pathStatus'),'Hai 1 premio da riscattare'); has(c.txt('#rbtn'),'Riscatta il premio · 100 punti'); has(c.txt('#regoleNota'),'10 euro di sconto');
+    has(c.txt('#codici'),'DIECI-ABC123'); assert(!/10%/.test(c.$('#app').textContent),'nessun "10%" in pagina');
+  });
+  await test('codici: i giorni sono quelli di Roma mandati dal server', async()=>{ const c=await open('mezzanotte'); has(c.txt('#codici'),'usato il 13/10/2026'); assert(!/12\/10\/2026/.test(c.txt('#codici')),'non la data UTC'); });
+  await test('riscatto spento: restano solo i punti', async()=>{
+    const c=await open('premi_off');
+    await until(()=>c.txt('#pts')==='180', 2000, 'saldo 180'); assert(!c.vis('#walk') && c.txt('#pathStatus')==='' && !c.$('#rbtn') && c.txt('#regoleNota')==='','solo il saldo');
+    assert(c.$$('#regole li').length===3,'regole base presenti');
+  });
+  await test('premio non a percentuale', async()=>{
+    const c=await open('premio_fisso');
+    has(c.txt('#pathStatus'),'Hai 1 premio da riscattare'); has(c.txt('#rbtn'),'Riscatta il premio · 100 punti'); has(c.txt('#regoleNota'),'un portacarte in omaggio');
+  });
+
+  // ---------- azioni del giorno ----------
+  await test('coccola: +5, poi non richiamabile', async()=>{
+    const c=await open('p45'); c.$('#btnCoccola').click();
+    await until(()=>c.txt('#pts')==='50', 3000, 'saldo 50'); has(c.toast(),'+5 punti Mimì'); has(c.txt('#btnCoccola'),'Coccolata');
+    assert(c.$('#btnCoccola').classList.contains('done') && c.$('#btnCoccola').getAttribute('aria-disabled')==='true','bottone fatto');
+    has(c.txt('#mood'),'coccolata'); c.$('#btnCoccola').click(); await sleep(150); assert(c.calls('coccola').length===1,'nessuna seconda chiamata');
+    has(c.txt('#pathStatus'),'Ti mancano 50 punti');
+  });
+  await test('coccola: gia\' fatta altrove', async()=>{ const c=await open('coccola_gia'); c.$('#btnCoccola').click(); await until(()=>/già stata coccolata/.test(c.toast()), 3000, 'avviso'); });
+  await test('coccola: errore', async()=>{ const c=await open('coccola_ko'); c.$('#btnCoccola').click(); await until(()=>/Riprova fra poco/.test(c.toast()), 3000, 'avviso'); await until(()=>c.txt('#pts')==='60', 2000, 'saldo invariato a 60'); assert(!c.$('#btnCoccola').classList.contains('done'),'coccola ancora disponibile'); });
+  await test('coccola: 502 senza JSON non regala punti a schermo', async()=>{
+    const c=await open('coccola_502'); await until(()=>c.txt('#pts')==='250', 2000, 'saldo 250'); c.$('#btnCoccola').click();
+    await until(()=>/Riprova fra poco/.test(c.toast()), 3000, 'avviso di errore'); await sleep(1000);
+    assert(c.txt('#pts')==='250' && !c.$('#btnCoccola').classList.contains('done'),'saldo invariato e coccola ancora disponibile'); assert(!/\+5/.test(c.toast()),'nessun "+5"');
+  });
+  await test('coccola: due tap veloci, una sola chiamata', async()=>{ const c=await open('p45',{lento:300}); c.$('#btnCoccola').click(); c.$('#btnCoccola').click(); await until(()=>c.txt('#pts')==='50', 4000, 'saldo 50'); assert(c.calls('coccola').length===1,'una sola chiamata coccola'); });
+  await test('memory: 502 senza JSON alla vittoria non regala punti a schermo', async()=>{
+    const c=await open('memory_502'); await playMemory(c, false); await until(()=>/Riprova fra poco/.test(c.toast()), 4000, 'avviso di errore'); await sleep(1000);
+    assert(c.txt('#pts')==='250' && !c.$('#rewardModal').classList.contains('on'),'saldo invariato, nessun premio');
+  });
+  await test('azioni gia\' fatte oggi', async()=>{
+    const c=await open('fatti');
+    assert(c.$('#btnCoccola').classList.contains('done') && c.$('#btnGame').classList.contains('done'),'entrambe fatte');
+    c.$('#btnGame').click(); await sleep(120); has(c.toast(),'Torna domani'); assert(!c.$('#gameModal').classList.contains('on'),'memory non si apre');
+    c.$('#btnCoccola').click(); await sleep(120); assert(c.calls('coccola').length===0,'nessuna chiamata coccola');
+  });
+  await test('memory: foto vere, mossa sbagliata, vittoria +5', async()=>{
+    const c=await open('p45'); await playMemory(c, true);
+    const src=c.$$('#grid .card .front img').map(i=>i.getAttribute('src'));
+    assert(src.length===6 && src.every(s=>s.indexOf('https://cdn.shopify.com/')===0 && /width=360/.test(s)),'sei fronti con foto dal CDN a 360px');
+    assert(c.$$('#grid .card').every(x=>/coppia trovata/.test(x.getAttribute('aria-label'))),'etichette delle carte aggiornate');
+    await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'finestra del premio');
+    has(c.txt('#rewardPrize'),'+5'); assert(c.calls('memory_win').length===1 && c.calls('deck').length===1,'una memory_win, un deck');
+    assert(!c.$('#gameModal').classList.contains('on'),'memory chiuso'); c.$('#rewardOk').click();
+    await until(()=>c.txt('#pts')==='50', 2000, 'saldo 50'); assert(c.$('#btnGame').classList.contains('done'),'gioco fatto');
+  });
+  await test('memory: mazzo di riserva se il server non risponde', async()=>{
+    const c=await open('deck_ko'); await playMemory(c, false);
+    assert(c.$$('#grid .card .front.glyph').length===6,'sei fronti di riserva'); await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'premio');
+  });
+  await test('memory: mazzo di riserva se le foto non si caricano', async()=>{
+    const c=await open('deck_rotto'); await playMemory(c, false); assert(c.$$('#grid .card .front.glyph').length===6,'sei fronti di riserva');
+  });
+  await test('memory: gia\' giocato altrove', async()=>{ const c=await open('memory_gia'); await playMemory(c, false); await until(()=>/già giocato oggi/.test(c.toast()), 4000, 'avviso'); await until(()=>c.txt('#pts')==='60', 2000, 'saldo invariato a 60'); });
+  await test('memory: Esc chiude e il fuoco torna al bottone', async()=>{
+    const c=await open('p45'); c.$('#btnGame').focus(); c.$('#btnGame').click();
+    await until(()=>c.$('#gameModal').classList.contains('on'), 1500, 'memory aperto');
+    c.doc.dispatchEvent(new c.win.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    assert(!c.$('#gameModal').classList.contains('on') && c.$('#gameModal').getAttribute('aria-hidden')==='true','chiuso'); assert(c.doc.activeElement===c.$('#btnGame'),'fuoco tornato a Gioca');
+    await sleep(900); assert(c.calls('memory_win').length===0,'nessun premio senza partita');
+  });
+
+  // ---------- borse, profilo ----------
+  await test('borse: non leggibili', async()=>{ const c=await open('borse_null'); has(c.txt('#ward'),'non sono leggibili'); });
+  await test('borse: nove, una senza foto', async()=>{
+    const c=await open('borse_tante'); assert(c.$$('#ward .witem').length===9 && c.$$('#ward .noimg').length===1,'nove borse, un segnaposto');
+    assert(c.$$('#ward img').every(i=>/width=300/.test(i.getAttribute('src'))),'miniature a 300px');
+  });
+  await test('profilo: card, quattro regole, seconda borsa, salvataggio +10', async()=>{
+    const c=await open('profilo');
+    assert(c.vis('#profSec'),'card profilo'); assert(c.$$('#regole li').length===4,'quattro regole'); has(c.txt('#regole'),'Vieni a un evento Amimì');
+    has(c.txt('#bonus2'),'Seconda borsa entro il 20/12/2026: +50 punti, mancano 70 giorni');
+    c.$('#pDay').value='11'; c.$('#pMonth').value='10'; c.$('#pMat').value='cocco'; c.$('#pConsenso').checked=true; c.$('#pSave').click();
+    await until(()=>c.$('#rewardModal').classList.contains('on'), 3000, 'premio profilo'); has(c.txt('#rewardPrize'),'+10');
+    const b=c.calls('profile_save')[0].body; assert(b.birth_day===11 && b.birth_month===10 && b.materiale==='cocco' && b.consenso===true && !('points' in b),'body del profilo');
+    c.$('#rewardOk').click(); has(c.txt('#profilo'),'Compleanno: 11 ottobre');
+  });
+  await test('profilo: giorno senza mese rifiutato in pagina', async()=>{
+    const c=await open('profilo'); c.$('#pDay').value='11'; c.$('#pSave').click(); await sleep(150); has(c.toast(),'Scegli giorno e mese'); assert(c.calls('profile_save').length===0,'nessuna chiamata');
+  });
+  await test('profilo completo: compleanno e bonus ricevuto', async()=>{
+    const c=await open('profilo_ok'); assert(c.vis('#bday'),'avviso compleanno'); has(c.txt('#bday'),'+20 punti Mimì'); has(c.txt('#bonus2'),'Bonus seconda borsa ricevuto');
+    assert(!/Amica del Cuore|Amica Speciale|livell|timbr|nanna|indossa/i.test(c.$('#app').textContent),'nessun livello, timbro, nanna o "indossa" in pagina');
+  });
+
+  // ---------- evento dal QR ----------
+  await test('evento: presenza registrata +20', async()=>{
+    const c=await open('evento_ok',{evento:'galliano22'});
+    await until(()=>c.$('#rewardModal').classList.contains('on'), 3000, 'premio evento');
+    const k=c.calls('checkin'); assert(k.length===1 && k[0].method==='POST' && k[0].body.code==='GALLIANO22','una checkin POST col codice in maiuscolo');
+    has(c.txt('#rewardPrize'),'+20'); has(c.txt('#evento'),'Presenza registrata'); has(c.txt('#evento'),'+20 punti Mimì per Amimì da Galliano.');
+    c.$('#rewardOk').click(); await until(()=>c.txt('#pts')==='65', 2000, 'saldo 65');
+    assert(localStorage.getItem('mimi_evento')===null,'codice tolto dall\'attesa'); assert(c.win.location.search.indexOf('evento=')<0,'parametro evento tolto dall\'indirizzo');
+  });
+  await test('evento: gia\' registrata', async()=>{ const c=await open('evento_gia',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'Punti già presi'); assert(!c.$('#rewardModal').classList.contains('on'),'nessun premio'); await until(()=>c.txt('#pts')==='65', 2000, 'saldo invariato a 65'); });
+  await test('evento: non ancora iniziato, il codice resta in attesa', async()=>{
+    const c=await open('evento_presto',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'Non è ancora ora'); assert(c.vis('#evtRetry'),'bottone Riprova');
+    assert(JSON.parse(localStorage.getItem('mimi_evento')).c==='GALLIANO22','codice ancora in attesa');
+    c.$('#evtRetry').click(); await until(()=>c.calls('checkin').length===2, 2000, 'seconda checkin');
+  });
+  await test('evento: finito', async()=>{ const c=await open('evento_finito',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'Evento finito'); assert(localStorage.getItem('mimi_evento')===null,'attesa svuotata'); });
+  await test('evento: punti esauriti', async()=>{ const c=await open('evento_pieno',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'Punti esauriti'); });
+  await test('evento: QR sconosciuto', async()=>{ const c=await open('evento_ignoto',{evento:'BOH1234'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'QR non valido'); });
+  await test('evento: presenze spente, avviso chiaro', async()=>{ const c=await open('evento_spento',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'Presenze non attive'); assert(!c.vis('#evtRetry'),'niente Riprova'); assert(localStorage.getItem('mimi_evento')===null,'attesa svuotata'); });
+  await test('evento: errore del server, Riprova', async()=>{ const c=await open('evento_ko',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso'); has(c.txt('#evento'),'Presenza non registrata'); c.$('#evtRetry').click(); await until(()=>c.calls('checkin').length===2, 2000, 'seconda checkin'); });
+  await test('evento: codice malformato ignorato', async()=>{ const c=await open('evento_ok',{evento:'<script>x'}); await sleep(400); assert(c.calls('checkin').length===0 && !c.vis('#evento'),'nessuna checkin'); assert(localStorage.getItem('mimi_evento')===null,'niente in attesa'); });
+  await test('evento: prima l\'accesso, poi la presenza dal codice in attesa', async()=>{
+    let c=await open('login',{evento:'GALLIANO22'});
+    has(c.txt('#gateTitle'),'Accedi per registrare la tua presenza'); has(c.txt('#gateMsg'),'Se l\'evento è in corso'); has(c.$('#gateBtn').getAttribute('href'),encodeURIComponent('?s=login&evento=GALLIANO22'),'il ritorno porta il codice evento');
+    assert(c.calls('checkin').length===0,'nessuna checkin senza accesso');
+    c=await open('evento_ok',{keepStore:true});
+    await until(()=>c.calls('checkin').length===1 && c.calls('checkin')[0].body.code==='GALLIANO22', 3000, 'checkin dal codice in attesa');
+  });
+  await test('senza evento: nessuna checkin', async()=>{ const c=await open('p257'); await sleep(300); assert(c.calls('checkin').length===0 && !c.vis('#evento'),'nessuna checkin'); });
+
+  // ---------- robustezza ----------
+  await test('testo ostile: niente HTML iniettato', async()=>{
+    const c=await open('xss',{evento:'GALLIANO22'}); await until(()=>c.vis('#evento'), 3000, 'avviso evento'); await sleep(300);
+    assert(c.win.__xss===undefined,'nessun onerror eseguito (__xss='+c.win.__xss+')'); assert(!c.$('#xk') && !c.$('#xv'),'nessun elemento iniettato da key/value');
+    assert(c.$$('#codici img, #evento img, #regoleNota img, #pathStatus img, #ward figcaption img').length===0,'nessun <img> nato dai dati');
+    has(c.txt('#codici'),'<img src=x','il testo ostile resta testo');
+  });
+  await test('server v13: la pagina nuova funziona lo stesso', async()=>{
+    const c=await open('server_v13',{evento:'GALLIANO22'});
+    has(c.txt('#codici'),'AMICA12-KTQWJJ'); has(c.txt('#codici'),'12% di sconto, da usare al checkout'); assert(c.$$('#regole li').length===3,'tre regole senza eventi');
+    await until(()=>c.vis('#evento'), 3000, 'avviso evento'); has(c.txt('#evento'),'Presenza non registrata');
+    await playMemory(c, false); assert(c.$$('#grid .card .front.glyph').length===6,'memory col mazzo di riserva');
+  });
+  await test('tracciamento: lotto con page_open e solo nomi previsti', async()=>{
+    const c=await open('p257'); await until(()=>c.calls('track').length>=1, 6000, 'primo lotto');
+    const ev=c.calls('track')[0].body.events; assert(ev[0].e==='page_open' && !('el' in ev[0]),'page_open senza elemento');
+    const lista=['redeem_ready','redeem_locked','redeem_pending','profilo','mimi','guardaroba','bonus2','bday','codici','regole','evento','redeem','copy_code','coccola','gioco','profile_save','codici_tutti','shop'];
+    assert(ev.every(x=>Object.keys(x).every(k=>k==='e'||k==='el') && (x.e==='page_open' || lista.indexOf(x.el)>=0)),'solo e/el e nomi della lista chiusa: '+JSON.stringify(ev));
+  });
+
+  // ---------- impaginazione e accessibilita' ----------
+  for(const w of [375,768,1280]) for(const s of ['zero','p257','p980','profilo','login','pending']){
+    await test('impaginazione '+w+'px: '+s, async()=>{
+      const c=await open(s,{w}); await sleep(250);
+      assert(c.doc.documentElement.scrollWidth<=c.win.innerWidth+1,'nessuno scorrimento orizzontale ('+c.doc.documentElement.scrollWidth+' > '+c.win.innerWidth+')');
+      const fuori=c.$$('main *, .gate *').filter(n=>{ if(n.closest('.walk')) return false; const r=n.getBoundingClientRect(); return r.width>0 && (r.right>c.win.innerWidth+1 || r.left<-1); });
+      assert(fuori.length===0,'elementi fuori schermo: '+fuori.slice(0,3).map(n=>n.tagName+'.'+n.className).join(', '));
+      const bassi=c.$$('.rbtn,.act,.cp,.btn,.link,.sbtn,.mini').filter(n=>n.getClientRects().length && n.getBoundingClientRect().height<44);
+      assert(bassi.length===0,'bottoni sotto i 44px: '+bassi.slice(0,3).map(n=>n.className+'='+Math.round(n.getBoundingClientRect().height)).join(', '));
+      const tagliati=c.$$('main h1, main h2, main p, main li, main button, main figcaption, .gate h1, .gate p').filter(n=>n.getClientRects().length && n.scrollWidth>n.clientWidth+1);
+      assert(tagliati.length===0,'testi tagliati: '+tagliati.slice(0,3).map(n=>n.tagName+':'+n.textContent.slice(0,30)).join(' | '));
+    });
+  }
+  await test('accessibilita\': immagini, bottoni, finestre', async()=>{
+    const c=await open('p980');
+    assert(c.$$('img').every(i=>i.hasAttribute('alt')),'ogni immagine ha alt'); assert(c.$$('button').filter(b=>b.getClientRects().length).every(b=>b.textContent.trim().length>0 || b.getAttribute('aria-label')),'ogni bottone visibile ha un nome');
+    assert(c.$$('.modal').every(m=>m.getAttribute('role')==='dialog' && m.getAttribute('aria-modal')==='true' && m.getAttribute('aria-hidden')==='true' && c.win.getComputedStyle(m).visibility==='hidden'),'finestre chiuse fuori dal giro del fuoco');
+    assert(c.$('html').getAttribute('lang')==='it' && c.$$('h1').filter(h=>h.getClientRects().length).length===1,'lingua e un solo h1 visibile');
+    assert(c.$('#walk').getAttribute('role')==='img' && c.$('#walk').getAttribute('aria-label'),'il percorso ha una descrizione');
+  });
+
+  sum.textContent=ok+' ok, '+ko+' KO'+(ko ? ' · FALLITE: '+fails.join(' ; ') : ' · tutte verdi');
+  sum.className=ko ? 'ko' : 'ok';
+  document.title=(ko ? 'KO ' : 'OK ')+ok+'/'+(ok+ko)+' prove';
+})();
+</script>
+</body>
+</html>

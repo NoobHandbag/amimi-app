@@ -3,229 +3,304 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Premia · Il mio profilo · Amimì</title>
+<title>I tuoi punti Mimì · Amimì</title>
 <!--
-  Area Membri "Premia" - PRODUZIONE (dati REALI via App Proxy).
-  Va servita SAME-ORIGIN su amimi.it (es. pagina/sezione storefront), cosi' le fetch a
-  /apps/premia/* portano il logged_in_customer_id firmato da Shopify (nessun secondo login).
-  Contratto edge live loyalty-proxy: state | balance | coccola | memory_win | nanna | wear | rewards | redeem | profile | profile_save.
-  Tiers e tessera sono calcolati lato client da CONFIG (nessun numero inventato lato server). Dal 22-09 (v12) il livello
-  segue i punti cumulati (server, azione profile) quando il flag loyalty_tier_lifetime_enabled e' acceso, altrimenti il saldo.
-  Card "Il tuo profilo" (compleanno giorno+mese, materiale, consenso) e riga "seconda borsa" solo a flag acceso: a flag OFF la pagina e' identica a prima.
-  Servita da github.io o altro dominio NON funziona: il cookie di login e' su amimi.it.
+  Area Membri Amimi' - PRODUZIONE (dati REALI via App Proxy). Pagina nuova dal 2026-10-11 (call del 09-10):
+  solo punti Mimi' (niente livelli, niente timbri), percorso con le bandierine a scacchi, elenco di tutti i codici
+  riscattati, memory con le foto vere delle borse, presenza agli eventi dal QR (?evento=CODICE).
+  Va servita SAME-ORIGIN su amimi.it, cosi' le fetch a /apps/premia/* portano il logged_in_customer_id firmato da
+  Shopify (nessun secondo login). Servita da un altro dominio NON funziona: il cookie di login e' su amimi.it.
+  Contratto edge loyalty-proxy v14: state | coccola | memory_win | rewards | redeem | profile | profile_save | track | deck | checkin.
+  Il costo e il valore del premio arrivano dal server (riga attiva di loyalty_rewards): qui nessun numero fisso.
+  La Mimi' e' src/mimi.webp: build.mjs la inserisce al posto del segnaposto nella costante MIMI (una sola occorrenza).
+  Tema: solo chiaro, per scelta (il negozio non ha un tema scuro e la Mimi' ha il bordo bianco da adesivo).
+  Forme: bottoni a pillola, card 20px, righe e campi 14px. Un solo colore d'accento: il rosso della Mimi'.
 -->
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --cream:#faf7f3; --paper:#fffdfa; --sand:#e4ded7; --ink:#2a2724; --muted:#6f6862;
-    --cognac:#8a6d4b; --bordeaux:#7a2e3f; --gold:#c9a86a; --peach:#f6e3d5; --blush:#f3d9d3; --ok:#5c7150;
+    --red:#E10A0A; --red-deep:#A30008; --pink:#F9CBD0; --pink-soft:#FDECEE; --paper:#FFFBFB;
+    --ink:#2B1215; --muted:#7E5158; --line:#F3BFC6; --white:#FFFFFF;
+    --display:"Cormorant Garamond",Georgia,"Times New Roman",serif;
+    --body:"Work Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --ease:cubic-bezier(.3,.8,.3,1);
+    --chk:conic-gradient(var(--red) 90deg,var(--white) 90deg 180deg,var(--red) 180deg 270deg,var(--white) 270deg);
+    color-scheme:light;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--cream);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);max-width:460px;margin:0 auto;padding:20px 16px 48px;min-height:100vh;position:relative;overflow-x:hidden}
-  .logo{font-family:"Cormorant Garamond",serif;font-style:italic;font-size:26px;color:var(--bordeaux);text-align:center;letter-spacing:1px}
-  h3.sec{font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--cognac);margin:26px 0 10px}
-  .tap{cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}.tap:active{opacity:.82}
+  html{-webkit-text-size-adjust:100%}
+  body{background:var(--pink-soft);font-family:var(--body);font-size:15px;line-height:1.45;color:var(--ink);max-width:480px;margin:0 auto;padding:18px 16px 56px;min-height:100dvh;position:relative;overflow-x:hidden}
+  button{font:inherit;color:inherit}
+  a{color:var(--red-deep)}
+  :focus-visible{outline:2.5px solid var(--red-deep);outline-offset:2px}
   .hidden{display:none!important}
+  .tap{cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none}
+  .tap:active{transform:scale(.98)}
+  .logo{display:block;width:max-content;margin:0 auto;font-family:var(--display);font-style:italic;font-weight:600;font-size:26px;line-height:1.2;color:var(--red-deep);text-decoration:none;letter-spacing:.5px}
+  h2{font-family:var(--display);font-weight:700;font-size:25px;line-height:1.1;margin-bottom:12px}
+  main{display:flex;flex-direction:column;gap:28px;margin-top:14px}
+  .btn{display:inline-block;background:var(--red);color:var(--white);font-size:15px;font-weight:700;padding:14px 26px;border-radius:99px;border:none;cursor:pointer;text-decoration:none}
 
-  /* stati (login / off / errore) */
-  .gate{text-align:center;padding:60px 20px}
-  .gate h2{font-family:"Cormorant Garamond",serif;font-size:30px;font-weight:600;margin-bottom:8px}
-  .gate p{font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.5}
-  .btn{display:inline-block;background:var(--bordeaux);color:#fff;font-size:13px;font-weight:700;padding:12px 22px;border-radius:99px;border:none;cursor:pointer;text-decoration:none}
+  /* caricamento: la sagoma della pagina */
+  .skel{display:flex;flex-direction:column;gap:16px;margin-top:22px}
+  .skel i{display:block;border-radius:20px;background:linear-gradient(90deg,var(--pink) 25%,var(--paper) 37%,var(--pink) 63%);background-size:400% 100%;animation:shimmer 1.5s ease infinite}
+  @keyframes shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
 
-  /* mascotte Mimi */
-  .mimi{width:170px;height:170px;position:relative}
-  .mimi .handle{width:74px;height:52px;border:3px solid #3c2f28;border-bottom:none;border-radius:40px 40px 0 0;position:absolute;top:4px;left:48px}
-  .mimi .body{width:150px;height:118px;background:#fff;border:3px solid #3c2f28;border-radius:26px 26px 40px 40px;position:absolute;bottom:0;left:10px;box-shadow:inset 0 -14px 0 var(--blush)}
-  .mimi .clasp{width:22px;height:10px;background:var(--gold);border-radius:4px;position:absolute;bottom:104px;left:74px;border:2px solid #3c2f28;z-index:2}
-  .mimi .eye{width:12px;height:16px;background:#3c2f28;border-radius:50%;position:absolute;bottom:62px;animation:blink 4.5s infinite;z-index:2}
-  .mimi .eye.l{left:52px}.mimi .eye.r{right:52px}
-  .mimi .cheek{width:14px;height:8px;background:var(--blush);border-radius:50%;position:absolute;bottom:52px;z-index:2}
-  .mimi .cheek.l{left:38px}.mimi .cheek.r{right:38px}
-  .mimi .mouth{width:18px;height:9px;border:2.5px solid #3c2f28;border-top:none;border-radius:0 0 20px 20px;position:absolute;bottom:46px;left:76px;z-index:2}
-  .mimi .bow{position:absolute;top:44px;left:104px;z-index:3;display:none}
-  .mimi .bow i,.mimi .bow em{position:absolute;width:0;height:0;border-style:solid}
-  .mimi .bow i{border-width:9px 15px 9px 0;border-color:transparent var(--bordeaux) transparent transparent;left:-16px;top:-9px;transform:rotate(-8deg)}
-  .mimi .bow em{border-width:9px 0 9px 15px;border-color:transparent transparent transparent var(--bordeaux);left:1px;top:-9px;transform:rotate(8deg)}
-  .mimi .bow b{position:absolute;width:8px;height:8px;background:#5e2231;border-radius:50%;left:-5px;top:-4px}
-  .mimi.worn .bow{display:block}
-  @keyframes blink{0%,92%,96%,100%{transform:scaleY(1)}94%{transform:scaleY(.12)}}
-  @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
-  @keyframes squee{0%{transform:scale(1)}30%{transform:scale(1.08) rotate(-2deg)}60%{transform:scale(.97) rotate(1.5deg)}100%{transform:scale(1)}}
-  .mimi.squee{animation:squee .7s ease}
-  .heart{position:absolute;z-index:70;pointer-events:none;animation:rise 1.3s ease-out forwards}
-  @keyframes rise{0%{opacity:0;transform:translateY(6px) scale(.7)}18%{opacity:1}100%{opacity:0;transform:translateY(-64px) scale(1.25)}}
-  .confetti{position:fixed;width:9px;height:14px;z-index:95;pointer-events:none;animation:fall linear forwards}
+  /* stati: accesso richiesto, programma spento, errore */
+  .gate{text-align:center;padding:36px 12px;display:flex;flex-direction:column;align-items:center;gap:12px}
+  .gate img{width:132px;height:auto}
+  .gate h1{font-family:var(--display);font-size:32px;font-weight:700;line-height:1.05;text-wrap:balance}
+  .gate p{font-size:15px;color:var(--muted);max-width:34ch}
+
+  /* saluto + Mimi */
+  .hero{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px}
+  .hello{font-family:var(--display);font-size:44px;font-weight:700;line-height:.98}
+  .mood{font-size:14px;color:var(--muted);margin-top:8px;max-width:22ch;min-height:2.9em}
+  .hero-mimi{position:relative;width:128px}
+  .hero-mimi img{display:block;width:100%;height:auto;animation:floaty 3.6s ease-in-out infinite;filter:drop-shadow(0 6px 6px rgba(163,0,8,.16))}
+  .hero-mimi.squee img{animation:squee .7s ease}
+  @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+  @keyframes squee{0%{transform:scale(1)}30%{transform:scale(1.09) rotate(-3deg)}60%{transform:scale(.97) rotate(2deg)}100%{transform:scale(1)}}
+  .spark{position:absolute;width:16px;height:16px;background:var(--red);clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);pointer-events:none;animation:rise 1.2s ease-out forwards;z-index:5}
+  @keyframes rise{0%{opacity:0;transform:translateY(6px) scale(.6)}20%{opacity:1}100%{opacity:0;transform:translateY(-58px) scale(1.2)}}
+  .confetti{position:fixed;width:10px;height:10px;z-index:95;pointer-events:none;animation:fall linear forwards}
   @keyframes fall{0%{opacity:1;transform:translateY(-10px) rotate(0)}100%{opacity:.9;transform:translateY(100vh) rotate(540deg)}}
 
-  /* profilo */
-  .hello{font-family:"Cormorant Garamond",serif;font-size:34px;font-weight:600;margin-top:14px;line-height:1.05}
-  .lvl{display:inline-flex;align-items:center;gap:7px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--cognac);margin-top:8px;background:var(--paper);border:1px solid var(--sand);padding:5px 11px;border-radius:99px}
-  .lvl .dot{width:8px;height:8px;border-radius:50%;background:var(--bordeaux)}
-  .tessera{background:var(--paper);border:1.5px dashed var(--cognac);border-radius:18px;padding:20px;margin-top:16px;position:relative}
-  .tessera:before,.tessera:after{content:"";position:absolute;width:22px;height:22px;background:var(--cream);border-radius:50%;top:50%;transform:translateY(-50%)}
-  .tessera:before{left:-13px}.tessera:after{right:-13px}
-  .pts{display:flex;align-items:baseline;gap:10px;justify-content:center}
-  .pts .n{font-family:"Cormorant Garamond",serif;font-size:50px;font-weight:600;color:var(--bordeaux);line-height:.9}
-  .pts .l{font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--muted)}
-  .stamps{display:grid;grid-template-columns:repeat(5,1fr);gap:11px;margin:16px 6px 4px}
-  .stamp{aspect-ratio:1;border-radius:50%;border:1.5px solid var(--sand);display:flex;align-items:center;justify-content:center;font-size:18px;background:#fff;color:#cfc6ba;transition:all .35s}
-  .stamp.full{background:var(--bordeaux);border-color:var(--bordeaux);transform:rotate(-8deg)}
-  .cap{text-align:center;font-size:12px;color:var(--muted);margin-top:10px}.cap b{color:var(--bordeaux)}
-  .tierbar{height:7px;border-radius:7px;background:#f0e8dd;margin-top:14px;overflow:hidden}
-  .tierbar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--bordeaux));transition:width .8s cubic-bezier(.22,.9,.3,1)}
-  .tiernote{font-size:11px;color:var(--muted);margin-top:7px;text-align:center}.tiernote b{color:var(--bordeaux)}
+  /* avvisi: evento dal QR, compleanno */
+  .note{display:flex;align-items:center;gap:12px;background:var(--white);border:1.5px solid var(--red);border-radius:20px;padding:14px 16px;font-size:14px}
+  .note b{display:block;font-family:var(--display);font-size:21px;font-weight:700;line-height:1.1;color:var(--red-deep)}
+  .note .txt{flex:1;min-width:0}
+  .note .mini{flex:none;background:var(--red);color:var(--white);border:none;border-radius:99px;font-size:14px;font-weight:700;padding:0 16px;min-height:44px;cursor:pointer}
+  .percorso:focus{outline:none}
 
-  /* stanza / azioni */
-  .scene{text-align:center;margin-top:8px;position:relative}
-  .scene .mimi{margin:0 auto;animation:floaty 3.5s ease-in-out infinite}
-  .mname{font-family:"Cormorant Garamond",serif;font-size:24px;font-weight:600;margin-top:4px}
-  .mmood{font-size:12.5px;color:#7d6a5c;max-width:300px;margin:2px auto 0;min-height:34px}
-  .acts{display:flex;gap:9px;margin-top:14px}
-  .act{flex:1;border-radius:13px;padding:12px 6px;text-align:center;font-size:12px;font-weight:700;transition:all .25s;border:none}
-  .act small{display:block;font-weight:500;font-size:9.5px;opacity:.85;margin-top:2px}
-  .act.main{background:var(--bordeaux);color:#fff}
-  .act.alt{background:#fff;color:var(--bordeaux);border:1.5px solid var(--bordeaux)}
-  .act.done{background:#efe8df;color:#9a8e80}
+  /* bandierina a scacchi */
+  .flag{position:relative;display:block;width:22px;height:30px;flex:none}
+  .flag::before{content:"";position:absolute;left:2px;top:0;bottom:0;width:2px;border-radius:2px;background:var(--red-deep)}
+  .flag i{position:absolute;left:4px;top:1px;width:17px;height:13px;border:1px solid var(--red-deep);transform-origin:left center;opacity:.32;background:var(--chk) 0 0/8px 8px}
+  .flag.on i{opacity:1;animation:wave 1.7s ease-in-out infinite}
+  @keyframes wave{0%,100%{transform:skewY(0)}50%{transform:skewY(-9deg)}}
+
+  /* punti e percorso */
+  .percorso{background:var(--white);border:1.5px solid var(--line);border-radius:20px;padding:22px 16px 18px;display:flex;flex-direction:column;gap:12px}
+  .pts{display:flex;align-items:baseline;justify-content:center;gap:10px}
+  .pts .n{font-family:var(--display);font-size:68px;font-weight:700;color:var(--red);line-height:.85;font-variant-numeric:tabular-nums}
+  .pts .l{font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .walk{position:relative;height:106px;margin:0 26px}
+  .walk .rail{position:absolute;left:0;right:0;bottom:22px;height:14px;border-radius:99px;background:var(--pink);box-shadow:inset 0 0 0 1.5px var(--line);overflow:hidden}
+  .walk .rail i{display:block;height:100%;width:0;background:var(--red);border-radius:99px;transition:width 1s var(--ease)}
+  .walk .ms{position:absolute;bottom:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center}
+  .walk .ms .flag{margin-bottom:14px;margin-left:16px}
+  .walk .ms span{font-size:12px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums;line-height:22px}
+  .walk .ms.on span{color:var(--red-deep)}
+  .walk .walker{position:absolute;bottom:31px;left:0;transform:translateX(-50%);transition:left 1s var(--ease);z-index:3}
+  .walk .walker img{display:block;width:48px;height:auto;filter:drop-shadow(0 3px 3px rgba(163,0,8,.18))}
+  .walk .walker.go img{animation:step .32s ease-in-out infinite}
+  @keyframes step{0%,100%{transform:translateY(0) rotate(-3deg)}50%{transform:translateY(-5px) rotate(3deg)}}
+  .status{text-align:center;font-size:15px}
+  .status b{color:var(--red-deep)}
+  .rbtn{background:var(--red);color:var(--white);border:none;border-radius:99px;font-size:15px;font-weight:700;padding:15px 18px;cursor:pointer;width:100%;transition:transform .12s,opacity .2s}
+  .rbtn[disabled]{background:var(--pink);color:var(--muted);cursor:default}
+  .bonus2{font-size:13px;color:var(--muted);text-align:center;border-top:1.5px dashed var(--line);padding-top:12px}
+  .bonus2 b{color:var(--red-deep)}
+
+  /* i tuoi codici */
+  .codici{list-style:none;display:grid;gap:8px}
+  .cod{display:flex;align-items:center;gap:12px;background:var(--white);border:1.5px solid var(--line);border-radius:14px;padding:13px 14px}
+  .cod-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .cod-c{font-weight:700;font-size:16px;letter-spacing:.04em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .cod-m{font-size:13px;color:var(--muted)}
+  .cod.used{background:transparent}
+  .cod.used .cod-c{color:var(--muted);text-decoration:line-through}
+  .cp{flex:none;background:var(--red);color:var(--white);border:none;border-radius:99px;font-size:14px;font-weight:700;padding:0 16px;min-width:80px;min-height:44px;cursor:pointer}
+  .chip{flex:none;font-size:12px;font-weight:600;color:var(--muted);border:1.5px solid var(--line);border-radius:99px;padding:6px 11px}
+  .link{background:none;border:none;color:var(--red-deep);font-size:14px;font-weight:600;text-decoration:underline;cursor:pointer;padding:0 4px;min-height:44px;margin-top:4px}
+
+  /* ogni giorno */
+  .acts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .act{border-radius:16px;padding:16px 10px;text-align:center;font-size:15px;font-weight:700;border:1.5px solid var(--red);background:var(--white);color:var(--red-deep);min-height:72px;transition:transform .12s}
+  .act small{display:block;font-weight:500;font-size:12.5px;margin-top:3px;color:var(--muted)}
+  .act.main{background:var(--red);color:var(--white)}
+  .act.main small{color:var(--white)}
+  .act.done{background:var(--pink);border-color:var(--pink);color:var(--muted);cursor:default}
+
+  /* come prendi i punti */
+  .regole{list-style:none;display:grid;gap:11px}
+  .regole li{display:flex;justify-content:space-between;align-items:baseline;gap:14px;font-size:15px}
+  .regole b{color:var(--red-deep);font-weight:600;text-align:right;white-space:nowrap}
+  .fine{font-size:13px;color:var(--muted);margin-top:14px}
+  .fine b{color:var(--ink);font-weight:600}
+
+  /* le tue borse */
   .ward{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-  .witem{background:#fff;border-radius:14px;padding:8px;box-shadow:0 4px 14px rgba(122,46,63,.06);text-align:center;border:2px solid transparent;transition:border-color .3s}
-  .witem.worn{border-color:var(--bordeaux)}
-  .witem img{width:100%;height:74px;object-fit:cover;border-radius:10px;background:var(--peach)}
-  .witem span{font-size:9.5px;color:var(--muted);display:block;margin-top:6px;line-height:1.3}
-  .witem .w{display:inline-block;font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--bordeaux);margin-top:3px}
-  .empty{background:#fff;border:1px dashed var(--sand);border-radius:14px;padding:18px;text-align:center;font-size:12px;color:var(--muted)}
+  .witem{background:var(--white);border-radius:14px;padding:7px;border:1.5px solid var(--line);min-width:0}
+  .witem img,.witem .noimg{display:block;width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:9px;background:var(--pink)}
+  .witem figcaption{font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.25;text-align:center;overflow-wrap:anywhere}
+  .empty{background:var(--white);border:1.5px dashed var(--line);border-radius:14px;padding:18px;text-align:center;font-size:14px;color:var(--muted)}
 
-  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#2a2724;color:#fff;font-size:12.5px;padding:10px 18px;border-radius:99px;opacity:0;pointer-events:none;transition:all .3s;z-index:80;max-width:88%}
-  #toast.on{opacity:.95;transform:translateX(-50%) translateY(0)}
-
-  /* mini-gioco memory */
-  .modal{position:fixed;inset:0;background:rgba(42,39,36,.55);display:flex;align-items:center;justify-content:center;z-index:90;opacity:0;pointer-events:none;transition:opacity .25s;padding:20px}
-  .modal.on{opacity:1;pointer-events:auto}
-  .sheet{background:var(--cream);border-radius:22px;padding:22px 20px;width:100%;max-width:340px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.3)}
-  .sheet h2{font-family:"Cormorant Garamond",serif;font-size:26px;font-weight:600}
-  .sheet p{font-size:12px;color:var(--muted);margin-top:4px}
-  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}
-  .card{aspect-ratio:3/4;border-radius:10px;background:var(--bordeaux);display:flex;align-items:center;justify-content:center;font-size:24px;cursor:pointer;color:transparent;transition:transform .25s, background .25s}
-  .card.up{background:var(--paper);color:initial;border:1.5px solid var(--sand)}
-  .card.done{background:var(--peach);color:initial;cursor:default}
-  .prizebig{font-family:"Cormorant Garamond",serif;font-size:44px;font-weight:700;color:var(--bordeaux);margin:6px 0}
-  .btnghost{background:none;border:none;color:var(--muted);font-size:12px;margin-top:8px;cursor:pointer;text-decoration:underline}
-
-  /* riscatto (punti -> codice sconto) */
-  .redeem{background:linear-gradient(135deg,var(--bordeaux),#5e2231);color:#fff;border-radius:18px;padding:18px 20px;margin-top:14px;box-shadow:0 10px 26px rgba(122,46,63,.22)}
-  .redeem h4{font-family:"Cormorant Garamond",serif;font-size:22px;font-weight:600;line-height:1.1}
-  .redeem .sub{font-size:12px;opacity:.88;margin:4px 0 12px}
-  .redeem .rbtn{background:var(--gold);color:#3c2f28;border:none;border-radius:99px;font-size:13px;font-weight:700;padding:13px 18px;cursor:pointer;width:100%;transition:transform .12s,opacity .2s}
-  .redeem .rbtn:active{transform:scale(.98)}
-  .redeem .rbtn[disabled]{background:rgba(255,255,255,.22);color:rgba(255,255,255,.7);cursor:default}
-  .codechip{display:flex;align-items:center;gap:8px;background:#fff;color:var(--bordeaux);border-radius:12px;padding:11px 12px}
-  .codechip .c{font-family:"Cormorant Garamond",serif;font-weight:700;font-size:19px;letter-spacing:.5px;flex:1;word-break:break-all}
-  .codechip .cp{background:var(--bordeaux);color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;padding:8px 12px;cursor:pointer;white-space:nowrap}
-  .redeem .fine{font-size:10.5px;opacity:.82;margin-top:9px;text-align:center}
-
-  /* compleanno, bonus seconda borsa, profilo (v12) */
-  .bday{background:linear-gradient(135deg,var(--peach),var(--blush));border-radius:16px;padding:14px 16px;margin-top:14px;text-align:center}
-  .bday b{font-family:"Cormorant Garamond",serif;font-size:22px;font-weight:600;color:var(--bordeaux);display:block}
-  .bday span{font-size:12px;color:#7d6a5c}
-  .bonus2{font-size:11.5px;color:var(--muted);margin-top:8px;text-align:center;border-top:1px dashed var(--sand);padding-top:9px}.bonus2 b{color:var(--bordeaux)}
-  .prof{background:var(--paper);border:1px solid var(--sand);border-radius:18px;padding:18px 16px}
+  /* profilo (compleanno, materiale): solo a flag acceso */
+  .prof{background:var(--white);border:1.5px solid var(--line);border-radius:20px;padding:18px 16px}
   .prof .row{display:flex;gap:8px;margin-top:10px}
-  .prof label{display:block;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--cognac);margin-bottom:4px}
-  .prof select{width:100%;border:1px solid var(--sand);border-radius:10px;background:#fff;padding:10px;font-size:14px;color:var(--ink)}
-  .prof select[disabled]{background:#f4efe9;color:var(--muted)}
-  .prof .chk{display:flex;gap:9px;align-items:flex-start;margin-top:12px;font-size:12px;color:var(--muted);line-height:1.4}
-  .prof .chk input{margin-top:2px;accent-color:var(--bordeaux)}
-  .prof .sbtn{width:100%;margin-top:14px;background:var(--bordeaux);color:#fff;border:none;border-radius:99px;font-size:13px;font-weight:700;padding:12px;cursor:pointer}
+  .prof label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px}
+  .prof select{width:100%;border:1.5px solid var(--line);border-radius:14px;background:var(--white);padding:11px 10px;font:inherit;font-size:16px;color:var(--ink)}
+  .prof select[disabled]{background:var(--pink-soft);color:var(--muted)}
+  .prof .chk{display:flex;gap:9px;align-items:flex-start;margin-top:12px;font-size:13px;color:var(--muted);line-height:1.4}
+  .prof .chk input{margin-top:2px;accent-color:var(--red);width:18px;height:18px;flex:none}
+  .prof .chk label{font-size:13px;font-weight:400;margin:0}
+  .prof .sbtn{width:100%;margin-top:14px;background:var(--red);color:var(--white);border:none;border-radius:99px;font-size:15px;font-weight:700;padding:14px;cursor:pointer}
   .prof .sbtn[disabled]{opacity:.55;cursor:default}
-  .prof .sum{font-size:13px;line-height:1.7;margin-top:8px}.prof .sum b{color:var(--bordeaux)}
-  .prof .got{display:inline-block;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ok);margin-top:8px}
-  .prof .note{font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.4}
+  .prof .sum{font-size:15px;line-height:1.7}
+  .prof .sum b{color:var(--red-deep)}
+  .prof .got{display:inline-block;font-size:13px;font-weight:600;color:var(--red-deep);margin-top:8px}
+  .prof .pnote{font-size:13px;color:var(--muted);margin-top:8px;line-height:1.4}
+  .prof .pnote b{color:var(--ink)}
+
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--white);font-size:14px;padding:11px 18px;border-radius:99px;opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;z-index:96;max-width:88%;text-align:center}
+  #toast.on{opacity:.96;transform:translateX(-50%) translateY(0)}
+
+  /* finestre: memory e premio */
+  .modal{position:fixed;inset:0;background:rgba(43,18,21,.6);display:flex;align-items:center;justify-content:center;z-index:90;opacity:0;visibility:hidden;transition:opacity .25s,visibility 0s .25s;padding:20px}
+  .modal.on{opacity:1;visibility:visible;transition:opacity .25s}
+  .sheet{background:var(--paper);border-radius:20px;padding:24px 20px 18px;width:100%;max-width:360px;text-align:center;box-shadow:0 20px 50px rgba(43,18,21,.35)}
+  .sheet h2{font-size:29px;margin-bottom:4px}
+  .sheet p{font-size:14px;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:16px 0 10px}
+  .card{position:relative;aspect-ratio:3/4;border:none;padding:0;background:none;border-radius:12px;cursor:pointer;perspective:700px}
+  .card[disabled]{cursor:default}
+  .card .in{position:absolute;inset:0;border-radius:12px;transition:transform .38s var(--ease);transform-style:preserve-3d}
+  .card.up .in,.card.done .in{transform:rotateY(180deg)}
+  .card .back,.card .front{position:absolute;inset:0;border-radius:12px;overflow:hidden;backface-visibility:hidden;-webkit-backface-visibility:hidden}
+  .card .back{background:var(--chk) 0 0/50% 37.5%;border:1.5px solid var(--red-deep);display:flex;align-items:center;justify-content:center}
+  .card .back img{width:46%;height:auto;background:var(--white);border-radius:50%;padding:5px;box-shadow:0 0 0 1.5px var(--red-deep)}
+  .card .front{transform:rotateY(180deg);background:var(--white);border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center}
+  .card .front img{display:block;width:100%;height:100%;object-fit:cover}
+  .card .front.glyph img{width:70%;height:auto;object-fit:contain}
+  .card .front.glyph.chk{background:var(--chk) 0 0/50% 37.5%}
+  .card .front.glyph.word{font-family:var(--display);font-style:italic;font-weight:600;font-size:22px;color:var(--red-deep)}
+  .card.done .front{border-color:var(--red);box-shadow:inset 0 0 0 2px var(--red)}
+  .card.loading .back{opacity:.5}
+  .prizebig{font-family:var(--display);font-size:60px;font-weight:700;color:var(--red);line-height:1;margin:6px 0}
+  .codechip{display:flex;align-items:center;gap:8px;background:var(--white);border:1.5px solid var(--line);border-radius:14px;padding:10px 10px 10px 14px;margin:12px 0 4px;text-align:left}
+  .codechip .c{flex:1;min-width:0;font-weight:700;font-size:17px;letter-spacing:.04em;overflow-wrap:anywhere}
+  .sheet .btn{width:100%;margin-top:14px}
+  .btnghost{background:none;border:none;color:var(--muted);font-size:14px;font-weight:600;margin-top:4px;padding:0 12px;min-height:44px;cursor:pointer;text-decoration:underline}
+
+  @media (min-width:420px){ .hero-mimi{width:146px} .hello{font-size:50px} }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+  }
 </style>
 </head>
 <body>
-  <div class="logo">amìmì</div>
+  <a class="logo" href="/" aria-label="Amimì, torna al sito">amìmì</a>
 
   <!-- stato: caricamento -->
-  <div id="loading" class="gate"><p>Carico il tuo profilo Premia...</p></div>
+  <div id="loading" class="skel" role="status" aria-label="Carico i tuoi punti Mimì">
+    <i style="height:118px"></i><i style="height:262px"></i><i style="height:76px"></i>
+  </div>
 
-  <!-- stato: login richiesto / off -->
+  <!-- stato: accesso richiesto / programma spento / errore -->
   <div id="gate" class="gate hidden">
-    <h2 id="gateTitle"></h2>
+    <img data-mimi alt="">
+    <h1 id="gateTitle"></h1>
     <p id="gateMsg"></p>
     <a id="gateBtn" class="btn" href="/account">Accedi</a>
+    <button id="gateRetry" class="btn hidden" type="button">Riprova</button>
   </div>
 
-  <!-- profilo -->
-  <div id="app" class="hidden">
-    <div class="hello">Ciao,<br><span id="cName">amica</span></div>
-    <div><span class="lvl"><span class="dot"></span><span id="tierName">Amica</span></span></div>
-    <div id="bday" class="bday hidden"></div>
+  <!-- area membri -->
+  <main id="app" class="hidden">
+    <div class="hero">
+      <div>
+        <h1 class="hello">Ciao,<br>amica</h1>
+        <p class="mood" id="mood"></p>
+      </div>
+      <div class="hero-mimi" id="mimi"><img data-mimi alt="Mimì, la borsetta di Amimì"></div>
+    </div>
 
-    <div class="tessera">
-      <div class="pts"><span class="n" id="pts">0</span><span class="l">punti</span></div>
-      <div class="stamps" id="stamps"></div>
-      <div class="cap" id="cap"></div>
-      <div class="tierbar"><i id="tierFill" style="width:0%"></i></div>
-      <div class="tiernote" id="tierNote"></div>
+    <div id="evento" class="note hidden" role="status"></div>
+    <div id="bday" class="note hidden"></div>
+
+    <section class="percorso" id="redeem" aria-label="I tuoi punti Mimì" tabindex="-1">
+      <div class="pts"><span class="n" id="pts">0</span><span class="l">punti Mimì</span></div>
+      <div class="walk hidden" id="walk" role="img"></div>
+      <p class="status" id="pathStatus"></p>
+      <div id="redeemBox"></div>
       <div id="bonus2" class="bonus2 hidden"></div>
-    </div>
+    </section>
 
-    <div id="redeem" class="redeem hidden"></div>
+    <section id="codiciSec" class="hidden">
+      <h2>I tuoi codici</h2>
+      <ul id="codici" class="codici"></ul>
+      <button id="codiciTutti" class="link hidden" type="button"></button>
+    </section>
 
-    <div id="profSec" class="hidden">
-      <h3 class="sec">Il tuo profilo</h3>
+    <section>
+      <h2>Ogni giorno</h2>
+      <div class="acts">
+        <button class="act main tap" id="btnCoccola" type="button"></button>
+        <button class="act tap" id="btnGame" type="button"></button>
+      </div>
+    </section>
+
+    <section id="profSec" class="hidden">
+      <h2>Il tuo profilo</h2>
       <div id="profilo" class="prof"></div>
-    </div>
+    </section>
 
-    <h3 class="sec">La stanza di Mimì</h3>
-    <div class="scene">
-      <div class="mimi" id="mimi"></div>
-      <div class="mname">Mimì</div>
-      <div class="mmood" id="mood"></div>
-    </div>
-    <div class="acts">
-      <button class="act main tap" id="btnCoccola"></button>
-      <button class="act alt tap" id="btnGame">Gioca<small>1 volta al giorno</small></button>
-      <button class="act alt tap" id="btnNanna"></button>
-    </div>
+    <section id="regoleSec">
+      <h2>Come prendi i punti</h2>
+      <ul class="regole" id="regole"></ul>
+      <p class="fine" id="regoleNota"></p>
+    </section>
 
-    <h3 class="sec">Il guardaroba di Mimì</h3>
-    <div id="ward"></div>
-  </div>
+    <section>
+      <h2>Le tue borse</h2>
+      <div id="ward"></div>
+    </section>
+  </main>
 
-  <!-- mini-gioco memory -->
-  <div class="modal" id="gameModal"><div class="sheet">
-    <h2>Trova le coppie</h2>
-    <p>Abbina le borsine per vincere i punti di oggi.</p>
+  <!-- memory -->
+  <div class="modal" id="gameModal" role="dialog" aria-modal="true" aria-labelledby="gameTitle" aria-hidden="true"><div class="sheet">
+    <h2 id="gameTitle">Trova le coppie</h2>
+    <p id="gameMsg">Abbina le borse uguali e vinci i punti di oggi.</p>
     <div class="grid" id="grid"></div>
-    <button class="btnghost" id="gameClose">Chiudi</button>
+    <button class="btnghost" id="gameClose" type="button">Chiudi</button>
   </div></div>
 
-  <!-- reveal premio -->
-  <div class="modal" id="rewardModal"><div class="sheet">
+  <!-- premio -->
+  <div class="modal" id="rewardModal" role="dialog" aria-modal="true" aria-labelledby="rewardTitle" aria-hidden="true"><div class="sheet">
     <h2 id="rewardTitle">Complimenti!</h2>
     <div class="prizebig" id="rewardPrize"></div>
     <p id="rewardMsg"></p>
-    <button class="btn" id="rewardOk">Continua</button>
+    <div id="rewardCode"></div>
+    <button class="btn" id="rewardOk" type="button">Continua</button>
   </div></div>
 
-  <div id="toast"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
 (function(){
   "use strict";
 
-  // === CONFIG (tiers/tessera lato client; i punti veri vengono dall'edge) ===
+  // === CONFIG (i punti veri, il costo e il valore del premio arrivano dall'edge) ===
   const CONFIG = {
-    stampEvery: 20, stampsForReward: 10,
-    tiers: [ {key:'amica',name:'Amica',min:0},{key:'speciale',name:'Amica Speciale',min:150},{key:'cuore',name:"Amica del Cuore",min:400} ],
+    traguardi: 3,          // bandierine visibili sul percorso: le ultime due raggiunte e la prossima
+    codiciVisibili: 3,     // codici mostrati prima di "Mostra tutti"
+    coppie: 3,             // coppie del memory
+    eventoOre: 12,         // per quante ore il codice di un QR resta in attesa dell'accesso
     materiali: ['cavallino','cocco','vernice','pelle liscia','cotone','nessuna preferenza'],   // lista chiusa, uguale al check a DB (migr 0141)
     mesi: ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'],
   };
   const PROXY = '/apps/premia';         // same-origin su amimi.it
+  const MIMI = '__MIMI_DATA_URI__';
   const el = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));   // tutto cio' che entra in innerHTML passa da qui (audit T7)
+  const reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   let S = null;                          // stato reale dall'edge
+  let tuttiICodici = false;
+  document.querySelectorAll('[data-mimi]').forEach(i => { i.src = MIMI; });
 
   // === API reale (rispecchia loyalty-proxy) ===
   async function api(action, opts){
@@ -235,11 +310,13 @@
     if (o.body) init.body = JSON.stringify(o.body);
     let r;
     try { r = await fetch(url, init); } catch(e) { return { status:0, data:{ error:'network' } }; }   // offline o rete: gli handler mostrano "Riprova" (audit T30)
-    let data = {}; try { data = await r.json(); } catch(e){}
+    let data = null; try { data = await r.json(); } catch(e){}
+    if(!data || typeof data!=='object') data = { error:'bad_response' };                              // corpo non JSON (502 del gateway, pagina HTML): mai scambiarlo per una risposta buona
+    else if(!r.ok && !data.error && !data.reason && !data.state) data.error = 'http_'+r.status;         // errore senza un motivo dichiarato
     return { status:r.status, data };
   }
 
-  // === tracciamento (loyalty-proxy v13, migr 0146): apertura, card viste, tap. Solo nome dell'evento e dell'elemento,
+  // === tracciamento (loyalty-proxy v13, migr 0146 e 0150): apertura, card viste, tap. Solo nome dell'evento e dell'elemento,
   // in lotti (max 20, invio dopo 4 s o quando la pagina va in background), max 60 per caricamento pagina. A flag
   // loyalty_track_enabled spento il server risponde {state:'off'} e la pagina smette di mandare. Mai bloccante, mai un toast.
   const T = { q:[], sent:0, off:false, seen:{}, timer:null, started:false, MAX:60 };
@@ -263,108 +340,164 @@
   function trackStart(){
     if(T.started) return; T.started=true;
     track('page_open');
-    watch('redeem'); watch('profSec','profilo'); watch('mimi','mimi'); watch('ward','guardaroba'); watch('bonus2','bonus2'); watch('bday','bday');
+    watch('redeem'); watch('codiciSec','codici'); watch('profSec','profilo'); watch('mimi','mimi'); watch('regoleSec','regole'); watch('ward','guardaroba'); watch('bonus2','bonus2'); watch('bday','bday'); watch('evento','evento');
   }
 
-  function toast(m){ const t=el('toast'); t.textContent=m; t.classList.add('on'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('on'),2200); }
-  function mimiInner(){ return '<div class="handle"></div><div class="body"></div><div class="clasp"></div><div class="bow"><i></i><em></em><b></b></div><div class="eye l"></div><div class="eye r"></div><div class="cheek l"></div><div class="cheek r"></div><div class="mouth"></div>'; }
-  function tierOf(p){ let t=CONFIG.tiers[0]; for(const x of CONFIG.tiers) if(p>=x.min) t=x; return t; }
-  function nextTier(p){ for(const x of CONFIG.tiers) if(p<x.min) return x; return null; }
-  function hearts(host,n){ n=n||6; for(let k=0;k<n;k++){ (function(k){ setTimeout(()=>{ const h=document.createElement('div'); h.className='heart'; h.textContent='💛'; h.style.fontSize=(14+Math.random()*8)+'px'; h.style.left=(40+Math.random()*120)+'px'; h.style.top=(30+Math.random()*60)+'px'; host.appendChild(h); setTimeout(()=>h.remove(),1400); }, k*110); })(k);} }
-  function squee(){ const m=el('mimi'); m.classList.remove('squee'); void m.offsetWidth; m.classList.add('squee'); }
-  function confetti(){ const cols=['#7a2e3f','#c9a86a','#f3d9d3','#8a6d4b','#f6e3d5']; for(let i=0;i<70;i++){ const c=document.createElement('div'); c.className='confetti'; c.style.left=Math.random()*100+'%'; c.style.top='-10px'; c.style.background=cols[i%cols.length]; c.style.animationDuration=(1.6+Math.random()*1.3)+'s'; document.body.appendChild(c); setTimeout(()=>c.remove(),3200);} }
-  function countUp(node,to){ const from=Number(node.textContent)||0; if(from===to){node.textContent=to;return;} const t0=performance.now(); (function step(t){ const k=Math.min(1,(t-t0)/650); node.textContent=Math.round(from+(to-from)*(1-Math.pow(1-k,3))); if(k<1) requestAnimationFrame(step); })(performance.now()); }
-  function reward(title,prize,msg){ el('rewardTitle').textContent=title; el('rewardPrize').textContent=prize; el('rewardMsg').textContent=msg||''; el('rewardModal').classList.add('on'); confetti(); }
+  // === piccoli effetti ===
+  function toast(m){ const t=el('toast'); t.textContent=m; t.classList.add('on'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('on'),2400); }
+  function sparkles(host,n){ if(reduced) return; n=n||6; for(let k=0;k<n;k++){ (function(k){ setTimeout(()=>{ const h=document.createElement('i'); h.className='spark'; const z=10+Math.random()*10; h.style.width=h.style.height=z+'px'; h.style.left=(8+Math.random()*78)+'%'; h.style.top=(18+Math.random()*46)+'%'; host.appendChild(h); setTimeout(()=>h.remove(),1300); }, k*110); })(k);} }
+  function squee(){ const m=el('mimi'); m.classList.remove('squee'); void m.offsetWidth; m.classList.add('squee'); setTimeout(()=>m.classList.remove('squee'),750); }
+  function confetti(){ if(reduced) return; const cols=['#E10A0A','#F9CBD0','#FFFFFF','#A30008','#F3BFC6']; for(let i=0;i<64;i++){ const c=document.createElement('div'); c.className='confetti'; c.style.left=Math.random()*100+'%'; c.style.top='-10px'; c.style.background=cols[i%cols.length]; c.style.animationDuration=(1.6+Math.random()*1.3)+'s'; document.body.appendChild(c); setTimeout(()=>c.remove(),3200);} }
+  // il conteggio e' solo estetica: il valore finale arriva comunque dopo 900 ms, anche se la scheda e' in secondo piano e i fotogrammi sono fermi
+  function countUp(node,to){ const from=Number(node.textContent)||0; clearTimeout(node._end); node._to=to; if(from===to || reduced){node.textContent=to;return;} const t0=performance.now(); (function step(t){ if(node._to!==to) return; const k=Math.min(1,(t-t0)/700); node.textContent=Math.round(from+(to-from)*(1-Math.pow(1-k,3))); if(k<1) requestAnimationFrame(step); })(performance.now()); node._end=setTimeout(()=>{ if(node._to===to) node.textContent=to; },900); }
+  function itDate(iso){ const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||'')); return m ? (m[3]+'/'+m[2]+'/'+m[1]) : ''; }
+  function thumb(u, w){ u=String(u||''); return u.indexOf('https://cdn.shopify.com/')===0 ? u+(u.indexOf('?')<0?'?':'&')+'width='+w : u; }   // il CDN Shopify ridimensiona con ?width=
+  async function copyCode(code, btn){
+    track('tap','copy_code');
+    try{ await navigator.clipboard.writeText(code); toast('Codice copiato'); if(btn){ const old=btn.textContent; btn.textContent='Copiato'; setTimeout(()=>{ btn.textContent=old; },1800); } }
+    catch(_){ toast('Codice: '+code); }
+  }
+
+  // === finestre (memory, premio): fuoco dentro all'apertura, Esc chiude, il fuoco torna dov'era ===
+  let lastFocus=null;
+  function openModal(id, focusNode){ const m=el(id); lastFocus=document.activeElement; m.classList.add('on'); m.setAttribute('aria-hidden','false'); setTimeout(()=>{ const f=focusNode||m.querySelector('button:not([disabled])'); if(f) f.focus(); },80); }
+  function closeModal(id){ const m=el(id); if(!m.classList.contains('on')) return; m.classList.remove('on'); m.setAttribute('aria-hidden','true'); const back=(lastFocus && lastFocus!==document.body && document.contains(lastFocus)) ? lastFocus : el('redeem'); if(back && back.focus) back.focus(); }   // il bottone di partenza puo' essere stato ridisegnato: si torna alla card dei punti
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal('gameModal'); closeModal('rewardModal'); } });
+  function reward(title,prize,msg,code){
+    el('rewardTitle').textContent=title; el('rewardPrize').textContent=prize; el('rewardMsg').textContent=msg||'';
+    el('rewardCode').innerHTML = code ? '<div class="codechip"><span class="c">'+esc(code)+'</span><button class="cp tap" type="button" data-code="'+esc(code)+'">Copia</button></div>' : '';
+    openModal('rewardModal', el('rewardOk')); confetti();
+  }
+  el('rewardOk').addEventListener('click', ()=>closeModal('rewardModal'));
+  el('rewardCode').addEventListener('click', e=>{ const cp=e.target.closest('.cp'); if(cp) copyCode(cp.dataset.code||'', cp); });
+
+  // === stati della pagina ===
+  function loginUrl(){ return '/customer_authentication/login?return_to='+encodeURIComponent(location.pathname+location.search); }   // account clienti nuovi: dopo l'accesso si torna qui (anche con ?evento=)
+  function showGate(title,msg,mode){
+    el('loading').classList.add('hidden'); el('app').classList.add('hidden'); const g=el('gate'); g.classList.remove('hidden');
+    el('gateTitle').textContent=title; el('gateMsg').textContent=msg;
+    const login = mode===true || mode==='login';
+    el('gateBtn').classList.toggle('hidden',!login); if(login) el('gateBtn').href=loginUrl();
+    el('gateRetry').classList.toggle('hidden', mode!=='retry');
+  }
+  el('gateRetry').addEventListener('click', ()=>{ el('gate').classList.add('hidden'); el('loading').classList.remove('hidden'); refresh(false); });
 
   // === render ===
-  function showGate(title,msg,showLogin){ el('loading').classList.add('hidden'); el('app').classList.add('hidden'); const g=el('gate'); g.classList.remove('hidden'); el('gateTitle').textContent=title; el('gateMsg').textContent=msg; el('gateBtn').classList.toggle('hidden',!showLogin); }
+  function reward0(){ const rd=S && S._rewards; return (rd && Array.isArray(rd.rewards) && rd.rewards.length) ? rd.rewards[0] : null; }   // primo premio attivo (oggi 'amica12')
+  function percento(o){ return (o && (o.kind==null || o.kind==='percentage') && Number(o.value)>0) ? Number(o.value) : 0; }           // "%" solo per un premio a percentuale; 0 = premio di altro tipo
 
   function render(){
     el('loading').classList.add('hidden'); el('gate').classList.add('hidden'); el('app').classList.remove('hidden');
-    const p = S.points||0, pr = S._profile;
-    // livello: sui punti CUMULATI (server, mai scendono per un riscatto) quando il flag e' acceso; altrimenti sul saldo
-    const lifetime = !!(pr && pr.tier_lifetime_enabled);
-    const tp = lifetime ? Math.max(p, Number(pr.punti_cumulati)||0) : p;
-    const tier=tierOf(tp), nt=nextTier(tp);
-    const tierCopy = lifetime ? 'il livello segue i punti cumulati: riscattare non lo abbassa' : 'il livello segue i punti disponibili';
+    const p = S.points||0;
     countUp(el('pts'), p);
-    el('tierName').textContent = tier.name;
-    // tessera: 10 timbri = costo del premio ATTIVO (dal server: 200 con 'tessera', 100 con 'amica12'); senza catalogo resta il CONFIG
-    const rw0 = S._rewards && Array.isArray(S._rewards.rewards) ? S._rewards.rewards[0] : null;
-    const stampEvery = (rw0 && Number(rw0.cost_points) > 0) ? Math.max(1, Math.round(Number(rw0.cost_points)/CONFIG.stampsForReward)) : CONFIG.stampEvery;
-    const timbri = Math.min(CONFIG.stampsForReward, Math.floor(p/stampEvery));
-    const sw = el('stamps'); sw.innerHTML='';
-    for(let i=1;i<=CONFIG.stampsForReward;i++){ const d=document.createElement('div'); const full=i<=timbri; d.className='stamp'+(full?' full':''); d.textContent=full?'💛':(i===CONFIG.stampsForReward?'🎁':'·'); sw.appendChild(d); }
-    el('cap').innerHTML='Un timbro ogni '+stampEvery+' punti · a '+CONFIG.stampsForReward+' timbri <b>il tuo sconto personale</b>';
-    if(nt){ const prog=Math.max(0,Math.min(1,(tp-tier.min)/(nt.min-tier.min))); el('tierFill').style.width=(prog*100)+'%'; el('tierNote').innerHTML='Ti mancano <b>'+(nt.min-tp)+' punti</b> per '+esc(nt.name)+' · '+tierCopy; }
-    else { el('tierFill').style.width='100%'; el('tierNote').innerHTML='Livello massimo: <b>'+esc(tier.name)+'</b> 💛 · '+tierCopy; }
-    renderBonus2(); renderBirthday(); renderProfile();
-    // mimi
-    const m=el('mimi'); if(!m.innerHTML.trim()) m.innerHTML=mimiInner(); m.classList.toggle('worn', !!S.worn);
-    el('mood').textContent = S.nanna ? 'Dorme nel suo sacchettino. Shhh.' : (!S.coccola_disponibile ? 'Coccolata oggi. È al settimo cielo!' : 'Oggi ti aspetta per la sua coccola.');
-    // azioni
+    renderPath(); renderRedeem(); renderCodes(); renderBonus2(); renderBirthday(); renderProfile(); renderRules();
+    // mimi e azioni del giorno
+    el('mood').textContent = !S.coccola_disponibile ? 'Mimì è stata coccolata: oggi è al settimo cielo.' : 'Mimì aspetta la sua coccola di oggi.';
     const bc=el('btnCoccola');
-    if(!S.coccola_disponibile){ bc.className='act done'; bc.innerHTML='Coccolata ✓<small>torna domani</small>'; }
-    else { bc.className='act main tap'; bc.innerHTML='Coccola Mimì<small>+5 punti · 1 al giorno</small>'; }
+    if(!S.coccola_disponibile){ bc.className='act done'; bc.innerHTML='Coccolata<small>torna domani</small>'; }
+    else { bc.className='act main tap'; bc.innerHTML='Coccola Mimì<small>+5 punti, una al giorno</small>'; }
+    bc.setAttribute('aria-disabled', String(!S.coccola_disponibile));
     const bg=el('btnGame');
-    if(!S.memory_disponibile){ bg.className='act done'; bg.innerHTML='Giocato ✓<small>torna domani</small>'; }
-    else { bg.className='act alt tap'; bg.innerHTML='Gioca<small>+5 · 1 al giorno</small>'; }
-    el('btnNanna').innerHTML = S.nanna ? 'Svegliala 💤<small>è a nanna</small>' : 'Metti a nanna<small>nel sacchettino</small>';
-    // guardaroba (borse realmente possedute)
+    if(!S.memory_disponibile){ bg.className='act done'; bg.innerHTML='Giocato<small>torna domani</small>'; }
+    else { bg.className='act tap'; bg.innerHTML='Gioca al memory<small>+5 punti, una al giorno</small>'; }
+    bg.setAttribute('aria-disabled', String(!S.memory_disponibile));
+    // le tue borse (quelle realmente acquistate)
     const w=el('ward'), items=S.wardrobe;
-    if(items===null){ w.className='empty'; w.innerHTML='Il guardaroba non è leggibile in questo momento: riprova fra poco.'; }   // null = non leggibile (audit), diverso da "nessun capo"
-    else if(!items||!items.length){ w.className='empty'; w.innerHTML='Le borse che acquisti appariranno qui, pronte da far indossare a Mimì.'; }
-    else { w.className='ward'; w.innerHTML=items.map(it=>{ const worn=S.worn===it.codice; return '<div class="witem tap'+(worn?' worn':'')+'" data-codice="'+esc(it.codice)+'"><img src="'+esc(it.img||'')+'" alt=""><span>'+esc(it.titolo||it.codice)+'</span><span class="w">'+(worn?'indossata':'indossa')+'</span></div>'; }).join(''); }
-    renderRedeem();
+    if(items===null){ w.className='empty'; w.innerHTML='Le tue borse non sono leggibili in questo momento: riprova fra poco.'; }   // null = non leggibile (audit), diverso da "nessuna borsa"
+    else if(!items||!items.length){ w.className='empty'; w.innerHTML='Le borse che compri su amimi.it appariranno qui. <a href="/" id="shopLink">Guarda le novità</a>'; }
+    else { w.className='ward'; w.innerHTML=items.map(it=>'<figure class="witem">'+(it.img ? '<img src="'+esc(thumb(it.img,300))+'" alt="" loading="lazy">' : '<div class="noimg"></div>')+'<figcaption>'+esc(it.titolo||it.codice)+'</figcaption></figure>').join(''); }
   }
 
-  // === riscatto (punti -> codice sconto). Catalogo/riscatti dall'edge (azioni rewards/redeem). ===
-  function renderRedeem(){
-    const box=el('redeem'); const rd=S && S._rewards;
-    if(!rd || !Array.isArray(rd.rewards) || !rd.rewards.length){ box.classList.add('hidden'); return; }
-    const rw=rd.rewards[0];                                   // primo premio attivo ('tessera')
-    const p=S.points||0, reds=rd.redemptions||[];
-    const pending=reds.find(x=>x.status==='pending');
-    const last=reds.find(x=>x.status==='fulfilled' && x.discount_code);   // il piu' recente (lista gia' desc)
-    box.classList.remove('hidden');
-    box.dataset.trk = pending ? 'redeem_pending' : (p>=rw.cost_points ? 'redeem_ready' : 'redeem_locked');   // letto dal tracciamento quando la card entra in vista
-    let h='<h4>'+esc(rw.label)+'</h4>';
-    // azione: il riscatto e' RIPETIBILE ogni volta che la tessera si riempie
-    if(pending){
-      h+='<div class="sub">Riscatto ricevuto. Il tuo codice sta arrivando, ti avvisiamo.</div>';
-    } else if(p>=rw.cost_points){
-      h+='<div class="sub">Hai '+p+' punti: puoi riscattare il tuo sconto.</div>'
-        +'<button class="rbtn tap" id="rbtn" data-reward="'+rw.key+'">Riscatta '+(rw.value?rw.value+'%':'sconto')+' · '+rw.cost_points+' punti</button>'
-        +'<div class="fine">Scala '+rw.cost_points+' punti · non cumulabile</div>';
-    } else {
-      h+='<div class="sub">Il tuo sconto personale, a tessera piena.</div>'
-        +'<button class="rbtn" disabled>Ti mancano '+(rw.cost_points-p)+' punti</button>';
+  // === percorso: una bandierina a scacchi ogni <costo del premio> punti. Finestra di tre traguardi che scorre. ===
+  function renderPath(){
+    const w=el('walk'), rw=reward0(), p=S.points||0;
+    if(!rw || !(Number(rw.cost_points)>0)){ w.classList.add('hidden'); return; }   // senza catalogo premi restano solo i punti
+    const cost=Number(rw.cost_points), n=CONFIG.traguardi, k=Math.floor(p/cost), base=Math.max(0,k-(n-1))*cost;
+    const pct=Math.max(0,Math.min(1,(p-base)/(n*cost)))*100;
+    if(!w.dataset.built){
+      let h='<div class="rail"><i></i></div>';
+      for(let i=1;i<=n;i++) h+='<div class="ms" style="left:'+(i/n*100).toFixed(3)+'%"><span class="flag"><i></i></span><span></span></div>';
+      w.innerHTML=h+'<div class="walker"><img alt="" src="'+MIMI+'"></div>';
+      w.dataset.built='1';
     }
-    // ultimo codice ottenuto: resta sempre a portata di mano
-    if(last){
-      h+='<div class="fine" style="margin-top:12px;text-align:left">Il tuo ultimo codice</div>'
-        +'<div class="codechip" style="margin-top:6px"><span class="c">'+esc(last.discount_code)+'</span><button class="cp" data-code="'+esc(last.discount_code)+'">Copia</button></div>'
-        +'<div class="fine">'+(rw.value?rw.value+'% · ':'')+'non cumulabile · uso singolo</div>';
-    }
-    box.innerHTML=h;
+    w.classList.remove('hidden');
+    w.querySelectorAll('.ms').forEach((ms,i)=>{ const val=base+(i+1)*cost, on=p>=val; ms.classList.toggle('on',on); ms.querySelector('.flag').classList.toggle('on',on); ms.lastElementChild.textContent=val; });
+    const walker=w.querySelector('.walker'), fill=w.querySelector('.rail i');
+    const move=()=>{ fill.style.width=pct+'%'; walker.style.left=pct+'%'; };
+    if(w.dataset.pct===undefined){ setTimeout(move,60); } else move();   // al primo disegno Mimi' parte da zero e cammina fino al suo punto
+    if(!reduced && w.dataset.pct!==String(pct)){ walker.classList.add('go'); clearTimeout(walker._t); walker._t=setTimeout(()=>walker.classList.remove('go'),1000); }
+    w.dataset.pct=String(pct);
+    w.setAttribute('aria-label','Hai '+p+' punti Mimì. Prossima bandierina a '+((k+1)*cost)+' punti.');
   }
+
+  // === riscatto (punti -> codice sconto). Catalogo e riscatti dall'edge (azioni rewards/redeem). ===
+  function renderRedeem(){
+    const box=el('redeem'), out=el('redeemBox'), st=el('pathStatus'), rd=S && S._rewards, rw=reward0();
+    if(!rw){ out.innerHTML=''; st.innerHTML=''; delete box.dataset.trk; return; }
+    const p=S.points||0, reds=rd.redemptions||[], cost=Number(rw.cost_points), k=Math.floor(p/cost), manca=cost-(p%cost);
+    const pending=reds.find(x=>x.status==='pending');
+    const punti = manca===1 ? '1 punto' : manca+' punti', pc=percento(rw);
+    box.dataset.trk = pending ? 'redeem_pending' : (p>=rw.cost_points ? 'redeem_ready' : 'redeem_locked');   // letto dal tracciamento quando la card entra in vista
+    if(pending){ st.innerHTML='Riscatto ricevuto. Il tuo codice sta arrivando.'; out.innerHTML=''; return; }
+    if(p>=rw.cost_points){
+      // il riscatto e' RIPETIBILE: uno sconto ogni <cost> punti
+      const cosa = pc ? (k===1 ? '1 sconto del '+pc+'%' : k+' sconti del '+pc+'%') : (k===1 ? '1 premio' : k+' premi');
+      st.innerHTML='Hai <b>'+cosa+'</b> da riscattare. Il prossimo fra '+punti+'.';
+      out.innerHTML='<button class="rbtn tap" type="button" id="rbtn" data-reward="'+esc(rw.key)+'">Riscatta '+(pc ? 'il '+pc+'%' : 'il premio')+' · '+cost+' punti</button>';
+    } else {
+      st.innerHTML=(manca===1 ? 'Ti manca' : 'Ti mancano')+' <b>'+punti+'</b> '+(pc ? 'allo sconto del '+pc+'%' : 'al premio')+'.';
+      out.innerHTML='';
+    }
+  }
+
+  // === i tuoi codici: TUTTI i riscatti, prima quelli da usare. used_at arriva dal server (il codice compare in un ordine). ===
+  function renderCodes(){
+    const sec=el('codiciSec'), ul=el('codici'), more=el('codiciTutti'), rd=S && S._rewards, rw=reward0();
+    const reds=(rd && Array.isArray(rd.redemptions)) ? rd.redemptions.filter(x=>x.status==='pending' || (x.status==='fulfilled' && x.discount_code)) : [];
+    if(!reds.length){ sec.classList.add('hidden'); return; }
+    sec.classList.remove('hidden');
+    const rank=x=> x.status==='pending' ? 0 : (x.used_at ? 2 : 1);
+    const list=reds.slice().sort((a,b)=> rank(a)-rank(b) || String(b.created_at||'').localeCompare(String(a.created_at||'')));
+    const vis = tuttiICodici ? list : list.slice(0, CONFIG.codiciVisibili);
+    ul.innerHTML=vis.map(x=>{
+      const pc = percento(x) || ((x.kind==null && rw && x.reward_key===rw.key) ? percento(rw) : 0);   // tipo e valore dal server; un server v13 non li manda: allora quelli del premio attivo, se e' lo stesso
+      const cosa = pc ? pc+'% di sconto' : 'Sconto';
+      // i giorni arrivano dal server gia' in Europe/Rome (created_day, used_day); col server v13 si ripiega sulla data UTC
+      if(x.status==='pending') return '<li class="cod"><div class="cod-main"><span class="cod-c">In arrivo</span><span class="cod-m">'+cosa+', riscattato il '+esc(itDate(x.created_day||x.created_at))+'</span></div><span class="chip">In preparazione</span></li>';
+      if(x.used_at) return '<li class="cod used"><div class="cod-main"><span class="cod-c">'+esc(x.discount_code)+'</span><span class="cod-m">'+cosa+', usato il '+esc(itDate(x.used_day||x.used_at))+'</span></div><span class="chip">Usato</span></li>';
+      return '<li class="cod"><div class="cod-main"><span class="cod-c">'+esc(x.discount_code)+'</span><span class="cod-m">'+cosa+', da usare al checkout</span></div><button class="cp tap" type="button" data-code="'+esc(x.discount_code)+'">Copia</button></li>';
+    }).join('');
+    if(list.length>CONFIG.codiciVisibili){ more.classList.remove('hidden'); more.textContent = tuttiICodici ? 'Mostra meno' : 'Mostra tutti ('+list.length+')'; }
+    else more.classList.add('hidden');
+  }
+  el('codici').addEventListener('click', e=>{ const cp=e.target.closest('.cp'); if(cp) copyCode(cp.dataset.code||'', cp); });
+  el('codiciTutti').addEventListener('click', ()=>{ track('tap','codici_tutti'); tuttiICodici=!tuttiICodici; renderCodes(); });
+
+  // === come prendi i punti: le regole decise nella call del 09-10; costo e valore del premio dal server ===
+  function renderRules(){
+    const rw=reward0(), pr=S._profile;
+    const rows=[['Compri su amimi.it','1 punto per ogni euro'],['Coccoli Mimì','+5 al giorno'],['Giochi al memory','+5 al giorno']];
+    if(pr && pr.checkin_enabled) rows.push(['Vieni a un evento Amimì','+20 con il QR']);
+    el('regole').innerHTML=rows.map(r=>'<li><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></li>').join('');
+    el('regoleNota').innerHTML = rw ? 'Ogni <b>'+esc(rw.cost_points)+' punti Mimì</b> sblocchi '+(percento(rw) ? 'uno sconto del <b>'+percento(rw)+'%</b>' : esc(rw.label))+' su un ordine. Quando lo riscatti i punti si scalano. Il codice vale una volta e non si somma ad altri sconti.' : '';
+  }
+  el('ward').addEventListener('click', e=>{ if(e.target.closest('#shopLink')) track('tap','shop'); });
 
   // === compleanno, seconda borsa, profilo (v12: azione profile; a flag OFF tutto resta nascosto) ===
-  function itDate(iso){ const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||'')); return m ? (m[3]+'/'+m[2]+'/'+m[1]) : ''; }
   function renderBirthday(){
     const b=el('bday'), pr=S._profile;
     if(!pr || !pr.profile_enabled || !pr.birthday_today){ b.classList.add('hidden'); return; }
     b.classList.remove('hidden');
-    b.innerHTML='<b>Buon compleanno! 🎀</b><span>Mimì ti fa tanti auguri'+(pr.birthday_awarded ? ' · <b style="display:inline;font-size:13px">+20 punti di regalo</b> sul tuo saldo' : '')+'</span>';
+    b.innerHTML='<span class="flag on"><i></i></span><span class="txt"><b>Buon compleanno!</b>Mimì ti fa tanti auguri'+(pr.birthday_awarded ? ': +20 punti Mimì di regalo sul tuo saldo.' : '.')+'</span>';
   }
   function renderBonus2(){
     const b=el('bonus2'), pr=S._profile, bs=pr && pr.bonus_second_enabled ? pr.bonus_second : null;
     if(!bs){ b.classList.add('hidden'); return; }
-    if(bs.awarded){ b.classList.remove('hidden'); b.innerHTML='Bonus seconda borsa ricevuto: <b>+50 punti</b> 💛'; return; }
+    if(bs.awarded){ b.classList.remove('hidden'); b.innerHTML='Bonus seconda borsa ricevuto: <b>+50 punti</b>'; return; }
     if(bs.ordini===1 && bs.deadline){
       const gg=Math.max(0, Number(bs.days_left)||0);   // giorni calcolati dal server in Europe/Rome, mai dal fuso del browser
       b.classList.remove('hidden');
-      b.innerHTML='Seconda borsa entro il <b>'+esc(itDate(bs.deadline))+'</b>: <b>+50 punti</b>'+(gg>0 ? ' · '+gg+(gg===1?' giorno':' giorni') : ' · oggi');
+      b.innerHTML='Seconda borsa entro il <b>'+esc(itDate(bs.deadline))+'</b>: <b>+50 punti</b>'+(gg>0 ? ', mancano '+gg+(gg===1?' giorno':' giorni') : ', scade oggi');
       return;
     }
     b.classList.add('hidden');
@@ -374,25 +507,26 @@
     if(!pr || !pr.profile_enabled){ sec.classList.add('hidden'); return; }
     sec.classList.remove('hidden');
     const P=pr.profile||{};
+    const consenso='<div class="chk"><input type="checkbox" id="pConsenso" '+(P.consenso_compleanno?'checked':'')+'><label for="pConsenso">Voglio il regalo di compleanno. Usiamo solo giorno e mese per farti un regalo di compleanno. Niente anno.</label></div>';
     if(P.complete){
       box.innerHTML='<div class="sum">Compleanno: <b>'+esc(P.birth_day)+' '+esc(CONFIG.mesi[(P.birth_month||1)-1]||'')+'</b><br>Materiale preferito: <b>'+esc(P.materiale_preferito||'')+'</b><br>Regalo di compleanno: <b>'+(P.consenso_compleanno?'sì':'no')+'</b></div>'
-        +'<span class="got">+10 punti ricevuti ✓</span>'
-        +'<div class="chk"><input type="checkbox" id="pConsenso" '+(P.consenso_compleanno?'checked':'')+'><label for="pConsenso" style="text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">Voglio il regalo di compleanno. Usiamo solo giorno e mese per farti un regalo di compleanno. Niente anno.</label></div>'
-        +'<button class="sbtn tap" id="pSave">Aggiorna</button>'
-        +'<div class="note">La data di compleanno non si modifica da qui: per una correzione scrivi all\'assistenza.</div>';
+        +'<span class="got">+10 punti ricevuti</span>'
+        +consenso
+        +'<button class="sbtn tap" type="button" id="pSave">Aggiorna</button>'
+        +'<div class="pnote">La data di compleanno non si modifica da qui: per una correzione scrivi all\'assistenza.</div>';
       return;
     }
     const locked=!!P.birth_locked;
     let days=''; for(let d=1;d<=31;d++) days+='<option value="'+d+'"'+(P.birth_day===d?' selected':'')+'>'+d+'</option>';
     let months=''; CONFIG.mesi.forEach((m,i)=>{ months+='<option value="'+(i+1)+'"'+(P.birth_month===i+1?' selected':'')+'>'+esc(m)+'</option>'; });
     let mats=''; CONFIG.materiali.forEach(m=>{ mats+='<option value="'+esc(m)+'"'+(P.materiale_preferito===m?' selected':'')+'>'+esc(m)+'</option>'; });
-    box.innerHTML='<div class="note" style="margin-top:0">Completa il profilo e ricevi <b>+10 punti</b>. Il giorno del tuo compleanno Mimì ti regala <b>+20 punti</b>.</div>'
-      +'<div class="row"><div style="flex:1"><label>Giorno</label><select id="pDay"'+(locked?' disabled':'')+'><option value="">-</option>'+days+'</select></div>'
-      +'<div style="flex:2"><label>Mese</label><select id="pMonth"'+(locked?' disabled':'')+'><option value="">-</option>'+months+'</select></div></div>'
-      +'<div class="row"><div style="flex:1"><label>Materiale preferito</label><select id="pMat"><option value="">-</option>'+mats+'</select></div></div>'
-      +'<div class="chk"><input type="checkbox" id="pConsenso" '+(P.consenso_compleanno?'checked':'')+'><label for="pConsenso" style="text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">Voglio il regalo di compleanno. Usiamo solo giorno e mese per farti un regalo di compleanno. Niente anno.</label></div>'
-      +'<button class="sbtn tap" id="pSave">Salva il profilo</button>'
-      +(locked ? '<div class="note">La data di compleanno è già salvata e non si modifica da qui.</div>' : '<div class="note">Il regalo di compleanno arriva se il profilo è salvato almeno 30 giorni prima.</div>');
+    box.innerHTML='<div class="pnote" style="margin-top:0">Completa il profilo e ricevi <b>+10 punti</b>. Il giorno del tuo compleanno Mimì ti regala <b>+20 punti</b>.</div>'
+      +'<div class="row"><div style="flex:1"><label for="pDay">Giorno</label><select id="pDay"'+(locked?' disabled':'')+'><option value="">-</option>'+days+'</select></div>'
+      +'<div style="flex:2"><label for="pMonth">Mese</label><select id="pMonth"'+(locked?' disabled':'')+'><option value="">-</option>'+months+'</select></div></div>'
+      +'<div class="row"><div style="flex:1"><label for="pMat">Materiale preferito</label><select id="pMat"><option value="">-</option>'+mats+'</select></div></div>'
+      +consenso
+      +'<button class="sbtn tap" type="button" id="pSave">Salva il profilo</button>'
+      +(locked ? '<div class="pnote">La data di compleanno è già salvata e non si modifica da qui.</div>' : '<div class="pnote">Il regalo di compleanno arriva se il profilo è salvato almeno 30 giorni prima.</div>');
   }
   el('profilo').addEventListener('click', async e=>{
     const btn=e.target.closest('#pSave'); if(!btn||!S) return;
@@ -407,8 +541,8 @@
     const { data } = await api('profile_save',{method:'POST',body});
     if(data && data.ok){
       await refresh(false);
-      if(data.awarded) reward('Profilo completo!', '+10', 'punti aggiunti al tuo saldo 💛');
-      else toast(data.birthday_locked ? 'Profilo aggiornato (la data resta quella salvata)' : 'Profilo aggiornato 💛');
+      if(data.awarded) reward('Profilo completo!', '+10', 'punti Mimì aggiunti al tuo saldo');
+      else toast(data.birthday_locked ? 'Profilo aggiornato (la data resta quella salvata)' : 'Profilo aggiornato');
     } else if(data && data.error==='bad_date'){ toast('Questa data non esiste'); btn.disabled=false; btn.textContent='Salva il profilo'; }
     else { toast('Riprova fra poco'); btn.disabled=false; btn.textContent='Riprova'; }
   });
@@ -416,88 +550,148 @@
   async function refresh(animate){
     const [st, rw, pf] = await Promise.all([api('state'), api('rewards'), api('profile')]);   // rewards/profile: OFF finche' i flag sono spenti
     const { status, data } = st;
-    if (data.state==='login_required') return showGate('Il tuo profilo Premia','Accedi con il tuo account Amimì per vedere i tuoi punti e prenderti cura di Mimì.', true);
-    if (data.state==='needs_secret' || data.state==='off') return showGate('Premia sta arrivando','Il programma fedeltà parte a breve. Torna presto!', false);
-    if (status===503 || data.error) return showGate('Un attimo...','Non riesco a leggere il profilo in questo momento. Riprova fra poco.', false);
+    if (data.state==='login_required') return showGate(EVT ? 'Accedi per registrare la tua presenza' : 'I tuoi punti Mimì', EVT ? 'Entra con il tuo account Amimì, oppure creane uno in un minuto. Se l\'evento è in corso, i punti arrivano subito dopo.' : 'Accedi con il tuo account Amimì per vedere i tuoi punti e coccolare Mimì.', 'login');
+    if (data.state==='needs_secret' || data.state==='off') return showGate('I punti Mimì stanno arrivando','Il programma parte a breve. Torna presto!', '');
+    if (status===503 || data.error || typeof data.points!=='number') return showGate('Un attimo...','Non riesco a leggere i tuoi punti in questo momento.', 'retry');   // senza un saldo vero non si disegna nessun profilo
     S = data;
     S._rewards = (rw && rw.data && Array.isArray(rw.data.rewards)) ? rw.data : null;
     S._profile = (pf && pf.status===200 && pf.data && !pf.data.error && typeof pf.data.profile_enabled==='boolean') ? pf.data : null;   // non leggibile = come a flag OFF, mai una card finta
     render();
     trackStart();
+    checkin();
+  }
+
+  // === presenza a un evento dal QR: amimi.it/apps/premia/club?evento=CODICE ===
+  // Il codice resta in attesa (localStorage) se serve prima l'accesso. I punti li decide il server: finestra oraria
+  // dell'evento, una presenza per cliente, tetto. Qui si mostra solo l'esito.
+  const EVT_KEY='mimi_evento';
+  function evtStored(){ try{ const o=JSON.parse(localStorage.getItem(EVT_KEY)||'null'); return (o && o.c && Date.now()-o.t < CONFIG.eventoOre*3600000) ? String(o.c) : ''; }catch(_){ return ''; } }
+  function evtClear(){ EVT=''; try{ localStorage.removeItem(EVT_KEY); }catch(_){}
+    try{ const u=new URL(location.href); if(u.searchParams.has('evento')){ u.searchParams.delete('evento'); history.replaceState(null,'',u.pathname+u.search+u.hash); } }catch(_){} }
+  let EVT=(()=>{ let c=''; try{ c=(new URLSearchParams(location.search).get('evento')||'').trim().toUpperCase(); }catch(_){}
+    if(/^[A-Z0-9_-]{4,40}$/.test(c)){ try{ localStorage.setItem(EVT_KEY, JSON.stringify({ c:c, t:Date.now() })); }catch(_){} return c; }
+    return evtStored(); })();
+  let evtBusy=false;
+  function evtNote(title,msg,retry){
+    const n=el('evento'); n.classList.remove('hidden');
+    n.innerHTML='<span class="flag on"><i></i></span><span class="txt"><b>'+esc(title)+'</b>'+esc(msg)+'</span>'+(retry ? '<button class="mini tap" type="button" id="evtRetry">Riprova</button>' : '');
+  }
+  el('evento').addEventListener('click', e=>{ if(e.target.closest('#evtRetry')) checkin(); });
+  async function checkin(){
+    if(!EVT || !S || evtBusy) return;
+    evtBusy=true;
+    const { data } = await api('checkin',{method:'POST',body:{code:EVT}});
+    evtBusy=false;
+    const nome = data && data.label ? String(data.label) : 'questo evento';
+    if(data && data.state==='off'){ evtClear(); evtNote('Presenze non attive', 'In questo momento i punti degli eventi non si possono prendere.'); return; }
+    if(data && data.ok && !data.already){
+      evtClear(); S.points=data.points; render();
+      evtNote('Presenza registrata', '+'+(data.added||0)+' punti Mimì per '+nome+'.');
+      reward('Eccoti qui!', '+'+(data.added||0), 'punti Mimì per '+nome);
+      return;
+    }
+    if(data && data.ok && data.already){ evtClear(); evtNote('Punti già presi', 'La tua presenza per '+nome+' è già registrata.'); return; }
+    const r = data && data.reason;
+    if(r==='not_started'){ evtNote('Non è ancora ora', 'I punti per '+nome+' si prendono durante l\'evento. Riprova quando sei lì.', true); return; }   // il codice resta in attesa
+    if(r==='ended'){ evtClear(); evtNote('Evento finito', 'I punti per '+nome+' non sono più disponibili.'); return; }
+    if(r==='full'){ evtClear(); evtNote('Punti esauriti', 'I punti per '+nome+' sono finiti.'); return; }
+    if(r==='unknown_event'){ evtClear(); evtNote('QR non valido', 'Questo codice evento non esiste. Chiedi a noi di Amimì.'); return; }
+    evtNote('Presenza non registrata', 'Non riesco a registrare la tua presenza in questo momento.', true);
   }
 
   // === azioni ===
+  let coccolaInCorso=false;                                                               // un tap alla volta: il secondo non parte finche' il primo non ha risposta
   el('btnCoccola').addEventListener('click', async ()=>{
-    if(!S || !S.coccola_disponibile) return;
-    track('tap','coccola');
+    if(!S || !S.coccola_disponibile || coccolaInCorso) return;
+    coccolaInCorso=true; track('tap','coccola');
     const { data } = await api('coccola');
-    if(data.done_today){ toast('Mimì è già stata coccolata oggi 💛'); return; }
-    if(data.error){ toast('Riprova fra poco'); return; }
-    S.points=data.points; S.coccola_disponibile=false; squee(); hearts(el('scene'),6); render(); toast('+'+(data.added||5)+' punti · coccola di oggi ✓');
+    coccolaInCorso=false;
+    if(data.done_today){ S.coccola_disponibile=false; if(typeof data.points==='number') S.points=data.points; render(); toast('Mimì è già stata coccolata oggi'); return; }
+    if(data.error || typeof data.points!=='number'){ toast('Riprova fra poco'); return; }   // solo un saldo vero dal server muove i punti
+    S.points=data.points; S.coccola_disponibile=false; squee(); sparkles(el('mimi'),7); render(); toast('+'+(data.added||5)+' punti Mimì, coccola di oggi fatta');
   });
 
-  el('btnNanna').addEventListener('click', async ()=>{
-    if(!S) return; track('tap','nanna'); const { data } = await api('nanna',{method:'POST',body:{value:!S.nanna}});
-    if(typeof data.nanna==='boolean'){ S.nanna=data.nanna; render(); toast(S.nanna?'Mimì è a nanna 💤':'Buongiorno!'); }
-  });
-
-  el('ward').addEventListener('click', async e=>{
-    const it=e.target.closest('.witem'); if(!it||!S) return;
-    track('tap','wear');
-    const { status, data } = await api('wear',{method:'POST',body:{codice:it.dataset.codice}});
-    if(status===409||data.error==='not_owned'){ toast('Puoi far indossare a Mimì solo le tue borse'); return; }
-    if(data.worn){ S.worn=data.worn; squee(); hearts(el('scene'),3); render(); }
-  });
-
-  // riscatto: copia codice oppure riscatta (bottone disabilitato subito = anti doppio-click; idemp lato server)
+  // riscatto (bottone disabilitato subito = anti doppio-click; idemp lato server).
+  // UN solo token per tentativo: se la risposta si perde (rete, 5xx) il "Riprova" rimanda LO STESSO token, cosi' il
+  // server riconosce il riscatto gia' fatto (ramo already) e non scala i punti una seconda volta. Il token si butta solo
+  // davanti a una risposta definitiva del server (riuscito, oppure rifiutato con un motivo).
+  let idempRiscatto=null;
   el('redeem').addEventListener('click', async e=>{
-    const cp=e.target.closest('.cp');
-    if(cp){ track('tap','copy_code'); const code=cp.dataset.code||''; try{ await navigator.clipboard.writeText(code); toast('Codice copiato 💛'); }catch(_){ toast('Codice: '+code); } return; }
     const btn=e.target.closest('#rbtn'); if(!btn||!S) return;
     track('tap','redeem');
-    const rw=(S._rewards&&S._rewards.rewards&&S._rewards.rewards[0])||{};
-    const pct=rw.value?('-'+rw.value+'%'):'Sconto';
+    const rw=reward0()||{};
+    const pct=percento(rw)?('-'+percento(rw)+'%'):'Premio';
     btn.disabled=true; btn.textContent='Riscatto...';
-    const idemp='r-'+Date.now()+'-'+Math.random().toString(36).slice(2,10);
+    const idemp = idempRiscatto || (idempRiscatto='r-'+Date.now()+'-'+Math.random().toString(36).slice(2,10));
     const { data } = await api('redeem',{method:'POST',body:{reward:btn.dataset.reward, idemp}});
     if(data && data.ok){
+      idempRiscatto=null;
       await refresh(false);
-      if(data.code) reward('Sconto sbloccato!', pct, 'Codice '+data.code+' · non cumulabile, usalo al checkout');
-      else toast('Riscatto ricevuto, codice in arrivo 💛');
-    } else if(data && data.reason==='insufficient'){ toast('Punti non sufficienti'); renderRedeem(); }
+      if(data.code) reward(percento(rw) ? 'Sconto sbloccato!' : 'Premio sbloccato!', pct, 'Usalo al checkout. Vale una volta e non si somma ad altri sconti.', data.code);
+      else toast('Riscatto ricevuto, codice in arrivo');
+    } else if(data && data.reason){
+      idempRiscatto=null;                                                                 // rifiuto con motivo: i punti non sono stati toccati
+      if(typeof data.points==='number') S.points=data.points;
+      toast(data.reason==='insufficient' ? 'Punti non sufficienti' : 'Riscatto non disponibile in questo momento'); render();
+    }
     else { toast('Riprova fra poco'); btn.disabled=false; btn.textContent='Riprova'; }
   });
 
-  // === mini-gioco memory: vinci -> chiama memory_win (premio deciso dall'edge) ===
-  const EMO=['👜','👛','🎀','👜','👛','🎀'];
-  el('btnGame').addEventListener('click', ()=>{ if(!S||!S.memory_disponibile){ toast('Torna domani per un nuovo gioco 🎀'); return; } track('tap','gioco'); startGame(); });
-  el('gameClose').addEventListener('click', ()=>el('gameModal').classList.remove('on'));
-  el('rewardOk').addEventListener('click', ()=>el('rewardModal').classList.remove('on'));
-  function startGame(){
-    const grid=el('grid'); grid.innerHTML='';
-    const cards=EMO.slice().sort(()=>Math.random()-0.5);
+  // === memory con le foto vere: il mazzo arriva dall'edge (azione deck), il premio lo decide memory_win ===
+  let DECK=null;                                                                          // null = non ancora chiesto
+  const RISERVA=[{ g:'mimi' },{ g:'chk' },{ g:'word' }];                                  // mazzo di riserva se le foto non arrivano
+  function preload(u){ return new Promise(res=>{ const i=new Image(); let done=false; const end=ok=>{ if(done) return; done=true; res(ok ? u : null); }; i.onload=()=>end(true); i.onerror=()=>end(false); setTimeout(()=>end(false),5000); i.src=u; }); }
+  async function loadDeck(){
+    if(DECK) return DECK;
+    const { status, data } = await api('deck');
+    const cards=(status===200 && data && Array.isArray(data.cards)) ? data.cards.filter(c=>c && c.img) : [];
+    const ok=(await Promise.all(cards.map(c=>preload(thumb(c.img,360))))).map((u,i)=> u ? { img:u, titolo:String(cards[i].titolo||'Borsa Amimì') } : null).filter(Boolean);
+    DECK = ok.length>=CONFIG.coppie ? ok.slice(0,CONFIG.coppie) : RISERVA;
+    return DECK;
+  }
+  function faceHTML(c){
+    if(c.img) return '<span class="front"><img alt="" src="'+esc(c.img)+'"></span>';
+    if(c.g==='mimi') return '<span class="front glyph"><img alt="" src="'+MIMI+'"></span>';
+    if(c.g==='chk') return '<span class="front glyph chk"></span>';
+    return '<span class="front glyph word">amìmì</span>';
+  }
+  function faceName(c, i){ return c.img ? c.titolo : (c.g==='mimi' ? 'Mimì' : (c.g==='chk' ? 'Scacchi' : 'Amimì')); }
+  el('btnGame').addEventListener('click', ()=>{ if(!S||!S.memory_disponibile){ toast('Torna domani per un nuovo gioco'); return; } track('tap','gioco'); startGame(); });
+  el('gameClose').addEventListener('click', ()=>closeModal('gameModal'));
+  let partita=0;                                                                          // una sola partita alla volta riempie la griglia
+  async function startGame(){
+    const grid=el('grid'), n=CONFIG.coppie*2, mia=++partita;
+    let h=''; for(let i=0;i<n;i++) h+='<button class="card loading" type="button" disabled aria-label="Carta coperta"><span class="in"><span class="back"><img alt="" src="'+MIMI+'"></span></span></button>';
+    grid.innerHTML=h; el('gameMsg').textContent='Preparo le carte...';
+    openModal('gameModal', el('gameClose'));
+    const deck=await loadDeck();
+    if(mia!==partita || !el('gameModal').classList.contains('on')) return;                // chiusa o riaperta mentre caricava
+    el('gameMsg').textContent='Abbina le borse uguali e vinci i punti di oggi.';
+    const order=[]; deck.forEach((c,i)=>{ order.push(i,i); }); order.sort(()=>Math.random()-0.5);
     let up=[], matched=0, lock=false;
-    cards.forEach((emo,i)=>{ const c=document.createElement('div'); c.className='card'; c.dataset.emo=emo; c.textContent=emo;
+    grid.querySelectorAll('.card').forEach((c,pos)=>{
+      const k=order[pos], face=deck[k];
+      c.dataset.k=String(k); c.querySelector('.in').insertAdjacentHTML('beforeend', faceHTML(face));
+      c.classList.remove('loading'); c.disabled=false;
       c.addEventListener('click',()=>{
         if(lock||c.classList.contains('up')||c.classList.contains('done'))return;
-        c.classList.add('up'); up.push(c);
+        c.classList.add('up'); c.setAttribute('aria-label', faceName(face)); up.push(c);
         if(up.length===2){ lock=true;
-          if(up[0].dataset.emo===up[1].dataset.emo){ up.forEach(x=>x.classList.add('done')); matched++; up=[]; lock=false;
-            if(matched===3) setTimeout(winGame,350);
-          } else setTimeout(()=>{ up.forEach(x=>x.classList.remove('up')); up=[]; lock=false; },700);
+          if(up[0].dataset.k===up[1].dataset.k){ up.forEach(x=>{ x.classList.add('done'); x.setAttribute('aria-label', faceName(deck[Number(x.dataset.k)])+', coppia trovata'); }); matched++; up=[]; lock=false;
+            if(matched===CONFIG.coppie) setTimeout(winGame,500);
+          } else setTimeout(()=>{ up.forEach(x=>{ x.classList.remove('up'); x.setAttribute('aria-label','Carta coperta'); }); up=[]; lock=false; },850);
         }
       });
-      grid.appendChild(c);
     });
-    el('gameModal').classList.add('on');
+    const first=grid.querySelector('.card'); if(first) first.focus();
   }
   async function winGame(){
-    el('gameModal').classList.remove('on');
+    closeModal('gameModal');
     const { data } = await api('memory_win');
-    if(data.done_today){ toast('Hai già giocato oggi'); return; }
-    if(data.error){ toast('Riprova fra poco'); return; }
+    if(data.done_today){ S.memory_disponibile=false; if(typeof data.points==='number') S.points=data.points; render(); toast('Hai già giocato oggi'); return; }
+    if(data.error || typeof data.points!=='number'){ toast('Riprova fra poco'); return; }   // solo un saldo vero dal server muove i punti
     S.points=data.points; S.memory_disponibile=false; render();
-    reward('Hai vinto!', '+'+(data.added||5), 'punti aggiunti al tuo saldo 💛');
+    reward('Hai vinto!', '+'+(data.added||5), 'punti Mimì aggiunti al tuo saldo');
   }
 
   refresh(false);

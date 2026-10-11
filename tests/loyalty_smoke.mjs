@@ -21,7 +21,17 @@ console.log('\n== App Proxy (firma vera aggiunta da Shopify, nessun cliente logg
   t('1  /apps/premia/state -> 200 login_required', s.status === 200 && s.json?.state === 'login_required', s.status + ' ' + s.text.slice(0, 80));
   const c = await get(SITE + '/club');
   t('2  /apps/premia/club -> 200 text/html (Liquid reso da Shopify)', c.status === 200 && /text\/html/.test(c.ct), c.status + ' ' + c.ct);
-  t('2b la pagina e\' quella membri (titolo Premia)', /Premia/.test(c.text) && /<!DOCTYPE html>/i.test(c.text));
+  t('2b la pagina e\' quella membri (di prima: titolo Premia; nuova: punti Mimì)', /Premia|punti Mimì/.test(c.text) && /<!DOCTYPE html>/i.test(c.text));
+  // v14 (2026-10-11): l'anteprima serve SEMPRE la pagina nuova, qualunque sia il flag loyalty_page_v2
+  const a = await get(SITE + '/club?anteprima=1');
+  t('2c /apps/premia/club?anteprima=1 -> pagina nuova (punti Mimì, percorso, nessun timbro)', a.status === 200 && /I tuoi punti Mimì/.test(a.text) && /id="walk"/.test(a.text) && !/stampsForReward/.test(a.text), a.status + ' ' + a.text.slice(0, 80));
+  t('2d la Mimì e\' dentro la pagina nuova (segnaposto riempito dal build)', /data:image\/webp;base64,/.test(a.text) && !/__MIMI_DATA_URI__/.test(a.text));
+  const q = await get(SITE + '/club?evento=SMOKE0000');
+  t('2e /apps/premia/club?evento=... -> sempre la pagina nuova (quella di prima ignorerebbe il QR)', q.status === 200 && /I tuoi punti Mimì/.test(q.text) && !/stampsForReward/.test(q.text), q.status + ' ' + q.text.slice(0, 80));
+  const dk = await get(SITE + '/deck');
+  t('3b /apps/premia/deck senza login -> login_required', dk.status === 200 && dk.json?.state === 'login_required', dk.status + ' ' + dk.text.slice(0, 80));
+  const ck = await get(SITE + '/checkin', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"code":"SMOKE0000"}' });
+  t('3c /apps/premia/checkin senza login -> login_required (nessuna presenza senza identita\')', ck.status === 200 && ck.json?.state === 'login_required', ck.status + ' ' + ck.text.slice(0, 80));
   const rw = await get(SITE + '/rewards');
   t('3  /apps/premia/rewards senza login -> login_required (identita\' prima del flag)', rw.status === 200 && rw.json?.state === 'login_required', rw.status + ' ' + rw.text.slice(0, 80));
 }
@@ -34,6 +44,8 @@ console.log('\n== Edge dirette (senza App Proxy: la firma manca o e\' falsa) =='
   t('5  loyalty-proxy con firma falsa -> 401 bad_signature', b.status === 401 && b.json?.error === 'bad_signature', b.status + ' ' + b.text.slice(0, 80));
   const p = await get(EDGE + '/loyalty-page');
   t('6  loyalty-page diretta -> 200 application/liquid con il wrapper', p.status === 200 && /application\/liquid/.test(p.ct) && p.text.startsWith('{% layout none %}{% raw %}'), p.status + ' ' + p.ct);
+  const p2 = await get(EDGE + '/loyalty-page?v=2');
+  t('6b loyalty-page?v=2 -> la pagina nuova, senza parametro quella di prima', p2.status === 200 && /I tuoi punti Mimì/.test(p2.text) && p2.text.endsWith('{% endraw %}') && /stampsForReward/.test(p.text) && !/stampsForReward/.test(p2.text), String(p2.status));
   const o = await get(EDGE + '/loyalty-orders', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   t('7  loyalty-orders senza PIN -> 401 PIN errato (v3, T2: stessa posta delle altre edge del cron)', o.status === 401 && o.json?.error === 'PIN errato', o.status + ' ' + o.text.slice(0, 80));
   const g = await get(EDGE + '/loyalty-proxy-smoke');

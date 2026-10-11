@@ -1,4 +1,15 @@
-// loyalty-proxy v13 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// loyalty-proxy v14 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// v14 (2026-10-11, call del 09-10: pagina a soli punti con percorso, migr 0150). Tutto additivo:
+//    rotta `club`   : serve la pagina nuova con `?anteprima=1`, con `?evento=` (QR) oppure a flag loyalty_page_v2 =
+//                     'true'; altrimenti la pagina di sempre. Flag non leggibile = pagina di sempre. Rollback = flag.
+//    ORDINE DI DEPLOY: prima la migr 0150, poi loyalty-page, poi questa edge. `rewards` chiama una RPC della 0150
+//                     anche per la pagina di prima: senza la migrazione risponderebbe 503 a tutte.
+//    `rewards`      : lo storico riscatti arriva dalla RPC loyalty_redemptions_for (fino a 60, con valore del premio e
+//                     `used_at` = data dell'ordine in cui il codice compare). Stessa forma di prima, campi in piu'.
+//    `deck` (GET)   : foto vere di borse per il memory (RPC loyalty_memory_deck). Solo lettura, nessun punto.
+//    `checkin` (POST {code}) : presenza a un evento dal QR (RPC loyalty_checkin: una per cliente per evento, finestra
+//                     oraria, tetto, flag loyalty_checkin_enabled). I punti li decide la riga dell'evento, mai il client.
+//    `nanna` e `wear` restano ma la pagina nuova non le chiama piu'.
 // v13 (2026-09-27, dashboard Premia Fase 2, migr 0146): azione NUOVA e additiva `track` (POST {events:[{e, el}]}) ->
 //    RPC loyalty_track (flag loyalty_track_enabled, liste chiuse, tetti). Le altre azioni non cambiano una riga.
 // v12 (2026-09-22, brief M4b "profilo + compleanno, tier sui punti cumulati, bonus seconda borsa", migr 0141):
@@ -52,6 +63,8 @@
 //   - `rewards`    : catalogo premi attivi + ultimi riscatti del cliente (gated da loyalty_redeem_enabled).
 //   - `redeem`     : POST {reward, idemp} -> detrae i punti (RPC atomica) e consegna un codice dal pool.
 //   - `track`      : POST {events:[{e, el}]} -> eventi di interfaccia (v13), gated da loyalty_track_enabled nella RPC.
+//   - `deck`       : GET, foto di borse a catalogo per il memory (v14).
+//   - `checkin`    : POST {code} -> presenza a un evento dal QR (v14), gated da loyalty_checkin_enabled nella RPC.
 //
 // SCELTE DI PROGETTO (dichiarate come chiede il brief):
 //  * GIORNO = Europe/Rome per le azioni nuove (clientela italiana). `add` resta su UTC per non
@@ -139,10 +152,24 @@ Deno.serve(async (req) => {
   // amimi.it/apps/premia/club cosi' le fetch a /apps/premia/* portano il login. Rotta ISOLATA in
   // early-return: NON tocca secret / firma / identita' / azioni sottostanti. Aggiunta 2026-09-20 (B1).
   {
-    const _p = new URL(req.url).pathname.split('/').filter(Boolean);
+    const _u = new URL(req.url);
+    const _p = _u.pathname.split('/').filter(Boolean);
     if (req.method === 'GET' && (_p[_p.length - 1] ?? '') === 'club') {
+      // v14: quale pagina. `?anteprima=1` = la nuova per chi ha il link (l'HTML e' pubblico, i dati chiedono comunque il
+      // login). Anche `?evento=` porta sempre alla nuova: la pagina di prima non sa cosa sia un QR e lo ignorerebbe in
+      // silenzio. Altrimenti decide il flag loyalty_page_v2, letto con un ritentativo (le letture delle edge prendono
+      // un 504 ogni tanto); se resta illeggibile si serve la pagina di sempre: questa lettura sceglie solo un file
+      // statico, non decide nessuna scrittura.
+      let _v2 = _u.searchParams.get('anteprima') === '1' || _u.searchParams.has('evento');
+      if (!_v2) {
+        try {
+          const _sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+          const { data: _f, error: _fErr } = await retryOnce(() => _sb.from('app_flags').select('value').eq('key', 'loyalty_page_v2').maybeSingle());
+          _v2 = !_fErr && String(_f?.value ?? '').trim().toLowerCase() === 'true';
+        } catch (_e) { _v2 = false; }
+      }
       try {
-        const _r = await fetch('https://imszbjeyplaiovylhkgl.supabase.co/functions/v1/loyalty-page');
+        const _r = await fetch('https://imszbjeyplaiovylhkgl.supabase.co/functions/v1/loyalty-page' + (_v2 ? '?v=2' : ''));
         const _ct = _r.headers.get('content-type') || 'application/liquid; charset=utf-8';
         return new Response(await _r.text(), { status: 200, headers: { ...cors, 'Content-Type': _ct } });
       } catch (_e) {
@@ -442,13 +469,14 @@ Deno.serve(async (req) => {
     if (action === 'rewards') {
       const [{ data: cat, error: catErr }, { data: mine, error: mineErr }, points] = await Promise.all([
         retryOnce(() => sb.from('loyalty_rewards').select('key, label, cost_points, kind, value, sort').eq('active', true).order('sort')),
-        retryOnce(() => sb.from('loyalty_redemptions').select('reward_key, cost_points, status, discount_code, created_at')
-          .eq('shopify_customer_id', customerId).order('created_at', { ascending: false }).limit(20)),
+        // v14: storico dalla RPC (fino a 60 riscatti del SOLO cliente loggato, con valore del premio e used_at)
+        retryOnce(() => sb.rpc('loyalty_redemptions_for', { p_customer: customerId })),
         readPoints(),
       ]);
       // v11 (T9): una lettura fallita del catalogo o dello storico non diventa un "nessun premio" / "nessun riscatto"
       if (catErr || mineErr || points === null) return json({ error: 'read_failed' }, 503);
-      return json({ points, rewards: cat ?? [], redemptions: mine ?? [] });
+      if (!Array.isArray(mine)) return json({ error: 'read_failed' }, 503);   // la RPC risponde sempre un array, anche vuoto
+      return json({ points, rewards: cat ?? [], redemptions: mine });
     }
 
     // action === 'redeem' (POST {reward, idemp})
@@ -507,11 +535,14 @@ Deno.serve(async (req) => {
       readFlagFor('loyalty_profile_enabled'), readFlagFor('loyalty_tier_lifetime_enabled'), readFlagFor('loyalty_bonus_second_enabled'),
     ]);
     if (profOn === null || tierOn === null || bonusOn === null) return json({ error: 'read_failed' }, 503);
+    // v14: la pagina mostra la regola "agli eventi" solo se le presenze sono accese per questo cliente
+    const checkinOn = await readFlagFor('loyalty_checkin_enabled');
+    if (checkinOn === null) return json({ error: 'read_failed' }, 503);
     const { data: st, error: stErr } = await retryOnce(() => sb.rpc('loyalty_profile_state', { p_customer: customerId, p_today: romeToday() }));
     if (stErr) return json({ error: 'read_failed' }, 503);   // stato non letto = 503, mai una card vuota spacciata per vera
     const s = (st ?? {}) as Record<string, unknown>;
     return json({
-      profile_enabled: profOn, tier_lifetime_enabled: tierOn, bonus_second_enabled: bonusOn,
+      profile_enabled: profOn, tier_lifetime_enabled: tierOn, bonus_second_enabled: bonusOn, checkin_enabled: checkinOn,
       profile: profOn ? (s.profile ?? null) : null,
       birthday_today: profOn ? Boolean(s.birthday_today) : false,
       birthday_awarded: profOn ? Boolean(s.birthday_awarded) : false,
@@ -538,6 +569,30 @@ Deno.serve(async (req) => {
     const sv = (saved ?? {}) as { ok?: boolean; reason?: string; awarded?: boolean; added?: number; points?: number; birthday_locked?: boolean };
     if (!sv.ok) return json({ error: sv.reason ?? 'write_failed' }, 400);
     return json({ ok: true, awarded: Boolean(sv.awarded), added: sv.added ?? 0, points: sv.points ?? 0, birthday_locked: Boolean(sv.birthday_locked) });
+  }
+
+  // --- MEMORY CON LE FOTO VERE (v14, migr 0150): mazzo di borse a catalogo. Sola lettura, nessun punto: il premio
+  // resta deciso da `memory_win`. Errore = 503 e la pagina gioca col mazzo di riserva.
+  if (action === 'deck') {
+    const { data: dk, error: dkErr } = await retryOnce(() => sb.rpc('loyalty_memory_deck', { p_n: 6 }));
+    if (dkErr || !Array.isArray(dk)) return json({ error: 'read_failed' }, 503);
+    return json({ cards: dk });
+  }
+
+  // --- PRESENZA A UN EVENTO DAL QR (v14, migr 0150): amimi.it/apps/premia/club?evento=<CODICE>. Flag, finestra oraria,
+  // tetto e "una per cliente per evento" stanno nella RPC loyalty_checkin, atomica e idempotente per PK (per questo il
+  // retryOnce, come loyalty_award_daily). Qui solo metodo, forma del codice e identita' firmata.
+  if (action === 'checkin') {
+    if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+    const cb = ((await req.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;
+    const code = String(cb.code ?? '').trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{4,40}$/.test(code)) return json({ ok: false, reason: 'unknown_event' });
+    const { data: ck, error: ckErr } = await retryOnce(() => sb.rpc('loyalty_checkin', { p_customer: customerId, p_code: code }));
+    if (ckErr) return json({ error: 'write_failed' }, 500);
+    const c = (ck ?? {}) as { ok?: boolean; reason?: string; already?: boolean; added?: number; points?: number; label?: string | null };
+    if (c.reason === 'off') return json({ state: 'off' });
+    if (!c.ok) return json({ ok: false, reason: c.reason ?? 'error', label: c.label ?? null });
+    return json({ ok: true, already: Boolean(c.already), added: c.added ?? 0, points: c.points ?? 0, label: c.label ?? null });
   }
 
   return json({ error: 'unknown_action', action }, 422);

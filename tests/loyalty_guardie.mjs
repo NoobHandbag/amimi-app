@@ -1,5 +1,5 @@
-// tests/loyalty_guardie.mjs — guardie sul SORGENTE del modulo Premia (loyalty-proxy v11, loyalty-orders v3, migr 0136,
-// pagina Area Membri, config.toml). Quest audit Area Membri, Fase 6 (2026-09-21).
+// tests/loyalty_guardie.mjs — guardie sul SORGENTE del modulo Premia (loyalty-proxy v14, loyalty-orders v3, migr 0136-0150,
+// pagina Area Membri, config.toml). Quest audit Area Membri, Fase 6 (2026-09-21); pagina a soli punti del 2026-10-11.
 //   node tests/loyalty_guardie.mjs
 //
 // Classe non collaudabile a runtime (compare solo con tap concorrenti, firme rigiocate, PostgREST che risponde male o
@@ -8,6 +8,7 @@
 // che lo ha generato. Le prove vive (RPC sull'account di test, smoke di produzione) stanno in tests/loyalty_smoke.mjs
 // e nel report di Fase 6.
 import { readFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -71,7 +72,7 @@ t('28 migr 0136: pre-check dei dati prima di ogni cintura (si ferma intera)', /r
 console.log('\n== T9 + letture controllate (Regola 20) ==');
 t('29 loyalty-proxy: rewards legge catalogo e storico con errori controllati (503)', /error: catErr/.test(P) && /error: mineErr/.test(P) && /if \(catErr \|\| mineErr \|\| points === null\) return json\(\{ error: 'read_failed' \}, 503\)/.test(P));
 t('30 loyalty-proxy: flag letti con retryOnce, null = 503 (mai off per un errore)', /const readFlag = async/.test(P) && (P.match(/=== null\) return json\(\{ error: 'read_failed' \}, 503\)/g) || []).length >= 4);
-t('31 loyalty-proxy: app_flags letto solo dal segreto, da readFlag e da readFlagFor (v12)', (P.match(/from\('app_flags'\)/g) || []).length === 3);
+t('31 loyalty-proxy: app_flags letto solo dal segreto, da readFlag, da readFlagFor (v12) e dalla rotta club (v14)', (P.match(/from\('app_flags'\)/g) || []).length === 4);
 t('32 loyalty-proxy: la RPC di premio ha il retryOnce (idempotente per giorno), l\'upsert del clicker no', /retryOnce\(\(\) => sb\.rpc\('loyalty_award_daily'/.test(P) && !/retryOnce\(\(\) => sb\.from\('loyalty_points'\)\s*\n?\s*\.upsert/.test(P));
 
 console.log('\n== S1/T33: guardaroba dal DB ==');
@@ -84,7 +85,7 @@ t('37 loyalty-proxy: visite registrate (loyalty_visit) senza bloccare state', /r
 console.log('\n== Pagina Area Membri (bundle D) ==');
 t('38 pagina: escape di tutto cio\' che entra in innerHTML (esc)', /const esc = s => String\(s \?\? ''\)\.replace/.test(PAGE) && /esc\(rw\.label\)/.test(PAGE) && !/'<h4>'\+rw\.label\+/.test(PAGE));
 t('39 pagina: fetch con rete assente gestita (status 0, error network)', /catch\(e\) \{ return \{ status:0, data:\{ error:'network' \} \}; \}/.test(PAGE));
-t('40 pagina: copy del livello onesta (segue i punti disponibili)', /il livello segue i punti disponibili/.test(PAGE));
+t('40 pagina (v14): nessun livello, timbro, nanna o "indossa"', !/tierOf|nextTier|stampEvery|stampsForReward|Amica Speciale|Amica del Cuore|btnNanna|data-codice|api\('nanna'|api\('wear'/.test(PAGE));
 t('41 pagina: guardaroba non leggibile (null) mostrato come tale', /items===null/.test(PAGE));
 
 console.log('\n== config.toml: verify_jwt pinnato per le tre edge ==');
@@ -125,7 +126,7 @@ t('65 le azioni esistenti restano: state/coccola/memory_win/nanna/wear/add/rewar
 
 console.log('\n== pagina v12: card profilo, compleanno, seconda borsa, tier cumulato ==');
 t('66 pagina: testo del consenso (solo giorno e mese, niente anno)', /Usiamo solo giorno e mese per farti un regalo di compleanno\. Niente anno\./.test(PAGE));
-t('67 pagina: tier dal cumulato SOLO a flag acceso, copy diversa', /pr\.tier_lifetime_enabled/.test(PAGE) && /il livello segue i punti cumulati: riscattare non lo abbassa/.test(PAGE) && /il livello segue i punti disponibili/.test(PAGE));
+t('67 pagina (v14): i livelli non si leggono piu\' (ne\' tier_lifetime_enabled ne\' punti_cumulati)', !/tier_lifetime_enabled|punti_cumulati|tier_cumulato/.test(PAGE));
 t('68 pagina: card profilo e bonus nascosti senza profile/flag (nessuna card finta)', /if\(!pr \|\| !pr\.profile_enabled\)\{ sec\.classList\.add\('hidden'\); return; \}/.test(PAGE) && /typeof pf\.data\.profile_enabled==='boolean'/.test(PAGE));
 t('69 pagina: +20 compleanno mostrato solo se il server dice birthday_awarded', /pr\.birthday_awarded \? /.test(PAGE));
 t('70 pagina: riga seconda borsa con data e +50', /Seconda borsa entro il <b>/.test(PAGE) && /\+50 punti/.test(PAGE));
@@ -144,7 +145,7 @@ t('78 B3: finestra 90 giorni e deadline su date Europe/Rome + days_left', /s\.or
 t('79 C1/C2: second_fully_refunded mai null, n=0 in errore', /coalesce\(s\.points_reversed >= s\.points or/.test(M142) && (M142.match(/v_sev := 'error'; v_done := 0/g) || []).length === 2);
 t('80 D: riga tessera12 (100 pt, 12%) inserita SPENTA, nessuna cancellazione, tessera invariata', /\('tessera12', '[^']*', 100, 'percentage', 12, false, 5\)/.test(M142) && !/delete from loyalty_rewards|update loyalty_rewards set active = \(key = 'tessera12'\)/.test(M142.replace(/^\s*--[^\n]*$/gm, '')));
 t('81 D: KPI tessera piena sul premio attivo (niente 200 fisso)', /p\.points >= coalesce\(\(select min\(w\.cost_points\) from loyalty_rewards w where w\.active\), 200\)/.test(M142));
-t('82 D: la pagina deriva i timbri dal costo del premio attivo (10 timbri = cost_points)', /Math\.round\(Number\(rw0\.cost_points\)\/CONFIG\.stampsForReward\)/.test(PAGE) && /Un timbro ogni '\+stampEvery\+' punti/.test(PAGE));
+t('82 D (v14): il percorso deriva i traguardi dal costo del premio attivo, nessun 100 o 12 fisso in pagina', /const cost=Number\(rw\.cost_points\), n=CONFIG\.traguardi/.test(PAGE) && /const val=base\+\(i\+1\)\*cost/.test(PAGE) && !/cost_points: ?100|value: ?12\b|sconto del 12%/.test(PAGE));
 t('83 D: la edge non ha costi o percentuali fisse del premio (li legge la RPC dalla riga attiva)', !/cost_points: 200|cost: 200|value: 20\b|value: 12\b/.test(P));
 t('84 C3: profile_save valida intervallo giorno/mese e body nullo', /day < 1 \|\| day > 31/.test(P) && /month < 1 \|\| month > 12/.test(P) && /\?\? \{\}\) as Record<string, unknown>/.test(P));
 t('85 C4: la pagina usa days_left dal server (niente fuso del browser)', /Number\(bs\.days_left\)/.test(PAGE) && !/new Date\(bs\.deadline/.test(PAGE));
@@ -180,7 +181,10 @@ t('102 pagina: tracciamento in lotti con keepalive, tetto 60, si ferma a state o
 t('103 pagina: il payload porta solo nome evento ed elemento', /T\.q\.push\(name \? \{ e:e, el:name \} : \{ e:e \}\)/.test(PAGE) && /body:JSON\.stringify\(\{ events:batch \}\)/.test(PAGE));
 t('104 pagina: tap sul riscatto e card del premio con lo stato (ready/locked/pending)', /track\('tap','redeem'\)/.test(PAGE) && /track\('tap','copy_code'\)/.test(PAGE) && /'redeem_pending' : \(p>=rw\.cost_points \? 'redeem_ready' : 'redeem_locked'\)/.test(PAGE));
 const trackNames = [...PAGE.matchAll(/track\('(view|tap)','([a-z0-9_]+)'\)|watch\('[a-zA-Z0-9]+','([a-z0-9_]+)'\)/g)].map((m) => m[2] || m[3]);
-const allowed = (M146c.match(/c_views\s+constant text\[\] := array\[([^\]]+)\]/)?.[1] + ',' + M146c.match(/c_taps\s+constant text\[\] := array\[([^\]]+)\]/)?.[1]).replace(/'/g, '').split(',').map((s) => s.trim());
+const M150 = read('supabase/migrations/0150_loyalty_percorso_eventi.sql');
+const M150c = M150.replace(/^\s*--[^\n]*$/gm, '');
+// dalla 0150 le liste chiuse valide sono le sue (la funzione e' ridefinita li')
+const allowed = (M150c.match(/c_views\s+constant text\[\] := array\[([^\]]+)\]/)?.[1] + ',' + M150c.match(/c_taps\s+constant text\[\] := array\[([^\]]+)\]/)?.[1]).replace(/'/g, '').split(',').map((s) => s.trim());
 t('105 pagina: ogni elemento tracciato e\' nella lista chiusa della RPC', trackNames.length >= 10 && trackNames.every((n) => allowed.includes(n)), trackNames.filter((n) => !allowed.includes(n)).join(','));
 
 // ---- migr 0147 (27-09): Gate 2 sulla 0146 ----
@@ -194,8 +198,73 @@ t('109 G2-3: visita contata solo se iniziata prima dell\'ordine', /v\.first_at <
 t('110 G2-5: ordini filtrati sugli stati pagati come v_loyalty_uplift', (M147.match(/financial_status = any\(v_paid\)/g) || []).length >= 7 && /financial_status in \('paid', 'partially_refunded', 'refunded'\)/.test(M147));
 t('111 G2-7: capped sui soli eventi validi', /'capped', v_valid > v_room/.test(M147));
 t('112 G2-10: vista funnel in security_invoker, ask_ro a colonne senza discount_code', /v_loyalty_funnel_daily with \(security_invoker = on\)/.test(M147) && /grant select \(id, shopify_customer_id, reward_key, cost_points, status, created_at, fulfilled_at\) on loyalty_redemptions to ask_ro/.test(M147));
-t('113 G2-8/9: vista con soglia anche per card alte; tap Gioca solo se disponibile', /x\.intersectionRect\.height>=window\.innerHeight\*0\.4/.test(PAGE) && /S\.memory_disponibile\)\{ toast\('Torna domani per un nuovo gioco [^']*'\); return; \} track\('tap','gioco'\)/.test(PAGE));
+t('113 G2-8/9: vista con soglia anche per card alte; tap Gioca solo se disponibile', /x\.intersectionRect\.height>=window\.innerHeight\*0\.4/.test(PAGE) && /S\.memory_disponibile\)\{ toast\('Torna domani per un nuovo gioco[^']*'\); return; \} track\('tap','gioco'\)/.test(PAGE));
 t('114 G2-4/11/12: percentuali del funnel solo fra popolazioni omogenee, risposta vecchia ignorata, tab fra quelle finance', /i > 0 && v <= steps\[i - 1\]\[1\]/.test(PREMIA) && /if \(vivo\) setD\(x\)/.test(PREMIA) && /'ads', 'premia'\]/.test(read('web/src/lib/people.tsx')));
+
+// ---- v14 (2026-10-11, call del 09-10): pagina a soli punti con percorso, QR eventi, codici, memory con foto (migr 0150) ----
+const M147raw = read('supabase/migrations/0147_loyalty_dashboard_gate2.sql');
+const BUILD = read('supabase/functions/loyalty-page/build.mjs');
+const PAGE_V1 = read('supabase/functions/loyalty-page/src/index.v1.html');
+const fnTrack = (sql) => { const i = sql.indexOf('create or replace function public.loyalty_track'); return sql.slice(i, sql.indexOf('end $$;', i)).replace(/array\[[^\]]+\]/g, 'array[...]').replace(/\s+/g, ' '); };
+const fn = (name) => { const i = M150c.indexOf('create or replace function public.' + name); return M150c.slice(i, M150c.indexOf('$function$;', i)); };
+console.log('\n== migr 0150: eventi con QR, codici riscattati, mazzo del memory ==');
+t('115 esattamente una migrazione 0150_*', migs.filter((f) => f.startsWith('0150_')).length === 1);
+t('116 due flag nuovi a false (presenze e pagina nuova)', /\('loyalty_checkin_enabled', 'false'\)/.test(M150c) && /\('loyalty_page_v2',\s+'false'\)/.test(M150c) && /on conflict \(key\) do nothing/.test(M150c));
+t('117 RLS + REVOKE sulle due tabelle nuove', ['loyalty_checkin_events', 'loyalty_checkins'].every((tb) => new RegExp('alter table ' + tb + ' enable row level security;\\s*\\nrevoke all on ' + tb + ' from anon, authenticated;').test(M150c)));
+t('118 presenza: PK (evento, cliente) + UNIQUE parziale su loyalty_events, pre-check sulla source nuova', /primary key \(event_code, shopify_customer_id\)/.test(M150c) && /loyalty_events_event_checkin_uq\s+on loyalty_events \(shopify_customer_id, \(meta->>'event'\)\) where source = 'event_checkin'/.test(M150c) && /raise exception 'pre-check: esistono gia'' eventi con source event_checkin'/.test(M150c));
+t('119 evento: finestra obbligatoria (max 14 giorni), punti 1-100, tetto di presenze, codice a formato chiuso', /ends_at > starts_at and ends_at <= starts_at \+ interval '14 days'/.test(M150c) && /check \(points between 1 and 100\)/.test(M150c) && /check \(max_checkins between 1 and 5000\)/.test(M150c) && /check \(code ~ '\^\[A-Z0-9_-\]\{4,40\}\$'\)/.test(M150c));
+const ck = fn('loyalty_checkin');
+t('120 loyalty_checkin: flag dentro, lucchetto per evento, finestra e tetto PRIMA dell\'insert, gate = insert ON CONFLICT', /loyalty_flag_on\('loyalty_checkin_enabled', p_customer\)/.test(ck) && /pg_advisory_xact_lock\(hashtext\('loyalty_checkin:' \|\| v_code\)\)/.test(ck) && ck.indexOf("'not_started'") < ck.indexOf('insert into loyalty_checkins') && ck.indexOf("'ended'") < ck.indexOf('insert into loyalty_checkins') && ck.indexOf("'full'") < ck.indexOf('insert into loyalty_checkins') && /on conflict \(event_code, shopify_customer_id\) do nothing;\s*\n\s*get diagnostics v_gate = row_count;/.test(ck));
+t('121 loyalty_checkin: i punti vengono dalla riga dell\'evento (nessun parametro punti), saldo ed evento nella stessa funzione', /loyalty_checkin\(p_customer text, p_code text\)/.test(ck) && !/p_points|p_delta/.test(ck) && /insert into loyalty_points[\s\S]*returning points into v_new;/.test(ck) && /'event_checkin', jsonb_build_object\('event', v_code/.test(ck));
+t('122 le tre funzioni nuove: execute solo a service_role', ['loyalty_checkin(text, text)', 'loyalty_redemptions_for(text)', 'loyalty_memory_deck(int)'].every((sig) => M150c.includes('revoke all on function public.' + sig + ' from anon, authenticated, public;') && M150c.includes('grant execute on function public.' + sig + ' to service_role;')));
+const rf = fn('loyalty_redemptions_for');
+t('123 loyalty_redemptions_for: solo i riscatti del cliente chiesto, usato = codice in un ordine, niente jolly dal dato', /from loyalty_redemptions\s+where shopify_customer_id = p_customer and status in/.test(rf) &&/upper\(r\.discount_code\) = any\(regexp_split_to_array\(upper\(coalesce\(o\.discount_codes, ''\)\), '\[\^A-Z0-9_-\]\+'\)\)/.test(rf) && !/ilike|like '%' \|\||position\(/.test(rf) && /status in \('pending', 'fulfilled'\)\s*\n\s*order by created_at desc limit 60/.test(rf) && /'used_day', \(u\.used_at at time zone 'Europe\/Rome'\)::date/.test(rf));
+const dk = fn('loyalty_memory_deck');
+t('124 loyalty_memory_deck: solo schede attive con foto sul CDN Shopify, una per modello, tetto 8', /shopify_status = 'active'/.test(dk) && /like 'https:\/\/cdn\.shopify\.com\/%'/.test(dk) && /distinct on \(split_part\(codice, '_', 1\)\)/.test(dk) && /least\(greatest\(coalesce\(p_n, 3\), 2\), 8\)/.test(dk));
+const dml150 = [...M150c.matchAll(/\b(?:insert into|delete from|update)\s+(?:only\s+)?(?:public\.)?([a-z_0-9]+)/g)].map((x) => x[1]).filter((n) => n !== 'set');
+const alt150 = [...M150c.matchAll(/\balter table\s+(?:public\.)?([a-z_0-9]+)/g)].map((x) => x[1]);
+t('125 0150: scrive solo su tabelle del modulo, app_flags e change_log; alter solo sulle due tabelle nuove; nessun drop', dml150.length >= 6 && dml150.every((n) => /^(loyalty_[a-z_]+|app_flags|change_log)$/.test(n)) && alt150.every((n) => n === 'loyalty_checkin_events' || n === 'loyalty_checkins') && !/\bdrop (table|function|view|column|policy|index)\b/.test(M150c), dml150.concat(alt150).join(','));
+t('125b 0150: ask_ro legge davvero le due tabelle nuove (grant + policy: senza policy la RLS gli darebbe zero righe)', ['loyalty_checkin_events', 'loyalty_checkins'].every((tb) => M150c.includes('grant select on ' + tb + ' to ask_ro;') && new RegExp('create policy ' + tb + '_ask_ro on ' + tb + ' for select to ask_ro using \\(true\\);').test(M150c)) && !/create policy[^;]*\bto (anon|authenticated|public)\b/.test(M150c));
+t('126 loyalty_track: corpo identico alla 0147, cambiano solo le due liste (che contengono quelle di prima)', fnTrack(M150c) === fnTrack(M147raw.replace(/^\s*--[^\n]*$/gm, '')) && ['redeem_ready', 'redeem_locked', 'redeem_pending', 'profilo', 'mimi', 'guardaroba', 'bonus2', 'bday', 'redeem', 'copy_code', 'coccola', 'gioco', 'nanna', 'wear', 'profile_save'].every((n) => allowed.includes(n)));
+
+console.log('\n== loyalty-proxy v14: club, rewards, deck, checkin ==');
+const clubBranch = P.slice(P.indexOf("=== 'club'"), P.indexOf('const url = new URL(req.url);'));
+t('127 club: pagina nuova con ?anteprima=1, con ?evento= (QR) o a flag loyalty_page_v2 true; flag letto con un ritentativo, illeggibile = pagina di sempre', /let _v2 = _u\.searchParams\.get\('anteprima'\) === '1' \|\| _u\.searchParams\.has\('evento'\);/.test(clubBranch) && /await retryOnce\(\(\) => _sb\.from\('app_flags'\)\.select\('value'\)\.eq\('key', 'loyalty_page_v2'\)\.maybeSingle\(\)\)/.test(clubBranch) && /_v2 = !_fErr && String\(_f\?\.value \?\? ''\)\.trim\(\)\.toLowerCase\(\) === 'true'/.test(clubBranch) && /catch \(_e\) \{ _v2 = false; \}/.test(clubBranch) && /\/functions\/v1\/loyalty-page' \+ \(_v2 \? '\?v=2' : ''\)/.test(clubBranch));
+t('128 club: resta prima di segreto, firma e identita\' (HTML pubblico, nessun dato)', P.indexOf("=== 'club'") < P.indexOf("'shopify_app_proxy_secret'") && !/logged_in_customer_id|customerId/.test(clubBranch));
+t('129 rewards: storico dalla RPC del solo cliente loggato, risposta non-array = 503', /sb\.rpc\('loyalty_redemptions_for', \{ p_customer: customerId \}\)/.test(P) && /if \(!Array\.isArray\(mine\)\) return json\(\{ error: 'read_failed' \}, 503\)/.test(P));
+const deckBranch = P.slice(P.indexOf("if (action === 'deck')"), P.indexOf("if (action === 'checkin')"));
+const checkinBranch = P.slice(P.indexOf("if (action === 'checkin')"), P.indexOf("return json({ error: 'unknown_action'"));
+t('130 deck e checkin dopo firma e identita\'', P.indexOf("if (action === 'deck')") > P.indexOf("params.get('logged_in_customer_id')") && P.indexOf("if (action === 'checkin')") > P.indexOf("params.get('logged_in_customer_id')"));
+t('131 deck: sola lettura (una RPC, nessuna scrittura), errore = 503', /rpc\('loyalty_memory_deck'/.test(deckBranch) && !/insert|upsert|update\(|loyalty_points/.test(deckBranch) && /return json\(\{ error: 'read_failed' \}, 503\)/.test(deckBranch));
+t('132 checkin: solo POST, codice a formato chiuso, identita\' dal param firmato, off = {state:off}', /req\.method !== 'POST'\) return json\(\{ error: 'method_not_allowed' \}, 405\)/.test(checkinBranch) && /\/\^\[A-Z0-9_-\]\{4,40\}\$\/\.test\(code\)/.test(checkinBranch) && /p_customer: customerId, p_code: code/.test(checkinBranch) && /c\.reason === 'off'\) return json\(\{ state: 'off' \}\)/.test(checkinBranch));
+t('133 checkin: il client non manda mai punti e la edge non ne decide', !/cb\.points|cb\.delta|p_points|added: \d/.test(checkinBranch));
+t('134 profile: checkin_enabled dal flag a valore, null = 503', /const checkinOn = await readFlagFor\('loyalty_checkin_enabled'\)/.test(P) && /if \(checkinOn === null\) return json\(\{ error: 'read_failed' \}, 503\)/.test(P) && /checkin_enabled: checkinOn/.test(P));
+t('135 le azioni v13 restano tutte (compatibilita\' con la pagina di prima)', ["'state'", "'coccola'", "'memory_win'", "'nanna'", "'wear'", "'add'", "'rewards'", "'redeem'", "'track'", "'profile'", "'profile_save'"].every((a) => P.includes('action === ' + a)));
+
+console.log('\n== pagina v14 e build ==');
+t('136 pagina: presenza via POST col solo codice, formato chiuso anche in pagina, attesa a tempo in localStorage', /api\('checkin',\{method:'POST',body:\{code:EVT\}\}\)/.test(PAGE) && /\/\^\[A-Z0-9_-\]\{4,40\}\$\/\.test\(c\)/.test(PAGE) && /Date\.now\(\)-o\.t < CONFIG\.eventoOre\*3600000/.test(PAGE));
+t('137 pagina: i testi dell\'evento passano da esc (titolo e messaggio col nome)', /<b>'\+esc\(title\)\+'<\/b>'\+esc\(msg\)/.test(PAGE));
+t('138 pagina: accesso con ritorno alla pagina (account clienti nuovi)', /'\/customer_authentication\/login\?return_to='\+encodeURIComponent\(location\.pathname\+location\.search\)/.test(PAGE));
+t('139 pagina: codici con escape, "usato" solo se il server manda used_at, Copia solo sui codici da usare e nel premio', /esc\(x\.discount_code\)/.test(PAGE) && /if\(x\.used_at\) return '<li class="cod used">/.test(PAGE) && (PAGE.match(/class="cp tap"/g) || []).length === 2);
+t('140 pagina: memory col mazzo dal server, riserva se le foto non arrivano, premio solo da memory_win', /api\('deck'\)/.test(PAGE) && /DECK = ok\.length>=CONFIG\.coppie \? ok\.slice\(0,CONFIG\.coppie\) : RISERVA/.test(PAGE) && /api\('memory_win'\)/.test(PAGE));
+t('141 pagina: contatore dei punti con arrivo garantito (non dipende dai fotogrammi)', /node\._end=setTimeout\(\(\)=>\{ if\(node\._to===to\) node\.textContent=to; \},900\)/.test(PAGE));
+t('142 pagina: la Mimi\' e\' un segnaposto unico che build.mjs riempie da src/mimi.webp', PAGE.split('__MIMI_DATA_URI__').length === 2 && /html\.split\(MIMI_TOKEN\)\.length !== 2/.test(BUILD) && /readFileSync\(DIR \+ 'src\/mimi\.webp'\)\.toString\('base64'\)/.test(BUILD));
+t('143 build: pagina di prima come default, nuova con ?v=2, {% endraw %} vietato nelle sorgenti', /searchParams\.get\("v"\) === "2"/.test(BUILD) && /v2 \? BODY : BODY_V1/.test(BUILD) && /\/\\\{%-\?\\s\*endraw\\s\*-\?%\\\}\/\.test\(html\)/.test(BUILD));
+t('144 la pagina di prima e\' conservata INTATTA per il rollback (impronta sha256 del file a fine riga LF)', createHash('sha256').update(PAGE_V1, 'utf8').digest('hex') === '38bfde203efcdf362e3e3cd6180c93cbe4f75cad4c6120a2e3708a7c29320d3b');
+t('145 pagina: niente emoji ne\' caratteri oltre U+2000 (tranne il puntino di sospensione)', ![...PAGE].some((ch) => ch.codePointAt(0) > 0x2000 && ch !== '…'));
+
+console.log('\n== Gate 2 dell\'11-10 (revisione indipendente): rilievi chiusi ==');
+const redeemHandler = PAGE.slice(PAGE.indexOf("let idempRiscatto=null;"), PAGE.indexOf('// === memory con le foto vere'));
+t('146 G2-1 riscatto: un solo token per tentativo, il Riprova rimanda lo stesso; si butta solo a risposta definitiva', /const idemp = idempRiscatto \|\| \(idempRiscatto='r-'\+Date\.now\(\)/.test(redeemHandler) && (redeemHandler.match(/idempRiscatto=null;/g) || []).length === 3 && /if\(data && data\.ok\)\{\s*\n\s*idempRiscatto=null;/.test(redeemHandler) && /else if\(data && data\.reason\)\{\s*\n\s*idempRiscatto=null;/.test(redeemHandler) && !/else \{ toast\('Riprova fra poco'\);[^\n]*idempRiscatto=null/.test(redeemHandler));
+t('147 G2-2 api(): corpo non JSON = errore, errore HTTP senza motivo = errore; mai una risposta vuota scambiata per buona', /if\(!data \|\| typeof data!=='object'\) data = \{ error:'bad_response' \};/.test(PAGE) && /else if\(!r\.ok && !data\.error && !data\.reason && !data\.state\) data\.error = 'http_'\+r\.status;/.test(PAGE) && !/let data = \{\}; try \{ data = await r\.json\(\); \} catch\(e\)\{\}\s*\n\s*return/.test(PAGE));
+t('148 G2-2 il profilo si disegna solo con un saldo numerico; coccola e memory muovono i punti solo con un saldo dal server', /if \(status===503 \|\| data\.error \|\| typeof data\.points!=='number'\) return showGate\(/.test(PAGE) && (PAGE.match(/if\(data\.error \|\| typeof data\.points!=='number'\)\{ toast\('Riprova fra poco'\); return; \}/g) || []).length === 2);
+t('149 G2-8 "%" solo per un premio a percentuale (percento()), mai rw.value o x.value stampati a mano', /function percento\(o\)\{ return \(o && \(o\.kind==null \|\| o\.kind==='percentage'\) && Number\(o\.value\)>0\) \? Number\(o\.value\) : 0; \}/.test(PAGE) && !/esc\(rw\.value\)|rw\.value\+'%'|x\.value\+'%'|esc\(val\)/.test(PAGE));
+t('150 G2-9 i giorni dei codici arrivano dal server in Europe/Rome (created_day, used_day)', /itDate\(x\.created_day\|\|x\.created_at\)/.test(PAGE) && /itDate\(x\.used_day\|\|x\.used_at\)/.test(PAGE));
+t('151 G2-10/11 presenze spente = avviso, coccola un tap alla volta, liste del tracciamento senza nomi mai mandati', /evtNote\('Presenze non attive'/.test(PAGE) && /if\(!S \|\| !S\.coccola_disponibile \|\| coccolaInCorso\) return;/.test(PAGE) && !allowed.includes('percorso') && allowed.every((n) => trackNames.includes(n) || ['redeem_ready', 'redeem_locked', 'redeem_pending', 'nanna', 'wear'].includes(n)), allowed.filter((n) => !trackNames.includes(n)).join(','));   // redeem_* nascono da dataset.trk; nanna e wear servono alla pagina di prima
+const CKSQL = read('tests/loyalty_checkin_idempotenza.sql');
+t('152 G2-6 prova viva delle presenze: blocco unico che finisce SEMPRE in rollback, copre flag spento, esiti, doppia presenza, tetto, UNIQUE, ledger', /^do \$\$/m.test(CKSQL) && /raise exception 'TEST_OK:[^']*\(rollback voluto\)';\s*\nend \$\$;\s*$/.test(CKSQL) && ["'off'", "'unknown_event'", "'not_started'", "'ended'", "'full'", 'unique_violation', 'v_loyalty_ledger_drift', 'already'].every((w) => CKSQL.includes(w)) && !/\bcommit\b/i.test(CKSQL.replace(/^\s*--[^\n]*$/gm, '')));
+const MOCK = read('tests/loyalty_page_mock.js');
+t('153 G2-6 il server finto sa perdere una risposta, rispondere senza JSON e riconoscere lo stesso idemp', /redeemMode === 'lost'/.test(MOCK) && /if \(idemp && fatti\[idemp\]\) return reply\(\{ ok: true, already: true/.test(MOCK) && /r\.raw !== undefined/.test(MOCK));
 
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
