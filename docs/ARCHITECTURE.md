@@ -205,3 +205,11 @@ snapshot**. Ponti previsti:
   datato nella cartella Drive "Amimi App Snapshots" (24 fonti + tab RIEPILOGO), retention 30gg,
   mail a info@amimi.it su errore, trigger self-healing, rilancio manuale via `/exec?k=`.
   Sorgente: `amimi-app/scripts/appsscript-snapshot/`.
+- **Archivio mensile permanente** (dal 2026-08-01): il primo del mese `db-backup.yml` pubblica lo stesso
+  contenuto (24 tabelle in JSON + `schema.sql`) come asset della Release `backup-AAAA-MM`, che non scade.
+  Presenti: `backup-2026-08`, `-09`, `-10`.
+- **Copia mensile su Drive** (codice dell'11-10-2026, attiva solo dopo il deploy dello script Apps Script):
+  lo snapshot Drive copia l'archivio della Release in "Amimi App Snapshots/Mensili (permanenti)" e non
+  cancella piu' il foglio del giorno 01. Test: `node tests/snapshot_drive_mensile.mjs`.
+- **Limite noto (11-10-2026):** il backup copre 24 tabelle; restano fuori quelle nate dopo
+  (`loyalty_*`, `lead_*`, `mat_*`, `cs_*`, `models`, `shipping_status` e altre). Vedi CASI_APERTI, A7.
