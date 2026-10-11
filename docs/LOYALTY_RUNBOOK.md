@@ -282,3 +282,12 @@ Non fatto, per scelta: le finestre (memory, premio) non intrappolano il fuoco de
 ### 14.8 Cosa resta a DB ma non si usa piu'
 
 Livelli: `loyalty_tier_of`, `v_loyalty_members.tier_saldo/tier_cumulato`, `loyalty_points_cumulati`, flag `loyalty_tier_lifetime_enabled` (resta `false`; la dashboard nell'app non lo mostra piu'). Mimi': colonne `mimi_state.nanna` e `worn`, azioni `nanna` e `wear` della edge. Nessun drop: la pagina di prima le usa ancora finche' resta come rollback. La copy "1 punto per ogni euro" e "+20 con il QR" e' scritta nella pagina: se cambiano `loyalty_euro_per_point` o i punti degli eventi, va cambiata li'.
+
+### 14.9 Stato del deploy (11-10-2026)
+
+- **Migr 0150** applicata alle 22:36 UTC (`schema_migrations` 20261011223619); i corpi delle quattro funzioni a DB hanno lo stesso md5 del file nel repo. **`loyalty-page`** deployata alle 22:37 (versione di piattaforma 11): la pagina servita senza parametri e' byte per byte quella che era viva prima, `?v=2` e' byte per byte la sorgente nuova. **`loyalty-proxy` v14** deployata alle 22:37 (versione di piattaforma 16), `verify_jwt` false su entrambe. Deploy dal branch `claude/premia-percorso` (commit `4080b83`, contiene `origin/main`), PR amimi-app #38.
+- **Flag: `loyalty_page_v2` = `false`, `loyalty_checkin_enabled` = `false`.** Quindi oggi: `/apps/premia/club` = pagina di prima per tutte; la nuova si vede con `?anteprima=1` (e con `?evento=`); nessun evento esiste e le presenze rispondono `off`.
+- Regola 19, prima e dopo ogni passo: CE di ottobre 7.716,23 / MC2 5.360,30, giacenze 913 pezzi / 66.968,00 EUR / 203 righe, identici. Ledger: 97.526 punti = 97.526 a eventi (900), zero scarti.
+- Prove sul vivo: `tests/loyalty_smoke.mjs` 15/15; `tests/loyalty_checkin_idempotenza.sql` = `TEST_OK` (rollback, zero residui verificati); pagina nuova aperta su `amimi.it/apps/premia/club?anteprima=1` senza accesso (cancello con la Mimi', link di accesso con ritorno, nessun errore in console).
+- **Non ancora provato dal vivo: tutto cio' che chiede l'accesso di una cliente** (saldo, percorso, riscatto, codici, memory, presenza dal QR) e il ritorno alla pagina dopo l'accesso. Lo copre il banco di prova su server finto, non una sessione vera: serve un giro con un account interno prima di accendere `loyalty_page_v2`.
+- La dashboard nell'app (tab Premia senza la tabella dei livelli) va in linea al prossimo deploy del web da `main`, dopo il merge della PR.
