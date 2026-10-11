@@ -216,7 +216,7 @@ snapshot**. Ponti previsti:
   `amimi-backup-AAAA-MM-full.tar.gz.gpg` (dump completo). La crea il primo run riuscito del mese (prima:
   solo il run del giorno 01); un asset gia' pubblicato non si sovrascrive mai. Presenti: `backup-2026-08`,
   `-09`, `-10` (ottobre: JSON del 01-10, dump completo dell'11-10).
-- **Copia mensile su Drive** (codice dell'11-10-2026, attiva dopo il push dello script Apps Script):
+- **Copia mensile su Drive** (dall'11-10-2026; script pushato via clasp e provato la sera stessa: agosto, settembre e ottobre sono in Drive):
   lo snapshot Drive copia i due asset del mese in "Amimi App Snapshots/Mensili (permanenti)" (ricontrolla
   gli ultimi 3 mesi a ogni run, mail dal giorno 3 se manca il mese corrente) e tiene per sempre il primo
   foglio di ogni mese. Test: `node tests/snapshot_drive_mensile.mjs`.
