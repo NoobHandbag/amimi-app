@@ -33,12 +33,14 @@ const NOME: Record<string, string> = {
 };
 const FLAG_NOME: [string, string][] = [
   ['loyalty_redeem_enabled', 'Riscatto'], ['loyalty_purchase_enabled', 'Punti sugli acquisti'], ['loyalty_profile_enabled', 'Profilo e compleanno'],
-  ['loyalty_tier_lifetime_enabled', 'Livello sui punti cumulati'], ['loyalty_bonus_second_enabled', 'Bonus seconda borsa'], ['loyalty_track_enabled', 'Tracciamento tap'],
-];
+  ['loyalty_bonus_second_enabled', 'Bonus seconda borsa'], ['loyalty_track_enabled', 'Tracciamento tap'],
+];   // i livelli sono usciti dalla pagina l'11-10 (call del 09-10): il flag loyalty_tier_lifetime_enabled resta a DB, spento
 const ELEMENTO: Record<string, string> = {
   redeem_ready: 'Card premio (sbloccabile)', redeem_locked: 'Card premio (punti non bastano)', redeem_pending: 'Card premio (codice in arrivo)',
   profilo: 'Card profilo', mimi: 'Mimi', guardaroba: 'Guardaroba', bonus2: 'Riga seconda borsa', bday: 'Banner compleanno',
   redeem: 'Tap Riscatta', copy_code: 'Tap Copia codice', coccola: 'Tap Coccola', gioco: 'Tap Gioca', nanna: 'Tap Nanna', wear: 'Tap Indossa', profile_save: 'Tap Salva profilo',
+  // pagina nuova (11-10): la card dei punti col percorso resta sotto redeem_*, cosi' l'imbuto non cambia
+  codici: 'I tuoi codici', regole: 'Come prendi i punti', evento: 'Avviso evento (QR)', codici_tutti: 'Tap Mostra tutti i codici', shop: 'Tap Guarda le novita’',
 };
 
 function Kpi({ v, k, sub, tone }: { v: ReactNode; k: string; sub?: ReactNode; tone?: 'green' | 'red' | 'rose' | 'accent' }) {
@@ -232,9 +234,6 @@ export default function Premia({ onBack }: { onBack: () => void }) {
           <Kpi v={num(d.members.b50_99)} k="Vicine al premio" sub="saldo fra 50 e 99" tone="accent" />
           <Kpi v={num(d.members.lt50)} k="Sotto 50 punti" />
         </div>
-        <table className="dtable"><thead><tr><th>Livello</th><th style={R}>sul saldo</th><th style={R}>sui cumulati</th></tr></thead>
-          <tbody>{['Amica', 'Amica Speciale', 'Amica del Cuore'].map((t) => (<tr key={t}><td>{t}</td><td style={R}>{num(d.members.tier_saldo[t] ?? 0)}</td><td style={R}>{num(d.members.tier_cumulato[t] ?? 0)}</td></tr>))}</tbody></table>
-        <p className="note">{(d.flags.loyalty_tier_lifetime_enabled ?? 'off') === 'on' ? 'Il livello mostrato alle clienti segue i punti cumulati (flag acceso).' : 'Il livello mostrato alle clienti segue il saldo (flag “livello sui cumulati” spento).'}</p>
         <div className="kpis" style={{ marginTop: 12 }}>
           <Kpi v={num(d.second.finestre_aperte)} k="Seconda borsa: finestre aperte" sub={`${num(d.second.in_scadenza_14gg)} scadono entro 14 giorni`} />
           <Kpi v={num(d.second.bonus_dati)} k="Bonus +50 dati" sub={(d.flags.loyalty_bonus_second_enabled ?? 'off') === 'off' ? 'flag spento' : undefined} />

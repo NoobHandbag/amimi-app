@@ -14,6 +14,7 @@
 - Sorgente della pagina: `supabase/functions/loyalty-page/src/index.html` (identica a `Cowork12/projects/Premia_Area_Membri_2026-09/PROD/index.html`); `index.ts` si GENERA con `build.mjs`.
 - Guardie: `tests/loyalty_guardie.mjs` (124 pin sul sorgente, bloccante), `tests/loyalty_smoke.mjs` (9 probe di produzione in sola lettura) e `tests/loyalty_profilo_idempotenza.sql` (prova viva delle RPC della 0141 sull'account di test, in un blocco che si annulla da solo: esito atteso `TEST_OK`).
 - Dashboard per l'owner: tab "Premia" nell'app (`#premia`, login @amimi.it), RPC `loyalty_dashboard` solo aggregati (§13).
+- Dal 11-10 (call del 09-10, migr 0150, `loyalty-proxy` v14): pagina a soli punti con percorso, eventi con QR (`checkin`), elenco dei codici con "usato", memory con le foto (`deck`), due pagine dietro `loyalty_page_v2` e `?anteprima=1`: tutto nel §14. Livelli, timbri, nanna e "indossa" valgono solo per la pagina di prima.
 - Regola d'oro: **rollback = flag OFF.** Nulla del modulo tocca CE, stock, checkout o tema.
 
 ## 1. Deploy sicuro di una edge del modulo
@@ -203,3 +204,64 @@ update app_flags set value = 'false' where key = 'loyalty_track_enabled';       
 Prova viva senza residui: `tests/loyalty_dashboard_tracking.sql` (flag spento = niente scritture, flag a lista, liste chiuse, payload non array, tetto 20 e 300, dashboard chiusa a chi non e' @amimi.it e senza JWT, nessun id cliente o codice nel risultato, grant, purge; esito atteso `TEST_OK loyalty 0146`), verde il 27-09 dopo la 0146 e dopo la 0147 (con i controlli K `capped`, L label oscurate, M vista e grant). Pin 89-114 in `tests/loyalty_guardie.mjs`.
 
 Gate 2 del 27-09 (revisore indipendente sul diff): nessun difetto alto; accessi, identita', tetti e grant confermati. Chiusi nella migr **0147** e nello stesso branch: (1) le label di `health_log` possono contenere id cliente (la 0137 elenca i membri fuori quadra) o testo d'errore: la dashboard oscura ogni sequenza di 5+ cifre; (2) la durata del pool divideva per 14 anche un premio attivo da 4 giorni: la RPC da' `giorni_ritmo`; (3) "ordini dopo una visita" contava anche la visita fatta DOPO l'ordine lo stesso giorno: ora serve `loyalty_visits.first_at` prima dell'ordine; (4) funnel: nota per il flag in modalita' prova, percentuale nascosta quando supera il 100% (popolazioni diverse), l'ultimo passaggio e' dichiarato come ordini; (5) ordini AMICA12, vendite e funnel filtrati su `paid`/`partially_refunded`/`refunded` come `v_loyalty_uplift`; (6) il KPI "Riscatti" dell'uso diventa "Richieste di riscatto" con le non riuscite; (7) `capped` di `loyalty_track` sui soli eventi validi; (8) una card piu' alta di due schermi conta come vista quando occupa il 40% dello schermo; (9) il tap "Gioca" si conta solo se il gioco e' disponibile; (10) `v_loyalty_funnel_daily` in `security_invoker`, con SELECT a colonne per `ask_ro` su `loyalty_redemptions` (senza `discount_code` ne' `meta`); (11) un cambio rapido di periodo non mostra una risposta vecchia; (12) la tab Premia e' fra le tab finance (mostra ricavi). Non fatto: (13) la purge da 5.000 righe al giorno basta finche' gli eventi restano sotto quella soglia giornaliera (oggi zero). Da verificare fuori dal codice (preesistente, vale anche per Assistenza, Negozi, Materiali): il cancello @amimi.it si fida dell'email del JWT, quindi in Supabase Auth l'iscrizione pubblica deve restare chiusa o con conferma email.
+
+## 14. Pagina a soli punti con percorso, eventi con QR, codici riscattati, memory con le foto (call del 09-10, 11-10, migr 0150, `loyalty-proxy` v14)
+
+Decisioni della call del 09-10 (owner e socie, transcript nel Registro Call) e dell'owner l'11-10: niente livelli e niente timbri, **solo punti** ("punti Mimi'"); un **percorso** con una bandierina a scacchi a ogni traguardo; premio **ripetibile** (ogni 100 punti uno sconto del 12%, riga attiva `amica12`: nessun numero fisso in pagina); **Mimi' nuova** (adesivo rosso e rosa, `src/mimi.webp`); via "Metti a nanna" e "indossa"; **memory con le foto vere** delle borse; **tutti i codici riscattati visibili**; **+20 punti agli eventi** con un QR. Nulla qui tocca CE, stock, checkout, tema o `write-api`.
+
+### 14.1 Cosa vede la cliente (pagina nuova)
+
+- Saluto e Mimi'; card dei punti col percorso: tre bandierine alla volta (le ultime due raggiunte e la prossima), Mimi' cammina fino al saldo. Sotto: "Ti mancano N punti allo sconto del 12%" oppure "Hai N sconti del 12% da riscattare" con il bottone "Riscatta". Quando riscatta i punti scendono del costo del premio e Mimi' torna indietro di un traguardo.
+- "I tuoi codici": tutti i riscatti (fino a 60), prima quelli da usare con il tasto Copia, poi quelli usati ("usato il gg/mm/aaaa"); "In arrivo" per un riscatto senza codice (pool vuoto). Tre visibili, poi "Mostra tutti".
+- "Ogni giorno": coccola (+5) e memory (+5). "Come prendi i punti": 1 punto per euro su amimi.it, coccola, memory e, a presenze accese, "+20 con il QR" agli eventi. "Le tue borse": le borse comprate, senza piu' "indossa".
+- Card profilo, compleanno e seconda borsa restano come nel §12, dietro i loro flag.
+- Accesso: il bottone porta a `/customer_authentication/login?return_to=<questa pagina>` (account clienti nuovi: `account.amimi.it`), cosi' dopo l'accesso si torna qui, anche con `?evento=`.
+
+### 14.2 Due pagine, un interruttore (rollback = flag)
+
+`loyalty-page` contiene due pagine: quella nuova (`src/index.html`, servita con `?v=2`) e quella di prima (`src/index.v1.html`, default). Quale arriva lo decide la rotta `/club` di `loyalty-proxy`:
+
+| Indirizzo | Flag `loyalty_page_v2` | Pagina |
+|---|---|---|
+| `amimi.it/apps/premia/club?anteprima=1` | qualunque | nuova (per provarla sul sito vero col proprio account) |
+| `amimi.it/apps/premia/club` | `false` (default) o non leggibile | di prima |
+| `amimi.it/apps/premia/club` | `true` | nuova |
+
+Lancio = `update app_flags set value = 'true' where key = 'loyalty_page_v2';` (scrittura: solo con OK dell'owner). Rollback = rimettere `false`: effetto immediato, nessun deploy. Le due pagine parlano con lo stesso server: la v14 e' compatibile con la pagina di prima e la pagina nuova regge un server v13 (provato nel banco, scenario `server_v13`). Quando la nuova e' stabile: togliere `index.v1.html`, `BODY_V1` e il parametro (un solo commit).
+
+### 14.3 Eventi con QR (+20 punti di presenza)
+
+Un evento e' una riga di `loyalty_checkin_events`. Il QR porta a `https://amimi.it/apps/premia/club?evento=<CODICE>` (con la pagina nuova accesa; in anteprima: `...club?anteprima=1&evento=<CODICE>`). La pagina chiede l'accesso se serve (il codice resta in attesa 12 ore nel telefono), poi chiama `checkin`: la RPC `loyalty_checkin` da' i punti dell'evento **una volta per cliente**, solo **dentro la finestra oraria** e **sotto il tetto di presenze**. Un QR fotografato e girato in rete non vale fuori orario ne' oltre il tetto.
+
+Creare un evento (scrittura in produzione: solo con OK dell'owner; orari con il fuso, il codice in MAIUSCOLO e non indovinabile):
+
+```sql
+insert into loyalty_checkin_events (code, label, points, starts_at, ends_at, max_checkins)
+values ('GALLIANO-7KQ4', 'la serata da Galliano', 20, '2026-10-22 18:00+02', '2026-10-22 23:59+02', 300);
+```
+
+- `label` finisce nelle frasi "+20 punti Mimi' per <label>" e "I punti per <label> ...": scriverlo in modo che la frase regga ("la serata da Galliano", "il pop-up di via Plinio").
+- Un pop-up di piu' giorni e' UN evento con la finestra lunga (massimo 14 giorni): una presenza per cliente per tutto il pop-up.
+- Accendere: `update app_flags set value = 'true' where key = 'loyalty_checkin_enabled';` (oppure una lista di `shopify_customer_id` per provarlo solo su account interni). A flag spento la pagina non mostra nulla e il server risponde `{state:'off'}`.
+- Spegnere un evento prima della fine: `update loyalty_checkin_events set active = false where code = '...';`.
+- Esiti che la cliente vede: presenza registrata (+N), gia' presa, non ancora iniziato (con "Riprova", il codice resta in attesa), finito, punti esauriti (tetto), QR non valido.
+- Contare le presenze: `select event_code, count(*), sum(points) from loyalty_checkins group by 1;`. I punti sono in `loyalty_events` con `source = 'event_checkin'` (il ledger resta in quadra: `v_loyalty_ledger_drift` = 0 righe).
+- Limite noto: `v_loyalty_kpi_daily` non ha una colonna per le presenze e la dashboard nell'app non mostra i due flag nuovi (la RPC `loyalty_dashboard` ha la lista dei flag fissa). Da aggiungere quando serve.
+
+### 14.4 Codici riscattati e "usato"
+
+`rewards` legge lo storico dalla RPC `loyalty_redemptions_for`: per ogni riscatto il valore del premio di allora (un codice della vecchia tessera resta "20%") e `used_at` = data del primo ordine in `shopify_orders.discount_codes` che contiene quel codice. Arriva con il ritardo del sync ordini (qualche ora al massimo): un codice appena usato puo' restare "da usare" fino al giro dopo. Un codice del pool e' monouso su Shopify, quindi "in un ordine" = non piu' spendibile, qualunque sia lo stato dell'ordine.
+
+### 14.5 Memory con le foto vere
+
+`deck` chiede alla RPC `loyalty_memory_deck` sei foto di borse a catalogo: schede `active` di `shopify_stock`, codice con `_BAG_`, foto sul CDN Shopify, una a caso per modello (LEA, NINA, ANNIE, AGATA, SOPHIE, VALENTINA, MARIA), cosi' le carte si distinguono. La pagina precarica le foto a 360 px e usa le prime tre che arrivano; se il server o le foto non rispondono gioca con tre carte di riserva (Mimi', scacchi, logo). Il premio resta deciso da `memory_win`. Se una foto non va bene come carta, la via e' cambiare la foto in evidenza della scheda su Shopify (o aggiungere un filtro alla RPC): la pagina non ha una lista a mano.
+
+### 14.6 Prove
+
+- **Banco di prova della pagina** (nessuna chiamata alla produzione): `node tests/loyalty_page_harness.mjs <cartella>`, poi servire la cartella (`python -m http.server 8765 --directory <cartella>`) e aprire `/run.html`: 66 prove su un server finto (`tests/loyalty_page_mock.js`, 36 scenari): stati della pagina, punti da 0 a 980, riscatto (codice, in attesa, errore, doppio tap), codici, coccola, memory (foto vere, mazzo di riserva), profilo, tutti gli esiti del QR, testo ostile, server v13, tracciamento, impaginazione a 375/768/1280 px, accessibilita'. `/index.html?s=<scenario>` apre un caso a mano (`&evento=CODICE` per il QR). L'iframe deve restare a schermo: con la finestra del browser coperta i fotogrammi si fermano.
+- **Guardie sul sorgente**: `node tests/loyalty_guardie.mjs` (155 pin; 115-145 sono di questa versione). **Smoke di produzione** in sola lettura: `node tests/loyalty_smoke.mjs` (2c, 2d, 3b, 3c, 6b sono nuovi e diventano verdi solo dopo il deploy della v14).
+- **Prova viva**: accesso con un account interno su `amimi.it/apps/premia/club?anteprima=1`; per il QR un evento di prova con finestra di oggi e `loyalty_checkin_enabled` = id dell'account.
+
+### 14.7 Cosa resta a DB ma non si usa piu'
+
+Livelli: `loyalty_tier_of`, `v_loyalty_members.tier_saldo/tier_cumulato`, `loyalty_points_cumulati`, flag `loyalty_tier_lifetime_enabled` (resta `false`; la dashboard nell'app non lo mostra piu'). Mimi': colonne `mimi_state.nanna` e `worn`, azioni `nanna` e `wear` della edge. Nessun drop: la pagina di prima le usa ancora finche' resta come rollback. La copy "1 punto per ogni euro" e "+20 con il QR" e' scritta nella pagina: se cambiano `loyalty_euro_per_point` o i punti degli eventi, va cambiata li'.
