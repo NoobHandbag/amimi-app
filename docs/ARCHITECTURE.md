@@ -205,3 +205,23 @@ snapshot**. Ponti previsti:
   datato nella cartella Drive "Amimi App Snapshots" (24 fonti + tab RIEPILOGO), retention 30gg,
   mail a info@amimi.it su errore, trigger self-healing, rilancio manuale via `/exec?k=`.
   Sorgente: `amimi-app/scripts/appsscript-snapshot/`.
+- **Dump completo cifrato** (dall'11-10-2026): ogni notte `db-backup.yml` fa anche `supabase db dump`
+  dei dati di TUTTE le tabelle (public, auth, storage; esclusa solo `app_config`, che tiene pin_hash e
+  shopify_token), piu' ruoli, struttura e storico migrazioni, e lo cifra (gpg AES256, secret
+  `BACKUP_PASSPHRASE`) perche' il repo e' pubblico. Nessun elenco di tabelle da tenere aggiornato: la
+  guardia `scripts/backup-full-check.mjs` manda in rosso la Action se una tabella `public` dello schema
+  manca nel dump. La passphrase vive fuori da GitHub (l'owner la custodisce): senza, il dump non si apre.
+- **Archivio mensile permanente** (dal 2026-08-01, rifatto l'11-10-2026): Release `backup-AAAA-MM`, che non
+  scade, con due asset: `amimi-backup-AAAA-MM.tar.gz` (24 tabelle JSON + `schema.sql`, in chiaro) e
+  `amimi-backup-AAAA-MM-full.tar.gz.gpg` (dump completo). La crea il primo run riuscito del mese (prima:
+  solo il run del giorno 01); un asset gia' pubblicato non si sovrascrive mai. Presenti: `backup-2026-08`,
+  `-09`, `-10` (ottobre: JSON del 01-10, dump completo dell'11-10).
+- **Copia mensile su Drive** (codice dell'11-10-2026, attiva dopo il push dello script Apps Script):
+  lo snapshot Drive copia i due asset del mese in "Amimi App Snapshots/Mensili (permanenti)" (ricontrolla
+  gli ultimi 3 mesi a ogni run, mail dal giorno 3 se manca il mese corrente) e tiene per sempre il primo
+  foglio di ogni mese. Test: `node tests/snapshot_drive_mensile.mjs`.
+- **Prova di restore (11-10-2026, superata):** archivio di ottobre scaricato, decifrato e applicato a un
+  Postgres Supabase 17 vuoto in Docker: 74 tabelle, 70 viste, 25 funzioni `public`; righe identiche al live
+  su products 203, purchases 322, shopify_orders 885, expenses 440, qromo_sales 256. Restano errori solo
+  dove l'immagine nuda non ha i servizi Supabase (23 policy su `auth.jwt()`, 8 tabelle auth/storage): in un
+  progetto Supabase nuovo esistono gia'. Procedura in `OPERATIONS.md`.

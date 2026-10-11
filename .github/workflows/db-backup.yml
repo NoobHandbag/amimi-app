@@ -5,10 +5,17 @@ name: db-backup
 #  1. QUOTIDIANO (ogni notte): dati + struttura, come artefatto. Conservato 90 giorni.
 #     Serve al caso comune: "ci siamo accorti oggi di aver rotto qualcosa ieri".
 #
-#  2. PERMANENTE (il primo del mese): stessa roba, ma pubblicata come asset di una Release.
+#  2. PERMANENTE (una volta al mese): stessa roba, ma pubblicata come asset di una Release.
 #     Gli asset delle Release NON SCADONO MAI, a differenza degli artefatti. Serve al caso
 #     raro e grave: ricostruire com'era il magazzino a marzo, un controllo fiscale, un errore
-#     scoperto sei mesi dopo.
+#     scoperto sei mesi dopo. Dall'11-10-2026 la crea il primo run riuscito del mese, non piu'
+#     solo quello del giorno 01, e lo script Drive la copia in "Amimi App Snapshots/Mensili (permanenti)".
+#
+# In ognuno dei due livelli ci sono DUE file (dall'11-10-2026):
+#  - JSON in chiaro: le 24 tabelle di scripts/db-backup.mjs, gia' leggibili con la chiave pubblica.
+#  - DUMP COMPLETO cifrato (gpg AES256, secret BACKUP_PASSPHRASE): TUTTE le tabelle, anche quelle
+#    che nasceranno, senza elenchi da aggiornare a mano. E' cifrato perche' il repo e' pubblico e
+#    dentro ci sono dati di clienti. Senza la passphrase non si apre: va tenuta fuori da GitHub.
 #
 # Perche' serve tutto questo: il progetto Supabase e' su piano FREE, che NON include i backup
 # della piattaforma (verificato in dashboard il 2026-08-01). Questa e' l'unica rete di sicurezza.
@@ -22,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       archivio_permanente:
-        description: 'Crea anche l archivio permanente (normalmente solo il primo del mese)'
+        description: 'Crea anche un archivio permanente di OGGI (Release backup-AAAA-MM-GG), oltre a quello del mese'
         type: boolean
         default: false
 
@@ -67,28 +74,70 @@ jobs:
           path: db-backup/
           retention-days: 90
 
-      - name: Serve l archivio permanente?
-        id: check
+      # Dopo l'artefatto JSON, cosi' un guasto qui non toglie il backup di sempre.
+      - name: Dump COMPLETO di tutte le tabelle, cifrato
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
-          if [ "${{ inputs.archivio_permanente }}" = "true" ] || [ "$(date -u +%d)" = "01" ]; then
-            echo "si=true" >> "$GITHUB_OUTPUT"
-            echo "tag=backup-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
-          else
-            echo "si=false" >> "$GITHUB_OUTPUT"
-            echo "Non e' il primo del mese: nessun archivio permanente."
+          set -eo pipefail
+          if [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error::Manca il secret BACKUP_PASSPHRASE: il dump completo non si puo' cifrare, quindi non si pubblica."
+            exit 1
           fi
+          mkdir -p full
+          npx --yes supabase@latest db dump --linked --data-only --use-copy --exclude public.app_config -f full/data.sql
+          cp db-backup/schema.sql full/schema.sql
+          # Prova di restore dell'11-10-2026: senza i ruoli (ask_ro) e senza supabase_migrations (lo legge
+          # la vista v_digest_versioni) schema.sql da solo non si applica per intero a un database vuoto.
+          npx --yes supabase@latest db dump --linked --role-only -f full/roles.sql
+          npx --yes supabase@latest db dump --linked --schema supabase_migrations -f full/migrations_schema.sql
+          npx --yes supabase@latest db dump --linked --data-only --use-copy --schema supabase_migrations -f full/migrations_data.sql
+          for f in roles.sql migrations_schema.sql migrations_data.sql; do
+            [ -s "full/$f" ] || { echo "::error::$f e' vuoto"; exit 1; }
+          done
+          node scripts/backup-full-check.mjs full/schema.sql full/data.sql
+          date -u +%Y-%m-%dT%H:%M:%SZ > full/generated_at.txt
+          tar czf full.tar.gz -C full .
+          gpg --batch --yes --pinentry-mode loopback --passphrase-file <(printf '%s' "$BACKUP_PASSPHRASE") \
+            --symmetric --cipher-algo AES256 -o db-backup-full.tar.gz.gpg full.tar.gz
+          rm -rf full full.tar.gz
+          echo "dump completo cifrato: $(du -h db-backup-full.tar.gz.gpg | cut -f1)"
 
-      - name: Archivio permanente (Release, non scade mai)
-        if: steps.check.outputs.si == 'true'
+      - name: Dump completo quotidiano (artefatto cifrato, 90 giorni)
+        uses: actions/upload-artifact@v4
+        with:
+          name: amimi-db-backup-full-${{ github.run_id }}
+          path: db-backup-full.tar.gz.gpg
+          retention-days: 90
+
+      # Non dipende dal giorno del mese: se la Release del mese manca (o le manca un file) la completa
+      # il primo run riuscito. Un file gia' pubblicato non viene mai sovrascritto.
+      - name: Archivio permanente del mese (Release, non scade mai)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.check.outputs.tag }}
         run: |
-          set -e
-          tar czf "amimi-${TAG}.tar.gz" db-backup/
-          echo "archivio: $(du -h "amimi-${TAG}.tar.gz" | cut -f1)"
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" "amimi-${TAG}.tar.gz" --clobber
-          else
-            gh release create "$TAG" "amimi-${TAG}.tar.gz" --title "Backup $TAG" --notes "Archivio permanente del database amimi-app. Contiene i DATI (un JSON per tabella) e la STRUTTURA (schema.sql). Per ricostruire da zero: applicare schema.sql, poi reinserire i JSON. Gli asset delle Release non scadono mai; gli artefatti del backup quotidiano scadono dopo 90 giorni."
+          set -eo pipefail
+          TAGS="backup-$(date -u +%Y-%m)"
+          if [ "${{ inputs.archivio_permanente }}" = "true" ]; then
+            TAGS="$TAGS backup-$(date -u +%Y-%m-%d)"
           fi
+          tar czf json.tar.gz db-backup/
+          for TAG in $TAGS; do
+            if ! gh release view "$TAG" > /dev/null 2>&1; then
+              gh release create "$TAG" --title "Backup $TAG" --notes "Archivio permanente del database amimi-app. amimi-${TAG}.tar.gz: 24 tabelle in JSON + schema.sql, in chiaro. amimi-${TAG}-full.tar.gz.gpg: dump completo di tutte le tabelle (data.sql + schema.sql), cifrato con la passphrase del backup. Ripristino: docs/OPERATIONS.md. Gli asset delle Release non scadono mai."
+            fi
+            have="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+            cp json.tar.gz "amimi-${TAG}.tar.gz"
+            cp db-backup-full.tar.gz.gpg "amimi-${TAG}-full.tar.gz.gpg"
+            for f in "amimi-${TAG}.tar.gz" "amimi-${TAG}-full.tar.gz.gpg"; do
+              if grep -qxF "$f" <<< "$have"; then
+                echo "$f: gia' nella Release, non lo tocco"
+              else
+                gh release upload "$TAG" "$f"
+                echo "$f: pubblicato ($(du -h "$f" | cut -f1))"
+              fi
+            done
+          done
+
