@@ -1,7 +1,7 @@
 // loyalty-proxy v15 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
 // v15 (2026-10-12, decisione owner: recensioni +20 e foto del look +30, migr 0153). Tre azioni NUOVE e additive, le altre
 //    non cambiano una riga. ORDINE DI DEPLOY: migr 0153, poi loyalty-page, poi questa edge (prima della 0153 le RPC non
-//    esistono: `ugc` risponderebbe 503 e la pagina nasconderebbe la sezione, nient'altro).
+//    esistono, ma senza la riga del flag `ugc` risponde off e la pagina non mostra la sezione).
 //    `ugc` (GET)         : flag a valore loyalty_ugc_enabled; acceso = punti per tipo, testo del consenso, invii della
 //                          cliente (senza foto) e borse a catalogo per il look (RPC loyalty_ugc_info). Spento = {state:'off'}.
 //    `ugc_upload` (POST {n, tipo}) : fino a 3 link firmati per caricare foto nel bucket PRIVATO loyalty-ugc, su percorsi

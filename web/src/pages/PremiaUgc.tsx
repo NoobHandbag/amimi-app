@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { decideUgc, fetchUgcQueue, fotoUgcUrls } from '../lib/premiaApi';
 import type { UgcItem, UgcQueue, UgcStato } from '../lib/premiaApi';
 
-// Coda "Recensioni e foto" della tab Premia (migr 0153): quello che le clienti mandano dall'Area Membri. Approvare da'
+// Coda "Recensioni e foto" della tab Premia (migr 0153): quello che le clienti mandano dall'Area Membri. Approvare dà
 // i punti alla cliente (recensione +20, look +30: li decide la RPC); rifiutare chiede un motivo, che la cliente legge
-// nella sua pagina. Una decisione presa da un'altra persona nel frattempo torna "gia' decisa", senza punti doppi.
+// nella sua pagina. Una decisione presa da un'altra persona nel frattempo torna "già decisa", senza punti doppi.
+// I punti dati non si riprendono da qui: per questo Approva chiede un secondo tocco.
 
 const TABS: [UgcStato, string][] = [['in_revisione', 'Da approvare'], ['approvata', 'Approvate'], ['rifiutata', 'Non approvate']];
 const MOTIVI = ['Nella foto non si vede una borsa Amimì', 'La foto non è chiara', 'Il testo non è adatto alla pubblicazione'];
@@ -16,35 +17,39 @@ export default function PremiaUgc() {
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
-  const [busy, setBusy] = useState<number | null>(null);
+  const [busy, setBusy] = useState<Record<number, boolean>>({});
+  const [conferma, setConferma] = useState<number | null>(null);
   const [rifiuto, setRifiuto] = useState<{ id: number; motivo: string } | null>(null);
   const [giro, setGiro] = useState(0);
 
   useEffect(() => {
     let vivo = true;                                   // cambio di scheda rapido: una risposta vecchia non sovrascrive la nuova
-    setErr(''); setQ(null); setUrls({});
     fetchUgcQueue(tab)
       .then(async (x) => {
         if (!vivo) return;
-        setQ(x);
+        setQ(x); setErr('');
+        // i link delle foto durano un'ora: si rifanno a ogni ricarica della lista (ogni decisione la ricarica)
         try { const u = await fotoUgcUrls(x.items.flatMap((i) => i.foto)); if (vivo) setUrls(u); } catch (e) { if (vivo) setErr((e as Error).message); }
       })
       .catch((e: Error) => { if (vivo) setErr(e.message); });
     return () => { vivo = false; };
   }, [tab, giro]);
 
+  const cambiaTab = (k: UgcStato) => { if (k === tab) return; setQ(null); setUrls({}); setErr(''); setMsg(''); setRifiuto(null); setConferma(null); setTab(k); };
+
   const decidi = async (it: UgcItem, decisione: 'approva' | 'rifiuta', motivo?: string) => {
-    setBusy(it.id); setErr(''); setMsg('');
+    if (busy[it.id]) return;
+    setBusy((b) => ({ ...b, [it.id]: true })); setErr(''); setMsg('');
     try {
       const r = await decideUgc(it.id, decisione, motivo);
       if (!r.ok) { setErr(r.reason === 'motivo' ? 'Scrivi il motivo (almeno 3 caratteri): lo legge la cliente.' : 'Non riuscito: ' + (r.reason ?? 'errore')); return; }
-      setRifiuto(null);
-      setMsg(r.already ? `Gia' decisa${r.deciso_da ? ' da ' + r.deciso_da : ''}: nessun punto in piu'.` : decisione === 'approva' ? `Approvata: +${r.punti ?? it.punti} punti alla cliente.` : 'Rifiutata: la cliente vede il motivo.');
-      setGiro((g) => g + 1);
+      setRifiuto(null); setConferma(null);
+      setMsg(r.already ? `Già decisa${r.deciso_da ? ' da ' + r.deciso_da : ''}: nessun punto in più.` : decisione === 'approva' ? `Approvata: +${r.punti ?? it.punti} punti alla cliente.` : 'Non approvata: la cliente vede il motivo.');
+      setGiro((g) => g + 1);                           // la lista resta a schermo finché non arriva quella nuova
     } catch (e) {
       setErr((e as Error).message);
     } finally {
-      setBusy(null);
+      setBusy((b) => ({ ...b, [it.id]: false }));
     }
   };
 
@@ -53,7 +58,7 @@ export default function PremiaUgc() {
     <section className="card">
       <h2>Recensioni e foto {n && n.in_revisione > 0 ? <span className="pill warn">{n.in_revisione} da guardare</span> : null}</h2>
       <div className="seg wrap" style={{ margin: '6px 0 10px' }}>
-        {TABS.map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} onClick={() => { setTab(k); setRifiuto(null); setMsg(''); }}>{label}{n ? ` (${n[k] ?? 0})` : ''}</button>)}
+        {TABS.map(([k, label]) => <button key={k} type="button" className={tab === k ? 'on' : ''} onClick={() => cambiaTab(k)}>{label}{n ? ` (${n[k] ?? 0})` : ''}</button>)}
       </div>
       {msg && <p className="note" style={{ marginTop: 0 }}>{msg}</p>}
       {err && <p className="err" style={{ margin: '0 0 8px' }}>{err}</p>}
@@ -72,7 +77,7 @@ export default function PremiaUgc() {
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
               {it.foto.map((p, i) => urls[p]
                 ? <a key={p} href={urls[p]} target="_blank" rel="noreferrer"><img src={urls[p]} alt={`Foto ${i + 1}`} style={{ width: 96, height: 120, objectFit: 'cover', borderRadius: 8, display: 'block' }} /></a>
-                : <span key={p} className="note" style={{ margin: 0 }}>foto non leggibile</span>)}
+                : <span key={p} className="note" style={{ margin: 0 }}>foto in arrivo&#8230;</span>)}
             </div>
           )}
           <div className="note" style={{ marginTop: 6 }}>{it.firma ? `Firma: ${it.firma} · ` : ''}cliente {it.cliente} · {quando(it.created_at)}</div>
@@ -85,14 +90,19 @@ export default function PremiaUgc() {
                   {MOTIVI.map((m) => <button key={m} type="button" className="pill muted" style={{ border: 0, cursor: 'pointer' }} onClick={() => setRifiuto({ id: it.id, motivo: m })}>{m}</button>)}
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" className="cs-btn cs-primary" disabled={busy === it.id} onClick={() => decidi(it, 'rifiuta', rifiuto.motivo)}>Conferma il rifiuto</button>
-                  <button type="button" className="cs-btn" disabled={busy === it.id} onClick={() => setRifiuto(null)}>Annulla</button>
+                  <button type="button" className="cs-btn cs-primary" disabled={!!busy[it.id]} onClick={() => decidi(it, 'rifiuta', rifiuto.motivo)}>Conferma il rifiuto</button>
+                  <button type="button" className="cs-btn" disabled={!!busy[it.id]} onClick={() => setRifiuto(null)}>Annulla</button>
                 </div>
+              </div>
+            ) : conferma === it.id ? (
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                <button type="button" className="cs-btn cs-primary" disabled={!!busy[it.id]} onClick={() => decidi(it, 'approva')}>{busy[it.id] ? 'Un attimo…' : `Sì, dai +${it.punti} punti`}</button>
+                <button type="button" className="cs-btn" disabled={!!busy[it.id]} onClick={() => setConferma(null)}>Annulla</button>
               </div>
             ) : (
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button type="button" className="cs-btn cs-primary" disabled={busy === it.id} onClick={() => decidi(it, 'approva')}>{busy === it.id ? 'Un attimo…' : `Approva (+${it.punti} punti)`}</button>
-                <button type="button" className="cs-btn" disabled={busy === it.id} onClick={() => setRifiuto({ id: it.id, motivo: '' })}>Rifiuta</button>
+                <button type="button" className="cs-btn cs-primary" disabled={!!busy[it.id]} onClick={() => { setConferma(it.id); setRifiuto(null); }}>Approva</button>
+                <button type="button" className="cs-btn" disabled={!!busy[it.id]} onClick={() => { setRifiuto({ id: it.id, motivo: '' }); setConferma(null); }}>Rifiuta</button>
               </div>
             )
           ) : (
@@ -102,7 +112,7 @@ export default function PremiaUgc() {
           )}
         </div>
       ))}
-      <p className="note">Approvare da&#8217; subito i punti alla cliente. Le foto restano private: le vede solo chi entra con un account @amimi.it.</p>
+      <p className="note">Approvare dà subito i punti alla cliente. Qui ci sono dati personali (testi, firme e foto delle clienti): le foto restano private, le vede solo chi entra con un account @amimi.it.</p>
     </section>
   );
 }

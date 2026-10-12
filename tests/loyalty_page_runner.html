@@ -403,7 +403,7 @@
     c.$('#ugcTesto').value='Bellissima, la porto ogni giorno in ufficio.'; c.$('#ugcFirma').value='Giulia M.'; c.$('#ugcInvia').click(); await sleep(50); has(c.txt('#ugcErr'),'consenso');
     assert(c.calls('ugc_submit').length===0,'nessun invio prima del consenso');
     c.$('#ugcConsenso').click(); c.$('#ugcInvia').click();
-    await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'grazie'); has(c.txt('#rewardPrize'),'+20'); has(c.txt('#rewardMsg'),'quando la approviamo');
+    await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'grazie'); has(c.txt('#rewardPrize'),'+20'); has(c.txt('#rewardMsg'),'dopo la nostra approvazione');
     assert(c.calls('ugc_upload').length===0 && c.calls('upload_put').length===0,'nessun caricamento senza foto');
     const s=c.calls('ugc_submit'); assert(s.length===1,'un invio'); const b=s[0].body;
     assert(b.kind==='recensione' && b.codice==='COD_0' && b.rating===4 && b.testo==='Bellissima, la porto ogni giorno in ufficio.' && b.firma==='Giulia M.' && b.consenso===true && Array.isArray(b.foto) && b.foto.length===0 && /^u-/.test(b.idemp),'campi: '+JSON.stringify(b));
@@ -454,10 +454,60 @@
   });
   await test('ugc: i miei invii con stato, motivo e punti; il testo dal server resta testo; dopo un rifiuto la borsa torna proponibile', async()=>{
     const c=await open('ugc_mine'); const li=c.$$('#ugcMine li'); assert(li.length===3,'tre invii');
-    has(li[0].textContent,'Non approvata: '); has(li[0].textContent,'non si vede la borsa'); has(li[1].textContent,'+20 punti'); has(li[2].textContent,'In revisione');
+    has(li[0].textContent,'Non approvato: '); has(li[0].textContent,'non si vede la borsa'); assert(!/punti/.test(li[0].textContent),'nessun punto accanto a un rifiuto'); has(li[1].textContent,'+20 punti'); has(li[1].textContent,'approvata'); has(li[2].textContent,'Inviata il'); has(li[2].textContent,'In revisione');
     assert(!c.win.__xss && !c.$('#xt') && c.$$('#ugcMine img, #ugcMine b').length===0,'nessun elemento nato dai dati');
     c.$('#btnRecensione').click(); await sleep(80); has(c.toast(),'già recensito tutte'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
     await apriModulo(c,'look'); assert(c.$$('#ugcBorsa option').some(o=>o.value==='NINA_BAG_PONY_ZEBRA'),'il look rifiutato si puo\' rimandare');
+  });
+  await test('ugc: borse viste dal ripiego Shopify ma non ancora accreditate: la pagina non propone una recensione che il server rifiuterebbe', async()=>{
+    const c=await open('ugc_ripiego'); assert(c.$$('#ward .witem').length===2,'le borse si vedono nel guardaroba');
+    c.$('#btnRecensione').click(); await sleep(80); has(c.toast(),'borse comprate su amimi.it'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
+    c.$('#mimi').click(); await until(()=>c.txt('#pts')==='65', 3000, 'coccola'); const viste=[]; for(let i=0;i<5;i++){ c.$('#mimi').click(); viste.push(c.txt('#mood')); }
+    assert(viste.every(t=>!/Mi racconti/.test(t)),'Mimì non chiede una recensione impossibile: '+viste.join(' | '));
+  });
+  await test('ugc: due scelte di foto ravvicinate non superano le tre; non si invia mentre le foto si preparano', async()=>{
+    const c=await open('ugc_on'); await apriModulo(c,'look'); const inp=c.$('#ugcFile');
+    const scegli=async fs=>{ const dt=new c.win.DataTransfer(); fs.forEach(f=>dt.items.add(f)); inp.files=dt.files; inp.dispatchEvent(new c.win.Event('change',{bubbles:true})); };
+    const due=[await fotoFinta(c,2400,3000),await fotoFinta(c,2400,3000)], altre=[await fotoFinta(c,2400,3000),await fotoFinta(c,2400,3000)];
+    scegli(due); scegli(altre);                                                              // la seconda arriva mentre la prima e' in lavorazione
+    assert(!c.$('#ugcAdd'),'niente "Aggiungi" mentre le foto si preparano'); c.$('#ugcConsenso').click(); c.$('#ugcInvia').click(); await sleep(30); has(c.txt('#ugcErr'),'preparando le foto');
+    await until(()=>c.$$('#ugcFotos .ft').length===2 && !!c.$('#ugcAdd'), 8000, 'due foto pronte'); await sleep(300);
+    assert(c.$$('#ugcFotos .ft').length===2 && c.calls('ugc_upload').length===0,'la seconda scelta e\' stata ignorata, nessun caricamento partito');
+    await aggiungiFoto(c,[await fotoFinta(c,600,800),await fotoFinta(c,600,800)],3); await sleep(200); assert(c.$$('#ugcFotos .ft').length===3 && !c.$('#ugcAdd'),'tetto di tre ricontrollato a ogni foto');
+  });
+  await test('ugc: un caricamento fallito a meta\': al "Riprova" si ricarica solo la foto mancante', async()=>{
+    const c=await open('ugc_put_una'); await apriModulo(c,'look'); await aggiungiFoto(c,[await fotoFinta(c,500,600),await fotoFinta(c,500,600)]);
+    c.$('#ugcConsenso').click(); c.$('#ugcInvia').click(); await until(()=>/foto non si caricano/.test(c.txt('#ugcErr')), 6000, 'errore al secondo caricamento');
+    assert(c.calls('upload_put').length===2 && c.calls('ugc_submit').length===0,'due tentativi di caricamento, nessun invio');
+    c.$('#ugcInvia').click(); await until(()=>c.$('#rewardModal').classList.contains('on'), 6000, 'grazie');
+    const u=c.calls('ugc_upload'); assert(u.length===2 && u[0].body.n===2 && u[1].body.n===1,'al secondo giro un solo link: '+u.map(x=>x.body.n).join(','));
+    assert(c.calls('upload_put').length===3 && c.calls('ugc_submit')[0].body.foto.length===2,'tre caricamenti in tutto, due percorsi inviati');
+  });
+  await test('ugc: foto non trovate dal server: i percorsi si azzerano e al "Riprova" si ricaricano', async()=>{
+    const c=await open('ugc_foto_ko'); await apriModulo(c,'look'); await aggiungiFoto(c,[await fotoFinta(c,500,600)]); c.$('#ugcConsenso').click(); c.$('#ugcInvia').click();
+    await until(()=>/foto non sono arrivate/.test(c.txt('#ugcErr')), 6000, 'motivo'); c.$('#ugcInvia').click(); await until(()=>c.$('#rewardModal').classList.contains('on'), 6000, 'grazie');
+    assert(c.calls('upload_put').length===2,'la foto e\' stata ricaricata'); const s=c.calls('ugc_submit'); assert(s.length===2 && s[0].body.foto[0]!==s[1].body.foto[0] && s[0].body.idemp!==s[1].body.idemp,'percorso e idemp nuovi');
+  });
+  await test('ugc: dopo una risposta persa, se cambia il testo l\'invio dopo e\' nuovo (idemp diverso)', async()=>{
+    const c=await open('ugc_perso'); await apriModulo(c,'recensione'); c.$('#ugcStelle [data-st="5"]').click(); c.$('#ugcTesto').value='Perfetta per le serate, la adoro.'; c.$('#ugcConsenso').click();
+    c.$('#ugcInvia').click(); await until(()=>/Riprova/.test(c.txt('#ugcErr')), 6000, 'risposta persa');
+    c.$('#ugcTesto').value='Perfetta per le serate, la adoro davvero.'; c.$('#ugcTesto').dispatchEvent(new c.win.Event('input',{bubbles:true})); c.$('#ugcInvia').click();
+    await until(()=>c.calls('ugc_submit').length===2, 4000, 'secondo invio'); const s=c.calls('ugc_submit'); assert(s[0].body.idemp!==s[1].body.idemp,'idemp nuovo dopo la modifica');
+  });
+  await test('ugc: stelle da tastiera (una sola nel giro del Tab, frecce), Chiudi ed Esc ignorati con avviso mentre si invia', async()=>{
+    const c=await open('ugc_on',{lento:700}); await apriModulo(c,'recensione');
+    assert(c.$$('#ugcStelle [tabindex="0"]').length===1 && c.$$('#ugcStelle [tabindex="-1"]').length===4,'una sola stella raggiungibile col Tab');
+    const freccia=k=>c.$('#ugcStelle').dispatchEvent(new c.win.KeyboardEvent('keydown',{key:k,bubbles:true}));
+    freccia('ArrowRight'); freccia('ArrowRight'); freccia('ArrowRight'); freccia('ArrowLeft');
+    assert(c.$$('#ugcStelle button.on').length===2 && c.doc.activeElement===c.$('#ugcStelle [data-st="2"]') && c.$('#ugcStelle [data-st="2"]').getAttribute('tabindex')==='0','due stelle, fuoco sulla seconda');
+    c.$('#ugcTesto').value='Comoda e capiente, la uso sempre.'; c.$('#ugcConsenso').click(); c.$('#ugcInvia').click(); await sleep(60);
+    c.$('#ugcClose').click(); c.doc.dispatchEvent(new c.win.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    assert(c.$('#ugcModal').classList.contains('on'),'il modulo resta aperto mentre invia'); has(c.toast(),'sto inviando');
+    await until(()=>c.$('#rewardModal').classList.contains('on'), 6000, 'grazie'); assert(c.calls('ugc_submit').length===1 && c.calls('ugc_submit')[0].body.rating===2,'un invio con due stelle');
+  });
+  await test('ugc: un invio storto nei dati non ferma la pagina', async()=>{
+    const c=await open('ugc_storto'); assert(c.vis('#ugcSec') && c.$$('#ugcMine li').length===1,'la riga buona si vede, quella nulla no'); has(c.txt('#ugcMine'),'Look · COD_1');
+    await until(()=>c.txt('#pts')==='60', 2000, 'saldo a 60'); assert(c.vis('#btnCoccola') && c.vis('#walk'),'il resto della pagina e\' disegnato');
   });
   await test('ugc: senza borse comprate online la recensione spiega perché, il look resta aperto col catalogo', async()=>{
     const c=await open('ugc_vuoto'); c.$('#btnRecensione').click(); await sleep(80); has(c.toast(),'borse comprate su amimi.it'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');

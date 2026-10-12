@@ -35,10 +35,21 @@ create or replace function public.loyalty_ugc_consenso() returns text
 language sql immutable set search_path to 'public' as $function$
   select 'Acconsento che Amimì pubblichi le foto e il testo che invio, con la firma che scelgo, sul sito amimi.it, '
       || 'sui social e nelle comunicazioni di Amimì. Le foto sono mie e chi compare ha dato il suo permesso. '
-      || 'Posso chiederne la rimozione in ogni momento scrivendo ad Amimì.'
+      || 'Posso chiederne la rimozione in ogni momento scrivendo all''assistenza clienti di Amimì.'
 $function$;
 revoke all on function public.loyalty_ugc_consenso() from anon, authenticated, public;
 grant execute on function public.loyalty_ugc_consenso() to service_role;
+
+-- 2b. Chi e' del team: un account di Supabase Auth con email @amimi.it CONFERMATA, letto da auth.users con l'id del
+--     token. L'email scritta nel token da sola non basta (Gate 2 del 12-10): qui decide chi puo' dare punti e vedere le
+--     foto, e se un giorno le iscrizioni senza conferma fossero aperte chiunque potrebbe dichiararsi @amimi.it.
+create or replace function public.loyalty_staff_email() returns text
+language sql stable security definer set search_path to '' as $function$
+  select u.email::text from auth.users u
+  where u.id = auth.uid() and u.email_confirmed_at is not null and u.email ilike '%@amimi.it'
+$function$;
+revoke all on function public.loyalty_staff_email() from anon, authenticated, public;
+grant execute on function public.loyalty_staff_email() to authenticated;
 
 -- 3. Gli invii
 create table if not exists loyalty_ugc (
@@ -63,7 +74,7 @@ create table if not exists loyalty_ugc (
   created_at          timestamptz not null default now(),
   constraint loyalty_ugc_kind_chk   check (kind in ('recensione', 'look')),
   constraint loyalty_ugc_codice_chk check (codice ~ '^[A-Z0-9_]{3,80}$'),
-  constraint loyalty_ugc_rating_chk check ((kind = 'recensione' and rating between 1 and 5) or (kind = 'look' and rating is null)),
+  constraint loyalty_ugc_rating_chk check ((kind = 'recensione' and rating is not null and rating between 1 and 5) or (kind = 'look' and rating is null)),
   constraint loyalty_ugc_testo_chk  check (testo is null or char_length(testo) <= 600),
   constraint loyalty_ugc_firma_chk  check (firma is null or char_length(firma) <= 40),
   constraint loyalty_ugc_foto_chk   check (cardinality(foto) <= 3 and (kind = 'recensione' or cardinality(foto) >= 1)),
@@ -102,7 +113,7 @@ values ('loyalty-ugc', 'loyalty-ugc', false, 4194304, array['image/jpeg', 'image
 on conflict (id) do nothing;
 drop policy if exists loyalty_ugc_sel on storage.objects;
 create policy loyalty_ugc_sel on storage.objects for select to authenticated
-  using (bucket_id = 'loyalty-ugc' and (auth.jwt() ->> 'email') ilike '%@amimi.it');
+  using (bucket_id = 'loyalty-ugc' and public.loyalty_staff_email() is not null);
 
 -- 6. Posti per caricare n foto oggi (giorno di Roma). Atomico: l'update condizionato non sfora il tetto.
 create or replace function public.loyalty_ugc_slot(p_customer text, p_n int) returns jsonb
@@ -137,6 +148,7 @@ declare
   v_idemp  text   := trim(coalesce(p_idemp, ''));
   v_row    loyalty_ugc%rowtype;
   v_ver    boolean;
+  v_cat    boolean;
   v_tit    text;
   v_n      int;
   v_id     bigint;
@@ -173,12 +185,15 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'bad_photo');
   end if;
 
-  -- la borsa: comprata online da LEI (cio' che rende la recensione verificata), titolo dal catalogo
+  -- la borsa: comprata online da LEI (cio' che rende la recensione verificata) oppure, per il look, una borsa ATTIVA
+  -- del catalogo (le stesse che loyalty_ugc_info propone). Il titolo e' quello della scheda, attiva se c'e'.
   v_ver := exists (select 1 from loyalty_order_credits c join shopify_line_items li on li.order_id = c.order_name
                    where c.shopify_customer_id = p_customer and coalesce(nullif(li.codice_norm, ''), li.codice) = v_codice);
-  select shopify_title into v_tit from shopify_stock where codice = v_codice and shopify_title is not null order by shopify_status = 'active' desc limit 1;
+  v_cat := exists (select 1 from shopify_stock where codice = v_codice and shopify_status = 'active' and codice ilike '%\_BAG\_%');
+  select shopify_title into v_tit from shopify_stock where codice = v_codice and shopify_title is not null
+    order by (shopify_status = 'active') desc nulls last limit 1;
   if p_kind = 'recensione' and not v_ver then return jsonb_build_object('ok', false, 'reason', 'not_bought'); end if;
-  if v_tit is null and not v_ver then return jsonb_build_object('ok', false, 'reason', 'unknown_bag'); end if;
+  if not v_ver and not v_cat then return jsonb_build_object('ok', false, 'reason', 'unknown_bag'); end if;
 
   select count(*) into v_n from loyalty_ugc where shopify_customer_id = p_customer and created_at > now() - interval '24 hours';
   if v_n >= 5 then return jsonb_build_object('ok', false, 'reason', 'limit'); end if;
@@ -194,8 +209,10 @@ end; $function$;
 revoke all on function public.loyalty_ugc_submit(text, text, text, int, text, text, text[], boolean, text) from anon, authenticated, public;
 grant execute on function public.loyalty_ugc_submit(text, text, text, int, text, text, text[], boolean, text) to service_role;
 
--- 8. Cosa vede la cliente: i suoi invii (ultimi 30, mai le foto), i punti per tipo, il testo del consenso e le borse a
---    catalogo per il look (una riga per codice, solo schede attive). Sola lettura.
+-- 8. Cosa vede la cliente: i suoi invii (ultimi 30, mai le foto), i punti per tipo, il testo del consenso, le borse
+--    che puo' recensire (comprate online: la STESSA regola di loyalty_ugc_submit, cosi' la pagina non propone una
+--    recensione che l'invio rifiuterebbe) e le borse a catalogo per il look (una riga per codice, solo schede attive).
+--    Sola lettura.
 create or replace function public.loyalty_ugc_info(p_customer text) returns jsonb
 language sql stable security definer set search_path to 'public' as $function$
   select jsonb_build_object(
@@ -203,9 +220,17 @@ language sql stable security definer set search_path to 'public' as $function$
     'consenso', loyalty_ugc_consenso(),
     'mine', (select coalesce(jsonb_agg(jsonb_build_object(
                'id', u.id, 'kind', u.kind, 'codice', u.codice, 'titolo', u.titolo, 'rating', u.rating, 'foto', cardinality(u.foto),
-               'status', u.status, 'motivo', u.motivo, 'punti', coalesce(u.punti, loyalty_ugc_points(u.kind)),
+               'status', u.status, 'motivo', u.motivo,
+               'punti', case when u.status = 'rifiutata' then null else coalesce(u.punti, loyalty_ugc_points(u.kind)) end,
                'created_day', (u.created_at at time zone 'Europe/Rome')::date) order by u.created_at desc), '[]'::jsonb)
              from (select * from loyalty_ugc where shopify_customer_id = p_customer order by created_at desc limit 30) u),
+    'recensibili', (select coalesce(jsonb_agg(jsonb_build_object('codice', b.codice, 'titolo', coalesce(t.titolo, b.nome, b.codice)) order by b.codice), '[]'::jsonb)
+                    from (select coalesce(nullif(li.codice_norm, ''), li.codice) as codice, max(li.lineitem_name) as nome
+                          from loyalty_order_credits c join shopify_line_items li on li.order_id = c.order_name
+                          where c.shopify_customer_id = p_customer and coalesce(nullif(li.codice_norm, ''), li.codice) ~ '^[A-Z0-9_]{3,80}$'
+                          group by 1) b
+                    left join lateral (select s.shopify_title as titolo from shopify_stock s where s.codice = b.codice and s.shopify_title is not null
+                                       order by (s.shopify_status = 'active') desc nulls last limit 1) t on true),
     'catalogo', (select coalesce(jsonb_agg(jsonb_build_object('codice', b.codice, 'titolo', b.titolo) order by b.titolo), '[]'::jsonb)
                  from (select distinct on (codice) codice, shopify_title as titolo from shopify_stock
                        where shopify_status = 'active' and codice ilike '%\_BAG\_%' and shopify_title is not null
@@ -214,16 +239,16 @@ $function$;
 revoke all on function public.loyalty_ugc_info(text) from anon, authenticated, public;
 grant execute on function public.loyalty_ugc_info(text) to service_role;
 
--- 9. Il team (login @amimi.it, dall'app): la coda e la decisione. Stessa guardia della dashboard (0147).
+-- 9. Il team (login @amimi.it, dall'app): la coda e la decisione. Guardia = loyalty_staff_email() (account confermato).
 create or replace function public.loyalty_ugc_queue(p_status text default 'in_revisione', p_limit int default 60) returns jsonb
 language plpgsql stable security definer set search_path to 'public' as $function$
 declare
-  v_email text := coalesce(auth.jwt() ->> 'email', '');
+  v_email text := loyalty_staff_email();
 begin
-  if v_email not ilike '%@amimi.it' then
+  if v_email is null then
     raise exception 'loyalty_ugc_queue: riservato agli account @amimi.it' using errcode = '42501';
   end if;
-  if p_status not in ('in_revisione', 'approvata', 'rifiutata') then raise exception 'stato non valido' using errcode = '22023'; end if;
+  if p_status is null or p_status not in ('in_revisione', 'approvata', 'rifiutata') then raise exception 'stato non valido' using errcode = '22023'; end if;
   return jsonb_build_object(
     'conteggi', (select jsonb_build_object(
                    'in_revisione', count(*) filter (where status = 'in_revisione'),
@@ -247,17 +272,18 @@ grant execute on function public.loyalty_ugc_queue(text, int) to authenticated;
 create or replace function public.loyalty_ugc_decide(p_id bigint, p_decisione text, p_motivo text default null) returns jsonb
 language plpgsql security definer set search_path to 'public' as $function$
 declare
-  v_email  text := coalesce(auth.jwt() ->> 'email', '');
+  v_email  text := loyalty_staff_email();
   v_motivo text := nullif(trim(coalesce(p_motivo, '')), '');
   v_row    loyalty_ugc%rowtype;
   v_pts    int;
   v_new    int;
   v_gate   int;
 begin
-  if v_email not ilike '%@amimi.it' then
+  if v_email is null then
     raise exception 'loyalty_ugc_decide: riservato agli account @amimi.it' using errcode = '42501';
   end if;
-  if p_decisione not in ('approva', 'rifiuta') then return jsonb_build_object('ok', false, 'reason', 'bad_request'); end if;
+  -- un valore nullo non e' 'approva': senza questo controllo il confronto darebbe NULL e si scivolerebbe nel ramo dei punti
+  if p_decisione is null or p_decisione not in ('approva', 'rifiuta') then return jsonb_build_object('ok', false, 'reason', 'bad_request'); end if;
   if p_decisione = 'rifiuta' and char_length(coalesce(v_motivo, '')) not between 3 and 200 then
     return jsonb_build_object('ok', false, 'reason', 'motivo');
   end if;
@@ -343,5 +369,5 @@ grant execute on function public.loyalty_track(text, jsonb) to service_role;
 -- 11. Traccia della migrazione
 insert into change_log (tbl, row_id, op, after, chi, source) values
   ('loyalty_points', 'migr_0153', 'schema',
-   '{"migr":"0153_loyalty_ugc","nuovo":["loyalty_ugc","loyalty_ugc_slots","bucket loyalty-ugc","loyalty_ugc_points()","loyalty_ugc_consenso()","loyalty_ugc_slot()","loyalty_ugc_submit()","loyalty_ugc_info()","loyalty_ugc_queue()","loyalty_ugc_decide()"],"ridefinito":["loyalty_track (liste)"],"flag":["loyalty_ugc_enabled=false"],"punti":{"recensione":20,"look":30}}'::jsonb,
+   '{"migr":"0153_loyalty_ugc","nuovo":["loyalty_ugc","loyalty_ugc_slots","bucket loyalty-ugc","loyalty_ugc_points()","loyalty_ugc_consenso()","loyalty_staff_email()","loyalty_ugc_slot()","loyalty_ugc_submit()","loyalty_ugc_info()","loyalty_ugc_queue()","loyalty_ugc_decide()"],"ridefinito":["loyalty_track (liste)"],"flag":["loyalty_ugc_enabled=false"],"punti":{"recensione":20,"look":30}}'::jsonb,
    'claude-code', 'migration_0153');

@@ -155,8 +155,10 @@ export default function Premia({ onBack }: { onBack: () => void }) {
       {[7, 30, 90].map((n) => <button key={n} type="button" className={days === n ? 'on' : ''} onClick={() => setDays(n)}>{n} giorni</button>)}
     </div>
   );
-  if (err) return <div className="screen">{header}{periodo}<div className="card err">{err}</div></div>;
-  if (!d) return <div className="screen">{header}{periodo}<p className="muted center">Carico i numeri di Premia&#8230;</p></div>;
+  // la coda delle recensioni sta SEMPRE al terzo posto, in tutti e tre i rami: cosi' resta montata (e non perde un
+  // motivo scritto a meta') quando la dashboard ricarica o da' errore, e si raggiunge anche se la dashboard non risponde
+  if (err) return <div className="screen">{header}{periodo}<PremiaUgc /><div className="card err">{err}</div></div>;
+  if (!d) return <div className="screen">{header}{periodo}<PremiaUgc /><p className="muted center">Carico i numeri di Premia&#8230;</p></div>;
 
   // ---- salute ----
   const health = [...d.health].sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.k.localeCompare(b.k));
@@ -193,9 +195,8 @@ export default function Premia({ onBack }: { onBack: () => void }) {
     <div className="screen">
       {header}
       {periodo}
-      <p className="note" style={{ marginTop: 0 }}>Dal {fmtDay(d.from)} al {fmtDay(d.to)}. Numeri aggregati, nessun dato personale.</p>
-
       <PremiaUgc />
+      <p className="note" style={{ marginTop: 0 }}>Qui sotto, dal {fmtDay(d.from)} al {fmtDay(d.to)}: numeri aggregati, nessun dato personale.</p>
 
       <section className="card" style={{ borderLeft: `4px solid ${SEV_COLOR[overall]}` }}>
         <h2>Salute: {overallLabel}</h2>
