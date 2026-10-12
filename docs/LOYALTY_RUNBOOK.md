@@ -294,3 +294,33 @@ Livelli: `loyalty_tier_of`, `v_loyalty_members.tier_saldo/tier_cumulato`, `loyal
 - PR amimi-app #38 mergiata in `main` (`e7dccb7`) la sera dell'11-10: il codice vivo e' quello di `main`. Web deployato da `main` subito dopo (l'unica differenza col build precedente `14db5c5` era la tab Premia senza la tabella e l'interruttore dei livelli).
 - **12-10, sentiero a giro**: `loyalty-page` rideployata alle 10:17 UTC dal branch `claude/premia-sentiero` (commit `0e4acbc`, contiene `origin/main`). `?v=2` e' byte per byte la sorgente nuova, la pagina di default e' invariata, smoke 15/15, Regola 19 identica prima e dopo (CE di ottobre 7.826,89 / MC2 5.430,03; giacenze 912 pezzi / 66.818,00 EUR / 203 righe). `loyalty-proxy` v14 e i flag non sono stati toccati: la pagina nuova resta visibile solo con `?anteprima=1` o `?evento=`. Revisione indipendente del diff prima del deploy: nessun rilievo grave, i ritocchi (festa finta della bandierina all'apertura, "pronto" con un riscatto in attesa, etichetta per i lettori di schermo, attese del banco) sono chiusi e fissati dalle guardie 82d-82e.
 - **12-10, Mimi' piu' presente**: `loyalty-page` rideployata alle 11:14 UTC dal branch `claude/premia-mimi-presente` (commit `b55c8a0`, contiene `origin/main`): `?v=2` e' byte per byte la sorgente nuova, la pagina di default e' invariata, smoke 15/15, Regola 19 identica prima e dopo (CE di ottobre 7.826,89 / MC2 5.430,03, giacenze 912 pezzi / 66.818,00 EUR / 203 righe), flag invariati (`loyalty_page_v2` e `loyalty_checkin_enabled` a `false`). Su `amimi.it/apps/premia/club?anteprima=1` la pagina nuova arriva dal proxy, senza errori in console.
+
+## 15. Recensioni e foto delle borse (decisione owner 12-10, migr 0153, `loyalty-proxy` v15)
+
+### 15.1 Cosa fa
+- **La cliente** (Area Membri, sezione "Racconta la tua borsa", visibile solo a flag acceso): una **recensione** = stelle da 1 a 5, almeno due righe (15 caratteri) e fino a 3 foto, solo per una borsa comprata online (controllo a DB su `loyalty_order_credits` -> `shopify_line_items`); un **look** = almeno una foto e fino a 3, per una borsa sua o del catalogo (cosi' vale anche per chi ha comprato in boutique o ai pop-up). Firma facoltativa (40 caratteri), consenso obbligatorio: il testo e' in `loyalty_ugc_consenso()` e ogni invio salva quello accettato. Una per tipo per borsa; dopo un rifiuto la stessa borsa si puo' rimandare. Tetti: 5 invii in 24 ore, 12 foto al giorno.
+- **Punti**: recensione +20, look +30 (`loyalty_ugc_points()`), SOLO quando una persona del team approva. L'invio non muove punti.
+- **Foto**: rimpicciolite nel telefono (lato lungo 1600 px, JPEG: via anche i dati dello scatto come la posizione), caricate con link firmati nel bucket PRIVATO `loyalty-ugc`, su percorsi `<cliente>/<giorno>-<uuid>.jpg` decisi da `loyalty-proxy`. La RPC di invio accetta solo foto di quella forma, nella cartella di chi invia, caricate davvero e mai usate in un altro invio. Le vede solo chi entra nell'app con un account @amimi.it.
+
+### 15.2 Moderazione (app, tab Premia, card "Recensioni e foto")
+- Tre schede: Da approvare, Approvate, Non approvate. **Approva** = punti subito alla cliente (`loyalty_ugc_decide`: gate sulla riga ancora in revisione, punti e ledger nella stessa transazione, una sola volta; un doppio tap o due persone insieme ricevono "gia' decisa"). **Rifiuta** = motivo obbligatorio, che la cliente legge nella sua pagina. Ogni decisione lascia una riga in `change_log` (`ugc_approva` / `ugc_rifiuta`) con l'email di chi ha deciso.
+- L'indicazione "acquisto verificato" dice se la borsa risulta fra i suoi ordini online (sempre vero per le recensioni).
+
+### 15.3 Interruttore e rollback
+- `loyalty_ugc_enabled`: `'false'` (oggi), lista di `shopify_customer_id` (prova), `'true'` (tutte). Spento: la sezione sparisce, caricamento e invio rispondono `off`. Le approvazioni dall'app restano possibili: sono una scelta di una persona, non un'azione della cliente.
+- Prova con l'account di test: `update app_flags set value = '10147859530055' where key = 'loyalty_ugc_enabled';` (solo con l'OK dell'owner).
+- Cambiare punti o testo del consenso = una migrazione nuova (le due funzioni sono la sola fonte).
+
+### 15.4 Cose da sapere
+- **Foto orfane**: una foto caricata e poi mai inviata (la cliente chiude il modulo) resta nel bucket. In questa fase nessuna pulizia automatica (`storage.objects` non si cancella da SQL: serve l'API di storage). Si contano con: `select count(*) from storage.objects o where o.bucket_id = 'loyalty-ugc' and o.created_at < now() - interval '1 day' and not exists (select 1 from loyalty_ugc u where o.name = any(u.foto));`
+- **Fase 2** (non costruita): griglia pubblica dei look, stelline nelle schede prodotto, mail che chiede la recensione dopo la consegna.
+- Tracciamento: vista `ugc`, tap `ugc_open`, `ugc_send`, e `mimi` (tocco su Mimi' che cambia frase, rinuncia del Gate 2 del 12-10 chiusa qui).
+
+### 15.5 Prove
+- `tests/loyalty_guardie.mjs` 160-172 (punti solo all'approvazione, idempotenza a DB, accesso solo @amimi.it, bucket privato senza policy di scrittura, percorsi decisi dal server, pagina e app).
+- Banco della pagina: la sezione "racconta la tua borsa" (flag spento, invio di recensione e di look, foto rimpicciolite a 1600 px, tetto di tre foto, risposta persa con lo stesso idemp senza ricaricare le foto, caricamento rifiutato, tetto del giorno, rifiuto definitivo, testo ostile, Esc e fuoco, 320 px).
+- Prova viva `tests/loyalty_ugc_idempotenza.sql` (account di test, si annulla da sola: esito atteso `TEST_OK`).
+
+### 15.6 Stato del deploy
+- 12-10: migr 0153 applicata alle 15:23 UTC (le 9 funzioni identiche al repo per md5), prova viva `tests/loyalty_ugc_idempotenza.sql` = `TEST_OK` senza residui (nessuna riga, nessun oggetto nel bucket, flag ancora `false`). `loyalty-page` deployata alle 15:26 UTC (default invariata, `?v=2` byte per byte la sorgente), `loyalty-proxy` v15 alle 15:26 UTC (piattaforma v17, `verify_jwt` false), smoke 15/15, Regola 19 identica prima e dopo (CE di ottobre 7.826,89 / MC2 5.430,03, giacenze 912 pezzi / 66.818,00 EUR / 203 righe), ledger senza scarti. Flag `loyalty_ugc_enabled` a `false`: la sezione non la vede nessuna cliente. App (tab Premia): deploy del web da `main` dopo il merge della PR.
+- Non provato dal vivo: il caricamento di una foto vera sul link firmato (provato sul banco e, sul vivo, fino al controllo CORS dello storage) e il giro completo con un account vero. Si prova con il flag acceso solo per l'account di test, con l'OK dell'owner.

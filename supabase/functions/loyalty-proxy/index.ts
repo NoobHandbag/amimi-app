@@ -1,4 +1,14 @@
-// loyalty-proxy v14 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// loyalty-proxy v15 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// v15 (2026-10-12, decisione owner: recensioni +20 e foto del look +30, migr 0153). Tre azioni NUOVE e additive, le altre
+//    non cambiano una riga. ORDINE DI DEPLOY: migr 0153, poi loyalty-page, poi questa edge (prima della 0153 le RPC non
+//    esistono, ma senza la riga del flag `ugc` risponde off e la pagina non mostra la sezione).
+//    `ugc` (GET)         : flag a valore loyalty_ugc_enabled; acceso = punti per tipo, testo del consenso, invii della
+//                          cliente (senza foto) e borse a catalogo per il look (RPC loyalty_ugc_info). Spento = {state:'off'}.
+//    `ugc_upload` (POST {n, tipo}) : fino a 3 link firmati per caricare foto nel bucket PRIVATO loyalty-ugc, su percorsi
+//                          decisi QUI (<cliente>/<giorno>-<uuid>.<ext>), dopo i posti del giorno (RPC loyalty_ugc_slot,
+//                          tetto 12 al giorno). Il client non sceglie mai dove scrivere.
+//    `ugc_submit` (POST) : recensione o look -> RPC loyalty_ugc_submit (controlli e idempotenza a DB). Nessun punto qui:
+//                          li da' l'approvazione del team dall'app (loyalty_ugc_decide, login @amimi.it).
 // v14 (2026-10-11, call del 09-10: pagina a soli punti con percorso, migr 0150). Tutto additivo:
 //    rotta `club`   : serve la pagina nuova con `?anteprima=1`, con `?evento=` (QR) oppure a flag loyalty_page_v2 =
 //                     'true'; altrimenti la pagina di sempre. Flag non leggibile = pagina di sempre. Rollback = flag.
@@ -65,6 +75,7 @@
 //   - `track`      : POST {events:[{e, el}]} -> eventi di interfaccia (v13), gated da loyalty_track_enabled nella RPC.
 //   - `deck`       : GET, foto di borse a catalogo per il memory (v14).
 //   - `checkin`    : POST {code} -> presenza a un evento dal QR (v14), gated da loyalty_checkin_enabled nella RPC.
+//   - `ugc`, `ugc_upload`, `ugc_submit` : recensioni e foto del look (v15), gated da loyalty_ugc_enabled.
 //
 // SCELTE DI PROGETTO (dichiarate come chiede il brief):
 //  * GIORNO = Europe/Rome per le azioni nuove (clientela italiana). `add` resta su UTC per non
@@ -593,6 +604,65 @@ Deno.serve(async (req) => {
     if (c.reason === 'off') return json({ state: 'off' });
     if (!c.ok) return json({ ok: false, reason: c.reason ?? 'error', label: c.label ?? null });
     return json({ ok: true, already: Boolean(c.already), added: c.added ?? 0, points: c.points ?? 0, label: c.label ?? null });
+  }
+
+  // --- RECENSIONI E FOTO DELLE BORSE (v15, migr 0153). La cliente invia, il team approva dall'app: i punti li da'
+  // loyalty_ugc_decide, mai questa edge. Il flag si legge qui per `ugc` e dentro le RPC per le scritture.
+  if (action === 'ugc') {
+    const on = await readFlagFor('loyalty_ugc_enabled');
+    if (on === null) return json({ error: 'read_failed' }, 503);
+    if (!on) return json({ state: 'off' });
+    const { data: inf, error: infErr } = await retryOnce(() => sb.rpc('loyalty_ugc_info', { p_customer: customerId }));
+    if (infErr || !inf || typeof inf !== 'object' || !Array.isArray((inf as { mine?: unknown }).mine)) return json({ error: 'read_failed' }, 503);
+    return json({ enabled: true, ...(inf as Record<string, unknown>) });
+  }
+
+  if (action === 'ugc_upload') {
+    if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+    const ub = ((await req.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;
+    const n = Number(ub.n);
+    const ext = ub.tipo === 'image/jpeg' ? 'jpg' : ub.tipo === 'image/webp' ? 'webp' : '';
+    if (!Number.isInteger(n) || n < 1 || n > 3 || !ext) return json({ error: 'invalid_value' }, 400);
+    // posti del giorno (al massimo 12 foto): RPC atomica col flag dentro. Nessun retry: e' una scrittura (Regola 20d).
+    const { data: sl, error: slErr } = await sb.rpc('loyalty_ugc_slot', { p_customer: customerId, p_n: n });
+    if (slErr) return json({ error: 'write_failed' }, 500);
+    const s = (sl ?? {}) as { ok?: boolean; reason?: string };
+    if (s.reason === 'off') return json({ state: 'off' });
+    if (!s.ok) return json({ ok: false, reason: s.reason ?? 'error' });
+    // il percorso lo decide questa edge: cartella della cliente firmata, giorno di Roma, uuid. La RPC di invio accetta
+    // solo questa forma, nella cartella di chi invia.
+    const day = romeToday().replaceAll('-', '');
+    const uploads: Array<{ path: string; url: string }> = [];
+    for (let i = 0; i < n; i++) {
+      const path = `${customerId}/${day}-${crypto.randomUUID()}.${ext}`;
+      const { data: up, error: upErr } = await sb.storage.from('loyalty-ugc').createSignedUploadUrl(path);
+      if (upErr || !up?.signedUrl) return json({ error: 'write_failed' }, 500);
+      uploads.push({ path, url: up.signedUrl });
+    }
+    return json({ ok: true, uploads });
+  }
+
+  if (action === 'ugc_submit') {
+    if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+    const raw = await req.text().catch(() => '');
+    if (raw.length > 6000) return json({ error: 'too_large' }, 413);
+    let b: Record<string, unknown> = {};
+    try { b = (JSON.parse(raw || '{}') ?? {}) as Record<string, unknown>; } catch { return json({ error: 'invalid_value' }, 400); }
+    const foto = Array.isArray(b.foto) ? b.foto.slice(0, 4).map((x) => String(x ?? '')) : [];
+    const rating = (b.rating === null || b.rating === undefined || b.rating === '') ? null : Number(b.rating);
+    if (rating !== null && !Number.isInteger(rating)) return json({ error: 'invalid_value' }, 400);
+    // la RPC controlla tutto (tipo, borsa comprata, foto caricate davvero, tetto) ed e' idempotente sull'idemp: per questo
+    // il retryOnce, come checkin. Un invio ripetuto risponde already con la stessa riga.
+    const { data: sv, error: svErr } = await retryOnce(() => sb.rpc('loyalty_ugc_submit', {
+      p_customer: customerId, p_kind: String(b.kind ?? ''), p_codice: String(b.codice ?? ''), p_rating: rating,
+      p_testo: b.testo == null ? null : String(b.testo).slice(0, 700), p_firma: b.firma == null ? null : String(b.firma).slice(0, 60),
+      p_foto: foto, p_consenso: b.consenso === true, p_idemp: String(b.idemp ?? ''),
+    }));
+    if (svErr) return json({ error: 'write_failed' }, 500);
+    const r = (sv ?? {}) as Record<string, unknown>;
+    if (r.reason === 'off') return json({ state: 'off' });
+    if (!r.ok) return json({ ok: false, reason: r.reason ?? 'error' });
+    return json({ ok: true, already: Boolean(r.already), id: r.id ?? null, status: r.status ?? 'in_revisione', punti: r.punti ?? null });
   }
 
   return json({ error: 'unknown_action', action }, 422);

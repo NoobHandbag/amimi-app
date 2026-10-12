@@ -25,6 +25,12 @@
     return s;
   };
 
+  // recensioni e foto (migr 0153): come risponde loyalty_ugc_info a flag acceso
+  var CONSENSO = 'Acconsento che Amimì pubblichi le foto e il testo che invio, con la firma che scelgo, sul sito amimi.it, sui social e nelle comunicazioni di Amimì.';
+  var CATALOGO = [{ codice: 'LEA_BAG_COCCO_BLUE', titolo: 'LEA BAG COCCO BLUE' }, { codice: 'NINA_BAG_PONY_ZEBRA', titolo: 'NINA BAG PONY ZEBRA' }, { codice: 'COD_0', titolo: 'LEA BAG COCCO BLUE' }];
+  var COMPRATE = [{ codice: 'COD_0', titolo: 'LEA BAG COCCO BLUE' }, { codice: 'COD_1', titolo: 'LEA BAG BAMBI PONY' }];   // comprate online: le sole recensibili
+  var ugc = function (over) { var u = { mine: [], recensibili: COMPRATE, catalogo: CATALOGO }; for (var k in (over || {})) u[k] = over[k]; return u; };
+
   var SC = {
     // stati della pagina
     login:   { state: { state: 'login_required' } },
@@ -91,6 +97,23 @@
                                 rewards: [{ key: 'amica12"><b id="xk">', label: '<img src=x onerror="window.__xss=2">', cost_points: 100, kind: 'percentage', value: '12<i id="xv">', sort: 5 }],
                                 redemptions: [cod('<img src=x onerror="window.__xss=3">', '2026-10-09', null)],
                                 checkin: { ok: false, reason: 'ended', label: '<img src=x onerror="window.__xss=4">' } }),
+    // recensioni e foto (flag acceso). Le borse di borse(2) hanno codice COD_0 e COD_1.
+    ugc_on:       base(60, { ugc: ugc() }),
+    ugc_mine:     base(60, { ugc: ugc({ mine: [
+                    { id: 3, kind: 'look', codice: 'NINA_BAG_PONY_ZEBRA', titolo: 'NINA BAG PONY ZEBRA', rating: null, foto: 2, status: 'rifiutata', motivo: '<img src=x onerror="window.__xss=6">non si vede la borsa', punti: null, created_day: '2026-10-10' },
+                    { id: 2, kind: 'recensione', codice: 'COD_1', titolo: '<b id="xt">LEA BAG BAMBI PONY</b>', rating: 5, foto: 0, status: 'approvata', motivo: null, punti: 20, created_day: '2026-10-09' },
+                    { id: 1, kind: 'recensione', codice: 'COD_0', titolo: 'LEA BAG COCCO BLUE', rating: 4, foto: 1, status: 'in_revisione', motivo: null, punti: 20, created_day: '2026-10-08' }] }) }),
+    ugc_vuoto:    base(60, { wardrobe: [], ugc: ugc({ recensibili: [] }) }),
+    // guardaroba letto dal ripiego Shopify (ordine non ancora accreditato): le borse si vedono ma NON sono recensibili
+    ugc_ripiego:  base(60, { ugc: ugc({ recensibili: [] }) }),
+    ugc_put_una:  base(60, { ugc: ugc({ putMode: 'ko_seconda' }) }),
+    ugc_foto_ko:  base(60, { ugc: ugc({ submitReason: 'photo_missing' }) }),
+    ugc_storto:   base(60, { ugc: ugc({ mine: [null, { id: 9, kind: 'look', codice: 'COD_1', titolo: null, rating: null, foto: 1, status: 'in_revisione', motivo: null, punti: 30, created_day: null }] }) }),
+    ugc_errore:   base(60, { ugc: ugc({ mode: 'error' }) }),
+    ugc_limite:   base(60, { ugc: ugc({ uploadMode: 'limit' }) }),
+    ugc_put_ko:   base(60, { ugc: ugc({ putMode: 'ko' }) }),
+    ugc_perso:    base(60, { ugc: ugc({ submitMode: 'lost' }) }),
+    ugc_no:       base(60, { ugc: ugc({ submitReason: 'not_bought' }) }),
     // server vecchio (v13): niente used_at/value nei riscatti, niente deck/checkin, profile senza checkin_enabled
     server_v13:     base(257, { old: true, redemptions: [{ reward_key: 'amica12', cost_points: 100, status: 'fulfilled', discount_code: 'AMICA12-KTQWJJ', created_at: '2026-10-09T10:00:00+00:00' }] }),
   };
@@ -163,8 +186,31 @@
       return reply({ ok: true, awarded: !!first, added: first ? 10 : 0, points: db.points, birthday_locked: !!pr.birth_locked });
     }
     if (action === 'track') return reply({ ok: true, inserted: (body && body.events ? body.events.length : 0), capped: false });
+    if (action === 'ugc' || action === 'ugc_upload' || action === 'ugc_submit') {
+      if (db.old) return reply({ error: 'unknown_action', action: action }, 422);
+      var u = db.ugc;
+      if (!u) return reply({ state: 'off' });
+      if (action === 'ugc') return u.mode === 'error' ? reply({ error: 'read_failed' }, 503) : reply({ enabled: true, punti: { recensione: 20, look: 30 }, consenso: CONSENSO, mine: u.mine, recensibili: u.recensibili, catalogo: u.catalogo });
+      if (action === 'ugc_upload') {
+        if (u.uploadMode === 'limit') return reply({ ok: false, reason: 'limit' });
+        var up = [];
+        for (var i = 0; i < Number(body && body.n); i++) { var pth = '7001/20261012-' + (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)) + '.jpg'; up.push({ path: pth, url: 'https://storage.finto/object/upload/sign/loyalty-ugc/' + pth + '?token=t' }); }
+        return reply({ ok: true, uploads: up });
+      }
+      // ugc_submit: stesso idemp = stessa risposta (come la RPC), una per tipo per borsa
+      var id0 = body && body.idemp;
+      if (id0 && u.fatti && u.fatti[id0]) return reply({ ok: true, already: true, id: u.fatti[id0], status: 'in_revisione', punti: body.kind === 'look' ? 30 : 20 });
+      if (u.submitReason) { var why = u.submitReason; u.submitReason = ''; return reply({ ok: false, reason: why }); }
+      var nid = (u.mine.length ? u.mine[0].id : 0) + 1;
+      var tit = (CATALOGO.concat(db.wardrobe || []).filter(function (b) { return b.codice === body.codice; })[0] || {}).titolo || body.codice;
+      u.mine.unshift({ id: nid, kind: body.kind, codice: body.codice, titolo: tit, rating: body.rating, foto: (body.foto || []).length, status: 'in_revisione', motivo: null, punti: body.kind === 'look' ? 30 : 20, created_day: '2026-10-12' });
+      u.fatti = u.fatti || {}; u.fatti[id0] = nid;
+      if (u.submitMode === 'lost') { u.submitMode = ''; return RAW502; }   // salvato a DB, risposta persa
+      return reply({ ok: true, already: false, id: nid, status: 'in_revisione', punti: body.kind === 'look' ? 30 : 20 });
+    }
     return reply({ error: 'unknown_action', action: action }, 422);
   }
+  window.__uploads = [];                                         // foto caricate sui link firmati finti (blob, tipo, url)
 
   window.fetch = function (url, init) {
     if (typeof url === 'string' && url.indexOf('/apps/premia/') === 0) {
@@ -179,6 +225,15 @@
           else res(new Response(JSON.stringify(r.data), { status: r.status, headers: { 'Content-Type': 'application/json' } }));
         }, Number(qs.get('lento')) || 40);
       });
+    }
+    if (typeof url === 'string' && url.indexOf('https://storage.finto/') === 0) {          // caricamento sul link firmato
+      var h = (init && init.headers) || {};
+      window.__calls.push({ action: 'upload_put', method: (init && init.method) || 'GET', body: null, tipo: h['content-type'] || null, size: init && init.body ? init.body.size : 0 });
+      if (init && init.body) window.__uploads.push({ blob: init.body, tipo: h['content-type'], url: url });
+      var nput = window.__calls.filter(function (x) { return x.action === 'upload_put'; }).length;
+      var ko = db.ugc && (db.ugc.putMode === 'ko' || (db.ugc.putMode === 'ko_seconda' && nput === 2));   // 'ko_seconda': fallisce solo il secondo caricamento, una volta
+      if (ko && db.ugc.putMode === 'ko_seconda') db.ugc.putMode = '';
+      return new Promise(function (res) { setTimeout(function () { res(new Response(ko ? '{"error":"no"}' : '{"Key":"ok"}', { status: ko ? 400 : 200, headers: { 'Content-Type': 'application/json' } })); }, 30); });
     }
     return real.apply(this, arguments);
   };
