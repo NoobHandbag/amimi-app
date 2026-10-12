@@ -41,7 +41,7 @@ begin
   -- il cliente finto: membro a zero punti, con un ordine accreditato che contiene v_bag
   insert into loyalty_points (shopify_customer_id, points) values (c, 0);
   insert into loyalty_order_credits (shopify_order_id, shopify_customer_id, points, order_name) values ('TEST0153-ORD', c, 1, '#TEST0153');
-  insert into shopify_line_items (order_id, lineitem_name, codice, codice_norm) values ('#TEST0153', 'borsa di prova 0153', v_bag, v_bag);
+  insert into shopify_line_items (order_id, lineitem_name, codice) values ('#TEST0153', 'borsa di prova 0153', v_bag);   -- codice_norm e' calcolata
   f1 := c || '/20261012-' || gen_random_uuid() || '.jpg';  f2 := c || '/20261012-' || gen_random_uuid() || '.jpg';
   f3 := c || '/20261012-' || gen_random_uuid() || '.jpg';  f4 := c || '/20261012-' || gen_random_uuid() || '.jpg';
   f5 := c || '/20261012-' || gen_random_uuid() || '.jpg';
