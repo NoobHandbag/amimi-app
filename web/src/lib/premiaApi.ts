@@ -28,6 +28,41 @@ export type PremiaDash = {
   elementi: { event: string; element: string | null; n: number; clienti: number }[];
 };
 
+// Recensioni e foto delle borse (migr 0153): la coda e la decisione, col login @amimi.it. Le RPC rifiutano chi non e'
+// @amimi.it (42501); approvare da' i punti (quanti lo decide la RPC per tipo, mai il client). Le foto stanno nel bucket
+// privato loyalty-ugc: la policy della 0153 le fa leggere solo al team, con link firmati di un'ora.
+export type UgcStato = 'in_revisione' | 'approvata' | 'rifiutata';
+export type UgcItem = {
+  id: number; kind: 'recensione' | 'look'; codice: string; titolo: string | null; rating: number | null; testo: string | null; firma: string | null;
+  foto: string[]; verificata: boolean; cliente: string; status: UgcStato; motivo: string | null; punti: number;
+  created_at: string; deciso_at: string | null; deciso_da: string | null;
+};
+export type UgcQueue = { conteggi: Record<UgcStato, number>; items: UgcItem[] };
+export type UgcDecisione = { ok: boolean; already?: boolean; reason?: string; status?: UgcStato; punti?: number; deciso_da?: string };
+
+const erroreRpc = (error: { code?: string; message: string }) => new Error(error.code === '42501' ? 'Sezione riservata agli account @amimi.it.' : error.message);
+
+export async function fetchUgcQueue(stato: UgcStato): Promise<UgcQueue> {
+  const { data, error } = await csClient.rpc('loyalty_ugc_queue', { p_status: stato, p_limit: 60 });
+  if (error) throw erroreRpc(error);
+  return data as UgcQueue;
+}
+
+export async function decideUgc(id: number, decisione: 'approva' | 'rifiuta', motivo?: string): Promise<UgcDecisione> {
+  const { data, error } = await csClient.rpc('loyalty_ugc_decide', { p_id: id, p_decisione: decisione, p_motivo: motivo ?? null });
+  if (error) throw erroreRpc(error);
+  return data as UgcDecisione;
+}
+
+export async function fotoUgcUrls(paths: string[]): Promise<Record<string, string>> {
+  if (!paths.length) return {};
+  const { data, error } = await csClient.storage.from('loyalty-ugc').createSignedUrls(paths, 3600);
+  if (error) throw new Error('Foto non leggibili: ' + error.message);
+  const out: Record<string, string> = {};
+  for (const d of data ?? []) if (d.path && d.signedUrl) out[d.path] = d.signedUrl;
+  return out;
+}
+
 export async function fetchPremiaDashboard(days: number): Promise<PremiaDash> {
   const { data, error } = await csClient.rpc('loyalty_dashboard', { p_days: days });
   if (error) throw new Error(error.code === '42501' ? 'Sezione riservata agli account @amimi.it.' : error.message);

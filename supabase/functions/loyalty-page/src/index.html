@@ -121,11 +121,11 @@
   .bonus2 b{color:var(--red-deep)}
 
   /* i tuoi codici */
-  .codici{list-style:none;display:grid;gap:8px}
+  .codici{list-style:none;display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
   .cod{display:flex;align-items:center;gap:12px;background:var(--white);border:1.5px solid var(--line);border-radius:14px;padding:13px 14px}
   .cod-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
   .cod-c{font-weight:700;font-size:16px;letter-spacing:.04em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-  .cod-m{font-size:13px;color:var(--muted)}
+  .cod-m{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
   .cod.used{background:transparent}
   .cod.used .cod-c{color:var(--muted);text-decoration:line-through}
   .cp{flex:none;background:var(--red);color:var(--white);border:none;border-radius:99px;font-size:14px;font-weight:700;padding:0 16px;min-width:80px;min-height:44px;cursor:pointer}
@@ -159,6 +159,31 @@
   .empty{background:var(--white);border:1.5px dashed var(--line);border-radius:14px;padding:18px;text-align:center;font-size:14px;color:var(--muted)}
   .empty.mimi{display:flex;align-items:center;gap:12px;text-align:left}
   .empty.mimi img{width:60px;height:auto;flex:none}
+
+  /* racconta la tua borsa (migr 0153): recensioni e foto del look, i punti arrivano all'approvazione del team */
+  .ugc-intro{font-size:14px;color:var(--muted);margin:-4px 0 12px}
+  .act .ico.stella{width:40px;background:var(--red);clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)}
+  .act .ico.foto{width:48px;border:2px solid var(--red-deep);border-radius:10px;background:radial-gradient(circle at 50% 55%,var(--red) 0 7px,var(--white) 8px 11px,transparent 12px),var(--pink-soft)}
+  .ugc-mine{margin-top:12px}
+  .chip.ok{color:var(--red-deep);border-color:var(--red)}
+  .sheet-form{text-align:left}
+  .sheet-form h2,.sheet-form .sub{text-align:center}
+  .f-l{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:14px 0 5px}
+  .f-in{display:block;width:100%;border:1.5px solid var(--line);border-radius:14px;background:var(--white);padding:11px 12px;font:inherit;font-size:16px;color:var(--ink)}
+  textarea.f-in{resize:vertical;min-height:96px}
+  .f-n{font-size:12px;color:var(--muted);text-align:right;margin-top:3px}
+  .stelle{display:flex;gap:4px}
+  .stelle button{width:44px;height:44px;border:none;background:none;padding:5px;border-radius:10px;cursor:pointer}
+  .stelle i{display:block;width:100%;height:100%;background:var(--pink);clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)}
+  .stelle button.on i{background:var(--red)}
+  .fotos{display:flex;gap:8px;flex-wrap:wrap}
+  .fotos .ft{position:relative;width:76px;height:96px;border-radius:12px;overflow:hidden;border:1.5px solid var(--line);background:var(--pink)}
+  .fotos .ft img{display:block;width:100%;height:100%;object-fit:cover}
+  .fotos .ft button{position:absolute;top:4px;right:4px;width:36px;height:36px;border-radius:50%;border:none;background:rgba(43,18,21,.72);color:var(--white);font-size:18px;line-height:1;cursor:pointer}
+  .fotos .add{width:76px;height:96px;border-radius:12px;border:1.5px dashed var(--red);background:var(--white);color:var(--red-deep);font-size:13px;font-weight:600;cursor:pointer;padding:6px}
+  .sheet .chk{display:flex;gap:9px;align-items:flex-start;margin-top:16px;font-size:12.5px;color:var(--muted);line-height:1.4}
+  .sheet .chk input{margin-top:2px;accent-color:var(--red);width:20px;height:20px;flex:none}
+  .f-err{color:var(--red-deep);font-size:13px;font-weight:600;min-height:1.2em;margin-top:10px}
 
   /* saluto finale di Mimi' */
   .ciao{display:flex;align-items:center;gap:14px;border-top:1.5px dashed var(--line);padding-top:22px}
@@ -306,6 +331,16 @@
       <div id="ward"></div>
     </section>
 
+    <section id="ugcSec" class="hidden">
+      <h2>Racconta la tua borsa</h2>
+      <p class="ugc-intro" id="ugcIntro"></p>
+      <div class="acts">
+        <button class="act tap" id="btnRecensione" type="button"></button>
+        <button class="act tap" id="btnLook" type="button"></button>
+      </div>
+      <ul id="ugcMine" class="codici ugc-mine"></ul>
+    </section>
+
     <footer class="ciao">
       <img data-mimi alt="">
       <p><b>A presto, amica</b>Torna a trovarmi ogni giorno: ti aspetto con la coccola e il memory. <a href="/" id="shopFine">Vai allo shop</a></p>
@@ -331,6 +366,33 @@
     <button class="btn" id="rewardOk" type="button">Continua</button>
   </div></div>
 
+  <!-- recensione o look -->
+  <div class="modal" id="ugcModal" role="dialog" aria-modal="true" aria-labelledby="ugcTitle" aria-hidden="true"><div class="sheet sheet-form">
+    <div class="sheet-peek"><img data-mimi alt=""></div>
+    <h2 id="ugcTitle"></h2>
+    <p class="sub" id="ugcSub"></p>
+    <form id="ugcForm" novalidate>
+      <label class="f-l" for="ugcBorsa">La borsa</label>
+      <select id="ugcBorsa" class="f-in"></select>
+      <div id="ugcStelleBox">
+        <span class="f-l" id="ugcStelleL">Quante stelle le dai?</span>
+        <div class="stelle" id="ugcStelle" role="radiogroup" aria-labelledby="ugcStelleL"></div>
+      </div>
+      <label class="f-l" for="ugcTesto" id="ugcTestoL"></label>
+      <textarea id="ugcTesto" class="f-in" rows="4" maxlength="600"></textarea>
+      <div class="f-n" id="ugcConta">0/600</div>
+      <span class="f-l" id="ugcFotoL"></span>
+      <div class="fotos" id="ugcFotos"></div>
+      <input type="file" id="ugcFile" accept="image/*" multiple hidden>
+      <label class="f-l" for="ugcFirma">Come ti firmi (se vuoi)</label>
+      <input id="ugcFirma" class="f-in" maxlength="40" placeholder="Per esempio Giulia M." autocomplete="off">
+      <div class="chk"><input type="checkbox" id="ugcConsenso"><label for="ugcConsenso" id="ugcConsensoT"></label></div>
+      <p class="f-err" id="ugcErr" role="alert"></p>
+      <button class="btn" id="ugcInvia" type="submit">Invia</button>
+    </form>
+    <button class="btnghost" id="ugcClose" type="button">Chiudi</button>
+  </div></div>
+
   <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -341,6 +403,8 @@
   const CONFIG = {
     codiciVisibili: 3,     // codici mostrati prima di "Mostra tutti"
     coppie: 3,             // coppie del memory
+    fotoMax: 3,            // foto per recensione o look (lo stesso tetto sta a DB, migr 0153)
+    fotoLato: 1600,        // lato lungo delle foto dopo il rimpicciolimento nel telefono (JPEG: via anche i dati dello scatto)
     eventoOre: 12,         // per quante ore il codice di un QR resta in attesa dell'accesso
     materiali: ['cavallino','cocco','vernice','pelle liscia','cotone','nessuna preferenza'],   // lista chiusa, uguale al check a DB (migr 0141)
     mesi: ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'],
@@ -393,7 +457,7 @@
   function trackStart(){
     if(T.started) return; T.started=true;
     track('page_open');
-    watch('redeem'); watch('codiciSec','codici'); watch('profSec','profilo'); watch('mimi','mimi'); watch('regoleSec','regole'); watch('ward','guardaroba'); watch('bonus2','bonus2'); watch('bday','bday'); watch('evento','evento');
+    watch('redeem'); watch('codiciSec','codici'); watch('profSec','profilo'); watch('mimi','mimi'); watch('regoleSec','regole'); watch('ward','guardaroba'); watch('bonus2','bonus2'); watch('bday','bday'); watch('evento','evento'); watch('ugcSec','ugc');
   }
 
   // === piccoli effetti ===
@@ -415,7 +479,7 @@
   let lastFocus=null;
   function openModal(id, focusNode){ const m=el(id); lastFocus=document.activeElement; m.classList.add('on'); m.setAttribute('aria-hidden','false'); setTimeout(()=>{ const f=focusNode||m.querySelector('button:not([disabled])'); if(f) f.focus({ preventScroll:true }); m.scrollTop=0; },80); }   // su uno schermo basso la finestra parte dall'alto, con Mimi' intera
   function closeModal(id){ const m=el(id); if(!m.classList.contains('on')) return; m.classList.remove('on'); m.setAttribute('aria-hidden','true'); const back=(lastFocus && lastFocus!==document.body && document.contains(lastFocus)) ? lastFocus : el('redeem'); if(back && back.focus) back.focus(); }   // il bottone di partenza puo' essere stato ridisegnato: si torna alla card dei punti
-  document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal('gameModal'); closeModal('rewardModal'); } });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal('gameModal'); closeModal('rewardModal'); chiudiUgc(); } });
   function reward(title,prize,msg,code){
     el('rewardTitle').textContent=title; el('rewardPrize').textContent=prize; el('rewardMsg').textContent=msg||'';
     el('rewardCode').innerHTML = code ? '<div class="codechip"><span class="c">'+esc(code)+'</span><button class="cp tap" type="button" data-code="'+esc(code)+'">Copia</button></div>' : '';
@@ -443,7 +507,7 @@
     el('loading').classList.add('hidden'); el('gate').classList.add('hidden'); el('app').classList.remove('hidden');
     const p = S.points||0;
     countUp(el('pts'), p);
-    renderRedeem(); renderCodes(); renderBonus2(); renderBirthday(); renderProfile(); renderRules();
+    renderRedeem(); renderCodes(); renderBonus2(); renderBirthday(); renderProfile(); renderRules(); renderUgc();
     // Mimi' e le azioni del giorno
     parla(false);
     el('mimi').setAttribute('aria-label', S.coccola_disponibile ? 'Coccola Mimì: +5 punti, una al giorno' : 'Mimì: toccala per sentire cosa dice');
@@ -475,6 +539,7 @@
     out.push(S.coccola_disponibile ? 'Mi fai la coccola di oggi? Toccami!' : 'Coccolata! Sono al settimo cielo.');
     if(pronto){ const k=Math.floor(p/cost); out.push(k===1 ? (pc ? 'Hai uno sconto pronto. Lo usiamo?' : 'Hai un premio pronto. Lo usiamo?') : 'Hai '+k+(pc ? ' sconti pronti' : ' premi pronti')+'. Ne usiamo uno?'); }
     if(S.memory_disponibile) out.push('Giochiamo al memory insieme?');
+    if(S._ugc && daRecensire().length) out.push('Mi racconti una delle tue borse?');
     if(cost>0 && !pronto && !attesa){ const m=cost-(p%cost); out.push('Ancora '+(m===1 ? '1 punto' : m+' punti')+' e '+(pc ? 'lo sconto' : 'il premio')+' è tuo.'); }
     if(!S.coccola_disponibile && !S.memory_disponibile) out.push('Per oggi è tutto. A domani!');
     return out;
@@ -597,6 +662,7 @@
     const rw=reward0(), pr=S._profile;
     const rows=[['Compri su amimi.it','1 punto per ogni euro'],['Coccoli Mimì','+5 al giorno'],['Giochi al memory','+5 al giorno']];
     if(pr && pr.checkin_enabled) rows.push(['Vieni a un evento Amimì','+20 con il QR']);
+    const ug=S._ugc; if(ug){ rows.push(['Recensisci una borsa','+'+puntiUgc('recensione')+' se approvata']); rows.push(['Mandaci il tuo look','+'+puntiUgc('look')+' se approvato']); }
     el('regole').innerHTML=rows.map(r=>'<li><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></li>').join('');
     el('regoleNota').innerHTML = rw ? 'Ogni <b>'+esc(rw.cost_points)+' punti Mimì</b> sblocchi '+(percento(rw) ? 'uno sconto del <b>'+percento(rw)+'%</b>' : esc(rw.label))+' su un ordine. Quando lo riscatti i punti si scalano. Il codice vale una volta e non si somma ad altri sconti.' : '';
   }
@@ -667,7 +733,7 @@
   });
 
   async function refresh(animate){
-    const [st, rw, pf] = await Promise.all([api('state'), api('rewards'), api('profile')]);   // rewards/profile: OFF finche' i flag sono spenti
+    const [st, rw, pf, ug] = await Promise.all([api('state'), api('rewards'), api('profile'), api('ugc')]);   // rewards/profile/ugc: OFF finche' i flag sono spenti
     const { status, data } = st;
     if (data.state==='login_required') return showGate(EVT ? 'Accedi per registrare la tua presenza' : 'I tuoi punti Mimì', EVT ? 'Entra con il tuo account Amimì, oppure creane uno in un minuto. Se l\'evento è in corso, i punti arrivano subito dopo.' : 'Accedi con il tuo account Amimì per vedere i tuoi punti e coccolare Mimì.', 'login');
     if (data.state==='needs_secret' || data.state==='off') return showGate('I punti Mimì stanno arrivando','Il programma parte a breve. Torna presto!', '');
@@ -675,6 +741,7 @@
     S = data;
     S._rewards = (rw && rw.data && Array.isArray(rw.data.rewards)) ? rw.data : null;
     S._profile = (pf && pf.status===200 && pf.data && !pf.data.error && typeof pf.data.profile_enabled==='boolean') ? pf.data : null;   // non leggibile = come a flag OFF, mai una card finta
+    S._ugc = (ug && ug.status===200 && ug.data && ug.data.enabled===true && Array.isArray(ug.data.mine) && Array.isArray(ug.data.catalogo)) ? ug.data : null;   // spento, server vecchio o non leggibile = sezione nascosta
     render();
     trackStart();
     checkin();
@@ -731,7 +798,7 @@
   }
   el('btnCoccola').addEventListener('click', coccola);
   // toccare Mimi' e' farle la coccola (stessa strada del bottone: un tap alla volta, una al giorno); a coccola fatta risponde con la frase dopo
-  el('mimi').addEventListener('click', ()=>{ if(!S) return; if(S.coccola_disponibile){ coccola(); return; } squee(); parla(true); });
+  el('mimi').addEventListener('click', ()=>{ if(!S) return; if(S.coccola_disponibile){ coccola(); return; } track('tap','mimi'); squee(); parla(true); });
   el('shopFine').addEventListener('click', ()=>track('tap','shop'));
 
   // riscatto (bottone disabilitato subito = anti doppio-click; idemp lato server).
@@ -817,6 +884,165 @@
     S.points=data.points; S.memory_disponibile=false; render();
     reward('Hai vinto!', '+'+(data.added||5), 'punti Mimì aggiunti al tuo saldo'); parla(false,'Che memoria! Brava.');
   }
+
+  // === racconta la tua borsa (migr 0153, loyalty-proxy v15). La cliente manda una recensione (borse comprate online) o
+  // una foto del suo look; il team la guarda dall'app e SOLO allora arrivano i punti (quanti, lo dice il server). Le foto
+  // si rimpiccioliscono qui (lato lungo CONFIG.fotoLato, JPEG: via anche i dati dello scatto, come la posizione), vanno
+  // nel bucket privato con i link firmati chiesti a loyalty-proxy, e l'invio porta solo i percorsi. Un "Riprova" dopo
+  // una risposta persa rimanda lo STESSO idemp e non ricarica le foto gia' caricate. ===
+  const UGC = { kind:'recensione', foto:[], stelle:0, idemp:null, busy:false };
+  function puntiUgc(k){ const u=S && S._ugc; return Number(u && u.punti && u.punti[k]) || 0; }
+  function inviati(k){ const u=S && S._ugc; return new Set(((u && u.mine) || []).filter(x=>x.kind===k && x.status!=='rifiutata').map(x=>String(x.codice))); }
+  function daRecensire(){ const fatti=inviati('recensione'); return (Array.isArray(S && S.wardrobe) ? S.wardrobe : []).filter(b=>b && b.codice && !fatti.has(String(b.codice))); }
+  function perLook(){
+    const fatti=inviati('look'), mie=(Array.isArray(S.wardrobe) ? S.wardrobe : []).filter(b=>b && b.codice && !fatti.has(String(b.codice)));
+    const giaMie=new Set(mie.map(b=>String(b.codice)));
+    const altre=((S._ugc && S._ugc.catalogo) || []).filter(b=>b && b.codice && !fatti.has(String(b.codice)) && !giaMie.has(String(b.codice)));
+    return { mie, altre };
+  }
+  function renderUgc(){
+    const sec=el('ugcSec'), u=S._ugc;
+    if(!u){ sec.classList.add('hidden'); return; }
+    sec.classList.remove('hidden');
+    const pr=puntiUgc('recensione'), pl=puntiUgc('look');
+    el('ugcIntro').textContent='Una recensione vale +'+pr+' punti Mimì, una foto del tuo look +'+pl+'. I punti arrivano quando la guardiamo e la approviamo.';
+    el('btnRecensione').innerHTML='<span class="ico stella"></span>Scrivi una recensione<small>+'+pr+' punti</small>';
+    el('btnLook').innerHTML='<span class="ico foto"></span>Mandaci il tuo look<small>+'+pl+' punti</small>';
+    const ul=el('ugcMine');
+    ul.innerHTML=(u.mine||[]).slice(0,10).map(x=>{
+      const cosa=(x.kind==='look' ? 'Look' : 'Recensione')+' · '+(x.titolo||x.codice);
+      const quando='Inviata il '+itDate(x.created_day);
+      if(x.status==='approvata') return '<li class="cod"><div class="cod-main"><span class="cod-c">'+esc(cosa)+'</span><span class="cod-m">'+esc(quando)+', approvata</span></div><span class="chip ok">+'+esc(Number(x.punti)||0)+' punti</span></li>';
+      if(x.status==='rifiutata') return '<li class="cod used"><div class="cod-main"><span class="cod-c">'+esc(cosa)+'</span><span class="cod-m">Non approvata'+(x.motivo ? ': '+esc(x.motivo) : '')+'</span></div><span class="chip">Non approvata</span></li>';
+      return '<li class="cod"><div class="cod-main"><span class="cod-c">'+esc(cosa)+'</span><span class="cod-m">'+esc(quando)+'</span></div><span class="chip">In revisione</span></li>';
+    }).join('');
+  }
+  function fotoHTML(){
+    let h=UGC.foto.map((f,i)=>'<div class="ft"><img alt="Foto '+(i+1)+'" src="'+esc(f.url)+'"><button type="button" data-via="'+i+'" aria-label="Togli la foto '+(i+1)+'">&times;</button></div>').join('');
+    if(UGC.foto.length<CONFIG.fotoMax) h+='<button class="add tap" type="button" id="ugcAdd">Aggiungi foto</button>';
+    el('ugcFotos').innerHTML=h;
+  }
+  function stelleHTML(){
+    let h=''; for(let i=1;i<=5;i++) h+='<button type="button" role="radio" data-st="'+i+'" aria-checked="'+(UGC.stelle===i)+'" aria-label="'+i+(i===1?' stella':' stelle')+'"'+(i<=UGC.stelle?' class="on"':'')+'><i></i></button>';
+    el('ugcStelle').innerHTML=h;
+  }
+  function liberaFoto(){ UGC.foto.forEach(f=>{ try{ URL.revokeObjectURL(f.url); }catch(_){} }); UGC.foto=[]; }
+  function apriUgc(kind){
+    if(!S || !S._ugc) return;
+    const look=kind==='look', p=perLook(), rec=daRecensire();
+    if(!look && !rec.length){ toast(Array.isArray(S.wardrobe) && S.wardrobe.length ? 'Hai già recensito tutte le tue borse' : 'Le recensioni sono per le borse comprate su amimi.it'); return; }
+    if(look && !p.mie.length && !p.altre.length){ toast('Hai già mandato un look per ogni borsa'); return; }
+    track('tap','ugc_open');
+    UGC.kind=kind; UGC.stelle=0; UGC.idemp=null; liberaFoto();
+    const opt=b=>'<option value="'+esc(b.codice)+'">'+esc(b.titolo||b.codice)+'</option>';
+    el('ugcBorsa').innerHTML= look
+      ? (p.mie.length ? '<optgroup label="Le tue borse">'+p.mie.map(opt).join('')+'</optgroup>' : '')+(p.altre.length ? '<optgroup label="Altre borse Amimì">'+p.altre.map(opt).join('')+'</optgroup>' : '')
+      : rec.map(opt).join('');
+    el('ugcTitle').textContent= look ? 'Il tuo look' : 'La tua recensione';
+    el('ugcSub').textContent='+'+puntiUgc(kind)+' punti Mimì quando la approviamo.';
+    el('ugcStelleBox').classList.toggle('hidden', look);
+    el('ugcTestoL').textContent= look ? 'Due parole sul tuo look (se vuoi)' : 'Com\'è la tua borsa? (almeno due righe)';
+    el('ugcFotoL').textContent= look ? 'Foto del tuo look (almeno una, fino a '+CONFIG.fotoMax+')' : 'Foto (se vuoi, fino a '+CONFIG.fotoMax+')';
+    el('ugcTesto').value=''; el('ugcConta').textContent='0/600'; el('ugcConsenso').checked=false; el('ugcErr').textContent='';
+    el('ugcConsensoT').textContent=String(S._ugc.consenso||'');
+    stelleHTML(); fotoHTML();
+    openModal('ugcModal', el('ugcBorsa'));
+  }
+  function chiudiUgc(){ if(UGC.busy) return; closeModal('ugcModal'); liberaFoto(); }
+  el('btnRecensione').addEventListener('click', ()=>apriUgc('recensione'));
+  el('btnLook').addEventListener('click', ()=>apriUgc('look'));
+  el('ugcClose').addEventListener('click', chiudiUgc);
+  el('ugcStelle').addEventListener('click', e=>{ const b=e.target.closest('[data-st]'); if(!b) return; UGC.stelle=Number(b.dataset.st); stelleHTML(); const n=el('ugcStelle').querySelector('[data-st="'+UGC.stelle+'"]'); if(n) n.focus(); });
+  el('ugcTesto').addEventListener('input', ()=>{ el('ugcConta').textContent=el('ugcTesto').value.length+'/600'; });
+  el('ugcFotos').addEventListener('click', e=>{
+    if(e.target.closest('#ugcAdd')){ el('ugcFile').click(); return; }
+    const v=e.target.closest('[data-via]'); if(!v || UGC.busy) return;
+    const f=UGC.foto.splice(Number(v.dataset.via),1)[0]; if(f) try{ URL.revokeObjectURL(f.url); }catch(_){}
+    fotoHTML();
+  });
+  // rimpicciolisce nel telefono: meno dati da caricare, e il JPEG ricodificato non porta con se' i dati dello scatto
+  async function rimpicciolisci(file){
+    let src=null, tmp=null;
+    try { src=await createImageBitmap(file, { imageOrientation:'from-image' }); }
+    catch(_){ tmp=URL.createObjectURL(file); src=await new Promise((ok,ko)=>{ const i=new Image(); i.onload=()=>ok(i); i.onerror=()=>ko(new Error('img')); i.src=tmp; }); }
+    try {
+      const w0=src.naturalWidth||src.width, h0=src.naturalHeight||src.height;
+      if(!w0 || !h0) throw new Error('img');
+      const k=Math.min(1, CONFIG.fotoLato/Math.max(w0,h0)), w=Math.max(1,Math.round(w0*k)), h=Math.max(1,Math.round(h0*k));
+      const cv=document.createElement('canvas'); cv.width=w; cv.height=h; cv.getContext('2d').drawImage(src,0,0,w,h);
+      const blob=await new Promise(ok=>cv.toBlob(ok,'image/jpeg',0.85));
+      if(!blob) throw new Error('img');
+      return blob;
+    } finally { if(tmp) URL.revokeObjectURL(tmp); if(src && src.close) src.close(); }
+  }
+  el('ugcFile').addEventListener('change', async e=>{
+    const files=Array.from(e.target.files||[]).slice(0, CONFIG.fotoMax-UGC.foto.length); e.target.value='';
+    for(const file of files){
+      if(!/^image\//.test(file.type||'')){ toast('Puoi aggiungere solo foto'); continue; }
+      try { const blob=await rimpicciolisci(file); UGC.foto.push({ blob, url:URL.createObjectURL(blob), path:null }); }
+      catch(_){ toast('Questa foto non riesco ad aprirla: provane un\'altra'); }
+    }
+    fotoHTML();
+  });
+  function motivoUgc(r){
+    return ({ no_consent:'Per inviare serve il tuo consenso.', unknown_bag:'Questa borsa non la trovo: scegline un\'altra.', bad_rating:'Scegli quante stelle le dai.',
+      short_text:'Scrivi almeno due righe sulla tua borsa.', too_long:'Il testo è troppo lungo.', too_many_photos:'Al massimo '+CONFIG.fotoMax+' foto.',
+      no_photo:'Aggiungi almeno una foto del tuo look.', bad_photo:'Le foto non sono arrivate: toglile e aggiungile di nuovo.', photo_missing:'Le foto non sono arrivate: riprova.',
+      not_bought:'Le recensioni sono per le borse comprate su amimi.it: questa non la trovo nei tuoi ordini.',
+      already_sent: UGC.kind==='look' ? 'Hai già mandato un look con questa borsa.' : 'Hai già recensito questa borsa.',
+      limit:'Per oggi hai inviato tanto: riprova domani.' })[r] || 'Non riesco a inviare in questo momento. Riprova.';
+  }
+  el('ugcForm').addEventListener('submit', async e=>{
+    e.preventDefault();
+    if(UGC.busy || !S || !S._ugc) return;
+    const err=m=>{ el('ugcErr').textContent=m; };
+    const kind=UGC.kind, codice=el('ugcBorsa').value, testo=el('ugcTesto').value.trim(), firma=el('ugcFirma').value.trim();
+    if(!codice) return err('Scegli la borsa.');
+    if(kind==='recensione' && !UGC.stelle) return err('Scegli quante stelle le dai.');
+    if(kind==='recensione' && testo.length<15) return err('Scrivi almeno due righe sulla tua borsa.');
+    if(kind==='look' && !UGC.foto.length) return err('Aggiungi almeno una foto del tuo look.');
+    if(!el('ugcConsenso').checked) return err('Per inviare serve il tuo consenso.');
+    err(''); UGC.busy=true; const b=el('ugcInvia'); b.disabled=true;
+    track('tap','ugc_send');
+    try {
+      // 1. foto: i link firmati li decide loyalty-proxy; si caricano solo quelle non ancora caricate
+      const da=UGC.foto.filter(f=>!f.path);
+      if(da.length){
+        b.textContent='Carico le foto...';
+        const { data } = await api('ugc_upload',{method:'POST',body:{n:da.length, tipo:'image/jpeg'}});
+        if(data && data.state==='off'){ UGC.busy=false; chiudiUgc(); toast('Le recensioni non sono attive in questo momento'); await refresh(false); return; }
+        if(data && data.ok===false && data.reason==='limit') throw new Error('limit');
+        if(!data || data.ok!==true || !Array.isArray(data.uploads) || data.uploads.length!==da.length) throw new Error('upload');
+        for(let i=0;i<da.length;i++){
+          b.textContent='Carico le foto '+(i+1)+'/'+da.length+'...';
+          const up=data.uploads[i];
+          const r=await fetch(String(up.url), { method:'PUT', headers:{ 'content-type':'image/jpeg', 'x-upsert':'false' }, body:da[i].blob });
+          if(!r.ok) throw new Error('upload');
+          da[i].path=String(up.path);
+        }
+      }
+      // 2. invio: stesso idemp finche' non arriva una risposta definitiva
+      b.textContent='Invio...';
+      const idemp=UGC.idemp || (UGC.idemp='u-'+Date.now()+'-'+Math.random().toString(36).slice(2,10));
+      const { data:d } = await api('ugc_submit',{method:'POST',body:{ kind, codice, rating: kind==='recensione' ? UGC.stelle : null, testo, firma, foto:UGC.foto.map(f=>f.path), consenso:true, idemp }});
+      if(d && d.state==='off'){ UGC.busy=false; chiudiUgc(); toast('Le recensioni non sono attive in questo momento'); await refresh(false); return; }
+      if(d && d.ok===true){
+        UGC.idemp=null; UGC.busy=false; chiudiUgc();
+        await refresh(false);
+        reward('Grazie, amica!', '+'+(Number(d.punti)||puntiUgc(kind)), 'punti Mimì quando la approviamo.');
+        parla(false, 'Grazie! La guardiamo presto.');
+        return;
+      }
+      if(d && d.reason){
+        UGC.idemp=null;                                                                      // risposta definitiva: niente e' stato salvato
+        if(d.reason==='photo_missing' || d.reason==='bad_photo') UGC.foto.forEach(f=>{ f.path=null; });   // al prossimo invio si ricaricano
+        err(motivoUgc(d.reason)); return;
+      }
+      throw new Error('rete');
+    } catch(ex){
+      err(ex && ex.message==='limit' ? 'Oggi hai caricato tante foto: riprova domani.' : (ex && ex.message==='upload' ? 'Le foto non si caricano in questo momento. Riprova.' : 'Non riesco a inviare in questo momento. Riprova.'));
+    } finally { UGC.busy=false; b.disabled=false; b.textContent='Invia'; }
+  });
 
   refresh(false);
 })();
