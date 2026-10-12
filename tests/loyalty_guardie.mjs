@@ -271,5 +271,13 @@ t('152 G2-6 prova viva delle presenze: blocco unico che finisce SEMPRE in rollba
 const MOCK = read('tests/loyalty_page_mock.js');
 t('153 G2-6 il server finto sa perdere una risposta, rispondere senza JSON e riconoscere lo stesso idemp', /redeemMode === 'lost'/.test(MOCK) && /if \(idemp && fatti\[idemp\]\) return reply\(\{ ok: true, already: true/.test(MOCK) && /r\.raw !== undefined/.test(MOCK));
 
+console.log('\n== CASI_APERTI 32: ask_ro legge le tabelle loyalty_* (migr 0151) ==');
+const M151 = read('supabase/migrations/0151_ask_ro_loyalty_policy.sql');
+const T151 = ['loyalty_points', 'loyalty_events', 'loyalty_order_credits', 'loyalty_order_reversals', 'loyalty_rewards', 'loyalty_redemptions', 'loyalty_reward_codes', 'loyalty_visits', 'loyalty_profiles', 'loyalty_birthday_awards', 'loyalty_bonus_second', 'loyalty_ui_events'];
+const ASKSQL = read('tests/loyalty_ask_ro_policy.sql');
+t('154 0151: le 12 tabelle loyalty_* precedenti alla 0150 hanno una policy for select to ask_ro', T151.every((tb) => M151.includes("'" + tb + "'")) && /create policy %I on public\.%I for select to ask_ro using \(true\)/.test(M151));
+t('155 0151: nessun grant ne\' scrittura (i limiti a colonne restano quelli decisi)', !/^\s*(grant|revoke|insert|update|delete|alter table)\b/mi.test(M151.replace(/^--.*$/gm, '')));
+t('156 0151: prova viva ask_ro contro owner, colonne vietate ancora vietate, finisce sempre in rollback', /TEST_OK loyalty 0151/.test(ASKSQL) && /birth_day leggibile/.test(ASKSQL));
+
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
