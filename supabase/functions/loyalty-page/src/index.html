@@ -47,18 +47,23 @@
   .skel{display:flex;flex-direction:column;gap:16px;margin-top:22px}
   .skel i{display:block;border-radius:20px;background:linear-gradient(90deg,var(--pink) 25%,var(--paper) 37%,var(--pink) 63%);background-size:400% 100%;animation:shimmer 1.5s ease infinite}
   @keyframes shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
+  .sk-hero{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}   /* Mimi' c'e' gia' mentre si carica, dove sara' nel saluto */
+  .sk-hero img{display:block;width:150px;height:auto;animation:floaty 3.6s ease-in-out infinite}
 
   /* stati: accesso richiesto, programma spento, errore */
   .gate{text-align:center;padding:36px 12px;display:flex;flex-direction:column;align-items:center;gap:12px}
-  .gate img{width:132px;height:auto}
+  .gate img{width:164px;height:auto;animation:floaty 3.6s ease-in-out infinite}
   .gate h1{font-family:var(--display);font-size:32px;font-weight:700;line-height:1.05;text-wrap:balance}
   .gate p{font-size:15px;color:var(--muted);max-width:34ch}
 
-  /* saluto + Mimi */
-  .hero{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px}
+  /* saluto + Mimi': e' lei che parla (il fumetto) e si lascia coccolare con un tocco (owner 12-10: "piu' presente") */
+  .hero{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px}
   .hello{font-family:var(--display);font-size:44px;font-weight:700;line-height:.98}
-  .mood{font-size:14px;color:var(--muted);margin-top:8px;max-width:22ch;min-height:2.9em}
-  .hero-mimi{position:relative;width:128px}
+  .says{position:relative;display:inline-block;margin-top:12px;background:var(--white);border:1.5px solid var(--line);border-radius:16px;padding:10px 13px;font-size:14px;line-height:1.35;max-width:23ch;min-height:calc(4.05em + 23px)}   /* tre righe riservate: cambiando frase il saluto non salta */
+  .says::after{content:"";position:absolute;right:-7px;top:50%;width:12px;height:12px;margin-top:-6px;background:var(--white);border:solid var(--line);border-width:1.5px 1.5px 0 0;transform:rotate(45deg)}
+  .says.new{animation:says .35s var(--ease)}
+  @keyframes says{0%{opacity:0;transform:translateX(-6px) scale(.96)}100%{opacity:1;transform:none}}
+  .hero-mimi{position:relative;display:block;width:150px;background:none;border:none;padding:0;border-radius:24px;cursor:pointer}
   .hero-mimi img{display:block;width:100%;height:auto;animation:floaty 3.6s ease-in-out infinite;filter:drop-shadow(0 6px 6px rgba(163,0,8,.16))}
   .hero-mimi.squee img{animation:squee .7s ease}
   @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
@@ -101,7 +106,7 @@
   .road .goal i{width:24px;height:18px;background-size:12px 12px}
   .road .goal.pop{animation:pop .55s var(--ease)}
   @keyframes pop{0%{transform:translate(-3px,-100%) scale(1)}40%{transform:translate(-3px,-100%) scale(1.4) rotate(-10deg)}100%{transform:translate(-3px,-100%) scale(1)}}
-  .road .runner{position:absolute;width:15%;transform:translate(-50%,-78%);z-index:3}
+  .road .runner{position:absolute;width:19%;transform:translate(-50%,-78%);z-index:3}
   .road .runner img{display:block;width:100%;height:auto;filter:drop-shadow(0 3px 3px rgba(163,0,8,.18));animation:floaty 3.6s ease-in-out infinite}
   .road .runner.go img{animation:step .32s ease-in-out infinite}
   @keyframes step{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-6px) rotate(4deg)}}
@@ -134,6 +139,10 @@
   .act.main{background:var(--red);color:var(--white)}
   .act.main small{color:var(--white)}
   .act.done{background:var(--pink);border-color:var(--pink);color:var(--muted);cursor:default}
+  .act .ico{display:block;height:44px;width:auto;margin:0 auto 7px}
+  .act img.ico{width:44px;object-fit:contain;padding:5px;background:var(--white);border-radius:50%}   /* Mimi' su un tondo bianco: si legge anche sul bottone rosso */
+  .act .ico.carta{width:33px;border-radius:6px;border:1.5px solid var(--red-deep);background:var(--chk) 0 0/50% 37.5%}
+  .act.done .ico{opacity:.5}
 
   /* come prendi i punti */
   .regole{list-style:none;display:grid;gap:11px}
@@ -148,6 +157,14 @@
   .witem img,.witem .noimg{display:block;width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:9px;background:var(--pink)}
   .witem figcaption{font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.25;text-align:center;overflow-wrap:anywhere}
   .empty{background:var(--white);border:1.5px dashed var(--line);border-radius:14px;padding:18px;text-align:center;font-size:14px;color:var(--muted)}
+  .empty.mimi{display:flex;align-items:center;gap:12px;text-align:left}
+  .empty.mimi img{width:60px;height:auto;flex:none}
+
+  /* saluto finale di Mimi' */
+  .ciao{display:flex;align-items:center;gap:14px;border-top:1.5px dashed var(--line);padding-top:22px}
+  .ciao img{width:76px;height:auto;flex:none}
+  .ciao p{font-size:14px;color:var(--muted);min-width:0}
+  .ciao b{display:block;font-family:var(--display);font-size:23px;font-weight:700;line-height:1.1;color:var(--ink);margin-bottom:3px}
 
   /* profilo (compleanno, materiale): solo a flag acceso */
   .prof{background:var(--white);border:1.5px solid var(--line);border-radius:20px;padding:18px 16px}
@@ -170,9 +187,16 @@
   #toast.on{opacity:.96;transform:translateX(-50%) translateY(0)}
 
   /* finestre: memory e premio */
-  .modal{position:fixed;inset:0;background:rgba(43,18,21,.6);display:flex;align-items:center;justify-content:center;z-index:90;opacity:0;visibility:hidden;transition:opacity .25s,visibility 0s .25s;padding:20px}
+  .modal{position:fixed;inset:0;background:rgba(43,18,21,.6);display:flex;z-index:90;opacity:0;visibility:hidden;transition:opacity .25s,visibility 0s .25s;padding:84px 20px 20px;overflow-y:auto}   /* in alto c'e' il posto per Mimi' che sporge; su uno schermo basso la finestra parte dall'alto e si scorre */
   .modal.on{opacity:1;visibility:visible;transition:opacity .25s}
-  .sheet{background:var(--paper);border-radius:20px;padding:24px 20px 18px;width:100%;max-width:360px;text-align:center;box-shadow:0 20px 50px rgba(43,18,21,.35)}
+  .sheet{position:relative;margin:auto;background:var(--paper);border-radius:20px;padding:24px 20px 18px;width:100%;max-width:360px;text-align:center;box-shadow:0 20px 50px rgba(43,18,21,.35)}
+  /* Mimi' nelle finestre: porta lei il premio (in cima, a cavallo del bordo) e guarda la partita dal bordo del memory */
+  .sheet-mimi{width:96px;margin:-84px auto 2px}
+  .sheet-peek{position:absolute;right:14px;top:0;width:68px;transform:translateY(-78%)}
+  .sheet-mimi img,.sheet-peek img{display:block;width:100%;height:auto;filter:drop-shadow(0 4px 4px rgba(163,0,8,.18))}
+  .modal.on .sheet-mimi img{animation:hop .7s var(--ease) .12s both}
+  .sheet-peek.hop img{animation:hop .6s var(--ease)}
+  @keyframes hop{0%,100%{transform:translateY(0)}35%{transform:translateY(-16px) rotate(-5deg)}70%{transform:translateY(0) rotate(3deg)}}
   .sheet h2{font-size:29px;margin-bottom:4px}
   .sheet p{font-size:14px;color:var(--muted)}
   .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:16px 0 10px}
@@ -196,7 +220,9 @@
   .sheet .btn{width:100%;margin-top:14px}
   .btnghost{background:none;border:none;color:var(--muted);font-size:14px;font-weight:600;margin-top:4px;padding:0 12px;min-height:44px;cursor:pointer;text-decoration:underline}
 
-  @media (min-width:420px){ .hero-mimi{width:146px} .hello{font-size:50px} }
+  @media (max-width:359px){ .says{min-height:calc(5.4em + 23px)} }   /* a 320 una frase arriva a quattro righe */
+  @media (min-width:360px){ .hero-mimi,.sk-hero img{width:168px} }
+  @media (min-width:420px){ .hero-mimi,.sk-hero img{width:186px} .hello{font-size:50px} }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{animation:none!important;transition:none!important}
   }
@@ -207,7 +233,7 @@
 
   <!-- stato: caricamento -->
   <div id="loading" class="skel" role="status" aria-label="Carico i tuoi punti Mimì">
-    <i style="height:118px"></i><i style="height:262px"></i><i style="height:76px"></i>
+    <div class="sk-hero"><i style="height:118px"></i><img data-mimi alt=""></div><i style="height:262px"></i><i style="height:76px"></i>
   </div>
 
   <!-- stato: accesso richiesto / programma spento / errore -->
@@ -224,9 +250,9 @@
     <div class="hero">
       <div>
         <h1 class="hello">Ciao,<br>amica</h1>
-        <p class="mood" id="mood"></p>
+        <div class="says"><p id="mood" aria-live="polite"></p></div>
       </div>
-      <div class="hero-mimi" id="mimi"><img data-mimi alt="Mimì, la borsetta di Amimì"></div>
+      <button class="hero-mimi tap" id="mimi" type="button" aria-describedby="mood"><img data-mimi alt=""></button>
     </div>
 
     <div id="evento" class="note hidden" role="status"></div>
@@ -279,10 +305,16 @@
       <h2>Le tue borse</h2>
       <div id="ward"></div>
     </section>
+
+    <footer class="ciao">
+      <img data-mimi alt="">
+      <p><b>A presto, amica</b>Torna a trovarmi ogni giorno: ti aspetto con la coccola e il memory. <a href="/" id="shopFine">Vai allo shop</a></p>
+    </footer>
   </main>
 
   <!-- memory -->
   <div class="modal" id="gameModal" role="dialog" aria-modal="true" aria-labelledby="gameTitle" aria-hidden="true"><div class="sheet">
+    <div class="sheet-peek" id="gameMimi"><img data-mimi alt=""></div>
     <h2 id="gameTitle">Trova le coppie</h2>
     <p id="gameMsg">Abbina le borse uguali e vinci i punti di oggi.</p>
     <div class="grid" id="grid"></div>
@@ -291,6 +323,7 @@
 
   <!-- premio -->
   <div class="modal" id="rewardModal" role="dialog" aria-modal="true" aria-labelledby="rewardTitle" aria-hidden="true"><div class="sheet">
+    <div class="sheet-mimi"><img data-mimi alt=""></div>
     <h2 id="rewardTitle">Complimenti!</h2>
     <div class="prizebig" id="rewardPrize"></div>
     <p id="rewardMsg"></p>
@@ -314,6 +347,7 @@
   };
   const PROXY = '/apps/premia';         // same-origin su amimi.it
   const MIMI = '__MIMI_DATA_URI__';
+  const ICO_MIMI = '<img class="ico" alt="" src="'+MIMI+'">', ICO_CARTA = '<span class="ico carta"></span>';   // le due azioni del giorno: Mimi' e la carta a scacchi del memory
   const el = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));   // tutto cio' che entra in innerHTML passa da qui (audit T7)
   const reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -379,7 +413,7 @@
 
   // === finestre (memory, premio): fuoco dentro all'apertura, Esc chiude, il fuoco torna dov'era ===
   let lastFocus=null;
-  function openModal(id, focusNode){ const m=el(id); lastFocus=document.activeElement; m.classList.add('on'); m.setAttribute('aria-hidden','false'); setTimeout(()=>{ const f=focusNode||m.querySelector('button:not([disabled])'); if(f) f.focus(); },80); }
+  function openModal(id, focusNode){ const m=el(id); lastFocus=document.activeElement; m.classList.add('on'); m.setAttribute('aria-hidden','false'); setTimeout(()=>{ const f=focusNode||m.querySelector('button:not([disabled])'); if(f) f.focus({ preventScroll:true }); m.scrollTop=0; },80); }   // su uno schermo basso la finestra parte dall'alto, con Mimi' intera
   function closeModal(id){ const m=el(id); if(!m.classList.contains('on')) return; m.classList.remove('on'); m.setAttribute('aria-hidden','true'); const back=(lastFocus && lastFocus!==document.body && document.contains(lastFocus)) ? lastFocus : el('redeem'); if(back && back.focus) back.focus(); }   // il bottone di partenza puo' essere stato ridisegnato: si torna alla card dei punti
   document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal('gameModal'); closeModal('rewardModal'); } });
   function reward(title,prize,msg,code){
@@ -410,23 +444,49 @@
     const p = S.points||0;
     countUp(el('pts'), p);
     renderRedeem(); renderCodes(); renderBonus2(); renderBirthday(); renderProfile(); renderRules();
-    // mimi e azioni del giorno
-    el('mood').textContent = !S.coccola_disponibile ? 'Mimì è stata coccolata: oggi è al settimo cielo.' : 'Mimì aspetta la sua coccola di oggi.';
+    // Mimi' e le azioni del giorno
+    parla(false);
+    el('mimi').setAttribute('aria-label', S.coccola_disponibile ? 'Coccola Mimì: +5 punti, una al giorno' : 'Mimì: toccala per sentire cosa dice');
     const bc=el('btnCoccola');
-    if(!S.coccola_disponibile){ bc.className='act done'; bc.innerHTML='Coccolata<small>torna domani</small>'; }
-    else { bc.className='act main tap'; bc.innerHTML='Coccola Mimì<small>+5 punti, una al giorno</small>'; }
+    if(!S.coccola_disponibile){ bc.className='act done'; bc.innerHTML=ICO_MIMI+'Coccolata<small>torna domani</small>'; }
+    else { bc.className='act main tap'; bc.innerHTML=ICO_MIMI+'Coccola Mimì<small>+5 punti, una al giorno</small>'; }
     bc.setAttribute('aria-disabled', String(!S.coccola_disponibile));
     const bg=el('btnGame');
-    if(!S.memory_disponibile){ bg.className='act done'; bg.innerHTML='Giocato<small>torna domani</small>'; }
-    else { bg.className='act tap'; bg.innerHTML='Gioca al memory<small>+5 punti, una al giorno</small>'; }
+    if(!S.memory_disponibile){ bg.className='act done'; bg.innerHTML=ICO_CARTA+'Giocato<small>torna domani</small>'; }
+    else { bg.className='act tap'; bg.innerHTML=ICO_CARTA+'Gioca al memory<small>+5 punti, una al giorno</small>'; }
     bg.setAttribute('aria-disabled', String(!S.memory_disponibile));
     // le tue borse (quelle realmente acquistate)
     const w=el('ward'), items=S.wardrobe;
     if(items===null){ w.className='empty'; w.innerHTML='Le tue borse non sono leggibili in questo momento: riprova fra poco.'; }   // null = non leggibile (audit), diverso da "nessuna borsa"
-    else if(!items||!items.length){ w.className='empty'; w.innerHTML='Le borse che compri su amimi.it appariranno qui. <a href="/" id="shopLink">Guarda le novità</a>'; }
+    else if(!items||!items.length){ w.className='empty mimi'; w.innerHTML='<img alt="" src="'+MIMI+'"><span>Le borse che compri su amimi.it appariranno qui. <a href="/" id="shopLink">Guarda le novità</a></span>'; }
     else { w.className='ward'; w.innerHTML=items.map(it=>'<figure class="witem">'+(it.img ? '<img src="'+esc(thumb(it.img,300))+'" alt="" loading="lazy">' : '<div class="noimg"></div>')+'<figcaption>'+esc(it.titolo||it.codice)+'</figcaption></figure>').join(''); }
     // per ultimo e contenuto: il sentiero e' un disegno, se il browser non riesce a misurarlo sparisce lui e il resto della pagina (riscatto, codici, azioni) resta
     try { renderPath(); } catch(e) { roadStop(); el('walk').classList.add('hidden'); el('pronti').classList.add('hidden'); }
+  }
+
+  // === Mimi' parla (owner 12-10: "piu' presente"). Nel fumetto accanto al saluto dice, in prima persona, la prima frase
+  // che vale per lo stato; a coccola fatta ogni tocco passa alla frase dopo. `una` = frase d'occasione (vittoria al memory,
+  // presenza a un evento, riscatto): resta finche' non cambia lo stato o non la si tocca. Le frasi stanno tutte qui.
+  let fraseK='', fraseI=0, fraseUna='';
+  function frasi(){
+    const rw=reward0(), p=S.points||0, cost=rw ? Number(rw.cost_points) : 0, pc=percento(rw), out=[];
+    const attesa=((S._rewards && S._rewards.redemptions) || []).some(x=>x.status==='pending');
+    const pronto = cost>0 && p>=cost && !attesa;
+    out.push(S.coccola_disponibile ? 'Mi fai la coccola di oggi? Toccami!' : 'Coccolata! Sono al settimo cielo.');
+    if(pronto){ const k=Math.floor(p/cost); out.push(k===1 ? (pc ? 'Hai uno sconto pronto. Lo usiamo?' : 'Hai un premio pronto. Lo usiamo?') : 'Hai '+k+(pc ? ' sconti pronti' : ' premi pronti')+'. Ne usiamo uno?'); }
+    if(S.memory_disponibile) out.push('Giochiamo al memory insieme?');
+    if(cost>0 && !pronto && !attesa){ const m=cost-(p%cost); out.push('Ancora '+(m===1 ? '1 punto' : m+' punti')+' e '+(pc ? 'lo sconto' : 'il premio')+' è tuo.'); }
+    if(!S.coccola_disponibile && !S.memory_disponibile) out.push('Per oggi è tutto. A domani!');
+    return out;
+  }
+  function parla(avanti, una){
+    const f=frasi(), k=f.join('|'), m=el('mood');
+    if(k!==fraseK){ fraseK=k; fraseI=0; fraseUna=''; }
+    else if(avanti){ if(fraseUna) fraseUna=''; else fraseI=(fraseI+1)%f.length; }
+    if(una) fraseUna=una;
+    const t=fraseUna || f[fraseI];
+    if(m.textContent===t) return;
+    m.textContent=t; const b=m.parentNode; b.classList.remove('new'); void b.offsetWidth; b.classList.add('new');   // il fumetto si riaffaccia a ogni frase nuova
   }
 
   // === il sentiero a giro (scelta owner 12-10): un giro = <costo del premio> punti = un premio. Tappe a un quarto, meta' e
@@ -646,7 +706,7 @@
     if(data && data.ok && !data.already){
       evtClear(); S.points=data.points; render();
       evtNote('Presenza registrata', '+'+(data.added||0)+' punti Mimì per '+nome+'.');
-      reward('Eccoti qui!', '+'+(data.added||0), 'punti Mimì per '+nome);
+      reward('Eccoti qui!', '+'+(data.added||0), 'punti Mimì per '+nome); parla(false,'Che bello vederti qui!');
       return;
     }
     if(data && data.ok && data.already){ evtClear(); evtNote('Punti già presi', 'La tua presenza per '+nome+' è già registrata.'); return; }
@@ -660,7 +720,7 @@
 
   // === azioni ===
   let coccolaInCorso=false;                                                               // un tap alla volta: il secondo non parte finche' il primo non ha risposta
-  el('btnCoccola').addEventListener('click', async ()=>{
+  async function coccola(){
     if(!S || !S.coccola_disponibile || coccolaInCorso) return;
     coccolaInCorso=true; track('tap','coccola');
     const { data } = await api('coccola');
@@ -668,7 +728,11 @@
     if(data.done_today){ S.coccola_disponibile=false; if(typeof data.points==='number') S.points=data.points; render(); toast('Mimì è già stata coccolata oggi'); return; }
     if(data.error || typeof data.points!=='number'){ toast('Riprova fra poco'); return; }   // solo un saldo vero dal server muove i punti
     S.points=data.points; S.coccola_disponibile=false; squee(); sparkles(el('mimi'),7); render(); toast('+'+(data.added||5)+' punti Mimì, coccola di oggi fatta');
-  });
+  }
+  el('btnCoccola').addEventListener('click', coccola);
+  // toccare Mimi' e' farle la coccola (stessa strada del bottone: un tap alla volta, una al giorno); a coccola fatta risponde con la frase dopo
+  el('mimi').addEventListener('click', ()=>{ if(!S) return; if(S.coccola_disponibile){ coccola(); return; } squee(); parla(true); });
+  el('shopFine').addEventListener('click', ()=>track('tap','shop'));
 
   // riscatto (bottone disabilitato subito = anti doppio-click; idemp lato server).
   // UN solo token per tentativo: se la risposta si perde (rete, 5xx) il "Riprova" rimanda LO STESSO token, cosi' il
@@ -686,7 +750,7 @@
     if(data && data.ok){
       idempRiscatto=null;
       await refresh(false);
-      if(data.code) reward(percento(rw) ? 'Sconto sbloccato!' : 'Premio sbloccato!', pct, 'Usalo al checkout. Vale una volta e non si somma ad altri sconti.', data.code);
+      if(data.code){ reward(percento(rw) ? 'Sconto sbloccato!' : 'Premio sbloccato!', pct, 'Usalo al checkout. Vale una volta e non si somma ad altri sconti.', data.code); parla(false,'Buono shopping! Poi mi racconti.'); }
       else toast('Riscatto ricevuto, codice in arrivo');
     } else if(data && data.reason){
       idempRiscatto=null;                                                                 // rifiuto con motivo: i punti non sono stati toccati
@@ -737,6 +801,7 @@
         c.classList.add('up'); c.setAttribute('aria-label', faceName(face)); up.push(c);
         if(up.length===2){ lock=true;
           if(up[0].dataset.k===up[1].dataset.k){ up.forEach(x=>{ x.classList.add('done'); x.setAttribute('aria-label', faceName(deck[Number(x.dataset.k)])+', coppia trovata'); }); matched++; up=[]; lock=false;
+            const gm=el('gameMimi'); gm.classList.remove('hop'); void gm.offsetWidth; gm.classList.add('hop');   // Mimi' salta a ogni coppia trovata
             if(matched===CONFIG.coppie) setTimeout(winGame,500);
           } else setTimeout(()=>{ up.forEach(x=>{ x.classList.remove('up'); x.setAttribute('aria-label','Carta coperta'); }); up=[]; lock=false; },850);
         }
@@ -750,7 +815,7 @@
     if(data.done_today){ S.memory_disponibile=false; if(typeof data.points==='number') S.points=data.points; render(); toast('Hai già giocato oggi'); return; }
     if(data.error || typeof data.points!=='number'){ toast('Riprova fra poco'); return; }   // solo un saldo vero dal server muove i punti
     S.points=data.points; S.memory_disponibile=false; render();
-    reward('Hai vinto!', '+'+(data.added||5), 'punti Mimì aggiunti al tuo saldo');
+    reward('Hai vinto!', '+'+(data.added||5), 'punti Mimì aggiunti al tuo saldo'); parla(false,'Che memoria! Brava.');
   }
 
   refresh(false);
