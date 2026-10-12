@@ -35,6 +35,7 @@
     // punti
     zero:    base(0, { wardrobe: [] }),
     p45:     base(45),
+    p95:     base(95),
     p99:     base(99),
     p100:    base(100),
     p257:    base(257, { redemptions: [cod('AMICA12-KTQWJJ', '2026-10-09', null), cod('PREMIA-T20-6KQ4ZM', '2026-09-20', '2026-09-28', 'tessera', 20)] }),
