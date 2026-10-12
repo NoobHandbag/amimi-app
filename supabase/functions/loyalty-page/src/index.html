@@ -57,9 +57,9 @@
   .gate p{font-size:15px;color:var(--muted);max-width:34ch}
 
   /* saluto + Mimi': e' lei che parla (il fumetto) e si lascia coccolare con un tocco (owner 12-10: "piu' presente") */
-  .hero{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}
+  .hero{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px}
   .hello{font-family:var(--display);font-size:44px;font-weight:700;line-height:.98}
-  .says{position:relative;display:inline-block;margin-top:12px;background:var(--white);border:1.5px solid var(--line);border-radius:16px;padding:10px 13px;font-size:14px;line-height:1.35;max-width:23ch;min-height:calc(2.7em + 23px)}
+  .says{position:relative;display:inline-block;margin-top:12px;background:var(--white);border:1.5px solid var(--line);border-radius:16px;padding:10px 13px;font-size:14px;line-height:1.35;max-width:23ch;min-height:calc(4.05em + 23px)}   /* tre righe riservate: cambiando frase il saluto non salta */
   .says::after{content:"";position:absolute;right:-7px;top:50%;width:12px;height:12px;margin-top:-6px;background:var(--white);border:solid var(--line);border-width:1.5px 1.5px 0 0;transform:rotate(45deg)}
   .says.new{animation:says .35s var(--ease)}
   @keyframes says{0%{opacity:0;transform:translateX(-6px) scale(.96)}100%{opacity:1;transform:none}}
@@ -220,6 +220,7 @@
   .sheet .btn{width:100%;margin-top:14px}
   .btnghost{background:none;border:none;color:var(--muted);font-size:14px;font-weight:600;margin-top:4px;padding:0 12px;min-height:44px;cursor:pointer;text-decoration:underline}
 
+  @media (max-width:359px){ .says{min-height:calc(5.4em + 23px)} }   /* a 320 una frase arriva a quattro righe */
   @media (min-width:360px){ .hero-mimi,.sk-hero img{width:168px} }
   @media (min-width:420px){ .hero-mimi,.sk-hero img{width:186px} .hello{font-size:50px} }
   @media (prefers-reduced-motion:reduce){
@@ -249,7 +250,7 @@
     <div class="hero">
       <div>
         <h1 class="hello">Ciao,<br>amica</h1>
-        <div class="says"><p id="mood"></p></div>
+        <div class="says"><p id="mood" aria-live="polite"></p></div>
       </div>
       <button class="hero-mimi tap" id="mimi" type="button" aria-describedby="mood"><img data-mimi alt=""></button>
     </div>
@@ -307,7 +308,7 @@
 
     <footer class="ciao">
       <img data-mimi alt="">
-      <p><b>A presto, amica</b>Torna a trovarmi domani: ti aspetto con la coccola e il memory. <a href="/" id="shopFine">Vai allo shop</a></p>
+      <p><b>A presto, amica</b>Torna a trovarmi ogni giorno: ti aspetto con la coccola e il memory. <a href="/" id="shopFine">Vai allo shop</a></p>
     </footer>
   </main>
 
@@ -412,7 +413,7 @@
 
   // === finestre (memory, premio): fuoco dentro all'apertura, Esc chiude, il fuoco torna dov'era ===
   let lastFocus=null;
-  function openModal(id, focusNode){ const m=el(id); lastFocus=document.activeElement; m.classList.add('on'); m.setAttribute('aria-hidden','false'); setTimeout(()=>{ const f=focusNode||m.querySelector('button:not([disabled])'); if(f) f.focus(); },80); }
+  function openModal(id, focusNode){ const m=el(id); lastFocus=document.activeElement; m.classList.add('on'); m.setAttribute('aria-hidden','false'); setTimeout(()=>{ const f=focusNode||m.querySelector('button:not([disabled])'); if(f) f.focus({ preventScroll:true }); m.scrollTop=0; },80); }   // su uno schermo basso la finestra parte dall'alto, con Mimi' intera
   function closeModal(id){ const m=el(id); if(!m.classList.contains('on')) return; m.classList.remove('on'); m.setAttribute('aria-hidden','true'); const back=(lastFocus && lastFocus!==document.body && document.contains(lastFocus)) ? lastFocus : el('redeem'); if(back && back.focus) back.focus(); }   // il bottone di partenza puo' essere stato ridisegnato: si torna alla card dei punti
   document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal('gameModal'); closeModal('rewardModal'); } });
   function reward(title,prize,msg,code){
@@ -471,11 +472,11 @@
     const rw=reward0(), p=S.points||0, cost=rw ? Number(rw.cost_points) : 0, pc=percento(rw), out=[];
     const attesa=((S._rewards && S._rewards.redemptions) || []).some(x=>x.status==='pending');
     const pronto = cost>0 && p>=cost && !attesa;
-    out.push(S.coccola_disponibile ? 'Mi fai la coccola di oggi? Toccami!' : 'Che bella coccola! Oggi sono al settimo cielo.');
-    if(pronto) out.push(pc ? 'Hai uno sconto pronto. Lo usiamo?' : 'Hai un premio pronto. Lo usiamo?');
-    if(S.memory_disponibile) out.push('Giochiamo al memory con le nostre borse?');
+    out.push(S.coccola_disponibile ? 'Mi fai la coccola di oggi? Toccami!' : 'Coccolata! Sono al settimo cielo.');
+    if(pronto){ const k=Math.floor(p/cost); out.push(k===1 ? (pc ? 'Hai uno sconto pronto. Lo usiamo?' : 'Hai un premio pronto. Lo usiamo?') : 'Hai '+k+(pc ? ' sconti pronti' : ' premi pronti')+'. Ne usiamo uno?'); }
+    if(S.memory_disponibile) out.push('Giochiamo al memory insieme?');
     if(cost>0 && !pronto && !attesa){ const m=cost-(p%cost); out.push('Ancora '+(m===1 ? '1 punto' : m+' punti')+' e '+(pc ? 'lo sconto' : 'il premio')+' è tuo.'); }
-    if(!S.coccola_disponibile && !S.memory_disponibile) out.push('Per oggi abbiamo fatto tutto. Ti aspetto domani!');
+    if(!S.coccola_disponibile && !S.memory_disponibile) out.push('Per oggi è tutto. A domani!');
     return out;
   }
   function parla(avanti, una){

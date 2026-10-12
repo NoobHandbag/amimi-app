@@ -64,6 +64,7 @@
     fatti:        base(60, { coccola: false, memory: false }),
     // Mimi' parla: coccola gia' fatta (cosi' il tocco cambia frase invece di fare la coccola) con un premio pronto
     mimi_pronto:  base(130, { coccola: false }),
+    mimi_due:     base(257, { coccola: false }),
     mimi_premio:  base(120, { coccola: false, rewards: [{ key: 'omaggio', label: 'un portacarte in omaggio', cost_points: 100, kind: 'gift', value: null, sort: 1 }] }),
     coccola_gia:  base(60, { coccolaMode: 'done' }),
     coccola_ko:   base(60, { coccolaMode: 'error' }),
