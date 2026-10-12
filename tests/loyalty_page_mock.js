@@ -35,13 +35,14 @@
     // punti
     zero:    base(0, { wardrobe: [] }),
     p45:     base(45),
+    p95:     base(95),
     p99:     base(99),
     p100:    base(100),
     p257:    base(257, { redemptions: [cod('AMICA12-KTQWJJ', '2026-10-09', null), cod('PREMIA-T20-6KQ4ZM', '2026-09-20', '2026-09-28', 'tessera', 20)] }),
     p980:    base(980, { redemptions: tanti(25), wardrobe: borse(9) }),
     // riscatto
     pending:        base(57, { redemptions: [{ reward_key: 'amica12', cost_points: 100, status: 'pending', discount_code: null, created_at: '2026-10-11T08:00:00+00:00', kind: 'percentage', value: 12, used_at: null }] }),
-    riscatto_vuoto: base(130, { redeemMode: 'pending' }),
+    riscatto_vuoto: base(230, { redeemMode: 'pending' }),
     riscatto_ko:    base(130, { redeemMode: 'error' }),
     riscatto_poco:  base(130, { redeemMode: 'insufficient' }),
     premi_off:      base(180, { rewardsOff: true }),
@@ -91,6 +92,10 @@
   };
 
   var qs = new URLSearchParams(location.search);
+  // ?raf=timer: fotogrammi a orologio (16 ms), cosi' la camminata si prova davvero anche quando il browser non disegna;
+  // ?raf=fermo: i fotogrammi non arrivano mai (scheda in secondo piano): resta solo l'arrivo garantito dai timer.
+  if (qs.get('raf') === 'timer') { window.requestAnimationFrame = function (cb) { return setTimeout(function () { cb(performance.now()); }, 16); }; window.cancelAnimationFrame = function (id) { clearTimeout(id); }; }
+  if (qs.get('raf') === 'fermo') { window.requestAnimationFrame = function () { return 0; }; window.cancelAnimationFrame = function () {}; }
   var name = qs.get('s') || 'p257';
   var db = JSON.parse(JSON.stringify(SC[name] || SC.p257));
   var real = window.fetch;

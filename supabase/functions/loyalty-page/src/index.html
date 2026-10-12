@@ -6,7 +6,7 @@
 <title>I tuoi punti Mimì · Amimì</title>
 <!--
   Area Membri Amimi' - PRODUZIONE (dati REALI via App Proxy). Pagina nuova dal 2026-10-11 (call del 09-10):
-  solo punti Mimi' (niente livelli, niente timbri), percorso con le bandierine a scacchi, elenco di tutti i codici
+  solo punti Mimi' (niente livelli, niente timbri), sentiero a giro con la bandierina a scacchi al traguardo (scelta owner 12-10), elenco di tutti i codici
   riscattati, memory con le foto vere delle borse, presenza agli eventi dal QR (?evento=CODICE).
   Va servita SAME-ORIGIN su amimi.it, cosi' le fetch a /apps/premia/* portano il logged_in_customer_id firmato da
   Shopify (nessun secondo login). Servita da un altro dominio NON funziona: il cookie di login e' su amimi.it.
@@ -87,17 +87,27 @@
   .pts{display:flex;align-items:baseline;justify-content:center;gap:10px}
   .pts .n{font-family:var(--display);font-size:68px;font-weight:700;color:var(--red);line-height:.85;font-variant-numeric:tabular-nums}
   .pts .l{font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-  .walk{position:relative;height:106px;margin:0 26px}
-  .walk .rail{position:absolute;left:0;right:0;bottom:22px;height:14px;border-radius:99px;background:var(--pink);box-shadow:inset 0 0 0 1.5px var(--line);overflow:hidden}
-  .walk .rail i{display:block;height:100%;width:0;background:var(--red);border-radius:99px;transition:width 1s var(--ease)}
-  .walk .ms{position:absolute;bottom:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center}
-  .walk .ms .flag{margin-bottom:14px;margin-left:16px}
-  .walk .ms span{font-size:12px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums;line-height:22px}
-  .walk .ms.on span{color:var(--red-deep)}
-  .walk .walker{position:absolute;bottom:31px;left:0;transform:translateX(-50%);transition:left 1s var(--ease);z-index:3}
-  .walk .walker img{display:block;width:48px;height:auto;filter:drop-shadow(0 3px 3px rgba(163,0,8,.18))}
-  .walk .walker.go img{animation:step .32s ease-in-out infinite}
-  @keyframes step{0%,100%{transform:translateY(0) rotate(-3deg)}50%{transform:translateY(-5px) rotate(3deg)}}
+  /* il sentiero: un giro vale un premio. Mimi' lo percorre, le tappe sono a un quarto, meta' e tre quarti, la bandierina grande e' il traguardo */
+  .road{position:relative;width:100%;max-width:340px;margin:0 auto;aspect-ratio:320/260}
+  .road svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+  .road .r-bg{fill:none;stroke:var(--pink);stroke-width:13;stroke-linecap:round}
+  .road .r-fg{fill:none;stroke:var(--red);stroke-width:13;stroke-linecap:round}
+  .road .r-dash{fill:none;stroke:var(--white);stroke-width:2;stroke-dasharray:5 7;stroke-linecap:round}
+  .road .stop circle{fill:var(--white);stroke:var(--line);stroke-width:2.5}
+  .road .stop.on circle{fill:var(--red);stroke:var(--red-deep)}
+  .road .lbl{font-family:var(--body);font-size:12px;font-weight:600;fill:var(--muted);paint-order:stroke;stroke:var(--white);stroke-width:4px;stroke-linejoin:round;font-variant-numeric:tabular-nums}
+  .road .lbl.on{fill:var(--red-deep)}
+  .road .goal{position:absolute;width:30px;height:40px;transform:translate(-3px,-100%);z-index:2}
+  .road .goal i{width:24px;height:18px;background-size:12px 12px}
+  .road .goal.pop{animation:pop .55s var(--ease)}
+  @keyframes pop{0%{transform:translate(-3px,-100%) scale(1)}40%{transform:translate(-3px,-100%) scale(1.4) rotate(-10deg)}100%{transform:translate(-3px,-100%) scale(1)}}
+  .road .runner{position:absolute;width:15%;transform:translate(-50%,-78%);z-index:3}
+  .road .runner img{display:block;width:100%;height:auto;filter:drop-shadow(0 3px 3px rgba(163,0,8,.18));animation:floaty 3.6s ease-in-out infinite}
+  .road .runner.go img{animation:step .32s ease-in-out infinite}
+  @keyframes step{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-6px) rotate(4deg)}}
+  .pronti{display:flex;align-items:center;justify-content:center;gap:2px;font-size:13px;color:var(--muted)}
+  .pronti .flag{width:20px;height:26px}
+  .pronti em{font-style:normal;font-weight:600;color:var(--red-deep);margin-left:6px}
   .status{text-align:center;font-size:15px}
   .status b{color:var(--red-deep)}
   .rbtn{background:var(--red);color:var(--white);border:none;border-radius:99px;font-size:15px;font-weight:700;padding:15px 18px;cursor:pointer;width:100%;transition:transform .12s,opacity .2s}
@@ -224,7 +234,17 @@
 
     <section class="percorso" id="redeem" aria-label="I tuoi punti Mimì" tabindex="-1">
       <div class="pts"><span class="n" id="pts">0</span><span class="l">punti Mimì</span></div>
-      <div class="walk hidden" id="walk" role="img"></div>
+      <div class="road hidden" id="walk" role="img">
+        <svg viewBox="0 0 320 260" aria-hidden="true">
+          <path class="r-bg" d="M28 232 C 110 246, 250 244, 284 204 C 308 172, 236 152, 160 156 C 96 160, 34 148, 44 108 C 52 74, 130 68, 190 74 C 236 78, 266 66, 286 46"/>
+          <path class="r-fg" pathLength="100" stroke-dasharray="0 100" d="M28 232 C 110 246, 250 244, 284 204 C 308 172, 236 152, 160 156 C 96 160, 34 148, 44 108 C 52 74, 130 68, 190 74 C 236 78, 266 66, 286 46"/>
+          <path class="r-dash" d="M28 232 C 110 246, 250 244, 284 204 C 308 172, 236 152, 160 156 C 96 160, 34 148, 44 108 C 52 74, 130 68, 190 74 C 236 78, 266 66, 286 46"/>
+          <g id="roadMarks"></g>
+        </svg>
+        <span class="flag goal"><i></i></span>
+        <div class="runner"><img data-mimi alt=""></div>
+      </div>
+      <div class="pronti hidden" id="pronti"></div>
       <p class="status" id="pathStatus"></p>
       <div id="redeemBox"></div>
       <div id="bonus2" class="bonus2 hidden"></div>
@@ -286,7 +306,6 @@
 
   // === CONFIG (i punti veri, il costo e il valore del premio arrivano dall'edge) ===
   const CONFIG = {
-    traguardi: 3,          // bandierine visibili sul percorso: le ultime due raggiunte e la prossima
     codiciVisibili: 3,     // codici mostrati prima di "Mostra tutti"
     coppie: 3,             // coppie del memory
     eventoOre: 12,         // per quante ore il codice di un QR resta in attesa dell'accesso
@@ -390,7 +409,7 @@
     el('loading').classList.add('hidden'); el('gate').classList.add('hidden'); el('app').classList.remove('hidden');
     const p = S.points||0;
     countUp(el('pts'), p);
-    renderPath(); renderRedeem(); renderCodes(); renderBonus2(); renderBirthday(); renderProfile(); renderRules();
+    renderRedeem(); renderCodes(); renderBonus2(); renderBirthday(); renderProfile(); renderRules();
     // mimi e azioni del giorno
     el('mood').textContent = !S.coccola_disponibile ? 'Mimì è stata coccolata: oggi è al settimo cielo.' : 'Mimì aspetta la sua coccola di oggi.';
     const bc=el('btnCoccola');
@@ -406,28 +425,68 @@
     if(items===null){ w.className='empty'; w.innerHTML='Le tue borse non sono leggibili in questo momento: riprova fra poco.'; }   // null = non leggibile (audit), diverso da "nessuna borsa"
     else if(!items||!items.length){ w.className='empty'; w.innerHTML='Le borse che compri su amimi.it appariranno qui. <a href="/" id="shopLink">Guarda le novità</a>'; }
     else { w.className='ward'; w.innerHTML=items.map(it=>'<figure class="witem">'+(it.img ? '<img src="'+esc(thumb(it.img,300))+'" alt="" loading="lazy">' : '<div class="noimg"></div>')+'<figcaption>'+esc(it.titolo||it.codice)+'</figcaption></figure>').join(''); }
+    // per ultimo e contenuto: il sentiero e' un disegno, se il browser non riesce a misurarlo sparisce lui e il resto della pagina (riscatto, codici, azioni) resta
+    try { renderPath(); } catch(e) { roadStop(); el('walk').classList.add('hidden'); el('pronti').classList.add('hidden'); }
   }
 
-  // === percorso: una bandierina a scacchi ogni <costo del premio> punti. Finestra di tre traguardi che scorre. ===
+  // === il sentiero a giro (scelta owner 12-10): un giro = <costo del premio> punti = un premio. Tappe a un quarto, meta' e
+  // tre quarti del costo, bandierina grande al traguardo. Mimi' sta alla FRAZIONE del giro in corso (data-f, da 0 a 1):
+  // riscattare scala un giro intero, quindi lei resta dov'e' e cala solo il numero di premi pronti. ===
+  const ROAD_VB = [320, 260];
+  let roadC=null, roadRaf=0, roadEnd=0;                                                   // roadC = punti/costo gia' disegnati (giri, con la virgola)
+  // Frazione del giro. A un multiplo esatto del costo Mimi' e' SUL traguardo solo quando e' un ARRIVO (saldo fermo li');
+  // mentre cammina, un numero intero di giri e' la partenza del giro dopo: senza questa distinzione chi apre la pagina con
+  // 257 punti vedrebbe per un attimo la bandierina festeggiare un traguardo che non sta raggiungendo.
+  function giro(c, arrivo){ const f=c-Math.floor(c); return (arrivo && c>0 && f<1e-9) ? 1 : f; }
+  function sparkAt(host,left,top){ if(reduced) return; for(let i=0;i<5;i++){ setTimeout(()=>{ const z=document.createElement('i'); z.className='spark'; z.style.width=z.style.height='12px'; z.style.left='calc('+left+' + '+(Math.random()*26-6)+'px)'; z.style.top='calc('+top+' - '+(16+Math.random()*16)+'px)'; host.appendChild(z); setTimeout(()=>z.remove(),1300); }, i*70); } }
+  function festa(w){ if(reduced) return; const goal=w.querySelector('.goal'); goal.classList.remove('pop'); void goal.offsetWidth; goal.classList.add('pop'); sparkAt(w, goal.style.left, goal.style.top); }   // scatto della bandierina e scintille
+  function roadDraw(w, c, arrivo, quiet){
+    const f=giro(c, arrivo), pt=w._path.getPointAtLength(w._len*f), run=w.querySelector('.runner');
+    run.style.left=(pt.x/ROAD_VB[0]*100)+'%'; run.style.top=(pt.y/ROAD_VB[1]*100)+'%';
+    w.querySelector('.r-fg').setAttribute('stroke-dasharray',(f*100).toFixed(2)+' 100');
+    w.querySelectorAll('.stop').forEach(z=>{ const on=f*100>=Number(z.dataset.at)-0.01; z.classList.toggle('on',on); z.querySelector('.lbl').classList.toggle('on',on); });
+    const goal=w.querySelector('.goal'), on=f>=1, era=goal.classList.contains('on');
+    goal.classList.toggle('on',on); w.querySelector('.lbl.fine').classList.toggle('on',on);
+    if(on && !era && !quiet) festa(w);
+    w.dataset.f=f.toFixed(4);
+  }
+  function roadStop(){ cancelAnimationFrame(roadRaf); clearTimeout(roadEnd); }
   function renderPath(){
-    const w=el('walk'), rw=reward0(), p=S.points||0;
-    if(!rw || !(Number(rw.cost_points)>0)){ w.classList.add('hidden'); return; }   // senza catalogo premi restano solo i punti
-    const cost=Number(rw.cost_points), n=CONFIG.traguardi, k=Math.floor(p/cost), base=Math.max(0,k-(n-1))*cost;
-    const pct=Math.max(0,Math.min(1,(p-base)/(n*cost)))*100;
-    if(!w.dataset.built){
-      let h='<div class="rail"><i></i></div>';
-      for(let i=1;i<=n;i++) h+='<div class="ms" style="left:'+(i/n*100).toFixed(3)+'%"><span class="flag"><i></i></span><span></span></div>';
-      w.innerHTML=h+'<div class="walker"><img alt="" src="'+MIMI+'"></div>';
-      w.dataset.built='1';
+    const w=el('walk'), pr=el('pronti'), rw=reward0(), p=S.points||0;
+    if(!rw || !(Number(rw.cost_points)>0)){ roadStop(); w.classList.add('hidden'); pr.classList.add('hidden'); return; }   // senza catalogo premi restano solo i punti
+    const cost=Number(rw.cost_points), k=Math.floor(p/cost), c=p/cost, resto=p%cost, sconto=percento(rw)>0;
+    const attesa=((S._rewards && S._rewards.redemptions) || []).some(x=>x.status==='pending');   // un riscatto in attesa blocca il prossimo: niente "pronti" finche' non arriva il codice
+    w.classList.remove('hidden');                                                         // prima visibile, poi si misura il tracciato
+    if(w.dataset.cost!==String(cost)){
+      const path=w.querySelector('.r-bg'), len=path.getTotalLength(); w._path=path; w._len=len;
+      let h='';
+      [0.25,0.5,0.75].forEach(q=>{ const pt=path.getPointAtLength(len*q); h+='<g class="stop" data-at="'+(q*100)+'"><circle cx="'+pt.x.toFixed(1)+'" cy="'+pt.y.toFixed(1)+'" r="7"/><text class="lbl" x="'+pt.x.toFixed(1)+'" y="'+(pt.y+(q===0.5?-15:22)).toFixed(1)+'" text-anchor="middle">'+Math.round(cost*q)+'</text></g>'; });
+      const end=path.getPointAtLength(len), goal=w.querySelector('.goal');
+      h+='<text class="lbl fine" x="'+(end.x+2).toFixed(1)+'" y="'+(end.y+30).toFixed(1)+'" text-anchor="middle">'+cost+'</text>';   // sotto la fine della strada, fuori dal tracciato
+      el('roadMarks').innerHTML=h;
+      goal.style.left=(end.x/ROAD_VB[0]*100)+'%'; goal.style.top=(end.y/ROAD_VB[1]*100)+'%';
+      w.dataset.cost=String(cost);
     }
-    w.classList.remove('hidden');
-    w.querySelectorAll('.ms').forEach((ms,i)=>{ const val=base+(i+1)*cost, on=p>=val; ms.classList.toggle('on',on); ms.querySelector('.flag').classList.toggle('on',on); ms.lastElementChild.textContent=val; });
-    const walker=w.querySelector('.walker'), fill=w.querySelector('.rail i');
-    const move=()=>{ fill.style.width=pct+'%'; walker.style.left=pct+'%'; };
-    if(w.dataset.pct===undefined){ setTimeout(move,60); } else move();   // al primo disegno Mimi' parte da zero e cammina fino al suo punto
-    if(!reduced && w.dataset.pct!==String(pct)){ walker.classList.add('go'); clearTimeout(walker._t); walker._t=setTimeout(()=>walker.classList.remove('go'),1000); }
-    w.dataset.pct=String(pct);
-    w.setAttribute('aria-label','Hai '+p+' punti Mimì. Prossima bandierina a '+((k+1)*cost)+' punti.');
+    // premi pronti: una bandierina per giro completato (al massimo cinque disegnate, il numero e' scritto)
+    if(k>0 && !attesa){ let h=''; for(let i=0;i<Math.min(k,5);i++) h+='<span class="flag on"><i></i></span>'; pr.innerHTML=h+'<em>'+(k===1 ? (sconto?'1 sconto pronto':'1 premio pronto') : k+(sconto?' sconti pronti':' premi pronti'))+'</em>'; pr.classList.remove('hidden'); }
+    else { pr.innerHTML=''; pr.classList.add('hidden'); }
+    w.setAttribute('aria-label','Hai '+p+(p===1?' punto':' punti')+' Mimì. '+((p>0 && resto===0) ? 'Sei al traguardo del giro.' : 'Sei a '+resto+(resto===1?' punto':' punti')+' su '+cost+' del giro verso il prossimo '+(sconto?'sconto':'premio')+'.'));
+    // movimento: la prima volta dall'inizio del giro in corso; poi solo in avanti. Un saldo che scende (riscatto) non fa camminare all'indietro.
+    const run=w.querySelector('.runner');
+    roadStop();
+    const from = roadC===null ? ((p>0 && resto===0) ? c-1 : Math.floor(c)) : roadC;
+    const fine=()=>{ roadStop(); roadC=c; roadDraw(w,c,true,false); run.classList.remove('go'); };
+    if(reduced || c<=from){ roadC=c; roadDraw(w,c,true,true); run.classList.remove('go'); return; }
+    const d=Math.max(650, Math.min(2400, (c-from)*2000)), t0=performance.now();
+    run.classList.add('go');
+    (function step(t){
+      const x=Math.min(1,(t-t0)/d), e=x<.5 ? 2*x*x : 1-Math.pow(-2*x+2,2)/2, prima=roadC===null ? from : roadC;
+      roadC=from+(c-from)*e;                                                              // roadC segue Mimi': se arriva un altro saldo a meta' strada si riparte da dov'e'
+      roadDraw(w, roadC, false, false);
+      if(x<1 && Math.floor(roadC)>Math.floor(prima)) festa(w);                            // ha passato il traguardo in corsa (es. da 95 a 110): si festeggia al passaggio
+      if(x<1) roadRaf=requestAnimationFrame(step); else fine();
+    })(t0);
+    roadEnd=setTimeout(fine, d+250);                                                      // arrivo garantito anche a fotogrammi fermi (scheda in secondo piano)
   }
 
   // === riscatto (punti -> codice sconto). Catalogo e riscatti dall'edge (azioni rewards/redeem). ===
