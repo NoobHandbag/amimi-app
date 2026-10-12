@@ -109,9 +109,9 @@ const B2 = '// ==== PURE:lead-inbound BEGIN ====', E2 = '// ==== PURE:lead-inbou
 const a2 = src.indexOf(B2), b2 = src.indexOf(E2);
 if (a2 < 0 || b2 < 0) { console.error('marcatori PURE:lead-inbound non trovati in lead-outreach'); process.exit(1); }
 const TMP2 = `${ROOT}tests/_leadinbound.tmp.ts`;
-writeFileSync(TMP2, `${src.slice(a2 + B2.length, b2).trim()}\nexport { indirizzoDi, tagliaCitazione, classificaInbound, jsonSafe, oggiRoma, prossimoFollowUp };\n`, 'utf8');
-let indirizzoDi, tagliaCitazione, classificaInbound, jsonSafe, oggiRoma, prossimoFollowUp;
-try { ({ indirizzoDi, tagliaCitazione, classificaInbound, jsonSafe, oggiRoma, prossimoFollowUp } = await import(pathToFileURL(TMP2).href)); }
+writeFileSync(TMP2, `${src.slice(a2 + B2.length, b2).trim()}\nexport { indirizzoDi, tagliaCitazione, classificaInbound, jsonSafe, oggiRoma, prossimoFollowUp, mittenteVero };\n`, 'utf8');
+let indirizzoDi, tagliaCitazione, classificaInbound, jsonSafe, oggiRoma, prossimoFollowUp, mittenteVero;
+try { ({ indirizzoDi, tagliaCitazione, classificaInbound, jsonSafe, oggiRoma, prossimoFollowUp, mittenteVero } = await import(pathToFileURL(TMP2).href)); }
 finally { try { unlinkSync(TMP2); } catch { /* niente */ } }
 const mig148 = readFileSync(`${ROOT}supabase/migrations/0148_lead_blocco2_cron.sql`, 'utf8').replace(/\r\n/g, '\n');
 const NOSTRA = '\n\nIl giorno lun 5 ott 2026 alle ore 10:12 Amimì Milano <info@amimi.it> ha scritto:\n> Gentile team,\n> ' + OPT;

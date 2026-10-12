@@ -3,6 +3,8 @@
 // Riusa i loro SCHEMI, non il loro codice: Gemini in JSON mode come cs-assist (MAI thinkingConfig, tetto
 // token alto: i token di ragionamento contano dentro maxOutputTokens), Gmail API da info@amimi.it col
 // service account di cs-send (app_flags.cs_gmail_sa_key, domain-wide delegation con gmail.send).
+// v9 (2026-10-12): la risposta di un negozio con DMARC rigido arriva dal gruppo wholesale@ con il From riscritto;
+// si legge l'autore da X-Original-From / Reply-To (mittenteVero) invece di scartarla come posta nostra. CASI_APERTI 29.
 // v8 (2026-10-08): azione `prova`. L'invio vero rifiuta i destinatari @amimi.it, quindi una prova mandata a info@
 // tornava 422 e non partiva; la prova manda il testo del compositore alla casella di chi e' loggato, senza toccare
 // bozza, tocchi ne' tetto. A capo e caratteri di controllo dell'oggetto diventano uno spazio (bozza, prova, invio).
@@ -76,6 +78,17 @@ const BUDGET_MS = 90_000;      // oltre, il giro si ferma e riprende al prossimo
 function indirizzoDi(from: string): string {
   const m = /<([^<>\s]+@[^<>\s]+)>/.exec(from) ?? /([^\s<>"']+@[^\s<>"']+)/.exec(from);
   return (m ? m[1] : '').trim().toLowerCase();
+}
+// Google Groups (wholesale@) riscrive il From dei mittenti con DMARC rigido con l'indirizzo del gruppo e lascia
+// l'autore in X-Original-From / Reply-To. Solo in quel caso si legge l'autore vero; un From @amimi.it qualunque
+// altro resta tale (collega, inoltro interno) e viene scartato come prima.
+function mittenteVero(from: string, xOriginalFrom: string, replyTo: string): string {
+  if (indirizzoDi(from) !== 'wholesale@amimi.it') return from;
+  for (const c of [xOriginalFrom, replyTo]) {
+    const a = indirizzoDi(c);
+    if (a && !a.endsWith('@amimi.it')) return c;
+  }
+  return from;
 }
 // toglie il testo citato (la nostra email sotto la risposta): senza, il nostro "mi risponda no grazie" citato
 // farebbe scattare un opt-out a ogni risposta
@@ -444,7 +457,7 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
   const cand: { id: string; threadId: string; accountId: string; at: number }[] = [];
   for (const th of threads) {
     if (Date.now() - t0 > BUDGET_MS) { esito.thread_troncati = true; break; }
-    const r = await fetch(`${GMAIL}/threads/${encodeURIComponent(th)}?format=metadata&metadataHeaders=From`, auth);
+    const r = await fetch(`${GMAIL}/threads/${encodeURIComponent(th)}?format=metadata&metadataHeaders=From&metadataHeaders=X-Original-From&metadataHeaders=Reply-To`, auth);
     if (r.status === 404) { letti.add(th); continue; }   // thread cancellato dalla casella: niente da leggere
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(`Gmail threads.get ${r.status}: ${JSON.stringify(j).slice(0, 160)}`);
@@ -454,7 +467,8 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
       if (lbl.includes('SENT') || lbl.includes('DRAFT')) continue;
       // un messaggio da @amimi.it (collega in copia, inoltro interno) non e' una risposta: scartato QUI, cosi' non
       // occupa a ogni giro un posto fra le risposte da scrivere
-      const da = (m.payload?.headers ?? []).find((h) => h.name?.toLowerCase() === 'from')?.value ?? '';
+      const mh = (n: string) => (m.payload?.headers ?? []).find((h) => h.name?.toLowerCase() === n)?.value ?? '';
+      const da = mittenteVero(mh('from'), mh('x-original-from'), mh('reply-to'));
       if (indirizzoDi(da).endsWith('@amimi.it')) continue;
       cand.push({ id: m.id, threadId: th, accountId: threadAcc.get(th)!, at: Number(m.internalDate ?? Date.now()) });
     }
@@ -489,7 +503,7 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
     if (!r.ok) { illeggibile(`Gmail messages.get ${r.status}`); continue; }
     const hs = ((m as { payload?: { headers?: { name?: string; value?: string }[] } }).payload?.headers ?? []);
     const hdr = (n: string) => hs.find((h) => h.name?.toLowerCase() === n)?.value ?? '';
-    const from = hdr('from');
+    const from = mittenteVero(hdr('from'), hdr('x-original-from'), hdr('reply-to'));
     // un messaggio da @amimi.it nel thread (collega in copia, inoltro interno) non e' una risposta del negozio
     if (indirizzoDi(from).endsWith('@amimi.it')) continue;
     const testo = corpoMessaggio((m as { payload?: GPart }).payload);
