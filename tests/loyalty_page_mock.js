@@ -62,6 +62,9 @@
     mezzanotte:     base(40, { redemptions: [{ reward_key: 'amica12', cost_points: 100, status: 'fulfilled', discount_code: 'AMICA12-NOTTE1', created_at: '2026-10-11T22:30:00+00:00', created_day: '2026-10-12', kind: 'percentage', value: 12, used_at: '2026-10-12T22:40:00+00:00', used_day: '2026-10-13' }] }),
     // azioni del giorno
     fatti:        base(60, { coccola: false, memory: false }),
+    // Mimi' parla: coccola gia' fatta (cosi' il tocco cambia frase invece di fare la coccola) con un premio pronto
+    mimi_pronto:  base(130, { coccola: false }),
+    mimi_premio:  base(120, { coccola: false, rewards: [{ key: 'omaggio', label: 'un portacarte in omaggio', cost_points: 100, kind: 'gift', value: null, sort: 1 }] }),
     coccola_gia:  base(60, { coccolaMode: 'done' }),
     coccola_ko:   base(60, { coccolaMode: 'error' }),
     memory_gia:   base(60, { memoryMode: 'done' }),

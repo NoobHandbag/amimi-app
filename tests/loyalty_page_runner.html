@@ -249,7 +249,7 @@
     const c=await open('p45'); c.$('#btnCoccola').click();
     await until(()=>c.txt('#pts')==='50', 3000, 'saldo 50'); has(c.toast(),'+5 punti Mimì'); has(c.txt('#btnCoccola'),'Coccolata'); await until(()=>fermo(c,'0.5000'), 4000, 'Mimì avanza al 50%');
     assert(c.$('#btnCoccola').classList.contains('done') && c.$('#btnCoccola').getAttribute('aria-disabled')==='true','bottone fatto');
-    has(c.txt('#mood'),'coccolata'); c.$('#btnCoccola').click(); await sleep(150); assert(c.calls('coccola').length===1,'nessuna seconda chiamata');
+    has(c.txt('#mood'),'Che bella coccola!'); c.$('#btnCoccola').click(); await sleep(150); assert(c.calls('coccola').length===1,'nessuna seconda chiamata');
     has(c.txt('#pathStatus'),'Ti mancano 50 punti');
   });
   await test('coccola: gia\' fatta altrove', async()=>{ const c=await open('coccola_gia'); c.$('#btnCoccola').click(); await until(()=>/già stata coccolata/.test(c.toast()), 3000, 'avviso'); });
@@ -294,6 +294,78 @@
     c.doc.dispatchEvent(new c.win.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
     assert(!c.$('#gameModal').classList.contains('on') && c.$('#gameModal').getAttribute('aria-hidden')==='true','chiuso'); assert(c.doc.activeElement===c.$('#btnGame'),'fuoco tornato a Gioca');
     await sleep(900); assert(c.calls('memory_win').length===0,'nessun premio senza partita');
+  });
+
+  // ---------- Mimi' presente (owner 12-10): parla nel fumetto, si coccola con un tocco, e' nelle finestre ----------
+  const mimiSrc=n=>!!n && String(n.getAttribute('src')||'').indexOf('data:image/webp')===0;
+  await test('Mimì: nel saluto è un bottone grande, parla nel fumetto e chiede la coccola', async()=>{
+    const c=await open('p45'), m=c.$('#mimi');
+    assert(m.tagName==='BUTTON' && m.getAttribute('type')==='button' && m.getAttribute('aria-describedby')==='mood','Mimì è un bottone descritto dal fumetto');
+    has(m.getAttribute('aria-label'),'Coccola Mimì','nome del bottone'); has(c.txt('#mood'),'Mi fai la coccola di oggi?');
+    assert(m.getBoundingClientRect().width>=160,'Mimì grande nel saluto ('+m.getBoundingClientRect().width+')');
+    const rw=c.$('#walk .runner').getBoundingClientRect().width, sw=c.$('#walk').getBoundingClientRect().width;
+    assert(rw>=sw*0.18 && rw>=50,'Mimì più grande sul sentiero ('+Math.round(rw)+' su '+Math.round(sw)+')');
+    const b=c.$('.says').getBoundingClientRect(), h=m.getBoundingClientRect(); assert(b.right<=h.left+10 && b.left>=0,'il fumetto sta accanto a Mimì, non sopra');
+  });
+  await test('Mimì: toccarla è la coccola (+5), una sola chiamata anche con tap misti e veloci', async()=>{
+    const c=await open('p45',{lento:300}); c.$('#mimi').click(); c.$('#btnCoccola').click(); c.$('#mimi').click();
+    await until(()=>c.txt('#pts')==='50', 4000, 'saldo 50'); assert(c.calls('coccola').length===1,'una sola chiamata coccola');
+    has(c.txt('#mood'),'Che bella coccola!'); has(c.$('#mimi').getAttribute('aria-label'),'toccala per sentire'); assert(c.$('#btnCoccola').classList.contains('done'),'bottone fatto');
+    await until(()=>c.calls('track').length>=1, 6000, 'lotto del tracciamento'); const ev=[].concat.apply([], c.calls('track').map(x=>x.body.events));
+    assert(ev.filter(x=>x.e==='tap' && x.el==='coccola').length===1,'un solo tap coccola tracciato');
+  });
+  await test('Mimì: a coccola fatta ogni tocco cambia frase e il giro ricomincia, senza chiamate', async()=>{
+    const c=await open('fatti'), prima=c.txt('#mood'); has(prima,'Che bella coccola!');
+    c.$('#mimi').click(); has(c.txt('#mood'),'Ancora 40 punti e lo sconto è tuo.'); c.$('#mimi').click(); has(c.txt('#mood'),'Per oggi abbiamo fatto tutto');
+    c.$('#mimi').click(); assert(c.txt('#mood')===prima,'il giro delle frasi ricomincia'); assert(c.calls('coccola').length===0,'nessuna chiamata coccola');
+  });
+  await test('Mimì: premio pronto e memory entrano nelle frasi; un premio non a percentuale non diventa "sconto"', async()=>{
+    let c=await open('mimi_pronto'); c.$('#mimi').click(); has(c.txt('#mood'),'Hai uno sconto pronto. Lo usiamo?'); c.$('#mimi').click(); has(c.txt('#mood'),'Giochiamo al memory');
+    c.$('#mimi').click(); has(c.txt('#mood'),'Che bella coccola!','con un premio pronto niente "Ancora N punti"');
+    c=await open('mimi_premio'); c.$('#mimi').click(); has(c.txt('#mood'),'Hai un premio pronto. Lo usiamo?'); assert(!/sconto/.test(c.txt('#mood')),'nessuno "sconto" per un omaggio');
+  });
+  await test('Mimì: con un riscatto in attesa non dice né "pronto" né "ancora N punti"', async()=>{
+    const c=await open('pending'); c.$('#mimi').click(); await until(()=>c.txt('#pts')==='62', 3000, 'coccola fatta dal tocco');
+    const viste=[c.txt('#mood')]; for(let i=0;i<3;i++){ c.$('#mimi').click(); viste.push(c.txt('#mood')); }
+    assert(viste.every(t=>t && !/pronto|Ancora/.test(t)),'frasi viste: '+viste.join(' | '));
+  });
+  await test('Mimì: salta alle coppie del memory, porta il premio a cavallo del bordo e commenta la vittoria', async()=>{
+    const c=await open('p45'); await playMemory(c, false);
+    assert(c.$('#gameMimi').classList.contains('hop') && mimiSrc(c.$('#gameMimi img')),'Mimì sul bordo del memory ha saltato');
+    await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'finestra del premio');
+    assert(mimiSrc(c.$('#rewardModal .sheet-mimi img')),'Mimì porta il premio'); has(c.txt('#mood'),'Che memoria! Brava.');
+    const r=c.$('#rewardModal .sheet-mimi').getBoundingClientRect(), s=c.$('#rewardModal .sheet').getBoundingClientRect();
+    assert(r.top<s.top-20 && r.bottom>s.top+10 && r.top>=0,'a cavallo del bordo alto della finestra, dentro lo schermo ('+Math.round(r.top)+', '+Math.round(s.top)+')');
+    c.$('#rewardOk').click(); c.$('#mimi').click(); await until(()=>c.txt('#pts')==='55', 3000, 'il tocco dopo la vittoria è la coccola'); has(c.txt('#mood'),'Che bella coccola!');
+  });
+  await test('Mimì: su uno schermo basso la finestra del premio parte dall\'alto e si scorre, Mimì resta dentro lo schermo', async()=>{
+    f.style.height='380px';
+    try{
+      const c=await open('p100'); c.$('#rbtn').click(); await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'codice consegnato');
+      const m=c.$('#rewardModal'), r=c.$('#rewardModal .sheet-mimi').getBoundingClientRect(), s=c.$('#rewardModal .sheet').getBoundingClientRect();
+      assert(c.win.innerHeight<=380,'schermo basso ('+c.win.innerHeight+')'); assert(r.top>=0 && s.top>r.top,'Mimì e finestra partono dentro lo schermo ('+Math.round(r.top)+', '+Math.round(s.top)+')');
+      assert(m.scrollHeight>m.clientHeight && c.win.getComputedStyle(m).overflowY==='auto','la finestra si scorre fino al bottone ('+m.scrollHeight+' > '+m.clientHeight+')');
+    } finally { f.style.height=''; }
+  });
+  await test('Mimì: frase d\'occasione dopo il riscatto e alla presenza di un evento', async()=>{
+    let c=await open('p100'); c.$('#rbtn').click(); await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'codice consegnato'); has(c.txt('#mood'),'Buono shopping!');
+    c=await open('evento_ok',{evento:'GALLIANO22'}); await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'presenza registrata'); has(c.txt('#mood'),'Che bello vederti qui!');
+  });
+  await test('Mimì: c\'è mentre si carica, nelle azioni del giorno, nel guardaroba vuoto e nel saluto finale', async()=>{
+    let c=await open('p45',{lento:500, raw:true});
+    assert(c.vis('#loading') && mimiSrc(c.$('#loading img')),'Mimì nella sagoma di caricamento');
+    await until(()=>c.vis('#app') && !c.vis('#loading'), 6000, 'area visibile');
+    assert(c.vis('.ciao') && mimiSrc(c.$('.ciao img')),'saluto finale con Mimì'); has(c.txt('.ciao'),'A presto, amica');
+    assert(c.$$('#btnCoccola img.ico').length===1 && mimiSrc(c.$('#btnCoccola img.ico')) && c.$$('#btnGame .ico.carta').length===1,'icone delle azioni del giorno');
+    c=await open('zero'); assert(c.$('#ward').classList.contains('mimi') && c.$$('#ward img').length===1 && mimiSrc(c.$('#ward img')),'Mimì nel guardaroba vuoto'); has(c.txt('#ward'),'appariranno qui');
+    c.$('#shopFine').addEventListener('click', e=>e.preventDefault()); c.$('#shopFine').click();
+    await until(()=>[].concat.apply([], c.calls('track').map(x=>x.body.events)).some(x=>x.e==='tap' && x.el==='shop'), 7000, 'tap shop tracciato dal saluto finale');
+  });
+  await test('Mimì: a 320px resta grande senza allargare la pagina, con "riduci movimento" non si anima', async()=>{
+    const c=await open('fatti',{w:320}); await sleep(200);
+    assert(c.doc.documentElement.scrollWidth<=c.win.innerWidth+1,'nessuno scorrimento orizzontale'); assert(c.$('#mimi').getBoundingClientRect().width>=140,'Mimì almeno 140px a 320');
+    const b=c.$('.says').getBoundingClientRect(); assert(b.left>=0 && b.right<=c.$('#mimi').getBoundingClientRect().left+10,'fumetto dentro la colonna del saluto');
+    assert(/prefers-reduced-motion:reduce\)\{\s*\*,\*::before,\*::after\{animation:none!important;transition:none!important\}/.test(c.doc.querySelector('style').textContent),'regola "riduci movimento" su tutte le animazioni');
   });
 
   // ---------- borse, profilo ----------
