@@ -276,8 +276,10 @@ const M151 = read('supabase/migrations/0151_ask_ro_loyalty_policy.sql');
 const T151 = ['loyalty_points', 'loyalty_events', 'loyalty_order_credits', 'loyalty_order_reversals', 'loyalty_rewards', 'loyalty_redemptions', 'loyalty_reward_codes', 'loyalty_visits', 'loyalty_profiles', 'loyalty_birthday_awards', 'loyalty_bonus_second', 'loyalty_ui_events'];
 const ASKSQL = read('tests/loyalty_ask_ro_policy.sql');
 t('154 0151: le 12 tabelle loyalty_* precedenti alla 0150 hanno una policy for select to ask_ro', T151.every((tb) => M151.includes("'" + tb + "'")) && /create policy %I on public\.%I for select to ask_ro using \(true\)/.test(M151));
-t('155 0151: nessun grant ne\' scrittura (i limiti a colonne restano quelli decisi)', !/^\s*(grant|revoke|insert|update|delete|alter table)\b/mi.test(M151.replace(/^--.*$/gm, '')));
-t('156 0151: prova viva ask_ro contro owner, colonne vietate ancora vietate, finisce sempre in rollback', /TEST_OK loyalty 0151/.test(ASKSQL) && /birth_day leggibile/.test(ASKSQL));
+const M151c = M151.replace(/^\s*--.*$/gm, '');
+t('155 0151: nessun grant ne\' scrittura, nemmeno dentro un execute; l\'unica policy creata e\' for select', !/\b(grant|revoke|insert\s+into|update\s+\w+\s+set|delete\s+from|alter\s+table|truncate)\b/i.test(M151c) && (M151c.match(/create policy/gi) || []).length === 1 && !/for (all|insert|update|delete)\b/i.test(M151c));
+const VIETATE151 = ['birth_day', 'birth_month', 'birth_set_at', 'consenso_at', 'discount_code', "'loyalty_redemptions', 'meta'", 'idemp', "'loyalty_reward_codes', 'code'", "'loyalty_birthday_awards', 'birthday'"];
+t('156 0151: prova viva = policy a catalogo per tabella, colonne leggibili esatte, le 9 vietate, righe di prova anche su profili e compleanni, sempre in rollback', /raise exception 'TEST_OK loyalty 0151';\s*\nend \$\$;\s*$/.test(ASKSQL) && VIETATE151.every((w) => ASKSQL.includes(w)) && T151.every((tb) => ASKSQL.includes('"' + tb + '"')) && /from pg_policy p/.test(ASKSQL) && /has_column_privilege\('ask_ro'/.test(ASKSQL) && /lette is distinct from attese/.test(ASKSQL) && /insert into loyalty_profiles/.test(ASKSQL) && /insert into loyalty_birthday_awards/.test(ASKSQL) && !/\bcommit\b/i.test(ASKSQL.replace(/^\s*--[^\n]*$/gm, '')));
 
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
