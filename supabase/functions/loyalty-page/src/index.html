@@ -409,7 +409,7 @@
     el('loading').classList.add('hidden'); el('gate').classList.add('hidden'); el('app').classList.remove('hidden');
     const p = S.points||0;
     countUp(el('pts'), p);
-    renderPath(); renderRedeem(); renderCodes(); renderBonus2(); renderBirthday(); renderProfile(); renderRules();
+    renderRedeem(); renderCodes(); renderBonus2(); renderBirthday(); renderProfile(); renderRules();
     // mimi e azioni del giorno
     el('mood').textContent = !S.coccola_disponibile ? 'Mimì è stata coccolata: oggi è al settimo cielo.' : 'Mimì aspetta la sua coccola di oggi.';
     const bc=el('btnCoccola');
@@ -425,6 +425,8 @@
     if(items===null){ w.className='empty'; w.innerHTML='Le tue borse non sono leggibili in questo momento: riprova fra poco.'; }   // null = non leggibile (audit), diverso da "nessuna borsa"
     else if(!items||!items.length){ w.className='empty'; w.innerHTML='Le borse che compri su amimi.it appariranno qui. <a href="/" id="shopLink">Guarda le novità</a>'; }
     else { w.className='ward'; w.innerHTML=items.map(it=>'<figure class="witem">'+(it.img ? '<img src="'+esc(thumb(it.img,300))+'" alt="" loading="lazy">' : '<div class="noimg"></div>')+'<figcaption>'+esc(it.titolo||it.codice)+'</figcaption></figure>').join(''); }
+    // per ultimo e contenuto: il sentiero e' un disegno, se il browser non riesce a misurarlo sparisce lui e il resto della pagina (riscatto, codici, azioni) resta
+    try { renderPath(); } catch(e) { roadStop(); el('walk').classList.add('hidden'); el('pronti').classList.add('hidden'); }
   }
 
   // === il sentiero a giro (scelta owner 12-10): un giro = <costo del premio> punti = un premio. Tappe a un quarto, meta' e
@@ -432,48 +434,58 @@
   // riscattare scala un giro intero, quindi lei resta dov'e' e cala solo il numero di premi pronti. ===
   const ROAD_VB = [320, 260];
   let roadC=null, roadRaf=0, roadEnd=0;                                                   // roadC = punti/costo gia' disegnati (giri, con la virgola)
-  function giro(c){ const f=c-Math.floor(c); return (c>0 && f<1e-9) ? 1 : f; }           // a un multiplo esatto Mimi' e' SUL traguardo, non alla partenza
+  // Frazione del giro. A un multiplo esatto del costo Mimi' e' SUL traguardo solo quando e' un ARRIVO (saldo fermo li');
+  // mentre cammina, un numero intero di giri e' la partenza del giro dopo: senza questa distinzione chi apre la pagina con
+  // 257 punti vedrebbe per un attimo la bandierina festeggiare un traguardo che non sta raggiungendo.
+  function giro(c, arrivo){ const f=c-Math.floor(c); return (arrivo && c>0 && f<1e-9) ? 1 : f; }
   function sparkAt(host,left,top){ if(reduced) return; for(let i=0;i<5;i++){ setTimeout(()=>{ const z=document.createElement('i'); z.className='spark'; z.style.width=z.style.height='12px'; z.style.left='calc('+left+' + '+(Math.random()*26-6)+'px)'; z.style.top='calc('+top+' - '+(16+Math.random()*16)+'px)'; host.appendChild(z); setTimeout(()=>z.remove(),1300); }, i*70); } }
-  function roadDraw(w, c, quiet){
-    const f=giro(c), pt=w._path.getPointAtLength(w._len*f), run=w.querySelector('.runner');
+  function festa(w){ if(reduced) return; const goal=w.querySelector('.goal'); goal.classList.remove('pop'); void goal.offsetWidth; goal.classList.add('pop'); sparkAt(w, goal.style.left, goal.style.top); }   // scatto della bandierina e scintille
+  function roadDraw(w, c, arrivo, quiet){
+    const f=giro(c, arrivo), pt=w._path.getPointAtLength(w._len*f), run=w.querySelector('.runner');
     run.style.left=(pt.x/ROAD_VB[0]*100)+'%'; run.style.top=(pt.y/ROAD_VB[1]*100)+'%';
     w.querySelector('.r-fg').setAttribute('stroke-dasharray',(f*100).toFixed(2)+' 100');
     w.querySelectorAll('.stop').forEach(z=>{ const on=f*100>=Number(z.dataset.at)-0.01; z.classList.toggle('on',on); z.querySelector('.lbl').classList.toggle('on',on); });
-    const goal=w.querySelector('.goal'), on=f>=1;
-    if(goal.classList.contains('on')!==on){
-      goal.classList.toggle('on',on); w.querySelector('.lbl.fine').classList.toggle('on',on);
-      if(on && !quiet && !reduced){ goal.classList.remove('pop'); void goal.offsetWidth; goal.classList.add('pop'); sparkAt(w, goal.style.left, goal.style.top); }   // arrivo al traguardo: scatto e scintille
-    }
+    const goal=w.querySelector('.goal'), on=f>=1, era=goal.classList.contains('on');
+    goal.classList.toggle('on',on); w.querySelector('.lbl.fine').classList.toggle('on',on);
+    if(on && !era && !quiet) festa(w);
     w.dataset.f=f.toFixed(4);
   }
+  function roadStop(){ cancelAnimationFrame(roadRaf); clearTimeout(roadEnd); }
   function renderPath(){
     const w=el('walk'), pr=el('pronti'), rw=reward0(), p=S.points||0;
-    if(!rw || !(Number(rw.cost_points)>0)){ w.classList.add('hidden'); pr.classList.add('hidden'); return; }   // senza catalogo premi restano solo i punti
-    const cost=Number(rw.cost_points), k=Math.floor(p/cost), c=p/cost, sconto=percento(rw)>0;
+    if(!rw || !(Number(rw.cost_points)>0)){ roadStop(); w.classList.add('hidden'); pr.classList.add('hidden'); return; }   // senza catalogo premi restano solo i punti
+    const cost=Number(rw.cost_points), k=Math.floor(p/cost), c=p/cost, resto=p%cost, sconto=percento(rw)>0;
+    const attesa=((S._rewards && S._rewards.redemptions) || []).some(x=>x.status==='pending');   // un riscatto in attesa blocca il prossimo: niente "pronti" finche' non arriva il codice
     w.classList.remove('hidden');                                                         // prima visibile, poi si misura il tracciato
     if(w.dataset.cost!==String(cost)){
       const path=w.querySelector('.r-bg'), len=path.getTotalLength(); w._path=path; w._len=len;
       let h='';
       [0.25,0.5,0.75].forEach(q=>{ const pt=path.getPointAtLength(len*q); h+='<g class="stop" data-at="'+(q*100)+'"><circle cx="'+pt.x.toFixed(1)+'" cy="'+pt.y.toFixed(1)+'" r="7"/><text class="lbl" x="'+pt.x.toFixed(1)+'" y="'+(pt.y+(q===0.5?-15:22)).toFixed(1)+'" text-anchor="middle">'+Math.round(cost*q)+'</text></g>'; });
       const end=path.getPointAtLength(len), goal=w.querySelector('.goal');
-      h+='<text class="lbl fine" x="'+(end.x-6).toFixed(1)+'" y="'+(end.y+24).toFixed(1)+'" text-anchor="end">'+cost+'</text>';
+      h+='<text class="lbl fine" x="'+(end.x+2).toFixed(1)+'" y="'+(end.y+30).toFixed(1)+'" text-anchor="middle">'+cost+'</text>';   // sotto la fine della strada, fuori dal tracciato
       el('roadMarks').innerHTML=h;
       goal.style.left=(end.x/ROAD_VB[0]*100)+'%'; goal.style.top=(end.y/ROAD_VB[1]*100)+'%';
       w.dataset.cost=String(cost);
     }
     // premi pronti: una bandierina per giro completato (al massimo cinque disegnate, il numero e' scritto)
-    if(k>0){ let h=''; for(let i=0;i<Math.min(k,5);i++) h+='<span class="flag on"><i></i></span>'; pr.innerHTML=h+'<em>'+(k===1 ? (sconto?'1 sconto pronto':'1 premio pronto') : k+(sconto?' sconti pronti':' premi pronti'))+'</em>'; pr.classList.remove('hidden'); }
+    if(k>0 && !attesa){ let h=''; for(let i=0;i<Math.min(k,5);i++) h+='<span class="flag on"><i></i></span>'; pr.innerHTML=h+'<em>'+(k===1 ? (sconto?'1 sconto pronto':'1 premio pronto') : k+(sconto?' sconti pronti':' premi pronti'))+'</em>'; pr.classList.remove('hidden'); }
     else { pr.innerHTML=''; pr.classList.add('hidden'); }
-    w.setAttribute('aria-label','Hai '+p+' punti Mimì. Sei a '+(p%cost)+' punti su '+cost+' del giro verso il prossimo '+(sconto?'sconto':'premio')+'.');
+    w.setAttribute('aria-label','Hai '+p+(p===1?' punto':' punti')+' Mimì. '+((p>0 && resto===0) ? 'Sei al traguardo del giro.' : 'Sei a '+resto+(resto===1?' punto':' punti')+' su '+cost+' del giro verso il prossimo '+(sconto?'sconto':'premio')+'.'));
     // movimento: la prima volta dall'inizio del giro in corso; poi solo in avanti. Un saldo che scende (riscatto) non fa camminare all'indietro.
     const run=w.querySelector('.runner');
-    cancelAnimationFrame(roadRaf); clearTimeout(roadEnd);
-    const from = roadC===null ? ((p>0 && p%cost===0) ? c-1 : Math.floor(c)) : roadC;
-    const fine=()=>{ cancelAnimationFrame(roadRaf); clearTimeout(roadEnd); roadC=c; roadDraw(w,c,false); run.classList.remove('go'); };
-    if(reduced || c<=from){ roadC=c; roadDraw(w,c,true); run.classList.remove('go'); return; }
+    roadStop();
+    const from = roadC===null ? ((p>0 && resto===0) ? c-1 : Math.floor(c)) : roadC;
+    const fine=()=>{ roadStop(); roadC=c; roadDraw(w,c,true,false); run.classList.remove('go'); };
+    if(reduced || c<=from){ roadC=c; roadDraw(w,c,true,true); run.classList.remove('go'); return; }
     const d=Math.max(650, Math.min(2400, (c-from)*2000)), t0=performance.now();
     run.classList.add('go');
-    (function step(t){ const x=Math.min(1,(t-t0)/d), e=x<.5 ? 2*x*x : 1-Math.pow(-2*x+2,2)/2; roadC=from+(c-from)*e; roadDraw(w, roadC, false); if(x<1) roadRaf=requestAnimationFrame(step); else fine(); })(t0);   // roadC segue Mimi': se arriva un altro saldo a meta' strada si riparte da dov'e'
+    (function step(t){
+      const x=Math.min(1,(t-t0)/d), e=x<.5 ? 2*x*x : 1-Math.pow(-2*x+2,2)/2, prima=roadC===null ? from : roadC;
+      roadC=from+(c-from)*e;                                                              // roadC segue Mimi': se arriva un altro saldo a meta' strada si riparte da dov'e'
+      roadDraw(w, roadC, false, false);
+      if(x<1 && Math.floor(roadC)>Math.floor(prima)) festa(w);                            // ha passato il traguardo in corsa (es. da 95 a 110): si festeggia al passaggio
+      if(x<1) roadRaf=requestAnimationFrame(step); else fine();
+    })(t0);
     roadEnd=setTimeout(fine, d+250);                                                      // arrivo garantito anche a fotogrammi fermi (scheda in secondo piano)
   }
 
