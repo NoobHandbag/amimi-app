@@ -35,8 +35,8 @@ const SCHEMA = `
 Postgres (Italian handbag business "Amimì"). Answer with ONE read-only SELECT.
 Key relations:
 - v_inventory(codice, item, variant, categoria, giacenza_attuale, disponibili_da_vendere, valore, retail_price, cogs, last_sale, on_shopify, shopify_sold, qromo_sold, b2b_venduto)
-- v_ce_amimi_summary(year, month, omni_netto, online_netto, offline_netto, b2b_netto, cogs, mc1, mc2)  -- Amimì brand P&L; sales start month 2
-- v_ce_totale(year, month, omni_netto, online_netto, offline_netto, cogs, mc1, mc2)  -- whole-business P&L, native/live, incl. January. Use THIS for "totale" (NOT the old seed).
+- v_ce_amimi_summary(year, month, omni_netto, online_netto, offline_netto, b2b_netto, cogs, compenso_soci, base_compenso_soci, mc1, mc2)  -- Amimì brand P&L (ONLY when asked for the brand / "solo Amimì"); sales start month 2
+- v_ce_totale(year, month, omni_netto, online_netto, offline_netto, cogs, compenso_soci, base_compenso_soci, mc1, mc2)  -- whole-business P&L, native/live, incl. January (NOT the old seed). DEFAULT for any P&L / conto economico / margini question. Costs are NEGATIVE; compenso_soci (partner compensation, 2.5% of net sales, from 2026-01) is a variable cost already INSIDE mc1 and mc2; base_compenso_soci = real net sales (omni_netto of this view also contains gifts at list price).
 - qromo_sales(data date, codice, item, variant, quantita, prezzo, nome, cognome, year, month)  -- offline/POS sales
 - shopify_orders(order_id, created_at_shop, customer_name, gross_total, net_total, discount_total, year, month)
 - shopify_line_items(order_id, codice, lineitem_name, quantita, price, year, month)  -- online sales lines
