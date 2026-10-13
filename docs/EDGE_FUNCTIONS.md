@@ -142,7 +142,7 @@ Valori al 2026-07-29 (deploy v4): `ce_sku_mismatch` 1 scheda 0 active (ANNIE BAG
 
 ## mcp (v8) - server MCP per Claude
 
-- **v8 (2026-10-13, compenso soci):** `pnl_summary` accetta `scope` (`totale` di default, come l'app; `amimi` = solo brand) e risponde `{ scope, mesi: [{ month, omni_netto, compenso_soci, mc1, mc2 }] }`. Prima rispondeva sempre il CE Amimi' come array e senza il compenso: chi lo chiamava per i numeri del brand ora passa `scope: "amimi"`.
+- **v8 (2026-10-13, compenso soci):** `pnl_summary` accetta `scope` (`totale` di default, come l'app; `amimi` = solo brand) e risponde `{ scope, year, mesi: [{ month, omni_netto, compenso_soci, mc1, mc2 }] }` dell'anno in corso. Prima rispondeva sempre il CE Amimi' del 2026 fisso, come array e senza il compenso: chi lo chiamava per i numeri del brand ora passa `scope: "amimi"`.
 - **Scopo:** pilotare l'app da Claude (JSON-RPC 2.0, supporto SSE).
 - **Auth:** tool read APERTI (`list_inventory`, `what_to_reorder`, `sku_availability`, `pnl_summary`, `ads_summary`, `ask_data`); tool write (`propose_expense`, `register_count`, `delete_rows`) dietro `Authorization: Bearer` = `app_flags.mcp_token`, delegati alla write-api con `chi='Claude-MCP'`.
 - **`delete_rows` (v6, brief 31-07):** wrapper del `row_delete` di write-api con guardia aggiuntiva: il dry-run gira SEMPRE per primo; per cancellare davvero servono `dry_run:false` E `conferma` = numero di righe visto nel dry-run (mismatch -> rifiuto con isError). Cosi' un agente non cancella 200 righe credendo di cancellarne 2. `force` passa al body write-api (mesi chiusi). Collaudato end-to-end il 31-07 (dry, conferma sbagliata rifiutata, delete vera con before-image `chi='Claude-MCP'`).
