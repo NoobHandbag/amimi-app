@@ -46,6 +46,7 @@ const ROWS: RowDef[] = [
   { k: 'commissioni', lab: 'Commissioni pagamenti', unit: 'e', kind: 'cost', src: { type: 'sales', field: 'commissioni' } },
   { k: 'logistica_var', lab: 'Logistica (spedizioni)', unit: 'e', kind: 'cost', src: { type: 'exp', line: 'lvar' } },
   { k: 'resi', lab: 'Resi', unit: 'e', kind: 'cost', src: { type: 'sales', field: 'refund' } },
+  { k: 'compenso_soci', lab: 'Compenso soci (% vendite nette)', unit: 'e', kind: 'cost', src: { type: 'formula' } },
   { k: 'var_tot', lab: 'Totale costi variabili', unit: 'e', kind: 'cost', sub: true, src: { type: 'sub' } },
   { k: 'mc1', lab: 'MC1 · margine di contribuzione', unit: 'e', mc: 1, src: { type: 'formula' } },
   { k: 'mc1p', lab: 'MC1 % su netto', pctOf: 'mc1' },
@@ -67,7 +68,7 @@ function val(r: CeFull, k: string): number {
   switch (k) {
     case 'omni_pezzi': return r.online_pezzi + r.offline_pezzi + r.b2b_pezzi;
     case 'omni_lordo': return Math.round(r.omni_netto * 1.22);
-    case 'var_tot': return r.cogs + r.packaging + r.commissioni + r.logistica_var + r.resi;
+    case 'var_tot': return r.cogs + r.packaging + r.commissioni + r.logistica_var + r.resi + r.compenso_soci;
     case 'fissi_tot': return r.salari + r.tasse + r.logistica_mag + r.opex + r.eventi + r.marketing;
     case 'iva': return r.omni_netto * 0.22;
     default: return (r as unknown as Record<string, number>)[k] ?? 0;
@@ -77,7 +78,7 @@ function val(r: CeFull, k: string): number {
 type DrillState = { key: string; label: string; month: number; amount: number; loading: boolean; kind: string; note: string; expRows?: DrillExp[]; cogsRows?: DrillCogs[]; saleRows?: DrillSale[]; field?: string };
 
 export default function CeDetail({ onBack }: { onBack?: () => void }) {
-  const [scope, setScope] = useState<Scope>('amimi');
+  const [scope, setScope] = useState<Scope>('totale');
   const [mode, setMode] = useState<Mode>('eur');
   const [rows, setRows] = useState<CeFull[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,8 +114,8 @@ export default function CeDetail({ onBack }: { onBack?: () => void }) {
     setDrill(base);
     try {
       if (row.src.type === 'exp') {
-        if (scope === 'totale' && row.src.line === 'lvar') {
-          setDrill({ ...base, loading: false, kind: 'formula', note: 'Nel CE Totale la logistica variabile arriva dal blocco manuale ereditato dal Foglio (ce_totale_manual), non dalle spese scomponibili. Nella vista Amimì il drilldown mostra le singole spedizioni.' });
+        if (scope === 'totale' && row.src.line === 'lvar' && month <= 2) {
+          setDrill({ ...base, loading: false, kind: 'formula', note: 'A gennaio e febbraio la logistica variabile del CE Totale arriva dal blocco manuale ereditato dal Foglio (ce_totale_manual), non dalle spese scomponibili. Da marzo il drilldown mostra le singole spedizioni.' });
           return;
         }
         const r = await fetchDrillExpense(row.src.line, month, scope === 'amimi');
@@ -133,16 +134,21 @@ export default function CeDetail({ onBack }: { onBack?: () => void }) {
       } else if (row.src.type === 'sub') {
         setDrill({ ...base, loading: false, kind: 'sub' });
       } else {
-        setDrill({ ...base, loading: false, kind: 'formula', note: formulaNote(row.k) });
+        setDrill({ ...base, loading: false, kind: 'formula', note: formulaNote(row.k, rec) });
       }
     } catch (e) {
       setDrill({ ...base, loading: false, note: 'Errore nel caricare il dettaglio: ' + (e instanceof Error ? e.message : String(e)) });
     }
   }
 
-  function formulaNote(k: string): string {
+  function formulaNote(k: string, rec?: CeFull): string {
     if (k === 'packaging') return 'Formula, non righe di spesa: 3,71 € × pezzi (online + offline) + 1 € a ordine online. Scala sui pezzi venduti del mese.';
-    if (k === 'mc1') return 'MC1 = Fatturato netto − Costi variabili (COGS, packaging, commissioni, logistica, resi). Tocca quelle celle per il dettaglio.';
+    if (k === 'compenso_soci') {
+      const r = rec;
+      const base = r ? `Base del mese ${eur(r.base_compenso_soci)}, compenso ${eur(r.compenso_soci)}. ` : '';
+      return base + 'Quota delle vendite nette che spetta ai soci per accordo: oggi Dan, 2,5% da gennaio 2026. Base = fatturato netto (IVA esclusa) al netto dei resi, senza omaggi. È una competenza calcolata, non una spesa dell\'estratto conto: i parametri stanno in ce_compensi_soci.';
+    }
+    if (k === 'mc1') return 'MC1 = Fatturato netto − Costi variabili (COGS, packaging, commissioni, logistica, resi, compenso soci). Tocca quelle celle per il dettaglio.';
     if (k === 'mc2') return 'MC2 (utile) = MC1 − Costi fissi (salari, tasse, logistica magazzino, OPEX, eventi, marketing). Tocca quelle celle per il dettaglio.';
     if (k === 'iva') return 'IVA a debito = Lordo − Netto = Netto × 22%. Non è un costo del conto economico, è la quota da versare.';
     return '';

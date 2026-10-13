@@ -21,6 +21,8 @@ const TABLES = [
   // Aggiunte audit 2026-07-06 (A11): ce_snapshots e' la BASELINE del drift dei mesi chiusi —
   // senza, un restore silenzia per sempre ce-guard. Le altre due sono config anon-readable.
   'ce_snapshots', 'shopify_catalog', 'non_product_codici',
+  // 0154: parametri della riga compenso_soci del CE (senza, un restore azzera il compenso e manda in drift i mesi chiusi).
+  'ce_compensi_soci',
 ];
 const PAGE = 1000;
 

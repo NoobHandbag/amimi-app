@@ -670,8 +670,9 @@ export type CeFull = {
   logistica_var: number; resi: number; salari: number; tasse: number;
   logistica_mag: number; opex: number; eventi: number; marketing: number;
   mc1: number; mc2: number;
+  base_compenso_soci: number; compenso_soci: number;
 };
-const CE_COLS = 'year,month,online_lordo,online_netto,online_pezzi,offline_lordo,offline_netto,offline_pezzi,b2b_lordo,b2b_netto,b2b_pezzi,omni_netto,cogs,packaging,commissioni,logistica_var,resi,salari,tasse,logistica_mag,opex,eventi,marketing,mc1,mc2';
+const CE_COLS = 'year,month,online_lordo,online_netto,online_pezzi,offline_lordo,offline_netto,offline_pezzi,b2b_lordo,b2b_netto,b2b_pezzi,omni_netto,cogs,packaging,commissioni,logistica_var,resi,salari,tasse,logistica_mag,opex,eventi,marketing,mc1,mc2,base_compenso_soci,compenso_soci';
 /** Full CE grid for the active scope. Amimì = v_ce_amimi_summary (brand), Totale = v_ce_totale. */
 export async function fetchCeGrid(scope: 'amimi' | 'totale'): Promise<CeFull[]> {
   const view = scope === 'amimi' ? 'v_ce_amimi_summary' : 'v_ce_totale';
