@@ -53,8 +53,9 @@ export default function Home({ chi, setChi, go, matEnabled = false }: { chi: str
       });
       if (cfg.finance) {
         const [ce, mtd] = await Promise.all([
-          supabase.from('v_ce_amimi_summary').select('month,omni_netto,mc2').eq('year', nowYear()),
-          fetchNettoMtd().catch(() => null),
+          // stesso perimetro di default del Cruscotto e del CE dettagliato: Totale (richiesta owner 13-10)
+          supabase.from('v_ce_totale').select('month,omni_netto,mc2').eq('year', nowYear()),
+          fetchNettoMtd('totale').catch(() => null),
         ]);
         const rows = ((ce.data ?? []) as { month: number; omni_netto: number; mc2: number }[]).sort((a, b) => a.month - b.month);
         const m = nowMonth();

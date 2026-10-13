@@ -61,6 +61,31 @@ console.log('\n== frontend ==');
   t('Cruscotto: riga Compenso soci nel Dettaglio mese', /<DetRow label="Compenso soci[^"]*" v=\{dm\.compenso_soci/.test(R));
 }
 
+console.log('\n== Home e assistenti AI (13-10, seconda richiesta owner) ==');
+{
+  const H = read('web/src/pages/Home.tsx');
+  t('Home: la card legge il CE Totale (stesso default di Cruscotto e CE dettagliato)',
+    /from\('v_ce_totale'\)\.select\('month,omni_netto,mc2'\)/.test(H) && !/from\('v_ce_amimi_summary'\)/.test(H));
+  t('Home: il delta a pari giorni usa lo stesso perimetro (Totale)', /fetchNettoMtd\('totale'\)/.test(H));
+  const A = read('web/src/lib/api.ts');
+  t('fetchNettoMtd: canali come le viste (Totale con le righe gift, B2B in entrambi i perimetri)',
+    /scope === 'totale' \? \['online', 'offline', 'gift', 'b2b'\] : \['online', 'offline', 'b2b'\]/.test(A));
+  for (const f of ['assistant', 'ask-data']) {
+    const P = read(`supabase/functions/${f}/index.ts`);
+    // la lista colonne di v_ce_totale: o nomina compenso_soci fra parentesi, o rimanda esplicitamente a quella sopra
+    t(`${f}: lo schema nel prompt elenca compenso_soci in entrambe le viste CE`,
+      /v_ce_amimi_summary\([^)]*compenso_soci[^)]*\)/.test(P)
+      && (/v_ce_totale\([^)]*compenso_soci[^)]*\)/.test(P) || /v_ce_totale\([^)]*same columns as above\)/.test(P)));
+    t(`${f}: l'aliquota non e' scritta nel prompt, si rimanda a ce_compensi_soci`, /rate from table ce_compensi_soci/.test(P) && !/2\.5% of net sales/.test(P));
+    t(`${f}: il prompt dice che il compenso e' gia' dentro mc1 e mc2 e che il default e' il Totale`,
+      /INSIDE mc1 and mc2/.test(P) && /v_ce_totale\([^\n]*DEFAULT for any P&L/.test(P));
+  }
+  const M = read('supabase/functions/mcp/index.ts');
+  t('MCP pnl_summary: scope con default totale e compenso_soci nella risposta',
+    /const scope = args\.scope === 'amimi' \? 'amimi' : 'totale';/.test(M) && /select\('month,omni_netto,compenso_soci,mc1,mc2'\)\.eq\('year', year\)/.test(M)
+    && /scope: \{ type: 'string', enum: \['totale', 'amimi'\] \}/.test(M));
+}
+
 console.log('\n== backup ==');
 {
   const B = read('scripts/db-backup.mjs');

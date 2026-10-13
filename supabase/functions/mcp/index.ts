@@ -33,8 +33,8 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },
   { name: 'sku_availability', description: 'Disponibilità SKU: acquistabili, in-stock-non-pubblicati, pubblicati-esauriti.',
     inputSchema: { type: 'object', properties: {} } },
-  { name: 'pnl_summary', description: 'Conto Economico Amimì per mese (netto, MC1, MC2) 2026.',
-    inputSchema: { type: 'object', properties: {} } },
+  { name: 'pnl_summary', description: 'Conto Economico per mese, anno in corso: netto, MC1, MC2 e compenso soci (costo variabile, incluso in MC1 e MC2). scope "totale" = intera azienda (default, come le schermate della app), "amimi" = solo brand.',
+    inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: ['totale', 'amimi'] } } } },
   { name: 'ads_summary', description: 'Meta Ads per mese: spesa, acquisti, valore, ROAS.',
     inputSchema: { type: 'object', properties: {} } },
   { name: 'ask_data', description: 'Domanda in linguaggio naturale sui dati (NL->SQL, sola lettura).',
@@ -87,9 +87,12 @@ async function callTool(name: string, args: Record<string, unknown>) {
       return textResult({ acquistabili: by('acquistabile').length, in_stock_non_pubblicati: by('in_stock_non_pubblicato'), pubblicati_esauriti: by('pubblicato_esaurito') });
     }
     case 'pnl_summary': {
-      const { data, error } = await retryOnce(() => sb.from('v_ce_amimi_summary').select('month,omni_netto,mc1,mc2').eq('year', 2026).order('month'));
-      if (error) return readFailed('v_ce_amimi_summary', error.message);
-      return textResult(data ?? []);
+      const scope = args.scope === 'amimi' ? 'amimi' : 'totale';
+      const view = scope === 'amimi' ? 'v_ce_amimi_summary' : 'v_ce_totale';
+      const year = new Date().getFullYear();
+      const { data, error } = await retryOnce(() => sb.from(view).select('month,omni_netto,compenso_soci,mc1,mc2').eq('year', year).order('month'));
+      if (error) return readFailed(view, error.message);
+      return textResult({ scope, year, mesi: data ?? [] });
     }
     case 'ads_summary': {
       const { data, error } = await retryOnce(() => sb.from('v_ads_mensile').select('month,spend,purchases,purchase_value,roas').eq('year', 2026).order('month'));
