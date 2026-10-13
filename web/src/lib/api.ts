@@ -749,13 +749,13 @@ export async function fetchFreschezza(): Promise<Freschezza | null> {
 
 /** Netto dei primi N giorni del mese in corso contro gli stessi N giorni del mese precedente, dalle righe di
  *  v_ce_drill_sales che ricostruiscono il lordo del CE. La Home confrontava il mese parziale col mese pieno e a
- *  inizio mese scriveva "-71%". Lo scope decide i canali come fanno le viste: Amimì = online + POS;
- *  Totale = anche le righe di gifts_offline (che v_ce_totale conta nel fatturato) e il B2B. */
+ *  inizio mese scriveva "-71%". Lo scope decide i canali come fanno le viste: Amimì = online + POS + B2B;
+ *  Totale = anche le righe di gifts_offline (che v_ce_totale conta nel fatturato). */
 export async function fetchNettoMtd(scope: 'amimi' | 'totale' = 'totale'): Promise<{ cur: number; prev: number; day: number } | null> {
   const now = new Date(); const y = now.getFullYear(); const m = now.getMonth() + 1; const day = now.getDate();
   if (m < 2) return null;
   const { data, error } = await supabase.from('v_ce_drill_sales').select('month,data,lordo')
-    .eq('year', y).in('month', [m, m - 1]).in('canale', scope === 'totale' ? ['online', 'offline', 'gift', 'b2b'] : ['online', 'offline']);
+    .eq('year', y).in('month', [m, m - 1]).in('canale', scope === 'totale' ? ['online', 'offline', 'gift', 'b2b'] : ['online', 'offline', 'b2b']);
   if (error) throw new Error(error.message);
   let cur = 0, prev = 0;
   (data ?? []).forEach((r: { month: number; data: string | null; lordo: number }) => {
