@@ -112,16 +112,18 @@ Dettagli di implementazione da non perdere:
 
 Valori al 2026-07-29 (deploy v4): `ce_sku_mismatch` 1 scheda 0 active (ANNIE BAG PINK SILK, draft: SKU `ANNIE_BAG_SILK_PINK` vs titolo `ANNIE_BAG_PINK`) -> ok; `ce_sku_unmapped_active` 0 (ANNIE BAG BROWN SILK e' stata corretta dall'owner a SKU `ANNIE_BAG_BROWN` nel pomeriggio, verificato via Admin API) -> ok; `ce_stock_senza_scheda` 8 codici / 10 pezzi (3 LEA_BAG_TOASTED_LEATHER_GREEN, 5 PORTA_CARTE_COCCO, AGATA_BAG_FLOWER_LILLA, LEA_BAG_CAVALLINO_CHOCOLATE) -> informativo.
 
-## ask-data (v6) - NL -> SQL
+## ask-data (v7) - NL -> SQL
 
+- **v7 (2026-10-13, pulizia gifts_offline):** il prompt non dice piu' che `v_ce_totale.omni_netto` contiene "omaggi a listino": contiene le vendite storiche incassate fuori dal fatturato (`gifts_offline.kind = 'vendita_fuori_fatturato'`), che `base_compenso_soci` lascia fuori; gli omaggi hanno prezzo 0 (migr 0156). Solo testo del prompt.
 - **v6 (2026-10-13, compenso soci):** lo schema nel prompt elenca `compenso_soci` e `base_compenso_soci` in `v_ce_amimi_summary` e `v_ce_totale`, dice che il compenso e' un costo variabile gia' DENTRO `mc1` e `mc2`, e fa di `v_ce_totale` il default per le domande sul conto economico (come le schermate dell'app dal 13-10). Solo testo del prompt. Guardia in `tests/ce_compenso_soci.mjs`.
 - **Scopo:** "Chiedi ai dati" del Cruscotto: Gemini (`gemini-flash-lite-latest`, temperature 0) genera una SELECT sullo schema esposto, eseguita da `ask_select` (SECURITY DEFINER: solo SELECT, singolo statement, max 200 righe, timeout 5s).
 - **Auth:** PIN. Key Gemini in `app_flags.gemini_api_key` (se assente risponde `needs_key`).
 - **Dal 06-07:** interroga `v_ce_totale` live (non piu' la copia storica).
 - **APERTO (audit A1):** `ask_select` non ha allowlist di viste e ask-data e' pubblica: via di esfiltrazione segreti finche' l'owner non ruota i segreti e si chiude la falla.
 
-## assistant (v10) - Assistente AI in-app (FLOW 6 v2, gated)
+## assistant (v11) - Assistente AI in-app (FLOW 6 v2, gated)
 
+- **v11 (2026-10-13, pulizia gifts_offline):** stessa correzione di ask-data v7 nello schema del passo 1. Solo testo del prompt.
 - **v10 (2026-10-13, compenso soci):** stesso aggiornamento di ask-data v6 allo schema del passo 1: colonne del compenso nelle due viste CE, formula di `mc1` con il compenso, `v_ce_totale` come default e avviso che il suo `omni_netto` contiene gli omaggi a listino (`base_compenso_soci` = vendite nette vere). Solo testo del prompt.
 - **Scopo:** "Chiedi ad Amimì", pannello slide-in presente su OGNI schermata della PWA. Evoluzione di ask-data: risponde in italiano sui dati LIVE con testo + grafico + card prodotti con foto, e ricorda la conversazione. Design: `Cowork12/projects/Assistente_AI_2026-07/DESIGN_Assistente_AI_Amimi_V1.md` (Fase 1 di 3).
 - **Pipeline (2 passi Gemini):** (1) `gemini-flash-lite-latest` traduce domanda + storia breve in UNA SELECT (schema-dal-reale CORRETTO: `categoria` = `BAG`/`ACCESSORY`/null, non piu' lo stale `ACCESSORI`/`PELLE`/`TESSUTO` di ask-data; glossario "borse tessili" = Nina/Agata/Annie via `item ILIKE`, netto = lordo/1,22); (2) `ask_select` esegue (SELECT-only, cap 200); (3) `gemini-flash-latest` in **JSON mode** (`responseMimeType: application/json`) scrive la prosa e MAPPA le colonne per grafico/prodotti. **I numeri arrivano SOLO da `ask_select`:** l'edge materializza barre e card DALLE righe reali (Gemini sceglie solo tipo/colonne), mai cifre inventate (Regola 1). Le card sono arricchite con foto/prezzo/giacenza reali da `v_inventory`.

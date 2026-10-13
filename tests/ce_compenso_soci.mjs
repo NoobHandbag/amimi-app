@@ -40,6 +40,35 @@ console.log('\n== migrazione 0154 ==');
   t('grant ad ask_ro (ask-data, assistant, MCP)', /grant execute on function public\.ce_aliquota_compensi\(int, int\) to ask_ro/.test(M));
 }
 
+console.log('\n== migrazione 0156 (pulizia gifts_offline) ==');
+{
+  const p = 'supabase/migrations/0156_gifts_offline_kind_pulizia.sql';
+  const M = existsSync(ROOT + p) ? read(p) : '';
+  t('0156 esiste', M.length > 0);
+  // la base del Totale toglie le vendite incassate fuori dal fatturato, non piu' gli omaggi (che ora hanno prezzo 0)
+  t('v_ce_totale riscritta da pg_get_viewdef cambiando SOLO il filtro del compenso, con guardia "uno e uno solo"',
+    /pg_get_viewdef\('public\.v_ce_totale'::regclass, true\)/.test(M) && /<> 1 then\s+raise exception '0156: in v_ce_totale atteso un solo filtro/.test(M)
+    && /replace\(d, old, 'g\.kind = ''vendita_fuori_fatturato''::text'\)/.test(M));
+  t('kind obbligatorio con i soli quattro valori',
+    /alter column kind set not null/.test(M)
+    && /check \(kind in \('gift', 'vendita_manuale', 'vendita_fuori_fatturato', 'rettifica'\)\)/.test(M));
+  t('un gift non puo\' avere prezzo (vincolo nel database)', /gifts_offline_gift_senza_prezzo\s+check \(kind <> 'gift' or coalesce\(prezzo, 0\) = 0\)/.test(M));
+  t('il magazzino non si muove: guardia su quantita, codice e data', /a\.quantita is distinct from b\.quantita or a\.codice is distinct from b\.codice or a\.data is distinct from b\.data/.test(M));
+  t('ogni riga toccata ha before/after in change_log', /insert into change_log[\s\S]*'gifts_offline', a\.id::text, 'update', to_jsonb\(b\), to_jsonb\(a\)/.test(M));
+  t('ri-chiusura solo del Totale di marzo e giugno, con la lista esatta delle differenze attese',
+    /where s\.id = t\.id and t\.ce = 'totale' and t\.month in \(3, 6\)/.test(M) && /'totale-6:cogs 193\.00, totale-6:mc1 193\.00, totale-6:mc2 193\.00'/.test(M));
+  t('guardia finale: nessuna riga di nessuno snapshot diversa dal live', /restano righe diverse dal live/.test(M));
+  const F = read('web/src/components/GiftForm.tsx');
+  t('form Regalo: prezzo 0, il prezzo si chiede solo alla Vendita',
+    /prezzo: isVendita \? Number\(prezzo\) : 0,/.test(F) && (F.match(/<NumberStepper value=\{prezzo\}/g) || []).length === 1
+    && /\{isVendita && \(/.test(F));
+  for (const f of ['supabase/functions/ask-data/index.ts', 'supabase/functions/assistant/index.ts']) {
+    const P = read(f);
+    t(`${f}: il prompt non dice piu' che il Totale contiene omaggi a listino e nomina vendita_fuori_fatturato`,
+      !/gifts at list price|gifts val/.test(P) && /vendita_fuori_fatturato/.test(P));
+  }
+}
+
 console.log('\n== ce-guard: invariante MC1 ==');
 {
   const G = read('supabase/functions/ce-guard/index.ts');

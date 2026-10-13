@@ -118,5 +118,20 @@ console.log('\n===== COMPENSO SOCI nel CE (migr 0154) =====');
   ok(snaps.length > 0 && righe.length === 0, `mesi chiusi: ogni riga dello snapshot uguale al live (${righe.join('; ')})`);
 }
 
+console.log('\n===== GIFTS_OFFLINE pulita (migr 0156) =====');
+{
+  // kind obbligatorio con quattro valori, un omaggio non ha prezzo, una riga a quantita' 0 non ha costo.
+  // Il database lo impone gia' per i primi due (vincoli della 0156): qui si vede se qualcuno li toglie.
+  const arr = (x) => (Array.isArray(x) ? x : []);
+  const g = arr(await get('/gifts_offline?select=id,kind,prezzo,quantita,cogs'));
+  const KIND = ['gift', 'vendita_manuale', 'vendita_fuori_fatturato', 'rettifica'];
+  const badKind = g.filter((r) => !KIND.includes(r.kind));
+  const giftPrezzo = g.filter((r) => r.kind === 'gift' && Number(r.prezzo || 0) !== 0);
+  const zeroCogs = g.filter((r) => Number(r.quantita) === 0 && Number(r.cogs || 0) > 0);
+  ok(g.length > 0 && badKind.length === 0, `gifts_offline: ogni riga ha uno dei quattro kind (${g.length} righe, KO ${badKind.length})`);
+  ok(g.length > 0 && giftPrezzo.length === 0, `gifts_offline: nessun omaggio con un prezzo (KO ${giftPrezzo.length})`);
+  ok(g.length > 0 && zeroCogs.length === 0, `gifts_offline: nessuna riga a quantita 0 con un costo (KO ${zeroCogs.length})`);
+}
+
 console.log(`\n===== ${pass} passed, ${fail} failed =====`);
 if (fail) { console.log('FAILURES:\n- ' + fails.join('\n- ')); process.exit(1); }
