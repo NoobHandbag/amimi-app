@@ -103,7 +103,8 @@ export default function Report({ onBack, onDetail, onAds }: { onBack?: () => voi
     .map((p) => ({ ...p, venduto: (p.shopify_sold || 0) + (p.qromo_sold || 0) + (p.b2b_venduto || 0), margine: p.retail_price && p.cogs != null ? (p.retail_price - p.cogs) / p.retail_price : null }))
     .filter((p) => p.venduto > 0).sort((a, b) => b.venduto - a.venduto).slice(0, 12);
   const detRows = scope === 'amimi' ? ce.filter((r) => r.month >= 2) : ceTot;
-  const dm = detRows.find((r) => r.month === detailMonth);
+  // il mese scelto puo' non esistere nello scope attivo (Gen in Totale, poi Amimi; gennaio dell'anno nuovo): ripiega sull'ultimo
+  const dm = detRows.find((r) => r.month === detailMonth) ?? detRows[detRows.length - 1];
 
   function toggle(m: number) {
     setSel((prev) => { const n = new Set(prev); n.has(m) ? n.delete(m) : n.add(m); return n.size ? n : prev; });
@@ -232,7 +233,7 @@ export default function Report({ onBack, onDetail, onAds }: { onBack?: () => voi
       <section className="card">
         <div className="dethead">
           <h2>Dettaglio mese</h2>
-          <select value={detailMonth} onChange={(e) => setDetailMonth(Number(e.target.value))}>
+          <select value={dm?.month ?? detailMonth} onChange={(e) => setDetailMonth(Number(e.target.value))}>
             {detRows.map((r) => <option key={r.month} value={r.month}>{MESI[r.month]}</option>)}
           </select>
         </div>

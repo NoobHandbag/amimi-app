@@ -13,11 +13,14 @@
 -- BASE = vendite nette REALI del perimetro: IVA esclusa, al netto dei resi, senza omaggi.
 --   * v_ce_amimi: omni_netto + resi (il CE Amimi' non contiene gifts_offline).
 --   * v_ce_totale: omni_netto + resi - omaggi. v_ce_totale mette in offline_lordo anche `gifts_offline.prezzo`, cioe'
---     il valore a listino degli OMAGGI (81 righe, 6.358 EUR lordi a ottobre): non sono vendite e non generano 2,5%.
---     Restano nella base le `vendita_manuale` (vendite vere fuori sistema). Il blocco manuale gen/feb
---     (ce_totale_manual, vecchia ditta) e' gia' dentro omni_netto e resi del Totale: entra, come da accordo "da gennaio".
+--     il valore a listino degli OMAGGI (kind 'gift': 81 righe, 6.358 EUR lordi a ottobre): non sono vendite e non
+--     generano 2,5%. Restano nella base le `vendita_manuale` e le righe senza `kind` (import dal Foglio: a giugno ci sono
+--     vendite vere fra queste, "vendita offline mai registrata", "deve ancora pagare"; le altre sono rettifiche a 0 o
+--     3 righe da 1 EUR). Il blocco manuale gen/feb (ce_totale_manual, vecchia ditta) e' gia' dentro omni_netto e resi
+--     del Totale: entra, come da accordo "da gennaio". La cifra da compensare col versamento di Dan e' quella del TOTALE.
 --   * base negativa (resi > vendite) -> compenso 0, mai un ricavo.
--- PARAMETRI in `ce_compensi_soci` (aliquota, dal, al): rollback o fine accordo = valorizzare `al`, nessun codice.
+-- PARAMETRI in `ce_compensi_soci` (aliquota, dal, al): fine accordo = valorizzare `al` (ultimo mese che matura);
+-- rollback totale = cancellare la riga. In entrambi i casi i mesi chiusi toccati vanno RI-chiusi (il compenso cambia mc2).
 --
 -- METODO: le viste NON vengono ribattute a mano (lezione 0093). v_ce_amimi e v_ce_totale si avvolgono nella loro
 -- stessa definizione (pg_get_viewdef): le colonne esistenti restano identiche e nello stesso ordine, mc1/mc2 del Totale
@@ -26,8 +29,10 @@
 -- perche' sono un SELECT di una riga.
 --
 -- MESI CHIUSI (gen-giu 2026, entrambi i CE): OK owner esplicito del 13-10 ("I am fine with changing closed months").
--- Si ri-chiudono qui sotto con guardia: per ogni mese chiuso il netto deve restare IDENTICO e mc2 deve scendere
--- esattamente del compenso; se un solo mese si muove di altro, la migrazione si annulla.
+-- La ri-chiusura qui sotto e' una PATCH: nello snapshot cambiano solo mc1, mc2 e le due colonne nuove, il resto resta
+-- com'era. Motivo (Gate 2, finding B1): a giugno, in entrambi i CE, 533,50 EUR sono passati da OPEX a SALARI il 09-10
+-- (change_log 1741, ricodifica a mese chiuso); mc2 non cambia, quindi una ri-chiusura "copia tutto il live" l'avrebbe
+-- congelata senza che nessuno l'avesse decisa. Guardia: netto identico e mc1/mc2 scesi ESATTAMENTE del compenso.
 
 ------------------------------------------------------------------------------------------------ parametri
 create table if not exists public.ce_compensi_soci (
@@ -37,14 +42,15 @@ create table if not exists public.ce_compensi_soci (
   dal date not null check (extract(day from dal) = 1),
   al date check (al is null or al >= dal),
   note text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  unique (socio, dal)
 );
 comment on table public.ce_compensi_soci is
   'Accordi di compenso dei soci in % delle vendite nette (riga compenso_soci del CE, migr 0154). Scrittura solo via migrazione.';
 
 insert into public.ce_compensi_soci (socio, aliquota, dal, note)
 select 'Dan', 0.025, date '2026-01-01',
-       'Proposta nov 2025: 2,5% vendite da gennaio 2026. Compensazione col versamento mancante (2.839,50) concordata su Discord #generale 08-06-2026.'
+       'Proposta nov 2025: 2,5% delle vendite nette da gennaio 2026. Compensazione col versamento mancante concordata su Discord #generale 08-06-2026.'
 where not exists (select 1 from public.ce_compensi_soci where socio = 'Dan' and dal = date '2026-01-01');
 
 grant select on public.ce_compensi_soci to anon, authenticated;
@@ -104,7 +110,7 @@ begin
                      t.omni_netto + t.resi
                      - coalesce((select sum(g.prezzo) from public.gifts_offline g
                                   where g.year = t.year and g.month = t.month
-                                    and g.kind is distinct from ''vendita_manuale''), 0) / 1.22,
+                                    and g.kind = ''gift''), 0) / 1.22,
                      0) as base) b
     ) c';
 end $$;
@@ -150,47 +156,49 @@ begin
 end $$;
 
 ------------------------------------------------------------------------------------------------ ri-chiusura mesi chiusi
--- Prima: per ogni mese chiuso il netto e' identico e mc2 e' sceso esattamente del compenso. Altrimenti stop.
+-- Prima: per ogni mese chiuso il netto e' identico e mc1/mc2 sono scesi esattamente del compenso. Altrimenti stop.
+create temp table _ce0154 on commit drop as
+select s.id, s.ce, s.year, s.month, s.snapshot, s.closed_at, s.closed_by, l.omni_netto, l.mc1, l.mc2, l.base_compenso_soci, l.compenso_soci
+  from ce_snapshots s
+  join (select 'amimi'::text ce, year, month, omni_netto, mc1, mc2, base_compenso_soci, compenso_soci from v_ce_amimi_summary
+        union all
+        select 'totale', year, month, omni_netto, mc1, mc2, base_compenso_soci, compenso_soci from v_ce_totale) l
+    on l.ce = s.ce and l.year = s.year and l.month = s.month;
+
 do $$
-declare v_bad int; v_tot int;
+declare v_bad int; v_tot int; v_n int;
 begin
   select count(*) into v_tot from ce_snapshots;
-  select count(*) into v_bad
-  from v_ce_drift d
-  join (select 'amimi'::text ce, year, month, compenso_soci from v_ce_amimi_summary
-        union all select 'totale', year, month, compenso_soci from v_ce_totale) c
-    on c.ce = d.ce and c.year = d.year and c.month = d.month
-  where abs(d.delta_netto) > 0.01 or abs(d.delta_mc2 - round(c.compenso_soci, 2)) > 0.011;
+  select count(*) into v_n from _ce0154;
+  if v_n <> v_tot then raise exception '0154: % snapshot senza riga live corrispondente', v_tot - v_n; end if;
+  select count(*) into v_bad from _ce0154
+   where abs(omni_netto - (snapshot->>'omni_netto')::numeric) > 0.01
+      or abs((mc1 - (snapshot->>'mc1')::numeric) - compenso_soci) > 0.01
+      or abs((mc2 - (snapshot->>'mc2')::numeric) - compenso_soci) > 0.01;
   if v_bad <> 0 then
-    raise exception '0154: reclose annullato, % mesi chiusi su % si muovono di altro oltre al compenso', v_bad, v_tot;
+    raise exception '0154: reclose annullato, % mesi chiusi su % non si muovono del solo compenso (netto/mc1/mc2)', v_bad, v_tot;
   end if;
 end $$;
 
--- audit: before/after di ogni snapshot in change_log PRIMA della sovrascrittura (stesso schema di 0046)
+-- audit: before (snapshot + vecchi closed_at/closed_by) e after in change_log PRIMA della sovrascrittura
 insert into change_log (tbl, row_id, op, before, after, chi, source)
-select 'ce_snapshots', s.ce || '-' || s.year || '-' || s.month, 'reclose', s.snapshot, to_jsonb(t) - 'ce',
+select 'ce_snapshots', ce || '-' || year || '-' || month, 'reclose',
+       snapshot || jsonb_build_object('_closed_at', closed_at, '_closed_by', closed_by),
+       snapshot || jsonb_build_object('mc1', mc1, 'mc2', mc2, 'base_compenso_soci', base_compenso_soci, 'compenso_soci', compenso_soci),
        'reclose-compenso-soci-2026-10-13', 'claude-code-migration'
-  from ce_snapshots s join v_ce_amimi_summary t on t.year = s.year and t.month = s.month
- where s.ce = 'amimi'
-union all
-select 'ce_snapshots', s.ce || '-' || s.year || '-' || s.month, 'reclose', s.snapshot, to_jsonb(t) - 'ce',
-       'reclose-compenso-soci-2026-10-13', 'claude-code-migration'
-  from ce_snapshots s join v_ce_totale t on t.year = s.year and t.month = s.month
- where s.ce = 'totale';
+  from _ce0154;
 
 update ce_snapshots s
-   set snapshot = to_jsonb(t) - 'ce', closed_at = now(), closed_by = 'claude-code (0154: compenso soci 2,5%, OK owner 13-10)'
-  from v_ce_amimi_summary t
- where s.ce = 'amimi' and s.year = t.year and s.month = t.month;
-
-update ce_snapshots s
-   set snapshot = to_jsonb(t) - 'ce', closed_at = now(), closed_by = 'claude-code (0154: compenso soci 2,5%, OK owner 13-10)'
-  from v_ce_totale t
- where s.ce = 'totale' and s.year = t.year and s.month = t.month;
+   set snapshot = s.snapshot || jsonb_build_object('mc1', t.mc1, 'mc2', t.mc2, 'base_compenso_soci', t.base_compenso_soci, 'compenso_soci', t.compenso_soci),
+       closed_at = now(), closed_by = 'claude-code (0154: compenso soci 2,5%, OK owner 13-10)'
+  from _ce0154 t
+ where s.id = t.id;
 
 do $$
 declare v_bad int;
 begin
   select count(*) into v_bad from v_ce_drift where abs(delta_netto) > 0.01 or abs(delta_mc2) > 0.01;
   if v_bad <> 0 then raise exception '0154: dopo la ri-chiusura restano % mesi in drift', v_bad; end if;
+  select count(*) into v_bad from ce_snapshots where not (snapshot ? 'compenso_soci');
+  if v_bad <> 0 then raise exception '0154: % snapshot senza compenso_soci dopo la ri-chiusura', v_bad; end if;
 end $$;

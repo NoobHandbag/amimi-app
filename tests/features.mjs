@@ -101,6 +101,21 @@ console.log('\n===== COMPENSO SOCI nel CE (migr 0154) =====');
   const drift = arr(await get('/v_ce_drift?select=ce,year,month,delta_netto,delta_mc2'));
   const moved = drift.filter((d) => Math.abs(Number(d.delta_netto)) > 0.01 || Math.abs(Number(d.delta_mc2)) > 0.01);
   ok(drift.length > 0 && moved.length === 0, `mesi chiusi: nessun drift fra snapshot e viste live (${moved.map((d) => `${d.ce}-${d.month}`).join(', ')})`);
+  // v_ce_drift guarda solo netto e mc2: uno spostamento fra righe che lascia mc2 uguale (es. OPEX -> SALARI in un mese
+  // chiuso, Gate 2 B1 del 13-10) non lo vede nessuno. Qui si confronta OGNI riga dello snapshot col live.
+  const snaps = arr(await get('/ce_snapshots?select=ce,year,month,snapshot'));
+  const liveA = arr(await get('/v_ce_amimi_summary?select=*'));
+  const liveT = arr(await get('/v_ce_totale?select=*'));
+  const righe = [];
+  for (const s of snaps) {
+    const l = (s.ce === 'amimi' ? liveA : liveT).find((r) => r.year === s.year && r.month === s.month);
+    if (!l) { righe.push(`${s.ce}-${s.month}: senza live`); continue; }
+    for (const [k, v] of Object.entries(s.snapshot || {})) {
+      if (k === 'year' || k === 'month') continue;
+      if (!near(Number(v), Number(l[k]), 0.01)) righe.push(`${s.ce}-${s.month} ${k} ${Number(v).toFixed(2)}->${Number(l[k]).toFixed(2)}`);
+    }
+  }
+  ok(snaps.length > 0 && righe.length === 0, `mesi chiusi: ogni riga dello snapshot uguale al live (${righe.join('; ')})`);
 }
 
 console.log(`\n===== ${pass} passed, ${fail} failed =====`);

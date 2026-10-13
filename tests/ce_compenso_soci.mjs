@@ -24,10 +24,16 @@ console.log('\n== migrazione 0154 ==');
   t('MC1 delle due summary include compenso_soci', (M.match(mc1) || []).length === 2);
   t('MC2 delle due summary include compenso_soci', (M.match(/resi \+ compenso_soci \+ salari \+ tasse \+ logistica_mag \+ opex \+ eventi \+ marketing AS mc2/g) || []).length === 2);
   t('v_ce_totale: mc1 e mc2 ricalcolati col compenso', /t\.mc1 \+ c\.compenso_soci as mc1/.test(M) && /t\.mc2 \+ c\.compenso_soci as mc2/.test(M));
-  t('base del Totale senza omaggi (vendita_manuale resta)', /kind is distinct from ''vendita_manuale''/.test(M));
+  t('base del Totale senza omaggi: si tolgono solo le righe kind = gift (vendite manuali e righe senza kind restano)', /and g\.kind = ''gift''\), 0\) \/ 1\.22/.test(M) && !/is distinct from ''vendita_manuale''/.test(M));
   t('base mai negativa (greatest ..., 0)', (M.match(/greatest\(/g) || []).length >= 3);
   t('le viste si avvolgono da pg_get_viewdef, non si ribattono', (M.match(/pg_get_viewdef\('public\.v_ce_(amimi|totale)'/g) || []).length === 2);
-  t('guardia pre-reclose: netto identico e mc2 sceso del solo compenso', /delta_mc2 - round\(c\.compenso_soci, 2\)/.test(M));
+  t('guardia pre-reclose: netto identico, mc1 e mc2 scesi del solo compenso',
+    /abs\(\(mc1 - \(snapshot->>'mc1'\)::numeric\) - compenso_soci\) > 0\.01/.test(M) && /abs\(\(mc2 - \(snapshot->>'mc2'\)::numeric\) - compenso_soci\) > 0\.01/.test(M));
+  t('reclose = PATCH (solo mc1, mc2, base e compenso), non copia del live: non congela altri spostamenti fra righe (Gate 2 B1)',
+    /set snapshot = s\.snapshot \|\| jsonb_build_object\('mc1', t\.mc1, 'mc2', t\.mc2, 'base_compenso_soci', t\.base_compenso_soci, 'compenso_soci', t\.compenso_soci\)/.test(M)
+    && !/set snapshot = to_jsonb\(t\)/.test(M));
+  t('change_log.before conserva i vecchi closed_at e closed_by', /'_closed_at', closed_at, '_closed_by', closed_by/.test(M));
+  t('un solo accordo per socio e data di inizio (niente aliquote doppie)', /unique \(socio, dal\)/.test(M));
   t('audit in change_log prima della sovrascrittura', /insert into change_log[\s\S]*reclose-compenso-soci[\s\S]*update ce_snapshots/.test(M));
   t('guardia post-reclose: drift 0', /dopo la ri-chiusura restano/.test(M));
   t('funzione aliquota SECURITY DEFINER con search_path fisso', /security definer set search_path = public/.test(M));
