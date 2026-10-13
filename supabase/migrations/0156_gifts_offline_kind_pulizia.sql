@@ -19,6 +19,7 @@
 --   4. kind obbligatorio (default 'gift') con i soli quattro valori; un 'gift' non puo' avere prezzo.
 --   5. v_ce_totale: la base del compenso toglie 'vendita_fuori_fatturato' invece di 'gift'. Stesso perimetro di prima
 --      (gli omaggi ora hanno prezzo 0); vista riscritta da pg_get_viewdef cambiando solo quel filtro.
+--   5b. v_ce_drill_sales: is_gift vero solo per kind 'gift' (prima ogni riga di gifts_offline, anche le vendite).
 --   6. Ri-chiusura del Totale di marzo e giugno, gli unici mesi chiusi che si muovono. Il CE Amimi' non legge
 --      gifts_offline: la guardia finale verifica che nessuna riga di nessuno snapshot resti diversa dal live.
 -- Ogni riga toccata ha before/after in change_log (chi = 'pulizia-gifts-offline-2026-10-13').
@@ -95,6 +96,16 @@ begin
     raise exception '0156: in v_ce_totale atteso un solo filtro %', old;
   end if;
   execute 'create or replace view public.v_ce_totale as ' || replace(d, old, 'g.kind = ''vendita_fuori_fatturato''::text');
+end $$;
+
+do $$
+declare d text; old text := E'true AS is_gift\n   FROM gifts_offline g';
+begin
+  d := rtrim(pg_get_viewdef('public.v_ce_drill_sales'::regclass, true), E' \n;');
+  if (length(d) - length(replace(d, old, ''))) / length(old) <> 1 then
+    raise exception '0156: in v_ce_drill_sales atteso un solo is_gift fisso sulle righe di gifts_offline';
+  end if;
+  execute 'create or replace view public.v_ce_drill_sales as ' || replace(d, old, E'g.kind = ''gift''::text AS is_gift\n   FROM gifts_offline g');
 end $$;
 
 create temp table _ce0156 on commit drop as

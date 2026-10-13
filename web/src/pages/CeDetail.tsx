@@ -335,7 +335,7 @@ function Drawer({ d, scope, onClose }: { d: DrillState; scope: Scope; onClose: (
               return (
                 <div className="cedt-row" key={i}>
                   <div className="di"><div className="dt">{r.descr || (r.canale === 'offline' ? 'Vendita negozio' : r.canale === 'b2b' ? 'B2B' : 'Ordine')}</div>
-                    <div className="dm">{(r.data ?? '').slice(0, 10)} · {r.canale}{r.is_gift ? ' · gift' : ''}{r.ref && r.canale === 'online' ? ' · #' + r.ref : ''}{url ? ' ↗' : ''}</div></div>
+                    <div className="dm">{(r.data ?? '').slice(0, 10)} · {r.canale === 'gift' ? 'fuori Qromo' : r.canale}{r.is_gift ? ' · omaggio' : ''}{r.ref && r.canale === 'online' ? ' · #' + r.ref : ''}{url ? ' ↗' : ''}</div></div>
                   <div className={`dv ${v < 0 ? 'neg' : ''}`}>{f === 'qty' ? num(r.qty ?? 0) : money(v)}</div>
                   {url && <a className="cedt-link" href={url} target="_blank" rel="noreferrer" aria-label="Apri in Shopify" />}
                 </div>

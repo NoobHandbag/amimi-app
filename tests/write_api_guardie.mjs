@@ -19,6 +19,15 @@ const F = flat(SRC);
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra ? '  <- ' + String(extra).slice(0, 160) : '')); } };
 
+console.log('\n== v28 (migr 0156): gift scrive solo omaggi e vendite manuali, un omaggio non ha prezzo ==');
+{
+  t('kind di default gift, letto da un solo helper', /const giftKind = \(k: unknown\) => \(k == null \|\| k === '' \? 'gift' : String\(k\)\);/.test(SRC));
+  t('validate: ammessi solo gift e vendita_manuale', /if \(!\['gift', 'vendita_manuale'\]\.includes\(kindG\)\) e\.push\(/.test(SRC));
+  t('validate: un omaggio con prezzo > 0 e\' rifiutato con un messaggio leggibile',
+    /kindG === 'gift' && \(num\(p\.prezzo, \{ min: 0 \}\) \?\? 0\) > 0\) e\.push\('Un regalo non ha prezzo/.test(SRC));
+  t('insert: il kind si scrive sempre (colonna NOT NULL dalla 0156)', /\} else \{\n\s+row\.kind = giftKind\(p\.kind\);/.test(SRC));
+}
+
 console.log('\n== A5: nessun Number() sui campi soldi/stock; si passa da num() ==');
 {
   const CAMPI = 'contati|qty|quantita|costo|costo_unitario|cogs|retail_price|prezzo|prezzo_retail|perc_negozio|importo_rimborsato|qty_sostituto|qty_ordered';

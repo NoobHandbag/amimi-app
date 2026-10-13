@@ -43,7 +43,7 @@ Key relations:
 - purchases(data date, codice, item, variant, quantita, costo_unitario, costo_totale, fornitore)
 - supplier_orders(fornitore, codice, item, variant, qty_ordered, qty_arrived, data_ordine, data_consegna)
 - expenses(date_paid date, operazione, costo, categoria, amimi boolean, status, year, month)  -- costo is NEGATIVE
-- gifts_offline(data date, codice, nome, cognome, quantita)
+- gifts_offline(year, month, data date, codice, nome, cognome, quantita, prezzo, cogs, kind)  -- offline rows outside Qromo/Shopify; prezzo and cogs are ROW totals (do not multiply by quantita), prezzo VAT-inclusive; kind = 'gift' (price 0), 'vendita_manuale' (manual sale), 'vendita_fuori_fatturato' (historical sale collected outside official revenue), 'rettifica' (stock out, no sale)
 - products(codice, item, variant, categoria, retail_price, cogs, verificato)
 - suppliers(name), negozi(name)
 Rules: prices are VAT-inclusive (netto = lordo/1.22, IVA 22%). expenses.costo is negative. Money is EUR.

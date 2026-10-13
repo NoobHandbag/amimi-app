@@ -67,7 +67,7 @@ export default function GiftForm({ pin, chi }: { pin: string; chi: string }) {
           {isVendita && (
             <>
               <div className="grid2">
-                <div><label className="fl">Prezzo € (IVA incl.)</label><NumberStepper value={prezzo} onChange={setPrezzo} decimal step={5} placeholder="0,00" /></div>
+                <div><label className="fl">Prezzo totale € (IVA incl., tutti i pezzi)</label><NumberStepper value={prezzo} onChange={setPrezzo} decimal step={5} placeholder="0,00" /></div>
                 <div><label className="fl">Pagamento</label>
                   <select className="num" value={pagamento} onChange={(e) => setPagamento(e.target.value)}>
                     {PAGAMENTI.map((p) => <option key={p} value={p}>{p}</option>)}

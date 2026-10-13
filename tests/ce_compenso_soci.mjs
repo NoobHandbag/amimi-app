@@ -58,14 +58,20 @@ console.log('\n== migrazione 0156 (pulizia gifts_offline) ==');
   t('ri-chiusura solo del Totale di marzo e giugno, con la lista esatta delle differenze attese',
     /where s\.id = t\.id and t\.ce = 'totale' and t\.month in \(3, 6\)/.test(M) && /'totale-6:cogs 193\.00, totale-6:mc1 193\.00, totale-6:mc2 193\.00'/.test(M));
   t('guardia finale: nessuna riga di nessuno snapshot diversa dal live', /restano righe diverse dal live/.test(M));
+  t('v_ce_drill_sales: is_gift vero solo per gli omaggi', /replace\(d, old, E'g\.kind = ''gift''::text AS is_gift/.test(M));
+  t('CE dettagliato: il canale gift si legge "fuori Qromo", omaggio solo se lo e\'',
+    /r\.canale === 'gift' \? 'fuori Qromo' : r\.canale\}\{r\.is_gift \? ' · omaggio' : ''\}/.test(read('web/src/pages/CeDetail.tsx')));
   const F = read('web/src/components/GiftForm.tsx');
   t('form Regalo: prezzo 0, il prezzo si chiede solo alla Vendita',
     /prezzo: isVendita \? Number\(prezzo\) : 0,/.test(F) && (F.match(/<NumberStepper value=\{prezzo\}/g) || []).length === 1
     && /\{isVendita && \(/.test(F));
+  t('form Vendita: il prezzo e\' il totale della riga (le viste non moltiplicano per la quantita)', /Prezzo totale € \(IVA incl\., tutti i pezzi\)/.test(F));
   for (const f of ['supabase/functions/ask-data/index.ts', 'supabase/functions/assistant/index.ts']) {
     const P = read(f);
     t(`${f}: il prompt non dice piu' che il Totale contiene omaggi a listino e nomina vendita_fuori_fatturato`,
       !/gifts at list price|gifts val/.test(P) && /vendita_fuori_fatturato/.test(P));
+    t(`${f}: lo schema nel prompt elenca gifts_offline con prezzo, kind e i quattro valori`,
+      /- gifts_offline\([^)]*prezzo[^)]*kind\)[^\n]*'gift'[^\n]*'vendita_manuale'[^\n]*'vendita_fuori_fatturato'[^\n]*'rettifica'/.test(P));
   }
 }
 

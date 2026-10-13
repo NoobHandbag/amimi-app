@@ -15,6 +15,9 @@
 // v27 (2026-10-04): arrival_set accetta `attesi` (opzionale), il totale arrivato che il client aveva a schermo:
 // se a DB e' un altro risponde 409 `riga_cambiata` senza scrivere, e l'update della riga ordine e' un
 // compare-and-set su quel valore. Senza `attesi` il comportamento e' quello della v26.
+//
+// v28 (2026-10-13, migr 0156): `gift` accetta solo kind 'gift' (default) o 'vendita_manuale' e lo scrive sempre
+// (la colonna e' NOT NULL); un omaggio con prezzo > 0 prende 422 leggibile invece dell'errore del vincolo Postgres.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { num, isoDate, todayRome, ymFromIso, tok, cnorm, VALID_CATEGORIE } from './lib.ts';
 
@@ -50,6 +53,7 @@ const TABLES: Record<string, string> = {
   product: 'products',
 };
 const noSpaces = (s: unknown) => typeof s === 'string' && s.length > 0 && !/\s/.test(s);
+const giftKind = (k: unknown) => (k == null || k === '' ? 'gift' : String(k));
 
 // tok v2 e cnorm sono ora in ./lib.ts (condivisi con i test). 'order' e 'count' non passano piu' da validate():
 // 'order' e' disabilitato (400 sotto) e 'count' ha il suo blocco dedicato, quindi qui restano solo i rami vivi
@@ -72,6 +76,12 @@ function validate(action: string, p: Record<string, unknown>): string[] {
     reqCodice();
     reqQty();
     if (p.prezzo != null && p.prezzo !== '' && num(p.prezzo, { min: 0 }) == null) e.push('prezzo non valido');
+    // migr 0156 (13-10): da qui entrano solo omaggi e vendite manuali; 'vendita_fuori_fatturato' e 'rettifica' sono storico
+    // (la prima esce dalla base del compenso soci). Un omaggio non ha prezzo: il vincolo c'e' anche nel database, qui il
+    // messaggio e' leggibile invece dell'errore Postgres.
+    const kindG = giftKind(p.kind);
+    if (!['gift', 'vendita_manuale'].includes(kindG)) e.push(`tipo non valido: ${kindG} (ammessi gift, vendita_manuale)`);
+    else if (kindG === 'gift' && (num(p.prezzo, { min: 0 }) ?? 0) > 0) e.push('Un regalo non ha prezzo: se sono entrati soldi usa Vendita manuale');
   } else if (action === 'b2b') {
     reqCodice();
     reqQty();
@@ -1199,8 +1209,9 @@ async function handle(req: Request): Promise<Response> {
     if (action === 'b2b') {
       if (p.prezzo_retail != null && p.prezzo_retail !== '') row.prezzo_retail = num(p.prezzo_retail, { min: 0 });
       if (String(p.tipo_movimento) === 'venduto') row.perc_negozio = num(p.perc_negozio, { min: 0, max: 1 });
-    } else if (p.prezzo != null && p.prezzo !== '') {
-      row.prezzo = num(p.prezzo, { min: 0 });
+    } else {
+      row.kind = giftKind(p.kind);
+      if (p.prezzo != null && p.prezzo !== '') row.prezzo = num(p.prezzo, { min: 0 });
     }
     if (!force && await closedMonth(ymG.year, ymG.month)) return closedErr(ymG.year, ymG.month);
   } else if (action === 'product') {

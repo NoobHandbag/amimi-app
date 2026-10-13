@@ -131,6 +131,9 @@ console.log('\n===== GIFTS_OFFLINE pulita (migr 0156) =====');
   ok(g.length > 0 && badKind.length === 0, `gifts_offline: ogni riga ha uno dei quattro kind (${g.length} righe, KO ${badKind.length})`);
   ok(g.length > 0 && giftPrezzo.length === 0, `gifts_offline: nessun omaggio con un prezzo (KO ${giftPrezzo.length})`);
   ok(g.length > 0 && zeroCogs.length === 0, `gifts_offline: nessuna riga a quantita 0 con un costo (KO ${zeroCogs.length})`);
+  // vendita_fuori_fatturato esce dalla base del compenso: e' solo storico (61 righe gen-set), nessuno ne scrive di nuove
+  const fuori = arr(await get('/gifts_offline?kind=eq.vendita_fuori_fatturato&created_at=gte.2026-10-14&select=id'));
+  ok(Array.isArray(await get('/gifts_offline?select=id&limit=1')) && fuori.length === 0, `gifts_offline: nessuna vendita_fuori_fatturato nuova dopo la 0156 (KO ${fuori.length})`);
 }
 
 console.log(`\n===== ${pass} passed, ${fail} failed =====`);
