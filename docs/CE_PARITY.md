@@ -30,7 +30,7 @@ Harness: `etl/parity.mjs`. Months tested: Feb–May 2026 (closed months).
 | **Variabili Commissioni** | Σ shopify_orders.payment_fees (already negative) |
 | **Variabili Logistica** | Σ expenses where categoria=LOGISTICA, amimi, sottocategoria ~ 'sped*' |
 | **Variabili Resi** | − Σ shopify_orders.refund_amount |
-| **Variabili Compenso soci** (migr 0154, 13-10) | − aliquota × max(Omnichannel Netto + Resi, 0); aliquota da `ce_compensi_soci` (Dan 0,025 da 2026-01). Nel Totale la base toglie anche gli omaggi (`gifts_offline` non `vendita_manuale`, prezzo/1,22). Riga calcolata: non esiste nel vecchio Foglio, quindi dal 13-10 la parity col Foglio vale al netto di questa riga |
+| **Variabili Compenso soci** (migr 0154, 13-10) | − aliquota × max(Omnichannel Netto + Resi, 0); aliquota da `ce_compensi_soci` (Dan 0,025 da 2026-01). Nel Totale la base toglie anche le vendite incassate fuori dal fatturato (`gifts_offline.kind = 'vendita_fuori_fatturato'`, prezzo/1,22; migr 0156, decisione Dan 13-10: base = vendite ufficiali + vendite manuali). Riga calcolata: non esiste nel vecchio Foglio, quindi dal 13-10 la parity col Foglio vale al netto di questa riga |
 | **MC1** | Omnichannel Netto + (COGS + Packaging + Commissioni + Logistica + Resi + Compenso soci) |
 | **Fissi SALARI/TASSE/OPEX/EVENTI/MARKETING** | Σ expenses where categoria=cat AND amimi |
 | **Fissi LOGISTICA (Magazzino)** | Σ expenses where categoria=LOGISTICA, amimi, sottocategoria NOT 'sped*' |

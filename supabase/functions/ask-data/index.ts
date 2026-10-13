@@ -36,14 +36,14 @@ Postgres (Italian handbag business "Amimì"). Answer with ONE read-only SELECT.
 Key relations:
 - v_inventory(codice, item, variant, categoria, giacenza_attuale, disponibili_da_vendere, valore, retail_price, cogs, last_sale, on_shopify, shopify_sold, qromo_sold, b2b_venduto)
 - v_ce_amimi_summary(year, month, omni_netto, online_netto, offline_netto, b2b_netto, cogs, compenso_soci, base_compenso_soci, mc1, mc2)  -- Amimì brand P&L (ONLY when asked for the brand / "solo Amimì"); sales start month 2
-- v_ce_totale(year, month, omni_netto, online_netto, offline_netto, cogs, compenso_soci, base_compenso_soci, mc1, mc2)  -- whole-business P&L, native/live, incl. January (NOT the old seed). DEFAULT for any P&L / conto economico / margini question. Costs are NEGATIVE; compenso_soci (partner compensation = rate from table ce_compensi_soci x base_compenso_soci) is a variable cost already INSIDE mc1 and mc2; base_compenso_soci = real net sales: ex VAT, net of refunds, excluding gifts (omni_netto of this view also contains gifts at list price).
+- v_ce_totale(year, month, omni_netto, online_netto, offline_netto, cogs, compenso_soci, base_compenso_soci, mc1, mc2)  -- whole-business P&L, native/live, incl. January (NOT the old seed). DEFAULT for any P&L / conto economico / margini question. Costs are NEGATIVE; compenso_soci (partner compensation = rate from table ce_compensi_soci x base_compenso_soci) is a variable cost already INSIDE mc1 and mc2; base_compenso_soci = net sales ex VAT, net of refunds, WITHOUT the historical sales collected outside official revenue (gifts_offline kind 'vendita_fuori_fatturato', Jan-Sep 2026), which omni_netto of this view does contain; gifts have price 0.
 - qromo_sales(data date, codice, item, variant, quantita, prezzo, nome, cognome, year, month)  -- offline/POS sales
 - shopify_orders(order_id, created_at_shop, customer_name, gross_total, net_total, discount_total, year, month)
 - shopify_line_items(order_id, codice, lineitem_name, quantita, price, year, month)  -- online sales lines
 - purchases(data date, codice, item, variant, quantita, costo_unitario, costo_totale, fornitore)
 - supplier_orders(fornitore, codice, item, variant, qty_ordered, qty_arrived, data_ordine, data_consegna)
 - expenses(date_paid date, operazione, costo, categoria, amimi boolean, status, year, month)  -- costo is NEGATIVE
-- gifts_offline(data date, codice, nome, cognome, quantita)
+- gifts_offline(year, month, data date, codice, nome, cognome, quantita, prezzo, cogs, kind)  -- offline rows outside Qromo/Shopify; prezzo and cogs are ROW totals (do not multiply by quantita), prezzo VAT-inclusive; kind = 'gift' (price 0), 'vendita_manuale' (manual sale), 'vendita_fuori_fatturato' (historical sale collected outside official revenue), 'rettifica' (stock out, no sale)
 - products(codice, item, variant, categoria, retail_price, cogs, verificato)
 - suppliers(name), negozi(name)
 Rules: prices are VAT-inclusive (netto = lordo/1.22, IVA 22%). expenses.costo is negative. Money is EUR.

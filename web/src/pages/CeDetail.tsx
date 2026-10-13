@@ -146,7 +146,7 @@ export default function CeDetail({ onBack }: { onBack?: () => void }) {
     if (k === 'compenso_soci') {
       const r = rec;
       const base = r ? `Base del mese ${eur(r.base_compenso_soci)}, compenso ${eur(r.compenso_soci)}. ` : '';
-      return base + 'Quota delle vendite nette che spetta ai soci per accordo: oggi Dan, 2,5% da gennaio 2026. Base = fatturato netto (IVA esclusa) al netto dei resi, senza omaggi. È una competenza calcolata, non una spesa dell\'estratto conto: i parametri stanno in ce_compensi_soci.';
+      return base + 'Quota delle vendite nette che spetta ai soci per accordo: oggi Dan, 2,5% da gennaio 2026. Base = fatturato netto (IVA esclusa) al netto dei resi; nel Totale restano fuori le vendite incassate fuori dal fatturato (righe storiche gen-set 2026, decisione del 13-10). È una competenza calcolata, non una spesa dell\'estratto conto: i parametri stanno in ce_compensi_soci.';
     }
     if (k === 'mc1') return 'MC1 = Fatturato netto − Costi variabili (COGS, packaging, commissioni, logistica, resi, compenso soci). Tocca quelle celle per il dettaglio.';
     if (k === 'mc2') return 'MC2 (utile) = MC1 − Costi fissi (salari, tasse, logistica magazzino, OPEX, eventi, marketing). Tocca quelle celle per il dettaglio.';
@@ -335,7 +335,7 @@ function Drawer({ d, scope, onClose }: { d: DrillState; scope: Scope; onClose: (
               return (
                 <div className="cedt-row" key={i}>
                   <div className="di"><div className="dt">{r.descr || (r.canale === 'offline' ? 'Vendita negozio' : r.canale === 'b2b' ? 'B2B' : 'Ordine')}</div>
-                    <div className="dm">{(r.data ?? '').slice(0, 10)} · {r.canale}{r.is_gift ? ' · gift' : ''}{r.ref && r.canale === 'online' ? ' · #' + r.ref : ''}{url ? ' ↗' : ''}</div></div>
+                    <div className="dm">{(r.data ?? '').slice(0, 10)} · {r.canale === 'gift' ? 'fuori Qromo' : r.canale}{r.is_gift ? ' · omaggio' : ''}{r.ref && r.canale === 'online' ? ' · #' + r.ref : ''}{url ? ' ↗' : ''}</div></div>
                   <div className={`dv ${v < 0 ? 'neg' : ''}`}>{f === 'qty' ? num(r.qty ?? 0) : money(v)}</div>
                   {url && <a className="cedt-link" href={url} target="_blank" rel="noreferrer" aria-label="Apri in Shopify" />}
                 </div>

@@ -46,6 +46,7 @@
 | C7 | Rimborsi/modifiche ordini post-ingest arrivano nel CE | A7 | - | shopify-sync v4: re-sync rimborsi | ce-guard riconcilia i CONTEGGI; riconciliazione a IMPORTO non ancora | da scrivere quando c'e' l'ambiente (serve mock Shopify) | OK runtime, guardia PARZIALE |
 | C8 | Il restatement di un mese chiuso passa da correzione + RI-chiusura esplicita | A3/B18 | - | force + ce_snapshots | v_ce_drift mostra il delta finche' non ri-chiuso | - | OWNER (giu/apr da correggere e ri-chiudere) |
 | C9 | Il compenso soci (migr 0154) e' dentro MC1 e MC2 in tutte le viste CE, vale -aliquota x base e non e' mai positivo | owner 13-10 | `ce_compensi_soci` + `ce_aliquota_compensi()` | viste CE | ce-guard v9 (invariante MC1) | `tests/ce_compenso_soci.mjs` (sorgente, CI) + blocco COMPENSO SOCI in `tests/features.mjs` (produzione, sola lettura) | OK |
+| C10 | `gifts_offline.kind` e' uno di quattro valori, un omaggio non ha prezzo, una riga a quantita' 0 non ha costo; la base del compenso nel Totale toglie solo `vendita_fuori_fatturato` | Dan 13-10 (migr 0156) | `gifts_offline_kind_check`, `gifts_offline_gift_senza_prezzo`, `kind` NOT NULL | form Regalo senza prezzo | - | blocco "migrazione 0156" in `tests/ce_compenso_soci.mjs` (sorgente, CI) + blocco GIFTS_OFFLINE in `tests/features.mjs` (produzione, sola lettura) | OK |
 
 ## 3. DEDUP / IDEMPOTENZA (ogni evento conta una volta sola)
 
