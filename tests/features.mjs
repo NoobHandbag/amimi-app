@@ -79,5 +79,29 @@ console.log('\n===== CONSERVAZIONE spese e ricavi (audit gate 14-09, guardiano a
   ok(Number(orf?.totale) === 0, `ricavi: nessuna vendita con periodo mancante (totale orfane = ${orf?.totale})`);
 }
 
+console.log('\n===== COMPENSO SOCI nel CE (migr 0154) =====');
+{
+  // la riga e' calcolata: compenso = -aliquota x base, mai positiva, dentro MC1 (e quindi MC2), in entrambi i CE.
+  // Se qualcuno toglie il compenso da una delle due summary, mc1 non torna piu' con la somma delle righe.
+  const arr = (x) => (Array.isArray(x) ? x : []);   // una vista/colonna assente risponde con un oggetto errore, non con []
+  const acc = arr(await get('/ce_compensi_soci?select=aliquota,dal,al'));
+  const aliq = (y, m) => acc.filter((a) => `${y}-${String(m).padStart(2, '0')}-01` >= a.dal && (!a.al || `${y}-${String(m).padStart(2, '0')}-01` <= a.al))
+    .reduce((s, a) => s + Number(a.aliquota), 0);
+  ok(acc.length >= 1, `ce_compensi_soci leggibile con la chiave pubblica (${acc.length} accordi)`);
+  for (const view of ['v_ce_amimi_summary', 'v_ce_totale', 'v_ce_totale_summary']) {
+    const rows = arr(await get(`/${view}?year=eq.2026&select=month,omni_netto,cogs,packaging,commissioni,logistica_var,resi,compenso_soci,base_compenso_soci,mc1,mc2,salari,tasse,logistica_mag,opex,eventi,marketing`));
+    const N = (x) => Number(x) || 0;
+    const badMc1 = rows.filter((r) => !near(N(r.omni_netto) + N(r.cogs) + N(r.packaging) + N(r.commissioni) + N(r.logistica_var) + N(r.resi) + N(r.compenso_soci), N(r.mc1)));
+    const badMc2 = rows.filter((r) => !near(N(r.mc1) + N(r.salari) + N(r.tasse) + N(r.logistica_mag) + N(r.opex) + N(r.eventi) + N(r.marketing), N(r.mc2)));
+    const badComp = rows.filter((r) => N(r.compenso_soci) > 0 || !near(N(r.compenso_soci), -aliq(2026, r.month) * N(r.base_compenso_soci), 0.01));
+    ok(rows.length > 0 && badMc1.length === 0 && badMc2.length === 0,
+      `${view}: MC1 = netto + variabili + compenso soci, MC2 = MC1 + fissi, su ${rows.length} mesi (KO mc1 ${badMc1.map((r) => r.month)}, mc2 ${badMc2.map((r) => r.month)})`);
+    ok(rows.length > 0 && badComp.length === 0, `${view}: compenso_soci = -aliquota x base e mai positivo (KO mesi ${badComp.map((r) => r.month)})`);
+  }
+  const drift = arr(await get('/v_ce_drift?select=ce,year,month,delta_netto,delta_mc2'));
+  const moved = drift.filter((d) => Math.abs(Number(d.delta_netto)) > 0.01 || Math.abs(Number(d.delta_mc2)) > 0.01);
+  ok(drift.length > 0 && moved.length === 0, `mesi chiusi: nessun drift fra snapshot e viste live (${moved.map((d) => `${d.ce}-${d.month}`).join(', ')})`);
+}
+
 console.log(`\n===== ${pass} passed, ${fail} failed =====`);
 if (fail) { console.log('FAILURES:\n- ' + fails.join('\n- ')); process.exit(1); }

@@ -148,7 +148,8 @@ Deno.serve(async (req) => {
   for (const [ce, view] of [['amimi', 'v_ce_amimi_summary'], ['totale', 'v_ce_totale']] as const) {
     const { data: rows } = read(view, await sb.from(view).select('*').eq('year', YEAR));
     for (const r of rows ?? []) {
-      const mc1c = N(r.omni_netto) + N(r.cogs) + N(r.packaging) + N(r.commissioni) + N(r.logistica_var) + N(r.resi);
+      // compenso_soci (migr 0154) e' un costo variabile: N() lo vale 0 se la colonna non c'e' ancora
+      const mc1c = N(r.omni_netto) + N(r.cogs) + N(r.packaging) + N(r.commissioni) + N(r.logistica_var) + N(r.resi) + N(r.compenso_soci);
       const mc2c = N(r.mc1) + N(r.salari) + N(r.tasse) + N(r.logistica_mag) + N(r.opex) + N(r.eventi) + N(r.marketing);
       if (Math.abs(mc1c - N(r.mc1)) > 0.02) { mcViol++; mcDetails.push(`${ce} M${r.month} mc1`); }
       if (Math.abs(mc2c - N(r.mc2)) > 0.02) { mcViol++; mcDetails.push(`${ce} M${r.month} mc2`); }

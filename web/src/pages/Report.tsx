@@ -24,6 +24,7 @@ const CURRENT_MONTH = nowMonth(); // mese in corso, derivato dalla data (mai har
 export default function Report({ onBack, onDetail, onAds }: { onBack?: () => void; onDetail?: () => void; onAds?: () => void }) {
   const [ce, setCe] = useState<CE[]>([]);
   const [cet, setCet] = useState<CeTot[]>([]);
+  const [ceTot, setCeTot] = useState<CE[]>([]);
   const [inv, setInv] = useState<Inv[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -31,7 +32,7 @@ export default function Report({ onBack, onDetail, onAds }: { onBack?: () => voi
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [detailMonth, setDetailMonth] = useState(Math.max(2, CURRENT_MONTH - 1));
-  const [scope, setScope] = useState<Scope>('amimi');
+  const [scope, setScope] = useState<Scope>('totale');
   const [sel, setSel] = useState<Set<number>>(new Set(Array.from({ length: CURRENT_MONTH }, (_, i) => i + 1)));
 
   useEffect(() => {
@@ -40,11 +41,14 @@ export default function Report({ onBack, onDetail, onAds }: { onBack?: () => voi
         const a = await supabase.from('v_ce_amimi_summary').select('*').order('month');
         const b = await supabase.from('v_inventory').select('codice,item,variant,shopify_sold,qromo_sold,b2b_venduto,retail_price,cogs');
         const c = await fetchCeTotale();
+        const t = await supabase.from('v_ce_totale').select('*').eq('year', nowYear()).order('month');
         if (a.error) throw a.error;
+        if (t.error) throw t.error;
         if (b.error) throw b.error;
         setCe((a.data as CE[]).filter((r) => r.year === nowYear() && r.month >= 1 && r.month <= 12));
         setInv(b.data as Inv[]);
         setCet(c);
+        setCeTot((t.data as CE[]).filter((r) => r.month >= 1 && r.month <= 12));
       } catch (e: unknown) {
         setErr(e instanceof Error ? e.message : String(e));
       } finally {
@@ -98,7 +102,8 @@ export default function Report({ onBack, onDetail, onAds }: { onBack?: () => voi
   const top = inv
     .map((p) => ({ ...p, venduto: (p.shopify_sold || 0) + (p.qromo_sold || 0) + (p.b2b_venduto || 0), margine: p.retail_price && p.cogs != null ? (p.retail_price - p.cogs) / p.retail_price : null }))
     .filter((p) => p.venduto > 0).sort((a, b) => b.venduto - a.venduto).slice(0, 12);
-  const dm = ce.find((r) => r.month === detailMonth);
+  const detRows = scope === 'amimi' ? ce.filter((r) => r.month >= 2) : ceTot;
+  const dm = detRows.find((r) => r.month === detailMonth);
 
   function toggle(m: number) {
     setSel((prev) => { const n = new Set(prev); n.has(m) ? n.delete(m) : n.add(m); return n.size ? n : prev; });
@@ -220,43 +225,42 @@ export default function Report({ onBack, onDetail, onAds }: { onBack?: () => voi
         <p className="note">
           {scope === 'amimi'
             ? '* mese in corso (costi fissi non ancora caricati). Vista Amimì (brand): Feb e Mar combaciano col foglio al centesimo, Apr/Mag entro ~1%.'
-            : '* mese in corso. Vista Totale (intera attività): valori letti dal foglio CE_TOTALE, gennaio incluso. Non ricalcolati dalle transazioni della replica.'}
+            : '* mese in corso. Vista Totale (intera attività): calcolata dalle transazioni, gennaio incluso; gen/feb contengono il blocco manuale della vecchia ditta ereditato dal Foglio.'}
         </p>
       </section>
 
-      {scope === 'amimi' && (
-        <section className="card">
-          <div className="dethead">
-            <h2>Dettaglio mese</h2>
-            <select value={detailMonth} onChange={(e) => setDetailMonth(Number(e.target.value))}>
-              {ce.filter((r) => r.month >= 2).map((r) => <option key={r.month} value={r.month}>{MESI[r.month]}</option>)}
-            </select>
+      <section className="card">
+        <div className="dethead">
+          <h2>Dettaglio mese</h2>
+          <select value={detailMonth} onChange={(e) => setDetailMonth(Number(e.target.value))}>
+            {detRows.map((r) => <option key={r.month} value={r.month}>{MESI[r.month]}</option>)}
+          </select>
+        </div>
+        {dm && (
+          <div>
+            <DetRow label="Online netto" v={dm.online_netto} />
+            <DetRow label="Offline netto" v={dm.offline_netto} />
+            {dm.b2b_netto > 0 && <DetRow label="B2B netto" v={dm.b2b_netto} />}
+            <DetRow label="Fatturato netto" v={dm.omni_netto} bold />
+            <div className="detsep">Costi variabili</div>
+            <DetRow label="COGS" v={dm.cogs} />
+            <DetRow label="Packaging" v={dm.packaging} />
+            <DetRow label="Commissioni pagamenti" v={dm.commissioni} />
+            <DetRow label="Logistica (spedizioni)" v={dm.logistica_var} />
+            <DetRow label="Resi" v={dm.resi} />
+            <DetRow label="Compenso soci (% vendite nette)" v={dm.compenso_soci ?? 0} />
+            <DetRow label="Margine di Contribuzione 1" v={dm.mc1} bold />
+            <div className="detsep">Costi fissi</div>
+            <DetRow label="Salari" v={dm.salari} />
+            <DetRow label="Tasse" v={dm.tasse} />
+            <DetRow label="Logistica (magazzino)" v={dm.logistica_mag} />
+            <DetRow label="OPEX" v={dm.opex} />
+            <DetRow label="Eventi" v={dm.eventi} />
+            <DetRow label="Marketing" v={dm.marketing} />
+            <DetRow label="MC2 (utile)" v={dm.mc2} bold />
           </div>
-          {dm && (
-            <div>
-              <DetRow label="Online netto" v={dm.online_netto} />
-              <DetRow label="Offline netto" v={dm.offline_netto} />
-              {dm.b2b_netto > 0 && <DetRow label="B2B netto" v={dm.b2b_netto} />}
-              <DetRow label="Fatturato netto" v={dm.omni_netto} bold />
-              <div className="detsep">Costi variabili</div>
-              <DetRow label="COGS" v={dm.cogs} />
-              <DetRow label="Packaging" v={dm.packaging} />
-              <DetRow label="Commissioni pagamenti" v={dm.commissioni} />
-              <DetRow label="Logistica (spedizioni)" v={dm.logistica_var} />
-              <DetRow label="Resi" v={dm.resi} />
-              <DetRow label="Margine di Contribuzione 1" v={dm.mc1} bold />
-              <div className="detsep">Costi fissi</div>
-              <DetRow label="Salari" v={dm.salari} />
-              <DetRow label="Tasse" v={dm.tasse} />
-              <DetRow label="Logistica (magazzino)" v={dm.logistica_mag} />
-              <DetRow label="OPEX" v={dm.opex} />
-              <DetRow label="Eventi" v={dm.eventi} />
-              <DetRow label="Marketing" v={dm.marketing} />
-              <DetRow label="MC2 (utile)" v={dm.mc2} bold />
-            </div>
-          )}
-        </section>
-      )}
+        )}
+      </section>
 
       <section className="card">
         <h2>Top prodotti (più venduti)</h2>
