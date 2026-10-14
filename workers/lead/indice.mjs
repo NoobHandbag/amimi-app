@@ -53,16 +53,17 @@ export function filtriCandidati(rows, blocco = 40) {
 }
 
 // Dedup multi-chiave (piano 3.2), nell'ordine: google_place_id | dominio del sito | ig_handle | nome normalizzato + citta.
+// `stessoGiro`: l'account e' nato in questo stesso giro di seed (seed.mjs lo passa per le righe appena inserite).
 export function creaIndice() {
-  const byPlace = new Map(), byDomain = new Map(), byHandle = new Map(), byName = new Map(), fonte = new Map();
-  const add = (a) => {
-    fonte.set(a.id, a.fonte_seed ?? null);
+  const byPlace = new Map(), byDomain = new Map(), byHandle = new Map(), byName = new Map(), info = new Map();
+  const add = (a, stessoGiro = false) => {
+    info.set(a.id, { fonte_seed: a.fonte_seed ?? null, google_place_id: a.google_place_id ?? null, owner_note: a.owner_note ?? null, stesso_giro: stessoGiro });
     if (a.google_place_id) byPlace.set(a.google_place_id, a.id);
     const d = domainOf(a.website); if (d) byDomain.set(d, a.id);
     const h = handleOf(a.ig_handle); if (h) byHandle.set(h, a.id);
     byName.set(nameKey(a), a.id);
   };
-  const trovato = (id, chiave) => ({ id, chiave, fonte_seed: fonte.get(id) ?? null });
+  const trovato = (id, chiave) => ({ id, chiave, ...info.get(id) });
   const match = (r) => {
     if (r.google_place_id && byPlace.has(r.google_place_id)) return trovato(byPlace.get(r.google_place_id), 'place_id');
     const d = domainOf(r.website); if (d && byDomain.has(d)) return trovato(byDomain.get(d), 'dominio');
@@ -79,9 +80,49 @@ export function creaIndice() {
 // alla sua fonte, e il negozio sembrava trovato da piu' fonti (al 14-10 in prod 179 evidenze `fonte` dello script su 337).
 export const serveFonte = (hit, r) => !!r.fonte_seed && r.fonte_seed !== hit.fonte_seed;
 
+// Voto e recensioni in coda alla nota di seed_maps.mjs: `Maps "concept store" Napoli · 4,8 (1.049)` -> '4.8|1049';
+// una nota Maps senza voto -> '-'; una nota che non e' di seed_maps (scritta a mano, altra fonte) -> null.
+export function votoMaps(nota) {
+  if (!/^Maps "/.test(nota ?? '')) return null;
+  const m = String(nota).match(/·\s*(\d[,.]\d)(?:\s*\(([\d.]+)\))?\s*$/);
+  return m ? `${m[1].replace(',', '.')}|${(m[2] ?? '').replace(/\./g, '')}` : '-';
+}
+
+// Omonimo Maps: una riga agganciata SOLO per nome+citta che e' un'altra scheda Maps (seconda sede, catena o negozio
+// omonimo), non lo stesso negozio ritrovato. Prima di serveFonte la sua traccia era un'evidenza `fonte`, che lo faceva
+// sembrare trovato da piu' fonti; con serveFonte non restava niente (14-10: 50 delle 231 evidenze `fonte` in prod,
+// place_id ritrovato nei file di seed). Torna 'place_id' o 'voto' (altra scheda), 'incerto' o null (stessa scheda,
+// o niente da confrontare).
+// - place_id della riga e dell'account entrambi presenti: diversi = altra scheda.
+// - senza uno dei due place_id, fra due note Maps decidono voto e recensioni, ma solo con l'account nato nello stesso
+//   giro: due schede dello stesso giro con la nota diversa sono due schede (48 su 48 al 14-10), mentre fra un giro e
+//   l'altro la stessa scheda cambia numeri (85 schede ritrovate su 87 con la nota diversa): li' e' 'incerto'.
+export function omonimoMaps(hit, r) {
+  if (hit?.chiave !== 'nome+citta') return null;
+  if (r.google_place_id && hit.google_place_id) return r.google_place_id !== hit.google_place_id ? 'place_id' : null;
+  const a = votoMaps(hit.owner_note), b = votoMaps(r.owner_note);
+  if (!a || !b || a === b) return null;
+  return hit.stesso_giro ? 'voto' : 'incerto';
+}
+
+// L'evidenza che seed.mjs scrive su un doppione, o null: `omonimo_maps` per un'altra scheda (mai `fonte`: non e' lo
+// stesso negozio), `fonte` per lo stesso negozio da una fonte diversa, niente se non si sa quale dei due e'.
+// `cerca` e' il filtro contains() che dice se c'e' gia' (rilancio dello stesso file, sweep che ritrova la scheda).
+export function evidenzaDoppione(hit, r) {
+  const motivo = omonimoMaps(hit, r);
+  if (motivo === 'incerto') return null;
+  if (motivo) {
+    const payload = { google_place_id: r.google_place_id ?? null, nome_visto: r.nome, nota: r.owner_note ?? null, fonte_seed: r.fonte_seed ?? null, google_maps_url: r.google_maps_url ?? null, motivo };
+    return { tipo: 'omonimo_maps', payload, cerca: r.google_place_id ? { google_place_id: r.google_place_id } : { nota: payload.nota } };
+  }
+  if (serveFonte(hit, r)) return { tipo: 'fonte', payload: { fonte_seed: r.fonte_seed, nome_visto: r.nome, nota: r.owner_note ?? null }, cerca: { fonte_seed: r.fonte_seed } };
+  return null;
+}
+
 // Carica l'indice di un file di seed: legge solo i candidati (filtriCandidati), a blocchi, ognuno paginato fino al
 // conteggio esatto. Una lettura fallita lancia STOP prima di qualunque scrittura.
-export const COLS_INDICE = 'id,nome,citta,website,ig_handle,google_place_id,fonte_seed';
+// owner_note serve a omonimoMaps (voto e recensioni Maps).
+export const COLS_INDICE = 'id,nome,citta,website,ig_handle,google_place_id,fonte_seed,owner_note';
 export async function caricaIndice(sb, rows) {
   const idx = creaIndice(), { place, or } = filtriCandidati(rows), visti = new Set();
   for (const blocco of place) {

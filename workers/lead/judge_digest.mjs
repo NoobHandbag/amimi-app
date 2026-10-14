@@ -39,6 +39,9 @@ for (const a of accounts) {
   if (last.contatti_trovati) console.log(`[contatti ${E('contatti_trovati')}] emails=${short(j(P('contatti_trovati').emails), 160)}`);
   const errs = ev.filter((e) => e.tipo === 'errore').map((e) => short(e.payload?.stage + ':' + e.payload?.msg, 80));
   if (errs.length) console.log(`[errori] ${errs.join(' ; ')}`);
+  // altre schede Maps con lo stesso nome nella stessa citta' (seed.mjs, omonimoMaps): tutte, non solo l'ultima
+  const omo = ev.filter((e) => e.tipo === 'omonimo_maps');
+  if (omo.length) console.log(`[omonimi_maps ${omo.length}] ${omo.map((e) => `${eid(e.id)} ${short(e.payload?.nota, 90)}`).join(' ; ')} -> altra scheda Maps con lo stesso nome: seconda sede (bonus gruppo), catena o monomarca (esclusione) o negozio diverso. Non e' una fonte in piu'`);
   const imgs = Object.values(last).filter((e) => e.asset_path && /screenshot_ig|home_mobile|maps_photos|screenshot_home$/.test(e.tipo)).map((e) => e.tipo);
   console.log(`immagini disponibili: ${imgs.join(', ') || '(nessuna)'}\n`);
 }
