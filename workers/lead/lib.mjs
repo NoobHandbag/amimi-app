@@ -30,7 +30,9 @@ export async function startRun(sb, fase, n_input, note) {
   return data.id;
 }
 export async function endRun(sb, id, { n_ok, n_err, log }) {
-  await sb.from('lead_runs').update({ ended_at: new Date().toISOString(), n_ok, n_err, log }).eq('id', id);
+  const { error } = await sb.from('lead_runs').update({ ended_at: new Date().toISOString(), n_ok, n_err, log }).eq('id', id);
+  // giro non chiuso = lead_runs senza ended_at, conteggi e log: lo si dice a schermo e lo script esce con errore (Regola 20 a)
+  if (error) throw new Error(`STOP: chiusura del giro ${id} non scritta in lead_runs (${error.message}): ok ${n_ok}, err ${n_err}`);
 }
 
 export async function evidence(sb, row) {

@@ -27,6 +27,13 @@ const runId = DRY ? null : await startRun(sb, 'collect', accounts.length, `stage
 const browser = await chromium.launch({ headless: true });
 const log = [];
 let nOk = 0, nErr = 0;
+// update di lead_accounts con error destrutturato (Regola 20 a): un errore non ferma il giro e non cambia le scritture
+// successive, ma l'account esce in errore nel log del giro (n_err, scritture_ko) e a schermo. Il loop e' sequenziale.
+let scrittureKo = [];
+async function aggiornaAccount(acc, campi, cosa) {
+  const { error } = await sb.from('lead_accounts').update(campi).eq('id', acc.id);
+  if (error) { scrittureKo.push(`${cosa}: ${error.message}`); console.log(`   ERR scrittura ${cosa}: ${error.message}`); }
+}
 
 async function ctxNew(mobile = false) {
   return browser.newContext({
@@ -262,7 +269,7 @@ async function stageMaps(acc) {
       if (siteNorm && !acc.website) { upd.website = siteNorm; acc.website = siteNorm; } // acc.website in memoria: stageSite lo usa subito dopo
       if (phone && !acc.telefono) upd.telefono = phone;
       if (address && !acc.indirizzo) upd.indirizzo = address;
-      if (Object.keys(upd).length) await sb.from('lead_accounts').update({ ...upd, updated_at: new Date().toISOString() }).eq('id', acc.id);
+      if (Object.keys(upd).length) await aggiornaAccount(acc, { ...upd, updated_at: new Date().toISOString() }, `anagrafica da Maps (${Object.keys(upd).join(',')})`);
     }
     await ctx.close();
     return payload.errore ? 'partial' : 'ok';
@@ -295,7 +302,7 @@ async function stagePress(acc) {
 
 // --------------------------------------------------------------------------- loop
 for (const acc of accounts) {
-  const t0 = Date.now(); const res = {};
+  const t0 = Date.now(); const res = {}; scrittureKo = [];
   console.log(`\n== ${acc.nome} (${acc.citta || acc.paese})`);
   try {
     // ordine: MAPS prima (per gli account nati da Maps trova e persiste il website), poi SITO
@@ -309,10 +316,11 @@ for (const acc of accounts) {
     if (ONLY.includes('ig')) { res.ig = await stageIg(acc, siteIg); console.log(`   ig: ${res.ig}`); await sleep(15000 + Math.random() * 10000); }
     if (ONLY.includes('press')) { res.press = await stagePress(acc); console.log(`   press: ${res.press}`); }
     const anyOk = Object.values(res).some((v) => v === 'ok' || v === 'partial');
-    if (!DRY && anyOk && acc.stato_ricerca === 'seed') await sb.from('lead_accounts').update({ stato_ricerca: 'enriched', updated_at: new Date().toISOString() }).eq('id', acc.id);
-    if (!DRY && siteIg && !acc.ig_handle) await sb.from('lead_accounts').update({ ig_handle: siteIg }).eq('id', acc.id);
-    anyOk ? nOk++ : nErr++;
+    if (!DRY && anyOk && acc.stato_ricerca === 'seed') await aggiornaAccount(acc, { stato_ricerca: 'enriched', updated_at: new Date().toISOString() }, 'stato enriched');
+    if (!DRY && siteIg && !acc.ig_handle) await aggiornaAccount(acc, { ig_handle: siteIg }, 'ig_handle dal sito');
+    anyOk && !scrittureKo.length ? nOk++ : nErr++;
   } catch (e) { nErr++; res.fatal = e.message; console.log('   FATAL', e.message); }
+  if (scrittureKo.length) res.scritture_ko = scrittureKo;
   res.ms = Date.now() - t0; log.push({ id: acc.id, nome: acc.nome, ...res });
   console.log(`   ${Math.round(res.ms / 1000)}s`);
 }
