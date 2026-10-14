@@ -303,7 +303,9 @@ for (const acc of accounts) {
     if (ONLY.includes('maps')) { res.maps = await stageMaps(acc); console.log(`   maps: ${res.maps}`); }
     let siteIg = null;
     if (ONLY.includes('site')) { res.site = await stageSite(acc); console.log(`   site: ${res.site}`);
-      if (!DRY) { const { data } = await sb.from('lead_evidence').select('payload').eq('account_id', acc.id).eq('tipo', 'site_meta').order('captured_at', { ascending: false }).limit(1); siteIg = data?.[0]?.payload?.ig_from_site || null; } }
+      // lettura fallita = handle dal sito sconosciuto (verso il sicuro: nessun ig_handle scritto), ma visibile nel log del giro
+      if (!DRY) { const { data, error: igErr } = await sb.from('lead_evidence').select('payload').eq('account_id', acc.id).eq('tipo', 'site_meta').order('captured_at', { ascending: false }).limit(1);
+        if (igErr) { res.ig_dal_sito = `non letto: ${igErr.message}`; console.log(`   handle IG dal sito non letto: ${igErr.message}`); } else siteIg = data[0]?.payload?.ig_from_site || null; } }
     if (ONLY.includes('ig')) { res.ig = await stageIg(acc, siteIg); console.log(`   ig: ${res.ig}`); await sleep(15000 + Math.random() * 10000); }
     if (ONLY.includes('press')) { res.press = await stagePress(acc); console.log(`   press: ${res.press}`); }
     const anyOk = Object.values(res).some((v) => v === 'ok' || v === 'partial');
