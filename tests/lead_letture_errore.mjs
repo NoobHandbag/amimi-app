@@ -58,6 +58,12 @@ for (const [nome, codice, atteso] of [
   t(`${nome} bloccato dal preload`, p.status !== 0 && atteso.test(p.stderr), p.stderr);
 }
 {
+  // gate 14-10, C3: l'hook vale solo in questo processo, quindi uno script lead non puo' lanciare processi figli
+  // (next_batch.mjs avvia collect.mjs, che nel figlio userebbe la lib e il Playwright veri)
+  const r = gira('next_batch.mjs', ['--n', '1']);
+  t('child_process vietato agli script lead sotto test (next_batch.mjs si ferma prima di partire)', r.code !== 0 && /child_process vietato/.test(r.testo) && !(r.scritture ?? []).length, `exit ${r.code} ` + r.testo);
+}
+{
   const F = readFileSync(new URL('./lead_finto_lib.mjs', import.meta.url), 'utf8');
   t('il finto riusa startRun/endRun/evidence VERI di lib.mjs (nessuna copia locale)', F.includes("export * from '../workers/lead/lib.mjs';") && !/function (startRun|endRun|evidence)\b/.test(F), 'copia locale nel finto');
 }
@@ -108,6 +114,27 @@ const DOPPIONE = { code: '23505', message: 'duplicate key value violates unique 
   t('altro errore sull\'insert (23503): resta un errore (ERR a schermo, n_err 1, exit 1)', /ERR contatto/.test(r.testo) && r.code === 1 && fineRun(r)?.n_err === 1, r.testo);
 }
 
+
+console.log('\n== session_write.mjs: righe in errore nel file .errori.json (gate 14-10, B3) ==');
+{
+  // lead_evidence non ha una chiave: rilanciare il file intero dopo un errore duplicherebbe le evidenze gia' scritte
+  const EVS = [{ account_id: ACC, tipo: 'ig_sessione', payload: { follower: 1 } }, { account_id: ACC, tipo: 'contatti_trovati', payload: { telefoni: ['1'] } }];
+  const PERSONA = { account_id: ACC, nome: 'Giulia Blu', email: 'giulia@negozio.it' };
+  const f = json({ evidence: EVS, contacts: [PERSONA] }), fk = f.replace(/\.json$/, '.errori.json');
+  const r = gira('session_write.mjs', [f], { tabelle: CONTATTI, errori: { 'lead_contacts:insert': { code: '23503', message: 'violates foreign key constraint (finto)' } } });
+  const ko = existsSync(fk) ? JSON.parse(readFileSync(fk, 'utf8')) : null;
+  t('contatto respinto: exit 1, le due evidenze scritte, nel file errori solo il contatto', r.code === 1 && scritte(r, 'lead_evidence', 'insert').length === 2
+    && ko?.evidence?.length === 0 && ko?.contacts?.length === 1 && ko.contacts[0].email === PERSONA.email && /rilancia solo quel file/.test(r.testo), JSON.stringify(ko) + r.testo);
+  const r2 = gira('session_write.mjs', [fk], { tabelle: CONTATTI });
+  t('... rilanciando il file errori: nessuna evidenza riscritta, il contatto entra, exit 0', r2.code === 0 && tentate(r2, 'lead_evidence', 'insert').length === 0
+    && scritte(r2, 'lead_contacts', 'insert').length === 1, JSON.stringify(r2.scritture) + r2.testo);
+  const fe = json({ evidence: EVS }), fek = fe.replace(/\.json$/, '.errori.json');
+  const e = gira('session_write.mjs', [fe], { tabelle: CONTATTI, errori: { 'lead_evidence:insert': { message: '504 Gateway Timeout (finto)' } } });
+  const koe = existsSync(fek) ? JSON.parse(readFileSync(fek, 'utf8')) : null;
+  t('evidenze respinte: tutte e due nel file errori, exit 1', e.code === 1 && koe?.evidence?.length === 2 && koe?.contacts?.length === 0, JSON.stringify(koe) + e.testo);
+  const fg = json({ evidence: EVS }), g = gira('session_write.mjs', [fg], { tabelle: CONTATTI });
+  t('giro senza errori: nessun file errori', g.code === 0 && !existsSync(fg.replace(/\.json$/, '.errori.json')), g.testo);
+}
 
 const EV = { id: 'e1e1e1e1-aaaa-bbbb-cccc-000000000001', account_id: ACC };
 const CRITERI = Object.fromEntries(['brand', 'stile', 'posto', 'vitalita', 'raggiungibilita', 'digitale'].map((k) => [k, { punti: 7 }]));
@@ -195,6 +222,20 @@ const senzaOra = (w) => { const { updated_at, ...riga } = w.riga; return JSON.st
   const ug = scritte(g, 'lead_accounts', 'update');
   t('collect, site_meta non leggibile: nessun ig_handle scritto, motivo nel log del giro', g.code === 0 && ug.length === 2 && !ug.some((w) => 'ig_handle' in w.riga)
     && /^non letto: 504/.test(fineRun(g)?.log?.[0]?.ig_dal_sito ?? ''), JSON.stringify(ug) + JSON.stringify(fineRun(g)?.log));
+  // gate 14-10, B1: con lo stadio IG. Handle dal sito non letto e nessun handle in anagrafica: lo stadio IG non deve
+  // scrivere "nessun handle" (e' falso, non lo sappiamo) e l'account esce in errore (lo stop-loss del 20% lo vede)
+  const IG = ['--id', ACC, '--only', 'site,ig'];
+  const nessunHandle = (r) => scritte(r, 'lead_evidence', 'insert').filter((w) => /nessun handle/.test(JSON.stringify(w.riga?.payload ?? {})));
+  const s1 = gira('collect.mjs', IG, { tabelle: DB_COLLECT, guasti: ['lead_evidence'] });
+  t('collect, handle dal sito non letto e nessun handle in anagrafica: stadio IG saltato, account in errore', s1.code === 0 && !nessunHandle(s1).length
+    && fineRun(s1)?.log?.[0]?.ig === 'saltato: handle dal sito non letto' && fineRun(s1)?.n_ok === 0 && fineRun(s1)?.n_err === 1, JSON.stringify(fineRun(s1)) + s1.testo);
+  const DB_HANDLE = { ...DB_COLLECT, lead_accounts: [{ ...DB_COLLECT.lead_accounts[0], ig_handle: 'negozio_uno' }] };
+  const s2 = gira('collect.mjs', IG, { tabelle: DB_HANDLE, guasti: ['lead_evidence'] });
+  t('... con l\'handle in anagrafica lo stadio IG gira lo stesso', s2.code === 0 && !nessunHandle(s2).length && /^(ok|partial|err|login|no_)/.test(fineRun(s2)?.log?.[0]?.ig ?? '')
+    && fineRun(s2)?.log?.[0]?.ig !== 'saltato: handle dal sito non letto', JSON.stringify(fineRun(s2)) + s2.testo);
+  const s3 = gira('collect.mjs', IG, { tabelle: DB_COLLECT });
+  t('... e con la lettura buona usa l\'handle del sito (niente "nessun handle", account non in errore per la lettura)', s3.code === 0 && !nessunHandle(s3).length
+    && fineRun(s3)?.log?.[0]?.ig !== 'saltato: handle dal sito non letto' && !fineRun(s3)?.log?.[0]?.ig_dal_sito, JSON.stringify(fineRun(s3)) + s3.testo);
 }
 
 // ---- Parte 2: sul sorgente ----

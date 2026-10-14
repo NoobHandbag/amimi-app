@@ -7,6 +7,8 @@
 import { writeFileSync } from 'node:fs';
 
 export * from '../workers/lead/lib.mjs';
+// le pause fra un profilo e l'altro (15-25 s dopo lo stadio IG di collect.mjs) non servono offline
+export const sleep = async () => {};
 
 const cfg = JSON.parse(process.env.LEAD_FINTO || '{}');
 const scritture = [];

@@ -32,7 +32,8 @@ export async function startRun(sb, fase, n_input, note) {
 export async function endRun(sb, id, { n_ok, n_err, log }) {
   const { error } = await sb.from('lead_runs').update({ ended_at: new Date().toISOString(), n_ok, n_err, log }).eq('id', id);
   // giro non chiuso = lead_runs senza ended_at, conteggi e log: lo si dice a schermo e lo script esce con errore (Regola 20 a)
-  if (error) throw new Error(`STOP: chiusura del giro ${id} non scritta in lead_runs (${error.message}): ok ${n_ok}, err ${n_err}`);
+  // le scritture del giro sono gia' fatte: rilanciarlo per questo duplicherebbe le evidenze (gate 14-10, B3)
+  if (error) throw new Error(`STOP: chiusura del giro ${id} non scritta in lead_runs (${error.message}): ok ${n_ok}, err ${n_err}. Le scritture del giro sono gia' in DB: non rilanciarlo per questo`);
 }
 
 export async function evidence(sb, row) {
