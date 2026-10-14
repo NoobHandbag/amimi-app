@@ -44,3 +44,4 @@ for (const r of rows) {
 }
 await endRun(sb, runId, { n_ok: ok, n_err: err, log });
 console.log(`judge: ok ${ok}, err ${err}`);
+if (err) process.exitCode = 1; // LOOP_100: "judge_write fallisce" e' uno stop-loss, l'exit code lo rende leggibile

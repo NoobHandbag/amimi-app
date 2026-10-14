@@ -17,6 +17,7 @@ function esegui(tabella, st) {
   }
   if ((cfg.guasti ?? []).includes(tabella)) return { data: null, error: { message: '504 Gateway Timeout (finto)' } };
   const righe = (cfg.tabelle?.[tabella] ?? []).filter((x) => st.filtri.every((f) => f(x)));
+  if (st.ordine) righe.sort((x, y) => String(x[st.ordine.c] ?? '').localeCompare(String(y[st.ordine.c] ?? '')) * (st.ordine.desc ? -1 : 1));
   if (!st.single) return { data: righe, error: null };
   return righe.length === 1 ? { data: righe[0], error: null } : { data: null, error: { message: 'JSON object requested, multiple (or no) rows returned' } };
 }
@@ -31,7 +32,10 @@ function client() {
         update: (riga) => { st.op = 'update'; st.riga = riga; return b; },
         eq: (c, v) => { st.eq[c] = v; st.filtri.push((x) => x[c] === v); return b; },
         in: (c, v) => { st.filtri.push((x) => v.includes(x[c])); return b; },
-        contains: () => b, order: () => b, limit: () => b,
+        // contains() non e' simulato: un test che ne dipende deve fallire qui, non passare con un filtro ignorato
+        contains: () => { throw new Error('contains() non simulato in tests/lead_finto_lib.mjs'); },
+        order: (c, o = {}) => { st.ordine = { c, desc: o.ascending === false }; return b; },
+        limit: () => b,
         single: () => { st.single = true; return b; },
         then: (res, rej) => Promise.resolve(esegui(tabella, st)).then(res, rej),
       };

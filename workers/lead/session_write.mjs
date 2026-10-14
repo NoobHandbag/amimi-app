@@ -26,3 +26,4 @@ for (const c of contacts) {
 }
 await endRun(sb, runId, { n_ok: ok, n_err: err, log });
 console.log(`sessione: ok ${ok}, err ${err}`);
+if (err) process.exitCode = 1;

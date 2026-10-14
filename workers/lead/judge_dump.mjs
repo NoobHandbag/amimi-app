@@ -2,7 +2,7 @@
 // out/judge/<slug>/evidence.json e scarica gli screenshot, cosi' la sessione Claude Code li legge
 // e compila le valutazioni (poi caricate con judge_write.mjs).
 // Uso: node judge_dump.mjs [--stato enriched|scored] [--id uuid]
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { supa, BUCKET } from './lib.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, arr) => a.startsWith('--') ? [a.slice(2), arr[i + 1] && !arr[i + 1].startsWith('--') ? arr[i + 1] : true] : []).filter(Boolean));
@@ -12,6 +12,8 @@ if (args.ids) q = q.in('id', String(args.ids).split(',')); else if (args.id) q =
 const { data: accounts, error } = await q; if (error) throw error;
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 const index = [];
+// un dump interrotto (STOP sotto) non deve lasciare l'indice del giro precedente accanto ai file nuovi
+rmSync('out/judge/_index.json', { force: true });
 for (const a of accounts) {
   const dir = `out/judge/${slug(a.nome)}`; mkdirSync(dir, { recursive: true });
   const { data: ev, error: evErr } = await sb.from('lead_evidence').select('*').eq('account_id', a.id).order('captured_at');

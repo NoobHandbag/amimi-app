@@ -24,11 +24,13 @@ const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } el
 
 // ---- Parte 1: gli script contro il client finto ----
 const TMP = mkdtempSync(join(tmpdir(), 'lead-letture-'));
+process.on('exit', () => rmSync(TMP, { recursive: true, force: true }));
 let n = 0;
 const json = (v) => { const f = join(TMP, `in${++n}.json`); writeFileSync(f, JSON.stringify(v)); return f; };
-function gira(script, args, { tabelle = {}, guasti = [] } = {}) {
+function gira(script, args, { tabelle = {}, guasti = [], prima } = {}) {
   const k = ++n, out = join(TMP, `out${k}.json`), cwd = join(TMP, `cwd${k}`);
   mkdirSync(cwd);
+  prima?.(cwd);
   const env = { ...process.env, SUPABASE_ACCESS_TOKEN: '', LEAD_FINTO: JSON.stringify({ tabelle, guasti, out }) };
   const p = spawnSync(process.execPath, ['--import', HOOK, join(ROOT, 'workers/lead', script), ...args], { cwd, env, encoding: 'utf8', timeout: 60000 });
   return { code: p.status, testo: `${p.stdout ?? ''}${p.stderr ?? ''}`, scritture: existsSync(out) ? JSON.parse(readFileSync(out, 'utf8')) : null, cwd };
@@ -53,13 +55,13 @@ console.log('\n== session_write.mjs: contatti gia\' presenti ==');
 {
   const r = gira('session_write.mjs', [json({ contacts: [CONTATTO] })], { tabelle: CONTATTI });
   t('client finto in uso (registro delle scritture presente)', r.scritture !== null, r.testo);
-  t('lettura ok, contatto gia\' presente: nessun insert', scritte(r, 'lead_contacts', 'insert').length === 0 && fineRun(r)?.n_err === 0, r.testo);
+  t('lettura ok, contatto gia\' presente: nessun insert', scritte(r, 'lead_contacts', 'insert').length === 0 && fineRun(r)?.n_err === 0 && r.code === 0, r.testo);
 }
 {
   const r = gira('session_write.mjs', [json({ contacts: [CONTATTO] })], { tabelle: CONTATTI, guasti: ['lead_contacts'] });
   t('lettura dei contatti in errore: il contatto NON viene reinserito', r.scritture !== null && scritte(r, 'lead_contacts', 'insert').length === 0, JSON.stringify(scritte(r, 'lead_contacts')));
-  t('... e la riga e\' un errore visibile (ERR a schermo, n_err 1 e motivo nel log di lead_runs)',
-    /ERR contatto/.test(r.testo) && fineRun(r)?.n_err === 1 && /non leggibili/.test(JSON.stringify(fineRun(r)?.log)), r.testo);
+  t('... e la riga e\' un errore visibile (ERR a schermo, n_err 1 e motivo nel log di lead_runs, exit 1)',
+    /ERR contatto/.test(r.testo) && r.code === 1 && fineRun(r)?.n_err === 1 && /non leggibili/.test(JSON.stringify(fineRun(r)?.log)), r.testo);
 }
 {
   const r = gira('session_write.mjs', [json({ contacts: [{ account_id: ACC, nome: 'Anna Bianchi', email: 'anna@negozio.it' }] })], { tabelle: CONTATTI });
@@ -75,14 +77,14 @@ console.log('\n== judge_write.mjs: evidenze e stato corrente ==');
 {
   const r = gira('judge_write.mjs', [json([SCORE])], { tabelle: DB_JUDGE('enriched') });
   const s = scritte(r, 'lead_scores', 'insert')[0]?.riga, u = scritte(r, 'lead_accounts', 'update')[0]?.riga;
-  t('letture ok: un punteggio, id evidenza abbreviato risolto al pieno', s?.criteri?.brand?.evidence_id === EV.id && s?.tier_proposto === 'B', JSON.stringify(s));
+  t('letture ok: un punteggio, id evidenza abbreviato risolto al pieno, exit 0', r.code === 0 && s?.criteri?.brand?.evidence_id === EV.id && s?.tier_proposto === 'B', JSON.stringify(s));
   t('letture ok: account a scored con il gancio e la sua evidenza', u?.stato_ricerca === 'scored' && u?.gancio_evidence_id === EV.id, JSON.stringify(u));
 }
 for (const [guasto, cosa] of [['lead_evidence', 'evidenze dell\'account'], ['lead_accounts', 'stato corrente dell\'account']]) {
   const r = gira('judge_write.mjs', [json([SCORE])], { tabelle: DB_JUDGE('enriched'), guasti: [guasto] });
   t(`lettura ${cosa} in errore: nessun punteggio e nessun update`, r.scritture !== null && scritte(r, 'lead_scores').length === 0 && scritte(r, 'lead_accounts').length === 0,
     JSON.stringify(r.scritture?.filter((w) => w.tabella !== 'lead_runs')));
-  t(`... errore visibile (ERR a schermo, n_err 1 in lead_runs)`, /ERR Negozio Uno/.test(r.testo) && fineRun(r)?.n_err === 1 && /non leggibil/.test(JSON.stringify(fineRun(r)?.log)), r.testo);
+  t(`... errore visibile (ERR a schermo, n_err 1 in lead_runs, exit 1)`, /ERR Negozio Uno/.test(r.testo) && r.code === 1 && fineRun(r)?.n_err === 1 && /non leggibil/.test(JSON.stringify(fineRun(r)?.log)), r.testo);
 }
 {
   const r = gira('judge_write.mjs', [json([SCORE])], { tabelle: DB_JUDGE('reviewed') });
@@ -101,10 +103,16 @@ const DB_DUMP = { lead_accounts: [{ id: ACC, nome: 'Negozio Uno', citta: 'Milano
 {
   const r = gira('judge_dump.mjs', ['--id', ACC], { tabelle: DB_DUMP });
   t('dump, letture ok: evidence.json scritto', r.code === 0 && existsSync(join(r.cwd, 'out/judge/negozio_uno/evidence.json')), r.testo);
-  const g = gira('judge_dump.mjs', ['--id', ACC], { tabelle: DB_DUMP, guasti: ['lead_evidence'] });
+  const vecchio = (cwd) => { mkdirSync(join(cwd, 'out/judge'), { recursive: true }); writeFileSync(join(cwd, 'out/judge/_index.json'), '[{"nome":"giro di prima"}]'); };
+  const g = gira('judge_dump.mjs', ['--id', ACC], { tabelle: DB_DUMP, guasti: ['lead_evidence'], prima: vecchio });
   t('dump, evidenze in errore: STOP con il motivo, nessun evidence.json vuoto', g.code !== 0 && /STOP: evidenze di Negozio Uno non leggibili \(504/.test(g.testo) && !existsSync(join(g.cwd, 'out/judge/negozio_uno/evidence.json')), g.testo);
+  t('dump interrotto: l\'_index.json del giro prima non resta accanto ai file nuovi', !existsSync(join(g.cwd, 'out/judge/_index.json')));
 }
-rmSync(TMP, { recursive: true, force: true });
+{
+  const { supa } = await import('./lead_finto_lib.mjs');
+  const sb = await supa();
+  t('client finto: contains() non simulato fallisce invece di ignorare il filtro', /non simulato/.test((() => { try { sb.from('x').select('id').contains('p', {}); return ''; } catch (e) { return e.message; } })()));
+}
 
 // ---- Parte 2: sul sorgente ----
 console.log('\n== collect.mjs: handle IG dal sito (non collaudabile offline: Playwright e rete) ==');
@@ -132,6 +140,8 @@ function letturaSenzaErrore(src) {
     const resto = s.slice(fine + 1), prossimo = resto.search(/\bawait\b/);
     if (!new RegExp(`(?<![\\w$.])${err.a}(?![\\w$])`).test(prossimo < 0 ? resto : resto.slice(0, prossimo))) out.push('error non guardato: ' + stmt);
   }
+  for (const m of s.matchAll(/\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*await\s+(?:sb|q)\b[^;]*;/g)) out.push('risultato non destrutturato: ' + m[0].trim());
+  for (const m of s.matchAll(/\.then\(\s*(?:async\s*)?\(\s*\{([^{}]*)\}\s*\)\s*=>/g)) if (/\b(data|count)\b/.test(m[1]) && !/\berror\b/.test(m[1])) out.push('then senza error: ' + m[0]);
   return out;
 }
 // amimi-app#54 (aperta il 14-10) corregge questa lettura di seed.mjs nello stesso punto (error destrutturato, throw):
@@ -169,6 +179,11 @@ const CASI = [
   ['insert con error guardato', "const { error } = await sb.from('lead_evidence').insert(row); if (error) throw error;", 0],
   ['download storage con error guardato', "const { data, error: de } = await sb.storage.from(BUCKET).download(p);\nif (de) { console.log(de.message); continue; }", 0],
   ['proprieta\' .error di un altro oggetto non conta come controllo', "const { data, error } = await q;\nif (x.error) throw x.error;", 1],
+  ['risultato non destrutturato (res.data senza res.error)', "const res = await sb.from('lead_contacts').select('id').eq('account_id', a);\nconst same = (res.data ?? []).find(f);", 1],
+  ['query costruita prima, non destrutturata', 'const r = await q;', 1],
+  ['.then con { data } senza error', "sb.from('lead_evidence').select('id').then(({ data }) => use(data));", 1],
+  ['.then con { data, error }', "sb.from('lead_evidence').select('id').then(({ data, error }) => { if (error) throw error; use(data); });", 0],
+  ['await di un helper (startRun, tutte) non e\' una lettura nuda', "const runId = DRY ? null : await startRun(sb, 'x', 1, 'n');\nconst acc = await tutte(() => sb.from('lead_accounts').select('id', { count: 'exact' }).order('id'), 'x');", 0],
 ];
 for (const [nome, src, atteso] of CASI) t(`rilevatore: ${nome} -> ${atteso ? 'segnalato' : 'non segnalato'}`, letturaSenzaErrore(src).length === atteso, JSON.stringify(letturaSenzaErrore(src)));
 
