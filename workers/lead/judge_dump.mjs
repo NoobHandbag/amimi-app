@@ -14,7 +14,8 @@ const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g
 const index = [];
 for (const a of accounts) {
   const dir = `out/judge/${slug(a.nome)}`; mkdirSync(dir, { recursive: true });
-  const { data: ev } = await sb.from('lead_evidence').select('*').eq('account_id', a.id).order('captured_at');
+  const { data: ev, error: evErr } = await sb.from('lead_evidence').select('*').eq('account_id', a.id).order('captured_at');
+  if (evErr) throw new Error(`STOP: evidenze di ${a.nome} non leggibili (${evErr.message}): dump interrotto`);
   // ultima evidenza per tipo (le vecchie restano nel json completo)
   const last = {}; for (const e of ev) last[e.tipo] = e;
   const shots = [];

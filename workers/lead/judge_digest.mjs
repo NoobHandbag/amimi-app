@@ -18,7 +18,8 @@ const j = (v) => (Array.isArray(v) ? v.join(', ') : v == null ? '' : typeof v ==
 
 console.log(`# JUDGE DIGEST — ${accounts.length} account (stato=${args.id ? 'id' : args.stato || 'enriched'}${args.citta ? ', ' + args.citta : ''})\n`);
 for (const a of accounts) {
-  const { data: ev } = await sb.from('lead_evidence').select('id,tipo,payload,asset_path,captured_at,note').eq('account_id', a.id).order('captured_at');
+  const { data: ev, error: evErr } = await sb.from('lead_evidence').select('id,tipo,payload,asset_path,captured_at,note').eq('account_id', a.id).order('captured_at');
+  if (evErr) throw new Error(`STOP: evidenze di ${a.nome} non leggibili (${evErr.message}): digest interrotto`);
   const last = {}; for (const e of ev) last[e.tipo] = e; // ultima per tipo
   const P = (t) => last[t]?.payload || {};
   const E = (t) => eid(last[t]?.id);

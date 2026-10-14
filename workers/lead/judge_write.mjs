@@ -15,8 +15,12 @@ let ok = 0, err = 0; const log = [];
 for (const r of rows) {
   try {
     // gli id evidenza possono essere abbreviati (8 char): si risolvono al full id
-    const { data: evs } = await sb.from('lead_evidence').select('id').eq('account_id', r.account_id);
-    const full = (x) => (!x ? null : (evs ?? []).find((e) => e.id.startsWith(x))?.id ?? x);
+    const { data: evs, error: evErr } = await sb.from('lead_evidence').select('id').eq('account_id', r.account_id);
+    if (evErr) throw new Error(`evidenze dell'account non leggibili (${evErr.message}): punteggio non scritto`);
+    // stato corrente letto prima di ogni scrittura (Regola Ferrea 20 a): se la lettura fallisce la riga si ferma qui
+    const { data: cur, error: curErr } = await sb.from('lead_accounts').select('stato_ricerca,tier').eq('id', r.account_id).single();
+    if (curErr) throw new Error(`stato corrente dell'account non leggibile (${curErr.message}): punteggio non scritto`);
+    const full = (x) => (!x ? null : evs.find((e) => e.id.startsWith(x))?.id ?? x);
     const criteri = {}; let sumP = 0, sumW = 0, nulls = 0;
     for (const [k, w] of Object.entries(PESI)) {
       const c = r.criteri?.[k] ?? {}; const p = c.punti == null ? null : Number(c.punti);
@@ -33,8 +37,7 @@ for (const r of rows) {
     if (r.esclusione) upd.rejected_motivo = `esclusione secca: ${r.esclusione}`;
     if (r.gancio && totale != null && totale >= 55) { upd.gancio = r.gancio; upd.gancio_evidence_id = full(r.gancio_evidence_id); }
     // non sovrascrivere una decisione umana gia' presa (reviewed/rejected da persona)
-    const { data: cur } = await sb.from('lead_accounts').select('stato_ricerca,tier').eq('id', r.account_id).single();
-    if (cur?.stato_ricerca === 'reviewed' || (cur?.stato_ricerca === 'rejected' && !r.esclusione)) { delete upd.stato_ricerca; delete upd.rejected_motivo; }
+    if (cur.stato_ricerca === 'reviewed' || (cur.stato_ricerca === 'rejected' && !r.esclusione)) { delete upd.stato_ricerca; delete upd.rejected_motivo; }
     const { error: e2 } = await sb.from('lead_accounts').update(upd).eq('id', r.account_id); if (e2) throw e2;
     ok++; log.push({ account_id: r.account_id, totale, tier, esclusione: r.esclusione ?? null }); console.log('ok', r.nome ?? r.account_id, totale, tier ?? r.esclusione);
   } catch (e) { err++; log.push({ account_id: r.account_id, err: e.message }); console.log('ERR', r.nome ?? r.account_id, e.message); }

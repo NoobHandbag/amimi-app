@@ -17,8 +17,9 @@ for (const e of evidence) {
   if (error) { err++; log.push({ ev: e.tipo, account_id: e.account_id, err: error.message }); console.log('ERR ev', e.tipo, error.message); } else ok++;
 }
 for (const c of contacts) {
-  const { data: cur } = await sb.from('lead_contacts').select('id,nome,email').eq('account_id', c.account_id);
-  const same = (cur ?? []).find((x) => (c.email && x.email?.toLowerCase() === c.email.toLowerCase()) || (!c.email && c.nome && x.nome?.toLowerCase() === c.nome.toLowerCase()));
+  const { data: cur, error: curErr } = await sb.from('lead_contacts').select('id,nome,email').eq('account_id', c.account_id);
+  if (curErr) { err++; log.push({ contatto: c.nome ?? c.email, err: `contatti esistenti non leggibili (${curErr.message}): contatto non scritto` }); console.log('ERR contatto', c.nome ?? c.email, curErr.message); continue; }
+  const same = cur.find((x) => (c.email && x.email?.toLowerCase() === c.email.toLowerCase()) || (!c.email && c.nome && x.nome?.toLowerCase() === c.nome.toLowerCase()));
   if (same) { log.push({ contatto: c.nome ?? c.email, esito: 'gia presente' }); continue; }
   const { error } = await sb.from('lead_contacts').insert({ account_id: c.account_id, nome: c.nome ?? null, ruolo: c.ruolo ?? null, email: c.email ?? null, telefono: c.telefono ?? null, linkedin_url: c.linkedin_url ?? null, fonte: c.fonte ?? null, note: c.note ?? null, chi: 'claude-code' });
   if (error) { err++; log.push({ contatto: c.nome ?? c.email, err: error.message }); console.log('ERR contatto', error.message); } else ok++;
