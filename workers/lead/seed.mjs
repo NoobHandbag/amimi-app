@@ -1,60 +1,56 @@
 // Seed di account in lead_accounts da un file JSON. Idempotente e con dedup multi-chiave.
-// Dedup (piano 3.2): google_place_id | dominio del sito | ig_handle | nome normalizzato + citta.
+// Dedup (piano 3.2): google_place_id | dominio del sito | ig_handle | nome normalizzato + citta (indice.mjs).
 // Un negozio trovato da piu' fonti resta UNO: sull'incontro NON si duplica, si aggiunge una
 // evidenza `fonte` con la fonte in piu' (cosi' lo stockist_match / multi-fonte pesa in giudizio).
-// Uso: node seed.mjs <file.json>
+// Uso: node seed.mjs <file.json> [--dry]
+//   --dry: costruisce l'indice e stampa riga per riga duplicato (su quale account e chiave) o nuovo. Zero scritture.
 import { readFileSync } from 'node:fs';
-import { supa, startRun, endRun, normName } from './lib.mjs';
+import { supa, startRun, endRun } from './lib.mjs';
+import { caricaIndice, COLS_INDICE } from './indice.mjs';
 
 const file = process.argv[2];
-if (!file) { console.error('uso: node seed.mjs <file.json>'); process.exit(1); }
+const DRY = process.argv.includes('--dry');
+if (!file || file.startsWith('--')) { console.error('uso: node seed.mjs <file.json> [--dry]'); process.exit(1); }
 const rows = JSON.parse(readFileSync(file, 'utf8'));
 const sb = await supa();
 
-const domainOf = (u) => { if (!u) return null; try { return new URL(/^https?:\/\//i.test(u) ? u : 'https://' + u).hostname.replace(/^www\./, '').toLowerCase(); } catch { return null; } };
-const handleOf = (h) => (h ? String(h).replace(/^@/, '').replace(/\/$/, '').toLowerCase().trim() : null);
-const nameKey = (r) => `${normName(r.nome)}|${normName(r.citta)}`;
+// Indice degli account esistenti (Regola Ferrea 20 b, 14-10): solo i candidati per i valori del file, a blocchi
+// paginati fino al conteggio esatto (caricaIndice in indice.mjs). Prima era una select di tutta lead_accounts senza
+// range: tornavano 1.000 righe su 6.957 senza errore e un negozio gia' presente rientrava come nuovo.
+const { idx, candidati } = await caricaIndice(sb, rows);
+console.log(`indice: ${candidati} account candidati letti per ${rows.length} righe del file`);
 
-// indice degli account esistenti (una lettura sola)
-const { data: existing, error: exErr } = await sb.from('lead_accounts').select('id,nome,citta,website,ig_handle,google_place_id');
-if (exErr) throw exErr;
-const byPlace = new Map(), byDomain = new Map(), byHandle = new Map(), byName = new Map();
-const indexAcc = (a) => {
-  if (a.google_place_id) byPlace.set(a.google_place_id, a.id);
-  const d = domainOf(a.website); if (d) byDomain.set(d, a.id);
-  const h = handleOf(a.ig_handle); if (h) byHandle.set(h, a.id);
-  byName.set(`${normName(a.nome)}|${normName(a.citta)}`, a.id);
-};
-for (const a of existing) indexAcc(a);
-
-const matchId = (r) => {
-  if (r.google_place_id && byPlace.has(r.google_place_id)) return byPlace.get(r.google_place_id);
-  const d = domainOf(r.website); if (d && byDomain.has(d)) return byDomain.get(d);
-  const h = handleOf(r.ig_handle); if (h && byHandle.has(h)) return byHandle.get(h);
-  const nk = nameKey(r); if (byName.has(nk)) return byName.get(nk);
-  return null;
-};
-
-const runId = await startRun(sb, 'import', rows.length, `seed da ${file}`);
+const runId = DRY ? null : await startRun(sb, 'import', rows.length, `seed da ${file}`);
 let inserted = 0, dup = 0, err = 0; const log = [];
-for (const r of rows) {
+for (const [i, r] of rows.entries()) {
   try {
-    const hit = matchId(r);
+    const hit = idx.match(r);
     if (hit) {
-      dup++;
       // registra la fonte in piu' solo se e' una fonte diversa (evita rumore sui re-run identici)
-      if (r.fonte_seed) {
-        const { data: ev } = await sb.from('lead_evidence').select('id').eq('account_id', hit).eq('tipo', 'fonte').contains('payload', { fonte_seed: r.fonte_seed }).limit(1);
-        if (!ev?.length) await sb.from('lead_evidence').insert({ account_id: hit, run_id: runId, tipo: 'fonte', payload: { fonte_seed: r.fonte_seed, nome_visto: r.nome, nota: r.owner_note ?? null }, raccolto_da: 'script' });
+      if (r.fonte_seed && !DRY) {
+        const { data: ev, error: evErr } = await sb.from('lead_evidence').select('id').eq('account_id', hit.id).eq('tipo', 'fonte').contains('payload', { fonte_seed: r.fonte_seed }).limit(1);
+        if (evErr) throw new Error(`evidenze fonte non leggibili (${evErr.message}): evidenza non scritta`);
+        if (!ev.length) {
+          const { error: insErr } = await sb.from('lead_evidence').insert({ account_id: hit.id, run_id: runId, tipo: 'fonte', payload: { fonte_seed: r.fonte_seed, nome_visto: r.nome, nota: r.owner_note ?? null }, raccolto_da: 'script' });
+          if (insErr) throw new Error(`evidenza fonte non scritta: ${insErr.message}`);
+        }
       }
-      log.push({ nome: r.nome, esito: 'dup', id: hit, fonte: r.fonte_seed });
+      dup++;
+      log.push({ nome: r.nome, esito: 'dup', id: hit.id, chiave: hit.chiave, fonte: r.fonte_seed });
+      if (DRY) console.log(`DUP    ${r.nome} [${r.citta ?? '-'}] -> ${hit.id} (${hit.chiave})`);
       continue;
     }
-    const { data, error } = await sb.from('lead_accounts').insert(r).select('id,nome,citta,website,ig_handle,google_place_id').single();
+    if (DRY) {
+      inserted++; idx.add({ ...r, id: `nuovo#${i + 1}` });
+      log.push({ nome: r.nome, esito: 'nuovo' });
+      console.log(`NUOVO  ${r.nome} [${r.citta ?? '-'}]`);
+      continue;
+    }
+    const { data, error } = await sb.from('lead_accounts').insert(r).select(COLS_INDICE).single();
     if (error) { err++; log.push({ nome: r.nome, esito: 'err', msg: error.message }); console.log('ERR', r.nome, error.message); continue; }
-    inserted++; indexAcc(data); // così i duplicati dentro lo stesso file si agganciano
+    inserted++; idx.add(data); // così i duplicati dentro lo stesso file si agganciano
     log.push({ nome: r.nome, esito: 'inserito', id: data.id });
   } catch (e) { err++; log.push({ nome: r.nome, esito: 'err', msg: e.message }); console.log('ERR', r.nome, e.message); }
 }
-await endRun(sb, runId, { n_ok: inserted, n_err: err, log });
-console.log(`seed ${file}: inseriti ${inserted}, duplicati ${dup}, err ${err} (su ${rows.length})`);
+if (!DRY) await endRun(sb, runId, { n_ok: inserted, n_err: err, log });
+console.log(`seed ${file}${DRY ? ' (DRY, nessuna scrittura)' : ''}: ${DRY ? 'da inserire' : 'inseriti'} ${inserted}, duplicati ${dup}, err ${err} (su ${rows.length})`);
