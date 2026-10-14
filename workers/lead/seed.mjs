@@ -6,7 +6,7 @@
 //   --dry: costruisce l'indice e stampa riga per riga duplicato (su quale account e chiave) o nuovo. Zero scritture.
 import { readFileSync } from 'node:fs';
 import { supa, startRun, endRun } from './lib.mjs';
-import { caricaIndice, COLS_INDICE } from './indice.mjs';
+import { caricaIndice, COLS_INDICE, serveFonte } from './indice.mjs';
 
 const file = process.argv[2];
 const DRY = process.argv.includes('--dry');
@@ -26,8 +26,8 @@ for (const [i, r] of rows.entries()) {
   try {
     const hit = idx.match(r);
     if (hit) {
-      // registra la fonte in piu' solo se e' una fonte diversa (evita rumore sui re-run identici)
-      if (r.fonte_seed && !DRY) {
+      // registra la fonte in piu' solo se e' diversa da quella dell'account (serveFonte) e non gia' registrata
+      if (serveFonte(hit, r) && !DRY) {
         const { data: ev, error: evErr } = await sb.from('lead_evidence').select('id').eq('account_id', hit.id).eq('tipo', 'fonte').contains('payload', { fonte_seed: r.fonte_seed }).limit(1);
         if (evErr) throw new Error(`evidenze fonte non leggibili (${evErr.message}): evidenza non scritta`);
         if (!ev.length) {
@@ -54,3 +54,4 @@ for (const [i, r] of rows.entries()) {
 }
 if (!DRY) await endRun(sb, runId, { n_ok: inserted, n_err: err, log });
 console.log(`seed ${file}${DRY ? ' (DRY, nessuna scrittura)' : ''}: ${DRY ? 'da inserire' : 'inseriti'} ${inserted}, duplicati ${dup}, err ${err} (su ${rows.length})`);
+if (err) process.exitCode = 1; // come session_write e judge_write (gate 14-10, C1)

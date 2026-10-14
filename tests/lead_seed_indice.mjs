@@ -8,7 +8,7 @@
 // essere paginata (tutte()) o limitata (range, limit, single, in/eq su una chiave); se torna una select nuda, il test lo dice.
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { tutte, caricaIndice, creaIndice, filtriCandidati, pattCitta, PAGINA, COLS_INDICE } from '../workers/lead/indice.mjs';
+import { tutte, caricaIndice, creaIndice, filtriCandidati, pattCitta, PAGINA, COLS_INDICE, serveFonte } from '../workers/lead/indice.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
@@ -145,12 +145,27 @@ for (const maxRows of [1000, 300]) {
     like2re(pattCitta('Forli')).test('Forlì') && like2re(pattCitta('Massa Carrara')).test('Massa-Carrara') && like2re(pattCitta('Forlì')).test('Forli'));
 }
 
+console.log('\n== serveFonte(): evidenza fonte solo per una fonte diversa da quella dell\'account (gate 14-10, B2) ==');
+{
+  const idx = creaIndice(); idx.add({ id: 'X1', nome: 'Glitter', citta: 'Ceva', fonte_seed: 'maps:concept store' });
+  const r = { nome: 'Glitter', citta: 'Ceva' }, h = idx.match(r);
+  t('match riporta la fonte con cui l\'account e\' nato', h?.id === 'X1' && h.fonte_seed === 'maps:concept store', JSON.stringify(h));
+  t('stessa fonte (rilancio del file, secondo sweep con la stessa query): niente evidenza', serveFonte(h, { ...r, fonte_seed: 'maps:concept store' }) === false);
+  t('fonte diversa: evidenza', serveFonte(h, { ...r, fonte_seed: 'stockist:momoni' }) === true);
+  t('riga senza fonte: niente evidenza', serveFonte(h, r) === false);
+  const f = creaIndice(); f.add({ id: 'nuovo#1', nome: 'Uno', citta: 'Roma', fonte_seed: 'maps:boutique donna' });
+  t('doppione dentro lo stesso file con la stessa fonte: niente evidenza', serveFonte(f.match({ nome: 'Uno', citta: 'Roma' }), { nome: 'Uno', citta: 'Roma', fonte_seed: 'maps:boutique donna' }) === false);
+  t('COLS_INDICE legge anche fonte_seed (serve a serveFonte)', COLS_INDICE.split(',').includes('fonte_seed'), COLS_INDICE);
+}
+
 // ---- Parte 2: sul sorgente ----
 console.log('\n== seed.mjs, indice.mjs, stato100.mjs: frammenti dei fix ==');
 const MARKERS = {
   'workers/lead/seed.mjs': [
-    "import { caricaIndice, COLS_INDICE } from './indice.mjs';",
+    "import { caricaIndice, COLS_INDICE, serveFonte } from './indice.mjs';",
     'const { idx, candidati } = await caricaIndice(sb, rows);',
+    'if (serveFonte(hit, r) && !DRY) {',
+    'if (err) process.exitCode = 1;',
     "const { data: ev, error: evErr } = await sb.from('lead_evidence')",
     'if (evErr) throw new Error(',
     'if (insErr) throw new Error(',

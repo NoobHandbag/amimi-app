@@ -54,26 +54,34 @@ export function filtriCandidati(rows, blocco = 40) {
 
 // Dedup multi-chiave (piano 3.2), nell'ordine: google_place_id | dominio del sito | ig_handle | nome normalizzato + citta.
 export function creaIndice() {
-  const byPlace = new Map(), byDomain = new Map(), byHandle = new Map(), byName = new Map();
+  const byPlace = new Map(), byDomain = new Map(), byHandle = new Map(), byName = new Map(), fonte = new Map();
   const add = (a) => {
+    fonte.set(a.id, a.fonte_seed ?? null);
     if (a.google_place_id) byPlace.set(a.google_place_id, a.id);
     const d = domainOf(a.website); if (d) byDomain.set(d, a.id);
     const h = handleOf(a.ig_handle); if (h) byHandle.set(h, a.id);
     byName.set(nameKey(a), a.id);
   };
+  const trovato = (id, chiave) => ({ id, chiave, fonte_seed: fonte.get(id) ?? null });
   const match = (r) => {
-    if (r.google_place_id && byPlace.has(r.google_place_id)) return { id: byPlace.get(r.google_place_id), chiave: 'place_id' };
-    const d = domainOf(r.website); if (d && byDomain.has(d)) return { id: byDomain.get(d), chiave: 'dominio' };
-    const h = handleOf(r.ig_handle); if (h && byHandle.has(h)) return { id: byHandle.get(h), chiave: 'ig_handle' };
-    const nk = nameKey(r); if (byName.has(nk)) return { id: byName.get(nk), chiave: 'nome+citta' };
+    if (r.google_place_id && byPlace.has(r.google_place_id)) return trovato(byPlace.get(r.google_place_id), 'place_id');
+    const d = domainOf(r.website); if (d && byDomain.has(d)) return trovato(byDomain.get(d), 'dominio');
+    const h = handleOf(r.ig_handle); if (h && byHandle.has(h)) return trovato(byHandle.get(h), 'ig_handle');
+    const nk = nameKey(r); if (byName.has(nk)) return trovato(byName.get(nk), 'nome+citta');
     return null;
   };
   return { add, match };
 }
 
+// Evidenza `fonte` "in piu'" su un doppione: solo se la fonte della riga e' DIVERSA da quella con cui l'account e' nato
+// (gate 14-10, B2). Prima si guardavano solo le evidenze `fonte` gia' scritte, mai `lead_accounts.fonte_seed`: un
+// rilancio dello stesso file, due sweep con la stessa query o un doppione nel file davano all'account un'evidenza uguale
+// alla sua fonte, e il negozio sembrava trovato da piu' fonti (al 14-10 in prod 179 evidenze `fonte` dello script su 337).
+export const serveFonte = (hit, r) => !!r.fonte_seed && r.fonte_seed !== hit.fonte_seed;
+
 // Carica l'indice di un file di seed: legge solo i candidati (filtriCandidati), a blocchi, ognuno paginato fino al
 // conteggio esatto. Una lettura fallita lancia STOP prima di qualunque scrittura.
-export const COLS_INDICE = 'id,nome,citta,website,ig_handle,google_place_id';
+export const COLS_INDICE = 'id,nome,citta,website,ig_handle,google_place_id,fonte_seed';
 export async function caricaIndice(sb, rows) {
   const idx = creaIndice(), { place, or } = filtriCandidati(rows), visti = new Set();
   for (const blocco of place) {
