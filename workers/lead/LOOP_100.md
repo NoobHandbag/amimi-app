@@ -50,6 +50,8 @@ Brand affini: `PEER_BRANDS` in `lib.mjs` (Lisa Corti, Le Orsine, MyStyleBag, Orc
 
 Due difetti noti della v1 da tenere a mente nel giudizio (non si correggono qui, si scrivono nel perche_no): luxury multimarca con borse a mediana sopra 400 euro salgono in B via posto+vitalita'; produttori a marchio proprio non sono rivenditori.
 
+**Omonimi Maps** (dal 14-10, pesi e soglie della v1 invariati): `[omonimi_maps N]` nel digest sono altre schede Maps con lo stesso nome nella stessa citta', lasciate dal seed come evidenze `omonimo_maps` (il link della scheda e' in `google_maps_url` dell'evidenza, in `evidence.json` di `judge_dump`). Si aprono prima del giudizio: seconda sede dello stesso negozio = bonus gruppo; catena o monomarca = esclusione secca; stesso indirizzo (scheda doppia su Google) o negozio diverso = nessun effetto. Non contano come fonte in piu' per la vitalita'. Se il place_id dell'account l'ha messo il collector (account nato da una lista, cerca per nome su Maps), puo' essere lui la scheda sbagliata: controllare indirizzo e foto.
+
 ## Quando la coda buona finisce
 
 Con la resa del 25-09 (concept store circa 58%) i 246 seed concept store dovrebbero bastare per i 61 mancanti; il conto vero lo da' `progress.mjs` dopo ogni lotto. Se lo stop-loss "3 lotti poveri" scatta prima, il sweep successivo con la resa migliore attesa e' quello delle **localita' resort** (il profilo dei 10 A/B su 14 della lista di Benny): `node seed_maps.mjs --cities "Forte dei Marmi,Portofino,Santa Margherita Ligure,Capri,Positano,Porto Cervo,Cortina d'Ampezzo,Taormina,Bellagio,Courmayeur" --queries "concept store,boutique donna"` e poi `node seed.mjs <out>`. Esce dal cerchio 1: serve l'OK dell'owner prima di lanciarlo.
