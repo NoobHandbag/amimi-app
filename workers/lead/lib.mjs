@@ -3,6 +3,7 @@
 // con SUPABASE_ACCESS_TOKEN (variabile utente Windows gia' usata dalla CLI), come fanno
 // scripts/migrations-from-prod.mjs e schema-dump.mjs. Il collector scrive SOLO lead_* e il bucket lead-assets.
 import { createClient } from '@supabase/supabase-js';
+import { normName } from './indice.mjs';
 
 export const PROJECT_REF = 'imszbjeyplaiovylhkgl';
 export const SUPABASE_URL = `https://${PROJECT_REF}.supabase.co`;
@@ -96,7 +97,7 @@ export const CHAIN_DENYLIST = [
   'farmacia', 'pharmacy', 'supermercato', 'esselunga', 'carrefour', 'conad', 'lidl', 'eurospin',
   'tabaccheria', 'edicola', 'ottica', 'parafarmacia',
 ];
-export const normName = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+export { normName }; // vive in indice.mjs (puro, testato offline); qui per seed_maps e isChain
 // match SOLO a parola/frase intera (bordo di parola via spazi), mai substring nuda: 'cos' non deve
 // pescare 'Cose', 'zara' non deve pescare 'Zarabetti'. Le voci multi-parola diventano sequenze di token.
 export const isChain = (name) => { const n = ` ${normName(name)} `; return CHAIN_DENYLIST.some((c) => n.includes(` ${normName(c)} `)); };

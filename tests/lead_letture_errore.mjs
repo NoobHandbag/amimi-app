@@ -16,7 +16,7 @@
 // Parte 2, sul sorgente: rilevatore di `{ data }` (o `{ count }`) destrutturato da un await senza `error`, o con `error`
 // non guardato prima dell'await successivo, e rilevatore di scritture awaited senza `error` destrutturato, in
 // workers/lead/*.mjs, con autocontrollo sulle versioni vecchie.
-// Gemello di tests/lead_seed_indice.mjs (amimi-app#54, non in main il 14-10): quando entra, i due si possono fondere.
+// Gemello di tests/lead_seed_indice.mjs (amimi-app#54, in main dal 14-10 sera insieme a questo file).
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -268,17 +268,12 @@ function letturaSenzaErrore(src) {
   for (const m of s.matchAll(/\.then\(\s*(?:async\s*)?\(\s*\{([^{}]*)\}\s*\)\s*=>/g)) if (/\b(data|count)\b/.test(m[1]) && !/\berror\b/.test(m[1])) out.push('then senza error: ' + m[0]);
   return out;
 }
-// amimi-app#54 (aperta il 14-10) corregge questa lettura di seed.mjs nello stesso punto (error destrutturato, throw):
-// finche' non entra in main resta ammessa qui, poi la voce non trova piu' niente e si puo' togliere.
-const IN_ATTESA_54 = "seed.mjs|const { data: ev } = await sb.from('lead_evidence').select('id').eq('account_id', hit).eq('tipo', 'fonte').contains('payload', { fonte_seed: r.fonte_seed }).limit(1);";
-
 console.log('\n== workers/lead/*.mjs: nessuna lettura con error ignorato ==');
-let attesa = false;
+// dal 14-10 sera anche seed.mjs (amimi-app#54): le voci IN_ATTESA_54 che la ammettevano sono state tolte (gate, C5)
 for (const f of readdirSync(ROOT + 'workers/lead').filter((x) => x.endsWith('.mjs')).sort()) {
-  const trovate = letturaSenzaErrore(read('workers/lead/' + f)).filter((q) => { if (`${f}|${q}` === IN_ATTESA_54) { attesa = true; return false; } return true; });
+  const trovate = letturaSenzaErrore(read('workers/lead/' + f));
   t(`${f}: ogni lettura destruttura error e lo guarda prima di proseguire`, trovate.length === 0, trovate[0]);
 }
-console.log(attesa ? '  nota  seed.mjs: la lettura delle evidenze fonte e\' in attesa di amimi-app#54' : '  nota  amimi-app#54 e\' in main: la voce IN_ATTESA_54 si puo\' togliere');
 
 console.log('\n== autocontrollo del rilevatore ==');
 // le sei letture del 14-10, come erano in main prima del fix: tutte viste
@@ -328,16 +323,14 @@ function scritturaSenzaErrore(src) {
   }
   return out;
 }
-// amimi-app#54 corregge anche questa scrittura di seed.mjs (riga sotto la lettura IN_ATTESA_54): stessa regola di attesa.
-const IN_ATTESA_54_SCRITTURA = "seed.mjs|await sb.from('lead_evidence').insert({ account_id: hit, run_id: runId, tipo: 'fonte', payload: { fonte_seed: r.fonte_seed, nome_visto: r.nome, nota: r.owner_note ?? null }, raccolto_da: 'script' });";
+// l'insert dell'evidenza fonte di seed.mjs com'era prima di amimi-app#54: resta solo per l'autocontrollo qui sotto
+const SEED_SCRITTURA_VECCHIA = "await sb.from('lead_evidence').insert({ account_id: hit, run_id: runId, tipo: 'fonte', payload: { fonte_seed: r.fonte_seed, nome_visto: r.nome, nota: r.owner_note ?? null }, raccolto_da: 'script' });";
 
 console.log('\n== workers/lead/*.mjs: nessuna scrittura con error ignorato ==');
-let attesaScrittura = false;
 for (const f of readdirSync(ROOT + 'workers/lead').filter((x) => x.endsWith('.mjs')).sort()) {
-  const trovate = scritturaSenzaErrore(read('workers/lead/' + f)).filter((q) => { if (`${f}|${q}` === IN_ATTESA_54_SCRITTURA) { attesaScrittura = true; return false; } return true; });
+  const trovate = scritturaSenzaErrore(read('workers/lead/' + f));
   t(`${f}: ogni scrittura destruttura error`, trovate.length === 0, trovate[0]);
 }
-console.log(attesaScrittura ? '  nota  seed.mjs: l\'insert dell\'evidenza fonte e\' in attesa di amimi-app#54' : '  nota  amimi-app#54 e\' in main: la voce IN_ATTESA_54_SCRITTURA si puo\' togliere');
 
 console.log('\n== autocontrollo del rilevatore sulle scritture ==');
 // le cinque scritture del 14-10 come erano prima del fix (collect.mjs x3, endRun in lib.mjs, seed.mjs): tutte viste
@@ -346,7 +339,7 @@ const VECCHIE_SCRITTURE = [
   "    if (!DRY && anyOk && acc.stato_ricerca === 'seed') await sb.from('lead_accounts').update({ stato_ricerca: 'enriched', updated_at: new Date().toISOString() }).eq('id', acc.id);",
   "    if (!DRY && siteIg && !acc.ig_handle) await sb.from('lead_accounts').update({ ig_handle: siteIg }).eq('id', acc.id);",
   "export async function endRun(sb, id, { n_ok, n_err, log }) {\n  await sb.from('lead_runs').update({ ended_at: new Date().toISOString(), n_ok, n_err, log }).eq('id', id);\n}",
-  IN_ATTESA_54_SCRITTURA.split('|')[1],
+  SEED_SCRITTURA_VECCHIA,
 ];
 t('le cinque scritture del 14-10 (versione vecchia) sono tutte segnalate', VECCHIE_SCRITTURE.every((v) => scritturaSenzaErrore(v).length === 1), VECCHIE_SCRITTURE.find((v) => scritturaSenzaErrore(v).length !== 1));
 const CASI_SCRITTURA = [
