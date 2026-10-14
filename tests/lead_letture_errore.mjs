@@ -201,7 +201,14 @@ const DB_DUMP = { lead_accounts: [{ id: ACC, nome: 'Negozio Uno', citta: 'Milano
     const r = await sb.from('x').select('id', { count: 'exact' }).or('c.ilike."%forl_%",c.is.null').order('id').range(1, 1);
     return ids(r) === '2' && r.count === 2;
   })());
-  t('client finto: un filtro or() che non conosce rompe lo script', /non simulato/.test((() => { try { sb.from('x').select('id').or('c.gt.1'); return ''; } catch (e) { return e.message; } })()));
+  const errSync = (fn) => { try { fn(); return ''; } catch (e) { return e.message; } };
+  t('client finto: un filtro or() che non conosce rompe lo script', /non simulato/.test(errSync(() => sb.from('x').select('id').or('c.gt.1'))));
+  // gate 14-10 sera (C1, C3): col finto che restituiva la riga intera, insert(r).select('id').single() in seed.mjs passava
+  // tutti i test e in produzione l'indice del giro avrebbe avuto solo l'id
+  t('client finto: select(colonne) restituisce solo quelle colonne', JSON.stringify((await sb.from('x').select('id').eq('id', 1)).data) === '[{"id":1}]');
+  t('client finto: insert senza select torna data null, con select solo le colonne chieste', (await sb.from('x').insert({ a: 1 }).single()).data === null
+    && JSON.stringify(Object.keys((await sb.from('x').insert({ a: 1, b: 2 }).select('id,a').single()).data)) === '["id","a"]');
+  t('client finto: contains() con un valore annidato e select con head:true rompono lo script', /non simulato/.test(errSync(() => sb.from('x').select('id').contains('p', { a: { b: 1 } }))) && /non simulato/.test(errSync(() => sb.from('x').select('id', { count: 'exact', head: true }))));
 }
 
 console.log('\n== collect.mjs (Playwright finto): update di lead_accounts e chiusura del giro ==');

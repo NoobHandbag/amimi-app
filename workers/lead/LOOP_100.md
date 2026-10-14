@@ -50,7 +50,7 @@ Brand affini: `PEER_BRANDS` in `lib.mjs` (Lisa Corti, Le Orsine, MyStyleBag, Orc
 
 Due difetti noti della v1 da tenere a mente nel giudizio (non si correggono qui, si scrivono nel perche_no): luxury multimarca con borse a mediana sopra 400 euro salgono in B via posto+vitalita'; produttori a marchio proprio non sono rivenditori.
 
-**Omonimi Maps** (dal 14-10, pesi e soglie della v1 invariati): `[omonimi_maps N]` nel digest sono altre schede Maps con lo stesso nome nella stessa citta', lasciate dal seed come evidenze `omonimo_maps` (payload con place_id e link della scheda). Si aprono prima del giudizio: seconda sede dello stesso negozio = bonus gruppo; catena o monomarca = esclusione secca; negozio diverso = nessun effetto. Non contano come fonte in piu' per la vitalita'.
+**Omonimi Maps** (dal 14-10, pesi e soglie della v1 invariati): `[omonimi_maps N]` nel digest sono altre schede Maps con lo stesso nome nella stessa citta', lasciate dal seed come evidenze `omonimo_maps` (il link della scheda e' in `google_maps_url` dell'evidenza, in `evidence.json` di `judge_dump`). Si aprono prima del giudizio: seconda sede dello stesso negozio = bonus gruppo; catena o monomarca = esclusione secca; stesso indirizzo (scheda doppia su Google) o negozio diverso = nessun effetto. Non contano come fonte in piu' per la vitalita'. Se il place_id dell'account l'ha messo il collector (account nato da una lista, cerca per nome su Maps), puo' essere lui la scheda sbagliata: controllare indirizzo e foto.
 
 ## Quando la coda buona finisce
 

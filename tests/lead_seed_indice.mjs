@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tutte, caricaIndice, creaIndice, filtriCandidati, pattCitta, PAGINA, COLS_INDICE, serveFonte, votoMaps, omonimoMaps, evidenzaDoppione } from '../workers/lead/indice.mjs';
+import { tutte, caricaIndice, creaIndice, filtriCandidati, pattCitta, PAGINA, COLS_INDICE, serveFonte, votoMaps, omonimoMaps, evidenzaDoppione, servonoSchede, schedeAccount } from '../workers/lead/indice.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
@@ -176,7 +176,7 @@ const FIG_B = { ...FIG_A, google_place_id: 'P-FIG-2', owner_note: NOTA('negozio 
   t('match riporta place_id, nota e "stesso giro" dell\'account', h?.chiave === 'nome+citta' && h.google_place_id === 'P-FIG-1' && h.owner_note === FIG_A.owner_note && h.stesso_giro === true, JSON.stringify(h));
   const ev = evidenzaDoppione(h, FIG_B);
   t('seconda scheda nello stesso giro, stessa fonte: omonimo_maps per place_id (prima: niente, e prima ancora `fonte`)', ev?.tipo === 'omonimo_maps' && ev.payload.motivo === 'place_id' && serveFonte(h, FIG_B) === false, JSON.stringify(ev));
-  t('payload: place_id, nome visto, nota, fonte, link della scheda, motivo', JSON.stringify(ev?.payload) === JSON.stringify({ google_place_id: 'P-FIG-2', nome_visto: 'Figus Designer', nota: FIG_B.owner_note, fonte_seed: FIG_B.fonte_seed, google_maps_url: 'https://maps/fig2', motivo: 'place_id' }), JSON.stringify(ev?.payload));
+  t('payload: place_id, nome visto, nota, fonte, link della scheda, motivo', JSON.stringify(ev?.payload) === JSON.stringify({ google_place_id: 'P-FIG-2', google_maps_url: 'https://maps/fig2', nome_visto: 'Figus Designer', nota: FIG_B.owner_note, fonte_seed: FIG_B.fonte_seed, motivo: 'place_id' }), JSON.stringify(ev?.payload));
   t('gia\' presente se c\'e\' un omonimo_maps con lo stesso place_id', JSON.stringify(ev?.cerca) === JSON.stringify({ google_place_id: 'P-FIG-2' }));
   // Tessabit Como: tre schede da tre query; la seconda e la terza erano `fonte` e il negozio sembrava trovato da piu' fonti
   const C = { ...FIG_B, google_place_id: 'P-FIG-3', fonte_seed: 'maps:concept store' };
@@ -194,6 +194,18 @@ const FIG_B = { ...FIG_A, google_place_id: 'P-FIG-2', owner_note: NOTA('negozio 
   const lista = creaIndice(); lista.add({ id: 'L1', nome: 'Wait and See', citta: 'Milano', fonte_seed: 'manuale', owner_note: 'Scelto da Claude come atteso SI\'' });
   const rLista = { nome: 'Wait and See', citta: 'Milano', google_place_id: 'P-WAIT', fonte_seed: 'maps:concept store', owner_note: NOTA('concept store', '4,3 (149)') };
   t('account senza place_id ne\' nota Maps, ritrovato da Maps: fonte (multi-fonte vera)', evidenzaDoppione(lista.match(rLista), rLista)?.tipo === 'fonte' && omonimoMaps(lista.match(rLista), rLista) === null);
+  // gate 14-10 sera, B1: lo stesso account senza place_id da DUE schede Maps (Antonia Milano, due `fonte`): la prima
+  // registrata e' la sua scheda, un'altra e' un omonimo
+  const hL = lista.match(rLista);
+  t('servonoSchede: solo account senza place_id, agganciato per nome+citta da una riga con place_id', servonoSchede(hL, rLista) && !servonoSchede(vecchio.match(FIG_B), FIG_B) && !servonoSchede(hL, { ...rLista, google_place_id: null }));
+  const fL = evidenzaDoppione(hL, rLista, schedeAccount([], null));
+  t('fonte porta la scheda (place_id e link): per i giri dopo e\' la scheda dell\'account', fL?.tipo === 'fonte' && fL.payload.google_place_id === 'P-WAIT' && 'google_maps_url' in fL.payload, JSON.stringify(fL));
+  const sc = schedeAccount([{ tipo: 'fonte', payload: { google_place_id: 'P-WAIT' } }, { tipo: 'fonte', payload: { fonte_seed: 'vecchia' } }, { tipo: 'omonimo_maps', payload: { google_place_id: 'P-ALTRA' } }], { carta: new Set(), omonimi: new Set(['P-GIRO']) });
+  t('schedeAccount: place_id delle fonte (la scheda) e degli omonimo_maps, piu\' quelli del giro; le fonte vecchie senza place_id non contano', [...sc.carta].join() === 'P-WAIT' && [...sc.omonimi].sort().join() === 'P-ALTRA,P-GIRO', JSON.stringify([[...sc.carta], [...sc.omonimi]]));
+  const r2L = { ...rLista, google_place_id: 'P-WAIT-2', fonte_seed: 'maps:boutique donna' };
+  t('seconda scheda per un account senza place_id: omonimo_maps, non una seconda fonte', evidenzaDoppione(hL, r2L, sc)?.tipo === 'omonimo_maps' && evidenzaDoppione(hL, r2L, schedeAccount([], null))?.tipo === 'fonte');
+  t('la sua scheda ritrovata da un\'altra query: fonte', evidenzaDoppione(hL, { ...rLista, fonte_seed: 'maps:boutique donna' }, sc)?.tipo === 'fonte');
+  t('un omonimo gia\' registrato resta omonimo, non diventa fonte', evidenzaDoppione(hL, { ...rLista, google_place_id: 'P-ALTRA' }, sc)?.tipo === 'omonimo_maps');
   // riga senza place_id: decidono voto e recensioni, solo nello stesso giro
   const senza = (v, f = FIG_A.fonte_seed) => ({ nome: 'Figus Designer', citta: 'Milano', google_place_id: null, fonte_seed: f, owner_note: NOTA('negozio borse artigianali', v) });
   const ev2 = evidenzaDoppione(giro.match(senza('4,9 (60)')), senza('4,9 (60)'));
@@ -211,10 +223,10 @@ const FIG_B = { ...FIG_A, google_place_id: 'P-FIG-2', owner_note: NOTA('negozio 
 const TMP = mkdtempSync(join(tmpdir(), 'lead-seed-'));
 process.on('exit', () => rmSync(TMP, { recursive: true, force: true }));
 let nTmp = 0;
-function gira(script, args, tabelle) {
+function gira(script, args, tabelle, errori = null, guasti = []) {
   const k = ++nTmp, out = join(TMP, `out${k}.json`), cwd = join(TMP, `cwd${k}`);
   mkdirSync(cwd);
-  const env = { ...process.env, SUPABASE_ACCESS_TOKEN: '', LEAD_FINTO: JSON.stringify({ tabelle, out }) };
+  const env = { ...process.env, SUPABASE_ACCESS_TOKEN: '', LEAD_FINTO: JSON.stringify({ tabelle, out, errori, guasti }) };
   const p = spawnSync(process.execPath, ['--import', new URL('./lead_finto_hook.mjs', import.meta.url).href, join(ROOT, 'workers/lead', script), ...args], { cwd, env, encoding: 'utf8', timeout: 60000 });
   return { code: p.status, testo: `${p.stdout ?? ''}${p.stderr ?? ''}`, scritture: existsSync(out) ? JSON.parse(readFileSync(out, 'utf8')) : [] };
 }
@@ -238,7 +250,8 @@ const RIGHE_SEED = [
   FIG_B, // altra scheda di un account di un giro di prima -> omonimo_maps
   { ...FIG_A, owner_note: NOTA('negozio borse artigianali', '4,8 (51)') }, // stessa scheda, stessa fonte -> niente
   { ...FIG_A, fonte_seed: 'maps:concept store' }, // stessa scheda, altra query -> fonte
-  WAIT_MAPS, // account da una lista, ritrovato da Maps -> fonte
+  WAIT_MAPS, // account da una lista, ritrovato da Maps -> fonte (col place_id della scheda)
+  { ...WAIT_MAPS, google_place_id: 'P-WAIT-2', fonte_seed: 'maps:boutique donna', owner_note: NOTA('boutique donna', '4,5 (64)') }, // seconda scheda dello stesso account -> omonimo_maps (gate, B1)
   SIG('P-SIG-2', '4,5 (296)'), // omonimo gia' registrato -> niente
   SIG('P-SIG-3', '4,7 (53)'), // terza scheda -> omonimo_maps
   TES('P-TES-1', 'concept store', '4,1 (139)'), // nuovo
@@ -248,20 +261,22 @@ const RIGHE_SEED = [
 const f1 = fileJson(RIGHE_SEED);
 const r1 = gira('seed.mjs', [f1], DB_SEED);
 const ev1 = insert(r1, 'lead_evidence'), acc1 = insert(r1, 'lead_accounts');
-const sintesi = (e) => `${e.account_id}:${e.tipo}:${e.payload.google_place_id ?? e.payload.fonte_seed}${e.payload.motivo ? ':' + e.payload.motivo : ''}`;
+const sintesi = (e) => `${e.account_id}:${e.tipo}:${e.payload.google_place_id ?? '-'}:${e.payload.fonte_seed}${e.payload.motivo ? ':' + e.payload.motivo : ''}`;
 const TES_ID = 'lead_accounts-finto-1';
 {
   t('seed: exit 0, un solo account nuovo (Tessabit)', r1.code === 0 && acc1.length === 1 && acc1[0].nome === 'Tessabit', `exit ${r1.code} ` + r1.testo);
-  const attese = ['FIG:omonimo_maps:P-FIG-2:place_id', 'FIG:fonte:maps:concept store', 'WAIT:fonte:maps:concept store', 'SIG:omonimo_maps:P-SIG-3:place_id', `${TES_ID}:omonimo_maps:P-TES-2:place_id`, `${TES_ID}:omonimo_maps:maps:boutique accessori:voto`].join(' | ');
+  const attese = ['FIG:omonimo_maps:P-FIG-2:maps:negozio borse artigianali:place_id', 'FIG:fonte:P-FIG-1:maps:concept store', 'WAIT:fonte:P-WAIT:maps:concept store', 'WAIT:omonimo_maps:P-WAIT-2:maps:boutique donna:place_id',
+    'SIG:omonimo_maps:P-SIG-3:maps:negozio regali design:place_id', `${TES_ID}:omonimo_maps:P-TES-2:maps:boutique donna:place_id`, `${TES_ID}:omonimo_maps:-:maps:boutique accessori:voto`].join(' | ');
   const viste = ev1.map(sintesi).join(' | ');
-  t('seed: 4 omonimo_maps e 2 fonte; nessuna fonte per un\'altra scheda, niente per la stessa scheda o un omonimo gia\' registrato', viste === attese, viste);
+  t('seed: 5 omonimo_maps e 2 fonte; nessuna fonte per un\'altra scheda, niente per la stessa scheda o un omonimo gia\' registrato', viste === attese, viste);
   const voto = ev1.find((e) => e.payload.motivo === 'voto');
   t('seed: l\'omonimo senza place_id e\' per voto, con la nota', voto?.payload.google_place_id === null && voto.payload.nota === COMO(['boutique accessori', '3,7 (31)']), JSON.stringify(voto));
   t('seed: ogni evidenza col run del giro e raccolta da script', ev1.every((e) => e.run_id === 'run-finto' && e.raccolto_da === 'script'), JSON.stringify(ev1[0]));
   const fine = r1.scritture.find((w) => w.tabella === 'lead_runs' && w.op === 'update')?.riga;
-  // 5 righe riconosciute come omonimi (Signum P-SIG-2 compreso), 4 evidenze scritte (quella di P-SIG-2 c'era gia')
-  t('seed: il log del giro dice quale evidenza e perche\'', fine?.log?.filter((l) => l.evidenza === 'omonimo_maps').length === 5 && fine.log.find((l) => l.motivo === 'voto')?.nome === 'Tessabit', JSON.stringify(fine?.log));
-  t('seed: riepilogo con gli omonimi', /duplicati 8 \(di cui omonimi Maps 5\), err 0/.test(r1.testo), r1.testo);
+  // 6 righe riconosciute come omonimi (Signum P-SIG-2 compreso), 5 evidenze scritte (quella di P-SIG-2 c'era gia')
+  const omo = fine?.log?.filter((l) => l.evidenza === 'omonimo_maps') ?? [];
+  t('seed: il log del giro dice quale evidenza, perche\' e se e\' stata scritta (gate, C2)', omo.length === 6 && omo.filter((l) => l.scritta).length === 5 && omo.find((l) => !l.scritta)?.nome === 'Signum' && fine.log.find((l) => l.motivo === 'voto')?.nome === 'Tessabit', JSON.stringify(fine?.log));
+  t('seed: riepilogo con omonimi ed evidenze nuove', /duplicati 9 \(di cui omonimi Maps 6\), evidenze nuove: omonimo_maps 5, fonte 2; err 0 \(su 10\)/.test(r1.testo), r1.testo);
 }
 {
   // rilancio dello stesso file sul DB dopo il primo giro: nessuna scrittura
@@ -271,15 +286,23 @@ const TES_ID = 'lead_accounts-finto-1';
   };
   const r2 = gira('seed.mjs', [f1], dopo);
   t('rilancio dello stesso file: nessun account e nessuna evidenza nuova', r2.code === 0 && insert(r2, 'lead_accounts').length === 0 && insert(r2, 'lead_evidence').length === 0, JSON.stringify(insert(r2, 'lead_evidence').map(sintesi)) + r2.testo);
+  // CASI_APERTI 36 (b): il conteggio degli errori del giro vero
+  const k = gira('seed.mjs', [f1], DB_SEED, { 'lead_evidence:insert': { message: '504 Gateway Timeout (finto)' } });
+  const fk = k.scritture.find((w) => w.tabella === 'lead_runs' && w.op === 'update')?.riga;
+  t('evidenze respinte: 7 righe in errore nel giro (n_err) col motivo, l\'account nuovo inserito (n_ok 1), exit 1', k.code === 1 && fk?.n_err === 7 && fk.n_ok === 1 && fk.log.filter((l) => l.esito === 'err' && /evidenza (omonimo_maps|fonte) non scritta: 504/.test(l.msg)).length === 7 && /err 7 \(su 10\)/.test(k.testo), `exit ${k.code} ` + JSON.stringify(fk) + k.testo);
+  const g = gira('seed.mjs', [f1], DB_SEED, null, ['lead_evidence']);
+  t('lettura "c\'e\' gia\'?" in errore: la riga va in errore e niente evidenza alla cieca', g.code === 1 && insert(g, 'lead_evidence').length === 0 && /ERR Figus Designer evidenze omonimo_maps non leggibili \(504/.test(g.testo), `exit ${g.code} ` + g.testo);
   const d = gira('seed.mjs', [f1, '--dry'], DB_SEED);
-  t('--dry: dice quale evidenza scriverebbe e non scrive niente', d.code === 0 && d.scritture.length === 0 && /DUP {4}Figus Designer \[Milano\] -> FIG \(nome\+citta\) \+ omonimo_maps \(place_id\)/.test(d.testo) && /DUP {4}Tessabit \[Como\] -> nuovo#7 \(nome\+citta\) \+ omonimo_maps \(voto\)/.test(d.testo), d.testo);
+  t('--dry: dice quale evidenza scriverebbe e non scrive niente', d.code === 0 && d.scritture.length === 0 && /DUP {4}Figus Designer \[Milano\] -> FIG \(nome\+citta\) \+ omonimo_maps \(place_id\)/.test(d.testo) && /DUP {4}Tessabit \[Como\] -> nuovo#8 \(nome\+citta\) \+ omonimo_maps \(voto\)/.test(d.testo), d.testo);
+  // gate 14-10 sera, C2: la prova legge se l'evidenza c'e' gia' e conta le stesse del giro vero
+  t('--dry: un omonimo gia\' registrato e\' "gia\' presente", non "da scrivere"', /DUP {4}Signum \[Firenze\] -> SIG \(nome\+citta\) = omonimo_maps \(place_id\) gia' presente/.test(d.testo) && (d.testo.match(/ \+ (omonimo_maps|fonte)/g) ?? []).length === 7 && /evidenze da scrivere: omonimo_maps 5, fonte 2; err 0/.test(d.testo), d.testo);
 }
 
 console.log('\n== judge_digest.mjs: gli omonimi davanti al giudizio ==');
 {
-  const tabelle = { lead_accounts: [{ ...DB_SEED.lead_accounts[2], stato_ricerca: 'enriched', tipo: 'boutique' }], lead_evidence: [{ id: 'aaaaaaaa-1', account_id: 'SIG', tipo: 'omonimo_maps', payload: { nota: 'Maps "negozio regali design" Firenze · 4,5 (296)' }, captured_at: '2026-10-01' }, { id: 'bbbbbbbb-2', account_id: 'SIG', tipo: 'omonimo_maps', payload: { nota: 'Maps "negozio regali design" Firenze · 4,7 (53)' }, captured_at: '2026-10-02' }] };
+  const tabelle = { lead_accounts: [{ ...DB_SEED.lead_accounts[2], stato_ricerca: 'enriched', tipo: 'boutique' }], lead_evidence: [{ id: 'aaaaaaaa-1', account_id: 'SIG', tipo: 'omonimo_maps', payload: { google_place_id: 'P-SIG-2', motivo: 'place_id', nota: 'Maps "negozio regali design" Firenze · 4,5 (296)' }, captured_at: '2026-10-01' }, { id: 'bbbbbbbb-2', account_id: 'SIG', tipo: 'omonimo_maps', payload: { nota: 'Maps "negozio regali design" Firenze · 4,7 (53)' }, captured_at: '2026-10-02' }] };
   const r = gira('judge_digest.mjs', ['--id', 'SIG'], tabelle);
-  t('digest: tutti gli omonimi (non solo l\'ultimo), con id evidenza e cosa vuol dire', r.code === 0 && /\[omonimi_maps 2\] aaaaaaaa .*4,5 \(296\) ; bbbbbbbb .*4,7 \(53\) -> altra scheda Maps con lo stesso nome: seconda sede \(bonus gruppo\), catena o monomarca \(esclusione\)/.test(r.testo), r.testo);
+  t('digest: tutti gli omonimi (non solo l\'ultimo), con id evidenza e cosa vuol dire', r.code === 0 && /\[omonimi_maps 2\] aaaaaaaa place_id place=P-SIG-2 .*4,5 \(296\) ; bbbbbbbb - place=- .*4,7 \(53\) -> altra scheda Maps con lo stesso nome: seconda sede \(bonus gruppo\), catena o monomarca \(esclusione\), scheda doppia allo stesso indirizzo/.test(r.testo), r.testo);
   const s = gira('judge_digest.mjs', ['--id', 'SIG'], { ...tabelle, lead_evidence: [] });
   t('digest: senza omonimi nessuna riga', s.code === 0 && !/omonimi_maps/.test(s.testo), s.testo);
 }
@@ -288,10 +311,13 @@ console.log('\n== judge_digest.mjs: gli omonimi davanti al giudizio ==');
 console.log('\n== seed.mjs, indice.mjs, stato100.mjs: frammenti dei fix ==');
 const MARKERS = {
   'workers/lead/seed.mjs': [
-    "import { caricaIndice, COLS_INDICE, evidenzaDoppione } from './indice.mjs';",
+    "import { caricaIndice, COLS_INDICE, evidenzaDoppione, servonoSchede, schedeAccount } from './indice.mjs';",
     'const { idx, candidati } = await caricaIndice(sb, rows);',
-    'const ev = evidenzaDoppione(hit, r);',
-    'if (ev && !DRY) {',
+    'const ev = evidenzaDoppione(hit, r, schede);',
+    'if (servonoSchede(hit, r)) {',
+    "const { data: viste, error: vsErr } = await sb.from('lead_evidence').select('tipo,payload').eq('account_id', hit.id).in('tipo', ['fonte', 'omonimo_maps']);",
+    'if (vsErr) throw new Error(',
+    'if (!presente && !DRY) {',
     "const { data: gia, error: evErr } = await sb.from('lead_evidence').select('id').eq('account_id', hit.id).eq('tipo', ev.tipo).contains('payload', ev.cerca).limit(1);",
     "insert({ account_id: hit.id, run_id: runId, tipo: ev.tipo, payload: ev.payload, raccolto_da: 'script' })",
     'inserted++; idx.add(data, true);',

@@ -5,8 +5,9 @@
 // con la sua chiave in `errori` torna quell'error (es. { code: '23505' }). Insert e update non vanno da nessuna parte:
 // si registrano in `out` all'uscita del processo (fallita: true se respinte) e il test controlla cosa lo script ha scritto.
 // Filtri simulati (dal 14-10 anche quelli dell'indice di seed.mjs): eq, in, or (ilike, is.null, eq), contains (jsonb a
-// un livello), order, range, limit, count exact. Un insert con .single() torna la riga con un id finto, come
-// insert().select().single() di supabase-js. Un metodo che il finto non conosce rompe lo script: nessun filtro ignorato.
+// un livello, valori scalari), order, range, limit, count exact. select(colonne) restituisce SOLO quelle colonne, anche
+// dopo un insert: insert().select(cols).single() torna la riga con un id finto ridotta a cols, un insert senza select
+// torna data null come supabase-js. Un metodo o un filtro che il finto non conosce rompe lo script: niente ignorato.
 import { writeFileSync } from 'node:fs';
 
 export * from '../workers/lead/lib.mjs';
@@ -32,7 +33,13 @@ function filtroOr(expr) {
   });
   return (x) => fs.some((f) => f(x));
 }
-const contiene = (v, sotto) => v != null && typeof v === 'object' && Object.entries(sotto).every(([k, w]) => v[k] === w);
+// payload @> valore, a un livello: un valore annidato (oggetto o array) non e' simulato e rompe lo script
+function filtroContains(c, sotto) {
+  for (const [k, w] of Object.entries(sotto)) if (w !== null && typeof w === 'object') throw new Error(`contains() con valore annidato (${k}) non simulato in tests/lead_finto_lib.mjs`);
+  return (x) => x[c] != null && typeof x[c] === 'object' && Object.entries(sotto).every(([k, w]) => x[c][k] === w);
+}
+// select('a,b') -> solo a e b (null se la riga non le ha); '*' o niente -> tutta la riga
+const proietta = (x, cols) => (cols == null || cols.trim() === '*' ? x : Object.fromEntries(cols.split(',').map((k) => k.trim()).map((k) => [k, x[k] ?? null])));
 
 let nIns = 0;
 function esegui(tabella, st) {
@@ -40,8 +47,9 @@ function esegui(tabella, st) {
     const error = cfg.errori?.[`${tabella}:${st.op}`] ?? null;
     scritture.push({ tabella, op: st.op, riga: st.riga, eq: st.eq, ...(error ? { fallita: true } : {}) });
     if (error) return { data: null, error };
-    if (st.op === 'insert' && tabella === 'lead_runs') return { data: { id: 'run-finto' }, error: null };
-    return { data: st.op === 'insert' && st.single ? { id: `${tabella}-finto-${++nIns}`, ...st.riga } : null, error: null };
+    if (st.op !== 'insert' || st.ritorna === undefined) return { data: null, error: null };
+    const riga = proietta(tabella === 'lead_runs' ? { id: 'run-finto', ...st.riga } : { id: `${tabella}-finto-${++nIns}`, ...st.riga }, st.ritorna);
+    return { data: st.single ? riga : [riga], error: null };
   }
   if ((cfg.guasti ?? []).includes(tabella)) return { data: null, error: { message: '504 Gateway Timeout (finto)' } };
   let righe = (cfg.tabelle?.[tabella] ?? []).filter((x) => st.filtri.every((f) => f(x)));
@@ -49,6 +57,7 @@ function esegui(tabella, st) {
   const count = st.count ? righe.length : null;
   if (st.range) righe = righe.slice(st.range[0], st.range[1] + 1);
   if (st.limit != null) righe = righe.slice(0, st.limit);
+  righe = righe.map((x) => proietta(x, st.cols));
   if (!st.single) return { data: righe, error: null, count };
   return righe.length === 1 ? { data: righe[0], error: null } : { data: null, error: { message: 'JSON object requested, multiple (or no) rows returned' } };
 }
@@ -58,13 +67,17 @@ function client() {
     from(tabella) {
       const st = { op: 'select', riga: null, filtri: [], eq: {}, single: false };
       const b = {
-        select: (_c, o = {}) => { st.count = o.count === 'exact'; return b; },
+        select: (c, o = {}) => {
+          if (o.head) throw new Error('select(..., { head: true }) non simulato in tests/lead_finto_lib.mjs');
+          if (st.op === 'insert') st.ritorna = c ?? '*'; else st.cols = c;
+          st.count = o.count === 'exact'; return b;
+        },
         insert: (riga) => { st.op = 'insert'; st.riga = riga; return b; },
         update: (riga) => { st.op = 'update'; st.riga = riga; return b; },
         eq: (c, v) => { st.eq[c] = v; st.filtri.push((x) => x[c] === v); return b; },
         in: (c, v) => { st.filtri.push((x) => v.includes(x[c])); return b; },
         or: (e) => { st.filtri.push(filtroOr(e)); return b; },
-        contains: (c, v) => { st.filtri.push((x) => contiene(x[c], v)); return b; },
+        contains: (c, v) => { st.filtri.push(filtroContains(c, v)); return b; },
         order: (c, o = {}) => { st.ordine = { c, desc: o.ascending === false }; return b; },
         range: (da, a) => { st.range = [da, a]; return b; },
         limit: (n) => { st.limit = n; return b; },

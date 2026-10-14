@@ -94,28 +94,52 @@ export function votoMaps(nota) {
 // place_id ritrovato nei file di seed). Torna 'place_id' o 'voto' (altra scheda), 'incerto' o null (stessa scheda,
 // o niente da confrontare).
 // - place_id della riga e dell'account entrambi presenti: diversi = altra scheda.
-// - senza uno dei due place_id, fra due note Maps decidono voto e recensioni, ma solo con l'account nato nello stesso
+// - account senza place_id (nato da una lista, da uno stockist): la sua scheda e' quella gia' registrata nelle sue
+//   evidenze `fonte` (`schede`, vedi schedeAccount); una scheda diversa e' un'altra scheda (gate 14-10 sera, B1: il caso
+//   di Antonia Milano, due schede Maps scritte tutte e due come `fonte`).
+// - senza place_id da confrontare, fra due note Maps decidono voto e recensioni, ma solo con l'account nato nello stesso
 //   giro: due schede dello stesso giro con la nota diversa sono due schede (48 su 48 al 14-10), mentre fra un giro e
 //   l'altro la stessa scheda cambia numeri (85 schede ritrovate su 87 con la nota diversa): li' e' 'incerto'.
-export function omonimoMaps(hit, r) {
+//   "Stesso giro" vale "stessa raccolta" solo se il file e' l'uscita di UN giro di seed_maps.mjs: un file unito da
+//   raccolte di giorni diversi va caricato a pezzi.
+export function omonimoMaps(hit, r, schede = null) {
   if (hit?.chiave !== 'nome+citta') return null;
   if (r.google_place_id && hit.google_place_id) return r.google_place_id !== hit.google_place_id ? 'place_id' : null;
+  if (r.google_place_id && schede) {
+    if (schede.omonimi.has(r.google_place_id)) return 'place_id';
+    if (schede.carta.size) return schede.carta.has(r.google_place_id) ? null : 'place_id';
+  }
   const a = votoMaps(hit.owner_note), b = votoMaps(r.owner_note);
   if (!a || !b || a === b) return null;
   return hit.stesso_giro ? 'voto' : 'incerto';
 }
 
+// Servono le schede gia' viste dell'account? Solo se e' agganciato per nome+citta', non ha un place_id suo e la riga si'.
+export const servonoSchede = (hit, r) => hit?.chiave === 'nome+citta' && !hit.google_place_id && !!r.google_place_id;
+// Le schede Maps gia' legate a un account: place_id delle sue evidenze `fonte` (la sua scheda) e `omonimo_maps`, piu'
+// quelle decise in questo giro (`nelGiro`, che --dry non scrive). Le `fonte` scritte prima del 14-10 non hanno place_id.
+export function schedeAccount(evidenze, nelGiro) {
+  const carta = new Set(nelGiro?.carta), omonimi = new Set(nelGiro?.omonimi);
+  for (const e of evidenze ?? []) {
+    const p = e.payload?.google_place_id; if (!p) continue;
+    if (e.tipo === 'fonte') carta.add(p); else if (e.tipo === 'omonimo_maps') omonimi.add(p);
+  }
+  return { carta, omonimi };
+}
+
 // L'evidenza che seed.mjs scrive su un doppione, o null: `omonimo_maps` per un'altra scheda (mai `fonte`: non e' lo
 // stesso negozio), `fonte` per lo stesso negozio da una fonte diversa, niente se non si sa quale dei due e'.
 // `cerca` e' il filtro contains() che dice se c'e' gia' (rilancio dello stesso file, sweep che ritrova la scheda).
-export function evidenzaDoppione(hit, r) {
-  const motivo = omonimoMaps(hit, r);
+// Anche `fonte` porta il place_id della scheda: e' la scheda dell'account per i giri dopo (schedeAccount).
+export function evidenzaDoppione(hit, r, schede = null) {
+  const motivo = omonimoMaps(hit, r, schede);
   if (motivo === 'incerto') return null;
+  const scheda = { google_place_id: r.google_place_id ?? null, google_maps_url: r.google_maps_url ?? null };
   if (motivo) {
-    const payload = { google_place_id: r.google_place_id ?? null, nome_visto: r.nome, nota: r.owner_note ?? null, fonte_seed: r.fonte_seed ?? null, google_maps_url: r.google_maps_url ?? null, motivo };
+    const payload = { ...scheda, nome_visto: r.nome, nota: r.owner_note ?? null, fonte_seed: r.fonte_seed ?? null, motivo };
     return { tipo: 'omonimo_maps', payload, cerca: r.google_place_id ? { google_place_id: r.google_place_id } : { nota: payload.nota } };
   }
-  if (serveFonte(hit, r)) return { tipo: 'fonte', payload: { fonte_seed: r.fonte_seed, nome_visto: r.nome, nota: r.owner_note ?? null }, cerca: { fonte_seed: r.fonte_seed } };
+  if (serveFonte(hit, r)) return { tipo: 'fonte', payload: { fonte_seed: r.fonte_seed, nome_visto: r.nome, nota: r.owner_note ?? null, ...scheda }, cerca: { fonte_seed: r.fonte_seed } };
   return null;
 }
 
