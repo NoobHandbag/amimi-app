@@ -6771,6 +6771,14 @@ CREATE INDEX "lead_contacts_account_idx" ON "public"."lead_contacts" USING "btre
 
 
 
+CREATE UNIQUE INDEX "lead_contacts_account_email_uq" ON "public"."lead_contacts" USING "btree" ("account_id", "lower"("email")) WHERE ("email" IS NOT NULL);
+
+
+
+CREATE UNIQUE INDEX "lead_contacts_account_nome_uq" ON "public"."lead_contacts" USING "btree" ("account_id", "lower"("nome")) WHERE (("email" IS NULL) AND ("nome" IS NOT NULL));
+
+
+
 CREATE INDEX "lead_drafts_account_idx" ON "public"."lead_drafts" USING "btree" ("account_id", "created_at" DESC);
 
 
