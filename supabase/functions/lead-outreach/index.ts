@@ -973,7 +973,7 @@ Deno.serve(async (req) => {
     if (gia) return gia.stato === 'inviata' && gia.account_id === accountId ? json({ ok: true, already_sent: true, to: toR, gmail_message_id: gia.gmail_message_id }) : json({ error: 'questa risposta e\' gia\' in invio: ricarica la scheda', bloccante: true }, 409);
     const [{ data: accR, error: accErr }, { data: tocchiR, error: tocErr }, { count: nOptR, error: optErr }, { count: nOptToR, error: optToErr }] = await Promise.all([
       retryOnce(() => sb.from('lead_accounts').select('id,lead_stage').eq('id', accountId).maybeSingle()),
-      retryOnce(() => sb.from('lead_touches').select('id,direzione,canale,esito,at,gmail_message_id,gmail_thread_id,subject').eq('account_id', accountId).order('at', { ascending: false }).limit(200)),
+      retryOnce(() => sb.from('lead_touches').select('id,direzione,canale,esito,at,gmail_message_id,gmail_thread_id,subject,body_clean').eq('account_id', accountId).order('at', { ascending: false }).limit(200)),
       retryOnce(() => sb.from('lead_contacts').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('opt_out', true)),
       retryOnce(() => sb.from('lead_contacts').select('id', { count: 'exact', head: true }).ilike('email', toR.replace(/[\\%_]/g, '\\$&')).eq('opt_out', true)),
     ]);
@@ -984,8 +984,15 @@ Deno.serve(async (req) => {
     if (accR.lead_stage === 'opt_out' || accR.lead_stage === 'chiuso_no') return json({ error: `negozio in stadio ${accR.lead_stage}: non si contatta`, bloccante: true }, 409);
     if ((nOptR ?? 0) > 0) return json({ error: 'opt-out registrato su questo negozio: non si contatta', bloccante: true }, 409);
     if ((nOptToR ?? 0) > 0) return json({ error: `${toR} ha chiesto di non essere contattato`, bloccante: true }, 409);
-    const tocchiList = (tocchiR ?? []) as { id: string; direzione: string; canale: string; esito: string | null; at: string; gmail_message_id: string | null; gmail_thread_id: string | null; subject: string | null }[];
+    const tocchiList = (tocchiR ?? []) as { id: string; direzione: string; canale: string; esito: string | null; at: string; gmail_message_id: string | null; gmail_thread_id: string | null; subject: string | null; body_clean: string | null }[];
     if (!ciHaScritto(tocchiList)) return json({ error: 'questo negozio non ci ha mai scritto: per il primo contatto si usa la sequenza (riga di opt-out, verdetto e tetto giornaliero)', bloccante: true }, 409);
+    // Gate 2 (15-10): fuori dal tetto e senza riga di opt-out, una risposta va SOLO a un indirizzo del negozio (contatti,
+    // email del negozio, chi ci ha scritto: la prima riga dei tocchi in entrata scritti dal giro). Senza questa cintura,
+    // cambiare il destinatario farebbe di "Rispondi" un invio libero a chiunque.
+    const ngR = await contattiNegozio(sb, accountId);
+    if ('errore' in ngR) return json({ error: ngR.errore }, 503);
+    const noti = new Set([...ngR.indirizzi, ...tocchiList.filter((t) => t.direzione === 'in').map((t) => String(t.body_clean ?? '').split('\n')[0])].map((x) => x.trim().toLowerCase()).filter((x) => EMAIL_RE.test(x)));
+    if (!noti.has(toR)) return json({ error: `${toR} non e\' un indirizzo di questo negozio: si risponde a un contatto del negozio o a chi ci ha scritto`, bloccante: true }, 422);
     const bers = bersaglioRisposta(tocchiList);
     const ultimoIn = tocchiList.find((t) => t.direzione === 'in' && !['bounce', 'risposta_automatica'].includes(t.esito ?? ''))?.id ?? null;
     if (!flags.cs_gmail_sa_key) return json({ error: 'chiave service account assente (app_flags.cs_gmail_sa_key)' }, 500);
@@ -998,19 +1005,16 @@ Deno.serve(async (req) => {
     const warningsR: string[] = mittR.avviso ? [mittR.avviso] : [];
     let inReplyToR = '', referencesR = '';
     if (bers) {
-      const tl = await tokenLettura(flags);
-      if ('errore' in tl) warningsR.push('header di reply non impostati: ' + tl.errore);
-      else {
-        try {
-          const mr = await fetch(`${GMAIL}/messages/${encodeURIComponent(bers.messageId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`, { headers: { Authorization: `Bearer ${tl.token}` } });
-          const mj = await mr.json().catch(() => ({}));
-          const hs = (mj?.payload?.headers ?? []) as { name?: string; value?: string }[];
-          const hdr = (n: string) => hs.find((h) => h.name?.toLowerCase() === n)?.value ?? '';
-          const mid = mr.ok ? hdr('message-id') : '';
-          if (mid) { inReplyToR = mid; referencesR = (hdr('references') ? hdr('references') + ' ' : '') + mid; }
-          else warningsR.push(`header di reply non impostati (Gmail ${mr.status}): la risposta si vede nel thread solo nella nostra casella`);
-        } catch (e) { warningsR.push('header di reply non impostati: ' + scrub((e as Error).message).slice(0, 120)); }
-      }
+      try {
+        const rtokenR = await googleAccessToken(saR, SCOPE_READ);
+        const mr = await fetch(`${GMAIL}/messages/${encodeURIComponent(bers.messageId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`, { headers: { Authorization: `Bearer ${rtokenR}` } });
+        const mj = await mr.json().catch(() => ({}));
+        const hs = (mj?.payload?.headers ?? []) as { name?: string; value?: string }[];
+        const hdr = (n: string) => hs.find((h) => h.name?.toLowerCase() === n)?.value ?? '';
+        const mid = mr.ok ? hdr('message-id') : '';
+        if (mid) { inReplyToR = mid; referencesR = (hdr('references') ? hdr('references') + ' ' : '') + mid; }
+        else warningsR.push(`header di reply non impostati (Gmail ${mr.status}): la risposta si vede nel thread solo nella nostra casella`);
+      } catch (e) { warningsR.push('header di reply non impostati: ' + scrub((e as Error).message).slice(0, 120)); }
     }
     // claim: la riga nasce in invio; il send_key UNIQUE fa fallire il secondo inserimento con la stessa chiave
     const nowR = new Date().toISOString();
@@ -1231,6 +1235,8 @@ Deno.serve(async (req) => {
   if (dr.stato === 'inviata' && dr.send_key === sendKey) return json({ ok: true, already_sent: true, to, gmail_message_id: dr.gmail_message_id });
   if (dr.stato === 'inviata' || dr.stato === 'in_invio') return json({ error: 'questa bozza e\' gia\' stata inviata (o e\' in invio)', bloccante: true }, 409);
   if (dr.stato === 'scartata') return json({ error: 'bozza scartata', bloccante: true }, 409);
+  // v12, Gate 2: una risposta (riga senza numero di tocco) non parte mai come tocco della sequenza a freddo
+  if (dr.sequenza_tocco == null) return json({ error: 'questa e\' una risposta, non un tocco della sequenza: si manda dal riquadro "Rispondi"', bloccante: true }, 409);
 
   // negozio: opt-out e verdetto (una persona ha detto "no" = non si scrive)
   const { data: acc, error: aErr } = await retryOnce(() => sb.from('lead_accounts').select('id,nome,lead_stage,verdetto,stato_ricerca').eq('id', dr.account_id).maybeSingle());
