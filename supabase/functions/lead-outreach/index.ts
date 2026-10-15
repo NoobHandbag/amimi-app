@@ -741,6 +741,9 @@ Deno.serve(async (req) => {
   // le risposte. Il messaggio si verifica su Gmail (scope readonly) prima di scrivere; si scrivono SOLO le due colonne
   // Gmail di QUEL tocco, con UPDATE condizionato al thread ancora vuoto (due richieste insieme: ne passa una) e UNIQUE
   // su gmail_message_id. Nessuna email parte, nessuno stadio cambia qui: li cambia il cron quando scrive le risposte.
+  // Effetto voluto (Gate 2, 15-10): un negozio "contattato" con l'ultimo tocco agganciato torna anche fra i candidati
+  // dei follow-up automatici (v_lead_followup_due vuole un thread): da li' il cron puo' proporre la bozza del tocco
+  // successivo in Coda, come per un'email partita dall'app. L'invio resta un click.
   if (action === 'aggancia') {
     const touchId = String(body.touch_id || '');
     const msgId = String(body.gmail_message_id || '').trim();
@@ -749,12 +752,17 @@ Deno.serve(async (req) => {
     if (tcErr) return json({ error: 'lettura tocco fallita, riprova: ' + tcErr.message }, 503);
     if (!tc) return json({ error: 'tocco inesistente', bloccante: true }, 404);
     if (tc.gmail_message_id === msgId && tc.gmail_thread_id) return json({ ok: true, gia_agganciato: true, touch_id: touchId, gmail_thread_id: tc.gmail_thread_id });
-    const { data: ac, error: acErr } = await retryOnce(() => sb.from('lead_accounts').select('email_generica').eq('id', tc.account_id).maybeSingle());
+    const [{ data: ac, error: acErr }, { data: cts, error: ctErr }, { count: nUsato, error: nuErr }] = await Promise.all([
+      retryOnce(() => sb.from('lead_accounts').select('email_generica,lead_stage').eq('id', tc.account_id).maybeSingle()),
+      retryOnce(() => sb.from('lead_contacts').select('email,opt_out').eq('account_id', tc.account_id).not('email', 'is', null).limit(200)),
+      retryOnce(() => sb.from('lead_touches').select('id', { count: 'exact', head: true }).eq('gmail_message_id', msgId).neq('id', touchId)),
+    ]);
     if (acErr) return json({ error: 'lettura negozio fallita, riprova: ' + acErr.message }, 503);
-    const { data: cts, error: ctErr } = await retryOnce(() => sb.from('lead_contacts').select('email').eq('account_id', tc.account_id).not('email', 'is', null).limit(200));
     if (ctErr) return json({ error: 'lettura contatti fallita, riprova: ' + ctErr.message }, 503);
-    const { count: nUsato, error: nuErr } = await retryOnce(() => sb.from('lead_touches').select('id', { count: 'exact', head: true }).eq('gmail_message_id', msgId).neq('id', touchId));
     if (nuErr) return json({ error: 'lettura tocchi fallita, riprova: ' + nuErr.message }, 503);
+    // Gate 2 (15-10): agganciare il thread di un negozio che ha chiesto di non essere contattato farebbe rientrare i suoi
+    // messaggi nel giro automatico; non serve a nessuno, quindi si rifiuta
+    if (ac?.lead_stage === 'opt_out' || ac?.lead_stage === 'chiuso_no' || ((cts ?? []) as { opt_out: boolean | null }[]).some((c) => c.opt_out)) return json({ error: `negozio in opt-out o chiuso (${ac?.lead_stage ?? 'stadio n/d'}): niente aggancio`, bloccante: true }, 409);
     if ((nUsato ?? 0) > 0) return json({ error: 'questo messaggio Gmail e\' gia\' agganciato a un altro tocco', bloccante: true }, 409);
     if (!flags.cs_gmail_sa_key) return json({ error: 'chiave service account assente (app_flags.cs_gmail_sa_key)' }, 500);
     let saA: { client_email: string; private_key: string };
@@ -762,7 +770,9 @@ Deno.serve(async (req) => {
     let rtokenA = '';
     try { rtokenA = await googleAccessToken(saA, SCOPE_READ); }
     catch (e) { return json({ error: 'autenticazione Google fallita: ' + (e as Error).message.slice(0, 180) }, 502); }
-    const gr = await fetch(`${GMAIL}/messages/${encodeURIComponent(msgId)}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc`, { headers: { Authorization: `Bearer ${rtokenA}` } });
+    let gr: Response;
+    try { gr = await fetch(`${GMAIL}/messages/${encodeURIComponent(msgId)}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc`, { headers: { Authorization: `Bearer ${rtokenA}` } }); }
+    catch (e) { return json({ error: 'Gmail non raggiungibile, niente e\' stato scritto: riprova. ' + scrub((e as Error).message).slice(0, 120) }, 504); }
     const gj = await gr.json().catch(() => ({}));
     if (gr.status === 404) return json({ error: 'messaggio non trovato nella casella info@', bloccante: true }, 404);
     if (!gr.ok) return json({ error: `Gmail messages.get ${gr.status}: ${JSON.stringify(gj).slice(0, 160)}` }, 502);
