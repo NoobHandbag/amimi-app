@@ -25,6 +25,8 @@ on:
       - "web/src/**"
       - "web/package.json"
       - "web/package-lock.json"
+      - "web/e2e/**"
+      - "web/playwright.config.ts"
       - ".github/workflows/amimi-app-tests.yml"
   pull_request:
     paths:
@@ -37,6 +39,8 @@ on:
       - "web/src/**"
       - "web/package.json"
       - "web/package-lock.json"
+      - "web/e2e/**"
+      - "web/playwright.config.ts"
       - ".github/workflows/amimi-app-tests.yml"
   workflow_dispatch:
 
@@ -80,6 +84,25 @@ jobs:
           npm ci
           npm run build
           npm run lint
+      # E2E di Negozi (15-10, rinuncia (a) del gate Fable sul cruscotto B2B, CASI_APERTI n.37): le spec
+      # web/e2e/negozi-*.spec.ts girano su dati finti, perche' ogni richiesta a *.supabase.co e' intercettata dalla spec.
+      # La build per gli e2e punta a un progetto INESISTENTE (un ref con i trattini non puo' essere reale): una spec
+      # nuova che dimentica l'intercettazione fallisce e non arriva alla produzione. assistenza.spec.ts e
+      # ingest.spec.ts leggono dal vivo con un login vero: restano fuori.
+      - name: Browser per gli e2e (Playwright, solo chromium)
+        shell: bash
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: E2E di Negozi su dati finti (build verso un progetto Supabase finto)
+        shell: bash
+        working-directory: web
+        env:
+          VITE_SUPABASE_URL: https://e2e-progetto-finto.supabase.co
+          VITE_SUPABASE_ANON_KEY: sb_publishable_e2e_finto
+        run: |
+          set -eo pipefail
+          npx vite build
+          npx playwright test negozi
 
   # Invarianti in SOLA LETTURA sulle viste di produzione con la chiave PUBBLICA (gia' nel bundle
   # e in uptime.yml). Separato e non bloccante: dipende dalla rete e dai 504 di PostgREST

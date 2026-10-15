@@ -6,6 +6,8 @@ export default defineConfig({
   timeout: 45000,
   expect: { timeout: 15000 },
   retries: 1,
+  // in CI un test.only dimenticato farebbe saltare tutti gli altri restando verde (CASI_APERTI n.37)
+  forbidOnly: !!process.env.CI,
   reporter: 'list',
   use: { baseURL: 'http://localhost:4173/amimi-app/', headless: true },
   webServer: {
