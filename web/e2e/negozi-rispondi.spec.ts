@@ -37,8 +37,9 @@ const SALVATA = { id: '00000000-0000-0000-0000-0000000000d5', account_id: ID, li
 
 type Chiamata = { action?: string; account_id?: string; to?: string; oggetto?: string; testo?: string; send_key?: string; draft_id?: string | null; istruzione?: string; modo?: string };
 
-async function apri(page: Page, riga: Record<string, unknown>, tocchi: Record<string, unknown>[], opts: { reteGiu?: boolean; bozze?: Record<string, unknown>[] } = {}): Promise<Chiamata[]> {
+async function apri(page: Page, riga: Record<string, unknown>, tocchi: Record<string, unknown>[], opts: { reteGiu?: boolean; bozze?: Record<string, unknown>[]; superata?: boolean; tocchiKo?: boolean; senzaAttesa?: boolean } = {}): Promise<Chiamata[]> {
   const edge: Chiamata[] = [];
+  let lettureTocchi = 0;
   await page.addInitScript(() => {
     localStorage.setItem('amimi-cs-auth', JSON.stringify({
       access_token: 'finto', refresh_token: 'finto', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600,
@@ -56,13 +57,16 @@ async function apri(page: Page, riga: Record<string, unknown>, tocchi: Record<st
       edge.push(c);
       // rete giu' sulla prima risposta: la richiesta e' partita, l'esito non si sa
       if (c.action === 'rispondi' && opts.reteGiu && edge.filter((x) => x.action === 'rispondi').length === 1) return route.abort('connectionreset');
+      // la proposta e' stata superata da una piu' recente (un'altra scheda l'ha rigenerata): 409 con il codice stabile
+      if (c.action === 'rispondi' && opts.superata && edge.filter((x) => x.action === 'rispondi').length === 1) return json({ error: 'questa proposta e’ stata scartata o superata da una più recente: il testo resta tuo, rimandalo senza proposta', bloccante: true, codice: 'proposta_superata' }, 409);
       if (c.action === 'rispondi') return json({ ok: true, to: c.to, from: 'wholesale@amimi.it', oggetto: c.oggetto, nel_thread: true, gmail_message_id: 'abcdef0123456789' });
       if (c.action === 'proponi_risposta') return json(PROPOSTA);
       if (c.action === 'rifinisci') return json({ ok: true, titolo: 'Risposta', testo: RIFINITA, non_grounded: [], troncata: false, avvisi: [], segnaposto: [] });
       if (c.action === 'prova') return json({ ok: true, prova: true, to: 'prova@amimi.it', from: 'wholesale@amimi.it', oggetto: '[PROVA] ' + c.oggetto, segnaposto: 0 });
       return json({ error: 'azione non prevista dalla spec' }, 500);
     }
-    if (url.pathname.endsWith('/lead_touches')) return json(tocchi);
+    // la prima lettura dei tocchi fallisce (PostgREST in timeout): la scheda deve dirlo e riprovare
+    if (url.pathname.endsWith('/lead_touches')) { lettureTocchi += 1; if (opts.tocchiKo && lettureTocchi === 1) return json({ message: 'canceling statement due to statement timeout' }, 500); return json(tocchi); }
     if (url.pathname.endsWith('/lead_drafts')) return json(opts.bozze ?? []);
     // la lista legge v_lead_lista (per id dopo una scrittura); il dossier completo si legge per id
     if (url.pathname.endsWith('/v_lead_lista') || url.pathname.endsWith('/v_lead_dossier')) return json(Number(url.searchParams.get('offset') ?? 0) > 0 ? [] : [riga]);
@@ -72,6 +76,7 @@ async function apri(page: Page, riga: Record<string, unknown>, tocchi: Record<st
     return json([]);
   });
   await page.goto(`#negozi/outreach/${ID}`);
+  if (opts.senzaAttesa) return edge;
   if (tocchi.length) await expect(page.locator('.or-conv > *')).toHaveCount(tocchi.length);
   else await expect(page.getByText('Nessun messaggio ancora')).toBeVisible();
   await expect(page.locator('.or-comp .cs-seg .cs-seg-btn.on')).toHaveCount(1);   // il modo iniziale e' deciso
@@ -241,5 +246,59 @@ test.describe('schermo largo 1280 px', () => {
     await expect(conv.locator('.cs-msg')).toHaveCount(3);
     await expect(conv.locator('.or-nota')).toHaveCount(1);
     await nienteEscape(page);
+  });
+
+  test('proposta superata da una più recente (409 con codice): il testo nel box resta, la proposta si stacca e il secondo click parte senza draft_id', async ({ page }) => {
+    const edge = await apri(page, base({}), [RISPOSTA, NOSTRA, MODULO], { superata: true });
+    const comp = page.locator('.or-comp');
+    await comp.getByRole('button', { name: 'Proponi le risposte dalla conversazione' }).click();
+    await expect(comp.locator('.cs-opts .cs-opt')).toHaveCount(2);
+    await comp.getByRole('button', { name: '✉️ Invia…' }).click();
+    const modal = page.locator('.cs-sendmodal');
+    const conferma = modal.getByRole('button', { name: '✓ Invia adesso' });
+    await conferma.click();
+    await expect(modal.locator('.err')).toContainText('Premi di nuovo');
+    await expect(conferma).toBeVisible();                        // non e' bloccante: si rimanda il testo senza proposta
+    await expect(modal.locator('.cs-send-preview')).toContainText(ALT1.testo.split('\n')[0]);
+    await conferma.click();
+    await expect(comp.locator('.or-esito')).toContainText('Risposta inviata');
+    const risposte = edge.filter((c) => c.action === 'rispondi');
+    expect(risposte).toHaveLength(2);
+    expect(risposte[0].draft_id).toBe(DRAFT_ID);
+    expect(risposte[1].draft_id ?? null).toBeNull();
+    expect(risposte[1].testo).toBe(risposte[0].testo);
+    expect(risposte[1].send_key).not.toBe(risposte[0].send_key);
+    await nienteEscape(page);
+  });
+
+  test('conversazione non caricata: l\'errore sta al posto di "Carico…", il compositore parte in Sequenza, Riprova la ricarica e torna Rispondi', async ({ page }) => {
+    await apri(page, base({}), [RISPOSTA, NOSTRA, MODULO], { tocchiKo: true, senzaAttesa: true });
+    const comp = page.locator('.or-comp');
+    const errore = page.locator('p.err', { hasText: 'Conversazione non caricata' });
+    await expect(errore).toContainText('statement timeout');
+    await expect(page.getByText('Carico la conversazione…')).toHaveCount(0);
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Sequenza a freddo');
+    await expect(comp.getByLabel('Testo')).toContainText('Gentile team di Glitter Prova');   // il template c'e' lo stesso
+    await errore.getByRole('button', { name: '↻ Riprova' }).click();
+    await expect(page.locator('.or-conv > *')).toHaveCount(3);
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Rispondi');
+    await expect(errore).toHaveCount(0);
+  });
+
+  test('follow-up automatico fra le bozze, ma il negozio ha scritto dopo: si apre Rispondi con l\'avviso sotto il selettore, il follow-up resta fra le bozze', async ({ page }) => {
+    const AUTO2 = { ...SALVATA, id: '00000000-0000-0000-0000-0000000000d7', sequenza_tocco: 2, origine: 'auto', fatti_usati: { avvisi: [] }, testo: `Gentile team,\ntesto del tocco 2.\n${FIRMA}\n${OPT}`, oggetto: 'Oggetto 2' };
+    await apri(page, base({ bozza_auto_tocco: 2 }), [RISPOSTA, NOSTRA, MODULO], { bozze: [AUTO2] });
+    const comp = page.locator('.or-comp');
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Rispondi');
+    await expect(comp.locator('.cs-note', { hasText: 'è fra le bozze, ma il negozio ci ha scritto' })).toBeVisible();
+    await expect(comp.getByLabel('Risposta')).toHaveValue(`\n\n${FIRMA}`);
+    await page.getByText('Bozze di questo negozio (1)').click();
+    await expect(page.locator('details', { hasText: 'Bozze di questo negozio' })).toContainText('Tocco 2 · proposta · automatica');
+    // passando alla sequenza la bozza si dichiara e si riprende
+    await comp.getByRole('button', { name: 'Sequenza a freddo' }).click();
+    await expect(comp.locator('.cs-note', { hasText: 'C’è già una bozza' })).toContainText('del tocco 2');
+    await comp.getByRole('button', { name: '↩ Riprendi' }).click();
+    await expect(comp.getByLabel('Testo')).toHaveValue(AUTO2.testo);
+    await expect(comp.getByLabel('Tocco')).toBeDisabled();
   });
 });
