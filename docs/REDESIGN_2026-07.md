@@ -51,3 +51,21 @@ Richiesta owner: tenere l'estetica GEEIQ (Brand Toolkit e Brand Guidelines v01: 
 - **Contrasto** (WCAG, prima -> dopo): testo azione su bianco 4,02 -> 5,37; bianco sul bottone primario 4,02 -> 5,37; bianco sul fondo del gradiente hero 2,94 -> 7,53; esiti 700 su tinta da 3,6-4,1 a 5,2-7,8; numeri `--accent` (giacenze, badge) 2,42 -> 3,85; MC1 verde su bianco 2,40 -> 6,09. Unico peggioramento: la barra del mese corrente (caramello) su bianco 3,32 -> 2,67, sotto il 3:1 degli oggetti grafici; resta distinta dalle barre rosa per tinta e luminosita' ed e' marcata anche nel testo. Da rivedere in fase 1 se serve.
 - **Prima e dopo**: `web/e2e/tema-schermate.spec.ts` (vedi `TEST_INVARIANTS.md`), 18 schermate a 390 px sugli stessi dati finti, 18 su 18 sia prima sia dopo; e2e di Negozi 18 su 18 sia prima sia dopo.
 - **Restano fuori (fasi successive)**: circa 180 hex nei `.tsx` e circa 130 nei CSS che NON sono della palette GEEIQ (rossi/verdi/marroni dell'era pre-luglio, `#fff`, ombre scure `rgba(46,32,77,...)`), concentrati in Negozi, Materiali, Assistenza, FoglioOrdine, Salute; i ~480 `style={{}}` inline. Fase 1 = componenti condivisi, fase 2 = una schermata per PR.
+
+## Tema Amimì, fase 1: i colori rimasti passano dai token (15-10-2026 sera)
+
+La fase 0 e' online dalle 20:03 del 15-10 (web `1b4f81b`, pubblicata dalla sessione della #68 insieme al suo lavoro). La fase 1 chiude il resto.
+
+- **Classificazione**: 316 colori scritti a mano in `web/src`, letti uno per uno da un agente per file (o per pezzo di `index.css`), con un controllore indipendente per ciascuno. La mappa segue il SIGNIFICATO, non la tinta: errore/allarme -> `--negative`, ok -> `--positive`, attesa/avviso -> `--warning`, pannelli tenui -> `--surface-alt`, segnaposto foto -> `--thumb-bg` / `--thumb-ink`. Sostituiti 173 colori su 140 righe.
+- **Lasciati apposta** (139), ognuno col motivo: testo bianco su fondo pieno, ombre e velature neutre, colori delle categorie materiali (`lib/matApi.ts`, sono dati), logo Google, torta dell'assistente e `fill` SVG di Premia (`var()` negli attributi SVG non e' affidabile su ogni browser; quei colori sono gia' della famiglia Amimì).
+- **Gate 2** (fase 0 e fase 1, un revisore per area e due verificatori indipendenti per rilievo): 24 rilievi sopravvissuti, tutti di classe C, chiusi in `30d4c8f`. I principali sono questi.
+  - Ultime ombre GEEIQ `rgba(46,32,77)` portate all'inchiostro Amimì.
+  - Mese corrente del CE in caramello, come i grafici.
+  - Seconda serie in ardesia (`--chart-4`) accanto al rosa antico.
+  - In Home, Registra vendita e Pubblica in caramello, Reso in terracotta.
+  - Badge "esaurito" con contorno terracotta.
+  - Token nuovi: `--accent-coral-strong` (caramello derivato, 3,8:1, per contorni e grafici sottili) e `--interactive-tint-soft` (stati selezionati su card bianca).
+  - Salute, freschezza delle fonti: "ferma" e "in ritardo" anche a parole, non solo col colore.
+  - Predeploy: rifiuta un host diverso dal progetto vero e un bundle verso il progetto finto degli e2e.
+- **Guardia**: `tests/tema_colori_guardie.mjs` (vedi `TEST_INVARIANTS.md`).
+- **Restano**: i circa 480 `style={{}}` inline (struttura, non colore) e i 139 colori lasciati apposta. Una passata di UX/UI si decide con l'owner schermata per schermata.
