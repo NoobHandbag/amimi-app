@@ -19,7 +19,7 @@ const SEG_DESC: Record<string, string> = {
   una_tantum: 'un solo ordine, non recente',
   dormiente: 'non comprano da molto: campagna di riattivazione o lasciar andare',
 };
-const SEG_COLOR: Record<string, string> = { top: 'var(--positive)', ripetuto: 'var(--interactive)', nuovo: 'var(--sec-lavender)', una_tantum: 'var(--warning)', dormiente: 'var(--negative)' };
+const SEG_COLOR: Record<string, string> = { top: 'var(--positive)', ripetuto: 'var(--interactive)', nuovo: 'var(--chart-4)', una_tantum: 'var(--warning)', dormiente: 'var(--negative)' };
 
 export default function Clienti({ onBack }: { onBack?: () => void }) {
   const [rfm, setRfm] = useState<ClienteRfm[] | null>(null);

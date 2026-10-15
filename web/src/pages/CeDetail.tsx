@@ -275,7 +275,7 @@ function sparkline(vals: number[], r: RowDef) {
   const x = (i: number) => pad + i * ((W - 2 * pad) / Math.max(1, n - 1));
   const y = (v: number) => H - pad - ((v - mn) / rng) * (H - 2 * pad);
   const d = vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
-  const color = r.mc ? 'var(--positive-700)' : r.kind === 'cost' ? 'var(--sec-cabaret)' : r.kind === 'rev' ? 'var(--interactive)' : 'var(--sec-lavender)';
+  const color = r.mc ? 'var(--positive-700)' : r.kind === 'cost' ? 'var(--sec-cabaret)' : r.kind === 'rev' ? 'var(--interactive)' : 'var(--chart-4)';
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
       <line x1={pad} y1={y(0).toFixed(1)} x2={W - pad} y2={y(0).toFixed(1)} stroke="var(--border-strong)" strokeWidth="1" />

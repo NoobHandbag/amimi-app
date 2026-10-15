@@ -229,7 +229,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; negozi B2B</span></div>
         <div className="cs-lt">Accedi con il tuo account Amimi&#8217; (dati di terzi: serve il login)</div>
-        <button className="cs-btn" style={{ width: '100%', background: '#fff', border: '1px solid var(--border)', color: 'var(--ink)' }} onClick={doGoogle} disabled={busy} type="button">Accedi con Google</button>
+        <button className="cs-btn" style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--ink)' }} onClick={doGoogle} disabled={busy} type="button">Accedi con Google</button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 4px', color: 'var(--ink-muted)', fontSize: 12 }}><span style={{ flex: 1, height: 1, background: 'var(--border)' }} /> oppure con email <span style={{ flex: 1, height: 1, background: 'var(--border)' }} /></div>
         <div className="cs-fld"><label>Email (@amimi.it)</label><input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="info@amimi.it" /></div>
         <div className="cs-fld"><label>Password</label><input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') doLogin(); }} /></div>
@@ -502,7 +502,7 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
                 <div className="lead-scale-med" style={{ left: pct(pb.borse.mediana) }} />
                 <div className="lead-scale-amimi" style={{ left: pct(AMIMI_MIN), width: `calc(${pct(AMIMI_MAX)} - ${pct(AMIMI_MIN)})` }} />
               </div>
-              <div className="lead-scale-leg"><i style={{ background: 'var(--interactive-tint)', border: '1px solid var(--interactive)' }} /> negozio <i style={{ background: 'var(--accent-coral-tint)', border: '1px solid var(--accent-coral)' }} /> Amimi&#8217; {AMIMI_MIN}–{AMIMI_MAX}€ <i style={{ background: 'var(--ink)', width: 3 }} /> mediana · asse fino a {eur(axisMax)}</div>
+              <div className="lead-scale-leg"><i style={{ background: 'var(--interactive-tint)', border: '1px solid var(--interactive)' }} /> negozio <i style={{ background: 'var(--accent-coral-tint)', border: '1px solid var(--accent-coral-strong)' }} /> Amimi&#8217; {AMIMI_MIN}–{AMIMI_MAX}€ <i style={{ background: 'var(--ink)', width: 3 }} /> mediana · asse fino a {eur(axisMax)}</div>
             </div>
           )}
           {bc?.vendors?.length ? <p className="note">Brand a catalogo: {bc.vendors.slice(0, 40).join(', ')}{bc.vendors.length > 40 ? '…' : ''}</p> : null}

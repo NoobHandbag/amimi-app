@@ -1,9 +1,10 @@
 /* ============================================================================
-   Componenti design-system GEEIQ (namespace ds-*).
+   Componenti design-system (struttura GEEIQ, colori Amimì; namespace ds-*).
    Namespacing per NON collidere con la index.css legacy (.search/.pill/.seg/.kpi
    esistono già con altro significato). Le schermate adottano ds-* man mano che
-   vengono rifinite (redesign 2026-07). Coral della design system = --negative
-   (in questo codebase --accent è il bridge legacy arancio).
+   vengono rifinite (redesign 2026-07, tema Amimì 15-10). Accento = --accent-coral (caramello),
+   allarme/negativo = --negative (terracotta), interazione = --interactive (rosa antico);
+   --accent e' il bridge legacy verso --warning (ocra).
    ============================================================================ */
 
 /* ---- primitivi condivisi ---- */
@@ -12,7 +13,7 @@
 
 .ds-btn { border: 0; border-radius: var(--r-md); font-family: inherit; font-size: 14px; font-weight: 700;
   padding: 11px 16px; min-height: 44px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-.ds-btn.primary { background: var(--grad-action); color: #fff; box-shadow: 0 6px 16px rgba(92,53,242,.26); }
+.ds-btn.primary { background: var(--grad-action); color: #fff; box-shadow: var(--e2); }
 .ds-btn.secondary { background: var(--surface); color: var(--ink); border: 1px solid var(--border-strong); }
 .ds-btn.ghost { background: transparent; color: var(--info-700); }
 .ds-btn.danger { background: var(--negative); color: #fff; }
@@ -103,7 +104,7 @@
 .ds-kpi.pos .v { color: var(--positive-700); }
 .ds-kpi.neg .v { color: var(--negative-700); }
 
-/* single-series trend (barre viola, corrente coral) */
+/* single-series trend (barre rosa antico, corrente caramello) */
 .ds-trend { display: flex; align-items: flex-end; gap: 6px; height: 150px; margin: 12px 0 6px; }
 .ds-tcol { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; height: 100%; background: none; border: 0; padding: 0; cursor: pointer; font-family: inherit; }
 .ds-tcol.off { opacity: .42; }
@@ -119,7 +120,7 @@
 .ds-chleg span { display: inline-flex; align-items: center; }
 .ds-chleg i { width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; display: inline-block; }
 .ds-ch-on { background: var(--interactive); }
-.ds-ch-of { background: var(--sec-lavender); }
+.ds-ch-of { background: var(--chart-4); }
 .ds-ch-b2 { background: var(--positive); }
 
 /* funnel "dal lordo all'utile" */
@@ -161,7 +162,7 @@
 .ds-psub { font-size: 11px; color: var(--ink-muted); margin-top: 2px; }
 .ds-pbadge { font-size: 10px; font-weight: 700; border-radius: 6px; padding: 2px 7px; margin-top: 5px; display: inline-block; }
 .ds-pbadge.pub { background: var(--interactive-tint); color: var(--interactive-700); }
-.ds-pbadge.out { background: var(--negative-tint); color: var(--negative-700); }
+.ds-pbadge.out { background: var(--negative-tint); color: var(--negative-700); box-shadow: inset 0 0 0 1px var(--negative); }
 .ds-pbadge.load { background: var(--warning-tint); color: var(--warning-700); }
 .ds-pbadge.off { background: var(--surface-alt); color: var(--ink-muted); }
 .ds-gia { text-align: right; flex: none; }
@@ -184,7 +185,7 @@
 .ds-pcard-nm { font-size: 12px; font-weight: 600; margin-top: 5px; line-height: 1.2; color: var(--ink); overflow-wrap: anywhere; }
 .ds-pcard-gia { display: inline-block; margin-top: 4px; font-size: 10.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--interactive-tint); color: var(--interactive-700); font-variant-numeric: tabular-nums; }
 .ds-pcard-gia.low { background: var(--warning-tint); color: var(--warning-700); }
-.ds-pcard-gia.zero { background: var(--negative-tint); color: var(--negative-700); }
+.ds-pcard-gia.zero { background: var(--negative-tint); color: var(--negative-700); box-shadow: inset 0 0 0 1px var(--negative); }
 
 .ds-picked { display: flex; align-items: center; gap: 12px; background: var(--surface-alt); border-radius: 12px; padding: 10px 12px; margin-top: 8px; }
 .ds-picked-img { width: 44px; height: 44px; flex: none; border-radius: 9px; background: var(--thumb-bg); display: flex; align-items: center; justify-content: center; overflow: hidden; font-weight: 800; color: var(--thumb-ink); font-size: 13px; }
@@ -203,12 +204,12 @@
 .ds-dchip.marg { background: var(--positive-tint); color: var(--positive-700); }
 .ds-dchip.marglow { background: var(--warning-tint); color: var(--warning-700); }
 .ds-dchip.miss { background: var(--negative-tint); color: var(--negative-700); }
-.ds-prow.miss { border-color: var(--negative-tint); background: #fff6f4; }
+.ds-prow.miss { border-color: var(--negative); background: var(--surface); }
 .ds-prow .chev { color: var(--ink-muted); font-size: 20px; flex: none; }
 .ds-count { font-size: 12px; color: var(--ink-muted); margin: 4px 2px 10px; line-height: 1.4; }
 
 .ds-reco { width: 100%; text-align: left; display: flex; align-items: center; gap: 10px; background: var(--sec-lavender-tint); border: 1px solid var(--sec-lavender); border-radius: 12px; padding: 11px 13px; margin-top: 10px; cursor: pointer; font-family: inherit; }
-.ds-reco .ic { width: 30px; height: 30px; border-radius: 9px; flex: none; display: flex; align-items: center; justify-content: center; background: #fff; color: var(--sec-lavender-700); }
+.ds-reco .ic { width: 30px; height: 30px; border-radius: 9px; flex: none; display: flex; align-items: center; justify-content: center; background: var(--surface); color: var(--sec-lavender-700); }
 .ds-reco .ht { font-size: 12.5px; font-weight: 600; color: var(--sec-lavender-700); line-height: 1.35; }
 .ds-fp-todo { border-color: var(--negative-tint); color: var(--negative-700); }
 .ds-fp-todo.on { background: var(--negative); border-color: var(--negative); color: #fff; }
@@ -245,7 +246,7 @@
 .ds-recvrow .stepper { width: 172px; flex: none; }
 .ds-recvrow .stepper .num { padding-left: 4px; padding-right: 4px; }
 .ds-recvdate { flex: 1 1 116px; min-height: 46px; border: 1px solid var(--border-strong); border-radius: 11px; padding: 0 10px; font-size: 13px; font-family: inherit; background: var(--surface); color: var(--ink); min-width: 0; }
-.ds-segna { flex: 1; min-width: 110px; background: var(--grad-action); color: #fff; border: 0; border-radius: 11px; font-size: 13.5px; font-weight: 800; padding: 12px; cursor: pointer; box-shadow: 0 6px 14px rgba(92,53,242,.26); }
+.ds-segna { flex: 1; min-width: 110px; background: var(--grad-action); color: #fff; border: 0; border-radius: 11px; font-size: 13.5px; font-weight: 800; padding: 12px; cursor: pointer; box-shadow: var(--e2); }
 .ds-segna:disabled { opacity: .55; }
 .ds-recvfoot { display: flex; justify-content: flex-end; margin-top: 11px; }
 .ds-del { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--negative-700); background: var(--negative-tint); border: 0; border-radius: 9px; padding: 7px 11px; cursor: pointer; font-family: inherit; }
@@ -358,7 +359,7 @@ table.cedt th, table.cedt td { white-space: nowrap; }
 table.cedt thead th { position: sticky; top: 0; z-index: 3; background: var(--surface-alt); color: var(--ink-muted);
   font-weight: 700; font-size: 10.5px; letter-spacing: .03em; text-align: right; padding: 8px 10px;
   border-bottom: 1px solid var(--border-strong); }
-table.cedt thead th.cur { color: var(--negative-700); }
+table.cedt thead th.cur { color: var(--accent-coral-700); }
 table.cedt thead th.sparkh { text-align: center; }
 table.cedt thead th:first-child { text-align: left; left: 0; z-index: 4; }
 table.cedt .lab { position: sticky; left: 0; z-index: 2; background: var(--surface); text-align: left;
@@ -370,7 +371,7 @@ table.cedt td.val.clk { cursor: pointer; }
 table.cedt td.val.clk:hover { background: var(--interactive-tint); }
 table.cedt td.val.z { color: var(--ink-faint, var(--ink-muted)); }
 table.cedt td.val.cost { color: var(--negative-700); }
-table.cedt td.val.curcol { background: rgba(252, 79, 63, .05); }
+table.cedt td.val.curcol { background: var(--accent-coral-tint); }
 table.cedt td.ytd { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--border); font-weight: 700;
   font-variant-numeric: tabular-nums; background: var(--surface-alt); }
 table.cedt td.spark { border-bottom: 1px solid var(--border); padding: 4px 8px; background: var(--surface-alt); }
@@ -388,9 +389,9 @@ table.cedt tr.pct td.flag { color: var(--warning-700); font-weight: 700; }
 table.cedt .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warning); margin-left: 5px; vertical-align: middle; }
 
 /* drawer drilldown */
-.cedt-scrim { position: fixed; inset: 0; background: rgba(46, 32, 77, .45); z-index: 60; animation: cedtFade .18s ease; }
+.cedt-scrim { position: fixed; inset: 0; background: rgba(45, 34, 38, .45); z-index: 60; animation: cedtFade .18s ease; }
 .cedt-drawer { position: fixed; right: 0; top: 0; height: 100%; width: min(440px, 92vw); background: var(--surface);
-  box-shadow: -18px 0 44px rgba(46, 32, 77, .22); z-index: 61; display: flex; flex-direction: column;
+  box-shadow: -18px 0 44px rgba(45, 34, 38, .22); z-index: 61; display: flex; flex-direction: column;
   border-left: 1px solid var(--border); animation: cedtSlide .22s cubic-bezier(.4, 0, .2, 1); }
 @keyframes cedtFade { from { opacity: 0; } }
 @keyframes cedtSlide { from { transform: translateX(100%); } }
