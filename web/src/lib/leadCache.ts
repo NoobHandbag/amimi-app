@@ -33,10 +33,14 @@ const firmeInCorso = new Map<string, Promise<void>>();
 
 // `dopo` = l'istante di una scrittura appena fatta: una lettura partita PRIMA non vale (porterebbe a schermo dati vecchi
 // come aggiornati, Gate 2 v15 B1) e se ne lancia una nuova; la vecchia finisce ma non scrive piu' la cache.
-function condivisa<T>(slot: Slot<T>, fn: () => Promise<T>, applica: (r: T) => void, dopo = 0): Promise<T> {
+function condivisa<T>(slot: Slot<T>, fn: () => Promise<T>, applica: (r: T) => void, leggi: () => T | null, dopo = 0): Promise<T> {
   if (slot.p && slot.at >= dopo) return slot.p;
   const at = Date.now();
-  const p = fn().then((r) => { if (slot.at === at) applica(r); return r; }).finally(() => { if (slot.p === p) slot.p = null; });
+  const p: Promise<T> = fn().then((r) => {
+    if (slot.at === at) { applica(r); return r; }
+    // superata da una lettura piu' nuova: chi aspettava riceve quella (o la cache che ha gia' scritto), mai il dato vecchio
+    return slot.p && slot.p !== p ? slot.p : (leggi() ?? r);
+  }).finally(() => { if (slot.p === p) slot.p = null; });
   slot.p = p; slot.at = at;
   return p;
 }
@@ -46,10 +50,10 @@ export function leggiCache() {
 }
 
 export function caricaLista(dopo = 0): Promise<LeadLista[]> {
-  return condivisa(slotLista, fetchLista, (r) => { cache.lista = r; }, dopo);
+  return condivisa(slotLista, fetchLista, (r) => { cache.lista = r; }, () => cache.lista, dopo);
 }
 export function caricaPipeline(dopo = 0): Promise<LeadOutreach[]> {
-  return condivisa(slotPipeline, fetchOutreach, (o) => { cache.pipeline = o; }, dopo);
+  return condivisa(slotPipeline, fetchOutreach, (o) => { cache.pipeline = o; }, () => cache.pipeline, dopo);
 }
 // sequenze e settings insieme, in un solo giro: il compositore rende il template con firma e link gia' noti (Gate 2 del
 // 25-09, B3). Si leggono una volta; `forza` le rilegge (bottone Aggiorna).
@@ -58,13 +62,15 @@ export function caricaSequenzeSettings(forza = false): Promise<{ sequences: Lead
   return condivisa(slotSeqSet, async () => {
     const [sequences, settings] = await Promise.all([fetchSequences(), fetchLeadSettings()]);
     return { sequences, settings };
-  }, (r) => { cache.sequences = r.sequences; cache.settings = r.settings; });
+  }, (r) => { cache.sequences = r.sequences; cache.settings = r.settings; }, () => (cache.sequences && cache.settings ? { sequences: cache.sequences, settings: cache.settings } : null));
 }
 
 // Una riga della lista riletta dopo una scrittura (verdetto, tier, nota...): sostituisce quella in cache senza rileggere
 // tutto. Torna la lista aggiornata, o null se la lista non e' ancora in cache (allora la riga arrivera' col primo giro).
 export async function aggiornaRigaLista(id: string): Promise<LeadLista[] | null> {
   const riga = await fetchListaUno(id);
+  // una lettura della lista ancora in volo e' partita prima di questa scrittura: non deve sovrascrivere la riga nuova
+  slotLista.at = Date.now();
   if (!cache.lista) return null;
   const i = cache.lista.findIndex((r) => r.id === id);
   if (!riga) { if (i < 0) return cache.lista; cache.lista = cache.lista.filter((r) => r.id !== id); return cache.lista; }
@@ -92,8 +98,9 @@ export function caricaDossier(id: string, dopo = 0): Promise<LeadDossier | null>
   const inCorso = slotDossier.get(id);
   if (inCorso && inCorso.at >= dopo) return inCorso.p;
   const at = Date.now();
-  const p = fetchDossierUno(id).then((d) => {
-    if (slotDossier.get(id)?.at !== at) return d;   // e' partita una lettura piu' nuova: la cache e' sua
+  const p: Promise<LeadDossier | null> = fetchDossierUno(id).then((d) => {
+    // e' partita una lettura piu' nuova: la cache e' sua, e chi aspettava questa riceve quella (mai il dossier vecchio)
+    if (slotDossier.get(id)?.at !== at) { const nuova = slotDossier.get(id); return nuova && nuova.p !== p ? nuova.p : (cache.dossier.get(id) ?? d); }
     if (d) {
       cache.dossier.delete(id); cache.dossier.set(id, d);
       while (cache.dossier.size > MAX_DOSSIER) { const primo = cache.dossier.keys().next().value; if (primo === undefined) break; cache.dossier.delete(primo); }

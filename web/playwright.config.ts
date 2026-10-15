@@ -18,7 +18,9 @@ export default defineConfig({
   webServer: {
     command: `npm run preview -- --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}/amimi-app/`,
-    reuseExistingServer: true,
+    // in locale la preview la avvia Playwright: con la porta gia' presa --strictPort fallisce rumorosamente, invece di
+    // riusare in silenzio la build di un altro worktree (15-10). In CI non c'e' nessuna preview da riusare.
+    reuseExistingServer: !!process.env.CI,
     timeout: 60000,
   },
 });

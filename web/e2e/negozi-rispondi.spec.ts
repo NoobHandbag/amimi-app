@@ -74,7 +74,7 @@ async function apri(page: Page, riga: Record<string, unknown>, tocchi: Record<st
   await page.goto(`#negozi/outreach/${ID}`);
   if (tocchi.length) await expect(page.locator('.or-conv > *')).toHaveCount(tocchi.length);
   else await expect(page.getByText('Nessun messaggio ancora')).toBeVisible();
-  await expect(page.locator('.or-comp .seg button.on')).toHaveCount(1);   // il modo iniziale e' deciso
+  await expect(page.locator('.or-comp .cs-seg .cs-seg-btn.on')).toHaveCount(1);   // il modo iniziale e' deciso
   return edge;
 }
 
@@ -87,7 +87,7 @@ test.describe('schermo largo 1280 px', () => {
   test('chi ci ha scritto: modo Rispondi, proposte dalla conversazione, modifica AI, finestra di conferma, rispondi con il draft_id e chiave nuova dopo', async ({ page }) => {
     const edge = await apri(page, base({}), [RISPOSTA, NOSTRA, MODULO]);
     const comp = page.locator('.or-comp');
-    await expect(comp.locator('.seg button.on')).toHaveText('Rispondi');
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Rispondi');
     await expect(comp.getByLabel('Destinatario')).toHaveValue('agnese@negozio.test');
     await expect(comp.getByLabel('Oggetto')).toHaveValue('Re: Amimì Milano x Glitter Prova');
     const invia = comp.getByRole('button', { name: '✉️ Invia…' });
@@ -170,7 +170,7 @@ test.describe('schermo largo 1280 px', () => {
   test('proposta salvata in lead_drafts e il negozio ha scritto dopo: avviso "ha scritto di nuovo" e Riprendi (senza chiamare il modello)', async ({ page }) => {
     const edge = await apri(page, base({}), [RISPOSTA, NOSTRA, MODULO], { bozze: [SALVATA] });
     const comp = page.locator('.or-comp');
-    await expect(comp.locator('.seg button.on')).toHaveText('Rispondi');
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Rispondi');
     const avviso = comp.locator('.cs-lint', { hasText: 'C’è già una proposta' });
     await expect(avviso).toContainText('il negozio ha scritto di nuovo');
     await expect(comp.getByRole('button', { name: 'Proponi le risposte dalla conversazione' })).toBeEnabled();
@@ -194,7 +194,7 @@ test.describe('schermo largo 1280 px', () => {
   test('ultimo messaggio = modulo del sito: la risposta e\' un\'email nuova; la prova manda solo oggetto e testo', async ({ page }) => {
     const edge = await apri(page, base({ n_email_out: 0, n_tocchi: 1 }), [MODULO]);
     const comp = page.locator('.or-comp');
-    await expect(comp.locator('.seg button.on')).toHaveText('Rispondi');
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Rispondi');
     await expect(comp.getByLabel('Destinatario')).toHaveValue('agnese@negozio.test');
     await expect(comp.getByLabel('Oggetto')).toHaveValue('Amimì Milano per Glitter Prova');
     await comp.getByLabel('Risposta').fill(`Buongiorno, grazie del messaggio.\n\n${FIRMA}`);
@@ -203,14 +203,14 @@ test.describe('schermo largo 1280 px', () => {
     expect(edge.map((c) => c.action)).toEqual(['prova']);
     expect(Object.keys(edge[0]).sort()).toEqual(['action', 'oggetto', 'testo']);
     await comp.getByRole('button', { name: '✉️ Invia…' }).click();
-    await expect(page.locator('.cs-sendmodal .cs-send-row').nth(3)).toContainText('email nuova: l’ultimo messaggio è il modulo del sito');
+    await expect(page.locator('.cs-sendmodal .cs-send-row').nth(3)).toContainText('email nuova (nessun thread Gmail da riprendere)');
     await nienteEscape(page);
   });
 
   test('negozio che non ci ha mai scritto: modo Sequenza con il template nel box; forzare Rispondi non propone e non invia', async ({ page }) => {
     await apri(page, base({ lead_stage: 'contattato', da_gestire: false, ultima_direzione: 'out', n_tocchi: 1 }), [NOSTRA]);
     const comp = page.locator('.or-comp');
-    await expect(comp.locator('.seg button.on')).toHaveText('Sequenza a freddo');
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Sequenza a freddo');
     await expect(comp.getByLabel('Tocco')).toHaveValue('2');   // una email gia' partita
     await expect(comp.getByLabel('Testo')).toHaveValue(/testo del tocco 2/);
     await expect(comp.getByRole('button', { name: 'Segna come inviata' })).toBeEnabled();

@@ -52,7 +52,7 @@ export function dopoInvioManuale(p: { ciHaScritto: boolean; email: boolean; tocc
   if (p.email && p.ciHaScritto) {
     return {
       sequenza_tocco: null, prossima_azione: 'attesa risposta del negozio', prossima_azione_at: piuGiorni(p.oggi, GIORNI_ATTESA_RISPOSTA), avanzaTocco: false,
-      messaggio: `Registrata come inviata. Il negozio ci aveva gia’ scritto: niente sequenza a freddo, promemoria fra ${GIORNI_ATTESA_RISPOSTA} giorni se non risponde.`,
+      messaggio: `Registrata come inviata. Il negozio ci aveva già scritto: niente sequenza a freddo, promemoria fra ${GIORNI_ATTESA_RISPOSTA} giorni se non risponde.`,
     };
   }
   return {

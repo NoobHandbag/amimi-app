@@ -80,7 +80,7 @@ async function apri(page: Page, sc: Scenario): Promise<{ edge: Chiamata[]; inser
   });
   await page.goto(`#negozi/outreach/${ID}`);
   await expect(page.locator('.or-conv > *')).toHaveCount(sc.tocchi.length);
-  await expect(page.locator('.or-comp .seg button.on')).toHaveCount(1);
+  await expect(page.locator('.or-comp .cs-seg .cs-seg-btn.on')).toHaveCount(1);
   return { edge, inserti };
 }
 
@@ -103,7 +103,7 @@ test.describe('schermo largo 1280 px', () => {
   test('negozio che ci ha scritto: parte in Rispondi; forzando la sequenza, "Segna come inviata" non registra un follow-up a freddo e apre subito la scelta dell\'email', async ({ page }) => {
     const { edge, inserti } = await apri(page, SCRITTO);
     const comp = page.locator('.or-comp');
-    await expect(comp.locator('.seg button.on')).toHaveText('Rispondi');
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Rispondi');
     await comp.getByRole('button', { name: 'Sequenza a freddo' }).click();
     await expect(comp.locator('.cs-note', { hasText: 'Questo negozio ci ha già scritto' })).toBeVisible();
     await comp.getByRole('button', { name: 'Segna come inviata' }).click();
@@ -120,7 +120,7 @@ test.describe('schermo largo 1280 px', () => {
   test('negozio a freddo: modo Sequenza con il template; "Segna come inviata" resta un tocco della sequenza, e un tocco gia\' collegato non mostra "Collega a Gmail"', async ({ page }) => {
     const { inserti } = await apri(page, FREDDO);
     const comp = page.locator('.or-comp');
-    await expect(comp.locator('.seg button.on')).toHaveText('Sequenza a freddo');
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Sequenza a freddo');
     await expect(comp.getByLabel('Tocco')).toHaveValue('2');
     await expect(comp.getByLabel('Testo')).toHaveValue(/Gentile team di Glitter Prova,\ntesto del tocco 2\./);
     await expect(page.getByRole('button', { name: 'Collega a Gmail' })).toHaveCount(0);

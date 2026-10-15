@@ -171,7 +171,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
     const esiti = await Promise.allSettled([aggiornaRigaLista(id).then((l) => { if (l) setRows(l); }), caricaDossier(id, dopo), loadPipeline(dopo)]);
     const d = esiti[1].status === 'fulfilled' ? esiti[1].value : null;
     const errori = esiti.filter((e): e is PromiseRejectedResult => e.status === 'rejected').map((e) => (e.reason as Error).message);
-    setDossier((prima) => (prima?.id === id ? { id, r: d ?? prima.r, err: errori.length ? 'Scheda non aggiornata: ' + [...new Set(errori)].join(' · ') : '', loading: false } : prima));
+    setDossier((prima) => (prima?.id === id ? { id, r: d ?? prima.r, err: errori.length ? [...new Set(errori)].join(' · ') : '', loading: false } : prima));
   };
   // dopo una scrittura dalla scheda outreach (tocco, bozza, invio, risposta): pipeline e, se c'e', la riga di quel negozio
   const ricaricaOutreach = async (id: string) => {
@@ -256,7 +256,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
       {onBack && <button className="back" onClick={onBack} type="button">← Home</button>}
       {nav}
       {err && <div className="card err">Errore: {err}</div>}
-      {!orows ? <p className="muted center">Carico la pipeline…</p> : route.view === 'coda' ? <OutreachCoda rows={orows} onOpen={(id) => goRoute({ view: 'oscheda', id })} who={who} onChanged={async () => { await loadPipeline(); }} aiOn={settings.lead_outreach_ai_enabled === 'true'} /> : route.view === 'sequenze' ? <OutreachSequenze sequences={sequences} settings={settings} /> : route.view === 'oscheda' ? <p className="muted">Negozio non in pipeline.</p> : <OutreachBoard rows={orows} urls={urls} onOpen={(id) => goRoute({ view: 'oscheda', id })} />}
+      {!orows ? <p className="muted center">Carico la pipeline…</p> : route.view === 'coda' ? <OutreachCoda rows={orows} onOpen={(id) => goRoute({ view: 'oscheda', id })} who={who} onChanged={async () => { await loadPipeline(Date.now()); }} aiOn={settings.lead_outreach_ai_enabled === 'true'} /> : route.view === 'sequenze' ? <OutreachSequenze sequences={sequences} settings={settings} /> : route.view === 'oscheda' ? <p className="muted">Negozio non in pipeline.</p> : <OutreachBoard rows={orows} urls={urls} onOpen={(id) => goRoute({ view: 'oscheda', id })} />}
     </div>
   );
 
@@ -397,7 +397,7 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
       await addReview({ account_id: r.id, chi: who, azione: 'verdetto', verdetto: v, motivo: perche.trim() || null });
       setPerche('');
       await onChanged();
-      setReviews(await fetchReviews(r.id));
+      try { setReviews(await fetchReviews(r.id)); } catch { /* la scheda dice gia' se non si e' aggiornata */ }
       setMsg(`${VERDETTO_LABEL[v]} salvato (${who}).`);
     } catch (e) { setMsg((e as Error).message); }
     setBusy(false);
@@ -410,7 +410,7 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
       await addReview({ account_id: r.id, chi: who, azione, tier: tier ?? null, motivo: azione === 'scarta' ? motivo.trim() : null, nota: nota.trim() || null });
       setNota(''); setMotivo('');
       await onChanged();
-      setReviews(await fetchReviews(r.id));
+      try { setReviews(await fetchReviews(r.id)); } catch { /* la scheda dice gia' se non si e' aggiornata */ }
       setMsg(azione === 'tier' ? `Tier ${tier} salvato (${who}).` : azione === 'scarta' ? 'Scartato.' : azione === 'ricontrolla' ? 'Rimesso in coda al collector.' : 'Nota salvata.');
     } catch (e) { setMsg((e as Error).message); }
     setBusy(false);

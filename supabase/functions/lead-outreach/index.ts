@@ -52,7 +52,8 @@
 //          Sola lettura; la scelta la fa la persona, poi aggancia.
 //   rispondi (JWT @amimi.it) v12: `{account_id, to, oggetto, testo, send_key}` a un negozio che ci ha scritto; destinatario
 //          fra gli indirizzi del negozio; claim con l'insert della riga gia' in invio (send_key UNIQUE). v15: con il
-//          `draft_id` di una proposta il claim e' l'UPDATE di quella riga ('proposta' -> 'in_invio'); fa fede il testo del box.
+//          `draft_id` di una proposta il claim e' l'UPDATE di quella riga ('proposta' o 'errore' -> 'in_invio'); fa fede il
+//          testo del box. A zero righe risponde 404/422/409 con un `codice` stabile (il web decide su quello), mai l'insert.
 //   proponi_risposta (JWT @amimi.it, flag lead_risposta_ai_enabled) v15: `{account_id}` di un negozio che ci ha scritto ->
 //          1-3 risposte alternative (titolo dell'esito + testo) dalla conversazione, dal dossier, dalle note del team e dalla
 //          line sheet; numeri, date e link fuori dai fatti segnalati dal linter. Salva una riga 'proposta' in lead_drafts
@@ -111,6 +112,7 @@ const FLAG_KEYS = ['lead_enabled', 'lead_outreach_ai_enabled', 'lead_risposta_ai
 const MAX_THREAD = 150;        // thread Gmail letti per giro
 const MAX_IN = 25;             // risposte scritte per giro
 const MAX_BOZZE = 3;           // bozze di follow-up per giro (una chiamata Gemini ciascuna)
+const MAX_PROPOSTE_GIORNO = 10; // v15: proposte di risposta per negozio e giorno (Regola 20c: ogni click e' una chiamata al modello e una riga)
 const MAX_CAND = 30;           // negozi esaminati per i follow-up
 const FINESTRA_GG = 120;       // si guardano i thread dei tocchi (in e out, v11) degli ultimi N giorni
 const BUDGET_MS = 90_000;      // oltre, il giro si ferma e riprende al prossimo
@@ -1398,6 +1400,10 @@ Deno.serve(async (req) => {
     const bersP = bersaglioRisposta(tocchiL);
     const baseP = String(bersP?.subject ?? '').replace(/^\s*((re|r|fwd?|i)\s*:\s*)+/i, '').trim();
     const oggettoP = pulisciOggetto(bersP ? `Re: ${baseP || `Amimì Milano per ${d.nome}`}` : `Amimì Milano per ${d.nome}`).slice(0, 200);
+    // tetto per negozio e giorno (Regola 20c): oltre, si scrive a mano o si riprende una proposta fra le bozze
+    const { count: nOggi, error: oggiErr } = await retryOnce(() => sb.from('lead_drafts').select('id', { count: 'exact', head: true }).eq('account_id', accountId).is('sequenza_tocco', null).eq('fatti_usati->>tipo', 'risposta').gte('created_at', inizioGiornoRoma()));
+    if (oggiErr) return json({ error: 'conteggio delle proposte di oggi fallito, riprova: ' + oggiErr.message }, 503);
+    if ((nOggi ?? 0) >= MAX_PROPOSTE_GIORNO) return json({ error: `gia' ${nOggi} proposte oggi per questo negozio (tetto ${MAX_PROPOSTE_GIORNO}): scrivi la risposta a mano, o riprendine una fra le bozze`, bloccante: true }, 429);
     // una proposta nuova supera quelle ancora aperte dello stesso negozio: niente righe 'proposta' accumulate a ogni click
     // (Gate 2 v15, C2; Regola 20). Chi aveva aperto la vecchia riceve 409 e rimanda il suo testo senza proposta.
     const { error: supErr } = await sb.from('lead_drafts').update({ stato: 'scartata', errore: 'superata da una proposta nuova', updated_at: new Date().toISOString() })
@@ -1523,27 +1529,34 @@ Deno.serve(async (req) => {
     }
     // claim: la riga nasce in invio; il send_key UNIQUE fa fallire il secondo inserimento con la stessa chiave.
     // v15: con il draft_id di una proposta AI il claim e' l'UPDATE di quella riga ('proposta' -> 'in_invio'), condizionato
-    // allo stato: fa fede il testo del box. Una proposta gia' partita, scartata, superata o di un altro negozio FERMA
-    // l'invio (Gate 2 v15, B2): ricadere sull'insert avrebbe mandato la stessa risposta due volte da due schede.
+    // allo stato: fa fede il testo del box. Si riparte anche da 'errore' (Gmail ha rifiutato: l'email NON e' partita).
+    // Una proposta gia' partita, scartata, superata o di un altro negozio FERMA l'invio (Gate 2 v15, B2): ricadere
+    // sull'insert avrebbe mandato la stessa risposta due volte da due schede.
     const nowR = new Date().toISOString();
     const draftIdR = UUID_RE.test(String(body.draft_id || '')) ? String(body.draft_id) : '';
     let insR: { id: string } | null = null;
     if (draftIdR) {
       const { data: upP, error: upPErr } = await sb.from('lead_drafts').update({ stato: 'in_invio', send_key: sendKeyR, testo: testoR, oggetto: oggettoR, to_email: toR, touch_in_id: ultimoIn, sent_by: chi, updated_at: nowR })
-        .eq('id', draftIdR).eq('account_id', accountId).is('sequenza_tocco', null).eq('stato', 'proposta').select('id');
+        .eq('id', draftIdR).eq('account_id', accountId).is('sequenza_tocco', null).in('stato', ['proposta', 'errore']).select('id');
       if (upPErr) {
         const dupP = upPErr.code === '23505';
         return json(dupP ? { error: INVIO_INCERTO_R, bloccante: true, incerto: true } : { error: 'salvataggio della risposta fallito: ' + upPErr.message }, dupP ? 409 : 500);
       }
       if (upP?.length) insR = upP[0];
       else {
-        const { data: pr, error: prErr } = await retryOnce(() => sb.from('lead_drafts').select('id,account_id,stato,errore,sent_at,sent_by').eq('id', draftIdR).maybeSingle());
+        // zero righe: la proposta non e' piu' 'proposta' ne' 'errore', o non e' di questo negozio. Si rilegge e si
+        // risponde con un `codice` stabile (il web decide su quello, non sul testo): mai l'insert al suo posto
+        const { data: pr, error: prErr } = await retryOnce(() => sb.from('lead_drafts').select('id,account_id,stato,errore,sent_at,sent_by,created_at').eq('id', draftIdR).maybeSingle());
         if (prErr) return json({ error: 'lettura della proposta fallita, riprova: ' + prErr.message }, 503);
-        if (!pr) return json({ error: 'proposta inesistente: ricarica la scheda', bloccante: true }, 404);
-        if (pr.account_id !== accountId) return json({ error: 'la proposta e\' di un altro negozio', bloccante: true }, 422);
-        if (pr.stato === 'inviata' || pr.stato === 'in_invio') return json({ error: `questa proposta e' gia' partita${pr.sent_by ? ` (${pr.sent_by}${pr.sent_at ? `, ${String(pr.sent_at).slice(0, 16).replace('T', ' ')} UTC` : ''})` : ''}: ricarica la scheda prima di rispondere di nuovo`, bloccante: true }, 409);
-        if (pr.stato === 'scartata') return json({ error: pr.errore === 'superata dalla risposta inviata' ? 'a questo negozio e\' gia\' partita una risposta dopo questa proposta: ricarica la scheda' : 'questa proposta e\' stata scartata o superata da una piu\' recente: il testo resta tuo, rimandalo senza proposta', bloccante: true }, 409);
-        return json({ error: `questa proposta non si puo' usare (stato ${pr.stato}): ricarica la scheda`, bloccante: true }, 409);
+        if (!pr) return json({ error: 'proposta inesistente: ricarica la scheda', bloccante: true, codice: 'proposta_inesistente' }, 404);
+        if (pr.account_id !== accountId) return json({ error: 'la proposta e\' di un altro negozio', bloccante: true, codice: 'proposta_altro_negozio' }, 422);
+        if (pr.stato === 'inviata' || pr.stato === 'in_invio') return json({ error: `questa proposta e' gia' partita${pr.sent_by ? ` (${pr.sent_by}${pr.sent_at ? `, ${String(pr.sent_at).slice(0, 16).replace('T', ' ')} UTC` : ''})` : ''}: ricarica la scheda prima di rispondere di nuovo`, bloccante: true, codice: 'proposta_partita' }, 409);
+        // una risposta partita DOPO questa proposta (anche da una proposta piu' recente) ferma l'invio: si ricarica
+        const { count: nDopo, error: dopoErr } = await retryOnce(() => sb.from('lead_drafts').select('id', { count: 'exact', head: true }).eq('account_id', accountId).is('sequenza_tocco', null).eq('stato', 'inviata').gt('sent_at', String(pr.created_at)));
+        if (dopoErr) return json({ error: 'lettura delle risposte partite fallita, riprova: ' + dopoErr.message }, 503);
+        if ((nDopo ?? 0) > 0 || pr.errore === 'superata dalla risposta inviata') return json({ error: 'a questo negozio e\' gia\' partita una risposta dopo questa proposta: ricarica la scheda', bloccante: true, codice: 'proposta_dopo_risposta' }, 409);
+        if (pr.stato === 'scartata') return json({ error: 'questa proposta e\' stata scartata o superata da una piu\' recente: il testo resta tuo, rimandalo senza proposta', bloccante: true, codice: 'proposta_superata' }, 409);
+        return json({ error: `questa proposta non si puo' usare (stato ${pr.stato}): ricarica la scheda`, bloccante: true, codice: 'proposta_stato' }, 409);
       }
     }
     if (!insR) {

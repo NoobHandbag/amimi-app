@@ -61,7 +61,7 @@ async function apri(page: Page, opts: { lento?: boolean } = {}): Promise<Chiamat
   });
   await page.goto(`#negozi/outreach/${ID}`);
   // la scheda apre da sola il follow-up scritto dal giro automatico: il compositore parte in modo sequenza, dalla bozza
-  await expect(page.locator('.or-comp .seg button.on')).toHaveText('Sequenza a freddo');
+  await expect(page.locator('.or-comp .cs-seg .cs-seg-btn.on')).toHaveText('Sequenza a freddo');
   await expect(page.locator('.or-comp').getByLabel('Testo')).toHaveValue(TESTO);
   return chiamate;
 }
@@ -104,7 +104,7 @@ test.describe('schermo largo 1280 px', () => {
     const comp = page.locator('.or-comp');
     await comp.getByLabel('Destinatario').fill('info@amimi.it');
     await expect(comp.getByRole('button', { name: '✉️ Invia…' })).toBeDisabled();
-    await expect(comp.locator('.note', { hasText: 'Gli indirizzi @amimi.it non ricevono' })).toContainText('Prova a me');
+    await expect(comp.locator('.cs-note', { hasText: 'Gli indirizzi @amimi.it non ricevono' })).toContainText('Prova a me');
     expect(chiamate).toHaveLength(0);
   });
 

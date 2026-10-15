@@ -900,7 +900,7 @@ button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-
 .or-go { color: var(--interactive-700); font-size: 12px; font-weight: 600; }
 .or-head { display: flex; gap: 12px; align-items: flex-start; margin: 4px 0 8px; }
 .or-head img { width: 64px; height: 64px; }
-.or-link { border: 0; background: none; color: var(--interactive-700); font: inherit; font-size: 13px; cursor: pointer; padding: 0; }
+.or-link { border: 0; background: none; color: var(--interactive-700); font: inherit; font-size: 13px; cursor: pointer; padding: 6px 2px; min-height: 36px; display: inline-flex; align-items: center; }
 .or-move { display: flex; gap: 6px; align-items: center; }
 .or-move select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); font: inherit; }
 /* v12 (blocco B): risposta dal cruscotto a un negozio che ci ha scritto, in cima alla timeline */
@@ -934,7 +934,13 @@ a.ds-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .or-comp .cs-fld { margin-bottom: 8px; }
 .or-comp .cs-fld input { font-size: 14px; padding: 10px 12px; }
 .or-comp .or-form { margin-bottom: 10px; }
-@media (max-width: 480px) { .or-comp .or-form { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .or-form { grid-template-columns: 1fr; } }
+.or-form input, .or-form select { width: 100%; min-width: 0; box-sizing: border-box; }
+/* telefono: il select "Sposta a..." e il bottone non ci stanno in una riga dentro il fatto Stadio (overflow hidden) */
+.cs-fact .or-move { flex-wrap: wrap; }
+.cs-fact .or-move select { flex: 1 1 100%; min-width: 0; }
+/* un indirizzo lungo nella finestra di conferma non deve sforare a 375 px */
+.cs-send-row > :not(.k) { min-width: 0; overflow-wrap: anywhere; }
 
 /* ===== Materie prime (modulo mat_*, migr 0140, Fase 1 catalogo) ===== */
 .mat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }

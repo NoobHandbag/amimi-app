@@ -49,7 +49,7 @@ export function OutreachBoard({ rows, urls, onOpen }: { rows: LeadOutreach[]; ur
       <div className="kpis">
         <div className="ds-kpi"><div className="v">{rows.filter((r) => r.lead_stage === 'da_contattare').length}</div><div className="l">Da contattare</div><div className="s">verdetto positivo, nessun tocco ancora</div></div>
         <div className="ds-kpi"><div className="v">{contattati.length}</div><div className="l">Contattati</div><div className="s">{rows.filter((r) => r.n_tocchi > 0 && r.ultimo_tocco_at && Date.now() - new Date(r.ultimo_tocco_at).getTime() < 7 * 864e5).length} toccati negli ultimi 7 giorni</div></div>
-        <div className={`ds-kpi ${risposti.length ? 'pos' : ''}`}><div className="v">{contattati.length ? `${Math.round((risposti.length / contattati.length) * 100)}%` : '—'}</div><div className="l">Tasso di risposta</div><div className="s">{risposti.length} su {contattati.length} contattati</div></div>
+        <div className={`ds-kpi ${risposti.length ? 'pos' : ''}`}><div className="v">{contattati.length ? `${Math.round((risposti.length / contattati.length) * 100)}%` : 'n.d.'}</div><div className="l">Tasso di risposta</div><div className="s">{risposti.length} su {contattati.length} contattati</div></div>
         <div className={`ds-kpi ${rows.some((r) => r.scaduta || r.da_gestire) ? 'neg' : ''}`}><div className="v">{rows.filter((r) => r.scaduta || r.da_gestire).length}</div><div className="l">Da fare oggi</div><div className="s">{rows.filter((r) => r.scaduta).length} scadute · {rows.filter((r) => r.da_gestire).length} risposte</div></div>
       </div>
       {/* su telefono (sotto i 700 px, index.css) il kanban diventa una lista unica per stadio: gli stadi vuoti spariscono */}
@@ -76,7 +76,7 @@ export function OutreachBoard({ rows, urls, onOpen }: { rows: LeadOutreach[]; ur
 // nome+citta'): la edge risponde con i candidati e la persona sceglie se collegarsi a uno di quelli o crearlo comunque.
 type FormNegozio = { convId: string | null; nome: string; citta: string; tipo: string; email: string; telefono: string; ig: string; website: string; canale: string; referente: string; nota: string; duplicati: NegozioCandidato[] };
 const CANALI_INGRESSO: Record<string, string> = { instagram_dm: 'Instagram', telefono: 'Telefono', visita: 'Visita in negozio', email: 'Email', altro: 'Fiera, passaparola, altro (non conta come un loro contatto)' };
-const viaLabel: Record<string, string> = { email: 'stessa email del negozio', contatto: 'e’ un suo contatto', dominio: 'stesso dominio del sito', sito: 'stesso sito', instagram: 'stesso Instagram', "nome e citta'": 'stesso nome e citta’' };
+const viaLabel: Record<string, string> = { email: 'stessa email del negozio', contatto: 'è un suo contatto', dominio: 'stesso dominio del sito', sito: 'stesso sito', instagram: 'stesso Instagram', "nome e citta'": 'stesso nome e città' };
 
 function InboundCoda({ who, onChanged, onOpen, rows }: { who: string; onChanged: () => Promise<void>; onOpen: (id: string) => void; rows: LeadOutreach[] }) {
   const [inbound, setInbound] = useState<LeadInbound[] | null>(null);
@@ -101,9 +101,9 @@ function InboundCoda({ who, onChanged, onOpen, rows }: { who: string; onChanged:
     setBusy(false);
   };
   const scarta = async (m: LeadInbound) => {
-    if (!window.confirm('Togliere questo messaggio dalla lista? Resta in Assistenza com’e’.')) return;
+    if (!window.confirm('Togliere questo messaggio dalla lista? Resta in Assistenza com’è.')) return;
     setBusy(true); setMsg(null);
-    try { await inboundScarta({ conv_id: m.conv_id, chi: who }); await fatto('Tolto dalla lista: non e’ un negozio.'); }
+    try { await inboundScarta({ conv_id: m.conv_id, chi: who }); await fatto('Tolto dalla lista: non è un negozio.'); }
     catch (e) { setMsg({ t: (e as Error).message, err: true }); }
     setBusy(false);
   };
@@ -130,7 +130,7 @@ function InboundCoda({ who, onChanged, onOpen, rows }: { who: string; onChanged:
     <div className="or-inbound-form">
       <h3>{form.convId ? 'Crea il negozio da questo messaggio' : 'Nuovo negozio'}</h3>
       {campo('nome', 'Nome del negozio')}
-      {campo('citta', 'Citta’')}
+      {campo('citta', 'Città')}
       <label className="cs-fld">Tipo<select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value, duplicati: [] })}>{Object.entries(TIPO_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
       {!form.convId && <label className="cs-fld">Come ci ha contattato<select value={form.canale} onChange={(e) => setForm({ ...form, canale: e.target.value, duplicati: [] })}>{Object.entries(CANALI_INGRESSO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>}
       {campo('email', 'Email', { type: 'email' })}
@@ -140,7 +140,7 @@ function InboundCoda({ who, onChanged, onOpen, rows }: { who: string; onChanged:
       {campo('website', 'Sito')}
       {!form.convId && <label className="cs-fld">Cosa ci siamo detti<textarea rows={3} value={form.nota} onChange={(e) => setForm({ ...form, nota: e.target.value })} /></label>}
       {form.duplicati.length > 0 && <div className="note">
-        <b>Potrebbe essere gia’ qui:</b>
+        <b>Potrebbe essere già qui:</b>
         {form.duplicati.map((d) => <div key={d.id} className="row"><div><div className="rt">{d.nome}{d.citta ? ` · ${d.citta}` : ''}</div><div className="rs">{viaLabel[d.via] ?? d.via}</div></div>
           {form.convId && inbound ? <button type="button" className="ds-btn" disabled={busy} onClick={() => { const m = inbound.find((x) => x.conv_id === form.convId); if (m) void collega(m, d); }}>Collega a questo</button> : <button type="button" className="ds-btn" disabled={busy} onClick={() => { setForm(null); onOpen(d.id); }}>Apri</button>}
         </div>)}
@@ -154,7 +154,7 @@ function InboundCoda({ who, onChanged, onOpen, rows }: { who: string; onChanged:
   return (
     <section className="card">
       <div className="or-inbound-head"><h2>Messaggi da collegare{inbound ? ` · ${inbound.length}` : ''}</h2><button type="button" className="ds-btn" disabled={busy} onClick={() => apriForm(null)}>Nuovo negozio</button></div>
-      <p className="note">Moduli del sito e email a wholesale@ arrivati in Assistenza negli ultimi 30 giorni, e messaggi da indirizzi gia’ noti, non ancora nella timeline di un negozio.</p>
+      <p className="note">Moduli del sito e email a wholesale@ arrivati in Assistenza negli ultimi 30 giorni, e messaggi da indirizzi già noti, non ancora nella timeline di un negozio.</p>
       {form && !form.convId && modulo}
       {!inbound ? <p className="muted">Carico…</p> : !inbound.length ? <p className="muted">Nessun messaggio da collegare.</p> : <div className="or-list">{inbound.map((m) => (
         <div key={m.conv_id} className="or-inbound">
@@ -163,7 +163,7 @@ function InboundCoda({ who, onChanged, onOpen, rows }: { who: string; onChanged:
           <div className="lead-actions">
             {m.candidati.map((c) => <button key={c.id} type="button" className="ds-btn" disabled={busy} title={viaLabel[c.via] ?? c.via} onClick={() => void collega(m, c)}>Collega a {c.nome}{c.citta ? ` (${c.citta})` : ''}</button>)}
             <button type="button" className="ds-btn" disabled={busy} onClick={() => apriForm(m)}>Crea negozio</button>
-            <button type="button" className="or-link" disabled={busy} onClick={() => void scarta(m)}>Non e’ un negozio</button>
+            <button type="button" className="or-link" disabled={busy} onClick={() => void scarta(m)}>Non è un negozio</button>
           </div>
           {form?.convId === m.conv_id && modulo}
         </div>
@@ -194,7 +194,7 @@ export function OutreachCoda({ rows, onOpen, who, onChanged, aiOn }: { rows: Lea
       {aiOn && <InboundCoda who={who} onChanged={onChanged} onOpen={onOpen} rows={rows} />}
       {empty && <section className="card"><p className="muted">Niente da fare oggi. Bel lavoro.</p></section>}
       {risposte.length > 0 && <section className="card"><h2>Risposte da gestire · {risposte.length}</h2><div className="or-list">{risposte.map((r) => <Row key={r.id} r={r} icon="📩" what={`${CANALI[r.ultimo_canale ?? ''] ?? ''} ricevuta ${fmtD(r.ultimo_tocco_at)}${r.ultimo_esito ? ` · ${ESITI.find((e) => e.key === r.ultimo_esito)?.label ?? r.ultimo_esito}` : ''}`} />)}</div></section>}
-      {pronti.length > 0 && <section className="card"><h2>Follow-up pronti da rivedere · {pronti.length}</h2><div className="or-list">{pronti.map((r) => <Row key={r.id} r={r} icon="✍️" what={`bozza del follow-up ${r.bozza_auto_tocco} di 4 gia’ scritta: rileggila e inviala`} />)}</div></section>}
+      {pronti.length > 0 && <section className="card"><h2>Follow-up pronti da rivedere · {pronti.length}</h2><div className="or-list">{pronti.map((r) => <Row key={r.id} r={r} icon="✍️" what={`bozza del follow-up ${r.bozza_auto_tocco} di 4 già scritta: rileggila e inviala`} />)}</div></section>}
       {scadute.length > 0 && <section className="card"><h2>Azioni scadute · {scadute.length}</h2><div className="or-list">{scadute.map((r) => <Row key={r.id} r={r} icon="⏰" what={`${r.prossima_azione ?? 'azione'} · scaduta il ${fmtD(r.prossima_azione_at)} · ${r.owner_outreach ?? ''}`} />)}</div></section>}
       {inScadenza.length > 0 && <section className="card"><h2>In scadenza entro 2 giorni · {inScadenza.length}</h2><div className="or-list">{inScadenza.map((r) => <Row key={r.id} r={r} icon="📅" what={`${r.prossima_azione ?? 'azione'} · ${fmtD(r.prossima_azione_at)}`} />)}</div></section>}
       {nuovi.length > 0 && <section className="card"><h2>Da contattare, mai toccati · {nuovi.length}</h2><div className="or-list">{nuovi.map((r) => <Row key={r.id} r={r} icon={r.telefono_maps || r.telefono ? '📞' : '✍️'} what={r.telefono_maps || r.telefono ? `telefonata di qualifica (${r.telefono ?? r.telefono_maps})` : r.email_generica || r.email_sito ? `email 1 a ${r.email_generica ?? r.email_sito}` : 'nessun contatto trovato: cercare email o telefono'} />)}</div></section>}
@@ -249,6 +249,9 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const [sendOpen, setSendOpen] = useState(false);
   const [sendErr, setSendErr] = useState('');
   const [sendBloccato, setSendBloccato] = useState(false);
+  const [convErr, setConvErr] = useState('');       // la conversazione non si e' letta: errore al posto di "Carico…", con Riprova
+  const [apertura, setApertura] = useState('');     // perche' il compositore si e' aperto cosi' (follow-up automatico), sotto il selettore
+  const [incertoMsg, setIncertoMsg] = useState(''); // esito incerto dell'ultimo invio: resta visibile anche dopo aver chiuso la finestra
   // modo sequenza: template, bozza AI (edge lead-outreach), invio con draftId e sendKey
   const [codice, setCodice] = useState(r.paese === 'IT' ? 'boutique_it' : 'boutique_en');
   const [tocco, setTocco] = useState<number>(Math.min(4, (r.n_email_out || 0) + 1));
@@ -304,18 +307,18 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   // all'apertura: se il giro automatico ha gia' scritto il follow-up di questo negozio, il compositore parte da li' (modo
   // sequenza); altrimenti dal modo iniziale (risposta a chi ci ha scritto, sequenza a freddo agli altri)
   const apriScheda = () => {
-    setTouches(null); setDraftId(null); setRDraftId(null); setOptions(null); setCmsg(null); setModo(null); setSendOpen(false);
+    setTouches(null); setDraftId(null); setRDraftId(null); setOptions(null); setCmsg(null); setModo(null); setSendOpen(false); setConvErr(''); setApertura(''); setIncertoMsg('');
     reload().then(({ ts, ds }) => {
       const auto = r.bozza_auto_tocco != null ? ds.find((d) => d.origine === 'auto' && d.stato === 'proposta' && d.sequenza_tocco === r.bozza_auto_tocco) : undefined;
-      const modoIni = modoIniziale(ts, r.lead_stage, r.n_opt_out);
-      // il follow-up automatico apre la sequenza SOLO se il negozio non ci ha scritto nel frattempo: a chi ha risposto si
-      // risponde, e il follow-up resta fra le bozze
-      if (auto && modoIni !== 'risposta') { apriBozza(auto); dire(`Follow-up ${auto.sequenza_tocco} scritto in automatico alla scadenza: rileggilo, correggilo e invialo (o scartalo).`); }
-      else { setModo(modoIni); if (auto) dire(`Il follow-up ${auto.sequenza_tocco} automatico è fra le bozze, ma il negozio ci ha scritto: rispondi alla conversazione (e scarta il follow-up).`); }
+      // il follow-up automatico apre la sequenza SOLO se il negozio non ci ha scritto nel frattempo: a chi ha scritto si
+      // risponde, e il follow-up resta fra le bozze. L'avviso sta sotto il selettore, non in fondo al compositore.
+      if (auto && !negozioCiHaScritto(ts)) { apriBozza(auto); setApertura(`Follow-up ${auto.sequenza_tocco} scritto in automatico alla scadenza: rileggilo, correggilo e invialo (o scartalo).`); }
+      else { setModo(modoIniziale(ts, r.lead_stage, r.n_opt_out)); if (auto) setApertura(`Il follow-up ${auto.sequenza_tocco} automatico è fra le bozze, ma il negozio ci ha scritto: rispondi alla conversazione (e scarta il follow-up).`); }
     }).catch((e: Error) => {
-      // senza conversazione il compositore resta usabile (template, Gmail, copia) e si puo' riprovare (Gate 2 v15, B4)
+      // senza conversazione il compositore resta usabile (template, Gmail, copia); l'errore sta dove c'era "Carico…",
+      // con Riprova (Gate 2 v15, B4)
       setModo(modoIniziale([], r.lead_stage, r.n_opt_out));
-      dire(`Conversazione non caricata: ${e.message}`, true);
+      setConvErr(e.message);
     });
   };
   useEffect(() => { apriScheda(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [r.id]);
@@ -366,10 +369,15 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     setBusy(true); setSendErr('');
     try {
       const res = await inviaBozza({ draft_id: draftId, send_key: sendKey, to, oggetto, testo, chi: who });
-      setDraftId(null); setAvvisi([]); setSNonGrounded([]); setSendOpen(false);
+      setDraftId(null); setAvvisi([]); setSNonGrounded([]); setSendOpen(false); setIncertoMsg('');
       dire(`${res.already_sent ? 'Già inviata prima' : 'Inviata'} a ${res.to}${res.from ? ` da ${res.from}` : ''}.${res.prossimo ? ` Follow-up in coda per il ${fmtD(res.prossimo)}.` : ''}${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}${await ricarica()}`);
       setTocco((t) => Math.min(4, t + 1));
-    } catch (e) { setSendErr((e as Error).message); if ((e as Error & { bloccante?: boolean }).bloccante) setSendBloccato(true); }
+    } catch (e) {
+      const err = e as Error & { bloccante?: boolean; incerto?: boolean };
+      setSendErr(err.message);
+      if (err.incerto) setIncertoMsg(err.message);   // la bozza resta in invio con la stessa chiave: lo si vede anche a finestra chiusa
+      if (err.bloccante) setSendBloccato(true);
+    }
     setBusy(false);
   };
   // prova: il testo che c'e' ADESSO nel box, alla casella di chi e' loggato. Non e' un invio: niente tocco, niente tetto.
@@ -464,21 +472,23 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     try {
       const res = await inviaRisposta({ account_id: r.id, to: rTo, oggetto: rOggetto, testo: rTesto, send_key: rKey, chi: who, draft_id: rDraftId });
       setRKey(crypto.randomUUID()); setRTesto(`\n\n${firma}`); setRPronto(false); setRToccato(false);
-      setOptions(null); setRDraftId(null); setNonGrounded([]); setTroncata(false); setSendOpen(false);
+      setOptions(null); setRDraftId(null); setNonGrounded([]); setTroncata(false); setSendOpen(false); setIncertoMsg('');
       dire(`${res.already_sent ? 'Già inviata prima' : 'Risposta inviata'} a ${res.to}${res.from ? ` da ${res.from}` : ''}${res.already_sent ? '' : res.nel_thread ? ', nel thread della conversazione' : ', come email nuova'}. Prossima azione: attesa risposta fra 5 giorni.${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}${await ricarica()}`);
     } catch (e) {
+      const err = e as Error & { incerto?: boolean; bloccante?: boolean; codice?: string };
       // un esito incerto tiene la chiave: ripremere non deve far ripartire l'email finche' non si guarda Posta inviata
-      if (!(e as Error & { incerto?: boolean }).incerto) setRKey(crypto.randomUUID());
-      const msgE = (e as Error).message;
-      // la proposta e' stata superata da una piu' recente o scartata: il testo nel box resta della persona, che lo rimanda
-      // senza proposta. Una proposta GIA' PARTITA (o una risposta partita dopo) invece ferma tutto: si ricarica la scheda.
-      if ((e as Error & { bloccante?: boolean }).bloccante && /superata|scartata/.test(msgE) && !/partita/.test(msgE)) {
+      if (!err.incerto) setRKey(crypto.randomUUID());
+      if (err.incerto) setIncertoMsg(err.message);
+      // la edge dice con un `codice` cosa e' successo alla proposta (mai dedotto dal testo): superata o scartata = il testo
+      // nel box resta della persona, che lo rimanda senza proposta; partita, o una risposta partita dopo = si ricarica
+      if (err.codice === 'proposta_superata') {
         setRDraftId(null); setOptions(null);
-        setSendErr(msgE + ' Premi di nuovo “Invia adesso” per mandare il testo così com’è.');
+        setSendErr(err.message + ' Premi di nuovo “Invia adesso” per mandare il testo così com’è.');
       } else {
-        setSendErr(msgE);
-        if ((e as Error & { bloccante?: boolean }).bloccante) setSendBloccato(true);
+        setSendErr(err.message);
+        if (err.bloccante) setSendBloccato(true);
       }
+      if (err.codice === 'proposta_partita' || err.codice === 'proposta_dopo_risposta') void reload().catch(() => undefined);
     }
     setRBusy(false);
   };
@@ -521,7 +531,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     const t = modo === 'risposta' ? `${rOggetto ? rOggetto + '\n\n' : ''}${rTesto}` : `${oggetto ? oggetto + '\n\n' : ''}${testo}`;
     try { await navigator.clipboard.writeText(t); dire('Testo copiato.'); } catch { dire('Copia non riuscita: seleziona e copia a mano.', true); }
   };
-  const cambiaModo = (m: 'risposta' | 'sequenza') => { setModo(m); setCmsg(null); setRefineTxt(''); setSendOpen(false); };
+  const cambiaModo = (m: 'risposta' | 'sequenza') => { setModo(m); setCmsg(null); setRefineTxt(''); setSendOpen(false); setApertura(''); setIncertoMsg(''); };
   const openSend = () => { setSendErr(''); setSendBloccato(false); setSendOpen(true); };
 
   const contatto = r.email_generica ?? r.email_sito ?? '';
@@ -609,7 +619,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
           </div>}
           <div className="cs-fact">
             <span className="fl">{r.tier ? 'Tier' : 'Score'}</span>
-            <span className="fv">{r.tier ? `Tier ${r.tier}` : r.tier_proposto ? `proposto ${r.tier_proposto}` : r.totale != null ? String(r.totale) : '—'}</span>
+            <span className="fv">{r.tier ? `Tier ${r.tier}` : r.tier_proposto ? `proposto ${r.tier_proposto}` : r.totale != null ? String(r.totale) : 'n.d.'}</span>
             <span className="fs">{[r.tier && r.totale != null ? `score ${r.totale}` : null, r.follower != null ? `IG ${new Intl.NumberFormat('it-IT').format(r.follower)}` : null].filter(Boolean).join(' · ')}</span>
           </div>
           {linesheet ? (
@@ -622,7 +632,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
             <div className="cs-fact warn">
               <span className="fl">Line sheet</span>
               <span className="fv">⚠ manca</span>
-              <span className="fs">app_flags.lead_linesheet_url</span>
+              <span className="fs">da impostare (lead_linesheet_url nelle impostazioni)</span>
             </div>
           )}
           {r.gancio && <div className="cs-fact" style={{ flexBasis: '100%' }}>
@@ -631,11 +641,11 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
           </div>}
         </div>
       </details>
-      {msg && <div className={msg.err ? 'err' : 'note'} style={{ margin: '4px 0' }}>{msg.t}</div>}
+      <div className="or-esito" aria-live="polite">{msg && <div className={msg.err ? 'err' : 'note'} style={{ margin: '4px 0' }}>{msg.t}</div>}</div>
 
       {/* CONVERSAZIONE: bolle in ordine cronologico (la piu' vecchia in alto), note in riga compatta */}
-      <div className="ds-seclb" style={{ marginTop: 12 }}>Conversazione</div>
-      {!touches ? <p className="muted">Carico…</p> : !conv.length ? <p className="muted">Nessun messaggio ancora: il primo lo scrivi qui sotto.</p> : (
+      {touches && conv.length > 0 && <div className="ds-seclb" style={{ marginTop: 12 }}>Conversazione</div>}
+      {!touches ? (convErr ? <p className="err" style={{ marginTop: 12 }}>Conversazione non caricata: {convErr} <button type="button" className="or-link" onClick={apriScheda}>↻ Riprova</button></p> : <p className="muted" style={{ marginTop: 12 }}>Carico la conversazione…</p>) : !conv.length ? <p className="muted" style={{ marginTop: 12 }}>Nessun messaggio ancora: il primo lo scrivi qui sotto.</p> : (
         <div className="or-conv">{conv.map((t) => t.tipo === 'nota' ? notaRiga(t) : (
           <div key={t.id} className={'cs-msg ' + (t.direzione === 'out' ? 'out' : 'in')}>
             <div className="cs-mh">{(t.direzione === 'out' ? `${fmtDT(t.at)} · ${t.chi || 'Amimì'}${t.sequenza_tocco != null ? ` · tocco ${t.sequenza_tocco}` : ''}` : `${r.nome}${t.mittente ? ` · ${t.mittente}` : ''} · ${fmtDT(t.at)}`) + (t.esito ? ` · ${ESITI.find((e) => e.key === t.esito)?.label ?? t.esito}` : '') + (t.stage_dopo ? ` → ${STAGE_LABEL[t.stage_dopo] ?? t.stage_dopo}` : '')}</div>
@@ -644,7 +654,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               <div className="cs-body">{t.testo || (t.subject ? '' : '(vuoto)')}</div>
             </div>
             {(t.prossima_azione || t.prossima_azione_at) && <div className="cs-mh" style={{ marginTop: 3 }}>prossima: {t.prossima_azione ?? ''} {t.prossima_azione_at ? fmtD(t.prossima_azione_at) : ''}</div>}
-            {aiOn && t.direzione === 'out' && t.canale === 'email' && !t.gmail_thread_id && collega?.touchId !== t.id && <button type="button" className="or-link" disabled={busy} onClick={() => void apriCollega(t.id)} title="Senza il collegamento il giro automatico non legge le risposte a questa email">Collega a Gmail</button>}
+            {aiOn && t.direzione === 'out' && t.canale === 'email' && !t.gmail_thread_id && collega?.touchId !== t.id && <button type="button" className="or-link" disabled={busy} onClick={() => void apriCollega(t.id)}>Collega a Gmail</button>}{aiOn && t.direzione === 'out' && t.canale === 'email' && !t.gmail_thread_id && collega?.touchId !== t.id && <span className="muted" style={{ fontSize: 11 }}> (senza, il giro automatico non legge le risposte a questa email)</span>}
             {pannelloCollega(t.id)}
           </div>
         ))}</div>
@@ -655,20 +665,20 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
 
       {/* IL COMPOSITORE, uno solo: risposta alla conversazione o sequenza a freddo */}
       <div className="cs-draftbox or-comp">
-        <div className="seg" role="group" aria-label="Modo del compositore" style={{ marginBottom: 8 }}>
-          <button type="button" className={modo === 'risposta' ? 'on' : ''} disabled={!modo} onClick={() => cambiaModo('risposta')}>Rispondi</button>
-          <button type="button" className={modo === 'sequenza' ? 'on' : ''} disabled={!modo} onClick={() => cambiaModo('sequenza')}>Sequenza a freddo</button>
+        <div className="cs-seg" role="group" aria-label="Modo del compositore" style={{ marginBottom: 8 }}>
+          <button type="button" className={'cs-seg-btn' + (modo === 'risposta' ? ' on' : '')} aria-pressed={modo === 'risposta'} disabled={!modo} onClick={() => cambiaModo('risposta')}>Rispondi</button>
+          <button type="button" className={'cs-seg-btn' + (modo === 'sequenza' ? ' on' : '')} aria-pressed={modo === 'sequenza'} disabled={!modo} onClick={() => cambiaModo('sequenza')}>Sequenza a freddo</button>
         </div>
+        {apertura && <div className="cs-note" style={{ textAlign: 'left', margin: '0 0 8px' }}>{apertura}</div>}
         {modo === 'sequenza' && ciHaScrittoOra && <div className="cs-note" style={{ textAlign: 'left', margin: '0 0 8px' }}>Questo negozio ci ha già scritto: un’email della sequenza conta come tocco (fino a 4), rientra nel tetto giornaliero e porta la riga di opt-out. Per rispondere alla conversazione usa “Rispondi”.</div>}
         {modo === 'risposta' && touches && !puoRispondere && <div className="cs-lint" style={{ marginBottom: 8 }}>{!ciHaScrittoOra ? 'Questo negozio non ci ha mai scritto: la risposta non si può né proporre né inviare (il primo contatto passa dalla sequenza a freddo, con verdetto, tetto e riga di opt-out).' : 'Negozio in opt-out o chiuso: non si contatta.'}</div>}
-        {!modo && <p className="muted">Carico…</p>}
-        {modo && !touches && <button className="cs-btn cs-ghost" type="button" style={{ marginBottom: 8 }} onClick={apriScheda}>↻ Riprova a caricare la conversazione</button>}
+        {!modo && <p className="muted">Preparo il compositore…</p>}
 
         {modo === 'risposta' && (
           <>
             {/* proposta gia' salvata: si DICHIARA e si lascia scegliere (caricarla d'ufficio cambierebbe il testo sotto gli
                 occhi; rigenerare costa una chiamata al modello). Se dopo e' successo qualcosa lo si dice. */}
-            {!options && proposta && (
+            {aiRispostaOn && !options && proposta && (
               <div className={stantia?.scrittoDopo || stantia?.rispostoDopo ? 'cs-lint' : 'cs-note'} style={{ textAlign: 'left', marginBottom: 8 }}>
                 <b>C’è già una proposta</b> del {fmtDT(proposta.created_at)}{proposta.chi ? ` (${proposta.chi})` : ''}.
                 {stantia?.scrittoDopo && <div style={{ marginTop: 4 }}>⚠️ Dopo quella proposta il negozio ha scritto di nuovo: rigenera, o risponderai a un messaggio vecchio.</div>}
@@ -678,7 +688,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
             )}
             {aiRispostaOn
               ? (!options && <button className="cs-btn cs-primary" style={{ width: '100%' }} type="button" disabled={aiBusy || !puoRispondere} onClick={() => void proponi()}>{aiBusy ? 'Propongo…' : '✍️ Proponi le risposte dalla conversazione'}</button>)
-              : <div className="cs-note" style={{ textAlign: 'left', marginBottom: 8 }}>Proposte AI spente (flag lead_risposta_ai_enabled): scrivi la risposta qui sotto.</div>}
+              : <div className="cs-note" style={{ textAlign: 'left', marginBottom: 8 }}>Proposte AI spente (impostazione lead_risposta_ai_enabled): scrivi la risposta qui sotto.</div>}
             {options && options.length > 1 && (
               <div className="cs-opts" style={{ marginTop: 8 }}>
                 {options.map((o, i) => (
@@ -699,12 +709,14 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
             <div className="cs-fld"><label htmlFor="or-r-to">Destinatario</label><input id="or-r-to" type="email" value={rTo} onChange={(e) => { setRTo(e.target.value.trim()); setRToccato(true); }} placeholder="chi ci ha scritto, o l’email del negozio" /></div>
             <div className="cs-fld"><label htmlFor="or-r-oggetto">Oggetto</label><input id="or-r-oggetto" value={rOggetto} onChange={(e) => { setROggetto(e.target.value); setRToccato(true); }} /></div>
             <textarea className="cs-draft-ta" rows={8} aria-label="Risposta" value={rTesto} onChange={(e) => setRTesto(e.target.value)} placeholder="Scrivi qui la risposta, o fatti proporre le alternative dalla conversazione" />
-            {avvisiR.length > 0 && <div className="err" style={{ marginTop: 6 }}>Da controllare: {avvisiR.join(' · ')}</div>}
+            {avvisiR.length > 0 && <div className="cs-lint">⚠️ <b>Da controllare</b>: {avvisiR.join(' · ')}</div>}
             {nonGrounded.length > 0 && (
               <div className="cs-lint">⚠️ <b>Controlla questi dati</b>: l’AI li ha scritti ma NON risultano dalla conversazione né dal dossier: {nonGrounded.map((x, i) => <span key={i} className="cs-lint-t">{x}</span>)}</div>
             )}
             {residuiR.length > 0 && <p className="cs-note" style={{ textAlign: 'left' }}>Prima di inviare completa: {residuiR.slice(0, 4).join(' ')}</p>}
             {toInternoR && <p className="cs-note" style={{ textAlign: 'left' }}>Gli indirizzi @amimi.it non ricevono l’invio vero: usa “Prova a me”.</p>}
+            {touches && puoRispondere && !rTo && <p className="cs-note" style={{ textAlign: 'left' }}>Manca il destinatario.</p>}
+            {touches && puoRispondere && !rOggetto.trim() && <p className="cs-note" style={{ textAlign: 'left' }}>Manca l’oggetto.</p>}
             {aiRispostaOn && refineBox}
             <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
               <button className="cs-btn cs-primary" type="button" disabled={rBusy || rProvaBusy || busy || !aiOn || !puoRispondere || !rTo || toInternoR || residuiR.length > 0 || testoVuotoR || !rOggetto.trim()} onClick={openSend}>✉️ Invia…</button>
@@ -712,17 +724,21 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               <button className="cs-btn cs-ghost" type="button" onClick={() => void copia()}>📋 Copia</button>
               {aiRispostaOn && options && <button className="cs-btn cs-ghost" type="button" disabled={aiBusy || !puoRispondere} onClick={() => void proponi()}>{aiBusy ? '…' : '↻ Rigenera'}</button>}
             </div>
-            {!aiOn && <p className="cs-note" style={{ textAlign: 'left' }}>Invio e prova dall’app spenti (flag lead_outreach_ai_enabled): copia la risposta e mandala dal thread in Gmail.</p>}
+            {!aiOn && <p className="cs-note" style={{ textAlign: 'left' }}>Invio e prova dall’app spenti (impostazione lead_outreach_ai_enabled): copia la risposta e mandala dal thread in Gmail.</p>}
             <div className="cs-note" style={{ textAlign: 'left' }}>La risposta va nel thread della conversazione, non conta nel tetto giornaliero e non serve la riga di opt-out. Parte da {LEAD_MITTENTE} solo dopo la tua conferma.</div>
           </>
         )}
 
         {modo === 'sequenza' && (
           <>
+            {/* una bozza della sequenza gia' salvata si DICHIARA, come la proposta nel modo risposta e come in Assistenza */}
+            {!draftId && (() => { const b = drafts.find((d) => d.sequenza_tocco != null && d.stato === 'proposta'); return b ? (
+              <div className="cs-note" style={{ textAlign: 'left', marginBottom: 8 }}><b>C’è già una bozza</b> del tocco {b.sequenza_tocco} ({fmtDT(b.created_at)}{b.origine === 'auto' ? ', automatica' : b.chi ? `, ${b.chi}` : ''}). <button className="cs-btn cs-ghost" type="button" disabled={busy} onClick={() => apriBozza(b)}>↩ Riprendi</button></div>
+            ) : null; })()}
             <div className="or-form">
               <label>Sequenza<select value={codice} onChange={(e) => { setCodice(e.target.value); setCmsg(null); }}>{[...new Set(sequences.map((s) => s.codice))].map((c) => <option key={c} value={c}>{c === 'boutique_it' ? 'Boutique · italiano' : c === 'boutique_en' ? 'Boutique · English' : c}</option>)}</select></label>
               <label>Tocco<select value={tocco} disabled={!!draftId} title={draftId ? 'La bozza aperta è di questo tocco: per cambiarlo torna al template' : undefined} onChange={(e) => { setTocco(Number(e.target.value)); setCmsg(null); }}>{sequences.filter((s) => s.codice === codice).map((s) => <option key={s.tocco} value={s.tocco}>{s.tocco === 0 ? '0 · telefonata' : `${s.tocco} · ${s.canale}${s.giorni_attesa ? ` (+${s.giorni_attesa} gg)` : ''}`}</option>)}</select></label>
-              <label className="wide">Referente (nome)<input value={referente} onChange={(e) => setReferente(e.target.value)} placeholder="es. Valentina · vuoto = team di …" /></label>
+              <label className="wide">Referente (nome)<input value={referente} onChange={(e) => setReferente(e.target.value)} placeholder={`es. Valentina (vuoto: si scrive al team di ${r.nome})`} /></label>
             </div>
             <div className="cs-draft-h">
               <span>✍️ {draftId ? `Bozza AI del tocco ${tocco} (ritoccala o chiedi una modifica)` : seq?.canale === 'telefono' ? 'Traccia della telefonata' : `Testo del tocco ${tocco} dal template`}</span>
@@ -733,24 +749,24 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
             {seq?.canale === 'email' && <div className="cs-fld"><label htmlFor="or-s-to">Destinatario</label><input id="or-s-to" type="email" value={to} onChange={(e) => setTo(e.target.value.trim())} placeholder="email del negozio" /></div>}
             {(oggetto !== '' || seq?.canale === 'email') && <div className="cs-fld"><label htmlFor="or-s-oggetto">Oggetto</label><input id="or-s-oggetto" value={oggetto} onChange={(e) => setOggetto(e.target.value)} /></div>}
             <textarea className="cs-draft-ta" rows={12} aria-label="Testo" value={testo} onChange={(e) => setTesto(e.target.value)} />
-            {avvisi.length > 0 && <div className="err" style={{ marginTop: 6 }}>Da controllare: {avvisi.join(' · ')}</div>}
+            {avvisi.length > 0 && <div className="cs-lint">⚠️ <b>Da controllare</b>: {avvisi.join(' · ')}</div>}
             {sNonGrounded.length > 0 && (
               <div className="cs-lint">⚠️ <b>Controlla questi dati</b>: l’AI li ha scritti ma NON risultano dal dossier né dalla conversazione: {sNonGrounded.map((x, i) => <span key={i} className="cs-lint-t">{x}</span>)}</div>
             )}
             {residui.length > 0 && <p className="cs-note" style={{ textAlign: 'left' }}>Prima di inviare completa: {residui.slice(0, 4).join(' ')}</p>}
-            {toInterno && <p className="note">Gli indirizzi @amimi.it non ricevono l’invio vero, che va solo ai negozi. Per vedere l’email nella tua casella usa “Prova a me”.</p>}
+            {toInterno && <p className="cs-note" style={{ textAlign: 'left' }}>Gli indirizzi @amimi.it non ricevono l’invio vero, che va solo ai negozi. Per vedere l’email nella tua casella usa “Prova a me”.</p>}
             {aiRispostaOn && seq?.canale === 'email' && refineBox}
-            <div className="facts-note" style={{ marginTop: 8 }}>{draftId ? 'Bozza scritta dall’AI dal dossier e dal template approvato: è una proposta, rileggila tutta.' : 'Riempito dal template con nome, gancio del dossier e firma.'} Le parti fra parentesi quadre vanno sistemate a mano prima di inviare. Tetto invii: {settings.lead_tetto_giornaliero ?? '20'} al giorno.</div>
+            <div className="cs-note" style={{ textAlign: 'left', marginTop: 8 }}>{draftId ? 'Bozza scritta dall’AI dal dossier e dal template approvato: è una proposta, rileggila tutta.' : 'Riempito dal template con nome, gancio del dossier e firma.'} Le parti fra parentesi quadre vanno sistemate a mano prima di inviare. Tetto invii: {settings.lead_tetto_giornaliero ?? '20'} al giorno.</div>
             {aiOn ? (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {draftId && <button className="cs-btn cs-primary" type="button" disabled={busy || provaBusy || !to || toInterno || residui.length > 0 || r.n_opt_out > 0 || aiBusy} onClick={openSend}>✉️ Invia…</button>}
-                <button className="cs-btn cs-ghost" type="button" disabled={aiBusy || busy || seq?.canale !== 'email'} onClick={() => void bozzaAI()}>{aiBusy ? 'Scrivo la bozza…' : draftId ? '↻ Rigenera bozza AI' : `✨ Bozza con l’AI (tocco ${tocco})`}</button>
+                <button className={draftId ? 'cs-btn cs-ghost' : 'cs-btn cs-primary'} type="button" disabled={aiBusy || busy || seq?.canale !== 'email'} onClick={() => void bozzaAI()}>{aiBusy ? 'Scrivo la bozza…' : draftId ? '↻ Rigenera bozza AI' : `✨ Bozza con l’AI (tocco ${tocco})`}</button>
                 {seq?.canale === 'email' && <button className="cs-btn cs-ghost" type="button" disabled={busy || aiBusy || provaBusy || !oggetto.trim() || !testo.trim()} title="Manda questo testo alla tua casella, con [PROVA] nell’oggetto: non conta come invio" onClick={() => void prova()}>{provaBusy ? 'Mando la prova…' : 'Prova a me'}</button>}
                 <button className="cs-btn cs-ghost" type="button" onClick={() => void copia()}>📋 Copia</button>
                 {draftId && <button className="cs-btn cs-ghost" type="button" disabled={busy} onClick={() => { setSNonGrounded([]); setDraftId(null); setAvvisi([]); setCmsg(null); }}>Torna al template</button>}
                 {draftId && <button className="cs-btn cs-ghost" type="button" disabled={busy} onClick={() => void scarta()}>Scarta bozza</button>}
               </div>
-            ) : <p className="cs-note" style={{ textAlign: 'left' }}>Bozza AI e invio dall’app spenti (flag lead_outreach_ai_enabled). Per ora: template, Gmail e “Segna come inviata”.</p>}
+            ) : <p className="cs-note" style={{ textAlign: 'left' }}>Bozza AI e invio dall’app spenti (impostazione lead_outreach_ai_enabled). Per ora: template, Gmail e “Segna come inviata”.</p>}
             {!draftId && <div className="lead-actions" style={{ marginTop: 8 }}>
               {seq?.canale === 'email' && to && <a className="ds-btn" href={gmailUrl} target="_blank" rel="noreferrer">Apri in Gmail</a>}
               {!aiOn && <button type="button" className="ds-btn" onClick={() => void copia()}>Copia testo</button>}
@@ -760,19 +776,20 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
             {!to && seq?.canale === 'email' && <p className="cs-note" style={{ textAlign: 'left' }}>Nessuna email in anagrafica: “Apri in Gmail” compare quando c’è un destinatario.</p>}
           </>
         )}
+        {incertoMsg && <div className="cs-lint" style={{ marginTop: 8 }}>⚠️ {incertoMsg} Ripremere “Invia…” riusa la stessa chiave: l’email non parte due volte.</div>}
         {/* contenitore sempre montato: una regione live che compare gia' piena spesso non viene letta */}
         <div className="or-esito" aria-live="polite">{cmsg && <div className={cmsg.err ? 'err' : 'note'} style={{ marginTop: 8 }}>{cmsg.t}</div>}</div>
 
         {/* finestra di conferma: destinatario, mittente, come parte e i warning SEMPRE in vista (come in Assistenza) */}
         {sendOpen && modo && (
-          <div className="cs-sendwrap" role="dialog" aria-modal="true" aria-label="Conferma invio">
+          <div className="cs-sendwrap" role="dialog" aria-modal="true" aria-label="Conferma invio" tabIndex={-1} onKeyDown={(e) => { if (e.key === 'Escape' && !inviando) setSendOpen(false); }}>
             <div className="cs-sendmodal">
               <div className="cs-send-h">{`✉️ Inviare adesso da ${LEAD_MITTENTE}?`}</div>
               <div className="cs-send-row"><span className="k">A</span><b>{modo === 'risposta' ? rTo : to}</b></div>
               <div className="cs-send-row"><span className="k">Da</span><span>{LEAD_MITTENTE} · firma {who}</span></div>
               <div className="cs-send-row"><span className="k">Oggetto</span><span>{modo === 'risposta' ? rOggetto : oggetto}</span></div>
               <div className="cs-send-row"><span className="k">Come</span><span>{modo === 'risposta'
-                ? (prep?.nelThread && prep.riferimento ? `nel thread di “${prep.riferimento.subject || '(senza oggetto)'}” del ${fmtDT(prep.riferimento.at)}` : 'email nuova: l’ultimo messaggio è il modulo del sito')
+                ? (prep?.nelThread && prep.riferimento ? `nel thread di “${prep.riferimento.subject || '(senza oggetto)'}” del ${fmtDT(prep.riferimento.at)}` : 'email nuova (nessun thread Gmail da riprendere)')
                 : `sequenza a freddo · tocco ${tocco} di 4 · email nuova con la riga di opt-out`}</span></div>
               {modo === 'risposta' && giaRisp && (
                 <div className="cs-lint" style={{ marginTop: 10 }}>⚠️ A questo negozio risulta <b>già inviata una risposta</b> il {fmtDT(giaRisp)}, e da allora il negozio non ha più scritto. Se è un secondo invio voluto va bene, altrimenti annulla.</div>
@@ -787,7 +804,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               {sendErr && <div className="err" style={{ marginTop: 10 }}>{sendErr}</div>}
               {sendBloccato && <div className="cs-note" style={{ textAlign: 'left', marginTop: 8 }}>L’invio è stato rifiutato: ripremere darebbe lo stesso esito. Chiudi, sistema quello che dice l’errore e riprova.</div>}
               <div className="cs-send-actions">
-                <button className="cs-btn cs-ghost" type="button" disabled={inviando} onClick={() => setSendOpen(false)}>{sendBloccato ? 'Chiudi' : 'Annulla'}</button>
+                <button className="cs-btn cs-ghost" type="button" autoFocus disabled={inviando} onClick={() => setSendOpen(false)}>{sendBloccato ? 'Chiudi' : 'Annulla'}</button>
                 {!sendBloccato && <button className="cs-btn cs-primary" type="button" disabled={inviando} onClick={() => void (modo === 'risposta' ? inviaRisp() : invia())}>{inviando ? 'Invio…' : '✓ Invia adesso'}</button>}
               </div>
             </div>
@@ -798,8 +815,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
       {drafts.length > 0 && <details style={{ marginTop: 10 }}><summary style={{ cursor: 'pointer', fontSize: 13 }}>Bozze di questo negozio ({drafts.length})</summary><div className="list">{drafts.map((d) => {
         // una bozza della sequenza si riapre nel modo sequenza (mai una risposta: la edge rifiuta send senza tocco); una
         // proposta di risposta ancora aperta si riapre nel modo risposta con le sue alternative
-        const apribileRisp = aiRispostaOn && d.sequenza_tocco == null && d.stato === 'proposta' && d.fatti_usati?.tipo === 'risposta' && d.id !== rDraftId;
-        return <div key={d.id} className="row"><div><div className="rt">{d.sequenza_tocco != null ? `Tocco ${d.sequenza_tocco}` : d.fatti_usati?.tipo === 'risposta' ? 'Proposta di risposta' : 'Risposta'} · {d.stato}{d.origine === 'auto' ? ' · automatica' : ''}{d.sent_by ? ` · ${d.sent_by}` : d.chi ? ` · ${d.chi}` : ''}</div><div className="rs">{d.oggetto ?? ''}{d.errore ? ` · ${d.errore}` : ''}</div>{aiOn && d.sequenza_tocco != null && (d.stato === 'proposta' || d.stato === 'errore') && d.id !== draftId && <button type="button" className="or-link" disabled={busy} onClick={() => apriBozza(d)}>Apri</button>}{apribileRisp && <button type="button" className="or-link" disabled={busy} onClick={() => apriProposta(d)}>Apri</button>}{d.sequenza_tocco == null && d.stato === 'proposta' && <button type="button" className="or-link" disabled={busy} onClick={() => void scartaProposta(d.id)}>Scarta</button>}{d.stato === 'in_invio' && <button type="button" className="or-link" disabled={busy} onClick={async () => { if (!window.confirm('Hai controllato "Posta inviata" di info@amimi.it e questa email NON c’è? Solo in quel caso sbloccala.')) return; try { await sbloccaBozza({ draft_id: d.id, chi: who }); dire('Bozza sbloccata: si può reinviare.'); await reload(); } catch (e) { dire((e as Error).message, true); } }}>Sblocca (esito incerto)</button>}</div><div className="muted" style={{ fontSize: 12 }}>{fmtD(d.sent_at ?? d.created_at)}</div></div>;
+        const apribileRisp = aiRispostaOn && d.sequenza_tocco == null && (d.stato === 'proposta' || d.stato === 'errore') && d.fatti_usati?.tipo === 'risposta' && d.id !== rDraftId;
+        return <div key={d.id} className="row"><div><div className="rt">{d.sequenza_tocco != null ? `Tocco ${d.sequenza_tocco}` : d.fatti_usati?.tipo === 'risposta' ? 'Proposta di risposta' : 'Risposta'} · {d.stato}{d.origine === 'auto' ? ' · automatica' : ''}{d.sent_by ? ` · ${d.sent_by}` : d.chi ? ` · ${d.chi}` : ''}</div><div className="rs">{d.oggetto ?? ''}{d.errore ? ` · ${d.errore}` : ''}</div>{aiOn && d.sequenza_tocco != null && (d.stato === 'proposta' || d.stato === 'errore') && d.id !== draftId && <button type="button" className="or-link" disabled={busy} onClick={() => apriBozza(d)}>Apri</button>}{apribileRisp && <button type="button" className="or-link" disabled={busy} onClick={() => apriProposta(d)}>Apri</button>}{d.sequenza_tocco == null && (d.stato === 'proposta' || d.stato === 'errore') && <button type="button" className="or-link" disabled={busy} onClick={() => void scartaProposta(d.id)}>Scarta</button>}{d.stato === 'in_invio' && <button type="button" className="or-link" disabled={busy} onClick={async () => { if (!window.confirm('Hai controllato "Posta inviata" di info@amimi.it e questa email NON c’è? Solo in quel caso sbloccala.')) return; try { await sbloccaBozza({ draft_id: d.id, chi: who }); dire('Bozza sbloccata: si può reinviare.'); await reload(); } catch (e) { dire((e as Error).message, true); } }}>Sblocca (esito incerto)</button>}</div><div className="muted" style={{ fontSize: 12 }}>{fmtD(d.sent_at ?? d.created_at)}</div></div>;
       })}</div></details>}
 
       <details style={{ marginTop: 10 }}>
@@ -809,7 +826,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
           <label>Direzione<select value={dir} onChange={(e) => setDir(e.target.value as 'in' | 'out')}><option value="out">Noi → loro</option><option value="in">Loro → noi</option></select></label>
           <label className="wide">Oggetto / titolo<input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="es. telefonata con Valentina" /></label>
           <label className="wide">Cosa ci siamo detti<textarea rows={3} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Riassunto, o il testo della risposta ricevuta" /></label>
-          <label>Esito<select value={esito} onChange={(e) => setEsito(e.target.value)}><option value="">—</option>{ESITI.map((e) => <option key={e.key} value={e.key}>{e.label}</option>)}</select></label>
+          <label>Esito<select value={esito} onChange={(e) => setEsito(e.target.value)}><option value="">nessuno</option>{ESITI.map((e) => <option key={e.key} value={e.key}>{e.label}</option>)}</select></label>
           <label>Stadio dopo<select value={stageDopo} onChange={(e) => setStageDopo(e.target.value)}><option value="">automatico</option>{STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}</select></label>
           <label>Prossima azione<input value={pa} onChange={(e) => setPa(e.target.value)} placeholder="es. mandare catalogo" /></label>
           <label>Entro il<input type="date" value={paAt} onChange={(e) => setPaAt(e.target.value)} min={today()} /></label>
@@ -832,7 +849,7 @@ export function OutreachSequenze({ sequences, settings }: { sequences: LeadSeque
           <div className="tablewrap"><table className="sortable">
             <thead><tr><th>Tocco</th><th>Quando</th><th>Canale</th><th>Oggetto</th><th>Chi</th></tr></thead>
             <tbody>{sequences.filter((s) => s.codice === c).map((s) => (
-              <tr key={s.id}><td>{s.tocco}</td><td className="l">{s.tocco === 0 ? 'prima dell’email, se c’e’ un numero' : s.giorni_attesa ? `+${s.giorni_attesa} giorni dal precedente` : 'subito'}</td><td className="l">{CANALI[s.canale] ?? s.canale}</td><td className="l">{s.oggetto ?? '—'}</td><td className="l">{s.chi_default ?? ''}</td></tr>
+              <tr key={s.id}><td>{s.tocco}</td><td className="l">{s.tocco === 0 ? 'prima dell’email, se c’è un numero' : s.giorni_attesa ? `+${s.giorni_attesa} giorni dal precedente` : 'subito'}</td><td className="l">{CANALI[s.canale] ?? s.canale}</td><td className="l">{s.oggetto ?? 'n.d.'}</td><td className="l">{s.chi_default ?? ''}</td></tr>
             ))}</tbody>
           </table></div>
           {sequences.filter((s) => s.codice === c).map((s) => <details key={s.id} style={{ marginTop: 6 }}><summary style={{ cursor: 'pointer', fontSize: 13 }}>Testo del tocco {s.tocco}</summary><pre className="lead-pre" style={{ maxHeight: 300 }}>{s.corpo}</pre></details>)}
@@ -841,8 +858,8 @@ export function OutreachSequenze({ sequences, settings }: { sequences: LeadSeque
       <section className="card">
         <h2>Impostazioni</h2>
         <div className="list">
-          <div className="row"><div className="rt">Casella</div><div className="rs">le email partono come {LEAD_MITTENTE} (alias della casella info@, con ripiego su info@ se l&#8217;alias non e&#8217; attivo); le risposte nello stesso thread le legge il giro automatico</div></div>
-          <div className="row"><div className="rt">Firma</div><div className="rs" style={{ whiteSpace: 'pre-line' }}>{settings.lead_firma ?? '—'}</div></div>
+          <div className="row"><div className="rt">Casella</div><div className="rs">le email partono come {LEAD_MITTENTE} (alias della casella info@, con ripiego su info@ se l&#8217;alias non è attivo); le risposte nello stesso thread le legge il giro automatico</div></div>
+          <div className="row"><div className="rt">Firma</div><div className="rs" style={{ whiteSpace: 'pre-line' }}>{settings.lead_firma ?? 'n.d.'}</div></div>
           <div className="row"><div className="rt">Tetto invii al giorno</div><div className="rs">{settings.lead_tetto_giornaliero ?? '20'}</div></div>
           <div className="row"><div className="rt">Modulo (flag)</div><div className="rs">lead_enabled = {settings.lead_enabled ?? 'false'}: {settings.lead_enabled === 'true' ? 'ogni 30 minuti il giro automatico legge le risposte dei negozi e, alla scadenza, scrive la bozza del follow-up nella Coda. L’invio resta sempre un tuo click.' : 'giro automatico spento: risposte e follow-up si registrano a mano. Acceso, legge le risposte e propone i follow-up in Coda (mai invii automatici).'}</div></div>
           <div className="row"><div className="rt">Regole</div><div className="rs">Massimo 4 tocchi email, poi stop. Opt-out onorato dal database (esito "Opt-out" su un tocco). Contatto 1:1 personalizzato, riga di opt-out in ogni email.</div></div>

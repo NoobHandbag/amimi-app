@@ -247,7 +247,7 @@ export async function fetchTouches(accountId: string): Promise<LeadTouch[]> {
 export async function addTouch(t: { account_id: string; canale: string; direzione: 'in' | 'out'; subject?: string | null; body_clean?: string | null; stage_prima?: string | null; stage_dopo?: string | null; esito?: string | null; prossima_azione?: string | null; prossima_azione_at?: string | null; sequenza_tocco?: number | null; chi: string; at?: string }): Promise<string> {
   const { data, error } = await csClient.from('lead_touches').insert(t).select('id').single();
   // 23505 = indice unico lead_touches_tocco_out_uq (migr 0139): lo stesso tocco email risulta gia' registrato
-  if (error) throw new Error(error.code === '23505' ? `Il tocco ${t.sequenza_tocco ?? ''} risulta gia’ registrato per questo negozio: guarda la Timeline.` : error.message);
+  if (error) throw new Error(error.code === '23505' ? `Il tocco ${t.sequenza_tocco ?? ''} risulta già registrato per questo negozio: guarda la Timeline.` : error.message);
   return String((data as { id: string }).id);
 }
 export async function fetchSequences(): Promise<LeadSequence[]> {
@@ -286,17 +286,18 @@ async function callOutreach(payload: Record<string, unknown>): Promise<Record<st
   // puo' essere arrivata ed eseguita: e' un esito INCERTO, come la rete giu' fra edge e Gmail. Chi invia tiene la stessa
   // chiave (send_key), cosi' un secondo click non rimanda l'email.
   const INCERTO = payload.action === 'send' || payload.action === 'rispondi'
-    ? 'Esito incerto (la rete si e\u2019 interrotta): controlla \u201cPosta inviata\u201d di info@amimi.it prima di riprovare.'
-    : 'Esito incerto (la rete si e\u2019 interrotta): ricarica la pagina e controlla se e\u2019 andata prima di riprovare.';
+    ? 'Esito incerto (la rete si è interrotta): controlla \u201cPosta inviata\u201d di info@amimi.it prima di riprovare.'
+    : 'Esito incerto (la rete si è interrotta): ricarica la pagina e controlla se e\u2019 andata prima di riprovare.';
   let r: Response;
   try { r = await fetch(LEAD_OUTREACH_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(payload) }); }
   catch { const e = new Error(INCERTO) as Error & { incerto?: boolean }; e.incerto = true; throw e; }
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) {
     const senzaCorpo = r.status >= 500 && !j.error;
-    const e = new Error(senzaCorpo ? INCERTO : j.error || 'Errore ' + r.status) as Error & { bloccante?: boolean; incerto?: boolean; dati?: Record<string, unknown> };
+    const e = new Error(senzaCorpo ? INCERTO : j.error || 'Errore ' + r.status) as Error & { bloccante?: boolean; incerto?: boolean; codice?: string; dati?: Record<string, unknown> };
     if (j.bloccante === true) e.bloccante = true;
     if (j.incerto === true || senzaCorpo) e.incerto = true;   // la stessa chiave non deve ripartire
+    if (typeof j.codice === 'string') e.codice = j.codice;   // v15: cosa e' successo alla proposta (il web decide su questo, non sul testo)
     e.dati = j;   // v13: un 409 di "negozio gia' esistente" porta i candidati (duplicati)
     throw e;
   }
@@ -404,7 +405,7 @@ export const segnaposto = (s: string): string[] => [...s.matchAll(/\[[^\]\n]{1,2
 export function renderTemplate(tpl: string, r: { nome: string; citta?: string | null; gancio?: string | null }, referente: string | null, firma: string, linesheet = ''): string {
   return tpl
     .replace(/\{\{nome_negozio\}\}/g, r.nome)
-    .replace(/\{\{citta\}\}/g, r.citta ?? '[citta\u2019]')
+    .replace(/\{\{citta\}\}/g, r.citta ?? '[città]')
     .replace(/\{\{referente\}\}/g, referente?.trim() || `team di ${r.nome}`)
     .replace(/\{\{gancio\}\}/g, r.gancio ?? '[GANCIO DA SCRIVERE: una cosa vera vista nel dossier]')
     .replace(/\{\{linesheet\}\}/g, linesheet || '[LINK LINE SHEET: manca app_flags.lead_linesheet_url]')
