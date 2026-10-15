@@ -3,6 +3,9 @@
 // Riusa i loro SCHEMI, non il loro codice: Gemini in JSON mode come cs-assist (MAI thinkingConfig, tetto
 // token alto: i token di ragionamento contano dentro maxOutputTokens), Gmail API da info@amimi.it col
 // service account di cs-send (app_flags.cs_gmail_sa_key, domain-wide delegation con gmail.send).
+// v10 (2026-10-15, caso Glitter): azione `aggancia`. Un tocco registrato a mano ("Segna come inviata") non ha thread,
+// e il giro automatico legge solo i thread dei tocchi inviati: le risposte del negozio restavano fuori dalla timeline.
+// L'azione aggancia il tocco al messaggio partito da Gmail, dopo averlo verificato su Gmail (sola lettura).
 // v9 (2026-10-12): la risposta di un negozio con DMARC rigido arriva dal gruppo wholesale@ con il From riscritto;
 // si legge l'autore da X-Original-From / Reply-To (mittenteVero) invece di scartarla come posta nostra. CASI_APERTI 29.
 // v8 (2026-10-08): azione `prova`. L'invio vero rifiuta i destinatari @amimi.it, quindi una prova mandata a info@
@@ -25,6 +28,11 @@
 //   scarta (JWT @amimi.it) v6: una bozza non ancora partita passa a 'scartata' (il cron non la riscrive).
 //   prova  (JWT @amimi.it) v8: il testo del compositore, con "[PROVA]" nell'oggetto, alla casella di chi e' loggato
 //          (l'email del JWT: il destinatario non arriva mai dal client). Nessuna lettura ne' scrittura sui dati lead_*.
+//   aggancia (JWT @amimi.it, oppure la chiave service_role di un operatore con `chi`) v10: `touch_id` di un tocco email
+//          in uscita senza thread + `gmail_message_id` del messaggio partito. Il messaggio deve essere in info@, SENT,
+//          da @amimi.it, a un contatto del negozio, entro 7 giorni dal tocco (blocco PURE:lead-aggancio). Scrive SOLO
+//          gmail_message_id e gmail_thread_id di quel tocco (UPDATE condizionato al thread vuoto); nessuna email parte.
+//          Le risposte del thread le scrive il giro successivo del cron.
 //   cron  (senza JWT, come gli altri cron; migr 0148) v6, Blocco 2. NO-OP finche' app_flags.lead_enabled non e' 'true'.
 //          1) RISPOSTE: per ogni thread Gmail di un nostro tocco email, i messaggi non nostri e non ancora in
 //             lead_touches entrano come tocco 'in' (upsert ignoreDuplicates su gmail_message_id). Una risposta vera
@@ -215,6 +223,35 @@ function inizioGiornoRoma(now = new Date()): string {
   return new Date(Date.UTC(+p.year, +p.month - 1, +p.day) - offsetMin * 60000).toISOString();
 }
 // ==== PURE:lead-guard END ====
+
+// ==== PURE:lead-aggancio BEGIN ====
+// v10: regole dell'azione aggancia, pure e testate in tests/lead_outreach_guardie.mjs. Un blocco qui = nessuna scrittura.
+const GMAIL_ID_RE = /^[0-9a-f]{12,24}$/i;
+const AGGANCIO_FINESTRA_MS = 7 * 864e5;
+// tutti gli indirizzi di un header (To e Cc ne portano piu' d'uno: "Nome <a@b.it>, c@d.it")
+function indirizziDi(h: string): string[] {
+  return [...h.matchAll(/[^\s<>",;:]+@[^\s<>",;:]+\.[a-z]{2,}/gi)].map((m) => m[0].toLowerCase());
+}
+function bloccantiAggancio(p: { tocco: { direzione: string; canale: string; gmail_message_id: string | null; gmail_thread_id: string | null; at: string }; messaggioId: string; etichette: string[]; from: string; destinatari: string; internalDate: number; indirizziNegozio: string[] }): string[] {
+  const b: string[] = [];
+  if (p.tocco.direzione !== 'out' || p.tocco.canale !== 'email') b.push('si aggancia solo un tocco email in uscita');
+  if (p.tocco.gmail_thread_id || (p.tocco.gmail_message_id && p.tocco.gmail_message_id !== p.messaggioId)) b.push('il tocco e\' gia\' agganciato a un altro messaggio Gmail');
+  if (!p.etichette.includes('SENT')) b.push('il messaggio non e\' fra la posta inviata di info@');
+  if (!indirizziDi(p.from).some((a) => a.endsWith('@amimi.it'))) b.push('il mittente del messaggio non e\' un indirizzo @amimi.it');
+  const negozio = new Set(p.indirizziNegozio.map((x) => x.trim().toLowerCase()).filter(Boolean));
+  if (!indirizziDi(p.destinatari).some((a) => negozio.has(a))) b.push('il messaggio non e\' indirizzato a un contatto di questo negozio');
+  const dt = Math.abs(p.internalDate - Date.parse(p.tocco.at));
+  if (!Number.isFinite(dt) || dt > AGGANCIO_FINESTRA_MS) b.push('messaggio e tocco sono a piu\' di 7 giorni di distanza: e\' davvero quello giusto?');
+  return b;
+}
+// confronto a tempo costante della chiave dell'operatore (nessun indizio dalla durata del confronto)
+function stessaChiave(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+// ==== PURE:lead-aggancio END ====
 
 type Flags = Record<string, string>;
 type Row = Record<string, unknown>;
@@ -616,7 +653,7 @@ Deno.serve(async (req) => {
   const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || '');
-  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'prova', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
+  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'prova', 'aggancia', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
   // giro automatico: nessun JWT (lo chiama pg_cron), nessun dato di terzi in risposta, NO-OP a lead_enabled spento
   if (action === 'cron') return await giroCron(createClient(url, svc));
 
@@ -624,10 +661,21 @@ Deno.serve(async (req) => {
   const authz = req.headers.get('Authorization') || '';
   const tk = authz.toLowerCase().startsWith('bearer ') ? authz.slice(7).trim() : '';
   if (!tk) return json({ error: 'non autenticato' }, 401);
-  const { data: ures, error: uerr } = await createClient(url, anon).auth.getUser(tk);
-  if (uerr || !ures?.user) return json({ error: 'sessione non valida' }, 401);
-  const userEmail = (ures.user.email || '').toLowerCase();
-  if (!userEmail.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+  // v10: la chiave service_role vale SOLO per aggancia, con `chi` obbligatorio (operatore: Claude Code da script, come il
+  // collector di workers/lead, che la legge a runtime dalla Management API). Chi ha quella chiave scrive gia' tutto il DB:
+  // non e' un accesso in piu'. Ogni altra azione resta di una persona con JWT @amimi.it.
+  const operatore = stessaChiave(tk, svc);
+  let userEmail = '';
+  if (operatore) {
+    if (action !== 'aggancia') return json({ error: 'chiave di servizio ammessa solo per aggancia' }, 403);
+    if (!String(body.chi || '').trim()) return json({ error: 'chi obbligatorio con la chiave di servizio' }, 422);
+    userEmail = 'service_role';
+  } else {
+    const { data: ures, error: uerr } = await createClient(url, anon).auth.getUser(tk);
+    if (uerr || !ures?.user) return json({ error: 'sessione non valida' }, 401);
+    userEmail = (ures.user.email || '').toLowerCase();
+    if (!userEmail.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+  }
   const chi = String(body.chi || userEmail).slice(0, 60);
 
   const sb = createClient(url, svc);
@@ -686,6 +734,55 @@ Deno.serve(async (req) => {
     if (sbErr) return json({ error: 'sblocco fallito: ' + sbErr.message }, 500);
     if (!sb1?.length) return json({ error: 'niente da sbloccare: la bozza non e\' in invio da piu\' di 10 minuti', bloccante: true }, 409);
     return json({ ok: true, sbloccata: id });
+  }
+
+  // --------------------------------------------------------------------------------------- aggancia
+  // v10: il tocco registrato a mano prende id e thread del messaggio partito da Gmail, cosi' il giro automatico ne legge
+  // le risposte. Il messaggio si verifica su Gmail (scope readonly) prima di scrivere; si scrivono SOLO le due colonne
+  // Gmail di QUEL tocco, con UPDATE condizionato al thread ancora vuoto (due richieste insieme: ne passa una) e UNIQUE
+  // su gmail_message_id. Nessuna email parte, nessuno stadio cambia qui: li cambia il cron quando scrive le risposte.
+  if (action === 'aggancia') {
+    const touchId = String(body.touch_id || '');
+    const msgId = String(body.gmail_message_id || '').trim();
+    if (!UUID_RE.test(touchId) || !GMAIL_ID_RE.test(msgId)) return json({ error: 'touch_id o gmail_message_id non validi' }, 422);
+    const { data: tc, error: tcErr } = await retryOnce(() => sb.from('lead_touches').select('id,account_id,direzione,canale,gmail_message_id,gmail_thread_id,at').eq('id', touchId).maybeSingle());
+    if (tcErr) return json({ error: 'lettura tocco fallita, riprova: ' + tcErr.message }, 503);
+    if (!tc) return json({ error: 'tocco inesistente', bloccante: true }, 404);
+    if (tc.gmail_message_id === msgId && tc.gmail_thread_id) return json({ ok: true, gia_agganciato: true, touch_id: touchId, gmail_thread_id: tc.gmail_thread_id });
+    const { data: ac, error: acErr } = await retryOnce(() => sb.from('lead_accounts').select('email_generica').eq('id', tc.account_id).maybeSingle());
+    if (acErr) return json({ error: 'lettura negozio fallita, riprova: ' + acErr.message }, 503);
+    const { data: cts, error: ctErr } = await retryOnce(() => sb.from('lead_contacts').select('email').eq('account_id', tc.account_id).not('email', 'is', null).limit(200));
+    if (ctErr) return json({ error: 'lettura contatti fallita, riprova: ' + ctErr.message }, 503);
+    const { count: nUsato, error: nuErr } = await retryOnce(() => sb.from('lead_touches').select('id', { count: 'exact', head: true }).eq('gmail_message_id', msgId).neq('id', touchId));
+    if (nuErr) return json({ error: 'lettura tocchi fallita, riprova: ' + nuErr.message }, 503);
+    if ((nUsato ?? 0) > 0) return json({ error: 'questo messaggio Gmail e\' gia\' agganciato a un altro tocco', bloccante: true }, 409);
+    if (!flags.cs_gmail_sa_key) return json({ error: 'chiave service account assente (app_flags.cs_gmail_sa_key)' }, 500);
+    let saA: { client_email: string; private_key: string };
+    try { saA = JSON.parse(flags.cs_gmail_sa_key); } catch { return json({ error: 'chiave service account non valida' }, 500); }
+    let rtokenA = '';
+    try { rtokenA = await googleAccessToken(saA, SCOPE_READ); }
+    catch (e) { return json({ error: 'autenticazione Google fallita: ' + (e as Error).message.slice(0, 180) }, 502); }
+    const gr = await fetch(`${GMAIL}/messages/${encodeURIComponent(msgId)}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc`, { headers: { Authorization: `Bearer ${rtokenA}` } });
+    const gj = await gr.json().catch(() => ({}));
+    if (gr.status === 404) return json({ error: 'messaggio non trovato nella casella info@', bloccante: true }, 404);
+    if (!gr.ok) return json({ error: `Gmail messages.get ${gr.status}: ${JSON.stringify(gj).slice(0, 160)}` }, 502);
+    const gm = gj as { threadId?: string; labelIds?: string[]; internalDate?: string; payload?: { headers?: { name?: string; value?: string }[] } };
+    const gh = (n: string) => (gm.payload?.headers ?? []).filter((h) => h.name?.toLowerCase() === n).map((h) => h.value ?? '').join(', ');
+    const indirizziNegozio = [String(ac?.email_generica ?? ''), ...((cts ?? []) as { email: string | null }[]).map((c) => String(c.email ?? ''))];
+    const blocchiA = bloccantiAggancio({ tocco: tc, messaggioId: msgId, etichette: gm.labelIds ?? [], from: gh('from'), destinatari: `${gh('to')}, ${gh('cc')}`, internalDate: Number(gm.internalDate ?? NaN), indirizziNegozio });
+    if (blocchiA.length) return json({ error: 'Aggancio rifiutato: ' + blocchiA.join('; '), bloccante: true }, 422);
+    const threadA = String(gm.threadId ?? '');
+    if (!threadA) return json({ error: 'Gmail non ha restituito il thread del messaggio' }, 502);
+    const { data: upA, error: upAErr } = await sb.from('lead_touches').update({ gmail_message_id: msgId, gmail_thread_id: threadA })
+      .eq('id', touchId).is('gmail_thread_id', null).select('id');
+    if (upAErr) {
+      const dup = upAErr.code === '23505';
+      return json({ error: dup ? 'questo messaggio Gmail e\' gia\' agganciato a un altro tocco' : 'aggancio fallito: ' + upAErr.message, bloccante: dup }, dup ? 409 : 500);
+    }
+    if (!upA?.length) return json({ error: 'il tocco e\' cambiato nel frattempo (gia\' agganciato?): ricarica', bloccante: true }, 409);
+    // traccia nei log della edge: chi ha agganciato cosa (nessun indirizzo ne' testo)
+    console.log(JSON.stringify({ azione: 'aggancia', chi, touch_id: touchId, gmail_message_id: msgId, gmail_thread_id: threadA }));
+    return json({ ok: true, touch_id: touchId, gmail_message_id: msgId, gmail_thread_id: threadA, prima: { gmail_message_id: tc.gmail_message_id, gmail_thread_id: tc.gmail_thread_id } });
   }
 
   // ------------------------------------------------------------------------------------------ prova
