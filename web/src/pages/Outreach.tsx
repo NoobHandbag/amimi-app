@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, inviaProva, indirizzoInterno, sbloccaBozza, scartaBozza, segnaposto, LEAD_MITTENTE, cercaInviate, agganciaTocco, inviaRisposta } from '../lib/leadApi';
-import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft, InviataCandidata } from '../lib/leadApi';
+import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, inviaProva, indirizzoInterno, sbloccaBozza, scartaBozza, segnaposto, LEAD_MITTENTE, cercaInviate, agganciaTocco, inviaRisposta, fetchInbound, inboundCollega, inboundScarta, inboundCrea, nuovoNegozio } from '../lib/leadApi';
+import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft, InviataCandidata, LeadInbound, NegozioCandidato } from '../lib/leadApi';
 import { negozioCiHaScritto, dopoInvioManuale, rispostaPreparata, avvisiTesto } from '../lib/leadRegole';
 
 // Sezione Outreach (tappa 1 del PIANO_Outreach_CRM.md): pipeline per stadio, coda del giorno, scheda con
@@ -65,8 +65,112 @@ export function OutreachBoard({ rows, urls, onOpen }: { rows: LeadOutreach[]; ur
   );
 }
 
+
 // ---------------------------------------------------------------------------------------------
-export function OutreachCoda({ rows, onOpen }: { rows: LeadOutreach[]; onOpen: (id: string) => void }) {
+// v13 (blocco C del cruscotto B2B): ingresso inbound. In cima alla Coda, i messaggi di Assistenza che possono essere un
+// negozio e non sono ancora qui (vista v_lead_inbound: modulo del sito classificato B2B, email a wholesale@, mittenti gia'
+// noti), con "Collega a", "Crea negozio" e "Non e' un negozio"; e "Nuovo negozio" per un ingresso da Instagram, telefono,
+// visita o fiera. Assistenza si legge soltanto. Un negozio nuovo non nasce se ne esiste uno uguale (email, Instagram, sito,
+// nome+citta'): la edge risponde con i candidati e la persona sceglie se collegarsi a uno di quelli o crearlo comunque.
+type FormNegozio = { convId: string | null; nome: string; citta: string; tipo: string; email: string; telefono: string; ig: string; website: string; canale: string; referente: string; nota: string; duplicati: NegozioCandidato[] };
+const CANALI_INGRESSO: Record<string, string> = { instagram_dm: 'Instagram', telefono: 'Telefono', visita: 'Visita in negozio', email: 'Email', altro: 'Fiera, passaparola, altro' };
+const viaLabel: Record<string, string> = { email: 'stessa email del negozio', contatto: 'e’ un suo contatto', dominio: 'stesso dominio del sito', sito: 'stesso sito', instagram: 'stesso Instagram', "nome e citta'": 'stesso nome e citta’' };
+
+function InboundCoda({ who, onChanged, onOpen }: { who: string; onChanged: () => Promise<void>; onOpen: (id: string) => void }) {
+  const [inbound, setInbound] = useState<LeadInbound[] | null>(null);
+  const [msg, setMsg] = useState<{ t: string; err: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState<FormNegozio | null>(null);
+  const carica = async () => { try { setInbound(await fetchInbound()); } catch (e) { setInbound([]); setMsg({ t: 'Messaggi da collegare non disponibili: ' + (e as Error).message, err: true }); } };
+  useEffect(() => { void carica(); }, []);
+  const fatto = async (t: string, apri?: string) => {
+    setMsg({ t, err: false });
+    // la pipeline si ricarica solo quando un negozio cambia (collegato o creato): serve ad aprirne la scheda
+    if (apri) { try { await onChanged(); } catch { /* il ricarico della pipeline non annulla l'azione fatta */ } }
+    await carica();
+    if (apri) onOpen(apri);
+  };
+  const collega = async (m: LeadInbound, c: NegozioCandidato) => {
+    setBusy(true); setMsg(null);
+    try { const r = await inboundCollega({ conv_id: m.conv_id, account_id: c.id, chi: who }); setForm(null); await fatto(`Collegato a ${c.nome}: ${r.tocchi} messaggi in timeline.`, c.id); }
+    catch (e) { setMsg({ t: (e as Error).message, err: true }); }
+    setBusy(false);
+  };
+  const scarta = async (m: LeadInbound) => {
+    if (!window.confirm('Togliere questo messaggio dalla lista? Resta in Assistenza com’e’.')) return;
+    setBusy(true); setMsg(null);
+    try { await inboundScarta({ conv_id: m.conv_id, chi: who }); await fatto('Tolto dalla lista: non e’ un negozio.'); }
+    catch (e) { setMsg({ t: (e as Error).message, err: true }); }
+    setBusy(false);
+  };
+  const apriForm = (m: LeadInbound | null) => setForm({ convId: m?.conv_id ?? null, nome: m?.customer_name ?? '', citta: '', tipo: 'boutique', email: m?.customer_email ?? '', telefono: '', ig: '', website: '', canale: 'instagram_dm', referente: '', nota: '', duplicati: [] });
+  const salva = async (forza: boolean) => {
+    if (!form) return;
+    setBusy(true); setMsg(null);
+    const dati = { nome: form.nome, citta: form.citta, tipo: form.tipo, email: form.email, telefono: form.telefono, ig_handle: form.ig, website: form.website, referente: form.referente, nota: form.nota, forza, chi: who };
+    try {
+      const r = form.convId ? await inboundCrea({ ...dati, conv_id: form.convId }) : await nuovoNegozio({ ...dati, canale: form.canale });
+      setForm(null);
+      await fatto(`Negozio ${form.nome} creato.`, r.account_id);
+    } catch (e) {
+      const dup = ((e as Error & { dati?: { duplicati?: NegozioCandidato[] } }).dati?.duplicati) ?? [];
+      if (dup.length) setForm({ ...form, duplicati: dup });
+      setMsg({ t: (e as Error).message, err: true });
+    }
+    setBusy(false);
+  };
+  const campo = (k: keyof FormNegozio, label: string, extra: Record<string, unknown> = {}) => (
+    <label className="cs-fld">{label}<input value={String(form?.[k] ?? '')} onChange={(e) => setForm((f) => (f ? { ...f, [k]: e.target.value } : f))} {...extra} /></label>
+  );
+  const modulo = form && (
+    <div className="or-inbound-form">
+      <h3>{form.convId ? 'Crea il negozio da questo messaggio' : 'Nuovo negozio'}</h3>
+      {campo('nome', 'Nome del negozio')}
+      {campo('citta', 'Citta’')}
+      <label className="cs-fld">Tipo<select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>{Object.entries(TIPO_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
+      {!form.convId && <label className="cs-fld">Come ci ha contattato<select value={form.canale} onChange={(e) => setForm({ ...form, canale: e.target.value })}>{Object.entries(CANALI_INGRESSO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>}
+      {campo('email', 'Email', { type: 'email' })}
+      {!form.convId && campo('telefono', 'Telefono')}
+      {!form.convId && campo('referente', 'Referente (nome)')}
+      {campo('ig', 'Instagram (handle)')}
+      {campo('website', 'Sito')}
+      {!form.convId && <label className="cs-fld">Cosa ci siamo detti<textarea rows={3} value={form.nota} onChange={(e) => setForm({ ...form, nota: e.target.value })} /></label>}
+      {form.duplicati.length > 0 && <div className="note">
+        <b>Potrebbe essere gia’ qui:</b>
+        {form.duplicati.map((d) => <div key={d.id} className="row"><div><div className="rt">{d.nome}{d.citta ? ` · ${d.citta}` : ''}</div><div className="rs">{viaLabel[d.via] ?? d.via}</div></div>
+          {form.convId && inbound ? <button type="button" className="ds-btn" disabled={busy} onClick={() => { const m = inbound.find((x) => x.conv_id === form.convId); if (m) void collega(m, d); }}>Collega a questo</button> : <button type="button" className="ds-btn" disabled={busy} onClick={() => { setForm(null); onOpen(d.id); }}>Apri</button>}
+        </div>)}
+      </div>}
+      <div className="lead-actions">
+        <button type="button" className="ds-btn" disabled={busy || form.nome.trim().length < 2} onClick={() => void salva(form.duplicati.length > 0)}>{form.duplicati.length ? 'Crea comunque un negozio nuovo' : 'Crea negozio'}</button>
+        <button type="button" className="ds-btn" disabled={busy} onClick={() => setForm(null)}>Annulla</button>
+      </div>
+    </div>
+  );
+  return (
+    <section className="card">
+      <div className="or-inbound-head"><h2>Messaggi da collegare{inbound ? ` · ${inbound.length}` : ''}</h2><button type="button" className="ds-btn" disabled={busy} onClick={() => apriForm(null)}>Nuovo negozio</button></div>
+      <p className="note">Moduli del sito e email a wholesale@ arrivati in Assistenza negli ultimi 30 giorni, e messaggi da indirizzi gia’ noti, non ancora nella timeline di un negozio.</p>
+      {form && !form.convId && modulo}
+      {!inbound ? <p className="muted">Carico…</p> : !inbound.length ? <p className="muted">Nessun messaggio da collegare.</p> : <div className="or-list">{inbound.map((m) => (
+        <div key={m.conv_id} className="or-inbound">
+          <div className="rt"><b>{m.customer_name || m.customer_email || 'mittente sconosciuto'}</b>{m.customer_email && m.customer_name ? ` · ${m.customer_email}` : ''} · {fmtDT(m.last_msg_at)}{m.da_modulo ? ' · modulo del sito' : ''}{m.a_wholesale ? ' · a wholesale@' : ''}</div>
+          <div className="rs">{m.subject ? <b>{m.subject} </b> : null}{m.snippet}</div>
+          <div className="lead-actions">
+            {m.candidati.map((c) => <button key={c.id} type="button" className="ds-btn" disabled={busy} title={viaLabel[c.via] ?? c.via} onClick={() => void collega(m, c)}>Collega a {c.nome}{c.citta ? ` (${c.citta})` : ''}</button>)}
+            <button type="button" className="ds-btn" disabled={busy} onClick={() => apriForm(m)}>Crea negozio</button>
+            <button type="button" className="or-link" disabled={busy} onClick={() => void scarta(m)}>Non e’ un negozio</button>
+          </div>
+          {form?.convId === m.conv_id && modulo}
+        </div>
+      ))}</div>}
+      <div className="or-esito" aria-live="polite">{msg && <div className={msg.err ? 'err' : 'note'} style={{ marginTop: 8 }}>{msg.t}</div>}</div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+export function OutreachCoda({ rows, onOpen, who, onChanged, aiOn }: { rows: LeadOutreach[]; onOpen: (id: string) => void; who: string; onChanged: () => Promise<void>; aiOn: boolean }) {
   const risposte = rows.filter((r) => r.da_gestire);
   // follow-up gia' scritti dal giro automatico (migr 0148): manca solo la rilettura e il click di invio
   const pronti = rows.filter((r) => r.bozza_auto_tocco != null && !r.da_gestire);
@@ -83,6 +187,7 @@ export function OutreachCoda({ rows, onOpen }: { rows: LeadOutreach[]; onOpen: (
   const empty = !risposte.length && !pronti.length && !scadute.length && !inScadenza.length && !nuovi.length;
   return (
     <>
+      {aiOn && <InboundCoda who={who} onChanged={onChanged} onOpen={onOpen} />}
       {empty && <section className="card"><p className="muted">Niente da fare oggi. Bel lavoro.</p></section>}
       {risposte.length > 0 && <section className="card"><h2>Risposte da gestire · {risposte.length}</h2><div className="or-list">{risposte.map((r) => <Row key={r.id} r={r} icon="📩" what={`${CANALI[r.ultimo_canale ?? ''] ?? ''} ricevuta ${fmtD(r.ultimo_tocco_at)}${r.ultimo_esito ? ` · ${ESITI.find((e) => e.key === r.ultimo_esito)?.label ?? r.ultimo_esito}` : ''}`} />)}</div></section>}
       {pronti.length > 0 && <section className="card"><h2>Follow-up pronti da rivedere · {pronti.length}</h2><div className="or-list">{pronti.map((r) => <Row key={r.id} r={r} icon="✍️" what={`bozza del follow-up ${r.bozza_auto_tocco} di 4 gia’ scritta: rileggila e inviala`} />)}</div></section>}

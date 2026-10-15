@@ -920,6 +920,15 @@ button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-
 /* v11 (blocco A3): scelta dell'email di Posta inviata da collegare a un tocco registrato a mano */
 .or-collega { border: 1px solid var(--interactive-700); border-radius: 8px; padding: 7px 9px; margin-top: 4px; font-size: 13px; }
 .or-collega .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
+/* v13 (blocco C): messaggi da collegare e nuovo negozio in Coda */
+.or-inbound-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.or-inbound { border-top: 1px solid var(--surface-alt); padding: 8px 0; }
+.or-inbound .rs { font-size: 13px; margin-top: 2px; }
+.or-inbound-form { border: 1px solid var(--interactive-700); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+.or-inbound-form h3 { margin: 0 0 4px; font-size: 14px; }
+.or-inbound-form .cs-fld { display: block; margin-top: 6px; }
+.or-inbound-form input, .or-inbound-form select, .or-inbound-form textarea { width: 100%; box-sizing: border-box; }
+.or-inbound-form .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
 .or-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
 .or-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--ink-muted); }
 .or-form label.wide { grid-column: 1 / -1; }

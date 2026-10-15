@@ -9,6 +9,10 @@
 // v11 (2026-10-15, blocco A del cruscotto B2B): ogni messaggio del negozio in timeline. Il giro legge i thread di TUTTI i
 // tocchi con thread (A1) e cerca per mittente le email e i moduli dei negozi gia' in lavorazione arrivati fuori da quei thread
 // (A2); azione `cerca_inviate` per scegliere in app l'email da agganciare a un "Segna come inviata" (A3).
+// v12 (2026-10-15, blocco B): azione `rispondi`, la risposta scritta da una persona a un negozio che ci ha scritto, nel
+// thread giusto, fuori dal tetto e senza numero di tocco. Il tetto di `send` conta solo le email della sequenza.
+// v13 (2026-10-15, blocco C, migr 0158): i messaggi di Assistenza che possono essere un negozio (vista v_lead_inbound) si
+// collegano, creano un negozio o escono dalla lista; "Nuovo negozio" a mano per Instagram, telefono, visita e fiera.
 // v9 (2026-10-12): la risposta di un negozio con DMARC rigido arriva dal gruppo wholesale@ con il From riscritto;
 // si legge l'autore da X-Original-From / Reply-To (mittenteVero) invece di scartarla come posta nostra. CASI_APERTI 29.
 // v8 (2026-10-08): azione `prova`. L'invio vero rifiuta i destinatari @amimi.it, quindi una prova mandata a info@
@@ -39,6 +43,12 @@
 //   cerca_inviate (JWT @amimi.it) v11: `touch_id` di un tocco email in uscita senza thread -> i messaggi di Posta inviata
 //          di info@ agli indirizzi del negozio, entro 3 giorni, che aggancia accetterebbe (oggetto, data, destinatari).
 //          Sola lettura; la scelta la fa la persona, poi aggancia.
+//   rispondi (JWT @amimi.it) v12: `{account_id, to, oggetto, testo, send_key}` a un negozio che ci ha scritto; destinatario
+//          fra gli indirizzi del negozio; claim con l'insert della riga gia' in invio (send_key UNIQUE).
+//   inbound_collega / inbound_crea / inbound_scarta (JWT @amimi.it) v13: una conversazione di Assistenza (letta, mai scritta)
+//          portata su un negozio esistente o nuovo, o segnata "non e' un negozio" in lead_inbound_esiti.
+//   nuovo_negozio (JWT @amimi.it) v13: negozio nuovo a mano con il suo primo tocco in entrata; mai un doppione silenzioso
+//          (email, Instagram, sito o nome+citta': risponde 409 con i candidati, `forza` dopo che la persona li ha visti).
 //   cron  (senza JWT, come gli altri cron; migr 0148) v6, Blocco 2. NO-OP finche' app_flags.lead_enabled non e' 'true'.
 //          1) RISPOSTE: per ogni thread Gmail di un tocco con thread (v11: anche i tocchi in entrata), i messaggi non nostri e non ancora in
 //             lead_touches entrano come tocco 'in' (upsert ignoreDuplicates su gmail_message_id). Una risposta vera
@@ -222,6 +232,55 @@ function bersaglioRisposta(tocchi: { direzione: string; esito: string | null; at
   if (!msg || !msg.gmail_thread_id) return null;
   return { threadId: msg.gmail_thread_id, messageId: String(msg.gmail_message_id), subject: String(msg.subject ?? '') };
 }
+// v13 (blocco C): i tocchi di una conversazione di Assistenza portata su un negozio, in ordine di tempo. Il modulo del
+// sito entra come 'altro' senza thread (il thread e' quello della notifica), l'email del negozio nel thread della
+// conversazione, le nostre risposte da Assistenza come tocchi 'out' senza numero di tocco. La prossima azione segue le
+// stesse regole del giro (campiRisposta); se l'ultimo messaggio e' nostro, si aspetta la risposta del negozio.
+type MsgCs = { gmail_message_id: string | null; direction: string; from_email: string | null; reply_to: string | null; sent_by: string | null; sent_at: string | null; created_at: string; body_clean: string | null; form_fields: unknown };
+function righeDaConversazione(msgs: MsgCs[], p: { accountId: string; stage: string | null; oggi: string; promemoria: string; chi: string; thread: string | null; oggetto: string }): Record<string, unknown>[] {
+  const ord = msgs.filter((m) => m.gmail_message_id).sort((a, b) => Date.parse(a.sent_at ?? a.created_at) - Date.parse(b.sent_at ?? b.created_at));
+  let st = p.stage;
+  const righe: Record<string, unknown>[] = [];
+  for (const m of ord) {
+    const at = new Date(Date.parse(m.sent_at ?? m.created_at)).toISOString();
+    const testo = String(m.body_clean ?? '').slice(0, 3800);
+    const comuni = { account_id: p.accountId, gmail_message_id: m.gmail_message_id, stage_prima: st, at, esito: null };
+    if (m.direction === 'out') {
+      righe.push({ ...comuni, canale: 'email', direzione: 'out', gmail_thread_id: p.thread, sequenza_tocco: null, subject: jsonSafe(p.oggetto.slice(0, 300)) || null, body_clean: jsonSafe(testo), chi: String(m.sent_by || p.chi).slice(0, 60) });
+      continue;
+    }
+    const modulo = m.form_fields != null;
+    const da = indirizzoDi(String((modulo ? m.reply_to : m.from_email) ?? m.from_email ?? ''));
+    // Gate 2 (15-10): un'email importata si classifica come nel giro (risposta automatica, bounce, opt-out); il modulo e'
+    // sempre un messaggio vero. Assistenza non salva l'header Auto-Submitted: decidono mittente, oggetto e testo.
+    const tipo = modulo ? null : classificaInbound({ from: da, subject: p.oggetto, autoSubmitted: '', testo });
+    righe.push({
+      ...comuni, direzione: 'in', chi: 'assistenza', esito: tipo,
+      canale: modulo ? 'altro' : 'email', gmail_thread_id: modulo ? null : p.thread,
+      subject: jsonSafe((modulo ? `Modulo contatti amimi.it: ${p.oggetto}` : p.oggetto).slice(0, 300)) || null,
+      body_clean: jsonSafe(`${da}\n${testo}`.slice(0, 4000)),
+      ...campiRisposta(tipo, st, p.oggi),
+    });
+    if (tipo === null && (st === 'da_contattare' || st === 'contattato')) st = 'risposto';
+  }
+  const ultima = righe[righe.length - 1];
+  if (ultima && ultima.direzione === 'out') Object.assign(ultima, { prossima_azione: 'attesa risposta del negozio', prossima_azione_at: p.promemoria });
+  return righe;
+}
+// v13 (blocco C): i dati di un negozio nuovo, dal modulo "Nuovo negozio" o da "Crea negozio" su un messaggio
+const TIPI_NEGOZIO = ['boutique', 'concept_store', 'hotel_shop', 'gruppo_multimarca', 'corner_department', 'negozio_regalo', 'online_multibrand'];
+function igPulito(s: string): string { return s.trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/\/.*$/, '').toLowerCase(); }
+function dominioDi(s: string): string { return s.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/^www\./, '').replace(/[/:?#].*$/, ''); }
+function bloccantiNegozio(p: { nome: string; citta: string; tipo: string; email: string; ig: string; website: string }): string[] {
+  const b: string[] = [];
+  if (p.nome.trim().length < 2 || p.nome.length > 120) b.push('nome del negozio mancante o troppo lungo');
+  if (p.citta.length > 80) b.push('citta\' troppo lunga');
+  if (!TIPI_NEGOZIO.includes(p.tipo)) b.push('tipo di negozio non valido');
+  if (p.email && !INDIRIZZO_RE.test(p.email.trim().toLowerCase())) b.push('email non valida');
+  if (p.ig && !/^[a-z0-9._]{1,30}$/.test(igPulito(p.ig))) b.push('handle Instagram non valido');
+  if (p.website && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(dominioDi(p.website))) b.push('sito non valido');
+  return b;
+}
 // il testo che il cliente ha scritto nel modulo, senza lo stampo di Shopify (marcatori IT e EN di cs-sync v12)
 function testoModulo(t: string): string {
   const s = t.replace(/\r\n/g, '\n');
@@ -374,6 +433,87 @@ async function contattiNegozio(sb: any, accountId: string): Promise<{ errore: st
   const righe = (cts ?? []) as { email: string | null; opt_out: boolean | null }[];
   const stage = (ac?.lead_stage as string | undefined) ?? null;
   return { stage, indirizzi: [String(ac?.email_generica ?? ''), ...righe.map((c) => String(c.email ?? ''))], chiuso: stage === 'opt_out' || stage === 'chiuso_no' || righe.some((c) => c.opt_out) };
+}
+// v13 (blocco C): negozi gia' esistenti che potrebbero essere lo stesso, per email, Instagram, dominio del sito o
+// nome+citta' (la chiave unica della tabella). MAI per il solo nome: due "Glitter" diversi esistono (Trieste e Ceva).
+// Letture mirate (.ilike sul valore cercato), mai l'elenco intero (Regola 20b).
+const DOMINI_LIBERI = ['gmail.com', 'googlemail.com', 'hotmail.com', 'hotmail.it', 'outlook.com', 'outlook.it', 'live.com', 'live.it', 'yahoo.com', 'yahoo.it', 'icloud.com', 'me.com', 'libero.it', 'virgilio.it', 'alice.it', 'tiscali.it', 'tin.it', 'fastwebnet.it', 'email.it', 'msn.com', 'aol.com', 'pec.it', 'legalmail.it'];
+const esc = (s: string) => s.replace(/[\\%_]/g, '\\$&');
+// deno-lint-ignore no-explicit-any
+async function duplicatiNegozio(sb: any, p: { nome: string; citta: string; email: string; ig: string; website: string }): Promise<{ errore: string } | { duplicati: { id: string; nome: string; citta: string | null; via: string }[] }> {
+  const email = p.email.trim().toLowerCase(), ig = igPulito(p.ig), dom = dominioDi(p.website || (email.split('@')[1] ?? ''));
+  const letture: [string, PromiseLike<{ data: unknown; error: { message: string } | null }>][] = [];
+  if (email) {
+    letture.push(['email', retryOnce(() => sb.from('lead_accounts').select('id,nome,citta').ilike('email_generica', esc(email)).limit(10))]);
+    letture.push(['contatto', retryOnce(() => sb.from('lead_contacts').select('account_id').ilike('email', esc(email)).limit(10))]);
+  }
+  if (ig) letture.push(['instagram', retryOnce(() => sb.from('lead_accounts').select('id,nome,citta').ilike('ig_handle', esc(ig)).limit(10))]);
+  if (dom && !DOMINI_LIBERI.includes(dom)) letture.push(['sito', retryOnce(() => sb.from('lead_accounts').select('id,nome,citta,website').ilike('website', `%${esc(dom)}%`).limit(20))]);
+  letture.push(['nome e citta\'', retryOnce(() => sb.from('lead_accounts').select('id,nome,citta').ilike('nome', esc(p.nome.trim())).ilike('citta', esc(p.citta.trim())).limit(10))]);
+  const esiti = await Promise.all(letture.map(([, q]) => q));
+  const out = new Map<string, { id: string; nome: string; citta: string | null; via: string }>();
+  const idContatti: string[] = [];
+  for (const [i, r] of esiti.entries()) {
+    if (r.error) return { errore: 'lettura dei negozi esistenti fallita, riprova: ' + r.error.message };
+    const via = letture[i][0];
+    for (const x of (r.data ?? []) as { id?: string; account_id?: string; nome?: string; citta?: string | null; website?: string | null }[]) {
+      if (via === 'contatto') { if (x.account_id) idContatti.push(x.account_id); continue; }
+      if (via === 'sito' && dominioDi(String(x.website ?? '')) !== dom) continue;   // l'ilike trova anche "xdom.it": serve il dominio esatto
+      if (x.id && !out.has(x.id)) out.set(x.id, { id: x.id, nome: String(x.nome), citta: x.citta ?? null, via });
+    }
+  }
+  const mancanti = idContatti.filter((id) => !out.has(id));
+  if (mancanti.length) {
+    const { data: ac, error } = await retryOnce(() => sb.from('lead_accounts').select('id,nome,citta').in('id', mancanti));
+    if (error) return { errore: 'lettura dei negozi esistenti fallita, riprova: ' + error.message };
+    for (const x of (ac ?? []) as { id: string; nome: string; citta: string | null }[]) out.set(x.id, { ...x, via: 'contatto' });
+  }
+  return { duplicati: [...out.values()] };
+}
+// v13 (blocco C): porta i messaggi di una conversazione di Assistenza (lettura, cs-* intatte) nella timeline di un negozio,
+// aggiunge chi ha scritto ai contatti e registra la decisione. Idempotente: upsert ignoreDuplicates su gmail_message_id,
+// contatto gia' presente = niente, decisione con chiave primaria sulla conversazione.
+// deno-lint-ignore no-explicit-any
+async function portaConversazione(sb: any, p: { convId: string; accountId: string; esito: 'collegato' | 'creato'; chi: string }): Promise<{ errore: string; status: number } | { tocchi: number; contatto: boolean }> {
+  const [{ data: conv, error: cvErr }, { data: msgs, error: msErr }, { data: acc, error: acErr }] = await Promise.all([
+    retryOnce(() => sb.from('cs_conversations').select('id,gmail_thread_id,subject,customer_email,customer_name').eq('id', p.convId).maybeSingle()),
+    retryOnce(() => sb.from('cs_messages').select('gmail_message_id,direction,from_email,reply_to,sent_by,sent_at,created_at,body_clean,form_fields').eq('conversation_id', p.convId).order('created_at').limit(101)),
+    retryOnce(() => sb.from('lead_accounts').select('id,lead_stage').eq('id', p.accountId).maybeSingle()),
+  ]);
+  if (cvErr || msErr || acErr) return { errore: 'lettura fallita, riprova: ' + (cvErr ?? msErr ?? acErr).message, status: 503 };
+  if (!conv) return { errore: 'conversazione di Assistenza inesistente', status: 404 };
+  if (!acc) return { errore: 'negozio inesistente', status: 404 };
+  // Gate 2 (15-10): un negozio chiuso o in opt-out non riceve messaggi nuovi ne' contatti nuovi
+  if (p.esito === 'collegato') {
+    const ng = await contattiNegozio(sb, p.accountId);
+    if ('errore' in ng) return { errore: ng.errore, status: 503 };
+    if (ng.chiuso) return { errore: `negozio in opt-out o chiuso (${ng.stage ?? 'stadio n/d'}): non si collega`, status: 409 };
+  }
+  if ((msgs ?? []).length > 100) return { errore: 'conversazione con piu\' di 100 messaggi: collegala a mano', status: 422 };
+  const righe = righeDaConversazione((msgs ?? []) as MsgCs[], {
+    accountId: p.accountId, stage: acc.lead_stage, oggi: oggiRoma(), promemoria: new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10),
+    chi: p.chi, thread: conv.gmail_thread_id ?? null, oggetto: String(conv.subject ?? ''),
+  });
+  // chi ha scritto diventa un contatto del negozio (il modulo porta il Reply-To): da qui il giro ne cerca le email.
+  // PRIMA della timeline (Gate 2, 15-10): appena un messaggio e' in lead_touches la conversazione esce dalla lista, e un
+  // errore dopo quel punto non si potrebbe piu' ripetere da li'.
+  const primoIn = ((msgs ?? []) as MsgCs[]).find((m) => m.direction === 'in');
+  const email = indirizzoDi(String((primoIn?.form_fields != null ? primoIn?.reply_to : primoIn?.from_email) ?? conv.customer_email ?? ''));
+  let contatto = false;
+  if (INDIRIZZO_RE.test(email) && !email.endsWith('@amimi.it')) {
+    const { error } = await sb.from('lead_contacts').insert({ account_id: p.accountId, email, nome: conv.customer_name ? String(conv.customer_name).slice(0, 80) : null, fonte: `Assistenza, ${oggiRoma()}` });
+    if (error && error.code !== '23505') return { errore: 'contatto non salvato: ' + error.message, status: 500 };
+    contatto = !error;
+  }
+  let scritti = 0;
+  for (const r of righe) {   // in ordine di tempo: il trigger lead_touches_apply aggiorna stadio e prossima azione riga per riga
+    const { data: ins, error } = await sb.from('lead_touches').upsert(r, { onConflict: 'gmail_message_id', ignoreDuplicates: true }).select('id');
+    if (error) return { errore: `scrittura della timeline fallita dopo ${scritti} messaggi: ${error.message}`, status: 500 };
+    scritti += (ins ?? []).length;
+  }
+  const { error: eErr } = await sb.from('lead_inbound_esiti').insert({ cs_conversation_id: p.convId, esito: p.esito, account_id: p.accountId, chi: p.chi });
+  if (eErr && eErr.code !== '23505') return { errore: 'decisione non registrata: ' + eErr.message, status: 500 };
+  return { tocchi: scritti, contatto };
 }
 // v11: token Gmail in sola lettura dalla chiave del service account, con l'errore gia' pronto per la risposta
 async function tokenLettura(flags: Flags): Promise<{ token: string } | { errore: string; status: number }> {
@@ -866,7 +1006,7 @@ Deno.serve(async (req) => {
   const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || '');
-  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'prova', 'rispondi', 'cerca_inviate', 'aggancia', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
+  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'prova', 'rispondi', 'inbound_collega', 'inbound_crea', 'inbound_scarta', 'nuovo_negozio', 'cerca_inviate', 'aggancia', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
   // giro automatico: nessun JWT (lo chiama pg_cron), nessun dato di terzi in risposta, NO-OP a lead_enabled spento
   if (action === 'cron') return await giroCron(createClient(url, svc));
 
@@ -1071,6 +1211,69 @@ Deno.serve(async (req) => {
       : await sb.from('lead_touches').insert(touchR);
     if (tErrR) warningsR.push('email partita, ma il tocco non e\' stato registrato: registralo a mano. ' + tErrR.message);
     return json({ ok: true, to: toR, from: mittR.from, oggetto: oggettoR, nel_thread: !!bers, gmail_message_id: msgIdR, ...(warningsR.length ? { warnings: warningsR } : {}) });
+  }
+
+  // ------------------------------------------------------------------------- inbound e nuovo negozio
+  // v13 (blocco C del cruscotto B2B): i messaggi di Assistenza che possono essere un negozio (vista v_lead_inbound, migr
+  // 0158) si collegano a un negozio esistente, creano un negozio nuovo, o escono dalla lista. "Nuovo negozio" registra a
+  // mano un ingresso da Instagram, telefono, visita o fiera. Assistenza si LEGGE soltanto (cs-* intatte, decisione 6 del
+  // 15-10); si scrivono solo tabelle lead_*. Un negozio nuovo non nasce se ne esiste uno uguale per email, Instagram, sito
+  // o nome+citta' (mai per il solo nome), salvo `forza` dopo che la persona ha visto i candidati.
+  if (action === 'inbound_collega' || action === 'inbound_scarta' || action === 'inbound_crea' || action === 'nuovo_negozio') {
+    const convId = String(body.conv_id || '');
+    if (action !== 'nuovo_negozio' && !UUID_RE.test(convId)) return json({ error: 'conv_id non valido' }, 422);
+    if (action === 'inbound_scarta') {
+      const { error } = await sb.from('lead_inbound_esiti').insert({ cs_conversation_id: convId, esito: 'non_negozio', account_id: null, chi });
+      if (error) return json({ error: error.code === '23505' ? 'questo messaggio e\' gia\' stato deciso: ricarica' : 'scarto fallito: ' + error.message, bloccante: error.code === '23505' }, error.code === '23505' ? 409 : 500);
+      return json({ ok: true, scartato: convId });
+    }
+    if (action === 'inbound_collega') {
+      const accountId = String(body.account_id || '');
+      if (!UUID_RE.test(accountId)) return json({ error: 'account_id non valido' }, 422);
+      const r = await portaConversazione(sb, { convId, accountId, esito: 'collegato', chi });
+      if ('errore' in r) return json({ error: r.errore }, r.status);
+      return json({ ok: true, account_id: accountId, tocchi: r.tocchi, contatto: r.contatto });
+    }
+    // inbound_crea e nuovo_negozio: un negozio nuovo
+    const nome = String(body.nome || '').trim(), citta = String(body.citta || '').trim(), tipo = String(body.tipo || 'boutique');
+    const email = String(body.email || '').trim().toLowerCase(), ig = String(body.ig_handle || ''), website = String(body.website || '').trim(), telefono = String(body.telefono || '').trim().slice(0, 40);
+    let emailNeg = email;
+    if (action === 'inbound_crea') {
+      const { data: cv, error: cvErr } = await retryOnce(() => sb.from('cs_conversations').select('customer_email').eq('id', convId).maybeSingle());
+      if (cvErr) return json({ error: 'lettura della conversazione fallita, riprova: ' + cvErr.message }, 503);
+      if (!cv) return json({ error: 'conversazione di Assistenza inesistente', bloccante: true }, 404);
+      emailNeg = email || String(cv.customer_email ?? '').trim().toLowerCase();
+    }
+    const blocchiN = bloccantiNegozio({ nome, citta, tipo, email: emailNeg, ig, website });
+    if (blocchiN.length) return json({ error: 'Negozio non creato: ' + blocchiN.join('; '), bloccante: true }, 422);
+    const canaleN = String(body.canale || 'altro');
+    if (action === 'nuovo_negozio' && !['instagram_dm', 'telefono', 'visita', 'email', 'altro'].includes(canaleN)) return json({ error: 'canale non valido' }, 422);
+    const dup = await duplicatiNegozio(sb, { nome, citta, email: emailNeg, ig, website });
+    if ('errore' in dup) return json({ error: dup.errore }, 503);
+    if (dup.duplicati.length && body.forza !== true) return json({ error: 'Esiste gia\' un negozio che puo\' essere lo stesso: controlla prima di crearne uno nuovo', bloccante: true, duplicati: dup.duplicati }, 409);
+    const { data: nuovo, error: nErr } = await sb.from('lead_accounts').insert({
+      nome, citta: citta || null, tipo, paese: 'IT', website: website || null, ig_handle: igPulito(ig) || null, telefono: telefono || null,
+      email_generica: emailNeg || null, fonte_seed: action === 'inbound_crea' ? 'cs_inbound' : `manuale:${canaleN}`, stato_ricerca: 'seed',
+      chi, owner_outreach: chi, owner_note: String(body.nota || '').trim().slice(0, 500) || null,
+    }).select('id').single();
+    if (nErr) return json({ error: nErr.code === '23505' ? 'esiste gia\' un negozio con questo nome e citta\' (o con questo Instagram)' : 'creazione fallita: ' + nErr.message, bloccante: nErr.code === '23505' }, nErr.code === '23505' ? 409 : 500);
+    if (action === 'inbound_crea') {
+      const r = await portaConversazione(sb, { convId, accountId: nuovo.id, esito: 'creato', chi });
+      if ('errore' in r) return json({ error: `negozio creato, ma i messaggi non sono stati portati: ${r.errore}. Ricollegali dalla Coda.`, account_id: nuovo.id }, r.status);
+      return json({ ok: true, account_id: nuovo.id, tocchi: r.tocchi, contatto: r.contatto });
+    }
+    // nuovo_negozio: contatto e primo tocco in entrata (ci ha cercato lui: Instagram, telefono, visita, fiera)
+    if (emailNeg || telefono) {
+      const { error } = await sb.from('lead_contacts').insert({ account_id: nuovo.id, email: emailNeg || null, telefono: telefono || null, nome: String(body.referente || '').trim().slice(0, 80) || null, fonte: `inserito a mano (${canaleN}), ${oggiRoma()}` });
+      if (error && error.code !== '23505') return json({ error: 'negozio creato, ma il contatto non e\' stato salvato: ' + error.message, account_id: nuovo.id }, 500);
+    }
+    const etichetta: Record<string, string> = { instagram_dm: 'Instagram', telefono: 'telefono', visita: 'visita', email: 'email', altro: 'altro (fiera, passaparola)' };
+    const { error: tErr } = await sb.from('lead_touches').insert({
+      account_id: nuovo.id, canale: canaleN, direzione: 'in', subject: `Primo contatto: ${etichetta[canaleN]}`,
+      body_clean: jsonSafe(String(body.nota || '').trim().slice(0, 4000)) || null, stage_prima: 'da_contattare', chi, ...campiRisposta(null, 'da_contattare', oggiRoma()),
+    });
+    if (tErr) return json({ error: 'negozio creato, ma il primo contatto non e\' stato registrato: ' + tErr.message, account_id: nuovo.id }, 500);
+    return json({ ok: true, account_id: nuovo.id });
   }
 
   // ----------------------------------------------------------------------------------- cerca_inviate

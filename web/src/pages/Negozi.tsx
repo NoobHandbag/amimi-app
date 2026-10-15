@@ -193,7 +193,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
       {onBack && <button className="back" onClick={onBack} type="button">← Home</button>}
       {nav}
       {err && <div className="card err">Errore: {err}</div>}
-      {!orows ? <p className="muted center">Carico la pipeline…</p> : route.view === 'coda' ? <OutreachCoda rows={orows} onOpen={(id) => goRoute({ view: 'oscheda', id })} /> : route.view === 'sequenze' ? <OutreachSequenze sequences={sequences} settings={settings} /> : route.view === 'oscheda' ? <p className="muted">Negozio non in pipeline.</p> : <OutreachBoard rows={orows} urls={urls} onOpen={(id) => goRoute({ view: 'oscheda', id })} />}
+      {!orows ? <p className="muted center">Carico la pipeline…</p> : route.view === 'coda' ? <OutreachCoda rows={orows} onOpen={(id) => goRoute({ view: 'oscheda', id })} who={who} onChanged={load} aiOn={settings.lead_outreach_ai_enabled === 'true'} /> : route.view === 'sequenze' ? <OutreachSequenze sequences={sequences} settings={settings} /> : route.view === 'oscheda' ? <p className="muted">Negozio non in pipeline.</p> : <OutreachBoard rows={orows} urls={urls} onOpen={(id) => goRoute({ view: 'oscheda', id })} />}
     </div>
   );
 

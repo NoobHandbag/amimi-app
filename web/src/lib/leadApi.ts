@@ -243,9 +243,10 @@ async function callOutreach(payload: Record<string, unknown>): Promise<Record<st
   const r = await fetch(LEAD_OUTREACH_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(payload) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) {
-    const e = new Error(j.error || 'Errore ' + r.status) as Error & { bloccante?: boolean; incerto?: boolean };
+    const e = new Error(j.error || 'Errore ' + r.status) as Error & { bloccante?: boolean; incerto?: boolean; dati?: Record<string, unknown> };
     if (j.bloccante === true) e.bloccante = true;
     if (j.incerto === true) e.incerto = true;   // rete giu' durante l'invio: la stessa chiave non deve ripartire
+    e.dati = j;   // v13: un 409 di "negozio gia' esistente" porta i candidati (duplicati)
     throw e;
   }
   return j;
@@ -295,8 +296,40 @@ export async function scartaBozza(p: { draft_id: string; chi: string }): Promise
 export async function fetchLeadTodo(): Promise<number> {
   const { data } = await csClient.auth.getSession();
   if (!data.session) return 0;
-  const { count, error } = await csClient.from('v_lead_outreach').select('id', { count: 'exact', head: true }).or('scaduta.eq.true,da_gestire.eq.true,bozza_auto_tocco.not.is.null');
-  return error ? 0 : count ?? 0;
+  const [{ count, error }, { count: nIn, error: inErr }, { data: flag }] = await Promise.all([
+    csClient.from('v_lead_outreach').select('id', { count: 'exact', head: true }).or('scaduta.eq.true,da_gestire.eq.true,bozza_auto_tocco.not.is.null'),
+    csClient.from('v_lead_inbound').select('conv_id', { count: 'exact', head: true }),   // v13: messaggi da collegare
+    csClient.from('v_lead_settings').select('value').eq('key', 'lead_outreach_ai_enabled').maybeSingle(),
+  ]);
+  // i messaggi da collegare si vedono in Coda solo col flag acceso: senza, il badge non li conta (Gate 2, 15-10)
+  const inbound = (flag as { value?: string } | null)?.value === 'true' && !inErr ? nIn ?? 0 : 0;
+  return (error ? 0 : count ?? 0) + inbound;
+}
+
+// v13 (blocco C, migr 0158): messaggi di Assistenza che possono essere un negozio, non ancora nel cruscotto. Si leggono
+// dalla vista (RLS @amimi.it); collegare, creare e scartare passano dalla edge, che scrive solo tabelle lead_*.
+export type NegozioCandidato = { id: string; nome: string; citta: string | null; lead_stage?: string; via: string };
+export type LeadInbound = {
+  conv_id: string; customer_email: string | null; customer_name: string | null; subject: string | null; snippet: string | null; last_msg_at: string;
+  gmail_thread_id: string | null; da_modulo: boolean; a_wholesale: boolean; n_in: number; candidati: NegozioCandidato[];
+};
+export async function fetchInbound(): Promise<LeadInbound[]> {
+  const { data, error } = await csClient.from('v_lead_inbound').select('*').order('last_msg_at', { ascending: false }).limit(100);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LeadInbound[];
+}
+export async function inboundCollega(p: { conv_id: string; account_id: string; chi: string }): Promise<{ tocchi: number }> {
+  return (await callOutreach({ action: 'inbound_collega', ...p })) as unknown as { tocchi: number };
+}
+export async function inboundScarta(p: { conv_id: string; chi: string }): Promise<void> {
+  await callOutreach({ action: 'inbound_scarta', ...p });
+}
+export type DatiNegozio = { nome: string; citta: string; tipo: string; email?: string; telefono?: string; ig_handle?: string; website?: string; referente?: string; nota?: string; forza?: boolean };
+export async function inboundCrea(p: DatiNegozio & { conv_id: string; chi: string }): Promise<{ account_id: string }> {
+  return (await callOutreach({ action: 'inbound_crea', ...p })) as unknown as { account_id: string };
+}
+export async function nuovoNegozio(p: DatiNegozio & { canale: string; chi: string }): Promise<{ account_id: string }> {
+  return (await callOutreach({ action: 'nuovo_negozio', ...p })) as unknown as { account_id: string };
 }
 // stessi segnaposto che la edge blocca: la UI li mostra PRIMA di premere Invia
 export const segnaposto = (s: string): string[] => [...s.matchAll(/\[[^\]\n]{1,200}\]|\{\{[^}\n]{1,60}\}\}/g)].map((m) => m[0]);
