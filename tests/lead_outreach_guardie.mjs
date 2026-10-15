@@ -71,7 +71,7 @@ t('31 conto vendita / ordine minimo segnalati', avvisiContenuto('conto vendita')
 t('32 giorno di Roma in estate (CEST): 00:30 a Roma = 22:00Z del giorno prima', inizioGiornoRoma(new Date('2026-09-22T22:30:00Z')) === '2026-09-22T22:00:00.000Z', inizioGiornoRoma(new Date('2026-09-22T22:30:00Z')));
 t('33 giorno di Roma in inverno (CET)', inizioGiornoRoma(new Date('2026-12-10T12:00:00Z')) === '2026-12-09T23:00:00.000Z', inizioGiornoRoma(new Date('2026-12-10T12:00:00Z')));
 t('34 bozza corta misurata PRIMA di firma e opt-out', src.indexOf('grezzo.length < 80') > 0 && src.indexOf('grezzo.length < 80') < src.indexOf('completaTesto(grezzo'));
-t('35 tocco gia\' registrato a mano blocca l\'invio (prima del claim)', src.indexOf(".eq('sequenza_tocco', tocco)") > 0 && src.indexOf(".eq('sequenza_tocco', tocco)") < src.indexOf("update({ stato: 'in_invio'"));
+t('35 tocco gia\' registrato a mano blocca l\'invio (prima del claim)', (() => { const iS = src.search(/\n  \/\/ -+ send\n/); const g = src.indexOf(".eq('sequenza_tocco', tocco)", iS); return iS > 0 && g > 0 && g < src.indexOf("update({ stato: 'in_invio'", iS); })());
 t('36 un tocco email in uscita per negozio anche a DB', /unique index[^;]*lead_touches \(account_id, sequenza_tocco\)[^;]*direzione = 'out'/is.test(mig));
 t('37 opt-out anche per INDIRIZZO, su tutti i negozi', /ilike\('email', to\.replace/.test(src));
 t('38 rete giu\' durante l\'invio = esito incerto, bozza resta bloccata', /incerto: true/.test(src));

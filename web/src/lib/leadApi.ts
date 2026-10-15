@@ -115,6 +115,47 @@ export async function fetchDossier(): Promise<LeadDossier[]> {
   }
 }
 
+// v15 (15-10, "ci mette 5-10 secondi ogni volta"): la LISTA legge la vista snella v_lead_lista (migr 0160), circa 4 MB
+// invece dei 23,5 di v_lead_dossier letti in 8 pagine in serie. La prima pagina porta il conteggio, le altre partono in
+// parallelo. Regola 20b: se le righe lette non sono quante dice il conteggio, errore (mai una lista monca in silenzio).
+// Il dossier completo si legge per id quando si apre la scheda (fetchDossierUno).
+export type LeadLista = Pick<LeadDossier, 'id' | 'nome' | 'tipo' | 'citta' | 'paese' | 'website' | 'ig_handle' | 'telefono' | 'email_generica' | 'stato_ricerca' | 'lead_stage' | 'tier' | 'gancio' | 'owner_note' | 'verdetto' | 'verdetto_motivo' | 'totale' | 'tier_proposto' | 'esclusione' | 'motivazione' | 'n_evidenze'> & {
+  ig_metrics: { follower?: number | null } | null;
+  maps: { rating?: number | null; recensioni?: number | null; telefono?: string | null } | null;
+  brands_carried: { peer_match?: string[] | null; vendors?: string[] | null } | null;
+  price_band: { borse?: { n: number; min: number; mediana: number; max: number } | null } | null;
+  img: string | null;   // una sola immagine per scheda: miniatura del feed, poi Instagram, sito mobile, sito desktop
+};
+const ordinaLista = <T,>(q: T) => (q as unknown as { order: (c: string, o?: Record<string, boolean>) => T }).order('totale', { ascending: false, nullsFirst: false }) as T;
+export async function fetchLista(): Promise<LeadLista[]> {
+  const base = () => ordinaLista(csClient.from('v_lead_lista').select('*')).order('nome').order('id');
+  const { data: prima, error, count } = await ordinaLista(csClient.from('v_lead_lista').select('*', { count: 'exact' })).order('nome').order('id').range(0, PAGE - 1);
+  if (error) throw new Error(error.message);
+  const tot = count ?? (prima ?? []).length;
+  if ((prima ?? []).length < Math.min(PAGE, tot)) throw new Error('lista dei negozi incompleta (il server ha tagliato la prima pagina): riprova');
+  const pagine: number[] = [];
+  for (let from = PAGE; from < tot; from += PAGE) pagine.push(from);
+  const resto = await Promise.all(pagine.map(async (from) => {
+    const { data, error: e } = await base().range(from, from + PAGE - 1);
+    if (e) throw new Error(e.message);
+    return (data ?? []) as LeadLista[];
+  }));
+  const visti = new Set<string>();
+  const out = [...((prima ?? []) as LeadLista[]), ...resto.flat()].filter((r) => (visti.has(r.id) ? false : (visti.add(r.id), true)));
+  if (out.length < tot) throw new Error(`lista dei negozi incompleta (${out.length} su ${tot}): riprova`);
+  return out;
+}
+export async function fetchListaUno(id: string): Promise<LeadLista | null> {
+  const { data, error } = await csClient.from('v_lead_lista').select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data ?? null) as LeadLista | null;
+}
+export async function fetchDossierUno(id: string): Promise<LeadDossier | null> {
+  const { data, error } = await csClient.from('v_lead_dossier').select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data ?? null) as LeadDossier | null;
+}
+
 export async function fetchEvidence(accountId: string): Promise<LeadEvidence[]> {
   const { data, error } = await csClient.from('lead_evidence').select('id,tipo,payload,asset_path,raccolto_da,note,captured_at').eq('account_id', accountId).order('captured_at', { ascending: false });
   if (error) throw new Error(error.message);
@@ -227,7 +268,8 @@ export type LeadDraft = {
   id: string; account_id: string; lingua: string | null; oggetto: string | null; testo: string; to_email: string | null;
   sequenza_tocco: number | null; stato: 'proposta' | 'approvata' | 'in_invio' | 'inviata' | 'errore' | 'scartata';
   chi: string | null; sent_by: string | null; sent_at: string | null; errore: string | null; created_at: string;
-  fatti_usati: { fatti_usati?: string[]; avvisi?: string[] } | null;
+  // v15: una proposta di risposta (sequenza_tocco null, stato 'proposta') porta tipo 'risposta' e le sue alternative
+  fatti_usati: { fatti_usati?: string[]; avvisi?: string[]; tipo?: 'risposta'; alternative?: { titolo: string; testo: string; non_grounded?: string[]; troncata?: boolean; avvisi?: string[]; segnaposto?: string[] }[] } | null;
   origine: 'manuale' | 'auto';
 };
 export async function fetchDrafts(accountId: string): Promise<LeadDraft[]> {
@@ -283,8 +325,22 @@ export async function sbloccaBozza(p: { draft_id: string; chi: string }): Promis
 // v12 (blocco B): risposta scritta dalla persona a un negozio che ci ha scritto. La edge decide il thread, non conta il
 // tetto e non chiede la riga di opt-out; send_key nuovo per ogni risposta (lo stesso solo per ripetere la stessa richiesta).
 export type LeadRispostaResult = { to: string; from?: string; oggetto: string; nel_thread?: boolean; already_sent?: boolean; warnings?: string[] };
-export async function inviaRisposta(p: { account_id: string; to: string; oggetto: string; testo: string; send_key: string; chi: string }): Promise<LeadRispostaResult> {
+// v15: `draft_id` facoltativo = la proposta AI da cui parte il testo (la edge la porta in invio con un UPDATE); fa fede il box
+export async function inviaRisposta(p: { account_id: string; to: string; oggetto: string; testo: string; send_key: string; chi: string; draft_id?: string | null }): Promise<LeadRispostaResult> {
   return (await callOutreach({ action: 'rispondi', ...p })) as unknown as LeadRispostaResult;
+}
+// v15 (edge lead-outreach v15, flag lead_risposta_ai_enabled): la proposta di risposta dalla CONVERSAZIONE col negozio, come
+// in Assistenza: 1-3 alternative per esito, con titolo; `non_grounded` = numeri, date e link che NON stanno nei fatti
+// (linter della edge); `segnaposto` = [DA VERIFICARE] rimasti, che bloccano l'invio. Generare non spedisce nulla.
+export type Alternativa = { titolo: string; testo: string; non_grounded: string[]; troncata: boolean; avvisi: string[]; segnaposto: string[] };
+export type PropostaRisposta = { draft_id: string; alternative: Alternativa[]; lingua: 'it' | 'en'; oggetto: string; to: string; ultimo_at: string | null };
+export async function proponiRisposta(p: { account_id: string; chi: string }): Promise<PropostaRisposta> {
+  return (await callOutreach({ action: 'proponi_risposta', ...p })) as unknown as PropostaRisposta;
+}
+// v15: il testo del box riscritto con l'istruzione della persona ("piu' breve", "proponi martedi'"); vale anche per la sequenza
+// a freddo (modo 'sequenza': la riga di opt-out resta). Non scrive nulla: il testo torna nel box e la persona decide.
+export async function rifinisciTesto(p: { account_id: string; testo: string; istruzione: string; modo: 'risposta' | 'sequenza'; lingua?: 'it' | 'en'; chi: string }): Promise<Alternativa> {
+  return (await callOutreach({ action: 'rifinisci', ...p })) as unknown as Alternativa;
 }
 // v11 (blocco A3): le email di Posta inviata di info@ che si possono collegare a un tocco registrato a mano. La scelta
 // e' sempre della persona: l'edge propone, aggancia scrive (solo le due colonne Gmail di quel tocco).
