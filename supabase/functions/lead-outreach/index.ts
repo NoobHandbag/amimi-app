@@ -1377,6 +1377,13 @@ Deno.serve(async (req) => {
     // i numeri del testo attuale li ha scritti o tenuti la persona: per il linter valgono come fatti
     const corpus = factKeys([JSON.stringify(negozio), ...knowledge.map((k) => `${k.titolo} ${k.contenuto}`), linesheet, firmaP, th.corpus, action === 'rifinisci' ? testoAttuale : ''].join('\n'));
     const prompt = action === 'rifinisci' ? promptRifinisci({ ...fatti, modo, testo: testoAttuale, istruzione }) : promptRisposta({ ...fatti, ultimoNegozio: th.ultimoNegozio });
+    // tetto per negozio e giorno (Regola 20c), PRIMA della chiamata al modello: oltre, si scrive a mano o si riprende una
+    // proposta fra le bozze. Solo per la proposta: la rifinitura non scrive righe.
+    if (action === 'proponi_risposta') {
+      const { count: nOggi, error: oggiErr } = await retryOnce(() => sb.from('lead_drafts').select('id', { count: 'exact', head: true }).eq('account_id', accountId).is('sequenza_tocco', null).eq('fatti_usati->>tipo', 'risposta').gte('created_at', inizioGiornoRoma()));
+      if (oggiErr) return json({ error: 'conteggio delle proposte di oggi fallito, riprova: ' + oggiErr.message }, 503);
+      if ((nOggi ?? 0) >= MAX_PROPOSTE_GIORNO) return json({ error: `gia' ${nOggi} proposte oggi per questo negozio (tetto ${MAX_PROPOSTE_GIORNO}): scrivi la risposta a mano, o riprendine una fra le bozze`, bloccante: true }, 429);
+    }
     let alt: { titolo: string; testo: string }[] = [];
     let finish = '', tokens: number | null = null, errG = '';
     // si riprova UNA volta solo se il modello ha risposto ma con alternative vuote o tagliate; un timeout o un errore del
@@ -1400,22 +1407,18 @@ Deno.serve(async (req) => {
     const bersP = bersaglioRisposta(tocchiL);
     const baseP = String(bersP?.subject ?? '').replace(/^\s*((re|r|fwd?|i)\s*:\s*)+/i, '').trim();
     const oggettoP = pulisciOggetto(bersP ? `Re: ${baseP || `Amimì Milano per ${d.nome}`}` : `Amimì Milano per ${d.nome}`).slice(0, 200);
-    // tetto per negozio e giorno (Regola 20c): oltre, si scrive a mano o si riprende una proposta fra le bozze
-    const { count: nOggi, error: oggiErr } = await retryOnce(() => sb.from('lead_drafts').select('id', { count: 'exact', head: true }).eq('account_id', accountId).is('sequenza_tocco', null).eq('fatti_usati->>tipo', 'risposta').gte('created_at', inizioGiornoRoma()));
-    if (oggiErr) return json({ error: 'conteggio delle proposte di oggi fallito, riprova: ' + oggiErr.message }, 503);
-    if ((nOggi ?? 0) >= MAX_PROPOSTE_GIORNO) return json({ error: `gia' ${nOggi} proposte oggi per questo negozio (tetto ${MAX_PROPOSTE_GIORNO}): scrivi la risposta a mano, o riprendine una fra le bozze`, bloccante: true }, 429);
-    // una proposta nuova supera quelle ancora aperte dello stesso negozio: niente righe 'proposta' accumulate a ogni click
-    // (Gate 2 v15, C2; Regola 20). Chi aveva aperto la vecchia riceve 409 e rimanda il suo testo senza proposta.
-    const { error: supErr } = await sb.from('lead_drafts').update({ stato: 'scartata', errore: 'superata da una proposta nuova', updated_at: new Date().toISOString() })
-      .eq('account_id', accountId).is('sequenza_tocco', null).eq('stato', 'proposta');
-    if (supErr) return json({ error: 'chiusura delle proposte precedenti fallita: ' + supErr.message }, 500);
     const { data: insP, error: insPErr } = await sb.from('lead_drafts').insert({
       account_id: accountId, touch_in_id: ultimoInT?.id ?? null, lingua, testo: proposte[0].testo, oggetto: oggettoP, to_email: toP || null,
       sequenza_tocco: null, model: MODEL, stato: 'proposta', chi, origine: 'manuale',
       fatti_usati: { tipo: 'risposta', alternative: proposte, finish, tokens, fonti: { messaggi: th.righe.length, note_team: knowledge.length, line_sheet: !!linesheet } },
     }).select('id').single();
     if (insPErr) return json({ error: 'salvataggio della proposta fallito: ' + insPErr.message }, 500);
-    return json({ ok: true, draft_id: insP.id, alternative: proposte, lingua, oggetto: oggettoP, to: toP, ultimo_at: th.ultimoAt || null, finish });
+    // la proposta nuova supera quelle ancora aperte dello stesso negozio, anche quelle in 'errore' (Gmail aveva rifiutato):
+    // niente righe accumulate, e nessuna vecchia rimandabile col testo di allora. DOPO l'insert: se questo fallisse, la
+    // persona terrebbe la proposta di prima. Chi aveva aperto la vecchia riceve 409 proposta_superata e rimanda il suo testo.
+    const { error: supErr } = await sb.from('lead_drafts').update({ stato: 'scartata', errore: 'superata da una proposta nuova', updated_at: new Date().toISOString() })
+      .eq('account_id', accountId).is('sequenza_tocco', null).in('stato', ['proposta', 'errore']).neq('id', insP.id);
+    return json({ ok: true, draft_id: insP.id, alternative: proposte, lingua, oggetto: oggettoP, to: toP, ultimo_at: th.ultimoAt || null, finish, ...(supErr ? { avviso: 'le proposte precedenti non sono state chiuse: ' + supErr.message } : {}) });
   }
 
   // ----------------------------------------------------------------------------------------- scarta
@@ -1536,7 +1539,7 @@ Deno.serve(async (req) => {
     const draftIdR = UUID_RE.test(String(body.draft_id || '')) ? String(body.draft_id) : '';
     let insR: { id: string } | null = null;
     if (draftIdR) {
-      const { data: upP, error: upPErr } = await sb.from('lead_drafts').update({ stato: 'in_invio', send_key: sendKeyR, testo: testoR, oggetto: oggettoR, to_email: toR, touch_in_id: ultimoIn, sent_by: chi, updated_at: nowR })
+      const { data: upP, error: upPErr } = await sb.from('lead_drafts').update({ stato: 'in_invio', send_key: sendKeyR, testo: testoR, oggetto: oggettoR, to_email: toR, touch_in_id: ultimoIn, sent_by: chi, errore: null, updated_at: nowR })
         .eq('id', draftIdR).eq('account_id', accountId).is('sequenza_tocco', null).in('stato', ['proposta', 'errore']).select('id');
       if (upPErr) {
         const dupP = upPErr.code === '23505';
@@ -1617,7 +1620,7 @@ Deno.serve(async (req) => {
     if (tErrR) warningsR.push('email partita, ma il tocco non e\' stato registrato: registralo a mano. ' + tErrR.message);
     // v15: le altre proposte di risposta di questo negozio sono superate dalla risposta partita (escono da "Riprendi")
     const { error: scErrR } = await sb.from('lead_drafts').update({ stato: 'scartata', errore: 'superata dalla risposta inviata', updated_at: new Date().toISOString() })
-      .eq('account_id', accountId).is('sequenza_tocco', null).eq('stato', 'proposta').neq('id', idR);
+      .eq('account_id', accountId).is('sequenza_tocco', null).in('stato', ['proposta', 'errore']).neq('id', idR);
     if (scErrR) warningsR.push('le proposte di risposta vecchie non sono state chiuse: ' + scErrR.message);
     return json({ ok: true, to: toR, from: mittR.from, oggetto: oggettoR, nel_thread: !!bers, gmail_message_id: msgIdR, ...(warningsR.length ? { warnings: warningsR } : {}) });
   }

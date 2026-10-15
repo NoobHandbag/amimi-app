@@ -69,7 +69,9 @@ export function caricaSequenzeSettings(forza = false): Promise<{ sequences: Lead
 // tutto. Torna la lista aggiornata, o null se la lista non e' ancora in cache (allora la riga arrivera' col primo giro).
 export async function aggiornaRigaLista(id: string): Promise<LeadLista[] | null> {
   const riga = await fetchListaUno(id);
-  // una lettura della lista ancora in volo e' partita prima di questa scrittura: non deve sovrascrivere la riga nuova
+  // cache vuota e lista d'ingresso ancora in volo (link diretto e scrittura subito): si aspetta che arrivi e poi si
+  // corregge la sua riga. Altrimenti una lista in volo partita PRIMA di questa scrittura non deve sovrascrivere la riga nuova.
+  if (!cache.lista && slotLista.p) await slotLista.p.catch(() => undefined);
   slotLista.at = Date.now();
   if (!cache.lista) return null;
   const i = cache.lista.findIndex((r) => r.id === id);
