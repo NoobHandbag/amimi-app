@@ -198,6 +198,20 @@ function finestraDelGiro<T>(lista: T[], giro: number, max: number): T[] {
   const ini = (giro * max) % lista.length;
   return [...lista.slice(ini), ...lista.slice(0, ini)].slice(0, max);
 }
+// Gate Fable (verifica, 15-10): finestre a tasselli per i negozi. Un offset (giro*max) % tot che non avvolge lasciava fuori
+// i primi negozi per id per giorni (con 301 negozi il primo entrava una volta ogni 301 giri); cosi' ognuno entra ogni nFin giri
+function tasselloDelGiro(tot: number, giro: number, max: number): { off: number; nFin: number } {
+  const nFin = Math.max(1, Math.ceil(tot / max));
+  return { off: (giro % nFin) * max, nFin };
+}
+// Gate Fable (verifica, 15-10): il tipo di un messaggio letto da Gmail. Il bounce vince sempre (un DSN puo' portare
+// Precedence: bulk); la posta di massa e' "automatica" solo se non risponde a nulla: una newsletter non ha In-Reply-To,
+// una risposta vera passata da una lista o da un helpdesk del negozio si'
+function tipoRisposta(classe: string | null, bulk: boolean, inReplyTo: string, st: string | null): string | null {
+  if (classe === 'bounce') return 'bounce';
+  if (bulk && !inReplyTo.trim()) return 'risposta_automatica';
+  return tipoEffettivo(classe, st);
+}
 // v11: i campi del tocco 'in' che dipendono da classificazione e stadio, uguali per ogni via d'ingresso (thread o mittente)
 function campiRisposta(tipo: string | null, st: string | null, oggi: string): Record<string, string | null> {
   if (tipo === 'risposta_automatica') return { stage_dopo: st };   // non ferma la sequenza, non tocca la scadenza
@@ -767,9 +781,9 @@ async function cercaPerMittente(sb: any, auth: { headers: Record<string, string>
   const filtro = (q: any) => q.or('lead_stage.neq.da_contattare,fonte_seed.eq.cs_inbound').not('lead_stage', 'in', '(opt_out,chiuso_no)');
   const { count: nNeg, error: nErr } = await retryOnce(() => filtro(sb.from('lead_accounts').select('id', { count: 'exact', head: true })));
   if (nErr) throw new Error('conteggio negozi in lavorazione fallito: ' + nErr.message);
-  const totNeg = Number(nNeg ?? 0);
-  if (totNeg > MAX_NEGOZI_MITT) esito.mittenti_troncati = true;
-  const off = totNeg > MAX_NEGOZI_MITT ? (giro * MAX_NEGOZI_MITT) % totNeg : 0;
+  if (nNeg == null) throw new Error('conteggio negozi in lavorazione assente');
+  const { off, nFin } = tasselloDelGiro(nNeg, giro, MAX_NEGOZI_MITT);
+  if (nFin > 1) esito.mittenti_troncati = true;
   const { data: accs, error: aErr } = await retryOnce(() => filtro(sb.from('lead_accounts').select('id,lead_stage,email_generica')).order('id').range(off, off + MAX_NEGOZI_MITT - 1));
   if (aErr) throw new Error('lettura negozi in lavorazione fallita: ' + aErr.message);
   const lista = ((accs ?? []) as { id: string; lead_stage: string; email_generica: string | null }[]);
@@ -793,7 +807,9 @@ async function cercaPerMittente(sb: any, auth: { headers: Record<string, string>
   }
   const tutti = [...mappa.keys()].sort();
   if (tutti.length > MAX_INDIRIZZI) esito.mittenti_troncati = true;
-  const indirizzi = finestraDelGiro(tutti, giro, MAX_INDIRIZZI);
+  // il tassello dei negozi torna ogni nFin giri: la finestra degli indirizzi avanza una volta per ritorno (con giro intero
+  // due cicli possono coincidere: nFin 2 e 400 indirizzi darebbero sempre la stessa finestra)
+  const indirizzi = finestraDelGiro(tutti, Math.floor(giro / nFin), MAX_INDIRIZZI);
   // id messaggio -> thread e negozi del blocco di indirizzi che l'ha trovato (se il messaggio non si legge, sono loro i
   // negozi da tenere sospesi: niente follow-up a chi forse ci ha appena scritto)
   const trovati = new Map<string, { threadId: string; negozi: string[] }>();
@@ -941,9 +957,8 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
       const from = mittenteVero(hdr('from'), hdr('x-original-from'), hdr('reply-to'));
       // un messaggio da @amimi.it nel thread (collega in copia, inoltro interno) non e' una risposta del negozio
       if (indirizzoDi(from).endsWith('@amimi.it')) continue;
-      tipo = eBulk({ listUnsubscribe: hdr('list-unsubscribe'), listId: hdr('list-id'), precedence: hdr('precedence') })
-        ? 'risposta_automatica'
-        : tipoEffettivo(classificaInbound({ from, subject: hdr('subject'), autoSubmitted: hdr('auto-submitted'), testo }), st);
+      tipo = tipoRisposta(classificaInbound({ from, subject: hdr('subject'), autoSubmitted: hdr('auto-submitted'), testo }),
+        eBulk({ listUnsubscribe: hdr('list-unsubscribe'), listId: hdr('list-id'), precedence: hdr('precedence') }), hdr('in-reply-to'), st);
       const pulito = tagliaCitazione(testo) || testo.trim();
       base = { ...comuni, canale: 'email', gmail_thread_id: c.threadId, esito: tipo,
         subject: jsonSafe(hdr('subject').slice(0, 300)) || null, body_clean: jsonSafe(`${indirizzoDi(from)}\n${pulito}`.slice(0, 4000)) };
@@ -1139,6 +1154,7 @@ Deno.serve(async (req) => {
   // con la stessa chiave trova la riga e non rimanda. Esito incerto (rete giu' durante l'invio) = la riga resta in invio e
   // si sblocca a mano dopo aver guardato Posta inviata, come per l'invio della sequenza.
   if (action === 'rispondi') {
+    const INVIO_INCERTO_R = 'una risposta a questo negozio e\' ancora in invio (esito incerto): controlla "Posta inviata" di info@amimi.it; se non c\'e\', sbloccala da "Bozze di questo negozio" (dopo 10 minuti) e riprova';
     const accountId = String(body.account_id || '');
     const sendKeyR = String(body.send_key || '');
     if (!UUID_RE.test(accountId) || !UUID_RE.test(sendKeyR)) return json({ error: 'account_id o send_key non validi' }, 422);
@@ -1152,10 +1168,17 @@ Deno.serve(async (req) => {
     if (giaErr) return json({ error: 'lettura bozza fallita, riprova: ' + giaErr.message }, 503);
     if (gia) {
       if (gia.stato === 'inviata' && gia.account_id === accountId) return json({ ok: true, already_sent: true, to: toR, gmail_message_id: gia.gmail_message_id });
-      // Gate Fable (C1): una risposta rifiutata da Gmail non e' "in invio": si riprova, e la scheda usa una chiave nuova
-      if (gia.stato === 'errore') return json({ error: 'questa risposta era stata rifiutata da Gmail: riprova', bloccante: true }, 409);
-      return json({ error: 'questa risposta e\' gia\' in invio: ricarica la scheda', bloccante: true }, 409);
+      // Gate Fable (C1): una risposta rifiutata da Gmail (o sbloccata) non e' "in invio": si riprova con una chiave nuova
+      if (gia.stato === 'errore') return json({ error: 'questa risposta non e\' partita (rifiutata da Gmail o sbloccata): riprova', bloccante: true }, 409);
+      // Gate Fable (verifica, A): ancora in invio = esito incerto, la scheda tiene la chiave (prima ne prendeva una nuova
+      // e il click dopo rimandava l'email)
+      return json({ error: INVIO_INCERTO_R, bloccante: true, incerto: true }, 409);
     }
+    // ... e una risposta a questo negozio in invio blocca anche una chiave nuova (scheda ricaricata): prima si guarda
+    // Posta inviata e la si sblocca, poi si riprova
+    const { count: nInvR, error: invErr } = await retryOnce(() => sb.from('lead_drafts').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('stato', 'in_invio').is('sequenza_tocco', null));
+    if (invErr) return json({ error: 'lettura delle risposte in invio fallita, riprova: ' + invErr.message }, 503);
+    if ((nInvR ?? 0) > 0) return json({ error: INVIO_INCERTO_R, bloccante: true, incerto: true }, 409);
     const [{ data: accR, error: accErr }, { data: tocchiR, error: tocErr }, { count: nOptR, error: optErr }, { count: nOptToR, error: optToErr }] = await Promise.all([
       retryOnce(() => sb.from('lead_accounts').select('id,lead_stage').eq('id', accountId).maybeSingle()),
       retryOnce(() => sb.from('lead_touches').select('id,direzione,canale,esito,at,gmail_message_id,gmail_thread_id,subject,body_clean').eq('account_id', accountId).order('at', { ascending: false }).limit(200)),
@@ -1209,7 +1232,7 @@ Deno.serve(async (req) => {
     }).select('id').single();
     if (insErr) {
       const dup = insErr.code === '23505';
-      return json({ error: dup ? 'questa risposta e\' gia\' in invio: ricarica la scheda' : 'salvataggio della risposta fallito: ' + insErr.message, bloccante: dup }, dup ? 409 : 500);
+      return json(dup ? { error: INVIO_INCERTO_R, bloccante: true, incerto: true } : { error: 'salvataggio della risposta fallito: ' + insErr.message }, dup ? 409 : 500);
     }
     const mimeR = [
       `From: ${encHdr('Amimì Milano')} <${mittR.from}>`,
