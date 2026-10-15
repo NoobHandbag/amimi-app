@@ -178,10 +178,17 @@ function campiRisposta(tipo: string | null, st: string | null, oggi: string): Re
 // indirizzi dei negozi gia' in lavorazione. L'indirizzo entra nella query solo se e' un'email valida (niente spazi,
 // virgolette o parentesi: non puo' cambiare la query).
 const INDIRIZZO_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
-function queryMittenti(indirizzi: string[], giorni: number): string {
+// Due query per blocco di indirizzi (Gate 2 del 15-10): le email DAL negozio, e le sole notifiche del modulo che portano
+// il suo indirizzo. Una ricerca a testo libero sull'indirizzo pescherebbe anche ordini e altre notifiche: mai attribuite,
+// verrebbero rilette a ogni giro per tre giorni e consumerebbero il tetto dei messaggi letti.
+function queryMittenti(indirizzi: string[], giorni: number): string[] {
   const ok = indirizzi.filter((a) => INDIRIZZO_RE.test(a));
-  // from: per l'email diretta; l'indirizzo fra virgolette per le notifiche del modulo, che lo portano nel corpo e nel Reply-To
-  return `newer_than:${giorni}d -in:sent -in:drafts {${ok.map((a) => `from:${a} "${a}"`).join(' ')}}`;
+  if (!ok.length) return [];
+  const base = `newer_than:${giorni}d -in:sent -in:drafts`;
+  return [
+    `${base} {${ok.map((a) => `from:${a}`).join(' ')}}`,
+    `${base} from:mailer@shopify.com {subject:"nuovo messaggio cliente" subject:"new customer message"} {${ok.map((a) => `"${a}"`).join(' ')}}`,
+  ];
 }
 // a quale negozio appartiene un messaggio trovato dalla ricerca. Il modulo del sito arriva da mailer@shopify.com con il
 // Reply-To del cliente e l'oggetto "Nuovo messaggio cliente" / "New customer message": e' l'unica notifica Shopify accettata.
@@ -555,7 +562,7 @@ type Cand = { id: string; threadId: string; accountId: string; at: number; via: 
 // v11 (blocco A2): email e moduli dei negozi gia' in lavorazione (stadio diverso da da_contattare, o entrati da un inbound)
 // arrivati FUORI dai thread che il giro conosce. Aggiunge i candidati a `cand`; la scrittura e' quella comune.
 // deno-lint-ignore no-explicit-any
-async function cercaPerMittente(sb: any, auth: { headers: Record<string, string> }, t0: number, esito: Record<string, number | boolean | string>, stage: Map<string, string>, cand: Map<string, Cand>): Promise<void> {
+async function cercaPerMittente(sb: any, auth: { headers: Record<string, string> }, t0: number, esito: Record<string, number | boolean | string>, stage: Map<string, string>, cand: Map<string, Cand>, sospesi: Set<string>): Promise<void> {
   const { data: accs, error: aErr } = await retryOnce(() => sb.from('lead_accounts').select('id,lead_stage,email_generica')
     .or('lead_stage.neq.da_contattare,fonte_seed.eq.cs_inbound').order('updated_at', { ascending: false }).limit(MAX_NEGOZI_MITT + 1));
   if (aErr) throw new Error('lettura negozi in lavorazione fallita: ' + aErr.message);
@@ -572,8 +579,9 @@ async function cercaPerMittente(sb: any, auth: { headers: Record<string, string>
     mappa.set(a, v);
   };
   for (const a of lista) { if (!stage.has(a.id)) stage.set(a.id, a.lead_stage); aggiungi(a.email_generica, a.id); }
-  for (let i = 0; i < lista.length; i += 100) {
-    const ids = lista.slice(i, i + 100).map((a) => a.id);
+  // 20 negozi per lettura (Gate 2 del 15-10): il fermo a 1.000 righe resta, ma servirebbero 50 contatti per negozio
+  for (let i = 0; i < lista.length; i += 20) {
+    const ids = lista.slice(i, i + 20).map((a) => a.id);
     const { data: cts, error: cErr } = await retryOnce(() => sb.from('lead_contacts').select('account_id,email').in('account_id', ids).not('email', 'is', null).limit(1000));
     if (cErr) throw new Error('lettura contatti fallita: ' + cErr.message);
     if ((cts ?? []).length >= 1000) throw new Error('lettura contatti troncata a 1.000 righe');   // Regola 20b: mai un elenco parziale
@@ -581,15 +589,20 @@ async function cercaPerMittente(sb: any, auth: { headers: Record<string, string>
   }
   const indirizzi = [...mappa.keys()].sort();
   if (indirizzi.length > MAX_INDIRIZZI) esito.mittenti_troncati = true;
-  const trovati = new Map<string, string>();   // id messaggio -> thread
+  // id messaggio -> thread e negozi del blocco di indirizzi che l'ha trovato (se il messaggio non si legge, sono loro i
+  // negozi da tenere sospesi: niente follow-up a chi forse ci ha appena scritto)
+  const trovati = new Map<string, { threadId: string; negozi: string[] }>();
   for (let i = 0; i < Math.min(indirizzi.length, MAX_INDIRIZZI); i += BLOCCO_QUERY) {
     if (Date.now() - t0 > BUDGET_MS) { esito.mittenti_troncati = true; break; }
-    const q = queryMittenti(indirizzi.slice(i, Math.min(i + BLOCCO_QUERY, MAX_INDIRIZZI)), FINESTRA_MITT_GG);
-    const r = await fetch(`${GMAIL}/messages?maxResults=50&q=${encodeURIComponent(q)}`, auth);
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(`Gmail messages.list ${r.status}: ${JSON.stringify(j).slice(0, 160)}`);
-    if ((j as { nextPageToken?: string }).nextPageToken) esito.mittenti_troncati = true;
-    for (const m of ((j as { messages?: { id: string; threadId: string }[] }).messages ?? [])) if (!cand.has(m.id)) trovati.set(m.id, m.threadId);
+    const blocco = indirizzi.slice(i, Math.min(i + BLOCCO_QUERY, MAX_INDIRIZZI));
+    const negoziBlocco = [...new Set(blocco.flatMap((a) => mappa.get(a) ?? []))];
+    for (const q of queryMittenti(blocco, FINESTRA_MITT_GG)) {
+      const r = await fetch(`${GMAIL}/messages?maxResults=50&q=${encodeURIComponent(q)}`, auth);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(`Gmail messages.list ${r.status}: ${JSON.stringify(j).slice(0, 160)}`);
+      if ((j as { nextPageToken?: string }).nextPageToken) esito.mittenti_troncati = true;
+      for (const m of ((j as { messages?: { id: string; threadId: string }[] }).messages ?? [])) if (!cand.has(m.id) && !trovati.has(m.id)) trovati.set(m.id, { threadId: m.threadId, negozi: negoziBlocco });
+    }
   }
   if (!trovati.size) return;
   // gia' in lead_touches: si scartano PRIMA di leggerli da Gmail (.in() sui soli id, Regola 20b)
@@ -600,14 +613,15 @@ async function cercaPerMittente(sb: any, auth: { headers: Record<string, string>
     for (const r of (ex ?? []) as { gmail_message_id: string }[]) trovati.delete(r.gmail_message_id);
   }
   let letti = 0;
-  for (const [id, threadId] of trovati) {
-    if (letti >= MAX_MSG_MITT || Date.now() - t0 > BUDGET_MS) { esito.mittenti_troncati = true; break; }
+  for (const [id, { threadId, negozi: negoziBlocco }] of trovati) {
+    // oltre il tetto: i negozi di quel blocco restano sospesi, i messaggi si leggono al prossimo giro
+    if (letti >= MAX_MSG_MITT || Date.now() - t0 > BUDGET_MS) { esito.mittenti_troncati = true; for (const n of negoziBlocco) sospesi.add(n); continue; }
     letti++;
     const r = await fetch(`${GMAIL}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=X-Original-From&metadataHeaders=Reply-To&metadataHeaders=Subject`, auth);
     if (r.status === 404) continue;
     const m = await r.json().catch(() => ({}));
     // un messaggio che non si legge non ferma il giro (niente stallo sullo stesso record): si conta e si riprova al prossimo
-    if (!r.ok) { esito.illeggibili = Number(esito.illeggibili) + 1; if (!esito.primo_errore) esito.primo_errore = `Gmail messages.get ${r.status}`; continue; }
+    if (!r.ok) { esito.illeggibili = Number(esito.illeggibili) + 1; for (const n of negoziBlocco) sospesi.add(n); if (!esito.primo_errore) esito.primo_errore = `Gmail messages.get ${r.status}`; continue; }
     const mm = m as { labelIds?: string[]; internalDate?: string; payload?: { headers?: { name?: string; value?: string }[] } };
     const mh = (n: string) => (mm.payload?.headers ?? []).find((h) => h.name?.toLowerCase() === n)?.value ?? '';
     const a = attribuisciMessaggio({ from: mh('from'), xOriginalFrom: mh('x-original-from'), replyTo: mh('reply-to'), subject: mh('subject'), etichette: mm.labelIds ?? [] }, mappa);
@@ -673,7 +687,7 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
     letti.add(th);
   }
   // 1b) v11 (A2): email e moduli dei negozi in lavorazione arrivati fuori da quei thread
-  await cercaPerMittente(sb, auth, t0, esito, stage, cand);
+  await cercaPerMittente(sb, auth, t0, esito, stage, cand, sospesi);
   if (!cand.size) return fine();
 
   // 2) quali sono gia' in lead_touches: .in() sui soli id da controllare (Regola 20b), a blocchi
@@ -937,12 +951,13 @@ Deno.serve(async (req) => {
     if (usErr) return json({ error: 'lettura tocchi fallita, riprova: ' + usErr.message }, 503);
     const giaUsati = new Set(((usati ?? []) as { gmail_message_id: string }[]).map((r) => r.gmail_message_id));
     const candidati: { gmail_message_id: string; oggetto: string; data: string; a: string }[] = [];
-    for (const id of ids) {
-      if (giaUsati.has(id)) continue;
-      let mr: Response;
-      try { mr = await fetch(`${GMAIL}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject`, authC); }
-      catch (e) { return json({ error: 'Gmail non raggiungibile: riprova. ' + scrub((e as Error).message).slice(0, 120) }, 504); }
-      if (!mr.ok) continue;   // un messaggio illeggibile non e' un candidato; gli altri si mostrano
+    const daLeggere = ids.filter((id) => !giaUsati.has(id));
+    let letture: (Response | null)[];
+    try { letture = await Promise.all(daLeggere.map((id) => fetch(`${GMAIL}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject`, authC))); }
+    catch (e) { return json({ error: 'Gmail non raggiungibile: riprova. ' + scrub((e as Error).message).slice(0, 120) }, 504); }
+    for (const [k, id] of daLeggere.entries()) {
+      const mr = letture[k];
+      if (!mr?.ok) continue;   // un messaggio illeggibile non e' un candidato; gli altri si mostrano
       const mm = await mr.json().catch(() => ({})) as { labelIds?: string[]; internalDate?: string; payload?: { headers?: { name?: string; value?: string }[] } };
       const mh = (n: string) => (mm.payload?.headers ?? []).filter((h) => h.name?.toLowerCase() === n).map((h) => h.value ?? '').join(', ');
       const internal = Number(mm.internalDate ?? NaN);

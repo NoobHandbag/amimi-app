@@ -220,7 +220,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     setCollega({ touchId, stato: 'carico', candidati: [], nota: '' });
     try {
       const res = await cercaInviate(touchId);
-      const nota = res.gia_agganciato ? 'Gia’ collegata.' : res.motivo ?? (res.candidati.length ? '' : 'Nessuna email a questo negozio in Posta inviata di info@ nei 3 giorni attorno alla registrazione. Se e’ partita da un’altra casella, le risposte non si leggono da qui: registrale con “Registra un tocco”.');
+      const nota = res.gia_agganciato ? 'Gia’ collegata.' : res.motivo ?? (res.candidati.length ? '' : 'Nessuna email a questo negozio in Posta inviata di info@ nei 3 giorni attorno alla registrazione. Se l’hai appena mandata, Gmail puo’ metterci qualche secondo: premi “Cerca di nuovo”. Se e’ partita da un’altra casella, le risposte non si leggono da qui: registrale con “Registra un tocco”.');
       setCollega({ touchId, stato: 'pronto', candidati: res.candidati, nota });
     } catch (e) { setCollega({ touchId, stato: 'errore', candidati: [], nota: (e as Error).message }); }
   };
@@ -297,7 +297,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
                     <p className="note">Quale di queste email hai registrato? Scegli quella giusta: le risposte a quella entreranno in timeline.</p>
                     {collega.candidati.map((c) => <div key={c.gmail_message_id} className="row"><div><div className="rt">{c.oggetto || '(senza oggetto)'}</div><div className="rs">{fmtDT(c.data)} · a {c.a}</div></div><button type="button" className="ds-btn" disabled={busy} onClick={() => void collegaA(t.id, c.gmail_message_id)}>Collega</button></div>)}
                   </>}
-                  <button type="button" className="or-link" disabled={busy} onClick={() => setCollega(null)}>Chiudi</button>
+                  {collega.stato !== 'carico' && <button type="button" className="or-link" disabled={busy} onClick={() => void apriCollega(t.id)} style={{ marginRight: 12 }}>Cerca di nuovo</button>}<button type="button" className="or-link" disabled={busy} onClick={() => setCollega(null)}>Chiudi</button>
                 </div>}
               </div>
             ))}</div>
@@ -348,7 +348,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
             {seq?.canale === 'email' && to && <a className="ds-btn" href={gmailUrl} target="_blank" rel="noreferrer">Apri in Gmail</a>}
             <button type="button" className="ds-btn" onClick={copia}>Copia testo</button>
             {/* secondaria (bordo, non pieno): registra un invio fatto altrove, non lo esegue */}
-            <button type="button" className="ds-btn" disabled={busy || !testo} style={{ color: 'var(--positive-700)', borderColor: 'var(--positive-700)' }} onClick={segnaInviata}>{seq?.canale === 'telefono' ? 'Segna come fatta' : 'Segna come inviata'}</button>
+            <button type="button" className="ds-btn" disabled={busy || !testo || !touches} style={{ color: 'var(--positive-700)', borderColor: 'var(--positive-700)' }} onClick={segnaInviata}>{seq?.canale === 'telefono' ? 'Segna come fatta' : 'Segna come inviata'}</button>
           </div>}
           {!to && seq?.canale === 'email' && <p className="note">Nessuna email in anagrafica: "Apri in Gmail" compare quando c&#8217;e&#8217; un destinatario.</p>}
           {/* contenitore sempre montato: una regione live che compare gia' piena spesso non viene letta */}
