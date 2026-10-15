@@ -43,7 +43,7 @@ async function apri(page: Page): Promise<Chiamata[]> {
       return json({ error: 'azione non prevista dalla spec' }, 500);
     }
     if (url.pathname.endsWith('/v_lead_inbound')) return req.method() === 'HEAD' ? route.fulfill({ status: 200, headers: { ...cors, 'content-range': `0-0/${inbound.length}` } }) : json(inbound);
-    if (url.pathname.endsWith('/v_lead_dossier')) return json([]);
+    if (url.pathname.endsWith('/v_lead_lista') || url.pathname.endsWith('/v_lead_dossier')) return json([]);
     if (url.pathname.endsWith('/v_lead_outreach')) return json([]);
     if (url.pathname.endsWith('/v_lead_settings')) return json(SETTINGS);
     return json([]);
@@ -67,7 +67,7 @@ test.describe('schermo largo 1280 px', () => {
 
   test('"Non e\' un negozio" toglie il messaggio dalla lista dopo la conferma', async ({ page }) => {
     const edge = await apri(page);
-    await page.getByRole('button', { name: 'Non e’ un negozio' }).click();
+    await page.getByRole('button', { name: 'Non è un negozio' }).click();
     await expect(page.getByText('Tolto dalla lista')).toBeVisible();
     expect(edge.map((c) => c.action)).toEqual(['inbound_scarta']);
     await expect(page.getByText('Nessun messaggio da collegare.')).toBeVisible();
@@ -78,11 +78,11 @@ test.describe('schermo largo 1280 px', () => {
     await page.getByRole('button', { name: 'Nuovo negozio' }).click();
     const form = page.locator('.or-inbound-form');
     await form.getByLabel('Nome del negozio').fill('Boutique Bella');
-    await form.getByLabel('Citta’').fill('Bergamo');
+    await form.getByLabel('Città').fill('Bergamo');
     await form.getByLabel('Come ci ha contattato').selectOption('telefono');
     await form.getByRole('button', { name: 'Crea negozio' }).click();
-    await expect(form).toContainText('Potrebbe essere gia’ qui');
-    await expect(form).toContainText('stesso nome e citta’');
+    await expect(form).toContainText('Potrebbe essere già qui');
+    await expect(form).toContainText('stesso nome e città');
     expect(edge[0]).toMatchObject({ action: 'nuovo_negozio', nome: 'Boutique Bella', canale: 'telefono', forza: false });
     await form.getByRole('button', { name: 'Crea comunque un negozio nuovo' }).click();
     await expect.poll(() => edge.length).toBe(2);

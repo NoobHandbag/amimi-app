@@ -1,9 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
 
 // Cruscotto B2B, blocco A (lead-outreach v11, 15-10). Origine: il caso Glitter, un'email mandata da Gmail e registrata con
-// "Segna come inviata" restava senza thread, la risposta del negozio non entrava in timeline e la prossima azione diceva
-// "follow-up 2 di 4" a un negozio che ci aveva scritto lui. Come negozi-prova NON tocca Supabase: ogni richiesta verso il
-// progetto, edge compresa, e' intercettata e riceve dati finti; la sessione e' un oggetto finto in localStorage.
+// "Segna come inviata" restava senza thread, la risposta del negozio non entrava in conversazione e la prossima azione
+// diceva "follow-up 2 di 4" a un negozio che ci aveva scritto lui. Dal 15-10 (v15) la scheda e' una colonna con le bolle
+// della conversazione e un compositore solo: "Segna come inviata" sta nel modo "Sequenza a freddo". Come negozi-prova NON
+// tocca Supabase: ogni richiesta verso il progetto, edge compresa, e' intercettata e riceve dati finti; la sessione e' un
+// oggetto finto in localStorage.
 // Lanciare dopo `npm run build`:  npx playwright test negozi-collega
 
 const ID = '00000000-0000-0000-0000-000000000005';
@@ -11,7 +13,7 @@ const T_OUT = '00000000-0000-0000-0000-0000000000b1';
 const NUOVO = '00000000-0000-0000-0000-0000000000b9';
 const base = (o: Record<string, unknown>) => ({
   id: ID, nome: 'Glitter Prova', tipo: 'boutique', citta: 'Ceva', paese: 'IT', stato_ricerca: 'reviewed', totale: 66.7, tier: null, tier_proposto: 'B',
-  verdetto: 'da_contattare', verdetto_motivo: null, gancio: null, n_evidenze: 3, n_contatti: 1, thumb: null, follower: null,
+  verdetto: 'da_contattare', verdetto_motivo: null, gancio: null, n_evidenze: 3, n_contatti: 1, thumb: null, img: null, follower: null,
   prossima_azione_at: null, owner_outreach: 'Benny', owner_note: null, email_generica: 'agnese@negozio.test', email_sito: null, telefono: null, telefono_maps: null,
   website: null, ig_handle: null, n_opt_out: 0, scaduta: false, da_gestire: false, bozza_auto_tocco: null, ultimo_esito: null, ultimo_chi: 'Benny', giorni_da_ultimo: 1,
   ultimo_tocco_at: '2026-10-14T12:54:37Z', ultimo_canale: 'email', ultima_direzione: 'out', ...o,
@@ -32,7 +34,7 @@ const FREDDO = {
 };
 const OPT = 'Se preferisce non ricevere altre email da parte mia, mi risponda "no grazie" e non la contatterò più.';
 const seq = (n: number) => ({ id: `seq-${n}`, codice: 'boutique_it', tocco: n, canale: 'email', oggetto: `Oggetto ${n}`, corpo: `Gentile {{referente}},\ntesto del tocco ${n}.\n{{firma}}\n${OPT}`, giorni_attesa: n === 1 ? 0 : 5, attiva: true, chi_default: 'Benny' });
-const SETTINGS = [{ key: 'lead_outreach_ai_enabled', value: 'true' }, { key: 'lead_enabled', value: 'true' }, { key: 'lead_firma', value: 'Benedetta - Amimì Milano' }, { key: 'lead_linesheet_url', value: 'https://amimi.it/pages/amimi-trade' }, { key: 'lead_tetto_giornaliero', value: '20' }];
+const SETTINGS = [{ key: 'lead_outreach_ai_enabled', value: 'true' }, { key: 'lead_risposta_ai_enabled', value: 'true' }, { key: 'lead_enabled', value: 'true' }, { key: 'lead_firma', value: 'Benedetta - Amimì Milano' }, { key: 'lead_linesheet_url', value: 'https://amimi.it/pages/amimi-trade' }, { key: 'lead_tetto_giornaliero', value: '20' }];
 const CANDIDATO = { gmail_message_id: '1a13a7a717a150bc', oggetto: 'Amimì Milano x Glitter Prova', data: '2026-10-14T12:54:24Z', a: 'agnese@negozio.test' };
 
 type Chiamata = { action?: string; touch_id?: string; gmail_message_id?: string; chi?: string };
@@ -70,14 +72,15 @@ async function apri(page: Page, sc: Scenario): Promise<{ edge: Chiamata[]; inser
       }
       return json(tocchi);
     }
-    if (url.pathname.endsWith('/v_lead_dossier')) return json(Number(url.searchParams.get('offset') ?? 0) > 0 ? [] : [sc.riga]);
+    if (url.pathname.endsWith('/v_lead_lista') || url.pathname.endsWith('/v_lead_dossier')) return json(Number(url.searchParams.get('offset') ?? 0) > 0 ? [] : [sc.riga]);
     if (url.pathname.endsWith('/v_lead_outreach')) return json([sc.riga]);
     if (url.pathname.endsWith('/lead_sequences')) return json([seq(1), seq(2), seq(3), seq(4)]);
     if (url.pathname.endsWith('/v_lead_settings')) return json(SETTINGS);
     return json([]);
   });
   await page.goto(`#negozi/outreach/${ID}`);
-  await expect(page.locator('.or-timeline .or-ev')).toHaveCount(sc.tocchi.length);
+  await expect(page.locator('.or-conv > *')).toHaveCount(sc.tocchi.length);
+  await expect(page.locator('.or-comp .cs-seg .cs-seg-btn.on')).toHaveCount(1);
   return { edge, inserti };
 }
 
@@ -86,7 +89,8 @@ test.describe('schermo largo 1280 px', () => {
 
   test('Collega a Gmail: propone le email di Posta inviata e aggancia SOLO quella scelta con un click', async ({ page }) => {
     const { edge } = await apri(page, SCRITTO);
-    await page.getByRole('button', { name: 'Collega a Gmail' }).click();
+    // il bottone sta nella bolla della nostra email senza thread
+    await page.locator('.cs-msg.out').getByRole('button', { name: 'Collega a Gmail' }).click();
     await expect(page.locator('.or-collega')).toContainText('Amimì Milano x Glitter Prova');
     expect(edge.map((c) => c.action)).toEqual(['cerca_inviate']);   // nessun aggancio senza scelta
     expect(edge[0].touch_id).toBe(T_OUT);
@@ -96,22 +100,32 @@ test.describe('schermo largo 1280 px', () => {
     expect(edge[1]).toMatchObject({ touch_id: T_OUT, gmail_message_id: CANDIDATO.gmail_message_id });
   });
 
-  test('negozio che ci ha scritto: "Segna come inviata" non registra un follow-up a freddo e apre subito la scelta dell\'email', async ({ page }) => {
+  test('negozio che ci ha scritto: parte in Rispondi; forzando la sequenza, "Segna come inviata" non registra un follow-up a freddo e apre subito la scelta dell\'email', async ({ page }) => {
     const { edge, inserti } = await apri(page, SCRITTO);
-    await page.getByRole('button', { name: 'Segna come inviata' }).click();
-    await expect(page.locator('.or-compositore .or-esito')).toContainText('niente sequenza a freddo');
+    const comp = page.locator('.or-comp');
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Rispondi');
+    await comp.getByRole('button', { name: 'Sequenza a freddo' }).click();
+    await expect(comp.locator('.cs-note', { hasText: 'Questo negozio ci ha già scritto' })).toBeVisible();
+    await comp.getByRole('button', { name: 'Segna come inviata' }).click();
+    await expect(comp.locator('.or-esito')).toContainText('niente sequenza a freddo');
     expect(inserti).toHaveLength(1);
     expect(inserti[0]).toMatchObject({ canale: 'email', direzione: 'out', sequenza_tocco: null, prossima_azione: 'attesa risposta del negozio' });
+    // il tocco nuovo e' in conversazione (3 elementi) e sotto di lui la scelta dell'email
+    await expect(page.locator('.or-conv > *')).toHaveCount(3);
     await expect(page.locator('.or-collega')).toContainText('Amimì Milano x Glitter Prova');
     expect(edge.map((c) => c.action)).toEqual(['cerca_inviate']);
     expect(edge[0].touch_id).toBe(NUOVO);
   });
 
-  test('negozio a freddo: "Segna come inviata" resta un tocco della sequenza, e un tocco gia\' collegato non mostra "Collega a Gmail"', async ({ page }) => {
+  test('negozio a freddo: modo Sequenza con il template; "Segna come inviata" resta un tocco della sequenza, e un tocco gia\' collegato non mostra "Collega a Gmail"', async ({ page }) => {
     const { inserti } = await apri(page, FREDDO);
+    const comp = page.locator('.or-comp');
+    await expect(comp.locator('.cs-seg-btn.on')).toHaveText('Sequenza a freddo');
+    await expect(comp.getByLabel('Tocco')).toHaveValue('2');
+    await expect(comp.getByLabel('Testo')).toHaveValue(/Gentile team di Glitter Prova,\ntesto del tocco 2\./);
     await expect(page.getByRole('button', { name: 'Collega a Gmail' })).toHaveCount(0);
-    await page.getByRole('button', { name: 'Segna come inviata' }).click();
-    await expect(page.locator('.or-compositore .or-esito')).toContainText('Follow-up 3 fra 5 giorni');
+    await comp.getByRole('button', { name: 'Segna come inviata' }).click();
+    await expect(comp.locator('.or-esito')).toContainText('Follow-up 3 fra 5 giorni');
     expect(inserti[0]).toMatchObject({ sequenza_tocco: 2, prossima_azione: 'follow-up 3 di 4' });
   });
 });
