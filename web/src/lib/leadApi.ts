@@ -188,6 +188,7 @@ export type LeadTouch = {
   id: string; account_id: string; contact_id: string | null; canale: string; direzione: 'in' | 'out'; subject: string | null; body_clean: string | null;
   stage_prima: string | null; stage_dopo: string | null; esito: string | null; prossima_azione: string | null; prossima_azione_at: string | null;
   sequenza_tocco: number | null; chi: string | null; at: string; created_at: string;
+  gmail_message_id: string | null; gmail_thread_id: string | null;   // v11: senza thread il giro non ne legge le risposte
 };
 export type LeadSequence = { id: number; codice: string; tocco: number; giorni_attesa: number; canale: string; lingua: string; oggetto: string | null; corpo: string; chi_default: string | null; attiva: boolean };
 
@@ -201,10 +202,12 @@ export async function fetchTouches(accountId: string): Promise<LeadTouch[]> {
   if (error) throw new Error(error.message);
   return (data ?? []) as LeadTouch[];
 }
-export async function addTouch(t: { account_id: string; canale: string; direzione: 'in' | 'out'; subject?: string | null; body_clean?: string | null; stage_prima?: string | null; stage_dopo?: string | null; esito?: string | null; prossima_azione?: string | null; prossima_azione_at?: string | null; sequenza_tocco?: number | null; chi: string; at?: string }) {
-  const { error } = await csClient.from('lead_touches').insert(t);
+// restituisce l'id del tocco scritto (v11: serve per collegarlo subito all'email di Posta inviata)
+export async function addTouch(t: { account_id: string; canale: string; direzione: 'in' | 'out'; subject?: string | null; body_clean?: string | null; stage_prima?: string | null; stage_dopo?: string | null; esito?: string | null; prossima_azione?: string | null; prossima_azione_at?: string | null; sequenza_tocco?: number | null; chi: string; at?: string }): Promise<string> {
+  const { data, error } = await csClient.from('lead_touches').insert(t).select('id').single();
   // 23505 = indice unico lead_touches_tocco_out_uq (migr 0139): lo stesso tocco email risulta gia' registrato
   if (error) throw new Error(error.code === '23505' ? `Il tocco ${t.sequenza_tocco ?? ''} risulta gia’ registrato per questo negozio: guarda la Timeline.` : error.message);
+  return String((data as { id: string }).id);
 }
 export async function fetchSequences(): Promise<LeadSequence[]> {
   const { data, error } = await csClient.from('lead_sequences').select('*').eq('attiva', true).order('codice').order('tocco');
@@ -265,6 +268,16 @@ export const indirizzoInterno = (to: string): boolean => /@amimi\.it$/i.test(to.
 // bozza rimasta 'in_invio' (esito incerto): si sblocca solo dopo aver controllato "Posta inviata" di info@
 export async function sbloccaBozza(p: { draft_id: string; chi: string }): Promise<void> {
   await callOutreach({ action: 'sblocca', ...p });
+}
+// v11 (blocco A3): le email di Posta inviata di info@ che si possono collegare a un tocco registrato a mano. La scelta
+// e' sempre della persona: l'edge propone, aggancia scrive (solo le due colonne Gmail di quel tocco).
+export type InviataCandidata = { gmail_message_id: string; oggetto: string; data: string; a: string };
+export async function cercaInviate(touch_id: string): Promise<{ candidati: InviataCandidata[]; gia_agganciato?: boolean; motivo?: string }> {
+  const j = await callOutreach({ action: 'cerca_inviate', touch_id });
+  return { candidati: (j.candidati ?? []) as InviataCandidata[], gia_agganciato: j.gia_agganciato === true, motivo: typeof j.motivo === 'string' ? j.motivo : undefined };
+}
+export async function agganciaTocco(p: { touch_id: string; gmail_message_id: string; chi: string }): Promise<void> {
+  await callOutreach({ action: 'aggancia', ...p });
 }
 // una bozza non partita esce dalla Coda (il cron non la riscrive: una bozza automatica per tocco)
 export async function scartaBozza(p: { draft_id: string; chi: string }): Promise<void> {

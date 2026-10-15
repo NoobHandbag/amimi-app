@@ -6,6 +6,9 @@
 // v10 (2026-10-15, caso Glitter): azione `aggancia`. Un tocco registrato a mano ("Segna come inviata") non ha thread,
 // e il giro automatico legge solo i thread dei tocchi inviati: le risposte del negozio restavano fuori dalla timeline.
 // L'azione aggancia il tocco al messaggio partito da Gmail, dopo averlo verificato su Gmail (sola lettura).
+// v11 (2026-10-15, blocco A del cruscotto B2B): ogni messaggio del negozio in timeline. Il giro legge i thread di TUTTI i
+// tocchi con thread (A1) e cerca per mittente le email e i moduli dei negozi gia' in lavorazione arrivati fuori da quei thread
+// (A2); azione `cerca_inviate` per scegliere in app l'email da agganciare a un "Segna come inviata" (A3).
 // v9 (2026-10-12): la risposta di un negozio con DMARC rigido arriva dal gruppo wholesale@ con il From riscritto;
 // si legge l'autore da X-Original-From / Reply-To (mittenteVero) invece di scartarla come posta nostra. CASI_APERTI 29.
 // v8 (2026-10-08): azione `prova`. L'invio vero rifiuta i destinatari @amimi.it, quindi una prova mandata a info@
@@ -33,11 +36,18 @@
 //          da @amimi.it, a un contatto del negozio, entro 7 giorni dal tocco (blocco PURE:lead-aggancio). Scrive SOLO
 //          gmail_message_id e gmail_thread_id di quel tocco (UPDATE condizionato al thread vuoto); nessuna email parte.
 //          Le risposte del thread le scrive il giro successivo del cron.
+//   cerca_inviate (JWT @amimi.it) v11: `touch_id` di un tocco email in uscita senza thread -> i messaggi di Posta inviata
+//          di info@ agli indirizzi del negozio, entro 3 giorni, che aggancia accetterebbe (oggetto, data, destinatari).
+//          Sola lettura; la scelta la fa la persona, poi aggancia.
 //   cron  (senza JWT, come gli altri cron; migr 0148) v6, Blocco 2. NO-OP finche' app_flags.lead_enabled non e' 'true'.
-//          1) RISPOSTE: per ogni thread Gmail di un nostro tocco email, i messaggi non nostri e non ancora in
+//          1) RISPOSTE: per ogni thread Gmail di un tocco con thread (v11: anche i tocchi in entrata), i messaggi non nostri e non ancora in
 //             lead_touches entrano come tocco 'in' (upsert ignoreDuplicates su gmail_message_id). Una risposta vera
 //             porta il negozio a "risposto" e ferma la sequenza; "no grazie" = opt-out; bounce e risposte automatiche
 //             sono riconosciuti dal CODICE (blocco PURE:lead-inbound), mai dal modello.
+//          1b) v11, PER MITTENTE: query Gmail sugli indirizzi dei negozi in lavorazione (stadio diverso da da_contattare o
+//             entrati da cs_inbound), ultimi 3 giorni: un'email nuova del negozio entra nel suo thread, il modulo del sito
+//             (mailer@shopify.com con il Reply-To del negozio) entra come tocco 'altro' senza thread. Un indirizzo che sta su
+//             piu' negozi non si attribuisce (lo collega una persona).
 //          2) FOLLOW-UP: negozio "contattato" con la prossima azione scaduta e nessuna risposta -> bozza AI del tocco
 //             N+1 in lead_drafts ('proposta', origine 'auto'). L'INVIO RESTA UN CLICK UMANO: il cron non spedisce mai.
 //          Se la lettura delle risposte fallisce, il giro NON propone follow-up (non sa chi ha risposto).
@@ -78,8 +88,14 @@ const MAX_THREAD = 150;        // thread Gmail letti per giro
 const MAX_IN = 25;             // risposte scritte per giro
 const MAX_BOZZE = 3;           // bozze di follow-up per giro (una chiamata Gemini ciascuna)
 const MAX_CAND = 30;           // negozi esaminati per i follow-up
-const FINESTRA_GG = 120;       // si guardano i thread dei tocchi inviati negli ultimi N giorni
+const FINESTRA_GG = 120;       // si guardano i thread dei tocchi (in e out, v11) degli ultimi N giorni
 const BUDGET_MS = 90_000;      // oltre, il giro si ferma e riprende al prossimo
+// v11, ricerca per mittente (blocco A2)
+const FINESTRA_MITT_GG = 3;    // messaggi degli ultimi N giorni (il giro passa ogni 30 minuti: tre giorni coprono i giri saltati)
+const MAX_NEGOZI_MITT = 300;   // negozi in lavorazione di cui si cercano gli indirizzi
+const MAX_INDIRIZZI = 200;     // indirizzi cercati per giro
+const BLOCCO_QUERY = 15;       // indirizzi per query Gmail
+const MAX_MSG_MITT = 60;       // messaggi trovati per mittente e letti per giro
 
 // ==== PURE:lead-inbound BEGIN ====
 // Lettura delle risposte, pura e testata in tests/lead_outreach_guardie.mjs. Classifica il CODICE, non il modello.
@@ -148,6 +164,51 @@ function prossimoFollowUp(tocchi: { direzione: string; canale: string; sequenza_
   const dopo = tocchi.filter((t) => t.direzione === 'in' && t.esito !== 'risposta_automatica' && Date.parse(t.at) > tLast - (t.esito === 'bounce' ? 600_000 : 0));
   if (dopo.length) return { salta: dopo.some((t) => t.esito === 'bounce') ? 'email non valida' : 'il negozio ha risposto' };
   return { tocco: n + 1, thread: last.gmail_thread_id };
+}
+// v11: i campi del tocco 'in' che dipendono da classificazione e stadio, uguali per ogni via d'ingresso (thread o mittente)
+function campiRisposta(tipo: string | null, st: string | null, oggi: string): Record<string, string | null> {
+  if (tipo === 'risposta_automatica') return { stage_dopo: st };   // non ferma la sequenza, non tocca la scadenza
+  if (tipo === 'bounce') return { stage_dopo: st, prossima_azione: 'email non valida: cercare un altro indirizzo', prossima_azione_at: oggi };
+  if (tipo === 'opt_out') return { prossima_azione: 'opt-out: non contattare più' };   // stadio e contatti: trigger
+  if (st === 'da_contattare' || st === 'contattato' || st === 'risposto') return { prossima_azione: 'rispondere al negozio', prossima_azione_at: oggi };
+  return {};   // stadi avanzati: la prossima azione l'ha decisa una persona, non si sovrascrive
+}
+// v11 (blocco A2): ricerca per MITTENTE. Una email nuova del negozio (non una risposta nel thread di un nostro invio) o il
+// modulo contatti del sito arrivano in info@ fuori dai thread che il giro conosce: si cercano con una query Gmail sugli
+// indirizzi dei negozi gia' in lavorazione. L'indirizzo entra nella query solo se e' un'email valida (niente spazi,
+// virgolette o parentesi: non puo' cambiare la query).
+const INDIRIZZO_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
+function queryMittenti(indirizzi: string[], giorni: number): string {
+  const ok = indirizzi.filter((a) => INDIRIZZO_RE.test(a));
+  // from: per l'email diretta; l'indirizzo fra virgolette per le notifiche del modulo, che lo portano nel corpo e nel Reply-To
+  return `newer_than:${giorni}d -in:sent -in:drafts {${ok.map((a) => `from:${a} "${a}"`).join(' ')}}`;
+}
+// a quale negozio appartiene un messaggio trovato dalla ricerca. Il modulo del sito arriva da mailer@shopify.com con il
+// Reply-To del cliente e l'oggetto "Nuovo messaggio cliente" / "New customer message": e' l'unica notifica Shopify accettata.
+function attribuisciMessaggio(p: { from: string; xOriginalFrom: string; replyTo: string; subject: string; etichette: string[] }, mappa: Map<string, string[]>): { via: 'mittente' | 'modulo'; account: string; indirizzo: string } | { salta: string } {
+  if (p.etichette.includes('SENT') || p.etichette.includes('DRAFT')) return { salta: 'nostro' };
+  const da = indirizzoDi(mittenteVero(p.from, p.xOriginalFrom, p.replyTo));
+  let via: 'mittente' | 'modulo' = 'mittente';
+  let indirizzo = da;
+  if (da === 'mailer@shopify.com') {
+    if (!/nuovo messaggio cliente|new customer message/i.test(p.subject)) return { salta: 'notifica shopify' };
+    via = 'modulo';
+    indirizzo = indirizzoDi(p.replyTo);
+  }
+  if (!indirizzo || indirizzo.endsWith('@amimi.it')) return { salta: 'nostro' };
+  const acc = mappa.get(indirizzo) ?? [];
+  if (!acc.length) return { salta: 'mittente di nessun negozio' };
+  if (acc.length > 1) return { salta: 'indirizzo su piu negozi' };   // lo collega una persona (blocco C)
+  return { via, account: acc[0], indirizzo };
+}
+// il testo che il cliente ha scritto nel modulo, senza lo stampo di Shopify (marcatori IT e EN di cs-sync v12)
+function testoModulo(t: string): string {
+  const s = t.replace(/\r\n/g, '\n');
+  const ini = /(^|\n)\s*(Corpo|Body)\s*:\s*\n/i.exec(s);
+  if (!ini) return s.trim();
+  const dopo = s.slice(ini.index + ini[0].length);
+  const fine = /(^|\n)\s*(Cliccando Su Invia|By Clicking Submit)/i.exec(dopo);
+  return (fine ? dopo.slice(0, fine.index) : dopo).trim();
 }
 // ==== PURE:lead-inbound END ====
 
@@ -244,6 +305,14 @@ function bloccantiAggancio(p: { tocco: { direzione: string; canale: string; gmai
   if (!Number.isFinite(dt) || dt > AGGANCIO_FINESTRA_MS) b.push('messaggio e tocco sono a piu\' di 7 giorni di distanza: e\' davvero quello giusto?');
   return b;
 }
+// v11 (A3): i messaggi di Posta inviata a uno degli indirizzi del negozio, nei `giorni` attorno all'istante del tocco.
+// Solo indirizzi validi entrano nella query; '' se non ce n'e' nessuno.
+function queryInviate(indirizzi: string[], istanteMs: number, giorni: number): string {
+  const ok = [...new Set(indirizzi.map((a) => a.trim().toLowerCase()).filter((a) => /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(a) && !a.endsWith('@amimi.it')))];
+  if (!ok.length || !Number.isFinite(istanteMs)) return '';
+  const s = Math.floor(istanteMs / 1000), d = giorni * 86400;
+  return `in:sent {${ok.map((a) => `to:${a}`).join(' ')}} after:${s - d} before:${s + d}`;
+}
 // confronto a tempo costante della chiave dell'operatore (nessun indizio dalla durata del confronto)
 function stessaChiave(a: string, b: string): boolean {
   if (!a || !b || a.length !== b.length) return false;
@@ -255,6 +324,28 @@ function stessaChiave(a: string, b: string): boolean {
 
 type Flags = Record<string, string>;
 type Row = Record<string, unknown>;
+
+// v11: indirizzi e stato di un negozio, per aggancia e cerca_inviate (le stesse regole in un posto solo)
+// deno-lint-ignore no-explicit-any
+async function contattiNegozio(sb: any, accountId: string): Promise<{ errore: string } | { stage: string | null; indirizzi: string[]; chiuso: boolean }> {
+  const [{ data: ac, error: acErr }, { data: cts, error: ctErr }] = await Promise.all([
+    retryOnce(() => sb.from('lead_accounts').select('email_generica,lead_stage').eq('id', accountId).maybeSingle()),
+    retryOnce(() => sb.from('lead_contacts').select('email,opt_out').eq('account_id', accountId).not('email', 'is', null).limit(200)),
+  ]);
+  if (acErr) return { errore: 'lettura negozio fallita, riprova: ' + acErr.message };
+  if (ctErr) return { errore: 'lettura contatti fallita, riprova: ' + ctErr.message };
+  const righe = (cts ?? []) as { email: string | null; opt_out: boolean | null }[];
+  const stage = (ac?.lead_stage as string | undefined) ?? null;
+  return { stage, indirizzi: [String(ac?.email_generica ?? ''), ...righe.map((c) => String(c.email ?? ''))], chiuso: stage === 'opt_out' || stage === 'chiuso_no' || righe.some((c) => c.opt_out) };
+}
+// v11: token Gmail in sola lettura dalla chiave del service account, con l'errore gia' pronto per la risposta
+async function tokenLettura(flags: Flags): Promise<{ token: string } | { errore: string; status: number }> {
+  if (!flags.cs_gmail_sa_key) return { errore: 'chiave service account assente (app_flags.cs_gmail_sa_key)', status: 500 };
+  let sa: { client_email: string; private_key: string };
+  try { sa = JSON.parse(flags.cs_gmail_sa_key); } catch { return { errore: 'chiave service account non valida', status: 500 }; }
+  try { return { token: await googleAccessToken(sa, SCOPE_READ) }; }
+  catch (e) { return { errore: 'autenticazione Google fallita: ' + (e as Error).message.slice(0, 180), status: 502 }; }
+}
 
 function b64url(bytes: Uint8Array): string {
   let s = '';
@@ -457,21 +548,91 @@ function corpoMessaggio(payload: GPart | undefined): string {
   return html.replace(/<(style|script)[\s\S]*?<\/\1>/gi, '').replace(/<br\s*\/?>|<\/p>|<\/div>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\n{3,}/g, '\n\n');
 }
 
+// un messaggio da scrivere come tocco 'in'. via: 'thread' = nel thread di un tocco gia' noto (A1); 'mittente' = email del
+// negozio trovata per indirizzo (A2), nel suo thread; 'modulo' = notifica del modulo del sito (A2), senza thread.
+type Cand = { id: string; threadId: string; accountId: string; at: number; via: 'thread' | 'mittente' | 'modulo' };
+
+// v11 (blocco A2): email e moduli dei negozi gia' in lavorazione (stadio diverso da da_contattare, o entrati da un inbound)
+// arrivati FUORI dai thread che il giro conosce. Aggiunge i candidati a `cand`; la scrittura e' quella comune.
+// deno-lint-ignore no-explicit-any
+async function cercaPerMittente(sb: any, auth: { headers: Record<string, string> }, t0: number, esito: Record<string, number | boolean | string>, stage: Map<string, string>, cand: Map<string, Cand>): Promise<void> {
+  const { data: accs, error: aErr } = await retryOnce(() => sb.from('lead_accounts').select('id,lead_stage,email_generica')
+    .or('lead_stage.neq.da_contattare,fonte_seed.eq.cs_inbound').order('updated_at', { ascending: false }).limit(MAX_NEGOZI_MITT + 1));
+  if (aErr) throw new Error('lettura negozi in lavorazione fallita: ' + aErr.message);
+  const negozi = ((accs ?? []) as { id: string; lead_stage: string; email_generica: string | null }[]);
+  if (negozi.length > MAX_NEGOZI_MITT) esito.mittenti_troncati = true;
+  const lista = negozi.slice(0, MAX_NEGOZI_MITT);
+  if (!lista.length) return;
+  const mappa = new Map<string, string[]>();
+  const aggiungi = (indirizzo: string | null, acc: string) => {
+    const a = String(indirizzo ?? '').trim().toLowerCase();
+    if (!INDIRIZZO_RE.test(a) || a.endsWith('@amimi.it')) return;
+    const v = mappa.get(a) ?? [];
+    if (!v.includes(acc)) v.push(acc);
+    mappa.set(a, v);
+  };
+  for (const a of lista) { if (!stage.has(a.id)) stage.set(a.id, a.lead_stage); aggiungi(a.email_generica, a.id); }
+  for (let i = 0; i < lista.length; i += 100) {
+    const ids = lista.slice(i, i + 100).map((a) => a.id);
+    const { data: cts, error: cErr } = await retryOnce(() => sb.from('lead_contacts').select('account_id,email').in('account_id', ids).not('email', 'is', null).limit(1000));
+    if (cErr) throw new Error('lettura contatti fallita: ' + cErr.message);
+    if ((cts ?? []).length >= 1000) throw new Error('lettura contatti troncata a 1.000 righe');   // Regola 20b: mai un elenco parziale
+    for (const c of (cts ?? []) as { account_id: string; email: string | null }[]) aggiungi(c.email, c.account_id);
+  }
+  const indirizzi = [...mappa.keys()].sort();
+  if (indirizzi.length > MAX_INDIRIZZI) esito.mittenti_troncati = true;
+  const trovati = new Map<string, string>();   // id messaggio -> thread
+  for (let i = 0; i < Math.min(indirizzi.length, MAX_INDIRIZZI); i += BLOCCO_QUERY) {
+    if (Date.now() - t0 > BUDGET_MS) { esito.mittenti_troncati = true; break; }
+    const q = queryMittenti(indirizzi.slice(i, Math.min(i + BLOCCO_QUERY, MAX_INDIRIZZI)), FINESTRA_MITT_GG);
+    const r = await fetch(`${GMAIL}/messages?maxResults=50&q=${encodeURIComponent(q)}`, auth);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`Gmail messages.list ${r.status}: ${JSON.stringify(j).slice(0, 160)}`);
+    if ((j as { nextPageToken?: string }).nextPageToken) esito.mittenti_troncati = true;
+    for (const m of ((j as { messages?: { id: string; threadId: string }[] }).messages ?? [])) if (!cand.has(m.id)) trovati.set(m.id, m.threadId);
+  }
+  if (!trovati.size) return;
+  // gia' in lead_touches: si scartano PRIMA di leggerli da Gmail (.in() sui soli id, Regola 20b)
+  const ids = [...trovati.keys()];
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data: ex, error: exErr } = await retryOnce(() => sb.from('lead_touches').select('gmail_message_id').in('gmail_message_id', ids.slice(i, i + 100)));
+    if (exErr) throw new Error('lettura tocchi esistenti fallita: ' + exErr.message);
+    for (const r of (ex ?? []) as { gmail_message_id: string }[]) trovati.delete(r.gmail_message_id);
+  }
+  let letti = 0;
+  for (const [id, threadId] of trovati) {
+    if (letti >= MAX_MSG_MITT || Date.now() - t0 > BUDGET_MS) { esito.mittenti_troncati = true; break; }
+    letti++;
+    const r = await fetch(`${GMAIL}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=X-Original-From&metadataHeaders=Reply-To&metadataHeaders=Subject`, auth);
+    if (r.status === 404) continue;
+    const m = await r.json().catch(() => ({}));
+    // un messaggio che non si legge non ferma il giro (niente stallo sullo stesso record): si conta e si riprova al prossimo
+    if (!r.ok) { esito.illeggibili = Number(esito.illeggibili) + 1; if (!esito.primo_errore) esito.primo_errore = `Gmail messages.get ${r.status}`; continue; }
+    const mm = m as { labelIds?: string[]; internalDate?: string; payload?: { headers?: { name?: string; value?: string }[] } };
+    const mh = (n: string) => (mm.payload?.headers ?? []).find((h) => h.name?.toLowerCase() === n)?.value ?? '';
+    const a = attribuisciMessaggio({ from: mh('from'), xOriginalFrom: mh('x-original-from'), replyTo: mh('reply-to'), subject: mh('subject'), etichette: mm.labelIds ?? [] }, mappa);
+    if ('salta' in a) { if (a.salta === 'indirizzo su piu negozi') esito.ambigui = Number(esito.ambigui) + 1; continue; }
+    esito.mittenti = Number(esito.mittenti) + 1;
+    cand.set(id, { id, threadId, accountId: a.account, at: Number(mm.internalDate ?? Date.now()), via: a.via });
+  }
+}
+
 // deno-lint-ignore no-explicit-any
 async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito: Record<string, number | boolean | string>; sospesi: Set<string>; letti: Set<string> }> {
-  const esito: Record<string, number | boolean | string> = { thread: 0, thread_troncati: false, nuove: 0, risposte: 0, opt_out: 0, bounce: 0, automatiche: 0, rimandate: 0, illeggibili: 0 };
+  const esito: Record<string, number | boolean | string> = { thread: 0, thread_troncati: false, mittenti: 0, mittenti_troncati: false, nuove: 0, risposte: 0, moduli: 0, opt_out: 0, bounce: 0, automatiche: 0, rimandate: 0, illeggibili: 0, ambigui: 0 };
   // negozi con una risposta arrivata ma NON ancora scritta (oltre il tetto, o messaggio illeggibile): niente follow-up per loro
   const sospesi = new Set<string>();
   // thread letti fino in fondo in questo giro: un follow-up si propone solo se il thread dell'ultimo tocco e' qui
   const letti = new Set<string>();
   const fine = () => ({ esito, sospesi, letti });
   const dal = new Date(Date.now() - FINESTRA_GG * 864e5).toISOString();
+  // v11 (A1): i thread di TUTTI i tocchi con thread, in e out (prima solo dei tocchi email inviati): cosi' si leggono anche
+  // i thread aperti dal negozio (email trovate per mittente) e quelli agganciati a mano
   const { data: outs, error: oErr } = await retryOnce(() => sb.from('lead_touches').select('account_id,gmail_thread_id,at')
-    .eq('direzione', 'out').eq('canale', 'email').not('gmail_thread_id', 'is', null).gte('at', dal).order('at', { ascending: false }).limit(MAX_THREAD * 4 + 1));
-  if (oErr) throw new Error('lettura tocchi inviati fallita: ' + oErr.message);
+    .not('gmail_thread_id', 'is', null).gte('at', dal).order('at', { ascending: false }).limit(MAX_THREAD * 4 + 1));
+  if (oErr) throw new Error('lettura tocchi con thread fallita: ' + oErr.message);
   const threadAcc = new Map<string, string>();
   for (const r of (outs ?? []) as { account_id: string; gmail_thread_id: string }[]) if (!threadAcc.has(r.gmail_thread_id)) threadAcc.set(r.gmail_thread_id, r.account_id);
-  if (!threadAcc.size) return fine();
   // stadio dei negozi: prima i thread dei "contattato" (li' una risposta ferma la sequenza), poi gli altri per recenza.
   // Senza questa precedenza, oltre MAX_THREAD thread i piu' vecchi (quelli in scadenza) non verrebbero mai letti.
   const stage = new Map<string, string>();
@@ -491,7 +652,7 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
   const auth = { headers: { Authorization: `Bearer ${token}` } };
 
   // 1) quali messaggi non nostri ci sono in quei thread (format=metadata: id, etichette e mittente, niente corpo)
-  const cand: { id: string; threadId: string; accountId: string; at: number }[] = [];
+  const cand = new Map<string, Cand>();
   for (const th of threads) {
     if (Date.now() - t0 > BUDGET_MS) { esito.thread_troncati = true; break; }
     const r = await fetch(`${GMAIL}/threads/${encodeURIComponent(th)}?format=metadata&metadataHeaders=From&metadataHeaders=X-Original-From&metadataHeaders=Reply-To`, auth);
@@ -507,21 +668,24 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
       const mh = (n: string) => (m.payload?.headers ?? []).find((h) => h.name?.toLowerCase() === n)?.value ?? '';
       const da = mittenteVero(mh('from'), mh('x-original-from'), mh('reply-to'));
       if (indirizzoDi(da).endsWith('@amimi.it')) continue;
-      cand.push({ id: m.id, threadId: th, accountId: threadAcc.get(th)!, at: Number(m.internalDate ?? Date.now()) });
+      cand.set(m.id, { id: m.id, threadId: th, accountId: threadAcc.get(th)!, at: Number(m.internalDate ?? Date.now()), via: 'thread' });
     }
     letti.add(th);
   }
-  if (!cand.length) return fine();
+  // 1b) v11 (A2): email e moduli dei negozi in lavorazione arrivati fuori da quei thread
+  await cercaPerMittente(sb, auth, t0, esito, stage, cand);
+  if (!cand.size) return fine();
 
   // 2) quali sono gia' in lead_touches: .in() sui soli id da controllare (Regola 20b), a blocchi
+  const tuttiCand = [...cand.values()];
   const noti = new Set<string>();
-  for (let i = 0; i < cand.length; i += 100) {
-    const ids = cand.slice(i, i + 100).map((c) => c.id);
+  for (let i = 0; i < tuttiCand.length; i += 100) {
+    const ids = tuttiCand.slice(i, i + 100).map((c) => c.id);
     const { data: ex, error: exErr } = await retryOnce(() => sb.from('lead_touches').select('gmail_message_id').in('gmail_message_id', ids));
     if (exErr) throw new Error('lettura tocchi esistenti fallita: ' + exErr.message);
     for (const r of (ex ?? []) as { gmail_message_id: string }[]) noti.add(r.gmail_message_id);
   }
-  const nuovi = cand.filter((c) => !noti.has(c.id)).sort((a, b) => a.at - b.at);
+  const nuovi = tuttiCand.filter((c) => !noti.has(c.id)).sort((a, b) => a.at - b.at);
   esito.rimandate = Math.max(0, nuovi.length - MAX_IN);
   for (const c of nuovi.slice(MAX_IN)) sospesi.add(c.accountId);
   const lotto = nuovi.slice(0, MAX_IN);
@@ -540,27 +704,32 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
     if (!r.ok) { illeggibile(`Gmail messages.get ${r.status}`); continue; }
     const hs = ((m as { payload?: { headers?: { name?: string; value?: string }[] } }).payload?.headers ?? []);
     const hdr = (n: string) => hs.find((h) => h.name?.toLowerCase() === n)?.value ?? '';
-    const from = mittenteVero(hdr('from'), hdr('x-original-from'), hdr('reply-to'));
-    // un messaggio da @amimi.it nel thread (collega in copia, inoltro interno) non e' una risposta del negozio
-    if (indirizzoDi(from).endsWith('@amimi.it')) continue;
     const testo = corpoMessaggio((m as { payload?: GPart }).payload);
-    const tipo = classificaInbound({ from, subject: hdr('subject'), autoSubmitted: hdr('auto-submitted'), testo });
     const st = stage.get(c.accountId) ?? null;
-    const pulito = tagliaCitazione(testo) || testo.trim();
-    const base = {
-      account_id: c.accountId, canale: 'email', direzione: 'in', gmail_message_id: c.id, gmail_thread_id: c.threadId,
-      subject: jsonSafe(hdr('subject').slice(0, 300)) || null, body_clean: jsonSafe(`${indirizzoDi(from)}\n${pulito}`.slice(0, 4000)),
-      stage_prima: st, chi: 'auto', at: new Date(c.at).toISOString(), esito: tipo,
-    };
-    const riga = tipo === 'risposta_automatica' ? { ...base, stage_dopo: st }   // non ferma la sequenza, non tocca la scadenza
-      : tipo === 'bounce' ? { ...base, stage_dopo: st, prossima_azione: 'email non valida: cercare un altro indirizzo', prossima_azione_at: oggi }
-      : tipo === 'opt_out' ? { ...base, prossima_azione: 'opt-out: non contattare più' }   // stadio e contatti: trigger
-      : (st === 'da_contattare' || st === 'contattato' || st === 'risposto') ? { ...base, prossima_azione: 'rispondere al negozio', prossima_azione_at: oggi }
-      : base;   // stadi avanzati: la prossima azione l'ha decisa una persona, non si sovrascrive
+    const comuni = { account_id: c.accountId, direzione: 'in', gmail_message_id: c.id, stage_prima: st, chi: 'auto', at: new Date(c.at).toISOString() };
+    let tipo: string | null = null;
+    let base: Record<string, unknown>;
+    if (c.via === 'modulo') {
+      // v11: il modulo del sito e' sempre un messaggio vero (la notifica Shopify porta header automatici: classificarla la
+      // farebbe passare per risposta automatica). Senza thread: e' quello della notifica, e una risposta parte come email
+      // nuova al Reply-To (CONOSCENZA 14-09); il giro non lo rilegge.
+      base = { ...comuni, canale: 'altro', gmail_thread_id: null, esito: null,
+        subject: jsonSafe(`Modulo contatti amimi.it: ${hdr('subject')}`.slice(0, 300)), body_clean: jsonSafe(`${indirizzoDi(hdr('reply-to'))}\n${testoModulo(testo)}`.slice(0, 4000)) };
+    } else {
+      const from = mittenteVero(hdr('from'), hdr('x-original-from'), hdr('reply-to'));
+      // un messaggio da @amimi.it nel thread (collega in copia, inoltro interno) non e' una risposta del negozio
+      if (indirizzoDi(from).endsWith('@amimi.it')) continue;
+      tipo = classificaInbound({ from, subject: hdr('subject'), autoSubmitted: hdr('auto-submitted'), testo });
+      const pulito = tagliaCitazione(testo) || testo.trim();
+      base = { ...comuni, canale: 'email', gmail_thread_id: c.threadId, esito: tipo,
+        subject: jsonSafe(hdr('subject').slice(0, 300)) || null, body_clean: jsonSafe(`${indirizzoDi(from)}\n${pulito}`.slice(0, 4000)) };
+    }
+    const riga = { ...base, ...campiRisposta(tipo, st, oggi) };
     const { data: ins, error: iErr } = await sb.from('lead_touches').upsert(riga, { onConflict: 'gmail_message_id', ignoreDuplicates: true }).select('id');
     if (iErr) { illeggibile('scrittura della risposta fallita: ' + iErr.message); continue; }
     if (!ins?.length) continue;   // gia' scritta da un giro concorrente
     esito.nuove = Number(esito.nuove) + 1;
+    if (c.via === 'modulo') esito.moduli = Number(esito.moduli) + 1;
     if (tipo === 'bounce') esito.bounce = Number(esito.bounce) + 1;
     else if (tipo === 'risposta_automatica') esito.automatiche = Number(esito.automatiche) + 1;
     else if (tipo === 'opt_out') { esito.opt_out = Number(esito.opt_out) + 1; stage.set(c.accountId, 'opt_out'); }
@@ -638,8 +807,8 @@ async function giroCron(sb: any): Promise<Response> {
   }
   const fuErr = (followup?.primo_errore ? `; errore bozza: ${followup.primo_errore}` : '') + (inbound?.illeggibili ? `; ${inbound.illeggibili} risposte non lette: ${inbound.primo_errore ?? ''}` : '');
   const label = errori.length ? errori.join(' | ')
-    : `risposte ${inbound?.nuove ?? 0} (vere ${inbound?.risposte ?? 0}, opt-out ${inbound?.opt_out ?? 0}, bounce ${inbound?.bounce ?? 0}, automatiche ${inbound?.automatiche ?? 0}), follow-up proposti ${followup?.proposte ?? 0}${followup?.saltati ? ` (${followup.saltati} rimandati)` : ''}${inbound?.thread_troncati || inbound?.rimandate ? '; giro troncato, il resto al prossimo' : ''}${fuErr}`;
-  const sev = errori.length ? 'error' : (inbound?.thread_troncati || inbound?.rimandate || fuErr) ? 'warn' : 'ok';
+    : `risposte ${inbound?.nuove ?? 0} (vere ${inbound?.risposte ?? 0}, opt-out ${inbound?.opt_out ?? 0}, bounce ${inbound?.bounce ?? 0}, automatiche ${inbound?.automatiche ?? 0}; trovate per mittente ${inbound?.mittenti ?? 0}, moduli ${inbound?.moduli ?? 0}), follow-up proposti ${followup?.proposte ?? 0}${followup?.saltati ? ` (${followup.saltati} rimandati)` : ''}${inbound?.ambigui ? `; ${inbound.ambigui} messaggi da un indirizzo di piu' negozi: da collegare a mano` : ''}${inbound?.thread_troncati || inbound?.mittenti_troncati || inbound?.rimandate ? '; giro troncato, il resto al prossimo' : ''}${fuErr}`;
+  const sev = errori.length ? 'error' : (inbound?.thread_troncati || inbound?.mittenti_troncati || inbound?.rimandate || inbound?.ambigui || fuErr) ? 'warn' : 'ok';
   const { error: hErr } = await sb.from('health_log').upsert({ day: oggiRoma(), k: 'lead_cron', label: jsonSafe(label.slice(0, 500)), n: Number(inbound?.nuove ?? 0) + Number(followup?.proposte ?? 0), severity: sev, created_at: new Date().toISOString() }, { onConflict: 'day,k' });
   return json({ ok: !errori.length, inbound: inbound ? { ...inbound, primo_errore: undefined } : null, followup: followup ? { ...followup, primo_errore: undefined } : null, errori: errori.length, health: hErr ? 'non scritto' : sev, ms: Date.now() - t0 }, errori.length ? 500 : 200);
 }
@@ -653,7 +822,7 @@ Deno.serve(async (req) => {
   const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || '');
-  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'prova', 'aggancia', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
+  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'prova', 'cerca_inviate', 'aggancia', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
   // giro automatico: nessun JWT (lo chiama pg_cron), nessun dato di terzi in risposta, NO-OP a lead_enabled spento
   if (action === 'cron') return await giroCron(createClient(url, svc));
 
@@ -736,6 +905,53 @@ Deno.serve(async (req) => {
     return json({ ok: true, sbloccata: id });
   }
 
+  // ----------------------------------------------------------------------------------- cerca_inviate
+  // v11 (blocco A3): dopo "Segna come inviata" (o su un tocco vecchio senza thread) la persona sceglie in app QUALE email
+  // di Posta inviata e' quella registrata. Qui si cercano i candidati: messaggi SENT di info@ agli indirizzi del negozio,
+  // entro 3 giorni dal tocco, che passerebbero le regole di aggancia e non sono gia' di un altro tocco. Sola lettura:
+  // l'aggancio lo fa l'azione aggancia, sul messaggio scelto. Mai una scelta automatica, nemmeno con un solo candidato.
+  if (action === 'cerca_inviate') {
+    const touchId = String(body.touch_id || '');
+    if (!UUID_RE.test(touchId)) return json({ error: 'touch_id non valido' }, 422);
+    const { data: tc, error: tcErr } = await retryOnce(() => sb.from('lead_touches').select('id,account_id,direzione,canale,gmail_message_id,gmail_thread_id,at').eq('id', touchId).maybeSingle());
+    if (tcErr) return json({ error: 'lettura tocco fallita, riprova: ' + tcErr.message }, 503);
+    if (!tc) return json({ error: 'tocco inesistente', bloccante: true }, 404);
+    if (tc.direzione !== 'out' || tc.canale !== 'email') return json({ error: 'si collega solo un tocco email in uscita', bloccante: true }, 422);
+    if (tc.gmail_thread_id) return json({ ok: true, gia_agganciato: true, candidati: [] });
+    const ng = await contattiNegozio(sb, tc.account_id);
+    if ('errore' in ng) return json({ error: ng.errore }, 503);
+    if (ng.chiuso) return json({ error: `negozio in opt-out o chiuso (${ng.stage ?? 'stadio n/d'}): niente aggancio`, bloccante: true }, 409);
+    const q = queryInviate(ng.indirizzi, Date.parse(tc.at), 3);
+    if (!q) return json({ ok: true, candidati: [], motivo: 'il negozio non ha un indirizzo email in anagrafica' });
+    const tl = await tokenLettura(flags);
+    if ('errore' in tl) return json({ error: tl.errore }, tl.status);
+    const authC = { headers: { Authorization: `Bearer ${tl.token}` } };
+    let lr: Response;
+    try { lr = await fetch(`${GMAIL}/messages?maxResults=10&q=${encodeURIComponent(q)}`, authC); }
+    catch (e) { return json({ error: 'Gmail non raggiungibile: riprova. ' + scrub((e as Error).message).slice(0, 120) }, 504); }
+    const lj = await lr.json().catch(() => ({}));
+    if (!lr.ok) return json({ error: `Gmail messages.list ${lr.status}: ${JSON.stringify(lj).slice(0, 160)}` }, 502);
+    const ids = ((lj as { messages?: { id: string }[] }).messages ?? []).map((m) => m.id).filter((x) => GMAIL_ID_RE.test(x));
+    if (!ids.length) return json({ ok: true, candidati: [] });
+    const { data: usati, error: usErr } = await retryOnce(() => sb.from('lead_touches').select('gmail_message_id').in('gmail_message_id', ids));
+    if (usErr) return json({ error: 'lettura tocchi fallita, riprova: ' + usErr.message }, 503);
+    const giaUsati = new Set(((usati ?? []) as { gmail_message_id: string }[]).map((r) => r.gmail_message_id));
+    const candidati: { gmail_message_id: string; oggetto: string; data: string; a: string }[] = [];
+    for (const id of ids) {
+      if (giaUsati.has(id)) continue;
+      let mr: Response;
+      try { mr = await fetch(`${GMAIL}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc&metadataHeaders=Subject`, authC); }
+      catch (e) { return json({ error: 'Gmail non raggiungibile: riprova. ' + scrub((e as Error).message).slice(0, 120) }, 504); }
+      if (!mr.ok) continue;   // un messaggio illeggibile non e' un candidato; gli altri si mostrano
+      const mm = await mr.json().catch(() => ({})) as { labelIds?: string[]; internalDate?: string; payload?: { headers?: { name?: string; value?: string }[] } };
+      const mh = (n: string) => (mm.payload?.headers ?? []).filter((h) => h.name?.toLowerCase() === n).map((h) => h.value ?? '').join(', ');
+      const internal = Number(mm.internalDate ?? NaN);
+      if (bloccantiAggancio({ tocco: tc, messaggioId: id, etichette: mm.labelIds ?? [], from: mh('from'), destinatari: `${mh('to')}, ${mh('cc')}`, internalDate: internal, indirizziNegozio: ng.indirizzi }).length) continue;
+      candidati.push({ gmail_message_id: id, oggetto: mh('subject').slice(0, 200), data: new Date(internal).toISOString(), a: mh('to').slice(0, 200) });
+    }
+    return json({ ok: true, candidati, esclusi: ids.length - candidati.length });
+  }
+
   // --------------------------------------------------------------------------------------- aggancia
   // v10: il tocco registrato a mano prende id e thread del messaggio partito da Gmail, cosi' il giro automatico ne legge
   // le risposte. Il messaggio si verifica su Gmail (scope readonly) prima di scrivere; si scrivono SOLO le due colonne
@@ -752,24 +968,19 @@ Deno.serve(async (req) => {
     if (tcErr) return json({ error: 'lettura tocco fallita, riprova: ' + tcErr.message }, 503);
     if (!tc) return json({ error: 'tocco inesistente', bloccante: true }, 404);
     if (tc.gmail_message_id === msgId && tc.gmail_thread_id) return json({ ok: true, gia_agganciato: true, touch_id: touchId, gmail_thread_id: tc.gmail_thread_id });
-    const [{ data: ac, error: acErr }, { data: cts, error: ctErr }, { count: nUsato, error: nuErr }] = await Promise.all([
-      retryOnce(() => sb.from('lead_accounts').select('email_generica,lead_stage').eq('id', tc.account_id).maybeSingle()),
-      retryOnce(() => sb.from('lead_contacts').select('email,opt_out').eq('account_id', tc.account_id).not('email', 'is', null).limit(200)),
+    const [ng, { count: nUsato, error: nuErr }] = await Promise.all([
+      contattiNegozio(sb, tc.account_id),
       retryOnce(() => sb.from('lead_touches').select('id', { count: 'exact', head: true }).eq('gmail_message_id', msgId).neq('id', touchId)),
     ]);
-    if (acErr) return json({ error: 'lettura negozio fallita, riprova: ' + acErr.message }, 503);
-    if (ctErr) return json({ error: 'lettura contatti fallita, riprova: ' + ctErr.message }, 503);
+    if ('errore' in ng) return json({ error: ng.errore }, 503);
     if (nuErr) return json({ error: 'lettura tocchi fallita, riprova: ' + nuErr.message }, 503);
     // Gate 2 (15-10): agganciare il thread di un negozio che ha chiesto di non essere contattato farebbe rientrare i suoi
     // messaggi nel giro automatico; non serve a nessuno, quindi si rifiuta
-    if (ac?.lead_stage === 'opt_out' || ac?.lead_stage === 'chiuso_no' || ((cts ?? []) as { opt_out: boolean | null }[]).some((c) => c.opt_out)) return json({ error: `negozio in opt-out o chiuso (${ac?.lead_stage ?? 'stadio n/d'}): niente aggancio`, bloccante: true }, 409);
+    if (ng.chiuso) return json({ error: `negozio in opt-out o chiuso (${ng.stage ?? 'stadio n/d'}): niente aggancio`, bloccante: true }, 409);
     if ((nUsato ?? 0) > 0) return json({ error: 'questo messaggio Gmail e\' gia\' agganciato a un altro tocco', bloccante: true }, 409);
-    if (!flags.cs_gmail_sa_key) return json({ error: 'chiave service account assente (app_flags.cs_gmail_sa_key)' }, 500);
-    let saA: { client_email: string; private_key: string };
-    try { saA = JSON.parse(flags.cs_gmail_sa_key); } catch { return json({ error: 'chiave service account non valida' }, 500); }
-    let rtokenA = '';
-    try { rtokenA = await googleAccessToken(saA, SCOPE_READ); }
-    catch (e) { return json({ error: 'autenticazione Google fallita: ' + (e as Error).message.slice(0, 180) }, 502); }
+    const tl = await tokenLettura(flags);
+    if ('errore' in tl) return json({ error: tl.errore }, tl.status);
+    const rtokenA = tl.token;
     let gr: Response;
     try { gr = await fetch(`${GMAIL}/messages/${encodeURIComponent(msgId)}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Cc`, { headers: { Authorization: `Bearer ${rtokenA}` } }); }
     catch (e) { return json({ error: 'Gmail non raggiungibile, niente e\' stato scritto: riprova. ' + scrub((e as Error).message).slice(0, 120) }, 504); }
@@ -778,8 +989,7 @@ Deno.serve(async (req) => {
     if (!gr.ok) return json({ error: `Gmail messages.get ${gr.status}: ${JSON.stringify(gj).slice(0, 160)}` }, 502);
     const gm = gj as { threadId?: string; labelIds?: string[]; internalDate?: string; payload?: { headers?: { name?: string; value?: string }[] } };
     const gh = (n: string) => (gm.payload?.headers ?? []).filter((h) => h.name?.toLowerCase() === n).map((h) => h.value ?? '').join(', ');
-    const indirizziNegozio = [String(ac?.email_generica ?? ''), ...((cts ?? []) as { email: string | null }[]).map((c) => String(c.email ?? ''))];
-    const blocchiA = bloccantiAggancio({ tocco: tc, messaggioId: msgId, etichette: gm.labelIds ?? [], from: gh('from'), destinatari: `${gh('to')}, ${gh('cc')}`, internalDate: Number(gm.internalDate ?? NaN), indirizziNegozio });
+    const blocchiA = bloccantiAggancio({ tocco: tc, messaggioId: msgId, etichette: gm.labelIds ?? [], from: gh('from'), destinatari: `${gh('to')}, ${gh('cc')}`, internalDate: Number(gm.internalDate ?? NaN), indirizziNegozio: ng.indirizzi });
     if (blocchiA.length) return json({ error: 'Aggancio rifiutato: ' + blocchiA.join('; '), bloccante: true }, 422);
     const threadA = String(gm.threadId ?? '');
     if (!threadA) return json({ error: 'Gmail non ha restituito il thread del messaggio' }, 502);
