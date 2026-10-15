@@ -4,7 +4,8 @@ import { defineConfig } from '@playwright/test';
 // E2E_PORT: con piu' worktree aperti la 4173 puo' essere gia' occupata dalla preview di un'ALTRA sessione, e
 // reuseExistingServer la riusa in silenzio: i test girano sulla build sbagliata (successo il 15-10). Porta propria
 // per worktree, es. E2E_PORT=4199 npx playwright test.
-const PORT = Number(process.env.E2E_PORT ?? 4173);
+const PORT = Number(process.env.E2E_PORT || 4173);
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error(`E2E_PORT non valido: '${process.env.E2E_PORT}'`);
 
 export default defineConfig({
   testDir: './e2e',

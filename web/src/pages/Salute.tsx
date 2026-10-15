@@ -439,7 +439,7 @@ function FreschezzaCard({ f }: { f: Freschezza }) {
   return (
     <section className="card">
       <h2>Freschezza delle fonti</h2>
-      <p className="note" style={{ marginTop: 0 }}>Prima di fidarti di un numero guarda quando la sua fonte si e' aggiornata. Rosso = ferma oltre l'atteso.</p>
+      <p className="note" style={{ marginTop: 0 }}>Prima di fidarti di un numero guarda quando la sua fonte si e' aggiornata. Rosso = ferma oltre l'atteso, ocra = in ritardo (lo dice anche il testo).</p>
       <div className="list">
         {rows.map((r) => {
           const a = ageOf(r.iso);
@@ -447,7 +447,7 @@ function FreschezzaCard({ f }: { f: Freschezza }) {
           return (
             <div className="row" key={r.label}>
               <div><div className="rt">{r.label}</div><div className="rs">{r.iso ? String(r.iso).slice(0, 16).replace('T', ' ') : '—'}{r.nota ? ` · ${r.nota}` : ''}</div></div>
-              <div className="giac" style={{ color: col, fontSize: 13 }}>{a.txt}</div>
+              <div className="giac" style={{ color: col, fontSize: 13 }}>{a.txt}{a.h > r.warnH ? ' · ferma' : a.h > r.okH ? ' · in ritardo' : ''}</div>
             </div>
           );
         })}

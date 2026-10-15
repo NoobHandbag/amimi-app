@@ -16,7 +16,7 @@ function avatar(chi: string | null): { i: string; bg: string; name: string } {
   if (AUTO.has(c)) return { i: '•', bg: 'var(--ink-muted)', name };
   const k = c.toLowerCase();
   if (k.startsWith('bene') || k.startsWith('benny')) return { i: 'B', bg: 'var(--positive)', name: 'Benny' };
-  if (k.startsWith('gin')) return { i: 'G', bg: 'var(--sec-cabaret)', name: 'Ginni' };
+  if (k.startsWith('gin')) return { i: 'G', bg: 'var(--sec-cabaret-700)', name: 'Ginni' };
   if (k.startsWith('ale') || k.startsWith('dan')) return { i: 'A', bg: 'var(--interactive)', name: 'Ale' };
   return { i: (c || '?').slice(0, 1).toUpperCase(), bg: 'var(--sec-lavender)', name };
 }

@@ -15,8 +15,8 @@
    - Terracotta  (--negative)             = esito negativo/reso, allarme.
    - Ocra        (--warning)              = in lavorazione / attesa.
    I nomi --interactive, --accent-coral, --sec-* vengono dal sistema GEEIQ e restano per non toccare
-   i componenti: il colore dietro e' quello Amimì. Ardesia, prugna e tortora solo nei grafici e nelle
-   tinte delle icone.
+   i componenti: il colore dietro e' quello Amimì. Prugna, ardesia e tortora: grafici, tinte delle icone,
+   avatar; per una seconda serie accanto al rosa antico si usa l'ardesia (--chart-4), non la prugna.
    ============================================================================ */
 :root {
   /* ---- palette Amimì v2: l'unico blocco con gli hex ---- */
@@ -34,6 +34,7 @@
   --amimi-caramel: #c4956a;
   --amimi-caramel-ink: #7a5433;
   --amimi-caramel-tint: #f6ede3;
+  --amimi-caramel-strong: #a67b54;    /* derivato: caramello 60% + caramel ink 40%, per linee e contorni (3,8:1 su bianco) */
   --amimi-sage: #456b48;
   --amimi-sage-ink: #35522f;
   --amimi-sage-tint: #e9efe9;
@@ -63,11 +64,13 @@
   --interactive-600: var(--amimi-rose-hover);
   --interactive-700: var(--amimi-rose-pressed);
   --interactive-tint: var(--amimi-rose-tint-strong);
+  --interactive-tint-soft: var(--amimi-rose-tint); /* selezionato / attivo su card bianca: piu' chiaro della tinta dei chip toccabili */
 
   /* ---- accento (caramello) ---- */
   --accent-coral: var(--amimi-caramel);
   --accent-coral-700: var(--amimi-caramel-ink);
   --accent-coral-tint: var(--amimi-caramel-tint);
+  --accent-coral-strong: var(--amimi-caramel-strong); /* caramello per contorni e grafici sottili: il caramello pieno su bianco sta sotto 3:1 */
 
   /* ---- esito ---- */
   --positive: var(--amimi-sage);
@@ -87,7 +90,7 @@
   --sec-lavender: var(--amimi-plum);
   --sec-lavender-tint: var(--amimi-plum-tint);
   --sec-lavender-700: var(--amimi-plum-ink);
-  --sec-cabaret: var(--amimi-caramel);
+  --sec-cabaret: var(--amimi-caramel-strong);
   --sec-cabaret-tint: var(--amimi-caramel-tint);
   --sec-cabaret-700: var(--amimi-caramel-ink);
   --sec-flush: var(--amimi-ochre);

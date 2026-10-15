@@ -46,12 +46,19 @@ const envRaw = existsSync(ENVF) ? readFileSync(ENVF, 'utf8') : '';
 const url = (process.env.VITE_SUPABASE_URL || (envRaw.match(/^VITE_SUPABASE_URL\s*=\s*(.+)$/m)?.[1] ?? '')).trim();
 if (!url) stop('VITE_SUPABASE_URL non trovata ne in ambiente ne in web/.env.local: non ho un riferimento con cui controllare il bundle.');
 const host = url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+// Quinto anello (15-10, gate del tema Amimì): il riferimento viene dall'ambiente, quindi una VITE_SUPABASE_URL
+// rimasta impostata dalla ricetta degli e2e e delle schermate (progetto finto) farebbe passare un dist costruito
+// verso il progetto finto. Si pubblica solo verso il progetto vero; un progetto nuovo si scrive qui.
+const HOST_PROD = 'imszbjeyplaiovylhkgl.supabase.co';
+if (host !== HOST_PROD) stop(`VITE_SUPABASE_URL punta a "${host}", non al progetto vero (${HOST_PROD}).\n` +
+  'Se nella shell e\' rimasta la variabile degli e2e (e2e-progetto-finto), toglila e ricostruisci con `npm run build`.');
 
 const assets = join(DIST, 'assets');
 if (!existsSync(assets)) stop('manca web/dist/assets: il bundle non e stato costruito.');
 const js = readdirSync(assets).filter((f) => f.endsWith('.js'));
 if (!js.length) stop('nessun file .js in web/dist/assets.');
 
+if (js.some((f) => readFileSync(join(assets, f), 'utf8').includes('e2e-progetto-finto'))) stop('il bundle in web/dist contiene il progetto Supabase FINTO degli e2e: ricostruisci con `npm run build` senza le VITE_* della ricetta e2e.');
 const trovato = js.some((f) => readFileSync(join(assets, f), 'utf8').includes(host));
 if (!trovato) stop(`l'host Supabase "${host}" NON compare in nessuno dei ${js.length} bundle di web/dist/assets.\n` +
   'Vuol dire che il dist e stato costruito senza env: pubblicarlo darebbe schermate bianche su TUTTA l app.\n' +
