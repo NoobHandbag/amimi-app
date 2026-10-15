@@ -8,7 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
 // contare le HEAD su v_lead_outreach isola le letture del badge.
 // Lanciare dopo `npm run build`:  npx playwright test negozi-badge
 
-type Stato = { head: number; outreach: number; inbound: number; guasto?: boolean };
+type Stato = { head: number; outreach: number; inbound: number; guasto?: boolean; ritardoProssima?: number };
 const SESSIONE = JSON.stringify({
   access_token: 'finto', refresh_token: 'finto', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600,
   user: { id: '00000000-0000-0000-0000-0000000000aa', aud: 'authenticated', role: 'authenticated', email: 'prova@amimi.it', app_metadata: {}, user_metadata: {}, created_at: '2026-01-01T00:00:00Z' },
@@ -27,7 +27,11 @@ async function apri(page: Page, stato: Stato, opts: { clock?: boolean; senzaSess
     if (req.method() === 'HEAD' && url.pathname.endsWith('/v_lead_outreach')) {
       head++;
       if (stato.guasto) return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'guasto finto' }) });
-      return conteggio(stato.outreach);
+      const valore = stato.outreach;   // il valore e' quello del momento in cui la richiesta parte, anche se la risposta e' lenta
+      const ritardo = stato.ritardoProssima ?? 0;
+      stato.ritardoProssima = 0;
+      if (ritardo) await new Promise((r) => setTimeout(r, ritardo));
+      return conteggio(valore);
     }
     if (req.method() === 'HEAD' && url.pathname.endsWith('/v_lead_inbound')) return conteggio(stato.inbound);
     if (url.pathname.endsWith('/v_lead_settings')) return json({ value: 'true' });   // lead_outreach_ai_enabled: .maybeSingle()
@@ -50,7 +54,7 @@ test('il badge si legge al mount e i cambi di tab non lo rileggono', async ({ pa
 
   // il numero finto cambia: se una rilettura partisse, il badge lo mostrerebbe
   stato.outreach = 9;
-  for (const nome of [/^Tabelle/, /^Magazzino/, /^Assistenza/, /^Home/, /^Magazzino/, /^Home/]) {
+  for (const nome of [/^Tabelle/, /^Magazzino/, /^Home/, /^Magazzino/, /^Tabelle/, /^Home/]) {
     await bottone(page, nome).click();
     await ferma(page);
   }
@@ -143,13 +147,11 @@ test('senza login niente richieste; dopo il login il cambio di tab successivo le
 test('una lettura fallita non vale "0 da fare": si riprova al cambio di tab successivo, poi si smette', async ({ page }) => {
   const stato: Stato = { head: 0, outreach: 2, inbound: 0, guasto: true };
   const r = await apri(page, stato);
-  await ferma(page);
-  expect(r.n()).toBe(1);
+  await expect.poll(() => r.n()).toBe(1);
   await expect(badge(page)).toHaveCount(0);
 
   await bottone(page, /^Tabelle/).click();
-  await ferma(page);
-  expect(r.n()).toBe(2);   // ancora guasto: riprova
+  await expect.poll(() => r.n()).toBe(2);   // ancora guasto: riprova
 
   stato.guasto = false;
   await bottone(page, /^Home/).click();
@@ -159,4 +161,39 @@ test('una lettura fallita non vale "0 da fare": si riprova al cambio di tab succ
   await bottone(page, /^Magazzino/).click();
   await ferma(page);
   expect(r.n()).toBe(3);
+});
+
+test('uscendo da Assistenza il badge si rilegge (login, logout e categoria cambiano il da-fare)', async ({ page }) => {
+  const stato: Stato = { head: 0, outreach: 2, inbound: 1 };
+  const r = await apri(page, stato);
+  await expect(badge(page)).toHaveText('3');
+  expect(r.n()).toBe(1);
+
+  await bottone(page, /^Assistenza/).click();
+  await ferma(page);
+  expect(r.n()).toBe(1);   // entrare in Assistenza non rilegge
+
+  stato.outreach = 6;
+  await bottone(page, /^Home/).click();
+  await expect(badge(page)).toHaveText('7');
+  expect(r.n()).toBe(2);
+});
+
+test('una risposta in ritardo non sovrascrive una lettura piu\' recente', async ({ page }) => {
+  const stato: Stato = { head: 0, outreach: 2, inbound: 0 };
+  const r = await apri(page, stato);
+  await expect(badge(page)).toHaveText('2');
+
+  await bottone(page, /B2B$/).click();
+  await ferma(page);
+  stato.ritardoProssima = 1500;   // la lettura del ritorno in primo piano parte col valore 2 e arriva dopo 1,5 s
+  await page.evaluate(() => { document.dispatchEvent(new Event('visibilitychange')); });
+  await expect.poll(() => r.n()).toBe(2);
+  stato.outreach = 7;   // una scrittura dentro Negozi: uscendo, la lettura veloce vede 7
+  await bottone(page, /^Home/).click();
+  await expect(badge(page)).toHaveText('7');
+  expect(r.n()).toBe(3);
+
+  await page.waitForTimeout(1900);   // la risposta lenta (2) e' arrivata: non deve rimettere il numero vecchio
+  await expect(badge(page)).toHaveText('7');
 });
