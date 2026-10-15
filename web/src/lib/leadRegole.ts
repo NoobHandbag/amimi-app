@@ -25,7 +25,7 @@ export function rispostaPreparata(tocchi: ToccoRisposta[], nome: string, emailNe
   const riga = (ultimoIn?.body_clean ?? '').split('\n')[0].trim();
   const to = EMAIL_RIGA.test(riga) ? riga.toLowerCase() : emailNegozio;
   const base = String(msg?.subject ?? '').replace(/^\s*((re|r|fwd?|i)\s*:\s*)+/i, '').trim();
-  if (msg?.gmail_thread_id) return { to, oggetto: base ? `Re: ${base}` : `Amimì Milano per ${nome}`, nelThread: true, riferimento: { subject: base, at: msg.at } };
+  if (msg?.gmail_thread_id) return { to, oggetto: `Re: ${base || `Amimì Milano per ${nome}`}`, nelThread: true, riferimento: { subject: base, at: msg.at } };
   return { to, oggetto: `Amimì Milano per ${nome}`, nelThread: false, riferimento: msg ? { subject: base, at: msg.at } : null };
 }
 // gli stessi avvisi di contenuto della edge (avvisiContenuto, PURE:lead-guard), mostrati MENTRE si scrive la risposta:

@@ -24,7 +24,7 @@ const SETTINGS = [{ key: 'lead_outreach_ai_enabled', value: 'true' }, { key: 'le
 
 type Chiamata = { action?: string; account_id?: string; to?: string; oggetto?: string; testo?: string; send_key?: string };
 
-async function apri(page: Page, riga: Record<string, unknown>, tocchi: Record<string, unknown>[]): Promise<Chiamata[]> {
+async function apri(page: Page, riga: Record<string, unknown>, tocchi: Record<string, unknown>[], opts: { reteGiu?: boolean } = {}): Promise<Chiamata[]> {
   const edge: Chiamata[] = [];
   await page.addInitScript(() => {
     localStorage.setItem('amimi-cs-auth', JSON.stringify({
@@ -41,6 +41,8 @@ async function apri(page: Page, riga: Record<string, unknown>, tocchi: Record<st
     if (url.pathname.endsWith('/functions/v1/lead-outreach')) {
       const c = (req.postDataJSON() ?? {}) as Chiamata;
       edge.push(c);
+      // rete giu' sulla prima risposta: la richiesta e' partita, l'esito non si sa
+      if (c.action === 'rispondi' && opts.reteGiu && edge.filter((x) => x.action === 'rispondi').length === 1) return route.abort('connectionreset');
       if (c.action === 'rispondi') return json({ ok: true, to: c.to, from: 'wholesale@amimi.it', oggetto: c.oggetto, nel_thread: true, gmail_message_id: 'abcdef0123456789' });
       if (c.action === 'prova') return json({ ok: true, prova: true, to: 'prova@amimi.it', from: 'wholesale@amimi.it', oggetto: '[PROVA] ' + c.oggetto, segnaposto: 0 });
       return json({ error: 'azione non prevista dalla spec' }, 500);
@@ -80,6 +82,20 @@ test.describe('schermo largo 1280 px', () => {
     await invia.click();
     await expect.poll(() => edge.length).toBe(2);
     expect(edge[1].send_key).not.toBe(primaChiave);
+  });
+
+  test("rete giu' durante la risposta (Gate Fable, A): esito incerto, e il secondo click riusa la STESSA chiave", async({ page }) => {
+    const edge = await apri(page, base({}), [RISPOSTA, NOSTRA, MODULO], { reteGiu: true });
+    const box = page.locator('.or-rispondi');
+    await box.getByLabel('Risposta').fill(`Ciao Agnese, ti chiamo domani.\n\n${FIRMA}`);
+    page.on('dialog', (d) => d.accept());
+    const invia = box.getByRole('button', { name: 'Invia risposta da wholesale@amimi.it' });
+    await invia.click();
+    await expect(box.locator('.or-esito .err')).toContainText('Esito incerto');
+    await invia.click();
+    await expect.poll(() => edge.filter((c) => c.action === 'rispondi').length).toBe(2);
+    const [a1, a2] = edge.filter((c) => c.action === 'rispondi');
+    expect(a2.send_key).toBe(a1.send_key);
   });
 
   test('ultimo messaggio = modulo del sito: Rispondi e\' un\'email nuova; la prova manda solo oggetto e testo', async ({ page }) => {

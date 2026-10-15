@@ -13,6 +13,9 @@
 // thread giusto, fuori dal tetto e senza numero di tocco. Il tetto di `send` conta solo le email della sequenza.
 // v13 (2026-10-15, blocco C, migr 0158): i messaggi di Assistenza che possono essere un negozio (vista v_lead_inbound) si
 // collegano, creano un negozio o escono dalla lista; "Nuovo negozio" a mano per Instagram, telefono, visita e fiera.
+// v14 (2026-10-15, gate Fable, migr 0159): opt-out automatico solo negli stadi a freddo, newsletter come risposte
+// automatiche, ricerca per mittente che fallisce senza buttare via i thread, rotazione oltre i tetti, fiera e passaparola
+// non contano come un contatto del negozio.
 // v9 (2026-10-12): la risposta di un negozio con DMARC rigido arriva dal gruppo wholesale@ con il From riscritto;
 // si legge l'autore da X-Original-From / Reply-To (mittenteVero) invece di scartarla come posta nostra. CASI_APERTI 29.
 // v8 (2026-10-08): azione `prova`. L'invio vero rifiuta i destinatari @amimi.it, quindi una prova mandata a info@
@@ -175,9 +178,30 @@ function prossimoFollowUp(tocchi: { direzione: string; canale: string; sequenza_
   if (dopo.length) return { salta: dopo.some((t) => t.esito === 'bounce') ? 'email non valida' : 'il negozio ha risposto' };
   return { tocco: n + 1, thread: last.gmail_thread_id };
 }
+// Gate Fable (15-10, B1): l'opt-out riconosciuto dal codice chiude il negozio da solo SOLO dove chiude una sequenza a
+// freddo (da_contattare, contattato, risposto). In uno stadio avanzato ("No grazie, abbiamo gia' ricevuto tutto" di un
+// cliente attivo) decide una persona: esito 'opt_out_da_verificare', che il trigger non tratta come opt-out.
+function tipoEffettivo(tipo: string | null, st: string | null): string | null {
+  if (tipo === 'opt_out' && !(st === 'da_contattare' || st === 'contattato' || st === 'risposto')) return 'opt_out_da_verificare';
+  return tipo;
+}
+// Gate Fable (15-10, B2): newsletter e posta di massa del negozio non sono una risposta. Gli header di lista del NOSTRO
+// gruppo wholesale@ non contano: il gruppo li aggiunge a ogni risposta vera che passa da li' (CONOSCENZA 15-10).
+function eBulk(h: { listUnsubscribe: string; listId: string; precedence: string }): boolean {
+  if (/wholesale\.amimi\.it/i.test(h.listId)) return false;
+  return !!h.listUnsubscribe.trim() || !!h.listId.trim() || /\b(bulk|list|junk)\b/i.test(h.precedence);
+}
+// Gate Fable (15-10, B4): oltre il tetto ogni giro prende la finestra successiva della lista (a rotazione), cosi'
+// nessun negozio e nessun indirizzo resta fuori per sempre perche' viene dopo in ordine
+function finestraDelGiro<T>(lista: T[], giro: number, max: number): T[] {
+  if (lista.length <= max) return lista;
+  const ini = (giro * max) % lista.length;
+  return [...lista.slice(ini), ...lista.slice(0, ini)].slice(0, max);
+}
 // v11: i campi del tocco 'in' che dipendono da classificazione e stadio, uguali per ogni via d'ingresso (thread o mittente)
 function campiRisposta(tipo: string | null, st: string | null, oggi: string): Record<string, string | null> {
   if (tipo === 'risposta_automatica') return { stage_dopo: st };   // non ferma la sequenza, non tocca la scadenza
+  if (tipo === 'opt_out_da_verificare') return { prossima_azione: 'possibile opt-out: leggere il messaggio e decidere', prossima_azione_at: oggi };
   if (tipo === 'bounce') return { stage_dopo: st, prossima_azione: 'email non valida: cercare un altro indirizzo', prossima_azione_at: oggi };
   if (tipo === 'opt_out') return { prossima_azione: 'opt-out: non contattare più' };   // stadio e contatti: trigger
   if (st === 'da_contattare' || st === 'contattato' || st === 'risposto') return { prossima_azione: 'rispondere al negozio', prossima_azione_at: oggi };
@@ -250,12 +274,15 @@ function righeDaConversazione(msgs: MsgCs[], p: { accountId: string; stage: stri
       continue;
     }
     const modulo = m.form_fields != null;
-    const da = indirizzoDi(String((modulo ? m.reply_to : m.from_email) ?? m.from_email ?? ''));
+    const da0 = indirizzoDi(String((modulo ? m.reply_to : m.from_email) ?? m.from_email ?? ''));
+    // Gate Fable (C2): un modulo senza Reply-To porterebbe mailer@shopify.com in prima riga, che poi "Rispondi" accetterebbe
+    const da = /@(mailer\.)?shopify\.com$/.test(da0) ? '' : da0;
     // Gate 2 (15-10): un'email importata si classifica come nel giro (risposta automatica, bounce, opt-out); il modulo e'
     // sempre un messaggio vero. Assistenza non salva l'header Auto-Submitted: decidono mittente, oggetto e testo.
-    const tipo = modulo ? null : classificaInbound({ from: da, subject: p.oggetto, autoSubmitted: '', testo });
+    const tipo = modulo ? null : tipoEffettivo(classificaInbound({ from: da, subject: p.oggetto, autoSubmitted: '', testo }), st);
     righe.push({
-      ...comuni, direzione: 'in', chi: 'assistenza', esito: tipo,
+      // Gate Fable (C4): chi = la persona che collega (il trigger ne fa l'owner se il negozio non ne ha uno), mai 'assistenza'
+      ...comuni, direzione: 'in', chi: p.chi.slice(0, 60), esito: tipo,
       canale: modulo ? 'altro' : 'email', gmail_thread_id: modulo ? null : p.thread,
       subject: jsonSafe((modulo ? `Modulo contatti amimi.it: ${p.oggetto}` : p.oggetto).slice(0, 300)) || null,
       body_clean: jsonSafe(`${da}\n${testo}`.slice(0, 4000)),
@@ -733,12 +760,19 @@ type Cand = { id: string; threadId: string; accountId: string; at: number; via: 
 // arrivati FUORI dai thread che il giro conosce. Aggiunge i candidati a `cand`; la scrittura e' quella comune.
 // deno-lint-ignore no-explicit-any
 async function cercaPerMittente(sb: any, auth: { headers: Record<string, string> }, t0: number, esito: Record<string, number | boolean | string>, stage: Map<string, string>, cand: Map<string, Cand>, sospesi: Set<string>): Promise<void> {
-  const { data: accs, error: aErr } = await retryOnce(() => sb.from('lead_accounts').select('id,lead_stage,email_generica')
-    .or('lead_stage.neq.da_contattare,fonte_seed.eq.cs_inbound').order('updated_at', { ascending: false }).limit(MAX_NEGOZI_MITT + 1));
+  // Gate Fable (B4, C5): negozi chiusi o in opt-out fuori dalla ricerca; oltre il tetto, a rotazione per giro (ordine
+  // stabile per id: un ordine per updated_at lasciava fuori per sempre proprio i negozi fermi da piu' tempo)
+  const giro = Math.floor(Date.now() / 1_800_000);
+  // deno-lint-ignore no-explicit-any
+  const filtro = (q: any) => q.or('lead_stage.neq.da_contattare,fonte_seed.eq.cs_inbound').not('lead_stage', 'in', '(opt_out,chiuso_no)');
+  const { count: nNeg, error: nErr } = await retryOnce(() => filtro(sb.from('lead_accounts').select('id', { count: 'exact', head: true })));
+  if (nErr) throw new Error('conteggio negozi in lavorazione fallito: ' + nErr.message);
+  const totNeg = Number(nNeg ?? 0);
+  if (totNeg > MAX_NEGOZI_MITT) esito.mittenti_troncati = true;
+  const off = totNeg > MAX_NEGOZI_MITT ? (giro * MAX_NEGOZI_MITT) % totNeg : 0;
+  const { data: accs, error: aErr } = await retryOnce(() => filtro(sb.from('lead_accounts').select('id,lead_stage,email_generica')).order('id').range(off, off + MAX_NEGOZI_MITT - 1));
   if (aErr) throw new Error('lettura negozi in lavorazione fallita: ' + aErr.message);
-  const negozi = ((accs ?? []) as { id: string; lead_stage: string; email_generica: string | null }[]);
-  if (negozi.length > MAX_NEGOZI_MITT) esito.mittenti_troncati = true;
-  const lista = negozi.slice(0, MAX_NEGOZI_MITT);
+  const lista = ((accs ?? []) as { id: string; lead_stage: string; email_generica: string | null }[]);
   if (!lista.length) return;
   const mappa = new Map<string, string[]>();
   const aggiungi = (indirizzo: string | null, acc: string) => {
@@ -757,8 +791,9 @@ async function cercaPerMittente(sb: any, auth: { headers: Record<string, string>
     if ((cts ?? []).length >= 1000) throw new Error('lettura contatti troncata a 1.000 righe');   // Regola 20b: mai un elenco parziale
     for (const c of (cts ?? []) as { account_id: string; email: string | null }[]) aggiungi(c.email, c.account_id);
   }
-  const indirizzi = [...mappa.keys()].sort();
-  if (indirizzi.length > MAX_INDIRIZZI) esito.mittenti_troncati = true;
+  const tutti = [...mappa.keys()].sort();
+  if (tutti.length > MAX_INDIRIZZI) esito.mittenti_troncati = true;
+  const indirizzi = finestraDelGiro(tutti, giro, MAX_INDIRIZZI);
   // id messaggio -> thread e negozi del blocco di indirizzi che l'ha trovato (se il messaggio non si legge, sono loro i
   // negozi da tenere sospesi: niente follow-up a chi forse ci ha appena scritto)
   const trovati = new Map<string, { threadId: string; negozi: string[] }>();
@@ -857,7 +892,10 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
     letti.add(th);
   }
   // 1b) v11 (A2): email e moduli dei negozi in lavorazione arrivati fuori da quei thread
-  await cercaPerMittente(sb, auth, t0, esito, stage, cand, sospesi);
+  // Gate Fable (B3): un errore qui non butta via le risposte gia' trovate nei thread (sarebbe uno stallo a ogni giro);
+  // si segna, e il giro non propone follow-up (non sa se un negozio in sequenza ci ha scritto fuori thread)
+  try { await cercaPerMittente(sb, auth, t0, esito, stage, cand, sospesi); }
+  catch (e) { esito.mittenti_errore = scrub((e as Error).message).slice(0, 200); }
   if (!cand.size) return fine();
 
   // 2) quali sono gia' in lead_touches: .in() sui soli id da controllare (Regola 20b), a blocchi
@@ -903,7 +941,9 @@ async function leggiRisposte(sb: any, flags: Flags, t0: number): Promise<{ esito
       const from = mittenteVero(hdr('from'), hdr('x-original-from'), hdr('reply-to'));
       // un messaggio da @amimi.it nel thread (collega in copia, inoltro interno) non e' una risposta del negozio
       if (indirizzoDi(from).endsWith('@amimi.it')) continue;
-      tipo = classificaInbound({ from, subject: hdr('subject'), autoSubmitted: hdr('auto-submitted'), testo });
+      tipo = eBulk({ listUnsubscribe: hdr('list-unsubscribe'), listId: hdr('list-id'), precedence: hdr('precedence') })
+        ? 'risposta_automatica'
+        : tipoEffettivo(classificaInbound({ from, subject: hdr('subject'), autoSubmitted: hdr('auto-submitted'), testo }), st);
       const pulito = tagliaCitazione(testo) || testo.trim();
       base = { ...comuni, canale: 'email', gmail_thread_id: c.threadId, esito: tipo,
         subject: jsonSafe(hdr('subject').slice(0, 300)) || null, body_clean: jsonSafe(`${indirizzoDi(from)}\n${pulito}`.slice(0, 4000)) };
@@ -985,14 +1025,14 @@ async function giroCron(sb: any): Promise<Response> {
   catch (e) { errori.push('risposte: ' + scrub((e as Error).message.slice(0, 200))); }
   // senza una lettura riuscita delle risposte non si sa chi ha risposto: nessun follow-up in questo giro. A lettura
   // riuscita il follow-up e' deciso negozio per negozio: thread letto in questo giro e nessuna risposta in sospeso.
-  if (inbound && flags.lead_outreach_ai_enabled === 'true') {
+  if (inbound && !inbound.mittenti_errore && flags.lead_outreach_ai_enabled === 'true') {
     try { followup = await proponiFollowUp(sb, flags, t0, sospesi, letti); }
     catch (e) { errori.push('follow-up: ' + scrub((e as Error).message.slice(0, 200))); }
   }
   const fuErr = (followup?.primo_errore ? `; errore bozza: ${followup.primo_errore}` : '') + (inbound?.illeggibili ? `; ${inbound.illeggibili} risposte non lette: ${inbound.primo_errore ?? ''}` : '');
   const label = errori.length ? errori.join(' | ')
-    : `risposte ${inbound?.nuove ?? 0} (vere ${inbound?.risposte ?? 0}, opt-out ${inbound?.opt_out ?? 0}, bounce ${inbound?.bounce ?? 0}, automatiche ${inbound?.automatiche ?? 0}; trovate per mittente ${inbound?.mittenti ?? 0}, moduli ${inbound?.moduli ?? 0}), follow-up proposti ${followup?.proposte ?? 0}${followup?.saltati ? ` (${followup.saltati} rimandati)` : ''}${inbound?.ambigui ? `; ${inbound.ambigui} messaggi da un indirizzo di piu' negozi: da collegare a mano` : ''}${inbound?.thread_troncati || inbound?.mittenti_troncati || inbound?.rimandate ? '; giro troncato, il resto al prossimo' : ''}${fuErr}`;
-  const sev = errori.length ? 'error' : (inbound?.thread_troncati || inbound?.mittenti_troncati || inbound?.rimandate || inbound?.ambigui || fuErr) ? 'warn' : 'ok';
+    : `risposte ${inbound?.nuove ?? 0} (vere ${inbound?.risposte ?? 0}, opt-out ${inbound?.opt_out ?? 0}, bounce ${inbound?.bounce ?? 0}, automatiche ${inbound?.automatiche ?? 0}; trovate per mittente ${inbound?.mittenti ?? 0}, moduli ${inbound?.moduli ?? 0}), follow-up proposti ${followup?.proposte ?? 0}${followup?.saltati ? ` (${followup.saltati} rimandati)` : ''}${inbound?.ambigui ? `; ${inbound.ambigui} messaggi da un indirizzo di piu' negozi: da collegare a mano` : ''}${inbound?.mittenti_errore ? `; ricerca per mittente fallita (follow-up fermi): ${inbound.mittenti_errore}` : ''}${inbound?.thread_troncati || inbound?.mittenti_troncati || inbound?.rimandate ? '; giro troncato, il resto al prossimo' : ''}${fuErr}`;
+  const sev = errori.length || inbound?.mittenti_errore ? 'error' : (inbound?.thread_troncati || inbound?.mittenti_troncati || inbound?.rimandate || inbound?.ambigui || fuErr) ? 'warn' : 'ok';
   const { error: hErr } = await sb.from('health_log').upsert({ day: oggiRoma(), k: 'lead_cron', label: jsonSafe(label.slice(0, 500)), n: Number(inbound?.nuove ?? 0) + Number(followup?.proposte ?? 0), severity: sev, created_at: new Date().toISOString() }, { onConflict: 'day,k' });
   return json({ ok: !errori.length, inbound: inbound ? { ...inbound, primo_errore: undefined } : null, followup: followup ? { ...followup, primo_errore: undefined } : null, errori: errori.length, health: hErr ? 'non scritto' : sev, ms: Date.now() - t0 }, errori.length ? 500 : 200);
 }
@@ -1110,7 +1150,12 @@ Deno.serve(async (req) => {
     // una richiesta ripetuta con la stessa chiave: se la risposta e' gia' partita lo si dice, senza rimandarla
     const { data: gia, error: giaErr } = await retryOnce(() => sb.from('lead_drafts').select('id,stato,account_id,gmail_message_id').eq('send_key', sendKeyR).maybeSingle());
     if (giaErr) return json({ error: 'lettura bozza fallita, riprova: ' + giaErr.message }, 503);
-    if (gia) return gia.stato === 'inviata' && gia.account_id === accountId ? json({ ok: true, already_sent: true, to: toR, gmail_message_id: gia.gmail_message_id }) : json({ error: 'questa risposta e\' gia\' in invio: ricarica la scheda', bloccante: true }, 409);
+    if (gia) {
+      if (gia.stato === 'inviata' && gia.account_id === accountId) return json({ ok: true, already_sent: true, to: toR, gmail_message_id: gia.gmail_message_id });
+      // Gate Fable (C1): una risposta rifiutata da Gmail non e' "in invio": si riprova, e la scheda usa una chiave nuova
+      if (gia.stato === 'errore') return json({ error: 'questa risposta era stata rifiutata da Gmail: riprova', bloccante: true }, 409);
+      return json({ error: 'questa risposta e\' gia\' in invio: ricarica la scheda', bloccante: true }, 409);
+    }
     const [{ data: accR, error: accErr }, { data: tocchiR, error: tocErr }, { count: nOptR, error: optErr }, { count: nOptToR, error: optToErr }] = await Promise.all([
       retryOnce(() => sb.from('lead_accounts').select('id,lead_stage').eq('id', accountId).maybeSingle()),
       retryOnce(() => sb.from('lead_touches').select('id,direzione,canale,esito,at,gmail_message_id,gmail_thread_id,subject,body_clean').eq('account_id', accountId).order('at', { ascending: false }).limit(200)),
@@ -1131,7 +1176,7 @@ Deno.serve(async (req) => {
     // cambiare il destinatario farebbe di "Rispondi" un invio libero a chiunque.
     const ngR = await contattiNegozio(sb, accountId);
     if ('errore' in ngR) return json({ error: ngR.errore }, 503);
-    const noti = new Set([...ngR.indirizzi, ...tocchiList.filter((t) => t.direzione === 'in').map((t) => String(t.body_clean ?? '').split('\n')[0])].map((x) => x.trim().toLowerCase()).filter((x) => EMAIL_RE.test(x)));
+    const noti = new Set([...ngR.indirizzi, ...tocchiList.filter((t) => t.direzione === 'in').map((t) => String(t.body_clean ?? '').split('\n')[0])].map((x) => x.trim().toLowerCase()).filter((x) => EMAIL_RE.test(x) && !/@(mailer\.)?shopify\.com$/.test(x)));
     if (!noti.has(toR)) return json({ error: `${toR} non e\' un indirizzo di questo negozio: si risponde a un contatto del negozio o a chi ci ha scritto`, bloccante: true }, 422);
     const bers = bersaglioRisposta(tocchiList);
     const ultimoIn = tocchiList.find((t) => t.direzione === 'in' && !['bounce', 'risposta_automatica'].includes(t.esito ?? ''))?.id ?? null;
@@ -1268,10 +1313,13 @@ Deno.serve(async (req) => {
       if (error && error.code !== '23505') return json({ error: 'negozio creato, ma il contatto non e\' stato salvato: ' + error.message, account_id: nuovo.id }, 500);
     }
     const etichetta: Record<string, string> = { instagram_dm: 'Instagram', telefono: 'telefono', visita: 'visita', email: 'email', altro: 'altro (fiera, passaparola)' };
-    const { error: tErr } = await sb.from('lead_touches').insert({
-      account_id: nuovo.id, canale: canaleN, direzione: 'in', subject: `Primo contatto: ${etichetta[canaleN]}`,
-      body_clean: jsonSafe(String(body.nota || '').trim().slice(0, 4000)) || null, stage_prima: 'da_contattare', chi, ...campiRisposta(null, 'da_contattare', oggiRoma()),
-    });
+    // Gate Fable (15-10, B7): "fiera, passaparola" non vuol dire che il negozio ci ha cercato. Quel negozio NON deve risultare
+    // "ci ha scritto" (aprirebbe "Rispondi" fuori da tetto, riga di opt-out e verdetto): si registra come nota, stadio fermo
+    // a da_contattare, prossima azione "primo contatto". Instagram, telefono, visita ed email restano un loro contatto.
+    const nota = jsonSafe(String(body.nota || '').trim().slice(0, 4000)) || null;
+    const { error: tErr } = await sb.from('lead_touches').insert(canaleN === 'altro'
+      ? { account_id: nuovo.id, canale: 'altro', direzione: 'out', subject: 'Inserito a mano: fiera, passaparola o altro', body_clean: nota, stage_prima: 'da_contattare', stage_dopo: 'da_contattare', chi, prossima_azione: 'primo contatto da fare', prossima_azione_at: oggiRoma() }
+      : { account_id: nuovo.id, canale: canaleN, direzione: 'in', subject: `Primo contatto: ${etichetta[canaleN]}`, body_clean: nota, stage_prima: 'da_contattare', chi, ...campiRisposta(null, 'da_contattare', oggiRoma()) });
     if (tErr) return json({ error: 'negozio creato, ma il primo contatto non e\' stato registrato: ' + tErr.message, account_id: nuovo.id }, 500);
     return json({ ok: true, account_id: nuovo.id });
   }
