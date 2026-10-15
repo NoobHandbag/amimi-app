@@ -27,6 +27,7 @@ on:
       - "web/package-lock.json"
       - "web/e2e/**"
       - "web/playwright.config.ts"
+      - "web/scripts/**"
       - ".github/workflows/amimi-app-tests.yml"
   pull_request:
     paths:
@@ -41,6 +42,7 @@ on:
       - "web/package-lock.json"
       - "web/e2e/**"
       - "web/playwright.config.ts"
+      - "web/scripts/**"
       - ".github/workflows/amimi-app-tests.yml"
   workflow_dispatch:
 
@@ -61,12 +63,12 @@ jobs:
       - name: loyalty-page generata dalla sorgente (quest audit Premia 2026-09-21, finding T25)
         shell: bash
         run: node supabase/functions/loyalty-page/build.mjs --check
-      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate)
+      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate, colori del tema)
         shell: bash
         run: |
           set -eo pipefail
           fail=0
-          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/lead_outreach_guardie.mjs tests/arrivo_adesso.mjs tests/snapshot_drive_mensile.mjs tests/ce_compenso_soci.mjs; do
+          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/lead_outreach_guardie.mjs tests/arrivo_adesso.mjs tests/snapshot_drive_mensile.mjs tests/ce_compenso_soci.mjs tests/tema_colori_guardie.mjs; do
             echo "== $t"
             node "$t" || { echo "::error::suite KO: $t"; fail=1; }
           done
