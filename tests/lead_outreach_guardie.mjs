@@ -705,5 +705,26 @@ console.log('== Quarto giro (refuter sul terzo) ==');
 t('r4-1 (migr 0160) una sola risposta in invio per negozio: indice unico parziale su lead_drafts (account_id) dove stato in_invio e sequenza_tocco null; il 23505 e\' esito incerto sia nel claim sia nell\'insert', /create unique index if not exists lead_drafts_risposta_in_invio_uq on lead_drafts \(account_id\) where stato = 'in_invio' and sequenza_tocco is null;/.test(mig160) && /const dupP = upPErr\.code === '23505';/.test(rispF) && /const dup = insErr\.code === '23505';/.test(rispF));
 t('r4-2 (web) Riprova non azzera la bozza aperta ne\' il box: rilegge solo tocchi e bozze, decide il modo solo senza bozza; l\'avviso di apertura sparisce anche dopo una risposta inviata', /const apriScheda = \(riprova = false\) => \{\n\s*if \(!riprova\) \{ setDraftId\(null\); setRDraftId\(null\); setOptions\(null\);/.test(schedaW) && /if \(riprova\) \{ if \(!draftId\) setModo\(modoIniziale\(ts, r\.lead_stage, r\.n_opt_out\)\); return; \}/.test(schedaW) && /if \(!riprova\) setModo\(modoIniziale\(\[\], r\.lead_stage, r\.n_opt_out\)\);/.test(schedaW) && /useEffect\(\(\) => \{ apriScheda\(false\);/.test(schedaW) && /setIncertoMsg\(''\); setApertura\(''\);\n\s*dire\(`\$\{res\.already_sent \? 'Già inviata prima' : 'Risposta inviata'\}/.test(inviaRispW));
 
+console.log('== Badge B2B nella barra (CASI_APERTI n.38 a, 15-10): una lettura per evento, non per tab ==');
+const appB = readFileSync(`${ROOT}web/src/App.tsx`, 'utf8').replace(/\r\n/g, '\n');
+const specBadge = readFileSync(`${ROOT}web/e2e/negozi-badge.spec.ts`, 'utf8').replace(/\r\n/g, '\n');
+const webApiB = readFileSync(`${ROOT}web/src/lib/leadApi.ts`, 'utf8').replace(/\r\n/g, '\n');
+const mountB = appB.slice(appB.indexOf('const leggiBadge = useCallback'), appB.indexOf('const [chi, setChiS]'));
+t('badge1 (App) il badge si legge una volta al mount, ogni 5 minuti e al ritorno in primo piano, con un solo effetto a dipendenze fisse (mai [tab])',
+  /useEffect\(\(\) => \{[^]*?leggiBadge\(\);[^]*?window\.setInterval\(seVisibile, 5 \* 60000\);[^]*?addEventListener\('visibilitychange', seVisibile\)[^]*?\}, \[leggiBadge\]\);/.test(mountB) && !/\[tab\]\);/.test(mountB.slice(0, mountB.indexOf('const tabPrec'))));
+t('badge2 (App) tick e ritorno leggono solo a scheda visibile (document.hidden), e il listener si toglie allo smontaggio',
+  /const seVisibile = \(\) => \{ if \(!document\.hidden\) leggiBadge\(\); \};/.test(mountB) && /clearInterval\(id\); document\.removeEventListener\('visibilitychange', seVisibile\);/.test(mountB));
+t('badge3 (App) uscendo da Negozi (e solo da li) si rilegge: una scrittura puo aver cambiato il da-fare; ingresso e altri cambi di tab no, salvo il "da riprovare" (senza login o lettura fallita); tre sole chiamate a leggiBadge',
+  /if \(daRiprovare\.current \|\| \(tabPrec\.current === 'negozi' && tab !== 'negozi'\)\) leggiBadge\(\);\n\s*tabPrec\.current = tab;/.test(mountB) && (appB.match(/leggiBadge\(\)/g) ?? []).length === 3);
+t('badge4 (App) fetchLeadTodo e chiamato in un punto solo, dentro leggiBadge, e un esito null (senza login o vista in errore) vale 0 ma segna "da riprovare"; mai una lettura sparsa nella shell',
+  (appB.match(/fetchLeadTodo\(\)/g) ?? []).length === 1 && /fetchLeadTodo\(\)\.then\(\(n\) => \{ daRiprovare\.current = n === null; setLeadTodo\(n \?\? 0\); \}\)\.catch\(\(\) => \{ daRiprovare\.current = true; setLeadTodo\(0\); \}\);/.test(appB) && /const daRiprovare = useRef\(false\);/.test(appB));
+t('badge5 (leadApi) fetchLeadTodo torna null (non 0) senza sessione e con la vista del conteggio in errore, o v_lead_inbound in errore a flag acceso: un guasto non e "0 da fare"',
+  /Promise<number \| null> \{/.test(webApiB) && /if \(!data\.session\) return null;/.test(webApiB) &&
+  /if \(error \|\| \(inErr && \(flag as \{ value\?: string \} \| null\)\?\.value === 'true'\)\) return null;\n\s*return \(count \?\? 0\) \+ inbound;/.test(webApiB));
+t('badge6 (e2e) la spec negozi-badge conta le HEAD del badge su mount, cambi di tab, uscita da Negozi, ritorno in primo piano, tick dei 5 minuti, senza login e dopo un guasto, su dati finti',
+  /page\.clock\.install\(\)/.test(specBadge) && /il badge si legge al mount e i cambi di tab non lo rileggono/.test(specBadge) && /uscendo da Negozi il badge si rilegge; entrarci no/.test(specBadge) &&
+  /ritorno in primo piano della scheda/.test(specBadge) && /ogni 5 minuti a scheda visibile; da nascosta niente/.test(specBadge) && /senza login niente richieste/.test(specBadge) &&
+  /una lettura fallita non vale/.test(specBadge) && /page\.route\(\/supabase\\\.co\\\/\//.test(specBadge));
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

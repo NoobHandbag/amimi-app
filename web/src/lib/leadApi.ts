@@ -358,10 +358,12 @@ export async function scartaBozza(p: { draft_id: string; chi: string }): Promise
   await callOutreach({ action: 'scarta', ...p });
 }
 // "da fare" del B2B per il badge nella barra in basso: risposte da gestire, azioni scadute, follow-up da rivedere.
-// Senza sessione (la sezione vuole il login @amimi.it) o su errore torna 0: il badge e' un aiuto, mai un blocco.
-export async function fetchLeadTodo(): Promise<number> {
+// null = nessun numero valido: senza sessione (la sezione vuole il login @amimi.it) o con una vista in errore, che non
+// e' "0 da fare". Il badge e' un aiuto, mai un blocco: chi lo mostra tratta null come 0 e riprova al cambio di tab
+// successivo (senza sessione non fa richieste); con un numero valido legge per eventi (App.tsx, CASI_APERTI n.38 a).
+export async function fetchLeadTodo(): Promise<number | null> {
   const { data } = await csClient.auth.getSession();
-  if (!data.session) return 0;
+  if (!data.session) return null;
   const [{ count, error }, { count: nIn, error: inErr }, { data: flag }] = await Promise.all([
     csClient.from('v_lead_outreach').select('id', { count: 'exact', head: true }).or('scaduta.eq.true,da_gestire.eq.true,bozza_auto_tocco.not.is.null'),
     csClient.from('v_lead_inbound').select('conv_id', { count: 'exact', head: true }),   // v13: messaggi da collegare
@@ -369,7 +371,8 @@ export async function fetchLeadTodo(): Promise<number> {
   ]);
   // i messaggi da collegare si vedono in Coda solo col flag acceso: senza, il badge non li conta (Gate 2, 15-10)
   const inbound = (flag as { value?: string } | null)?.value === 'true' && !inErr ? nIn ?? 0 : 0;
-  return (error ? 0 : count ?? 0) + inbound;
+  if (error || (inErr && (flag as { value?: string } | null)?.value === 'true')) return null;
+  return (count ?? 0) + inbound;
 }
 
 // v13 (blocco C, migr 0158): messaggi di Assistenza che possono essere un negozio, non ancora nel cruscotto. Si leggono
