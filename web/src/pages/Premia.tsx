@@ -14,7 +14,7 @@ const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', c
 const R = { textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums' };
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) + '%' : '—');
 const fmtDay = (d: string | null) => (d ? new Date(d + 'T00:00:00').toLocaleDateString('it-IT', { day: '2-digit', month: 'short' }) : '—');
-const SEV_COLOR: Record<string, string> = { error: 'var(--red, #c83c46)', bad: 'var(--red, #c83c46)', warn: '#c98a1a', ok: 'var(--green, #2e9e5b)' };
+const SEV_COLOR: Record<string, string> = { error: 'var(--negative)', bad: 'var(--negative)', warn: 'var(--warning)', ok: 'var(--positive)' };
 const sevRank = (s: string) => (s === 'bad' || s === 'error' ? 0 : s === 'warn' ? 1 : 2);
 
 // Cosa fare quando una voce non e' verde (sezioni di amimi-app/docs/LOYALTY_RUNBOOK.md)
@@ -80,7 +80,7 @@ function Funnel({ steps }: { steps: [string, number][] }) {
         <div key={label} style={{ margin: '6px 0' }}>
           {/* popolazioni diverse (aperture = tutte, passaggi tracciati = solo chi e' tracciato): oltre il 100% la percentuale non ha senso */}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{label}</span><strong>{num(v)}{i > 0 && v <= steps[i - 1][1] ? <span style={{ color: 'var(--muted)', fontWeight: 400 }}> · {pct(v, steps[i - 1][1])}</span> : null}</strong></div>
-          <div style={{ height: 8, borderRadius: 4, background: 'var(--line, #eee)' }}><div style={{ width: Math.min(100, (v / top) * 100) + '%', height: 8, borderRadius: 4, background: 'var(--rose, #8b5e6b)' }} /></div>
+          <div style={{ height: 8, borderRadius: 4, background: 'var(--border)' }}><div style={{ width: Math.min(100, (v / top) * 100) + '%', height: 8, borderRadius: 4, background: 'var(--chart-1)' }} /></div>
         </div>
       ))}
     </div>
@@ -135,7 +135,7 @@ export default function Premia({ onBack }: { onBack: () => void }) {
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; premia</span></div>
         <div className="cs-lt">Come sta andando il programma fedelta&#8217;: accedi con il tuo account Amimi&#8217;</div>
-        <button className="cs-btn" style={{ width: '100%', background: '#fff', border: '1px solid var(--line)', color: 'var(--dark)' }} onClick={doGoogle} disabled={busy} type="button">Accedi con Google</button>
+        <button className="cs-btn" style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--dark)' }} onClick={doGoogle} disabled={busy} type="button">Accedi con Google</button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 4px', color: 'var(--muted)', fontSize: 12 }}>
           <span style={{ flex: 1, height: 1, background: 'var(--line)' }} /> oppure con email <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
         </div>

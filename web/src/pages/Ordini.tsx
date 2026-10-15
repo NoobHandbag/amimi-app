@@ -126,7 +126,7 @@ function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLin
           {altri.length > 0 && (
             // fix b (31-07): il vero antidoto al doppio conteggio: chi registra VEDE che esistono
             // altre righe ordine aperte per la stessa borsa e controlla di essere su quella giusta.
-            <div style={{ background: '#fff4e0', border: '1px solid #eac07a', color: '#7a4d0b', borderRadius: 10, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}>
+            <div style={{ background: 'var(--warning-tint)', border: '1px solid var(--warning)', color: 'var(--warning-700)', borderRadius: 10, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}>
               Attenzione: {altri.length === 1 ? "c'e' un altro ordine aperto" : `ci sono ${altri.length} altri ordini aperti`} per questa borsa
               ({altri.map((a) => `${a.fornitore ?? '?'}: ${a.wip ? '?' : a.mancano} mancano, ordine del ${String(a.data_ordine ?? '').slice(0, 10)}`).join(' · ')}).
               Controlla di registrare l'arrivo sulla riga giusta.
