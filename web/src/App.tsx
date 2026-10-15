@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Tab } from './lib/people';
 import { fetchMatEnabled } from './lib/matApi';
 import Materiali from './pages/Materiali';
@@ -30,14 +30,32 @@ export default function App() {
   // pagina dice "non attiva". Rollback = spegnere app_flags.mat_enabled (Regola Ferrea 19). Letto una volta all'avvio.
   const [matEnabled, setMatEnabled] = useState(false);
   useEffect(() => { fetchMatEnabled().then(setMatEnabled).catch(() => setMatEnabled(false)); }, []);
-  // badge del bottone B2B nella barra: "da fare" dell'outreach (0 senza login). Si rilegge a ogni cambio di tab e ogni 5 minuti.
+  // badge del bottone B2B nella barra: "da fare" dell'outreach (0 senza login). 3 richieste, di cui v_lead_inbound la piu'
+  // cara (CASI_APERTI n.38 a): si legge al mount, ogni 5 minuti a scheda visibile, al ritorno in primo piano e quando si
+  // ESCE da Negozi o da Assistenza (scrivono: una scrittura, il login o la categoria di una conversazione cambiano il
+  // da-fare); NON a ogni cambio di tab. Unica eccezione: senza login (zero richieste) o dopo una lettura fallita si
+  // riprova al cambio di tab successivo, come prima. Conta solo l'esito dell'ultima lettura partita.
   const [leadTodo, setLeadTodo] = useState(0);
+  const daRiprovare = useRef(false);
+  const ultimaLettura = useRef(0);
+  const leggiBadge = useCallback(() => {
+    const mia = ++ultimaLettura.current;
+    fetchLeadTodo()
+      .then(({ n, riprova }) => { if (mia === ultimaLettura.current) { daRiprovare.current = riprova; setLeadTodo(n); } })
+      .catch(() => { if (mia === ultimaLettura.current) { daRiprovare.current = true; setLeadTodo(0); } });
+  }, []);
   useEffect(() => {
-    const leggi = () => { fetchLeadTodo().then(setLeadTodo).catch(() => setLeadTodo(0)); };
-    leggi();
-    const id = window.setInterval(leggi, 5 * 60000);
-    return () => window.clearInterval(id);
-  }, [tab]);
+    const seVisibile = () => { if (!document.hidden) leggiBadge(); };
+    leggiBadge();
+    const id = window.setInterval(seVisibile, 5 * 60000);
+    document.addEventListener('visibilitychange', seVisibile);
+    return () => { window.clearInterval(id); document.removeEventListener('visibilitychange', seVisibile); };
+  }, [leggiBadge]);
+  const tabPrec = useRef(tab);
+  useEffect(() => {
+    if (daRiprovare.current || (tab !== tabPrec.current && (tabPrec.current === 'negozi' || tabPrec.current === 'assistenza'))) leggiBadge();
+    tabPrec.current = tab;
+  }, [tab, leggiBadge]);
   const [chi, setChiS] = useState(() => localStorage.getItem('amimi_chi') || 'Ale');
   const setChi = (c: string) => { setChiS(c); localStorage.setItem('amimi_chi', c); };
   const go = (t: Tab, p?: string) => {
