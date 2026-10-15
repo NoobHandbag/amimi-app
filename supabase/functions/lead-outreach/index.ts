@@ -506,7 +506,8 @@ function threadRisposta(tocchi: ToccoConv[], max = 30): { righe: string[]; ultim
     const nota = NOTA_CANALE[t.canale] ? `, ${NOTA_CANALE[t.canale]} (nota interna)` : t.canale === 'altro' ? (t.direzione === 'in' ? ', modulo del sito' : ', nota interna') : '';
     righe.push(`[${t.at.slice(0, 10)}] ${t.direzione === 'in' ? 'NEGOZIO' : 'NOI'}${nota}${t.subject ? ` | oggetto: ${t.subject.slice(0, 150)}` : ''}\n${corpo.slice(0, 800)}`);
     pezzi.push(`${t.subject ?? ''}\n${corpo.slice(0, 4000)}`);
-    if (t.direzione === 'in') { ultimoNegozio = corpo.slice(0, 1500); ultimoAt = t.at; }
+    // si risponde a un MESSAGGIO del negozio (email o modulo): una telefonata registrata come "Loro -> noi" e' una nota
+    if (t.direzione === 'in' && (t.canale === 'email' || t.canale === 'altro')) { ultimoNegozio = corpo.slice(0, 1500); ultimoAt = t.at; }
   }
   return { righe, ultimoNegozio, ultimoAt, corpus: pezzi.join('\n') };
 }
@@ -1321,7 +1322,7 @@ Deno.serve(async (req) => {
       }
       catch (e) { sa = (e as Error).message.slice(0, 160); }
     }
-    return json({ ok: true, enabled, cron: flags.lead_enabled === 'true', mittente: mitt, ...(mittAvviso ? { mittente_avviso: mittAvviso } : {}), gemini: !!flags.gemini_api_key, service_account: sa, linesheet: !!flags.lead_linesheet_url, firma: !!flags.lead_firma, tetto: Number.parseInt(flags.lead_tetto_giornaliero || '20', 10) });
+    return json({ ok: true, enabled, cron: flags.lead_enabled === 'true', mittente: mitt, ...(mittAvviso ? { mittente_avviso: mittAvviso } : {}), gemini: !!flags.gemini_api_key, risposta_ai: flags.lead_risposta_ai_enabled === 'true', service_account: sa, linesheet: !!flags.lead_linesheet_url, firma: !!flags.lead_firma, tetto: Number.parseInt(flags.lead_tetto_giornaliero || '20', 10) });
   }
   if (!enabled) return json({ error: 'Bozze e invio B2B spenti (app_flags.lead_outreach_ai_enabled = false).', bloccante: true }, 403);
 
@@ -1376,9 +1377,12 @@ Deno.serve(async (req) => {
     const prompt = action === 'rifinisci' ? promptRifinisci({ ...fatti, modo, testo: testoAttuale, istruzione }) : promptRisposta({ ...fatti, ultimoNegozio: th.ultimoNegozio });
     let alt: { titolo: string; testo: string }[] = [];
     let finish = '', tokens: number | null = null, errG = '';
+    // si riprova UNA volta solo se il modello ha risposto ma con alternative vuote o tagliate; un timeout o un errore del
+    // modello non si ripete (Gate 2 v15, C1: la persona aspetta davanti allo schermo, 45 s bastano)
     for (let tentativo = 0; tentativo < 2 && !alt.length; tentativo++) {
+      errG = '';
       try { const g = await geminiAlternative(prompt, flags.gemini_api_key); finish = g.finish; tokens = g.tokens; alt = leggiAlternative(g.text); }
-      catch (e) { errG = (e as Error).message.slice(0, 200); }
+      catch (e) { errG = (e as Error).message.slice(0, 200); break; }
     }
     if (!alt.length) return json({ error: errG ? `proposta non riuscita: ${errG}. Riprova` : `proposta vuota o tagliata (${finish}): riprova` }, 502);
     const proposte = alt.slice(0, action === 'rifinisci' ? 1 : 3).map((a) => {
@@ -1388,12 +1392,17 @@ Deno.serve(async (req) => {
     });
     if (action === 'rifinisci') return json({ ok: true, ...proposte[0], lingua, finish });
     // destinatario e oggetto come li prepara il web (rispostaPreparata): chi ci ha scritto per ultimo, nel thread giusto
-    const ultimoInT = tocchiL.find((t) => t.direzione === 'in' && !['bounce', 'risposta_automatica', 'opt_out'].includes(t.esito ?? ''));
+    const ultimoInT = tocchiL.find((t) => t.direzione === 'in' && (t.canale === 'email' || t.canale === 'altro') && !['bounce', 'risposta_automatica', 'opt_out'].includes(t.esito ?? ''));
     const riga0 = String(ultimoInT?.body_clean ?? '').split('\n')[0].trim().toLowerCase();
     const toP = EMAIL_RE.test(riga0) && !/@(mailer\.)?shopify\.com$/.test(riga0) ? riga0 : String(d.email_generica ?? '');
     const bersP = bersaglioRisposta(tocchiL);
     const baseP = String(bersP?.subject ?? '').replace(/^\s*((re|r|fwd?|i)\s*:\s*)+/i, '').trim();
     const oggettoP = pulisciOggetto(bersP ? `Re: ${baseP || `Amimì Milano per ${d.nome}`}` : `Amimì Milano per ${d.nome}`).slice(0, 200);
+    // una proposta nuova supera quelle ancora aperte dello stesso negozio: niente righe 'proposta' accumulate a ogni click
+    // (Gate 2 v15, C2; Regola 20). Chi aveva aperto la vecchia riceve 409 e rimanda il suo testo senza proposta.
+    const { error: supErr } = await sb.from('lead_drafts').update({ stato: 'scartata', errore: 'superata da una proposta nuova', updated_at: new Date().toISOString() })
+      .eq('account_id', accountId).is('sequenza_tocco', null).eq('stato', 'proposta');
+    if (supErr) return json({ error: 'chiusura delle proposte precedenti fallita: ' + supErr.message }, 500);
     const { data: insP, error: insPErr } = await sb.from('lead_drafts').insert({
       account_id: accountId, touch_in_id: ultimoInT?.id ?? null, lingua, testo: proposte[0].testo, oggetto: oggettoP, to_email: toP || null,
       sequenza_tocco: null, model: MODEL, stato: 'proposta', chi, origine: 'manuale',
@@ -1514,7 +1523,8 @@ Deno.serve(async (req) => {
     }
     // claim: la riga nasce in invio; il send_key UNIQUE fa fallire il secondo inserimento con la stessa chiave.
     // v15: con il draft_id di una proposta AI il claim e' l'UPDATE di quella riga ('proposta' -> 'in_invio'), condizionato
-    // allo stato: fa fede il testo del box. Una proposta gia' usata o scartata non blocca: si ricade sull'insert.
+    // allo stato: fa fede il testo del box. Una proposta gia' partita, scartata, superata o di un altro negozio FERMA
+    // l'invio (Gate 2 v15, B2): ricadere sull'insert avrebbe mandato la stessa risposta due volte da due schede.
     const nowR = new Date().toISOString();
     const draftIdR = UUID_RE.test(String(body.draft_id || '')) ? String(body.draft_id) : '';
     let insR: { id: string } | null = null;
@@ -1526,6 +1536,15 @@ Deno.serve(async (req) => {
         return json(dupP ? { error: INVIO_INCERTO_R, bloccante: true, incerto: true } : { error: 'salvataggio della risposta fallito: ' + upPErr.message }, dupP ? 409 : 500);
       }
       if (upP?.length) insR = upP[0];
+      else {
+        const { data: pr, error: prErr } = await retryOnce(() => sb.from('lead_drafts').select('id,account_id,stato,errore,sent_at,sent_by').eq('id', draftIdR).maybeSingle());
+        if (prErr) return json({ error: 'lettura della proposta fallita, riprova: ' + prErr.message }, 503);
+        if (!pr) return json({ error: 'proposta inesistente: ricarica la scheda', bloccante: true }, 404);
+        if (pr.account_id !== accountId) return json({ error: 'la proposta e\' di un altro negozio', bloccante: true }, 422);
+        if (pr.stato === 'inviata' || pr.stato === 'in_invio') return json({ error: `questa proposta e' gia' partita${pr.sent_by ? ` (${pr.sent_by}${pr.sent_at ? `, ${String(pr.sent_at).slice(0, 16).replace('T', ' ')} UTC` : ''})` : ''}: ricarica la scheda prima di rispondere di nuovo`, bloccante: true }, 409);
+        if (pr.stato === 'scartata') return json({ error: pr.errore === 'superata dalla risposta inviata' ? 'a questo negozio e\' gia\' partita una risposta dopo questa proposta: ricarica la scheda' : 'questa proposta e\' stata scartata o superata da una piu\' recente: il testo resta tuo, rimandalo senza proposta', bloccante: true }, 409);
+        return json({ error: `questa proposta non si puo' usare (stato ${pr.stato}): ricarica la scheda`, bloccante: true }, 409);
+      }
     }
     if (!insR) {
       const { data: insN, error: insErr } = await sb.from('lead_drafts').insert({

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { csClient } from '../lib/csClient';
 import { pushBack, popBack, killBack } from '../lib/backnav';
-import { fetchDossier, fetchEvidence, fetchContacts, fetchReviews, signedUrls, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL } from '../lib/leadApi';
-import type { LeadDossier, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
+import { fetchEvidence, fetchContacts, fetchReviews, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL } from '../lib/leadApi';
+import type { LeadDossier, LeadLista, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
 import { PEOPLE, personaName } from '../lib/people';
 import ExportBtn from '../components/ExportBtn';
-import { fetchOutreach, fetchSequences, fetchLeadSettings } from '../lib/leadApi';
 import type { LeadOutreach, LeadSequence } from '../lib/leadApi';
+import { leggiCache, caricaLista, caricaPipeline, caricaSequenzeSettings, aggiornaRigaLista, righeMancanti, dossierInCache, caricaDossier, urlsValidi, daFirmare, firma } from '../lib/leadCache';
 import { OutreachBoard, OutreachCoda, OutreachScheda, OutreachSequenze } from './Outreach';
 
 // Rotte hash della sezione (URL condivisibili): #negozi (lista), #negozi/outreach (pipeline),
@@ -31,8 +31,11 @@ const routeHash = (r: Route) => r.view === 'lista' ? '#negozi' : r.view === 'pip
 // raccolto dal collector (workers/lead) e valutato dalla sessione Claude con la rubrica v1
 // (PIANO_Ricerca_e_Outreach_B2B.md cap. 3.4). L'unica scrittura e' la decisione umana (lead_reviews).
 // Login: stesso client e stessa sessione dell'Assistenza (csClient, RLS @amimi.it).
-// Le immagini vivono nel bucket privato lead-assets: la lista firma solo le miniature, la scheda
-// firma tutto il suo materiale (feed IG, foto prodotto, screenshot) quando si apre.
+// Le immagini vivono nel bucket privato lead-assets: la lista firma solo le miniature delle schede a schermo (dopo i
+// filtri) e della pipeline, la scheda firma tutto il suo materiale (feed IG, foto prodotto, screenshot) quando si apre.
+// Velocita' (15-10): la lista legge la vista snella v_lead_lista, il dossier completo si legge per id all'apertura della
+// scheda, lista e pipeline partono in parallelo e ogni pezzo si mostra appena arriva; i dati restano in cache fra le
+// navigazioni (lib/leadCache) e dopo una scrittura si rilegge solo cio' che e' cambiato, mai tutto.
 
 const fmtN = (n: number | null | undefined) => (n == null ? '—' : new Intl.NumberFormat('it-IT').format(n));
 const eur = (n: number | null | undefined) => (n == null ? '—' : `${Math.round(n)}€`);
@@ -69,14 +72,18 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
   const [session, setSession] = useState<'?' | 'in' | 'out'>('?');
   const [email, setEmail] = useState(''); const [pwd, setPwd] = useState(''); const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const [rows, setRows] = useState<LeadDossier[] | null>(null);
-  const [urls, setUrls] = useState<Record<string, string>>({});
+  // al rientro nella sezione si parte da cio' che la cache ha gia' (lista, pipeline, sequenze, URL firmati validi)
+  const [rows, setRows] = useState<LeadLista[] | null>(() => leggiCache().lista);
+  const [urls, setUrls] = useState<Record<string, string>>(() => urlsValidi());
   const [view, setView] = useState<View>('lista');
   const [route, setRoute] = useState<Route>(() => parseHash());
-  const [orows, setOrows] = useState<LeadOutreach[] | null>(null);
-  const [sequences, setSequences] = useState<LeadSequence[]>([]);
-  const [settings, setSettings] = useState<Record<string, string>>({});
-  const cur = useMemo(() => (route.view === 'scheda' && rows ? rows.find((x) => x.id === route.id) ?? null : null), [route, rows]);
+  const [orows, setOrows] = useState<LeadOutreach[] | null>(() => leggiCache().pipeline);
+  const [sequences, setSequences] = useState<LeadSequence[]>(() => leggiCache().sequences ?? []);
+  const [settings, setSettings] = useState<Record<string, string>>(() => leggiCache().settings ?? {});
+  // il dossier completo del negozio aperto (#negozi/<id>): letto per id, non cercato nella lista, cosi' un link diretto
+  // non aspetta la lista intera. `r` null con `loading` false = non trovato (o errore in `err`).
+  const [dossier, setDossier] = useState<{ id: string; r: LeadDossier | null; err: string; loading: boolean } | null>(null);
+  const cur = route.view === 'scheda' && dossier && dossier.id === route.id ? dossier.r : null;
   const ocur = useMemo(() => (route.view === 'oscheda' && orows ? orows.find((x) => x.id === route.id) ?? null : null), [route, orows]);
   // Navigazione (fix 22-09). Prima si scriveva `location.hash`, che genera un `popstate`: backnav lo prendeva per
   // il gesto "indietro" e chiudeva la sezione, quindi entrando da Home ogni scheda aperta riportava alla Home con
@@ -112,23 +119,65 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  const load = async () => {
-    setErr('');
-    try {
-      const r = await fetchDossier(); setRows(r);
-      const thumbs = r.flatMap((x) => [x.thumb, x.shot_ig, x.shot_home_mobile, x.shot_home]).filter((p): p is string => !!p);
-      setUrls((u) => ({ ...u }));
-      const signed = await signedUrls(thumbs); setUrls((u) => ({ ...u, ...signed }));
-      const o = await fetchOutreach(); setOrows(o);
-      const oth = o.map((x) => x.thumb).filter((p): p is string => !!p && !signed[p]);
-      if (oth.length) { const s2 = await signedUrls(oth); setUrls((u) => ({ ...u, ...s2 })); }
-      // sequenze e settings insieme, in un solo render: il compositore rende il template con firma e link gia' noti,
-      // altrimenti al primo giro scriveva il segnaposto del link (Gate 2 del 25-09, B3)
-      if (!sequences.length) { const [sq, st] = await Promise.all([fetchSequences(), fetchLeadSettings()]); setSettings(st); setSequences(sq); }
-    } catch (e) { setErr((e as Error).message); }
+  // firma (o rifirma) i path che ne hanno bisogno e porta gli URL nello stato; un errore di firma non ferma nulla, si
+  // vede come avviso e si riprova dopo un minuto (leadCache). Chi vuole l'errore lo passa come eccezione (`lancia`).
+  const firmaIn = async (paths: (string | null | undefined)[], lancia = false) => {
+    try { const s = await firma(paths); if (Object.keys(s).length) setUrls((u) => ({ ...u, ...s })); }
+    catch (e) {
+      // i blocchi firmati arrivano comunque a schermo: l'avviso riguarda solo quelli falliti (Gate 2 v15, B3)
+      const parziali = (e as Error & { urls?: Record<string, string> }).urls;
+      if (parziali && Object.keys(parziali).length) setUrls((u) => ({ ...u, ...parziali }));
+      if (lancia) throw e;
+      setErr('Immagini non caricate: ' + (e as Error).message);
+    }
   };
-  useEffect(() => { if (session === 'in') load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [session]);
-  const signMore = async (paths: string[]) => { const missing = paths.filter((p) => !urls[p]); if (!missing.length) return; const s = await signedUrls(missing); setUrls((u) => ({ ...u, ...s })); };
+  const signMore = (paths: string[]) => firmaIn(paths, true);
+  const loadLista = async () => { const r = await caricaLista(); setRows(r); return r; };
+  // la pipeline e le sue miniature; i negozi entrati in pipeline che la lista non ha ancora (creati dalla Coda o collegati
+  // da Assistenza) si leggono riga per riga, senza rifare la lista
+  const loadPipeline = async (dopo = 0) => {
+    const o = await caricaPipeline(dopo); setOrows(o);
+    await Promise.all([firmaIn(o.map((x) => x.thumb)), righeMancanti(o.map((x) => x.id)).then((l) => { if (l) setRows(l); })]);
+    return o;
+  };
+  const loadSeqSet = async (forza = false) => { const { sequences: sq, settings: st } = await caricaSequenzeSettings(forza); setSettings(st); setSequences(sq); };
+  // il giro completo: lista, pipeline e (una volta) sequenze+settings IN PARALLELO, ogni pezzo a schermo appena arriva;
+  // lo schermo non si svuota intanto (il bottone Aggiorna rilegge anche sequenze e settings)
+  const load = async (forza = false) => {
+    setErr('');
+    const esiti = await Promise.allSettled([loadLista(), loadPipeline(), loadSeqSet(forza)]);
+    const errori = esiti.filter((e): e is PromiseRejectedResult => e.status === 'rejected').map((e) => (e.reason as Error).message);
+    // con la cache a schermo l'errore deve dire che cio' che si vede e' la lettura di prima (Gate 2 v15, C5)
+    if (errori.length) setErr([...new Set(errori)].join(' · ') + (rows || orows ? ' (a schermo resta la lettura di prima)' : ''));
+  };
+  useEffect(() => { if (session === 'in') void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [session]);
+  // il dossier completo del negozio aperto: quello in cache subito, poi riletto in background; "Carico…" solo se non c'e'
+  useEffect(() => {
+    if (session !== 'in' || route.view !== 'scheda' || !route.id) return;
+    const id = route.id; let vivo = true;
+    const noto = dossierInCache(id);
+    setDossier({ id, r: noto, err: '', loading: !noto });
+    caricaDossier(id)
+      .then((r) => { if (vivo) setDossier({ id, r, err: '', loading: false }); })
+      .catch((e: Error) => { if (vivo) setDossier((d) => ({ id, r: d?.id === id ? d.r : null, err: e.message, loading: false })); });
+    return () => { vivo = false; };
+  }, [route.view, route.id, session]);
+  // dopo una scrittura sulla Scheda (verdetto, tier, scarta, nota, ricontrolla): solo la sua riga della lista, il suo
+  // dossier e la pipeline, niente giro completo
+  // Non rilancia mai (Gate 2 v15, B2): la scrittura e' gia' fatta, un ricarico fallito si legge come "scheda non aggiornata"
+  // e non come un errore dell'azione. `dopo` scarta le letture partite prima della scrittura (B1).
+  const ricaricaNegozio = async (id: string) => {
+    const dopo = Date.now();
+    const esiti = await Promise.allSettled([aggiornaRigaLista(id).then((l) => { if (l) setRows(l); }), caricaDossier(id, dopo), loadPipeline(dopo)]);
+    const d = esiti[1].status === 'fulfilled' ? esiti[1].value : null;
+    const errori = esiti.filter((e): e is PromiseRejectedResult => e.status === 'rejected').map((e) => (e.reason as Error).message);
+    setDossier((prima) => (prima?.id === id ? { id, r: d ?? prima.r, err: errori.length ? 'Scheda non aggiornata: ' + [...new Set(errori)].join(' · ') : '', loading: false } : prima));
+  };
+  // dopo una scrittura dalla scheda outreach (tocco, bozza, invio, risposta): pipeline e, se c'e', la riga di quel negozio
+  const ricaricaOutreach = async (id: string) => {
+    const dopo = Date.now();
+    await Promise.all([loadPipeline(dopo), aggiornaRigaLista(id).then((l) => { if (l) setRows(l); })]);
+  };
 
   const doLogin = async () => {
     setBusy(true); setErr('');
@@ -152,8 +201,16 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
       (fVerd === 'tutti' || (fVerd === 'senza' ? !r.verdetto : r.verdetto === fVerd)) &&
       (!s || `${r.nome} ${r.citta ?? ''} ${r.ig_handle ?? ''} ${(r.brands_carried?.peer_match ?? []).join(' ')} ${(r.brands_carried?.vendors ?? []).join(' ')}`.toLowerCase().includes(s)));
   }, [rows, fStato, fTier, fTipo, fVerd, q]);
+  // miniature: si firmano SOLO quelle delle schede a schermo dopo i filtri (vista Schede), a blocchi da 100 in parallelo;
+  // `urls` fra le dipendenze fa ripassare il giro quando una firma arriva, e daFirmare esclude cio' che e' gia' valido o in firma
+  useEffect(() => {
+    if (session !== 'in' || route.view !== 'lista' || view !== 'lista') return;
+    const paths = daFirmare(list.map((r) => r.img));
+    if (paths.length) void firmaIn(paths);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [list, view, route.view, session, urls]);
 
-  const openScheda = (r: LeadDossier) => goRoute({ view: 'scheda', id: r.id });
+  const openScheda = (r: LeadLista) => goRoute({ view: 'scheda', id: r.id });
   const closeScheda = () => closeDetail({ view: 'lista' });
   const nCoda = (orows ?? []).filter((r) => r.scaduta || r.da_gestire || r.bozza_auto_tocco != null).length;
   const nav = (
@@ -182,22 +239,28 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
     </div>
   );
 
-  if (route.view === 'scheda' && cur) return <Scheda r={cur} urls={urls} signMore={signMore} who={who} onBack={closeScheda} onChanged={load} onOutreach={orows?.some((x) => x.id === cur.id) ? () => goRoute({ view: 'oscheda', id: cur.id }) : undefined} />;
-  if (route.view === 'oscheda' && ocur) return <OutreachScheda key={ocur.id} r={ocur} urls={urls} who={who} sequences={sequences} settings={settings} onBack={() => closeDetail({ view: 'pipeline' })} onOpenDossier={(id) => goRoute({ view: 'scheda', id })} onChanged={load} />;
-  if (route.view === 'scheda' && rows && !cur) return (
-    <div className="screen"><header><button className="lead-back" onClick={closeScheda} type="button">‹ Negozi</button></header><p className="muted">Negozio non trovato (forse scartato o rinominato).</p></div>
-  );
+  if (route.view === 'scheda') {
+    if (cur) return <Scheda r={cur} urls={urls} signMore={signMore} who={who} avviso={dossier?.err || undefined} onBack={closeScheda} onChanged={() => ricaricaNegozio(cur.id)} onOutreach={orows?.some((x) => x.id === cur.id) ? () => goRoute({ view: 'oscheda', id: cur.id }) : undefined} />;
+    const fermo = dossier && dossier.id === route.id && !dossier.loading ? dossier : null;
+    return (
+      <div className="screen">
+        <header><button className="lead-back" onClick={closeScheda} type="button">‹ Negozi</button></header>
+        {!fermo ? <p className="muted center">Carico la scheda…</p> : fermo.err ? <div className="card err">Errore: {fermo.err}</div> : <p className="muted">Negozio non trovato (forse scartato o rinominato).</p>}
+      </div>
+    );
+  }
+  if (route.view === 'oscheda' && ocur) return <OutreachScheda key={ocur.id} r={ocur} urls={urls} who={who} sequences={sequences} settings={settings} onBack={() => closeDetail({ view: 'pipeline' })} onOpenDossier={(id) => goRoute({ view: 'scheda', id })} onChanged={() => ricaricaOutreach(ocur.id)} />;
   if (route.view === 'pipeline' || route.view === 'coda' || route.view === 'sequenze' || (route.view === 'oscheda' && orows && !ocur)) return (
     <div className="screen">
-      <header><h1>{route.view === 'coda' ? 'Coda' : route.view === 'sequenze' ? 'Sequenze' : 'Pipeline outreach'}</h1><div className="operbar"><button className="badge" onClick={load} type="button">Aggiorna</button></div></header>
+      <header><h1>{route.view === 'coda' ? 'Coda' : route.view === 'sequenze' ? 'Sequenze' : 'Pipeline outreach'}</h1><div className="operbar"><button className="badge" onClick={() => load(true)} type="button">Aggiorna</button></div></header>
       {onBack && <button className="back" onClick={onBack} type="button">← Home</button>}
       {nav}
       {err && <div className="card err">Errore: {err}</div>}
-      {!orows ? <p className="muted center">Carico la pipeline…</p> : route.view === 'coda' ? <OutreachCoda rows={orows} onOpen={(id) => goRoute({ view: 'oscheda', id })} who={who} onChanged={load} aiOn={settings.lead_outreach_ai_enabled === 'true'} /> : route.view === 'sequenze' ? <OutreachSequenze sequences={sequences} settings={settings} /> : route.view === 'oscheda' ? <p className="muted">Negozio non in pipeline.</p> : <OutreachBoard rows={orows} urls={urls} onOpen={(id) => goRoute({ view: 'oscheda', id })} />}
+      {!orows ? <p className="muted center">Carico la pipeline…</p> : route.view === 'coda' ? <OutreachCoda rows={orows} onOpen={(id) => goRoute({ view: 'oscheda', id })} who={who} onChanged={async () => { await loadPipeline(); }} aiOn={settings.lead_outreach_ai_enabled === 'true'} /> : route.view === 'sequenze' ? <OutreachSequenze sequences={sequences} settings={settings} /> : route.view === 'oscheda' ? <p className="muted">Negozio non in pipeline.</p> : <OutreachBoard rows={orows} urls={urls} onOpen={(id) => goRoute({ view: 'oscheda', id })} />}
     </div>
   );
 
-  const counts = (k: keyof LeadDossier) => { const m = new Map<string, number>(); (rows ?? []).forEach((r) => { const v = String(r[k] ?? '—'); m.set(v, (m.get(v) ?? 0) + 1); }); return m; };
+  const counts = (k: keyof LeadLista) => { const m = new Map<string, number>(); (rows ?? []).forEach((r) => { const v = String(r[k] ?? '—'); m.set(v, (m.get(v) ?? 0) + 1); }); return m; };
   const byStato = counts('stato_ricerca');
   const tipi = [...new Set((rows ?? []).map((r) => r.tipo))];
 
@@ -207,7 +270,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
         <h1>Negozi B2B</h1>
         <div className="operbar">
           {setChi && <label className="lead-who">Firmi come <select value={chi} onChange={(e) => setChi(e.target.value)}>{PEOPLE.map((p) => <option key={p} value={p}>{personaName(p)}</option>)}</select></label>}
-          <button className="badge" onClick={load} type="button">Aggiorna</button>
+          <button className="badge" onClick={() => load(true)} type="button">Aggiorna</button>
           <ExportBtn name="negozi_b2b" rows={() => list.map((r) => ({ nome: r.nome, tipo: r.tipo, citta: r.citta, paese: r.paese, stato: r.stato_ricerca, totale: r.totale, tier_proposto: r.tier_proposto, tier: r.tier, follower: r.ig_metrics?.follower ?? null, rating: r.maps?.rating ?? null, recensioni: r.maps?.recensioni ?? null, borse_mediana: r.price_band?.borse?.mediana ?? null, brand_affini: (r.brands_carried?.peer_match ?? []).join(' '), sito: r.website, instagram: r.ig_handle, email: r.email_generica, telefono: r.telefono ?? r.maps?.telefono ?? null, gancio: r.gancio, nota: r.owner_note }))} />
         </div>
       </header>
@@ -264,12 +327,13 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
           ) : (
             <div className="lead-grid">
               {list.map((r) => {
-                const shot = (r.thumb && urls[r.thumb]) || (r.shot_ig && urls[r.shot_ig]) || (r.shot_home_mobile && urls[r.shot_home_mobile]) || (r.shot_home && urls[r.shot_home]) || null;
+                // `img` = l'unica immagine della scheda (v_lead_lista: miniatura del feed, poi Instagram, sito mobile, sito desktop)
+                const shot = r.img ? urls[r.img] ?? null : null;
                 const peer = r.brands_carried?.peer_match ?? [];
                 return (
                   <button key={r.id} type="button" className="lead-card" onClick={() => openScheda(r)}>
-                    <div className="lead-thumb" style={{ background: shot ? `url(${shot}) center / cover no-repeat` : 'var(--surface-alt)' }}>
-                      {!shot && <span className="muted">nessuna immagine</span>}
+                    <div className="lead-thumb" style={{ background: 'var(--surface-alt)' }}>
+                      {shot ? <img src={shot} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : <span className="muted">nessuna immagine</span>}
                       <span className="lead-score" style={{ background: scoreColor(r.totale) }}>{r.totale ?? '—'}</span>
                       {r.verdetto ? <span className="lead-tier" style={{ background: verdColor(r.verdetto) }}>{VERDETTO_LABEL[r.verdetto]}</span> : (r.tier || r.tier_proposto) && <span className="lead-tier" style={{ background: tierColor(r.tier ?? r.tier_proposto) }}>{r.tier ? `Tier ${r.tier}` : `${r.tier_proposto}?`}</span>}
                     </div>
@@ -298,7 +362,9 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
 }
 
 // ---------------------------------------------------------------------------------------------
-function Scheda({ r, urls, signMore, who, onBack, onChanged, onOutreach }: { r: LeadDossier; urls: Record<string, string>; signMore: (p: string[]) => Promise<void>; who: string; onBack: () => void; onChanged: () => Promise<void>; onOutreach?: () => void }) {
+// `r` e' il dossier COMPLETO letto per id (fetchDossierUno) da Negozi, che lo tiene in cache e lo rilegge in background;
+// `avviso` = la rilettura e' fallita e quello a schermo e' il dossier di prima.
+function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach }: { r: LeadDossier; urls: Record<string, string>; signMore: (p: string[]) => Promise<void>; who: string; avviso?: string; onBack: () => void; onChanged: () => Promise<void>; onOutreach?: () => void }) {
   const [ev, setEv] = useState<LeadEvidence[] | null>(null);
   const [contacts, setContacts] = useState<LeadContact[]>([]);
   const [reviews, setReviews] = useState<LeadReview[]>([]);
@@ -313,10 +379,16 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged, onOutreach }: { r: 
 
   useEffect(() => {
     setEv(null);
-    signMore(assetPathsOf(r)).catch((e: Error) => setMsg('Immagini non caricate: ' + e.message));
     Promise.all([fetchEvidence(r.id), fetchContacts(r.id), fetchReviews(r.id)]).then(([e, c, v]) => { setEv(e); setContacts(c); setReviews(v); }).catch((e: Error) => setMsg(e.message));
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [r.id]);
+  // le immagini del dossier si firmano insieme; la chiave segue i path, cosi' un dossier riletto con materiale nuovo
+  // (stesso id) firma anche quello
+  const assetKey = assetPathsOf(r).join('|');
+  useEffect(() => {
+    signMore(assetPathsOf(r)).catch((e: Error) => setMsg('Immagini non caricate: ' + e.message));
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [assetKey]);
 
   const classify = async (v: 'da_contattare' | 'forse' | 'no') => {
     if (v === 'no' && !perche.trim()) { setMsg('Per un "no" scrivi il perche\u2019: serve a non ricontattarlo per sbaglio.'); return; }
@@ -368,6 +440,7 @@ function Scheda({ r, urls, signMore, who, onBack, onChanged, onOutreach }: { r: 
       </header>
       <h1 style={{ margin: '4px 0 0' }}>{r.nome}</h1>
       <div className="muted" style={{ marginBottom: 6 }}>{[TIPO_LABEL[r.tipo] ?? r.tipo, r.citta, r.provincia, r.paese !== 'IT' ? r.paese : null, r.gruppo_nome ? `gruppo: ${r.gruppo_nome}` : null].filter(Boolean).join(' · ')}</div>
+      {avviso && <div className="card err">Scheda non aggiornata ({avviso}): quella che vedi e&#8217; la lettura di prima.</div>}
       <div className="lead-links">
         {r.website && <a href={r.website} target="_blank" rel="noreferrer">sito</a>}
         {r.ig_handle && <a href={`https://www.instagram.com/${r.ig_handle}/`} target="_blank" rel="noreferrer">@{r.ig_handle}</a>}

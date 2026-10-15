@@ -901,22 +901,9 @@ button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-
 .or-head { display: flex; gap: 12px; align-items: flex-start; margin: 4px 0 8px; }
 .or-head img { width: 64px; height: 64px; }
 .or-link { border: 0; background: none; color: var(--interactive-700); font: inherit; font-size: 13px; cursor: pointer; padding: 0; }
-.or-next { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--surface-alt); border-radius: var(--r-md); padding: 8px 12px; margin: 8px 0; font-size: 13px; }
 .or-move { display: flex; gap: 6px; align-items: center; }
 .or-move select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); font: inherit; }
-.or-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-@media (max-width: 860px) { .or-two { grid-template-columns: 1fr; } }
-.or-timeline { border-left: 2px solid var(--border); margin-left: 8px; padding-left: 14px; }
-.or-ev { position: relative; margin-bottom: 12px; }
-.or-ev:before { content: ''; position: absolute; left: -21px; top: 4px; width: 12px; height: 12px; border-radius: 50%; background: var(--interactive); border: 2px solid var(--surface); }
-.or-ev.in:before { background: var(--positive); } .or-ev.call:before { background: var(--warning); }
-.or-ev .h { font-size: 11px; color: var(--ink-muted); }
-.or-ev .b { background: var(--surface-alt); border-radius: 8px; padding: 7px 9px; margin-top: 3px; font-size: 13px; white-space: pre-line; }
 /* v12 (blocco B): risposta dal cruscotto a un negozio che ci ha scritto, in cima alla timeline */
-.or-rispondi { border: 1px solid var(--positive-700); border-radius: 8px; padding: 8px 10px; margin: 6px 0 14px; }
-.or-rispondi h3 { margin: 0 0 4px; font-size: 14px; }
-.or-rispondi .cs-fld { display: block; margin-top: 6px; }
-.or-rispondi input, .or-rispondi textarea { width: 100%; box-sizing: border-box; }
 /* v11 (blocco A3): scelta dell'email di Posta inviata da collegare a un tocco registrato a mano */
 .or-collega { border: 1px solid var(--interactive-700); border-radius: 8px; padding: 7px 9px; margin-top: 4px; font-size: 13px; }
 .or-collega .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
@@ -936,6 +923,18 @@ button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-
 .or-form textarea { resize: vertical; line-height: 1.4; }
 .facts-note { font-size: 11px; color: var(--ink-muted); margin: 0 0 8px; }
 a.ds-btn { text-decoration: none; display: inline-flex; align-items: center; }
+/* v15 (15-10, "come Assistenza"): la scheda del negozio in una colonna. La conversazione usa le bolle cs-msg di Assistenza
+   (or-conv e' solo il contenitore); telefonate, visite, Instagram, note, spostamenti, bounce e risposte automatiche sono
+   una riga compatta rientrata (or-nota), non una bolla. Il compositore (or-comp) resta una colonna anche su telefono. */
+.or-conv { margin: 4px 0 10px; }
+.or-nota { display: flex; align-items: flex-start; gap: 7px; margin: 6px 0 6px 12px; padding: 5px 10px; font-size: 11.5px; line-height: 1.45; color: var(--ink-muted); background: var(--surface-alt); border-radius: 8px; min-width: 0; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
+.or-nota-i { flex: none; font-size: 13px; line-height: 1.3; }
+.or-nota-h { font-weight: 700; }
+.or-nota-t { color: var(--ink); }
+.or-comp .cs-fld { margin-bottom: 8px; }
+.or-comp .cs-fld input { font-size: 14px; padding: 10px 12px; }
+.or-comp .or-form { margin-bottom: 10px; }
+@media (max-width: 480px) { .or-comp .or-form { grid-template-columns: 1fr; } }
 
 /* ===== Materie prime (modulo mat_*, migr 0140, Fase 1 catalogo) ===== */
 .mat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
@@ -979,8 +978,7 @@ a.ds-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .lead-who { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-muted); }
 .lead-who select { font: inherit; font-weight: 700; color: var(--ink); border: 1px solid var(--border); border-radius: 999px; padding: 6px 10px; background: var(--surface); min-height: 36px; }
 .or-nav button.on { background: var(--interactive-700); border-color: var(--interactive-700); }
-.lead-verd h2, .or-two .card h2 { color: var(--interactive-700); }
-@media (max-width: 860px) { .or-compositore { order: -1; } }
+.lead-verd h2 { color: var(--interactive-700); }
 
 /* Negozi B2B su telefono (report UI/UX 22-09, righe "Alta"; Blocco 2). Tabella: la colonna Negozio resta ferma mentre
    si scorre di lato (prima, dopo il primo scorrimento, non si sapeva piu' di quale negozio fosse la riga) e sotto i

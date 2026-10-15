@@ -1,16 +1,18 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// Compositore di Negozi B2B, invio di prova (lead-outreach v8, 08-10). Origine: una prova mandata a info@ e' stata
-// rifiutata dalla edge (destinatario @amimi.it) e il messaggio, in cima alla scheda, non si vedeva con il bottone
-// Invia a schermo: e' sembrata un'email mai arrivata. Come negozi-layout NON tocca Supabase: ogni richiesta verso il
-// progetto, edge compresa, e' intercettata e riceve dati finti; la sessione e' un oggetto finto in localStorage.
+// Compositore di Negozi B2B in modo sequenza, invio di prova (lead-outreach v8, 08-10) e finestra di conferma (v15, 15-10).
+// Origine: una prova mandata a info@ e' stata rifiutata dalla edge (destinatario @amimi.it) e il messaggio, in cima alla
+// scheda, non si vedeva con il bottone Invia a schermo: e' sembrata un'email mai arrivata. Dal 15-10 l'invio passa dalla
+// finestra di conferma (cs-sendmodal) e un rifiuto resta li', davanti agli occhi. Come negozi-layout NON tocca Supabase:
+// ogni richiesta verso il progetto, edge compresa, e' intercettata e riceve dati finti; la sessione e' un oggetto finto in
+// localStorage.
 // Lanciare dopo `npm run build`:  npx playwright test negozi-prova
 
 const ID = '00000000-0000-0000-0000-000000000003';
 const NEGOZIO = {
   id: ID, nome: 'Wait and See', tipo: 'boutique', citta: 'Milano', paese: 'IT', stato_ricerca: 'scored', totale: 90, tier: null, tier_proposto: 'A',
   verdetto: 'da_contattare', verdetto_motivo: null, n_evidenze: 12, n_contatti: 1, ig_metrics: { follower: 12000 }, maps: { rating: 4.7, recensioni: 210 },
-  price_band: null, brands_carried: { peer_match: [] }, thumb: null, shot_ig: null, shot_home: null, shot_home_mobile: null, gancio: 'Ho visto la vostra selezione di accessori colorati.',
+  price_band: null, brands_carried: { peer_match: [] }, thumb: null, img: null, shot_ig: null, shot_home: null, shot_home_mobile: null, gancio: 'Ho visto la vostra selezione di accessori colorati.',
 };
 const OUTREACH = [{
   ...NEGOZIO, lead_stage: 'contattato', n_tocchi: 1, n_email_out: 1, n_opt_out: 0, scaduta: false, da_gestire: false, bozza_auto_tocco: 2,
@@ -23,7 +25,7 @@ const TESTO = `Gentile team di Wait and See,\nvolevo solo assicurarmi che avesse
 const seq = (tocco: number, oggetto: string) => ({ id: `seq-${tocco}`, codice: 'boutique_it', tocco, canale: 'email', oggetto, corpo: `Gentile {{referente}},\ntesto del tocco ${tocco}.\n{{firma}}\n${OPT}`, giorni_attesa: tocco === 1 ? 0 : 5, attiva: true, chi_default: 'Benny' });
 const SEQUENZE = [seq(1, 'Amimì Milano per {{nome_negozio}}'), seq(2, 'Re: Amimì Milano per {{nome_negozio}}'), seq(3, 'Un\'idea per {{nome_negozio}}')];
 const BOZZE = [{ id: '00000000-0000-0000-0000-0000000000d2', account_id: ID, lingua: 'it', oggetto: 'Re: Amimì Milano per Wait and See', testo: TESTO, to_email: null, sequenza_tocco: 2, stato: 'proposta', chi: 'auto', sent_by: null, sent_at: null, errore: null, created_at: '2026-10-07T22:20:23Z', fatti_usati: { avvisi: [] }, origine: 'auto' }];
-const SETTINGS = [{ key: 'lead_outreach_ai_enabled', value: 'true' }, { key: 'lead_enabled', value: 'true' }, { key: 'lead_firma', value: 'Benedetta - Amimì Milano' }, { key: 'lead_linesheet_url', value: 'https://amimi.it/pages/amimi-trade' }, { key: 'lead_tetto_giornaliero', value: '20' }];
+const SETTINGS = [{ key: 'lead_outreach_ai_enabled', value: 'true' }, { key: 'lead_risposta_ai_enabled', value: 'true' }, { key: 'lead_enabled', value: 'true' }, { key: 'lead_firma', value: 'Benedetta - Amimì Milano' }, { key: 'lead_linesheet_url', value: 'https://amimi.it/pages/amimi-trade' }, { key: 'lead_tetto_giornaliero', value: '20' }];
 const RIFIUTO = 'Invio bloccato: il destinatario e\' un indirizzo @amimi.it';
 
 // chiamate arrivate alla edge finta, per controllare COSA manda il compositore
@@ -50,7 +52,7 @@ async function apri(page: Page, opts: { lento?: boolean } = {}): Promise<Chiamat
       if (c.action === 'send') return json({ error: RIFIUTO, bloccante: true }, 422);
       return json({ error: 'azione non prevista dalla spec' }, 500);
     }
-    if (url.pathname.endsWith('/v_lead_dossier')) return json(Number(url.searchParams.get('offset') ?? 0) > 0 ? [] : [NEGOZIO]);
+    if (url.pathname.endsWith('/v_lead_lista') || url.pathname.endsWith('/v_lead_dossier')) return json(Number(url.searchParams.get('offset') ?? 0) > 0 ? [] : [NEGOZIO]);
     if (url.pathname.endsWith('/v_lead_outreach')) return json(OUTREACH);
     if (url.pathname.endsWith('/lead_sequences')) return json(SEQUENZE);
     if (url.pathname.endsWith('/v_lead_settings')) return json(SETTINGS);
@@ -58,8 +60,9 @@ async function apri(page: Page, opts: { lento?: boolean } = {}): Promise<Chiamat
     return json([]);
   });
   await page.goto(`#negozi/outreach/${ID}`);
-  // la scheda apre da sola il follow-up scritto dal giro automatico: il compositore parte gia' dalla bozza
-  await expect(page.locator('.or-compositore textarea')).toHaveValue(TESTO);
+  // la scheda apre da sola il follow-up scritto dal giro automatico: il compositore parte in modo sequenza, dalla bozza
+  await expect(page.locator('.or-comp .seg button.on')).toHaveText('Sequenza a freddo');
+  await expect(page.locator('.or-comp').getByLabel('Testo')).toHaveValue(TESTO);
   return chiamate;
 }
 
@@ -68,10 +71,11 @@ test.describe('schermo largo 1280 px', () => {
 
   test('prova: parte con solo oggetto e testo, e l\'esito compare in fondo al compositore, a schermo', async ({ page }) => {
     const chiamate = await apri(page);
-    const prova = page.getByRole('button', { name: 'Manda una prova a me' });
+    const comp = page.locator('.or-comp');
+    const prova = comp.getByRole('button', { name: 'Prova a me' });
     await prova.scrollIntoViewIfNeeded();
     await prova.click();
-    const esito = page.locator('.or-compositore .or-esito .note');
+    const esito = comp.locator('.or-esito .note');
     await expect(esito).toContainText('Prova inviata a prova@amimi.it da wholesale@amimi.it');
     await expect(esito).toContainText('Non conta come invio');
     await expect(esito).toBeInViewport();
@@ -80,43 +84,60 @@ test.describe('schermo largo 1280 px', () => {
     expect(chiamate[0].action).toBe('prova');
     expect(chiamate[0].testo).toBe(TESTO);
     // la bozza e' ancora aperta e inviabile: la prova non l'ha consumata
-    await expect(page.getByRole('button', { name: 'Invia da wholesale@amimi.it' })).toBeEnabled();
+    await expect(comp.getByRole('button', { name: '✉️ Invia…' })).toBeEnabled();
   });
 
   test('durante la prova il bottone Invia non dice "Invio…" e non si puo\' premere', async ({ page }) => {
     await apri(page, { lento: true });
-    await page.getByRole('button', { name: 'Manda una prova a me' }).click();
-    await expect(page.getByRole('button', { name: 'Mando la prova…' })).toBeDisabled();
-    const invia = page.getByRole('button', { name: 'Invia da wholesale@amimi.it' });
+    const comp = page.locator('.or-comp');
+    await comp.getByRole('button', { name: 'Prova a me' }).click();
+    await expect(comp.getByRole('button', { name: 'Mando la prova…' })).toBeDisabled();
+    const invia = comp.getByRole('button', { name: '✉️ Invia…' });
     await expect(invia).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Invio…' })).toHaveCount(0);
-    await expect(page.locator('.or-compositore .or-esito .note')).toContainText('Prova inviata');
+    await expect(comp.locator('.or-esito .note')).toContainText('Prova inviata');
     await expect(invia).toBeEnabled();
   });
 
   test('destinatario @amimi.it: Invia fermo, e la nota dice di usare la prova', async ({ page }) => {
     const chiamate = await apri(page);
-    await page.getByLabel('Destinatario').fill('info@amimi.it');
-    await expect(page.getByRole('button', { name: 'Invia da wholesale@amimi.it' })).toBeDisabled();
-    await expect(page.locator('.or-compositore .or-ai .note', { hasText: 'Gli indirizzi @amimi.it non ricevono' })).toContainText('Manda una prova a me');
+    const comp = page.locator('.or-comp');
+    await comp.getByLabel('Destinatario').fill('info@amimi.it');
+    await expect(comp.getByRole('button', { name: '✉️ Invia…' })).toBeDisabled();
+    await expect(comp.locator('.note', { hasText: 'Gli indirizzi @amimi.it non ricevono' })).toContainText('Prova a me');
     expect(chiamate).toHaveLength(0);
   });
 
-  test('invio rifiutato dalla edge: l\'errore e\' rosso, accanto al bottone e a schermo, non in cima alla scheda', async ({ page }) => {
+  test('invio rifiutato dalla edge: l\'errore e\' rosso, dentro la finestra di conferma, una volta sola; la bozza resta aperta', async ({ page }) => {
     const chiamate = await apri(page);
-    page.on('dialog', (d) => d.accept());
-    const invia = page.getByRole('button', { name: 'Invia da wholesale@amimi.it' });
+    const comp = page.locator('.or-comp');
+    const invia = comp.getByRole('button', { name: '✉️ Invia…' });
     await invia.scrollIntoViewIfNeeded();
     await invia.click();
-    const errore = page.locator('.or-compositore .or-esito .err');
+    const modal = page.locator('.cs-sendmodal');
+    const righe = modal.locator('.cs-send-row');
+    await expect(righe.nth(0)).toContainText('info@negozio.test');
+    await expect(righe.nth(3)).toContainText('sequenza a freddo · tocco 2 di 4');
+    await expect(modal.locator('.cs-send-preview')).toContainText('volevo solo assicurarmi');
+    const conferma = modal.getByRole('button', { name: '✓ Invia adesso' });
+    await conferma.click();
+    const errore = modal.locator('.err');
     await expect(errore).toHaveText(RIFIUTO);
     await expect(errore).toBeInViewport();
-    await expect(invia).toBeInViewport();                               // bottone ed esito nella stessa schermata
-    await expect(page.getByText(RIFIUTO)).toHaveCount(1);               // una volta sola, dentro il compositore
+    await expect(page.getByText(RIFIUTO)).toHaveCount(1);               // una volta sola, nella finestra
+    await expect(conferma).toHaveCount(0);                              // rifiuto bloccante: ripremere darebbe lo stesso esito
     expect(chiamate.map((c) => c.action)).toEqual(['send']);
     expect(chiamate[0].to).toBe('info@negozio.test');
-    // cambiare tocco toglie l'esito della bozza di prima
-    await page.getByLabel('Tocco').selectOption('3');
-    await expect(page.locator('.or-compositore .or-esito .err')).toHaveCount(0);
+    await modal.getByRole('button', { name: 'Chiudi' }).click();
+    await expect(modal).toHaveCount(0);
+    await expect(page.getByText(RIFIUTO)).toHaveCount(0);
+    await expect(comp.locator('.or-esito .err')).toHaveCount(0);
+    await expect(invia).toBeEnabled();                                  // la bozza e' ancora li', da sistemare e rimandare
+    // con la bozza aperta il tocco e' fermo (Gate 2 v15: la edge invia il tocco della bozza, non quello del select);
+    // si cambia solo dopo "Torna al template", e cambiare tocco toglie l'esito della bozza di prima
+    await expect(comp.getByLabel('Tocco')).toBeDisabled();
+    await comp.getByRole('button', { name: 'Torna al template' }).click();
+    await comp.getByLabel('Tocco').selectOption('3');
+    await expect(comp.locator('.or-esito .note')).toHaveCount(0);
   });
 });

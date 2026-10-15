@@ -4,7 +4,7 @@
 export type ToccoMinimo = { direzione: string; esito: string | null };
 
 // esiti di un tocco in entrata che NON vogliono dire "il negozio ci ha scritto"
-const NON_CONVERSAZIONE = ['bounce', 'risposta_automatica', 'opt_out'];
+export const NON_CONVERSAZIONE = ['bounce', 'risposta_automatica', 'opt_out'];
 
 // Il negozio ci ha scritto: almeno un tocco in entrata che non sia un bounce, una risposta automatica o un opt-out.
 // Vale per ogni canale: un modulo, un'email, una telefonata o una visita registrate come "Loro -> noi" contano.
@@ -21,7 +21,8 @@ const EMAIL_RIGA = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 export function rispostaPreparata(tocchi: ToccoRisposta[], nome: string, emailNegozio: string): { to: string; oggetto: string; nelThread: boolean; riferimento: { subject: string; at: string } | null } {
   const ord = [...tocchi].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const msg = ord.find((t) => t.gmail_message_id && t.esito !== 'bounce' && t.esito !== 'risposta_automatica');
-  const ultimoIn = ord.find((t) => t.direzione === 'in' && !NON_CONVERSAZIONE.includes(t.esito ?? ''));
+  // chi ci ha scritto per ultimo per EMAIL o dal modulo: una telefonata o un DM registrati dopo non cambiano il destinatario
+  const ultimoIn = ord.find((t) => t.direzione === 'in' && (t.canale === 'email' || t.canale === 'altro') && !NON_CONVERSAZIONE.includes(t.esito ?? ''));
   const riga = (ultimoIn?.body_clean ?? '').split('\n')[0].trim();
   const to = EMAIL_RIGA.test(riga) ? riga.toLowerCase() : emailNegozio;
   const base = String(msg?.subject ?? '').replace(/^\s*((re|r|fwd?|i)\s*:\s*)+/i, '').trim();
@@ -61,4 +62,70 @@ export function dopoInvioManuale(p: { ciHaScritto: boolean; email: boolean; tocc
     avanzaTocco: true,
     messaggio: p.prossimo ? `Registrata come inviata. Follow-up ${p.prossimo.tocco} fra ${p.prossimo.giorni_attesa} giorni.` : 'Registrata come inviata. Sequenza finita.',
   };
+}
+
+// v15 (15-10, "fallo come Assistenza"): la scheda del negozio mostra la conversazione a bolle e un solo compositore.
+// Regole pure della scheda, senza import, provate da tests/lead_outreach_guardie.mjs.
+
+export type ToccoConv = ToccoRisposta & { id: string; chi: string | null; sequenza_tocco: number | null; stage_dopo: string | null; prossima_azione: string | null; prossima_azione_at: string | null };
+export type ElementoConv = {
+  tipo: 'bolla' | 'nota'; id: string; direzione: string; canale: string; at: string; chi: string | null; esito: string | null;
+  subject: string | null; testo: string; mittente: string | null; sequenza_tocco: number | null; stage_dopo: string | null;
+  gmail_thread_id: string | null; prossima_azione: string | null; prossima_azione_at: string | null;
+};
+
+// La conversazione in ordine cronologico (la piu' vecchia in alto). Bolla = email (in o out) e messaggi in entrata
+// importati o del modulo (canale altro); nota = telefonate, visite, Instagram, note e spostamenti, bounce e risposte
+// automatiche. In una bolla in entrata la prima riga di body_clean, se e' un indirizzo email, diventa il mittente.
+export function ordinaConversazione(tocchi: ToccoConv[]): ElementoConv[] {
+  const ord = [...tocchi].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.id.localeCompare(b.id));
+  return ord.map((t) => {
+    const automatico = t.direzione === 'in' && NON_CONVERSAZIONE.includes(t.esito ?? '');
+    const bolla = !automatico && (t.canale === 'email' || (t.direzione === 'in' && t.canale === 'altro'));
+    const righe = String(t.body_clean ?? '').split('\n');
+    const primaRiga = (righe[0] ?? '').trim();
+    const conMittente = bolla && t.direzione === 'in' && EMAIL_RIGA.test(primaRiga);
+    const testo = (conMittente ? righe.slice(1).join('\n') : righe.join('\n')).trim();
+    return {
+      tipo: bolla ? 'bolla' : 'nota', id: t.id, direzione: t.direzione, canale: t.canale, at: t.at, chi: t.chi, esito: t.esito,
+      subject: t.subject, testo, mittente: conMittente ? primaRiga.toLowerCase() : null, sequenza_tocco: t.sequenza_tocco, stage_dopo: t.stage_dopo,
+      gmail_thread_id: t.gmail_thread_id, prossima_azione: t.prossima_azione, prossima_azione_at: t.prossima_azione_at,
+    };
+  });
+}
+
+// La proposta di risposta AI piu' recente ancora aperta: sequenza_tocco null, stato 'proposta', fatti_usati.tipo
+// 'risposta' (le bozze della sequenza a freddo e le risposte gia' partite non contano). Null se non c'e'.
+export type BozzaMinima = { sequenza_tocco: number | null; stato: string; created_at: string; fatti_usati: { tipo?: string } | null };
+export function propostaSalvata<T extends BozzaMinima>(drafts: T[]): T | null {
+  const aperte = drafts.filter((d) => d.sequenza_tocco == null && d.stato === 'proposta' && d.fatti_usati?.tipo === 'risposta');
+  aperte.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  return aperte[0] ?? null;
+}
+
+// Una proposta inganna se dopo di lei e' successo qualcosa: il negozio ha scritto di nuovo (tocco in entrata vero,
+// non bounce o automatico) o e' gia' partita un'email nostra. Date confrontate come istanti, non come stringhe.
+export function propostaStantia(createdAt: string, tocchi: (ToccoMinimo & { at: string; canale: string })[]): { scrittoDopo: boolean; rispostoDopo: boolean } {
+  const q = Date.parse(createdAt);
+  const dopo = tocchi.filter((t) => Date.parse(t.at) > q);
+  return {
+    scrittoDopo: dopo.some((t) => t.direzione === 'in' && !NON_CONVERSAZIONE.includes(t.esito ?? '')),
+    rispostoDopo: dopo.some((t) => t.direzione === 'out' && t.canale === 'email'),
+  };
+}
+
+// Data dell'ultima email nostra se e' piu' recente dell'ultimo messaggio vero del negozio (quindi una risposta risulta
+// gia' partita e da allora il negozio non ha piu' scritto), altrimenti null. Stessa regola dell'avviso di Assistenza.
+export function giaRisposto(tocchi: (ToccoMinimo & { at: string; canale: string })[]): string | null {
+  const ultimo = (f: (t: ToccoMinimo & { at: string; canale: string }) => boolean): string | null => tocchi.filter(f).map((t) => t.at).sort((a, b) => Date.parse(a) - Date.parse(b)).pop() ?? null;
+  const out = ultimo((t) => t.direzione === 'out' && t.canale === 'email');
+  const inn = ultimo((t) => t.direzione === 'in' && !NON_CONVERSAZIONE.includes(t.esito ?? ''));
+  if (!out || (inn && Date.parse(inn) > Date.parse(out))) return null;
+  return out;
+}
+
+// Modo iniziale del compositore: 'risposta' se il negozio ci ha scritto e si puo' contattare (non opt_out, non
+// chiuso_no, nessun opt-out registrato), altrimenti la sequenza a freddo. La persona puo' sempre cambiarlo.
+export function modoIniziale(tocchi: ToccoMinimo[], stage: string, nOptOut: number): 'risposta' | 'sequenza' {
+  return negozioCiHaScritto(tocchi) && stage !== 'opt_out' && stage !== 'chiuso_no' && nOptOut === 0 ? 'risposta' : 'sequenza';
 }

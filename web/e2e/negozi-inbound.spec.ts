@@ -43,7 +43,7 @@ async function apri(page: Page): Promise<Chiamata[]> {
       return json({ error: 'azione non prevista dalla spec' }, 500);
     }
     if (url.pathname.endsWith('/v_lead_inbound')) return req.method() === 'HEAD' ? route.fulfill({ status: 200, headers: { ...cors, 'content-range': `0-0/${inbound.length}` } }) : json(inbound);
-    if (url.pathname.endsWith('/v_lead_dossier')) return json([]);
+    if (url.pathname.endsWith('/v_lead_lista') || url.pathname.endsWith('/v_lead_dossier')) return json([]);
     if (url.pathname.endsWith('/v_lead_outreach')) return json([]);
     if (url.pathname.endsWith('/v_lead_settings')) return json(SETTINGS);
     return json([]);
