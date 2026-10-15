@@ -1,5 +1,5 @@
 -- 0160_lead_risposta_ai_e_lista (2026-10-15): Negozi B2B "come Assistenza" e veloce. Modulo lead_*, additivo (Regola 19):
--- nessuna tabella core toccata, nessun dato scritto fuori da app_flags.
+-- nessuna tabella core toccata, nessun dato scritto fuori da app_flags; un indice unico parziale su lead_drafts (tabella del modulo).
 -- (1) Flag lead_risposta_ai_enabled per le azioni proponi_risposta e rifinisci di lead-outreach v15 (la proposta di
 --     risposta dalla conversazione col negozio). Nel codice il default e' spento; qui nasce 'true' perche' l'owner l'ha
 --     chiesto in chat il 15-10 ("fallo molto piu' simile ad assistenza"). Rollback = 'false': gli invii restano accesi.
@@ -11,6 +11,12 @@
 --     `img` e' UNA immagine per negozio, nello stesso ordine di prima (miniatura del feed, poi Instagram, sito mobile,
 --     sito desktop): coalesce valuta le sottoquery da sinistra e si ferma alla prima non nulla.
 insert into app_flags (key, value) values ('lead_risposta_ai_enabled', 'true') on conflict (key) do nothing;
+
+-- (4) Una sola risposta (sequenza_tocco null) in invio per negozio: il controllo "c'e' gia' una risposta in invio" della edge
+--     e' check-then-act con 1-3 s fra lettura e claim (due persone che premono Invia sullo stesso negozio nello stesso
+--     secondo mandavano due email). Il 23505 e' gia' mappato dalla edge su "esito incerto" (claim e insert). Le email della
+--     sequenza (sequenza_tocco non null) hanno gia' il loro vincolo (migr 0139).
+create unique index if not exists lead_drafts_risposta_in_invio_uq on lead_drafts (account_id) where stato = 'in_invio' and sequenza_tocco is null;
 
 create or replace view v_lead_settings as
 select key, value from app_flags

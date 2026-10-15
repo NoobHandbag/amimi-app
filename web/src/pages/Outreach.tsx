@@ -306,9 +306,13 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const ricarica = async (): Promise<string> => { try { await onChanged(); await reload(); return ''; } catch { return ' La scheda non si è aggiornata: ricarica la pagina per vedere la conversazione.'; } };
   // all'apertura: se il giro automatico ha gia' scritto il follow-up di questo negozio, il compositore parte da li' (modo
   // sequenza); altrimenti dal modo iniziale (risposta a chi ci ha scritto, sequenza a freddo agli altri)
-  const apriScheda = () => {
-    setTouches(null); setDraftId(null); setRDraftId(null); setOptions(null); setCmsg(null); setModo(null); setSendOpen(false); setConvErr(''); setApertura(''); setIncertoMsg('');
+  // `riprova` = la conversazione non si era letta e la persona ritenta: cio' che ha gia' scritto nel box (anche una bozza
+  // AI) resta; si rileggono solo tocchi e bozze, e il modo si decide solo se non c'e' una bozza aperta
+  const apriScheda = (riprova = false) => {
+    if (!riprova) { setDraftId(null); setRDraftId(null); setOptions(null); setCmsg(null); setModo(null); setApertura(''); setIncertoMsg(''); }
+    setTouches(null); setSendOpen(false); setConvErr('');
     reload().then(({ ts, ds }) => {
+      if (riprova) { if (!draftId) setModo(modoIniziale(ts, r.lead_stage, r.n_opt_out)); return; }
       const auto = r.bozza_auto_tocco != null ? ds.find((d) => d.origine === 'auto' && d.stato === 'proposta' && d.sequenza_tocco === r.bozza_auto_tocco) : undefined;
       // il follow-up automatico apre la sequenza SOLO se il negozio non ci ha scritto nel frattempo: a chi ha scritto si
       // risponde, e il follow-up resta fra le bozze. L'avviso sta sotto il selettore, non in fondo al compositore.
@@ -317,11 +321,11 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     }).catch((e: Error) => {
       // senza conversazione il compositore resta usabile (template, Gmail, copia); l'errore sta dove c'era "Carico…",
       // con Riprova (Gate 2 v15, B4)
-      setModo(modoIniziale([], r.lead_stage, r.n_opt_out));
+      if (!riprova) setModo(modoIniziale([], r.lead_stage, r.n_opt_out));
       setConvErr(e.message);
     });
   };
-  useEffect(() => { apriScheda(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [r.id]);
+  useEffect(() => { apriScheda(false); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [r.id]);
   // una proposta di risposta non piu' utile si chiude (scarta della edge): il riquadro "C’è già una proposta" sparisce
   const scartaProposta = async (id: string) => {
     setBusy(true); dire('');
@@ -472,7 +476,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     try {
       const res = await inviaRisposta({ account_id: r.id, to: rTo, oggetto: rOggetto, testo: rTesto, send_key: rKey, chi: who, draft_id: rDraftId });
       setRKey(crypto.randomUUID()); setRTesto(`\n\n${firma}`); setRPronto(false); setRToccato(false);
-      setOptions(null); setRDraftId(null); setNonGrounded([]); setTroncata(false); setSendOpen(false); setIncertoMsg('');
+      setOptions(null); setRDraftId(null); setNonGrounded([]); setTroncata(false); setSendOpen(false); setIncertoMsg(''); setApertura('');
       dire(`${res.already_sent ? 'Già inviata prima' : 'Risposta inviata'} a ${res.to}${res.from ? ` da ${res.from}` : ''}${res.already_sent ? '' : res.nel_thread ? ', nel thread della conversazione' : ', come email nuova'}. Prossima azione: attesa risposta fra 5 giorni.${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}${await ricarica()}`);
     } catch (e) {
       const err = e as Error & { incerto?: boolean; bloccante?: boolean; codice?: string };
@@ -646,7 +650,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
 
       {/* CONVERSAZIONE: bolle in ordine cronologico (la piu' vecchia in alto), note in riga compatta */}
       {touches && conv.length > 0 && <div className="ds-seclb" style={{ marginTop: 12 }}>Conversazione</div>}
-      {!touches ? (convErr ? <p className="err" style={{ marginTop: 12 }}>Conversazione non caricata: {convErr} <button type="button" className="or-link" disabled={aiBusy || busy || refining} onClick={apriScheda}>↻ Riprova</button></p> : <p className="muted" style={{ marginTop: 12 }}>Carico la conversazione…</p>) : !conv.length ? <p className="muted" style={{ marginTop: 12 }}>Nessun messaggio ancora: il primo lo scrivi qui sotto.</p> : (
+      {!touches ? (convErr ? <p className="err" style={{ marginTop: 12 }}>Conversazione non caricata: {convErr} <button type="button" className="or-link" disabled={aiBusy || busy || refining} onClick={() => apriScheda(true)}>↻ Riprova</button></p> : <p className="muted" style={{ marginTop: 12 }}>Carico la conversazione…</p>) : !conv.length ? <p className="muted" style={{ marginTop: 12 }}>Nessun messaggio ancora: il primo lo scrivi qui sotto.</p> : (
         <div className="or-conv">{conv.map((t) => t.tipo === 'nota' ? notaRiga(t) : (
           <div key={t.id} className={'cs-msg ' + (t.direzione === 'out' ? 'out' : 'in')}>
             <div className="cs-mh">{(t.direzione === 'out' ? `${fmtDT(t.at)} · ${t.chi || 'Amimì'}${t.sequenza_tocco != null ? ` · tocco ${t.sequenza_tocco}` : ''}` : `${r.nome}${t.mittente ? ` · ${t.mittente}` : ''} · ${fmtDT(t.at)}`) + (t.esito ? ` · ${ESITI.find((e) => e.key === t.esito)?.label ?? t.esito}` : '') + (t.stage_dopo ? ` → ${STAGE_LABEL[t.stage_dopo] ?? t.stage_dopo}` : '')}</div>
