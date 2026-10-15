@@ -34,8 +34,8 @@ export default function HealthBanner() {
   return (
     <div
       style={{
-        background: 'rgba(200,60,70,.10)', border: '1px solid var(--red, #c83c46)',
-        borderRadius: 12, padding: '10px 12px', marginTop: 18, color: 'var(--red, #c83c46)',
+        background: 'var(--negative-tint)', border: '1px solid var(--negative)',
+        borderRadius: 12, padding: '10px 12px', marginTop: 18, color: 'var(--negative-700)',
       }}
     >
       <button
@@ -47,7 +47,7 @@ export default function HealthBanner() {
         <span style={{ marginLeft: 'auto', opacity: .8 }}>{open ? '▲' : '▼'}</span>
       </button>
       {open && (
-        <ul style={{ margin: '10px 0 2px', paddingLeft: 18, color: 'var(--dark, #2d2226)', fontSize: 13.5, lineHeight: 1.5 }}>
+        <ul style={{ margin: '10px 0 2px', paddingLeft: 18, color: 'var(--ink)', fontSize: 13.5, lineHeight: 1.5 }}>
           {items.map((r) => (
             <li key={r.k}><strong>{r.n}</strong> · {r.label}</li>
           ))}

@@ -12,7 +12,7 @@ const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', c
 
 // tinta icon-tile per nome icona (bg tint + stroke 700). Semantico dove ha senso.
 const TC: Record<string, [string, string]> = {
-  bag: ['--negative-tint', '--negative-700'], rocket: ['--negative-tint', '--negative-700'],
+  bag: ['--accent-coral-tint', '--accent-coral-700'], rocket: ['--accent-coral-tint', '--accent-coral-700'],
   chart: ['--interactive-tint', '--interactive-700'], plus: ['--interactive-tint', '--interactive-700'],
   box: ['--interactive-tint', '--interactive-700'], inbox: ['--interactive-tint', '--interactive-700'],
   table: ['--interactive-tint', '--interactive-700'], tag: ['--interactive-tint', '--interactive-700'],
@@ -20,7 +20,7 @@ const TC: Record<string, [string, string]> = {
   store: ['--sec-lavender-tint', '--sec-lavender-700'],
   euro: ['--warning-tint', '--warning-700'], pulse: ['--warning-tint', '--warning-700'], sparkles: ['--warning-tint', '--warning-700'],
   recycle: ['--positive-tint', '--positive-700'], handshake: ['--positive-tint', '--positive-700'],
-  return: ['--sec-cabaret-tint', '--sec-cabaret-700'],
+  return: ['--negative-tint', '--negative-700'],
 };
 const tileTint = (icon: string) => TC[icon] ?? ['--interactive-tint', '--interactive-700'];
 const keyOf = (t: Tile) => `${t.tab}:${t.param ?? ''}`;

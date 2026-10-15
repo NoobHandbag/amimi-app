@@ -23,8 +23,8 @@ const eur2 = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', 
 const num = (n: number) => new Intl.NumberFormat('it-IT').format(n || 0);
 const fmtDay = (d: string | null) => (d ? new Date(d + 'T00:00:00').toLocaleDateString('it-IT', { day: '2-digit', month: 'short' }) : '—');
 const trunc = (s: string | null, n: number) => (!s ? '—' : s.length > n ? s.slice(0, n) + '…' : s);
-const SEV_COLOR: Record<string, string> = { bad: 'var(--red, #c83c46)', error: 'var(--red, #c83c46)', warn: '#c98a1a', ok: 'var(--green, #2e9e5b)' };
-const sevColor = (s: string) => SEV_COLOR[s] ?? 'var(--muted, #8a7f84)';
+const SEV_COLOR: Record<string, string> = { bad: 'var(--negative)', error: 'var(--negative)', warn: 'var(--warning)', ok: 'var(--positive)' };
+const sevColor = (s: string) => SEV_COLOR[s] ?? 'var(--ink-muted)';
 const sevRank = (s: string) => (s === 'bad' || s === 'error' ? 0 : s === 'warn' ? 1 : 2);
 
 // Edge-function versions: NOT in the database, so kept as a static reference updated at each release.
@@ -55,10 +55,10 @@ function deltaPct(cur: number, prev: number): number | null {
 }
 function Delta({ cur, prev, goodUp = true }: { cur: number; prev: number; goodUp?: boolean }) {
   const d = deltaPct(cur, prev);
-  if (d == null) return <span style={{ color: 'var(--muted, #8a7f84)', fontSize: 12 }}>—</span>;
+  if (d == null) return <span style={{ color: 'var(--ink-muted)', fontSize: 12 }}>—</span>;
   const up = d >= 0;
   const good = goodUp ? up : !up;
-  const color = d === 0 ? 'var(--muted, #8a7f84)' : good ? 'var(--green, #2e9e5b)' : 'var(--red, #c83c46)';
+  const color = d === 0 ? 'var(--ink-muted)' : good ? 'var(--positive)' : 'var(--negative)';
   return <span style={{ color, fontSize: 12, fontWeight: 700 }}>{up ? '▲' : '▼'} {Math.abs(d * 100).toLocaleString('it-IT', { maximumFractionDigits: 0 })}%</span>;
 }
 
@@ -266,7 +266,7 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
         {alerts.length > 0 && (
           <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.6 }}>
             {alerts.map((r) => (
-              <li key={r.k} style={{ color: 'var(--dark, #2d2226)' }}>
+              <li key={r.k} style={{ color: 'var(--ink)' }}>
                 <span style={{ color: SEV_COLOR[r.severity], fontWeight: 700 }}>&bull;</span> {r.label}{r.n ? <strong> ({num(r.n)})</strong> : null}
               </li>
             ))}
@@ -384,7 +384,7 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
             <Flag on={flags.write} label="Scrittura Shopify" />
             <Flag on={flags.autopush} label="Autopush stock" />
             <Flag on={flags.hold_raises} label="Blocca rialzi" neutral />
-            <span className="pill" style={{ border: '1px solid var(--line, #e6ddd8)', borderRadius: 999, padding: '2px 10px', fontSize: 13, color: 'var(--muted, #8a7f84)' }}>Buffer esposizione: {flags.expose_buffer}</span>
+            <span className="pill" style={{ border: '1px solid var(--border)', borderRadius: 999, padding: '2px 10px', fontSize: 13, color: 'var(--ink-muted)' }}>Buffer esposizione: {flags.expose_buffer}</span>
           </div>
         )}
       </section>
@@ -439,7 +439,7 @@ function FreschezzaCard({ f }: { f: Freschezza }) {
   return (
     <section className="card">
       <h2>Freschezza delle fonti</h2>
-      <p className="note" style={{ marginTop: 0 }}>Prima di fidarti di un numero guarda quando la sua fonte si e' aggiornata. Rosso = ferma oltre l'atteso.</p>
+      <p className="note" style={{ marginTop: 0 }}>Prima di fidarti di un numero guarda quando la sua fonte si e' aggiornata. Rosso = ferma oltre l'atteso, ocra = in ritardo (lo dice anche il testo).</p>
       <div className="list">
         {rows.map((r) => {
           const a = ageOf(r.iso);
@@ -447,7 +447,7 @@ function FreschezzaCard({ f }: { f: Freschezza }) {
           return (
             <div className="row" key={r.label}>
               <div><div className="rt">{r.label}</div><div className="rs">{r.iso ? String(r.iso).slice(0, 16).replace('T', ' ') : '—'}{r.nota ? ` · ${r.nota}` : ''}</div></div>
-              <div className="giac" style={{ color: col, fontSize: 13 }}>{a.txt}</div>
+              <div className="giac" style={{ color: col, fontSize: 13 }}>{a.txt}{a.h > r.warnH ? ' · ferma' : a.h > r.okH ? ' · in ritardo' : ''}</div>
             </div>
           );
         })}
@@ -457,7 +457,7 @@ function FreschezzaCard({ f }: { f: Freschezza }) {
 }
 
 function Flag({ on, label, neutral = false }: { on: boolean; label: string; neutral?: boolean }) {
-  const color = neutral ? 'var(--muted, #8a7f84)' : on ? 'var(--green, #2e9e5b)' : 'var(--red, #c83c46)';
+  const color = neutral ? 'var(--ink-muted)' : on ? 'var(--positive)' : 'var(--negative)';
   return (
     <span className="pill" style={{ border: `1px solid ${color}`, color, borderRadius: 999, padding: '2px 10px', fontSize: 13, fontWeight: 700 }}>
       {on ? '●' : '○'} {label}

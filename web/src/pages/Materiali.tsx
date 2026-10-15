@@ -35,7 +35,7 @@ function Card({ g, url, onOpen }: { g: MatGruppo; url: string | undefined; onOpe
         <div className="mat-price">{g.prezzo}</div>
         <span className={`mat-badge ${g.acquistato ? 'acq' : ''}`}>{g.acquistato ? 'acquistato' : 'offerta'}</span>
         {g.n_foto > 1 && <span className="mat-badge" style={{ marginLeft: 4 }}>{g.n_foto} foto</span>}
-        {g.righe.some((r) => !r.attivo) && <span className="mat-badge" style={{ marginLeft: 4, background: '#fde2e2', color: '#8a2a2a' }}>{g.righe.every((r) => !r.attivo) ? 'non attivo' : 'colori non attivi'}</span>}
+        {g.righe.some((r) => !r.attivo) && <span className="mat-badge" style={{ marginLeft: 4, background: 'var(--negative-tint)', color: 'var(--negative-700)' }}>{g.righe.every((r) => !r.attivo) ? 'non attivo' : 'colori non attivi'}</span>}
         {colori.length > 0 && <div className="mat-colors">{colori.slice(0, 4).map((c) => <span key={c}>{c}</span>)}{colori.length > 4 && <span>+{colori.length - 4}</span>}</div>}
       </div>
     </button>
@@ -486,7 +486,7 @@ export default function Materiali({ chi, onBack, onProdotti }: { chi: string; on
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; materie prime</span></div>
         <div className="cs-lt">Listini e contatti dei fornitori: accedi con il tuo account Amimi&#8217;</div>
-        <button className="cs-btn" style={{ width: '100%', background: '#fff', border: '1px solid var(--line)', color: 'var(--dark)' }} onClick={doGoogle} disabled={busy} type="button">Accedi con Google</button>
+        <button className="cs-btn" style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--dark)' }} onClick={doGoogle} disabled={busy} type="button">Accedi con Google</button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 4px', color: 'var(--muted)', fontSize: 12 }}>
           <span style={{ flex: 1, height: 1, background: 'var(--line)' }} /> oppure con email <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
         </div>

@@ -456,7 +456,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; assistenza</span></div>
         <div className="cs-lt">Accedi con il tuo account Amimi&#8217;</div>
-        <button className="cs-btn" style={{ width: '100%', background: '#fff', border: '1px solid var(--line)', color: 'var(--dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }} onClick={doGoogle} disabled={busy} type="button">
+        <button className="cs-btn" style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }} onClick={doGoogle} disabled={busy} type="button">
           <span aria-hidden="true" style={{ fontWeight: 800, fontFamily: 'Arial, sans-serif' }}><span style={{ color: '#4285F4' }}>G</span><span style={{ color: '#EA4335' }}>o</span><span style={{ color: '#FBBC05' }}>o</span><span style={{ color: '#4285F4' }}>g</span><span style={{ color: '#34A853' }}>l</span><span style={{ color: '#EA4335' }}>e</span></span>
           <span>Accedi con Google</span>
         </button>
