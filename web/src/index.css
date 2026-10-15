@@ -912,6 +912,11 @@ button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-
 .or-ev.in:before { background: var(--positive); } .or-ev.call:before { background: var(--warning); }
 .or-ev .h { font-size: 11px; color: var(--ink-muted); }
 .or-ev .b { background: var(--surface-alt); border-radius: 8px; padding: 7px 9px; margin-top: 3px; font-size: 13px; white-space: pre-line; }
+/* v12 (blocco B): risposta dal cruscotto a un negozio che ci ha scritto, in cima alla timeline */
+.or-rispondi { border: 1px solid var(--positive-700); border-radius: 8px; padding: 8px 10px; margin: 6px 0 14px; }
+.or-rispondi h3 { margin: 0 0 4px; font-size: 14px; }
+.or-rispondi .cs-fld { display: block; margin-top: 6px; }
+.or-rispondi input, .or-rispondi textarea { width: 100%; box-sizing: border-box; }
 /* v11 (blocco A3): scelta dell'email di Posta inviata da collegare a un tocco registrato a mano */
 .or-collega { border: 1px solid var(--interactive-700); border-radius: 8px; padding: 7px 9px; margin-top: 4px; font-size: 13px; }
 .or-collega .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }

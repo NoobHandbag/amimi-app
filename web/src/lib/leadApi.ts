@@ -243,8 +243,9 @@ async function callOutreach(payload: Record<string, unknown>): Promise<Record<st
   const r = await fetch(LEAD_OUTREACH_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(payload) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) {
-    const e = new Error(j.error || 'Errore ' + r.status) as Error & { bloccante?: boolean };
+    const e = new Error(j.error || 'Errore ' + r.status) as Error & { bloccante?: boolean; incerto?: boolean };
     if (j.bloccante === true) e.bloccante = true;
+    if (j.incerto === true) e.incerto = true;   // rete giu' durante l'invio: la stessa chiave non deve ripartire
     throw e;
   }
   return j;
@@ -268,6 +269,12 @@ export const indirizzoInterno = (to: string): boolean => /@amimi\.it$/i.test(to.
 // bozza rimasta 'in_invio' (esito incerto): si sblocca solo dopo aver controllato "Posta inviata" di info@
 export async function sbloccaBozza(p: { draft_id: string; chi: string }): Promise<void> {
   await callOutreach({ action: 'sblocca', ...p });
+}
+// v12 (blocco B): risposta scritta dalla persona a un negozio che ci ha scritto. La edge decide il thread, non conta il
+// tetto e non chiede la riga di opt-out; send_key nuovo per ogni risposta (lo stesso solo per ripetere la stessa richiesta).
+export type LeadRispostaResult = { to: string; from?: string; oggetto: string; nel_thread?: boolean; already_sent?: boolean; warnings?: string[] };
+export async function inviaRisposta(p: { account_id: string; to: string; oggetto: string; testo: string; send_key: string; chi: string }): Promise<LeadRispostaResult> {
+  return (await callOutreach({ action: 'rispondi', ...p })) as unknown as LeadRispostaResult;
 }
 // v11 (blocco A3): le email di Posta inviata di info@ che si possono collegare a un tocco registrato a mano. La scelta
 // e' sempre della persona: l'edge propone, aggancia scrive (solo le due colonne Gmail di quel tocco).
