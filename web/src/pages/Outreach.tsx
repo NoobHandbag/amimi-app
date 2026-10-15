@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, inviaProva, indirizzoInterno, sbloccaBozza, scartaBozza, segnaposto, LEAD_MITTENTE } from '../lib/leadApi';
-import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft } from '../lib/leadApi';
+import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, inviaProva, indirizzoInterno, sbloccaBozza, scartaBozza, segnaposto, LEAD_MITTENTE, cercaInviate, agganciaTocco } from '../lib/leadApi';
+import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft, InviataCandidata } from '../lib/leadApi';
+import { negozioCiHaScritto, dopoInvioManuale } from '../lib/leadRegole';
 
 // Sezione Outreach (tappa 1 del PIANO_Outreach_CRM.md): pipeline per stadio, coda del giorno, scheda con
 // timeline dei tocchi e compositore da template, sequenze. Nessun invio dall'app: le email si mandano da
@@ -128,6 +129,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const [cmsg, setCmsg] = useState<{ t: string; err: boolean } | null>(null);
   const dire = (t: string, err = false) => setCmsg(t ? { t, err } : null);
   const [provaBusy, setProvaBusy] = useState(false);
+  // v11 (blocco A3): collegare un tocco registrato a mano all'email partita da Gmail, scegliendola fra quelle di Posta inviata
+  const [collega, setCollega] = useState<{ touchId: string; stato: 'carico' | 'pronto' | 'errore'; candidati: InviataCandidata[]; nota: string } | null>(null);
 
   const apriBozza = (d: LeadDraft) => {
     setCmsg(null);   // l'esito della bozza di prima non deve restare sotto il bottone Invia di questa
@@ -204,18 +207,44 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     setProvaBusy(false);
   };
 
-  // torna true solo se il tocco e' stato scritto: chi chiama pulisce il modulo o avanza il tocco SOLO in quel caso
-  const save = async (t: Parameters<typeof addTouch>[0], ok: string, out: (s: string, err?: boolean) => void = setMsg): Promise<boolean> => {
+  // torna l'id del tocco solo se e' stato scritto: chi chiama pulisce il modulo o avanza il tocco SOLO in quel caso
+  const save = async (t: Parameters<typeof addTouch>[0], ok: string, out: (s: string, err?: boolean) => void = setMsg): Promise<string | null> => {
     setBusy(true); out('');
-    let done = false;
-    try { await addTouch(t); done = true; out(ok + (await ricarica())); } catch (e) { out((e as Error).message, true); }
+    let id: string | null = null;
+    try { id = await addTouch(t); out(ok + (await ricarica())); } catch (e) { out((e as Error).message, true); }
     setBusy(false);
-    return done;
+    return id;
+  };
+  // v11 (A3): i candidati di Posta inviata per un tocco email senza thread. Nessuna scelta automatica, anche con un solo candidato.
+  const apriCollega = async (touchId: string) => {
+    setCollega({ touchId, stato: 'carico', candidati: [], nota: '' });
+    try {
+      const res = await cercaInviate(touchId);
+      const nota = res.gia_agganciato ? 'Gia’ collegata.' : res.motivo ?? (res.candidati.length ? '' : 'Nessuna email a questo negozio in Posta inviata di info@ nei 3 giorni attorno alla registrazione. Se l’hai appena mandata, Gmail puo’ metterci qualche secondo: premi “Cerca di nuovo”. Se e’ partita da un’altra casella, le risposte non si leggono da qui: registrale con “Registra un tocco”.');
+      setCollega({ touchId, stato: 'pronto', candidati: res.candidati, nota });
+    } catch (e) { setCollega({ touchId, stato: 'errore', candidati: [], nota: (e as Error).message }); }
+  };
+  const collegaA = async (touchId: string, gmailId: string) => {
+    setBusy(true);
+    try {
+      await agganciaTocco({ touch_id: touchId, gmail_message_id: gmailId, chi: who });
+      setCollega(null);
+      setMsg('Email collegata: le risposte del negozio a quell’email entrano in timeline al prossimo giro automatico (entro mezz’ora).' + (await ricarica()));
+    } catch (e) { setCollega((c) => (c ? { ...c, stato: 'errore', nota: (e as Error).message } : c)); }
+    setBusy(false);
   };
   const registra = () => save({ account_id: r.id, canale, direzione: dir, subject: subject || null, body_clean: body || null, stage_prima: r.lead_stage, stage_dopo: stageDopo || null, esito: esito || null, prossima_azione: pa || null, prossima_azione_at: paAt || null, chi: who }, 'Tocco registrato.').then((ok) => { if (!ok) return; setSubject(''); setBody(''); setEsito(''); setStageDopo(''); setPa(''); setPaAt(''); });
+  // v11 (A4): a un negozio che ci ha gia' scritto "Segna come inviata" non registra un tocco della sequenza a freddo
   const segnaInviata = () => {
+    const canaleT = seq?.canale ?? 'email';
     const next = sequences.find((s) => s.codice === codice && s.tocco === tocco + 1 && s.canale === 'email');
-    return save({ account_id: r.id, canale: seq?.canale ?? 'email', direzione: 'out', subject: oggetto || null, body_clean: testo, stage_prima: r.lead_stage, stage_dopo: r.lead_stage === 'da_contattare' ? 'contattato' : null, sequenza_tocco: tocco, prossima_azione: next ? `follow-up ${next.tocco} di 4` : 'chiusura: nessun altro tocco', prossima_azione_at: next ? addDays(next.giorni_attesa) : null, chi: who }, next ? `Registrata come inviata. Follow-up ${next.tocco} fra ${next.giorni_attesa} giorni.` : 'Registrata come inviata. Sequenza finita.', dire).then((ok) => { if (ok) setTocco((t) => Math.min(4, t + 1)); });
+    const d = dopoInvioManuale({ ciHaScritto: negozioCiHaScritto(touches ?? []), email: canaleT === 'email', tocco, prossimo: next ? { tocco: next.tocco, giorni_attesa: next.giorni_attesa } : null, oggi: new Date() });
+    return save({ account_id: r.id, canale: canaleT, direzione: 'out', subject: oggetto || null, body_clean: testo, stage_prima: r.lead_stage, stage_dopo: r.lead_stage === 'da_contattare' ? 'contattato' : null, sequenza_tocco: d.sequenza_tocco, prossima_azione: d.prossima_azione, prossima_azione_at: d.prossima_azione_at, chi: who }, d.messaggio, dire).then((id) => {
+      if (!id) return;
+      if (d.avanzaTocco) setTocco((t) => Math.min(4, t + 1));
+      // subito dopo la registrazione si sceglie l'email partita da Gmail, cosi' il giro ne legge le risposte
+      if (canaleT === 'email' && aiOn) void apriCollega(id);
+    });
   };
   const sposta = () => moveTo && save({ account_id: r.id, canale: 'altro', direzione: 'out', body_clean: `Spostato a "${STAGE_LABEL[moveTo]}" da ${who}`, stage_prima: r.lead_stage, stage_dopo: moveTo, chi: who }, `Spostato in ${STAGE_LABEL[moveTo]}.`).then((ok) => { if (ok) setMoveTo(''); });
   const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(oggetto)}&body=${encodeURIComponent(testo)}`;
@@ -260,6 +289,16 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
                 <div className="h">{fmtDT(t.at)} · {CANALI[t.canale] ?? t.canale} {t.direzione === 'in' ? 'ricevuta' : t.canale === 'altro' ? '' : 'inviata'}{t.sequenza_tocco != null ? ` · tocco ${t.sequenza_tocco}` : ''}{t.chi ? ` · ${t.chi}` : ''}{t.esito ? ` · ${ESITI.find((e) => e.key === t.esito)?.label ?? t.esito}` : ''}{t.stage_dopo ? ` → ${STAGE_LABEL[t.stage_dopo] ?? t.stage_dopo}` : ''}</div>
                 {(t.subject || t.body_clean) && <div className="b">{t.subject ? <b>{t.subject}{'\n'}</b> : null}{t.body_clean}</div>}
                 {(t.prossima_azione || t.prossima_azione_at) && <div className="h">prossima: {t.prossima_azione ?? ''} {t.prossima_azione_at ? fmtD(t.prossima_azione_at) : ''}</div>}
+                {aiOn && t.direzione === 'out' && t.canale === 'email' && !t.gmail_thread_id && collega?.touchId !== t.id && <button type="button" className="or-link" disabled={busy} onClick={() => void apriCollega(t.id)} title="Senza il collegamento il giro automatico non legge le risposte a questa email">Collega a Gmail</button>}
+                {collega?.touchId === t.id && <div className="or-collega" aria-live="polite">
+                  {collega.stato === 'carico' && <p className="muted">Cerco in Posta inviata di info@…</p>}
+                  {collega.stato !== 'carico' && collega.nota && <p className={collega.stato === 'errore' ? 'err' : 'note'}>{collega.nota}</p>}
+                  {collega.stato === 'pronto' && collega.candidati.length > 0 && <>
+                    <p className="note">Quale di queste email hai registrato? Scegli quella giusta: le risposte a quella entreranno in timeline.</p>
+                    {collega.candidati.map((c) => <div key={c.gmail_message_id} className="row"><div><div className="rt">{c.oggetto || '(senza oggetto)'}</div><div className="rs">{fmtDT(c.data)} · a {c.a}</div></div><button type="button" className="ds-btn" disabled={busy} onClick={() => void collegaA(t.id, c.gmail_message_id)}>Collega</button></div>)}
+                  </>}
+                  {collega.stato !== 'carico' && <button type="button" className="or-link" disabled={busy} onClick={() => void apriCollega(t.id)} style={{ marginRight: 12 }}>Cerca di nuovo</button>}<button type="button" className="or-link" disabled={busy} onClick={() => setCollega(null)}>Chiudi</button>
+                </div>}
               </div>
             ))}</div>
           )}
@@ -309,7 +348,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
             {seq?.canale === 'email' && to && <a className="ds-btn" href={gmailUrl} target="_blank" rel="noreferrer">Apri in Gmail</a>}
             <button type="button" className="ds-btn" onClick={copia}>Copia testo</button>
             {/* secondaria (bordo, non pieno): registra un invio fatto altrove, non lo esegue */}
-            <button type="button" className="ds-btn" disabled={busy || !testo} style={{ color: 'var(--positive-700)', borderColor: 'var(--positive-700)' }} onClick={segnaInviata}>{seq?.canale === 'telefono' ? 'Segna come fatta' : 'Segna come inviata'}</button>
+            <button type="button" className="ds-btn" disabled={busy || !testo || !touches} style={{ color: 'var(--positive-700)', borderColor: 'var(--positive-700)' }} onClick={segnaInviata}>{seq?.canale === 'telefono' ? 'Segna come fatta' : 'Segna come inviata'}</button>
           </div>}
           {!to && seq?.canale === 'email' && <p className="note">Nessuna email in anagrafica: "Apri in Gmail" compare quando c&#8217;e&#8217; un destinatario.</p>}
           {/* contenitore sempre montato: una regione live che compare gia' piena spesso non viene letta */}
