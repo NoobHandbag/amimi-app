@@ -243,7 +243,9 @@ async function callOutreach(payload: Record<string, unknown>): Promise<Record<st
   // Gate Fable (15-10, A): se la rete cade fra browser ed edge, o il gateway risponde senza un corpo della edge, la richiesta
   // puo' essere arrivata ed eseguita: e' un esito INCERTO, come la rete giu' fra edge e Gmail. Chi invia tiene la stessa
   // chiave (send_key), cosi' un secondo click non rimanda l'email.
-  const INCERTO = 'Esito incerto (la rete si e\u2019 interrotta): controlla \u201cPosta inviata\u201d di info@amimi.it prima di riprovare.';
+  const INCERTO = payload.action === 'send' || payload.action === 'rispondi'
+    ? 'Esito incerto (la rete si e\u2019 interrotta): controlla \u201cPosta inviata\u201d di info@amimi.it prima di riprovare.'
+    : 'Esito incerto (la rete si e\u2019 interrotta): ricarica la pagina e controlla se e\u2019 andata prima di riprovare.';
   let r: Response;
   try { r = await fetch(LEAD_OUTREACH_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(payload) }); }
   catch { const e = new Error(INCERTO) as Error & { incerto?: boolean }; e.incerto = true; throw e; }
