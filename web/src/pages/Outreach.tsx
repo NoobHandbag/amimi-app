@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, inviaProva, indirizzoInterno, sbloccaBozza, scartaBozza, segnaposto, LEAD_MITTENTE, cercaInviate, agganciaTocco } from '../lib/leadApi';
+import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, inviaProva, indirizzoInterno, sbloccaBozza, scartaBozza, segnaposto, LEAD_MITTENTE, cercaInviate, agganciaTocco, inviaRisposta } from '../lib/leadApi';
 import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft, InviataCandidata } from '../lib/leadApi';
-import { negozioCiHaScritto, dopoInvioManuale } from '../lib/leadRegole';
+import { negozioCiHaScritto, dopoInvioManuale, rispostaPreparata, avvisiTesto } from '../lib/leadRegole';
 
 // Sezione Outreach (tappa 1 del PIANO_Outreach_CRM.md): pipeline per stadio, coda del giorno, scheda con
 // timeline dei tocchi e compositore da template, sequenze. Nessun invio dall'app: le email si mandano da
@@ -130,6 +130,14 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const dire = (t: string, err = false) => setCmsg(t ? { t, err } : null);
   const [provaBusy, setProvaBusy] = useState(false);
   // v11 (blocco A3): collegare un tocco registrato a mano all'email partita da Gmail, scegliendola fra quelle di Posta inviata
+  // v12 (blocco B): riquadro "Rispondi" per i negozi che ci hanno scritto. Testo della persona, nessun numero di tocco.
+  const [rTo, setRTo] = useState('');
+  const [rOggetto, setROggetto] = useState('');
+  const [rTesto, setRTesto] = useState('');
+  const [rKey, setRKey] = useState(() => crypto.randomUUID());
+  const [rBusy, setRBusy] = useState(false);
+  const [rMsg, setRMsg] = useState<{ t: string; err: boolean } | null>(null);
+  const [rPronto, setRPronto] = useState(false);   // destinatario e oggetto riempiti una volta: poi decide la persona
   const [collega, setCollega] = useState<{ touchId: string; stato: 'carico' | 'pronto' | 'errore'; candidati: InviataCandidata[]; nota: string } | null>(null);
 
   const apriBozza = (d: LeadDraft) => {
@@ -234,6 +242,43 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     setBusy(false);
   };
   const registra = () => save({ account_id: r.id, canale, direzione: dir, subject: subject || null, body_clean: body || null, stage_prima: r.lead_stage, stage_dopo: stageDopo || null, esito: esito || null, prossima_azione: pa || null, prossima_azione_at: paAt || null, chi: who }, 'Tocco registrato.').then((ok) => { if (!ok) return; setSubject(''); setBody(''); setEsito(''); setStageDopo(''); setPa(''); setPaAt(''); });
+  // v12 (blocco B): chi ci ha scritto riceve la risposta dal cruscotto. La preparazione (destinatario, oggetto, thread) e'
+  // la stessa regola della edge; riempie i campi una volta sola, poi i campi sono della persona.
+  const ciHaScrittoOra = negozioCiHaScritto(touches ?? []);
+  const prep = touches ? rispostaPreparata(touches, r.nome, r.email_generica ?? r.email_sito ?? '') : null;
+  const mostraRispondi = aiOn && !!touches && ciHaScrittoOra && r.lead_stage !== 'opt_out' && r.lead_stage !== 'chiuso_no' && r.n_opt_out === 0;
+  useEffect(() => {
+    if (!prep || rPronto) return;
+    setRTo(prep.to); setROggetto(prep.oggetto); setRTesto(`\n\n${firma}`); setRPronto(true);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [touches, rPronto]);
+  const avvisiR = avvisiTesto(rTesto);
+  const residuiR = segnaposto(`${rOggetto}\n${rTesto}`);
+  const toInternoR = indirizzoInterno(rTo);
+  const testoVuotoR = !rTesto.trim() || rTesto.trim() === firma.trim();
+  const inviaRisp = async () => {
+    if (!window.confirm(`Inviare la risposta adesso da ${LEAD_MITTENTE}?\n\nA: ${rTo}\nOggetto: ${rOggetto}\n\nL'email parte davvero e non si puo' richiamare.`)) return;
+    setRBusy(true); setRMsg(null);
+    try {
+      const res = await inviaRisposta({ account_id: r.id, to: rTo, oggetto: rOggetto, testo: rTesto, send_key: rKey, chi: who });
+      setRKey(crypto.randomUUID()); setRTesto(`\n\n${firma}`); setRPronto(false);
+      setRMsg({ t: `${res.already_sent ? 'Gia\u2019 inviata prima' : 'Risposta inviata'} a ${res.to}${res.from ? ` da ${res.from}` : ''}${res.nel_thread ? ', nel thread della conversazione' : ', come email nuova'}. Prossima azione: attesa risposta fra 5 giorni.${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}${await ricarica()}`, err: false });
+    } catch (e) {
+      // un esito incerto tiene la chiave: ripremere non deve far ripartire l'email finche' non si guarda Posta inviata
+      if (!(e as Error & { incerto?: boolean }).incerto) setRKey(crypto.randomUUID());
+      setRMsg({ t: (e as Error).message, err: true });
+    }
+    setRBusy(false);
+  };
+  const provaRisp = async () => {
+    setRBusy(true); setRMsg(null);
+    try {
+      const res = await inviaProva({ oggetto: rOggetto, testo: rTesto });
+      setRMsg({ t: `Prova inviata a ${res.to}: la trovi in Posta in arrivo con \u201c[PROVA]\u201d nell\u2019oggetto. Non conta come invio.`, err: false });
+    } catch (e) { setRMsg({ t: (e as Error).message, err: true }); }
+    setRBusy(false);
+  };
+
   // v11 (A4): a un negozio che ci ha gia' scritto "Segna come inviata" non registra un tocco della sequenza a freddo
   const segnaInviata = () => {
     const canaleT = seq?.canale ?? 'email';
@@ -283,6 +328,21 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
       <div className="or-two">
         <section className="card">
           <h2>Timeline</h2>
+          {mostraRispondi && prep && <div className="or-rispondi">
+            <h3>Rispondi a {r.nome}</h3>
+            <p className="note">{prep.nelThread && prep.riferimento ? `Nel thread di \u201c${prep.riferimento.subject || '(senza oggetto)'}\u201d del ${fmtDT(prep.riferimento.at)}: il negozio la riceve come risposta.` : 'Email nuova: l\u2019ultimo messaggio e\u2019 il modulo del sito, che non ha un thread da riprendere.'} Non conta nel tetto giornaliero e non serve la riga di opt-out.</p>
+            <label className="cs-fld">Destinatario<input type="email" value={rTo} onChange={(e) => setRTo(e.target.value.trim())} /></label>
+            <label className="cs-fld">Oggetto<input value={rOggetto} onChange={(e) => setROggetto(e.target.value)} /></label>
+            <label className="cs-fld">Risposta<textarea rows={7} value={rTesto} onChange={(e) => setRTesto(e.target.value)} placeholder="Scrivi qui la risposta" /></label>
+            {avvisiR.length > 0 && <div className="err" style={{ marginTop: 6 }}>Da controllare: {avvisiR.join(' \u00b7 ')}</div>}
+            {residuiR.length > 0 && <p className="note">Prima di inviare completa: {residuiR.slice(0, 4).join(' ')}</p>}
+            {toInternoR && <p className="note">Gli indirizzi @amimi.it non ricevono l\u2019invio vero: usa \u201cProva della risposta a me\u201d.</p>}
+            <div className="lead-actions">
+              <button type="button" className="ds-btn" disabled={rBusy || busy || !rTo || toInternoR || residuiR.length > 0 || testoVuotoR || !rOggetto.trim()} style={{ background: 'var(--positive-700)', color: '#fff', borderColor: 'var(--positive-700)' }} onClick={() => void inviaRisp()}>{rBusy ? 'Invio\u2026' : `Invia risposta da ${LEAD_MITTENTE}`}</button>
+              <button type="button" className="ds-btn" disabled={rBusy || !rOggetto.trim() || testoVuotoR} onClick={() => void provaRisp()}>Prova della risposta a me</button>
+            </div>
+            <div className="or-esito" aria-live="polite">{rMsg && <div className={rMsg.err ? 'err' : 'note'} style={{ marginTop: 8 }}>{rMsg.t}</div>}</div>
+          </div>}
           {!touches ? <p className="muted">Carico…</p> : !touches.length ? <p className="muted">Nessun tocco ancora. Il primo lo registri qui a destra, o lo mandi dal compositore.</p> : (
             <div className="or-timeline">{touches.map((t) => (
               <div key={t.id} className={`or-ev ${t.direzione === 'in' ? 'in' : ''} ${t.canale === 'telefono' || t.canale === 'visita' ? 'call' : ''}`}>
@@ -318,6 +378,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
 
         <section className="card or-compositore">
           <h2>Compositore</h2>
+          {mostraRispondi && <p className="note">Questo negozio ci ha gia\u2019 scritto: per rispondere usa \u201cRispondi\u201d in cima alla timeline. Qui restano la sequenza a freddo e \u201cSegna come inviata\u201d per un\u2019email mandata da Gmail.</p>}
           <div className="or-form">
             <label>Sequenza<select value={codice} onChange={(e) => { setCodice(e.target.value); setCmsg(null); }}>{[...new Set(sequences.map((s) => s.codice))].map((c) => <option key={c} value={c}>{c === 'boutique_it' ? 'Boutique · italiano' : c === 'boutique_en' ? 'Boutique · English' : c}</option>)}</select></label>
             <label>Tocco<select value={tocco} onChange={(e) => { setTocco(Number(e.target.value)); setCmsg(null); }}>{sequences.filter((s) => s.codice === codice).map((s) => <option key={s.tocco} value={s.tocco}>{s.tocco === 0 ? '0 · telefonata' : `${s.tocco} · ${s.canale}${s.giorni_attesa ? ` (+${s.giorni_attesa} gg)` : ''}`}</option>)}</select></label>
@@ -343,7 +404,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               </>}
             </div>
           ) : <p className="note">Bozza AI e invio dall&#8217;app spenti (flag lead_outreach_ai_enabled). Per ora: template, Gmail e &#8220;Segna come inviata&#8221;.</p>}
-          {drafts.length > 0 && <details style={{ marginTop: 8 }}><summary style={{ cursor: 'pointer', fontSize: 13 }}>Bozze di questo negozio ({drafts.length})</summary><div className="list">{drafts.map((d) => <div key={d.id} className="row"><div><div className="rt">Tocco {d.sequenza_tocco ?? '—'} · {d.stato}{d.origine === 'auto' ? ' · automatica' : ''}{d.sent_by ? ` · ${d.sent_by}` : d.chi ? ` · ${d.chi}` : ''}</div><div className="rs">{d.oggetto ?? ''}{d.errore ? ` · ${d.errore}` : ''}</div>{aiOn && (d.stato === 'proposta' || d.stato === 'errore') && d.id !== draftId && <button type="button" className="or-link" disabled={busy} onClick={() => apriBozza(d)}>Apri nel compositore</button>}{d.stato === 'in_invio' && <button type="button" className="or-link" disabled={busy} onClick={async () => { if (!window.confirm('Hai controllato "Posta inviata" di info@amimi.it e questa email NON c’e’? Solo in quel caso sbloccala.')) return; try { await sbloccaBozza({ draft_id: d.id, chi: who }); dire('Bozza sbloccata: si puo’ reinviare.'); await reload(); } catch (e) { dire((e as Error).message, true); } }}>Sblocca (esito incerto)</button>}</div><div className="muted" style={{ fontSize: 12 }}>{fmtD(d.sent_at ?? d.created_at)}</div></div>)}</div></details>}
+          {drafts.length > 0 && <details style={{ marginTop: 8 }}><summary style={{ cursor: 'pointer', fontSize: 13 }}>Bozze di questo negozio ({drafts.length})</summary><div className="list">{drafts.map((d) => <div key={d.id} className="row"><div><div className="rt">{d.sequenza_tocco != null ? `Tocco ${d.sequenza_tocco}` : 'Risposta'} · {d.stato}{d.origine === 'auto' ? ' · automatica' : ''}{d.sent_by ? ` · ${d.sent_by}` : d.chi ? ` · ${d.chi}` : ''}</div><div className="rs">{d.oggetto ?? ''}{d.errore ? ` · ${d.errore}` : ''}</div>{aiOn && (d.stato === 'proposta' || d.stato === 'errore') && d.id !== draftId && <button type="button" className="or-link" disabled={busy} onClick={() => apriBozza(d)}>Apri nel compositore</button>}{d.stato === 'in_invio' && <button type="button" className="or-link" disabled={busy} onClick={async () => { if (!window.confirm('Hai controllato "Posta inviata" di info@amimi.it e questa email NON c’e’? Solo in quel caso sbloccala.')) return; try { await sbloccaBozza({ draft_id: d.id, chi: who }); dire('Bozza sbloccata: si puo’ reinviare.'); await reload(); } catch (e) { dire((e as Error).message, true); } }}>Sblocca (esito incerto)</button>}</div><div className="muted" style={{ fontSize: 12 }}>{fmtD(d.sent_at ?? d.created_at)}</div></div>)}</div></details>}
           {!draftId && <div className="lead-actions">
             {seq?.canale === 'email' && to && <a className="ds-btn" href={gmailUrl} target="_blank" rel="noreferrer">Apri in Gmail</a>}
             <button type="button" className="ds-btn" onClick={copia}>Copia testo</button>

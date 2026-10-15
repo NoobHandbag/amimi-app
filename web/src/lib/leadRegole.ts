@@ -12,6 +12,35 @@ export function negozioCiHaScritto(tocchi: ToccoMinimo[]): boolean {
   return tocchi.some((t) => t.direzione === 'in' && !NON_CONVERSAZIONE.includes(t.esito ?? ''));
 }
 
+// v12 (blocco B): come si prepara il riquadro "Rispondi". Stessa regola della edge (bersaglioRisposta): la risposta va
+// nel thread dell'ultimo messaggio vero (un tocco con id Gmail, bounce e risposte automatiche esclusi); se quel messaggio
+// e' il modulo del sito (senza thread) parte un'email nuova. Il destinatario e' chi ci ha scritto per ultimo (la prima
+// riga dei tocchi in entrata scritti dal giro e' il suo indirizzo), altrimenti l'email del negozio.
+export type ToccoRisposta = ToccoMinimo & { at: string; canale: string; subject: string | null; body_clean: string | null; gmail_message_id: string | null; gmail_thread_id: string | null };
+const EMAIL_RIGA = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
+export function rispostaPreparata(tocchi: ToccoRisposta[], nome: string, emailNegozio: string): { to: string; oggetto: string; nelThread: boolean; riferimento: { subject: string; at: string } | null } {
+  const ord = [...tocchi].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const msg = ord.find((t) => t.gmail_message_id && t.esito !== 'bounce' && t.esito !== 'risposta_automatica');
+  const ultimoIn = ord.find((t) => t.direzione === 'in' && !NON_CONVERSAZIONE.includes(t.esito ?? ''));
+  const riga = (ultimoIn?.body_clean ?? '').split('\n')[0].trim();
+  const to = EMAIL_RIGA.test(riga) ? riga.toLowerCase() : emailNegozio;
+  const base = String(msg?.subject ?? '').replace(/^\s*((re|r|fwd?|i)\s*:\s*)+/i, '').trim();
+  if (msg?.gmail_thread_id) return { to, oggetto: base ? `Re: ${base}` : `Amimì Milano per ${nome}`, nelThread: true, riferimento: { subject: base, at: msg.at } };
+  return { to, oggetto: `Amimì Milano per ${nome}`, nelThread: false, riferimento: msg ? { subject: base, at: msg.at } : null };
+}
+// gli stessi avvisi di contenuto della edge (avvisiContenuto, PURE:lead-guard), mostrati MENTRE si scrive la risposta:
+// una persona non li vede in una bozza AI, quindi devono comparire prima del click. Provati sugli stessi testi.
+export function avvisiTesto(testo: string): string[] {
+  const a: string[] = [];
+  const low = testo.toLowerCase();
+  if (/\bindia\b/.test(low)) a.push('il testo nomina l\'India: non si dice mai');
+  if (/cotone[^.\n]{0,80}(made in italy|in italia|italian)|(made in italy|in italia)[^.\n]{0,80}cotone/.test(low)) a.push('il testo associa il cotone all\'Italia: vale solo per la pelle');
+  if (/\d+\s?%/.test(testo)) a.push('il testo contiene una percentuale: nelle email non si scrivono sconti ne\' supplementi, si rimanda alla line sheet');
+  if (/ordine minimo|minimo d.ordine|conto vendita|consignment|minimum order/.test(low)) a.push('il testo cita minimi d\'ordine o conto vendita: controlla che coincida con la line sheet (primo ordine 12 pezzi e 400 euro netto; il conto vendita non c\'e\' piu\')');
+  if (/alleg|attach/.test(low)) a.push('il testo parla di un allegato: l\'email parte senza allegati');
+  return a;
+}
+
 const piuGiorni = (oggi: Date, n: number): string => { const d = new Date(oggi.getTime()); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 export const GIORNI_ATTESA_RISPOSTA = 5;
 

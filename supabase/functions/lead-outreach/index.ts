@@ -208,6 +208,20 @@ function attribuisciMessaggio(p: { from: string; xOriginalFrom: string; replyTo:
   if (acc.length > 1) return { salta: 'indirizzo su piu negozi' };   // lo collega una persona (blocco C)
   return { via, account: acc[0], indirizzo };
 }
+// v12 (blocco B): "il negozio ci ha scritto" = almeno un tocco in entrata, di qualunque canale, che non sia un bounce, una
+// risposta automatica o un opt-out (stessa regola di web/src/lib/leadRegole.ts, provata sugli stessi casi). Solo a chi ci ha
+// scritto si "risponde"; per il primo contatto resta la sequenza a freddo, con opt-out, verdetto e tetto.
+function ciHaScritto(tocchi: { direzione: string; esito: string | null }[]): boolean {
+  return tocchi.some((t) => t.direzione === 'in' && !['bounce', 'risposta_automatica', 'opt_out'].includes(t.esito ?? ''));
+}
+// dove va la risposta: nel thread dell'ultimo MESSAGGIO del negozio o nostro (un tocco con gmail_message_id). Se quel
+// messaggio e' una notifica del modulo (nessun thread) la risposta parte come email nuova: il thread della notifica e'
+// di mailer@shopify.com (CONOSCENZA 14-09). Telefonate e "Sposta a" non hanno messaggio e non contano.
+function bersaglioRisposta(tocchi: { direzione: string; esito: string | null; at: string; gmail_message_id: string | null; gmail_thread_id: string | null; subject: string | null }[]): { threadId: string; messageId: string; subject: string } | null {
+  const msg = tocchi.filter((t) => t.gmail_message_id && t.esito !== 'bounce' && t.esito !== 'risposta_automatica').sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+  if (!msg || !msg.gmail_thread_id) return null;
+  return { threadId: msg.gmail_thread_id, messageId: String(msg.gmail_message_id), subject: String(msg.subject ?? '') };
+}
 // il testo che il cliente ha scritto nel modulo, senza lo stampo di Shopify (marcatori IT e EN di cs-sync v12)
 function testoModulo(t: string): string {
   const s = t.replace(/\r\n/g, '\n');
@@ -260,6 +274,22 @@ function bloccantiInvio(p: { to: string; oggetto: string; testo: string }): stri
   const seg = segnapostoResidui(`${p.oggetto}\n${p.testo}`);
   if (seg.length) b.push(`restano ${seg.length} parti da completare fra parentesi: ${seg.slice(0, 3).join(' ')}`);
   if (!CHIUSURA_RE.test(p.testo)) b.push('manca la riga di opt-out ("no grazie") o la chiusura definitiva del tocco 4');
+  return b;
+}
+// v12 (blocco B): la risposta scritta da una persona a un negozio che ci ha scritto. Niente riga di opt-out obbligatoria
+// (decisione owner 15-10: solo per chi non ci ha mai scritto) e nessuna lunghezza minima ("Va bene, a martedi'" e' una
+// risposta); restano destinatario valido e non @amimi.it, oggetto, tetti di lunghezza e segnaposto rimasti.
+function bloccantiRisposta(p: { to: string; oggetto: string; testo: string }): string[] {
+  const b: string[] = [];
+  const to = p.to.trim().toLowerCase();
+  if (!EMAIL_RE.test(to)) b.push('destinatario mancante o non valido');
+  else if (to.endsWith('@amimi.it')) b.push('il destinatario e\' un indirizzo @amimi.it: per vedere l\'email usa "Manda una prova a me"');
+  if (!p.oggetto.trim()) b.push('oggetto vuoto');
+  if (p.oggetto.length > 200) b.push('oggetto troppo lungo');
+  if (!p.testo.trim()) b.push('testo vuoto');
+  if (p.testo.length > 6000) b.push('testo troppo lungo');
+  const seg = segnapostoResidui(`${p.oggetto}\n${p.testo}`);
+  if (seg.length) b.push(`restano ${seg.length} parti da completare fra parentesi: ${seg.slice(0, 3).join(' ')}`);
   return b;
 }
 // garantisce firma e riga di opt-out anche se il modello le ha dimenticate (mai due volte)
@@ -836,7 +866,7 @@ Deno.serve(async (req) => {
   const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || '');
-  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'prova', 'cerca_inviate', 'aggancia', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
+  if (!['draft', 'send', 'sblocca', 'diag', 'scarta', 'prova', 'rispondi', 'cerca_inviate', 'aggancia', 'cron'].includes(action)) return json({ error: 'azione sconosciuta' }, 422);
   // giro automatico: nessun JWT (lo chiama pg_cron), nessun dato di terzi in risposta, NO-OP a lead_enabled spento
   if (action === 'cron') return await giroCron(createClient(url, svc));
 
@@ -917,6 +947,126 @@ Deno.serve(async (req) => {
     if (sbErr) return json({ error: 'sblocco fallito: ' + sbErr.message }, 500);
     if (!sb1?.length) return json({ error: 'niente da sbloccare: la bozza non e\' in invio da piu\' di 10 minuti', bloccante: true }, 409);
     return json({ ok: true, sbloccata: id });
+  }
+
+  // --------------------------------------------------------------------------------------- rispondi
+  // v12 (blocco B del cruscotto B2B): la risposta scritta da una persona, in qualunque stadio, a un negozio che ci ha
+  // scritto. Nel thread dell'ultimo messaggio con In-Reply-To e References veri; email nuova se l'ultimo messaggio e' il
+  // modulo del sito. Nessun numero di tocco (non consuma i 4 della sequenza), fuori dal tetto giornaliero, nessuna riga di
+  // opt-out obbligatoria, nessun verdetto richiesto (decisioni owner 15-10). Restano: il click della persona, l'opt-out
+  // del negozio e dell'indirizzo, gli stadi opt_out e chiuso_no, i destinatari @amimi.it rifiutati.
+  // Idempotenza: la riga di lead_drafts nasce GIA' 'in_invio' con send_key UNIQUE: l'insert e' il claim, un secondo click
+  // con la stessa chiave trova la riga e non rimanda. Esito incerto (rete giu' durante l'invio) = la riga resta in invio e
+  // si sblocca a mano dopo aver guardato Posta inviata, come per l'invio della sequenza.
+  if (action === 'rispondi') {
+    const accountId = String(body.account_id || '');
+    const sendKeyR = String(body.send_key || '');
+    if (!UUID_RE.test(accountId) || !UUID_RE.test(sendKeyR)) return json({ error: 'account_id o send_key non validi' }, 422);
+    const toR = String(body.to || '').trim().toLowerCase();
+    const oggettoR = pulisciOggetto(String(body.oggetto || ''));
+    const testoR = String(body.testo || '').replace(/\r\n/g, '\n').trim();
+    const blocchiR = bloccantiRisposta({ to: toR, oggetto: oggettoR, testo: testoR });
+    if (blocchiR.length) return json({ error: 'Risposta bloccata: ' + blocchiR.join('; '), bloccante: true }, 422);
+    // una richiesta ripetuta con la stessa chiave: se la risposta e' gia' partita lo si dice, senza rimandarla
+    const { data: gia, error: giaErr } = await retryOnce(() => sb.from('lead_drafts').select('id,stato,account_id,gmail_message_id').eq('send_key', sendKeyR).maybeSingle());
+    if (giaErr) return json({ error: 'lettura bozza fallita, riprova: ' + giaErr.message }, 503);
+    if (gia) return gia.stato === 'inviata' && gia.account_id === accountId ? json({ ok: true, already_sent: true, to: toR, gmail_message_id: gia.gmail_message_id }) : json({ error: 'questa risposta e\' gia\' in invio: ricarica la scheda', bloccante: true }, 409);
+    const [{ data: accR, error: accErr }, { data: tocchiR, error: tocErr }, { count: nOptR, error: optErr }, { count: nOptToR, error: optToErr }] = await Promise.all([
+      retryOnce(() => sb.from('lead_accounts').select('id,lead_stage').eq('id', accountId).maybeSingle()),
+      retryOnce(() => sb.from('lead_touches').select('id,direzione,canale,esito,at,gmail_message_id,gmail_thread_id,subject').eq('account_id', accountId).order('at', { ascending: false }).limit(200)),
+      retryOnce(() => sb.from('lead_contacts').select('id', { count: 'exact', head: true }).eq('account_id', accountId).eq('opt_out', true)),
+      retryOnce(() => sb.from('lead_contacts').select('id', { count: 'exact', head: true }).ilike('email', toR.replace(/[\\%_]/g, '\\$&')).eq('opt_out', true)),
+    ]);
+    if (accErr) return json({ error: 'lettura negozio fallita, riprova: ' + accErr.message }, 503);
+    if (tocErr) return json({ error: 'lettura tocchi fallita, riprova: ' + tocErr.message }, 503);
+    if (optErr || optToErr) return json({ error: 'lettura opt-out fallita, riprova: ' + (optErr ?? optToErr)!.message }, 503);
+    if (!accR) return json({ error: 'negozio inesistente', bloccante: true }, 404);
+    if (accR.lead_stage === 'opt_out' || accR.lead_stage === 'chiuso_no') return json({ error: `negozio in stadio ${accR.lead_stage}: non si contatta`, bloccante: true }, 409);
+    if ((nOptR ?? 0) > 0) return json({ error: 'opt-out registrato su questo negozio: non si contatta', bloccante: true }, 409);
+    if ((nOptToR ?? 0) > 0) return json({ error: `${toR} ha chiesto di non essere contattato`, bloccante: true }, 409);
+    const tocchiList = (tocchiR ?? []) as { id: string; direzione: string; canale: string; esito: string | null; at: string; gmail_message_id: string | null; gmail_thread_id: string | null; subject: string | null }[];
+    if (!ciHaScritto(tocchiList)) return json({ error: 'questo negozio non ci ha mai scritto: per il primo contatto si usa la sequenza (riga di opt-out, verdetto e tetto giornaliero)', bloccante: true }, 409);
+    const bers = bersaglioRisposta(tocchiList);
+    const ultimoIn = tocchiList.find((t) => t.direzione === 'in' && !['bounce', 'risposta_automatica'].includes(t.esito ?? ''))?.id ?? null;
+    if (!flags.cs_gmail_sa_key) return json({ error: 'chiave service account assente (app_flags.cs_gmail_sa_key)' }, 500);
+    let saR: { client_email: string; private_key: string };
+    try { saR = JSON.parse(flags.cs_gmail_sa_key); } catch { return json({ error: 'chiave service account non valida' }, 500); }
+    let stokenR = '';
+    try { stokenR = await googleAccessToken(saR, SCOPE_SEND); }
+    catch (e) { return json({ error: 'autenticazione Google fallita: ' + (e as Error).message.slice(0, 180) }, 502); }
+    const mittR = await mittente(saR);
+    const warningsR: string[] = mittR.avviso ? [mittR.avviso] : [];
+    let inReplyToR = '', referencesR = '';
+    if (bers) {
+      const tl = await tokenLettura(flags);
+      if ('errore' in tl) warningsR.push('header di reply non impostati: ' + tl.errore);
+      else {
+        try {
+          const mr = await fetch(`${GMAIL}/messages/${encodeURIComponent(bers.messageId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`, { headers: { Authorization: `Bearer ${tl.token}` } });
+          const mj = await mr.json().catch(() => ({}));
+          const hs = (mj?.payload?.headers ?? []) as { name?: string; value?: string }[];
+          const hdr = (n: string) => hs.find((h) => h.name?.toLowerCase() === n)?.value ?? '';
+          const mid = mr.ok ? hdr('message-id') : '';
+          if (mid) { inReplyToR = mid; referencesR = (hdr('references') ? hdr('references') + ' ' : '') + mid; }
+          else warningsR.push(`header di reply non impostati (Gmail ${mr.status}): la risposta si vede nel thread solo nella nostra casella`);
+        } catch (e) { warningsR.push('header di reply non impostati: ' + scrub((e as Error).message).slice(0, 120)); }
+      }
+    }
+    // claim: la riga nasce in invio; il send_key UNIQUE fa fallire il secondo inserimento con la stessa chiave
+    const nowR = new Date().toISOString();
+    const { data: insR, error: insErr } = await sb.from('lead_drafts').insert({
+      account_id: accountId, touch_in_id: ultimoIn, testo: testoR, oggetto: oggettoR, to_email: toR, sequenza_tocco: null, stato: 'in_invio',
+      send_key: sendKeyR, chi, sent_by: chi, origine: 'manuale', updated_at: nowR,
+    }).select('id').single();
+    if (insErr) {
+      const dup = insErr.code === '23505';
+      return json({ error: dup ? 'questa risposta e\' gia\' in invio: ricarica la scheda' : 'salvataggio della risposta fallito: ' + insErr.message, bloccante: dup }, dup ? 409 : 500);
+    }
+    const mimeR = [
+      `From: ${encHdr('Amimì Milano')} <${mittR.from}>`,
+      `To: <${toR}>`,
+      `Subject: ${encHdr(oggettoR)}`,
+      ...(inReplyToR ? [`In-Reply-To: ${inReplyToR}`] : []),
+      ...(referencesR ? [`References: ${referencesR}`] : []),
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      wrap76(b64(testoR)),
+    ].join('\r\n');
+    let srR: Response;
+    try {
+      srR = await fetch(`${GMAIL}/messages/send`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${stokenR}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw: b64url(new TextEncoder().encode(mimeR)), ...(bers ? { threadId: bers.threadId } : {}) }),
+      });
+    } catch (e) {
+      return json({ error: 'Rete giu\' durante l\'invio: esito incerto. Controlla "Posta inviata" di info@amimi.it prima di riprovare. ' + (e as Error).message.slice(0, 120), bloccante: true, incerto: true }, 504);
+    }
+    const sjR = await srR.json().catch(() => ({}));
+    if (!srR.ok) {
+      const msg = `Gmail ha rifiutato l'invio (${srR.status}): ${JSON.stringify(sjR).slice(0, 250)}`;
+      const { error: eErr } = await sb.from('lead_drafts').update({ stato: 'errore', errore: msg, updated_at: new Date().toISOString() }).eq('id', insR.id);
+      return json({ error: msg + (eErr ? ' (e la risposta e\' rimasta in invio: sbloccala)' : '') }, 502);
+    }
+    // da qui la mail E' PARTITA: gli errori successivi sono avvisi, mai un fallimento dell'invio
+    const msgIdR = String((sjR as { id?: string }).id ?? '') || null;
+    const threadIdR = String((sjR as { threadId?: string }).threadId ?? '') || null;
+    if (!msgIdR) warningsR.push('Gmail non ha restituito l\'id del messaggio: il tocco e\' registrato senza');
+    const sentAt = new Date().toISOString();
+    const { error: upErrR } = await sb.from('lead_drafts').update({ stato: 'inviata', sent_at: sentAt, gmail_message_id: msgIdR, gmail_thread_id: threadIdR, updated_at: sentAt }).eq('id', insR.id);
+    if (upErrR) warningsR.push('email partita, ma lo stato della risposta non e\' stato aggiornato: ' + upErrR.message);
+    const promemoria = new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10);
+    const touchR = {
+      account_id: accountId, canale: 'email', direzione: 'out', gmail_message_id: msgIdR, gmail_thread_id: threadIdR, subject: oggettoR, body_clean: testoR,
+      stage_prima: accR.lead_stage, sequenza_tocco: null, chi, prossima_azione: 'attesa risposta del negozio', prossima_azione_at: promemoria,
+    };
+    const { error: tErrR } = msgIdR
+      ? await sb.from('lead_touches').upsert(touchR, { onConflict: 'gmail_message_id', ignoreDuplicates: true })
+      : await sb.from('lead_touches').insert(touchR);
+    if (tErrR) warningsR.push('email partita, ma il tocco non e\' stato registrato: registralo a mano. ' + tErrR.message);
+    return json({ ok: true, to: toR, from: mittR.from, oggetto: oggettoR, nel_thread: !!bers, gmail_message_id: msgIdR, ...(warningsR.length ? { warnings: warningsR } : {}) });
   }
 
   // ----------------------------------------------------------------------------------- cerca_inviate
@@ -1107,7 +1257,9 @@ Deno.serve(async (req) => {
   // Non atomico con il claim: due invii contemporanei all'ultimo posto passano entrambi (tetto morbido, accettato).
   const tetto = Number.parseInt(flags.lead_tetto_giornaliero || '20', 10);
   if (!Number.isFinite(tetto) || tetto < 0) return json({ error: 'app_flags.lead_tetto_giornaliero non e\' un numero: invio fermo finche\' non viene corretto' }, 500);
-  const { count: nOggi, error: cErr } = await retryOnce(() => sb.from('lead_drafts').select('id', { count: 'exact', head: true }).or(`stato.eq.in_invio,sent_at.gte.${inizioGiornoRoma()}`));
+  // v12: contano solo le email della sequenza a freddo (con numero di tocco); le risposte a chi ci ha scritto ne restano
+  // fuori (decisione owner 15-10: il tetto protegge l'outreach a freddo)
+  const { count: nOggi, error: cErr } = await retryOnce(() => sb.from('lead_drafts').select('id', { count: 'exact', head: true }).not('sequenza_tocco', 'is', null).or(`stato.eq.in_invio,sent_at.gte.${inizioGiornoRoma()}`));
   if (cErr) return json({ error: 'conteggio invii fallito, riprova: ' + cErr.message }, 503);
   if ((nOggi ?? 0) >= tetto) return json({ error: `tetto di ${tetto} invii al giorno raggiunto`, bloccante: true }, 429);
 
