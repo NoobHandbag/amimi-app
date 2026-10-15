@@ -73,16 +73,18 @@ export function OutreachBoard({ rows, urls, onOpen }: { rows: LeadOutreach[]; ur
 // visita o fiera. Assistenza si legge soltanto. Un negozio nuovo non nasce se ne esiste uno uguale (email, Instagram, sito,
 // nome+citta'): la edge risponde con i candidati e la persona sceglie se collegarsi a uno di quelli o crearlo comunque.
 type FormNegozio = { convId: string | null; nome: string; citta: string; tipo: string; email: string; telefono: string; ig: string; website: string; canale: string; referente: string; nota: string; duplicati: NegozioCandidato[] };
-const CANALI_INGRESSO: Record<string, string> = { instagram_dm: 'Instagram', telefono: 'Telefono', visita: 'Visita in negozio', email: 'Email', altro: 'Fiera, passaparola, altro' };
+const CANALI_INGRESSO: Record<string, string> = { instagram_dm: 'Instagram', telefono: 'Telefono', visita: 'Visita in negozio', email: 'Email', altro: 'Fiera, passaparola, altro (non conta come un loro contatto)' };
 const viaLabel: Record<string, string> = { email: 'stessa email del negozio', contatto: 'e’ un suo contatto', dominio: 'stesso dominio del sito', sito: 'stesso sito', instagram: 'stesso Instagram', "nome e citta'": 'stesso nome e citta’' };
 
-function InboundCoda({ who, onChanged, onOpen }: { who: string; onChanged: () => Promise<void>; onOpen: (id: string) => void }) {
+function InboundCoda({ who, onChanged, onOpen, rows }: { who: string; onChanged: () => Promise<void>; onOpen: (id: string) => void; rows: LeadOutreach[] }) {
   const [inbound, setInbound] = useState<LeadInbound[] | null>(null);
   const [msg, setMsg] = useState<{ t: string; err: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<FormNegozio | null>(null);
   const carica = async () => { try { setInbound(await fetchInbound()); } catch (e) { setInbound([]); setMsg({ t: 'Messaggi da collegare non disponibili: ' + (e as Error).message, err: true }); } };
-  useEffect(() => { void carica(); }, []);
+  // si ricarica quando la pipeline si ricarica ("Aggiorna" in testata, o dopo un'azione che cambia un negozio)
+  /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  useEffect(() => { void carica(); }, [rows]);
   const fatto = async (t: string, apri?: string) => {
     setMsg({ t, err: false });
     // la pipeline si ricarica solo quando un negozio cambia (collegato o creato): serve ad aprirne la scheda
@@ -114,21 +116,21 @@ function InboundCoda({ who, onChanged, onOpen }: { who: string; onChanged: () =>
       await fatto(`Negozio ${form.nome} creato.`, r.account_id);
     } catch (e) {
       const dup = ((e as Error & { dati?: { duplicati?: NegozioCandidato[] } }).dati?.duplicati) ?? [];
-      if (dup.length) setForm({ ...form, duplicati: dup });
+      if (dup.length) setForm((f) => (f ? { ...f, duplicati: dup } : f));
       setMsg({ t: (e as Error).message, err: true });
     }
     setBusy(false);
   };
   const campo = (k: keyof FormNegozio, label: string, extra: Record<string, unknown> = {}) => (
-    <label className="cs-fld">{label}<input value={String(form?.[k] ?? '')} onChange={(e) => setForm((f) => (f ? { ...f, [k]: e.target.value } : f))} {...extra} /></label>
+    <label className="cs-fld">{label}<input value={String(form?.[k] ?? '')} onChange={(e) => setForm((f) => (f ? { ...f, [k]: e.target.value, duplicati: [] } : f))} {...extra} /></label>
   );
   const modulo = form && (
     <div className="or-inbound-form">
       <h3>{form.convId ? 'Crea il negozio da questo messaggio' : 'Nuovo negozio'}</h3>
       {campo('nome', 'Nome del negozio')}
       {campo('citta', 'Citta’')}
-      <label className="cs-fld">Tipo<select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>{Object.entries(TIPO_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
-      {!form.convId && <label className="cs-fld">Come ci ha contattato<select value={form.canale} onChange={(e) => setForm({ ...form, canale: e.target.value })}>{Object.entries(CANALI_INGRESSO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>}
+      <label className="cs-fld">Tipo<select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value, duplicati: [] })}>{Object.entries(TIPO_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
+      {!form.convId && <label className="cs-fld">Come ci ha contattato<select value={form.canale} onChange={(e) => setForm({ ...form, canale: e.target.value, duplicati: [] })}>{Object.entries(CANALI_INGRESSO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>}
       {campo('email', 'Email', { type: 'email' })}
       {!form.convId && campo('telefono', 'Telefono')}
       {!form.convId && campo('referente', 'Referente (nome)')}
@@ -187,7 +189,7 @@ export function OutreachCoda({ rows, onOpen, who, onChanged, aiOn }: { rows: Lea
   const empty = !risposte.length && !pronti.length && !scadute.length && !inScadenza.length && !nuovi.length;
   return (
     <>
-      {aiOn && <InboundCoda who={who} onChanged={onChanged} onOpen={onOpen} />}
+      {aiOn && <InboundCoda who={who} onChanged={onChanged} onOpen={onOpen} rows={rows} />}
       {empty && <section className="card"><p className="muted">Niente da fare oggi. Bel lavoro.</p></section>}
       {risposte.length > 0 && <section className="card"><h2>Risposte da gestire · {risposte.length}</h2><div className="or-list">{risposte.map((r) => <Row key={r.id} r={r} icon="📩" what={`${CANALI[r.ultimo_canale ?? ''] ?? ''} ricevuta ${fmtD(r.ultimo_tocco_at)}${r.ultimo_esito ? ` · ${ESITI.find((e) => e.key === r.ultimo_esito)?.label ?? r.ultimo_esito}` : ''}`} />)}</div></section>}
       {pronti.length > 0 && <section className="card"><h2>Follow-up pronti da rivedere · {pronti.length}</h2><div className="or-list">{pronti.map((r) => <Row key={r.id} r={r} icon="✍️" what={`bozza del follow-up ${r.bozza_auto_tocco} di 4 gia’ scritta: rileggila e inviala`} />)}</div></section>}
@@ -241,6 +243,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const [rTesto, setRTesto] = useState('');
   const [rKey, setRKey] = useState(() => crypto.randomUUID());
   const [rBusy, setRBusy] = useState(false);
+  const [rProvaBusy, setRProvaBusy] = useState(false);   // Gate Fable: la prova non mostra "Invio" sul bottone vero
   const [rMsg, setRMsg] = useState<{ t: string; err: boolean } | null>(null);
   const [rPronto, setRPronto] = useState(false);   // destinatario e oggetto riempiti una volta: poi decide la persona
   const [collega, setCollega] = useState<{ touchId: string; stato: 'carico' | 'pronto' | 'errore'; candidati: InviataCandidata[]; nota: string } | null>(null);
@@ -350,7 +353,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   // v12 (blocco B): chi ci ha scritto riceve la risposta dal cruscotto. La preparazione (destinatario, oggetto, thread) e'
   // la stessa regola della edge; riempie i campi una volta sola, poi i campi sono della persona.
   const ciHaScrittoOra = negozioCiHaScritto(touches ?? []);
-  const prep = touches ? rispostaPreparata(touches, r.nome, r.email_generica ?? r.email_sito ?? '') : null;
+  // Gate Fable (15-10, B): il ripiego e' solo email_generica, che la edge conosce; email_sito no (verrebbe rifiutata)
+  const prep = touches ? rispostaPreparata(touches, r.nome, r.email_generica ?? '') : null;
   const mostraRispondi = aiOn && !!touches && ciHaScrittoOra && r.lead_stage !== 'opt_out' && r.lead_stage !== 'chiuso_no' && r.n_opt_out === 0;
   useEffect(() => {
     if (!prep || rPronto) return;
@@ -367,7 +371,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     try {
       const res = await inviaRisposta({ account_id: r.id, to: rTo, oggetto: rOggetto, testo: rTesto, send_key: rKey, chi: who });
       setRKey(crypto.randomUUID()); setRTesto(`\n\n${firma}`); setRPronto(false);
-      setRMsg({ t: `${res.already_sent ? 'Gia\u2019 inviata prima' : 'Risposta inviata'} a ${res.to}${res.from ? ` da ${res.from}` : ''}${res.nel_thread ? ', nel thread della conversazione' : ', come email nuova'}. Prossima azione: attesa risposta fra 5 giorni.${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}${await ricarica()}`, err: false });
+      setRMsg({ t: `${res.already_sent ? 'Gia\u2019 inviata prima' : 'Risposta inviata'} a ${res.to}${res.from ? ` da ${res.from}` : ''}${res.already_sent ? '' : res.nel_thread ? ', nel thread della conversazione' : ', come email nuova'}. Prossima azione: attesa risposta fra 5 giorni.${res.warnings?.length ? ' Attenzione: ' + res.warnings.join(' ') : ''}${await ricarica()}`, err: false });
     } catch (e) {
       // un esito incerto tiene la chiave: ripremere non deve far ripartire l'email finche' non si guarda Posta inviata
       if (!(e as Error & { incerto?: boolean }).incerto) setRKey(crypto.randomUUID());
@@ -376,13 +380,25 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
     setRBusy(false);
   };
   const provaRisp = async () => {
-    setRBusy(true); setRMsg(null);
+    setRProvaBusy(true); setRMsg(null);
     try {
       const res = await inviaProva({ oggetto: rOggetto, testo: rTesto });
       setRMsg({ t: `Prova inviata a ${res.to}: la trovi in Posta in arrivo con \u201c[PROVA]\u201d nell\u2019oggetto. Non conta come invio.`, err: false });
     } catch (e) { setRMsg({ t: (e as Error).message, err: true }); }
-    setRBusy(false);
+    setRProvaBusy(false);
   };
+
+  const pannelloCollega = (touchId: string) => collega?.touchId === touchId && (
+    <div className="or-collega" aria-live="polite">
+      {collega.stato === 'carico' && <p className="muted">Cerco in Posta inviata di info@…</p>}
+      {collega.stato !== 'carico' && collega.nota && <p className={collega.stato === 'errore' ? 'err' : 'note'}>{collega.nota}</p>}
+      {collega.stato === 'pronto' && collega.candidati.length > 0 && <>
+        <p className="note">Quale di queste email hai registrato? Scegli quella giusta: le risposte a quella entreranno in timeline.</p>
+        {collega.candidati.map((c) => <div key={c.gmail_message_id} className="row"><div><div className="rt">{c.oggetto || '(senza oggetto)'}</div><div className="rs">{fmtDT(c.data)} · a {c.a}</div></div><button type="button" className="ds-btn" disabled={busy} onClick={() => void collegaA(touchId, c.gmail_message_id)}>Collega</button></div>)}
+      </>}
+      {collega.stato !== 'carico' && <button type="button" className="or-link" disabled={busy} onClick={() => void apriCollega(touchId)} style={{ marginRight: 12 }}>Cerca di nuovo</button>}<button type="button" className="or-link" disabled={busy} onClick={() => setCollega(null)}>Chiudi</button>
+    </div>
+  );
 
   // v11 (A4): a un negozio che ci ha gia' scritto "Segna come inviata" non registra un tocco della sequenza a freddo
   const segnaInviata = () => {
@@ -443,8 +459,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
             {residuiR.length > 0 && <p className="note">Prima di inviare completa: {residuiR.slice(0, 4).join(' ')}</p>}
             {toInternoR && <p className="note">Gli indirizzi @amimi.it non ricevono l\u2019invio vero: usa \u201cProva della risposta a me\u201d.</p>}
             <div className="lead-actions">
-              <button type="button" className="ds-btn" disabled={rBusy || busy || !rTo || toInternoR || residuiR.length > 0 || testoVuotoR || !rOggetto.trim()} style={{ background: 'var(--positive-700)', color: '#fff', borderColor: 'var(--positive-700)' }} onClick={() => void inviaRisp()}>{rBusy ? 'Invio\u2026' : `Invia risposta da ${LEAD_MITTENTE}`}</button>
-              <button type="button" className="ds-btn" disabled={rBusy || !rOggetto.trim() || testoVuotoR} onClick={() => void provaRisp()}>Prova della risposta a me</button>
+              <button type="button" className="ds-btn" disabled={rBusy || rProvaBusy || busy || !rTo || toInternoR || residuiR.length > 0 || testoVuotoR || !rOggetto.trim()} style={{ background: 'var(--positive-700)', color: '#fff', borderColor: 'var(--positive-700)' }} onClick={() => void inviaRisp()}>{rBusy ? 'Invio\u2026' : `Invia risposta da ${LEAD_MITTENTE}`}</button>
+              <button type="button" className="ds-btn" disabled={rBusy || rProvaBusy || !rOggetto.trim() || testoVuotoR} onClick={() => void provaRisp()}>{rProvaBusy ? 'Mando la prova\u2026' : 'Prova della risposta a me'}</button>
             </div>
             <div className="or-esito" aria-live="polite">{rMsg && <div className={rMsg.err ? 'err' : 'note'} style={{ marginTop: 8 }}>{rMsg.t}</div>}</div>
           </div>}
@@ -455,18 +471,13 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
                 {(t.subject || t.body_clean) && <div className="b">{t.subject ? <b>{t.subject}{'\n'}</b> : null}{t.body_clean}</div>}
                 {(t.prossima_azione || t.prossima_azione_at) && <div className="h">prossima: {t.prossima_azione ?? ''} {t.prossima_azione_at ? fmtD(t.prossima_azione_at) : ''}</div>}
                 {aiOn && t.direzione === 'out' && t.canale === 'email' && !t.gmail_thread_id && collega?.touchId !== t.id && <button type="button" className="or-link" disabled={busy} onClick={() => void apriCollega(t.id)} title="Senza il collegamento il giro automatico non legge le risposte a questa email">Collega a Gmail</button>}
-                {collega?.touchId === t.id && <div className="or-collega" aria-live="polite">
-                  {collega.stato === 'carico' && <p className="muted">Cerco in Posta inviata di info@…</p>}
-                  {collega.stato !== 'carico' && collega.nota && <p className={collega.stato === 'errore' ? 'err' : 'note'}>{collega.nota}</p>}
-                  {collega.stato === 'pronto' && collega.candidati.length > 0 && <>
-                    <p className="note">Quale di queste email hai registrato? Scegli quella giusta: le risposte a quella entreranno in timeline.</p>
-                    {collega.candidati.map((c) => <div key={c.gmail_message_id} className="row"><div><div className="rt">{c.oggetto || '(senza oggetto)'}</div><div className="rs">{fmtDT(c.data)} · a {c.a}</div></div><button type="button" className="ds-btn" disabled={busy} onClick={() => void collegaA(t.id, c.gmail_message_id)}>Collega</button></div>)}
-                  </>}
-                  {collega.stato !== 'carico' && <button type="button" className="or-link" disabled={busy} onClick={() => void apriCollega(t.id)} style={{ marginRight: 12 }}>Cerca di nuovo</button>}<button type="button" className="or-link" disabled={busy} onClick={() => setCollega(null)}>Chiudi</button>
-                </div>}
+                {pannelloCollega(t.id)}
               </div>
             ))}</div>
           )}
+          {/* Gate Fable (15-10, B): se la timeline non si e' ricaricata dopo "Segna come inviata", il tocco nuovo non c'e'
+              ancora: la scelta dell'email si mostra lo stesso, qui sotto */}
+          {collega && touches && !touches.some((t) => t.id === collega.touchId) && pannelloCollega(collega.touchId)}
           <h2 style={{ marginTop: 14 }}>Registra un tocco</h2>
           <div className="or-form">
             <label>Canale<select value={canale} onChange={(e) => setCanale(e.target.value)}>{Object.entries(CANALI).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>

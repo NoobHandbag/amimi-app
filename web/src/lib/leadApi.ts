@@ -170,7 +170,7 @@ export const STAGES: { key: LeadStage; label: string }[] = [
 export const STAGE_LABEL: Record<string, string> = Object.fromEntries(STAGES.map((s) => [s.key, s.label]));
 export const ESITI: { key: string; label: string }[] = [
   { key: 'interessato', label: 'Interessato' }, { key: 'chiede_info', label: 'Chiede informazioni' }, { key: 'piu_avanti', label: 'Più avanti' },
-  { key: 'nessuna_risposta', label: 'Nessuna risposta' }, { key: 'no', label: 'No' }, { key: 'bounce', label: 'Email non valida' }, { key: 'opt_out', label: 'Opt-out (non contattare più)' }, { key: 'risposta_automatica', label: 'Risposta automatica' }, { key: 'altro', label: 'Altro' },
+  { key: 'nessuna_risposta', label: 'Nessuna risposta' }, { key: 'no', label: 'No' }, { key: 'bounce', label: 'Email non valida' }, { key: 'opt_out', label: 'Opt-out (non contattare più)' }, { key: 'risposta_automatica', label: 'Risposta automatica' }, { key: 'opt_out_da_verificare', label: 'Forse opt-out: da verificare' }, { key: 'altro', label: 'Altro' },
 ];
 
 export type LeadOutreach = {
@@ -240,12 +240,21 @@ async function callOutreach(payload: Record<string, unknown>): Promise<Record<st
   const { data } = await csClient.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error('Sessione scaduta: rientra.');
-  const r = await fetch(LEAD_OUTREACH_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(payload) });
+  // Gate Fable (15-10, A): se la rete cade fra browser ed edge, o il gateway risponde senza un corpo della edge, la richiesta
+  // puo' essere arrivata ed eseguita: e' un esito INCERTO, come la rete giu' fra edge e Gmail. Chi invia tiene la stessa
+  // chiave (send_key), cosi' un secondo click non rimanda l'email.
+  const INCERTO = payload.action === 'send' || payload.action === 'rispondi'
+    ? 'Esito incerto (la rete si e\u2019 interrotta): controlla \u201cPosta inviata\u201d di info@amimi.it prima di riprovare.'
+    : 'Esito incerto (la rete si e\u2019 interrotta): ricarica la pagina e controlla se e\u2019 andata prima di riprovare.';
+  let r: Response;
+  try { r = await fetch(LEAD_OUTREACH_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(payload) }); }
+  catch { const e = new Error(INCERTO) as Error & { incerto?: boolean }; e.incerto = true; throw e; }
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) {
-    const e = new Error(j.error || 'Errore ' + r.status) as Error & { bloccante?: boolean; incerto?: boolean; dati?: Record<string, unknown> };
+    const senzaCorpo = r.status >= 500 && !j.error;
+    const e = new Error(senzaCorpo ? INCERTO : j.error || 'Errore ' + r.status) as Error & { bloccante?: boolean; incerto?: boolean; dati?: Record<string, unknown> };
     if (j.bloccante === true) e.bloccante = true;
-    if (j.incerto === true) e.incerto = true;   // rete giu' durante l'invio: la stessa chiave non deve ripartire
+    if (j.incerto === true || senzaCorpo) e.incerto = true;   // la stessa chiave non deve ripartire
     e.dati = j;   // v13: un 409 di "negozio gia' esistente" porta i candidati (duplicati)
     throw e;
   }
