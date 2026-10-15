@@ -177,7 +177,7 @@ export default function Report({ onBack, onDetail, onAds }: { onBack?: () => voi
             );
           })}
         </div>
-        <p className="note">Barre viola = fatturato lordo per mese, corallo = mese in corso. Tocca un mese per includerlo o escluderlo dai totali.</p>
+        <p className="note">Barre rosa antico = fatturato lordo per mese, caramello = mese in corso. Tocca un mese per includerlo o escluderlo dai totali.</p>
       </section>
 
       <section className="card">

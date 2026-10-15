@@ -154,7 +154,7 @@
 .ds-lens.scrollx .ds-lp { flex: 0 0 auto; white-space: nowrap; }
 
 .ds-prow { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 11px 13px; box-shadow: var(--e1); margin-bottom: 8px; cursor: pointer; font-family: inherit; }
-.ds-thumb { width: 40px; height: 40px; border-radius: 9px; background: linear-gradient(160deg, #f3eee6, #efe7f7); display: flex; align-items: center; justify-content: center; flex: none; font-weight: 800; color: #b9a9df; font-size: 12px; overflow: hidden; }
+.ds-thumb { width: 40px; height: 40px; border-radius: 9px; background: var(--thumb-bg); display: flex; align-items: center; justify-content: center; flex: none; font-weight: 800; color: var(--thumb-ink); font-size: 12px; overflow: hidden; }
 .ds-thumb img { width: 100%; height: 100%; object-fit: contain; }
 .ds-pinfo { flex: 1; min-width: 0; }
 .ds-pn { font-size: 13px; font-weight: 700; line-height: 1.2; color: var(--ink); }
@@ -179,7 +179,7 @@
 .ds-linefilters { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
 .ds-pgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
 .ds-pcard { position: relative; min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 6px; cursor: pointer; text-align: center; font-family: inherit; box-shadow: var(--e1); }
-.ds-pcard-img { aspect-ratio: 1 / 1; width: 100%; border-radius: 9px; background: linear-gradient(160deg, #f3eee6, #efe7f7); display: flex; align-items: center; justify-content: center; overflow: hidden; font-weight: 800; color: #b9a9df; }
+.ds-pcard-img { aspect-ratio: 1 / 1; width: 100%; border-radius: 9px; background: var(--thumb-bg); display: flex; align-items: center; justify-content: center; overflow: hidden; font-weight: 800; color: var(--thumb-ink); }
 .ds-pcard-img img { width: 100%; height: 100%; object-fit: contain; }
 .ds-pcard-nm { font-size: 12px; font-weight: 600; margin-top: 5px; line-height: 1.2; color: var(--ink); overflow-wrap: anywhere; }
 .ds-pcard-gia { display: inline-block; margin-top: 4px; font-size: 10.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--interactive-tint); color: var(--interactive-700); font-variant-numeric: tabular-nums; }
@@ -187,7 +187,7 @@
 .ds-pcard-gia.zero { background: var(--negative-tint); color: var(--negative-700); }
 
 .ds-picked { display: flex; align-items: center; gap: 12px; background: var(--surface-alt); border-radius: 12px; padding: 10px 12px; margin-top: 8px; }
-.ds-picked-img { width: 44px; height: 44px; flex: none; border-radius: 9px; background: linear-gradient(160deg, #f3eee6, #efe7f7); display: flex; align-items: center; justify-content: center; overflow: hidden; font-weight: 800; color: #b9a9df; font-size: 13px; }
+.ds-picked-img { width: 44px; height: 44px; flex: none; border-radius: 9px; background: var(--thumb-bg); display: flex; align-items: center; justify-content: center; overflow: hidden; font-weight: 800; color: var(--thumb-ink); font-size: 13px; }
 .ds-picked-img img { width: 100%; height: 100%; object-fit: contain; }
 .ds-picked-txt { flex: 1; min-width: 0; font-weight: 700; color: var(--ink); }
 
@@ -328,7 +328,7 @@
    system) al posto del vecchio marrone hardcoded. Override additivi (components.css vince
    su index.css), nessuna modifica alla struttura del pannello. */
 .ai-fab { background: var(--interactive); box-shadow: var(--e2); }
-.ai-send { background: var(--interactive); box-shadow: 0 5px 14px rgba(124,104,251,.4); }
+.ai-send { background: var(--interactive); box-shadow: 0 5px 14px color-mix(in srgb, var(--interactive) 40%, transparent); }
 .ai-mark, .ai-empty-m, .ai-who-m, .ai-report-mark { background: var(--grad-hero); }
 .ai-chip { color: var(--interactive-700); background: var(--interactive-tint); }
 .ai-dot { background: var(--positive); box-shadow: 0 0 0 3px var(--positive-tint); }
