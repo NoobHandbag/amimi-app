@@ -374,6 +374,13 @@ t('c11 migr 0158: i tre ingressi misurati (modulo B2B, wholesale@, mittente noto
 const webOut13 = readFileSync(`${ROOT}web/src/pages/Outreach.tsx`, 'utf8').replace(/\r\n/g, '\n');
 const webNeg13 = readFileSync(`${ROOT}web/src/pages/Negozi.tsx`, 'utf8').replace(/\r\n/g, '\n');
 t('c12 web: "Messaggi da collegare" e "Nuovo negozio" in cima alla Coda solo col flag; scartare chiede conferma; i doppioni si mostrano con "Collega a questo" e "Crea comunque"', /\{aiOn && <InboundCoda who=\{who\} onChanged=\{onChanged\} onOpen=\{onOpen\} \/>\}/.test(webOut13) && /aiOn=\{settings\.lead_outreach_ai_enabled === 'true'\}/.test(webNeg13) && /if \(!window\.confirm\('Togliere questo messaggio dalla lista\?/.test(webOut13) && /Crea comunque un negozio nuovo/.test(webOut13) && /Collega a questo/.test(webOut13) && /void salva\(form\.duplicati\.length > 0\)/.test(webOut13));
+const portaFn2 = src.slice(src.indexOf('async function portaConversazione'), src.indexOf('// v11: token Gmail in sola lettura'));
+const rAuto = righeDaConversazione([msgCs({ gmail_message_id: 'eeee4444ffff5555', from_email: 'info@negozio.it', body_clean: 'Sono fuori ufficio fino al 20', sent_at: '2026-10-15T08:00:00Z' })], { accountId: 'a', stage: 'contattato', oggi: '2026-10-15', promemoria: 'x', chi: 'Ale', thread: 'th', oggetto: 'Risposta automatica: Amimì Milano' });
+t('c13 (Gate 2, B) un\'email importata da Assistenza si classifica come nel giro: una risposta automatica non diventa "rispondere al negozio"', rAuto[0].esito === 'risposta_automatica' && rAuto[0].prossima_azione === undefined && rG[0].esito === null);
+t('c14 (Gate 2, B) il contatto si salva PRIMA della timeline (dopo, la conversazione esce dalla lista e un errore non si ripete piu\' da li\')', portaFn2.indexOf("from('lead_contacts').insert(") > 0 && portaFn2.indexOf("from('lead_contacts').insert(") < portaFn2.indexOf("from('lead_touches').upsert("));
+t('c15 (Gate 2, B) "Collega" rifiuta un negozio chiuso o in opt-out, prima di qualunque scrittura', /if \(ng\.chiuso\) return \{ errore: [^\n]*status: 409 \};/.test(portaFn2) && portaFn2.indexOf('if (ng.chiuso)') < portaFn2.indexOf("from('lead_contacts').insert("));
+const webApi13 = readFileSync(`${ROOT}web/src/lib/leadApi.ts`, 'utf8').replace(/\r\n/g, '\n');
+t('c16 (Gate 2, C) il badge conta i messaggi da collegare solo col flag acceso; "Non e\' un negozio" non ricarica la pipeline', /\(flag as \{ value\?: string \} \| null\)\?\.value === 'true' && !inErr \? nIn \?\? 0 : 0/.test(webApi13) && /if \(apri\) \{ try \{ await onChanged\(\); \}/.test(webOut13));
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

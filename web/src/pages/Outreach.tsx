@@ -85,7 +85,8 @@ function InboundCoda({ who, onChanged, onOpen }: { who: string; onChanged: () =>
   useEffect(() => { void carica(); }, []);
   const fatto = async (t: string, apri?: string) => {
     setMsg({ t, err: false });
-    try { await onChanged(); } catch { /* il ricarico della pipeline non annulla l'azione fatta */ }
+    // la pipeline si ricarica solo quando un negozio cambia (collegato o creato): serve ad aprirne la scheda
+    if (apri) { try { await onChanged(); } catch { /* il ricarico della pipeline non annulla l'azione fatta */ } }
     await carica();
     if (apri) onOpen(apri);
   };

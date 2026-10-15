@@ -251,14 +251,17 @@ function righeDaConversazione(msgs: MsgCs[], p: { accountId: string; stage: stri
     }
     const modulo = m.form_fields != null;
     const da = indirizzoDi(String((modulo ? m.reply_to : m.from_email) ?? m.from_email ?? ''));
+    // Gate 2 (15-10): un'email importata si classifica come nel giro (risposta automatica, bounce, opt-out); il modulo e'
+    // sempre un messaggio vero. Assistenza non salva l'header Auto-Submitted: decidono mittente, oggetto e testo.
+    const tipo = modulo ? null : classificaInbound({ from: da, subject: p.oggetto, autoSubmitted: '', testo });
     righe.push({
-      ...comuni, direzione: 'in', chi: 'assistenza',
+      ...comuni, direzione: 'in', chi: 'assistenza', esito: tipo,
       canale: modulo ? 'altro' : 'email', gmail_thread_id: modulo ? null : p.thread,
       subject: jsonSafe((modulo ? `Modulo contatti amimi.it: ${p.oggetto}` : p.oggetto).slice(0, 300)) || null,
       body_clean: jsonSafe(`${da}\n${testo}`.slice(0, 4000)),
-      ...campiRisposta(null, st, p.oggi),
+      ...campiRisposta(tipo, st, p.oggi),
     });
-    if (st === 'da_contattare' || st === 'contattato') st = 'risposto';
+    if (tipo === null && (st === 'da_contattare' || st === 'contattato')) st = 'risposto';
   }
   const ultima = righe[righe.length - 1];
   if (ultima && ultima.direzione === 'out') Object.assign(ultima, { prossima_azione: 'attesa risposta del negozio', prossima_azione_at: p.promemoria });
@@ -480,18 +483,20 @@ async function portaConversazione(sb: any, p: { convId: string; accountId: strin
   if (cvErr || msErr || acErr) return { errore: 'lettura fallita, riprova: ' + (cvErr ?? msErr ?? acErr).message, status: 503 };
   if (!conv) return { errore: 'conversazione di Assistenza inesistente', status: 404 };
   if (!acc) return { errore: 'negozio inesistente', status: 404 };
+  // Gate 2 (15-10): un negozio chiuso o in opt-out non riceve messaggi nuovi ne' contatti nuovi
+  if (p.esito === 'collegato') {
+    const ng = await contattiNegozio(sb, p.accountId);
+    if ('errore' in ng) return { errore: ng.errore, status: 503 };
+    if (ng.chiuso) return { errore: `negozio in opt-out o chiuso (${ng.stage ?? 'stadio n/d'}): non si collega`, status: 409 };
+  }
   if ((msgs ?? []).length > 100) return { errore: 'conversazione con piu\' di 100 messaggi: collegala a mano', status: 422 };
   const righe = righeDaConversazione((msgs ?? []) as MsgCs[], {
     accountId: p.accountId, stage: acc.lead_stage, oggi: oggiRoma(), promemoria: new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10),
     chi: p.chi, thread: conv.gmail_thread_id ?? null, oggetto: String(conv.subject ?? ''),
   });
-  let scritti = 0;
-  for (const r of righe) {   // in ordine di tempo: il trigger lead_touches_apply aggiorna stadio e prossima azione riga per riga
-    const { data: ins, error } = await sb.from('lead_touches').upsert(r, { onConflict: 'gmail_message_id', ignoreDuplicates: true }).select('id');
-    if (error) return { errore: `scrittura della timeline fallita dopo ${scritti} messaggi: ${error.message}`, status: 500 };
-    scritti += (ins ?? []).length;
-  }
-  // chi ha scritto diventa un contatto del negozio (il modulo porta il Reply-To): da qui il giro ne cerca le email
+  // chi ha scritto diventa un contatto del negozio (il modulo porta il Reply-To): da qui il giro ne cerca le email.
+  // PRIMA della timeline (Gate 2, 15-10): appena un messaggio e' in lead_touches la conversazione esce dalla lista, e un
+  // errore dopo quel punto non si potrebbe piu' ripetere da li'.
   const primoIn = ((msgs ?? []) as MsgCs[]).find((m) => m.direction === 'in');
   const email = indirizzoDi(String((primoIn?.form_fields != null ? primoIn?.reply_to : primoIn?.from_email) ?? conv.customer_email ?? ''));
   let contatto = false;
@@ -499,6 +504,12 @@ async function portaConversazione(sb: any, p: { convId: string; accountId: strin
     const { error } = await sb.from('lead_contacts').insert({ account_id: p.accountId, email, nome: conv.customer_name ? String(conv.customer_name).slice(0, 80) : null, fonte: `Assistenza, ${oggiRoma()}` });
     if (error && error.code !== '23505') return { errore: 'contatto non salvato: ' + error.message, status: 500 };
     contatto = !error;
+  }
+  let scritti = 0;
+  for (const r of righe) {   // in ordine di tempo: il trigger lead_touches_apply aggiorna stadio e prossima azione riga per riga
+    const { data: ins, error } = await sb.from('lead_touches').upsert(r, { onConflict: 'gmail_message_id', ignoreDuplicates: true }).select('id');
+    if (error) return { errore: `scrittura della timeline fallita dopo ${scritti} messaggi: ${error.message}`, status: 500 };
+    scritti += (ins ?? []).length;
   }
   const { error: eErr } = await sb.from('lead_inbound_esiti').insert({ cs_conversation_id: p.convId, esito: p.esito, account_id: p.accountId, chi: p.chi });
   if (eErr && eErr.code !== '23505') return { errore: 'decisione non registrata: ' + eErr.message, status: 500 };

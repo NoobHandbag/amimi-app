@@ -296,11 +296,14 @@ export async function scartaBozza(p: { draft_id: string; chi: string }): Promise
 export async function fetchLeadTodo(): Promise<number> {
   const { data } = await csClient.auth.getSession();
   if (!data.session) return 0;
-  const [{ count, error }, { count: nIn, error: inErr }] = await Promise.all([
+  const [{ count, error }, { count: nIn, error: inErr }, { data: flag }] = await Promise.all([
     csClient.from('v_lead_outreach').select('id', { count: 'exact', head: true }).or('scaduta.eq.true,da_gestire.eq.true,bozza_auto_tocco.not.is.null'),
     csClient.from('v_lead_inbound').select('conv_id', { count: 'exact', head: true }),   // v13: messaggi da collegare
+    csClient.from('v_lead_settings').select('value').eq('key', 'lead_outreach_ai_enabled').maybeSingle(),
   ]);
-  return (error ? 0 : count ?? 0) + (inErr ? 0 : nIn ?? 0);
+  // i messaggi da collegare si vedono in Coda solo col flag acceso: senza, il badge non li conta (Gate 2, 15-10)
+  const inbound = (flag as { value?: string } | null)?.value === 'true' && !inErr ? nIn ?? 0 : 0;
+  return (error ? 0 : count ?? 0) + inbound;
 }
 
 // v13 (blocco C, migr 0158): messaggi di Assistenza che possono essere un negozio, non ancora nel cruscotto. Si leggono
