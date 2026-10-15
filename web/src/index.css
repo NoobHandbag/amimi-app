@@ -627,7 +627,7 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-badges { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 6px; }
 .cs-badge { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 3px 9px; }
 .cs-can { background: rgba(0,0,0,.05); color: var(--muted); }
-.cs-chat { background: #ece9f6; color: #5c4d9c; }
+.cs-chat { background: var(--info-tint); color: var(--info-700); }
 .cs-warn { background: #fff3e0; color: #b26a00; }
 .cs-state { background: rgba(139,94,107,.1); color: var(--rose-deep); }
 .cs-cat { background: rgba(139,94,107,.12); color: var(--rose-deep); }
@@ -651,7 +651,7 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-rumore { display: block; width: 100%; background: none; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); font-size: 12.5px; padding: 10px; margin: 16px 0 8px; cursor: pointer; }
 .cs-tnm { font-weight: 800; font-size: 17px; }
 .cs-tem { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.cs-banner { background: #ece9f6; color: #5c4d9c; font-size: 12.5px; font-weight: 600; padding: 11px 13px; border-radius: 12px; margin-bottom: 12px; line-height: 1.4; }
+.cs-banner { background: var(--info-tint); color: var(--info-700); font-size: 12.5px; font-weight: 600; padding: 11px 13px; border-radius: 12px; margin-bottom: 12px; line-height: 1.4; }
 /* --- contesto thread (link ordine + storico acquisti) e reply UX (3 opzioni + chiedi-modifica) --- */
 .cs-ctx { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .cs-orderlink { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; background: var(--card); border: 1px solid var(--line); color: var(--rose); border-radius: 999px; padding: 7px 13px; font-size: 12.5px; font-weight: 700; text-decoration: none; }
@@ -676,9 +676,9 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-verdict + .cs-verdict { margin-top: 8px; }
 .cs-verdict b { font-size: 13px; }
 .cs-verdict a { color: inherit; font-weight: 700; }
-.cs-v-ok { background: rgba(0,189,157,.10); color: #028371; border: 1px solid rgba(0,189,157,.25); }
-.cs-v-no { background: rgba(252,79,63,.08); color: #c51f10; border: 1px solid rgba(252,79,63,.22); }
-.cs-v-warn { background: rgba(255,134,20,.10); color: #c74d07; border: 1px solid rgba(255,134,20,.25); }
+.cs-v-ok { background: var(--positive-tint); color: var(--positive-700); border: 1px solid color-mix(in srgb, var(--positive) 25%, transparent); }
+.cs-v-no { background: var(--negative-tint); color: var(--negative-700); border: 1px solid color-mix(in srgb, var(--negative) 22%, transparent); }
+.cs-v-warn { background: var(--warning-tint); color: var(--warning-700); border: 1px solid color-mix(in srgb, var(--warning) 25%, transparent); }
 .cs-v-info { background: var(--surface-alt, #f3eee5); color: var(--dark); border: 1px solid var(--line); }
 .cs-case-row { display: flex; gap: 8px; margin-top: 8px; }
 .cs-case-row input[type="date"] { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font: inherit; font-size: 13px; background: var(--card); color: var(--dark); }
@@ -686,12 +686,12 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 .cs-avimg { border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1.5px solid var(--line); display: inline-block; vertical-align: middle; }
 .cs-assignee { display: inline-flex; align-items: center; margin-left: auto; margin-right: 6px; }
 /* --- workflow stato --- */
-.cs-state-done { background: rgba(0,189,157,.12) !important; color: #028371 !important; }
-.cs-state-prog { background: rgba(255,134,20,.12) !important; color: #c74d07 !important; }
+.cs-state-done { background: var(--positive-tint) !important; color: var(--positive-700) !important; }
+.cs-state-prog { background: var(--warning-tint) !important; color: var(--warning-700) !important; }
 .cs-actions-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
 .cs-actions-row .cs-btn { padding: 8px 12px; font-size: 12.5px; }
-.cs-okbtn { border-color: rgba(0,189,157,.4); color: #028371; }
-.cs-noisebtn { border-color: rgba(252,79,63,.35); color: #c51f10; margin-left: auto; }
+.cs-okbtn { border-color: color-mix(in srgb, var(--positive) 40%, transparent); color: var(--positive-700); }
+.cs-noisebtn { border-color: color-mix(in srgb, var(--negative) 35%, transparent); color: var(--negative-700); margin-left: auto; }
 /* --- toggle segmentato Tempo|Tema --- */
 .cs-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--card); }
 .cs-seg-btn { border: none; background: none; padding: 6px 13px; font-size: 12px; font-weight: 700; color: var(--muted); cursor: pointer; }
@@ -734,7 +734,7 @@ button.kpibtn.selk { border-color: var(--accent, #C4956A); box-shadow: 0 0 0 2px
 /* --- linter di aderenza: dati della bozza non trovati nel gestionale --- */
 .cs-lint { background: rgba(252,79,63,.07); border: 1px solid rgba(252,79,63,.22); color: #9c2417; border-radius: 10px; padding: 9px 12px; font-size: 12px; line-height: 1.7; margin-top: 8px; }
 .cs-lint-t { display: inline-block; background: #fff; border: 1px solid rgba(252,79,63,.35); border-radius: 6px; padding: 1px 7px; margin: 0 3px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.cs-inbox { display: inline-block; background: #5c4d9c; color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
+.cs-inbox { display: inline-block; background: var(--info-700); color: #fff; text-decoration: none; padding: 9px 13px; border-radius: 10px; font-size: 13px; }
 .cs-form { background: rgba(156,95,51,.08); border-radius: 8px; padding: 7px 9px; margin-bottom: 6px; font-size: 12.5px; line-height: 1.5; }
 .cs-formrow { display: flex; flex-wrap: wrap; gap: 4px 12px; background: rgba(156,95,51,.08); border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; font-size: 12px; line-height: 1.45; }
 .cs-tws { font-size: 12.5px; margin: 2px 0 8px; }

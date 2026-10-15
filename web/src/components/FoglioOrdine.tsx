@@ -47,7 +47,7 @@ const LAB = { fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', lette
 function Pill({ img, label, on, onClick }: { img: string; label: string; on?: boolean; onClick: () => void }) {
   return (
     <button type="button" className={'chip' + (on ? ' on' : '')} onClick={onClick} style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: 4, borderRadius: 12, width: 92 }}>
-      <span style={{ width: 82, height: 82, borderRadius: 9, overflow: 'hidden', background: 'linear-gradient(160deg, #f3eee6, #efe7f7)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, color: '#b9a9df' }}>
+      <span style={{ width: 82, height: 82, borderRadius: 9, overflow: 'hidden', background: 'var(--thumb-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, color: 'var(--thumb-ink)' }}>
         {img ? <img src={img} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : label.slice(0, 2)}
       </span>
       <span style={{ fontSize: 11, lineHeight: 1.15, overflowWrap: 'anywhere' }}>{label}</span>
