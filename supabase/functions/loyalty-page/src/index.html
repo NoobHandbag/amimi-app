@@ -113,8 +113,8 @@
   @keyframes step{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-6px) rotate(4deg)}}
   /* sconto pronto (owner 16-10): il bottone sta all'inizio della strada, alle spalle di Mimi' che riparte verso il prossimo.
      Solo con il sentiero visibile: se il disegno non si misura, il bottone torna largo nel flusso normale */
-  .roadbox{position:relative;width:100%;max-width:340px;margin:0 auto}
-  .roadbox.con{padding-bottom:52px}
+  .roadbox{position:relative;width:100%;max-width:340px;margin:0 auto;display:flow-root}
+  .roadbox.con .road:not(.hidden){margin-bottom:52px}
   .road:not(.hidden) ~ #redeemBox{position:absolute;left:calc(8.75% - 14px);bottom:0}
   .road:not(.hidden) ~ #redeemBox .rbtn{width:auto;min-height:44px;padding:0 18px;font-size:14px;box-shadow:0 3px 8px rgba(163,0,8,.22)}
   .road:not(.hidden) ~ #redeemBox .rbtn::before{content:"";position:absolute;left:14px;bottom:100%;height:34px;border-left:2px dashed var(--red)}
