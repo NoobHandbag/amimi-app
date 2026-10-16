@@ -62,7 +62,7 @@ t('24 tocco registrato con upsert ignoreDuplicates su gmail_message_id', /onConf
 t('25 niente thinkingConfig nelle chiamate Gemini', !/thinkingConfig\s*:/.test(src));
 t('26 tetto giornaliero con conteggio head:true, sul giorno di Roma, sulle sole email della sequenza (v12: le risposte ne restano fuori)', src.includes("head: true }).not('sequenza_tocco', 'is', null).or(`stato.eq.in_invio,sent_at.gte.${inizioGiornoRoma()}`)"));
 t('27 verdetto "da_contattare" obbligatorio per l\'invio', /acc\.verdetto !== 'da_contattare'/.test(src));
-t('28 JWT @amimi.it per tutte le azioni di una persona (il cron: test 82)', /endsWith\('@amimi\.it'\)\) return json\(\{ error: 'dominio non ammesso' \}, 403\)/.test(src));
+t('28 JWT del team (EMAIL_TEAM, migr 0161) per tutte le azioni di una persona (il cron: test 82)', /if \(!EMAIL_TEAM\.test\(userEmail\)\) return json\(\{ error: 'dominio non ammesso' \}, 403\)/.test(src));
 // Regola 20a: ogni select supabase-js destruttura l'error (nessun `const { data: x } = await sb.from`)
 t('29 nessuna lettura con error ignorato', !/const \{ data: \w+ \} = await (retryOnce\(\(\) => )?sb\.from/.test(src));
 

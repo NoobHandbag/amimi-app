@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { decideUgc, fetchUgcQueue, fotoUgcUrls } from '../lib/premiaApi';
 import type { UgcItem, UgcQueue, UgcStato } from '../lib/premiaApi';
 
@@ -112,7 +113,7 @@ export default function PremiaUgc() {
           )}
         </div>
       ))}
-      <p className="note">Approvare dà subito i punti alla cliente. Qui ci sono dati personali (testi, firme e foto delle clienti): le foto restano private, le vede solo chi entra con un account @amimi.it.</p>
+      <p className="note">Approvare dà subito i punti alla cliente. Qui ci sono dati personali (testi, firme e foto delle clienti): le foto restano private, le vede solo chi entra con un account del team ({EMAIL_TEAM_TESTO}).</p>
     </section>
   );
 }

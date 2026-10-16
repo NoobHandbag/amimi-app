@@ -88,6 +88,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// Chi entra col JWT: gli account del team. Stessa lista di public.email_del_team (migr 0161) e di DOMINI_TEAM del web
+// (tests/dominio_team.mjs controlla che coincidano). Le regole sulle NOSTRE caselle restano @amimi.it.
+const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // una lettura idempotente puo' ritentare UNA volta (504 di PostgREST nei primi secondi del minuto); le scritture mai
@@ -1293,7 +1296,7 @@ Deno.serve(async (req) => {
   if (!tk) return json({ error: 'non autenticato' }, 401);
   // v10: la chiave service_role vale SOLO per aggancia, con `chi` obbligatorio (operatore: Claude Code da script, come il
   // collector di workers/lead, che la legge a runtime dalla Management API). Chi ha quella chiave scrive gia' tutto il DB:
-  // non e' un accesso in piu'. Ogni altra azione resta di una persona con JWT @amimi.it.
+  // non e' un accesso in piu'. Ogni altra azione resta di una persona con JWT del team (EMAIL_TEAM).
   const operatore = stessaChiave(tk, svc);
   let userEmail = '';
   if (operatore) {
@@ -1304,7 +1307,7 @@ Deno.serve(async (req) => {
     const { data: ures, error: uerr } = await createClient(url, anon).auth.getUser(tk);
     if (uerr || !ures?.user) return json({ error: 'sessione non valida' }, 401);
     userEmail = (ures.user.email || '').toLowerCase();
-    if (!userEmail.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+    if (!EMAIL_TEAM.test(userEmail)) return json({ error: 'dominio non ammesso' }, 403);
   }
   const chi = String(body.chi || userEmail).slice(0, 60);
 

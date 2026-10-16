@@ -84,7 +84,7 @@
 // SE CAMBI LA REGOLA IN cs-sync, CAMBIALA ANCHE QUI (due sedi dichiarate, una regola).
 //
 // Autorizzazione: come cs-api (belt-and-suspenders): access_token utente Supabase Auth reale
-// (getUser: la anon key NON e' un utente) + email @amimi.it; poi scrive col service_role.
+// (getUser: la anon key NON e' un utente) + email del team (EMAIL_TEAM); poi scrive col service_role.
 // Gmail: service account con domain-wide delegation (chiave in app_flags.cs_gmail_sa_key),
 // scope gmail.send + gmail.readonly (il readonly serve SOLO a leggere gli header del thread per
 // il reply corretto). Prerequisito owner (fatto 01-08): gmail.send aggiunto alla delegation.
@@ -92,6 +92,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// Chi entra col JWT: gli account del team. Stessa lista di public.email_del_team (migr 0161) e di DOMINI_TEAM del web
+// (tests/dominio_team.mjs controlla che coincidano). Le regole sulle NOSTRE caselle restano @amimi.it.
+const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 // v7 (2026-08-02, brief cs_crop_e_dati_falsi 3.1): rifiuto STRUTTURALE, cioe' "ripremere Invia
 // produrra' esattamente lo stesso esito". La UI mostrava il rifiuto in rosso e lasciava "Invia
 // adesso" acceso e cliccabile: l'operatrice ripremeva e non capiva. Il flag distingue questi dal
@@ -255,7 +258,7 @@ Deno.serve(async (req) => {
   if (action !== 'send' && action !== 'diag') return json({ error: 'azione sconosciuta' }, 422);
   const sb = createClient(url, svc);
 
-  // 1) autorizzazione. `send` (tocca il cliente) = utente Supabase Auth reale @amimi.it, pattern
+  // 1) autorizzazione. `send` (tocca il cliente) = utente Supabase Auth reale del team, pattern
   // cs-api. `diag` (solo tecnica: nessuna PII, nessun segreto, nessun invio) = PIN, come le azioni
   // di servizio delle altre edge del modulo: deve restare invocabile anche senza sessione browser.
   let userEmail = '';
@@ -270,7 +273,7 @@ Deno.serve(async (req) => {
     const user = ures?.user;
     if (uerr || !user) return json({ error: 'sessione non valida' }, 401);
     userEmail = (user.email || '').toLowerCase();
-    if (!userEmail.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+    if (!EMAIL_TEAM.test(userEmail)) return json({ error: 'dominio non ammesso' }, 403);
   }
 
   // --- diag (v2): quali scope Gmail sono davvero autorizzati sulla domain-wide delegation? ---

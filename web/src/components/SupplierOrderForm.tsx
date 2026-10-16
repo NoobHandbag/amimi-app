@@ -3,7 +3,7 @@ import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti
 import type { Supplier, FornProd, Product } from '../lib/api';
 import { toast } from '../lib/toast';
 import Icon from './Icon';
-import { csClient } from '../lib/csClient';
+import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { aiCompila, fetchMatSettings, uploadInbox, v } from '../lib/matApi';
 import type { PropostaOrdine } from '../lib/matApi';
 
@@ -238,8 +238,8 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
         : !aiLogged
           ? (
             <div className="mat-aibox">
-              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Per la compilazione AI serve il login @amimi.it (una volta per dispositivo). L'ordine in corso resta qui.</div>
-              <input className="txt" type="email" autoCapitalize="none" autoCorrect="off" value={lgEmail} onChange={(e) => setLgEmail(e.target.value)} placeholder="Email @amimi.it" style={{ width: '100%', marginBottom: 6 }} />
+              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Per la compilazione AI serve il login del team, {EMAIL_TEAM_TESTO} (una volta per dispositivo). L'ordine in corso resta qui.</div>
+              <input className="txt" type="email" autoCapitalize="none" autoCorrect="off" value={lgEmail} onChange={(e) => setLgEmail(e.target.value)} placeholder="Email del team" style={{ width: '100%', marginBottom: 6 }} />
               <input className="txt" type="password" value={lgPwd} onChange={(e) => setLgPwd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') aiLogin(); }} placeholder="Password" style={{ width: '100%', marginBottom: 6 }} />
               {lgErr && <div className="err" style={{ marginBottom: 6 }}>{lgErr}</div>}
               <div style={{ display: 'flex', gap: 6 }}>

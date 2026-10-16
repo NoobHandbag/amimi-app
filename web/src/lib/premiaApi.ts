@@ -1,4 +1,4 @@
-import { csClient } from './csClient';
+import { csClient, EMAIL_TEAM_TESTO } from './csClient';
 
 // Sezione "Premia" (dashboard del programma fedelta', migr 0146). UNA lettura: la RPC loyalty_dashboard, col client
 // della sessione @amimi.it (stesso login di Assistenza, Negozi, Materiali). Le tabelle loyalty_* restano chiuse ad anon e
@@ -40,7 +40,7 @@ export type UgcItem = {
 export type UgcQueue = { conteggi: Record<UgcStato, number>; items: UgcItem[] };
 export type UgcDecisione = { ok: boolean; already?: boolean; reason?: string; status?: UgcStato; punti?: number; deciso_da?: string };
 
-const erroreRpc = (error: { code?: string; message: string }) => new Error(error.code === '42501' ? 'Sezione riservata agli account @amimi.it.' : error.message);
+const erroreRpc = (error: { code?: string; message: string }) => new Error(error.code === '42501' ? `Sezione riservata agli account ${EMAIL_TEAM_TESTO}.` : error.message);
 
 export async function fetchUgcQueue(stato: UgcStato): Promise<UgcQueue> {
   const { data, error } = await csClient.rpc('loyalty_ugc_queue', { p_status: stato, p_limit: 60 });
@@ -65,6 +65,6 @@ export async function fotoUgcUrls(paths: string[]): Promise<Record<string, strin
 
 export async function fetchPremiaDashboard(days: number): Promise<PremiaDash> {
   const { data, error } = await csClient.rpc('loyalty_dashboard', { p_days: days });
-  if (error) throw new Error(error.code === '42501' ? 'Sezione riservata agli account @amimi.it.' : error.message);
+  if (error) throw new Error(error.code === '42501' ? `Sezione riservata agli account ${EMAIL_TEAM_TESTO}.` : error.message);
   return data as PremiaDash;
 }

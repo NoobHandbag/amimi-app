@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { csClient } from '../lib/csClient';
+import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { fetchPremiaDashboard } from '../lib/premiaApi';
 import type { PremiaDash, HealthItem, KpiDay } from '../lib/premiaApi';
 import PremiaUgc from './PremiaUgc';
@@ -117,7 +117,7 @@ export default function Premia({ onBack }: { onBack: () => void }) {
   const doGoogle = async () => {
     setBusy(true); setErr('');
     // redirectTo SENZA hash: Supabase appende la sessione come fragment (#access_token=...), un hash nostro lo romperebbe
-    const { error } = await csClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin + import.meta.env.BASE_URL, queryParams: { hd: 'amimi.it', prompt: 'select_account' } } });
+    const { error } = await csClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin + import.meta.env.BASE_URL, queryParams: { prompt: 'select_account' } } });
     if (error) { setBusy(false); setErr('Google non attivo: accedi con email e password.'); }
   };
 
@@ -139,13 +139,13 @@ export default function Premia({ onBack }: { onBack: () => void }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 4px', color: 'var(--muted)', fontSize: 12 }}>
           <span style={{ flex: 1, height: 1, background: 'var(--line)' }} /> oppure con email <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
         </div>
-        <div className="cs-fld"><label>Email (@amimi.it)</label>
+        <div className="cs-fld"><label>Email ({EMAIL_TEAM_TESTO})</label>
           <input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="info@amimi.it" /></div>
         <div className="cs-fld"><label>Password</label>
           <input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') doLogin(); }} /></div>
         {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
         <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doLogin} disabled={busy} type="button">{busy ? 'Accesso…' : 'Entra'}</button>
-        <div className="cs-note">Stesso login dell&#8217;Assistenza: vale qualsiasi casella @amimi.it, si fa una volta per dispositivo.</div>
+        <div className="cs-note">Stesso login dell&#8217;Assistenza: vale qualsiasi casella {EMAIL_TEAM_TESTO}, si fa una volta per dispositivo.</div>
       </div>
     </div>
   );
