@@ -92,14 +92,12 @@
   .pts{display:flex;align-items:baseline;justify-content:center;gap:10px}
   .pts .n{font-family:var(--display);font-size:68px;font-weight:700;color:var(--red);line-height:.85;font-variant-numeric:tabular-nums}
   .pts .l{font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-  /* il sentiero: un giro vale un premio. Mimi' lo percorre, le tappe sono a un quarto, meta' e tre quarti, la bandierina grande e' il traguardo */
+  /* il sentiero: un giro vale un premio. Mimi' lo percorre, la bandierina grande e' il traguardo (niente tappe dal 16-10) */
   .road{position:relative;width:100%;max-width:340px;margin:0 auto;aspect-ratio:320/260}
   .road svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
   .road .r-bg{fill:none;stroke:var(--pink);stroke-width:13;stroke-linecap:round}
   .road .r-fg{fill:none;stroke:var(--red);stroke-width:13;stroke-linecap:round}
   .road .r-dash{fill:none;stroke:var(--white);stroke-width:2;stroke-dasharray:5 7;stroke-linecap:round}
-  .road .stop circle{fill:var(--white);stroke:var(--line);stroke-width:2.5}
-  .road .stop.on circle{fill:var(--red);stroke:var(--red-deep)}
   .road .lbl{font-family:var(--body);font-size:12px;font-weight:600;fill:var(--muted);paint-order:stroke;stroke:var(--white);stroke-width:4px;stroke-linejoin:round;font-variant-numeric:tabular-nums}
   .road .lbl.on{fill:var(--red-deep)}
   .road .lbl.fine{font-size:14px;font-weight:700}
@@ -564,10 +562,9 @@
     m.textContent=t; const b=m.parentNode; b.classList.remove('new'); void b.offsetWidth; b.classList.add('new');   // il fumetto si riaffaccia a ogni frase nuova
   }
 
-  // === il sentiero a giro (scelta owner 12-10): un giro = <costo del premio> punti = un premio. Tappe a un quarto, meta' e
-  // tre quarti del costo, bandierina grande al traguardo. Le tappe sono pallini SENZA numero e al traguardo c'e' solo lo
-  // sconto (owner 16-10: con "25" scritto sembrava che si prendesse qualcosa ogni 25 punti). Mimi' sta alla FRAZIONE del
-  // giro in corso (data-f, da 0 a 1): riscattare scala un giro intero, quindi lei resta dov'e'. ===
+  // === il sentiero a giro (scelta owner 12-10): un giro = <costo del premio> punti = un premio, bandierina grande
+  // al traguardo con scritto "il tuo sconto". Niente tappe (owner 16-10: con "25" scritto sembrava che si prendesse
+  // qualcosa ogni 25 punti, poi tolti anche i pallini). Mimi' sta alla FRAZIONE del giro in corso (data-f, da 0 a 1): riscattare scala un giro intero, quindi lei resta dov'e'. ===
   const ROAD_VB = [320, 260];
   let roadC=null, roadRaf=0, roadEnd=0;                                                   // roadC = punti/costo gia' disegnati (giri, con la virgola)
   // Frazione del giro. A un multiplo esatto del costo Mimi' e' SUL traguardo solo quando e' un ARRIVO (saldo fermo li');
@@ -580,7 +577,6 @@
     const f=giro(c, arrivo), pt=w._path.getPointAtLength(w._len*f), run=w.querySelector('.runner');
     run.style.left=(pt.x/ROAD_VB[0]*100)+'%'; run.style.top=(pt.y/ROAD_VB[1]*100)+'%';
     w.querySelector('.r-fg').setAttribute('stroke-dasharray',(f*100).toFixed(2)+' 100');
-    w.querySelectorAll('.stop').forEach(z=>z.classList.toggle('on', f*100>=Number(z.dataset.at)-0.01));
     const goal=w.querySelector('.goal'), on=f>=1, era=goal.classList.contains('on');
     goal.classList.toggle('on',on); w.querySelector('.lbl.fine').classList.toggle('on',on);
     if(on && !era && !quiet) festa(w);
@@ -594,10 +590,8 @@
     w.classList.remove('hidden');                                                         // prima visibile, poi si misura il tracciato
     if(w.dataset.cost!==cost+'|'+pc){
       const path=w.querySelector('.r-bg'), len=path.getTotalLength(); w._path=path; w._len=len;
-      let h='';
-      [0.25,0.5,0.75].forEach(q=>{ const pt=path.getPointAtLength(len*q); h+='<g class="stop" data-at="'+(q*100)+'"><circle cx="'+pt.x.toFixed(1)+'" cy="'+pt.y.toFixed(1)+'" r="7"/></g>'; });
       const end=path.getPointAtLength(len), goal=w.querySelector('.goal');
-      h+='<text class="lbl fine" x="'+(end.x+2).toFixed(1)+'" y="'+(end.y+30).toFixed(1)+'" text-anchor="middle">'+(sconto ? pc+'%' : '')+'</text>';   // sotto la fine della strada, fuori dal tracciato: lo sconto, non i punti
+      const h='<text class="lbl fine" x="'+(end.x+8).toFixed(1)+'" y="'+(end.y+50).toFixed(1)+'" text-anchor="end">'+(sconto ? 'il tuo sconto' : 'il tuo premio')+'</text>';   // sotto la fine della strada, fuori dal tracciato
       el('roadMarks').innerHTML=h;
       goal.style.left=(end.x/ROAD_VB[0]*100)+'%'; goal.style.top=(end.y/ROAD_VB[1]*100)+'%';
       w.dataset.cost=cost+'|'+pc;
