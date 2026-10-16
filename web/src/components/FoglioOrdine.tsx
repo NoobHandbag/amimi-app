@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchProducts, fetchFotoProdotti, fetchActiveFornitori, fetchSuppliers, fetchLastOrder, fetchLastPurchase, createOrderMulti, oggi } from '../lib/api';
 import type { Product } from '../lib/api';
-import { csClient } from '../lib/csClient';
+import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { aiCompila, matApi, preparaFoto, uploadInbox, v } from '../lib/matApi';
 import type { PropostaFoglio, RigaFoglio } from '../lib/matApi';
 import { deriveCodice, tok } from '../lib/helpers';
@@ -225,8 +225,8 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
     <div className="form">
       <button className="back" onClick={onCancel}>← Ordini</button>
       <div className="mat-aibox">
-        <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Per leggere i fogli serve il login @amimi.it (una volta per dispositivo).</div>
-        <input className="txt" type="email" autoCapitalize="none" autoCorrect="off" value={lgEmail} onChange={(e) => setLgEmail(e.target.value)} placeholder="Email @amimi.it" style={{ width: '100%', marginBottom: 6 }} />
+        <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Per leggere i fogli serve il login del team, {EMAIL_TEAM_TESTO} (una volta per dispositivo).</div>
+        <input className="txt" type="email" autoCapitalize="none" autoCorrect="off" value={lgEmail} onChange={(e) => setLgEmail(e.target.value)} placeholder="Email del team" style={{ width: '100%', marginBottom: 6 }} />
         <input className="txt" type="password" value={lgPwd} onChange={(e) => setLgPwd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') login(); }} placeholder="Password" style={{ width: '100%', marginBottom: 6 }} />
         {lgErr && <div className="err" style={{ marginBottom: 6 }}>{lgErr}</div>}
         <button type="button" className="ds-btn secondary full" disabled={lgBusy || !lgEmail.trim() || !lgPwd} onClick={login}>{lgBusy ? 'Accesso…' : 'Entra'}</button>

@@ -8,7 +8,7 @@
 // Cosa NON fa: non scrive MAI sulle tabelle del modulo ne' sul core. L'unica scrittura e' il proprio log (ai_compila_log,
 // prefisso proprio). L'AI propone, l'umano conferma, mat-api (o write-api order_multi per gli ordini) scrive.
 //
-// Autorizzazione (postura cs-api): access_token di un utente Supabase Auth reale (getUser), email @amimi.it; poi service_role.
+// Autorizzazione (postura cs-api): access_token di un utente Supabase Auth reale (getUser), email del team; poi service_role.
 // Flag ai_compila_enabled (default OFF): a OFF risponde {state:'off'} senza chiamare nessuno.
 // Gemini: chiave app_flags.gemini_api_key, modello app_flags.ai_compila_model (default MODELLO_DEFAULT), responseMimeType
 // application/json, temperature 0, MAI thinkingConfig (gotcha CONOSCENZA -> 400). Timeout 25 s. Errore = 503 ai_failed:
@@ -20,6 +20,9 @@ import type { Target, Contesto } from './prompt.ts';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// Chi entra col JWT: gli account del team. Stessa lista di public.email_del_team (migr 0161) e di DOMINI_TEAM del web
+// (tests/dominio_team.mjs controlla che coincidano). Le regole sulle NOSTRE caselle restano @amimi.it.
+const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
   const r = await fn(); if (!r.error) return r; await sleep(1500); return await fn();
@@ -49,7 +52,7 @@ Deno.serve(async (req) => {
   const anon = Deno.env.get('SUPABASE_ANON_KEY')!;
   const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-  // 1) autorizzazione: access_token utente reale (la anon key non e' un utente), email @amimi.it
+  // 1) autorizzazione: access_token utente reale (la anon key non e' un utente), email del team (EMAIL_TEAM)
   const authz = req.headers.get('Authorization') || '';
   const token = authz.toLowerCase().startsWith('bearer ') ? authz.slice(7).trim() : '';
   if (!token) return json({ error: 'non autenticato' }, 401);
@@ -57,7 +60,7 @@ Deno.serve(async (req) => {
   const user = ures?.user;
   if (uerr || !user) return json({ error: 'sessione non valida' }, 401);
   const email = (user.email || '').toLowerCase();
-  if (!email.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+  if (!EMAIL_TEAM.test(email)) return json({ error: 'dominio non ammesso' }, 403);
 
   const body = await req.json().catch(() => ({}));
   const sb = createClient(url, svc);

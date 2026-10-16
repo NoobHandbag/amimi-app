@@ -2,7 +2,7 @@
 // Cowork12/docs/Codice_e_Automazione/BRIEF_materie_prime_fase2_ai_compila_2026-09-23.md
 //
 // Postura = cs-api: l'Authorization porta l'access_token di un utente Supabase Auth reale (getUser: la anon key non e'
-// un utente), email @amimi.it; solo allora un client service_role scrive. `chi` = selettore persona (B/G/A), che firma
+// un utente), email del team (EMAIL_TEAM); solo allora un client service_role scrive. `chi` = selettore persona (B/G/A), che firma
 // la riga; il login no. Ogni azione scrive mat_events (before/after). Nessun DELETE: "non attivo" al posto di cancellare.
 // Regola 19: scrive SOLO mat_* (+ l'esito in ai_compila_log). Mai core, mai write-api, mai change_log.
 // Regola 20: chiavi naturali con UNIQUE gia' a DB (migr 0140): "cerco e poi inserisco" e' un'ottimizzazione, la
@@ -25,6 +25,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// Chi entra col JWT: gli account del team. Stessa lista di public.email_del_team (migr 0161) e di DOMINI_TEAM del web
+// (tests/dominio_team.mjs controlla che coincidano). Le regole sulle NOSTRE caselle restano @amimi.it.
+const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
   const r = await fn(); if (!r.error) return r; await sleep(1500); return await fn();
@@ -72,7 +75,7 @@ async function handle(req: Request): Promise<Response> {
   const user = ures?.user;
   if (uerr || !user) return json({ error: 'sessione non valida' }, 401);
   const email = (user.email || '').toLowerCase();
-  if (!email.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+  if (!EMAIL_TEAM.test(email)) return json({ error: 'dominio non ammesso' }, 403);
 
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || '');

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { csClient } from '../lib/csClient';
+import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { pushBack, popBack, killBack } from '../lib/backnav';
 import { fetchEvidence, fetchContacts, fetchReviews, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL } from '../lib/leadApi';
 import type { LeadDossier, LeadLista, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
@@ -187,7 +187,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
   };
   const doGoogle = async () => {
     setBusy(true); setErr('');
-    const { error } = await csClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin + import.meta.env.BASE_URL, queryParams: { hd: 'amimi.it', prompt: 'select_account' } } });
+    const { error } = await csClient.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin + import.meta.env.BASE_URL, queryParams: { prompt: 'select_account' } } });
     if (error) { setBusy(false); setErr('Google non attivo: usa email e password.'); }
   };
 
@@ -231,7 +231,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
         <div className="cs-lt">Accedi con il tuo account Amimi&#8217; (dati di terzi: serve il login)</div>
         <button className="cs-btn" style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--ink)' }} onClick={doGoogle} disabled={busy} type="button">Accedi con Google</button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 4px', color: 'var(--ink-muted)', fontSize: 12 }}><span style={{ flex: 1, height: 1, background: 'var(--border)' }} /> oppure con email <span style={{ flex: 1, height: 1, background: 'var(--border)' }} /></div>
-        <div className="cs-fld"><label>Email (@amimi.it)</label><input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="info@amimi.it" /></div>
+        <div className="cs-fld"><label>Email ({EMAIL_TEAM_TESTO})</label><input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="info@amimi.it" /></div>
         <div className="cs-fld"><label>Password</label><input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') doLogin(); }} /></div>
         {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
         <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doLogin} disabled={busy} type="button">{busy ? 'Accesso…' : 'Entra'}</button>

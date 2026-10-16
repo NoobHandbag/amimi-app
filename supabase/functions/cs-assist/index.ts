@@ -224,6 +224,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// Chi entra col JWT: gli account del team. Stessa lista di public.email_del_team (migr 0161) e di DOMINI_TEAM del web
+// (tests/dominio_team.mjs controlla che coincidano). Le regole sulle NOSTRE caselle restano @amimi.it.
+const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -1294,7 +1297,7 @@ Deno.serve(async (req) => {
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
 
-  // Azioni che scrivono/leggono dati cliente per la UI = gate JWT (utente reale @amimi.it), come cs-api.
+  // Azioni che scrivono/leggono dati cliente per la UI = gate JWT (utente reale del team, EMAIL_TEAM), come cs-api.
   // dry_data ritorna lo STESSO payload PII di context: DEVE essere JWT (non PIN pubblico). Solo summary
   // (aggregato, cron) resta PIN. (audit 2026-07-24: dry_data dietro PIN 'x' esponeva PII cliente.)
   const JWT_ACTIONS = new Set(['context', 'dry_data', 'draft', 'refine', 'case_data']);
@@ -1306,7 +1309,7 @@ Deno.serve(async (req) => {
     const { data: ures, error: uerr } = await createClient(url, anon).auth.getUser(tk);
     const email = (ures?.user?.email || '').toLowerCase();
     if (uerr || !ures?.user) return json({ error: 'sessione non valida' }, 401);
-    if (!email.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+    if (!EMAIL_TEAM.test(email)) return json({ error: 'dominio non ammesso' }, 403);
   } else {
     if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
   }
