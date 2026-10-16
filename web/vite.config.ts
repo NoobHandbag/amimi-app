@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { execSync } from 'node:child_process'
 
 // --- Identita' della versione (brief cs_crop_residui_e_versione, parte 2) ---
@@ -24,8 +24,10 @@ const LABEL = `${new Date(BUILD).toLocaleString('it-IT', { day: '2-digit', month
 // identica non fa comparire l'avviso a nessuno.
 const versionePlugin = () => ({
   name: 'amimi-versione',
-  writeBundle(options: { dir?: string }, bundle: Record<string, { type: string; isEntry?: boolean; fileName: string }>) {
-    const entry = Object.values(bundle).find((c) => c.type === 'chunk' && c.isEntry)
+  writeBundle(options: { dir?: string }, bundle: Record<string, { type: string; isEntry?: boolean; fileName: string; facadeModuleId?: string | null }>) {
+    // con due ingressi (app e Villaggio a se', 16-10) conta quello dell'app: e' il suo hash che fa comparire l'avviso
+    const chunks = Object.values(bundle).filter((c) => c.type === 'chunk' && c.isEntry)
+    const entry = chunks.find((c) => /src[\\/]main\.tsx$/.test(c.facadeModuleId ?? '')) ?? chunks[0]
     const dir = options.dir
     if (!dir) return
     writeFileSync(join(dir, 'version.json'), JSON.stringify({ build: BUILD, label: LABEL, entry: entry?.fileName ?? null }))
@@ -59,6 +61,8 @@ export default defineConfig(({ command, mode }) => {
   return {
     base: '/amimi-app/',
     plugins: [react(), versionePlugin()],
+    // due ingressi: l'app intera e il Villaggio a se' (villaggio/index.html), l'app da installare per Ginni (16-10)
+    build: { rollupOptions: { input: { main: resolve(__dirname, 'index.html'), villaggio: resolve(__dirname, 'villaggio/index.html') } } },
     define: {
       __AMIMI_BUILD__: JSON.stringify(BUILD),
       __AMIMI_LABEL__: JSON.stringify(LABEL),
