@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
   const user = ures?.user;
   if (uerr || !user) return json({ error: 'sessione non valida' }, 401);
   const email = (user.email || '').toLowerCase();
-  if (!email.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+  if (!EMAIL_TEAM.test(email)) return json({ error: 'dominio non ammesso' }, 403);
 
   const body = await req.json().catch(() => ({}));
   const sb = createClient(url, svc);
