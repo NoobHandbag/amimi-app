@@ -348,6 +348,9 @@ function testoModulo(t: string): string {
 
 // ==== PURE:lead-guard BEGIN ====
 // Regole di invio, pure e testate in tests/lead_outreach_guardie.mjs. Un blocco qui = l'email NON parte.
+// Gli account del team: chi entra col JWT e chi non riceve mai un invio vero. Stessa lista di public.email_del_team
+// (migr 0161) e di DOMINI_TEAM del web (tests/dominio_team.mjs). Qui dentro perche' il test ritaglia questo blocco.
+const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 const OPT_OUT_IT = 'Se preferisce non ricevere altre email da parte mia, mi risponda "no grazie" e non la contatterò più.';
 const OPT_OUT_EN = 'If you would rather not hear from me again, just reply "no thanks" and I will not contact you further.';
@@ -379,7 +382,7 @@ function bloccantiInvio(p: { to: string; oggetto: string; testo: string }): stri
   const b: string[] = [];
   const to = p.to.trim().toLowerCase();
   if (!EMAIL_RE.test(to)) b.push('destinatario mancante o non valido');
-  else if (to.endsWith('@amimi.it')) b.push('il destinatario e\' un indirizzo @amimi.it: l\'invio vero va solo ai negozi (per vedere l\'email usa "Manda una prova a me")');
+  else if (EMAIL_TEAM.test(to)) b.push('il destinatario e\' un indirizzo del team (@amimi.it o @telaioconsulting.com): l\'invio vero va solo ai negozi (per vedere l\'email usa "Manda una prova a me")');
   if (!p.oggetto.trim()) b.push('oggetto vuoto');
   if (p.oggetto.length > 200) b.push('oggetto troppo lungo');
   if (p.testo.trim().length < 80) b.push('testo troppo corto');
@@ -396,7 +399,7 @@ function bloccantiRisposta(p: { to: string; oggetto: string; testo: string }): s
   const b: string[] = [];
   const to = p.to.trim().toLowerCase();
   if (!EMAIL_RE.test(to)) b.push('destinatario mancante o non valido');
-  else if (to.endsWith('@amimi.it')) b.push('il destinatario e\' un indirizzo @amimi.it: per vedere l\'email usa "Manda una prova a me"');
+  else if (EMAIL_TEAM.test(to)) b.push('il destinatario e\' un indirizzo del team (@amimi.it o @telaioconsulting.com): per vedere l\'email usa "Manda una prova a me"');
   if (!p.oggetto.trim()) b.push('oggetto vuoto');
   if (p.oggetto.length > 200) b.push('oggetto troppo lungo');
   if (!p.testo.trim()) b.push('testo vuoto');
@@ -1293,7 +1296,7 @@ Deno.serve(async (req) => {
   if (!tk) return json({ error: 'non autenticato' }, 401);
   // v10: la chiave service_role vale SOLO per aggancia, con `chi` obbligatorio (operatore: Claude Code da script, come il
   // collector di workers/lead, che la legge a runtime dalla Management API). Chi ha quella chiave scrive gia' tutto il DB:
-  // non e' un accesso in piu'. Ogni altra azione resta di una persona con JWT @amimi.it.
+  // non e' un accesso in piu'. Ogni altra azione resta di una persona con JWT del team (EMAIL_TEAM).
   const operatore = stessaChiave(tk, svc);
   let userEmail = '';
   if (operatore) {
@@ -1304,7 +1307,7 @@ Deno.serve(async (req) => {
     const { data: ures, error: uerr } = await createClient(url, anon).auth.getUser(tk);
     if (uerr || !ures?.user) return json({ error: 'sessione non valida' }, 401);
     userEmail = (ures.user.email || '').toLowerCase();
-    if (!userEmail.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+    if (!EMAIL_TEAM.test(userEmail)) return json({ error: 'dominio non ammesso' }, 403);
   }
   const chi = String(body.chi || userEmail).slice(0, 60);
 

@@ -74,7 +74,7 @@ t('29 nessun ALTER su tabelle core, nessun grant di scrittura a authenticated su
 t('30 v_mat_settings espone solo i tre flag del modulo', /where key in \('mat_enabled', 'mat_write_enabled', 'ai_compila_enabled'\)/.test(M2));
 
 console.log('\n== Fase 2: mat-api (scritture) ==');
-t('31 mat-api: getUser sul token utente, la anon key non basta, email @amimi.it', /auth\.getUser\(token\)/.test(mapi) && /endsWith\('@amimi\.it'\)/.test(mapi));
+t('31 mat-api: getUser sul token utente, la anon key non basta, email del team (EMAIL_TEAM, migr 0161)', /auth\.getUser\(token\)/.test(mapi) && /if \(!EMAIL_TEAM\.test\(email\)\) return json\(\{ error: 'dominio non ammesso' \}, 403\)/.test(mapi));
 t('32 mat-api: chi obbligatorio dal selettore (B/G/A)', /IDENT\[String\(body\.chi/.test(mapi) && /chi mancante/.test(mapi));
 t('33 mat-api: flag mat_write_enabled letto con errore controllato, OFF = state off', /'mat_write_enabled'/.test(mapi) && /throw new ReadError\('flag non leggibile/.test(mapi) && /return json\(\{ state: 'off' \}\)/.test(mapi));
 t('34 mat-api: scrive solo tabelle mat_* e ai_compila_log (mai core, write-api, change_log)', ![...mapi.matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]).some((tb) => !tb.startsWith('mat_') && tb !== 'ai_compila_log' && tb !== 'app_flags') && !/change_log|write-api|purchases|supplier_orders/.test(mapi));
@@ -85,7 +85,7 @@ t('38 mat-api: asset_add solo sotto inbox/ e con file verificato nel bucket', /p
 t('39 mat-api: categoria e unita validate sulle liste, prezzo numerico >= 0', /CATEGORIE\.has\(categoria\)/.test(mapi) && /UNITA\.has\(/.test(mapi) && /n >= 0 \? n : 'bad'/.test(mapi));
 
 console.log('\n== Fase 2: ai-compila (sola lettura + Gemini) ==');
-t('40 ai-compila: stessa autorizzazione (getUser + @amimi.it)', /auth\.getUser\(token\)/.test(ai) && /endsWith\('@amimi\.it'\)/.test(ai));
+t('40 ai-compila: stessa autorizzazione (getUser + EMAIL_TEAM, migr 0161)', /auth\.getUser\(token\)/.test(ai) && /if \(!EMAIL_TEAM\.test\(email\)\) return json\(\{ error: 'dominio non ammesso' \}, 403\)/.test(ai));
 t('41 ai-compila: flag ai_compila_enabled, OFF = state off senza chiamare Gemini', /'ai_compila_enabled'/.test(ai) && ai.indexOf("return json({ state: 'off' })") < ai.indexOf('generativelanguage.googleapis.com'));
 t('42 ai-compila: scrive SOLO ai_compila_log', ![...ai.matchAll(/\.from\('([a-z_]+)'\)\.(insert|update|upsert|delete)/g)].some((m) => m[1] !== 'ai_compila_log'));
 t('43 ai-compila: structured output (responseSchema + JSON), temperatura 0, MAI thinkingConfig nel codice', /responseMimeType: 'application\/json'/.test(ai) && /responseSchema: responseSchema\(target\)/.test(ai) && /temperature: 0/.test(ai) && !/thinkingConfig/.test(ai + noTs(PROMPT)));

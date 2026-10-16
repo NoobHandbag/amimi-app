@@ -104,7 +104,7 @@ test.describe('schermo largo 1280 px', () => {
     const comp = page.locator('.or-comp');
     await comp.getByLabel('Destinatario').fill('info@amimi.it');
     await expect(comp.getByRole('button', { name: '✉️ Invia…' })).toBeDisabled();
-    await expect(comp.locator('.cs-note', { hasText: 'Gli indirizzi @amimi.it non ricevono' })).toContainText('Prova a me');
+    await expect(comp.locator('.cs-note', { hasText: 'Gli indirizzi del team (@amimi.it o @telaioconsulting.com) non ricevono' })).toContainText('Prova a me');
     expect(chiamate).toHaveLength(0);
   });
 

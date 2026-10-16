@@ -7,7 +7,7 @@
 // NON il login). AUTORIZZAZIONE (belt-and-suspenders): la UI non scrive mai diretto via RLS;
 //   1) l'Authorization header deve portare un access_token di un UTENTE Supabase Auth reale
 //      (getUser lato server: la anon key NON e' un utente -> rifiutata);
-//   2) l'email dell'utente deve finire in @amimi.it (stessa postura della RLS cs_*).
+//   2) l'email dell'utente deve essere del team, EMAIL_TEAM (stessa postura della RLS cs_*).
 //   Solo allora un client service_role esegue la scrittura + l'audit su cs_events.
 //
 // Azioni (v2, feedback owner 24-07):
@@ -33,6 +33,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// Chi entra col JWT: gli account del team. Stessa lista di public.email_del_team (migr 0161) e di DOMINI_TEAM del web
+// (tests/dominio_team.mjs controlla che coincidano). Le regole sulle NOSTRE caselle restano @amimi.it.
+const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 // 2026-09-13 (sweep incidente doppioni): PostgREST risponde 504 anche su letture banali (~4% delle chiamate
 // REST delle edge). Una lettura e' idempotente: UN solo ritentativo dopo 1,5 s, mai sulle scritture.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -82,7 +85,7 @@ async function handle(req: Request): Promise<Response> {
   const user = ures?.user;
   if (uerr || !user) return json({ error: 'sessione non valida' }, 401);
   const email = (user.email || '').toLowerCase();
-  if (!email.endsWith('@amimi.it')) return json({ error: 'dominio non ammesso' }, 403);
+  if (!EMAIL_TEAM.test(email)) return json({ error: 'dominio non ammesso' }, 403);
 
   const body = await req.json().catch(() => ({}));
   const action = String(body.action || '');
