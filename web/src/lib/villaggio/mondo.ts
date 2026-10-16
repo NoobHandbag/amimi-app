@@ -3,6 +3,7 @@
 // e non scrive niente: le scritture passano dai componenti di Ordini (ArrivoRow, SupplierOrderForm) montati nella pagina.
 // Scala unica: una lastra della pila = 2 pezzi, in magazzino (quello che c'e') e sui carrelli (quello che deve arrivare).
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { lastre } from './catalogo';
 import type { Look, Modello } from './catalogo';
 
@@ -15,7 +16,9 @@ export type DatiMondo = { labs: LabMondo[]; pile: PilaMondo[]; totale: number };
 export type EventiMondo = { onLab: (key: string) => void; onMagazzino: (model?: Modello) => void; onGinni: () => void; onCarro: () => void; onPartenza?: (n: number) => void };
 type Ctx = { type: string; lab?: string } | null;
 type Anchor = { el: HTMLElement; pos: THREE.Vector3; cond?: (now: number) => boolean; free?: boolean; w?: number; until?: number };
-type Tween = { t0: number; dur: number; fn: (p: number) => void; done?: () => void; dead?: boolean };
+type Tween = { t0: number; dur: number; fn: (p: number) => void; done?: () => void; dead?: boolean; ombre?: boolean };
+/** Dopo questo tempo senza tocchi ne' dati nuovi l'isola si ferma (fumo, braccia, Ginni) e non ridisegna piu': batteria. */
+const RIPOSO_MS = 20000;
 
 const V3 = THREE.Vector3;
 // colori come nel prototipo: niente conversione sRGB (le texture sono gia' i colori giusti)
@@ -344,11 +347,15 @@ export const PSC = (m: Modello) => (/cover|carte/.test(m) ? 1 : 0.8);
 /* ---------- miniature 3D per i pannelli: un secondo renderer piccolo, condiviso ---------- */
 let TR: THREE.WebGLRenderer | null = null, TS: THREE.Scene | null = null, TC: THREE.PerspectiveCamera | null = null;
 const THC: Record<string, string> = {};
+/** il secondo contesto WebGL non si e' creato: niente miniature (resta il riquadro vuoto), il resto va avanti */
+let THKO = false;
 export function thumb(model: Modello, look: Look): string {
   const k = model + '|' + look.key;
   if (THC[k]) return THC[k];
+  if (THKO) return '';
   if (!TR) {
-    TR = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    try { TR = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }); }
+    catch { THKO = true; return ''; }
     TR.outputColorSpace = THREE.LinearSRGBColorSpace;
     TR.setPixelRatio(1); TR.setSize(144, 144);
     TS = new THREE.Scene();
@@ -381,22 +388,35 @@ function liberaCache() {
   for (const k of Object.keys(GEO) as Modello[]) { const g = GEO[k] as Geo; for (const x of [...g.parts.map((p) => p[0]), ...g.pierce, ...g.charm, g.slabGeo]) x.dispose(); delete GEO[k]; }
   if (TR) { TR.dispose(); TR.forceContextLoss(); }
   TR = null; TS = null; TC = null;
+  THQ.length = 0;
+  for (const k of Object.keys(CANV)) delete CANV[k];
 }
 /** Miniature in coda: al massimo ~12 ms per frame, cosi' un pannello con 80 borse non blocca la pagina. */
 const THQ: [Modello, Look, (u: string) => void][] = [];
 let thBusy = false;
-export function thumbAsync(model: Modello, look: Look, cb: (u: string) => void) {
+/** Restituisce la funzione che toglie la richiesta dalla coda (il componente si smonta prima che tocchi a lui). */
+export function thumbAsync(model: Modello, look: Look, cb: (u: string) => void): () => void {
   const k = model + '|' + look.key;
-  if (THC[k]) { cb(THC[k]); return; }
-  THQ.push([model, look, cb]);
-  if (thBusy) return;
-  thBusy = true;
-  const step = () => {
-    const t0 = performance.now();
-    while (THQ.length && performance.now() - t0 < 12) { const [m, l, c] = THQ.shift() as [Modello, Look, (u: string) => void]; c(thumb(m, l)); }
-    if (THQ.length) requestAnimationFrame(step); else thBusy = false;
-  };
-  requestAnimationFrame(step);
+  if (THC[k]) { cb(THC[k]); return () => {}; }
+  const job: [Modello, Look, (u: string) => void] = [model, look, cb];
+  THQ.push(job);
+  if (!thBusy) {
+    thBusy = true;
+    const step = () => {
+      // senza un Mondo vivo le cache sono gia' state liberate: disegnare ora ricreerebbe un contesto WebGL orfano
+      if (!VIVI) { THQ.length = 0; thBusy = false; return; }
+      const t0 = performance.now();
+      while (THQ.length && performance.now() - t0 < 12) {
+        const [m, l, c] = THQ.shift() as [Modello, Look, (u: string) => void];
+        let u = '';
+        try { u = thumb(m, l); } catch { THKO = true; }
+        c(u);
+      }
+      if (THQ.length) requestAnimationFrame(step); else thBusy = false;
+    };
+    requestAnimationFrame(step);
+  }
+  return () => { const i = THQ.indexOf(job); if (i >= 0) THQ.splice(i, 1); };
 }
 
 /* ---------- decori: insegne, assi, lamiera ---------- */
@@ -462,8 +482,9 @@ export class Mondo {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 400);
-  private target: THREE.Vector3;
-  private viewH: number;
+  // assegnati in allestisci(), chiamato dal costruttore
+  private target!: THREE.Vector3;
+  private viewH!: number;
   private portrait: boolean;
   private tweens: Tween[] = [];
   private anchors: Anchor[] = [];
@@ -475,16 +496,16 @@ export class Mondo {
   private reduce: boolean;
   private wh = new THREE.Group();
   private whInside = new THREE.Group();
-  private whA: Anchor;
+  private whA!: Anchor;
   private labs = new Map<string, LabG>();
   private piles = new Map<string, PilaG>();
   private zones = new Map<Modello, Zona>();
-  private ginni: THREE.Group;
+  private ginni!: THREE.Group;
   private cart = new THREE.Group();
   private cartLoad = new THREE.Group();
   private cartQ: (() => void)[] = [];
   private cartBusy = false;
-  private foam: THREE.Mesh;
+  private foam!: THREE.Mesh;
   private pickables: THREE.Object3D[] = [];
   private ptr = new Map<number, { x: number; y: number }>();
   private moved = 0;
@@ -502,6 +523,10 @@ export class Mondo {
   private shadowDirty = true;
   private dirty = true;
   private lastRender = 0;
+  private lastLabels = 0;
+  private ultimoInput = performance.now();
+  /** gia' in posa di riposo */
+  private fermo = false;
 
   /** Crea il proprio canvas dentro `container` (e lo toglie in dispose): un contesto WebGL nuovo a ogni montaggio. Lancia se il WebGL non c'e'. */
   constructor(container: HTMLElement, labelsEl: HTMLElement, hudEl: HTMLElement | null, ev: EventiMondo) {
@@ -519,6 +544,10 @@ export class Mondo {
       throw e;
     }
     VIVI++;
+    try { this.allestisci(); } catch (e) { this.dispose(); throw e; }
+  }
+  /** Il resto del costruttore: se un passo lancia, dispose() libera canvas, contesto, listener e contatore. */
+  private allestisci() {
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     // sul telefono 1,5x basta: il canvas a 2x costava il doppio dei pixel per frame
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.portrait ? 1.5 : 2));
@@ -546,10 +575,12 @@ export class Mondo {
     this.add(this.scene, new THREE.CylinderGeometry(27.6, 28.6, 1.6, 72), 0xf1dfb0, 0, -1.9, 0, { cast: false });
     const island = new THREE.Mesh(new THREE.CylinderGeometry(25, 26, 2.4, 72), [this.mat(0xd8bf86), this.mat(0x93d26c), this.mat(0xd8bf86)]);
     island.position.y = -1.2; island.receiveShadow = true; this.scene.add(island);
+    const erba = new THREE.Group(); this.scene.add(erba);
     for (let i = 0; i < 16; i++) {
       const a = this.rnd() * 6.283, r = 6 + this.rnd() * 14;
-      this.add(this.scene, new THREE.CircleGeometry(1.2 + this.rnd() * 2, 22), 0x87c962, Math.cos(a) * r, 0.012, Math.sin(a) * r, { rx: -Math.PI / 2, cast: false });
+      this.add(erba, new THREE.CircleGeometry(1.2 + this.rnd() * 2, 22), 0x87c962, Math.cos(a) * r, 0.012, Math.sin(a) * r, { rx: -Math.PI / 2, cast: false });
     }
+    this.impasta(erba);
     this.buildWarehouseShell();
     this.whA = this.addLabel('', new V3(WCX, 8.7, WZ0 + 0.25), 'v-lbl v-wh', () => this.ev.onMagazzino());
     this.ginni = this.makeChar(0xee8fab, 0x7a4a2a);
@@ -610,7 +641,9 @@ export class Mondo {
     parent.add(m);
     return m;
   }
-  private tween(dur: number, fn: (p: number) => void, done?: () => void): Tween { const tw: Tween = { t0: performance.now(), dur: Math.max(1, dur), fn, done }; this.tweens.push(tw); return tw; }
+  private tween(dur: number, fn: (p: number) => void, done?: () => void): Tween { const tw: Tween = { t0: performance.now(), dur: Math.max(1, dur), fn, done }; this.tweens.push(tw); this.sveglia(); return tw; }
+  /** Qualcosa e' successo (tocco, dati, pannello): l'isola si rianima per RIPOSO_MS. */
+  private sveglia() { this.ultimoInput = performance.now(); this.dirty = true; }
   private addLabel(html: string, pos: THREE.Vector3, cls: string, onClick?: () => void): Anchor {
     const el = document.createElement('div');
     el.className = cls; el.innerHTML = html;
@@ -636,6 +669,8 @@ export class Mondo {
   private resize() {
     this.dirty = true;
     const w = innerWidth, h = innerHeight, a = w / h;
+    const portrait = a < 0.8;
+    if (portrait !== this.portrait) { this.portrait = portrait; this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, portrait ? 1.5 : 2)); }
     this.renderer.setSize(w, h, false);
     this.camera.left = -this.viewH * a / 2; this.camera.right = this.viewH * a / 2; this.camera.top = this.viewH / 2; this.camera.bottom = -this.viewH / 2;
     this.camera.updateProjectionMatrix();
@@ -653,6 +688,7 @@ export class Mondo {
       this.target.lerpVectors(fromT, toT, e); this.clampTarget(); this.placeCam();
       if (toV !== fromV) { this.viewH = fromV + (toV - fromV) * e; this.resize(); }
     }, () => { this.camTw = null; this.camDest = null; });
+    this.camTw.ombre = false;
   }
   static isWide() { return innerWidth >= 900 && innerWidth >= innerHeight; }
   private frame(x: number, z: number, vh: number, up: number) {
@@ -663,7 +699,7 @@ export class Mondo {
   }
   private remember() { if (!this.savedView) this.savedView = this.camDest ? { t: this.camDest.t.clone(), v: this.camDest.v } : { t: this.target.clone(), v: this.viewH }; }
   ripristina() { this.ctx = null; if (!this.savedView) return; const s = this.savedView; this.savedView = null; this.camTween(s.t, s.v, 520); }
-  setCtx(c: Ctx) { this.ctx = c; }
+  setCtx(c: Ctx) { this.ctx = c; this.sveglia(); }
   focusLab(key: string) {
     const L = this.labs.get(key); this.ctx = { type: 'lab', lab: key };
     if (!L) return;
@@ -706,6 +742,7 @@ export class Mondo {
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(5, 1.25), signMat('AMIMI', '', 0xc4607f));
     sign.position.set(WCX, 5.7, WZ0 + 0.56); WH.add(sign);
     WH.add(this.whInside);
+    this.impasta(WH, [this.whInside]);
   }
   private disc = new THREE.CircleGeometry(1, 24);
   private DISC = { low: new THREE.MeshLambertMaterial({ color: 0xf2b84b }), neg: new THREE.MeshLambertMaterial({ color: 0xe0574b }), inc: new THREE.MeshLambertMaterial({ color: 0x9fd3ec }) };
@@ -801,8 +838,8 @@ export class Mondo {
     this.add(c, new THREE.SphereGeometry(0.075, 8, 6), 0xf3a1a1, -0.27, 1.38, 0.33, { cast: false });
     this.add(c, new THREE.SphereGeometry(0.075, 8, 6), 0xf3a1a1, 0.27, 1.38, 0.33, { cast: false });
     const arm = new THREE.Group(); arm.position.set(0.38, 1.0, 0); c.add(arm);
-    this.add(arm, box(0.13, 0.45, 0.13), shirt, 0, -0.2, 0);
-    this.add(arm, box(0.1, 0.1, 0.36), 0x8a8a96, 0, -0.42, 0.15);
+    this.add(arm, box(0.13, 0.45, 0.13), shirt, 0, -0.2, 0, { cast: false });
+    this.add(arm, box(0.1, 0.1, 0.36), 0x8a8a96, 0, -0.42, 0.15, { cast: false });
     c.userData.arm = arm;
     return c;
   }
@@ -858,6 +895,7 @@ export class Mondo {
     anchor.cond = () => !(this.ctx && (this.ctx.type === 'wh' || this.ctx.type === 'lab'));
     const L: LabG = { g, yard, ch, puffs, hideSlot, rollSlot, spoolSlot, dock, anchor, pileAnchors: [], data, index };
     this.stones(CART_HOME.x, CART_HOME.z, dock.x, dock.z);
+    this.impasta(g, [ch, yard, hideSlot, rollSlot, spoolSlot, ...puffs]);
     return L;
   }
   private fillYard(L: LabG) {
@@ -926,14 +964,16 @@ export class Mondo {
   private buildFence() {
     const fp: [number, number][] = [];
     for (let d = 168; d <= 282; d += 4.2) { const a = d * Math.PI / 180; fp.push([Math.cos(a) * 21.8, Math.sin(a) * 21.8]); }
-    const postGeo = box(0.22, 1.0, 0.22);
+    const postGeo = box(0.22, 1.0, 0.22), F = new THREE.Group();
+    this.scene.add(F);
     fp.forEach(([x, z], i) => {
-      this.add(this.scene, postGeo, 0xfff4e0, x, 0.5, z);
+      this.add(F, postGeo, 0xfff4e0, x, 0.5, z);
       if (i > 0) {
         const [px, pz] = fp[i - 1]; const dx = x - px, dz = z - pz; const len = Math.hypot(dx, dz);
-        for (const y of [0.42, 0.78]) this.add(this.scene, box(len, 0.1, 0.08), 0xfff4e0, (x + px) / 2, y, (z + pz) / 2, { ry: Math.atan2(-dz, dx) });
+        for (const y of [0.42, 0.78]) this.add(F, box(len, 0.1, 0.08), 0xfff4e0, (x + px) / 2, y, (z + pz) / 2, { ry: Math.atan2(-dz, dx) });
       }
     });
+    this.impasta(F);
   }
   private stoneGeo = new THREE.CylinderGeometry(0.42, 0.48, 0.12, 9);
   private stones(ax: number, az: number, bx: number, bz: number) {
@@ -970,6 +1010,7 @@ export class Mondo {
     ([[-19, -8.5, GREEN, 1.05], [-12, -16.5, BLOSSOM, 1], [-4, -15.8, GREEN, 1.15], [5.5, -15, BLOSSOM, 0.95], [10, -16, GREEN, 1], [15, -12.5, GREEN, 1.05],
       [18, -4, AUTUMN, 1], [-19, -2, GREEN, 1.05], [-17, 4.5, BLOSSOM, 1], [-13.5, 3.4, AUTUMN, 0.85], [19, 2.5, GREEN, 0.9]] as [number, number, number, number][]).forEach((t) => tree(t[0], t[1], t[2], t[3]));
     ([[14, 12], [7.5, 17], [-2, 17.5], [-12, 14.5], [17.5, 8.5], [-16, 10], [0.5, 5.2], [-9.5, 3.5]] as [number, number][]).forEach((b) => bush(b[0], b[1], 0.9 + this.rnd() * 0.3));
+    this.impasta(D);
   }
 
   /* ---------- dati: si ricostruiscono magazzino e laboratori ---------- */
@@ -982,11 +1023,12 @@ export class Mondo {
       this.labs.clear();
       this.svuota(this.paths);
       dati.labs.slice(0, LAB_SLOTS.length).forEach((d, i) => this.labs.set(d.key, this.buildLab(d, i)));
+      this.impasta(this.paths);
       this.buildDecor(keys.map((_, i) => LAB_SLOTS[i]));
     }
     dati.labs.slice(0, LAB_SLOTS.length).forEach((d) => { const L = this.labs.get(d.key); if (L) { L.data = d; this.fillYard(L); } });
     this.whA.el.innerHTML = 'Magazzino<small>' + dati.totale + ' pezzi</small>'; this.whA.w = 0;
-    this.shadowDirty = true; this.dirty = true;
+    this.shadowDirty = true; this.sveglia();
   }
   /** Punto di carico del capannone (copia), da leggere PRIMA di aggiorna(): un arrivo che chiude l'ultima riga toglie il capannone. */
   dockOf(labKey: string): THREE.Vector3 | null { const L = this.labs.get(labKey); return L ? L.dock.clone() : null; }
@@ -1034,7 +1076,7 @@ export class Mondo {
   /* ---------- tocchi: trascina, pizzica, tocca ---------- */
   private bindPointer() {
     const c = this.canvas;
-    const down = (e: PointerEvent) => { c.setPointerCapture(e.pointerId); this.ptr.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (this.ptr.size === 1) this.moved = 0; else this.pinch = 0; };
+    const down = (e: PointerEvent) => { this.sveglia(); c.setPointerCapture(e.pointerId); this.ptr.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (this.ptr.size === 1) this.moved = 0; else this.pinch = 0; };
     const move = (e: PointerEvent) => {
       const p = this.ptr.get(e.pointerId);
       if (!p) return;
@@ -1054,7 +1096,7 @@ export class Mondo {
       if (this.ptr.size < 2) this.pinch = 0;
       if (this.ptr.size === 0 && this.moved <= 6 && e.type === 'pointerup') this.pick(e.clientX, e.clientY);
     };
-    const wheel = (e: WheelEvent) => { e.preventDefault(); this.zoomBy(e.deltaY > 0 ? 1.1 : 1 / 1.1); this.dirty = true; };
+    const wheel = (e: WheelEvent) => { e.preventDefault(); this.zoomBy(e.deltaY > 0 ? 1.1 : 1 / 1.1); this.sveglia(); };
     c.addEventListener('pointerdown', down); c.addEventListener('pointermove', move); c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
     c.addEventListener('wheel', wheel, { passive: false });
     this.off.push(() => { c.removeEventListener('pointerdown', down); c.removeEventListener('pointermove', move); c.removeEventListener('pointerup', end); c.removeEventListener('pointercancel', end); c.removeEventListener('wheel', wheel); });
@@ -1089,10 +1131,18 @@ export class Mondo {
   /* ---------- ciclo ---------- */
   private v3 = new V3();
   private frameTick(now: number) {
+    const vivo = !this.reduce && now - this.ultimoInput < RIPOSO_MS;
+    if (vivo) this.fermo = false;
+    else if (!this.fermo) { this.posa(); this.fermo = true; this.dirty = true; }
     const attivo = this.tweens.length > 0 || this.ptr.size > 0 || this.dirty;
-    if (!attivo && now - this.lastRender < 33) return;
-    this.lastRender = now; this.dirty = false;
-    if (this.tweens.length || this.shadowDirty) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; }
+    if (!attivo && (!vivo || now - this.lastRender < 33)) {
+      // niente da disegnare: solo le etichette a tempo (pila appena arrivata), 4 volte al secondo
+      if (now - this.lastLabels > 250) { this.lastLabels = now; this.updateLabels(now); }
+      return;
+    }
+    this.lastRender = now; this.lastLabels = now; this.dirty = false;
+    // le ombre seguono gli oggetti che si muovono (furgoncino, pile), non la camera
+    if (this.shadowDirty || this.tweens.some((tw) => tw.ombre !== false)) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; }
     for (let i = this.tweens.length - 1; i >= 0; i--) {
       const tw = this.tweens[i];
       if (tw.dead) { this.tweens.splice(i, 1); continue; }
@@ -1101,7 +1151,7 @@ export class Mondo {
       if (p >= 1) { this.tweens.splice(i, 1); tw.done?.(); }
     }
     const t = now / 1000;
-    if (!this.reduce) {
+    if (vivo) {
       this.ginni.position.y = Math.abs(Math.sin(t * 2.2)) * 0.06;
       this.foam.scale.setScalar(1 + Math.sin(t * 0.8) * 0.004);
       for (const L of this.labs.values()) {
@@ -1118,6 +1168,52 @@ export class Mondo {
     }
     this.updateLabels(now);
     this.renderer.render(this.scene, this.camera);
+  }
+  /** Posa del riposo: niente fumo, braccia giu', Ginni a terra. */
+  private posa() {
+    this.ginni.position.y = 0; this.foam.scale.setScalar(1);
+    for (const L of this.labs.values()) {
+      L.puffs.forEach((pf) => { (pf.material as THREE.MeshLambertMaterial).opacity = 0; });
+      (L.ch.userData.arm as THREE.Group).rotation.x = 0;
+    }
+  }
+  /** Fonde le mesh FERME di `root` che hanno lo stesso materiale e le stesse ombre in una mesh sola: la scena da ferma
+   *  faceva ~1.250 draw call, quasi tutte scatole e sfere di decori, staccionata, sassi e capannoni. `salta`: i
+   *  sottogruppi che si muovono o si ricostruiscono (personaggi, fumo, carrelli, pile). Il raycast funziona uguale: la
+   *  mesh fusa e' figlia di `root`, che porta userData.kind. */
+  private impasta(root: THREE.Object3D, salta: THREE.Object3D[] = []) {
+    root.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), mtx = new THREE.Matrix4();
+    const fuori = new Set(salta), secchi = new Map<string, THREE.Mesh[]>();
+    const visita = (o: THREE.Object3D) => {
+      if (fuori.has(o)) return;
+      const m = o as THREE.Mesh;
+      if (m.isMesh && !(m as THREE.InstancedMesh).isInstancedMesh && !m.children.length && !Array.isArray(m.material) && !m.material.transparent && !m.geometry.morphAttributes.position) {
+        const g = m.geometry;
+        const k = [m.material.uuid, m.castShadow, m.receiveShadow, g.index ? 'i' : 'n', Object.keys(g.attributes).sort().join(',')].join('|');
+        const a = secchi.get(k); if (a) a.push(m); else secchi.set(k, [m]);
+      }
+      for (const c of [...o.children]) visita(c);
+    };
+    for (const c of [...root.children]) visita(c);
+    const tolte = new Set<THREE.BufferGeometry>();
+    for (const ms of secchi.values()) {
+      if (ms.length < 2) continue;
+      const geos = ms.map((m) => m.geometry.clone().applyMatrix4(mtx.multiplyMatrices(inv, m.matrixWorld)));
+      const fusa = mergeGeometries(geos, false);
+      geos.forEach((g) => g.dispose());
+      if (!fusa) continue;
+      const mesh = new THREE.Mesh(fusa, ms[0].material);
+      mesh.castShadow = ms[0].castShadow; mesh.receiveShadow = ms[0].receiveShadow;
+      root.add(mesh);
+      for (const m of ms) { tolte.add(m.geometry); m.parent?.remove(m); }
+    }
+    // gruppi rimasti vuoti (alberi, cespugli) e geometrie che nessuna mesh usa piu'
+    const vuoti: THREE.Object3D[] = [];
+    root.traverse((o) => { if (o !== root && !fuori.has(o) && !(o as THREE.Mesh).isMesh && !o.children.length) vuoti.push(o); });
+    vuoti.forEach((o) => o.parent?.remove(o));
+    root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) tolte.delete(m.geometry); });
+    tolte.forEach((g) => { if (!SHARED.has(g) && !this.keep.has(g)) g.dispose(); });
   }
   private updateLabels(now: number) {
     const w = innerWidth, h = innerHeight;

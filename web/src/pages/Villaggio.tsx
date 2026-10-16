@@ -34,7 +34,7 @@ const css = (c: number) => ({ '--c': '#' + c.toString(16).padStart(6, '0') }) as
 
 function Thumb({ model, look }: { model: Modello; look: Look }) {
   const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => { let on = true; thumbAsync(model, look, (u) => { if (on) setSrc(u); }); return () => { on = false; }; }, [model, look]);
+  useEffect(() => { let on = true; const via = thumbAsync(model, look, (u) => { if (on) setSrc(u); }); return () => { on = false; via(); }; }, [model, look]);
   return src ? <img className="v-th" src={src} alt="" /> : <span className="v-th" />;
 }
 
@@ -47,12 +47,12 @@ function Pezzi({ a, o }: { a: number; o: number }) {
 function Dialogo({ testo, onAvanti }: { testo: string; onAvanti: () => void }) {
   const ridotto = useMemo(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches, []);
   const [k, setK] = useState(ridotto ? testo.length : 0);
+  const tutto = ridotto || k >= testo.length;
   useEffect(() => {
-    if (ridotto) return;
+    if (tutto) return;
     const id = window.setInterval(() => setK((x) => Math.min(testo.length, x + 1)), 22);
     return () => window.clearInterval(id);
-  }, [testo, ridotto]);
-  const tutto = ridotto || k >= testo.length;
+  }, [testo, tutto]);
   return (
     <button type="button" className="v-dlg" aria-label={'Ginni: ' + testo} onClick={() => (tutto ? onAvanti() : setK(testo.length))}>
       <span className="tag">Ginni</span><span className="v-dlgp" aria-hidden="true">{ridotto ? testo : testo.slice(0, k)}</span><span className="more" aria-hidden="true">▼</span>
@@ -83,14 +83,42 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
 
   const toast = useCallback((m: string) => { setToastMsg(m); window.setTimeout(() => setToastMsg((x) => (x === m ? null : x)), 3200); }, []);
 
-  // pannelli e gesto "indietro" di Android (lib/backnav): aprire da chiuso spinge una voce, chiudere la consuma
+  // Il modulo dell'ordine (passo 4) toccato non si perde senza chiedere: vale per Esc, "indietro", la X, le etichette
+  // della mappa e la barra in basso. La mappa al passo 4 non chiude proprio (W.onTap).
+  const formSporco = useRef(false);
+  const lascia = useCallback(() => {
+    const s = sheetRef.current;
+    if (!s || s.t !== 'add' || s.step !== 4 || !formSporco.current) return true;
+    if (!window.confirm("Lasci l'ordine a metà? Quello che hai scritto si perde.")) return false;
+    formSporco.current = false;
+    return true;
+  }, []);
+  // Pannelli e gesto "indietro" di Android (lib/backnav): aprire da chiuso spinge una voce, chiudere la consuma. La X
+  // chiude subito e lascia in volo un history.back(): `backPendenti` lo riconosce, cosi' non chiude un pannello
+  // riaperto nel frattempo (la voce che resta in pila e' equivalente: chiude il pannello aperto).
   const pushed = useRef<(() => void)[]>([]);
+  const backPendenti = useRef(0);
   const apri = useCallback((s: Exclude<Sheet, null>) => {
-    if (!sheetRef.current) { const fn = () => { sheetRef.current = null; setSheet(null); }; pushed.current.push(fn); pushBack(fn); }
+    if (sheetRef.current && !lascia()) return;
+    if (!sheetRef.current) {
+      const fn = () => {
+        if (backPendenti.current > 0) { backPendenti.current--; if (!sheetRef.current) setSheet(null); return; }
+        if (!lascia()) { pushed.current.push(fn); pushBack(fn); return; }
+        sheetRef.current = null; setSheet(null);
+      };
+      pushed.current.push(fn); pushBack(fn);
+    }
+    formSporco.current = false;
     sheetRef.current = s;
     setSheet(s);
-  }, []);
-  const chiudi = useCallback(() => { if (sheetRef.current) { sheetRef.current = null; popBack(() => setSheet(null)); } }, []);
+  }, [lascia]);
+  const chiudi = useCallback(() => {
+    if (!sheetRef.current || !lascia()) return;
+    sheetRef.current = null; setSheet(null);
+    let subito = false;
+    popBack(() => { subito = true; });
+    if (!subito) backPendenti.current++;
+  }, [lascia]);
   useEffect(() => () => killBack(pushed.current), []);
 
   // carica (o ricarica dopo una scrittura); se qualche riga ha nuovi arrivi fa partire il furgoncino.
@@ -107,12 +135,13 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
       setMod(m); setErr(null);
       const W = mondoRef.current;
       if (W) {
-        // i moli si leggono PRIMA di aggiornare: un laboratorio che chiude l'ultima riga sparisce dal mondo
-        const docks = arrivi.map((x) => W.dockOf(x.lab));
+        // il molo e' quello del capannone dopo l'aggiornamento (i posti scorrono quando un laboratorio sparisce); quello
+        // letto prima serve solo se il capannone non c'e' piu' (ha chiuso la sua ultima riga)
+        const prima = arrivi.map((x) => W.dockOf(x.lab));
         W.aggiorna(m.dati);
         arrivi.forEach((x, i) => {
-          W.arrivo(docks[i], x.riga, x.n, m.codeToPila.get(x.riga.codice) ?? '');
-          toast(`${x.n} ${x.riga.model} ${x.riga.label.toLowerCase()} in magazzino.`);
+          W.arrivo(W.dockOf(x.lab) ?? prima[i], x.riga, x.n, m.codeToPila.get(x.riga.codice) ?? '');
+          toast(`${x.n} ${x.riga.model} ${x.riga.label.replace(/ \(WIP\)$/, '').toLowerCase()} in magazzino.`);
         });
       }
     } catch (e) { if (mia === ultima.current) setErr((e as Error).message); }
@@ -172,12 +201,17 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
     const model = s.model;
     const id = requestAnimationFrame(() => {
       const b = sbodyRef.current, el = b?.querySelector<HTMLElement>(`[data-model="${model}"]`);
-      if (b && el) b.scrollTop = el.offsetTop - 8;
+      if (b && el) b.scrollTop += el.getBoundingClientRect().top - b.getBoundingClientRect().top - 8;
     });
     return () => cancelAnimationFrame(id);
   }, [sheetId]);
   useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape' && sheetRef.current) chiudi(); };
+    const k = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !sheetRef.current) return;
+      // Esc dentro un campo resta al campo (svuotarlo, chiudere un menu): il pannello si chiude da fuori dei campi
+      if ((e.target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+      chiudi();
+    };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [chiudi]);
@@ -230,7 +264,7 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
             {d == null ? <span className="v-chip nodate">senza data</span>
               : d < 0 ? <span className={'v-chip ' + (-d >= 30 ? 'verylate' : 'late')}>{-d === 1 ? '1 giorno di ritardo' : `${-d} giorni di ritardo`}</span>
                 : <span className="v-chip ok">consegna {dataBreve(raw.data_consegna)}</span>}
-            <span className="v-chip stock">in magazzino {stockDi(r.codice)}</span>
+            <span className={'v-chip stock' + (stockDi(r.codice) < 0 ? ' neg' : '')}>in magazzino {stockDi(r.codice)}</span>
           </div>
         </div>
         <button className={'v-btn sm' + (aperta ? ' ghost' : '')} type="button" aria-expanded={aperta} onClick={() => setOpenLine(aperta ? null : r.id)}>{aperta ? 'Chiudi' : 'Arrivate'}</button>
@@ -270,7 +304,9 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
             </div>
           )}
           <p className="v-note">Nel capannone c'è un carrello per variante: la pila è quanto deve ancora arrivare (una lastra = 2 pezzi). Gli arrivi si registrano con la stessa riga di Ordini.</p>
-          <button className="v-btn alt wide" type="button" onClick={() => apri({ t: 'add', step: 2, lab: lab.key })}>+ Ordina a {lab.nome}</button>
+          {lab.forn
+            ? <button className="v-btn alt wide" type="button" onClick={() => apri({ t: 'add', step: 2, lab: lab.key })}>+ Ordina a {lab.nome}</button>
+            : <button className="v-btn alt wide" type="button" onClick={() => apri({ t: 'add', step: 1 })}>+ Ordina borse</button>}
         </>,
       };
     }
@@ -355,23 +391,31 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
           <button type="button" className="v-tile" onClick={() => setSheet({ ...s, step: 2, lab: undefined })}><span className="v-hic">…</span><b>Un altro</b><small>lo scegli nel modulo</small></button>
         </div>}
         {s.step === 2 && <>
-          <button className="v-back" type="button" onClick={() => setSheet({ ...s, step: 1 })}>‹ {L ? `Cambia fornitore (${L.nome})` : 'Cambia fornitore'}</button>
+          <button className="v-back" type="button" onClick={() => setSheet({ ...s, step: 1 })}>‹ {L?.forn ? `Cambia fornitore (${L.nome})` : 'Cambia fornitore'}</button>
           <div className="v-tiles">{MODEL_ORDER.map((m) => { const p = [...mod.pile.values()].filter((x) => x.model === m).sort((a, b) => b.stock - a.stock)[0]; return p ? <button key={m} type="button" className="v-tile" onClick={() => setSheet({ ...s, step: 3, model: m })}><Thumb model={m} look={p.look} /><b>{m}</b></button> : null; })}</div>
         </>}
-        {s.step === 3 && s.model && <>
-          <button className="v-back" type="button" onClick={() => setSheet({ ...s, step: 2 })}>‹ Cambia modello ({s.model})</button>
-          <div className="v-vgrid">{[...mod.pile.values()].filter((p) => p.model === s.model).sort((a, b) => b.stock - a.stock).flatMap((p) => p.codes.map((c) => (
-            <button key={c.codice} type="button" className="v-vt" onClick={() => setSheet({ ...s, step: 4, pila: p.key, codice: c.codice })}>
-              <Thumb model={p.model} look={p.look} /><small>{p.codes.length > 1 ? conTaglia(c.variant) : p.name}</small><small>in magazzino {c.stock}</small>
-            </button>
-          )))}</div>
-        </>}
+        {s.step === 3 && s.model && (() => {
+          // due codici con la stessa figura e lo stesso nome (MILITARY_GREEN / GREEN_MILITARY): si distinguono dal codice
+          const voci = [...mod.pile.values()].filter((p) => p.model === s.model).sort((a, b) => b.stock - a.stock)
+            .flatMap((p) => p.codes.map((c) => ({ p, c, nome: p.codes.length > 1 ? conTaglia(c.variant) : p.name })));
+          const quanti = new Map<string, number>();
+          voci.forEach((v) => quanti.set(v.nome, (quanti.get(v.nome) ?? 0) + 1));
+          return <>
+            <button className="v-back" type="button" onClick={() => setSheet({ ...s, step: 2 })}>‹ Cambia modello ({s.model})</button>
+            <div className="v-vgrid">{voci.map(({ p, c, nome }) => (
+              <button key={c.codice} type="button" className="v-vt" onClick={() => { formSporco.current = false; setSheet({ ...s, step: 4, pila: p.key, codice: c.codice }); }}>
+                <Thumb model={p.model} look={p.look} /><small>{nome}</small>{(quanti.get(nome) ?? 0) > 1 && <small className="cod">{c.codice}</small>}<small>in magazzino {c.stock}</small>
+              </button>
+            ))}</div>
+          </>;
+        })()}
         {s.step === 4 && P && <>
-          <button className="v-back" type="button" onClick={() => setSheet({ ...s, step: 3 })}>‹ Cambia colore</button>
-          <div className="v-qty"><Thumb model={P.model} look={P.look} /><div><b>{P.model} · {C ? conTaglia(C.variant) : P.name}</b><small>{L ? `da ${L.nome}` : 'scegli il fornitore qui sotto'} · in magazzino {stockDi(s.codice)}</small></div></div>
-          <div className="v-form">
+          <button className="v-back" type="button" onClick={() => { if (lascia()) setSheet({ ...s, step: 3 }); }}>‹ Cambia colore</button>
+          <div className="v-qty"><Thumb model={P.model} look={P.look} /><div><b>{P.model} · {C ? conTaglia(C.variant) : P.name}</b><small>{s.codice} · {L?.forn ? `da ${L.nome}` : 'scegli il fornitore qui sotto'} · in magazzino {stockDi(s.codice)}</small></div></div>
+          <div className="v-form" onInput={() => { formSporco.current = true; }} onClick={() => { formSporco.current = true; }}>
             <SupplierOrderForm pin={pin} chi={chi} initialForn={L?.forn ?? undefined} initialCodice={s.codice}
               onDone={() => {
+                formSporco.current = false;
                 load(); toast('Ordine salvato: lo trovi anche in Ordini.');
                 // il modulo chiama onDone 700 ms dopo il salvataggio: se nel frattempo il pannello e' stato chiuso resta chiuso
                 if (sheetRef.current?.t === 'add') { sheetRef.current = { t: 'labs' }; setSheet({ t: 'labs' }); }
@@ -382,7 +426,6 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
     };
   }
   const P = pannello();
-  const cambiaChi = () => { if (!setChi) return; const i = PEOPLE.indexOf(chi as (typeof PEOPLE)[number]); setChi(PEOPLE[(i + 1) % PEOPLE.length]); };
 
   return (
     <div className="vil" data-furgoni={furgoni}>
@@ -390,13 +433,19 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
       <div ref={labelsRef} className="v-labels" />
       <header ref={hudRef} className="v-hud">
         <button className="v-pill v-home" type="button" onClick={onBack} aria-label="Torna alla Home"><Icon name="home" size={20} /></button>
-        <div className="v-pill"><span className="ic" style={{ background: '#e57f9d' }}><Icon name="bag" size={16} /></span><span><b>{tot.stock}</b><small>in magazzino</small></span></div>
-        <div className="v-pill"><span className="ic" style={{ background: '#c8643f' }}><Icon name="store" size={16} /></span><span><b>{tot.prep}</b><small>in preparazione</small></span></div>
-        <div className="v-pill"><span className="ic" style={{ background: '#e0a32f' }}><Icon name="inbox" size={16} /></span><span><b>{tot.open}</b><small>righe aperte</small></span></div>
-        <button className="v-pill v-chi" type="button" onClick={cambiaChi} disabled={!setChi} aria-label={`Scrive ${personaName(chi)}${setChi ? ', tocca per cambiare' : ''}`}>
-          <span><small>scrive</small><b>{personaName(chi)}</b></span>
-        </button>
-        <button className="v-qb" type="button" onClick={() => apri({ t: 'help' })} aria-label="Legenda: come leggere il villaggio">?</button>
+        {!noGl && <>
+          <div className="v-pill"><span className="ic" style={{ background: '#e57f9d' }}><Icon name="bag" size={16} /></span><span><b>{tot.stock}</b><small>in magazzino</small></span></div>
+          <div className="v-pill"><span className="ic" style={{ background: '#c8643f' }}><Icon name="store" size={16} /></span><span><b>{tot.prep}</b><small>in preparazione</small></span></div>
+          <div className="v-pill"><span className="ic" style={{ background: '#e0a32f' }}><Icon name="inbox" size={16} /></span><span><b>{tot.open}</b><small>righe aperte</small></span></div>
+          {setChi
+            ? <label className="v-pill v-chi"><span><small>scrive</small>
+                <select value={chi} onChange={(e) => setChi(e.target.value)} aria-label="Chi scrive">
+                  {(PEOPLE as readonly string[]).includes(chi) ? null : <option value={chi}>{personaName(chi)}</option>}
+                  {PEOPLE.map((p) => <option key={p} value={p}>{personaName(p)}</option>)}
+                </select></span></label>
+            : <div className="v-pill v-chi" aria-label={`Scrive ${personaName(chi)}`}><span><small>scrive</small><b>{personaName(chi)}</b></span></div>}
+          <button className="v-qb" type="button" onClick={() => apri({ t: 'help' })} aria-label="Legenda: come leggere il villaggio">?</button>
+        </>}
       </header>
       {noGl && (
         <div className="v-err">Questo dispositivo non riesce a disegnare il villaggio (manca il WebGL). Ordini e Magazzino funzionano come sempre.
@@ -404,11 +453,11 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
       )}
       {err && !noGl && <div className="v-err">Non riesco a leggere i dati: {err}. <button type="button" onClick={load}>Riprova</button></div>}
       {!mod && !err && !noGl && <div className="v-loading">Carico il villaggio…</div>}
-      <nav className="v-bar" aria-label="Azioni del villaggio">
+      {!noGl && <nav className="v-bar" aria-label="Azioni del villaggio">
         <button className="v-rb" type="button" onClick={() => apri({ t: 'wh' })}><span className="c"><Icon name="box" size={28} /></span><span className="t">Magazzino</span></button>
         <button className="v-rb big" type="button" onClick={() => apri({ t: 'add', step: 1 })} aria-label="Ordina borse"><span className="c"><Icon name="plus" size={36} /></span><span className="t">Ordina</span></button>
         <button className="v-rb" type="button" onClick={() => apri({ t: 'labs' })}><span className="c"><Icon name="store" size={28} /></span><span className="t">Laboratori</span></button>
-      </nav>
+      </nav>}
       {toastMsg && <div className="v-toast" role="status"><b>Ginni</b>{toastMsg}</div>}
       {say.length > 0 && say[0] !== '__fatto__' && <Dialogo key={say[0]} testo={say[0]} onAvanti={() => setSay((x) => x.slice(1))} />}
       <section className={'v-sheet' + (P ? ' open ' + P.cls : '')} role="dialog" aria-modal="false" aria-labelledby="v-sheet-title" aria-hidden={!P}>

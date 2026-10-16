@@ -6,9 +6,13 @@ import { fetchVillaggioEnabled } from './lib/api.ts'
 // Villaggio a se' (16-10): l'app da installare sul telefono di Ginni, /amimi-app/villaggio/ con il suo manifest.
 // Stesso codice della scheda #villaggio dell'app intera: stesse letture, stesse scritture (moduli di Ordini), stesso
 // interruttore app_flags.villaggio_enabled. Chi scrive: la persona scelta su questo dispositivo (amimi_chi, condiviso con
-// l'app intera), altrimenti Ginevra.
+// l'app intera nello stesso browser; su iPhone l'app installata ha uno storage suo), altrimenti Ginevra. Si cambia dal menu
+// "scrive" nell'HUD.
 const leggiChi = () => { try { return localStorage.getItem('amimi_chi') || 'Ginevra' } catch { return 'Ginevra' } }
-const home = () => { window.location.href = import.meta.env.BASE_URL }
+// Installata, l'app ha scope /amimi-app/villaggio/ (diverso dall'app intera, cosi' le due non si contendono i link, per
+// esempio la push di ce-guard): la Home apre l'app intera in una finestra sua invece di caricarla qui dentro.
+const installata = () => window.matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true
+const home = () => { if (installata()) window.open(import.meta.env.BASE_URL, '_blank', 'noopener'); else window.location.href = import.meta.env.BASE_URL }
 
 export default function VillaggioApp() {
   const [acceso, setAcceso] = useState<boolean | null>(null)

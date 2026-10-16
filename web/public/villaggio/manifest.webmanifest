@@ -4,7 +4,7 @@
   "short_name": "Villaggio",
   "description": "Ordini e magazzino di Amimì come un'isola 3D",
   "start_url": "/amimi-app/villaggio/",
-  "scope": "/amimi-app/",
+  "scope": "/amimi-app/villaggio/",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#7fd0d2",

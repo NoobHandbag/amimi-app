@@ -157,16 +157,23 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   finitura = materiale, colore) e' in `web/src/lib/villaggio/catalogo.ts`, funzioni pure con alias per i nomi
   incoerenti fra ordini e magazzino; le righe d'ordine prendono l'aspetto dalla variante di magazzino con lo stesso
   codice. Ingressi: tile per Ale e Ginevra, "Tutte le azioni", `#villaggio`, bottone "Apri il Villaggio" nel
-  Cruscotto, e app a se' `/amimi-app/villaggio/` (secondo ingresso Vite `web/villaggio/index.html`, manifest
-  proprio con `id` distinto e `scope` `/amimi-app/`, da installare sul telefono di Ginni; logica in
-  `VillaggioApp.tsx`). Chi scrive: la pillola "scrive" nell'HUD, che cambia persona e la salva in `amimi_chi`
-  (condiviso con l'app intera; senza scelta, Ginevra). Interruttore `app_flags.villaggio_enabled` (migr 0162, vista
-  `v_villaggio_settings`, SCHEMA.md sez. 17): a flag spento nessun ingresso si vede. Il costo: three.js e i font
-  del villaggio (`@fontsource/fredoka`, `@fontsource/nunito`, niente Google Fonts) stanno nel chunk del Villaggio;
-  `ErrorBoundary` intorno al chunk (un import fallito dopo un deploy mostra "Ricarica", non l'app bianca) e
-  messaggio dedicato se manca il WebGL. I pannelli usano `lib/backnav` (il gesto indietro chiude il pannello) ed
-  Esc; il modulo dell'ordine non si chiude toccando la mappa. Il modello dai dati (`costruisci`, `arriviFra`) e' in
-  `catalogo.ts`, provato da `tests/villaggio_catalogo.mjs`; e2e in `web/e2e/villaggio.spec.ts` (progetto finto).
+  Cruscotto, e app a se' `/amimi-app/villaggio/` (secondo ingresso Vite `web/villaggio/index.html`, logica in
+  `VillaggioApp.tsx`, manifest proprio con `id` e `scope` `/amimi-app/villaggio/`: non si contende i link con l'app
+  intera; installata, la Home apre l'app intera in una finestra sua). Chi scrive: nell'app intera si sceglie in Home e
+  nel Villaggio si vede soltanto; nell'app a se' c'e' il menu "scrive" nell'HUD, salvato in `amimi_chi` (stesso valore
+  dell'app intera nello stesso browser; su iPhone l'app installata ha uno storage suo; senza scelta, Ginevra).
+  Interruttore `app_flags.villaggio_enabled` (migr 0162, vista `v_villaggio_settings`, SCHEMA.md sez. 17): a flag
+  spento nessun ingresso si vede. three.js e i font del villaggio (`@fontsource/fredoka`, `@fontsource/nunito`, niente
+  Google Fonts) stanno nel chunk del Villaggio; `ErrorBoundary` intorno al chunk (un import fallito dopo un deploy
+  mostra "Ricarica", non l'app bianca) e messaggio dedicato se manca il WebGL. Pannelli: `lib/backnav` (il gesto
+  indietro chiude il pannello) ed Esc fuori dai campi; il modulo dell'ordine gia' toccato chiede conferma prima di
+  chiudersi (X, Esc, indietro, etichette, barra) e la mappa al passo 4 non lo chiude. Il ritardo usa SOLO
+  `data_consegna` (in Ordini "Consegna prevista" mostra `data_consegna_display`, che senza data ricade sull'ultimo
+  arrivo: le due viste possono dire cose diverse sulla stessa riga). Costo del disegno: le mesh ferme (staccionata,
+  sassi, decori, gusci di magazzino e capannoni) sono fuse per materiale, le ombre si ricalcolano solo quando si muove
+  un oggetto, e dopo 20 s senza tocchi ne' dati nuovi l'isola va a riposo e non ridisegna piu'. Il modello dai dati
+  (`costruisci`, `arriviFra`) e' in `catalogo.ts`, provato da `tests/villaggio_catalogo.mjs`; e2e in
+  `web/e2e/villaggio.spec.ts` (progetto finto, sempre con il percorso della spec).
 
 ## 8. Sicurezza (posture rilassata, per scelta)
 anon = sola lettura (grant revocati in scrittura; TRUNCATE revocato dal 06-07, migr 0037). Scritture

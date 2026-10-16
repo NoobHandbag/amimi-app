@@ -23,8 +23,8 @@
 .v-pill b { display: block; font-weight: 600; font-size: 16px; line-height: 1.05; font-variant-numeric: tabular-nums; }
 .v-pill small { display: block; font: 700 10.5px/1.1 var(--v-fb); color: var(--v-ink2); }
 .v-home { pointer-events: auto; cursor: pointer; padding: 0; width: 42px; height: 42px; justify-content: center; font-size: 24px; font-weight: 600; line-height: 1; }
-.v-chi { pointer-events: auto; cursor: pointer; padding: 3px 13px; font: inherit; }
-.v-chi:disabled { cursor: default; }
+.v-chi { padding: 3px 13px; }
+.v-chi select { pointer-events: auto; cursor: pointer; display: block; border: 0; padding: 0; margin: 0; background: transparent; color: var(--v-ink); font: 600 16px/1.05 var(--v-fd); max-width: 9em; }
 .v-qb { pointer-events: auto; margin-left: auto; flex: none; width: 42px; height: 42px; border-radius: 50%; border: 3px solid var(--v-paper); background: var(--v-cream); box-shadow: 0 3px 0 rgba(74, 53, 35, .22); font: 700 20px var(--v-fd); color: var(--v-pinkd); cursor: pointer; }
 
 .v-bar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; justify-content: center; align-items: flex-end; gap: 26px;
@@ -100,6 +100,7 @@
 .v-chip.nodate { background: var(--v-cream2); color: var(--v-ink2); }
 .v-chip.ok { background: #dff3d0; color: #2f6b14; }
 .v-chip.stock { background: #fde3ec; color: #8c2d4c; }
+.v-chip.stock.neg { background: #ffd8d3; color: #9e2a1d; }
 .v-btn { font: 600 15px var(--v-fd); border: 0; border-radius: 15px; padding: 10px 15px; background: var(--v-leaf); color: var(--v-paper); box-shadow: 0 4px 0 var(--v-leafd); cursor: pointer; white-space: nowrap; }
 .v-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--v-leafd); }
 .v-btn.sm { padding: 8px 12px; font-size: 14px; }
@@ -120,6 +121,7 @@
 .v-vt b { font-weight: 600; font-size: 18px; line-height: 1.05; font-variant-numeric: tabular-nums; }
 .v-vt small { font: 700 10.5px/1.2 var(--v-fb); color: var(--v-ink2); }
 .v-vt .inc { color: #2a6d8f; }
+.v-vt .cod { font: 700 9.5px/1.15 ui-monospace, monospace; color: var(--v-pinkd); word-break: break-all; }
 .v-vt.low { box-shadow: 0 0 0 3px var(--v-amber); }
 .v-vt.out { background: #f7efe0; }
 .v-vt.out .v-th { opacity: .45; }

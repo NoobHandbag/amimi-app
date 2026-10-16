@@ -97,7 +97,7 @@ export default function App() {
         {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} onMateriali={matEnabled ? () => go('materiali') : undefined} />}
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}
         {tab === 'villaggio' && (vilEnabled
-          ? <ErrorBoundary titolo="Villaggio" onBack={() => go('home')}><Suspense fallback={<div className="screen"><div className="card muted center">Carico il villaggio…</div></div>}><Villaggio pin={pin} chi={chi} setChi={setChi} onBack={() => go('home')} /></Suspense></ErrorBoundary>
+          ? <ErrorBoundary titolo="Villaggio" onBack={() => go('home')}><Suspense fallback={<div className="screen"><div className="card muted center">Carico il villaggio…</div></div>}><Villaggio pin={pin} chi={chi} onBack={() => go('home')} /></Suspense></ErrorBoundary>
           : <div className="screen"><header><h1>Villaggio</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">{vilEnabled === null ? 'Carico…' : 'Sezione non attiva (flag villaggio_enabled spento).'}</div></div>)}
       </main>
       {/* nav ridotta (decisione call 06-07, item 13+28): Registra e Ordini vivono nella Home
