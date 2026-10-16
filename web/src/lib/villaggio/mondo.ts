@@ -1030,7 +1030,8 @@ export class Mondo {
     this.whA.el.innerHTML = 'Magazzino<small>' + dati.totale + ' pezzi</small>'; this.whA.w = 0;
     this.shadowDirty = true; this.sveglia();
   }
-  /** Punto di carico del capannone (copia), da leggere PRIMA di aggiorna(): un arrivo che chiude l'ultima riga toglie il capannone. */
+  /** Punto di carico del capannone (copia), null se il capannone non c'e'. La pagina lo legge dopo aggiorna() (i posti
+   *  scorrono quando un laboratorio sparisce) e tiene quello letto prima solo per un capannone sparito. */
   dockOf(labKey: string): THREE.Vector3 | null { const L = this.labs.get(labKey); return L ? L.dock.clone() : null; }
   /** Il furgoncino va dal punto di carico al magazzino con `n` pezzi della variante; alla fine la pila fa un saltello. */
   arrivo(dock: THREE.Vector3 | null, riga: RigaMondo, n: number, pilaKey: string) {
@@ -1178,7 +1179,9 @@ export class Mondo {
     }
   }
   /** Fonde le mesh FERME di `root` che hanno lo stesso materiale e le stesse ombre in una mesh sola: la scena da ferma
-   *  faceva ~1.250 draw call, quasi tutte scatole e sfere di decori, staccionata, sassi e capannoni. `salta`: i
+   *  faceva ~1.250 draw call; fondendo decori, staccionata, erba, sassi e gusci di magazzino e capannoni scendono a
+   *  ~930 (misurato il 16-10 sui dati veri). Il resto sono le pile del magazzino e i carrelli, saltati di proposito
+   *  perche' si ricostruiscono a ogni aggiorna() e saltano all'arrivo. `salta`: i
    *  sottogruppi che si muovono o si ricostruiscono (personaggi, fumo, carrelli, pile). Il raycast funziona uguale: la
    *  mesh fusa e' figlia di `root`, che porta userData.kind. */
   private impasta(root: THREE.Object3D, salta: THREE.Object3D[] = []) {
@@ -1208,9 +1211,15 @@ export class Mondo {
       root.add(mesh);
       for (const m of ms) { tolte.add(m.geometry); m.parent?.remove(m); }
     }
-    // gruppi rimasti vuoti (alberi, cespugli) e geometrie che nessuna mesh usa piu'
+    // gruppi rimasti vuoti (alberi, cespugli), senza scendere nelle parti saltate (i loro slot vuoti servono), e
+    // geometrie che nessuna mesh usa piu'
     const vuoti: THREE.Object3D[] = [];
-    root.traverse((o) => { if (o !== root && !fuori.has(o) && !(o as THREE.Mesh).isMesh && !o.children.length) vuoti.push(o); });
+    const cerca = (o: THREE.Object3D) => {
+      if (fuori.has(o)) return;
+      if (!(o as THREE.Mesh).isMesh && !o.children.length) vuoti.push(o);
+      for (const c of o.children) cerca(c);
+    };
+    for (const c of root.children) cerca(c);
     vuoti.forEach((o) => o.parent?.remove(o));
     root.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) tolte.delete(m.geometry); });
     tolte.forEach((g) => { if (!SHARED.has(g) && !this.keep.has(g)) g.dispose(); });

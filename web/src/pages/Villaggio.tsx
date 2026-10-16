@@ -30,6 +30,7 @@ type Sheet = { t: 'lab'; key: string } | { t: 'wh'; model?: Modello } | { t: 'la
 
 const INTRO_KEY = 'amimi_villaggio_intro';
 const dataBreve = (iso: string | null | undefined) => (iso ? new Date(String(iso).slice(0, 10) + 'T12:00:00').toLocaleDateString('it-IT', { day: 'numeric', month: 'long' }) : '');
+const righe = (n: number) => (n === 1 ? '1 riga' : n + ' righe');
 const css = (c: number) => ({ '--c': '#' + c.toString(16).padStart(6, '0') }) as CSSProperties;
 
 function Thumb({ model, look }: { model: Modello; look: Look }) {
@@ -94,15 +95,31 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
     return true;
   }, []);
   // Pannelli e gesto "indietro" di Android (lib/backnav): aprire da chiuso spinge una voce, chiudere la consuma. La X
-  // chiude subito e lascia in volo un history.back(): `backPendenti` lo riconosce, cosi' non chiude un pannello
-  // riaperto nel frattempo (la voce che resta in pila e' equivalente: chiude il pannello aperto).
+  // chiude subito e lascia in volo un history.back() (`backPendenti`). Quello che si chiede mentre il back e' in volo
+  // (riaprire un pannello, la Home) aspetta che arrivi (`dopoIlBack`): Chromium fissa la meta del back quando lo si
+  // chiama, quindi una voce spinta prima verrebbe scavalcata (pannello senza "indietro", X che esce dal Villaggio) e
+  // la voce del cambio di scheda di App verrebbe consumata (rimbalzo nel Villaggio).
   const pushed = useRef<(() => void)[]>([]);
   const backPendenti = useRef(0);
+  const dopoIlBack = useRef<(() => void) | null>(null);
+  const attesa = useRef(0);
+  const quandoArrivaIlBack = useCallback((f: () => void) => {
+    if (backPendenti.current === 0) { f(); return; }
+    dopoIlBack.current = f;
+    // rete: se il popstate non arrivasse (history toccata da altri), dopo 2 s si procede comunque
+    window.clearTimeout(attesa.current);
+    attesa.current = window.setTimeout(() => { backPendenti.current = 0; const g = dopoIlBack.current; dopoIlBack.current = null; g?.(); }, 2000);
+  }, []);
+  const apriRef = useRef<(s: Exclude<Sheet, null>) => void>(() => {});
   const apri = useCallback((s: Exclude<Sheet, null>) => {
+    if (backPendenti.current > 0) { quandoArrivaIlBack(() => apriRef.current(s)); return; }
     if (sheetRef.current && !lascia()) return;
     if (!sheetRef.current) {
       const fn = () => {
-        if (backPendenti.current > 0) { backPendenti.current--; if (!sheetRef.current) setSheet(null); return; }
+        if (backPendenti.current > 0) {
+          if (--backPendenti.current === 0) { window.clearTimeout(attesa.current); const g = dopoIlBack.current; dopoIlBack.current = null; g?.(); }
+          return;
+        }
         if (!lascia()) { pushed.current.push(fn); pushBack(fn); return; }
         sheetRef.current = null; setSheet(null);
       };
@@ -111,7 +128,8 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
     formSporco.current = false;
     sheetRef.current = s;
     setSheet(s);
-  }, [lascia]);
+  }, [lascia, quandoArrivaIlBack]);
+  useEffect(() => { apriRef.current = apri; }, [apri]);
   const chiudi = useCallback(() => {
     if (!sheetRef.current || !lascia()) return;
     sheetRef.current = null; setSheet(null);
@@ -119,6 +137,7 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
     popBack(() => { subito = true; });
     if (!subito) backPendenti.current++;
   }, [lascia]);
+  useEffect(() => () => window.clearTimeout(attesa.current), []);
   useEffect(() => () => killBack(pushed.current), []);
 
   // carica (o ricarica dopo una scrittura); se qualche riga ha nuovi arrivi fa partire il furgoncino.
@@ -289,7 +308,7 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
       return {
         cls: 'labsheet',
         head: <><span className="v-hic" style={css(labColor(labIndex(lab.key)))}><Icon name="store" size={22} /></span>
-          <div className="v-ht"><h2 id="v-sheet-title">{lab.nome} sta preparando</h2><p>{lab.tipo ? `Laboratorio ${lab.tipo} · ` : ''}{lab.raw.length + lab.extra.length} righe, {lab.pz} pz da arrivare</p></div></>,
+          <div className="v-ht"><h2 id="v-sheet-title">{lab.nome} sta preparando</h2><p>{lab.tipo ? `Laboratorio ${lab.tipo} · ` : ''}{righe(lab.raw.length + lab.extra.length)}, {lab.pz} pz da arrivare</p></div></>,
         body: <>
           {[...gruppi.entries()].map(([m, xs]) => (
             <div key={m}>
@@ -347,7 +366,7 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
           return (
             <button key={L.key} type="button" className="v-lrow" onClick={() => apri({ t: 'lab', key: L.key })}>
               <span className="v-hic" style={css(labColor(i))}>{L.nome.slice(0, 1)}</span>
-              <span><b>{L.nome}</b><small>{L.tipo ? L.tipo + ' · ' : ''}{L.raw.length + L.extra.length} righe · {L.pz} pz</small></span>
+              <span><b>{L.nome}</b><small>{L.tipo ? L.tipo + ' · ' : ''}{righe(L.raw.length + L.extra.length)} · {L.pz} pz</small></span>
               {late ? <span className="v-chip verylate">{late} in ritardo</span> : <span className="v-chip nodate">{L.raw.length + L.extra.length} in corso</span>}
             </button>
           );
@@ -415,10 +434,11 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
           <div className="v-form" onInput={() => { formSporco.current = true; }} onClick={() => { formSporco.current = true; }}>
             <SupplierOrderForm pin={pin} chi={chi} initialForn={L?.forn ?? undefined} initialCodice={s.codice}
               onDone={() => {
-                formSporco.current = false;
                 load(); toast('Ordine salvato: lo trovi anche in Ordini.');
-                // il modulo chiama onDone 700 ms dopo il salvataggio: se nel frattempo il pannello e' stato chiuso resta chiuso
-                if (sheetRef.current?.t === 'add') { sheetRef.current = { t: 'labs' }; setSheet({ t: 'labs' }); }
+                // il modulo chiama onDone 700 ms dopo il salvataggio: conta solo se si e' ancora su QUESTO passo 4
+                if (sheetRef.current !== s) return;
+                formSporco.current = false;
+                sheetRef.current = { t: 'labs' }; setSheet({ t: 'labs' });
               }} />
           </div>
         </>}
@@ -432,7 +452,7 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
       <div ref={sceneRef} className="v-scene" />
       <div ref={labelsRef} className="v-labels" />
       <header ref={hudRef} className="v-hud">
-        <button className="v-pill v-home" type="button" onClick={onBack} aria-label="Torna alla Home"><Icon name="home" size={20} /></button>
+        <button className="v-pill v-home" type="button" onClick={() => { if (lascia()) quandoArrivaIlBack(onBack); }} aria-label="Torna alla Home"><Icon name="home" size={20} /></button>
         {!noGl && <>
           <div className="v-pill"><span className="ic" style={{ background: '#e57f9d' }}><Icon name="bag" size={16} /></span><span><b>{tot.stock}</b><small>in magazzino</small></span></div>
           <div className="v-pill"><span className="ic" style={{ background: '#c8643f' }}><Icon name="store" size={16} /></span><span><b>{tot.prep}</b><small>in preparazione</small></span></div>

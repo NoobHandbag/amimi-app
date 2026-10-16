@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 
 // Villaggio (16-10): ordini e magazzino come isola 3D (three.js). Come negozi-*.spec.ts NON tocca Supabase: ogni richiesta
 // a *.supabase.co e' intercettata e riceve dati finti (v_ordini_arrivo, v_inventory, products, l'interruttore
@@ -31,7 +31,7 @@ type Riga = {
 };
 type Inv = { codice: string; item: string | null; variant: string | null; giacenza_attuale: number; [k: string]: unknown };
 
-const riga = (id: string, gruppo: string, fornitore: string, codice: string, item: string, variant: string, ordinati: number | null, arrivati: number, consegna: string | null, extra: Partial<Riga> = {}): Riga => {
+const riga = (id: string, gruppo: string, fornitore: string | null, codice: string, item: string, variant: string, ordinati: number | null, arrivati: number, consegna: string | null, extra: Partial<Riga> = {}): Riga => {
   const mancano = (ordinati ?? 0) - arrivati;
   return {
     id, gruppo, codice, item, variant, fornitore, qty_ordered: ordinati, qty_arrived: arrivati, mancano, completo: arrivati >= (ordinati ?? 0) && !extra.wip,
@@ -45,7 +45,12 @@ const inv = (codice: string, item: string, variant: string, giacenza: number): I
 
 const FRANCESCO = 'Francesco (pelle)';
 const SARTE = 'Sarte Milano (tessuto)';
-const ID = { lea: '00000000-0000-0000-0000-0000000000a1', sophie: '00000000-0000-0000-0000-0000000000a2', zebra: '00000000-0000-0000-0000-0000000000a3', nina: '00000000-0000-0000-0000-0000000000b1' };
+const ID = {
+  lea: '00000000-0000-0000-0000-0000000000a1', sophie: '00000000-0000-0000-0000-0000000000a2', zebra: '00000000-0000-0000-0000-0000000000a3', nina: '00000000-0000-0000-0000-0000000000b1',
+  wip: '00000000-0000-0000-0000-0000000000b2', anonimo: '00000000-0000-0000-0000-0000000000d1',
+};
+/** La conferma della pagina prima di perdere un ordine toccato al passo 4. */
+const LASCI = "Lasci l'ordine a metà? Quello che hai scritto si perde.";
 
 // Francesco: Lea cocco nero 4/10 IN RITARDO, Sophie camoscio 0/5, Lea zebrata 3/3 (completa: non e' "in preparazione").
 // Sarte Milano: Nina righe rosse 0/8 senza data. Solo modelli che il villaggio sa disegnare e nessuna riga WIP: i casi
@@ -96,11 +101,13 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
   registro.set(page, posts);
   const errori: string[] = [];
   const dialoghi: string[] = [];
+  // ogni window.confirm e' contato in `dialoghi` e risposto qui: OK di default, Annulla con conferme.accetta = false
+  const conferme = { accetta: true };
   const letture = { ordini: 0, magazzino: 0, flag: 0 };
   const flag: Flag = opts.flag ?? 'true';
   page.on('console', (m) => { if (m.type() === 'error') errori.push(m.text()); });
   page.on('pageerror', (e) => errori.push('pageerror: ' + e.message));
-  page.on('dialog', (d) => { dialoghi.push(d.message()); void d.accept(); });
+  page.on('dialog', (d) => { dialoghi.push(d.message()); void (conferme.accetta ? d.accept() : d.dismiss()); });
   await page.addInitScript(({ chi, intro }) => {
     if (chi) localStorage.setItem('amimi_chi', chi);
     if (!intro) localStorage.setItem('amimi_villaggio_intro', '1');
@@ -159,7 +166,7 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
     return json([]);
   });
   await page.goto(path);
-  return { posts, errori, dialoghi, letture };
+  return { posts, errori, dialoghi, letture, conferme };
 }
 /** Il contatore di partenze del furgoncino: la radice .vil lo espone, +1 a ogni onPartenza del Mondo. */
 const furgoni = async (page: Page) => Number(await page.locator('.vil').getAttribute('data-furgoni'));
@@ -181,17 +188,45 @@ const avvisoCon = (page: Page, testo: string) => expect.poll(async () => (await 
 const etichettaLab = (page: Page, nome: string) => page.locator('.v-labels > .v-lbl:not(.v-mini):not(.v-zone):not(.v-wh)', { hasText: nome });
 const fienile = (page: Page) => page.locator('.v-labels > .v-lbl.v-wh');
 
-/** Il canvas ha un contesto WebGL vero e il renderer l'ha portato alle misure della finestra. */
+/** Il canvas ha un contesto WebGL vero e il renderer l'ha portato alle misure della finestra. Pixel ratio come Mondo:
+ *  il devicePixelRatio con un tetto di 1,5 in verticale (larghezza/altezza < 0,8) e di 2 altrimenti. */
 async function canvasVivo(page: Page) {
   const c = page.locator('canvas.v-canvas');
-  await expect(c).toHaveCount(1);
-  const m = await c.evaluate((el: HTMLCanvasElement) => ({
-    w: el.width, h: el.height, vw: window.innerWidth, vh: window.innerHeight, dpr: Math.min(window.devicePixelRatio || 1, 2),
-    gl: !!(el.getContext('webgl2') || el.getContext('webgl')),
-  }));
+  await expect(c).toHaveCount(1, ATTESA);   // dal Cruscotto c'e' anche il chunk del Villaggio da scaricare
+  const m = await c.evaluate((el: HTMLCanvasElement) => {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    return { w: el.width, h: el.height, vw, vh, dpr: Math.min(window.devicePixelRatio || 1, vw / vh < 0.8 ? 1.5 : 2), gl: !!(el.getContext('webgl2') || el.getContext('webgl')) };
+  });
   expect(m.gl).toBe(true);
   expect(m.w).toBe(Math.floor(m.vw * m.dpr));
   expect(m.h).toBe(Math.floor(m.vh * m.dpr));
+}
+
+const passo = (page: Page) => page.locator('.v-sheet.open .v-shead p');
+const tile = (page: Page, nome: string) => page.locator('.v-sheet.open .v-tile', { has: page.locator('b', { hasText: new RegExp(`^${nome}$`) }) });
+/** Dal + della barra fino al passo 4 (Francesco, Lea, Cocco nero): il modulo vero di Ordini con la riga precompilata. */
+async function alPasso4(page: Page) {
+  await page.getByRole('button', { name: 'Ordina borse', exact: true }).click();
+  await expect(passo(page)).toHaveText('A chi lo ordini?');
+  await tile(page, 'Francesco').click();
+  await tile(page, 'Lea').click();
+  await page.locator('.v-sheet.open .v-vt', { hasText: 'Cocco nero' }).click();
+  await expect(passo(page)).toHaveText('Quantità e prezzo');
+  const qty = page.locator('.v-sheet.open .v-form .cartrow[data-cart-codice="LEA_BAG_COCCO_BLACK"] input.qbox');
+  await expect(qty).toBeVisible(ATTESA);
+  return qty;
+}
+const barra = (page: Page, testo: string) => page.locator('.v-bar .v-rb', { hasText: testo });
+/** La X del pannello e subito Laboratori nella barra, nello stesso task: l'history.back() della X e' ancora in volo. */
+const xESubitoLaboratori = (page: Page) => page.evaluate(() => {
+  document.querySelector<HTMLButtonElement>('.v-sheet .v-x')!.click();
+  [...document.querySelectorAll<HTMLButtonElement>('.v-bar .v-rb')].find((b) => (b.textContent ?? '').includes('Laboratori'))!.click();
+});
+/** Il passo 4 e' ancora li', con il numero scritto. */
+async function ancoraAlPasso4(page: Page, qty: Locator, valore: string) {
+  await expect(page.locator('.v-sheet.open h2')).toHaveText('Ordina borse');
+  await expect(passo(page)).toHaveText('Quantità e prezzo');
+  await expect(qty).toHaveValue(valore);
 }
 
 test.describe('scheda #villaggio dell\'app intera', () => {
@@ -218,6 +253,11 @@ test.describe('scheda #villaggio dell\'app intera', () => {
     await expect(page.locator('.v-labels .v-zone', { hasText: /^Sophie/ })).toHaveText(/^Sophie0 pz$/);
     await expect(page.locator('.v-loading')).toHaveCount(0);
     await expect(page.locator('.v-err')).toHaveCount(0);
+    // nell'app intera "scrive" e' solo da leggere (la persona si cambia dalla Home): niente menu; senza scelta e' Ale
+    await expect(page.locator('.v-hud .v-chi')).toHaveCount(1);
+    await expect(page.locator('.v-hud .v-chi select')).toHaveCount(0);
+    await expect(page.locator('.v-hud .v-chi b')).toHaveText('Ale');
+    await expect(page.locator('.v-hud .v-chi')).toHaveAttribute('aria-label', 'Scrive Ale');
     await page.waitForTimeout(800);   // qualche frame di rendering, e le miniature
     expect(r.errori).toEqual([]);
     expect(r.posts).toEqual([]);      // aprire il Villaggio non scrive niente
@@ -236,6 +276,13 @@ test.describe('scheda #villaggio dell\'app intera', () => {
     await expect(sheet.locator('.v-row').first()).toContainText('10 giorni di ritardo');
     await expect(sheet.locator('.v-row', { hasText: 'Camoscio marrone' })).toContainText('0 di 5 arrivate');
     await expect(sheet.locator('.v-gh b')).toHaveText(['Lea', 'Sophie']);
+    // giacenza negativa (Sophie camoscio -1) in rosso: classe neg sul chip; la giacenza positiva no
+    const chipSophie = sheet.locator('.v-row', { hasText: 'Camoscio marrone' }).locator('.v-chip.stock');
+    await expect(chipSophie).toHaveText('in magazzino -1');
+    await expect(chipSophie).toHaveClass(/(^|\s)neg(\s|$)/);
+    const chipLea = sheet.locator('.v-row', { hasText: 'Cocco nero' }).locator('.v-chip.stock');
+    await expect(chipLea).toHaveText('in magazzino 7');
+    await expect(chipLea).not.toHaveClass(/(^|\s)neg(\s|$)/);
     // l'etichetta del capannone si nasconde mentre il pannello del laboratorio e' aperto
     await expect(etichettaLab(page, 'Francesco')).toBeHidden();
 
@@ -261,6 +308,9 @@ test.describe('scheda #villaggio dell\'app intera', () => {
     const prima = attesi(dati);
     const r = await apri(page, '#villaggio', dati, { chi: 'Ginevra' });
     await hud(page, prima);
+    // la pillola dell'app intera mostra la persona di amimi_chi (Ginevra -> Ginni), senza menu
+    await expect(page.locator('.v-hud .v-chi b')).toHaveText('Ginni');
+    await expect(page.locator('.v-hud .v-chi select')).toHaveCount(0);
     const lettureIniziali = r.letture.ordini;
     await etichettaLab(page, 'Francesco').click();
     const lea = page.locator('.v-sheet.open .v-row', { hasText: 'Cocco nero' });
@@ -398,6 +448,9 @@ test.describe('scheda #villaggio dell\'app intera', () => {
     await expect(passo).toHaveText('Che materiale e colore?');
     await sheet.locator('.v-vt', { hasText: 'Cocco nero' }).click();
     await expect(passo).toHaveText('Quantità e prezzo');
+    // il passo 4 dice sempre il codice scelto, e "da <laboratorio>" perche' Francesco e' un fornitore vero
+    await expect(sheet.locator('.v-qty b')).toHaveText('Lea · Cocco nero');
+    await expect(sheet.locator('.v-qty small')).toHaveText('LEA_BAG_COCCO_BLACK · da Francesco · in magazzino 7');
     // il modulo vero di Ordini, gia' sul fornitore e sulla variante scelti con le figure
     const form = sheet.locator('.v-form');
     await expect(form.locator('.ordtop .chip.on')).toHaveText(`${FRANCESCO} ✕`, ATTESA);
@@ -439,6 +492,398 @@ test.describe('scheda #villaggio dell\'app intera', () => {
     await expect(page.locator('.hello h1')).toContainText('Ciao');
     expect(r.errori).toEqual([]);
   });
+
+  test('Home dell\'HUD col passo 4 toccato chiede; Annulla tiene il modulo e il numero, OK va alla Home; non toccato esce senza chiedere', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    const qty = await alPasso4(page);
+    await qty.fill('5');
+    r.conferme.accetta = false;
+    await page.locator('.v-hud .v-home').click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(1);
+    expect(r.dialoghi[0]).toBe(LASCI);
+    await page.waitForTimeout(400);
+    await ancoraAlPasso4(page, qty, '5');
+    await expect(page.locator('.vil')).toHaveCount(1);
+    r.conferme.accetta = true;
+    await page.locator('.v-hud .v-home').click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(2);
+    expect(r.dialoghi[1]).toBe(LASCI);
+    await expect(page.locator('.vil')).toHaveCount(0, ATTESA);
+    await expect(page.locator('.hello h1')).toContainText('Ciao');
+    // passo 4 non toccato: la Home esce subito, senza conferma (l'URL e' ancora #villaggio: si ricarica li')
+    await page.reload();
+    await hud(page, attesi(dati));
+    await alPasso4(page);
+    await page.locator('.v-hud .v-home').click();
+    await expect(page.locator('.vil')).toHaveCount(0, ATTESA);
+    await expect(page.locator('.hello h1')).toContainText('Ciao');
+    expect(r.dialoghi).toHaveLength(2);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('X e Home nello stesso istante: si arriva alla Home e il Villaggio non torna', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    await barra(page, 'Magazzino').click();
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Magazzino');
+    // i due tocchi nello stesso task: l'history.back() della X e' ancora in volo quando si chiede la Home
+    await page.evaluate(() => {
+      document.querySelector<HTMLButtonElement>('.v-sheet .v-x')!.click();
+      document.querySelector<HTMLButtonElement>('.v-hud .v-home')!.click();
+    });
+    await expect(page.locator('.vil')).toHaveCount(0, ATTESA);
+    await expect(page.locator('.hello h1')).toContainText('Ciao');
+    // il popstate della X e' arrivato e non ha consumato la voce del cambio di scheda di App: niente rimbalzo nel Villaggio
+    await page.waitForTimeout(2000);
+    await expect(page.locator('.vil')).toHaveCount(0);
+    await expect(page.locator('.hello h1')).toContainText('Ciao');
+    // quella voce c'e' ancora: "indietro" dalla Home riporta al Villaggio (come da ogni scheda), senza pannelli aperti
+    await page.goBack();
+    await expect(page.locator('.vil')).toHaveCount(1, ATTESA);
+    await hud(page, attesi(dati));
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0);
+    expect(r.dialoghi).toEqual([]);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('ordine salvato, poi prima di onDone (700 ms) "Cambia colore" e un altro colore: il passo 4 nuovo resta, ricarica e avviso arrivano lo stesso', async ({ page }) => {
+    const dati = datiBase();
+    const prima = attesi(dati);
+    const r = await apri(page, '#villaggio', dati, { chi: 'Ginevra' });
+    await hud(page, prima);
+    const qty = await alPasso4(page);
+    await qty.fill('5');
+    await expect(qty).toHaveValue('5');
+    await expect(page.locator('.v-sheet.open .v-form').getByRole('button', { name: 'Salva ordine (1)' })).toBeEnabled();
+    // tutto dentro la pagina: Salva; appena compare il toast di Ordini (SupplierOrderForm ha appena messo il timer di
+    // 700 ms per onDone) "Cambia colore" (la conferma la accetta il gestore dei dialoghi) e, al passo 3, l'altro colore
+    const esito = await page.evaluate(async () => {
+      const salvato = new Promise<number>((ok) => {
+        const mo = new MutationObserver(() => {
+          if ([...document.querySelectorAll('#toast-host .toast')].some((el) => (el.textContent ?? '').includes('Ordine salvato ·'))) { mo.disconnect(); ok(performance.now()); }
+        });
+        mo.observe(document.body, { subtree: true, childList: true });
+      });
+      [...document.querySelectorAll<HTMLButtonElement>('.v-sheet.open .v-form button')].find((b) => (b.textContent ?? '').includes('Salva ordine'))!.click();
+      const t0 = await salvato;
+      document.querySelector<HTMLButtonElement>('.v-sheet.open .v-back')!.click();   // ‹ Cambia colore
+      let altro: HTMLButtonElement | undefined;
+      for (let i = 0; i < 400 && !altro; i++) {
+        if (document.querySelector('.v-sheet.open .v-shead p')?.textContent === 'Che materiale e colore?') {
+          altro = [...document.querySelectorAll<HTMLButtonElement>('.v-sheet.open .v-vt')].find((b) => !(b.textContent ?? '').includes('Cocco nero'));
+        }
+        if (!altro) await new Promise((ok) => setTimeout(ok, 0));
+      }
+      altro?.click();
+      return { altro: !!altro, ms: Math.round(performance.now() - t0) };
+    });
+    test.info().annotations.push({ type: 'tempi', description: `dal toast di Ordini al secondo colore: ${esito.ms} ms` });
+    expect(esito.altro, JSON.stringify(esito)).toBe(true);
+    // il timer di onDone parte nello stesso giro del toast: sotto i 700 ms il secondo colore e' arrivato prima (misurati ~100 ms)
+    expect(esito.ms, 'il secondo colore deve arrivare prima di onDone').toBeLessThan(700);
+    expect(r.dialoghi).toEqual([LASCI]);
+    await expect(passo(page)).toHaveText('Quantità e prezzo');
+    await expect(page.locator('.v-sheet.open .v-qty small')).toHaveText('LEA_BAG_PONY_ZEBRA · da Francesco · in magazzino 3');
+    // onDone arriva lo stesso: ricarica (l'HUD vede l'ordine) e Ginni conferma
+    await avvisoCon(page, 'Ordine salvato · 1 borse');
+    await avvisoCon(page, 'GinniOrdine salvato: lo trovi anche in Ordini.');
+    const dopo = attesi(dati);
+    expect(dopo).toEqual({ stock: prima.stock, prep: prima.prep + 5, open: prima.open + 1 });
+    await hud(page, dopo);
+    await page.waitForTimeout(800);
+    // ...ma il pannello resta sul passo 4 nuovo, non passa ai Laboratori
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Ordina borse');
+    await expect(passo(page)).toHaveText('Quantità e prezzo');
+    await expect(page.locator('.v-sheet.open .v-form .cartrow[data-cart-codice="LEA_BAG_PONY_ZEBRA"]')).toBeVisible(ATTESA);
+    expect(r.posts).toHaveLength(1);
+    expect(r.posts[0].body.action).toBe('order_multi');
+    expect(r.posts[0].body.chi).toBe('Ginevra');
+    expect(r.posts[0].body.payload).toMatchObject({ fornitore: FRANCESCO, righe: [{ codice: 'LEA_BAG_COCCO_BLACK', qty_ordered: 5 }] });
+    // il passo 4 nuovo non e' toccato: la X chiude senza chiedere
+    await page.locator('.v-sheet .v-x').click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    expect(r.dialoghi).toEqual([LASCI]);
+    expect(r.posts).toHaveLength(1);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('passo 4 toccato: Esc nel campo resta al campo; Esc fuori chiede, Annulla tiene il modulo e il numero, OK lo chiude', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    const qty = await alPasso4(page);
+    await qty.fill('5');
+    // Esc dentro il campo e' del campo: niente conferma, il pannello resta
+    await qty.press('Escape');
+    await page.waitForTimeout(400);
+    expect(r.dialoghi).toEqual([]);
+    await ancoraAlPasso4(page, qty, '5');
+    // fuori dai campi Esc vuole chiudere: prima chiede
+    await qty.blur();
+    r.conferme.accetta = false;
+    await page.keyboard.press('Escape');
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(1);
+    expect(r.dialoghi[0]).toBe(LASCI);
+    await ancoraAlPasso4(page, qty, '5');
+    r.conferme.accetta = true;
+    await page.keyboard.press('Escape');
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(2);
+    expect(r.dialoghi[1]).toBe(LASCI);
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0);
+    await expect(page.locator('.vil')).toHaveCount(1);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('passo 4 toccato: etichetta della mappa, barra in basso, X e "Cambia colore" chiedono; la mappa non chiude; OK porta ai Laboratori', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    const qty = await alPasso4(page);
+    await qty.fill('5');
+    r.conferme.accetta = false;
+    // l'etichetta di un capannone: aprirebbe il suo pannello
+    await etichettaLab(page, 'Francesco').click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(1);
+    await ancoraAlPasso4(page, qty, '5');
+    // la barra in basso: aprirebbe i Laboratori
+    await page.locator('.v-bar .v-rb', { hasText: 'Laboratori' }).click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(2);
+    await ancoraAlPasso4(page, qty, '5');
+    // la X del pannello
+    await page.locator('.v-sheet .v-x').click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(3);
+    await ancoraAlPasso4(page, qty, '5');
+    // "Cambia colore" torna al passo 3 e il modulo si perderebbe
+    await page.locator('.v-sheet.open .v-back', { hasText: 'Cambia colore' }).click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(4);
+    await ancoraAlPasso4(page, qty, '5');
+    // un tocco sull'isola al passo 4 non chiude e non chiede
+    await page.locator('canvas.v-canvas').click({ position: { x: 200, y: 360 } });
+    await page.waitForTimeout(500);
+    expect(r.dialoghi).toHaveLength(4);
+    await ancoraAlPasso4(page, qty, '5');
+    expect(r.dialoghi.every((m) => m === LASCI), r.dialoghi.join(' | ')).toBe(true);
+    // con OK la barra in basso apre davvero i Laboratori
+    r.conferme.accetta = true;
+    await page.locator('.v-bar .v-rb', { hasText: 'Laboratori' }).click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(5);
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Laboratori');
+    await expect(page.locator('.v-sheet.open .v-form')).toHaveCount(0);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('passo 4 toccato: "indietro" di Android chiede; Annulla tiene il modulo, OK lo chiude e si resta nel Villaggio', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    const qty = await alPasso4(page);
+    await qty.fill('5');
+    r.conferme.accetta = false;
+    await page.goBack();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(1);
+    expect(r.dialoghi[0]).toBe(LASCI);
+    await ancoraAlPasso4(page, qty, '5');
+    // annullato, la voce di history e' stata rimessa: un altro "indietro" chiede di nuovo
+    r.conferme.accetta = true;
+    await page.goBack();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(2);
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    await expect(page.locator('.vil')).toHaveCount(1);
+    await expect(page).toHaveURL(/#villaggio$/);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('passo 4 non toccato: Esc, X e "indietro" chiudono senza chiedere', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    await alPasso4(page);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    await alPasso4(page);
+    await page.locator('.v-sheet .v-x').click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    await alPasso4(page);
+    await page.goBack();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    await page.waitForTimeout(400);
+    expect(r.dialoghi).toEqual([]);
+    await expect(page.locator('.vil')).toHaveCount(1);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('X e subito Laboratori: il pannello riaperto resta aperto quando arriva il popstate della X', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    const titolo = page.locator('.v-sheet.open h2');
+    // i due tocchi nello stesso task: l'history.back() della X e' ancora in volo quando i Laboratori si aprono
+    await barra(page, 'Magazzino').click();
+    await expect(titolo).toHaveText('Magazzino');
+    await xESubitoLaboratori(page);
+    await page.waitForTimeout(1500);
+    await expect(titolo).toHaveText('Laboratori');
+    await expect(page.locator('.vil')).toHaveCount(1);
+    // lo stesso con i tocchi di Playwright, uno dopo l'altro: qui l'indietro della X arriva prima del secondo tocco, e
+    // la voce di history rimasta chiude il pannello riaperto senza uscire dal Villaggio
+    await page.reload();
+    await hud(page, attesi(dati));
+    await barra(page, 'Magazzino').click();
+    await expect(titolo).toHaveText('Magazzino');
+    await page.locator('.v-sheet .v-x').click();
+    await barra(page, 'Laboratori').click();
+    await page.waitForTimeout(1500);
+    await expect(titolo).toHaveText('Laboratori');
+    await page.goBack();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    await expect(page.locator('.vil')).toHaveCount(1);
+    await expect(page).toHaveURL(/#villaggio$/);
+    expect(r.dialoghi).toEqual([]);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  // Se la X e il nuovo pannello arrivano prima che l'history.back() della X sia eseguito, Chromium torna comunque alla voce
+  // di PRIMA del primo pannello (il bersaglio e' fissato quando si chiama back()). Per questo apri() aspetta quel popstate
+  // (quandoArrivaIlBack) e solo dopo spinge la voce del pannello riaperto: "indietro" e la sua X lo chiudono e si resta
+  // nel Villaggio, invece di uscire (about:blank qui, la pagina precedente o la chiusura della PWA sul telefono).
+  test('X e subito Laboratori nello stesso istante: "indietro" e la X chiudono il pannello riaperto e si resta nel Villaggio', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    const titolo = page.locator('.v-sheet.open h2');
+    await barra(page, 'Magazzino').click();
+    await expect(titolo).toHaveText('Magazzino');
+    await xESubitoLaboratori(page);
+    await page.waitForTimeout(1500);
+    await expect(titolo).toHaveText('Laboratori');
+    // "indietro" chiude il pannello riaperto, la pagina resta il Villaggio
+    await page.goBack();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    await expect(page.locator('.vil')).toHaveCount(1);
+    await expect(page).toHaveURL(/#villaggio$/);
+    // di nuovo, e questa volta la X: chiude e basta
+    await barra(page, 'Magazzino').click();
+    await expect(titolo).toHaveText('Magazzino');
+    await xESubitoLaboratori(page);
+    await page.waitForTimeout(1500);
+    await expect(titolo).toHaveText('Laboratori');
+    await page.locator('.v-sheet .v-x').click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    await page.waitForTimeout(1000);
+    await expect(page).toHaveURL(/#villaggio$/);
+    await expect(page.locator('.vil')).toHaveCount(1);
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0);
+    expect(r.dialoghi).toEqual([]);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('passo 3: due codici con lo stesso nome (MILITARY_GREEN / GREEN_MILITARY) mostrano il codice, gli altri no; il passo 4 dice il codice scelto', async ({ page }) => {
+    const dati = datiBase();
+    // stessa figura e stesso nome italiano ("Verde militare"): una pila sola con due codici
+    dati.magazzino.push(inv('LEA_BAG_MILITARY_GREEN', 'LEA BAG', 'MILITARY GREEN', 2), inv('LEA_BAG_GREEN_MILITARY', 'LEA BAG', 'GREEN MILITARY', 1));
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    await page.getByRole('button', { name: 'Ordina borse', exact: true }).click();
+    await tile(page, 'Francesco').click();
+    await tile(page, 'Lea').click();
+    await expect(passo(page)).toHaveText('Che materiale e colore?');
+    const voci = page.locator('.v-sheet.open .v-vt');
+    await expect(voci).toHaveCount(4);   // cocco nero, pony zebra e i due verde militare
+    await expect(page.locator('.v-sheet.open .v-vt', { hasText: 'Verde militare' })).toHaveCount(2);
+    expect((await page.locator('.v-sheet.open .v-vt .cod').allTextContents()).sort()).toEqual(['LEA_BAG_GREEN_MILITARY', 'LEA_BAG_MILITARY_GREEN']);
+    // le figure con un nome solo non mostrano il codice
+    await expect(page.locator('.v-sheet.open .v-vt:not(:has(.cod))')).toHaveCount(2);
+    await expect(page.locator('.v-sheet.open .v-vt', { hasText: 'Cocco nero' }).locator('.cod')).toHaveCount(0);
+    const verde = page.locator('.v-sheet.open .v-vt', { hasText: 'LEA_BAG_GREEN_MILITARY' });
+    await expect(verde).toContainText('in magazzino 1');
+    await verde.click();
+    await expect(passo(page)).toHaveText('Quantità e prezzo');
+    await expect(page.locator('.v-sheet.open .v-qty b')).toHaveText('Lea · Verde militare');
+    await expect(page.locator('.v-sheet.open .v-qty small')).toHaveText('LEA_BAG_GREEN_MILITARY · da Francesco · in magazzino 1');
+    await expect(page.locator('.v-sheet.open .v-form .cartrow[data-cart-codice="LEA_BAG_GREEN_MILITARY"]')).toBeVisible(ATTESA);
+    // non toccato: la X chiude senza chiedere
+    await page.locator('.v-sheet .v-x').click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    expect(r.dialoghi).toEqual([]);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('un laboratorio senza fornitore offre "+ Ordina borse" dal passo 1, e senza fornitore il passo 4 non dice "da ..."', async ({ page }) => {
+    const dati = datiBase();
+    dati.ordini.push(riga(ID.anonimo, 'G3', null, 'LEA_BAG_PONY_ZEBRA', 'LEA BAG', 'PONY ZEBRA', 2, 0, traGiorni(5)));
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    await expect(etichettaLab(page, 'Senza fornitore')).toHaveText('Senza fornitore2 pz in preparazione');
+    await etichettaLab(page, 'Senza fornitore').click();
+    const sheet = page.locator('.v-sheet.open');
+    await expect(sheet.locator('h2')).toHaveText('Senza fornitore sta preparando');
+    await expect(sheet.getByRole('button', { name: /^\+ Ordina a / })).toHaveCount(0);
+    await sheet.getByRole('button', { name: '+ Ordina borse', exact: true }).click();
+    await expect(sheet.locator('h2')).toHaveText('Ordina borse');
+    await expect(passo(page)).toHaveText('A chi lo ordini?');
+    // al passo 1 solo i fornitori veri, piu' "Un altro"
+    await expect(sheet.locator('.v-tile b')).toHaveText(['Francesco', 'Sarte Milano', 'Un altro']);
+    await tile(page, 'Un altro').click();
+    await expect(sheet.locator('.v-back')).toHaveText('‹ Cambia fornitore');
+    await tile(page, 'Lea').click();
+    await sheet.locator('.v-vt', { hasText: 'Cocco nero' }).click();
+    await expect(passo(page)).toHaveText('Quantità e prezzo');
+    await expect(sheet.locator('.v-qty small')).toHaveText('LEA_BAG_COCCO_BLACK · scegli il fornitore qui sotto · in magazzino 7');
+    await page.locator('.v-sheet .v-x').click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    expect(r.dialoghi).toEqual([]);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  // Sarte Milano nei dati base ha una riga sola (Nina righe rosse): intestazione del pannello e riga dei Laboratori al
+  // singolare (righe(n) di Villaggio.tsx); Francesco, con due righe, resta al plurale.
+  test('un laboratorio con una sola riga aperta dice "1 riga", non "1 righe"', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    await etichettaLab(page, 'Sarte Milano').click();
+    await expect(page.locator('.v-sheet.open .v-shead p')).toHaveText('Laboratorio tessuto · 1 riga, 8 pz da arrivare');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    await barra(page, 'Laboratori').click();
+    await expect(page.locator('.v-sheet.open .v-lrow', { hasText: 'Sarte Milano' }).locator('small')).toHaveText('tessuto · 1 riga · 8 pz');
+    await expect(page.locator('.v-sheet.open .v-lrow', { hasText: 'Francesco' }).locator('small')).toHaveText('pelle · 2 righe · 11 pz');
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('dopo 20 s senza tocchi il mondo riposa: le etichette restano cliccabili e un arrivo fa partire il furgoncino', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    await page.waitForTimeout(22000);   // RIPOSO_MS = 20 s
+    await expect(etichettaLab(page, 'Francesco')).toBeVisible();
+    await etichettaLab(page, 'Francesco').click();
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Francesco sta preparando');
+    const lea = page.locator('.v-sheet.open .v-row', { hasText: 'Cocco nero' });
+    await lea.getByRole('button', { name: 'Arrivate' }).click();
+    await lea.locator('.ds-recv input.num').fill('1');
+    await lea.locator('.ds-segna').click();
+    await expect.poll(() => r.posts.length, ATTESA).toBe(1);
+    expect(r.posts[0].body).toMatchObject({ action: 'arrival_set', payload: { order_id: ID.lea, qty: 5, attesi: 4 } });
+    await hud(page, attesi(dati));
+    await expect.poll(() => furgoni(page), ATTESA).toBe(1);
+    await canvasVivo(page);
+    expect(r.errori).toEqual([]);
+  });
 });
 
 test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
@@ -453,9 +898,10 @@ test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
     const man = await page.request.get(new URL(href!, page.url()).toString());
     expect(man.ok()).toBe(true);
     const mj = await man.json();
-    // id proprio (si installa accanto all'app intera, che non ha id: vale il suo start_url /amimi-app/) e scope /amimi-app/,
-    // cosi' la Home dell'HUD che porta a /amimi-app/ resta dentro l'app installata invece di aprire il browser
-    expect(mj).toMatchObject({ id: '/amimi-app/villaggio/', start_url: '/amimi-app/villaggio/', scope: '/amimi-app/', display: 'standalone' });
+    // id proprio (si installa accanto all'app intera, che non ha id: vale il suo start_url /amimi-app/) e scope stretto
+    // /amimi-app/villaggio/: le due app installate non si contendono i link (per esempio la push di ce-guard); installata,
+    // la Home dell'HUD apre l'app intera in una finestra sua (test "installata" qui sotto)
+    expect(mj).toMatchObject({ id: '/amimi-app/villaggio/', start_url: '/amimi-app/villaggio/', scope: '/amimi-app/villaggio/', display: 'standalone' });
     const principale = await (await page.request.get(new URL('/amimi-app/manifest.webmanifest', page.url()).toString())).json();
     expect(principale.id ?? principale.start_url).not.toBe(mj.id);
     for (const ic of mj.icons as { src: string }[]) expect((await page.request.get(new URL(ic.src, page.url()).toString())).ok()).toBe(true);
@@ -485,22 +931,76 @@ test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
     expect(r.errori).toEqual([]);
   });
 
-  test('la pillola "scrive" cambia chi firma (Ginni, Ale, Benny), resta sul telefono e l\'arrival_set porta la persona scelta', async ({ page }) => {
+  test('non installata, passo 4 toccato: Home chiede; Annulla tiene il modulo, OK porta a /amimi-app/; non toccato esce senza chiedere', async ({ page }) => {
     const dati = datiBase();
     const r = await apri(page, 'villaggio/', dati);
     await hud(page, attesi(dati));
-    const chiPill = page.locator('.v-hud .v-chi');
-    await expect(chiPill).toBeEnabled();
-    await expect(chiPill.locator('b')).toHaveText('Ginni');
-    await expect(chiPill).toHaveAttribute('aria-label', 'Scrive Ginni, tocca per cambiare');
-    // il giro e' quello delle persone dell'app (Ale, Bene, Ginevra): dopo Ginevra si riparte da Ale
-    await chiPill.click();
-    await expect(chiPill.locator('b')).toHaveText('Ale');
-    await chiPill.click();
-    await expect(chiPill.locator('b')).toHaveText('Benny');
-    await expect(chiPill).toHaveAttribute('aria-label', 'Scrive Benny, tocca per cambiare');
-    // la scelta vale per il dispositivo (amimi_chi, la stessa chiave dell'app intera)
-    expect(await page.evaluate(() => localStorage.getItem('amimi_chi'))).toBe('Bene');
+    const qty = await alPasso4(page);
+    await qty.fill('5');
+    r.conferme.accetta = false;
+    await page.locator('.v-hud .v-home').click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(1);
+    expect(r.dialoghi[0]).toBe(LASCI);
+    await page.waitForTimeout(400);
+    await ancoraAlPasso4(page, qty, '5');
+    await expect(page).toHaveURL(/\/amimi-app\/villaggio\/$/);
+    r.conferme.accetta = true;
+    await page.locator('.v-hud .v-home').click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(2);
+    expect(r.dialoghi[1]).toBe(LASCI);
+    await expect(page).toHaveURL(/\/amimi-app\/$/, ATTESA);
+    await expect(page.locator('.hello h1')).toContainText('Ciao');
+    // di nuovo nel Villaggio a se', passo 4 non toccato: la Home porta all'app intera senza conferma
+    await page.goto('villaggio/');
+    await hud(page, attesi(dati));
+    await alPasso4(page);
+    await page.locator('.v-hud .v-home').click();
+    await expect(page).toHaveURL(/\/amimi-app\/$/, ATTESA);
+    await expect(page.locator('.hello h1')).toContainText('Ciao');
+    expect(r.dialoghi).toHaveLength(2);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('installata (display-mode standalone): Home apre l\'app intera in una finestra sua e il Villaggio resta', async ({ page }) => {
+    await page.addInitScript(() => {
+      const orig = window.matchMedia.bind(window);
+      window.matchMedia = ((q: string) => (/display-mode:\s*standalone/.test(q)
+        ? { matches: true, media: q, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false }
+        : orig(q))) as typeof window.matchMedia;
+      const aperte: unknown[][] = [];
+      (window as unknown as { __aperte: unknown[][] }).__aperte = aperte;
+      window.open = ((...a: unknown[]) => { aperte.push(a); return null; }) as typeof window.open;
+    });
+    const dati = datiBase();
+    const r = await apri(page, 'villaggio/', dati);
+    await hud(page, attesi(dati));
+    await page.locator('.v-hud .v-home').click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __aperte: unknown[][] }).__aperte), ATTESA).toEqual([['/amimi-app/', '_blank', 'noopener']]);
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL(/\/amimi-app\/villaggio\/$/);
+    await expect(page.locator('.vil')).toHaveCount(1);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('il menu "scrive" sceglie chi firma (Ginni, Ale, Benny), resta sul telefono e l\'arrival_set porta la persona scelta', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, 'villaggio/', dati);
+    await hud(page, attesi(dati));
+    const menu = page.locator('.v-hud .v-chi select');
+    await expect(menu).toHaveCount(1);
+    await expect(menu).toBeEnabled();
+    await expect(page.getByRole('combobox', { name: 'Chi scrive' })).toHaveCount(1);
+    // le persone dell'app (Ale, Bene, Ginevra) coi loro nomi; senza scelta su questo telefono scrive Ginevra
+    await expect(menu.locator('option')).toHaveText(['Ale', 'Benny', 'Ginni']);
+    await expect(menu).toHaveValue('Ginevra');
+    // un giro completo: ogni scelta vale subito per il dispositivo (amimi_chi, la stessa chiave dell'app intera)
+    for (const [valore, nome] of [['Ale', 'Ale'], ['Bene', 'Benny'], ['Ginevra', 'Ginni'], ['Bene', 'Benny']] as const) {
+      await menu.selectOption(valore);
+      await expect(menu).toHaveValue(valore);
+      await expect(menu.locator('option:checked')).toHaveText(nome);
+      expect(await page.evaluate(() => localStorage.getItem('amimi_chi'))).toBe(valore);
+    }
     expect(r.posts).toEqual([]);   // cambiare persona non scrive niente
 
     await etichettaLab(page, 'Francesco').click();
@@ -515,8 +1015,29 @@ test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
 
     // riaperta, l'app a se' ricorda chi scrive
     await page.reload();
-    await expect(page.locator('.v-hud .v-chi b')).toHaveText('Benny', ATTESA);
+    await expect(page.locator('.v-hud .v-chi select')).toHaveValue('Bene', ATTESA);
+    await expect(page.locator('.v-hud .v-chi select option:checked')).toHaveText('Benny');
     expect(r.posts).toHaveLength(1);
+    expect(r.errori).toEqual([]);
+  });
+});
+
+test.describe('telefono con schermo denso (deviceScaleFactor 3)', () => {
+  test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 });
+
+  test('in verticale il canvas ha il tetto 1,5x; girato in orizzontale torna al tetto 2x', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, 'villaggio/', dati);
+    await hud(page, attesi(dati));
+    const c = page.locator('canvas.v-canvas');
+    await canvasVivo(page);
+    expect(await c.evaluate((el: HTMLCanvasElement) => [el.width, el.height, window.devicePixelRatio])).toEqual([585, 1266, 3]);   // 390 x 844 a 1,5
+    // rotazione: resize() ricalcola il verticale e il tetto del pixel ratio
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect.poll(() => c.evaluate((el: HTMLCanvasElement) => [el.width, el.height]), ATTESA).toEqual([1688, 780]);   // 844 x 390 a 2
+    await canvasVivo(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => c.evaluate((el: HTMLCanvasElement) => [el.width, el.height]), ATTESA).toEqual([585, 1266]);
     expect(r.errori).toEqual([]);
   });
 });
@@ -600,7 +1121,7 @@ test.describe('casi limite dei dati', () => {
   function datiLimite() {
     const d = datiBase();
     d.ordini.push(
-      riga('00000000-0000-0000-0000-0000000000b2', 'G2', SARTE, 'NINA_BAG_CHECKS_BLUE', 'NINA BAG', 'CHECKS BLUE', 0, 0, traGiorni(15), { wip: true, completo: false, costo_unitario: null }),
+      riga(ID.wip, 'G2', SARTE, 'NINA_BAG_CHECKS_BLUE', 'NINA BAG', 'CHECKS BLUE', 0, 0, traGiorni(15), { wip: true, completo: false, costo_unitario: null }),
       riga('00000000-0000-0000-0000-0000000000b3', 'G2', SARTE, 'PORTACHIAVI_ROSSO', 'PORTACHIAVI', 'ROSSO', 6, 2, traGiorni(15)),
     );
     d.magazzino.push(inv('PORTACHIAVI_ROSSO', 'PORTACHIAVI', 'ROSSO', 4));
@@ -639,6 +1160,28 @@ test.describe('casi limite dei dati', () => {
     await expect(head).toContainText('3 righe');
     expect.soft(Number(/(\d+) pz da arrivare/.exec((await head.textContent()) ?? '')?.[1]), 'intestazione del pannello di Sarte Milano').toBe(mancanoSarte);
   });
+
+  test('arrivo su una riga WIP: la riga dice "(WIP)", il fumetto di Ginni no', async ({ page }) => {
+    const dati = datiLimite();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    await etichettaLab(page, 'Sarte Milano').click();
+    const wip = page.locator('.v-sheet.open .v-row', { hasText: '(WIP)' });
+    await expect(wip.locator('.v-rt > b')).toHaveText('Quadretti blu (WIP)');
+    await wip.getByRole('button', { name: 'Arrivate' }).click();
+    await expect(wip.locator('.ds-recv input.num')).toHaveValue('');   // WIP: quantita' da definire, niente precompilato
+    await wip.locator('.ds-recv input.num').fill('3');
+    await wip.locator('.ds-segna').click();
+    await expect.poll(() => r.posts.length, ATTESA).toBe(1);
+    expect(r.posts[0].body).toMatchObject({ action: 'arrival_set', payload: { order_id: ID.wip, qty: 3, attesi: 0 } });
+    expect(r.dialoghi).toEqual([]);   // nessun ordinato da superare: nessuna conferma
+    await hud(page, attesi(dati));
+    await avvisoCon(page, 'Arrivo salvato · +3 (totale 3)');
+    await avvisoCon(page, 'Ginni3 Nina quadretti blu in magazzino.');
+    expect((await avvisi(page)).filter((t) => /wip/i.test(t))).toEqual([]);
+    await expect.poll(() => furgoni(page), ATTESA).toBe(1);
+    expect(r.errori).toEqual([]);
+  });
 });
 
 test.describe('robustezza: il Villaggio non porta giu\' l\'app', () => {
@@ -666,5 +1209,13 @@ test.describe('robustezza: il Villaggio non porta giu\' l\'app', () => {
     const r = await apri(page, 'villaggio/', datiBase());
     await page.waitForTimeout(1500);
     await expect(page.locator('.v-hud .v-home'), `errori: ${r.errori.join(' | ')}`).toBeVisible();
+    await expect(page.locator('.v-err')).toContainText('manca il WebGL');
+    await expect(page.locator('.v-err').getByRole('button', { name: 'Torna alla Home' })).toBeVisible();
+    // senza mondo niente numeri a zero, menu "scrive", legenda ne' barra in basso: solo la Home e il messaggio
+    await expect(page.locator('.v-hud .v-pill:not(.v-home)')).toHaveCount(0);
+    await expect(page.locator('.v-hud .v-chi, .v-hud .v-qb')).toHaveCount(0);
+    await expect(page.locator('.v-bar')).toHaveCount(0);
+    await expect(page.locator('.v-loading')).toHaveCount(0);
+    expect(r.posts).toEqual([]);
   });
 });

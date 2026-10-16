@@ -149,8 +149,9 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
 - **Villaggio** (`Villaggio.tsx`, tab `villaggio`, dal 16-10) — ordini e magazzino come isola 3D in stile
   FarmVille/Animal Crossing (three.js 0.169.0, chunk caricato solo aprendo la scheda). Una vista parallela, non un
   secondo modo di scrivere: LEGGE `v_ordini_arrivo` e `v_inventory` con `fetchOrdiniGruppi`/`fetchInventory`,
-  SCRIVE solo con i componenti di Ordini (`ArrivoRow` per gli arrivi, con le sue conferme; `SupplierOrderForm` per
-  l'ordine nuovo). Magazzino: una pedana per modello e una pila per variante (1 lastra = 2 pezzi, anello giallo
+  SCRIVE solo con i componenti di Ordini, cosi' come sono: `ArrivoRow` (arrivi con le sue conferme, `arrival_set`, e
+  "Elimina riga", `order_delete`) e `SupplierOrderForm` (ordine nuovo, `order_multi`, con la sua "Compila" AI se
+  `ai_compila_enabled` e il login del team). Magazzino: una pedana per modello e una pila per variante (1 lastra = 2 pezzi, anello giallo
   1-2 pezzi, borsa trasparente = finita ma in arrivo, anello rosso = negativa). Laboratori: un capannone per
   fornitore con righe aperte (max 6 sull'isola, gli altri solo nei pannelli), un carrello per riga con la pila di
   quanto deve ancora arrivare, bandierina rossa se in ritardo. Lo "studio delle borse" (modello = sagoma,
@@ -163,17 +164,19 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   nel Villaggio si vede soltanto; nell'app a se' c'e' il menu "scrive" nell'HUD, salvato in `amimi_chi` (stesso valore
   dell'app intera nello stesso browser; su iPhone l'app installata ha uno storage suo; senza scelta, Ginevra).
   Interruttore `app_flags.villaggio_enabled` (migr 0162, vista `v_villaggio_settings`, SCHEMA.md sez. 17): a flag
-  spento nessun ingresso si vede. three.js e i font del villaggio (`@fontsource/fredoka`, `@fontsource/nunito`, niente
+  spento spariscono tile e bottone del Cruscotto, e `#villaggio` e l'app a se' dicono solo "non attivo". three.js e i font del villaggio (`@fontsource/fredoka`, `@fontsource/nunito`, niente
   Google Fonts) stanno nel chunk del Villaggio; `ErrorBoundary` intorno al chunk (un import fallito dopo un deploy
   mostra "Ricarica", non l'app bianca) e messaggio dedicato se manca il WebGL. Pannelli: `lib/backnav` (il gesto
   indietro chiude il pannello) ed Esc fuori dai campi; il modulo dell'ordine gia' toccato chiede conferma prima di
-  chiudersi (X, Esc, indietro, etichette, barra) e la mappa al passo 4 non lo chiude. Il ritardo usa SOLO
+  chiudersi (X, Esc, indietro, Home, etichette, barra) e la mappa al passo 4 non lo chiude. Il ritardo usa SOLO
   `data_consegna` (in Ordini "Consegna prevista" mostra `data_consegna_display`, che senza data ricade sull'ultimo
   arrivo: le due viste possono dire cose diverse sulla stessa riga). Costo del disegno: le mesh ferme (staccionata,
-  sassi, decori, gusci di magazzino e capannoni) sono fuse per materiale, le ombre si ricalcolano solo quando si muove
+  erba, sassi, decori, gusci di magazzino e capannoni) sono fuse per materiale (da ~1.250 a ~930 draw call: il resto
+  sono pile e carrelli, che si ricostruiscono), le ombre si ricalcolano solo quando si muove
   un oggetto, e dopo 20 s senza tocchi ne' dati nuovi l'isola va a riposo e non ridisegna piu'. Il modello dai dati
   (`costruisci`, `arriviFra`) e' in `catalogo.ts`, provato da `tests/villaggio_catalogo.mjs`; e2e in
-  `web/e2e/villaggio.spec.ts` (progetto finto, sempre con il percorso della spec).
+  `web/e2e/villaggio.spec.ts` (progetto finto, sempre con il percorso della spec). Tutti e due si lanciano a mano
+  (Gate 1): la CI non li esegue ancora (CASI_APERTI del repo principale).
 
 ## 8. Sicurezza (posture rilassata, per scelta)
 anon = sola lettura (grant revocati in scrittura; TRUNCATE revocato dal 06-07, migr 0037). Scritture
