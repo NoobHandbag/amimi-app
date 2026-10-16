@@ -90,14 +90,22 @@ t('21 login Google senza hd (con hd=amimi.it Google nasconde gli account Telaio)
 t('22 nessuna etichetta o avviso del login dice ancora solo @amimi.it', !Object.values(W).some((s) => /Email \(@amimi\.it\)|qualsiasi casella @amimi\.it|login @amimi\.it|account @amimi\.it|Email @amimi\.it/.test(s)));
 t('23 le etichette usano EMAIL_TEAM_TESTO', oauth.every((f) => W[f].includes('<label>Email ({EMAIL_TEAM_TESTO})</label>')) && (W['lib/premiaApi.ts'].match(/Sezione riservata agli account \$\{EMAIL_TEAM_TESTO\}\./g) ?? []).length === 2);
 
-console.log('\n== Le nostre caselle restano @amimi.it ==');
+console.log('\n== Un indirizzo del team non riceve mai un invio vero (Gate 2 del 16-10) ==');
 const CSSEND = read('supabase/functions/cs-send/index.ts'), LEAD = read('supabase/functions/lead-outreach/index.ts');
 const CSSYNC = read('supabase/functions/cs-sync/index.ts'), LEADAPI = read('web/src/lib/leadApi.ts');
-t('24 cs-send: un destinatario @amimi.it blocca l\'invio', /if \(to\.endsWith\('@amimi\.it'\)\) return blocco\(/.test(CSSEND));
-t('25 lead-outreach: l\'invio vero non va a @amimi.it, e i mittenti @amimi.it non sono risposte', /else if \(to\.endsWith\('@amimi\.it'\)\) b\.push\(/.test(LEAD) && /indirizzoDi\(from\)\.endsWith\('@amimi\.it'\)\) continue/.test(LEAD));
-t('26 cs-sync: "nostro" = @amimi.it', /const isAmimi = \(e: string\) => e\.endsWith\('@amimi\.it'\);/.test(CSSYNC));
-t('27 web: indirizzoInterno resta @amimi.it', /export const indirizzoInterno = \(to: string\): boolean => \/@amimi\\\.it\$\/i\.test\(to\.trim\(\)\)/.test(LEADAPI));
-t('28 EMAIL_TEAM non e\' usato fuori dal cancello (le regole sulle caselle non lo toccano)', EDGE.every((e) => (read(`supabase/functions/${e}/index.ts`).replace(/^\s*\/\/[^\n]*$/gm, '').match(/EMAIL_TEAM/g) ?? []).length === 2));
+const codice = (s) => s.replace(/^\s*\/\/[^\n]*$/gm, '');
+t('24 cs-send: un destinatario del team blocca l\'invio al cliente', /if \(EMAIL_TEAM\.test\(to\)\) return blocco\(/.test(CSSEND) && !/to\.endsWith\('@amimi\.it'\)/.test(CSSEND));
+t('25 lead-outreach: invio e risposta a un indirizzo del team bloccati (dentro il blocco PURE:lead-guard, con la costante)',
+  (LEAD.match(/else if \(EMAIL_TEAM\.test\(to\)\) b\.push\(/g) ?? []).length === 2 && !/to\.endsWith\('@amimi\.it'\)/.test(LEAD)
+  && LEAD.indexOf('const EMAIL_TEAM') > LEAD.indexOf('// ==== PURE:lead-guard BEGIN ====') && LEAD.indexOf('const EMAIL_TEAM') < LEAD.indexOf('// ==== PURE:lead-guard END ===='));
+t('26 web: indirizzoInterno dalla lista del team', /import \{ csClient, DOMINI_TEAM \} from '\.\/csClient';/.test(LEADAPI) && /export const indirizzoInterno = \(to: string\): boolean => DOMINI_TEAM\.some\(\(d\) => to\.trim\(\)\.toLowerCase\(\)\.endsWith\('@' \+ d\)\);/.test(LEADAPI));
+const conti = { 'ai-compila': 2, 'cs-api': 2, 'cs-assist': 2, 'cs-send': 3, 'lead-outreach': 4, 'mat-api': 2 };
+t('27 EMAIL_TEAM solo nel cancello e nei blocchi sui destinatari (dichiarazione + usi contati)', EDGE.every((e) => (codice(read(`supabase/functions/${e}/index.ts`)).match(/EMAIL_TEAM/g) ?? []).length === conti[e]),
+  EDGE.map((e) => e + '=' + (codice(read(`supabase/functions/${e}/index.ts`)).match(/EMAIL_TEAM/g) ?? []).length).join(' '));
+
+console.log('\n== I mittenti "nostri" restano @amimi.it (le caselle Gmail sono di Amimi) ==');
+t('28 lead-outreach: i messaggi da @amimi.it non sono risposte del negozio', /indirizzoDi\(from\)\.endsWith\('@amimi\.it'\)\) continue/.test(LEAD) && /indirizzoDi\(da\)\.endsWith\('@amimi\.it'\)\) continue/.test(LEAD));
+t('29 cs-sync: "nostro" = @amimi.it', /const isAmimi = \(e: string\) => e\.endsWith\('@amimi\.it'\);/.test(CSSYNC));
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

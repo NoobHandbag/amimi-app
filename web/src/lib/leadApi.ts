@@ -1,4 +1,4 @@
-import { csClient } from './csClient';
+import { csClient, DOMINI_TEAM } from './csClient';
 
 // Letture e scritture della sezione "Negozi B2B" (modulo lead_*, migr 0111). Tutto passa dal client
 // con la sessione utente loggato (@amimi.it): la RLS `authenticated` nega ai non loggati.
@@ -318,7 +318,7 @@ export type LeadProvaResult = { to: string; from?: string; segnaposto?: number; 
 export async function inviaProva(p: { oggetto: string; testo: string }): Promise<LeadProvaResult> {
   return (await callOutreach({ action: 'prova', ...p })) as unknown as LeadProvaResult;
 }
-export const indirizzoInterno = (to: string): boolean => /@amimi\.it$/i.test(to.trim());
+export const indirizzoInterno = (to: string): boolean => DOMINI_TEAM.some((d) => to.trim().toLowerCase().endsWith('@' + d));
 // bozza rimasta 'in_invio' (esito incerto): si sblocca solo dopo aver controllato "Posta inviata" di info@
 export async function sbloccaBozza(p: { draft_id: string; chi: string }): Promise<void> {
   await callOutreach({ action: 'sblocca', ...p });

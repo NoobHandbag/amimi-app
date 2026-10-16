@@ -3,6 +3,7 @@ import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VER
 import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft, InviataCandidata, LeadInbound, NegozioCandidato, Alternativa } from '../lib/leadApi';
 import { negozioCiHaScritto, dopoInvioManuale, rispostaPreparata, avvisiTesto, ordinaConversazione, propostaSalvata, propostaStantia, giaRisposto, modoIniziale, NON_CONVERSAZIONE } from '../lib/leadRegole';
 import type { ElementoConv } from '../lib/leadRegole';
+import { EMAIL_TEAM_TESTO } from '../lib/csClient';
 
 // Sezione Outreach (tappa 1 del PIANO_Outreach_CRM.md): pipeline per stadio, coda del giorno, scheda del negozio
 // (conversazione a bolle e un compositore, come Assistenza, dal 15-10), sequenze. Le email partono dalla edge
@@ -720,7 +721,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               <div className="cs-lint">⚠️ <b>Controlla questi dati</b>: l’AI li ha scritti ma NON risultano dalla conversazione né dal dossier: {nonGrounded.map((x, i) => <span key={i} className="cs-lint-t">{x}</span>)}</div>
             )}
             {residuiR.length > 0 && <p className="cs-note" style={{ textAlign: 'left' }}>Prima di inviare completa: {residuiR.slice(0, 4).join(' ')}</p>}
-            {toInternoR && <p className="cs-note" style={{ textAlign: 'left' }}>Gli indirizzi @amimi.it non ricevono l’invio vero: usa “Prova a me”.</p>}
+            {toInternoR && <p className="cs-note" style={{ textAlign: 'left' }}>Gli indirizzi del team ({EMAIL_TEAM_TESTO}) non ricevono l’invio vero: usa “Prova a me”.</p>}
             {touches && puoRispondere && !rTo && <p className="cs-note" style={{ textAlign: 'left' }}>Manca il destinatario.</p>}
             {touches && puoRispondere && !rOggetto.trim() && <p className="cs-note" style={{ textAlign: 'left' }}>Manca l’oggetto.</p>}
             {aiRispostaOn && refineBox}
@@ -760,7 +761,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               <div className="cs-lint">⚠️ <b>Controlla questi dati</b>: l’AI li ha scritti ma NON risultano dal dossier né dalla conversazione: {sNonGrounded.map((x, i) => <span key={i} className="cs-lint-t">{x}</span>)}</div>
             )}
             {residui.length > 0 && <p className="cs-note" style={{ textAlign: 'left' }}>Prima di inviare completa: {residui.slice(0, 4).join(' ')}</p>}
-            {toInterno && <p className="cs-note" style={{ textAlign: 'left' }}>Gli indirizzi @amimi.it non ricevono l’invio vero, che va solo ai negozi. Per vedere l’email nella tua casella usa “Prova a me”.</p>}
+            {toInterno && <p className="cs-note" style={{ textAlign: 'left' }}>Gli indirizzi del team ({EMAIL_TEAM_TESTO}) non ricevono l’invio vero, che va solo ai negozi. Per vedere l’email nella tua casella usa “Prova a me”.</p>}
             {aiRispostaOn && seq?.canale === 'email' && refineBox}
             <div className="cs-note" style={{ textAlign: 'left', marginTop: 8 }}>{draftId ? 'Bozza scritta dall’AI dal dossier e dal template approvato: è una proposta, rileggila tutta.' : 'Riempito dal template con nome, gancio del dossier e firma.'} Le parti fra parentesi quadre vanno sistemate a mano prima di inviare. Tetto invii: {settings.lead_tetto_giornaliero ?? '20'} al giorno.</div>
             {aiOn ? (

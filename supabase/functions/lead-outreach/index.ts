@@ -88,9 +88,6 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
-// Chi entra col JWT: gli account del team. Stessa lista di public.email_del_team (migr 0161) e di DOMINI_TEAM del web
-// (tests/dominio_team.mjs controlla che coincidano). Le regole sulle NOSTRE caselle restano @amimi.it.
-const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // una lettura idempotente puo' ritentare UNA volta (504 di PostgREST nei primi secondi del minuto); le scritture mai
@@ -351,6 +348,9 @@ function testoModulo(t: string): string {
 
 // ==== PURE:lead-guard BEGIN ====
 // Regole di invio, pure e testate in tests/lead_outreach_guardie.mjs. Un blocco qui = l'email NON parte.
+// Gli account del team: chi entra col JWT e chi non riceve mai un invio vero. Stessa lista di public.email_del_team
+// (migr 0161) e di DOMINI_TEAM del web (tests/dominio_team.mjs). Qui dentro perche' il test ritaglia questo blocco.
+const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 const OPT_OUT_IT = 'Se preferisce non ricevere altre email da parte mia, mi risponda "no grazie" e non la contatterò più.';
 const OPT_OUT_EN = 'If you would rather not hear from me again, just reply "no thanks" and I will not contact you further.';
@@ -382,7 +382,7 @@ function bloccantiInvio(p: { to: string; oggetto: string; testo: string }): stri
   const b: string[] = [];
   const to = p.to.trim().toLowerCase();
   if (!EMAIL_RE.test(to)) b.push('destinatario mancante o non valido');
-  else if (to.endsWith('@amimi.it')) b.push('il destinatario e\' un indirizzo @amimi.it: l\'invio vero va solo ai negozi (per vedere l\'email usa "Manda una prova a me")');
+  else if (EMAIL_TEAM.test(to)) b.push('il destinatario e\' un indirizzo del team (@amimi.it o @telaioconsulting.com): l\'invio vero va solo ai negozi (per vedere l\'email usa "Manda una prova a me")');
   if (!p.oggetto.trim()) b.push('oggetto vuoto');
   if (p.oggetto.length > 200) b.push('oggetto troppo lungo');
   if (p.testo.trim().length < 80) b.push('testo troppo corto');
@@ -399,7 +399,7 @@ function bloccantiRisposta(p: { to: string; oggetto: string; testo: string }): s
   const b: string[] = [];
   const to = p.to.trim().toLowerCase();
   if (!EMAIL_RE.test(to)) b.push('destinatario mancante o non valido');
-  else if (to.endsWith('@amimi.it')) b.push('il destinatario e\' un indirizzo @amimi.it: per vedere l\'email usa "Manda una prova a me"');
+  else if (EMAIL_TEAM.test(to)) b.push('il destinatario e\' un indirizzo del team (@amimi.it o @telaioconsulting.com): per vedere l\'email usa "Manda una prova a me"');
   if (!p.oggetto.trim()) b.push('oggetto vuoto');
   if (p.oggetto.length > 200) b.push('oggetto troppo lungo');
   if (!p.testo.trim()) b.push('testo vuoto');

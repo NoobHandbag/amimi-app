@@ -329,7 +329,7 @@ Deno.serve(async (req) => {
   if (to === 'mailer@shopify.com' || to.endsWith('@shopify.com') || to.endsWith('@shopifyemail.com') || to.endsWith('@mailer.shopify.com')) {
     return blocco('il destinatario risolto e\' il wrapper Shopify, non il cliente: invio bloccato');
   }
-  if (to.endsWith('@amimi.it')) return blocco('il destinatario risolto e\' un indirizzo @amimi.it: invio bloccato');
+  if (EMAIL_TEAM.test(to)) return blocco('il destinatario risolto e\' un indirizzo del team (@amimi.it o @telaioconsulting.com): invio bloccato');
 
   // 4-bis) CINTURA CROSS-CLIENTE (v3, brief cs_form_thread_merge punto 3). Due invii dal form nello
   // stesso MINUTO producono notifiche Shopify con oggetto identico: Gmail le accoda nello stesso
