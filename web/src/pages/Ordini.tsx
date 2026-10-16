@@ -17,8 +17,8 @@ import { toast } from '../lib/toast';
 const campoIniziale = (m: ModoArrivo, gia: number, mancano: number, wip: boolean, done: boolean) =>
   m === 'totale' ? String(gia) : (wip || done || mancano <= 0 ? '' : String(mancano));
 
-/* register an arrival against one order line */
-function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLine; pin: string; chi: string; reload: () => void; defaultOpen?: boolean; altri?: OrdLine[] }) {
+/* register an arrival against one order line (riusata dal Villaggio: un solo punto che scrive gli arrivi) */
+export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLine; pin: string; chi: string; reload: () => void; defaultOpen?: boolean; altri?: OrdLine[] }) {
   const [open, setOpen] = useState(defaultOpen ?? false);
   const done = l.completo;
   const wip = !!l.wip;

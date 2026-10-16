@@ -1,7 +1,7 @@
 // Centralized people + persona-driven navigation. Dan removed (= Ale, same person).
 // The Home surfaces only the tiles relevant to each persona; Registra shows the same actions for everyone.
 
-export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads' | 'materiali' | 'premia';
+export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads' | 'materiali' | 'premia' | 'villaggio';
 /** Tab visibili SOLO alle persona con finance=true (Home le filtra). 'ads' (18-09) si raggiunge dal Cruscotto o da #ads. */
 export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti', 'ads', 'premia']);
 export type Tile = { icon: string; label: string; tab: Tab; param?: string; badge?: 'arrivi' | 'todo' };
@@ -23,6 +23,7 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
       { icon: 'recycle', label: 'Cosa riprodurre', tab: 'magazzino', param: 'riordino' },
       { icon: 'sparkles', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
       { icon: 'box', label: 'Ordini in arrivo', tab: 'ordini', badge: 'arrivi' },
+      { icon: 'globe', label: 'Villaggio', tab: 'villaggio' },
     ],
   },
   Bene: {
@@ -42,6 +43,7 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
       { icon: 'inbox', label: 'Registra arrivi', tab: 'ordini' },
       { icon: 'swatch', label: 'Materie prime', tab: 'materiali' },
       { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },
+      { icon: 'globe', label: 'Villaggio', tab: 'villaggio' },
     ],
   },
 };
@@ -72,6 +74,8 @@ export const ALL_ACTIONS: Tile[] = [
   { icon: 'swatch', label: 'Materie prime (catalogo fornitori)', tab: 'materiali' },
   // Magazzino e Disponibilita' tolti dai quick-link (feedback 06-07 item 12): gia' in bottom-nav.
   { icon: 'recycle', label: 'Cosa riprodurre', tab: 'magazzino', param: 'riordino' },
+  // Villaggio (16-10): ordini e magazzino come isola 3D; legge le stesse viste e scrive con i moduli di Ordini
+  { icon: 'globe', label: 'Villaggio (ordini e magazzino in 3D)', tab: 'villaggio' },
 ];
 
 export const personaName = (chi: string) => PERSONA[chi]?.name ?? chi;
