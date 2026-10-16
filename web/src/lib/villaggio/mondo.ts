@@ -6,11 +6,13 @@ import * as THREE from 'three';
 import { lastre } from './catalogo';
 import type { Look, Modello } from './catalogo';
 
-export type RigaMondo = { id: string; codice: string; model: Modello; look: Look; label: string; a: number; o: number; late: boolean };
-export type LabMondo = { key: string; nome: string; tipo: string; righe: RigaMondo[] };
-export type PilaMondo = { key: string; model: Modello; look: Look; name: string; stock: number; incoming: number };
+export type RigaMondo = { id: string; codice: string; model: Modello; look: Look; label: string; a: number; o: number; late: boolean; wip?: boolean };
+/** `pz` = pezzi in arrivo del laboratorio come li conta la pagina (WIP escluse, prodotti non disegnabili inclusi): l'etichetta 3D dice lo stesso numero del pannello. */
+export type LabMondo = { key: string; nome: string; tipo: string; righe: RigaMondo[]; pz: number };
+/** `neg` = almeno un codice della pila ha giacenza negativa (anche se la somma della pila e' positiva). */
+export type PilaMondo = { key: string; model: Modello; look: Look; name: string; stock: number; incoming: number; neg?: boolean };
 export type DatiMondo = { labs: LabMondo[]; pile: PilaMondo[]; totale: number };
-export type EventiMondo = { onLab: (key: string) => void; onMagazzino: (model?: Modello) => void; onGinni: () => void; onCarro: () => void };
+export type EventiMondo = { onLab: (key: string) => void; onMagazzino: (model?: Modello) => void; onGinni: () => void; onCarro: () => void; onPartenza?: (n: number) => void };
 type Ctx = { type: string; lab?: string } | null;
 type Anchor = { el: HTMLElement; pos: THREE.Vector3; cond?: (now: number) => boolean; free?: boolean; w?: number; until?: number };
 type Tween = { t0: number; dur: number; fn: (p: number) => void; done?: () => void; dead?: boolean };
@@ -183,22 +185,29 @@ function paint(look: Look): HTMLCanvasElement {
 const REP: Partial<Record<string, number>> = { cocco: 1.6, sequin: 2.2, stripes: 1.1, checks: 1.3, pois: 1.3, embroidery: 1.4, floral: 1.4, roses: 1.2, organza: 1.4, tiedye: 1.0, pony: 1.0, satin: 1.0, patent: 1.0 };
 const SHINE: Partial<Record<string, [number, number]>> = { cocco: [45, 0x3a3a3a], patent: [120, 0xdddddd], satin: [60, 0x888888], sequin: [100, 0xbbbbbb], leather: [22, 0x2a2a2a], toasted: [24, 0x2a2a2a] };
 const FABRIC = new Set(['cotton', 'stripes', 'checks', 'pois', 'embroidery', 'roses', 'floral', 'organza', 'tiedye', 'sequin', 'satin']);
+/** Geometrie, materiali e texture delle cache di modulo: chi svuota un gruppo non li libera (li libera liberaCache all'ultimo Mondo). */
+const SHARED = new WeakSet<object>();
 const CANV: Record<string, HTMLCanvasElement> = {};
 const TEX: Record<string, THREE.CanvasTexture> = {};
 type Mats = { body: THREE.Material; strap: THREE.Material; gold: THREE.Material; silver: THREE.Material; dark: THREE.Material };
 const MATS: Record<string, Mats> = {};
 export const canvasFor = (look: Look) => CANV[look.key] || (CANV[look.key] = paint(look));
+const SWU: Record<string, string> = {};
+/** dataURL della texture (legenda): calcolato una volta sola, non a ogni render. */
+export const swatchURL = (look: Look) => SWU[look.key] || (SWU[look.key] = canvasFor(look).toDataURL());
 function texFor(look: Look) {
   if (TEX[look.key]) return TEX[look.key];
   const t = new THREE.CanvasTexture(canvasFor(look));
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   const r = REP[look.fin] ?? 1.2;
   t.repeat.set(r, r);
+  SHARED.add(t);
   return TEX[look.key] = t;
 }
 const GOLD = new THREE.MeshPhongMaterial({ color: 0xd9b45a, shininess: 90, specular: 0xffffff });
 const SILVER = new THREE.MeshPhongMaterial({ color: 0xd3d8de, shininess: 90, specular: 0xffffff });
 const DARK = new THREE.MeshLambertMaterial({ color: 0x2a2626 });
+SHARED.add(GOLD); SHARED.add(SILVER); SHARED.add(DARK);
 function strapColor(look: Look) {
   if (look.print === 'zebra') return 0x1e1c21;
   if (look.print === 'cow') return look.cols[0];
@@ -218,6 +227,7 @@ function matsFor(look: Look, ghost?: boolean): Mats {
     for (const r of Object.keys(M) as (keyof Mats)[]) { const c = M[r].clone(); c.transparent = true; c.opacity = 0.3; c.depthWrite = false; G[r] = c; }
     M = G;
   }
+  for (const m of Object.values(M)) SHARED.add(m);
   return MATS[k] = M;
 }
 
@@ -316,6 +326,7 @@ function partsFor(model: Modello): Geo {
   sg.rotateX(-Math.PI / 2); sg.computeBoundingBox();
   const sb = sg.boundingBox as THREE.Box3; sg.translate(-(sb.min.x + sb.max.x) / 2, 0, -(sb.min.z + sb.max.z) / 2);
   const g: Geo = { ...d, pierce, charm, w, h: all.max.y, slabGeo: sg, sw: sb.max.x - sb.min.x, sd: sb.max.z - sb.min.z };
+  for (const x of [...d.parts.map((p) => p[0]), ...pierce, ...charm, sg]) SHARED.add(x);
   return GEO[model] = g;
 }
 function makeBag(model: Modello, look: Look, o: { ghost?: boolean; noShadow?: boolean } = {}) {
@@ -358,6 +369,18 @@ export function thumb(model: Modello, look: Look): string {
   const url = TR.domElement.toDataURL('image/png');
   scene.remove(b);
   return THC[k] = url;
+}
+let VIVI = 0;
+/** Libera cio' che le cache di modulo tengono in GPU (materiali, texture, geometrie, renderer delle miniature). Gli URL restano. */
+function liberaCache() {
+  const mats = new Set<THREE.Material>();
+  for (const k of Object.keys(MATS)) { for (const m of Object.values(MATS[k])) mats.add(m); delete MATS[k]; }
+  mats.add(GOLD); mats.add(SILVER); mats.add(DARK);
+  mats.forEach((m) => m.dispose());
+  for (const k of Object.keys(TEX)) { TEX[k].dispose(); delete TEX[k]; }
+  for (const k of Object.keys(GEO) as Modello[]) { const g = GEO[k] as Geo; for (const x of [...g.parts.map((p) => p[0]), ...g.pierce, ...g.charm, g.slabGeo]) x.dispose(); delete GEO[k]; }
+  if (TR) { TR.dispose(); TR.forceContextLoss(); }
+  TR = null; TS = null; TC = null;
 }
 /** Miniature in coda: al massimo ~12 ms per frame, cosi' un pannello con 80 borse non blocca la pagina. */
 const THQ: [Modello, Look, (u: string) => void][] = [];
@@ -474,17 +497,37 @@ export class Mondo {
   private canvas: HTMLCanvasElement;
   private labelsEl: HTMLElement;
   private hudEl: HTMLElement | null;
+  /** risorse di questo Mondo riusate fra un aggiorna() e l'altro: svuotando un gruppo non si liberano */
+  private keep = new WeakSet<object>();
+  private shadowDirty = true;
+  private dirty = true;
+  private lastRender = 0;
 
-  constructor(canvas: HTMLCanvasElement, labelsEl: HTMLElement, hudEl: HTMLElement | null, ev: EventiMondo) {
+  /** Crea il proprio canvas dentro `container` (e lo toglie in dispose): un contesto WebGL nuovo a ogni montaggio. Lancia se il WebGL non c'e'. */
+  constructor(container: HTMLElement, labelsEl: HTMLElement, hudEl: HTMLElement | null, ev: EventiMondo) {
+    const canvas = document.createElement('canvas');
+    canvas.className = 'v-canvas';
+    canvas.setAttribute('aria-label', 'Villaggio Amimi: il magazzino con le borse impilate e i laboratori con le borse in preparazione');
+    container.appendChild(canvas);
     this.canvas = canvas; this.labelsEl = labelsEl; this.hudEl = hudEl; this.ev = ev;
     this.reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.portrait = innerWidth / innerHeight < 0.8;
+    try {
+      this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    } catch (e) {
+      canvas.remove();
+      throw e;
+    }
+    VIVI++;
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    // sul telefono 1,5x basta: il canvas a 2x costava il doppio dei pixel per frame
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.portrait ? 1.5 : 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // le ombre si ricalcolano solo quando qualcosa si muove o cambia (aggiorna, tween, furgoncino), non a ogni frame
+    this.renderer.shadowMap.autoUpdate = false;
+    for (const x of [this.disc, this.DISC.low, this.DISC.neg, this.DISC.inc, this.wheelGeo, this.rollGeo, this.spoolGeo, this.hideGeo, this.FLAG, this.flagGeo, this.stoneGeo]) this.keep.add(x);
     this.scene.background = new THREE.Color(0x86d4d4);
-    this.portrait = innerWidth / innerHeight < 0.8;
     this.target = this.portrait ? new V3(0.6, 0, 0.6) : new V3(-2.6, 0, -2.6);
     this.viewH = Math.min(78, Math.max(30, 32 / (innerWidth / innerHeight)));
     this.resize(); this.placeCam();
@@ -520,18 +563,41 @@ export class Mondo {
     this.raf = requestAnimationFrame(loop);
   }
 
+  private disposed = false;
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
     cancelAnimationFrame(this.raf);
     this.off.forEach((f) => f());
     this.anchors.forEach((a) => a.el.remove());
     this.anchors = [];
+    this.cartQ = [];
+    this.smaltisci(this.scene, true);
     this.renderer.dispose();
     this.renderer.forceContextLoss();
+    this.canvas.remove();
+    VIVI = Math.max(0, VIVI - 1);
+    if (!VIVI) liberaCache();
   }
+  /** Libera geometrie, materiali e InstancedMesh propri di un sottoalbero; quelli condivisi restano (tutti, se `tutto`, tranne le cache di modulo). */
+  private smaltisci(root: THREE.Object3D, tutto = false) {
+    root.traverse((o) => {
+      if (o instanceof THREE.InstancedMesh) o.dispose();
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      if (!SHARED.has(m.geometry) && (tutto || !this.keep.has(m.geometry))) m.geometry.dispose();
+      for (const x of Array.isArray(m.material) ? m.material : [m.material]) {
+        if (SHARED.has(x) || (!tutto && this.keep.has(x))) continue;
+        (x as THREE.MeshBasicMaterial).map?.dispose();
+        x.dispose();
+      }
+    });
+  }
+  private svuota(g: THREE.Object3D) { while (g.children.length) { const c = g.children[0]; this.smaltisci(c); g.remove(c); } }
 
   /* ---------- piccoli attrezzi ---------- */
   private MC: Record<number, THREE.MeshLambertMaterial> = {};
-  private mat(c: number) { return this.MC[c] || (this.MC[c] = new THREE.MeshLambertMaterial({ color: c })); }
+  private mat(c: number) { if (!this.MC[c]) { this.MC[c] = new THREE.MeshLambertMaterial({ color: c }); this.keep.add(this.MC[c]); } return this.MC[c]; }
   private rnd() { this.seed = (this.seed * 16807) % 2147483647; return (this.seed - 1) / 2147483646; }
   private add(parent: THREE.Object3D, geo: THREE.BufferGeometry, color: number | THREE.Material, x = 0, y = 0, z = 0, o: { rx?: number; ry?: number; rz?: number; s?: number[]; cast?: boolean } = {}) {
     const m = new THREE.Mesh(geo, typeof color === 'number' ? this.mat(color) : color);
@@ -568,6 +634,7 @@ export class Mondo {
     setTimeout(() => this.dropLabel(a), 1450);
   }
   private resize() {
+    this.dirty = true;
     const w = innerWidth, h = innerHeight, a = w / h;
     this.renderer.setSize(w, h, false);
     this.camera.left = -this.viewH * a / 2; this.camera.right = this.viewH * a / 2; this.camera.top = this.viewH / 2; this.camera.bottom = -this.viewH / 2;
@@ -646,7 +713,7 @@ export class Mondo {
     for (const p of this.piles.values()) this.dropLabel(p.anchor);
     for (const z of this.zones.values()) this.dropLabel(z.anchor);
     this.piles.clear(); this.zones.clear();
-    while (this.whInside.children.length) this.whInside.remove(this.whInside.children[0]);
+    this.svuota(this.whInside);
     const byModel = new Map<Modello, PilaMondo[]>();
     for (const p of pile) { const a = byModel.get(p.model) ?? []; a.push(p); byModel.set(p.model, a); }
     // le pile alte dietro; se le file non ci stanno nel fienile, tutto un po' piu' piccolo
@@ -693,10 +760,10 @@ export class Mondo {
   }
   private fillPile(p: PilaG, shrink: number) {
     const g = p.g;
-    while (g.children.length) g.remove(g.children[0]);
+    this.svuota(g);
     const P = partsFor(p.model), sc = PSC(p.model) * shrink;
     const st = Math.max(0, p.stock);
-    const mk = p.stock < 0 ? 'neg' : st > 0 && st <= 2 ? 'low' : st === 0 && p.incoming > 0 ? 'inc' : null;
+    const mk = p.stock < 0 || p.neg ? 'neg' : st > 0 && st <= 2 ? 'low' : st === 0 && p.incoming > 0 ? 'inc' : null;
     if (mk) { const d = new THREE.Mesh(this.disc, this.DISC[mk]); d.rotation.x = -Math.PI / 2; d.position.y = 0.006; d.scale.setScalar(p.cell * 0.47); d.receiveShadow = true; g.add(d); }
     let top = 0;
     const n = lastre(st);
@@ -795,9 +862,10 @@ export class Mondo {
   }
   private fillYard(L: LabG) {
     const Y = L.yard;
-    while (Y.children.length) Y.remove(Y.children[0]);
+    this.svuota(Y);
     L.pileAnchors.forEach((a) => this.dropLabel(a)); L.pileAnchors = [];
-    const o = L.data.righe.filter((r) => r.a < r.o).sort((a, b) => (b.o - b.a) - (a.o - a.a));
+    const manca = (r: RigaMondo) => (r.wip ? 0 : r.o - r.a);
+    const o = L.data.righe.filter((r) => r.a < r.o).sort((a, b) => manca(b) - manca(a));
     o.slice(0, LAB_COLS * 3).forEach((l, i) => {
       const col = i % LAB_COLS, row = Math.floor(i / LAB_COLS);
       const x = (col - (LAB_COLS - 1) / 2) * LAB_CELL, z = row * LAB_ROW;
@@ -807,7 +875,7 @@ export class Mondo {
       for (const hx of [-0.45, 0.45]) this.add(t, box(0.04, 0.62, 0.04), 0x7d848c, hx, 0.48, -0.39);
       this.add(t, box(0.94, 0.04, 0.04), 0x7d848c, 0, 0.78, -0.39);
       const P = partsFor(l.model), sc = PSC(l.model);
-      const miss = l.o - l.a, n = Math.max(1, lastre(miss));
+      const miss = manca(l), n = Math.max(1, lastre(miss));
       const inst = new THREE.InstancedMesh(P.slabGeo, matsFor(l.look).body, n);
       const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s3 = new V3(sc, sc, sc), R = rngFor('lab' + l.id);
       for (let k = 0; k < n; k++) {
@@ -824,19 +892,19 @@ export class Mondo {
         const f = new THREE.Mesh(this.flagGeo, this.FLAG); f.position.set(0.46, 1.5, -0.39); t.add(f);
       }
       const wp = L.g.localToWorld(new V3(x, 0.3 + top + P.h * sc + 0.12, z));
-      const a = this.addLabel('<b>' + miss + '</b> pz', wp, 'v-lbl v-mini v-yard');
+      const a = this.addLabel(l.wip ? '<b>?</b> pz' : '<b>' + miss + '</b> pz', wp, 'v-lbl v-mini v-yard');
       a.el.title = l.model + ' ' + l.label;
       a.cond = (now) => (this.ctx?.type === 'lab' && this.ctx.lab === L.data.key) || now < (a.until ?? 0);
       L.pileAnchors.push(a);
     });
-    for (const slot of [L.hideSlot, L.rollSlot, L.spoolSlot]) while (slot.children.length) slot.remove(slot.children[0]);
+    for (const slot of [L.hideSlot, L.rollSlot, L.spoolSlot]) this.svuota(slot);
     if (o[0]) { const h = new THREE.Mesh(this.hideGeo, matsFor(o[0].look).body); h.receiveShadow = true; L.hideSlot.add(h); }
     const looks: Look[] = [];
     o.forEach((l) => { if (!looks.some((k) => k.key === l.look.key)) looks.push(l.look); });
     const RP = [[2.0, 1.67], [2.6, 1.67], [2.0, 2.37], [2.6, 2.37]];
     looks.slice(0, 4).forEach((lk, i) => { const r = new THREE.Mesh(this.rollGeo, matsFor(lk).body); r.position.set(RP[i][0], RP[i][1], -2.45); r.castShadow = true; L.rollSlot.add(r); });
     looks.slice(0, 3).forEach((lk, i) => { this.add(L.spoolSlot, this.spoolGeo, lk.cols[0], 0, 0, i * 0.18); });
-    const pz = o.reduce((s, l) => s + l.o - l.a, 0);
+    const pz = L.data.pz;
     const late = o.filter((l) => l.late).length;
     L.anchor.el.innerHTML = '<b>' + esc(L.data.nome) + '</b><small>' + (o.length ? pz + ' pz in preparazione' : 'tutto arrivato') + '</small>' + (late ? '<span class="v-bang" title="' + late + ' righe in ritardo">!</span>' : '');
     L.anchor.w = 0;
@@ -877,7 +945,7 @@ export class Mondo {
   }
   private buildDecor(used: [number, number][]) {
     const D = this.decor;
-    while (D.children.length) D.remove(D.children[0]);
+    this.svuota(D);
     const free = (x: number, z: number, r: number) => used.every(([ux, uz]) => Math.hypot(ux - x, uz - z) > r);
     const tree = (x: number, z: number, col: number, sc: number) => {
       if (!free(x, z, 6.2)) return;
@@ -910,27 +978,31 @@ export class Mondo {
     const keys = dati.labs.slice(0, LAB_SLOTS.length).map((l) => l.key);
     const same = keys.length === this.labs.size && keys.every((k, i) => this.labs.get(k)?.index === i);
     if (!same) {
-      for (const L of this.labs.values()) { this.scene.remove(L.g); this.dropLabel(L.anchor); L.pileAnchors.forEach((a) => this.dropLabel(a)); const pi = this.pickables.indexOf(L.g); if (pi >= 0) this.pickables.splice(pi, 1); }
+      for (const L of this.labs.values()) { this.scene.remove(L.g); this.smaltisci(L.g); this.dropLabel(L.anchor); L.pileAnchors.forEach((a) => this.dropLabel(a)); const pi = this.pickables.indexOf(L.g); if (pi >= 0) this.pickables.splice(pi, 1); }
       this.labs.clear();
-      while (this.paths.children.length) this.paths.remove(this.paths.children[0]);
+      this.svuota(this.paths);
       dati.labs.slice(0, LAB_SLOTS.length).forEach((d, i) => this.labs.set(d.key, this.buildLab(d, i)));
       this.buildDecor(keys.map((_, i) => LAB_SLOTS[i]));
     }
     dati.labs.slice(0, LAB_SLOTS.length).forEach((d) => { const L = this.labs.get(d.key); if (L) { L.data = d; this.fillYard(L); } });
     this.whA.el.innerHTML = 'Magazzino<small>' + dati.totale + ' pezzi</small>'; this.whA.w = 0;
+    this.shadowDirty = true; this.dirty = true;
   }
-  /** Il furgoncino va dal laboratorio al magazzino con `n` pezzi della variante; alla fine la pila fa un saltello. */
-  arrivo(labKey: string, riga: RigaMondo, n: number, pilaKey: string) {
+  /** Punto di carico del capannone (copia), da leggere PRIMA di aggiorna(): un arrivo che chiude l'ultima riga toglie il capannone. */
+  dockOf(labKey: string): THREE.Vector3 | null { const L = this.labs.get(labKey); return L ? L.dock.clone() : null; }
+  /** Il furgoncino va dal punto di carico al magazzino con `n` pezzi della variante; alla fine la pila fa un saltello. */
+  arrivo(dock: THREE.Vector3 | null, riga: RigaMondo, n: number, pilaKey: string) {
     const go = () => {
-      const L = this.labs.get(labKey);
-      if (!L) { this.cartBusy = false; this.next(); return; }
+      if (this.disposed) return;
+      if (!dock) { this.cartBusy = false; this.next(); return; }
       this.cartBusy = true;
-      this.drive(L.dock, () => {
-        while (this.cartLoad.children.length) this.cartLoad.remove(this.cartLoad.children[0]);
+      this.ev.onPartenza?.(n);
+      this.drive(dock, () => {
+        this.svuota(this.cartLoad);
         const k = Math.min(4, Math.max(1, Math.round(n / 8))), P = partsFor(riga.model), s = Math.min(0.75, 0.75 / P.w);
         for (let i = 0; i < k; i++) { const b = makeBag(riga.model, riga.look); b.scale.setScalar(s); b.position.set(i % 2 ? 0.38 : -0.38, 0, i < 2 ? -0.22 : 0.22); b.rotation.y = Math.PI / 2; this.cartLoad.add(b); }
-        setTimeout(() => this.drive(CART_HOME, () => {
-          while (this.cartLoad.children.length) this.cartLoad.remove(this.cartLoad.children[0]);
+        setTimeout(() => { if (!this.disposed) this.drive(CART_HOME, () => {
+          this.svuota(this.cartLoad);
           const p = this.piles.get(pilaKey);
           if (p) {
             this.tween(this.reduce ? 1 : 560, (t) => { p.g.scale.set(1, 0.55 + 0.45 * back(t), 1); });
@@ -939,7 +1011,7 @@ export class Mondo {
           }
           this.cart.rotation.y = -Math.PI / 2;
           setTimeout(() => { this.cartBusy = false; this.next(); }, 350);
-        }), 350);
+        }); }, 350);
       });
     };
     this.cartQ.push(go);
@@ -982,7 +1054,7 @@ export class Mondo {
       if (this.ptr.size < 2) this.pinch = 0;
       if (this.ptr.size === 0 && this.moved <= 6 && e.type === 'pointerup') this.pick(e.clientX, e.clientY);
     };
-    const wheel = (e: WheelEvent) => { e.preventDefault(); this.zoomBy(e.deltaY > 0 ? 1.1 : 1 / 1.1); };
+    const wheel = (e: WheelEvent) => { e.preventDefault(); this.zoomBy(e.deltaY > 0 ? 1.1 : 1 / 1.1); this.dirty = true; };
     c.addEventListener('pointerdown', down); c.addEventListener('pointermove', move); c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
     c.addEventListener('wheel', wheel, { passive: false });
     this.off.push(() => { c.removeEventListener('pointerdown', down); c.removeEventListener('pointermove', move); c.removeEventListener('pointerup', end); c.removeEventListener('pointercancel', end); c.removeEventListener('wheel', wheel); });
@@ -1010,13 +1082,17 @@ export class Mondo {
     const wpp = this.viewH / innerHeight;
     this.target.addScaledVector(RIGHT, -dx * wpp);
     this.target.addScaledVector(AWAY, dy * wpp / Math.sin(EL));
-    this.clampTarget(); this.placeCam();
+    this.clampTarget(); this.placeCam(); this.dirty = true;
   }
   private zoomBy(f: number) { this.viewH = Math.min(80, Math.max(8, this.viewH * f)); this.resize(); }
 
   /* ---------- ciclo ---------- */
   private v3 = new V3();
   private frameTick(now: number) {
+    const attivo = this.tweens.length > 0 || this.ptr.size > 0 || this.dirty;
+    if (!attivo && now - this.lastRender < 33) return;
+    this.lastRender = now; this.dirty = false;
+    if (this.tweens.length || this.shadowDirty) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; }
     for (let i = this.tweens.length - 1; i >= 0; i--) {
       const tw = this.tweens[i];
       if (tw.dead) { this.tweens.splice(i, 1); continue; }

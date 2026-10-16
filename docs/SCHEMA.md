@@ -311,3 +311,10 @@ Registro SEPARATO dal core (Regola 19): le materie prime non hanno CODICE_AMIIMI
 - Trigger `mat_suppliers_touch` / `mat_items_touch` (`updated_at` che si aggiorna davvero).
 - `v_mat_settings` espone ora tre chiavi: `mat_enabled` (sezione), `mat_write_enabled` (bottoni di scrittura, edge mat-api), `ai_compila_enabled` (bottone "Compila", edge ai-compila). Default dei due nuovi: `false`.
 - Scritture: SOLO edge `mat-api` (vedi EDGE_FUNCTIONS.md). Il client carica i file nel bucket e poi li registra con `asset_add`.
+
+## 17. Villaggio: solo un interruttore (migr 0162, 2026-10-16)
+
+Il Villaggio (ordini e magazzino come isola 3D, `web/src/pages/Villaggio.tsx`) e' un modulo di SOLA INTERFACCIA: nessuna tabella, nessuna vista di dati, nessuna azione `write-api` nuova. Legge `v_ordini_arrivo` e `v_inventory` come Ordini e Magazzino; scrive solo con i componenti di Ordini (`ArrivoRow` -> `arrival_set`, `SupplierOrderForm` -> `order_multi`).
+
+- **`app_flags.villaggio_enabled`** = `'false'` alla nascita (`on conflict do nothing`: una riaccensione manuale non viene sovrascritta da un re-run). Acceso = tile in Home (Ale, Ginevra, "Tutte le azioni"), scheda `#villaggio`, bottone "Apri il Villaggio" nel Cruscotto e app a se' `/amimi-app/villaggio/`. Spento = tutto nascosto, `#villaggio` e l'app a se' dicono "non attivo". Rollback = rimetterlo a `'false'`, senza deploy (Regola Ferrea 19).
+- **`v_villaggio_settings`** (owner postgres, leggibile anche da anon) espone SOLO quella chiave, come `v_mat_settings` (migr 0140): `app_flags` resta chiusa. Letta da `fetchVillaggioEnabled()` in `web/src/lib/api.ts`; errore o vista assente = spento.

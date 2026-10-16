@@ -24,10 +24,11 @@ const LABEL = `${new Date(BUILD).toLocaleString('it-IT', { day: '2-digit', month
 // identica non fa comparire l'avviso a nessuno.
 const versionePlugin = () => ({
   name: 'amimi-versione',
-  writeBundle(options: { dir?: string }, bundle: Record<string, { type: string; isEntry?: boolean; fileName: string; facadeModuleId?: string | null }>) {
-    // con due ingressi (app e Villaggio a se', 16-10) conta quello dell'app: e' il suo hash che fa comparire l'avviso
+  writeBundle(options: { dir?: string }, bundle: Record<string, { type: string; isEntry?: boolean; fileName: string; name?: string }>) {
+    // con due ingressi (app e Villaggio a se', 16-10) conta quello dell'app: e' il suo hash che fa comparire l'avviso.
+    // Si sceglie per nome dell'input (rollupOptions.input.main): il facadeModuleId di un ingresso HTML non e' main.tsx
     const chunks = Object.values(bundle).filter((c) => c.type === 'chunk' && c.isEntry)
-    const entry = chunks.find((c) => /src[\\/]main\.tsx$/.test(c.facadeModuleId ?? '')) ?? chunks[0]
+    const entry = chunks.find((c) => c.name === 'main') ?? chunks[0]
     const dir = options.dir
     if (!dir) return
     writeFileSync(join(dir, 'version.json'), JSON.stringify({ build: BUILD, label: LABEL, entry: entry?.fileName ?? null }))

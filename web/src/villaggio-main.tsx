@@ -6,17 +6,13 @@ import '@fontsource/roboto/500.css'
 import '@fontsource/roboto/700.css'
 import './index.css'
 import './styles/components.css'
-import Villaggio from './pages/Villaggio.tsx'
+import VillaggioApp from './VillaggioApp.tsx'
 import UpdateBanner from './components/UpdateBanner.tsx'
 
-// Villaggio a se' (16-10): l'app da installare sul telefono di Ginni, /amimi-app/villaggio/ con il suo manifest.
-// Stesso codice della scheda #villaggio dell'app intera: stesse letture, stesse scritture (moduli di Ordini).
-// Chi scrive: la persona scelta nell'app intera su questo dispositivo, altrimenti Ginevra.
-const chi = (() => { try { return localStorage.getItem('amimi_chi') || 'Ginevra' } catch { return 'Ginevra' } })()
-
+// ingresso dell'app a se' del Villaggio (villaggio/index.html): la logica e' in VillaggioApp.tsx
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Villaggio pin="x" chi={chi} onBack={() => { window.location.href = import.meta.env.BASE_URL }} />
+    <VillaggioApp />
     <UpdateBanner />
   </StrictMode>,
 )

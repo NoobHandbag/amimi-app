@@ -12,6 +12,7 @@
 }
 .vil button { font-family: inherit; }
 .vil button:focus-visible, .vil .v-lbl:focus-visible { outline: 3px solid var(--v-amber); outline-offset: 2px; }
+.v-scene { position: absolute; inset: 0; }
 .v-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
 .v-labels { position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
 
@@ -22,6 +23,8 @@
 .v-pill b { display: block; font-weight: 600; font-size: 16px; line-height: 1.05; font-variant-numeric: tabular-nums; }
 .v-pill small { display: block; font: 700 10.5px/1.1 var(--v-fb); color: var(--v-ink2); }
 .v-home { pointer-events: auto; cursor: pointer; padding: 0; width: 42px; height: 42px; justify-content: center; font-size: 24px; font-weight: 600; line-height: 1; }
+.v-chi { pointer-events: auto; cursor: pointer; padding: 3px 13px; font: inherit; }
+.v-chi:disabled { cursor: default; }
 .v-qb { pointer-events: auto; margin-left: auto; flex: none; width: 42px; height: 42px; border-radius: 50%; border: 3px solid var(--v-paper); background: var(--v-cream); box-shadow: 0 3px 0 rgba(74, 53, 35, .22); font: 700 20px var(--v-fd); color: var(--v-pinkd); cursor: pointer; }
 
 .v-bar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; justify-content: center; align-items: flex-end; gap: 26px;
@@ -58,8 +61,8 @@
 .v-err button { margin-left: 8px; font: 600 14px var(--v-fd); border: 0; border-radius: 12px; padding: 6px 12px; background: var(--v-leaf); color: var(--v-paper); cursor: pointer; }
 
 .v-dlg { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 124px); z-index: 12; width: min(520px, calc(100% - 32px));
-  background: var(--v-cream); border-radius: 30px; padding: 24px 22px 22px; box-shadow: 0 6px 0 rgba(74, 53, 35, .16), 0 14px 34px rgba(40, 30, 20, .18); cursor: pointer; }
-.v-dlg p { margin: 0; min-height: 3em; font: 500 18px/1.45 var(--v-fd); color: var(--v-ink); }
+  background: var(--v-cream); border-radius: 30px; padding: 24px 22px 22px; box-shadow: 0 6px 0 rgba(74, 53, 35, .16), 0 14px 34px rgba(40, 30, 20, .18); cursor: pointer; border: 0; text-align: left; color: var(--v-ink); }
+.v-dlg .v-dlgp { display: block; margin: 0; min-height: 3em; font: 500 18px/1.45 var(--v-fd); color: var(--v-ink); }
 .v-dlg .tag { position: absolute; top: -17px; left: 24px; background: var(--v-pink); color: var(--v-paper); font-weight: 600; font-size: 16px; padding: 4px 16px; border-radius: 999px; transform: rotate(-4deg); box-shadow: 0 3px 0 var(--v-pinkd); }
 .v-dlg .more { position: absolute; right: 20px; bottom: 9px; color: var(--v-amberd); font-size: 14px; animation: v-bob .9s ease-in-out infinite; }
 
@@ -154,7 +157,7 @@
   .v-bang { width: 20px; height: 20px; font-size: 13px; top: -10px; right: -10px; }
   .v-row { grid-template-columns: 56px minmax(0, 1fr) auto; }
   .v-row .v-th { width: 56px; height: 56px; }
-  .v-dlg p { font-size: 17px; }
+  .v-dlg .v-dlgp { font-size: 17px; }
 }
 @media (min-width: 900px) and (min-aspect-ratio: 1/1) {
   .v-sheet { left: auto; right: 16px; top: calc(env(safe-area-inset-top, 0px) + 86px); bottom: 16px; width: 430px; max-height: none; border-radius: 28px; transform: translateX(calc(100% + 40px)); }

@@ -837,3 +837,12 @@ export async function fetchSconti(): Promise<Sconto[]> {
   if (error) throw new Error(error.message);
   return ((data ?? []) as Sconto[]).map((r) => numify(r, ['year', 'month', 'ordini', 'netto', 'sconto', 'margine', 'margine_pct_medio']));
 }
+
+/** Interruttore del Villaggio (migr 0162, Regola Ferrea 19), letto col client anon dalla vista v_villaggio_settings,
+ *  che espone solo questa chiave. Errore o assenza = spento. */
+export async function fetchVillaggioEnabled(): Promise<boolean> {
+  const { data, error } = await supabase.from('v_villaggio_settings').select('key,value').eq('key', 'villaggio_enabled').maybeSingle();
+  if (error || !data) return false;
+  const s = String((data as { value: unknown }).value ?? '').trim().toLowerCase();
+  return s === 'true' || s === '1' || s === 'on' || s === 'yes';
+}

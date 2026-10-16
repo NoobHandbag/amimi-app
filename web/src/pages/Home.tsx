@@ -33,7 +33,7 @@ function sparkPoints(vals: number[], w = 150, h = 26): string {
   return vals.map((v, i) => `${(i / (vals.length - 1) * w).toFixed(1)},${(h - 3 - ((v - min) / span) * (h - 6)).toFixed(1)}`).join(' ');
 }
 
-export default function Home({ chi, setChi, go, matEnabled = false }: { chi: string; setChi: (c: string) => void; go: (t: Tab, p?: string) => void; matEnabled?: boolean }) {
+export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled = false }: { chi: string; setChi: (c: string) => void; go: (t: Tab, p?: string) => void; matEnabled?: boolean; vilEnabled?: boolean }) {
   const cfg = PERSONA[chi] ?? PERSONA.Ale;
   const [badges, setBadges] = useState({ arrivi: 0, todo: 0 });
   const [fin, setFin] = useState<{ netto: number; deltaPct: number | null; giorno: number | null; mc2: number; spark: number[] } | null>(null);
@@ -78,9 +78,10 @@ export default function Home({ chi, setChi, go, matEnabled = false }: { chi: str
   const badge = (b?: 'arrivi' | 'todo') => (b === 'arrivi' ? badges.arrivi : b === 'todo' ? badges.todo : 0);
 
   const { quick, gestione, altro } = useMemo(() => {
-    // Materie prime (modulo mat_*): la tile esiste solo a flag acceso, per ogni persona
-    const tiles = cfg.tiles.filter((t) => matEnabled || t.tab !== 'materiali');
-    const actions = ALL_ACTIONS.filter((t) => matEnabled || t.tab !== 'materiali');
+    // Materie prime (modulo mat_*) e Villaggio: la tile esiste solo a flag acceso, per ogni persona
+    const acceso = (t: Tile) => (matEnabled || t.tab !== 'materiali') && (vilEnabled || t.tab !== 'villaggio');
+    const tiles = cfg.tiles.filter(acceso);
+    const actions = ALL_ACTIONS.filter(acceso);
     const quick = tiles.slice(0, 4);
     const qk = new Set(quick.map(keyOf));
     const gest: Tile[] = [];
@@ -93,7 +94,7 @@ export default function Home({ chi, setChi, go, matEnabled = false }: { chi: str
     }
     const altro = actions.filter((t) => !seen.has(keyOf(t)) && (!FINANCE_TABS.has(t.tab) || cfg.finance));
     return { quick, gestione: gest, altro };
-  }, [cfg, matEnabled]);
+  }, [cfg, matEnabled, vilEnabled]);
 
   const query = q.trim().toLowerCase();
   const matches = useMemo(() => {

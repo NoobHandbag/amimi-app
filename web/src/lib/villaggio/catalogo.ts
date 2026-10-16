@@ -1,9 +1,13 @@
 // Villaggio (16-10): lo "studio delle borse" in forma di funzioni pure. Dal nome di una variante (v_inventory.variant,
 // o il nome scritto nell'ordine) ricava la FINITURA (materiale), la stampa e i COLORI; dall'item ricava il MODELLO (la
-// sagoma 3D). Nessun import: lo usano la pagina, il mondo three.js e tests/villaggio_catalogo.mjs (Node 24 strippa i tipi).
+// sagoma 3D). Solo import di TIPI (spariscono a runtime): lo usano la pagina, il mondo three.js e tests/villaggio_catalogo.mjs
+// (Node 24 strippa i tipi). In fondo costruisci() e arriviFra(): da v_ordini_arrivo e v_inventory alle pile e ai carrelli.
 // I nomi delle varianti non sono coerenti fra ordini e magazzino (COCCO_BORDOUX / COCCO_BURGUNDY, STRIPES_REED,
 // ORGANZA BIANCA sullo stesso codice di EMBROIDERY WHITE): qui ci sono gli alias, e per le righe d'ordine la pagina
 // legge l'aspetto dalla variante del MAGAZZINO con lo stesso codice, cosi' la pila e il carrello combaciano.
+
+import type { InvFull, OrdGruppo, OrdLine } from '../api';
+import type { DatiMondo, LabMondo, PilaMondo, RigaMondo } from './mondo';
 
 export type Fin = 'cocco' | 'patent' | 'suede' | 'sequin' | 'pony' | 'stripes' | 'checks' | 'pois' | 'embroidery' | 'roses'
   | 'floral' | 'organza' | 'tiedye' | 'satin' | 'toasted' | 'leather' | 'cotton';
@@ -100,6 +104,12 @@ export function nice(v: string | null | undefined): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Variante senza nome';
 }
 
+/** Misura scritta nella variante ("7X9 STRIPES RED" -> "7x9"), '' se non c'e'. Serve dove le taglie di una pila vanno distinte. */
+export function taglia(v: string | null | undefined): string {
+  const m = /\b(\d+)X(\d+)\b/.exec(norm(v));
+  return m ? m[1] + 'x' + m[2] : '';
+}
+
 /** Aspetto della variante. `codice` serve da riserva per i colori: "COCCO" sul codice LEA_BAG_MAXI_COCCO_BURGUNDY e' bordeaux. */
 export function parseLook(model: Modello | null, variant: string | null | undefined, codice?: string | null): Look {
   const w = words(String(variant ?? ''));
@@ -149,4 +159,91 @@ export function giorniAllaConsegna(consegna: string | null | undefined, oggi: st
   const a = Date.parse(String(consegna).slice(0, 10) + 'T00:00:00Z'), b = Date.parse(oggi.slice(0, 10) + 'T00:00:00Z');
   if (Number.isNaN(a) || Number.isNaN(b)) return null;
   return Math.round((a - b) / 86400000);
+}
+
+// --- Dal database al villaggio ---
+
+export type Codice = { codice: string; variant: string; stock: number };
+export type Pila = PilaMondo & { codes: Codice[] };
+export type Lab = LabMondo & { forn: string | null; raw: OrdLine[]; extra: OrdLine[] };
+export type Info = { riga: RigaMondo; lab: string };
+export type Mod = {
+  dati: DatiMondo; labs: Lab[]; pile: Map<string, Pila>; codeToPila: Map<string, string>; stockCodice: Map<string, number>;
+  righe: Map<string, Info>; tot: { stock: number; prep: number; open: number; fuori: number };
+};
+
+/** Nome della variante con la taglia, se c'e' ("Cocco nero · 30x20"): le pile uniscono le taglie, le righe no. */
+export const conTaglia = (v: string | null | undefined) => { const t = taglia(v); return nice(v) + (t ? ' · ' + t : ''); };
+
+/** Da ordini e magazzino al modello del villaggio. Le righe d'ordine prendono l'aspetto dalla variante di MAGAZZINO con lo stesso codice. */
+export function costruisci(gruppi: OrdGruppo[], inv: InvFull[], oggiIso: string): Mod {
+  const invBy = new Map(inv.map((r) => [r.codice, r]));
+  const pile = new Map<string, Pila>();
+  const codeToPila = new Map<string, string>();
+  const stockCodice = new Map<string, number>();
+  const pilaFor = (codice: string, item: string | null, variant: string | null) => {
+    const mv = modelOf(item, variant);
+    if (!mv.model) return null;
+    const look = parseLook(mv.model, mv.variant, codice);
+    const key = mv.model + '|' + look.key;
+    const nm = nice(mv.variant);
+    let p = pile.get(key);
+    if (!p) { p = { key, model: mv.model, look, name: nm, stock: 0, incoming: 0, codes: [] }; pile.set(key, p); }
+    // il nome della pila e' il piu' parlante fra le sue varianti ("Cocco bordeaux", non "Cocco")
+    else if (nm.length > p.name.length) p.name = nm;
+    if (!p.codes.some((c) => c.codice === codice)) p.codes.push({ codice, variant: variant ?? '', stock: 0 });
+    codeToPila.set(codice, key);
+    return p;
+  };
+  let stock = 0, fuori = 0;
+  for (const r of inv) {
+    const n = Number(r.giacenza_attuale) || 0;
+    stock += Math.max(0, n);
+    stockCodice.set(r.codice, (stockCodice.get(r.codice) ?? 0) + n);
+    const p = pilaFor(r.codice, r.item, r.variant);
+    if (!p) { fuori += Math.max(0, n); continue; }
+    p.stock += n;
+    const c = p.codes.find((x) => x.codice === r.codice);
+    if (c) c.stock += n;
+    if (n < 0) p.neg = true;
+  }
+  const labsBy = new Map<string, Lab>();
+  const righe = new Map<string, Info>();
+  let prep = 0, open = 0;
+  for (const g of gruppi) for (const l of g.righe) {
+    if (l.completo) continue;
+    const key = l.fornitore ?? '';
+    let L = labsBy.get(key);
+    if (!L) { const lo = labOf(l.fornitore); L = { key, forn: l.fornitore ?? null, nome: lo.nome, tipo: lo.tipo, righe: [], pz: 0, raw: [], extra: [] }; labsBy.set(key, L); }
+    open++;
+    const a = Number(l.qty_arrived) || 0;
+    const manca = l.wip ? 0 : Math.max(0, Number(l.mancano) || 0);
+    prep += manca; L.pz += manca;
+    const o = l.wip || l.qty_ordered == null ? a + 1 : Math.max(Number(l.qty_ordered) || 0, a);
+    const iv = invBy.get(l.codice);
+    const p = pilaFor(l.codice, iv?.item ?? l.item, iv?.variant ?? l.variant);
+    if (!p) { L.extra.push(l); continue; }
+    p.incoming += manca;
+    // in ritardo solo rispetto alla consegna promessa: data_consegna_display ricade sull'ultimo arrivo e non e' una scadenza
+    const d = giorniAllaConsegna(l.data_consegna, oggiIso);
+    const riga: RigaMondo = { id: l.id, codice: l.codice, model: p.model, look: p.look, label: conTaglia(l.variant) + (l.wip ? ' (WIP)' : ''), a, o, late: d != null && d < 0, wip: !!l.wip };
+    L.righe.push(riga); L.raw.push(l);
+    righe.set(l.id, { riga, lab: key });
+  }
+  const labs = [...labsBy.values()].sort((x, y) => x.nome.localeCompare(y.nome, 'it'));
+  const visibili = [...pile.values()].filter((p) => p.stock !== 0 || p.incoming > 0 || p.neg);
+  return { dati: { labs, pile: visibili, totale: stock }, labs, pile, codeToPila, stockCodice, righe, tot: { stock, prep, open, fuori } };
+}
+
+/** Arrivi fra due letture: righe con piu' pezzi arrivati di prima. Riga e laboratorio vengono dal modello PRECEDENTE,
+ *  perche' un arrivo che chiude la riga (il caso normale) la toglie dal modello nuovo. */
+export function arriviFra(prima: Map<string, number>, prec: Mod | null, nuovo: Mod, gruppi: OrdGruppo[]) {
+  const out: { lab: string; riga: RigaMondo; n: number }[] = [];
+  if (!prec) return out;
+  for (const g of gruppi) for (const l of g.righe) {
+    const p = prima.get(l.id), ora = Number(l.qty_arrived) || 0;
+    const info = prec.righe.get(l.id) ?? nuovo.righe.get(l.id);
+    if (p != null && ora > p && info) out.push({ lab: info.lab, riga: info.riga, n: ora - p });
+  }
+  return out;
 }

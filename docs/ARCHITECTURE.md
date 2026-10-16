@@ -146,6 +146,27 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
 - **In arrivo** (`Arrivi.tsx`) — ordini fornitore multi-borsa, arrivi parziali/totali.
 - **Verifica** (`Verifica.tsx`) — dettagli prodotto, approvazione spese, correzione vendita, pubblica (gated).
 - **Inventario** (`Inventory.tsx`) — Magazzino, Riordino, Disponibilità, Nei negozi, Shopify, Valore.
+- **Villaggio** (`Villaggio.tsx`, tab `villaggio`, dal 16-10) — ordini e magazzino come isola 3D in stile
+  FarmVille/Animal Crossing (three.js 0.169.0, chunk caricato solo aprendo la scheda). Una vista parallela, non un
+  secondo modo di scrivere: LEGGE `v_ordini_arrivo` e `v_inventory` con `fetchOrdiniGruppi`/`fetchInventory`,
+  SCRIVE solo con i componenti di Ordini (`ArrivoRow` per gli arrivi, con le sue conferme; `SupplierOrderForm` per
+  l'ordine nuovo). Magazzino: una pedana per modello e una pila per variante (1 lastra = 2 pezzi, anello giallo
+  1-2 pezzi, borsa trasparente = finita ma in arrivo, anello rosso = negativa). Laboratori: un capannone per
+  fornitore con righe aperte (max 6 sull'isola, gli altri solo nei pannelli), un carrello per riga con la pila di
+  quanto deve ancora arrivare, bandierina rossa se in ritardo. Lo "studio delle borse" (modello = sagoma,
+  finitura = materiale, colore) e' in `web/src/lib/villaggio/catalogo.ts`, funzioni pure con alias per i nomi
+  incoerenti fra ordini e magazzino; le righe d'ordine prendono l'aspetto dalla variante di magazzino con lo stesso
+  codice. Ingressi: tile per Ale e Ginevra, "Tutte le azioni", `#villaggio`, bottone "Apri il Villaggio" nel
+  Cruscotto, e app a se' `/amimi-app/villaggio/` (secondo ingresso Vite `web/villaggio/index.html`, manifest
+  proprio con `id` distinto e `scope` `/amimi-app/`, da installare sul telefono di Ginni; logica in
+  `VillaggioApp.tsx`). Chi scrive: la pillola "scrive" nell'HUD, che cambia persona e la salva in `amimi_chi`
+  (condiviso con l'app intera; senza scelta, Ginevra). Interruttore `app_flags.villaggio_enabled` (migr 0162, vista
+  `v_villaggio_settings`, SCHEMA.md sez. 17): a flag spento nessun ingresso si vede. Il costo: three.js e i font
+  del villaggio (`@fontsource/fredoka`, `@fontsource/nunito`, niente Google Fonts) stanno nel chunk del Villaggio;
+  `ErrorBoundary` intorno al chunk (un import fallito dopo un deploy mostra "Ricarica", non l'app bianca) e
+  messaggio dedicato se manca il WebGL. I pannelli usano `lib/backnav` (il gesto indietro chiude il pannello) ed
+  Esc; il modulo dell'ordine non si chiude toccando la mappa. Il modello dai dati (`costruisci`, `arriviFra`) e' in
+  `catalogo.ts`, provato da `tests/villaggio_catalogo.mjs`; e2e in `web/e2e/villaggio.spec.ts` (progetto finto).
 
 ## 8. Sicurezza (posture rilassata, per scelta)
 anon = sola lettura (grant revocati in scrittura; TRUNCATE revocato dal 06-07, migr 0037). Scritture
