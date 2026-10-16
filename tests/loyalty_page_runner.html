@@ -121,9 +121,9 @@
     const c=await open('zero');
     assert(c.txt('#pts')==='0','saldo 0'); has(c.txt('#pathStatus'),'Ti mancano 100 punti allo sconto del 12%.');
     assert(!c.$('#rbtn'),'nessun bottone di riscatto'); assert(!c.vis('#codiciSec'),'nessun codice');
-    assert(c.$$('#walk .lbl').map(t=>t.textContent).join()==='25,50,75,100','tappe 25, 50, 75 e traguardo a 100');
+    assert(c.$$('#walk .lbl').map(t=>t.textContent).join()==='12%' && c.$$('#walk .stop').length===3,'tre tappe senza numeri, al traguardo solo il 12%');
     assert(c.$('#walk').dataset.f==='0.0000' && !c.$('#walk .goal').classList.contains('on') && c.$$('#walk .stop.on').length===0,'Mimì alla partenza, nessuna tappa raggiunta');
-    assert(!c.vis('#pronti'),'nessuna riga dei premi pronti'); has(c.txt('#ward'),'appariranno qui');
+    assert(!c.$('#roadbox').classList.contains('con'),'nessuno spazio per il bottone'); has(c.txt('#ward'),'appariranno qui');
     assert(c.$('#redeem').dataset.trk==='redeem_locked','stato tracciato locked');
   });
   await test('punti: 45, Mimì al 45% del giro', async()=>{
@@ -135,14 +135,14 @@
   await test('punti: 99, singolare', async()=>{ const c=await open('p99'); has(c.txt('#pathStatus'),'Ti manca 1 punto allo sconto del 12%.'); });
   await test('punti: 100, uno sconto pronto', async()=>{
     const c=await open('p100');
-    has(c.txt('#pathStatus'),'Hai 1 sconto del 12% da riscattare. Il prossimo fra 100 punti.'); has(c.txt('#rbtn'),'Riscatta il 12% · 100 punti');
+    has(c.txt('#pathStatus'),'Hai 1 sconto del 12% da riscattare. Il prossimo fra 100 punti.'); assert(c.txt('#rbtn')==='Ritira il 12%','bottone Ritira il 12%');
     await until(()=>fermo(c,'1.0000'), 4000, 'Mimì sul traguardo'); assert(c.$('#walk .goal').classList.contains('on') && c.$$('#walk .stop.on').length===3,'bandierina del traguardo accesa, tre tappe passate');
-    has(c.txt('#pronti'),'1 sconto pronto'); assert(c.$$('#pronti .flag.on').length===1,'una bandierina fra i pronti'); assert(c.$('#walk .goal').classList.contains('pop'),'arrivo esatto a 100: la bandierina scatta'); has(c.$('#walk').getAttribute('aria-label'),'Sei al traguardo del giro.'); assert(c.$('#redeem').dataset.trk==='redeem_ready','stato tracciato ready');
+    assert(c.$('#roadbox').classList.contains('con') && getComputedStyle(c.$('#redeemBox')).position==='absolute','il bottone sta sulla strada'); assert(c.$('#walk .goal').classList.contains('pop'),'arrivo esatto a 100: la bandierina scatta'); has(c.$('#walk').getAttribute('aria-label'),'Sei al traguardo del giro.'); assert(c.$('#redeem').dataset.trk==='redeem_ready','stato tracciato ready');
   });
   await test('punti: 257, due sconti, codici in ordine', async()=>{
     const c=await open('p257');
     has(c.txt('#pathStatus'),'Hai 2 sconti del 12% da riscattare. Il prossimo fra 43 punti.'); await until(()=>fermo(c,'0.5700'), 4000, 'Mimì al 57% del terzo giro');
-    assert(c.$$('#pronti .flag.on').length===2 && /2 sconti pronti/.test(c.txt('#pronti')),'due giri fatti = due sconti pronti'); assert(!c.$('#walk .goal').classList.contains('pop') && c.$$('#walk .spark').length===0,'aprire la pagina a 257 punti non festeggia un traguardo che non si sta raggiungendo'); assert(c.$$('#walk .stop.on').length===2 && !c.$('#walk .goal').classList.contains('on'),'tappe 25 e 50 passate, traguardo no');
+    assert(c.txt('#rbtn')==='Ritira il 12% · 2 pronti','due giri fatti = due sconti pronti sul bottone'); assert(!c.$('#walk .goal').classList.contains('pop') && c.$$('#walk .spark').length===0,'aprire la pagina a 257 punti non festeggia un traguardo che non si sta raggiungendo'); assert(c.$$('#walk .stop.on').length===2 && !c.$('#walk .goal').classList.contains('on'),'tappe 25 e 50 passate, traguardo no');
     const li=c.$$('#codici .cod'); assert(li.length===2,'due codici');
     has(li[0].textContent,'AMICA12-KTQWJJ'); has(li[0].textContent,'12% di sconto, da usare al checkout'); assert(!!li[0].querySelector('.cp'),'Copia sul codice da usare');
     has(li[1].textContent,'PREMIA-T20-6KQ4ZM'); has(li[1].textContent,'20% di sconto, usato il 28/09/2026'); assert(li[1].classList.contains('used') && !li[1].querySelector('.cp'),'codice usato senza Copia');
@@ -151,7 +151,7 @@
   await test('punti: 980, nove giri fatti e 25 codici', async()=>{
     const c=await open('p980');
     has(c.txt('#pathStatus'),'Hai 9 sconti del 12%'); await until(()=>fermo(c,'0.8000'), 4000, 'Mimì all\'80% del decimo giro');
-    assert(c.$$('#pronti .flag.on').length===5 && /9 sconti pronti/.test(c.txt('#pronti')),'cinque bandierine disegnate, "9 sconti pronti" scritto'); assert(!c.$('#walk .goal').classList.contains('pop'),'nessuna festa all\'apertura a 980 punti'); assert(c.$$('#walk .lbl').map(t=>t.textContent).join()==='25,50,75,100','le tappe restano quelle del giro');
+    assert(c.txt('#rbtn')==='Ritira il 12% · 9 pronti','"9 pronti" sul bottone'); assert(!c.$('#walk .goal').classList.contains('pop'),'nessuna festa all\'apertura a 980 punti'); assert(c.$$('#walk .lbl').map(t=>t.textContent).join()==='12%','il traguardo resta quello del giro');
     assert(c.$$('#codici .cod').length===3,'tre codici visibili');
     assert(c.$$('#codici .cod.used').length===0,'i primi tre sono da usare'); has(c.txt('#codiciTutti'),'Mostra tutti (25)');
     c.$('#codiciTutti').click(); assert(c.$$('#codici .cod').length===25,'25 codici dopo il tap'); has(c.txt('#codiciTutti'),'Mostra meno');
@@ -172,7 +172,7 @@
     assert(c.doc.activeElement===c.$('#redeem'),'fuoco tornato alla card dei punti');
     assert(c.txt('#pts')==='0' || (await until(()=>c.txt('#pts')==='0',1500,'saldo a 0')),'saldo a 0');
     has(c.txt('#codici'),code,'codice nella lista'); has(c.txt('#pathStatus'),'Ti mancano 100 punti');
-    assert(c.$('#walk').dataset.f==='0.0000' && !c.$('#walk .goal').classList.contains('on') && !c.vis('#pronti'),'dopo il riscatto: giro da capo, traguardo spento, nessun premio pronto');
+    assert(c.$('#walk').dataset.f==='0.0000' && !c.$('#walk .goal').classList.contains('on') && !c.$('#rbtn'),'dopo il riscatto: giro da capo, traguardo spento, nessun premio pronto');
   });
   await test('riscatto: in attesa di codice (pool vuoto)', async()=>{
     const c=await open('riscatto_vuoto'); c.$('#rbtn').click();
@@ -193,36 +193,36 @@
     const k=c.calls('redeem'); assert(k.length===2 && k[0].body.idemp===k[1].body.idemp,'due chiamate con lo STESSO idemp ('+k.map(x=>x.body.idemp).join(' / ')+')');
     assert(/^AMICA12-/.test(c.txt('#rewardCode .c')),'il codice del primo tentativo arriva al secondo'); c.$('#rewardOk').click();
     await until(()=>c.txt('#pts')==='150', 2000, 'saldo 150: scalati 100 punti una volta sola (non 50)'); assert(c.$$('#codici .cod').length===1,'un solo codice');
-    await until(()=>fermo(c,'0.5000'), 4000, 'Mimì a meta\' giro'); assert(/1 sconto pronto/.test(c.txt('#pronti')),'resta un solo sconto pronto');
+    await until(()=>fermo(c,'0.5000'), 4000, 'Mimì a meta\' giro'); assert(c.txt('#rbtn')==='Ritira il 12%','resta un solo sconto pronto');
     c.$('#rbtn').click(); await until(()=>c.calls('redeem').length===3, 2000, 'terzo riscatto, voluto'); assert(c.calls('redeem')[2].body.idemp!==k[0].body.idemp,'un riscatto nuovo ha un token nuovo');
   });
   await test('sentiero: da 95 a 100 con la coccola Mimì arriva al traguardo, da 100 a 105 riparte', async()=>{
-    let c=await open('p95'); await until(()=>fermo(c,'0.9500'), 4000, 'Mimì al 95%'); assert(!c.vis('#pronti') && !c.$('#rbtn'),'nessun premio prima del traguardo');
+    let c=await open('p95'); await until(()=>fermo(c,'0.9500'), 4000, 'Mimì al 95%'); assert(!c.$('#rbtn'),'nessun premio prima del traguardo');
     c.$('#btnCoccola').click(); await until(()=>fermo(c,'1.0000'), 5000, 'Mimì sul traguardo dopo la coccola');
-    assert(c.$('#walk .goal').classList.contains('on') && /1 sconto pronto/.test(c.txt('#pronti')) && !!c.$('#rbtn'),'traguardo acceso, uno sconto pronto, bottone di riscatto');
+    assert(c.$('#walk .goal').classList.contains('on') && c.txt('#rbtn')==='Ritira il 12%','traguardo acceso, uno sconto pronto, bottone di riscatto');
     c=await open('p100'); await until(()=>fermo(c,'1.0000'), 4000, 'Mimì sul traguardo'); c.$('#btnCoccola').click();
-    await until(()=>fermo(c,'0.0500'), 5000, 'Mimì riparte: 5% del giro nuovo'); assert(!c.$('#walk .goal').classList.contains('on') && /1 sconto pronto/.test(c.txt('#pronti')),'traguardo spento, lo sconto pronto resta');
+    await until(()=>fermo(c,'0.0500'), 5000, 'Mimì riparte: 5% del giro nuovo'); assert(!c.$('#walk .goal').classList.contains('on') && c.txt('#rbtn')==='Ritira il 12%','traguardo spento, il bottone resta alle spalle di Mimì');
   });
   await test('sentiero: riscattare non sposta Mimì (stessa posizione, nessuna camminata)', async()=>{
     const c=await open('p257'); await until(()=>fermo(c,'0.5700'), 4000, 'Mimì al 57%'); const prima=posto(c);
     c.$('#rbtn').click(); await until(()=>c.$('#rewardModal').classList.contains('on'), 3000, 'premio');
     assert(posto(c)===prima && !c.$('#walk .runner').classList.contains('go') && c.$('#walk').dataset.f==='0.5700','stessa posizione di prima del riscatto ('+prima+' -> '+posto(c)+')');
-    has(c.txt('#pronti'),'1 sconto pronto'); c.$('#rewardOk').click(); await until(()=>c.txt('#pts')==='157', 2000, 'saldo 157'); assert(posto(c)===prima,'ancora ferma dopo il conteggio');
+    assert(c.txt('#rbtn')==='Ritira il 12%','dopo il riscatto ne resta uno pronto'); c.$('#rewardOk').click(); await until(()=>c.txt('#pts')==='157', 2000, 'saldo 157'); assert(posto(c)===prima,'ancora ferma dopo il conteggio');
   });
   await test('sentiero: acquisto che passa il traguardo (95 + 15), festa al passaggio e Mimì al 10% del giro nuovo', async()=>{
     const c=await open('p95'); await until(()=>fermo(c,'0.9500'), 4000, 'Mimì al 95%');
     c.win.__mock.db.points=105; c.$('#btnCoccola').click();                                 // la coccola porta a 110: il traguardo viene passato in corsa
     await until(()=>fermo(c,'0.1000'), 5000, 'Mimì al 10% del giro nuovo');
-    assert(c.$('#walk .goal').classList.contains('pop') && !c.$('#walk .goal').classList.contains('on'),'la bandierina ha festeggiato al passaggio e poi e\' tornata spenta'); has(c.txt('#pronti'),'1 sconto pronto');
+    assert(c.$('#walk .goal').classList.contains('pop') && !c.$('#walk .goal').classList.contains('on'),'la bandierina ha festeggiato al passaggio e poi e\' tornata spenta'); assert(c.txt('#rbtn')==='Ritira il 12%','uno sconto pronto');
   });
   await test('sentiero: a fotogrammi fermi (scheda in secondo piano) Mimì e il saldo arrivano lo stesso', async()=>{
     const c=await open('p257',{raf:'fermo'}); await until(()=>fermo(c,'0.5700') && c.txt('#pts')==='257', 5000, 'arrivo garantito dai timer');
     assert(!c.$('#walk .goal').classList.contains('pop'),'nessuna festa');
   });
   await test('sentiero: riscatto in attesa, nessun "pronto" finche\' il codice non arriva', async()=>{
-    const c=await open('riscatto_vuoto'); await until(()=>fermo(c,'0.3000'), 4000, 'Mimì al 30%'); has(c.txt('#pronti'),'2 sconti pronti');
+    const c=await open('riscatto_vuoto'); await until(()=>fermo(c,'0.3000'), 4000, 'Mimì al 30%'); assert(c.txt('#rbtn')==='Ritira il 12% · 2 pronti','due pronti');
     c.$('#rbtn').click(); await until(()=>/Riscatto ricevuto/.test(c.txt('#pathStatus')), 3000, 'riscatto in attesa');
-    assert(!c.vis('#pronti') && !c.$('#rbtn'),'con 130 punti e un riscatto in attesa non si promette un altro sconto');
+    assert(!c.$('#rbtn') && !c.$('#roadbox').classList.contains('con'),'con 130 punti e un riscatto in attesa non si promette un altro sconto');
   });
   await test('sentiero: un solo punto si scrive al singolare anche per i lettori di schermo', async()=>{
     const c=await open('zero'); c.win.__mock.db.points=96; c.$('#btnCoccola').click(); await until(()=>c.txt('#pts')==='101', 3000, 'saldo 101');
@@ -230,18 +230,18 @@
   });
   await test('premio a importo: mai una percentuale', async()=>{
     const c=await open('premio_importo');
-    has(c.txt('#pathStatus'),'Hai 1 premio da riscattare'); has(c.txt('#rbtn'),'Riscatta il premio · 100 punti'); has(c.txt('#regoleNota'),'10 euro di sconto');
-    has(c.txt('#codici'),'DIECI-ABC123'); assert(!/10%/.test(c.$('#app').textContent),'nessun "10%" in pagina'); has(c.txt('#pronti'),'1 premio pronto'); has(c.$('#walk').getAttribute('aria-label'),'verso il prossimo premio');
+    has(c.txt('#pathStatus'),'Hai 1 premio da riscattare'); assert(c.txt('#rbtn')==='Ritira il premio','bottone Ritira il premio'); has(c.txt('#regoleNota'),'10 euro di sconto');
+    has(c.txt('#codici'),'DIECI-ABC123'); assert(!/10%/.test(c.$('#app').textContent),'nessun "10%" in pagina'); assert(c.txt('#walk .lbl.fine')==='','al traguardo nessuna percentuale per un premio non a percentuale'); has(c.$('#walk').getAttribute('aria-label'),'verso il prossimo premio');
   });
   await test('codici: i giorni sono quelli di Roma mandati dal server', async()=>{ const c=await open('mezzanotte'); has(c.txt('#codici'),'usato il 13/10/2026'); assert(!/12\/10\/2026/.test(c.txt('#codici')),'non la data UTC'); });
   await test('riscatto spento: restano solo i punti', async()=>{
     const c=await open('premi_off');
-    await until(()=>c.txt('#pts')==='180', 2000, 'saldo 180'); assert(!c.vis('#walk') && !c.vis('#pronti') && c.txt('#pathStatus')==='' && !c.$('#rbtn') && c.txt('#regoleNota')==='','solo il saldo');
+    await until(()=>c.txt('#pts')==='180', 2000, 'saldo 180'); assert(!c.vis('#walk') && c.txt('#pathStatus')==='' && !c.$('#rbtn') && c.txt('#regoleNota')==='','solo il saldo');
     assert(c.$$('#regole li').length===3,'regole base presenti');
   });
   await test('premio non a percentuale', async()=>{
     const c=await open('premio_fisso');
-    has(c.txt('#pathStatus'),'Hai 1 premio da riscattare'); has(c.txt('#rbtn'),'Riscatta il premio · 100 punti'); has(c.txt('#regoleNota'),'un portacarte in omaggio');
+    has(c.txt('#pathStatus'),'Hai 1 premio da riscattare'); assert(c.txt('#rbtn')==='Ritira il premio','bottone Ritira il premio'); has(c.txt('#regoleNota'),'un portacarte in omaggio');
   });
 
   // ---------- azioni del giorno ----------
