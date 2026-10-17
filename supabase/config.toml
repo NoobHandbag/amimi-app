@@ -95,3 +95,7 @@ verify_jwt = false
 # il cron (migr 0148) chiama la edge senza JWT; le azioni di una persona lo verificano nel codice
 [functions.lead-outreach]
 verify_jwt = false
+
+# Notifiche native (17-10): la edge controlla da sola il JWT utente (getUser + dominio del team) o la chiave di servizio.
+[functions.push-api]
+verify_jwt = false

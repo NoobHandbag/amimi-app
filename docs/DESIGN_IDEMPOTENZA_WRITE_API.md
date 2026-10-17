@@ -12,7 +12,8 @@ I form hanno una guardia `busy` che disabilita il bottone MENTRE la richiesta e'
 
 - se la risposta si perde (rete mobile, timeout, tab sospesa) il client mostra errore e l'utente
   ritocca "salva". Il server pero' potrebbe aver GIA' scritto: il secondo tap duplica la riga.
-- non c'e' service worker ne' coda offline: il rischio non e' un retry automatico, e' il re-tap umano.
+- nessun service worker con fetch o cache ne' coda offline (`sw.js` delle notifiche, dal 17-10, gestisce solo push e
+  tocco sulla notifica): il rischio non e' un retry automatico, e' il re-tap umano.
 - `write-api` non ha alcun riconoscimento di replay: ogni POST che passa la validazione inserisce.
 
 L'unica azione oggi replay-safe e' `qromo_sale` (dedup su `sale_id` + UNIQUE parziale migr 0036),

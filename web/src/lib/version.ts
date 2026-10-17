@@ -3,9 +3,9 @@
 // Il problema, e non e' teorico: le operatrici tengono la PWA aperta per ore e la scheda continua a
 // eseguire il bundle che ha caricato all'avvio. Durante un collaudo del 02-08 e' successo davvero -
 // la scheda girava su un bundle vecchio, il difetto era gia' corretto, e stava per essere
-// consegnato all'owner come "bug critico non risolto". Non esiste service worker nel progetto
-// (verificato: nessun sw.js, nessun vite-plugin-pwa), quindi non c'e' nessun ciclo di aggiornamento
-// che se ne occupi: va fatto a mano.
+// consegnato all'owner come "bug critico non risolto". Nessun service worker gestisce la cache del
+// progetto (nessun vite-plugin-pwa; web/public/sw.js, dal 17-10, fa SOLO notifiche push, senza fetch
+// ne' cache), quindi non c'e' nessun ciclo di aggiornamento che se ne occupi: va fatto a mano.
 //
 // COSA SI CONFRONTA. Un intero crescente generato al build (`build`), non il nome del file e non
 // una data leggibile. Il confronto e' MONOTONO - si avvisa solo se il pubblicato e' PIU' NUOVO del

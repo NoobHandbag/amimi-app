@@ -18,17 +18,21 @@ import Premia from './pages/Premia';
 import Icon from './components/Icon';
 import AssistantPanel from './components/AssistantPanel';
 import UpdateBanner from './components/UpdateBanner';
+import PushKeeper from './components/PushKeeper';
+import Notifiche from './pages/Notifiche';
 import { pushBack } from './lib/backnav';
 import { fetchLeadTodo } from './lib/leadApi';
-import { fetchVillaggioEnabled } from './lib/api';
+import { fetchPushEnabled, fetchVillaggioEnabled } from './lib/api';
 import ErrorBoundary from './components/ErrorBoundary';
 // three.js pesa: il Villaggio si scarica solo quando lo si apre
 const Villaggio = lazy(() => import('./pages/Villaggio'));
 
 export default function App() {
   // URL diretto: .../amimi-app/#negozi apre la sezione B2B (richiesta owner 10-09); #ads la reportistica Meta (18-09);
-  // #materiali il catalogo materie prime (22-09); #premia la dashboard del programma fedeltà (27-09)
-  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : window.location.hash.startsWith('#materiali') ? 'materiali' : window.location.hash.startsWith('#premia') ? 'premia' : window.location.hash.startsWith('#villaggio') ? 'villaggio' : 'home'));
+  // #materiali il catalogo materie prime (22-09); #premia la dashboard del programma fedeltà (27-09); #notifiche le
+  // notifiche native (17-10). Il tocco su una notifica ad app aperta passa da tabDaHash di lib/push.ts (PushKeeper): una
+  // scheda nuova va aggiunta anche li': tests/push_sw.mjs controlla che i due elenchi di hash siano uguali
+  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : window.location.hash.startsWith('#materiali') ? 'materiali' : window.location.hash.startsWith('#premia') ? 'premia' : window.location.hash.startsWith('#villaggio') ? 'villaggio' : window.location.hash.startsWith('#notifiche') ? 'notifiche' : 'home'));
   const [param, setParam] = useState<string | undefined>();
   // Modulo mat_* (materie prime): a flag spento la tile in Home non compare, Ordini non mostra il segmented e la
   // pagina dice "non attiva". Rollback = spegnere app_flags.mat_enabled (Regola Ferrea 19). Letto una volta all'avvio.
@@ -38,6 +42,10 @@ export default function App() {
   // aperto da link non mostra 'non attiva' per un attimo.
   const [vilEnabled, setVilEnabled] = useState<boolean | null>(null);
   useEffect(() => { fetchVillaggioEnabled().then(setVilEnabled).catch(() => setVilEnabled(false)); }, []);
+  // Notifiche native (17-10, migr 0163): stesso schema, flag push_enabled. Spento: niente voce in Home, #notifiche dice
+  // "non attiva", PushKeeper non fa niente. null = non ancora letto.
+  const [pushEnabled, setPushEnabled] = useState<boolean | null>(null);
+  useEffect(() => { fetchPushEnabled().then(setPushEnabled).catch(() => setPushEnabled(false)); }, []);
   // badge del bottone B2B nella barra: "da fare" dell'outreach (0 senza login). 3 richieste, di cui v_lead_inbound la piu'
   // cara (CASI_APERTI n.38 a): si legge al mount, ogni 5 minuti a scheda visibile, al ritorno in primo piano e quando si
   // ESCE da Negozi o da Assistenza (scrivono: una scrittura, il login o la categoria di una conversazione cambiano il
@@ -80,7 +88,7 @@ export default function App() {
   return (
     <div className="app">
       <main>
-        {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} matEnabled={matEnabled} vilEnabled={vilEnabled === true} />}
+        {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} matEnabled={matEnabled} vilEnabled={vilEnabled === true} pushEnabled={pushEnabled === true} />}
         {tab === 'materiali' && (matEnabled
           ? <Materiali chi={chi} onBack={() => go('home')} onProdotti={() => go('ordini')} />
           : <div className="screen"><header><h1>Materie prime</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">Sezione non attiva (flag mat_enabled spento).</div></div>)}
@@ -99,6 +107,9 @@ export default function App() {
         {tab === 'villaggio' && (vilEnabled
           ? <ErrorBoundary titolo="Villaggio" onBack={() => go('home')}><Suspense fallback={<div className="screen"><div className="card muted center">Carico il villaggio…</div></div>}><Villaggio pin={pin} chi={chi} onBack={() => go('home')} /></Suspense></ErrorBoundary>
           : <div className="screen"><header><h1>Villaggio</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">{vilEnabled === null ? 'Carico…' : 'Sezione non attiva (flag villaggio_enabled spento).'}</div></div>)}
+        {tab === 'notifiche' && (pushEnabled
+          ? <Notifiche chi={chi} setChi={setChi} onBack={() => go('home')} />
+          : <div className="screen"><header><h1>Notifiche</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">{pushEnabled === null ? 'Carico…' : 'Sezione non attiva (flag push_enabled spento).'}</div></div>)}
       </main>
       {/* nav ridotta (decisione call 06-07, item 13+28): Registra e Ordini vivono nella Home
           ("la home page fa tutto"); al loro posto l'accesso diretto alle Tabelle (dati grezzi). */}
@@ -114,6 +125,7 @@ export default function App() {
       {/* avvisa quando e' stata pubblicata una versione nuova: la PWA resta aperta per ore e
           altrimenti si continua a lavorare su un bundle vecchio senza nessun segnale */}
       <UpdateBanner />
+      <PushKeeper attivo={pushEnabled === true} nascondi={tab === 'notifiche'} go={go} />
     </div>
   );
 }
