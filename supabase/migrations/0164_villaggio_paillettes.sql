@@ -1,4 +1,4 @@
--- 0163_villaggio_paillettes.sql (2026-10-16): Paillettes, la gamification del Villaggio (fase 2).
+-- 0164_villaggio_paillettes.sql (2026-10-16): Paillettes, la gamification del Villaggio (fase 2).
 -- Gioca solo Ginni (app_flags.villaggio_paillettes_chi). I punti NON si scrivono da nessuna parte: il client li CALCOLA
 -- da v_villaggio_eventi, cioe' da eventi che il database registra comunque (change_log di order_multi e arrival_set,
 -- counts) piu' due tabelle nuove: vil_presenze (un'apertura al giorno) e supplier_checks (verifica con il fornitore).

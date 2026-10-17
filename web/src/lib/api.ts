@@ -849,8 +849,8 @@ export async function fetchVillaggioEnabled(): Promise<boolean> {
   return s === 'true' || s === '1' || s === 'on' || s === 'yes';
 }
 
-/** Tutti gli interruttori del Villaggio in una lettura (v_villaggio_settings, migr 0162 e 0163): il Villaggio e le sue
- *  Paillettes, da quando si contano e chi gioca. Errore = tutto spento. Prima della 0163 la vista ha solo
+/** Tutti gli interruttori del Villaggio in una lettura (v_villaggio_settings, migr 0162 e 0164): il Villaggio e le sue
+ *  Paillettes, da quando si contano e chi gioca. Errore = tutto spento. Prima della 0164 la vista ha solo
  *  villaggio_enabled, quindi le Paillettes restano spente da sole. */
 export type VillaggioSettings = { enabled: boolean; paillettes: boolean; dal: string | null; giocatrice: string | null };
 export const VILLAGGIO_SPENTO: VillaggioSettings = { enabled: false, paillettes: false, dal: null, giocatrice: null };
@@ -868,7 +868,7 @@ export async function fetchVillaggioSettings(): Promise<VillaggioSettings> {
   };
 }
 
-/** Gli eventi delle Paillettes della giocatrice (v_villaggio_eventi, migr 0163), tutti: i punti si ricalcolano dallo
+/** Gli eventi delle Paillettes della giocatrice (v_villaggio_eventi, migr 0164), tutti: i punti si ricalcolano dallo
  *  storico intero. A pagine, fermandosi solo su una pagina vuota, perche' PostgREST taglia in silenzio (Regola 20b).
  *  Errore = lancia: un errore non e' mai "zero eventi". */
 export async function fetchVillaggioEventi(): Promise<Evento[]> {
@@ -892,4 +892,13 @@ export type VerificaRiga = { id: string; confermata: boolean; data_consegna: str
 /** Verifica con il fornitore: conferma le righe aperte e mette o corregge le date di consegna (order_date nel change_log). */
 export async function verificaFornitore(chi: string, payload: { fornitore: string; righe: VerificaRiga[]; nota?: string | null }) {
   return (await writeApi('fornitore_verifica', payload, 'x', chi)) as unknown as { ok: boolean; check_id: string; date_cambiate: number };
+}
+
+/** Interruttore delle notifiche native (migr 0163, 17-10), stesso schema: vista v_push_settings con la sola chiave
+ *  push_enabled. Errore o assenza = spento, cosi' a migrazione non ancora applicata la scheda non compare. */
+export async function fetchPushEnabled(): Promise<boolean> {
+  const { data, error } = await supabase.from('v_push_settings').select('key,value').eq('key', 'push_enabled').maybeSingle();
+  if (error || !data) return false;
+  const s = String((data as { value: unknown }).value ?? '').trim().toLowerCase();
+  return s === 'true' || s === '1' || s === 'on' || s === 'yes';
 }

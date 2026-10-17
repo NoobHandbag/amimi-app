@@ -1,4 +1,4 @@
-// tests/paillettes_guardie.mjs: guardie delle Paillettes del Villaggio (migr 0163, write-api v29, 16-10).
+// tests/paillettes_guardie.mjs: guardie delle Paillettes del Villaggio (migr 0164, write-api v29, 16-10).
 //   node tests/paillettes_guardie.mjs   (Node 24 strippa i tipi TS all'import)
 //
 // Due meta'. Sul SORGENTE della migrazione: cio' che tiene il modulo spento alla nascita (Regola 19), fuori dalla anon
@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
-const M = read('supabase/migrations/0163_villaggio_paillettes.sql');
+const M = read('supabase/migrations/0164_villaggio_paillettes.sql');
 const SRC = read('supabase/functions/write-api/index.ts');
 const noSql = (s) => s.replace(/--[^\n]*/g, '');
 const m = noSql(M);
@@ -26,7 +26,7 @@ const eq = (n, got, exp) => {
   if (g === e) { ok++; console.log('  ok  ' + n); } else { ko++; console.log(`  KO  ${n}  atteso ${e}, ottenuto ${g}`); }
 };
 
-console.log('\n== migrazione 0163: spenta alla nascita, una transazione ==');
+console.log('\n== migrazione 0164: spenta alla nascita, una transazione ==');
 t('1  begin; ... commit; in una transazione', /^begin;$/m.test(M) && /^commit;$/m.test(M) && M.indexOf('begin;') < M.indexOf('commit;'));
 t("2  villaggio_paillettes_enabled nasce 'false'", /\('villaggio_paillettes_enabled', 'false'\)/.test(m));
 t("3  dal '2026-10-17' e giocatrice 'Ginevra'", /\('villaggio_paillettes_dal', '2026-10-17'\)/.test(m) && /\('villaggio_paillettes_chi', 'Ginevra'\)/.test(m));
@@ -67,7 +67,7 @@ t('28 verifica: ref = fornitore, n = righe con confermata true', /select 'verifi
 t('29 data_aggiunta: una riga per elemento con data_prima null e data_dopo non null, ref = id', /select 'data_aggiunta', s\.giorno, s\.ts, e ->> 'id', 1, s\.chi/.test(m) && /where e ->> 'data_prima' is null and e ->> 'data_dopo' is not null/.test(m));
 
 console.log('\n== write-api v29: cinture sul sorgente ==');
-const BEGIN = '  // --- PAILLETTES (v29, migr 0163)', END = "  // v21: l'insert generico 'order' bypassava";
+const BEGIN = '  // --- PAILLETTES (v29, migr 0164)', END = "  // v21: l'insert generico 'order' bypassava";
 const a = SRC.indexOf(BEGIN), b = SRC.indexOf(END);
 if (a < 0 || b < 0 || b < a) { console.error('blocco Paillettes non trovato in write-api/index.ts'); process.exit(1); }
 const BLK = SRC.slice(a, b), F = flat(BLK);

@@ -26,6 +26,10 @@ const tileTint = (icon: string) => TC[icon] ?? ['--interactive-tint', '--interac
 const keyOf = (t: Tile) => `${t.tab}:${t.param ?? ''}`;
 // azioni "di gestione" (mockup: Prodotti, Reso, B2B, Salute...) per il tier centrale
 const GEST = new Set(['registra:catalogo', 'registra:product', 'registra:reso', 'registra:b2b', 'salute:', 'registra:pubblica']);
+// Notifiche native (17-10): voce per tutte le persona, solo a flag push_enabled acceso. Sta fra le azioni e non fra le
+// tile delle persona: si usa una volta per telefono, e se l'iscrizione si perde ci riporta l'avviso di PushKeeper. Non
+// e' in GEST, quindi cade in "Altro", e "Cerca un'azione" la trova.
+const NOTIFICHE: Tile = { icon: 'pulse', label: 'Notifiche sul telefono', tab: 'notifiche' };
 
 function sparkPoints(vals: number[], w = 150, h = 26): string {
   if (vals.length < 2) return `0,${h} ${w},${h}`;
@@ -33,7 +37,7 @@ function sparkPoints(vals: number[], w = 150, h = 26): string {
   return vals.map((v, i) => `${(i / (vals.length - 1) * w).toFixed(1)},${(h - 3 - ((v - min) / span) * (h - 6)).toFixed(1)}`).join(' ');
 }
 
-export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled = false }: { chi: string; setChi: (c: string) => void; go: (t: Tab, p?: string) => void; matEnabled?: boolean; vilEnabled?: boolean }) {
+export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled = false, pushEnabled = false }: { chi: string; setChi: (c: string) => void; go: (t: Tab, p?: string) => void; matEnabled?: boolean; vilEnabled?: boolean; pushEnabled?: boolean }) {
   const cfg = PERSONA[chi] ?? PERSONA.Ale;
   const [badges, setBadges] = useState({ arrivi: 0, todo: 0 });
   const [fin, setFin] = useState<{ netto: number; deltaPct: number | null; giorno: number | null; mc2: number; spark: number[] } | null>(null);
@@ -81,7 +85,7 @@ export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled =
     // Materie prime (modulo mat_*) e Villaggio: la tile esiste solo a flag acceso, per ogni persona
     const acceso = (t: Tile) => (matEnabled || t.tab !== 'materiali') && (vilEnabled || t.tab !== 'villaggio');
     const tiles = cfg.tiles.filter(acceso);
-    const actions = ALL_ACTIONS.filter(acceso);
+    const actions = [...ALL_ACTIONS.filter(acceso), ...(pushEnabled ? [NOTIFICHE] : [])];
     const quick = tiles.slice(0, 4);
     const qk = new Set(quick.map(keyOf));
     const gest: Tile[] = [];
@@ -94,7 +98,7 @@ export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled =
     }
     const altro = actions.filter((t) => !seen.has(keyOf(t)) && (!FINANCE_TABS.has(t.tab) || cfg.finance));
     return { quick, gestione: gest, altro };
-  }, [cfg, matEnabled, vilEnabled]);
+  }, [cfg, matEnabled, vilEnabled, pushEnabled]);
 
   const query = q.trim().toLowerCase();
   const matches = useMemo(() => {

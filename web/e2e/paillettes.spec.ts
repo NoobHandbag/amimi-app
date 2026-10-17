@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// Paillettes (fase 2 del Villaggio, migr 0163): i punti di Ginni. Come villaggio.spec.ts NON tocca Supabase: ogni richiesta
+// Paillettes (fase 2 del Villaggio, migr 0164): i punti di Ginni. Come villaggio.spec.ts NON tocca Supabase: ogni richiesta
 // a *.supabase.co riceve dati finti (v_ordini_arrivo, v_inventory, products, v_villaggio_settings con le quattro chiavi,
 // v_villaggio_eventi a pagine) e le POST alla write-api sono registrate e risposte qui come farebbe write-api v29:
 // villaggio_presenza (idempotente per giorno, ignorata per chi non gioca), fornitore_verifica (date aggiornate, eventi

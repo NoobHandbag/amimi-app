@@ -15,7 +15,9 @@ export default defineConfig({
   // in CI un test.only dimenticato farebbe saltare tutti gli altri restando verde (CASI_APERTI n.37)
   forbidOnly: !!process.env.CI,
   reporter: 'list',
-  use: { baseURL: `http://localhost:${PORT}/amimi-app/`, headless: true },
+  // serviceWorkers 'block' (17-10, notifiche native): page.route non vede le richieste servite da un service worker, e
+  // bloccandoli i dati finti restano l'unica fonte anche se sw.js un giorno cambiasse. L'iscrizione vera si prova sul telefono.
+  use: { baseURL: `http://localhost:${PORT}/amimi-app/`, headless: true, serviceWorkers: 'block' },
   webServer: {
     command: `npm run preview -- --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}/amimi-app/`,

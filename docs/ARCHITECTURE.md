@@ -178,7 +178,7 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   (`costruisci`, `arriviFra`) e' in `catalogo.ts`, provato da `tests/villaggio_catalogo.mjs`; e2e in
   `web/e2e/villaggio.spec.ts` (progetto finto, sempre con il percorso della spec). Tutti e due si lanciano a mano
   (Gate 1): la CI non li esegue ancora (CASI_APERTI del repo principale).
-  **Paillettes** (fase 2, dal 16-10, migr 0163, SCHEMA.md sez. 17): la gamification del Villaggio. Gioca solo la
+  **Paillettes** (fase 2, dal 16-10, migr 0164, SCHEMA.md sez. 17): la gamification del Villaggio. Gioca solo la
   giocatrice (`app_flags.villaggio_paillettes_chi`, oggi Ginevra); interruttore `villaggio_paillettes_enabled`, nato
   'false': spento non c'e' niente di questa fase (pillola, stella, bottoni, presenza, letture degli eventi). App e
   VillaggioApp leggono tutte le chiavi con `fetchVillaggioSettings` e passano alla pagina `paillettes` e `giocatrice`.

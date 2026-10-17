@@ -19,7 +19,7 @@
 // v28 (2026-10-13, migr 0156): `gift` accetta solo kind 'gift' (default) o 'vendita_manuale' e lo scrive sempre
 // (la colonna e' NOT NULL); un omaggio con prezzo > 0 prende 422 leggibile invece dell'errore del vincolo Postgres.
 //
-// v29 (2026-10-16, migr 0163): Paillettes del Villaggio. `villaggio_presenza` (una presenza al giorno della giocatrice,
+// v29 (2026-10-16, migr 0164): Paillettes del Villaggio. `villaggio_presenza` (una presenza al giorno della giocatrice,
 // idempotente sulla PK) e `fornitore_verifica` (date di consegna delle righe di un laboratorio + registro della
 // verifica). Entrambe 409 a flag villaggio_paillettes_enabled spento. logp accetta un `before` opzionale.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -1158,7 +1158,7 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, id: cnt.id, contati, giac_prima: giacLive, delta, giac_dopo: contati, adjustment_id });
   }
 
-  // --- PAILLETTES (v29, migr 0163): la gamification del Villaggio ---
+  // --- PAILLETTES (v29, migr 0164): la gamification del Villaggio ---
   // I punti non si scrivono: il client li calcola da v_villaggio_eventi. Qui entrano solo i due eventi che il database
   // non registra gia' (la presenza e la verifica col fornitore). Semplice per scelta di Dan (16-10): niente
   // compare-and-set sulle date (le tocca solo Ginni) e niente op_id (i tetti dei punti rendono innocuo un doppio invio).

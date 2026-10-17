@@ -25,7 +25,7 @@ import '../styles/villaggio.css';
 // Villaggio (16-10): la stessa gestione ordini e magazzino, vista come un'isola in stile FarmVille / Animal Crossing.
 // LEGGE le stesse viste di Ordini e Magazzino (v_ordini_arrivo, v_inventory). SCRIVE solo attraverso i componenti di
 // Ordini e Magazzino: ArrivoRow (arrivi, con le sue conferme su mese chiuso, doppio arrivo e totale atteso),
-// SupplierOrderForm (ordine nuovo) e CountForm (giro di conta). Le Paillettes (fase 2, migr 0163) aggiungono le loro due
+// SupplierOrderForm (ordine nuovo) e CountForm (giro di conta). Le Paillettes (fase 2, migr 0164) aggiungono le loro due
 // sole scritture, la presenza e la verifica fornitore, con segnaPresenza e verificaFornitore di lib/api; i punti non si
 // scrivono da nessuna parte, si ricalcolano da v_villaggio_eventi con lib/villaggio/paillettes.ts.
 // Interruttori: app_flags.villaggio_enabled (migr 0162) e villaggio_paillettes_enabled, letti da App.tsx e da VillaggioApp.tsx.
