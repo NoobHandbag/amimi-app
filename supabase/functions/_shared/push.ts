@@ -13,9 +13,11 @@ export type EsitoPush = {
 export type MsgPush = { tema: string; titolo: string; testo: string; url?: string; urgente?: boolean; dryRun?: boolean };
 
 export const APP_URL = 'https://noobhandbag.github.io/amimi-app/';
-// push-api spedisce in sequenza con 10 s per telefono: con i tre telefoni del team il caso peggiore sta sotto i 20 s.
-// Oltre, la push puo' arrivare lo stesso (push-api va avanti) ma per il guardiano conta come non arrivata.
-export const TIMEOUT_PUSH_MS = 20000;
+// push-api spedisce in sequenza con 10 s al massimo per telefono (giro intero al massimo 100 s) e le sue letture possono
+// ritentare dopo 1,5 s: con i tre telefoni del team il caso peggiore e' di circa 35 s (di solito meno di un secondo a
+// telefono). Oltre il tetto la push puo' arrivare lo stesso (push-api va avanti) ma per il guardiano conta come non
+// arrivata: in modalita' `push` partirebbe anche ntfy (Gate 2 del 17-10, C2).
+export const TIMEOUT_PUSH_MS = 40000;
 
 // Stessa regola di flagVero in push-api: acceso SOLO con la stringa 'true' (maiuscole e spazi tollerati).
 export function canaleEffettivo(pushEnabled: unknown, canale: unknown): Canale {

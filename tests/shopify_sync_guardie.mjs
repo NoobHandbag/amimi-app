@@ -8,9 +8,11 @@
 // e' un guasto che compare solo quando il database risponde male, cioe' mai in un collaudo.
 // Questo file quindi non prova la funzione: legge il sorgente e verifica che le cinque regole della v7 ci siano
 // ancora. Se qualcuno le toglie "per semplificare", il test lo dice.
-import { readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, readdirSync, existsSync, mkdtempSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripTypeScriptTypes } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
@@ -132,10 +134,12 @@ const PUSH_SRC = read('supabase/functions/_shared/push.ts');
 const PUSH_API = read('supabase/functions/push-api/index.ts');
 const MIG164 = read('supabase/migrations/0164_push_canale_guardie.sql');
 process.removeAllListeners('warning');
-const TMP_PUSH = `${ROOT}tests/_push_shared.tmp.mjs`;
+// fuori dal repo (Gate 2 del 17-10, C4): una run interrotta non lascia un file da committare per sbaglio
+const TMP_DIR = mkdtempSync(join(tmpdir(), 'amimi-push-'));
+const TMP_PUSH = join(TMP_DIR, 'push.mjs');
 writeFileSync(TMP_PUSH, stripTypeScriptTypes(PUSH_SRC), 'utf8');
 let P;
-try { P = await import(pathToFileURL(TMP_PUSH).href); } finally { try { unlinkSync(TMP_PUSH); } catch { /* niente */ } }
+try { P = await import(pathToFileURL(TMP_PUSH).href); } finally { try { rmSync(TMP_DIR, { recursive: true, force: true }); } catch { /* niente */ } }
 const { canaleEffettivo, consegnata, consegnaAvviso, esitoDaRisposta, inviaPush, APP_URL, TIMEOUT_PUSH_MS } = P;
 
 console.log('\n== push: canaleEffettivo (interruttore push_canale_guardie) ==');
@@ -186,8 +190,9 @@ console.log('\n== push: consegnaAvviso (chi parte, in che ordine) ==');
     async () => { await Promise.race([partita, new Promise((_, rej) => setTimeout(() => rej(new Error('push non partita in parallelo')), 500))]); return true; },
     async () => { pushPartita(); return PUSH_OK; });
   t('54 entrambi: ntfy e push in parallelo', r.consegnata === true && r.ntfyOk === true);
-  f = finto(new Error('ntfy esploso'), PUSH_OK); r = await consegnaAvviso('ntfy', f.ntfy, f.push);
-  t('55 una spedizione ntfy che lancia conta come fallita e non esce', r.ntfyOk === false && r.consegnata === false);
+  f = finto(new Error('ntfy esploso'), PUSH_OK);
+  try { r = await consegnaAvviso('ntfy', f.ntfy, f.push); } catch { r = null; }
+  t('55 una spedizione ntfy che lancia conta come fallita e non esce', r?.ntfyOk === false && r?.consegnata === false);
   f = finto(true, new Error('push esplosa')); r = await consegnaAvviso('push', f.ntfy, f.push);
   t('56 una push che lancia: esito ok:false con errore, poi il ripiego ntfy', r.push?.ok === false && /push esplosa/.test(r.push?.errore ?? '') && f.log.join() === 'push,ntfy' && r.consegnata === true, r);
   f = finto(null, PUSH_ZERO); r = await consegnaAvviso('push', f.ntfy, f.push);
@@ -222,7 +227,8 @@ console.log('\n== push: inviaPush (POST a push-api, mai un\'eccezione) ==');
   t('64 URL = SUPABASE_URL + /functions/v1/push-api (senza doppia barra)', visto.url === 'https://progetto.supabase.co/functions/v1/push-api', visto.url);
   t('65 POST, Bearer con la chiave di servizio, JSON', visto.init.method === 'POST' && visto.init.headers.Authorization === 'Bearer ' + KEY && visto.init.headers['Content-Type'] === 'application/json');
   t('66 corpo: action invia, tema, titolo, testo, url di default, urgente; nessun dryRun', body.action === 'invia' && body.tema === 'conti' && body.titolo === msg.titolo && body.testo === msg.testo && body.url === APP_URL && body.urgente === true && !('dryRun' in body), body);
-  t('67 c\'e\' un timeout (AbortSignal), al massimo 20 s', visto.init.signal instanceof AbortSignal && TIMEOUT_PUSH_MS > 0 && TIMEOUT_PUSH_MS <= 20000);
+  // tre telefoni x 10 s di push-api piu' i ritentativi delle sue letture stanno sotto i 40 s (Gate 2 del 17-10, C2)
+  t('67 c\'e\' un timeout (AbortSignal), fra 35 e 60 s', visto.init.signal instanceof AbortSignal && TIMEOUT_PUSH_MS >= 35000 && TIMEOUT_PUSH_MS <= 60000);
   t('68 risposta 2xx con un telefono: ok', e.ok === true && e.inviati === 1);
   e = await inviaPush({ ...msg, dryRun: true, urgente: undefined }, ENV, fetchFinto(risposta(200, { ok: false, dryRun: true, inviati: 0, destinatari: 0 })));
   const b2 = JSON.parse(visto.init.body);
@@ -305,6 +311,14 @@ console.log('\n== push: guardie sul sorgente di ce-guard e sales-guard ==');
   const conWebPush = tsFiles.filter((f) => /from ['"](npm:|jsr:)?[^'"]*web-?push/i.test(readFileSync(f, 'utf8')));
   t(`96 nessun import di web-push fuori da push-api (${tsFiles.length} file)`, tsFiles.length > 10 && conWebPush.length === 0 && existsSync(`${FN}/_shared/push.ts`), conWebPush[0]);
   t('97 i due guardiani importano il client da ../_shared/push.ts', [GUARD, SALES].every((s) => /from '\.\.\/_shared\/push\.ts';/.test(s)));
+  // Gate 2 del 17-10 (C1): il caso 29 resta verde anche con `return true` al posto di `return res.ok` (lo `res.ok` di
+  // `if (!res.ok)` basta alla sua regex), e niente fissava che consegnaAvviso riceva il canale vero. Qui la forma esatta.
+  const ntfyEsatto = /if \(!res\.ok\) ntfyFailed = res\.status;\s*return res\.ok;\s*\} catch \(e\) \{ ntfyError = 'ntfy non raggiungibile: ' \+ [^}]*return false; \}/;
+  t('100 mandaNtfy: ok = res.ok, ntfy_failed sul non-2xx, false (non null) su un errore di rete', [GUARD, SALES].every((s) => ntfyEsatto.test(s)));
+  t('100b rilevatore: `return true` al posto di `return res.ok` viene visto',
+    !ntfyEsatto.test("if (!res.ok) ntfyFailed = res.status;\n            return true;\n          } catch (e) { ntfyError = 'ntfy non raggiungibile: ' + x; return false; }"));
+  t('101 consegnaAvviso riceve il canale letto dai flag (mai una modalita\' scritta a mano)',
+    [GUARD, SALES].every((s) => /const av = await consegnaAvviso\(canale, mandaNtfy, /.test(s) && (s.match(/consegnaAvviso\(/g) ?? []).length === 1));
 }
 
 console.log('\n== migr 0164: interruttore ==');
