@@ -132,7 +132,7 @@ console.log('\n== guardie: verdetti in health_log con upsert controllato (audit 
 // 2026-10-17_BRIEF_notifiche_guardie_PR_B.md.
 const PUSH_SRC = read('supabase/functions/_shared/push.ts');
 const PUSH_API = read('supabase/functions/push-api/index.ts');
-const MIG164 = read('supabase/migrations/0164_push_canale_guardie.sql');
+const MIG165 = read('supabase/migrations/0165_push_canale_guardie.sql');
 process.removeAllListeners('warning');
 // fuori dal repo (Gate 2 del 17-10, C4): una run interrotta non lascia un file da committare per sbaglio
 const TMP_DIR = mkdtempSync(join(tmpdir(), 'amimi-push-'));
@@ -326,10 +326,10 @@ console.log('\n== push: guardie sul sorgente di ce-guard e sales-guard ==');
   t('102 _shared/push.ts e\' importato solo da ce-guard e sales-guard (una modifica = deploy di entrambe)', importatori.join() === 'ce-guard,sales-guard', importatori);
 }
 
-console.log('\n== migr 0164: interruttore ==');
+console.log('\n== migr 0165: interruttore ==');
 {
-  t('98 push_canale_guardie nasce ntfy, senza sovrascrivere un valore gia\' cambiato', /insert into app_flags \(key, value\) values \('push_canale_guardie', 'ntfy'\) on conflict \(key\) do nothing/.test(MIG164));
-  t('99 controllo a fine migrazione con RAISE', /raise exception '0164: push_canale_guardie nato qui vale % invece di ntfy'/.test(MIG164) && /raise exception '0164: manca app_flags\.push_canale_guardie'/.test(MIG164));
+  t('98 push_canale_guardie nasce ntfy, senza sovrascrivere un valore gia\' cambiato', /insert into app_flags \(key, value\) values \('push_canale_guardie', 'ntfy'\) on conflict \(key\) do nothing/.test(MIG165));
+  t('99 controllo a fine migrazione con RAISE', /raise exception '0165: push_canale_guardie nato qui vale % invece di ntfy'/.test(MIG165) && /raise exception '0165: manca app_flags\.push_canale_guardie'/.test(MIG165));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);
