@@ -13,6 +13,8 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const FN = `${ROOT}supabase/functions`;
 const files = readdirSync(FN, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync(`${FN}/${d.name}/index.ts`)).map((d) => `${FN}/${d.name}/index.ts`);
 if (existsSync(`${FN}/write-api/lib.ts`)) files.push(`${FN}/write-api/lib.ts`);
+// moduli condivisi fra edge (dal 17-10 _shared/push.ts, importato da ce-guard e sales-guard): non hanno index.ts
+if (existsSync(`${FN}/_shared`)) for (const f of readdirSync(`${FN}/_shared`).filter((n) => n.endsWith('.ts')).sort()) files.push(`${FN}/_shared/${f}`);
 
 let ok = 0, ko = 0;
 const parses = (src) => { try { stripTypeScriptTypes(src); return null; } catch (e) { return e.message.split('\n')[0]; } };
