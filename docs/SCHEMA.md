@@ -319,3 +319,27 @@ Il Villaggio (ordini e magazzino come isola 3D, `web/src/pages/Villaggio.tsx`) e
 
 - **`app_flags.villaggio_enabled`** = `'false'` alla nascita (`on conflict do nothing`: una riaccensione manuale non viene sovrascritta da un re-run). Acceso = tile in Home (Ale, Ginevra, "Tutte le azioni"), scheda `#villaggio`, bottone "Apri il Villaggio" nel Cruscotto e app a se' `/amimi-app/villaggio/`. Spento = tutto nascosto, `#villaggio` e l'app a se' dicono "non attivo". Rollback = rimetterlo a `'false'`, senza deploy (Regola Ferrea 19).
 - **`v_villaggio_settings`** (owner postgres, leggibile anche da anon) espone SOLO quella chiave, come `v_mat_settings` (migr 0140): `app_flags` resta chiusa. Letta da `fetchVillaggioEnabled()` in `web/src/lib/api.ts`; errore o vista assente = spento.
+
+### 17b. Paillettes: la gamification del Villaggio (migr 0163, 2026-10-16, IN ATTESA di applicazione)
+
+Gioca solo Ginni (`app_flags.villaggio_paillettes_chi` = 'Ginevra'), i punti si chiamano Paillettes. I punti NON si scrivono da nessuna parte: il client li calcola con una funzione pura da `v_villaggio_eventi`, cioe' da eventi che il database registra comunque (`change_log` di `order_multi` e `arrival_set`, `counts`) piu' due tabelle nuove. Nessun effetto su CE e giacenze: l'unica scrittura operativa nuova e' `supplier_orders.data_consegna`, dalla verifica fornitore, con il suo `change_log` (op `order_date`, before/after). Scrive solo la `write-api` col service role (azioni `villaggio_presenza` e `fornitore_verifica`, vedi `EDGE_FUNCTIONS.md`).
+
+- **`vil_presenze`** `(chi text, giorno date, ts timestamptz default now(), primary key (chi, giorno))`: una riga per giorno di apertura del Villaggio da parte della giocatrice. La PK rende la presenza idempotente a DB (insert `on conflict do nothing`).
+- **`supplier_checks`** `(id uuid pk, ts, giorno date, fornitore text, chi text, righe jsonb, nota text)`: una riga per verifica con un laboratorio. `righe` = `[{ id, codice, confermata, data_prima, data_dopo }]` (le righe ordine lette con la data prima e dopo la verifica); un check impone che sia un array, cosi' la vista eventi non puo' rompersi su un valore storto. Niente idempotenza di proposito (scelta di Dan, 16-10): i tetti dei punti rendono innocuo un doppio salvataggio.
+- **Sicurezza:** RLS accesa su entrambe senza policy e `revoke all from public, anon, authenticated` (i default privileges di `public` darebbero select ad anon). Le legge e scrive solo il service role. Nota sulla postura esistente, non toccata qui: `change_log` resta leggibile da anon (lo legge il feed attivita' della Home).
+- **`app_flags`** (`on conflict do nothing`): `villaggio_paillettes_enabled` = `'false'` alla nascita (Regola Ferrea 19), `villaggio_paillettes_dal` = `'2026-10-17'` (da quando si contano gli eventi; si sposta al go-live senza migrazione), `villaggio_paillettes_chi` = `'Ginevra'`.
+- **`v_villaggio_settings`** ricreata con 4 chiavi: `villaggio_enabled` e le tre qui sopra. Stessa postura: owner postgres, solo select ad anon e authenticated.
+- **`v_villaggio_eventi`** `(tipo text, giorno date, ts timestamptz, ref text, n int)`, owner postgres senza `security_invoker` (anon legge gli eventi senza vedere le tabelle sotto), solo select ad anon e authenticated. Righe:
+
+| tipo | da | ref | n | giorno |
+|---|---|---|---|---|
+| `presenza` | `vil_presenze` | giorno | 1 | giorno |
+| `ordine` | `change_log` op `order_multi`, source `write-api` | `row_id` (= gruppo) | righe di `supplier_orders` del gruppo che ESISTONO ANCORA (ordine tutto cancellato = 0) | data di Roma del ts |
+| `arrivo` | `change_log` op `arrival_set`, source `write-api`, solo `after.delta > 0` | `row_id` (riga ordine) | delta (pezzi) | data di Roma del ts |
+| `conta` | `counts` | codice | 1 | `data_conta` (data di Roma del ts se manca) |
+| `verifica` | `supplier_checks` | fornitore | righe con `confermata = true` | giorno |
+| `data_aggiunta` | un elemento di `supplier_checks.righe` con `data_prima` null e `data_dopo` non null | id della riga ordine | 1 | giorno |
+
+  Filtri, tutti obbligatori: flag `villaggio_paillettes_enabled` = `'true'` (spento o assente = nessuna riga), `chi` = `villaggio_paillettes_chi`, `ts >=` mezzanotte di Roma di `villaggio_paillettes_dal`. `dal` si legge solo se e' una data ISO valida (regex + `pg_input_is_valid`): un valore storto o assente da' **nessuna riga**, mai un errore che spegne la vista.
+- **Prova live (notte fra 16 e 17-10, una sola transazione chiusa con ROLLBACK, nessun residuo):** con `dal` = `'2026-08-01'` e flag acceso, Ginni = 30 `ordine` (36 righe ancora esistenti, 5 ordini a n = 0), 45 `arrivo` (498 pezzi, 44 coppie riga-giorno, 13 giorni, dal 02-09), 3 `conta`; negli ultimi 60 giorni 21 ordini (25 righe, 10 giorni attivi), 45 arrivi, 3 conte. Esclusi correttamente 7 `arrival_set` al ribasso di Ginni e 22 righe di altri autori. `dal` = `'2026-02-30'`, `'epoch'` o assente = 0 righe; flag spento = 0 righe. Anon: select sulle due viste si', su `vil_presenze`, `supplier_checks` e `app_flags` no (42501), insert sulle viste no.
+- **Rollback:** `villaggio_paillettes_enabled` a `'false'`, senza deploy: la vista torna vuota e le due azioni `write-api` rispondono 409.

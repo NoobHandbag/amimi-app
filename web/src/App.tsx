@@ -20,7 +20,8 @@ import AssistantPanel from './components/AssistantPanel';
 import UpdateBanner from './components/UpdateBanner';
 import { pushBack } from './lib/backnav';
 import { fetchLeadTodo } from './lib/leadApi';
-import { fetchVillaggioEnabled } from './lib/api';
+import { VILLAGGIO_SPENTO, fetchVillaggioSettings } from './lib/api';
+import type { VillaggioSettings } from './lib/api';
 import ErrorBoundary from './components/ErrorBoundary';
 // three.js pesa: il Villaggio si scarica solo quando lo si apre
 const Villaggio = lazy(() => import('./pages/Villaggio'));
@@ -34,10 +35,12 @@ export default function App() {
   // pagina dice "non attiva". Rollback = spegnere app_flags.mat_enabled (Regola Ferrea 19). Letto una volta all'avvio.
   const [matEnabled, setMatEnabled] = useState(false);
   useEffect(() => { fetchMatEnabled().then(setMatEnabled).catch(() => setMatEnabled(false)); }, []);
-  // Villaggio (16-10): stesso schema, flag villaggio_enabled (migr 0162). null = non ancora letto, cosi' #villaggio
-  // aperto da link non mostra 'non attiva' per un attimo.
-  const [vilEnabled, setVilEnabled] = useState<boolean | null>(null);
-  useEffect(() => { fetchVillaggioEnabled().then(setVilEnabled).catch(() => setVilEnabled(false)); }, []);
+  // Villaggio (16-10): stesso schema, flag villaggio_enabled (migr 0162), letto insieme a quelli delle Paillettes (migr
+  // 0163) che si passano alla pagina. null = non ancora letto, cosi' #villaggio aperto da link non mostra 'non attiva'
+  // per un attimo.
+  const [vil, setVil] = useState<VillaggioSettings | null>(null);
+  useEffect(() => { fetchVillaggioSettings().then(setVil).catch(() => setVil(VILLAGGIO_SPENTO)); }, []);
+  const vilEnabled = vil && vil.enabled;
   // badge del bottone B2B nella barra: "da fare" dell'outreach (0 senza login). 3 richieste, di cui v_lead_inbound la piu'
   // cara (CASI_APERTI n.38 a): si legge al mount, ogni 5 minuti a scheda visibile, al ritorno in primo piano e quando si
   // ESCE da Negozi o da Assistenza (scrivono: una scrittura, il login o la categoria di una conversazione cambiano il
@@ -97,7 +100,7 @@ export default function App() {
         {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} onMateriali={matEnabled ? () => go('materiali') : undefined} />}
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}
         {tab === 'villaggio' && (vilEnabled
-          ? <ErrorBoundary titolo="Villaggio" onBack={() => go('home')}><Suspense fallback={<div className="screen"><div className="card muted center">Carico il villaggio…</div></div>}><Villaggio pin={pin} chi={chi} onBack={() => go('home')} /></Suspense></ErrorBoundary>
+          ? <ErrorBoundary titolo="Villaggio" onBack={() => go('home')}><Suspense fallback={<div className="screen"><div className="card muted center">Carico il villaggio…</div></div>}><Villaggio pin={pin} chi={chi} paillettes={vil?.paillettes === true} giocatrice={vil?.giocatrice} onBack={() => go('home')} /></Suspense></ErrorBoundary>
           : <div className="screen"><header><h1>Villaggio</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">{vilEnabled === null ? 'Carico…' : 'Sezione non attiva (flag villaggio_enabled spento).'}</div></div>)}
       </main>
       {/* nav ridotta (decisione call 06-07, item 13+28): Registra e Ordini vivono nella Home

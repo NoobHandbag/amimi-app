@@ -5,7 +5,7 @@ import { writeApi, fetchGiacenzaOne, fetchProducts, oggi } from '../lib/api';
 import type { Product } from '../lib/api';
 import { toast } from '../lib/toast';
 
-export default function CountForm({ pin, chi, initialCodice }: { pin: string; chi: string; initialCodice?: string }) {
+export default function CountForm({ pin, chi, initialCodice, onDone }: { pin: string; chi: string; initialCodice?: string; onDone?: () => void }) {
   const [prod, setProd] = useState<Product | null>(null);
   // arrivo dalla scheda prodotto in magazzino (item 3): prodotto gia' selezionato
   useEffect(() => {
@@ -54,6 +54,7 @@ export default function CountForm({ pin, chi, initialCodice }: { pin: string; ch
         ? `Conta combacia · ${prod.item ?? prod.codice}: nessuna rettifica`
         : `Giacenza corretta · ${prod.item ?? ''} ${prod.variant ?? ''} ora = ${res.giac_dopo ?? contati} (${dl > 0 ? '+' : ''}${dl})`, 'ok');
       setProd(null); setContati(''); setNota('');
+      onDone?.();
     } catch (e) {
       toast((e as Error).message, 'err');
     } finally {

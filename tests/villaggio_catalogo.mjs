@@ -8,6 +8,8 @@
 // DAVVERO e le proviamo sui nomi VERI delle varianti (copia datata qui sotto), su piccoli dati costruiti a mano e sui
 // casi limite. Poi mettiamo le cinture sul sorgente perche' il Villaggio resti una vista: legge v_ordini_arrivo e
 // v_inventory, scrive SOLO con ArrivoRow e SupplierOrderForm di Ordini, e si vede solo a flag villaggio_enabled acceso.
+// Dalle Paillettes (fase 2) scrive anche con CountForm (giro di conta) e con le due azioni sue, segnaPresenza e
+// verificaFornitore; i suoi interruttori arrivano tutti insieme da fetchVillaggioSettings.
 // Dal secondo giro (16-10 sera) anche cinture e prove sulla pagina e sul mondo: l'ordine a meta' non si perde (apri,
 // chiudi, lascia, la Home e onDone VERI ritagliati da Villaggio.tsx, con go() di App.tsx e il backnav vero su una
 // history finta che fissa la meta di back() come Chromium), Esc nei campi, passo 3 sui dati veri, home() dell'app a
@@ -705,21 +707,31 @@ console.log('\n== cinture sul sorgente: il Villaggio legge e basta (Villaggio.ts
     eq(`${n}: ogni riga 'import' e' letta da queste cinture`, importi(s).length, conta(s, /^import\b/m));
   }
   t("catalogo.ts importa solo TIPI (spariscono a runtime: per questo questo test lo importa in Node)", importi(CAT).length > 0 && importi(CAT).every((i) => i.tipo));
-  // 16-10 sera: mergeGeometries per fondere le mesh ferme (impasta); viene dagli esempi di three, nessuna dipendenza nuova
-  eq('mondo.ts importa (valori) solo three, mergeGeometries dagli esempi di three e lastre da ./catalogo', importi(MONDO).filter((i) => !i.tipo).map((i) => i.da + ':' + i.nomi.join(',')).sort(),
-    ['./catalogo:lastre', 'three/examples/jsm/utils/BufferGeometryUtils.js:mergeGeometries', 'three:THREE']);
+  // 16-10 sera: mergeGeometries per fondere le mesh ferme (impasta); viene dagli esempi di three, nessuna dipendenza nuova.
+  // Paillettes (fase 2): parseLook per le due borse sul banco del chiosco-boutique (premio del livello 4)
+  eq('mondo.ts importa (valori) solo three, mergeGeometries dagli esempi di three, lastre e parseLook da ./catalogo', importi(MONDO).filter((i) => !i.tipo).map((i) => i.da + ':' + i.nomi.join(',')).sort(),
+    ['./catalogo:lastre,parseLook', 'three/examples/jsm/utils/BufferGeometryUtils.js:mergeGeometries', 'three:THREE']);
   const PKG = JSON.parse(read('web/package.json'));
   t("three e' una dipendenza dichiarata di web/ (gli esempi vengono con lo stesso pacchetto)", !!PKG.dependencies?.three && !PKG.dependencies?.['three-stdlib']);
   t("la pagina usa costruisci() e arriviFra() di catalogo.ts, non una copia sua", /\bcostruisci\b/.test(nomiDa(VIL, '../lib/villaggio/catalogo').join(' ')) && nomiDa(VIL, '../lib/villaggio/catalogo').includes('arriviFra')
     && !/function (costruisci|arriviFra)\s*\(/.test(VIL));
 }
 
-console.log('\n== cinture: le sole vie di scrittura sono ArrivoRow e SupplierOrderForm di Ordini ==');
+console.log('\n== cinture: le sole vie di scrittura sono ArrivoRow e SupplierOrderForm di Ordini, CountForm e le due delle Paillettes ==');
 {
-  const OK_VIL = ['react', '../components/Icon', '../lib/api', './Ordini', '../components/SupplierOrderForm', '../lib/people', '../lib/backnav',
-    '../lib/villaggio/catalogo', '../lib/villaggio/mondo', '../styles/villaggio.css'];
+  // Paillettes (fase 2): CountForm di Magazzino per il giro di conta, paillettes.ts (funzioni pure, solo tipi) per i punti
+  const OK_VIL = ['react', '../components/Icon', '../lib/api', './Ordini', '../components/SupplierOrderForm', '../components/CountForm', '../lib/people', '../lib/backnav',
+    '../lib/villaggio/catalogo', '../lib/villaggio/mondo', '../lib/villaggio/paillettes', '../styles/villaggio.css'];
   eq('Villaggio.tsx importa (valori) solo da moduli noti', importi(VIL).filter((i) => !i.tipo && !OK_VIL.includes(i.da) && !/^@fontsource\//.test(i.da)).map((i) => i.da), []);
-  eq("da lib/api solo le letture fetchInventory, fetchOrdiniGruppi e oggi", nomiDa(VIL, '../lib/api'), ['fetchInventory', 'fetchOrdiniGruppi', 'oggi']);
+  eq("da lib/api le letture fetchInventory, fetchOrdiniGruppi, fetchVillaggioEventi e oggi, e le due scritture segnaPresenza e verificaFornitore",
+    nomiDa(VIL, '../lib/api'), ['fetchInventory', 'fetchOrdiniGruppi', 'fetchVillaggioEventi', 'oggi', 'segnaPresenza', 'verificaFornitore']);
+  const corpoPres = ritaglia(API, 'export async function segnaPresenza(', '\n}\n'), corpoVer = ritaglia(API, 'export async function verificaFornitore(', '\n}\n');
+  t("segnaPresenza scrive solo l'azione villaggio_presenza, verificaFornitore solo fornitore_verifica",
+    conta(corpoPres, /writeApi\(/) === 1 && /writeApi\('villaggio_presenza', \{\}, 'x', chi\)/.test(corpoPres)
+    && conta(corpoVer, /writeApi\(/) === 1 && /writeApi\('fornitore_verifica', payload, 'x', chi\)/.test(corpoVer));
+  t('fetchVillaggioEventi legge e basta: v_villaggio_eventi, nessuna scrittura', /supabase\.from\('v_villaggio_eventi'\)\.select\(/.test(ritaglia(API, 'export async function fetchVillaggioEventi(', '\n}\n'))
+    && !/writeApi|\.(insert|upsert|update|delete|rpc)\(/.test(ritaglia(API, 'export async function fetchVillaggioEventi(', '\n}\n')));
+  eq('da CountForm il suo componente, che dal Villaggio si usa solo nel giro', [nomiDa(VIL, '../components/CountForm'), conta(VIL, /<CountForm\b/)], [['CountForm'], 1]);
   eq('da ./Ordini solo ArrivoRow', nomiDa(VIL, './Ordini'), ['ArrivoRow']);
   eq('da SupplierOrderForm il suo componente', nomiDa(VIL, '../components/SupplierOrderForm'), ['SupplierOrderForm']);
   t('usa <ArrivoRow> e <SupplierOrderForm>', /<ArrivoRow\b/.test(VIL) && /<SupplierOrderForm\b/.test(VIL));
@@ -729,7 +741,7 @@ console.log('\n== cinture: le sole vie di scrittura sono ArrivoRow e SupplierOrd
     /<SupplierOrderForm\b[\s\S]*?onDone=\{\(\) => \{\s*load\(\); toast\('Ordine salvato: lo trovi anche in Ordini\.'\);\s*(?:\/\/[^\n]*\n\s*)*if \(sheetRef\.current !== s\) return;\s*formSporco\.current = false;\s*sheetRef\.current = \{ t: 'labs' \}; setSheet\(\{ t: 'labs' \}\);\s*\}\} \/>/.test(VIL));
   const OK_VAPP = ['react', './pages/Villaggio.tsx', './components/ErrorBoundary.tsx', './lib/api.ts'];
   eq('VillaggioApp.tsx importa (valori) solo da moduli noti', importi(VAPP).filter((i) => !i.tipo && !OK_VAPP.includes(i.da)).map((i) => i.da), []);
-  eq('VillaggioApp.tsx da lib/api solo fetchVillaggioEnabled', nomiDa(VAPP, './lib/api.ts'), ['fetchVillaggioEnabled']);
+  eq('VillaggioApp.tsx da lib/api solo fetchVillaggioSettings e VILLAGGIO_SPENTO', nomiDa(VAPP, './lib/api.ts'), ['VILLAGGIO_SPENTO', 'fetchVillaggioSettings']);
   for (const f of ['web/src/lib/people.tsx', 'web/src/lib/backnav.ts', 'web/src/components/Icon.tsx', 'web/src/components/ErrorBoundary.tsx']) {
     const s = read(f);
     t(`${f.split('/').pop()} (importato dal Villaggio) non scrive: niente writeApi, supabase, fetch(`, !/\b(writeApi|sbWrite|supabase|csClient)\b/.test(s) && !/\bfetch\s*\(/.test(s));
@@ -784,7 +796,27 @@ console.log("\n== cinture: l'ordine a meta' non si perde (lascia, formSporco, Es
   const corpoFn = ritaglia(corpoApri, '      const fn = () => {', '\n      };', true);   // l'handler di backnav del pannello
   const corpoChiudi = ritaglia(VIL, '  const chiudi = useCallback(() => {', '\n  }, [lascia]);', true);
   t('ritagli presenti: lascia, quandoArrivaIlBack, apri (con il suo handler di backnav), chiudi', [corpoLascia, corpoAttendi, corpoApri, corpoFn, corpoChiudi].every(Boolean));
-  t("lascia(): chiede solo per il modulo dell'ordine (add, passo 4) gia' toccato", /if \(!s \|\| s\.t !== 'add' \|\| s\.step !== 4 \|\| !formSporco\.current\) return true;/.test(corpoLascia));
+  // Paillettes (fase 2): la stessa guardia protegge la verifica fornitore e il giro di conta
+  t("lascia(): chiede solo per un modulo gia' toccato: l'ordine (add, passo 4), la verifica, la conta del giro",
+    /const cosa = !s \|\| !formSporco\.current \? null\s*: s\.t === 'add' && s\.step === 4 \? "l'ordine" : s\.t === 'verifica' \? 'la verifica' : s\.t === 'giro' \? 'la conta' : null;\s*if \(!cosa\) return true;/.test(corpoLascia));
+  const jsLascia = await sTS(corpoLascia.replace(/^  const lascia = useCallback\(/, 'const lascia = ').replace(/\n  \}, \[\]\);$/, '\n  };'));
+  if (jsLascia) {
+    const prova = (s, sporco, ok) => {
+      const chieste = [], formSporco = { current: sporco };
+      const r = new Function('sheetRef', 'formSporco', 'window', jsLascia + '\nreturn lascia;')({ current: s }, formSporco, { confirm: (m) => { chieste.push(m); return ok; } })();
+      return [r, chieste, formSporco.current];
+    };
+    const LASCI = (cosa) => `Lasci ${cosa} a metà? Quello che hai scritto si perde.`;
+    eq('lascia() vera: nessun pannello -> true senza chiedere', prova(null, true, false), [true, [], true]);
+    for (const [nome, s, cosa] of [['passo 4', { t: 'add', step: 4 }, "l'ordine"], ['verifica', { t: 'verifica', lab: 'x' }, 'la verifica'], ['giro', { t: 'giro', codici: ['A'] }, 'la conta']]) {
+      eq(`lascia() vera, ${nome} non toccato: true senza chiedere`, prova(s, false, false), [true, [], false]);
+      eq(`lascia() vera, ${nome} toccato, Annulla: false, resta toccato`, prova(s, true, false), [false, [LASCI(cosa)], true]);
+      eq(`lascia() vera, ${nome} toccato, OK: true, modulo pulito`, prova(s, true, true), [true, [LASCI(cosa)], false]);
+    }
+    for (const s of [{ t: 'add', step: 3 }, { t: 'lab', key: 'x' }, { t: 'wh' }, { t: 'percorso' }, { t: 'missioni' }]) {
+      eq(`lascia() vera, ${s.t}${s.step ? ' passo ' + s.step : ''} "toccato": non e' un modulo, true senza chiedere`, prova(s, true, false).slice(0, 2), [true, []]);
+    }
+  } else nota('lascia() non provata (ritaglio assente o node:module.stripTypeScriptTypes mancante)');
   t('lascia(): window.confirm; annulla -> false, conferma -> modulo pulito e true', /if \(!window\.confirm\([^)]*\)\) return false;\s*formSporco\.current = false;\s*return true;/.test(corpoLascia));
   eq('window.confirm compare solo in lascia()', [conta(VIL, /window\.confirm\(/), conta(corpoLascia, /window\.confirm\(/)], [1, 1]);
   // 16-10 notte: quello che si chiede con un back() della X ancora in volo (riaprire, la Home) aspetta che arrivi
@@ -800,12 +832,15 @@ console.log("\n== cinture: l'ordine a meta' non si perde (lascia, formSporco, Es
   t("passo 4, '< Cambia colore': passa da lascia()", /<button className="v-back" type="button" onClick=\{\(\) => \{ if \(lascia\(\)\) setSheet\(\{ \.\.\.s, step: 3 \}\); \}\}>[^<]*Cambia colore<\/button>/.test(VIL));
   t("Home dell'HUD: passa da lascia() e, se un back() della X e' in volo, aspetta che arrivi prima di onBack",
     /<button className="v-pill v-home" type="button" onClick=\{\(\) => \{ if \(lascia\(\)\) quandoArrivaIlBack\(onBack\); \}\} aria-label="Torna alla Home">/.test(VIL));
-  eq("lascia() la chiamano solo apri() (e il suo handler), chiudi(), '< Cambia colore' e la Home", [conta(VIL, /\blascia\(\)/), conta(corpoApri, /\blascia\(\)/), conta(corpoFn, /\blascia\(\)/), conta(corpoChiudi, /\blascia\(\)/)], [5, 2, 1, 1]);
+  t("giro di conta: 'Salta/Avanti' passa da lascia() prima di andare al codice dopo",
+    /onClick=\{\(\) => \{ if \(lascia\(\)\) \{ pulisci\(\); setI\(\(x\) => x \+ 1\); \} \}\}>\{gia \? 'Avanti ›' : 'Salta ›'\}<\/button>/.test(VIL));
+  eq("lascia() la chiamano solo apri() (e il suo handler), chiudi(), '< Cambia colore', la Home e 'Salta/Avanti' del giro", [conta(VIL, /\blascia\(\)/), conta(corpoApri, /\blascia\(\)/), conta(corpoFn, /\blascia\(\)/), conta(corpoChiudi, /\blascia\(\)/)], [6, 2, 1, 1]);
   const corpoNoGl = ritaglia(VIL, '{noGl && (', ')}');
   eq("onBack: diretto solo nel messaggio senza WebGL (li' nessun pannello si apre), altrove solo via quandoArrivaIlBack, mai chiamato a mano",
     [conta(VIL, /onClick=\{onBack\}/), corpoNoGl.includes('onClick={onBack}'), conta(VIL, /quandoArrivaIlBack\(onBack\)/), conta(VIL, /\bonBack\(/)], [1, true, 1, 0]);
   t('la X del pannello e Esc chiamano chiudi()', /<button ref=\{closeRef\} className="v-x" type="button" onClick=\{chiudi\}/.test(VIL));
-  t('tocco sulla mappa: al passo 4 non chiude proprio', /W\.onTap = \(\) => \{ const s = sheetRef\.current; if \(!s \|\| \(s\.t === 'add' && s\.step === 4\)\) return; chiudi\(\); \};/.test(VIL));
+  t('tocco sulla mappa: al passo 4, nella verifica e nel giro di conta non chiude proprio',
+    /W\.onTap = \(\) => \{ const s = sheetRef\.current; if \(!s \|\| \(s\.t === 'add' && s\.step === 4\) \|\| s\.t === 'verifica' \|\| s\.t === 'giro'\) return; chiudi\(\); \};/.test(VIL));
   eq("setSheet(null) e sheetRef.current = null solo nell'handler di backnav e in chiudi(): niente chiusure che scavalcano lascia()",
     [conta(VIL, /setSheet\(null\)/), conta(corpoFn, /setSheet\(null\)/), conta(corpoChiudi, /setSheet\(null\)/), conta(VIL, /sheetRef\.current = null/), conta(corpoFn, /sheetRef\.current = null/), conta(corpoChiudi, /sheetRef\.current = null/)],
     [2, 1, 1, 2, 1, 1]);
@@ -813,7 +848,11 @@ console.log("\n== cinture: l'ordine a meta' non si perde (lascia, formSporco, Es
   t('.v-form si segna toccato a ogni input e a ogni click', /<div className="v-form" onInput=\{\(\) => \{ formSporco\.current = true; \}\} onClick=\{\(\) => \{ formSporco\.current = true; \}\}>/.test(VIL));
   const vForm = ritaglia(VIL, '<div className="v-form"', '</div>');
   t('...e SupplierOrderForm sta dentro .v-form', /<SupplierOrderForm\b/.test(vForm));
-  eq('formSporco diventa true solo in .v-form (input e click)', conta(VIL, /formSporco\.current = true/), 2);
+  // la verifica e il giro si segnano toccati con sporca(), la stessa cosa scritta una volta sola
+  t('sporca() = formSporco a true; la usano la verifica (interruttori, date, nota) e il .v-form del giro (input e click)',
+    /const sporca = \(\) => \{ formSporco\.current = true; \};/.test(VIL) && conta(VIL, /\bsporca\(\);/) === 2
+    && /<div className="v-form v-conta" onInput=\{sporca\} onClick=\{sporca\}>/.test(VIL) && /<Verifica\b[^>]*sporca=\{sporca\}/.test(VIL) && /<Giro\b[\s\S]*?sporca=\{sporca\}/.test(VIL));
+  eq('formSporco diventa true solo in .v-form (input e click) e in sporca()', conta(VIL, /formSporco\.current = true/), 3);
   t('scegliendo la variante al passo 3 il modulo parte pulito', /onClick=\{\(\) => \{ formSporco\.current = false; setSheet\(\{ \.\.\.s, step: 4, pila: p\.key, codice: c\.codice \}\); \}\}/.test(VIL));
   // Esc
   const corpoK = ritaglia(VIL, '    const k = (e: KeyboardEvent) => {', '\n    };', true);
@@ -1193,12 +1232,17 @@ console.log("\n== cinture su mondo.ts: miniature, riposo, ombre, mesh fuse, cost
   ];
   for (const [n, re] of SVEGLIE) t(`sveglia() da ${n}`, re.test(MONDO));
   t('sveglia() da aggiorna() (dati nuovi)', /this\.shadowDirty = true; this\.sveglia\(\);\n  \}$/.test(metodo('aggiorna')));
-  eq('sveglia() chiamata in quei 5 posti e basta', conta(MONDO, /this\.sveglia\(\)/), 5);
+  // Paillettes (fase 2): i premi nuovi, la festa e il "+n" si vedono anche a isola a riposo
+  t('sveglia() da setLivello(), festa() e puntiFlottanti()', /^\s*setLivello\(i: number\) \{\n[^\n]*\n    this\.sveglia\(\);/.test(metodo('setLivello'))
+    && /^\s*festa\(testo\?: string\) \{\n    this\.sveglia\(\);/.test(metodo('festa')) && /\n    this\.sveglia\(\);\n  \}$/.test(metodo('puntiFlottanti')));
+  eq('sveglia() chiamata in quegli 8 posti e basta', conta(MONDO, /this\.sveglia\(\)/), 8);
 
   // ombre
   t('Tween ha il campo facoltativo ombre', /^type Tween = \{[^}\n]*ombre\?: boolean \};$/m.test(MONDO));
   t('il tween della camera non ricalcola le ombre (ombre = false)', /this\.camTw = this\.tween\([\s\S]*?\);\n    this\.camTw\.ombre = false;\n  \}$/.test(metodo('camTween')));
-  eq('ombre = false solo sulla camera', conta(MONDO, /\.ombre = false/), 1);
+  // le scintille della festa (Paillettes) non fanno ombra: anche il loro tween non le ricalcola
+  t('il tween delle scintille di festa() non ricalcola le ombre (ombre = false)', /const tw = this\.tween\(1500, [\s\S]*?\n    tw\.ombre = false;\n  \}$/.test(metodo('festa')));
+  eq('ombre = false solo sulla camera e sulle scintille della festa', conta(MONDO, /\.ombre = false/), 2);
   t("frameTick: ombre ricalcolate solo con shadowDirty o con un tween che non e' della camera",
     /if \(this\.shadowDirty \|\| this\.tweens\.some\(\(tw\) => tw\.ombre !== false\)\) \{ this\.renderer\.shadowMap\.needsUpdate = true; this\.shadowDirty = false; \}/.test(corpoFT));
   t('shadowMap.autoUpdate spento', /this\.renderer\.shadowMap\.autoUpdate = false;/.test(MONDO));
@@ -1208,7 +1252,11 @@ console.log("\n== cinture su mondo.ts: miniature, riposo, ombre, mesh fuse, cost
   // mesh fuse
   const corpoImp = metodo('impasta'), corpoWH = metodo('buildWarehouseShell'), corpoLab = metodo('buildLab'), corpoF = metodo('buildFence'), corpoD = metodo('buildDecor');
   const corpoAgg = metodo('aggiorna'), corpoAll = metodo('allestisci');
-  eq('impasta chiamata 6 volte (erba, magazzino, capannone, staccionata, sentieri, decori)', conta(MONDO, /this\.impasta\(/), 6);
+  // Paillettes (fase 2): i premi dei livelli (buildPremi) si fondono in tre gruppi: i premi a terra, la mongolfiera (si
+  // muove: fusa a parte e saltata dal gruppo dei premi) e la corona (figlia di Ginni, saltella con lei)
+  t('premi: impasta(premi, [pallone]), poi il pallone e la corona per conto loro',
+    /this\.impasta\(this\.premi, this\.pallone \? \[this\.pallone\] : \[\]\);\n    if \(this\.pallone\) this\.impasta\(this\.pallone\);\n    this\.impasta\(this\.corona\);/.test(metodo('buildPremi')));
+  eq('impasta chiamata 9 volte (erba, magazzino, capannone, staccionata, sentieri, decori, premi, mongolfiera, corona)', conta(MONDO, /this\.impasta\(/), 9);
   t('magazzino: impasta(WH, [this.whInside]) per ultima, dopo WH.add(this.whInside)', /WH\.add\(this\.whInside\);\n    this\.impasta\(WH, \[this\.whInside\]\);\n  \}$/.test(corpoWH));
   t("...whInside (le pile, rifatte a ogni aggiorna) e' l'unica parte mobile: this.wh si usa solo nel guscio", conta(MONDO, /\bthis\.wh\b/) === 1 && /this\.wh\b/.test(corpoWH) && /this\.svuota\(this\.whInside\)/.test(metodo('layoutWarehouse')));
   const saltaLab = (/this\.impasta\(g, \[([^\]]*)\]\);/.exec(corpoLab)?.[1] ?? '').split(',').map((x) => x.trim().replace(/^\.\.\./, '')).filter(Boolean).sort();
@@ -1322,8 +1370,10 @@ console.log('\n== cinture: interruttore app_flags.villaggio_enabled (Regola Ferr
   const APP = read('web/src/App.tsx');
   t('App.tsx carica Villaggio con lazy()', /const Villaggio = lazy\(\(\) => import\('\.\/pages\/Villaggio'\)\);/.test(APP));
   t('App.tsx non importa Villaggio in modo statico (three.js resterebbe nel bundle principale)', !/^import\s+Villaggio\b/m.test(APP) && !/^import[^;]*from '\.\/pages\/Villaggio'/m.test(APP));
-  t('App.tsx legge il flag una volta: null finche\' non arriva, false se la lettura fallisce',
-    /const \[vilEnabled, setVilEnabled\] = useState<boolean \| null>\(null\);/.test(APP) && /fetchVillaggioEnabled\(\)\.then\(setVilEnabled\)\.catch\(\(\) => setVilEnabled\(false\)\)/.test(APP));
+  // Paillettes (fase 2): il flag del Villaggio arriva con gli altri interruttori (fetchVillaggioSettings), una lettura
+  t('App.tsx legge gli interruttori una volta: null finche\' non arrivano, tutto spento se la lettura fallisce',
+    /const \[vil, setVil\] = useState<VillaggioSettings \| null>\(null\);/.test(APP) && /fetchVillaggioSettings\(\)\.then\(setVil\)\.catch\(\(\) => setVil\(VILLAGGIO_SPENTO\)\)/.test(APP)
+    && /const vilEnabled = vil && vil\.enabled;/.test(APP) && conta(APP, /fetchVillaggioSettings\(\)/) === 1 && !/fetchVillaggioEnabled/.test(APP));
   t('URL diretto #villaggio apre la scheda', /hash\.startsWith\('#villaggio'\) \? 'villaggio'/.test(APP));
   const a = APP.indexOf("{tab === 'villaggio' &&");
   const fine = [APP.indexOf("{tab === '", a + 1), APP.indexOf('</main>', a)].filter((x) => x > a);
@@ -1334,8 +1384,8 @@ console.log('\n== cinture: interruttore app_flags.villaggio_enabled (Regola Ferr
   t("...ramo spento: nessun <Villaggio>, dice 'non attiva'", !!rami && !/<Villaggio\b/.test(rami[2]) && /non attiva/.test(rami[2]));
   eq('App.tsx: <Villaggio> compare una volta sola (solo nel ramo acceso)', conta(APP, /<Villaggio\b/), 1);
   // 16-10 sera: nell'app intera chi scrive si sceglie come in tutte le altre schede, nel Villaggio la pill e' solo da leggere
-  t("App.tsx passa a <Villaggio> pin, chi e onBack, e NON setChi (la pill 'scrive' resta da leggere)",
-    /<Villaggio pin=\{pin\} chi=\{chi\} onBack=\{\(\) => go\('home'\)\} \/>/.test(APP) && !/<Villaggio\b[^>]*\bsetChi\b/.test(APP));
+  t("App.tsx passa a <Villaggio> pin, chi, paillettes (solo se 'true' letto), giocatrice e onBack, e NON setChi (la pill 'scrive' resta da leggere)",
+    /<Villaggio pin=\{pin\} chi=\{chi\} paillettes=\{vil\?\.paillettes === true\} giocatrice=\{vil\?\.giocatrice\} onBack=\{\(\) => go\('home'\)\} \/>/.test(APP) && !/<Villaggio\b[^>]*\bsetChi\b/.test(APP));
   const riga = (s, pezzo) => s.split('\n').find((r) => r.includes(pezzo)) ?? '';
   t('il Cruscotto riceve onVillaggio solo a flag acceso', /<Report\b.*onVillaggio=\{vilEnabled \? \(\) => go\('villaggio'\) : undefined\}/.test(riga(APP, "tab === 'cruscotto' &&")));
   const REP = read('web/src/pages/Report.tsx');
@@ -1351,13 +1401,13 @@ console.log('\n== cinture: interruttore app_flags.villaggio_enabled (Regola Ferr
   t('Home: il filtro si ricalcola quando il flag arriva', /\}, \[cfg, matEnabled, vilEnabled\]\);/.test(HOME));
 
   // app a se': prima il flag, poi il Villaggio
-  t('VillaggioApp: stato del flag null finche\' non arriva, false se la lettura fallisce',
-    /useState<boolean \| null>\(null\)/.test(VAPP) && /fetchVillaggioEnabled\(\)\.then\(setAcceso\)\.catch\(\(\) => setAcceso\(false\)\)/.test(VAPP));
-  const iNull = VAPP.indexOf('if (acceso === null) return'), iSpento = VAPP.indexOf('if (!acceso) {'), iVil = VAPP.indexOf('<Villaggio ');
-  t('VillaggioApp: attesa, poi flag spento, poi (solo dopo) <Villaggio>', iNull > 0 && iSpento > iNull && iVil > iSpento && /if \(!acceso\) \{\s*return \(/.test(VAPP));
+  t('VillaggioApp: interruttori null finche\' non arrivano, tutto spento se la lettura fallisce',
+    /const \[cfg, setCfg\] = useState<VillaggioSettings \| null>\(null\)/.test(VAPP) && /fetchVillaggioSettings\(\)\.then\(setCfg\)\.catch\(\(\) => setCfg\(VILLAGGIO_SPENTO\)\)/.test(VAPP));
+  const iNull = VAPP.indexOf('if (cfg === null) return'), iSpento = VAPP.indexOf('if (!cfg.enabled) {'), iVil = VAPP.indexOf('<Villaggio ');
+  t('VillaggioApp: attesa, poi flag spento, poi (solo dopo) <Villaggio>', iNull > 0 && iSpento > iNull && iVil > iSpento && /if \(!cfg\.enabled\) \{\s*return \(/.test(VAPP));
   eq('VillaggioApp: <Villaggio> una volta sola', conta(VAPP, /<Villaggio\b/), 1);
   t('VillaggioApp: <Villaggio> dentro <ErrorBoundary>', /<ErrorBoundary titolo="Villaggio" onBack=\{home\}><Villaggio\b[^>]*\/><\/ErrorBoundary>/.test(VAPP));
-  t("VillaggioApp: l'app a se' passa setChi (menu 'scrive')", /<Villaggio pin="x" chi=\{chi\} setChi=\{setChi\} onBack=\{home\} \/>/.test(VAPP));
+  t("VillaggioApp: l'app a se' passa setChi (menu 'scrive'), paillettes e giocatrice", /<Villaggio pin="x" chi=\{chi\} setChi=\{setChi\} paillettes=\{cfg\.paillettes\} giocatrice=\{cfg\.giocatrice\} onBack=\{home\} \/>/.test(VAPP));
   t("VillaggioApp: chi scrive parte da amimi_chi (o Ginevra) e ci torna a ogni cambio, con lo storage protetto",
     /const leggiChi = \(\) => \{ try \{ return localStorage\.getItem\('amimi_chi'\) \|\| 'Ginevra' \} catch \{ return 'Ginevra' \} \}/.test(VAPP)
     && /const setChi = \(c: string\) => \{ setChiS\(c\); try \{ localStorage\.setItem\('amimi_chi', c\) \} catch \{/.test(VAPP));
@@ -1417,6 +1467,34 @@ console.log('\n== cinture: interruttore app_flags.villaggio_enabled (Regola Ferr
     ];
     for (const [nome, risposta, atteso] of CASI) eq(`fetchVillaggioEnabled: ${nome} -> ${atteso}`, (await prova(risposta)).v, atteso);
   } else nota('fetchVillaggioEnabled non provata su un client finto (manca il corpo o node:module.stripTypeScriptTypes)');
+
+  // fetchVillaggioSettings() (Paillettes, fase 2): quella che App e VillaggioApp usano davvero, stessa prova su un client finto
+  const corpoSet = ritaglia(API, 'export const VILLAGGIO_SPENTO', '\n}\n', true);
+  t('api.ts definisce VILLAGGIO_SPENTO e subito dopo fetchVillaggioSettings', /\nexport async function fetchVillaggioSettings\(\)/.test(corpoSet));
+  const jsSet = await sTS(corpoSet.replace(/^export /gm, ''));
+  if (jsSet) {
+    const fvs = new Function('supabase', jsSet + '\nreturn fetchVillaggioSettings;');
+    const prova = async (risposta) => {
+      const log = [];
+      const sb = { from(tab) { log.push(['from', tab]); return { select: async (c) => { log.push(['select', c]); return risposta; } }; } };
+      try { return { v: await fvs(sb)(), log }; } catch (e) { return { v: 'lancia: ' + e.message, log }; }
+    };
+    const righe = (o) => ({ data: Object.entries(o).map(([key, value]) => ({ key, value })), error: null });
+    const SPENTO = { enabled: false, paillettes: false, dal: null, giocatrice: null };
+    const tutte = await prova(righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: 'true', villaggio_paillettes_dal: '2026-10-17', villaggio_paillettes_chi: 'Ginevra' }));
+    eq('fetchVillaggioSettings: una lettura di tutte le chiavi di v_villaggio_settings', tutte.log, [['from', 'v_villaggio_settings'], ['select', 'key,value']]);
+    eq('fetchVillaggioSettings: tutto acceso', tutte.v, { enabled: true, paillettes: true, dal: '2026-10-17', giocatrice: 'Ginevra' });
+    const CASI = [
+      ['errore (vista assente, permesso negato): tutto spento', { data: [{ key: 'villaggio_enabled', value: 'true' }], error: { message: 'x' } }, SPENTO],
+      ['nessuna riga', { data: null, error: null }, SPENTO],
+      ['prima della 0163 (solo villaggio_enabled): Paillettes spente', righe({ villaggio_enabled: 'true' }), { enabled: true, paillettes: false, dal: null, giocatrice: null }],
+      ["flag delle Paillettes 'false' (come nasce)", righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: 'false', villaggio_paillettes_chi: 'Ginevra' }), { enabled: true, paillettes: false, dal: null, giocatrice: 'Ginevra' }],
+      ["flag delle Paillettes 'TRUE' o '1': spento (il server accende solo con 'true')", righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: 'TRUE' }), { enabled: true, paillettes: false, dal: null, giocatrice: null }],
+      ["villaggio_enabled ' TRUE ' come fetchVillaggioEnabled", righe({ villaggio_enabled: ' TRUE ' }), { enabled: true, paillettes: false, dal: null, giocatrice: null }],
+      ['giocatrice vuota = nessuna', righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: 'true', villaggio_paillettes_chi: '  ' }), { enabled: true, paillettes: true, dal: null, giocatrice: null }],
+    ];
+    for (const [nome, risposta, atteso] of CASI) eq(`fetchVillaggioSettings: ${nome}`, (await prova(risposta)).v, atteso);
+  } else nota('fetchVillaggioSettings non provata su un client finto (manca il corpo o node:module.stripTypeScriptTypes)');
 
   const MIG_FILE = 'supabase/migrations/0162_villaggio_flag.sql';
   t(`${MIG_FILE} esiste`, existsSync(ROOT + MIG_FILE));

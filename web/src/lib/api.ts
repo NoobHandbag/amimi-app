@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { nowYear } from './helpers';
+import type { Evento } from './villaggio/paillettes';
 
 const FN = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/write-api';
 
@@ -839,10 +840,56 @@ export async function fetchSconti(): Promise<Sconto[]> {
 }
 
 /** Interruttore del Villaggio (migr 0162, Regola Ferrea 19), letto col client anon dalla vista v_villaggio_settings,
- *  che espone solo questa chiave. Errore o assenza = spento. */
+ *  che espone solo le chiavi del Villaggio. Errore o assenza = spento. Dal 16-10 App e VillaggioApp leggono tutte le
+ *  chiavi insieme con fetchVillaggioSettings, qui sotto. */
 export async function fetchVillaggioEnabled(): Promise<boolean> {
   const { data, error } = await supabase.from('v_villaggio_settings').select('key,value').eq('key', 'villaggio_enabled').maybeSingle();
   if (error || !data) return false;
   const s = String((data as { value: unknown }).value ?? '').trim().toLowerCase();
   return s === 'true' || s === '1' || s === 'on' || s === 'yes';
+}
+
+/** Tutti gli interruttori del Villaggio in una lettura (v_villaggio_settings, migr 0162 e 0163): il Villaggio e le sue
+ *  Paillettes, da quando si contano e chi gioca. Errore = tutto spento. Prima della 0163 la vista ha solo
+ *  villaggio_enabled, quindi le Paillettes restano spente da sole. */
+export type VillaggioSettings = { enabled: boolean; paillettes: boolean; dal: string | null; giocatrice: string | null };
+export const VILLAGGIO_SPENTO: VillaggioSettings = { enabled: false, paillettes: false, dal: null, giocatrice: null };
+export async function fetchVillaggioSettings(): Promise<VillaggioSettings> {
+  const { data, error } = await supabase.from('v_villaggio_settings').select('key,value');
+  if (error) return VILLAGGIO_SPENTO;
+  const v = new Map(((data ?? []) as { key: string; value: unknown }[]).map((r) => [r.key, String(r.value ?? '').trim()]));
+  const vil = (v.get('villaggio_enabled') ?? '').toLowerCase();
+  return {
+    enabled: vil === 'true' || vil === '1' || vil === 'on' || vil === 'yes',
+    // solo 'true', come la write-api e v_villaggio_eventi: un valore che il server non legge come acceso qui resta spento
+    paillettes: v.get('villaggio_paillettes_enabled') === 'true',
+    dal: v.get('villaggio_paillettes_dal') || null,
+    giocatrice: v.get('villaggio_paillettes_chi') || null,
+  };
+}
+
+/** Gli eventi delle Paillettes della giocatrice (v_villaggio_eventi, migr 0163), tutti: i punti si ricalcolano dallo
+ *  storico intero. A pagine, fermandosi solo su una pagina vuota, perche' PostgREST taglia in silenzio (Regola 20b).
+ *  Errore = lancia: un errore non e' mai "zero eventi". */
+export async function fetchVillaggioEventi(): Promise<Evento[]> {
+  const PAGINA = 1000, out: Evento[] = [];
+  for (;;) {
+    const { data, error } = await supabase.from('v_villaggio_eventi').select('tipo,giorno,ts,ref,n')
+      .order('ts').order('tipo').order('ref').range(out.length, out.length + PAGINA - 1);
+    if (error) throw new Error(error.message);
+    const righe = (data ?? []) as Evento[];
+    if (!righe.length) return out;
+    out.push(...righe.map((e) => ({ tipo: e.tipo, giorno: String(e.giorno).slice(0, 10), ts: String(e.ts), ref: String(e.ref ?? ''), n: Number(e.n) || 0 })));
+  }
+}
+
+// Le due scritture delle Paillettes (write-api v29). PIN 'x' come il resto dell'app: il PIN e' stato tolto per design.
+/** Presenza del giorno della giocatrice: idempotente sul server, per chi non gioca risponde ignorata. 409 a flag spento. */
+export async function segnaPresenza(chi: string) {
+  return (await writeApi('villaggio_presenza', {}, 'x', chi)) as unknown as { ok: boolean; nuova: boolean; ignorata?: boolean };
+}
+export type VerificaRiga = { id: string; confermata: boolean; data_consegna: string | null };
+/** Verifica con il fornitore: conferma le righe aperte e mette o corregge le date di consegna (order_date nel change_log). */
+export async function verificaFornitore(chi: string, payload: { fornitore: string; righe: VerificaRiga[]; nota?: string | null }) {
+  return (await writeApi('fornitore_verifica', payload, 'x', chi)) as unknown as { ok: boolean; check_id: string; date_cambiate: number };
 }

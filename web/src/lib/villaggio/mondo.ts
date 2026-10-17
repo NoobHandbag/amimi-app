@@ -4,7 +4,7 @@
 // Scala unica: una lastra della pila = 2 pezzi, in magazzino (quello che c'e') e sui carrelli (quello che deve arrivare).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { lastre } from './catalogo';
+import { lastre, parseLook } from './catalogo';
 import type { Look, Modello } from './catalogo';
 
 export type RigaMondo = { id: string; codice: string; model: Modello; look: Look; label: string; a: number; o: number; late: boolean; wip?: boolean };
@@ -457,6 +457,14 @@ function signMat(text: string, sub: string, c: number, w = 512) {
   if (document.fonts && document.fonts.load) document.fonts.load('700 52px Fredoka').then(draw).catch(() => undefined);
   return new THREE.MeshBasicMaterial({ map: t, transparent: true });
 }
+/** Righe a due colori (tenda del chiosco, spicchi della mongolfiera): `rep` coppie di righe lungo la u. */
+function righeMat(a: number, b: number, rep: number) {
+  const cv = document.createElement('canvas'); cv.width = 64; cv.height = 8;
+  const x = cv.getContext('2d') as CanvasRenderingContext2D;
+  x.fillStyle = hex(a); x.fillRect(0, 0, 32, 8); x.fillStyle = hex(b); x.fillRect(32, 0, 32, 8);
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep, 1);
+  return new THREE.MeshLambertMaterial({ map: t });
+}
 
 /* ---------- geometria del villaggio ---------- */
 const WX0 = -16, WX1 = 2, WZ0 = -13, WZ1 = -1, WCX = (WX0 + WX1) / 2, WCZ = (WZ0 + WZ1) / 2, WW = WX1 - WX0, WD = WZ1 - WZ0;
@@ -473,6 +481,26 @@ const OFF = new V3(32, 38, 32);
 const EL = Math.atan2(OFF.y, Math.hypot(OFF.x, OFF.z));
 const AWAY = new V3(-1, 0, -1).normalize();
 const RIGHT = new V3(1, 0, -1).normalize();
+const GINNI = new V3(5.2, 0, -5.4);
+/* premi delle Paillettes (fase 2), lontani dai posti dei capannoni e da tutti i sentieri possibili: la piazzetta davanti al
+   magazzino, fra il sentiero del primo laboratorio e quello lungo il magazzino; il tappeto da Ginni al lato aperto del
+   magazzino; la mongolfiera in cielo dietro a destra, dove sullo schermo non copre capannoni ne' pile */
+const FONTANA = new V3(-6.3, 0, 2.5);
+const CHIOSCO = new V3(-2.2, 0, 1.2);
+const PANCHINA = new V3(-8.9, 0, 0.85);
+const LAMPIONI: [number, number][] = [[-8.0, 0.25], [-5.0, 0.9], [-0.6, 0.0]];
+const PALLONE = new V3(4, 13, -11.6);
+const TAPPETO = { x0: WX1 + 0.05, x1: GINNI.x + 0.8 };
+/** Ingombri a terra (x, z, raggio) dei premi a posto fisso, anche di quelli non ancora sbloccati: le aiuole li evitano
+ *  e non si spostano quando arriva il premio del livello dopo. */
+const INGOMBRI: [number, number, number][] = [[FONTANA.x, FONTANA.z, 1.7], [CHIOSCO.x, CHIOSCO.z, 1.4], [PANCHINA.x, PANCHINA.z, 1.0],
+  ...LAMPIONI.map(([x, z]): [number, number, number] => [x, z, 0.7]), [GINNI.x, GINNI.z, 1.0],
+  ...[0, 1, 2, 3].map((i): [number, number, number] => [TAPPETO.x0 + 0.5 + i * (TAPPETO.x1 - TAPPETO.x0 - 1) / 3, GINNI.z, 0.9])];
+const distSeg = (x: number, z: number, a: THREE.Vector3, b: THREE.Vector3) => {
+  const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz;
+  const t = l2 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / l2)) : 0;
+  return Math.hypot(x - a.x - dx * t, z - a.z - dz * t);
+};
 
 type LabG = { g: THREE.Group; yard: THREE.Group; ch: THREE.Group; puffs: THREE.Mesh[]; hideSlot: THREE.Group; rollSlot: THREE.Group; spoolSlot: THREE.Group; dock: THREE.Vector3; anchor: Anchor; pileAnchors: Anchor[]; data: LabMondo; index: number };
 type PilaG = PilaMondo & { x: number; z: number; cell: number; top: number; g: THREE.Group; anchor: Anchor };
@@ -514,6 +542,13 @@ export class Mondo {
   private off: (() => void)[] = [];
   private paths = new THREE.Group();
   private decor = new THREE.Group();
+  /** alberi e cespugli messi da buildDecor (x, z, raggio): le aiuole dei premi non ci finiscono sopra */
+  private occupati: [number, number, number][] = [];
+  /** decorazioni sbloccate dai livelli delle Paillettes; la corona sta su Ginni, la mongolfiera ondeggia da sveglia */
+  private premi = new THREE.Group();
+  private corona = new THREE.Group();
+  private pallone: THREE.Group | null = null;
+  private livello = 0;
   private ev: EventiMondo;
   private canvas: HTMLCanvasElement;
   private labelsEl: HTMLElement;
@@ -585,10 +620,11 @@ export class Mondo {
     this.whA = this.addLabel('', new V3(WCX, 8.7, WZ0 + 0.25), 'v-lbl v-wh', () => this.ev.onMagazzino());
     this.ginni = this.makeChar(0xee8fab, 0x7a4a2a);
     this.add(this.ginni, new THREE.SphereGeometry(0.22, 12, 10), 0x7a4a2a, 0, 2.05, -0.22);
-    this.ginni.position.set(5.2, 0, -5.4); this.ginni.rotation.y = Math.PI / 4; this.ginni.userData.kind = 'ginni'; this.scene.add(this.ginni);
+    this.ginni.position.copy(GINNI); this.ginni.rotation.y = Math.PI / 4; this.ginni.userData.kind = 'ginni'; this.scene.add(this.ginni);
+    this.ginni.add(this.corona);
     this.buildCart();
     this.buildFence();
-    this.scene.add(this.paths); this.scene.add(this.decor);
+    this.scene.add(this.paths); this.scene.add(this.decor); this.scene.add(this.premi);
     this.bindPointer();
     const loop = (now: number) => { this.raf = requestAnimationFrame(loop); this.frameTick(now); };
     this.raf = requestAnimationFrame(loop);
@@ -658,13 +694,14 @@ export class Mondo {
     return a;
   }
   private dropLabel(a: Anchor) { a.el.remove(); const i = this.anchors.indexOf(a); if (i >= 0) this.anchors.splice(i, 1); }
-  private floatText(text: string, pos: THREE.Vector3, cls = '') {
+  private floatText(text: string, pos: THREE.Vector3, cls = '', ms = 1450) {
     const el = document.createElement('div');
     el.className = 'v-float ' + cls; el.textContent = text;
     this.labelsEl.appendChild(el);
     const a: Anchor = { el, pos: pos.clone(), free: true };
     this.anchors.push(a);
-    setTimeout(() => this.dropLabel(a), 1450);
+    setTimeout(() => this.dropLabel(a), ms);
+    return a;
   }
   private resize() {
     this.dirty = true;
@@ -986,9 +1023,11 @@ export class Mondo {
   private buildDecor(used: [number, number][]) {
     const D = this.decor;
     this.svuota(D);
+    this.occupati = [];
     const free = (x: number, z: number, r: number) => used.every(([ux, uz]) => Math.hypot(ux - x, uz - z) > r);
     const tree = (x: number, z: number, col: number, sc: number) => {
       if (!free(x, z, 6.2)) return;
+      this.occupati.push([x, z, 2 * sc]);
       const g = new THREE.Group(); g.position.set(x, 0, z); g.scale.setScalar(sc); D.add(g);
       this.add(g, new THREE.CylinderGeometry(0.28, 0.4, 1.7, 9), 0x9a6a43, 0, 0.85, 0);
       const c2 = new THREE.Color(col).multiplyScalar(0.88).getHex();
@@ -999,6 +1038,7 @@ export class Mondo {
     };
     const bush = (x: number, z: number, s: number) => {
       if (!free(x, z, 5.2)) return;
+      this.occupati.push([x, z, 1.6 * s]);
       const g = new THREE.Group(); g.position.set(x, 0, z); g.scale.setScalar(s); D.add(g);
       this.add(g, new THREE.SphereGeometry(0.9, 12, 10), 0x6db54a, 0, 0.55, 0);
       this.add(g, new THREE.SphereGeometry(0.7, 12, 10), 0x7cc456, 0.8, 0.45, 0.2);
@@ -1025,6 +1065,8 @@ export class Mondo {
       dati.labs.slice(0, LAB_SLOTS.length).forEach((d, i) => this.labs.set(d.key, this.buildLab(d, i)));
       this.impasta(this.paths);
       this.buildDecor(keys.map((_, i) => LAB_SLOTS[i]));
+      // le aiuole seguono i sentieri, che cambiano con i capannoni
+      if (this.livello) this.buildPremi();
     }
     dati.labs.slice(0, LAB_SLOTS.length).forEach((d) => { const L = this.labs.get(d.key); if (L) { L.data = d; this.fillYard(L); } });
     this.whA.el.innerHTML = 'Magazzino<small>' + dati.totale + ' pezzi</small>'; this.whA.w = 0;
@@ -1073,6 +1115,207 @@ export class Mondo {
   }
   /** Mostra l'etichetta della pila per qualche secondo (tocco su una pila). */
   mostraPila(key: string) { const p = this.piles.get(key); if (p) p.anchor.until = performance.now() + 3500; }
+
+  /* ---------- Paillettes: premi dei livelli, festa, punti ---------- */
+  /** Decorazioni sbloccate fino al livello `i` (0 Stagista .. 6 Executive Queen), cumulative. Lo stesso livello non ricostruisce. */
+  setLivello(i: number) {
+    const n = Math.max(0, Math.min(6, Math.floor(i) || 0));
+    this.sveglia();
+    if (n === this.livello) return;
+    this.livello = n;
+    this.buildPremi();
+  }
+  /** Chiamata da setLivello e da aggiorna() quando cambiano i capannoni (che poi svegliano l'isola). */
+  private buildPremi() {
+    this.svuota(this.premi); this.svuota(this.corona); this.pallone = null;
+    const n = this.livello;
+    if (n >= 1) this.aiuole();
+    if (n >= 2) this.fontana();
+    if (n >= 3) this.lampioni();
+    if (n >= 4) this.chiosco();
+    if (n >= 5) this.mongolfiera();
+    if (n >= 6) { this.tappeto(); this.coronaGinni(); }
+    // la mongolfiera si muove: fusa a parte, dentro il suo gruppo
+    this.impasta(this.premi, this.pallone ? [this.pallone] : []);
+    if (this.pallone) this.impasta(this.pallone);
+    this.impasta(this.corona);
+    this.shadowDirty = true;
+  }
+  /** Livello 1: aiuole fiorite ai due lati dei sentieri, solo dove non toccano capannoni, magazzino, furgoncino, alberi,
+   *  altri sentieri e i premi dei livelli dopo. */
+  private aiuole() {
+    const segs = [...this.labs.values()].map((L): [THREE.Vector3, THREE.Vector3] => [CART_HOME, L.dock]);
+    const prese: [number, number, number][] = [];
+    const libero = (x: number, z: number, r: number) => {
+      if (Math.hypot(x, z) > 20.5 - r) return false;
+      if (x > WX0 - r - 0.4 && x < WX1 + r + 0.4 && z > WZ0 - r - 0.4 && z < WZ1 + r + 0.4) return false;
+      if (Math.hypot(x - CART_HOME.x, z - CART_HOME.z) < 2.3 + r) return false;
+      for (const L of this.labs.values()) if (Math.hypot(x - L.g.position.x, z - L.g.position.z) < 4.7 + r) return false;
+      if (segs.some(([a, b]) => distSeg(x, z, a, b) < 0.65 + r)) return false;
+      return [...this.occupati, ...INGOMBRI, ...prese].every(([ox, oz, or]) => Math.hypot(x - ox, z - oz) >= or + r);
+    };
+    const FL = [0xf27a8c, 0xf6d04d, 0xb08ae0];
+    for (const [a, b] of segs) {
+      const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz), ux = dx / len, uz = dz / len;
+      for (let s = 2.6; s <= len - 1.6; s += 1.9) for (const lato of [-1, 1]) {
+        const x = a.x + ux * s - uz * lato * 1.2, z = a.z + uz * s + ux * lato * 1.2;
+        // l'aiuola e' lunga: due cerchi lungo il sentiero
+        if (!libero(x + ux * 0.55, z + uz * 0.55, 0.45) || !libero(x - ux * 0.55, z - uz * 0.55, 0.45)) continue;
+        const k = prese.length, R = rngFor('aiuola' + k);
+        prese.push([x, z, 1.0]);
+        const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = Math.atan2(-uz, ux); this.premi.add(g);
+        this.add(g, new THREE.CylinderGeometry(0.5, 0.54, 0.14, 12), 0xeee2c2, 0, 0.07, 0, { s: [1.75, 1, 0.68], cast: false });
+        this.add(g, new THREE.SphereGeometry(0.5, 12, 6), 0x8a5a3a, 0, 0.12, 0, { s: [1.6, 0.24, 0.56], cast: false });
+        for (let j = 0; j < 5; j++) {
+          const fx = (j - 2) * 0.3 + (R() - 0.5) * 0.08, fz = (R() - 0.5) * 0.14;
+          this.add(g, new THREE.SphereGeometry(0.15, 8, 6), 0x6db54a, fx, 0.25, fz, { cast: false });
+          this.add(g, new THREE.SphereGeometry(0.1, 8, 6), j % 2 ? 0xffffff : FL[k % FL.length], fx + (R() - 0.5) * 0.06, 0.38, fz, { cast: false });
+        }
+      }
+    }
+  }
+  /** Livello 2: fontana rosa e crema nella piazzetta davanti al magazzino. */
+  private fontana() {
+    const g = new THREE.Group(); g.position.copy(FONTANA); this.premi.add(g);
+    const PINK = 0xf3a7bb, CREAM = 0xfff1dc, SPRUZZO = 0xbfe6f4;
+    const acqua = new THREE.MeshPhongMaterial({ color: 0x8fd3ec, shininess: 80, specular: 0xffffff });
+    this.add(g, new THREE.CylinderGeometry(1.45, 1.55, 0.5, 18), PINK, 0, 0.25, 0);
+    this.add(g, new THREE.TorusGeometry(1.42, 0.13, 6, 24), CREAM, 0, 0.52, 0, { rx: Math.PI / 2 });
+    this.add(g, new THREE.CylinderGeometry(1.32, 1.32, 0.06, 18), acqua, 0, 0.45, 0, { cast: false });
+    this.add(g, new THREE.CylinderGeometry(0.2, 0.32, 1.0, 10), CREAM, 0, 0.95, 0);
+    this.add(g, new THREE.CylinderGeometry(0.62, 0.3, 0.22, 14), PINK, 0, 1.5, 0);
+    this.add(g, new THREE.TorusGeometry(0.6, 0.06, 6, 18), CREAM, 0, 1.61, 0, { rx: Math.PI / 2 });
+    this.add(g, new THREE.CylinderGeometry(0.55, 0.55, 0.04, 14), acqua, 0, 1.6, 0, { cast: false });
+    this.add(g, new THREE.SphereGeometry(0.15, 10, 8), CREAM, 0, 1.72, 0);
+    this.add(g, new THREE.CylinderGeometry(0.03, 0.08, 0.4, 8), SPRUZZO, 0, 1.98, 0, { cast: false });
+    this.add(g, new THREE.SphereGeometry(0.1, 8, 6), SPRUZZO, 0, 2.2, 0, { cast: false });
+    // archi d'acqua dal bordo della vasca alta a quella bassa
+    for (let k = 0; k < 6; k++) {
+      const a = (k + 0.5) / 6 * 6.283, c = Math.cos(a), s = Math.sin(a);
+      this.add(g, tube([[0.6, 1.52], [0.84, 1.42], [0.99, 1.05], [1.05, 0.5]].map(([r, y]) => new V3(c * r, y, s * r)), 0.04), SPRUZZO, 0, 0, 0, { cast: false });
+    }
+  }
+  /** Livello 3: lampioni intorno alla fontana e una panchina che la guarda. */
+  private lampioni() {
+    const SCURO = 0x3d3a45, LEGNO = 0xbb8650, luce = new THREE.MeshBasicMaterial({ color: 0xfff1b8 });
+    for (const [x, z] of LAMPIONI) {
+      const g = new THREE.Group(); g.position.set(x, 0, z); this.premi.add(g);
+      this.add(g, new THREE.CylinderGeometry(0.14, 0.19, 0.22, 8), SCURO, 0, 0.11, 0);
+      this.add(g, new THREE.CylinderGeometry(0.05, 0.065, 2.1, 8), SCURO, 0, 1.25, 0);
+      this.add(g, new THREE.CylinderGeometry(0.17, 0.12, 0.34, 8), luce, 0, 2.47, 0, { cast: false });
+      this.add(g, new THREE.CylinderGeometry(0.03, 0.24, 0.18, 8), SCURO, 0, 2.73, 0);
+      this.add(g, new THREE.SphereGeometry(0.055, 8, 6), GOLD, 0, 2.85, 0);
+    }
+    const b = new THREE.Group(); b.position.copy(PANCHINA); b.rotation.y = Math.PI / 2; this.premi.add(b);
+    for (const sx of [-0.68, 0.68]) { this.add(b, box(0.08, 0.42, 0.44), SCURO, sx, 0.21, 0); this.add(b, box(0.07, 0.55, 0.07), SCURO, sx, 0.7, -0.24); }
+    for (const sz of [-0.15, 0, 0.15]) this.add(b, box(1.56, 0.06, 0.13), LEGNO, 0, 0.45, sz);
+    for (const sy of [0.66, 0.86]) this.add(b, box(1.56, 0.12, 0.05), LEGNO, 0, sy, -0.26);
+  }
+  /** Livello 4: chiosco-boutique con la tenda a righe rosa, due borse sul banco e l'insegna. */
+  private chiosco() {
+    const g = new THREE.Group(); g.position.copy(CHIOSCO); g.rotation.y = Math.PI / 4; this.premi.add(g);
+    const PINK = 0xf3a7bb, CREAM = 0xfff1dc, ROSA = 0xf08fb0, tenda = righeMat(ROSA, 0xfff8ea, 5);
+    this.add(g, box(2.2, 0.14, 1.5), CREAM, 0, 0.07, 0);
+    this.add(g, box(2.0, 0.9, 0.5), PINK, 0, 0.59, 0.4);
+    this.add(g, box(2.12, 0.08, 0.62), CREAM, 0, 1.08, 0.4);
+    this.add(g, box(2.0, 2.5, 0.12), plankMat(mix(PINK, CREAM, 0.55)), 0, 1.39, -0.62);
+    for (const sx of [-1.0, 1.0]) this.add(g, new THREE.CylinderGeometry(0.06, 0.06, 2.02, 8), CREAM, sx, 1.14, 0.62);
+    // tenda inclinata verso il cliente; la mantovana e i festoni pendono dal suo bordo davanti
+    this.add(g, box(2.4, 0.05, 1.6), tenda, 0, 2.32, 0.08, { rx: 0.3 });
+    this.add(g, box(2.4, 0.2, 0.04), tenda, 0, 1.99, 0.85);
+    // festoni negli stessi colori dei fiori delle aiuole: si fondono con loro
+    for (let j = 0; j < 8; j++) this.add(g, new THREE.SphereGeometry(0.1, 8, 6), j % 2 ? 0xffffff : 0xf27a8c, -1.05 + j * 0.3, 1.89, 0.85, { cast: false });
+    for (const [m, v, x, s] of [['Lea', 'PATENT PINK', -0.5, 0.42], ['Annie', 'PAILLETTES PINK', 0.45, 0.55]] as [Modello, string, number, number][]) {
+      const bag = makeBag(m, parseLook(m, v)); bag.scale.setScalar(s); bag.position.set(x, 1.12, 0.4); bag.rotation.y = -0.2; g.add(bag);
+    }
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.45), signMat('BOUTIQUE', '', 0xc4607f));
+    sign.position.set(0, 2.88, -0.54); g.add(sign);
+  }
+  /** Livello 5: mongolfiera rosa a spicchi. Ondeggia in frameTick solo da sveglia; a riposo torna ferma (posa). */
+  private mongolfiera() {
+    const g = new THREE.Group(); g.position.copy(PALLONE); this.premi.add(g); this.pallone = g;
+    const prof = [[0.34, 0], [0.5, 0.25], [0.95, 0.85], [1.38, 1.65], [1.58, 2.45], [1.55, 3.1], [1.3, 3.65], [0.82, 4.02], [0.001, 4.18]];
+    this.add(g, new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 16), righeMat(0xf08fb0, 0xfff1dc, 8), 0, 0, 0, { cast: false });
+    this.add(g, new THREE.TorusGeometry(0.36, 0.05, 6, 16), GOLD, 0, 0.02, 0, { rx: Math.PI / 2, cast: false });
+    this.add(g, new THREE.SphereGeometry(0.12, 8, 6), GOLD, 0, 4.2, 0, { cast: false });
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) this.add(g, new THREE.CylinderGeometry(0.015, 0.015, 0.95, 5), 0x5a4a3a, sx * 0.3, -0.47, sz * 0.3, { cast: false });
+    this.add(g, box(0.64, 0.48, 0.64), 0xa8743f, 0, -1.18, 0, { cast: false });
+    this.add(g, box(0.72, 0.09, 0.72), 0x9a6a3f, 0, -0.93, 0, { cast: false });
+  }
+  /** Livello 6: tappeto rosso da Ginni al lato aperto del magazzino, con i bordi d'oro e i cordoni. */
+  private tappeto() {
+    const { x0, x1 } = TAPPETO, len = x1 - x0, cx = (x0 + x1) / 2, z = GINNI.z, P = this.premi;
+    this.add(P, box(len, 0.03, 1.0), 0xc8323b, cx, 0.016, z, { cast: false });
+    for (const s of [-1, 1]) this.add(P, box(len, 0.04, 0.07), GOLD, cx, 0.02, z + s * 0.5, { cast: false });
+    const pali = [x0 + 0.35, x0 + 1.45, x0 + 2.55];
+    for (const s of [-1, 1]) {
+      const pz = z + s * 0.78;
+      for (const px of pali) {
+        this.add(P, new THREE.CylinderGeometry(0.15, 0.17, 0.06, 10), GOLD, px, 0.03, pz);
+        this.add(P, new THREE.CylinderGeometry(0.035, 0.045, 0.78, 8), GOLD, px, 0.42, pz);
+        this.add(P, new THREE.SphereGeometry(0.07, 8, 6), GOLD, px, 0.84, pz);
+      }
+      for (let i = 1; i < pali.length; i++) this.add(P, arch(pali[i - 1], pali[i], 0.77, 0.55, 0.035, pz), 0xb02a3a);
+    }
+  }
+  /** Livello 6: corona d'oro con le gemme rosa, figlia di Ginni (saltella con lei). */
+  private coronaGinni() {
+    // anello aperto (oro sulle due facce) posato sulla testa, inclinato in avanti; dentro spunta lo chignon
+    const K = new THREE.Group(); K.position.set(0, 2.12, -0.08); K.rotation.x = 0.22; this.corona.add(K);
+    const oro = GOLD.clone(); oro.side = THREE.DoubleSide;
+    const GEMMA = 0xe57f9d;
+    this.add(K, new THREE.CylinderGeometry(0.3, 0.26, 0.2, 14, 1, true), oro, 0, 0, 0, { cast: false });
+    for (let k = 0; k < 6; k++) {
+      const a = k / 6 * Math.PI * 2, x = Math.sin(a) * 0.29, z = Math.cos(a) * 0.29;
+      this.add(K, new THREE.ConeGeometry(0.075, 0.2, 6), oro, x, 0.2, z, { cast: false });
+      this.add(K, new THREE.SphereGeometry(0.045, 8, 6), GEMMA, x, 0.32, z, { cast: false });
+    }
+    this.add(K, new THREE.SphereGeometry(0.065, 8, 6), GEMMA, 0, 0, 0.29, { cast: false });
+  }
+  /** Scintille dorate che salgono da Ginni per 1,5 s (una InstancedMesh, una draw call) e, se c'e', il testo dorato.
+   *  Con prefers-reduced-motion solo il testo. */
+  festa(testo?: string) {
+    this.sveglia();
+    if (testo) { const a = this.floatText(testo, new V3(GINNI.x, 3.3, GINNI.z), 'v-gold v-festa', 2300); a.free = false; }
+    if (this.reduce || this.disposed) return;
+    // la nuvola cresce con lo zoom (sul telefono l'isola intera sta in 70 unita'): resta visibile a ogni distanza
+    const N = 26, R = rngFor('festa' + performance.now()), zoom = Math.max(1, this.viewH / 30);
+    // stellina a quattro punte, girata verso la camera a ogni fotogramma
+    const st = new THREE.Shape();
+    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2, r = i % 2 ? 0.07 : 0.26; if (i) st.lineTo(Math.sin(a) * r, Math.cos(a) * r); else st.moveTo(0, r); }
+    const geo = new THREE.ShapeGeometry(st);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
+    const inst = new THREE.InstancedMesh(geo, mat, N);
+    // le scintille escono dalla sfera di partenza: senza questo three le taglierebbe col bounding del primo fotogramma
+    inst.frustumCulled = false;
+    const ORI = [0xffd86b, 0xfff4c2, 0xf2b84b], col = new THREE.Color();
+    const S = Array.from({ length: N }, (_, i) => {
+      inst.setColorAt(i, col.setHex(ORI[i % ORI.length]));
+      return { a: i / N * 6.283 + R() * 0.4, r: 0.35 + R() * 0.6, su: 2.4 + R() * 2.2, giro: 1.5 + R() * 2.5, ritardo: R() * 0.3, s: 0.6 + R() * 0.8 };
+    });
+    inst.position.copy(GINNI); inst.scale.setScalar(zoom);
+    this.scene.add(inst);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), qz = new THREE.Quaternion(), Z = new V3(0, 0, 1), s3 = new V3(), p3 = new V3();
+    const tw = this.tween(1500, (p) => {
+      S.forEach((k, i) => {
+        // partenza dal petto di Ginni a ogni zoom, poi la salita e l'allargarsi in scala
+        const t = Math.max(0, Math.min(1, (p - k.ritardo) / (1 - k.ritardo))), an = k.a + t * k.giro, rr = k.r / zoom + t * 0.9;
+        p3.set(Math.cos(an) * rr, 1.0 / zoom + t * k.su, Math.sin(an) * rr);
+        q.copy(this.camera.quaternion).multiply(qz.setFromAxisAngle(Z, t * 5 + i));
+        s3.setScalar(t > 0 ? k.s * (1 - t * 0.6) * (0.75 + 0.25 * Math.sin(t * 30 + i)) : 0);
+        inst.setMatrixAt(i, m4.compose(p3, q, s3));
+      });
+      inst.instanceMatrix.needsUpdate = true;
+      mat.opacity = p < 0.7 ? 1 : 1 - (p - 0.7) / 0.3;
+    }, () => { this.scene.remove(inst); inst.dispose(); geo.dispose(); mat.dispose(); });
+    tw.ombre = false;
+  }
+  /** "+n" dorato sopra Ginni (paillettes appena prese). Punto delle migliaia anche a 4 cifre ("+1.240"): toLocaleString
+   *  in italiano lo mette solo da 10.000. */
+  puntiFlottanti(n: number) {
+    this.floatText('+' + String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'), new V3(GINNI.x, 2.8, GINNI.z), 'v-gold');
+    this.sveglia();
+  }
 
   /* ---------- tocchi: trascina, pizzica, tocca ---------- */
   private bindPointer() {
@@ -1155,6 +1398,7 @@ export class Mondo {
     if (vivo) {
       this.ginni.position.y = Math.abs(Math.sin(t * 2.2)) * 0.06;
       this.foam.scale.setScalar(1 + Math.sin(t * 0.8) * 0.004);
+      if (this.pallone) { this.pallone.position.y = PALLONE.y + Math.sin(t * 0.8) * 0.35; this.pallone.rotation.y = Math.sin(t * 0.25) * 0.3; }
       for (const L of this.labs.values()) {
         const busy = L.data.righe.some((r) => r.a < r.o);
         L.puffs.forEach((pf, i) => {
@@ -1170,9 +1414,10 @@ export class Mondo {
     this.updateLabels(now);
     this.renderer.render(this.scene, this.camera);
   }
-  /** Posa del riposo: niente fumo, braccia giu', Ginni a terra. */
+  /** Posa del riposo: niente fumo, braccia giu', Ginni a terra, mongolfiera ferma. */
   private posa() {
     this.ginni.position.y = 0; this.foam.scale.setScalar(1);
+    if (this.pallone) { this.pallone.position.y = PALLONE.y; this.pallone.rotation.y = 0; }
     for (const L of this.labs.values()) {
       L.puffs.forEach((pf) => { (pf.material as THREE.MeshLambertMaterial).opacity = 0; });
       (L.ch.userData.arm as THREE.Group).rotation.x = 0;

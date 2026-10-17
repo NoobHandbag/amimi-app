@@ -151,7 +151,8 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   secondo modo di scrivere: LEGGE `v_ordini_arrivo` e `v_inventory` con `fetchOrdiniGruppi`/`fetchInventory`,
   SCRIVE solo con i componenti di Ordini, cosi' come sono: `ArrivoRow` (arrivi con le sue conferme, `arrival_set`, e
   "Elimina riga", `order_delete`) e `SupplierOrderForm` (ordine nuovo, `order_multi`, con la sua "Compila" AI se
-  `ai_compila_enabled` e il login del team). Magazzino: una pedana per modello e una pila per variante (1 lastra = 2 pezzi, anello giallo
+  `ai_compila_enabled` e il login del team); con le Paillettes (sotto) anche `CountForm` di Magazzino (`count`, giro di
+  conta) e le due azioni nuove `villaggio_presenza` e `fornitore_verifica`. Magazzino: una pedana per modello e una pila per variante (1 lastra = 2 pezzi, anello giallo
   1-2 pezzi, borsa trasparente = finita ma in arrivo, anello rosso = negativa). Laboratori: un capannone per
   fornitore con righe aperte (max 6 sull'isola, gli altri solo nei pannelli), un carrello per riga con la pila di
   quanto deve ancora arrivare, bandierina rossa se in ritardo. Lo "studio delle borse" (modello = sagoma,
@@ -177,6 +178,31 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   (`costruisci`, `arriviFra`) e' in `catalogo.ts`, provato da `tests/villaggio_catalogo.mjs`; e2e in
   `web/e2e/villaggio.spec.ts` (progetto finto, sempre con il percorso della spec). Tutti e due si lanciano a mano
   (Gate 1): la CI non li esegue ancora (CASI_APERTI del repo principale).
+  **Paillettes** (fase 2, dal 16-10, migr 0163, SCHEMA.md sez. 17): la gamification del Villaggio. Gioca solo la
+  giocatrice (`app_flags.villaggio_paillettes_chi`, oggi Ginevra); interruttore `villaggio_paillettes_enabled`, nato
+  'false': spento non c'e' niente di questa fase (pillola, stella, bottoni, presenza, letture degli eventi). App e
+  VillaggioApp leggono tutte le chiavi con `fetchVillaggioSettings` e passano alla pagina `paillettes` e `giocatrice`.
+  I punti NON si scrivono: a ogni `load()` la pagina rilegge `v_villaggio_eventi` (`fetchVillaggioEventi`, a pagine) e
+  li ricalcola con le funzioni pure di `web/src/lib/villaggio/paillettes.ts` (`calcola`, `missioni`, `differenza`,
+  tetti contro le ripetizioni, 7 livelli da Stagista a Executive Queen of Fashion Production); un errore della lettura
+  lascia il punteggio dell'ultima lettura buona, mai zero. Dopo ogni lettura la differenza col prima: "+n" dorato su
+  Ginni e toast (accodato al messaggio dell'azione), livello nuovo = scintille (`Mondo.festa`), fumetto "Sei diventata
+  ...!" e il premio sull'isola (`Mondo.setLivello`: aiuole, fontana, lampioni, chiosco, mongolfiera, corona e tappeto
+  rosso), medaglia nuova = toast; alla prima lettura solo `setLivello`, niente festa. HUD: pillola "1.240 ·
+  Coordinator" con la barra del livello (tocco = pannello percorso: scala dei livelli, oggi, serie e pallini lun-ven,
+  medaglie, ultime 15 voci, come si guadagnano) e la stella delle missioni col numero di quelle da fare (al massimo 3:
+  verifica del laboratorio piu' in ritardo, conta dei negativi del giorno, date mancanti; Ginni le presenta alla prima
+  presenza del giorno). Le due sole scritture nuove passano dalla write-api (v29): `segnaPresenza` (una al giorno, guardia
+  `amimi_villaggio_presenza` sul telefono, server idempotente; parte dopo la prima lettura) e `verificaFornitore`
+  (pannello del laboratorio con fornitore, "Verifica con ...": una riga per riga aperta con interruttore "confermata" e
+  data di consegna, evidenziata se manca, piu' una nota; bottone spento mentre salva, poi si torna al laboratorio). Giro
+  di conta (dal Magazzino, codici con giacenza diversa da 0: negativi, poi pila per pila, poi i modelli non disegnati; o
+  dalla missione sui negativi): camera sulla pila, `CountForm` di Magazzino col codice gia' scelto, contato si passa al
+  prossimo (`onDone`), "Salta" o "Avanti" se gia' contato oggi, barra "2 / 98". Verifica e giro toccati hanno la stessa
+  guardia del modulo dell'ordine (conferma prima di X, Esc, indietro, Home, etichette, barra) e la mappa non li chiude.
+  Chi non e' la giocatrice vede la pillola con le paillettes di Ginni e il percorso, senza presenza ne' missioni; verifica
+  e giro restano a tutti (la riga porta il suo chi, i punti contano solo per la giocatrice). Prove: `tests/villaggio_paillettes.mjs`
+  (logica pura) e `tests/paillettes_guardie.mjs` (write-api).
 
 ## 8. Sicurezza (posture rilassata, per scelta)
 anon = sola lettura (grant revocati in scrittura; TRUNCATE revocato dal 06-07, migr 0037). Scritture
