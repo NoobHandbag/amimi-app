@@ -240,7 +240,7 @@ console.log('\n== push: inviaPush (POST a push-api, mai un\'eccezione) ==');
   esiti.push(await inviaPush(msg, ENV, fetchFinto(risposta(401, { error: 'sessione non valida' }))));
   t('70 errore di rete: esito con errore, nessuna eccezione, chiave oscurata', esiti[0].ok === false && /\[chiave\]/.test(esiti[0].errore) && !esiti[0].errore.includes(KEY), esiti[0]);
   t('71 timeout: esito TimeoutError', esiti[1].ok === false && /^TimeoutError/.test(esiti[1].errore), esiti[1]);
-  t('72 risposta non JSON: non ok', esiti[2].ok === false && esiti[2].status === 200);
+  t('72 risposta non JSON (anche un 2xx): non ok, con errore', esiti[2].ok === false && esiti[2].status === 200 && esiti[2].errore === 'risposta di push-api non leggibile', esiti[2]);
   t('73 401 (chiave rifiutata): non ok, testo del servizio', esiti[3].ok === false && esiti[3].status === 401 && esiti[3].errore === 'sessione non valida');
   let chiamato = false;
   const senzaChiave = await inviaPush(msg, { url: 'https://progetto.supabase.co', key: '' }, async () => { chiamato = true; return risposta(200, {}); });
@@ -319,6 +319,11 @@ console.log('\n== push: guardie sul sorgente di ce-guard e sales-guard ==');
     !ntfyEsatto.test("if (!res.ok) ntfyFailed = res.status;\n            return true;\n          } catch (e) { ntfyError = 'ntfy non raggiungibile: ' + x; return false; }"));
   t('101 consegnaAvviso riceve il canale letto dai flag (mai una modalita\' scritta a mano)',
     [GUARD, SALES].every((s) => /const av = await consegnaAvviso\(canale, mandaNtfy, /.test(s) && (s.match(/consegnaAvviso\(/g) ?? []).length === 1));
+  // Gate 2 del 17-10 (C3): _shared/push.ts finisce nel bundle di OGNI edge che lo importa, quindi una modifica si deploya
+  // su tutte. L'elenco sta in EDGE_FUNCTIONS.md (ce-guard v10): un importatore nuovo fa diventare rosso questo caso.
+  const importatori = readdirSync(FN, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync(`${FN}/${d.name}/index.ts`))
+    .filter((d) => /from '\.\.\/_shared\/push\.ts'/.test(readFileSync(`${FN}/${d.name}/index.ts`, 'utf8'))).map((d) => d.name).sort();
+  t('102 _shared/push.ts e\' importato solo da ce-guard e sales-guard (una modifica = deploy di entrambe)', importatori.join() === 'ce-guard,sales-guard', importatori);
 }
 
 console.log('\n== migr 0164: interruttore ==');

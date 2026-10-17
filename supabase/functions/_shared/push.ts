@@ -80,6 +80,7 @@ export function esitoDaRisposta(status: number, corpo: unknown): EsitoPush {
   if (typeof o.skipped === 'string') e.skipped = o.skipped.slice(0, 40);
   if (dry) e.dryRun = true;
   if (!ok2xx) e.errore = typeof o.error === 'string' && o.error ? o.error.slice(0, 200) : `push-api ha risposto ${status}`;
+  else if (corpo === null || typeof corpo !== 'object' || Array.isArray(corpo)) e.errore = 'risposta di push-api non leggibile';
   return e;
 }
 
