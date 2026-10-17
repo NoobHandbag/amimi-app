@@ -53,6 +53,9 @@
 .v-float { position: absolute; left: 0; top: 0; font: 700 24px var(--v-fd); color: var(--v-paper); white-space: nowrap; pointer-events: none; animation: v-rise 1.4s ease-out forwards;
   text-shadow: 0 2px 0 var(--v-leafd), 2px 0 0 var(--v-leafd), -2px 0 0 var(--v-leafd), 0 -2px 0 var(--v-leafd), 2px 2px 0 var(--v-leafd), -2px 2px 0 var(--v-leafd); }
 @keyframes v-rise { 0% { opacity: 0; margin-top: 14px; } 15% { opacity: 1; } 100% { opacity: 0; margin-top: -56px; } }
+/* Paillettes: "+n" e testo della festa sopra Ginni, dorati. La festa sta piu' in alto dei punti (arrivano insieme) e va a capo */
+.v-float.v-gold { color: #ffe39a; text-shadow: 0 2px 0 var(--v-amberd), 2px 0 0 var(--v-amberd), -2px 0 0 var(--v-amberd), 0 -2px 0 var(--v-amberd), 2px 2px 0 var(--v-amberd), -2px 2px 0 var(--v-amberd), 0 0 14px rgba(255, 214, 102, .9); }
+.v-float.v-festa { top: -40px; font-size: 25px; line-height: 1.15; white-space: normal; width: max-content; max-width: min(300px, 78vw); text-align: center; animation-duration: 2.2s; }
 
 .v-toast { position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 66px); transform: translateX(-50%); z-index: 11; max-width: min(440px, calc(100% - 32px));
   background: var(--v-paper); border-radius: 18px; padding: 9px 15px; font: 500 15px/1.35 var(--v-fd); box-shadow: 0 4px 0 rgba(74, 53, 35, .15), 0 8px 24px rgba(40, 30, 20, .14); pointer-events: none; }
@@ -168,3 +171,87 @@
   .v-grab { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .vil *, .v-labels * { animation: none !important; transition: none !important; } }
+
+/* Paillettes (fase 2): la pillola dei punti con la barra del livello, la stella delle missioni, i pannelli percorso,
+   missioni, verifica fornitore e giro di conta. Solo a flag villaggio_paillettes_enabled acceso. */
+.v-pill.v-pai { pointer-events: auto; cursor: pointer; text-align: left; font: inherit; color: var(--v-ink); }
+.v-pai .ic { background: var(--v-amber); color: var(--v-ink); }
+.v-pai small { max-width: 11em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v-prog { display: block; height: 5px; margin-top: 3px; border-radius: 9px; background: var(--v-cream2); overflow: hidden; min-width: 56px; }
+.v-prog > i { display: block; height: 100%; border-radius: 9px; background: linear-gradient(90deg, var(--v-amber), #ffd86b); }
+.v-prog.big { height: 10px; margin: 8px 0 4px; }
+.v-mis { position: relative; margin-left: auto; color: var(--v-amberd); font-size: 22px; }
+.v-mis + .v-qb { margin-left: 0; }
+.v-nb { position: absolute; top: -7px; right: -7px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 99px; background: var(--v-red); color: var(--v-paper);
+  border: 2px solid var(--v-paper); font: 700 11px/16px var(--v-fb); font-style: normal; }
+.v-pcard { background: var(--v-paper); border-radius: 18px; padding: 12px 14px; box-shadow: 0 2px 0 rgba(74, 53, 35, .1); }
+.v-pcard > small { display: block; font: 700 12.5px/1.35 var(--v-fb); color: var(--v-ink2); }
+.v-prow { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.v-prow > span b { display: block; font-weight: 600; font-size: 21px; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.v-prow > span small { display: block; font: 700 11px var(--v-fb); color: var(--v-ink2); }
+.v-wk { display: flex; gap: 4px; margin-left: auto; }
+.v-wk i { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font: 800 11px var(--v-fb); font-style: normal; background: var(--v-cream2); color: var(--v-ink2); }
+.v-wk i.on { background: var(--v-amber); color: var(--v-ink); }
+.v-lad { display: flex; flex-direction: column; gap: 5px; }
+.v-lv { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 10px; background: var(--v-paper); border-radius: 14px; padding: 7px 12px; opacity: .62; }
+.v-lv .n { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--v-cream2); font: 800 12px var(--v-fb); color: var(--v-ink2); }
+.v-lv b { font-weight: 600; font-size: 15px; }
+.v-lv small { font: 700 11.5px var(--v-fb); color: var(--v-ink2); white-space: nowrap; }
+.v-lv.preso { opacity: 1; }
+.v-lv.preso .n { background: #dff3d0; color: #2f6b14; }
+.v-lv.on { opacity: 1; box-shadow: 0 0 0 3px var(--v-amber), 0 2px 0 rgba(74, 53, 35, .1); }
+.v-lv.on .n { background: var(--v-amber); color: var(--v-ink); }
+.v-meds { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.v-med { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 1px 8px; align-items: center; background: var(--v-paper); border-radius: 14px; padding: 8px 10px; opacity: .55; }
+.v-med > span { grid-row: span 2; font-size: 20px; color: var(--v-ink2); }
+.v-med b { font-weight: 600; font-size: 13.5px; }
+.v-med small { font: 700 10.5px/1.25 var(--v-fb); color: var(--v-ink2); }
+.v-med.presa { opacity: 1; box-shadow: 0 0 0 2px #ffd86b; }
+.v-med.presa > span { color: var(--v-amberd); }
+.v-voce { display: flex; align-items: center; gap: 10px; background: var(--v-paper); border-radius: 14px; padding: 7px 12px; }
+.v-voce .pt { flex: none; min-width: 46px; text-align: center; font: 700 14px var(--v-fd); color: var(--v-ink); background: #ffe9b0; border-radius: 99px; padding: 3px 8px; font-variant-numeric: tabular-nums; }
+.v-voce b { display: block; font-weight: 600; font-size: 14px; }
+.v-voce small { display: block; font: 700 11.5px var(--v-fb); color: var(--v-ink2); }
+.v-regole { margin: 0; padding: 0 0 0 18px; font: 700 12.5px/1.6 var(--v-fb); color: var(--v-ink2); }
+.v-regole b { color: var(--v-ink); font-family: var(--v-fd); font-weight: 600; }
+.v-mrow.fatta b { text-decoration: line-through; text-decoration-color: rgba(74, 53, 35, .35); }
+.v-vrow { grid-template-columns: 62px minmax(0, 1fr); }
+.v-vrow.no { opacity: .7; }
+.v-vctl { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.v-sw { position: relative; display: inline-flex; align-items: center; gap: 8px; font: 700 13px var(--v-fb); color: var(--v-ink); cursor: pointer; }
+.v-sw input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.v-sw i { position: relative; width: 44px; height: 26px; border-radius: 99px; background: #d8c9ad; transition: background .15s; flex: none; }
+.v-sw i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--v-paper); box-shadow: 0 1px 2px rgba(0, 0, 0, .2); transition: transform .15s; }
+.v-sw input:checked + i { background: var(--v-leaf); }
+.v-sw input:checked + i::after { transform: translateX(18px); }
+.v-sw input:focus-visible + i { outline: 3px solid var(--v-amber); outline-offset: 2px; }
+.v-dt { display: inline-flex; align-items: center; gap: 6px; }
+.v-dt small { font: 700 11.5px var(--v-fb); color: var(--v-ink2); }
+.v-dt input { font: 600 14px var(--v-fd); color: var(--v-ink); border: 2px solid var(--v-cream2); border-radius: 11px; padding: 5px 8px; background: var(--v-cream); }
+.v-dt.manca small { color: #94440f; }
+.v-dt.manca input { border-color: var(--v-amber); background: #fff3d6; }
+.v-fl { display: flex; flex-direction: column; gap: 4px; font: 700 12.5px var(--v-fb); color: var(--v-ink2); }
+.v-nota { font: 500 15px/1.4 var(--v-fd); color: var(--v-ink); border: 2px solid var(--v-cream2); border-radius: 13px; padding: 8px 10px; background: var(--v-paper); resize: vertical; }
+.v-errl { margin: 0; font: 700 13px/1.4 var(--v-fb); color: #9e2a1d; background: #ffd8d3; border-radius: 12px; padding: 8px 12px; }
+.v-btn:disabled { opacity: .6; cursor: default; transform: none; }
+.v-giro { display: flex; align-items: center; gap: 10px; }
+.v-giro .v-prog { flex: 1; height: 8px; margin: 0; }
+.v-giro b { font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.v-fine { margin: 6px 0; font: 600 17px/1.4 var(--v-fd); color: var(--v-ink); }
+/* con le paillettes accodate il toast si allunga: quello delle paillettes e' largo quanto il testo (fino al suo
+   max-width), non mezza finestra; gli altri restano come sono */
+.v-toast.v-tpai { width: max-content; }
+/* la scheda in fondo al giro di conta completo, con la registrazione della conta del mese */
+.v-ccard { display: flex; flex-direction: column; gap: 8px; }
+.v-ccard .v-ok { margin: 0; font: 600 15px/1.35 var(--v-fd); color: #2f6b14; }
+@media (max-width: 480px) {
+  /* sul telefono pillola e stella vanno in una riga loro, sotto (il ::before e' l'a capo): il "?" resta a destra della
+     seconda riga com'era, e il toast scende sotto la terza */
+  .v-hud:has(.v-pai)::before { content: ""; order: 1; flex-basis: 100%; height: 0; }
+  .v-pai { order: 2; }
+  .v-mis { order: 3; font-size: 18px; }
+  .v-mis + .v-qb { margin-left: auto; }
+  .vil:has(.v-pai) .v-toast { top: calc(env(safe-area-inset-top, 0px) + 162px); }
+  .v-pai small { max-width: 8em; }
+  .v-prog { min-width: 44px; }
+}

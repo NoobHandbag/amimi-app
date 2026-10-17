@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, RefObject } from 'react';
 import Icon from '../components/Icon';
-import { fetchInventory, fetchOrdiniGruppi, oggi } from '../lib/api';
-import type { OrdLine } from '../lib/api';
+import { fetchInventory, fetchOrdiniGruppi, fetchVillaggioEventi, oggi, registraContaCompleta, segnaPresenza, verificaFornitore } from '../lib/api';
+import type { InvFull, OrdGruppo, OrdLine } from '../lib/api';
 import { ArrivoRow } from './Ordini';
 import SupplierOrderForm from '../components/SupplierOrderForm';
+import CountForm from '../components/CountForm';
 import { PEOPLE, personaName } from '../lib/people';
 import { killBack, popBack, pushBack } from '../lib/backnav';
-import { MODEL_ORDER, FIN_IT, PRINT_IT, arriviFra, conTaglia, costruisci, giorniAllaConsegna, modelOf } from '../lib/villaggio/catalogo';
+import { MODEL_ORDER, FIN_IT, PRINT_IT, arriviFra, conTaglia, costruisci, giorniAllaConsegna, labOf, modelOf } from '../lib/villaggio/catalogo';
 import type { Lab, Look, Mod, Modello, Pila } from '../lib/villaggio/catalogo';
 import { Mondo, labColor, swatchURL, thumbAsync } from '../lib/villaggio/mondo';
 import type { RigaMondo } from '../lib/villaggio/mondo';
+import { LIVELLI, MEDAGLIE, VALORI, calcola, differenza, missioni } from '../lib/villaggio/paillettes';
+import type { Evento, Stato } from '../lib/villaggio/paillettes';
 import '@fontsource/fredoka/400.css';
 import '@fontsource/fredoka/500.css';
 import '@fontsource/fredoka/600.css';
@@ -21,17 +24,35 @@ import '../styles/villaggio.css';
 
 // Villaggio (16-10): la stessa gestione ordini e magazzino, vista come un'isola in stile FarmVille / Animal Crossing.
 // LEGGE le stesse viste di Ordini e Magazzino (v_ordini_arrivo, v_inventory). SCRIVE solo attraverso i componenti di
-// Ordini: ArrivoRow (arrivi, con le sue conferme su mese chiuso, doppio arrivo e totale atteso) e SupplierOrderForm
-// (ordine nuovo). Nessuna chiamata a write-api nasce qui: e' una vista parallela, non un secondo modo di scrivere.
-// Interruttore: app_flags.villaggio_enabled (migr 0162), letto da App.tsx e da villaggio-main.tsx.
+// Ordini e Magazzino: ArrivoRow (arrivi, con le sue conferme su mese chiuso, doppio arrivo e totale atteso),
+// SupplierOrderForm (ordine nuovo) e CountForm (giro di conta). Le Paillettes (fase 2, migr 0164) aggiungono le loro tre
+// sole scritture, la presenza, la verifica fornitore e la conta completa del mese, con segnaPresenza, verificaFornitore e
+// registraContaCompleta di lib/api; i punti non si scrivono da nessuna parte, si ricalcolano da v_villaggio_eventi con
+// lib/villaggio/paillettes.ts.
+// Interruttori: app_flags.villaggio_enabled (migr 0162) e villaggio_paillettes_enabled, letti da App.tsx e da VillaggioApp.tsx.
 
 type Sheet = { t: 'lab'; key: string } | { t: 'wh'; model?: Modello } | { t: 'labs' } | { t: 'help' }
-  | { t: 'add'; step: 1 | 2 | 3 | 4; lab?: string; model?: Modello; pila?: string; codice?: string } | null;
+  | { t: 'add'; step: 1 | 2 | 3 | 4; lab?: string; model?: Modello; pila?: string; codice?: string }
+  | { t: 'percorso' } | { t: 'missioni' } | { t: 'verifica'; lab: string } | { t: 'giro'; codici: string[]; completo?: boolean } | null;
 
 const INTRO_KEY = 'amimi_villaggio_intro';
+const PRESENZA_KEY = 'amimi_villaggio_presenza';
+/** L'ultimo livello festeggiato su questo telefono: si festeggia solo un livello piu' alto, anche se preso fuori dal Villaggio. */
+const LIVELLO_KEY = 'amimi_paillettes_livello';
+/** I negativi della prima lettura del giorno ({giorno, codici}): la missione resta e si vede fatta anche riaprendo. */
+const NEGATIVI_KEY = 'amimi_paillettes_negativi';
+/** "ottobre": il mese della conta completa, di Roma come oggi(). */
+const nomeMese = (iso: string) => new Date(iso.slice(0, 7) + '-15T12:00:00').toLocaleDateString('it-IT', { month: 'long' });
 const dataBreve = (iso: string | null | undefined) => (iso ? new Date(String(iso).slice(0, 10) + 'T12:00:00').toLocaleDateString('it-IT', { day: 'numeric', month: 'long' }) : '');
 const righe = (n: number) => (n === 1 ? '1 riga' : n + ' righe');
 const css = (c: number) => ({ '--c': '#' + c.toString(16).padStart(6, '0') }) as CSSProperties;
+/** "1.240": il punto delle migliaia anche a 4 cifre, come il "+n" di Mondo.puntiFlottanti. */
+const migliaia = (n: number) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+/** Il premio che ogni livello mette sull'isola (Mondo.setLivello): Ginni lo dice quando si sale. */
+const PREMI = ['', 'Lungo i sentieri sono spuntate le aiuole fiorite.', 'Davanti al magazzino c\'è una fontana nuova.',
+  'Sono arrivati i lampioni e una panchina.', 'Ora c\'è il chiosco-boutique con la tenda a righe rosa.',
+  'Guarda in cielo: c\'è una mongolfiera rosa.', 'Corona d\'oro e tappeto rosso fino al magazzino.'];
+const GIORNI = ['L', 'M', 'M', 'G', 'V'];
 
 function Thumb({ model, look }: { model: Modello; look: Look }) {
   const [src, setSrc] = useState<string | null>(null);
@@ -61,7 +82,161 @@ function Dialogo({ testo, onAvanti }: { testo: string; onAvanti: () => void }) {
   );
 }
 
-export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; chi: string; setChi?: (c: string) => void; onBack: () => void }) {
+/** Per le voci del percorso: il prodotto di un codice o di una riga d'ordine, il laboratorio di un ordine. */
+function dettagli(gruppi: OrdGruppo[], inv: InvFull[]) {
+  const nome = (item: string | null, variant: string | null) => { const mv = modelOf(item, variant); return (mv.model ?? item ?? '') + ' ' + conTaglia(mv.variant).toLowerCase(); };
+  const m = new Map<string, string>();
+  for (const r of inv) m.set('c:' + r.codice, nome(r.item, r.variant));
+  for (const g of gruppi) {
+    m.set('g:' + g.gruppo, 'a ' + labOf(g.fornitore).nome);
+    for (const l of g.righe) m.set('r:' + l.id, nome(l.item, l.variant));
+  }
+  return m;
+}
+
+/** Il giro di conta completo del Magazzino (e della missione del mese): prima i codici negativi, poi pila per pila come nel
+ *  pannello (modello, pila piu' alta prima), in fondo i modelli che il villaggio non disegna. Solo codici con giacenza
+ *  diversa da 0: quelli a 0 non hanno niente da contare. */
+function giroMagazzino(mod: Mod) {
+  const neg = [...mod.stockCodice].filter(([, n]) => n < 0).map(([c]) => c);
+  const perPila = MODEL_ORDER.flatMap((m) => [...mod.pile.values()].filter((p) => p.model === m).sort((a, b) => b.stock - a.stock)
+    .flatMap((p) => p.codes.filter((c) => c.stock !== 0).map((c) => c.codice)));
+  const fuori = [...mod.stockCodice].filter(([c, n]) => n !== 0 && !mod.codeToPila.has(c)).map(([c]) => c);
+  return [...new Set([...neg, ...perPila, ...fuori])];
+}
+
+type Scelta = { confermata?: boolean; data?: string };
+/** Verifica con il fornitore: una riga per riga aperta del laboratorio, confermata (acceso di default) e con la data di
+ *  consegna attuale da mettere o correggere. La bozza vive qui: cambiando pannello sparisce, quindi toccata la protegge
+ *  la stessa guardia del modulo dell'ordine. */
+function Verifica({ lab, mod, chi, sporca, onSalvata }: { lab: Lab; mod: Mod; chi: string; sporca: () => void; onSalvata: (dateCambiate: number) => void }) {
+  const [scelte, setScelte] = useState<Record<string, Scelta>>({});
+  const [nota, setNota] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [errore, setErrore] = useState<string | null>(null);
+  const aperte = [...lab.raw, ...lab.extra];
+  const prima = (l: OrdLine) => String(l.data_consegna ?? '').slice(0, 10);
+  const valore = (l: OrdLine) => ({ confermata: scelte[l.id]?.confermata ?? true, data: scelte[l.id]?.data ?? prima(l) });
+  const cambia = (id: string, x: Scelta) => { sporca(); setScelte((s) => ({ ...s, [id]: { ...s[id], ...x } })); };
+  // la verifica mette o corregge la data, non la toglie: un campo svuotato su una riga che la data l'aveva la lascia com'e'
+  const inviata = (l: OrdLine) => valore(l).data || prima(l);
+  const senzaData = aperte.filter((l) => !inviata(l)).length;
+  async function salva() {
+    setBusy(true); setErrore(null);
+    try {
+      const r = await verificaFornitore(chi, {
+        fornitore: lab.forn ?? '', nota: nota.trim() || null,
+        righe: aperte.map((l) => ({ id: l.id, confermata: valore(l).confermata, data_consegna: inviata(l) || null })),
+      });
+      onSalvata(Number(r.date_cambiate) || 0);
+    } catch (e) {
+      setErrore((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return <>
+    <p className="v-note">{righe(aperte.length)}{senzaData ? ` · ${senzaData} senza data` : ''}. Spegni quelle che {lab.nome} non sta lavorando.</p>
+    <div className="v-list">{aperte.map((l) => {
+      const info = mod.righe.get(l.id), v = valore(l), d = giorniAllaConsegna(l.data_consegna, oggi());
+      return (
+        <div key={l.id} className={'v-row v-vrow' + (v.confermata ? '' : ' no')}>
+          {info ? <Thumb model={info.riga.model} look={info.riga.look} /> : <span className="v-th" />}
+          <div className="v-rt">
+            <b>{info ? `${info.riga.model} · ${info.riga.label}` : `${l.item ?? l.codice} · ${conTaglia(l.variant)}`}</b>
+            <div className="v-meta">
+              {l.wip ? 'quantità da definire' : `${Number(l.qty_arrived) || 0} di ${l.qty_ordered ?? '?'} arrivate`}
+              {d != null && d < 0 && <span className={'v-chip ' + (-d >= 30 ? 'verylate' : 'late')}>{-d === 1 ? '1 giorno di ritardo' : `${-d} giorni di ritardo`}</span>}
+            </div>
+          </div>
+          <div className="v-vctl">
+            <label className="v-sw"><input type="checkbox" checked={v.confermata} onChange={(e) => cambia(l.id, { confermata: e.target.checked })} /><i aria-hidden="true" />{v.confermata ? 'confermata' : 'non confermata'}</label>
+            <label className={'v-dt' + (inviata(l) ? '' : ' manca')}><small>{v.data ? 'consegna' : prima(l) ? `resta il ${dataBreve(prima(l))}` : 'manca la data'}</small>
+              <input type="date" value={v.data} onChange={(e) => cambia(l.id, { data: e.target.value })} /></label>
+          </div>
+        </div>
+      );
+    })}</div>
+    <label className="v-fl">Nota (facoltativa)
+      <textarea className="v-nota" rows={2} value={nota} onChange={(e) => { sporca(); setNota(e.target.value); }} placeholder={`cosa ti ha detto ${lab.nome}`} /></label>
+    {errore && <p className="v-errl" role="alert">{errore}</p>}
+    <button className="v-btn wide" type="button" disabled={busy || !aperte.length} onClick={salva}>{busy ? 'Salvo la verifica…' : 'Salva la verifica'}</button>
+  </>;
+}
+
+/** Giro di conta: un codice alla volta, con la camera sulla sua pila e il CountForm di Magazzino gia' sul prodotto.
+ *  Contato (onDone), si passa da soli al prossimo; "Salta" lo lascia com'e', "Avanti" se e' gia' stato contato oggi.
+ *  Il giro completo (dal Magazzino o dalla missione del mese) finisce con la scheda della conta completa: la giocatrice
+ *  la registra (onRegistra, assente per chi non gioca), una volta al mese. */
+function Giro({ codici, completo, registrata, onRegistra, mod, nomi, contatiOggi, pin, chi, mondo, lascia, sporca, pulisci, onContato, onFine }: {
+  codici: string[]; completo: boolean; registrata: boolean; onRegistra?: (n: number) => Promise<void>;
+  mod: Mod; nomi: Map<string, string>; contatiOggi: Set<string>; pin: string; chi: string; mondo: RefObject<Mondo | null>;
+  lascia: () => boolean; sporca: () => void; pulisci: () => void; onContato: () => void; onFine: () => void;
+}) {
+  const [i, setI] = useState(0);
+  const [salvati, setSalvati] = useState<Set<string>>(() => new Set());
+  const [salvo, setSalvo] = useState(false);
+  const [fatta, setFatta] = useState(false);
+  const [errore, setErrore] = useState<string | null>(null);
+  const codice = codici[i];
+  // un onDone arrivato tardi (salvataggio lento e intanto "Salta") vale per il SUO codice: non fa saltare quello dopo
+  const attuale = useRef(codice);
+  useEffect(() => { attuale.current = codice; }, [codice]);
+  const pila = codice ? mod.pile.get(mod.codeToPila.get(codice) ?? '') : undefined;
+  const pilaKey = pila?.key;
+  useEffect(() => {
+    const W = mondo.current;
+    if (!W || !pilaKey) return;
+    W.focusPila(pilaKey);
+    // focusPila toglie il contesto: senza, un tocco sull'isola aprirebbe un laboratorio e lascerebbe il giro
+    W.setCtx({ type: 'giro' });
+  }, [pilaKey, mondo]);
+  if (!codice) {
+    // contati = i codici del giro con una conta di oggi: salvati qui, o gia' contati prima (quelli passati con "Avanti")
+    const contati = codici.filter((c) => salvati.has(c) || contatiOggi.has(c)).length;
+    const mese = nomeMese(oggi());
+    const registra = async () => {
+      if (!onRegistra) return;
+      setSalvo(true); setErrore(null);
+      try { await onRegistra(contati); setFatta(true); } catch (e) { setErrore((e as Error).message); } finally { setSalvo(false); }
+    };
+    return <>
+      <p className="v-fine">Giro finito: {contati === 1 ? '1 codice contato' : contati + ' codici contati'} su {codici.length}.</p>
+      {completo && onRegistra && (
+        <div className="v-pcard v-ccard">
+          {registrata || fatta
+            ? <p className="v-ok">✓ Conta completa di {mese} già registrata.</p>
+            : <>
+              <p className="v-note">La conta completa vale +{VALORI.contaCompleta} paillettes, una volta al mese{contati ? '' : ': conta almeno un codice per registrarla'}.</p>
+              <button className="v-btn alt wide" type="button" disabled={salvo || !contati} onClick={registra}>{salvo ? 'Registro la conta completa…' : `Registra la conta completa di ${mese}`}</button>
+            </>}
+          {errore && <p className="v-errl" role="alert">{errore}</p>}
+        </div>
+      )}
+      <button className="v-btn wide" type="button" onClick={onFine}>Chiudi il giro</button>
+    </>;
+  }
+  const voce = pila?.codes.find((c) => c.codice === codice);
+  const nome = pila ? pila.model + ' · ' + (voce ? conTaglia(voce.variant) : pila.name) : nomi.get('c:' + codice) ?? codice;
+  const gia = contatiOggi.has(codice);
+  return <>
+    <div className="v-giro"><span className="v-prog"><i style={{ width: (i / codici.length) * 100 + '%' }} /></span><b>{i + 1} / {codici.length}</b></div>
+    <div className="v-qty">{pila ? <Thumb model={pila.model} look={pila.look} /> : <span className="v-th" />}
+      <div><b>{nome}</b><small>{codice} · in magazzino {mod.stockCodice.get(codice) ?? 0}{gia ? ' · già contato oggi' : ''}</small></div></div>
+    <div className="v-form v-conta" onInput={sporca} onClick={sporca}>
+      <CountForm key={codice} pin={pin} chi={chi} initialCodice={codice} onDone={() => {
+        setSalvati((s) => new Set(s).add(codice)); onContato();
+        if (attuale.current !== codice) return;
+        pulisci(); setI((x) => x + 1);
+      }} />
+    </div>
+    <button className="v-btn ghost wide" type="button" onClick={() => { if (lascia()) { pulisci(); setI((x) => x + 1); } }}>{gia ? 'Avanti ›' : 'Salta ›'}</button>
+  </>;
+}
+
+export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false, giocatrice = null }: {
+  pin: string; chi: string; setChi?: (c: string) => void; onBack: () => void; paillettes?: boolean; giocatrice?: string | null;
+}) {
   const sceneRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const hudRef = useRef<HTMLElement>(null);
@@ -77,20 +252,46 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
   const [sheet, setSheet] = useState<Sheet>(null);
   const [openLine, setOpenLine] = useState<string | null>(null);
   const [say, setSay] = useState<string[]>([]);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<{ m: string; pai: boolean } | null>(null);
   const [furgoni, setFurgoni] = useState(0);
   const sheetRef = useRef<Sheet>(null);
   useEffect(() => { sheetRef.current = sheet; }, [sheet]);
 
-  const toast = useCallback((m: string) => { setToastMsg(m); window.setTimeout(() => setToastMsg((x) => (x === m ? null : x)), 3200); }, []);
+  // Paillettes (fase 2): gioca solo la giocatrice di app_flags. Gli altri vedono i suoi punti, senza presenza ne' missioni.
+  const gioca = paillettes && !!giocatrice && chi === giocatrice;
+  const giocaRef = useRef(gioca);
+  useEffect(() => { giocaRef.current = gioca; }, [gioca]);
+  const nomeG = personaName(giocatrice ?? '');
+  const [stato, setStato] = useState<Stato | null>(null);
+  const [eventi, setEventi] = useState<Evento[] | null>(null);
+  const [nomi, setNomi] = useState<Map<string, string>>(() => new Map());
+  // i negativi della prima lettura del giorno restano nella missione anche dopo che la conta li ha sistemati, cosi' la si
+  // vede fatta (anche riaprendo il Villaggio: NEGATIVI_KEY); il ref dice se il giorno e' gia' fissato
+  const [negOggi, setNegOggi] = useState<{ giorno: string; codici: string[] }>({ giorno: '', codici: [] });
+  const negRef = useRef(negOggi);
+  const prevStato = useRef<Stato | null>(null);
+  // Ginni presenta le missioni dopo la presenza nuova: 1 = chiesto, 2 = sono arrivati gli eventi della rilettura (con la
+  // presenza dentro), quindi le missioni sono quelle vere e il fumetto va dopo quello del livello
+  const presenta = useRef<0 | 1 | 2>(0);
+  // l'ultimo livello festeggiato, se il telefono non ha storage (vale per la sessione)
+  const livFesta = useRef<number | null>(null);
 
-  // Il modulo dell'ordine (passo 4) toccato non si perde senza chiedere: vale per Esc, "indietro", la X, le etichette
-  // della mappa e la barra in basso. La mappa al passo 4 non chiude proprio (W.onTap).
+  // il messaggio a video: le paillettes della stessa azione ci si accodano invece di scavalcarlo
+  const toastOra = useRef<string | null>(null);
+  const toast = useCallback((m: string, pai = false) => {
+    toastOra.current = m; setToastMsg({ m, pai });
+    window.setTimeout(() => { if (toastOra.current === m) toastOra.current = null; setToastMsg((x) => (x?.m === m ? null : x)); }, 3200);
+  }, []);
+
+  // I moduli toccati non si perdono senza chiedere: l'ordine al passo 4, la verifica fornitore e la conta del giro. Vale
+  // per Esc, "indietro", la X, le etichette della mappa e la barra in basso; su questi pannelli la mappa non chiude (W.onTap).
   const formSporco = useRef(false);
   const lascia = useCallback(() => {
     const s = sheetRef.current;
-    if (!s || s.t !== 'add' || s.step !== 4 || !formSporco.current) return true;
-    if (!window.confirm("Lasci l'ordine a metà? Quello che hai scritto si perde.")) return false;
+    const cosa = !s || !formSporco.current ? null
+      : s.t === 'add' && s.step === 4 ? "l'ordine" : s.t === 'verifica' ? 'la verifica' : s.t === 'giro' ? 'la conta' : null;
+    if (!cosa) return true;
+    if (!window.confirm(`Lasci ${cosa} a metà? Quello che hai scritto si perde.`)) return false;
     formSporco.current = false;
     return true;
   }, []);
@@ -139,11 +340,16 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
   }, [lascia]);
   useEffect(() => () => window.clearTimeout(attesa.current), []);
   useEffect(() => () => killBack(pushed.current), []);
+  const sporca = () => { formSporco.current = true; };
+  const pulisci = () => { formSporco.current = false; };
 
   // carica (o ricarica dopo una scrittura); se qualche riga ha nuovi arrivi fa partire il furgoncino.
   // Conta solo l'ultima lettura partita: una risposta vecchia non sovrascrive quella nuova.
   const load = useCallback(async () => {
     const mia = ++ultima.current;
+    // gli eventi delle Paillettes partono insieme ma si aspettano dopo: HUD, carrelli e pannelli non attendono le loro
+    // pagine. Se falliscono il villaggio va avanti e i punti restano quelli dell'ultima lettura buona (mai "zero eventi")
+    const eventiP = paillettes ? fetchVillaggioEventi().catch((e: Error) => e) : null;
     try {
       const [g, inv] = await Promise.all([fetchOrdiniGruppi(), fetchInventory()]);
       if (mia !== ultima.current) return;
@@ -163,8 +369,54 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
           toast(`${x.n} ${x.riga.model} ${x.riga.label.replace(/ \(WIP\)$/, '').toLowerCase()} in magazzino.`);
         });
       }
+      if (paillettes) {
+        setNomi(dettagli(g, inv));
+        const giorno = oggi();
+        if (negRef.current.giorno !== giorno) {
+          let primi: string[] | null = null;
+          try {
+            const v = JSON.parse(localStorage.getItem(NEGATIVI_KEY) ?? 'null') as { giorno?: unknown; codici?: unknown } | null;
+            if (v && v.giorno === giorno && Array.isArray(v.codici)) primi = v.codici.map(String);
+          } catch { /* storage non disponibile o valore storto: vale questa lettura */ }
+          if (!primi) {
+            primi = [...m.stockCodice].filter(([, n]) => n < 0).map(([c]) => c);
+            try { localStorage.setItem(NEGATIVI_KEY, JSON.stringify({ giorno, codici: primi })); } catch { /* resta per la sessione */ }
+          }
+          negRef.current = { giorno, codici: primi };
+          setNegOggi(negRef.current);
+        }
+      }
     } catch (e) { if (mia === ultima.current) setErr((e as Error).message); }
-  }, [toast]);
+
+    const ev = await eventiP;
+    if (!Array.isArray(ev) || mia !== ultima.current) return;
+    const W = mondoRef.current;
+    const st = calcola(ev, oggi());
+    const prima = prevStato.current;
+    prevStato.current = st;
+    if (presenta.current === 1) presenta.current = 2;
+    setEventi(ev); setStato(st);
+    // i premi sull'isola sono del livello di Ginni per tutti; festeggia solo chi gioca
+    if (W && (!prima || st.livello !== prima.livello)) W.setLivello(st.livello);
+    if (!giocaRef.current) return;
+    // la festa del livello e' per un livello piu' alto dell'ultimo festeggiato su questo telefono (anche se preso fuori dal
+    // Villaggio, quindi gia' alla prima lettura); al primo avvio assoluto si prende nota del livello e basta
+    let gia = livFesta.current;
+    try { const v = localStorage.getItem(LIVELLO_KEY); if (v !== null && /^\d+$/.test(v)) gia = Number(v); } catch { /* vale livFesta */ }
+    if (gia === null || st.livello > gia) {
+      livFesta.current = st.livello;
+      try { localStorage.setItem(LIVELLO_KEY, String(st.livello)); } catch { /* vale livFesta */ }
+    }
+    if (gia !== null && st.livello > gia) {
+      if (W) W.festa(st.nomeLivello);
+      setSay([`Sei diventata ${st.nomeLivello}!`, PREMI[st.livello]].filter(Boolean));
+    }
+    // "+n" e medaglie dal confronto con la lettura di prima (alla prima lettura, prima = null, niente)
+    const d = differenza(prima, st);
+    if (W && d.punti > 0) W.puntiFlottanti(d.punti);
+    const avviso = [d.punti > 0 ? `+${migliaia(d.punti)} paillettes` : '', ...d.medaglieNuove.map((x) => `Medaglia nuova: ${x.nome}!`)].filter(Boolean).join(' · ');
+    if (avviso) toast(toastOra.current ? toastOra.current + ' ' + avviso : avviso, true);
+  }, [toast, paillettes]);
 
   // il mondo 3D vive finche' la pagina e' montata; senza WebGL resta un messaggio, non una pagina bianca
   useEffect(() => {
@@ -180,9 +432,11 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
         onPartenza: () => setFurgoni((n) => n + 1),
       });
     } catch { setNoGl(true); return; }
-    // tocco sull'isola con un pannello aperto: lo chiude, tranne il modulo dell'ordine (non si perde a meta')
-    W.onTap = () => { const s = sheetRef.current; if (!s || (s.t === 'add' && s.step === 4)) return; chiudi(); };
+    // tocco sull'isola con un pannello aperto: lo chiude, tranne i moduli che non si perdono a meta' (ordine al passo 4,
+    // verifica fornitore, giro di conta)
+    W.onTap = () => { const s = sheetRef.current; if (!s || (s.t === 'add' && s.step === 4) || s.t === 'verifica' || s.t === 'giro') return; chiudi(); };
     mondoRef.current = W;
+    prevStato.current = null;
     prevMod.current = null;
     load();
     let intro = false;
@@ -199,8 +453,34 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
     return () => { document.removeEventListener('visibilitychange', onVis); W.dispose(); mondoRef.current = null; };
   }, [load, toast, apri, chiudi]);
 
+  // Presenza del giorno, solo per chi gioca: una volta al giorno su questo telefono (il server e' comunque idempotente),
+  // anche quando la PWA rimasta aperta torna in primo piano il giorno dopo. Se non va (flag spento = 409, niente rete) non
+  // succede niente e si riprova alla prossima apertura. Parte dopo la prima lettura, cosi' la rilettura che segue ha un
+  // "prima" con cui fare la differenza (il +5 si vede); la prima presenza del giorno fa presentare le missioni a Ginni.
+  const pronto = !!mod;
+  // una presenza alla volta: piu' ritorni in primo piano di fila (o l'effetto che riparte) mandano una POST sola
+  const presenzaInVolo = useRef(false);
+  useEffect(() => {
+    if (!gioca || !pronto) return;
+    const segna = () => {
+      if (presenzaInVolo.current) return;
+      const k = chi + '|' + oggi();
+      try { if (localStorage.getItem(PRESENZA_KEY) === k) return; } catch { /* storage non disponibile: decide il server */ }
+      presenzaInVolo.current = true;
+      segnaPresenza(chi).then((r) => {
+        try { localStorage.setItem(PRESENZA_KEY, k); } catch { /* come sopra */ }
+        if (r.nuova) { presenta.current = 1; load(); }
+      }).catch(() => { /* vedi sopra: si riprova alla prossima apertura */ })
+        .finally(() => { presenzaInVolo.current = false; });
+    };
+    segna();
+    const onVis = () => { if (!document.hidden) segna(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [gioca, pronto, chi, load]);
+
   // pannello aperto -> camera e contesto del mondo; cambiando pannello la riga d'arrivo si richiude e Ginni tace
-  const sheetId = sheet ? sheet.t + ':' + (sheet.t === 'lab' ? sheet.key : sheet.t === 'wh' ? sheet.model ?? '' : '') : '';
+  const sheetId = sheet ? sheet.t + ':' + (sheet.t === 'lab' ? sheet.key : sheet.t === 'verifica' ? sheet.lab : sheet.t === 'wh' ? sheet.model ?? '' : '') : '';
   useEffect(() => {
     setOpenLine(null);
     const s = sheetRef.current;
@@ -209,6 +489,7 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
     if (!W) return;
     if (!s) { W.ripristina(); return; }
     if (s.t === 'lab') W.focusLab(s.key);
+    else if (s.t === 'verifica') W.focusLab(s.lab);
     else if (s.t === 'wh') W.focusMagazzino(s.model);
     else W.setCtx({ type: s.t });
   }, [sheetId]);
@@ -224,6 +505,15 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
     });
     return () => cancelAnimationFrame(id);
   }, [sheetId]);
+  // una rilettura che fa sparire il laboratorio di una verifica gia' toccata (righe chiuse altrove): la bozza non ha piu'
+  // righe a cui riferirsi, quindi si chiude con un avviso, e senza lasciare il modulo "toccato" (niente conferma dopo)
+  useEffect(() => {
+    const s = sheetRef.current;
+    if (!mod || s?.t !== 'verifica' || !formSporco.current || mod.labs.some((x) => x.key === s.lab && x.forn)) return;
+    formSporco.current = false;
+    chiudi();
+    toast('Questo laboratorio non ha più righe aperte: la verifica si chiude senza salvare.');
+  }, [mod, chiudi, toast]);
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || !sheetRef.current) return;
@@ -234,6 +524,39 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [chiudi]);
+
+  // missioni di oggi, solo per chi gioca: le calcola paillettes.ts dai laboratori, dai negativi del giorno e dagli eventi
+  const contatiOggi = useMemo(() => new Set((eventi ?? []).filter((e) => e.tipo === 'conta' && e.giorno === oggi()).map((e) => e.ref)), [eventi]);
+  // la conta completa di questo mese c'e' gia'? Il mese come lo legge paillettes.ts: il ref 'YYYY-MM', se no il giorno
+  const completaRegistrata = useMemo(() => {
+    const mese = oggi().slice(0, 7);
+    return (eventi ?? []).some((e) => e.tipo === 'conta_completa' && (/^\d{4}-\d{2}$/.test(e.ref) ? e.ref : e.giorno.slice(0, 7)) === mese);
+  }, [eventi]);
+  const registraCompleta = useCallback(async (n: number) => {
+    const r = await registraContaCompleta(chi, n);
+    // il flag della giocatrice letto all'avvio puo' essere cambiato intanto: il server non l'ha scritta, non e' "registrata"
+    if (r.ignorata) throw new Error(`La conta completa la registra solo ${nomeG}.`);
+    const mese = nomeMese(oggi());
+    toast(r.nuova ? `Conta completa di ${mese} registrata.` : `La conta completa di ${mese} era già registrata.`);
+    load();
+  }, [chi, nomeG, toast, load]);
+  const lista = useMemo(() => {
+    if (!gioca || !mod || !eventi) return null;
+    return missioni({
+      labs: mod.labs.map((L) => {
+        const tutte = [...L.raw, ...L.extra];
+        return { key: L.key, nome: L.nome, forn: L.forn, senzaData: tutte.filter((l) => !l.data_consegna).length,
+          righe: tutte.map((l) => ({ late: (giorniAllaConsegna(l.data_consegna, oggi()) ?? 0) < 0, wip: !!l.wip })) };
+      }),
+      negativi: negOggi.codici, eventi, oggi: oggi(),
+    });
+  }, [gioca, mod, eventi, negOggi]);
+  const daFare = lista ? lista.filter((x) => !x.fatta).length : 0;
+  useEffect(() => {
+    if (!lista || presenta.current !== 2) return;
+    presenta.current = 0;
+    if (lista.length) setSay((s) => [...s, `Buongiorno! Oggi ${lista.length === 1 ? 'ho una missione' : `ho ${lista.length} missioni`} per te: le trovi sotto la stella.`, ...lista.map((x) => x.testo + '.')]);
+  }, [lista]);
 
   // fatti veri per Ginni, calcolati dai dati
   const fatti = useMemo(() => {
@@ -251,8 +574,9 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
     if (finita) out.push(`${finita.model} ${finita.name.toLowerCase()} è finita in magazzino, ma ne arrivano ${finita.incoming}: la vedi trasparente.`);
     const alta = [...mod.dati.pile].sort((a, b) => b.stock - a.stock)[0];
     if (alta) out.push(`La pila più alta è ${alta.model} ${alta.name.toLowerCase()}: ${alta.stock} pezzi.`);
+    if (gioca && stato?.prossimo) out.push(`Ti mancano ${migliaia(stato.prossimo.da - stato.totale)} paillettes per diventare ${stato.prossimo.nome}.`);
     return out;
-  }, [mod]);
+  }, [mod, gioca, stato]);
   const fattoI = useRef(0);
   useEffect(() => {
     if (say[0] === '__fatto__') setSay(fatti.length ? [fatti[fattoI.current++ % fatti.length]] : []);
@@ -323,6 +647,7 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
             </div>
           )}
           <p className="v-note">Nel capannone c'è un carrello per variante: la pila è quanto deve ancora arrivare (una lastra = 2 pezzi). Gli arrivi si registrano con la stessa riga di Ordini.</p>
+          {paillettes && lab.forn && <button className="v-btn wide" type="button" onClick={() => apri({ t: 'verifica', lab: lab.key })}>✓ Verifica con {lab.nome}</button>}
           {lab.forn
             ? <button className="v-btn alt wide" type="button" onClick={() => apri({ t: 'add', step: 2, lab: lab.key })}>+ Ordina a {lab.nome}</button>
             : <button className="v-btn alt wide" type="button" onClick={() => apri({ t: 'add', step: 1 })}>+ Ordina borse</button>}
@@ -330,10 +655,13 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
       };
     }
     if (sheet.t === 'wh') {
+      const giro = paillettes ? giroMagazzino(mod) : [];
       return {
         cls: 'short',
         head: <><span className="v-hic" style={css(0xe57f9d)}><Icon name="box" size={22} /></span><div className="v-ht"><h2 id="v-sheet-title">Magazzino</h2><p>{tot.stock} pezzi · una pila per variante, più è alta più pezzi ci sono</p></div></>,
-        body: <>{MODEL_ORDER.map((m) => {
+        body: <>
+        {giro.length > 0 && <button className="v-btn wide" type="button" onClick={() => apri({ t: 'giro', codici: giro, completo: true })}>Giro di conta completo · {giro.length === 1 ? '1 codice' : giro.length + ' codici'}</button>}
+        {MODEL_ORDER.map((m) => {
           const ps = mod.dati.pile.filter((p) => p.model === m).sort((a, b) => b.stock - a.stock);
           if (!ps.length) return null;
           const t = ps.reduce((s, p) => s + Math.max(0, p.stock), 0);
@@ -345,7 +673,7 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
                 const st = Math.max(0, p.stock);
                 return (
                   <button key={p.key} type="button" className={'v-vt' + (p.stock < 0 || p.neg ? ' neg' : st === 0 ? ' out' : st <= 2 ? ' low' : '')}
-                    onClick={() => { chiudi(); window.setTimeout(() => mondoRef.current?.focusPila(p.key), 30); }}>
+                    onClick={() => { chiudi(); window.setTimeout(() => mondoRef.current?.focusPila(p.key, false), 30); }}>
                     <Thumb model={p.model} look={p.look} />
                     <b>{p.stock < 0 ? p.stock : st}</b><small>{p.name}</small>{p.incoming > 0 && <small className="inc">+{p.incoming} in arrivo</small>}
                   </button>
@@ -392,6 +720,106 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
           <div className="v-sig"><span className="mk" style={{ background: '#e0574b', borderRadius: '4px 50% 50% 4px' }} /><span><b>Bandierina rossa sul carrello</b>Quella variante ha passato la data di consegna.</span></div>
           <div className="v-sig"><span className="mk" style={{ background: '#eee' }} /><span><b>Pile e carrelli</b>Ogni lastra vale 2 pezzi, ovunque. In magazzino la pila è quello che c'è, nei laboratori quello che deve ancora arrivare.</span></div>
         </>,
+      };
+    }
+    if (sheet.t === 'percorso') {
+      const st = stato;
+      const head = <><span className="v-hic" style={css(0xe0a32f)}><Icon name="sparkles" size={22} /></span>
+        <div className="v-ht"><h2 id="v-sheet-title">{gioca ? 'Il tuo percorso' : `Il percorso di ${nomeG}`}</h2><p>{st ? `${migliaia(st.totale)} paillettes · ${st.nomeLivello}` : 'Paillettes non ancora lette'}</p></div></>;
+      if (!st) return { cls: '', head, body: <p className="v-empty">Le paillettes arrivano con la prossima lettura dei dati.</p> };
+      const prese = new Set(st.medaglie.map((x) => x.id));
+      return {
+        cls: '', head,
+        body: <>
+          <div className="v-pcard">
+            <div className="v-prow">
+              <span><b>+{migliaia(st.oggi)}</b><small>oggi</small></span>
+              <span><b>{st.serie}</b><small>{st.serie === 1 ? 'giorno di fila' : 'giorni di fila'}</small></span>
+              <span className="v-wk" aria-label={`Questa settimana: ${st.settimana.filter(Boolean).length} giorni su 5`}>{GIORNI.map((g, i) => <i key={i} className={st.settimana[i] ? 'on' : ''}>{g}</i>)}</span>
+            </div>
+            {st.prossimo
+              ? <><span className="v-prog big"><i style={{ width: Math.round(st.frazione * 100) + '%' }} /></span><small>Ancora {migliaia(st.prossimo.da - st.totale)} paillettes per {st.prossimo.nome}</small></>
+              : <small>{gioca ? 'Livello massimo: sei la regina della produzione.' : `${nomeG} è al livello massimo.`}</small>}
+          </div>
+          <h3 className="v-sec">I livelli</h3>
+          <div className="v-lad">{LIVELLI.map((l, i) => ({ l, i })).reverse().map(({ l, i }) => (
+            <div key={l.nome} className={'v-lv' + (i === st.livello ? ' on' : i < st.livello ? ' preso' : '')}>
+              <span className="n">{i + 1}</span><b>{l.nome}</b>
+              <small>{i === st.livello ? 'adesso' : i === st.livello + 1 ? `mancano ${migliaia(l.da - st.totale)}` : `da ${migliaia(l.da)}`}</small>
+            </div>
+          ))}</div>
+          <h3 className="v-sec">Medaglie<small>{st.medaglie.length} di {MEDAGLIE.length}</small></h3>
+          <div className="v-meds">{MEDAGLIE.map((x) => (
+            <div key={x.id} className={'v-med' + (prese.has(x.id) ? ' presa' : '')}><span aria-hidden="true">{prese.has(x.id) ? '★' : '☆'}</span><b>{x.nome}</b><small>{x.descrizione}</small></div>
+          ))}</div>
+          <h3 className="v-sec">Ultime paillettes</h3>
+          {st.voci.length
+            ? <div className="v-list">{st.voci.slice(0, 15).map((v, k) => {
+              const det = v.tipo === 'ordine' ? nomi.get('g:' + v.ref) : v.tipo === 'arrivo' || v.tipo === 'data_aggiunta' ? nomi.get('r:' + v.ref) : v.tipo === 'conta' ? nomi.get('c:' + v.ref) : undefined;
+              return <div key={k} className="v-voce"><span className="pt">+{migliaia(v.punti)}</span><span><b>{v.testo}</b><small>{[det, v.giorno === oggi() ? 'oggi' : dataBreve(v.giorno)].filter(Boolean).join(' · ')}</small></span></div>;
+            })}</div>
+            : <p className="v-empty">Ancora nessuna paillette: arrivano con presenze, ordini, arrivi, verifiche e conte.</p>}
+          <h3 className="v-sec">Come si guadagnano</h3>
+          <ul className="v-regole">
+            <li><b>+{VALORI.presenza}</b> presenza, una al giorno; <b>+{VALORI.settimanaPiena}</b> con la settimana piena, da lunedì a venerdì</li>
+            <li><b>+{VALORI.ordine}</b> ordine, più <b>+{VALORI.rigaOrdine}</b> a riga</li>
+            <li><b>+{VALORI.arrivo}</b> arrivo registrato, a riga</li>
+            <li><b>+{VALORI.verifica}</b> verifica con un laboratorio, una a settimana</li>
+            <li><b>+{VALORI.dataAggiunta}</b> data di consegna aggiunta a una riga</li>
+            <li><b>+{VALORI.conta}</b> conta di un codice, una al giorno; <b>+{VALORI.contaCompleta}</b> per la conta completa, registrata in fondo al giro di conta completo del Magazzino, una al mese</li>
+          </ul>
+        </>,
+      };
+    }
+    if (sheet.t === 'missioni') {
+      const xs = lista ?? [];
+      return {
+        cls: 'short',
+        head: <><span className="v-hic" style={css(0xe0a32f)}>★</span><div className="v-ht"><h2 id="v-sheet-title">Missioni di oggi</h2>
+          <p>{xs.length ? `${xs.length - daFare} di ${xs.length} fatte · ti portano alle cose utili, le paillettes arrivano dalle azioni` : 'Oggi niente da segnalare'}</p></div></>,
+        body: xs.length
+          ? <div className="v-list">{xs.map((x) => (
+            <button key={x.id} type="button" className={'v-lrow v-mrow' + (x.fatta ? ' fatta' : '')}
+              onClick={() => apri(x.azione.t === 'verifica' ? { t: 'verifica', lab: x.azione.lab }
+                : x.azione.t === 'conta' ? { t: 'giro', codici: x.azione.codici } : { t: 'giro', codici: giroMagazzino(mod), completo: true })}>
+              <span className="v-hic" style={css(x.fatta ? 0x4f9a2f : 0xe0a32f)}>{x.fatta ? <Icon name="check" size={22} /> : '★'}</span>
+              <span><b>{x.testo}</b><small>{x.azione.t === 'verifica' ? 'Apri la verifica' : x.azione.t === 'conta' ? 'Apri il giro di conta' : 'Apri il giro di conta completo'}</small></span>
+              {x.fatta ? <span className="v-chip ok">fatta</span> : <span className="v-chip nodate">da fare</span>}
+            </button>
+          ))}</div>
+          : <p className="v-empty">Nessuna missione: laboratori verificati, niente negativi, date a posto.</p>,
+      };
+    }
+    if (sheet.t === 'verifica') {
+      const s = sheet, L = mod.labs.find((x) => x.key === s.lab);
+      if (!L || !L.forn) {
+        return { cls: '', head: <div className="v-ht"><h2 id="v-sheet-title">Verifica</h2></div>,
+          body: <p className="v-empty">{L ? 'Senza un fornitore non c\'è nessuno con cui verificare.' : 'Questo laboratorio non ha più righe aperte.'}</p> };
+      }
+      return {
+        cls: 'tall',
+        head: <><span className="v-hic" style={css(labColor(labIndex(L.key)))}><Icon name="check" size={22} /></span>
+          <div className="v-ht"><h2 id="v-sheet-title">Verifica con {L.nome}</h2><p>Le righe aperte: confermale con {L.nome} e metti o correggi la data di consegna</p></div></>,
+        body: <Verifica key={L.key} lab={L} mod={mod} chi={chi} sporca={sporca} onSalvata={(n) => {
+          toast(`Verifica con ${L.nome} salvata${n ? `: ${n === 1 ? '1 data aggiornata' : n + ' date aggiornate'}` : ''}.`);
+          load();
+          // si torna al laboratorio solo se si e' ancora su QUESTA verifica
+          if (sheetRef.current !== s) return;
+          formSporco.current = false;
+          sheetRef.current = { t: 'lab', key: L.key }; setSheet({ t: 'lab', key: L.key });
+        }} />,
+      };
+    }
+    if (sheet.t === 'giro') {
+      const completo = !!sheet.completo;
+      return {
+        cls: 'labsheet',
+        head: <><span className="v-hic" style={css(0xe57f9d)}><Icon name="count" size={22} /></span>
+          <div className="v-ht"><h2 id="v-sheet-title">{completo ? 'Giro di conta completo' : 'Giro di conta'}</h2>
+            <p>{completo ? 'Tutti i codici con giacenza diversa da 0, prima i negativi: contato, si passa al prossimo' : 'Conta i pezzi di ogni codice: contato, si passa al prossimo'}</p></div></>,
+        body: <Giro key={(completo ? 'completo ' : '') + sheet.codici.join(' ')} codici={sheet.codici} completo={completo} registrata={completaRegistrata}
+          onRegistra={gioca ? registraCompleta : undefined} mod={mod} nomi={nomi} contatiOggi={contatiOggi} pin={pin} chi={chi}
+          mondo={mondoRef} lascia={lascia} sporca={sporca} pulisci={pulisci} onContato={load} onFine={chiudi} />,
       };
     }
     // ordine nuovo: si sceglie con le figure, poi si compila il modulo vero di Ordini
@@ -464,6 +892,18 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
                   {PEOPLE.map((p) => <option key={p} value={p}>{personaName(p)}</option>)}
                 </select></span></label>
             : <div className="v-pill v-chi" aria-label={`Scrive ${personaName(chi)}`}><span><small>scrive</small><b>{personaName(chi)}</b></span></div>}
+          {paillettes && stato && (
+            <button className="v-pill v-pai" type="button" onClick={() => apri({ t: 'percorso' })}
+              aria-label={`${gioca ? 'Le tue paillettes' : 'Paillettes di ' + nomeG}: ${migliaia(stato.totale)}, livello ${stato.nomeLivello}`}>
+              <span className="ic"><Icon name="sparkles" size={16} /></span>
+              <span><b>{migliaia(stato.totale)}</b><small>{gioca ? stato.nomeLivello : `${nomeG} · ${stato.nomeLivello}`}</small>
+                <span className="v-prog"><i style={{ width: Math.round(stato.frazione * 100) + '%' }} /></span></span>
+            </button>
+          )}
+          {lista && lista.length > 0 && (
+            <button className="v-qb v-mis" type="button" onClick={() => apri({ t: 'missioni' })}
+              aria-label={daFare ? `Missioni di oggi: ${daFare} da fare` : 'Missioni di oggi: tutte fatte'}>★{daFare > 0 && <i className="v-nb">{daFare}</i>}</button>
+          )}
           <button className="v-qb" type="button" onClick={() => apri({ t: 'help' })} aria-label="Legenda: come leggere il villaggio">?</button>
         </>}
       </header>
@@ -478,7 +918,7 @@ export default function Villaggio({ pin, chi, setChi, onBack }: { pin: string; c
         <button className="v-rb big" type="button" onClick={() => apri({ t: 'add', step: 1 })} aria-label="Ordina borse"><span className="c"><Icon name="plus" size={36} /></span><span className="t">Ordina</span></button>
         <button className="v-rb" type="button" onClick={() => apri({ t: 'labs' })}><span className="c"><Icon name="store" size={28} /></span><span className="t">Laboratori</span></button>
       </nav>}
-      {toastMsg && <div className="v-toast" role="status"><b>Ginni</b>{toastMsg}</div>}
+      {toastMsg && <div className={'v-toast' + (toastMsg.pai ? ' v-tpai' : '')} role="status"><b>Ginni</b>{toastMsg.m}</div>}
       {say.length > 0 && say[0] !== '__fatto__' && <Dialogo key={say[0]} testo={say[0]} onAvanti={() => setSay((x) => x.slice(1))} />}
       <section className={'v-sheet' + (P ? ' open ' + P.cls : '')} role="dialog" aria-modal="false" aria-labelledby="v-sheet-title" aria-hidden={!P}>
         {P && <>

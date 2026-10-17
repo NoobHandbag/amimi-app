@@ -28,6 +28,7 @@ const VERB: Record<string, string> = {
   arrival: 'Arrivo merce', arrival_set: 'Arrivo corretto', test_cleanup: 'Pulizia dati test',
   orphan_cleanup: 'Pulizia anagrafica', sale_correct: 'Vendita ri-mappata', guard_fix: 'Fix della guardia',
   qromo_sale: 'Vendita Qromo', gift: 'Regalo', return: 'Reso', product_delete: 'Prodotto rimosso',
+  order_date: 'Data di consegna',
 };
 const TBLVERB: Record<string, string> = {
   purchases: 'Arrivo', counts: 'Conta', gifts_offline: 'Regalo', b2b_movements: 'Movimento B2B', products: 'Prodotto',
@@ -65,6 +66,11 @@ function summarize(r: Activity): string {
     case 'arrival': case 'arrival_set': return `${s('codice') ?? ''} · ${n('qty') ?? n('target') ?? '?'} pz`;
     case 'qromo_sale': return `${s('codice') ?? ''} × ${n('qty') ?? 1}`;
     case 'sale_correct': return `${s('from') ?? ''} → ${s('to') ?? ''}`;
+    // verifica fornitore del Villaggio (write-api v29): after = { codice, fornitore, data_consegna nuova }
+    case 'order_date': {
+      const d = s('data_consegna');
+      return [s('codice'), d ? new Date(d.slice(0, 10) + 'T12:00:00').toLocaleDateString('it-IT', { day: 'numeric', month: 'short' }) : null].filter(Boolean).join(' · ');
+    }
     default: {
       const codice = s('codice'); const qty = n('quantita'); const costo = n('costo');
       return [codice, qty != null ? `× ${qty}` : null, costo != null ? eur(Math.abs(costo)) : null].filter(Boolean).join(' ');

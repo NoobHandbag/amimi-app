@@ -22,7 +22,8 @@ import PushKeeper from './components/PushKeeper';
 import Notifiche from './pages/Notifiche';
 import { pushBack } from './lib/backnav';
 import { fetchLeadTodo } from './lib/leadApi';
-import { fetchPushEnabled, fetchVillaggioEnabled } from './lib/api';
+import { VILLAGGIO_SPENTO, fetchPushEnabled, fetchVillaggioSettings } from './lib/api';
+import type { VillaggioSettings } from './lib/api';
 import ErrorBoundary from './components/ErrorBoundary';
 // three.js pesa: il Villaggio si scarica solo quando lo si apre
 const Villaggio = lazy(() => import('./pages/Villaggio'));
@@ -38,10 +39,12 @@ export default function App() {
   // pagina dice "non attiva". Rollback = spegnere app_flags.mat_enabled (Regola Ferrea 19). Letto una volta all'avvio.
   const [matEnabled, setMatEnabled] = useState(false);
   useEffect(() => { fetchMatEnabled().then(setMatEnabled).catch(() => setMatEnabled(false)); }, []);
-  // Villaggio (16-10): stesso schema, flag villaggio_enabled (migr 0162). null = non ancora letto, cosi' #villaggio
-  // aperto da link non mostra 'non attiva' per un attimo.
-  const [vilEnabled, setVilEnabled] = useState<boolean | null>(null);
-  useEffect(() => { fetchVillaggioEnabled().then(setVilEnabled).catch(() => setVilEnabled(false)); }, []);
+  // Villaggio (16-10): stesso schema, flag villaggio_enabled (migr 0162), letto insieme a quelli delle Paillettes (migr
+  // 0164) che si passano alla pagina. null = non ancora letto, cosi' #villaggio aperto da link non mostra 'non attiva'
+  // per un attimo.
+  const [vil, setVil] = useState<VillaggioSettings | null>(null);
+  useEffect(() => { fetchVillaggioSettings().then(setVil).catch(() => setVil(VILLAGGIO_SPENTO)); }, []);
+  const vilEnabled = vil && vil.enabled;
   // Notifiche native (17-10, migr 0163): stesso schema, flag push_enabled. Spento: niente voce in Home, #notifiche dice
   // "non attiva", PushKeeper non fa niente. null = non ancora letto.
   const [pushEnabled, setPushEnabled] = useState<boolean | null>(null);
@@ -105,7 +108,7 @@ export default function App() {
         {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} onMateriali={matEnabled ? () => go('materiali') : undefined} />}
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}
         {tab === 'villaggio' && (vilEnabled
-          ? <ErrorBoundary titolo="Villaggio" onBack={() => go('home')}><Suspense fallback={<div className="screen"><div className="card muted center">Carico il villaggio…</div></div>}><Villaggio pin={pin} chi={chi} onBack={() => go('home')} /></Suspense></ErrorBoundary>
+          ? <ErrorBoundary titolo="Villaggio" onBack={() => go('home')}><Suspense fallback={<div className="screen"><div className="card muted center">Carico il villaggio…</div></div>}><Villaggio pin={pin} chi={chi} paillettes={vil?.paillettes === true} giocatrice={vil?.giocatrice} onBack={() => go('home')} /></Suspense></ErrorBoundary>
           : <div className="screen"><header><h1>Villaggio</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">{vilEnabled === null ? 'Carico…' : 'Sezione non attiva (flag villaggio_enabled spento).'}</div></div>)}
         {tab === 'notifiche' && (pushEnabled
           ? <Notifiche chi={chi} setChi={setChi} onBack={() => go('home')} />
