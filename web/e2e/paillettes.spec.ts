@@ -797,15 +797,17 @@ test.describe('Paillettes accese, gioca Ginni', () => {
       const dati = datiBase();
       const mese = OGGI.slice(0, 7);
       const contaDelMese = ev('conta_completa', mese + '-01', mese, 40, '07:00');
-      const eventi = [...eventiBase(), ...(caso.prima ? [contaDelMese] : [])];
+      // la zebrata e' gia' contata stamattina: il giro chiude con 1 codice contato (con 0 non si registra, test sotto)
+      const eventi = [...eventiBase(), ev('conta', OGGI, 'LEA_BAG_PONY_ZEBRA', 1, '06:50'), ...(caso.prima ? [contaDelMese] : [])];
       const r = await apri(page, '#villaggio', dati, { chi: 'Ginevra', presenzaFatta: true, eventi, giocatriceServer: caso.ignorata ? 'Bene' : undefined });
       await hud(page);
-      await pillola(page, String(BASE + 5 + (caso.prima ? 500 : 0)), caso.prima ? 'Junior' : 'Stagista');
+      await pillola(page, String(BASE + 5 + 2 + (caso.prima ? 500 : 0)), caso.prima ? 'Junior' : 'Stagista');
       await barra(page, 'Magazzino').click();
       await sheet(page).getByRole('button', { name: 'Giro di conta completo · 3 codici' }).click();
       const s = sheet(page);
-      for (let i = 0; i < 3; i++) await s.getByRole('button', { name: 'Salta ›' }).click();
-      await expect(s.locator('.v-fine')).toHaveText('Giro finito: 0 codici contati su 3.');
+      for (let i = 0; i < 2; i++) await s.getByRole('button', { name: 'Salta ›' }).click();
+      await s.getByRole('button', { name: 'Avanti ›' }).click();
+      await expect(s.locator('.v-fine')).toHaveText('Giro finito: 1 codice contato su 3.');
       const card = s.locator('.v-ccard');
       if (caso.prima) {
         await expect(card.locator('.v-ok')).toHaveText(`✓ Conta completa di ${MESE} già registrata.`);
@@ -817,7 +819,7 @@ test.describe('Paillettes accese, gioca Ginni', () => {
         await expect(card.locator('.v-errl')).toHaveText('La conta completa la registra solo Ginni.', ATTESA);
         await expect(registra).toBeEnabled();
         await expect(card.locator('.v-ok')).toHaveCount(0);
-        expect(corpo(di(r.posts, 'villaggio_conta_completa')[0])).toEqual({ action: 'villaggio_conta_completa', payload: { codici: 0 }, pin: 'x', chi: 'Ginevra' });
+        expect(corpo(di(r.posts, 'villaggio_conta_completa')[0])).toEqual({ action: 'villaggio_conta_completa', payload: { codici: 1 }, pin: 'x', chi: 'Ginevra' });
         await page.waitForTimeout(1000);
         expect((await registrati(page, '__avvisi')).filter((t) => t.includes('onta completa di'))).toEqual([]);
         expect(r.eventi.filter((e) => e.tipo === 'conta_completa')).toEqual([]);
@@ -827,15 +829,30 @@ test.describe('Paillettes accese, gioca Ginni', () => {
         await card.getByRole('button', { name: `Registra la conta completa di ${MESE}` }).click();
         await expect(card.locator('.v-ok')).toHaveText(`✓ Conta completa di ${MESE} già registrata.`, ATTESA);
         await compare(page, '__avvisi', `La conta completa di ${MESE} era già registrata.`);
-        expect(corpo(di(r.posts, 'villaggio_conta_completa')[0])).toEqual({ action: 'villaggio_conta_completa', payload: { codici: 0 }, pin: 'x', chi: 'Ginevra' });
+        expect(corpo(di(r.posts, 'villaggio_conta_completa')[0])).toEqual({ action: 'villaggio_conta_completa', payload: { codici: 1 }, pin: 'x', chi: 'Ginevra' });
         // le paillettes sono quelle dell'altro telefono, una volta sola
-        await pillola(page, String(BASE + 5 + 500), 'Junior');
+        await pillola(page, String(BASE + 5 + 2 + 500), 'Junior');
         expect(r.eventi.filter((e) => e.tipo === 'conta_completa')).toHaveLength(1);
         expect(r.posts.map((x) => x.body.action)).toEqual(['villaggio_conta_completa']);
       }
       expect(r.errori).toEqual([]);
     });
   }
+
+  test('conta completa con 0 codici contati nel giro: il bottone resta spento e la nota dice di contarne almeno uno', async ({ page }) => {
+    const r = await apri(page, '#villaggio', datiBase(), { chi: 'Ginevra', presenzaFatta: true, eventi: eventiBase() });
+    await hud(page);
+    await barra(page, 'Magazzino').click();
+    await sheet(page).getByRole('button', { name: 'Giro di conta completo · 3 codici' }).click();
+    const s = sheet(page);
+    for (let i = 0; i < 3; i++) await s.getByRole('button', { name: 'Salta ›' }).click();
+    await expect(s.locator('.v-fine')).toHaveText('Giro finito: 0 codici contati su 3.');
+    const card = s.locator('.v-ccard');
+    await expect(card.locator('.v-note')).toHaveText('La conta completa vale +500 paillettes, una volta al mese: conta almeno un codice per registrarla.');
+    await expect(card.getByRole('button', { name: `Registra la conta completa di ${MESE}` })).toBeDisabled();
+    expect(di(r.posts, 'villaggio_conta_completa')).toHaveLength(0);
+    expect(r.errori).toEqual([]);
+  });
 
   test('missioni: la stella col numero, l\'elenco dai dati (verifica, negativi, date), ogni missione apre la sua azione e diventa fatta; i negativi restano quelli della prima lettura del giorno', async ({ page }) => {
     const dati = datiBase();
