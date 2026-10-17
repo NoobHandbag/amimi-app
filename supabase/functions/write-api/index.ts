@@ -19,9 +19,10 @@
 // v28 (2026-10-13, migr 0156): `gift` accetta solo kind 'gift' (default) o 'vendita_manuale' e lo scrive sempre
 // (la colonna e' NOT NULL); un omaggio con prezzo > 0 prende 422 leggibile invece dell'errore del vincolo Postgres.
 //
-// v29 (2026-10-16, migr 0164): Paillettes del Villaggio. `villaggio_presenza` (una presenza al giorno della giocatrice,
-// idempotente sulla PK) e `fornitore_verifica` (date di consegna delle righe di un laboratorio + registro della
-// verifica). Entrambe 409 a flag villaggio_paillettes_enabled spento. logp accetta un `before` opzionale.
+// v29 (2026-10-16, rivista il 17-10, migr 0164): Paillettes del Villaggio. `villaggio_presenza` (una presenza al giorno
+// della giocatrice, idempotente sulla PK), `villaggio_conta_completa` (una conta completa registrata al mese, idempotente
+// sulla PK) e `fornitore_verifica` (date di consegna delle righe aperte di un laboratorio + registro della verifica).
+// Tutte e tre 409 a flag villaggio_paillettes_enabled spento. logp accetta un `before` opzionale.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { num, isoDate, todayRome, ymFromIso, tok, cnorm, VALID_CATEGORIE } from './lib.ts';
 
@@ -1159,10 +1160,11 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // --- PAILLETTES (v29, migr 0164): la gamification del Villaggio ---
-  // I punti non si scrivono: il client li calcola da v_villaggio_eventi. Qui entrano solo i due eventi che il database
-  // non registra gia' (la presenza e la verifica col fornitore). Semplice per scelta di Dan (16-10): niente
-  // compare-and-set sulle date (le tocca solo Ginni) e niente op_id (i tetti dei punti rendono innocuo un doppio invio).
-  if (action === 'villaggio_presenza' || action === 'fornitore_verifica') {
+  // I punti non si scrivono: il client li calcola da v_villaggio_eventi. Qui entrano solo gli eventi che il database
+  // non registra gia' (la presenza, la conta completa del mese e la verifica col fornitore). Semplice per scelta di Dan
+  // (16-10): niente compare-and-set sulle date (le tocca solo Ginni) e niente op_id (i tetti dei punti rendono innocuo
+  // un doppio invio).
+  if (action === 'villaggio_presenza' || action === 'villaggio_conta_completa' || action === 'fornitore_verifica') {
     // Regola 20 a: un flag non leggibile non e' "acceso", ci si ferma
     const { data: flags, error: fe } = await retryOnce(() => sb.from('app_flags').select('key, value')
       .in('key', ['villaggio_paillettes_enabled', 'villaggio_paillettes_chi']));
@@ -1180,11 +1182,22 @@ async function handle(req: Request): Promise<Response> {
       return json({ ok: true, nuova: (ins ?? []).length > 0 });
     }
 
+    if (action === 'villaggio_conta_completa') {
+      const codici = num(payload.codici, { integer: true, min: 0 });
+      if (codici == null) return json({ error: 'codici contati non validi (intero >= 0)' }, 422);
+      if (!chi || chi !== flag('villaggio_paillettes_chi')) return json({ ok: true, nuova: false, ignorata: true });
+      // una al mese: la PK (chi, mese) tiene la prima del mese, un secondo invio non torna righe e non cambia i codici
+      const { data: ins, error: ke } = await sb.from('vil_conte_complete')
+        .upsert({ chi, mese: today.slice(0, 7), codici }, { onConflict: 'chi,mese', ignoreDuplicates: true }).select('mese');
+      if (ke) return json({ error: ke.message }, 400);
+      return json({ ok: true, nuova: (ins ?? []).length > 0 });
+    }
+
     const fornitore = String(payload.fornitore ?? '').trim();
     const righeIn = Array.isArray(payload.righe) ? (payload.righe as Record<string, unknown>[]) : [];
     if (!fornitore) return json({ error: 'fornitore mancante' }, 422);
     if (!righeIn.length) return json({ error: 'nessuna riga da verificare' }, 422);
-    // supplier_checks.chi e' NOT NULL: chi scrive la verifica deve essere noto prima di toccare le date
+    // vil_verifiche.chi e' NOT NULL: chi scrive la verifica deve essere noto prima di toccare le date
     if (!chi) return json({ error: 'chi mancante: scegli chi sei prima di salvare la verifica' }, 422);
     const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const chieste = new Map<string, { confermata: boolean; data: string | null }>();
@@ -1192,32 +1205,38 @@ async function handle(req: Request): Promise<Response> {
       const vuota = r?.data_consegna == null || r.data_consegna === '';
       const data = vuota ? null : isoDate(r.data_consegna);
       if (!vuota && data == null) return json({ error: `data di consegna non valida (${String(r.data_consegna)}): atteso YYYY-MM-DD` }, 422);
-      // un id che non e' un uuid farebbe fallire la lettura intera: e' un id sconosciuto, si ignora come gli altri
-      const id = String(r?.id ?? '').trim();
+      // un id che non e' un uuid farebbe fallire la lettura intera: e' un id sconosciuto, si ignora come gli altri.
+      // In minuscolo: Postgres risponde gli uuid in minuscolo, e la mappa si rilegge con l'id che torna dalla lettura
+      const id = String(r?.id ?? '').trim().toLowerCase();
       if (UUID.test(id)) chieste.set(id, { confermata: r.confermata === true, data });
     }
-    // le righe che non tornano (altro fornitore, id sconosciuto) si ignorano; se non ne torna nessuna non c'e' verifica
+    // le righe che non tornano (altro fornitore, id sconosciuto) o gia' chiuse (tutto arrivato) si ignorano: si verifica
+    // solo cio' che il laboratorio sta ancora lavorando. Se non ne resta nessuna non c'e' verifica.
     const { data: lette, error: le } = chieste.size
-      ? await retryOnce(() => sb.from('supplier_orders').select('id, codice, data_consegna').in('id', [...chieste.keys()]).eq('fornitore', fornitore))
+      ? await retryOnce(() => sb.from('supplier_orders').select('id, codice, data_consegna, qty_ordered, qty_arrived, wip').in('id', [...chieste.keys()]).eq('fornitore', fornitore))
       : { data: [], error: null };
     if (le) return json({ error: `righe di ${fornitore} non leggibili (${le.message}): niente salvato, riprova` }, 503);
-    if (!(lette ?? []).length) return json({ error: `nessuna delle righe inviate e' un ordine di ${fornitore}: verifica non salvata` }, 422);
+    type Letta = { id: string; codice: string | null; data_consegna: string | null; qty_ordered: number | string | null; qty_arrived: number | string | null; wip: boolean | null };
+    const aperte = ((lette ?? []) as Letta[]).filter((r) => r.wip === true || (num(r.qty_arrived) ?? 0) < (num(r.qty_ordered) ?? 0));
+    if (!aperte.length) return json({ error: `nessuna delle righe inviate e' una riga aperta di ${fornitore}: verifica non salvata` }, 422);
 
     const righe: Record<string, unknown>[] = [];
     let cambiate = 0;
-    for (const r of lette as { id: string; codice: string | null; data_consegna: string | null }[]) {
+    for (const r of aperte) {
       const ch = chieste.get(String(r.id))!;
       const prima = r.data_consegna ?? null;
-      if (prima !== ch.data) {
-        const { error: ue } = await sb.from('supplier_orders').update({ data_consegna: ch.data }).eq('id', r.id);
+      // la verifica mette o corregge una data, non la toglie: una data vuota su una riga che ce l'ha si ignora
+      const dopo = ch.data ?? prima;
+      if (prima !== dopo) {
+        const { error: ue } = await sb.from('supplier_orders').update({ data_consegna: dopo }).eq('id', r.id);
         if (ue) return json({ error: `data di ${r.codice ?? r.id} non salvata (${ue.message}): ${cambiate} date gia' cambiate, verifica non registrata, riprova` }, 400);
-        await logp('supplier_orders', String(r.id), 'order_date', { codice: r.codice, fornitore, data_consegna: ch.data }, { data_consegna: prima });
+        await logp('supplier_orders', String(r.id), 'order_date', { codice: r.codice, fornitore, data_consegna: dopo }, { data_consegna: prima });
         cambiate++;
       }
-      righe.push({ id: r.id, codice: r.codice, confermata: ch.confermata, data_prima: prima, data_dopo: ch.data });
+      righe.push({ id: r.id, codice: r.codice, confermata: ch.confermata, data_prima: prima, data_dopo: dopo });
     }
     const nota = typeof payload.nota === 'string' && payload.nota.trim() ? payload.nota.trim().slice(0, 1000) : null;
-    const { data: chk, error: ce } = await sb.from('supplier_checks')
+    const { data: chk, error: ce } = await sb.from('vil_verifiche')
       .insert({ giorno: today, fornitore, chi, righe, nota }).select('id').single();
     if (ce) return json({ error: `verifica non registrata (${ce.message}); date cambiate: ${cambiate}`, date_cambiate: cambiate }, 400);
     return json({ ok: true, check_id: chk.id, date_cambiate: cambiate });

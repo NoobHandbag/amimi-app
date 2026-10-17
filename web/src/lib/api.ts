@@ -839,31 +839,23 @@ export async function fetchSconti(): Promise<Sconto[]> {
   return ((data ?? []) as Sconto[]).map((r) => numify(r, ['year', 'month', 'ordini', 'netto', 'sconto', 'margine', 'margine_pct_medio']));
 }
 
-/** Interruttore del Villaggio (migr 0162, Regola Ferrea 19), letto col client anon dalla vista v_villaggio_settings,
- *  che espone solo le chiavi del Villaggio. Errore o assenza = spento. Dal 16-10 App e VillaggioApp leggono tutte le
- *  chiavi insieme con fetchVillaggioSettings, qui sotto. */
-export async function fetchVillaggioEnabled(): Promise<boolean> {
-  const { data, error } = await supabase.from('v_villaggio_settings').select('key,value').eq('key', 'villaggio_enabled').maybeSingle();
-  if (error || !data) return false;
-  const s = String((data as { value: unknown }).value ?? '').trim().toLowerCase();
-  return s === 'true' || s === '1' || s === 'on' || s === 'yes';
-}
-
-/** Tutti gli interruttori del Villaggio in una lettura (v_villaggio_settings, migr 0162 e 0164): il Villaggio e le sue
- *  Paillettes, da quando si contano e chi gioca. Errore = tutto spento. Prima della 0164 la vista ha solo
- *  villaggio_enabled, quindi le Paillettes restano spente da sole. */
+/** Tutti gli interruttori del Villaggio in una lettura, col client anon (v_villaggio_settings, migr 0162 e 0164, Regola
+ *  Ferrea 19): il Villaggio e le sue Paillettes, da quando si contano e chi gioca. Errore = tutto spento. Prima della
+ *  0164 la vista ha solo villaggio_enabled, quindi le Paillettes restano spente da sole. */
 export type VillaggioSettings = { enabled: boolean; paillettes: boolean; dal: string | null; giocatrice: string | null };
 export const VILLAGGIO_SPENTO: VillaggioSettings = { enabled: false, paillettes: false, dal: null, giocatrice: null };
 export async function fetchVillaggioSettings(): Promise<VillaggioSettings> {
   const { data, error } = await supabase.from('v_villaggio_settings').select('key,value');
   if (error) return VILLAGGIO_SPENTO;
-  const v = new Map(((data ?? []) as { key: string; value: unknown }[]).map((r) => [r.key, String(r.value ?? '').trim()]));
-  const vil = (v.get('villaggio_enabled') ?? '').toLowerCase();
+  const v = new Map(((data ?? []) as { key: string; value: unknown }[]).map((r) => [r.key, String(r.value ?? '')]));
+  const vil = (v.get('villaggio_enabled') ?? '').trim().toLowerCase();
   return {
     enabled: vil === 'true' || vil === '1' || vil === 'on' || vil === 'yes',
-    // solo 'true', come la write-api e v_villaggio_eventi: un valore che il server non legge come acceso qui resta spento
+    // paillettes e dal grezzi, senza trim: la write-api e v_villaggio_eventi confrontano il valore cosi' com'e', quindi
+    // ' true' qui resta spento come la' (e un dal con spazi non e' una data per la vista)
     paillettes: v.get('villaggio_paillettes_enabled') === 'true',
     dal: v.get('villaggio_paillettes_dal') || null,
+    // senza trim, come paillettes e dal: la write-api e la vista confrontano chi con il valore cosi' com'e'
     giocatrice: v.get('villaggio_paillettes_chi') || null,
   };
 }
@@ -883,7 +875,7 @@ export async function fetchVillaggioEventi(): Promise<Evento[]> {
   }
 }
 
-// Le due scritture delle Paillettes (write-api v29). PIN 'x' come il resto dell'app: il PIN e' stato tolto per design.
+// Le tre scritture delle Paillettes (write-api v29). PIN 'x' come il resto dell'app: il PIN e' stato tolto per design.
 /** Presenza del giorno della giocatrice: idempotente sul server, per chi non gioca risponde ignorata. 409 a flag spento. */
 export async function segnaPresenza(chi: string) {
   return (await writeApi('villaggio_presenza', {}, 'x', chi)) as unknown as { ok: boolean; nuova: boolean; ignorata?: boolean };
@@ -892,6 +884,11 @@ export type VerificaRiga = { id: string; confermata: boolean; data_consegna: str
 /** Verifica con il fornitore: conferma le righe aperte e mette o corregge le date di consegna (order_date nel change_log). */
 export async function verificaFornitore(chi: string, payload: { fornitore: string; righe: VerificaRiga[]; nota?: string | null }) {
   return (await writeApi('fornitore_verifica', payload, 'x', chi)) as unknown as { ok: boolean; check_id: string; date_cambiate: number };
+}
+/** Conta completa del mese, in fondo al giro di conta completo: `codici` = quanti ne ha contati in quel giro (serve solo al
+ *  testo). Una al mese per chi (on conflict do nothing: la seconda risponde nuova = false); chi non gioca = ignorata. */
+export async function registraContaCompleta(chi: string, codici: number) {
+  return (await writeApi('villaggio_conta_completa', { codici }, 'x', chi)) as unknown as { ok: boolean; nuova: boolean; ignorata?: boolean };
 }
 
 /** Interruttore delle notifiche native (migr 0163, 17-10), stesso schema: vista v_push_settings con la sola chiave

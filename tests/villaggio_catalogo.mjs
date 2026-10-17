@@ -8,8 +8,8 @@
 // DAVVERO e le proviamo sui nomi VERI delle varianti (copia datata qui sotto), su piccoli dati costruiti a mano e sui
 // casi limite. Poi mettiamo le cinture sul sorgente perche' il Villaggio resti una vista: legge v_ordini_arrivo e
 // v_inventory, scrive SOLO con ArrivoRow e SupplierOrderForm di Ordini, e si vede solo a flag villaggio_enabled acceso.
-// Dalle Paillettes (fase 2) scrive anche con CountForm (giro di conta) e con le due azioni sue, segnaPresenza e
-// verificaFornitore; i suoi interruttori arrivano tutti insieme da fetchVillaggioSettings.
+// Dalle Paillettes (fase 2) scrive anche con CountForm (giro di conta) e con le tre azioni sue, segnaPresenza,
+// verificaFornitore e registraContaCompleta; i suoi interruttori arrivano tutti insieme da fetchVillaggioSettings.
 // Dal secondo giro (16-10 sera) anche cinture e prove sulla pagina e sul mondo: l'ordine a meta' non si perde (apri,
 // chiudi, lascia, la Home e onDone VERI ritagliati da Villaggio.tsx, con go() di App.tsx e il backnav vero su una
 // history finta che fissa la meta di back() come Chromium), Esc nei campi, passo 3 sui dati veri, home() dell'app a
@@ -723,12 +723,17 @@ console.log('\n== cinture: le sole vie di scrittura sono ArrivoRow e SupplierOrd
   const OK_VIL = ['react', '../components/Icon', '../lib/api', './Ordini', '../components/SupplierOrderForm', '../components/CountForm', '../lib/people', '../lib/backnav',
     '../lib/villaggio/catalogo', '../lib/villaggio/mondo', '../lib/villaggio/paillettes', '../styles/villaggio.css'];
   eq('Villaggio.tsx importa (valori) solo da moduli noti', importi(VIL).filter((i) => !i.tipo && !OK_VIL.includes(i.da) && !/^@fontsource\//.test(i.da)).map((i) => i.da), []);
-  eq("da lib/api le letture fetchInventory, fetchOrdiniGruppi, fetchVillaggioEventi e oggi, e le due scritture segnaPresenza e verificaFornitore",
-    nomiDa(VIL, '../lib/api'), ['fetchInventory', 'fetchOrdiniGruppi', 'fetchVillaggioEventi', 'oggi', 'segnaPresenza', 'verificaFornitore']);
+  eq("da lib/api le letture fetchInventory, fetchOrdiniGruppi, fetchVillaggioEventi e oggi, e le tre scritture segnaPresenza, verificaFornitore e registraContaCompleta",
+    nomiDa(VIL, '../lib/api'), ['fetchInventory', 'fetchOrdiniGruppi', 'fetchVillaggioEventi', 'oggi', 'registraContaCompleta', 'segnaPresenza', 'verificaFornitore']);
   const corpoPres = ritaglia(API, 'export async function segnaPresenza(', '\n}\n'), corpoVer = ritaglia(API, 'export async function verificaFornitore(', '\n}\n');
-  t("segnaPresenza scrive solo l'azione villaggio_presenza, verificaFornitore solo fornitore_verifica",
+  const corpoCC = ritaglia(API, 'export async function registraContaCompleta(', '\n}\n');
+  t("segnaPresenza scrive solo l'azione villaggio_presenza, verificaFornitore solo fornitore_verifica, registraContaCompleta solo villaggio_conta_completa {codici}",
     conta(corpoPres, /writeApi\(/) === 1 && /writeApi\('villaggio_presenza', \{\}, 'x', chi\)/.test(corpoPres)
-    && conta(corpoVer, /writeApi\(/) === 1 && /writeApi\('fornitore_verifica', payload, 'x', chi\)/.test(corpoVer));
+    && conta(corpoVer, /writeApi\(/) === 1 && /writeApi\('fornitore_verifica', payload, 'x', chi\)/.test(corpoVer)
+    && conta(corpoCC, /writeApi\(/) === 1 && /writeApi\('villaggio_conta_completa', \{ codici \}, 'x', chi\)/.test(corpoCC));
+  // la conta completa si registra solo in fondo al giro completo, e il bottone c'e' solo per chi gioca
+  t('registraContaCompleta: una sola chiamata nella pagina, passata al giro solo per chi gioca (onRegistra)',
+    conta(VIL, /registraContaCompleta\(/) === 1 && /onRegistra=\{gioca \? registraCompleta : undefined\}/.test(VIL));
   t('fetchVillaggioEventi legge e basta: v_villaggio_eventi, nessuna scrittura', /supabase\.from\('v_villaggio_eventi'\)\.select\(/.test(ritaglia(API, 'export async function fetchVillaggioEventi(', '\n}\n'))
     && !/writeApi|\.(insert|upsert|update|delete|rpc)\(/.test(ritaglia(API, 'export async function fetchVillaggioEventi(', '\n}\n')));
   eq('da CountForm il suo componente, che dal Villaggio si usa solo nel giro', [nomiDa(VIL, '../components/CountForm'), conta(VIL, /<CountForm\b/)], [['CountForm'], 1]);
@@ -1435,43 +1440,11 @@ console.log('\n== cinture: interruttore app_flags.villaggio_enabled (Regola Ferr
   t('villaggio-main.tsx monta VillaggioApp, non Villaggio direttamente', /import VillaggioApp from '\.\/VillaggioApp\.tsx'/.test(MAIN) && /<VillaggioApp\b/.test(MAIN)
     && !/import Villaggio from/.test(MAIN) && !/<Villaggio\b/.test(MAIN));
 
-  // fetchVillaggioEnabled(): la funzione vera, ritagliata da api.ts (che a livello di modulo crea il client supabase)
-  // e fatta girare su un client finto. Nessuna rete.
-  const a0 = API.indexOf('export async function fetchVillaggioEnabled('), b0 = API.indexOf('\n}\n', a0);
-  t('api.ts definisce fetchVillaggioEnabled', a0 >= 0 && b0 > a0);
-  const corpo = a0 >= 0 && b0 > a0 ? API.slice(a0, b0 + 2) : '';
-  t('fetchVillaggioEnabled: errore o riga assente -> false', /if \(error \|\| !data\) return false;/.test(corpo));
-  let strip = null;
-  try { ({ stripTypeScriptTypes: strip } = await import('node:module')); } catch { strip = null; }
-  if (corpo && typeof strip === 'function') {
-    const ew = process.emitWarning; process.emitWarning = () => {};   // stripTypeScriptTypes e' ancora "experimental": niente avviso a ogni run
-    let fve = () => () => { throw new Error('fetchVillaggioEnabled non compila'); };
-    try { fve = new Function('supabase', strip(corpo.replace(/^export /, '')) + '\nreturn fetchVillaggioEnabled;'); }
-    catch (e) { t('fetchVillaggioEnabled ritagliata compila: ' + e.message, false); }
-    finally { process.emitWarning = ew; }
-    const prova = async (risposta) => {
-      const log = [];
-      const sb = { from(tab) { log.push(['from', tab]); return { select(c) { log.push(['select', c]); return { eq(k, v) { log.push(['eq', k, v]); return { maybeSingle: async () => risposta }; } }; } }; } };
-      try { return { v: await fve(sb)(), log }; } catch (e) { return { v: 'lancia: ' + e.message, log }; }
-    };
-    const acceso = await prova({ data: { key: 'villaggio_enabled', value: 'true' }, error: null });
-    eq("legge v_villaggio_settings, chiave villaggio_enabled", acceso.log, [['from', 'v_villaggio_settings'], ['select', 'key,value'], ['eq', 'key', 'villaggio_enabled']]);
-    eq("value 'true' -> true", acceso.v, true);
-    const CASI = [
-      ["errore (permesso negato, vista non ancora creata in prod)", { data: null, error: { message: 'relation "v_villaggio_settings" does not exist' } }, false],
-      ['errore anche se arriva una riga', { data: { key: 'villaggio_enabled', value: 'true' }, error: { message: 'x' } }, false],
-      ['riga assente (migrazione non applicata, flag mai inserito)', { data: null, error: null }, false],
-      ["value 'false'", { data: { key: 'villaggio_enabled', value: 'false' }, error: null }, false],
-      ['value null', { data: { key: 'villaggio_enabled', value: null }, error: null }, false],
-      ["value 'boh'", { data: { key: 'villaggio_enabled', value: 'boh' }, error: null }, false],
-      ["value ' TRUE ' (spazi e maiuscole)", { data: { key: 'villaggio_enabled', value: ' TRUE ' }, error: null }, true],
-      ['value true (booleano jsonb)', { data: { key: 'villaggio_enabled', value: true }, error: null }, true],
-      ["value '1'", { data: { key: 'villaggio_enabled', value: '1' }, error: null }, true],
-    ];
-    for (const [nome, risposta, atteso] of CASI) eq(`fetchVillaggioEnabled: ${nome} -> ${atteso}`, (await prova(risposta)).v, atteso);
-  } else nota('fetchVillaggioEnabled non provata su un client finto (manca il corpo o node:module.stripTypeScriptTypes)');
-
-  // fetchVillaggioSettings() (Paillettes, fase 2): quella che App e VillaggioApp usano davvero, stessa prova su un client finto
+  // fetchVillaggioSettings(): l'unica lettura degli interruttori (App e VillaggioApp; la vecchia fetchVillaggioEnabled,
+  // codice morto, e' stata tolta il 17-10). La funzione vera, ritagliata da api.ts (che a livello di modulo crea il client
+  // supabase) e fatta girare su un client finto. Nessuna rete.
+  t('fetchVillaggioEnabled non esiste piu\' (codice morto, 17-10): nessuno la definisce ne\' la importa',
+    !/fetchVillaggioEnabled/.test(API) && !/fetchVillaggioEnabled/.test(APP) && !/fetchVillaggioEnabled/.test(VAPP) && !/fetchVillaggioEnabled/.test(VIL));
   const corpoSet = ritaglia(API, 'export const VILLAGGIO_SPENTO', '\n}\n', true);
   t('api.ts definisce VILLAGGIO_SPENTO e subito dopo fetchVillaggioSettings', /\nexport async function fetchVillaggioSettings\(\)/.test(corpoSet));
   const jsSet = await sTS(corpoSet.replace(/^export /gm, ''));
@@ -1489,14 +1462,26 @@ console.log('\n== cinture: interruttore app_flags.villaggio_enabled (Regola Ferr
     eq('fetchVillaggioSettings: tutto acceso', tutte.v, { enabled: true, paillettes: true, dal: '2026-10-17', giocatrice: 'Ginevra' });
     const CASI = [
       ['errore (vista assente, permesso negato): tutto spento', { data: [{ key: 'villaggio_enabled', value: 'true' }], error: { message: 'x' } }, SPENTO],
+      ['errore senza righe (relazione non ancora creata in prod): tutto spento', { data: null, error: { message: 'relation "v_villaggio_settings" does not exist' } }, SPENTO],
       ['nessuna riga', { data: null, error: null }, SPENTO],
+      ['lista vuota (migrazione non applicata, flag mai inserito): tutto spento', { data: [], error: null }, SPENTO],
       ['prima della 0164 (solo villaggio_enabled): Paillettes spente', righe({ villaggio_enabled: 'true' }), { enabled: true, paillettes: false, dal: null, giocatrice: null }],
       ["flag delle Paillettes 'false' (come nasce)", righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: 'false', villaggio_paillettes_chi: 'Ginevra' }), { enabled: true, paillettes: false, dal: null, giocatrice: 'Ginevra' }],
       ["flag delle Paillettes 'TRUE' o '1': spento (il server accende solo con 'true')", righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: 'TRUE' }), { enabled: true, paillettes: false, dal: null, giocatrice: null }],
-      ["villaggio_enabled ' TRUE ' come fetchVillaggioEnabled", righe({ villaggio_enabled: ' TRUE ' }), { enabled: true, paillettes: false, dal: null, giocatrice: null }],
-      ['giocatrice vuota = nessuna', righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: 'true', villaggio_paillettes_chi: '  ' }), { enabled: true, paillettes: true, dal: null, giocatrice: null }],
+      ['giocatrice vuota = nessuna', righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: 'true', villaggio_paillettes_chi: '' }), { enabled: true, paillettes: true, dal: null, giocatrice: null }],
+      ['giocatrice con spazi resta com\'e\' (il server confronta il valore grezzo)', righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: 'true', villaggio_paillettes_chi: 'Ginevra ' }), { enabled: true, paillettes: true, dal: null, giocatrice: 'Ginevra ' }],
+      // 17-10: paillettes e dal grezzi, come li confrontano la write-api e v_villaggio_eventi (niente trim)
+      ["flag delle Paillettes ' true' (con lo spazio): spento, come per il server", righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: ' true' }), { enabled: true, paillettes: false, dal: null, giocatrice: null }],
+      ["flag delle Paillettes 'true ' (spazio in coda): spento", righe({ villaggio_enabled: 'true', villaggio_paillettes_enabled: 'true ' }), { enabled: true, paillettes: false, dal: null, giocatrice: null }],
+      ['dal con gli spazi resta com\'e\'', righe({ villaggio_enabled: 'true', villaggio_paillettes_dal: ' 2026-10-17 ' }), { enabled: true, paillettes: false, dal: ' 2026-10-17 ', giocatrice: null }],
     ];
     for (const [nome, risposta, atteso] of CASI) eq(`fetchVillaggioSettings: ${nome}`, (await prova(risposta)).v, atteso);
+    // villaggio_enabled: gli stessi casi che provava fetchVillaggioEnabled (spazi e maiuscole, '1', il booleano jsonb)
+    const VIL_ENABLED = [
+      ["'true'", 'true', true], ["'false'", 'false', false], ['null', null, false], ["'boh'", 'boh', false],
+      ["' TRUE ' (spazi e maiuscole)", ' TRUE ', true], ['true (booleano jsonb)', true, true], ["'1'", '1', true], ["'on'", 'on', true], ["'yes'", 'yes', true],
+    ];
+    for (const [nome, value, atteso] of VIL_ENABLED) eq(`fetchVillaggioSettings: villaggio_enabled ${nome} -> ${atteso}`, (await prova(righe({ villaggio_enabled: value }))).v.enabled, atteso);
   } else nota('fetchVillaggioSettings non provata su un client finto (manca il corpo o node:module.stripTypeScriptTypes)');
 
   const MIG_FILE = 'supabase/migrations/0162_villaggio_flag.sql';
@@ -1511,7 +1496,7 @@ console.log('\n== cinture: interruttore app_flags.villaggio_enabled (Regola Ferr
   t('0162: nessuna tabella nuova, nessun update o delete', !/create\s+table|\bupdate\s+\w|\bdelete\s+from/i.test(MIG));
   t('0162: dentro begin / commit', /^\s*begin;/m.test(MIG) && /^\s*commit;/m.test(MIG));
   eq('un solo file 0162_ in supabase/migrations', readdirSync(ROOT + 'supabase/migrations').filter((f) => f.startsWith('0162_')), ['0162_villaggio_flag.sql']);
-  t("api.ts legge la stessa vista e la stessa chiave della migrazione", /from\('v_villaggio_settings'\)/.test(corpo) && /eq\('key', 'villaggio_enabled'\)/.test(corpo));
+  t("api.ts legge la stessa vista e la stessa chiave della migrazione", /from\('v_villaggio_settings'\)/.test(corpoSet) && /v\.get\('villaggio_enabled'\)/.test(corpoSet));
 }
 
 console.log('\n== cinture: tile, icone e persone ==');

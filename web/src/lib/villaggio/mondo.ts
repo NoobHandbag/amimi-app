@@ -15,7 +15,7 @@ export type PilaMondo = { key: string; model: Modello; look: Look; name: string;
 export type DatiMondo = { labs: LabMondo[]; pile: PilaMondo[]; totale: number };
 export type EventiMondo = { onLab: (key: string) => void; onMagazzino: (model?: Modello) => void; onGinni: () => void; onCarro: () => void; onPartenza?: (n: number) => void };
 type Ctx = { type: string; lab?: string } | null;
-type Anchor = { el: HTMLElement; pos: THREE.Vector3; cond?: (now: number) => boolean; free?: boolean; w?: number; until?: number };
+type Anchor = { el: HTMLElement; pos: THREE.Vector3; cond?: (now: number) => boolean; free?: boolean; w?: number; h?: number; until?: number };
 type Tween = { t0: number; dur: number; fn: (p: number) => void; done?: () => void; dead?: boolean; ombre?: boolean };
 /** Dopo questo tempo senza tocchi ne' dati nuovi l'isola si ferma (fumo, braccia, Ginni) e non ridisegna piu': batteria. */
 const RIPOSO_MS = 20000;
@@ -750,9 +750,13 @@ export class Mondo {
     if (Z) this.frame(Z.x, Z.z, Mondo.isWide() ? 10 : 16, 0.28);
     else this.frame(WCX + 1, WCZ + 1, Mondo.isWide() ? 17 : 34, 0.24);
   }
-  focusPila(key: string) {
+  /** Camera su una pila. Come focusMagazzino ricorda la vista di prima, cosi' chiudendo il giro di conta (anche aperto
+   *  dalle missioni) ripristina() la rimette; `ricorda = false` quando nessun pannello resta aperto a riportarla indietro
+   *  (la figura del pannello Magazzino), se no la prossima chiusura tornerebbe a una vista vecchia. */
+  focusPila(key: string, ricorda = true) {
     const p = this.piles.get(key); this.ctx = null;
     if (!p) return;
+    if (ricorda) this.remember();
     this.frame(p.x, p.z, this.portrait ? 11 : 10, 0.05);
     p.anchor.until = performance.now() + 4500;
   }
@@ -1471,22 +1475,30 @@ export class Mondo {
   }
   private updateLabels(now: number) {
     const w = innerWidth, h = innerHeight;
+    // in verticale l'HUD va a capo e copre tutta la fascia in alto; in orizzontale e' una riga col centro libero, quindi
+    // si nasconde solo l'etichetta che finirebbe sotto una pillola (a 1024x768 quella delle Paillettes copriva il Magazzino)
     const hudB = this.portrait && this.hudEl ? this.hudEl.offsetHeight + 4 : 0;
+    const pillole = !this.portrait && this.hudEl ? [...this.hudEl.children].map((c) => c.getBoundingClientRect()).filter((r) => r.width > 0) : [];
     for (const a of this.anchors) {
       let show = !!(a.cond ? a.cond(now) : true);
+      let x = 0, y = 0;
       if (show) {
         this.v3.copy(a.pos).project(this.camera);
-        if (!a.free && (this.v3.x < -1.05 || this.v3.x > 1.05 || this.v3.y < -1.05 || this.v3.y > 1.02 || (1 - this.v3.y) / 2 * h < hudB + 30)) show = false;
+        x = (this.v3.x + 1) / 2 * w; y = (1 - this.v3.y) / 2 * h;
+        if (!a.free && (this.v3.x < -1.05 || this.v3.x > 1.05 || this.v3.y < -1.05 || this.v3.y > 1.02 || y < hudB + 30)) show = false;
+      }
+      if (show && !a.free) {
+        // misurata da visibile (nascosta darebbe 0); w = 0 dopo un cambio di testo la fa rimisurare
+        if (!a.w) { a.el.hidden = false; a.w = a.el.offsetWidth; a.h = a.el.offsetHeight; }
+        const half = a.w / 2 + 8;
+        x = Math.max(half, Math.min(w - half, x));
+        // il riquadro sta sopra il punto, la punta scende di 11 px: 4 px di aria intorno
+        const l = x - a.w / 2 - 4, r = x + a.w / 2 + 4, t = y - (a.h ?? 0) - 4, b = y + 15;
+        if (pillole.some((p) => l < p.right && r > p.left && t < p.bottom && b > p.top)) show = false;
       }
       if (a.el.hidden === show) a.el.hidden = !show;
       if (!show) continue;
-      let x = (this.v3.x + 1) / 2 * w;
-      if (!a.free) {
-        if (!a.w) a.w = a.el.offsetWidth;
-        const half = a.w / 2 + 8;
-        x = Math.max(half, Math.min(w - half, x));
-      }
-      a.el.style.transform = 'translate(' + x.toFixed(1) + 'px,' + ((1 - this.v3.y) / 2 * h).toFixed(1) + 'px) translate(-50%,-100%)';
+      a.el.style.transform = 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) translate(-50%,-100%)';
     }
   }
 }

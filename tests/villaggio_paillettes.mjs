@@ -6,10 +6,11 @@
 // regole e nei tetti di calcola(): qui li proviamo uno per uno con eventi costruiti a mano (presenza una volta al giorno,
 // weekend che non rompe la serie, settimana piena solo 5 su 5, ordine con 0 righe che non vale, arrivo una volta per riga
 // e giorno, verifica una volta per fornitore e settimana ISO, data una volta per riga, conta una volta per codice e
-// giorno, conta completa all'80% in 7 giorni al massimo una volta al mese), poi i confini dei livelli, le medaglie, le
-// missioni e la differenza fra due letture. In fondo la taratura: gli eventi VERI di Ginevra dal 17-08 (copia datata).
+// giorno, conta completa REGISTRATA (17-10: non piu' calcolata dalle conte) una volta per mese), poi i confini dei
+// livelli, le medaglie, le missioni (con quella della conta completa dal 20 del mese), la differenza fra due letture e gli
+// accenti veri nei testi. In fondo la taratura: gli eventi VERI di Ginevra dal 17-08 (copia datata).
 //
-// Calendario usato: lunedi' 2026-10-12 ... venerdi' 2026-10-16, sabato 17, domenica 18, lunedi' 19.
+// Calendario usato: lunedi' 2026-10-12 ... venerdi' 2026-10-16, sabato 17, domenica 18, lunedi' 19, martedi' 20.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { calcola, missioni, differenza, VALORI, LIVELLI, MEDAGLIE } from '../web/src/lib/villaggio/paillettes.ts';
@@ -29,10 +30,12 @@ const nota = (s) => console.log('  --  ' + s);
 // evento a mano: ts = giorno + ora (UTC, basta per l'ordine), ref e n come nella vista
 const E = (tipo, giorno, ref = '', n = 1, ora = '10:00:00') => ({ tipo, giorno, ts: `${giorno}T${ora}Z`, ref, n });
 const P = (giorno, ora) => E('presenza', giorno, giorno, 1, ora);
-const C = (oggi, ...eventi) => calcola(eventi.flat(), oggi, []);
+// conta completa come la scrive la vista: ref = mese 'YYYY-MM', n = codici contati nel giro
+const CC = (giorno, ref = giorno.slice(0, 7), n = 180, ora) => E('conta_completa', giorno, ref, n, ora);
+const C = (oggi, ...eventi) => calcola(eventi.flat(), oggi);
 const tot = (oggi, ...eventi) => C(oggi, ...eventi).totale;
 const LUN = '2026-10-12', MAR = '2026-10-13', MER = '2026-10-14', GIO = '2026-10-15', VEN = '2026-10-16';
-const SAB = '2026-10-17', DOM = '2026-10-18', LUN2 = '2026-10-19';
+const SAB = '2026-10-17', DOM = '2026-10-18', LUN2 = '2026-10-19', MAR2 = '2026-10-20';
 const SETTIMANA = [LUN, MAR, MER, GIO, VEN];
 // giorni lavorativi consecutivi a partire da un lunedi' (salta sabato e domenica)
 const lavorativi = (da, quanti) => {
@@ -121,34 +124,37 @@ eq('stesso codice due volte lo stesso giorno = 2', tot(VEN, E('conta', VEN, 'LEA
 eq('stesso codice il giorno dopo = 4', tot(VEN, E('conta', GIO, 'LEA'), E('conta', VEN, 'LEA')), 4);
 eq('due codici lo stesso giorno = 4', tot(VEN, E('conta', VEN, 'LEA'), E('conta', VEN, 'NINA')), 4);
 
-console.log('\n== conta completa: +500 quando 7 giorni di conte coprono l\'80% della base, al massimo una volta al mese ==');
+console.log('\n== conta completa: registrata da Ginni in fondo al giro, +500 una volta per mese ==');
 {
-  const BASE = Array.from({ length: 10 }, (_, i) => 'B' + i);
-  const conte = (giorno, codici, ora0 = 9) => codici.map((c, i) => E('conta', giorno, c, 1, `${String(ora0 + Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}:00`));
-  const K = (ev, oggi = '2026-11-30', base = BASE) => calcola(ev.flat(), oggi, base);
   const complete = (s) => s.voci.filter((v) => v.tipo === 'conta_completa');
-  eq('7 codici su 10 lo stesso giorno: niente (14)', [K([conte('2026-10-01', BASE.slice(0, 7))]).totale, complete(K([conte('2026-10-01', BASE.slice(0, 7))])).length], [14, 0]);
+  const FINE = '2026-12-31';
+  eq('una conta completa = 500, una voce col mese in ref', C(FINE, CC('2026-10-25')).voci,
+    [{ giorno: '2026-10-25', ts: '2026-10-25T10:00:00Z', tipo: 'conta_completa', ref: '2026-10', punti: 500, testo: 'Conta completa di ottobre · 180 codici' }]);
+  eq('testo: singolare, e senza codici se n = 0', [C(FINE, CC('2026-10-25', '2026-10', 1)).voci[0].testo, C(FINE, CC('2026-10-25', '2026-10', 0)).voci[0].testo],
+    ['Conta completa di ottobre · 1 codice', 'Conta completa di ottobre']);
+  eq('n non cambia i punti (1 codice o 400: sempre 500)', [tot(FINE, CC('2026-10-25', '2026-10', 1)), tot(FINE, CC('2026-10-25', '2026-10', 400))], [500, 500]);
   {
-    const s = K([conte('2026-10-01', BASE.slice(0, 8))]);
-    eq('8 su 10: 16 + 500', s.totale, 516);
-    eq('la voce cade sul giorno e sull\'evento che supera la soglia (l\'ottavo codice)', complete(s).map((v) => [v.giorno, v.ts, v.ref, v.punti, v.testo]),
-      [['2026-10-01', '2026-10-01T09:07:00Z', '2026-10', 500, 'Conta completa!']]);
-    eq('ed e\' sopra la conta che la fa scattare', s.voci.slice(0, 2).map((v) => v.tipo), ['conta_completa', 'conta']);
+    const s = C(FINE, CC('2026-10-05', undefined, 120), CC('2026-10-28', undefined, 180));
+    eq('due nello stesso mese: 500 e una voce, la prima', [s.totale, complete(s).map((v) => [v.giorno, v.testo])],
+      [500, [['2026-10-05', 'Conta completa di ottobre · 120 codici']]]);
   }
-  eq('4 il 01-10 e 4 il 07-10: dentro i 7 giorni (01..07) = premio', complete(K([conte('2026-10-01', BASE.slice(0, 4)), conte('2026-10-07', BASE.slice(4, 8))])).map((v) => v.giorno), ['2026-10-07']);
-  eq('4 il 01-10 e 4 il 08-10: fuori finestra = niente', complete(K([conte('2026-10-01', BASE.slice(0, 4)), conte('2026-10-08', BASE.slice(4, 8))])).length, 0);
-  eq('ricontare lo stesso codice non allarga la copertura', complete(K([conte('2026-10-01', BASE.slice(0, 7)), conte('2026-10-02', BASE.slice(0, 7))])).length, 0);
-  eq('codici fuori dalla base (giacenza 0) non contano per la soglia, ma valgono i loro 2', [complete(K([conte('2026-10-01', [...BASE.slice(0, 7), 'Z1', 'Z2', 'Z3'])])).length,
-    K([conte('2026-10-01', [...BASE.slice(0, 7), 'Z1', 'Z2', 'Z3'])]).totale], [0, 20]);
-  eq('due giri completi nello stesso mese: un solo premio', complete(K([conte('2026-10-01', BASE), conte('2026-10-20', BASE)])).length, 1);
-  eq('un giro a ottobre e uno a novembre: due premi', complete(K([conte('2026-10-01', BASE), conte('2026-11-02', BASE)])).map((v) => v.ref), ['2026-11', '2026-10']);
-  eq('finestra a cavallo del mese: conta per il mese del giorno in cui si supera la soglia', complete(K([conte('2026-10-05', BASE),
-    conte('2026-10-30', BASE.slice(0, 4)), conte('2026-11-02', BASE.slice(4, 8))])).map((v) => v.giorno), ['2026-11-02', '2026-10-05']);
-  eq('base vuota: mai', complete(K([conte('2026-10-01', BASE)], '2026-10-01', [])).length, 0);
-  const B7 = BASE.slice(0, 7);
-  eq('base di 7: 5 contati (71%) niente, 6 (86%) premio', [complete(K([conte('2026-10-01', B7.slice(0, 5))], '2026-10-01', B7)).length,
-    complete(K([conte('2026-10-01', B7.slice(0, 6))], '2026-10-01', B7)).length], [0, 1]);
-  eq('base di 5: 4 contati = esattamente 80% = premio', complete(K([conte('2026-10-01', BASE.slice(0, 4))], '2026-10-01', BASE.slice(0, 5))).length, 1);
+  eq('ottobre e novembre: 1000, due voci dalla piu\' recente', [tot(FINE, CC('2026-10-25'), CC('2026-11-03')),
+    complete(C(FINE, CC('2026-10-25'), CC('2026-11-03'))).map((v) => [v.ref, v.testo])],
+    [1000, [['2026-11', 'Conta completa di novembre · 180 codici'], ['2026-10', 'Conta completa di ottobre · 180 codici']]]);
+  eq('stesso mese di anni diversi: due premi', tot(FINE, CC('2025-10-20'), CC('2026-10-20')), 1000);
+  eq('tutti i mesi col loro nome', Array.from({ length: 12 }, (_, i) => C(FINE, CC(`2026-${String(i + 1).padStart(2, '0')}-20`, undefined, 0)).voci[0].testo.replace('Conta completa di ', '')),
+    ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre']);
+  eq('ref vuoto: vale il mese del giorno', complete(C(FINE, CC('2026-10-25', ''))).map((v) => [v.ref, v.punti]), [['2026-10', 500]]);
+  eq('ref che non e\' un mese (un giorno intero): vale il mese del giorno', complete(C(FINE, CC('2026-10-25', '2026-10-25'))).map((v) => v.ref), ['2026-10']);
+  eq('ref vuoto e ref del mese nello stesso mese: un solo premio', tot(FINE, CC('2026-10-05', ''), CC('2026-10-25')), 500);
+  eq('il ref vince sul giorno: registrata il 01-11 per ottobre, poi novembre = due premi', complete(C(FINE, CC('2026-11-01', '2026-10'), CC('2026-11-15'))).map((v) => [v.giorno, v.ref]),
+    [['2026-11-15', '2026-11'], ['2026-11-01', '2026-10']]);
+  {
+    const giro = Array.from({ length: 200 }, (_, i) => E('conta', '2026-10-01', 'K' + i, 1, `09:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`));
+    eq('le singole conte restano +2 per codice al giorno e da sole non fanno mai la conta completa', [tot(FINE, giro), complete(C(FINE, giro)).length], [400, 0]);
+    eq('giro di 200 codici + registrazione = 400 + 500', tot(FINE, giro, CC('2026-10-01', undefined, 200, '12:00:00')), 900);
+  }
+  eq('la conta completa di oggi entra in oggi', C(VEN, CC(VEN)).oggi, 500);
 }
 
 console.log('\n== livelli: confini, prossimo e frazione ==');
@@ -159,7 +165,7 @@ console.log('\n== livelli: confini, prossimo e frazione ==');
     const c = ((T % 5) * 3) % 5;
     return [...Array.from({ length: c }, (_, i) => E('conta', VEN, 'K' + i)), E('ordine', VEN, 'g', (T - 2 * c - 20) / 5)];
   };
-  const S = (T) => calcola(perTotale(T), VEN, []);
+  const S = (T) => calcola(perTotale(T), VEN);
   for (const [T, i] of [[0, 0], [299, 0], [300, 1], [999, 1], [1000, 2], [2499, 2], [2500, 3], [4999, 3], [5000, 4], [8999, 4],
     [9000, 5], [14999, 5], [15000, 6], [40000, 6]]) {
     const s = S(T);
@@ -191,11 +197,9 @@ console.log('\n== medaglie ==');
   t('tutti-i-laboratori: no con 3 + 1 la settimana dopo', !ha('tutti-i-laboratori', [FR, SA, VI].map((f) => E('verifica', LUN, f, 1)), E('verifica', LUN2, FI, 1)));
   t('tutti-i-laboratori: no se uno dei 4 non ha righe confermate', !ha('tutti-i-laboratori', [FR, SA, VI].map((f) => E('verifica', LUN, f, 1)), E('verifica', LUN, FI, 0)));
   t('tutti-i-laboratori: no con lo stesso fornitore 4 volte', !ha('tutti-i-laboratori', SETTIMANA.slice(0, 4).map((g) => E('verifica', g, FR, 1))));
-  {
-    const B = ['A', 'B', 'C', 'D', 'E'];
-    t('prima-conta-completa', calcola(B.map((c) => E('conta', VEN, c)), VEN, B).medaglie.some((m) => m.id === 'prima-conta-completa'));
-    t('prima-conta-completa: no sotto soglia', !calcola(B.slice(0, 3).map((c) => E('conta', VEN, c)), VEN, B).medaglie.some((m) => m.id === 'prima-conta-completa'));
-  }
+  t('prima-conta-completa: con la conta completa registrata', ha('prima-conta-completa', CC('2026-10-25')));
+  t('prima-conta-completa: no con tante conte singole e nessuna registrazione', !ha('prima-conta-completa', Array.from({ length: 300 }, (_, i) => E('conta', VEN, 'K' + i))));
+  t('prima-conta-completa: anche con 0 codici e ref vuoto (vale l\'evento)', ha('prima-conta-completa', CC('2026-10-25', '', 0)));
   const righeArrivate = (n) => Array.from({ length: n }, (_, i) => E('arrivo', VEN, 'r' + i, 1));
   t('cento-arrivi: 100 righe', ha('cento-arrivi', righeArrivate(100)));
   t('cento-arrivi: 99 righe no', !ha('cento-arrivi', righeArrivate(99)));
@@ -214,7 +218,7 @@ console.log('\n== medaglie ==');
   eq('in ordine di MEDAGLIE', ids(date(10), P(VEN), E('verifica', VEN, FR, 1)), ['prima-presenza', 'prima-verifica', 'date-a-posto']);
 }
 
-console.log('\n== missioni: al massimo 3, verifica > conta > date; guidano, non danno punti ==');
+console.log('\n== missioni: al massimo 3, verifica > conta > date > conta completa; guidano, non danno punti ==');
 {
   const R = (late, ok) => [...Array(late).fill({ late: true, wip: false }), ...Array(ok).fill({ late: false, wip: false })];
   const lab = (forn, nome, late, ok, senzaData) => ({ key: forn ?? '', nome, forn, righe: R(late, ok), senzaData });
@@ -257,6 +261,25 @@ console.log('\n== missioni: al massimo 3, verifica > conta > date; guidano, non 
   eq('le missioni non toccano i punti: stessi eventi, stesso totale', tot(VEN, E('verifica', VEN, FR, 3)), 50);
   eq('di lunedi\' la settimana riparte: Francesco verificato venerdi\' torna in cima', missioni({ labs: LABS, negativi: [], eventi: [E('verifica', VEN, FR, 3)], oggi: LUN2 })[0].id,
     'verifica:' + FR);
+
+  // conta completa del mese: dal 20, finche' non e' registrata, ultima e solo se c'e' posto
+  const SOLA = (eventi, oggi) => missioni({ labs: [], negativi: [], eventi, oggi });
+  const CCM = ['conta-completa:2026-10', 'Conta completa di ottobre', { t: 'contaCompleta' }, false];
+  eq('il 16 e il 19 non c\'e\' (prima del 20)', [SOLA([], VEN), SOLA([], LUN2)], [[], []]);
+  eq('dal 20, da sola', forma(SOLA([], MAR2)), [CCM]);
+  eq('il 31 c\'e\' ancora, il primo del mese dopo no', [SOLA([], '2026-10-31').map((m) => m.id), SOLA([], '2026-11-01')], [['conta-completa:2026-10'], []]);
+  eq('il 20 novembre con quella di ottobre fatta: torna, col mese nuovo', forma(SOLA([CC('2026-10-25')], '2026-11-20')),
+    [['conta-completa:2026-11', 'Conta completa di novembre', { t: 'contaCompleta' }, false]]);
+  eq('registrata oggi: resta, fatta', forma(SOLA([CC(MAR2)], MAR2)), [[...CCM.slice(0, 3), true]]);
+  eq('registrata il 05 dello stesso mese: non c\'e\' piu\'', SOLA([CC('2026-10-05')], MAR2), []);
+  eq('registrata il 21, vista il 25: non c\'e\' piu\'', SOLA([CC('2026-10-21')], '2026-10-25'), []);
+  eq('registrata a settembre: a ottobre torna, da fare', forma(SOLA([CC('2026-09-25')], MAR2)), [CCM]);
+  eq('ref vuoto: vale il mese del giorno anche qui', SOLA([CC('2026-10-05', '')], MAR2), []);
+  eq('una conta singola non e\' la conta completa', forma(SOLA([E('conta', MAR2, 'LEA')], MAR2)), [CCM]);
+  eq('con verifica e date: e\' la terza, ultima', M([], [], LABS, MAR2).map((m) => m.id), ['verifica:' + FR, 'date:' + SA, 'conta-completa:2026-10']);
+  eq('con verifica, negativi e date: non c\'e\' posto (sempre 3)', M([], ['N1', 'N2'], LABS, MAR2).map((m) => m.id), ['verifica:' + FR, 'conta-negativi', 'date:' + SA]);
+  eq('con una sola altra missione: seconda', M([], ['N1'], [], MAR2).map((m) => m.id), ['conta-negativi', 'conta-completa:2026-10']);
+  eq('la missione non da\' punti: registrata = solo i 500 della conta completa', tot(MAR2, CC(MAR2)), 500);
 }
 
 console.log('\n== differenza fra due letture ==');
@@ -276,20 +299,47 @@ console.log('\n== differenza fra due letture ==');
 console.log('\n== calcola e\' pura e deterministica ==');
 {
   const ev = [...SETTIMANA.map((g) => P(g)), E('ordine', MAR, 'g1', 2), E('arrivo', MER, 'r1', 4), E('arrivo', MER, 'r1', 1, '10:00:00'),
-    E('verifica', GIO, FR, 2), E('data_aggiunta', GIO, 'r9'), E('conta', VEN, 'A'), E('conta', VEN, 'B', 1, '10:00:00')];
+    E('verifica', GIO, FR, 2), E('data_aggiunta', GIO, 'r9'), E('conta', VEN, 'A'), E('conta', VEN, 'B', 1, '10:00:00'),
+    CC(VEN, undefined, 2), CC(VEN, undefined, 2, '10:00:00')];
   const copia = JSON.stringify(ev);
-  const s1 = calcola(ev, VEN, ['A', 'B']);
+  const s1 = calcola(ev, VEN);
   t('l\'array in ingresso non viene toccato', JSON.stringify(ev) === copia);
   const mescolato = [...ev].reverse();
   mescolato.push(mescolato.shift());
-  t('stessi eventi in un altro ordine (anche con ts uguali): stesso stato', JSON.stringify(calcola(mescolato, VEN, ['A', 'B'])) === JSON.stringify(s1));
-  t('stesso input due volte: stesso stato', JSON.stringify(calcola(ev, VEN, ['A', 'B'])) === JSON.stringify(s1));
+  t('stessi eventi in un altro ordine (anche con ts uguali): stesso stato', JSON.stringify(calcola(mescolato, VEN)) === JSON.stringify(s1));
+  t('stesso input due volte: stesso stato', JSON.stringify(calcola(ev, VEN)) === JSON.stringify(s1));
   t('voci dalla piu\' recente', s1.voci.every((v, i) => i === 0 || Date.parse(s1.voci[i - 1].ts) >= Date.parse(v.ts)));
   t('voci solo con punti > 0, e sommano al totale', s1.voci.every((v) => v.punti > 0) && s1.voci.reduce((s, v) => s + v.punti, 0) === s1.totale);
   eq('ts nel formato di PostgREST (microsecondi, +00:00) ordinati bene', calcola([
     { tipo: 'arrivo', giorno: VEN, ts: '2026-10-16T09:00:00.5+00:00', ref: 'r2', n: 1 },
     { tipo: 'arrivo', giorno: VEN, ts: '2026-10-16T09:00:00.123456+00:00', ref: 'r1', n: 1 },
-  ], VEN, []).voci.map((v) => v.ref), ['r2', 'r1']);
+  ], VEN).voci.map((v) => v.ref), ['r2', 'r1']);
+  t('calcola prende due argomenti (17-10: niente piu\' codici del magazzino)', calcola.length === 2);
+}
+
+console.log('\n== testi con gli accenti veri (lunedì, venerdì, già, più), mai l\'apostrofo al posto dell\'accento ==');
+{
+  // ogni testo che Ginni vede: nomi e descrizioni di medaglie e livelli, le voci di tutti i tipi, le missioni di tutti i tipi
+  const tutti = calcola([...SETTIMANA.map((g) => P(g)), E('ordine', VEN, 'g', 2), E('ordine', VEN, 'g1', 1), E('arrivo', VEN, 'r', 3),
+    E('verifica', VEN, FR, 1), E('verifica', VEN, SA, 2), E('data_aggiunta', VEN, 'r'), E('conta', VEN, 'A'), CC(VEN, undefined, 1), CC('2026-11-02', '', 0)], VEN);
+  const lab = (forn, nome, late, senzaData) => ({ key: forn, nome, forn, righe: Array(late).fill({ late: true }), senzaData });
+  const ms = [
+    ...missioni({ labs: [lab(FR, 'Francesco', 1, 0), lab(SA, 'Sarte Milano', 0, 1)], negativi: ['N1'], eventi: [], oggi: VEN }),
+    ...missioni({ labs: [lab(FR, 'Francesco', 3, 0), lab(SA, 'Sarte Milano', 0, 4)], negativi: ['N1', 'N2'], eventi: [], oggi: VEN }),
+    ...missioni({ labs: [lab(FR, 'Francesco', 0, 0), lab(SA, 'Sarte Milano', 0, 0)], negativi: [],
+      eventi: [E('verifica', MAR2, FR, 1), E('verifica', MAR2, SA, 1)], oggi: MAR2 }),
+  ];
+  const testi = [...MEDAGLIE.flatMap((m) => [m.nome, m.descrizione]), ...LIVELLI.map((l) => l.nome), ...tutti.voci.map((v) => v.testo), ...ms.map((m) => m.testo)];
+  eq('ci sono tutti i tipi di voce e di missione', [[...new Set(tutti.voci.map((v) => v.tipo))].sort(), [...new Set(ms.map((m) => m.azione.t))].sort()],
+    [['arrivo', 'conta', 'conta_completa', 'data_aggiunta', 'ordine', 'presenza', 'settimana_piena', 'verifica'], ['conta', 'contaCompleta', 'verifica']]);
+  // una vocale seguita da apostrofo e poi da uno spazio, dalla punteggiatura o dalla fine: e' un accento scritto male
+  const male = testi.filter((s) => /[aeiou]'(?![A-Za-zÀ-ÿ])/i.test(s));
+  eq('nessun testo con l\'apostrofo al posto dell\'accento', male, []);
+  eq('settimana perfetta: da lunedì a venerdì', MEDAGLIE.find((m) => m.id === 'settimana-perfetta').descrizione, 'Presente tutti i giorni da lunedì a venerdì');
+  // e sul sorgente: nessuna stringa del codice con vocale + \' a fine parola (nei commenti l'apostrofo resta, e' il nostro stile)
+  const codice = read('web/src/lib/villaggio/paillettes.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  eq('nessuna stringa del sorgente con l\'accento scritto come apostrofo', codice.match(/[aeiou]\\'(?![A-Za-z])/gi) ?? [], []);
+  t('nel sorgente c\'e\' "lunedì a venerdì" con gli accenti veri', codice.includes('lunedì a venerdì'));
 }
 
 console.log('\n== cinture sul sorgente: paillettes.ts e\' importabile da Node e non legge l\'orologio ==');
@@ -311,8 +361,7 @@ console.log('\n== cinture sul sorgente: paillettes.ts e\' importabile da Node e 
 //   conta:  counts chi='Ginevra'
 // giorno = (ts at time zone 'Europe/Rome')::date (l'arrivo delle 22:07 UTC del 01-10 e' del 02-10). ref accorciati ai primi
 // 8 caratteri (bastano a distinguerli). Le presenze non esistevano: una per ogni giorno con almeno un evento, all'ora del primo.
-// Nessuna verifica e nessuna data aggiunta: sono azioni nuove. Base del magazzino: 98 codici con giacenza diversa da 0 al
-// 16-10 (qui conta solo il numero: con 1 codice contato la conta completa e' comunque lontana).
+// Nessuna verifica, nessuna data aggiunta e nessuna conta completa: sono azioni nuove.
 const VERI = [
   ['ordine', '2026-09-02', '2026-09-02T08:42:50Z', '620482c7', 3], ['arrivo', '2026-09-02', '2026-09-02T14:51:59Z', '820a2458', 20],
   ['arrivo', '2026-09-02', '2026-09-02T14:53:04Z', '8284c0f9', 20], ['arrivo', '2026-09-02', '2026-09-02T14:53:46Z', 'bb41463f', 7],
@@ -356,8 +405,7 @@ console.log('\n== taratura: gli eventi veri di Ginevra dal 17-08 al 16-10 ==');
   const primi = new Map();
   for (const e of VERI) if (!primi.has(e.giorno) || Date.parse(e.ts) < Date.parse(primi.get(e.giorno))) primi.set(e.giorno, e.ts);
   const presenze = [...primi].map(([giorno, ts]) => ({ tipo: 'presenza', giorno, ts, ref: giorno, n: 1 }));
-  const BASE98 = ['LEA_BAG_COCCO_PURPLE', ...Array.from({ length: 97 }, (_, i) => 'CODICE_' + i)];
-  const s = calcola([...VERI, ...presenze], VEN, BASE98);
+  const s = calcola([...VERI, ...presenze], VEN);
   const per = (tipo) => s.voci.filter((v) => v.tipo === tipo).reduce((a, v) => a + v.punti, 0);
   eq('copia completa: 21 ordini, 45 arrivi, 3 conte, 15 giorni con eventi', [VERI.filter((e) => e.tipo === 'ordine').length,
     VERI.filter((e) => e.tipo === 'arrivo').length, VERI.filter((e) => e.tipo === 'conta').length, presenze.length], [21, 45, 3, 15]);
@@ -370,16 +418,30 @@ console.log('\n== taratura: gli eventi veri di Ginevra dal 17-08 al 16-10 ==');
   const giorniFinestra = (Date.parse(VEN) - Date.parse('2026-08-17')) / 86400000 + 1;
   const giorniAttiva = (Date.parse(VEN) - Date.parse('2026-09-02')) / 86400000 + 1;
   const regina = LIVELLI[LIVELLI.length - 1].da;
+  const mesi = (alMese) => (regina / alMese).toFixed(1);
   for (const [nome, giorni] of [['finestra 17-08..16-10', giorniFinestra], ['dal primo evento, 02-09..16-10', giorniAttiva]]) {
     const mese = (s.totale / giorni) * 30;
-    nota(`${nome}: ${giorni} giorni, ${Math.round(mese)} paillettes ogni 30 giorni, regina (15.000) in ${(regina / mese).toFixed(1)} mesi`);
+    nota(`${nome}: ${giorni} giorni, ${Math.round(mese)} paillettes ogni 30 giorni, regina (15.000) in ${mesi(mese)} mesi`);
   }
-  // le presenze vere saranno una per giorno lavorativo, non solo nei giorni con un ordine o un arrivo
+  // il ritmo di oggi: le presenze vere saranno una per giorno lavorativo, non solo nei giorni con un ordine o un arrivo
   const ogniGiorno = lavorativi('2026-09-07', 30).filter((g) => g <= VEN);
-  const conPresenze = calcola([...VERI, ...presenze, ...['2026-09-02', '2026-09-03', '2026-09-04', ...ogniGiorno].map((g) => P(g, '06:00:00'))], VEN, BASE98);
+  const conPresenze = calcola([...VERI, ...presenze, ...['2026-09-02', '2026-09-03', '2026-09-04', ...ogniGiorno].map((g) => P(g, '06:00:00'))], VEN);
   const meseP = (conPresenze.totale / giorniAttiva) * 30;
-  nota(`stesso storico con una presenza ogni giorno lavorativo dal 02-09: ${conPresenze.totale} paillettes, ${Math.round(meseP)} ogni 30 giorni, regina in ${(regina / meseP).toFixed(1)} mesi`);
+  nota(`ritmo di oggi (una presenza ogni giorno lavorativo dal 02-09): ${conPresenze.totale} paillettes, ${Math.round(meseP)} ogni 30 giorni, regina in ${mesi(meseP)} mesi`);
+  // piu' le verifiche settimanali dei due laboratori con piu' righe aperte al 17-10 (Francesco 12, Sarte Milano 7; poi
+  // Vincenzo 2 e Fiorella 1): 50 a laboratorio a settimana
+  const meseV = meseP + 2 * VALORI.verifica * 30 / 7;
+  nota(`con la verifica settimanale di 2 laboratori: ${Math.round(meseV)} ogni 30 giorni, regina in ${mesi(meseV)} mesi`);
+  const meseTutto = meseP + 4 * VALORI.verifica * 30 / 7 + VALORI.contaCompleta;
+  nota(`con tutti e 4 i laboratori ogni settimana e la conta completa ogni mese: ${Math.round(meseTutto)} ogni 30 giorni, regina in ${mesi(meseTutto)} mesi`);
   t('la taratura gira (numeri sopra: LIVELLI li decide l\'owner, il test non li corregge)', s.totale > 0);
+  // il commento sopra LIVELLI riporta questi numeri: se cambiano VALORI o lo storico, il commento va riscritto
+  const src = read('web/src/lib/villaggio/paillettes.ts');
+  const arr10 = (x) => Math.round(x / 10) * 10;
+  eq('il commento di LIVELLI dice i numeri di questa taratura (930 al mese, 16 mesi; 1.360 al mese, 11 mesi)',
+    [arr10(meseP), Math.round(regina / meseP), arr10(meseV), Math.round(regina / meseV),
+      ['circa 930 paillettes', 'circa 16 mesi', 'circa 1.360', 'circa 11 mesi', 'Dan 17-10: restano cosi\''].every((x) => src.includes(x))],
+    [930, 16, 1360, 11, true]);
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);

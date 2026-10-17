@@ -1,16 +1,20 @@
 // Villaggio, fase 2 (16-10): le Paillettes di Ginni come funzioni pure. I punti NON si salvano da nessuna parte: si
 // ricalcolano a ogni lettura dagli eventi che il database registra comunque (v_villaggio_eventi: presenze, ordini, arrivi,
-// conte, verifiche fornitore, date aggiunte), quindi stessi eventi = stesso punteggio su ogni dispositivo e nessun punto
-// "regalato" dal client. Nessun import (neanche di tipi): lo usano la pagina e tests/villaggio_paillettes.mjs (Node 24
-// strippa i tipi). Niente Date.now(): `oggi` (data di Roma, 'YYYY-MM-DD') arriva da fuori, cosi' il calcolo e' ripetibile.
-// I tetti (una volta al giorno, alla settimana, per riga) tolgono il gusto di ripetere la stessa azione per fare punti.
+// conte, conte complete registrate, verifiche fornitore, date aggiunte), quindi stessi eventi = stesso punteggio su ogni
+// dispositivo e nessun punto "regalato" dal client. Nessun import (neanche di tipi): lo usano la pagina e
+// tests/villaggio_paillettes.mjs (Node 24 strippa i tipi). Niente Date.now(): `oggi` (data di Roma, 'YYYY-MM-DD') arriva da
+// fuori, cosi' il calcolo e' ripetibile. I tetti (una volta al giorno, alla settimana, al mese, per riga) tolgono il gusto
+// di ripetere la stessa azione per fare punti.
 
-export type TipoEvento = 'presenza' | 'ordine' | 'arrivo' | 'conta' | 'verifica' | 'data_aggiunta';
+export type TipoEvento = 'presenza' | 'ordine' | 'arrivo' | 'conta' | 'conta_completa' | 'verifica' | 'data_aggiunta';
 export type Evento = { tipo: TipoEvento; giorno: string; ts: string; ref: string; n: number };
 
 export const VALORI = { presenza: 5, settimanaPiena: 50, ordine: 20, rigaOrdine: 5, arrivo: 10, verifica: 50, conta: 2,
   contaCompleta: 500, dataAggiunta: 15 } as const;
 
+// Tarati il 17-10 sugli eventi veri di Ginevra (02-09..16-10, taratura in tests/villaggio_paillettes.mjs): con una presenza
+// ogni giorno lavorativo fanno circa 930 paillettes ogni 30 giorni, regina in circa 16 mesi; aggiungendo la verifica
+// settimanale dei due laboratori con piu' righe aperte circa 1.360, regina in circa 11 mesi. Dan 17-10: restano cosi'.
 export type Livello = { nome: string; da: number };
 export const LIVELLI: readonly Livello[] = [
   { nome: 'Stagista', da: 0 }, { nome: 'Junior', da: 300 }, { nome: 'Production Assistant', da: 1000 },
@@ -18,8 +22,8 @@ export const LIVELLI: readonly Livello[] = [
   { nome: 'Executive Queen of Fashion Production', da: 15000 },
 ];
 
-/** Le voci dei due premi (settimana piena, conta completa) non vengono da un evento loro: nascono dall'evento che li fa scattare. */
-export type TipoVoce = TipoEvento | 'settimana_piena' | 'conta_completa';
+/** Il premio della settimana piena non viene da un evento suo: nasce dalla presenza che completa la settimana. */
+export type TipoVoce = TipoEvento | 'settimana_piena';
 export type Voce = { giorno: string; ts: string; tipo: TipoVoce; ref: string; punti: number; testo: string };
 
 /** Quello che le medaglie guardano, contato sulle voci che hanno dato punti (un'azione ripetuta oltre il tetto non conta). */
@@ -31,10 +35,10 @@ export type Medaglia = { id: string; nome: string; descrizione: string; regola: 
 
 export const MEDAGLIE: readonly Medaglia[] = [
   { id: 'prima-presenza', nome: 'Prima presenza', descrizione: 'Hai aperto il Villaggio per la prima volta', regola: (c) => c.presenze >= 1 },
-  { id: 'settimana-perfetta', nome: 'Settimana perfetta', descrizione: 'Presente tutti i giorni da lunedi\' a venerdi\'', regola: (c) => c.settimanePiene >= 1 },
+  { id: 'settimana-perfetta', nome: 'Settimana perfetta', descrizione: 'Presente tutti i giorni da lunedì a venerdì', regola: (c) => c.settimanePiene >= 1 },
   { id: 'prima-verifica', nome: 'Prima verifica', descrizione: 'Hai passato le righe aperte con un laboratorio', regola: (c) => c.verifiche >= 1 },
   { id: 'tutti-i-laboratori', nome: 'Tutti i laboratori', descrizione: '4 laboratori verificati nella stessa settimana', regola: (c) => c.labInUnaSettimana >= 4 },
-  { id: 'prima-conta-completa', nome: 'Prima conta completa', descrizione: 'L\'80% del magazzino contato in 7 giorni', regola: (c) => c.conteComplete >= 1 },
+  { id: 'prima-conta-completa', nome: 'Prima conta completa', descrizione: 'Hai registrato la prima conta completa del magazzino', regola: (c) => c.conteComplete >= 1 },
   { id: 'cento-arrivi', nome: 'Cento arrivi', descrizione: '100 arrivi registrati', regola: (c) => c.arrivi >= 100 },
   { id: 'serie-20', nome: 'Serie da 20', descrizione: '20 giorni lavorativi di fila', regola: (c) => c.serieMax >= 20 },
   { id: 'date-a-posto', nome: 'Date a posto', descrizione: '10 date di consegna aggiunte', regola: (c) => c.dateAggiunte >= 10 },
@@ -45,7 +49,7 @@ export type Stato = {
   serie: number; settimana: boolean[]; voci: Voce[]; medaglie: Medaglia[];
 };
 
-// --- Giorni come interi (giorni dal 1970-01-01, che era giovedi'): settimane e finestre senza fusi orari ---
+// --- Giorni come interi (giorni dal 1970-01-01, che era giovedi'): settimane senza fusi orari ---
 const GIORNO = 86400000;
 const num = (g: string) => Math.round(Date.parse(g.slice(0, 10) + 'T00:00:00Z') / GIORNO);
 const iso = (d: number) => new Date(d * GIORNO).toISOString().slice(0, 10);
@@ -55,7 +59,15 @@ const lunedi = (d: number) => d - dow(d);
 const lavorativo = (d: number) => dow(d) < 5;
 const lavPrima = (d: number) => { do d--; while (!lavorativo(d)); return d; };
 
+const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre',
+  'novembre', 'dicembre'];
+const nomeMese = (m: string) => MESI[Number(m.slice(5, 7)) - 1] ?? m;
+/** Il mese di una conta completa: la vista lo mette in ref ('YYYY-MM', mese di Roma della registrazione); se il ref non e'
+ *  un mese vale quello del giorno, cosi' anche un evento storto conta una volta sola. */
+const meseDi = (e: Evento) => (/^\d{4}-\d{2}$/.test(e.ref) ? e.ref : e.giorno.slice(0, 7));
+
 const righe = (n: number) => (n === 1 ? '1 riga' : n + ' righe');
+const codici = (n: number) => (n === 1 ? '1 codice' : n + ' codici');
 /** "Francesco (pelle)" -> "Francesco", come labOf() di catalogo.ts (qui niente import di valori). */
 const nomeLab = (f: string) => f.replace(/\s*\([^)]*\)\s*$/, '').trim() || f;
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -63,14 +75,11 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const cronologico = (a: Evento, b: Evento) =>
   Date.parse(a.ts) - Date.parse(b.ts) || cmp(a.tipo, b.tipo) || cmp(a.ref, b.ref) || cmp(a.giorno, b.giorno) || a.n - b.n;
 
-export function calcola(eventi: Evento[], oggi: string, codiciMagazzino: string[]): Stato {
+export function calcola(eventi: Evento[], oggi: string): Stato {
   const voci: Voce[] = [];
   const presi = new Set<string>();
   const unaVolta = (k: string) => (presi.has(k) ? false : (presi.add(k), true));
   const presenti = new Set<number>();
-  const base = new Set(codiciMagazzino);
-  const ultimaConta = new Map<string, number>();
-  const mesiCompleti = new Set<string>();
   const labSettimana = new Map<number, Set<string>>();
   const voce = (e: Evento, tipo: TipoVoce, punti: number, testo: string, ref = e.ref) =>
     voci.push({ giorno: e.giorno, ts: e.ts, tipo, ref, punti, testo });
@@ -108,19 +117,14 @@ export function calcola(eventi: Evento[], oggi: string, codiciMagazzino: string[
       case 'data_aggiunta':
         if (unaVolta('d|' + e.ref)) voce(e, 'data_aggiunta', VALORI.dataAggiunta, 'Data di consegna aggiunta');
         break;
-      case 'conta': {
+      case 'conta':
         if (unaVolta('c|' + e.ref + '|' + e.giorno)) voce(e, 'conta', VALORI.conta, 'Conta registrata');
-        // conta completa: codici della base contati negli ultimi 7 giorni (d-6..d), soglia 80% in interi per non
-        // dipendere dagli arrotondamenti; scatta sull'evento che la supera, una volta per mese di calendario
-        if (!base.has(e.ref)) break;
-        ultimaConta.set(e.ref, Math.max(ultimaConta.get(e.ref) ?? d, d));
-        const mese = e.giorno.slice(0, 7);
-        if (mesiCompleti.has(mese)) break;
-        let coperti = 0;
-        for (const g of ultimaConta.values()) if (g > d - 7 && g <= d) coperti++;
-        if (coperti * 5 >= base.size * 4) {
-          mesiCompleti.add(mese);
-          voce(e, 'conta_completa', VALORI.contaCompleta, 'Conta completa!', mese);
+        break;
+      case 'conta_completa': {
+        // la registra Ginni in fondo al giro di conta: il numero di codici e' solo per il testo, i punti sono una volta al mese
+        const mese = meseDi(e);
+        if (unaVolta('cc|' + mese)) {
+          voce(e, 'conta_completa', VALORI.contaCompleta, 'Conta completa di ' + nomeMese(mese) + (e.n > 0 ? ' · ' + codici(e.n) : ''), mese);
         }
         break;
       }
@@ -164,20 +168,25 @@ export function calcola(eventi: Evento[], oggi: string, codiciMagazzino: string[
 // --- Missioni: guidano verso le azioni utili di oggi, NON danno punti propri ---
 
 export type LabMissione = { key: string; nome: string; forn: string | null; righe: { late: boolean; wip?: boolean }[]; senzaData: number };
-export type Missione = { id: string; testo: string; azione: { t: 'verifica'; lab: string } | { t: 'conta'; codici: string[] }; fatta: boolean };
+export type Missione = {
+  id: string; testo: string; fatta: boolean;
+  azione: { t: 'verifica'; lab: string } | { t: 'conta'; codici: string[] } | { t: 'contaCompleta' };
+};
 
-/** Al massimo 3, in ordine di priorita': verifica del laboratorio piu' in ritardo, conta dei negativi, date mancanti.
- *  `negativi` sono i codici con giacenza negativa: una conta li sistema e li toglie dalla lista, quindi perche' la missione
- *  resti visibile come fatta la pagina passa quelli della prima lettura del giorno. */
+/** Al massimo 3, in ordine di priorita': verifica del laboratorio piu' in ritardo, conta dei negativi, date mancanti, conta
+ *  completa del mese (dal 20). `negativi` sono i codici con giacenza negativa: una conta li sistema e li toglie dalla lista,
+ *  quindi perche' la missione resti visibile come fatta la pagina passa quelli della prima lettura del giorno. */
 export function missioni(input: { labs: LabMissione[]; negativi: string[]; eventi: Evento[]; oggi: string }): Missione[] {
   const { labs, negativi, eventi, oggi } = input;
-  const t = num(oggi), l = lunedi(t);
+  const t = num(oggi), l = lunedi(t), mese = oggi.slice(0, 7);
   const oggiVerificati = new Set<string>(), giaVerificati = new Set<string>(), contatiOggi = new Set<string>();
+  let completaOggi = false, completaPrima = false;
   for (const e of eventi) {
     const d = num(e.giorno);
     if (e.tipo === 'verifica' && d === t) oggiVerificati.add(e.ref);
     else if (e.tipo === 'verifica' && d >= l && d < t) giaVerificati.add(e.ref);
     else if (e.tipo === 'conta' && d === t) contatiOggi.add(e.ref);
+    else if (e.tipo === 'conta_completa' && meseDi(e) === mese) { if (d === t) completaOggi = true; else completaPrima = true; }
   }
   const ritardi = (x: LabMissione) => x.righe.filter((r) => r.late).length;
   const fatto = (x: LabMissione) => oggiVerificati.has(x.forn!);
@@ -202,6 +211,11 @@ export function missioni(input: { labs: LabMissione[]; negativi: string[]; event
   if (dt) {
     out.push({ id: 'date:' + dt.key, testo: 'Chiedi a ' + dt.nome + (dt.senzaData ? ' la data di ' + righe(dt.senzaData) : ' le date di consegna'),
       azione: { t: 'verifica', lab: dt.key }, fatta: fatto(dt) });
+  }
+  // il giro completo e' lungo: lo si ricorda solo nell'ultima parte del mese, e per ultimo. Registrata oggi resta (fatta),
+  // registrata in un giorno precedente dello stesso mese non torna fino al mese dopo
+  if (out.length < 3 && Number(oggi.slice(8, 10)) >= 20 && !completaPrima) {
+    out.push({ id: 'conta-completa:' + mese, testo: 'Conta completa di ' + nomeMese(mese), azione: { t: 'contaCompleta' }, fatta: completaOggi });
   }
   return out;
 }

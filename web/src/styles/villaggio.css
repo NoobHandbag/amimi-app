@@ -238,8 +238,12 @@
 .v-giro .v-prog { flex: 1; height: 8px; margin: 0; }
 .v-giro b { font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .v-fine { margin: 6px 0; font: 600 17px/1.4 var(--v-fd); color: var(--v-ink); }
-/* con le paillettes accodate il toast si allunga: largo quanto il testo (fino al suo max-width), non mezza finestra */
-.v-toast { width: max-content; }
+/* con le paillettes accodate il toast si allunga: quello delle paillettes e' largo quanto il testo (fino al suo
+   max-width), non mezza finestra; gli altri restano come sono */
+.v-toast.v-tpai { width: max-content; }
+/* la scheda in fondo al giro di conta completo, con la registrazione della conta del mese */
+.v-ccard { display: flex; flex-direction: column; gap: 8px; }
+.v-ccard .v-ok { margin: 0; font: 600 15px/1.35 var(--v-fd); color: #2f6b14; }
 @media (max-width: 480px) {
   /* sul telefono pillola e stella vanno in una riga loro, sotto (il ::before e' l'a capo): il "?" resta a destra della
      seconda riga com'era, e il toast scende sotto la terza */
