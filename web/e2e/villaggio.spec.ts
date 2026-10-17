@@ -155,7 +155,7 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
     if (url.pathname.endsWith('/rest/v1/v_villaggio_settings')) {
       letture.flag++;
       if (flag === '404') return json({ code: 'PGRST205', details: null, hint: null, message: 'Could not find the table \'public.v_villaggio_settings\' in the schema cache' }, 404);
-      // fetchVillaggioEnabled usa maybeSingle(): con Accept vnd.pgrst.object+json PostgREST risponde l'oggetto, altrimenti l'array
+      // fetchVillaggioSettings chiede l'array; l'oggetto resta per una lettura con Accept vnd.pgrst.object+json
       const rigaFlag = { key: 'villaggio_enabled', value: flag };
       return json((req.headers()['accept'] ?? '').includes('application/vnd.pgrst.object+json') ? rigaFlag : [rigaFlag]);
     }
