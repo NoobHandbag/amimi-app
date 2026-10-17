@@ -32,7 +32,13 @@
 // push. (b) nuovo check WARN `ce_codici_doppi`: codici a catalogo con le stesse parole in ordine diverso
 // (LEA_BAG_BAMBI_PONY / LEA_BAG_PONY_BAMBI). (c) l'etichetta dei negativi elenca i codici. Blocchi PURE:ceguard-alert
 // e PURE:ceguard-doppi, test `node tests/ceguard_alert.mjs`.
+// v10 (2026-10-17, PR B delle notifiche native, OK di Dan sul brief): secondo canale per gli avvisi, la notifica dell'app
+// via push-api (tema `conti`), dietro app_flags.push_canale_guardie ('ntfy' | 'entrambi' | 'push', nasce 'ntfy'; a
+// push_enabled spento vale 'ntfy'). Cosa parte e quando l'avviso conta come consegnato: _shared/push.ts. Decisione,
+// titolo e testo invariati; lo stato si salva solo ad avviso consegnato. Guardie in tests/shopify_sync_guardie.mjs.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { APP_URL, canaleEffettivo, consegnaAvviso, inviaPush } from '../_shared/push.ts';
+import type { Canale, EsitoPush } from '../_shared/push.ts';
 
 // ==== PURE:ceguard-alert BEGIN ====
 type AlertCheck = { k: string; label: string; n: number; severity: string };
@@ -373,12 +379,17 @@ Deno.serve(async (req) => {
   // 2026-09-14 (audit gate, B60): la risposta di ntfy non era controllata: un 429/5xx perdeva la push ma lo stato
   // veniva aggiornato come se fosse partita, e quell'allarme non suonava piu' fino al prossimo cambio di insieme.
   // Lo stato si aggiorna SOLO a push consegnata (res.ok); altrimenti `ntfy_failed` in risposta e il giro dopo riprova.
+  // v10: secondo canale (push dell'app, tema `conti`) secondo push_canale_guardie; "consegnato" lo decide consegnaAvviso.
   let ntfyFailed: number | null = null; let ntfyError: string | null = null;
+  let canale: Canale = 'ntfy'; let esitoPush: EsitoPush | null = null;
   try {
-    const { data: tf, error: tfErr } = await sb.from('app_flags').select('value').eq('key', 'ntfy_topic').maybeSingle();
+    // topic e interruttore in UNA lettura: e' una whitelist, un flag non elencato qui varrebbe undefined (CONOSCENZA 02-08)
+    const { data: tf, error: tfErr } = await sb.from('app_flags').select('key, value').in('key', ['ntfy_topic', 'push_enabled', 'push_canale_guardie']);
     if (tfErr) throw new Error('topic ntfy non leggibile: ' + tfErr.message);
-    const topic = tf?.value as string | undefined;
-    if (topic) {
+    const flag = (k: string) => (tf ?? []).find((r) => r.key === k)?.value as string | undefined;
+    const topic = flag('ntfy_topic');
+    canale = canaleEffettivo(flag('push_enabled'), flag('push_canale_guardie'));
+    if (topic || canale !== 'ntfy') {
       const errs = checks.filter((c) => c.severity === 'error');
       // lettura fallita = stato precedente vuoto = push spuria o elenco azzerato: si salta la notifica (ntfy_error)
       const { data: lf, error: lfErr } = await sb.from('app_flags').select('key, value').in('key', ['ceguard_alert_state', 'ceguard_alert_detail']);
@@ -392,14 +403,24 @@ Deno.serve(async (req) => {
         const hasProblems = dec.sig !== '';
         const title = hasProblems ? `Amimi: ${errs.length} da controllare` : 'Amimi: tutto a posto';
         const message = messaggioAlert(errs, dec.nuovi);
-        const res = await fetch('https://ntfy.sh', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ topic, title, message, priority: hasProblems ? 4 : 3, tags: [hasProblems ? 'warning' : 'white_check_mark'], click: 'https://noobhandbag.github.io/amimi-app/' }),
-        });
-        if (res.ok) {
+        // null = ntfy non e' partito (nessun topic). Un errore di rete resta in ntfy_error e conta come non consegnato.
+        const mandaNtfy = async (): Promise<boolean | null> => {
+          if (!topic) return null;
+          try {
+            const res = await fetch('https://ntfy.sh', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ topic, title, message, priority: hasProblems ? 4 : 3, tags: [hasProblems ? 'warning' : 'white_check_mark'], click: 'https://noobhandbag.github.io/amimi-app/' }),
+            });
+            if (!res.ok) ntfyFailed = res.status;
+            return res.ok;
+          } catch (e) { ntfyError = 'ntfy non raggiungibile: ' + (e instanceof Error ? e.message : String(e)); return false; }
+        };
+        const av = await consegnaAvviso(canale, mandaNtfy, () => inviaPush({ tema: 'conti', titolo: title, testo: message, url: APP_URL, urgente: hasProblems }));
+        esitoPush = av.push;
+        if (av.consegnata) {
           const { error: stErr } = await sb.from('app_flags').upsert([{ key: 'ceguard_alert_state', value: dec.sig }, ...detailRow], { onConflict: 'key' });
-          if (stErr) ntfyError = 'push partita ma stato non salvato (il giro dopo la ripete): ' + stErr.message;
-        } else ntfyFailed = res.status;
+          if (stErr) ntfyError = 'avviso partito ma stato non salvato (il giro dopo lo ripete): ' + stErr.message;
+        }
       } else if (detailRow.length && detailRow[0].value !== JSON.stringify(prevDetail ?? null)) {
         // nessuna push (numero sceso o invariato): si aggiorna l'elenco, cosi' un codice che esce e poi rientra notifica
         const { error: dtErr } = await sb.from('app_flags').upsert(detailRow, { onConflict: 'key' });
@@ -409,7 +430,8 @@ Deno.serve(async (req) => {
   } catch (e) { ntfyError = e instanceof Error ? e.message : String(e); /* la notifica non deve mai rompere la guardia contabile */ }
 
   return json({
-    ok: true, all_green: problems.length === 0, checks, problems,
+    ok: true, all_green: problems.length === 0, checks, problems, canale,
+    ...(esitoPush ? { push: esitoPush } : {}),
     ...(staleErr ? { stale_keys_error: staleErr.message } : {}),
     ...(ntfyFailed !== null ? { ntfy_failed: ntfyFailed } : {}),
     ...(ntfyError ? { ntfy_error: ntfyError } : {}),

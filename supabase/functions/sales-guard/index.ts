@@ -1,3 +1,9 @@
+// sales-guard v4 (2026-10-17, PR B delle notifiche native, OK di Dan sul brief): S1 avvisa anche con la notifica dell'app
+// via push-api (tema `vendite`), dietro app_flags.push_canale_guardie ('ntfy' | 'entrambi' | 'push', nasce 'ntfy'; a
+// push_enabled spento vale 'ntfy'); cosa parte e quando conta come consegnato: _shared/push.ts. Titolo, testo e firma
+// invariati. sales_guard_alert_state si salva solo ad avviso consegnato e con l'errore controllato (prima un upsert fallito
+// lasciava `notified: true` e lo stato vecchio: lo stesso avviso ripartiva al giro dopo, senza traccia). `dryRun` riporta
+// anche `canale` e `push_prova` (push-api a vuoto: conta i destinatari, non spedisce). Guardie in tests/shopify_sync_guardie.mjs.
 // sales-guard v3 (2026-09-14, audit gate B13/B60): verdetti in health_log con UN upsert controllato su (day,k) al posto
 // di delete non controllata + insert (un 504 sulla delete faceva fallire l'insert sull'unique, il giorno restava senza
 // righe sales_*); fallito -> 500 e niente ntfy. Prune controllato (non fatale) delle chiavi sales_* non piu' nell'insieme.
@@ -25,6 +31,8 @@
 // accensioni/settimana" del brief vale per cio' che suona, e a suonare e' solo S1.
 // Le liste correnti di S2/S3/S4/S5 si ispezionano a mano in `v_sales_anomalie` (migr 0087).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { APP_URL, canaleEffettivo, consegnaAvviso, inviaPush } from '../_shared/push.ts';
+import type { Canale, EsitoPush } from '../_shared/push.ts';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -57,7 +65,7 @@ Deno.serve(async (req) => {
 
   const flags: Record<string, string> = {};
   // 2026-09-13 (sweep incidente doppioni): flag non letti = guardia che si crede spenta e non gira, in silenzio
-  const { data: frows, error: frowsErr } = await retryOnce(() => sb.from('app_flags').select('key,value').in('key', ['sales_guard_enabled', 'ntfy_topic_sales', 'ntfy_topic', 'sales_guard_alert_state']));
+  const { data: frows, error: frowsErr } = await retryOnce(() => sb.from('app_flags').select('key,value').in('key', ['sales_guard_enabled', 'ntfy_topic_sales', 'ntfy_topic', 'sales_guard_alert_state', 'push_enabled', 'push_canale_guardie']));
   if (frowsErr) return json({ ok: false, error: 'lettura app_flags fallita, guardia non valutata: ' + frowsErr.message }, 503);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const source = String(body.source || 'manual');
@@ -115,7 +123,12 @@ Deno.serve(async (req) => {
   agg('sales_sconto_anomalo', 'sconto_anomalo', 'nessun codice sconto oltre soglia',
     (n, top) => `${n} codici sconto oltre soglia d'uso: ${top} — verificare che non sia un leak (dettaglio in v_sales_anomalie)`);
 
-  if (dryRun) return json({ ok: true, dryRun: true, checks });
+  // v4: la prova a vuoto del secondo canale (push-api con dryRun conta i destinatari e non spedisce mai) dimostra, senza
+  // mandare niente a nessuno, che push-api accetta la chiave di servizio di questa edge.
+  if (dryRun) {
+    const push_prova = await inviaPush({ tema: 'vendite', titolo: 'Prova a vuoto', testo: 'Prova a vuoto di sales-guard', url: APP_URL, dryRun: true });
+    return json({ ok: true, dryRun: true, checks, canale: canaleEffettivo(flags.push_enabled, flags.push_canale_guardie), push_prova });
+  }
 
   // scrivi in health_log: UN upsert controllato su (day,k), indice unico health_log_day_k (refresh_health_log esclude
   // le sales_*, migr 0087). 2026-09-14 (audit gate, B13): prima delete NON controllata + insert: un 504 sulla delete
@@ -135,31 +148,46 @@ Deno.serve(async (req) => {
   // 2026-09-14 (audit gate, B60): la risposta di ntfy non era controllata: un 429/5xx perdeva la push ma lo stato
   // veniva aggiornato come se fosse partita, e S1 non suonava piu' fino al prossimo cambio. Stato e `notified` SOLO
   // a push consegnata (res.ok); altrimenti `ntfy_failed` in risposta e il giro dopo riprova.
+  // v4: secondo canale (push dell'app, tema `vendite`) secondo push_canale_guardie; "consegnato" lo decide consegnaAvviso.
   let notified = false; let ntfyFailed: number | null = null; let ntfyError: string | null = null;
+  let canale: Canale = 'ntfy'; let esitoPush: EsitoPush | null = null;
   try {
     const topic = (flags.ntfy_topic_sales || flags.ntfy_topic || '').trim();
-    if (topic) {
+    canale = canaleEffettivo(flags.push_enabled, flags.push_canale_guardie);
+    if (topic || canale !== 'ntfy') {
       const errs = checks.filter((c) => c.severity === 'error').map((c) => c.k).sort();
       const sig = errs.join(',');
       const last = flags.sales_guard_alert_state ?? '';
       if (sig !== last) {
         const title = errs.length ? 'Vendite: serve un occhio' : 'Vendite: rientrato, tutto ok';
         const msg = errs.length ? checks.filter((c) => c.severity === 'error').map((c) => c.label).join('\n') : 'I problemi segnalati sono rientrati.';
-        const res = await fetch('https://ntfy.sh', {
-          method: 'POST',
-          body: JSON.stringify({ topic, title, message: msg.slice(0, 800), priority: errs.length ? 5 : 3, tags: [errs.length ? 'rotating_light' : 'white_check_mark'] }),
-          headers: { 'Content-Type': 'application/json' },
-        });
-        if (res.ok) {
-          await sb.from('app_flags').upsert({ key: 'sales_guard_alert_state', value: sig }, { onConflict: 'key' });
+        // null = ntfy non e' partito (nessun topic). Un errore di rete resta in ntfy_error e conta come non consegnato.
+        const mandaNtfy = async (): Promise<boolean | null> => {
+          if (!topic) return null;
+          try {
+            const res = await fetch('https://ntfy.sh', {
+              method: 'POST',
+              body: JSON.stringify({ topic, title, message: msg.slice(0, 800), priority: errs.length ? 5 : 3, tags: [errs.length ? 'rotating_light' : 'white_check_mark'] }),
+              headers: { 'Content-Type': 'application/json' },
+            });
+            if (!res.ok) ntfyFailed = res.status;
+            return res.ok;
+          } catch (e) { ntfyError = 'ntfy non raggiungibile: ' + (e instanceof Error ? e.message : String(e)); return false; }
+        };
+        const av = await consegnaAvviso(canale, mandaNtfy, () => inviaPush({ tema: 'vendite', titolo: title, testo: msg.slice(0, 800), url: APP_URL, urgente: errs.length > 0 }));
+        esitoPush = av.push;
+        if (av.consegnata) {
           notified = true;
-        } else ntfyFailed = res.status;
+          const { error: stErr } = await sb.from('app_flags').upsert({ key: 'sales_guard_alert_state', value: sig }, { onConflict: 'key' });
+          if (stErr) ntfyError = 'avviso partito ma stato non salvato (il giro dopo lo ripete): ' + stErr.message;
+        }
       }
     }
   } catch (e) { ntfyError = e instanceof Error ? e.message : String(e); /* la notifica non deve mai rompere la guardia */ }
 
   return json({
-    ok: true, checks, notified,
+    ok: true, checks, notified, canale,
+    ...(esitoPush ? { push: esitoPush } : {}),
     ...(staleErr ? { stale_keys_error: staleErr.message } : {}),
     ...(ntfyFailed !== null ? { ntfy_failed: ntfyFailed } : {}),
     ...(ntfyError ? { ntfy_error: ntfyError } : {}),

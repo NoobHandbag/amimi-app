@@ -8,8 +8,9 @@
 // e' un guasto che compare solo quando il database risponde male, cioe' mai in un collaudo.
 // Questo file quindi non prova la funzione: legge il sorgente e verifica che le cinque regole della v7 ci siano
 // ancora. Se qualcuno le toglie "per semplificare", il test lo dice.
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync, unlinkSync, readdirSync, existsSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { stripTypeScriptTypes } from 'node:module';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
@@ -120,6 +121,196 @@ console.log('\n== guardie: verdetti in health_log con upsert controllato (audit 
     /const writeAutopushHealth = async/.test(STOCK) && /const \{ error \} = await sb\.from\('health_log'\)\.upsert\(\{ day, k: 'stock_autopush'/.test(fs) && /onConflict: 'day,k'/.test(fs));
   t("31 shopify-stock: nessun delete non controllato di health_log stock_autopush (sostituito dall'upsert)",
     !/from\('health_log'\)\.delete\(\)\.eq\('day', today\)\.eq\('k', 'stock_autopush'\)/.test(fs));
+}
+
+// ==== secondo canale degli avvisi (PR B delle notifiche native, 17-10-2026) ====
+// ce-guard e sales-guard mandano gli avvisi anche come notifica dell'app via push-api, dietro app_flags.push_canale_guardie
+// (nasce 'ntfy'). La logica sta in supabase/functions/_shared/push.ts: qui si carica QUEL file coi tipi tolti e lo si guida
+// con spedizioni e fetch finti; poi guardie sul sorgente dei due guardiani. Brief: Cowork12/_CLAUDE_CODE_INBOX/
+// 2026-10-17_BRIEF_notifiche_guardie_PR_B.md.
+const PUSH_SRC = read('supabase/functions/_shared/push.ts');
+const PUSH_API = read('supabase/functions/push-api/index.ts');
+const MIG164 = read('supabase/migrations/0164_push_canale_guardie.sql');
+process.removeAllListeners('warning');
+const TMP_PUSH = `${ROOT}tests/_push_shared.tmp.mjs`;
+writeFileSync(TMP_PUSH, stripTypeScriptTypes(PUSH_SRC), 'utf8');
+let P;
+try { P = await import(pathToFileURL(TMP_PUSH).href); } finally { try { unlinkSync(TMP_PUSH); } catch { /* niente */ } }
+const { canaleEffettivo, consegnata, consegnaAvviso, esitoDaRisposta, inviaPush, APP_URL, TIMEOUT_PUSH_MS } = P;
+
+console.log('\n== push: canaleEffettivo (interruttore push_canale_guardie) ==');
+{
+  t('40 acceso + entrambi / push / ntfy', canaleEffettivo('true', 'entrambi') === 'entrambi' && canaleEffettivo('true', 'push') === 'push' && canaleEffettivo('true', 'ntfy') === 'ntfy');
+  t('41 maiuscole e spazi tollerati', canaleEffettivo(' TRUE ', '  Push ') === 'push' && canaleEffettivo('True', 'ENTRAMBI') === 'entrambi');
+  t('42 valore assente, vuoto o sconosciuto = ntfy', [undefined, null, '', 'boh', 'push,ntfy', 'entrambi!'].every((v) => canaleEffettivo('true', v) === 'ntfy'));
+  t('43 push_enabled non "true" forza ntfy anche con push/entrambi', ['false', undefined, null, '', '1', 'yes', 'on', true].every((v) => canaleEffettivo(v, 'push') === 'ntfy' && canaleEffettivo(v, 'entrambi') === 'ntfy'));
+}
+
+console.log('\n== push: consegnata (quando lo stato dell\'avviso si salva) ==');
+{
+  const OK = { ok: true }, KO = { ok: false };
+  t('44 ntfy: decide solo ntfy, la push non conta', consegnata('ntfy', true, null) && !consegnata('ntfy', false, OK) && !consegnata('ntfy', null, OK) && !consegnata('ntfy', null, null));
+  t('45 entrambi: decide ntfy quando e\' partito', consegnata('entrambi', true, KO) && !consegnata('entrambi', false, OK) && consegnata('entrambi', true, null));
+  t('46 entrambi senza topic ntfy (null): decide la push', consegnata('entrambi', null, OK) && !consegnata('entrambi', null, KO) && !consegnata('entrambi', null, null));
+  t('47 push: basta la push o il ripiego ntfy', consegnata('push', null, OK) && consegnata('push', true, KO) && !consegnata('push', false, KO) && !consegnata('push', null, KO) && !consegnata('push', null, null));
+}
+
+console.log('\n== push: consegnaAvviso (chi parte, in che ordine) ==');
+{
+  const PUSH_OK = { ok: true, inviati: 2, falliti: 0, destinatari: 2, status: 200 };
+  const PUSH_ZERO = { ok: false, inviati: 0, falliti: 0, destinatari: 0, status: 200 };
+  const finto = (rNtfy, rPush) => {
+    const log = [];
+    return {
+      log,
+      ntfy: async () => { log.push('ntfy'); if (rNtfy instanceof Error) throw rNtfy; return rNtfy; },
+      push: async () => { log.push('push'); if (rPush instanceof Error) throw rPush; return rPush; },
+    };
+  };
+  let f = finto(true, PUSH_OK);
+  let r = await consegnaAvviso('ntfy', f.ntfy, f.push);
+  t('48 ntfy: la push non parte mai', f.log.join() === 'ntfy' && r.consegnata === true && r.push === null, f.log);
+  f = finto(false, PUSH_OK); r = await consegnaAvviso('ntfy', f.ntfy, f.push);
+  t('49 ntfy fallito: non consegnato (il giro dopo riprova, come prima)', r.consegnata === false && f.log.join() === 'ntfy');
+  f = finto(true, PUSH_OK); r = await consegnaAvviso('push', f.ntfy, f.push);
+  t('50 push arrivata: ntfy non parte', f.log.join() === 'push' && r.consegnata === true && r.ntfyOk === null, f.log);
+  f = finto(true, PUSH_ZERO); r = await consegnaAvviso('push', f.ntfy, f.push);
+  t('51 push a zero telefoni: ripiego ntfy DOPO la push, consegnato da ntfy', f.log.join() === 'push,ntfy' && r.consegnata === true, f.log);
+  f = finto(false, PUSH_ZERO); r = await consegnaAvviso('push', f.ntfy, f.push);
+  t('52 push a zero e ntfy fallito: non consegnato', r.consegnata === false);
+  f = finto(false, PUSH_OK); r = await consegnaAvviso('entrambi', f.ntfy, f.push);
+  t('53 entrambi: partono tutti e due, decide ntfy (push ok + ntfy ko = non consegnato)', f.log.length === 2 && f.log.includes('ntfy') && f.log.includes('push') && r.consegnata === false && r.push?.ok === true);
+  // in parallelo: ntfy aspetta che la push sia partita; se fossero in sequenza (prima ntfy) ntfy scadrebbe e varrebbe false
+  let pushPartita; const partita = new Promise((res) => { pushPartita = res; });
+  r = await consegnaAvviso('entrambi',
+    async () => { await Promise.race([partita, new Promise((_, rej) => setTimeout(() => rej(new Error('push non partita in parallelo')), 500))]); return true; },
+    async () => { pushPartita(); return PUSH_OK; });
+  t('54 entrambi: ntfy e push in parallelo', r.consegnata === true && r.ntfyOk === true);
+  f = finto(new Error('ntfy esploso'), PUSH_OK); r = await consegnaAvviso('ntfy', f.ntfy, f.push);
+  t('55 una spedizione ntfy che lancia conta come fallita e non esce', r.ntfyOk === false && r.consegnata === false);
+  f = finto(true, new Error('push esplosa')); r = await consegnaAvviso('push', f.ntfy, f.push);
+  t('56 una push che lancia: esito ok:false con errore, poi il ripiego ntfy', r.push?.ok === false && /push esplosa/.test(r.push?.errore ?? '') && f.log.join() === 'push,ntfy' && r.consegnata === true, r);
+  f = finto(null, PUSH_ZERO); r = await consegnaAvviso('push', f.ntfy, f.push);
+  t('57 push a zero e nessun topic ntfy (null): non consegnato', r.consegnata === false && r.ntfyOk === null);
+}
+
+console.log('\n== push: esitoDaRisposta (la risposta di push-api) ==');
+{
+  const e1 = esitoDaRisposta(200, { ok: true, inviati: 2, falliti: 1, rimossi: 0, destinatari: 3, esiti: { ok: 2 } });
+  t('58 2xx con telefoni raggiunti: ok, conteggi', e1.ok === true && e1.inviati === 2 && e1.falliti === 1 && e1.destinatari === 3 && e1.status === 200 && !('errore' in e1), e1);
+  t('59 skipped disabled / tema_spento: non ok, motivo riportato', esitoDaRisposta(200, { ok: false, skipped: 'disabled', inviati: 0 }).skipped === 'disabled'
+    && esitoDaRisposta(200, { ok: false, skipped: 'tema_spento', inviati: 0 }).ok === false);
+  t('60 ok:true ma zero inviati (fuori contratto) = non ok', esitoDaRisposta(200, { ok: true, inviati: 0 }).ok === false);
+  const dry = esitoDaRisposta(200, { ok: true, dryRun: true, inviati: 0, destinatari: 3 });
+  t('61 dryRun: ok = ci sono destinatari, dryRun riportato', dry.ok === true && dry.dryRun === true && dry.destinatari === 3);
+  const e503 = esitoDaRisposta(503, { error: 'oltre 50 telefoni iscritti al tema conti: invio fermato' });
+  t('62 errore di push-api: non ok, testo del servizio', e503.ok === false && e503.status === 503 && /oltre 50/.test(e503.errore));
+  t('63 corpo assente, array o stringa: non ok, errore generico sui non-2xx', esitoDaRisposta(401, null).errore === 'push-api ha risposto 401'
+    && esitoDaRisposta(200, [1]).ok === false && esitoDaRisposta(200, 'x').ok === false && esitoDaRisposta(500, { ok: true, inviati: 5 }).ok === false);
+}
+
+console.log('\n== push: inviaPush (POST a push-api, mai un\'eccezione) ==');
+{
+  const KEY = 'chiave_servizio_FINTA_per_test';  // non nel formato sb_secret_: la scansione segreti della Gate 1 resta muta
+  const ENV = { url: 'https://progetto.supabase.co/', key: KEY };
+  const risposta = (status, corpo) => ({ status, json: async () => { if (corpo === undefined) throw new SyntaxError('non JSON'); return corpo; } });
+  let visto = null;
+  const fetchFinto = (res) => async (url, init) => { visto = { url, init }; if (res instanceof Error) throw res; return res; };
+  const msg = { tema: 'conti', titolo: 'Amimi: 2 da controllare', testo: '- riga', urgente: true };
+  let e = await inviaPush(msg, ENV, fetchFinto(risposta(200, { ok: true, inviati: 1, falliti: 0, destinatari: 1 })));
+  const body = JSON.parse(visto.init.body);
+  t('64 URL = SUPABASE_URL + /functions/v1/push-api (senza doppia barra)', visto.url === 'https://progetto.supabase.co/functions/v1/push-api', visto.url);
+  t('65 POST, Bearer con la chiave di servizio, JSON', visto.init.method === 'POST' && visto.init.headers.Authorization === 'Bearer ' + KEY && visto.init.headers['Content-Type'] === 'application/json');
+  t('66 corpo: action invia, tema, titolo, testo, url di default, urgente; nessun dryRun', body.action === 'invia' && body.tema === 'conti' && body.titolo === msg.titolo && body.testo === msg.testo && body.url === APP_URL && body.urgente === true && !('dryRun' in body), body);
+  t('67 c\'e\' un timeout (AbortSignal), al massimo 20 s', visto.init.signal instanceof AbortSignal && TIMEOUT_PUSH_MS > 0 && TIMEOUT_PUSH_MS <= 20000);
+  t('68 risposta 2xx con un telefono: ok', e.ok === true && e.inviati === 1);
+  e = await inviaPush({ ...msg, dryRun: true, urgente: undefined }, ENV, fetchFinto(risposta(200, { ok: false, dryRun: true, inviati: 0, destinatari: 0 })));
+  const b2 = JSON.parse(visto.init.body);
+  t('69 dryRun passato a push-api; urgente assente = false', b2.dryRun === true && b2.urgente === false && e.dryRun === true && e.ok === false);
+  const esiti = [];
+  esiti.push(await inviaPush(msg, ENV, fetchFinto(new Error(`rete giu verso ${KEY}`))));
+  esiti.push(await inviaPush(msg, ENV, fetchFinto(new DOMException('signal timed out', 'TimeoutError'))));
+  esiti.push(await inviaPush(msg, ENV, fetchFinto(risposta(200, undefined))));
+  esiti.push(await inviaPush(msg, ENV, fetchFinto(risposta(401, { error: 'sessione non valida' }))));
+  t('70 errore di rete: esito con errore, nessuna eccezione, chiave oscurata', esiti[0].ok === false && /\[chiave\]/.test(esiti[0].errore) && !esiti[0].errore.includes(KEY), esiti[0]);
+  t('71 timeout: esito TimeoutError', esiti[1].ok === false && /^TimeoutError/.test(esiti[1].errore), esiti[1]);
+  t('72 risposta non JSON: non ok', esiti[2].ok === false && esiti[2].status === 200);
+  t('73 401 (chiave rifiutata): non ok, testo del servizio', esiti[3].ok === false && esiti[3].status === 401 && esiti[3].errore === 'sessione non valida');
+  let chiamato = false;
+  const senzaChiave = await inviaPush(msg, { url: 'https://progetto.supabase.co', key: '' }, async () => { chiamato = true; return risposta(200, {}); });
+  t('74 chiave o URL mancanti: niente fetch, esito con errore', !chiamato && senzaChiave.ok === false && /mancanti/.test(senzaChiave.errore));
+  t('75 la chiave non compare in nessun esito', [e, ...esiti, senzaChiave].every((x) => !JSON.stringify(x).includes(KEY)));
+  t('76 in produzione legge SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY', /Deno\.env\.get\('SUPABASE_URL'\)/.test(PUSH_SRC) && /Deno\.env\.get\('SUPABASE_SERVICE_ROLE_KEY'\)/.test(PUSH_SRC));
+  t('77 il modulo condiviso non importa niente (i guardiani restano senza web-push)', !/^\s*import\s/m.test(PUSH_SRC));
+  t('78 push-api legge esattamente i campi che manda inviaPush', ['tema', 'titolo', 'testo', 'url'].every((k) => PUSH_API.includes(`body.${k}`)) && /body\.urgente === true/.test(PUSH_API) && /body\.dryRun === true/.test(PUSH_API));
+  const apiUrl = PUSH_API.match(/const APP_URL = '([^']+)'/)?.[1];
+  t('79 APP_URL uguale a quello di push-api e al click di ntfy di ce-guard', APP_URL === apiUrl && GUARD.includes(`click: '${APP_URL}'`), apiUrl);
+}
+
+console.log('\n== push: guardie sul sorgente di ce-guard e sales-guard ==');
+{
+  // whitelist dei flag (CONOSCENZA 02-08): un flag letto ma non elencato nella .in() vale undefined per sempre, in silenzio
+  const listaIn = (src, chiave) => {
+    for (const m of src.matchAll(/\.in\('key', \[([^\]]*)\]\)/g)) {
+      const keys = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+      if (keys.includes(chiave)) return keys;
+    }
+    return [];
+  };
+  const orfaniCe = (src) => { const l = listaIn(src, 'ntfy_topic'); return [...src.matchAll(/\bflag\('([^']+)'\)/g)].map((x) => x[1]).filter((k) => !l.includes(k)); };
+  const orfaniSales = (src) => { const l = listaIn(src, 'sales_guard_enabled'); return [...src.matchAll(/\bflags\.(\w+)/g)].map((x) => x[1]).filter((k) => !l.includes(k)); };
+  const lCe = listaIn(GUARD, 'ntfy_topic'), lSa = listaIn(SALES, 'sales_guard_enabled');
+  t('80 ce-guard: topic e interruttore in UNA lettura .in() di app_flags', ['ntfy_topic', 'push_enabled', 'push_canale_guardie'].every((k) => lCe.includes(k)), lCe);
+  t('81 ce-guard: ogni flag(...) consumato sta nella whitelist', orfaniCe(GUARD).length === 0 && (GUARD.match(/\bflag\('/g) ?? []).length >= 3, orfaniCe(GUARD));
+  t('82 sales-guard: push_enabled e push_canale_guardie nella whitelist', ['push_enabled', 'push_canale_guardie'].every((k) => lSa.includes(k)), lSa);
+  t('83 sales-guard: ogni flags.X consumato sta nella whitelist', orfaniSales(SALES).length === 0, orfaniSales(SALES));
+  t('83b rilevatore: un flag letto e non elencato viene visto', orfaniCe(".in('key', ['ntfy_topic']) flag('ntfy_topic') flag('assente')").join() === 'assente'
+    && orfaniSales(".in('key', ['sales_guard_enabled']) flags.sales_guard_enabled flags.assente").join() === 'assente');
+  t('84 entrambi decidono il canale con canaleEffettivo(push_enabled, push_canale_guardie)',
+    /canale = canaleEffettivo\(flag\('push_enabled'\), flag\('push_canale_guardie'\)\)/.test(GUARD) && /canale = canaleEffettivo\(flags\.push_enabled, flags\.push_canale_guardie\)/.test(SALES));
+  t('85 il blocco avvisi entra con un topic OPPURE un canale diverso da ntfy, e senza topic ntfy non parte (null)',
+    [GUARD, SALES].every((s) => /if \(topic \|\| canale !== 'ntfy'\) \{/.test(s) && /if \(!topic\) return null;/.test(s)));
+  // stato salvato SOLO ad avviso consegnato
+  t('86 ce-guard: ceguard_alert_state salvato solo dentro if (av.consegnata), una volta sola',
+    /if \(av\.consegnata\) \{\s*const \{ error: stErr \} = await sb\.from\('app_flags'\)\.upsert\(\[\{ key: 'ceguard_alert_state'/.test(GUARD) && (GUARD.match(/key: 'ceguard_alert_state'/g) ?? []).length === 1);
+  t('87 sales-guard: sales_guard_alert_state salvato solo dentro if (av.consegnata), con l\'errore controllato',
+    /if \(av\.consegnata\) \{\s*notified = true;\s*const \{ error: stErr \} = await sb\.from\('app_flags'\)\.upsert\(\{ key: 'sales_guard_alert_state'/.test(SALES)
+    && /if \(stErr\) ntfyError = /.test(SALES) && (SALES.match(/key: 'sales_guard_alert_state'/g) ?? []).length === 1);
+  const nonControllate = (src) => src.split('\n').filter((l) => /\.from\('app_flags'\)\.upsert\(/.test(l) && !/const \{ error: \w+ \} = await/.test(l));
+  t('88 nessuna scrittura di app_flags senza error destrutturato nei due guardiani', nonControllate(GUARD).length === 0 && nonControllate(SALES).length === 0, [...nonControllate(GUARD), ...nonControllate(SALES)][0]);
+  t('88b rilevatore: la riga della v3 (upsert non controllato) viene vista',
+    nonControllate("          await sb.from('app_flags').upsert({ key: 'sales_guard_alert_state', value: sig }, { onConflict: 'key' });").length === 1);
+  // temi, titoli, testi e priorita' invariati; la push porta gli stessi titolo e testo di ntfy
+  t('89 ce-guard: push col tema conti, stessi titolo e testo, urgente coi problemi',
+    /inviaPush\(\{ tema: 'conti', titolo: title, testo: message, url: APP_URL, urgente: hasProblems \}\)/.test(GUARD));
+  t('90 sales-guard: push col tema vendite, stessi titolo e testo (800), urgente con l\'errore',
+    /inviaPush\(\{ tema: 'vendite', titolo: title, testo: msg\.slice\(0, 800\), url: APP_URL, urgente: errs\.length > 0 \}\)/.test(SALES));
+  t('91 ce-guard: titoli, priorita\', tag e click di ntfy invariati',
+    GUARD.includes("const title = hasProblems ? `Amimi: ${errs.length} da controllare` : 'Amimi: tutto a posto';")
+    && GUARD.includes("priority: hasProblems ? 4 : 3, tags: [hasProblems ? 'warning' : 'white_check_mark'], click: 'https://noobhandbag.github.io/amimi-app/'"));
+  t('92 sales-guard: titoli, testo, priorita\' e tag di ntfy invariati',
+    SALES.includes("const title = errs.length ? 'Vendite: serve un occhio' : 'Vendite: rientrato, tutto ok';")
+    && SALES.includes("message: msg.slice(0, 800), priority: errs.length ? 5 : 3, tags: [errs.length ? 'rotating_light' : 'white_check_mark']"));
+  t('93 decisione invariata: ce-guard decidiAlert, sales-guard firma degli error contro lo stato',
+    /const dec = decidiAlert\(errs, prev, alertDetail \?\? \{\}, alertDetail \? prevDetail : null\);/.test(GUARD) && /if \(sig !== last\) \{/.test(SALES));
+  t('94 sales-guard dryRun: prova a vuoto di push-api (dryRun: true) PRIMA di ogni scrittura, e riporta il canale',
+    /if \(dryRun\) \{\s*const push_prova = await inviaPush\(\{[^}]*dryRun: true \}\);\s*return json\(\{ ok: true, dryRun: true, checks, canale: canaleEffettivo\(/.test(SALES)
+    && SALES.indexOf('if (dryRun) {') < SALES.indexOf("from('health_log').upsert("));
+  t('95 le risposte dicono il canale e l\'esito della push', /checks, problems, canale,/.test(GUARD) && /checks, notified, canale,/.test(SALES)
+    && [GUARD, SALES].every((s) => /\.\.\.\(esitoPush \? \{ push: esitoPush \} : \{\}\)/.test(s)));
+  // web-push solo in push-api: i guardiani (e il modulo condiviso) non la caricano
+  const FN = `${ROOT}supabase/functions`;
+  const tsFiles = readdirSync(FN, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== 'push-api')
+    .flatMap((d) => readdirSync(`${FN}/${d.name}`).filter((n) => n.endsWith('.ts')).map((n) => `${FN}/${d.name}/${n}`));
+  const conWebPush = tsFiles.filter((f) => /from ['"](npm:|jsr:)?[^'"]*web-?push/i.test(readFileSync(f, 'utf8')));
+  t(`96 nessun import di web-push fuori da push-api (${tsFiles.length} file)`, tsFiles.length > 10 && conWebPush.length === 0 && existsSync(`${FN}/_shared/push.ts`), conWebPush[0]);
+  t('97 i due guardiani importano il client da ../_shared/push.ts', [GUARD, SALES].every((s) => /from '\.\.\/_shared\/push\.ts';/.test(s)));
+}
+
+console.log('\n== migr 0164: interruttore ==');
+{
+  t('98 push_canale_guardie nasce ntfy, senza sovrascrivere un valore gia\' cambiato', /insert into app_flags \(key, value\) values \('push_canale_guardie', 'ntfy'\) on conflict \(key\) do nothing/.test(MIG164));
+  t('99 controllo a fine migrazione con RAISE', /raise exception '0164: push_canale_guardie nato qui vale % invece di ntfy'/.test(MIG164) && /raise exception '0164: manca app_flags\.push_canale_guardie'/.test(MIG164));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);
