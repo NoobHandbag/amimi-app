@@ -1,6 +1,6 @@
 // tests/dominio_team.mjs: chi entra nelle sezioni col login (migr 0161). I domini del team sono UNA lista ripetuta in tre
 // posti che devono coincidere: public.email_del_team (RLS cs_*/lead_*/mat_*, storage, loyalty_staff_email,
-// loyalty_dashboard), EMAIL_TEAM nelle sei edge che fanno getUser, DOMINI_TEAM nel web (solo testi del login).
+// loyalty_dashboard), EMAIL_TEAM nelle sette edge che fanno getUser (push-api dal 17-10), DOMINI_TEAM nel web (solo testi del login).
 //   node tests/dominio_team.mjs
 // Pinna anche il contrario: le regole sulle NOSTRE caselle (destinatari bloccati, mittenti "nostri") restano @amimi.it.
 import { readFileSync, readdirSync } from 'node:fs';
@@ -19,7 +19,7 @@ const M = read('supabase/migrations/0161_dominio_team.sql');
 const Mc = noSql(M);
 const M147 = read('supabase/migrations/0147_loyalty_dashboard_gate2.sql');
 const CLIENT = read('web/src/lib/csClient.ts');
-const EDGE = ['ai-compila', 'cs-api', 'cs-assist', 'cs-send', 'lead-outreach', 'mat-api'];
+const EDGE = ['ai-compila', 'cs-api', 'cs-assist', 'cs-send', 'lead-outreach', 'mat-api', 'push-api'];
 
 console.log('\n== Una lista sola ==');
 const sqlM = Mc.match(/lower\(p_email\) ~ '@\(([^)]+)\)\$'/);
@@ -99,7 +99,7 @@ t('25 lead-outreach: invio e risposta a un indirizzo del team bloccati (dentro i
   (LEAD.match(/else if \(EMAIL_TEAM\.test\(to\)\) b\.push\(/g) ?? []).length === 2 && !/to\.endsWith\('@amimi\.it'\)/.test(LEAD)
   && LEAD.indexOf('const EMAIL_TEAM') > LEAD.indexOf('// ==== PURE:lead-guard BEGIN ====') && LEAD.indexOf('const EMAIL_TEAM') < LEAD.indexOf('// ==== PURE:lead-guard END ===='));
 t('26 web: indirizzoInterno dalla lista del team', /import \{ csClient, DOMINI_TEAM \} from '\.\/csClient';/.test(LEADAPI) && /export const indirizzoInterno = \(to: string\): boolean => DOMINI_TEAM\.some\(\(d\) => to\.trim\(\)\.toLowerCase\(\)\.endsWith\('@' \+ d\)\);/.test(LEADAPI));
-const conti = { 'ai-compila': 2, 'cs-api': 2, 'cs-assist': 2, 'cs-send': 3, 'lead-outreach': 4, 'mat-api': 2 };
+const conti = { 'ai-compila': 2, 'cs-api': 2, 'cs-assist': 2, 'cs-send': 3, 'lead-outreach': 4, 'mat-api': 2, 'push-api': 2 };
 t('27 EMAIL_TEAM solo nel cancello e nei blocchi sui destinatari (dichiarazione + usi contati)', EDGE.every((e) => (codice(read(`supabase/functions/${e}/index.ts`)).match(/EMAIL_TEAM/g) ?? []).length === conti[e]),
   EDGE.map((e) => e + '=' + (codice(read(`supabase/functions/${e}/index.ts`)).match(/EMAIL_TEAM/g) ?? []).length).join(' '));
 

@@ -1348,7 +1348,10 @@ console.log('\n== cinture: interruttore app_flags.villaggio_enabled (Regola Ferr
   t("Home: il filtro delle tile toglie 'villaggio' a flag spento", /const acceso = \(t: Tile\) => [^;\n]*\(vilEnabled \|\| t\.tab !== 'villaggio'\)/.test(HOME));
   t('Home: il filtro vale per le tile della persona e per tutte le azioni', /cfg\.tiles\.filter\(acceso\)/.test(HOME) && /ALL_ACTIONS\.filter\(acceso\)/.test(HOME));
   t('Home: nessuna lista di tile non filtrata (cfg.tiles e ALL_ACTIONS si leggono una volta sola)', conta(HOME, /cfg\.tiles\b/) === 1 && conta(HOME, /\bALL_ACTIONS\b/) === 2);
-  t('Home: il filtro si ricalcola quando il flag arriva', /\}, \[cfg, matEnabled, vilEnabled\]\);/.test(HOME));
+  // le dipendenze si leggono come insieme (Gate 2 del 17-10): il letterale andava rosso appena un altro modulo ne
+  // aggiungeva una (pushEnabled delle notifiche) e non diceva niente su vilEnabled, che e' il punto del test
+  const depsHome = (HOME.match(/const \{ quick, gestione, altro \} = useMemo\([\s\S]*?\}, \[([^\]]*)\]\);/)?.[1] ?? '').split(',').map((d) => d.trim());
+  t('Home: il filtro si ricalcola quando il flag arriva', ['cfg', 'matEnabled', 'vilEnabled'].every((d) => depsHome.includes(d)));
 
   // app a se': prima il flag, poi il Villaggio
   t('VillaggioApp: stato del flag null finche\' non arriva, false se la lettura fallisce',

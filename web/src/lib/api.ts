@@ -846,3 +846,12 @@ export async function fetchVillaggioEnabled(): Promise<boolean> {
   const s = String((data as { value: unknown }).value ?? '').trim().toLowerCase();
   return s === 'true' || s === '1' || s === 'on' || s === 'yes';
 }
+
+/** Interruttore delle notifiche native (migr 0163, 17-10), stesso schema: vista v_push_settings con la sola chiave
+ *  push_enabled. Errore o assenza = spento, cosi' a migrazione non ancora applicata la scheda non compare. */
+export async function fetchPushEnabled(): Promise<boolean> {
+  const { data, error } = await supabase.from('v_push_settings').select('key,value').eq('key', 'push_enabled').maybeSingle();
+  if (error || !data) return false;
+  const s = String((data as { value: unknown }).value ?? '').trim().toLowerCase();
+  return s === 'true' || s === '1' || s === 'on' || s === 'yes';
+}
