@@ -151,7 +151,7 @@ export function parseLook(model: Modello | null, variant: string | null | undefi
 }
 
 /** Pezzi -> lastre della pila (1 lastra = 2 pezzi, minimo 1 se c'e' almeno un pezzo, tetto 24). Uguale in magazzino e nei laboratori. */
-export const lastre = (pezzi: number) => (pezzi > 0 ? Math.min(24, Math.max(1, Math.round(pezzi / 2))) : 0);
+export const lastre = (pezzi: number) => (pezzi > 0 ? Math.min(24, Math.max(1, Math.round(pezzi / 3))) : 0);
 
 /** Giorni fra oggi e la consegna (negativo = in ritardo), null se la riga non ha data. Date ISO 'YYYY-MM-DD'. */
 export function giorniAllaConsegna(consegna: string | null | undefined, oggi: string): number | null {

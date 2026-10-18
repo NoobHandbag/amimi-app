@@ -63,12 +63,12 @@ jobs:
       - name: loyalty-page generata dalla sorgente (quest audit Premia 2026-09-21, finding T25)
         shell: bash
         run: node supabase/functions/loyalty-page/build.mjs --check
-      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate, colori del tema, materie prime, domini del team)
+      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate, colori del tema, materie prime, domini del team, Paillettes)
         shell: bash
         run: |
           set -eo pipefail
           fail=0
-          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/lead_outreach_guardie.mjs tests/arrivo_adesso.mjs tests/snapshot_drive_mensile.mjs tests/ce_compenso_soci.mjs tests/tema_colori_guardie.mjs tests/mat_guardie.mjs tests/dominio_team.mjs; do
+          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/lead_outreach_guardie.mjs tests/arrivo_adesso.mjs tests/snapshot_drive_mensile.mjs tests/ce_compenso_soci.mjs tests/tema_colori_guardie.mjs tests/mat_guardie.mjs tests/dominio_team.mjs tests/villaggio_paillettes.mjs tests/paillettes_guardie.mjs; do
             echo "== $t"
             node "$t" || { echo "::error::suite KO: $t"; fail=1; }
           done
@@ -86,6 +86,12 @@ jobs:
           npm ci
           npm run build
           npm run lint
+      # Villaggio (18-10, CASI_APERTI n.40 a): DOPO npm ci e la build, perche' la suite prova impasta() sul three.js vero di
+      # web/node_modules e controlla che dist/index.html carichi l'ingresso dichiarato da dist/version.json (senza, quelle
+      # parti si saltano con una nota e la suite resta verde).
+      - name: Suite del Villaggio (catalogo, modello dai dati, cinture sul sorgente, impasta su three.js, version.json)
+        shell: bash
+        run: node tests/villaggio_catalogo.mjs
       # E2E di Negozi (15-10, rinuncia (a) del gate Fable sul cruscotto B2B, CASI_APERTI n.37): le spec
       # web/e2e/negozi-*.spec.ts girano su dati finti, perche' ogni richiesta a *.supabase.co e' intercettata dalla spec.
       # La build per gli e2e punta a un progetto INESISTENTE (un ref con i trattini non puo' essere reale): una spec
@@ -105,6 +111,37 @@ jobs:
           set -eo pipefail
           npx vite build
           npx playwright test negozi
+
+  # E2E del Villaggio e delle Paillettes (18-10, CASI_APERTI n.40 a e n.42 a): job a parte, in parallelo a "offline",
+  # perche' la scena 3D senza GPU gira col WebGL software (SwiftShader) e le due spec durano un quarto d'ora. Dati finti
+  # come Negozi: ogni richiesta a *.supabase.co e' intercettata dalla spec e la build punta a un progetto inesistente.
+  # Le spec si nominano SEMPRE col percorso: il filtro nudo "villaggio" prenderebbe ogni spec in una cartella che si
+  # chiama villaggio, compresa ingest.spec.ts, che legge e scrive dal vivo con un login.
+  e2e-villaggio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Dipendenze e browser (Playwright, solo chromium)
+        shell: bash
+        working-directory: web
+        run: |
+          set -eo pipefail
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: E2E del Villaggio e delle Paillettes su dati finti (build verso un progetto Supabase finto)
+        shell: bash
+        working-directory: web
+        env:
+          VITE_SUPABASE_URL: https://e2e-progetto-finto.supabase.co
+          VITE_SUPABASE_ANON_KEY: sb_publishable_e2e_finto
+        run: |
+          set -eo pipefail
+          npx vite build
+          npx playwright test e2e/villaggio.spec.ts e2e/paillettes.spec.ts
 
   # Invarianti in SOLA LETTURA sulle viste di produzione con la chiave PUBBLICA (gia' nel bundle
   # e in uptime.yml). Separato e non bloccante: dipende dalla rete e dai 504 di PostgREST
