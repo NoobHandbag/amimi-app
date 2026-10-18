@@ -332,5 +332,70 @@ console.log('\n== migr 0165: interruttore ==');
   t('99 controllo a fine migrazione con RAISE', /raise exception '0165: push_canale_guardie nato qui vale % invece di ntfy'/.test(MIG165) && /raise exception '0165: manca app_flags\.push_canale_guardie'/.test(MIG165));
 }
 
+// ==== ce-guard v11 (18-10-2026): ce_shopify_reconcile conta solo gli ordini nati prima dell'ora piena del giro ====
+// Il 17-10 alle 11:30 ce-guard contava Shopify fino ad ADESSO contro un DB fermo al sync delle 11:07: #1912, nato alle
+// 11:14:18, era su Shopify e non ancora nell'app, e il check e' diventato rosso per un'ora (falso allarme da tempi, 34
+// episodi nei primi 17 giorni di ottobre). Report: Cowork12/_CLAUDE_CODE_INBOX/REPORT_ntfy_429_e_riconciliazione_ordini_
+// 2026-10-17.md, proposta A. Qui si ritaglia il blocco PURE:ceguard-reconcile dal sorgente e lo si guida con ordini finti.
+console.log('\n== ce-guard: riconciliazione ordini fino all\'ora piena (v11) ==');
+{
+  const B = '// ==== PURE:ceguard-reconcile BEGIN ====', E = '// ==== PURE:ceguard-reconcile END ====';
+  const a = GUARD.indexOf(B), b = GUARD.indexOf(E);
+  t('103 il blocco PURE:ceguard-reconcile c\'e\' in ce-guard', a >= 0 && b > a);
+  let finestraReconcile = null;
+  if (a >= 0 && b > a) {
+    const dir = mkdtempSync(join(tmpdir(), 'amimi-reconcile-'));
+    const f = join(dir, 'reconcile.mjs');
+    writeFileSync(f, stripTypeScriptTypes(GUARD.slice(a + B.length, b)) + '\nexport { finestraReconcile };\n', 'utf8');
+    try { ({ finestraReconcile } = await import(pathToFileURL(f).href)); } finally { try { rmSync(dir, { recursive: true, force: true }); } catch { /* niente */ } }
+  }
+  if (finestraReconcile) {
+    const W = (now, y, m) => finestraReconcile(new Date(now), y, m);
+    const ms = (s) => Date.parse(s);
+    // il modello dei due conteggi: l'API conta min <= creato <= max (created_at_max e' incluso per Shopify), il DB conta
+    // gli ordini gia' entrati col sync e nati prima del cutoff (year/month UTC, come shopify-sync)
+    const conta = (w, ordini) => w.vuota ? { api: 0, db: 0 } : {
+      api: ordini.filter((o) => ms(o.creato) >= ms(w.min) && ms(o.creato) <= ms(w.max)).length,
+      db: ordini.filter((o) => o.nelDb && ms(o.creato) >= ms(w.min) && ms(o.creato) < ms(w.cutoff)).length,
+    };
+    // la finestra di prima (v10): API da inizio mese a fine mese, DB solo year/month
+    const contaPrima = (ordini) => ({ api: ordini.length, db: ordini.filter((o) => o.nelDb).length });
+    const GIRO = '2026-10-17T11:30:00Z';
+    const w = W(GIRO, 2026, 10);
+    t('104 giro delle 11:30 del 17-10: da inizio mese alle 10:59:59, cutoff 11:00', w.vuota === false && w.min === '2026-10-01T00:00:00Z'
+      && w.max === '2026-10-17T10:59:59Z' && w.cutoff === '2026-10-17T11:00:00Z', JSON.stringify(w));
+    const base = [{ creato: '2026-10-02T09:00:00Z', nelDb: true }, { creato: '2026-10-17T10:40:00Z', nelDb: true }];
+    const caso = [...base, { creato: '2026-10-17T11:14:18Z', nelDb: false }];
+    const c1 = conta(w, caso), p1 = contaPrima(caso);
+    t('105 il caso del 17-10: l\'ordine nato alle 11:14:18 e non ancora nel DB resta fuori dai due conti (prima: api = db + 1)',
+      c1.api === c1.db && c1.api === 2 && p1.api === p1.db + 1, JSON.stringify({ c1, p1 }));
+    const c2 = conta(w, [...base, { creato: '2026-10-17T11:00:00Z', nelDb: false }]);
+    t('106 un ordine nato alle 11:00:00 esatte e\' fuori da tutti e due (non riaccende l\'error)', c2.api === c2.db, JSON.stringify(c2));
+    const c3 = conta(w, [...base, { creato: '2026-10-17T10:59:59Z', nelDb: true }]);
+    t('107 uno nato alle 10:59:59 ed entrato col sync conta su tutti e due', c3.api === 3 && c3.db === 3, JSON.stringify(c3));
+    const c4 = conta(w, [...base, { creato: '2026-10-17T10:20:00Z', nelDb: false }]);
+    t('108 un ammanco vero resta visibile: un ordine delle 10:20 che il DB non ha -> api = db + 1', c4.api === c4.db + 1, JSON.stringify(c4));
+    const ws = W(GIRO, 2026, 9);
+    t('109 il mese prima e\' intero, fino all\'ultimo secondo', ws.vuota === false && ws.min === '2026-09-01T00:00:00Z' && ws.max === '2026-09-30T23:59:59Z', JSON.stringify(ws));
+    const cs = conta(ws, [{ creato: '2026-10-01T00:00:00Z', nelDb: false }, { creato: '2026-09-30T23:59:59Z', nelDb: true }]);
+    t('110 un ordine nato alle 00:00:00 del primo del mese non conta piu\' anche nel mese prima', cs.api === 1 && cs.db === 1, JSON.stringify(cs));
+    const nov = W('2026-11-01T00:30:00Z', 2026, 11), ott = W('2026-11-01T00:30:00Z', 2026, 10);
+    t('111 giro delle 00:30 del primo del mese: mese nuovo vuoto (0 = 0), quello prima intero',
+      nov.vuota === true && JSON.stringify(conta(nov, caso)) === '{"api":0,"db":0}' && ott.vuota === false && ott.max === '2026-10-31T23:59:59Z', JSON.stringify({ nov, ott }));
+    const gen = W('2027-01-01T00:30:00Z', 2027, 1), dic = W('2027-01-01T00:30:00Z', 2026, 12);
+    t('112 dicembre -> gennaio: dicembre fino al 31 alle 23:59:59, gennaio vuoto', gen.vuota && dic.min === '2026-12-01T00:00:00Z' && dic.max === '2026-12-31T23:59:59Z', JSON.stringify({ gen, dic }));
+    t('113 bordo dell\'ora: alle 00:59:59.999 il cutoff e\' 00:00, alle 01:00:00 e\' 01:00',
+      W('2026-10-18T00:59:59.999Z', 2026, 10).cutoff === '2026-10-18T00:00:00Z' && W('2026-10-18T01:00:00Z', 2026, 10).cutoff === '2026-10-18T01:00:00Z');
+  } else t('104-113 comportamento della finestra non provato: blocco assente o non caricabile', false);
+  const RUN8 = GUARD.slice(GUARD.indexOf('// 8) riconciliazione ESTERNA Shopify'), GUARD.indexOf("add('ce_shopify_token'"));
+  t('114 la finestra si calcola per ogni mese del ciclo', /for \(const \[y, m\] of months\) \{\s*const w = finestraReconcile\(now, y, m\);/.test(RUN8));
+  t('115 finestra vuota: 0 = 0 contato e nessuna chiamata (il continue sta prima della fetch)',
+    /if \(w\.vuota\) \{ shopifyChecked\+\+; continue; \}/.test(RUN8) && RUN8.indexOf('if (w.vuota)') >= 0 && RUN8.indexOf('if (w.vuota)') < RUN8.indexOf('await fetch('));
+  t('116 l\'API Shopify riceve gli estremi della finestra', /created_at_min=\$\{w\.min\}&created_at_max=\$\{w\.max\}/.test(RUN8) && !/created_at_max=\$\{to\}/.test(RUN8));
+  t('117 il conteggio DB e\' year/month piu\' created_at_shop < cutoff, sempre da read()',
+    /read\(`shopify_orders \$\{y\}-\$\{m\}`, await sb\.from\('shopify_orders'\)\.select\('\*', \{ count: 'exact', head: true \}\)\.eq\('year', y\)\.eq\('month', m\)\.lt\('created_at_shop', w\.cutoff\)\)/.test(RUN8));
+  t('118 l\'etichetta dice fino a che ora si e\' contato', /il corrente fino alle \$\{oraPiena\} UTC\)` \+ \(shopDetails/.test(GUARD));
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
