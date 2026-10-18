@@ -36,6 +36,11 @@
 // via push-api (tema `conti`), dietro app_flags.push_canale_guardie ('ntfy' | 'entrambi' | 'push', nasce 'ntfy'; a
 // push_enabled spento vale 'ntfy'). Cosa parte e quando l'avviso conta come consegnato: _shared/push.ts. Decisione,
 // titolo e testo invariati; lo stato si salva solo ad avviso consegnato. Guardie in tests/shopify_sync_guardie.mjs.
+// v11 (2026-10-18, OK di Dan in chat, proposta A del report _CLAUDE_CODE_INBOX/REPORT_ntfy_429_e_riconciliazione_ordini_
+// 2026-10-17.md): `ce_shopify_reconcile` confronta su tutti e due i lati solo gli ordini nati prima dell'ora piena del
+// giro. Prima contava Shopify fino ad ADESSO (:30) contro un DB fermo al sync delle :07: ogni ordine nato in quei 23
+// minuti accendeva un error per un'ora (34 volte nei primi 17 giorni di ottobre, due avvisi inutili ciascuno). Blocco
+// PURE:ceguard-reconcile, test in tests/shopify_sync_guardie.mjs (gira nella CI).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { APP_URL, canaleEffettivo, consegnaAvviso, inviaPush } from '../_shared/push.ts';
 import type { Canale, EsitoPush } from '../_shared/push.ts';
@@ -93,6 +98,24 @@ function gruppiParoleInvertite(codici: string[]): string[][] {
   return [...perChiave.values()].filter((s) => s.size > 1).map((s) => [...s].sort()).sort((a, b) => a[0].localeCompare(b[0]));
 }
 // ==== PURE:ceguard-doppi END ====
+
+// ==== PURE:ceguard-reconcile BEGIN ====
+// Finestra di `ce_shopify_reconcile` per il mese (y, m) nel giro delle `now`. cutoff = inizio dell'ora UTC del giro:
+// shopify-sync gira alle :07, quindi alle :30 il DB ha di sicuro tutti gli ordini nati prima dell'ora piena, e un
+// ammanco vero si vede lo stesso, al giro dopo. API: da inizio mese a min(fine mese, cutoff) MENO UN SECONDO, perche'
+// per Shopify `created_at_max` e' incluso mentre il DB conta `created_at_shop < cutoff` (Shopify ha i secondi interi:
+// senza il secondo in meno un ordine nato alle HH:00:00 esatte riaccenderebbe l'error). Finestra vuota (il giro delle
+// 00:30 del primo del mese): `vuota`, il confronto vale 0 = 0 senza chiamate. year/month di shopify_orders sono UTC.
+function finestraReconcile(now: Date, y: number, m: number) {
+  const ORA = 3600000;
+  const inizio = Date.UTC(y, m - 1, 1);
+  const fineMese = Date.UTC(y, m, 1);
+  const cutoff = Math.floor(now.getTime() / ORA) * ORA;
+  const limite = Math.min(fineMese, cutoff);
+  const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  return { vuota: limite <= inizio, min: iso(inizio), max: iso(limite - 1000), cutoff: iso(cutoff) };
+}
+// ==== PURE:ceguard-reconcile END ====
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -219,22 +242,23 @@ Deno.serve(async (req) => {
   };
   add('ce_drift_mesi_chiusi', 'Mesi CHIUSI i cui numeri sono cambiati' + (drifted.length ? ': ' + drifted.map(driftLabel).join(', ') : ''), drifted.length);
 
-  // 8) riconciliazione ESTERNA Shopify: count ordini mese corrente + precedente vs Admin API
+  // 8) riconciliazione ESTERNA Shopify: count ordini mese corrente + precedente vs Admin API, nati prima dell'ora piena (v11)
   let shopifyChecked = 0, shopifyMismatch = 0, shopifyErr = 0; const shopDetails: string[] = [];
+  const cm = now.getUTCMonth() + 1;
+  const oraPiena = finestraReconcile(now, YEAR, cm).cutoff.slice(11, 16);
   if (cfg.shopify_token) {
     const months: [number, number][] = [];
-    const cm = now.getUTCMonth() + 1;
     months.push([YEAR, cm]);
     months.push(cm === 1 ? [YEAR - 1, 12] : [YEAR, cm - 1]);
     for (const [y, m] of months) {
-      const from = `${y}-${String(m).padStart(2, '0')}-01T00:00:00Z`;
-      const to = m === 12 ? `${y + 1}-01-01T00:00:00Z` : `${y}-${String(m + 1).padStart(2, '0')}-01T00:00:00Z`;
+      const w = finestraReconcile(now, y, m);
+      if (w.vuota) { shopifyChecked++; continue; }  // nessun ordine puo' essere nato in una finestra vuota: 0 = 0
       try {
-        const r = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/orders/count.json?status=any&created_at_min=${from}&created_at_max=${to}`,
+        const r = await fetch(`https://${SHOP}.myshopify.com/admin/api/2024-01/orders/count.json?status=any&created_at_min=${w.min}&created_at_max=${w.max}`,
           { headers: { 'X-Shopify-Access-Token': cfg.shopify_token } });
         if (!r.ok) { shopifyErr++; continue; }  // NON ingoiare: un token morto deve accendere ce_shopify_token (A10)
         const apiCount = (await r.json()).count ?? 0;
-        const dbRes = read(`shopify_orders ${y}-${m}`, await sb.from('shopify_orders').select('*', { count: 'exact', head: true }).eq('year', y).eq('month', m));
+        const dbRes = read(`shopify_orders ${y}-${m}`, await sb.from('shopify_orders').select('*', { count: 'exact', head: true }).eq('year', y).eq('month', m).lt('created_at_shop', w.cutoff));
         if (dbRes.error) continue;  // conteggio DB non letto: lo riporta ce_guard_letture; non e' un mismatch (10-09: "db=null") ne' un guasto del token Shopify
         const dbCount = dbRes.count;
         shopifyChecked++;
@@ -242,7 +266,7 @@ Deno.serve(async (req) => {
       } catch { shopifyErr++; }
     }
   } else { shopifyErr = 1; }
-  add('ce_shopify_reconcile', `Riconciliazione ordini vs Shopify API (${shopifyChecked} mesi)` + (shopDetails.length ? ': ' + shopDetails.join(', ') : ''), shopifyMismatch);
+  add('ce_shopify_reconcile', `Riconciliazione ordini vs Shopify API (${shopifyChecked} mesi, il corrente fino alle ${oraPiena} UTC)` + (shopDetails.length ? ': ' + shopDetails.join(', ') : ''), shopifyMismatch);
   // token/connessione Shopify: se l'API non risponde o il token e' assente/morto, l'intera pipeline
   // Shopify (sync ordini, stock, autopush) e' cieca ma tutti i cron restano verdi. Questo lo accende.
   add('ce_shopify_token', 'Chiamate Shopify fallite (token assente/scaduto o API giu)', shopifyErr);
