@@ -1207,7 +1207,7 @@ async function handle(req: Request): Promise<Response> {
       if (!vuota && data == null) return json({ error: `data di consegna non valida (${String(r.data_consegna)}): atteso YYYY-MM-DD` }, 422);
       // un id che non e' un uuid farebbe fallire la lettura intera: e' un id sconosciuto, si ignora come gli altri.
       // In minuscolo: Postgres risponde gli uuid in minuscolo, e la mappa si rilegge con l'id che torna dalla lettura
-      const id = String(r?.id ?? '').trim();
+      const id = String(r?.id ?? '').trim().toLowerCase();
       if (UUID.test(id)) chieste.set(id, { confermata: r.confermata === true, data });
     }
     // le righe che non tornano (altro fornitore, id sconosciuto) o gia' chiuse (tutto arrivato) si ignorano: si verifica

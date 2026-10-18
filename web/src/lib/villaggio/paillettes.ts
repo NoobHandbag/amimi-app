@@ -9,7 +9,7 @@
 export type TipoEvento = 'presenza' | 'ordine' | 'arrivo' | 'conta' | 'conta_completa' | 'verifica' | 'data_aggiunta';
 export type Evento = { tipo: TipoEvento; giorno: string; ts: string; ref: string; n: number };
 
-export const VALORI = { presenza: 6, settimanaPiena: 50, ordine: 20, rigaOrdine: 5, arrivo: 10, verifica: 50, conta: 2,
+export const VALORI = { presenza: 5, settimanaPiena: 50, ordine: 20, rigaOrdine: 5, arrivo: 10, verifica: 50, conta: 2,
   contaCompleta: 500, dataAggiunta: 15 } as const;
 
 // Tarati il 17-10 sugli eventi veri di Ginevra (02-09..16-10, taratura in tests/villaggio_paillettes.mjs): con una presenza
