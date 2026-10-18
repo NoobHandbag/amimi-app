@@ -160,7 +160,7 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   incoerenti fra ordini e magazzino; le righe d'ordine prendono l'aspetto dalla variante di magazzino con lo stesso
   codice. Ingressi: tile per Ale e Ginevra, "Tutte le azioni", `#villaggio`, bottone "Apri il Villaggio" nel
   Cruscotto, e app a se' `/amimi-app/villaggio/` (secondo ingresso Vite `web/villaggio/index.html`, logica in
-  `VillaggioApp.tsx`, manifest proprio con `id` e `scope` `/amimi-app/villaggio/`: non si contende i link con l'app
+  `VillaggioApp.tsx`, manifest proprio con `id` e `scope` `/amimi-app/villaggio/` e un'icona sua (il fienile sulla collina, nello stile della DA dashboard; scelta di Dan del 18-10): non si contende i link con l'app
   intera; installata, la Home apre l'app intera in una finestra sua). Chi scrive: nell'app intera si sceglie in Home e
   nel Villaggio si vede soltanto; nell'app a se' c'e' il menu "scrive" nell'HUD, salvato in `amimi_chi` (stesso valore
   dell'app intera nello stesso browser; su iPhone l'app installata ha uno storage suo; senza scelta, Ginevra).

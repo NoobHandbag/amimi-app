@@ -1547,6 +1547,11 @@ console.log('\n== cinture sull\'app a se\' (per Ginni): build, html, manifest ==
   t("manifest: scope del Villaggio diverso e piu' stretto di quello dell'app intera (i link dell'app restano all'app)",
     !!man && !!manApp && man.scope !== manApp.scope && String(man.scope).startsWith(String(manApp.scope)));
   for (const ic of man?.icons ?? []) t(`manifest: icona ${ic.src} esiste in web/public`, ic.src.startsWith('/amimi-app/') && existsSync(ROOT + 'web/public/' + ic.src.slice('/amimi-app/'.length)));
+  // 18-10, scelta di Dan: il Villaggio ha la sua icona (il fienile sulla collina), non quella dell'app intera
+  t("manifest: le icone del Villaggio sono sue (/amimi-app/villaggio/), con la maskable", !!man?.icons?.length
+    && man.icons.every((ic) => ic.src.startsWith('/amimi-app/villaggio/')) && man.icons.some((ic) => ic.purpose === 'maskable'));
+  t('villaggio/index.html: favicon e icona iPhone sono quelle del Villaggio', /<link rel="icon"[^>]*href="\/villaggio\/icon\.svg"/.test(HTML)
+    && /<link rel="apple-touch-icon" href="\/villaggio\/apple-touch-icon-180\.png"/.test(HTML));
 
   // l'ultima build, se c'e': version.json deve nominare il chunk che carica index.html (quello dell'app intera)
   const D = 'web/dist/';
