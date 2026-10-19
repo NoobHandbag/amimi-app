@@ -2,11 +2,16 @@
 // messaggi dei sei eventi, ora di Roma del riepilogo, registro e baseline, giro di un evento con scritture e invio finti),
 // piu' le guardie sul sorgente (PIN prima di tutto, anteprima solo con la chiave di servizio, NO-OP a flag spento, solo
 // gli eventi accesi, inviaPush e mai il ripiego su ntfy, .limit su ogni lettura, error destrutturato, nessun ritentativo
-// sulle scritture, nessuna colonna personale nelle select). Nessuna rete, nessun DB.
+// sulle scritture, nelle select solo le colonne ammesse). Nessuna rete, nessun DB.
 //   node tests/push_eventi_core.mjs
 // Perche' esiste (18-10, brief push_eventi_per_profilo): la edge manda notifiche vere ai telefoni del team a partire da
 // dati che contengono nomi, email e testi delle clienti. Un campo copiato per sbaglio nel testo, un registro che lascia
 // passare due volte la stessa chiave o un'ora di Roma sbagliata al cambio d'ora non si vedono finche' non succedono.
+// 19-10 (decisione di Dan, "RIMUOVI QUESTO. ANZI, DEVE DIRLO!!"): le push su una cliente (cs_urgente,
+// cs_cliente_ha_riscritto, spedizione_eccezione) DEVONO portare il suo nome, o l'email senza nome; tutto il resto della
+// riga (oggetto, snippet, riassunto, corpo, motivo dell'AI, stato_by, referente) resta fuori, e b2b, riepilogo e sistema
+// non portano dati delle clienti. Casi N1-N13 e autocontrolli AN1-AN2; N14-N16 dalla Gate 2 del 19-10 (la notizia della
+// spedizione prima del nome, senza nome i testi del 18-10, un nome che e' un'email segue le regole dell'email).
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripTypeScriptTypes } from 'node:module';
@@ -30,7 +35,7 @@ const cut = (s, name) => {
 };
 for (const b of BLOCCHI) if (cut(SRC, b) === null) { console.error(`marcatori PURE:${b} non trovati in push-eventi`); process.exit(1); }
 const ESPORTA = ['APP_URL', 'LINK_ASSISTENZA', 'LINK_SALUTE', 'CHI_PERSONE', 'TEMA_EVENTO', 'temaDi', 'linkNegozio', 'ugualeCostante', 'flagVero', 'pulisci',
-  'plurale', 'euro', 'soglia', 'numeroOrdine', 'statoCorriere', 'partiRoma', 'offsetRomaMin', 'dataRoma', 'mezzanotteRoma', 'finestraRiepilogo',
+  'plurale', 'euro', 'soglia', 'numeroOrdine', 'statoCorriere', 'nomeCliente', 'TITOLO_MAX_PUSH', 'partiRoma', 'offsetRomaMin', 'dataRoma', 'mezzanotteRoma', 'finestraRiepilogo',
   'giorniLavorativiDopo', 'candB2b', 'msgB2b', 'candCsUrgente', 'msgCsUrgente', 'motivoFisso', 'MOTIVI_FISSI', 'candCsRiscritto', 'msgCsRiscritto',
   'candSpedizione', 'msgSpedizione', 'candCsSync', 'msgCsSync', 'durata', 'candRiepilogo', 'righeRiepilogo', 'msgRiepilogo', 'sommaOrdini', 'sommaCassa',
   'ordiniInRitardo', 'STALLO_MS', 'PRENOTATO_SCADUTO_MS', 'MAX_TENTATIVI', 'TETTO_INVII', 'serveBaseline', 'pianifica', 'statoDaEsito', 'esitoDaSalvare', 'eseguiPiano',
@@ -49,14 +54,18 @@ const ESPORTA_IMPURO = ['EVENTI', 'ORDINE', 'giroEvento', 'eseguiRun', 'anteprim
   'ScritturaFallita', 'causaDi', 'RILETTURA_CS_SYNC_MS', 'TEMPO_EVENTI_MS', 'SCADENZA_INVII_MS'];
 // fuori dal repo (come shopify_sync_guardie): una run interrotta non lascia un file da committare per sbaglio
 const TMP_DIR = mkdtempSync(join(tmpdir(), 'amimi-push-eventi-'));
-const TMP = join(TMP_DIR, 'pe.mjs'), TMP_I = join(TMP_DIR, 'pe_impuro.mjs');
+const TMP = join(TMP_DIR, 'pe.mjs'), TMP_I = join(TMP_DIR, 'pe_impuro.mjs'), TMP_P = join(TMP_DIR, 'push_payload.mjs');
 const PURI = BLOCCHI.map((b) => cut(SRC, b)).join('\n');
+// 19-10: il payload vero di push-api (blocco PURE push-payload, ritagliato dal suo sorgente) per misurare i titoli col nome
+const PAYLOAD_API = cut(PUSH_API, 'push-payload');
+if (PAYLOAD_API === null) { console.error('marcatori PURE:push-payload non trovati in push-api'); process.exit(1); }
 writeFileSync(TMP, stripTypeScriptTypes(`${PURI}\nexport { ${ESPORTA.join(', ')} };\n`), 'utf8');
 writeFileSync(TMP_I, stripTypeScriptTypes(`const inviaPush = (m) => globalThis.__invia(m);\n${PURI}\n${IMPURO}\nexport { ${[...ESPORTA, ...ESPORTA_IMPURO].join(', ')} };\n`), 'utf8');
-let M, MI;
-try { M = await import(pathToFileURL(TMP).href); MI = await import(pathToFileURL(TMP_I).href); } finally { try { rmSync(TMP_DIR, { recursive: true, force: true }); } catch { /* niente */ } }
+writeFileSync(TMP_P, stripTypeScriptTypes(`${PAYLOAD_API}\nexport { costruisciPayload, PAYLOAD_MAX, TITOLO_MAX };\n`), 'utf8');
+let M, MI, MP;
+try { M = await import(pathToFileURL(TMP).href); MI = await import(pathToFileURL(TMP_I).href); MP = await import(pathToFileURL(TMP_P).href); } finally { try { rmSync(TMP_DIR, { recursive: true, force: true }); } catch { /* niente */ } }
 const { APP_URL, LINK_ASSISTENZA, LINK_SALUTE, CHI_PERSONE, TEMA_EVENTO, temaDi, linkNegozio, ugualeCostante, flagVero, pulisci, plurale, euro, soglia, numeroOrdine,
-  statoCorriere, partiRoma, offsetRomaMin, dataRoma, mezzanotteRoma, finestraRiepilogo, giorniLavorativiDopo, candB2b, msgB2b, candCsUrgente, msgCsUrgente, motivoFisso,
+  statoCorriere, nomeCliente, TITOLO_MAX_PUSH, partiRoma, offsetRomaMin, dataRoma, mezzanotteRoma, finestraRiepilogo, giorniLavorativiDopo, candB2b, msgB2b, candCsUrgente, msgCsUrgente, motivoFisso,
   MOTIVI_FISSI, candCsRiscritto, msgCsRiscritto, candSpedizione, msgSpedizione, candCsSync, msgCsSync, durata, candRiepilogo, righeRiepilogo, msgRiepilogo, sommaOrdini,
   sommaCassa, ordiniInRitardo, STALLO_MS, PRENOTATO_SCADUTO_MS, MAX_TENTATIVI, TETTO_INVII, serveBaseline, pianifica, statoDaEsito, esitoDaSalvare, eseguiPiano,
   contaArrivi, RITARDO_LETTURA_MAX_MS, FINESTRA_RISCRITTO_MS, EVENTI_DI_STATO, baselineDi, chiusura, saluteGiro, conPrecedente, causaSicura, SEP_PRIMO } = M;
@@ -67,12 +76,18 @@ const T = (s) => Date.parse(s);
 const EM_DASH = String.fromCodePoint(0x2014);
 const EMOJI = String.fromCodePoint(0x1f600);
 const U1 = '3f2504e0-4f89-41d3-9a0c-0305e82c3301', U2 = '11111111-2222-4333-8444-555555555555', U3 = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-// dati personali di prova: nessuno deve arrivare in titolo, testo o url
-const PII = ['Maria Rossi', 'maria.rossi@example.com', 'Oggetto riservato', 'Snippet riservato', 'Corpo della risposta del negozio', 'matrimonio 27-07',
-  'Giulia Referente', '+39 333 1234567', 'Via Roma 1', 'Riassunto riservato', 'Mittente <x@y.it>'];
-const conPII = (extra) => ({ customer_name: PII[0], customer_email: PII[1], email: PII[1], subject: PII[2], snippet: PII[3], body_clean: PII[4], body_text: PII[4],
-  urgenza_motivo: PII[5], referente: PII[6], telefono: PII[7], indirizzo: PII[8], summary: PII[9], label: PII[10], nome_cliente: PII[0], ...extra });
+// dati personali di prova. Decisione di Dan del 19-10: il nome della cliente (customer_name) o, senza nome, la sua email
+// (customer_email) DEVONO arrivare nel titolo di cs_urgente, cs_cliente_ha_riscritto e spedizione_eccezione (CLIENTE);
+// tutto il resto (PII) mai, in nessuna push. Le colonne finte `email` e `nome_cliente` hanno valori diversi: un nome preso
+// da un campo che non e' customer_name / customer_email si vede.
+const CLIENTE = 'Maria Rossi', CLIENTE_EMAIL = 'maria.rossi@example.com';
+const PII = ['Oggetto riservato', 'Snippet riservato', 'Corpo della risposta del negozio', 'matrimonio 27-07', 'Giulia Referente', '+39 333 1234567',
+  'Via Roma 1', 'Riassunto riservato', 'Mittente <x@y.it>', 'esca@example.com', 'Nome Esca', 'Operatrice Esca'];
+const conPII = (extra) => ({ customer_name: CLIENTE, customer_email: CLIENTE_EMAIL, email: PII[9], subject: PII[0], snippet: PII[1], body_clean: PII[2], body_text: PII[2],
+  urgenza_motivo: PII[3], referente: PII[4], telefono: PII[5], indirizzo: PII[6], summary: PII[7], label: PII[8], nome_cliente: PII[10], stato_by: PII[11], ...extra });
 const perde = (msgs) => { const s = JSON.stringify(msgs.map((m) => [m.titolo, m.testo, m.url])); return PII.filter((p) => s.includes(p)); };
+// b2b, riepilogo, sistema e salute: nessun dato della cliente, nemmeno il nome
+const perdeTutto = (msgs) => { const s = JSON.stringify(msgs.map((m) => [m.titolo, m.testo, m.url])); return [CLIENTE, CLIENTE_EMAIL, ...PII].filter((p) => s.includes(p)); };
 const testoValido = (msgs) => msgs.every((m) => typeof m.titolo === 'string' && m.titolo && typeof m.testo === 'string' && m.testo && !m.titolo.includes(EM_DASH) && !m.testo.includes(EM_DASH) && m.url.startsWith(APP_URL));
 
 console.log('== base ==');
@@ -103,6 +118,24 @@ console.log('== base ==');
   t('12 statoCorriere: stati TWS veri tenuti (maiuscolo), il resto -> vuoto, al massimo 40', statoCorriere('indirizzo errato') === 'INDIRIZZO ERRATO'
     && statoCorriere('N. CIVICO MANCANTE/ERRATO') === 'N. CIVICO MANCANTE/ERRATO' && statoCorriere('RIFIUTATA DAL DESTINATARIO') === 'RIFIUTATA DAL DESTINATARIO'
     && statoCorriere('x <script>') === '' && statoCorriere('mail: a@b.it') === '' && statoCorriere('A'.repeat(60)).length === 40 && statoCorriere(null) === '');
+  // 19-10 (decisione di Dan): chi e' la cliente
+  const RLO = String.fromCodePoint(0x202e), ZWSP = String.fromCodePoint(0x200b), LRI = String.fromCodePoint(0x2066), NL = String.fromCodePoint(10);
+  t('N1 nomeCliente: il nome ripulito (a capo e controlli -> spazio, spazi compressi) e vince sull\'email', nomeCliente('  Maria' + NL + ' Rossi ', CLIENTE_EMAIL) === 'Maria Rossi'
+    && nomeCliente('Giulia', 'g@x.it') === 'Giulia' && nomeCliente('maria.rossi@example.com', 'altro@x.it') === 'maria.rossi@example.com');
+  const lungo = nomeCliente(EMOJI.repeat(30) + 'A'.repeat(50), null);
+  t('N2 nomeCliente: al massimo 60 punti di codice (emoji intere); caratteri di formato (direzione del testo, larghezza zero) tolti', Array.from(lungo).length === 60
+    && lungo.startsWith(EMOJI.repeat(30)) && nomeCliente('Maria' + RLO + ' Ros' + ZWSP + 'si' + LRI, null) === 'Maria Rossi' && nomeCliente(RLO + ZWSP, 'a@b.it') === 'a@b.it', lungo);
+  t('N3 nomeCliente: senza nome (vuoto, spazi, null, non stringa) l\'email, senza spazi ai lati e minuscola', nomeCliente('', ' Maria.Rossi@Example.COM ') === CLIENTE_EMAIL
+    && nomeCliente('   ', 'a@b.co.uk') === 'a@b.co.uk' && nomeCliente(null, 'x.y+z@dominio.it') === 'x.y+z@dominio.it' && nomeCliente(42, 'a@b.it') === 'a@b.it'
+    && nomeCliente(undefined, 'a'.repeat(75) + '@b.it') === 'a'.repeat(75) + '@b.it');
+  const noEmail = ['maria', 'a@b', '@b.it', 'a@', 'a@b.', 'a@.it', 'a b@c.it', 'a@b@c.it', 'a' + NL + '@b.it', 'a@b.it' + RLO, 'a'.repeat(76) + '@b.it', '', null, 42, { a: 1 }];
+  t('N4 nomeCliente: un\'email che non ha la forma di un\'email (o oltre 80 caratteri: tagliata non e\' piu\' un\'email), o niente -> vuoto', noEmail.every((v) => nomeCliente(null, v) === '')
+    && nomeCliente(null, null) === '', noEmail.filter((v) => nomeCliente(null, v) !== ''));
+  // C4 della Gate 2 del 19-10: 3 urgenti su 19 hanno come nome l'email stessa (il mittente senza nome)
+  const nomeEmail = [nomeCliente(' Maria.Rossi@Example.COM ', null), nomeCliente('a'.repeat(75) + '@b.it', null), nomeCliente('a'.repeat(76) + '@b.it', 'Altra@X.it'),
+    nomeCliente('a'.repeat(76) + '@b.it', null), nomeCliente('Maria' + RLO + '@Example.com', null)];
+  t('N16 nomeCliente: un nome che e\' un\'email segue le regole dell\'email (minuscola, intera fino a 80 anche oltre 60, oltre 80 scartata e vale l\'email della cliente)',
+    isDeepStrictEqual(nomeEmail, [CLIENTE_EMAIL, 'a'.repeat(75) + '@b.it', 'altra@x.it', '', 'maria@example.com']), nomeEmail);
 }
 
 console.log('\n== ora di Roma ==');
@@ -153,7 +186,8 @@ console.log('\n== candidati e messaggi (privacy) ==');
     && m[0].url === APP_URL + '#negozi/outreach/' + U2 && m[0].tema === 'negozi' && m[0].testo === 'In Negozi B2B: 1 risposta da gestire.' && !('chi' in m[0]), m);
   const m2 = msgB2b(c, {}, 0);
   t('23 b2b senza nome -> "Un negozio ha risposto"; nessun totale -> invito ad aprire la scheda', m2[0].titolo === 'Un negozio ha risposto' && m2[0].testo === 'Apri la scheda del negozio in Negozi B2B.');
-  t('24 b2b: nessun dato personale della riga (corpo, oggetto, referente, email) nel messaggio', perde(m).length === 0 && perde(m2).length === 0 && testoValido([...m, ...m2]), perde(m));
+  t('24 b2b: nessun dato personale della riga (corpo, oggetto, referente, email, nemmeno il nome di una cliente) nel messaggio', perdeTutto(m).length === 0 && perdeTutto(m2).length === 0
+    && testoValido([...m, ...m2]), perdeTutto(m));
 
   // B1 (Gate 3 del 18-10): eta' da quando l'app ha visto la risposta (entro 72 ore dal messaggio), solo i tocchi del giro
   // automatico. Il caso Glitter del 14-10: risposta delle 16:33Z letta il giorno dopo alle 11:28Z (1.134 minuti).
@@ -182,29 +216,42 @@ console.log('\n== candidati e messaggi (privacy) ==');
     && cu[0].ts === T('2026-10-19T09:30:00Z') && cu[0].rif.conv === U1, cu);
   const conv = { [U1]: conPII({ id: U1, urgente: true, canale: 'email', stato: 'da_fare', categoria: 'Reso e rimborso', urgenza_motivo: 'matrimonio 27-07' }) };
   const mu = msgCsUrgente(cu, conv, 3);
-  t('26 cs_urgente: "Richiesta urgente: <categoria>", "3 urgenti aperte", #assistenza, urgente; il motivo dell\'AI NON entra', mu.length === 1 && mu[0].titolo === 'Richiesta urgente: Reso e rimborso'
-    && mu[0].testo === '3 urgenti aperte.' && mu[0].url === LINK_ASSISTENZA && mu[0].urgente === true && mu[0].tema === 'assistenza' && perde(mu).length === 0, mu);
+  t('26 cs_urgente (19-10): "Richiesta urgente da <nome della cliente>", categoria e "3 urgenti aperte" nel testo, #assistenza, urgente; il motivo dell\'AI, oggetto, snippet, riassunto e stato_by NON entrano',
+    mu.length === 1 && mu[0].titolo === 'Richiesta urgente da ' + CLIENTE && mu[0].testo === 'Reso e rimborso. 3 urgenti aperte.' && mu[0].url === LINK_ASSISTENZA && mu[0].urgente === true
+    && mu[0].tema === 'assistenza' && perde(mu).length === 0 && testoValido(mu), { mu, perde: perde(mu) });
   const fisso = msgCsUrgente(cu, { [U1]: { ...conv[U1], urgenza_motivo: 'rischio disputa' } }, 1);
-  t('27 cs_urgente: un motivo FISSO delle regole entra, tradotto; "1 urgente aperta"', fisso[0].testo === 'Rischio di contestazione del pagamento. 1 urgente aperta.', fisso[0]);
+  t('27 cs_urgente: categoria, poi un motivo FISSO delle regole, tradotto, poi "1 urgente aperta"', fisso[0].testo === 'Reso e rimborso. Rischio di contestazione del pagamento. 1 urgente aperta.', fisso[0]);
+  const senzaNome = msgCsUrgente(cu, { [U1]: { ...conv[U1], customer_name: '  ' } }, 1)[0], senzaEmail = msgCsUrgente(cu, { [U1]: { ...conv[U1], customer_name: null, customer_email: 'non-una-email' } }, 1)[0];
+  t('N5 cs_urgente senza nome -> l\'email della cliente nel titolo; senza nome ne\' email valida -> il titolo del 18-10 con la categoria; mai l\'email finta di un\'altra colonna',
+    senzaNome.titolo === 'Richiesta urgente da ' + CLIENTE_EMAIL && senzaEmail.titolo === 'Richiesta urgente: Reso e rimborso' && perde([senzaNome, senzaEmail]).length === 0, [senzaNome.titolo, senzaEmail.titolo]);
   t('28 motivoFisso: solo le quattro frasi delle regole, confronto esatto; nient\'altro (prototipo compreso)', Object.keys(MOTIVI_FISSI).length === 4
     && motivoFisso('2+ messaggi senza nostra risposta') !== '' && motivoFisso('thread riaperto (sollecito)') !== '' && motivoFisso('cliente in loco') !== ''
     && ['Rischio disputa', 'rischio disputa ', 'constructor', '__proto__', 'toString', 'matrimonio 27-07', null, 3].every((v) => motivoFisso(v) === ''));
   const nonPiu = [{ ...conv[U1], urgente: false }, { ...conv[U1], canale: 'rumore' }, { ...conv[U1], stato: 'fatto' }].map((v) => msgCsUrgente(cu, { [U1]: v }, 1).length);
   t('29 cs_urgente: conversazione non piu\' urgente, nel rumore, chiusa, o non letta -> nessun messaggio', nonPiu.every((n) => n === 0) && msgCsUrgente(cu, {}, 1).length === 0, nonPiu);
-  t('29b cs_urgente senza categoria e senza aperte -> "Richiesta urgente" e invito ad aprire', (() => { const x = msgCsUrgente(cu, { [U1]: { ...conv[U1], categoria: null } }, 0)[0]; return x.titolo === 'Richiesta urgente' && x.testo === 'Apri l\'Assistenza.'; })());
+  t('29b cs_urgente senza cliente, senza categoria e senza aperte -> "Richiesta urgente" e invito ad aprire; con la sola categoria -> nel titolo (18-10); col nome -> nel testo', (() => {
+    const v = { ...conv[U1], categoria: null, customer_name: null, customer_email: null };
+    const x = msgCsUrgente(cu, { [U1]: v }, 0)[0], y = msgCsUrgente(cu, { [U1]: { ...v, categoria: 'Reso' } }, 0)[0];
+    const z = msgCsUrgente(cu, { [U1]: { ...v, categoria: 'Reso', customer_name: CLIENTE } }, 0)[0];
+    return x.titolo === 'Richiesta urgente' && x.testo === 'Apri l\'Assistenza.' && y.titolo === 'Richiesta urgente: Reso' && y.testo === 'Apri l\'Assistenza.'
+      && z.titolo === 'Richiesta urgente da ' + CLIENTE && z.testo === 'Reso.';
+  })());
   // B2 (Gate 3 del 18-10): il sollecito su una conversazione chiusa da una persona esiste SOLO con stato 'fatto'
   const chiusa = { urgente: true, canale: 'email_diretta', stato: 'fatto', categoria: 'Riparazione' };
   const sol = (o) => msgCsUrgente(cu, { [U1]: { ...chiusa, ...o } }, 2);
   const solA = sol({ urgenza_motivo: 'thread riaperto (sollecito)', stato_by: 'Ginevra' });
   t('29c B2: chiusa a mano e riaperta dalla cliente -> push, che dice dove trovarla (Concluse); stato_by non entra nel testo', solA.length === 1
     && solA[0].titolo === 'Richiesta urgente: Riparazione' && solA[0].testo === 'Sollecito: ha riscritto dopo la chiusura (in Concluse). 2 urgenti aperte.' && !JSON.stringify(solA).includes('Ginevra'), solA);
+  const solB = sol({ urgenza_motivo: 'thread riaperto (sollecito)', stato_by: 'Ginevra', customer_name: 'Ginevra Bianchi' });
+  t('N6 B2 col nome: il titolo porta il nome della CLIENTE, stato_by (chi del team ha chiuso) mai', solB[0]?.titolo === 'Richiesta urgente da Ginevra Bianchi'
+    && !solB[0].testo.includes('Ginevra') && JSON.stringify(solB).split('Ginevra').length === 2, solB);
   const nonSol = [sol({ urgenza_motivo: 'thread riaperto (sollecito)', stato_by: 'auto' }), sol({ urgenza_motivo: 'thread riaperto (sollecito)', stato_by: null }),
     sol({ urgenza_motivo: 'thread riaperto (sollecito)', stato_by: '  ' }), sol({ urgenza_motivo: 'matrimonio 27-07', stato_by: 'Ginevra' }),
     sol({ urgenza_motivo: '2+ messaggi senza nostra risposta', stato_by: 'Ginevra' }), sol({ urgenza_motivo: 'thread riaperto (sollecito)', stato_by: 'Ginevra', canale: 'rumore' })];
   t('29d B2: chiusa da sola (un "grazie" con cs_reopen_skip_closure), senza chi, altro motivo, nel rumore -> nessuna push', nonSol.every((x) => x.length === 0), nonSol.map((x) => x.length));
   const chat = (canale) => msgCsUrgente(cu, { [U1]: { ...conv[U1], canale, urgenza_motivo: '2+ messaggi senza nostra risposta' } }, 1)[0].testo;
-  t('29e C2: "2+ messaggi" in una chat_notifica (raffica di pochi minuti) non e\' un sollecito; in un\'email si\'', chat('chat_notifica') === '1 urgente aperta.'
-    && chat('email_diretta') === 'Sollecito: due o piu\' messaggi senza risposta. 1 urgente aperta.');
+  t('29e C2: "2+ messaggi" in una chat_notifica (raffica di pochi minuti) non e\' un sollecito; in un\'email si\'', chat('chat_notifica') === 'Reso e rimborso. 1 urgente aperta.'
+    && chat('email_diretta') === 'Reso e rimborso. Sollecito: due o piu\' messaggi senza risposta. 1 urgente aperta.');
 
   const rs = candCsRiscritto([conPII({ id: 123, conversation_id: U1, a: 'da_fare', at }), conPII({ id: 124, conversation_id: U1, a: 'fatto', at }),
     conPII({ id: '125', conversation_id: U2.toUpperCase(), a: 'da_fare', at: '2026-10-19T11:00:00Z' }), conPII({ id: 'x1', conversation_id: U1, a: 'da_fare', at: '2026-10-19T10:04:00Z' }),
@@ -218,9 +265,22 @@ console.log('\n== candidati e messaggi (privacy) ==');
   t('30b riaperture della stessa conversazione a 4 minuti: una chiave sola; 4 ore dopo: un\'altra', raffica.length === 2 && raffica[1].ts === T('2026-10-07T09:38:00Z')
     && pianifica(raffica, new Map(), { ora: T('2026-10-07T13:12:00Z'), baseline: false, etaMaxMs: 6 * 3600000 }).filter((p) => p.azione === 'nuovo').length === 2, raffica);
   const mr = msgCsRiscritto(rs, { [U1]: conv[U1], [U2]: conPII({ canale: 'rumore', stato: 'da_fare', categoria: 'Altro' }) }, 2);
-  t('31 riscritto: "Una cliente ha riscritto: <categoria>", "2 richieste aspettano una risposta", conversazioni nel rumore fuori, niente dati personali',
-    mr.length === 1 && mr[0].titolo === 'Una cliente ha riscritto: Reso e rimborso' && mr[0].testo === '2 richieste aspettano una risposta.' && mr[0].url === LINK_ASSISTENZA
-    && mr[0].tema === 'assistenza' && perde(mr).length === 0, mr);
+  t('31 riscritto (19-10): "<nome della cliente> ha riscritto", categoria e "2 richieste aspettano una risposta" nel testo, conversazioni nel rumore fuori, nessun altro dato personale',
+    mr.length === 1 && mr[0].titolo === CLIENTE + ' ha riscritto' && mr[0].testo === 'Reso e rimborso. 2 richieste aspettano una risposta.' && mr[0].url === LINK_ASSISTENZA
+    && mr[0].tema === 'assistenza' && perde(mr).length === 0 && testoValido(mr), { mr, perde: perde(mr) });
+  const rsEmail = msgCsRiscritto(rs.slice(1), { [U1]: { ...conv[U1], customer_name: '', customer_email: 'Maria.Rossi@Example.com' } }, 0)[0];
+  const rsNessuno = msgCsRiscritto(rs.slice(1), { [U1]: { ...conv[U1], customer_name: null, customer_email: null, categoria: null } }, 1)[0];
+  t('N7 riscritto senza nome -> "<email> ha riscritto" (minuscola); senza nome ne\' email -> "Una cliente ha riscritto"; senza categoria ne\' attesa -> invito ad aprire',
+    rsEmail.titolo === CLIENTE_EMAIL + ' ha riscritto' && rsEmail.testo === 'Reso e rimborso.' && rsNessuno.titolo === 'Una cliente ha riscritto' && rsNessuno.testo === '1 richiesta aspetta una risposta.'
+    && msgCsRiscritto(rs.slice(1), { [U1]: { ...conv[U1], customer_name: null, customer_email: null, categoria: null } }, 0)[0].testo === 'Apri l\'Assistenza.', [rsEmail, rsNessuno]);
+  // C2 della Gate 2 del 19-10: la decisione chiede il nome, non un'altra impaginazione. Senza nome ne' email i testi sono
+  // quelli del 18-10 parola per parola (categoria nel titolo, testo senza categoria)
+  const anonima = { ...conv[U1], customer_name: null, customer_email: 'non-una-email' };
+  const v1 = [msgCsUrgente(cu, { [U1]: { ...anonima, urgenza_motivo: 'rischio disputa' } }, 1)[0], msgCsUrgente(cu, { [U1]: anonima }, 0)[0],
+    msgCsRiscritto(rs.slice(1), { [U1]: anonima }, 2)[0], msgCsRiscritto(rs.slice(1), { [U1]: anonima }, 0)[0]].map((m) => [m.titolo, m.testo]);
+  t('N15 senza nome ne\' email cs_urgente e riscritto restano quelli del 18-10: "Richiesta urgente: <categoria>", "Una cliente ha riscritto: <categoria>"', isDeepStrictEqual(v1, [
+    ['Richiesta urgente: Reso e rimborso', 'Rischio di contestazione del pagamento. 1 urgente aperta.'], ['Richiesta urgente: Reso e rimborso', 'Apri l\'Assistenza.'],
+    ['Una cliente ha riscritto: Reso e rimborso', '2 richieste aspettano una risposta.'], ['Una cliente ha riscritto: Reso e rimborso', 'Apri l\'Assistenza.']]), v1);
 
   const sp = candSpedizione([conPII({ ldv: 'ABC123/1', order_name: '1890', stato_tws: 'INDIRIZZO ERRATO', classe: 'eccezione', updated_at: at }),
     conPII({ ldv: 'ABC124', order_name: '#1891', stato_tws: 'CONSEGNATA', classe: 'consegnata', updated_at: at }),
@@ -231,10 +291,36 @@ console.log('\n== candidati e messaggi (privacy) ==');
   t('32b ogni chiave dei candidati e\' fatta di caratteri sicuri per un filtro .in() (niente spazi, virgole, parentesi, virgolette)', [...sp, ...candB2b(righe), ...candCsUrgente([{ conversation_id: U1, azione: 'classify', urgente: 'true', at }]),
     ...candCsSync({ severity: 'error', created_at: at }, T(at), 15), ...candRiepilogo({ aperta: true, data: '2026-10-19', ts: 0 })].every((x) => /^[A-Za-z0-9_.:/-]+$/.test(x.chiave)));
   const ms = msgSpedizione(sp, 3);
-  t('33 spedizione: "Spedizione #1890: INDIRIZZO ERRATO", radice dell\'app; ordine o stato non validi -> "problema del corriere"; mai il nome della cliente',
-    ms[0].titolo === 'Spedizione #1890: INDIRIZZO ERRATO' && ms[0].url === APP_URL && ms[0].tema === 'spedizioni' && ms[1].titolo === 'Spedizione: problema del corriere'
-    && ms[0].testo === 'Il corriere segnala un problema. 3 spedizioni con un problema negli ultimi 7 giorni.' && perde(ms).length === 0 && testoValido(ms), ms);
+  t('33 spedizione (19-10): "Spedizione #1890: INDIRIZZO ERRATO (<nome della cliente>)", radice dell\'app; ordine o stato non validi -> "problema del corriere"; nessun altro dato personale',
+    ms[0].titolo === `Spedizione #1890: INDIRIZZO ERRATO (${CLIENTE})` && ms[0].url === APP_URL && ms[0].tema === 'spedizioni' && ms[1].titolo === `Spedizione: problema del corriere (${CLIENTE})`
+    && ms[0].testo === 'Il corriere segnala un problema. 3 spedizioni con un problema negli ultimi 7 giorni.' && perde(ms).length === 0 && testoValido(ms), { ms, perde: perde(ms) });
   t('33b spedizione: una sola nella settimana -> testo senza totale', msgSpedizione(sp.slice(0, 1), 1)[0].testo === 'Il corriere segnala un problema su questa spedizione.');
+  // la vista non ha l'email: anche se una riga ne portasse una, non entra; senza nome niente parentesi
+  const spSenza = msgSpedizione(candSpedizione([conPII({ ldv: 'L9', order_name: '1890', stato_tws: 'INDIRIZZO ERRATO', classe: 'eccezione', updated_at: at, customer_name: null })]), 1);
+  t('N8 spedizione senza nome -> "Spedizione #1890: INDIRIZZO ERRATO", senza parentesi e mai l\'email', spSenza[0].titolo === 'Spedizione #1890: INDIRIZZO ERRATO'
+    && perdeTutto(spSenza).length === 0, spSenza);
+  // C1 della Gate 2 del 19-10: sul telefono chiuso il titolo e' una riga sola; il nome in mezzo spingeva lo stato fuori
+  const coppie = [['1890', 'INDIRIZZO ERRATO'], ['', 'DESTINATARIO ASSENTE'], ['123456789', 'N. CIVICO MANCANTE/ERRATO'], ['1891', 'nota: chiamare']].map(([o, s]) => {
+    const r = { ldv: 'L2', order_name: o, stato_tws: s, classe: 'eccezione', updated_at: at };
+    return [msgSpedizione(candSpedizione([{ ...r, customer_name: 'Anna Maria Bianchi Verdi' }]), 1)[0].titolo, msgSpedizione(candSpedizione([r]), 1)[0].titolo];
+  });
+  t('N14 spedizione: la notizia (ordine e stato del corriere) prima del nome, sempre; il titolo col nome = quello senza nome + " (<nome>)"',
+    coppie.every(([con, senza]) => con === `${senza} (Anna Maria Bianchi Verdi)`), coppie);
+  t('N9 il nome della cliente sta nel rif del candidato (per il titolo), mai nella chiave che finisce nel registro', sp[0].rif.cliente === CLIENTE
+    && [...sp, ...rs, ...cu].every((x) => !x.chiave.includes('Maria') && !x.chiave.includes('@')), sp.map((x) => x.chiave));
+  // push-api taglia il titolo a TITOLO_MAX punti di codice e il payload a PAYLOAD_MAX byte: coi nomi al massimo (emoji da 4
+  // byte) nessun titolo si taglia, lo stato del corriere resta intero e nessun testo prende i tre puntini
+  const NOME_MAX = EMOJI.repeat(70), STATO_MAX = 'A'.repeat(40);
+  const spMax = msgSpedizione(candSpedizione([{ ldv: 'L1', order_name: '123456789', stato_tws: STATO_MAX, classe: 'eccezione', updated_at: at, customer_name: NOME_MAX }]), 999)[0];
+  const convMax = { [U1]: { ...conv[U1], customer_name: NOME_MAX, categoria: EMOJI.repeat(50), urgenza_motivo: 'thread riaperto (sollecito)', stato: 'fatto', stato_by: 'Ale' } };
+  const peggiori = [spMax, msgCsUrgente(cu, convMax, 999)[0], msgCsRiscritto(rs.slice(1), { [U1]: { ...convMax[U1], stato: 'da_fare' } }, 999)[0],
+    msgCsUrgente(cu, { [U1]: { ...conv[U1], customer_name: null, customer_email: 'a'.repeat(75) + '@b.it' } }, 999)[0]];
+  const payload = peggiori.map((m) => { const p = MP.costruisciPayload(m); return { m, p, n: new TextEncoder().encode(p).length, j: JSON.parse(p).notification }; });
+  t('N10 titoli col nome al massimo: dentro TITOLO_MAX di push-api (stesso numero di TITOLO_MAX_PUSH), mai tagliati; spedizione: si accorcia il nome, lo stato resta intero; payload sotto PAYLOAD_MAX senza tagli',
+    TITOLO_MAX_PUSH === MP.TITOLO_MAX && MP.TITOLO_MAX === Number((PUSH_API.match(/const TITOLO_MAX = (\d+);/) ?? [])[1])
+    && Array.from(spMax.titolo).length === TITOLO_MAX_PUSH && spMax.titolo === `Spedizione #123456789: ${STATO_MAX} (${EMOJI.repeat(54)})`
+    && payload.every((x) => x.n < MP.PAYLOAD_MAX && x.j.title === x.m.titolo && x.j.body === x.m.testo && Array.from(x.m.titolo).length <= MP.TITOLO_MAX),
+    payload.map((x) => [x.n, Array.from(x.m.titolo).length, x.j.title === x.m.titolo, x.j.body === x.m.testo]));
 
   const ora = T('2026-10-19T12:00:00Z');
   const riga = (min, sev = 'ok') => conPII({ severity: sev, created_at: new Date(ora - min * 60000).toISOString(), label: 'giro fermato sul messaggio di Maria Rossi' });
@@ -251,7 +337,7 @@ console.log('\n== candidati e messaggi (privacy) ==');
   t('37 cs_sync: "Posta clienti ferma da 20 minuti / 70 minuti / 3 ore / 2 giorni", errore generico, #salute, urgente, mai la label',
     mcs[0].testo.startsWith('Posta clienti ferma da 20 minuti') && mcs[1].testo.startsWith('Posta clienti ferma da 70 minuti') && mcs[2].testo.startsWith('Posta clienti ferma da 3 ore')
     && mcs[3].testo.startsWith('Posta clienti ferma da 2 giorni') && mcs[4].titolo === 'Posta clienti in errore' && mcs.every((x) => x.url === LINK_SALUTE && x.urgente === true && x.tema === 'sistema')
-    && perde(mcs).length === 0 && !JSON.stringify(mcs).includes('Maria'), mcs.map((x) => x.testo));
+    && perdeTutto(mcs).length === 0 && !JSON.stringify(mcs).includes('Maria'), mcs.map((x) => x.testo));
   t('37b durata: 1 minuto, 119 minuti, 2 ore, 24 ore, 2 giorni', durata(1) === '1 minuto' && durata(119) === '119 minuti' && durata(120) === '2 ore' && durata(1440) === '24 ore' && durata(2880) === '2 giorni');
 }
 
@@ -285,6 +371,9 @@ console.log('\n== riepilogo ==');
   t('45 chi fuori dalle tre chiavi (Benny, Ginni, minuscolo) -> nessun messaggio, mai un riepilogo a tutti', msgRiepilogo([{ chiave: 'r', ts: 0, rif: { chi: 'Benny' } },
     { chiave: 'r2', ts: 0, rif: { chi: 'ginevra' } }, { chiave: 'r3', ts: 0, rif: {} }], C, 4, 48).length === 0);
   t('46 testo su piu\' righe (a capo fra le voci), niente em dash', msgRiepilogo(cr, C, 4, 48)[0].testo.split('\n').length === 4 && testoValido(msgRiepilogo(cr, C, 4, 48)));
+  const rDati = msgRiepilogo(cr, { ...C, daSpedire: [...C.daSpedire, CLIENTE, CLIENTE_EMAIL, PII[0]] }, 4, 48);
+  t('N11 il riepilogo serale non cambia col 19-10: nessun dato della cliente, nemmeno il nome (un nome al posto del numero d\'ordine non passa)',
+    rDati.length === 3 && perdeTutto(rDati).length === 0, perdeTutto(rDati));
   // B3 (Gate 3 del 18-10): arrivi al netto per riga d'ordine. 29-09: +10 e -10 sulla stessa riga (storno) piu' un +4
   t('46b B3: arrivi = righe d\'ordine con arrivo netto positivo (0 e negativi fuori, storno annullato, legacy con qty, riga vuota fuori)',
     contaArrivi([{ row_id: 'x', delta: 5 }, { row_id: 'y', delta: 0 }, { row_id: 'z', delta: -2 }, { row_id: 'w', qty: 3 }]) === 2
@@ -450,7 +539,7 @@ console.log('\n== salute del giro (PURE) ==');
   const PII_ERR = 'cs_events urgenti: Failing row contains (Maria Rossi, maria.rossi@example.com, #1890)';
   const er = sg({ cs_urgente: { errore: PII_ERR, causa: 'lettura cs_events urgenti' }, riepilogo: pulito }, 0, { cs_urgente: min(10) });
   t('S2 un evento in errore (lettura fallita) -> error; nella label il nome e la causa del CODICE, mai il messaggio di PostgREST', er.severity === 'error'
-    && er.label === '2 eventi accesi, 0 push inviate; in errore: cs_urgente (lettura cs_events urgenti)' && perde([{ titolo: er.label, testo: er.problema, url: '' }]).length === 0
+    && er.label === '2 eventi accesi, 0 push inviate; in errore: cs_urgente (lettura cs_events urgenti)' && perdeTutto([{ titolo: er.label, testo: er.problema, url: '' }]).length === 0
     && !er.label.includes('#1890') && er.problema === 'in errore: cs_urgente (lettura cs_events urgenti)', er);
   const er31 = sg({ cs_urgente: { errore: 'x', causa: 'lettura cs_events urgenti' } }, 0, { cs_urgente: min(31) });
   const erMai = sg({ cs_urgente: { errore: 'x', causa: 'causa: con "virgolette" e <tag>' } }, 0, {});
@@ -601,12 +690,13 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
     // cs_urgente
     [`cs_events select id, conversation_id, azione, at, urgente:dettaglio->>urgente in:azione|["classify","urgenza_ricalcolo"] eq:dettaglio->>urgente|true gte:at|${G} at:desc limit:50`]:
       { data: [{ id: 1, conversation_id: U1, azione: 'classify', at: '2026-10-19T16:50:00Z', urgente: 'true' }] },
-    [`cs_conversations select id, canale, categoria, urgente, urgenza_motivo, stato, stato_by in:id|["${U1}"] limit:2`]:
-      { data: [{ id: U1, canale: 'email_diretta', categoria: 'Reso', urgente: true, urgenza_motivo: 'rischio disputa', stato: 'da_fare', stato_by: null }] },
+    // 19-10 (decisione di Dan): nome ed email della cliente nella lettura delle conversazioni, nome in quella delle spedizioni
+    [`cs_conversations select id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email in:id|["${U1}"] limit:2`]:
+      { data: [{ id: U1, canale: 'email_diretta', categoria: 'Reso', urgente: true, urgenza_motivo: 'rischio disputa', stato: 'da_fare', stato_by: null, customer_name: 'Carla Bianchi', customer_email: 'carla@example.com' }] },
     'cs_conversations select id head eq:urgente|true neq:canale|rumore neq:stato|fatto': { count: 43 },
     // spedizione_eccezione
-    [`v_spedizioni_eccezioni select ldv, order_name, stato_tws, updated_at, classe eq:classe|eccezione gte:updated_at|${G} updated_at:desc limit:50`]:
-      { data: [{ ldv: 'L1', order_name: '1890', stato_tws: 'INDIRIZZO ERRATO', updated_at: '2026-10-19T16:00:00Z', classe: 'eccezione' }] },
+    [`v_spedizioni_eccezioni select ldv, order_name, stato_tws, updated_at, classe, customer_name eq:classe|eccezione gte:updated_at|${G} updated_at:desc limit:50`]:
+      { data: [{ ldv: 'L1', order_name: '1890', stato_tws: 'INDIRIZZO ERRATO', updated_at: '2026-10-19T16:00:00Z', classe: 'eccezione', customer_name: 'Carla Bianchi' }] },
     'v_spedizioni_eccezioni select ldv head eq:classe|eccezione gte:updated_at|2026-10-12T17:00:00.000Z': { count: 47 },
     // b2b_risposta_negozio (B1: chi auto e opt_out_da_verificare nella lettura, created_at per l'eta')
     [`lead_touches select id, account_id, direzione, esito, chi, at, created_at eq:direzione|in eq:chi|auto or:esito.is.null,esito.eq.opt_out_da_verificare gte:created_at|${G} created_at:desc limit:50`]:
@@ -616,8 +706,8 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
     // cs_cliente_ha_riscritto
     [`cs_events select conversation_id, at, a:dettaglio->>a eq:azione|stato_auto eq:dettaglio->>a|da_fare gte:at|${G} at:desc limit:50`]:
       { data: [{ conversation_id: U3, at: '2026-10-19T16:30:00Z', a: 'da_fare' }] },
-    [`cs_conversations select id, canale, categoria, urgente, urgenza_motivo, stato, stato_by in:id|["${U3}"] limit:2`]:
-      { data: [{ id: U3, canale: 'email_diretta', categoria: 'Spedizione', urgente: false, stato: 'da_fare' }] },
+    [`cs_conversations select id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email in:id|["${U3}"] limit:2`]:
+      { data: [{ id: U3, canale: 'email_diretta', categoria: 'Spedizione', urgente: false, stato: 'da_fare', customer_name: null, customer_email: 'Lucia.Verdi@Example.com' }] },
     'cs_conversations select id head eq:stato|da_fare eq:last_direction|in neq:canale|rumore': { count: 59 },
     // riepilogo: lunedi' 19-10 alle 19:00 di Roma (CEST), mezzanotte di Roma = 18-10 22:00Z
     'shopify_orders select gross_total gte:created_at_shop|2026-10-18T22:00:00.000Z limit:501': { data: [{ gross_total: 100 }, { gross_total: 50.4 }] },
@@ -650,10 +740,13 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
   const nonViste = Object.keys(LETTURE).filter((f) => !vista.has(f)), inattese = w.log.map(firma).filter((f) => !(f in LETTURE));
   t('Q1 F4: ogni lettura di ogni evento ha la firma attesa (tabella, colonne, filtri coi valori, ordine, limite): nessuna mancante, nessuna in piu\'',
     nonViste.length === 0 && inattese.length === 0 && w.scritte.length === 0, { nonViste, inattese, msgs });
-  t('Q2 cs_urgente: categoria, motivo fisso, il conteggio delle urgenti aperte nel testo', isDeepStrictEqual(msgs.cs_urgente, [['Richiesta urgente: Reso', 'Rischio di contestazione del pagamento. 43 urgenti aperte.', '']]), msgs.cs_urgente);
-  t('Q3 spedizione: ordine, stato, il conteggio della settimana', isDeepStrictEqual(msgs.spedizione_eccezione, [['Spedizione #1890: INDIRIZZO ERRATO', 'Il corriere segnala un problema. 47 spedizioni con un problema negli ultimi 7 giorni.', '']]), msgs.spedizione_eccezione);
+  t('Q2 cs_urgente: il nome della cliente nel titolo (19-10); categoria, motivo fisso, il conteggio delle urgenti aperte nel testo', isDeepStrictEqual(msgs.cs_urgente,
+    [['Richiesta urgente da Carla Bianchi', 'Reso. Rischio di contestazione del pagamento. 43 urgenti aperte.', '']]), msgs.cs_urgente);
+  t('Q3 spedizione: ordine, nome della cliente (19-10), stato, il conteggio della settimana', isDeepStrictEqual(msgs.spedizione_eccezione,
+    [['Spedizione #1890: INDIRIZZO ERRATO (Carla Bianchi)', 'Il corriere segnala un problema. 47 spedizioni con un problema negli ultimi 7 giorni.', '']]), msgs.spedizione_eccezione);
   t('Q4 b2b: nome commerciale e risposte da gestire', isDeepStrictEqual(msgs.b2b_risposta_negozio, [['Glitter ha risposto', 'In Negozi B2B: 53 risposte da gestire.', '']]), msgs.b2b_risposta_negozio);
-  t('Q5 riscritto: categoria e richieste in attesa', isDeepStrictEqual(msgs.cs_cliente_ha_riscritto, [['Una cliente ha riscritto: Spedizione', '59 richieste aspettano una risposta.', '']]), msgs.cs_cliente_ha_riscritto);
+  t('Q5 riscritto: senza nome l\'email della cliente, minuscola, nel titolo (19-10); categoria e richieste in attesa nel testo', isDeepStrictEqual(msgs.cs_cliente_ha_riscritto,
+    [['lucia.verdi@example.com ha riscritto', 'Spedizione. 59 richieste aspettano una risposta.', '']]), msgs.cs_cliente_ha_riscritto);
   t('Q6 riepilogo: ogni numero sotto la sua voce (arrivi al netto B3, azioni scadute e follow-up pronti della Coda B4, affido dei soli 30 giorni B5, da spedire con fulfillment_status C5)',
     isDeepStrictEqual(msgs.riepilogo, [
       ['Riepilogo di oggi', 'Vendite: 2 ordini sul sito (150 EUR), 2 scontrini in cassa (150 EUR)\nFornitori: 2 arrivi registrati, 7 ordini registrati\nPremia: 11 contenuti da approvare\nTeam: 13 richieste ferme da oltre 24 ore, 17 azioni B2B scadute', 'Ale'],
@@ -712,14 +805,15 @@ console.log('\n== giro di un evento col client finto (F3, RF-4, RF-6, RF-3) ==')
 }
 
 console.log('\n== run col client finto: salute in health_log (K1, RF-2, B6, MIG-B1, RF-5, RF-6) ==');
-const runs = [], logRun = [];
+const runs = [], logRun = [], scritteRun = [], inviateRun = [];
 {
   const ORA_E = T('2026-10-18T22:30:00Z'), ctx = ctxDi(ORA_E), min = (m) => new Date(ORA_E - m * 60000).toISOString();
   const CS = `cs_events select id, conversation_id, azione, at, urgente:dettaglio->>urgente in:azione|["classify","urgenza_ricalcolo"] eq:dettaglio->>urgente|true gte:at|${new Date(ORA_E - 86400000).toISOString()} at:desc limit:50`;
-  const CONV = `cs_conversations select id, canale, categoria, urgente, urgenza_motivo, stato, stato_by in:id|["${U1}"] limit:2`;
-  const SPED = `v_spedizioni_eccezioni select ldv, order_name, stato_tws, updated_at, classe eq:classe|eccezione gte:updated_at|${new Date(ORA_E - 86400000).toISOString()} updated_at:desc limit:50`;
+  const CONV = `cs_conversations select id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email in:id|["${U1}"] limit:2`;
+  const SPED = `v_spedizioni_eccezioni select ldv, order_name, stato_tws, updated_at, classe, customer_name eq:classe|eccezione gte:updated_at|${new Date(ORA_E - 86400000).toISOString()} updated_at:desc limit:50`;
   const urgente = { data: [{ id: 1, conversation_id: U1, azione: 'classify', at: min(20), urgente: 'true' }], error: null };
-  const convOk = { data: [{ id: U1, canale: 'email_diretta', categoria: 'Reso', urgente: true, stato: 'da_fare' }], error: null };
+  // 19-10: la conversazione porta nome ed email della cliente; finiscono nella push e da nessun'altra parte (E14)
+  const convOk = { data: [{ id: U1, canale: 'email_diretta', categoria: 'Reso', urgente: true, stato: 'da_fare', customer_name: 'Carla Bianchi', customer_email: 'carla@example.com' }], error: null };
   const base = (f) => (f === CS ? { data: [], error: null } : f === SPED ? { data: [], error: null } : f.startsWith('cs_conversations select id head') ? { count: 1, error: null } : f === CONV ? convOk : undefined);
   const evCs = (o = {}) => evRiga('cs_urgente', { baseline_at: min(3000), ultimo_giro_at: min(5), ...o });
   const run = async (o = {}) => {
@@ -733,6 +827,8 @@ const runs = [], logRun = [];
     const corpo = await res.json();
     const hu = w.scritte.filter((s) => s.table === 'health_log');
     runs.push(corpo);
+    scritteRun.push(JSON.stringify(w.scritte));
+    inviateRun.push(...inviate.map((m) => m.titolo));
     return { w, corpo, status: res.status, hu, h: w.health };
   };
   const pulito = await run();
@@ -799,6 +895,9 @@ const runs = [], logRun = [];
   t('E13 RF-6: esito non registrato (chiusura su zero righe) -> error', chiusuraZero.h?.severity === 'error' && chiusuraZero.h?.label.includes('1 esito non registrato'), chiusuraZero.h);
   const tutte = JSON.stringify(runs) + JSON.stringify(logRun);
   t('E14 risposte e log del run: mai titolo o testo di una push (il testo degli errori resta in risposta e log, mai in health_log: E2)',!tutte.includes('Richiesta urgente') && !tutte.includes('Reso') && logRun.length >= 14);
+  const fuoriPush = tutte + scritteRun.join('');
+  t('N12 (19-10) il nome della cliente parte nella push (E3, E13) e non finisce mai in risposta, log, registro (prenotazioni, esiti, saltati) o health_log',
+    inviateRun.filter((x) => x === 'Richiesta urgente da Carla Bianchi').length >= 4 && !/Carla|Bianchi|carla@/i.test(fuoriPush) && scritteRun.length >= 14, inviateRun);
 }
 
 console.log('\n== anteprima col client finto ==');
@@ -877,8 +976,9 @@ const AMMESSE = {
   push_eventi: ['evento', 'tema', 'attivo', 'soglie', 'baseline_at', 'ultimo_giro_at'], push_eventi_inviati: ['id', 'chiave', 'stato', 'tentativi', 'updated_at'],
   'health_log:cs_sync': ['severity', 'created_at'], 'health_log:push_eventi': ['severity', 'label'],
   cs_events: ['id', 'conversation_id', 'azione', 'at', 'dettaglio->>urgente', 'dettaglio->>a'],
-  cs_conversations: ['id', 'canale', 'categoria', 'urgente', 'urgenza_motivo', 'stato', 'stato_by'],
-  v_spedizioni_eccezioni: ['ldv', 'order_name', 'stato_tws', 'updated_at', 'classe'],
+  // customer_name e customer_email dal 19-10 (decisione di Dan), e SOLO nelle due letture di LETTURE_CLIENTE (caso N13)
+  cs_conversations: ['id', 'canale', 'categoria', 'urgente', 'urgenza_motivo', 'stato', 'stato_by', 'customer_name', 'customer_email'],
+  v_spedizioni_eccezioni: ['ldv', 'order_name', 'stato_tws', 'updated_at', 'classe', 'customer_name'],
   lead_touches: ['id', 'account_id', 'direzione', 'esito', 'chi', 'at', 'created_at'], lead_accounts: ['id', 'nome'],
   v_lead_outreach: ['id'], v_lead_inbound: ['conv_id'], v_products_todo: ['codice'], loyalty_ugc: ['id'], shipping_status: ['ldv'],
   shopify_orders: ['gross_total', 'order_number', 'created_at_shop'], qromo_sales: ['order_id', 'prezzo'], change_log: ['id', 'row_id', 'after->>delta', 'after->>qty'],
@@ -896,6 +996,23 @@ const selectFuoriElenco = (s) => {
   }
   const tutte = (codice(s).match(/\.select\(/g) ?? []).length;
   if (viste !== tutte) out.push(`select fuori da una riga sb.from: ${tutte - viste}`);
+  return out;
+};
+// 19-10 (decisione di Dan): nome ed email della cliente si leggono in queste due select esatte e in nessun'altra (non nei
+// conteggi, non in altre tabelle), e si usano SOLO come argomenti di nomeCliente (nessun altro percorso verso il testo)
+const LETTURE_CLIENTE = [
+  "sb.from('cs_conversations').select('id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email').in('id', ids).limit(ids.length + 1)",
+  "sb.from('v_spedizioni_eccezioni').select('ldv, order_name, stato_tws, updated_at, classe, customer_name').eq('classe', 'eccezione')",
+];
+const USI_CLIENTE = [['nomeCliente(v.customer_name, v.customer_email)', 2], ['nomeCliente(r.customer_name, null)', 1]];
+const lettureCliente = (s) => {
+  const righe = righeSb(s).filter((l) => /customer_/.test(l));
+  const out = righe.filter((l) => !LETTURE_CLIENTE.some((x) => l.includes(x))).map((l) => 'lettura fuori elenco: ' + l.trim().slice(0, 120));
+  for (const x of LETTURE_CLIENTE) if (righe.filter((l) => l.includes(x)).length !== 1) out.push('lettura mancante o doppia: ' + x.slice(0, 60));
+  let resto = flat(codice(s));
+  for (const x of LETTURE_CLIENTE) resto = resto.split(x).join('');
+  for (const [uso, n] of USI_CLIENTE) { const k = resto.split(uso).length - 1; if (k !== n) out.push(`${uso}: ${k} invece di ${n}`); resto = resto.split(uso).join(''); }
+  if (/customer_/.test(resto)) out.push('customer_ fuori da nomeCliente: ' + (resto.match(/[^\n]*customer_[^\n]*/) ?? [''])[0].trim().slice(0, 120));
   return out;
 };
 const anteprimaSoloLettura = (s) => {
@@ -967,7 +1084,10 @@ t('82 nessun retryOnce attorno a insert/update/upsert/delete (Regola 20d)', sr.l
 t('83 scrive SOLO push_eventi_inviati, push_eventi e la SUA riga di salute in health_log (K1, Regola 19: telemetria propria), core in sola lettura',
   sf.length === 0 && righeSb(SRC).filter((l) => SCRITTURA.test(l)).length === 6 && righeSb(SRC).filter((l) => SCRITTURA.test(l) && l.includes("sb.from('health_log')")).length === 1, sf[0]);
 const sp = selectFuoriElenco(SRC);
-t('84 F5: ogni colonna letta sta nell\'elenco ammesso della sua tabella (mai cliente, email, oggetto, corpo, raw, label di cs_sync, *)', sp.length === 0, sp);
+t('84 F5: ogni colonna letta sta nell\'elenco ammesso della sua tabella (mai oggetto, snippet, riassunto, corpo, raw, label di cs_sync, *; nome ed email della cliente solo dove dice N13)', sp.length === 0, sp);
+const lc = lettureCliente(SRC);
+t('N13 (19-10) nome ed email della cliente: letti SOLO nella select delle conversazioni (customer_name, customer_email) e in quella delle spedizioni (customer_name), usati SOLO da nomeCliente',
+  lc.length === 0, lc);
 t('85 anteprima: solo letture (nessuna scrittura, nessun giro, nessun inviaPush), tutti gli eventi accesi o no', anteprimaSoloLettura(SRC));
 t('86 registro: prenotazione su UNIQUE (evento, chiave) con ignoreDuplicates, ripresa con confronto su stato e tentativi, esito sul proprio tentativo; nessun insert nudo', registroScritture(SRC));
 t('87 giroEvento: registro sulle chiavi dei candidati, piano, composizione SOLO per nuovo/ritenta, giro, poi ultimo_giro_at (e baseline_at)', giroComposto(SRC));
@@ -989,9 +1109,9 @@ t('89c RF-1: cs_sync riletta dopo 3 s solo se la prima lettura dice ferma, e dec
     && run92.indexOf("if (adesso() - inizio > TEMPO_EVENTI_MS)") < run92.indexOf('await giroEvento(') && SRC.includes('const FINESTRA_MS = 24 * 3600000;') && SRC.includes('const LIMITE = 50;')
     && (SRC.match(/soglia\(ev\.soglie, 'eta_max_ore', 6, 1, 48\)/g) ?? []).length === 2);
   t('93 config.toml: verify_jwt = false per push-eventi', /\n\[functions\.push-eventi\]\nverify_jwt = false\n/.test(CONFIG + '\n'));
-  t('94 lettura di cs_sync senza label; cs_events con il solo campo del dettaglio che serve; v_spedizioni_eccezioni senza customer_name',
+  t('94 lettura di cs_sync senza label; cs_events con il solo campo del dettaglio che serve; v_spedizioni_eccezioni con customer_name (19-10) e senza le altre colonne',
     SRC.includes(".from('health_log').select('severity, created_at').eq('k', 'cs_sync')") && SRC.includes("urgente:dettaglio->>urgente") && SRC.includes("a:dettaglio->>a")
-    && !/select\('[^']*\bdettaglio\b(?!->>)/.test(SRC) && SRC.includes(".from('v_spedizioni_eccezioni').select('ldv, order_name, stato_tws, updated_at, classe')"));
+    && !/select\('[^']*\bdettaglio\b(?!->>)/.test(SRC) && SRC.includes(".from('v_spedizioni_eccezioni').select('ldv, order_name, stato_tws, updated_at, classe, customer_name')"));
   const nessunEm = !SRC.includes(EM_DASH) && !PUSH_API.includes(EM_DASH);
   t('95 nessun em dash nei sorgenti nuovi', nessunEm);
 }
@@ -1134,9 +1254,12 @@ console.log('\n== autocontrollo dei rilevatori ==');
   t('A9 scrittura ritentata, anche su due righe -> vista', scrittureRitentate(pianta("const { error } = await sb.from('push_eventi').update(", "const { error } = await retryOnce(() => sb.from('push_eventi')\n    .update(")).length === 1);
   t('A10 scrittura su una tabella del core, o un\'altra scrittura di health_log -> vista', [pianta("const fine = new Date().toISOString();", "const fine = new Date().toISOString();\n  const { error: x } = await sb.from('cs_conversations').update({ stato: 'fatto' }).eq('id', ev.evento);"),
     pianta("const fine = new Date().toISOString();", "const fine = new Date().toISOString();\n  const { error: x } = await sb.from('health_log').upsert({ k: 'push_eventi' });")].every((s) => scrittureFuoriModulo(s).length === 1));
-  t('A11 select con customer_name, label di cs_sync, oggetto, *, raw di shopify_orders (F5), email_generica -> vista', [pianta("select('ldv, order_name, stato_tws, updated_at, classe')", "select('ldv, order_name, stato_tws, updated_at, classe, customer_name')"),
+  t('A11 select con stato_raw o customer_email delle spedizioni, oggetto o snippet delle conversazioni, label di cs_sync, oggetto, *, raw di shopify_orders (F5), email_generica -> vista', [
+    pianta("select('ldv, order_name, stato_tws, updated_at, classe, customer_name')", "select('ldv, order_name, stato_tws, updated_at, classe, customer_name, stato_raw')"),
+    pianta("select('ldv, order_name, stato_tws, updated_at, classe, customer_name')", "select('ldv, order_name, stato_tws, updated_at, classe, customer_name, customer_email')"),
+    pianta("stato_by, customer_name, customer_email')", "stato_by, customer_name, customer_email, subject')"), pianta("stato_by, customer_name, customer_email')", "stato_by, customer_name, customer_email, snippet')"),
     pianta("select('severity, created_at')", "select('severity, created_at, label')"), pianta("select('id, account_id, direzione, esito, chi, at, created_at')", "select('id, account_id, direzione, esito, chi, at, created_at, subject')"),
-    pianta("select('id, canale, categoria, urgente, urgenza_motivo, stato, stato_by')", "select('*')"), pianta(".from('shopify_orders').select('gross_total')", ".from('shopify_orders').select('gross_total, raw')"),
+    pianta("select('id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email')", "select('*')"), pianta(".from('shopify_orders').select('gross_total')", ".from('shopify_orders').select('gross_total, raw')"),
     pianta("select('id, nome')", "select('id, nome, email_generica')"), pianta("select('row_id, delta:after->>delta, qty:after->>qty')", "select('row_id, d:after')")].every((s) => selectFuoriElenco(s).length >= 1));
   t('A12 anteprima che scrive, invia o scrive la salute -> visto', [pianta("const partirebbe = piano.filter(", "await sb.from('push_eventi_inviati').upsert({ evento: nome });\n      const partirebbe = piano.filter("),
     pianta("const partirebbe = piano.filter(", "await eseguiPiano(piano, msgs, { invii: 1, scade: 0 }, depGiro(sb, nome, tema, Date.now));\n      const partirebbe = piano.filter("),
@@ -1172,11 +1295,25 @@ console.log('\n== autocontrollo dei rilevatori ==');
   ].every((s) => !rilettura(s)));
   // prova che i casi di privacy vedono davvero una fuga: un builder che copia l'oggetto nel testo
   const fuga = [{ chiave: 'k', titolo: 'x', testo: 'Oggetto riservato', url: APP_URL }];
-  t('A17 il controllo di privacy vede un campo personale nel testo', perde(fuga).length === 1);
+  const conNome = [{ chiave: 'k', titolo: CLIENTE + ' ha riscritto', testo: CLIENTE_EMAIL, url: APP_URL }];
+  t('A17 il controllo di privacy vede un campo personale nel testo; dal 19-10 il nome e l\'email della cliente li vede solo perdeTutto (b2b, riepilogo, sistema, salute)',
+    perde(fuga).length === 1 && perdeTutto(fuga).length === 1 && perde(conNome).length === 0 && perdeTutto(conNome).length === 2);
   // un motivo dell'AI che passasse il filtro: il caso 26 deve diventare rosso
   const motivoLibero = (v) => (typeof v === 'string' ? v : '');
   const ui = { titolo: 'x', testo: [motivoLibero('matrimonio 27-07'), '3 urgenti aperte'].join('. '), url: APP_URL };
   t('A18 un filtro dei motivi che lascia passare il testo dell\'AI viene visto dal controllo di privacy', perde([ui]).length === 1);
+  // 19-10: N13 vede nome ed email letti dove non servono (anche dove l'elenco F5 della tabella li ammette) o usati fuori da nomeCliente
+  t('AN1 nome o email della cliente in un conteggio, in un\'altra tabella, o una delle due letture cambiata -> vista', [
+    pianta(".from('cs_conversations').select('id', { count: 'exact', head: true }).eq('urgente', true)", ".from('cs_conversations').select('id, customer_name', { count: 'exact', head: true }).eq('urgente', true)"),
+    pianta(".from('v_spedizioni_eccezioni').select('ldv', { count: 'exact', head: true })", ".from('v_spedizioni_eccezioni').select('ldv, customer_name', { count: 'exact', head: true })"),
+    pianta("select('id, nome')", "select('id, nome, customer_name')"),
+    pianta("stato_by, customer_name, customer_email')", "stato_by, customer_name')"),
+  ].every((s) => lettureCliente(s).length >= 1));
+  t('AN2 nome o email della cliente usati fuori da nomeCliente (senza pulizia, email nella spedizione, email nel testo) -> visti', [
+    pianta('const cliente = nomeCliente(v.customer_name, v.customer_email);\n    const motivo', 'const cliente = pulisci(v.customer_name, 60);\n    const motivo'),
+    pianta('nomeCliente(r.customer_name, null)', 'nomeCliente(r.customer_name, r.customer_email)'),
+    pianta("const parti = [cliente ? cat : '', inAttesa", "const parti = [cliente ? cat : '', String(v.customer_email ?? ''), inAttesa"),
+  ].every((s) => lettureCliente(s).length >= 1));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);

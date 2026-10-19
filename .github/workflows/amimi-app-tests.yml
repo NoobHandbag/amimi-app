@@ -23,6 +23,8 @@ on:
       - "scripts/appsscript-snapshot/**"
       - "scripts/backup-full-check.mjs"
       - "web/src/**"
+      # web/public/sw.js e' il service worker delle notifiche, provato da tests/push_sw.mjs (19-10)
+      - "web/public/**"
       - "web/package.json"
       - "web/package-lock.json"
       - "web/e2e/**"
@@ -38,6 +40,8 @@ on:
       - "scripts/appsscript-snapshot/**"
       - "scripts/backup-full-check.mjs"
       - "web/src/**"
+      # web/public/sw.js e' il service worker delle notifiche, provato da tests/push_sw.mjs (19-10)
+      - "web/public/**"
       - "web/package.json"
       - "web/package-lock.json"
       - "web/e2e/**"
@@ -63,12 +67,12 @@ jobs:
       - name: loyalty-page generata dalla sorgente (quest audit Premia 2026-09-21, finding T25)
         shell: bash
         run: node supabase/functions/loyalty-page/build.mjs --check
-      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate, colori del tema, materie prime, domini del team, Paillettes)
+      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate, colori del tema, materie prime, domini del team, Paillettes, notifiche)
         shell: bash
         run: |
           set -eo pipefail
           fail=0
-          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/lead_outreach_guardie.mjs tests/arrivo_adesso.mjs tests/snapshot_drive_mensile.mjs tests/ce_compenso_soci.mjs tests/tema_colori_guardie.mjs tests/mat_guardie.mjs tests/dominio_team.mjs tests/villaggio_paillettes.mjs tests/paillettes_guardie.mjs; do
+          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/lead_outreach_guardie.mjs tests/arrivo_adesso.mjs tests/snapshot_drive_mensile.mjs tests/ce_compenso_soci.mjs tests/tema_colori_guardie.mjs tests/mat_guardie.mjs tests/dominio_team.mjs tests/villaggio_paillettes.mjs tests/paillettes_guardie.mjs tests/push_core.mjs tests/push_sw.mjs tests/push_eventi_core.mjs; do
             echo "== $t"
             node "$t" || { echo "::error::suite KO: $t"; fail=1; }
           done
@@ -97,11 +101,18 @@ jobs:
       # La build per gli e2e punta a un progetto INESISTENTE (un ref con i trattini non puo' essere reale): una spec
       # nuova che dimentica l'intercettazione fallisce e non arriva alla produzione. assistenza.spec.ts e
       # ingest.spec.ts leggono dal vivo con un login vero: restano fuori.
+      # Notifiche (19-10, owner in chat): e2e/notifiche.spec.ts gira qui con le stesse garanzie (intercetta ogni richiesta
+      # a *.supabase.co, push-api e' un server finto nella spec) e non ha bisogno di un service worker vero: la config li
+      # blocca (serviceWorkers 'block') e dove serve l'iscrizione la spec ne mette uno finto. Nominata SEMPRE col percorso,
+      # come le spec del Villaggio: un filtro nudo "notifiche" prenderebbe ogni spec futura col nome simile.
+      # Due chiamate, non una (19-10, Gate 2): playwright mette i filtri in OR, quindi con "negozi e2e/notifiche.spec.ts"
+      # una spec rinominata o spostata spariva in silenzio e il passo restava verde con l'altra (provato: 33 test, exit 0).
+      # Da sola una chiamata che non trova test esce con errore ("No tests found").
       - name: Browser per gli e2e (Playwright, solo chromium)
         shell: bash
         working-directory: web
         run: npx playwright install --with-deps chromium
-      - name: E2E di Negozi su dati finti (build verso un progetto Supabase finto)
+      - name: E2E di Negozi e delle Notifiche su dati finti (build verso un progetto Supabase finto)
         shell: bash
         working-directory: web
         env:
@@ -111,6 +122,7 @@ jobs:
           set -eo pipefail
           npx vite build
           npx playwright test negozi
+          npx playwright test e2e/notifiche.spec.ts
 
   # E2E del Villaggio e delle Paillettes (18-10, CASI_APERTI n.40 a e n.42 a): job a parte, in parallelo a "offline",
   # perche' la scena 3D senza GPU gira col WebGL software (SwiftShader) e le due spec durano un quarto d'ora. Dati finti
@@ -138,8 +150,11 @@ jobs:
         env:
           VITE_SUPABASE_URL: https://e2e-progetto-finto.supabase.co
           VITE_SUPABASE_ANON_KEY: sb_publishable_e2e_finto
+        # 19-10 (Gate 2): stessa trappola dei filtri in OR del passo e2e di "offline". Qui le due spec restano in una
+        # chiamata sola (durano un quarto d'ora e si dividono i worker), ma prima si controlla che esistano tutte e due.
         run: |
           set -eo pipefail
+          for f in e2e/villaggio.spec.ts e2e/paillettes.spec.ts; do test -f "$f" || { echo "::error::$f mancante: coi filtri in OR il passo resterebbe verde senza"; exit 1; }; done
           npx vite build
           npx playwright test e2e/villaggio.spec.ts e2e/paillettes.spec.ts
 
