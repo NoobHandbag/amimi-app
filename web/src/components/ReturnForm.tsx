@@ -24,7 +24,10 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { if (prod) { setSales(null); fetchSalesByCodice(prod.codice).then(setSales).catch(() => setSales([])); } }, [prod]);
+  // una lettura fallita si dice con "Riprova": come "nessuna vendita" spingeva verso il reso senza vendita (canale qromo)
+  const [salesErr, setSalesErr] = useState<string | null>(null);
+  const [rilettura, setRilettura] = useState(0);
+  useEffect(() => { if (prod) { setSales(null); setSalesErr(null); fetchSalesByCodice(prod.codice).then(setSales).catch((e: Error) => setSalesErr(e.message)); } }, [prod, rilettura]);
 
   const isCambio = motivo === 'Cambio';
   const canale = sale ? (sale.source === 'qromo' ? 'qromo' : 'online') : 'qromo';
@@ -71,7 +74,11 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
     <div>
       <button className="back" onClick={() => setProd(null)}>← {nm(prod)}</button>
       <p className="note">Quale vendita di <b>{nm(prod)}</b> è stata resa?</p>
-      {sales == null ? <p className="muted center">Carico vendite…</p>
+      {salesErr ? (
+          <div className="card center"><p className="err">Non riesco a leggere le vendite: {salesErr}</p>
+            <button className="chip" type="button" onClick={() => setRilettura((n) => n + 1)}>Riprova</button></div>
+        )
+        : sales == null ? <p className="muted center">Carico vendite…</p>
         : !sales.length ? (
           <div className="card muted center">Nessuna vendita recente trovata.
             <div style={{ marginTop: 10 }}><button className="chip" onClick={() => setSale({ source: 'qromo', id: '', data: oggi(), qty: 1, price: null, descr: 'Reso senza vendita collegata', ref: '' })}>Reso senza vendita →</button></div>

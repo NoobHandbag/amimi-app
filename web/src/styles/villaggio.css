@@ -277,6 +277,10 @@
 .vil .v-fum:focus-visible .v-fumb { outline: 3px solid var(--v-amber); outline-offset: 2px; }
 @keyframes v-fumin { 0% { opacity: 0; transform: scale(.3); } 100% { opacity: 1; transform: none; } }
 @media (max-width: 480px) {
+  /* le etichette dei capannoni (le sole senza v-mini, v-zone, v-wh) un filo piu' strette: a 375 px Vincenzo copriva la
+     coda di Sarte Milano e mezzo "!" */
+  .v-lbl:not(.v-mini):not(.v-zone):not(.v-wh) { padding-left: 5px; padding-right: 5px; }
+  .v-lbl:not(.v-mini):not(.v-zone):not(.v-wh) small { letter-spacing: -.2px; }
   .v-fumb { width: 32px; height: 32px; }
   .v-fumb svg { width: 20px; height: 20px; }
 }
@@ -300,6 +304,16 @@
 /* il segnaposto puo' stare piu' piccolo (lo zoom di Safari guarda il testo del campo): "pezzi" a 16 px si tagliava */
 .vil .v-form .qbox::placeholder, .vil .v-form .cbox::placeholder { font-size: 13px; }
 .vil .v-form .qbox { width: 54px; }
+/* stesse misure per cio' che ha la misura in linea: "Cambia" del ProductPicker (36 px), il passo +/- (42), intestazione
+   del carrello e totale (11 px); lo spazio in fondo all'intestazione largo quanto la X, cosi' "PEZZI" ed "EUR AL PEZZO"
+   stanno sopra le loro colonne */
+.vil .v-form .ds-btn { min-height: 44px !important; }
+.vil .v-form .stepbtn { width: 44px; }
+.vil .v-form .cart > .cartrow:first-child, .vil .v-form .carttot { font-size: 12px !important; }
+.vil .v-form .cartrow > span:last-child { width: 44px !important; flex: none; }
+/* la data per riga va a capo sotto "consegna" e prende tutta la larghezza: a 375 px, accanto, si leggeva solo "/2026" */
+.vil .v-form .cartinfo label:has(> input[type="date"]) { flex-direction: column; align-items: flex-start !important; }
+.vil .v-form .cartinfo input[type="date"] { width: 100%; max-width: none !important; }
 .vil .v-form .linkbtn { font-size: 12px !important; }
 /* la tastiera dell'iPhone: il pannello si appoggia sopra (variabili scritte dalla pagina con visualViewport) */
 .vil.kb .v-sheet.open { bottom: var(--v-kb, 0px); max-height: calc(var(--v-vvh, 100%) - 12px); padding-bottom: 0; }

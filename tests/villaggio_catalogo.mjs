@@ -734,8 +734,8 @@ console.log('\n== staFinendo(): vende, ha meno di 30 giorni di stock e nessuna r
     eq('tutte e due senza ordine: due codici, sempre una pila', [due[0].length, due[1].length], [2, 1]);
   }
   {
-    // la lettura di oggi (fetchOrdiniGruppi) non porta data_ultimo_arrivo: si ricava da data_consegna_display, ma solo se
-    // la riga non ha una consegna promessa (la vista la fa COALESCE(data_consegna, data_ultimo_arrivo))
+    // senza data_ultimo_arrivo nella lettura (fetchOrdiniGruppi lo legge dal 19-10: qui e' la rete di sicurezza di mossa())
+    // si ricava da data_consegna_display, ma solo se la riga non ha una consegna promessa (COALESCE della vista)
     const senza = (o) => { const { data_ultimo_arrivo, ...r } = o; return r; };
     eq('senza data_ultimo_arrivo e senza consegna: il display e\' l\'ultimo arrivo (01-10): viva', finendo(R, con(senza(verde('a', mossaIl('2026-06-01', '2026-10-01')))))[0], []);
     eq('senza data_ultimo_arrivo ma con consegna promessa: l\'arrivo non si vede, conta solo l\'ordine', finendo(R, con(senza(verde('a', mossaIl('2026-04-23', '2026-09-25', '2026-05-20')))))[0], ['LEA_BAG_COCCO_GREEN']);
@@ -830,8 +830,8 @@ console.log('\n== staFinendo() sui dati veri del 18-10 ==');
   eq('5 pile in avviso sono finite e nascoste dal modello: la bandierina non puo\' contare su dati.pile',
     [...codici].filter((c) => !m.dati.pile.some((p) => p.key === m.codeToPila.get(c))).sort(),
     ['AGATA_BAG_ROSE_PINK', 'ANNIE_BAG_SAMPLE', 'LEA_BAG_COCCO_BLUE', 'LEA_BAG_PONY_BAMBI', 'SOPHIE_BAG_SUEDE_BROWN']);
-  // la lettura di oggi della pagina (fetchOrdiniGruppi) non ha data_ultimo_arrivo: con il solo display COCCO_BLACK resta
-  // giusta (nessuna consegna promessa), i porta-carte con la consegna del 20-05 perdono l'arrivo del 25-09
+  // senza data_ultimo_arrivo (com'era la lettura della pagina fino al 18-10): con il solo display COCCO_BLACK resta giusta
+  // (nessuna consegna promessa), i porta-carte con la consegna del 20-05 perdono l'arrivo del 25-09
   const senzaUltimo = costruisci(gruppiDi(righe.map(({ data_ultimo_arrivo, ...r }) => r)), inv, OGGI3);
   const s2 = staFinendo(reorder, senzaUltimo, OGGI3).codici;
   eq('senza data_ultimo_arrivo nella lettura: in piu\' solo CREDIT_CARD_CASE_COCCO_GREEN (serve leggerlo in fetchOrdiniGruppi)', [...s2].filter((c) => !codici.has(c)), ['CREDIT_CARD_CASE_COCCO_GREEN']);
@@ -1410,7 +1410,23 @@ console.log("\n== cinture: la pagina della fase 3 (scheda della pila, verifica c
   t("useStorico: errore = messaggio, mai righe vuote; una lettura vecchia (scheda smontata) non scrive", /\.catch\(\(e: unknown\) => \{ if \(vivo\) setS\(\{ righe: null, errore: testoErrore\(e\) \}\); \}\);/.test(corpoSt) && /return \(\) => \{ vivo = false; \};/.test(corpoSt));
   t('useStorico per vendite, arrivi e conte della pila', ['fetchSalesByCodice', 'fetchPurchasesByCodice', 'fetchAdjustmentsByCodice'].every((f) => new RegExp('useStorico\\(codici, ' + f + '\\)').test(VIL)));
   t("sta finendo: Riordino letto con ordini e magazzino, un errore non ferma il villaggio e tiene l'ultima lettura buona",
-    /fetchReorder\(\)\.catch\(\(e: Error\) => e\)/.test(VIL) && /if \(Array\.isArray\(rio\)\) \{ riordino\.current = rio; setRioErr\(null\); \} else setRioErr\(rio\.message\);/.test(VIL) && conta(VIL, /riordino\.current = /) === 1);
+    /fetchReorder\(\)\.catch\(\(e: Error\) => e\)/.test(VIL) && /if \(Array\.isArray\(rio\)\) \{ riordino\.current = rio; setRioErr\(null\); \} else setRioErr\(testoErrore\(rio\)\);/.test(VIL) && conta(VIL, /riordino\.current = /) === 1);
+  {
+    // le letture della scheda della pila (19-10): l'errore si dice, le vendite fino a 300 righe per tabella, l'ultimo arrivo letto
+    const vend = ritaglia(API, 'export async function fetchSalesByCodice(', '\n}\n');
+    t("storico: fetchSalesByCodice legge 300 righe da qromo_sales e shopify_line_items e lancia su ciascuna delle tre letture",
+      conta(vend, /\.limit\(300\)/g) === 2 && !/\.limit\(40\)/.test(vend) && /if \(q\.error\) throw new Error\('vendite in negozio: '/.test(vend)
+      && /if \(s\.error\) throw new Error\('vendite online: '/.test(vend) && /if \(oe\) throw new Error\('ordini online: '/.test(vend));
+    t("storico: arrivi e rettifiche lanciano sull'errore invece di dare []",
+      /if \(error\) throw new Error\('arrivi: '/.test(ritaglia(API, 'export async function fetchPurchasesByCodice(', '\n}\n'))
+      && /if \(error\) throw new Error\('conte e rettifiche: '/.test(ritaglia(API, 'export async function fetchAdjustmentsByCodice(', '\n}\n')));
+    t('fetchOrdiniGruppi legge data_ultimo_arrivo (staFinendo: una riga che riceve arrivi e\' viva)', /data_consegna_display,data_ultimo_arrivo,/.test(ritaglia(API, 'export async function fetchOrdiniGruppi(', '\n}\n')));
+    const wa = ritaglia(API, 'export async function writeApi(', '\n}\n');
+    t("writeApi: un fetch fallito e' un esito incerto, mai \"niente e' stato salvato\"", /\} catch \{/.test(wa) && /throw new Error\('Connessione interrotta: non so se e\\' stato salvato\./.test(wa) && !/niente e\\' stato salvato/.test(wa));
+    const INV = read('web/src/pages/Inventory.tsx'), RES = read('web/src/components/ReturnForm.tsx');
+    t("Magazzino e Resi: una lettura fallita dello storico si dice (nessun .catch(() => setX([])))",
+      !/\.catch\(\(\) => set(Sales|Purch|Adjs)\(\[\]\)\)/.test(INV + RES) && conta(INV, /Non riesco a leggere/g) === 3 && /Non riesco a leggere le vendite/.test(RES) && /Riprova/.test(RES));
+  }
   t("sta finendo: un errore di v_reorder si dice nel Magazzino e nella scheda della pila (mai come \"niente finisce\")",
     conta(VIL, /\{rioErr && avvisoRiordini\(rioErr\)\}/) === 2 && /<SchedaPila key=\{Pi\.key\} pila=\{Pi\} finendo=\{finendo\} rioErr=\{rioErr\}/.test(VIL)
     && /const avvisoRiordini = \(e: string\) => <p className="v-errl" role="alert">Non riesco a leggere i riordini/.test(VIL));
@@ -1941,6 +1957,22 @@ console.log("\n== cinture su mondo.ts (fase 3): ambiente, fumetti, avvisi, pile 
   t('bandierine rifatte dopo ogni disposizione del magazzino', /\n    this\.disegnaAvvisi\(\);\n  \}$/.test(metodo('layoutWarehouse')));
   t('materiali e geometrie dell\'ambiente in keep e liberati in dispose', /for \(const x of this\.persistenti\(\)\) this\.keep\.add\(x\);/.test(metodo('allestisci')) && /for \(const x of this\.persistenti\(\)\) x\.dispose\(\);/.test(metodo('dispose')));
   // i conteggi delle cinture di prima non cambiano: la fase 3 non aggiunge sveglie, fusioni ne' tween senza ombre
+  // 19-10: il mare porta il colore del momento (la camera dall'alto vede il mare, non il cielo)
+  const luce = (m) => (new RegExp('  ' + m + ': \\{ cielo: 0x[0-9a-f]+, mare: (0x[0-9a-f]+),').exec(MONDO) ?? [])[1];
+  t('mare: setHex(L.mare) in illumina, materiale suo tenuto in persistenti, al tramonto diverso dal giorno',
+    /this\.mare\.color\.setHex\(L\.mare\);/.test(corpoIll) && /this\.vetri, this\.mare, this\.luceLamp/.test(metodo('persistenti'))
+    && /new THREE\.PlaneGeometry\(400, 400\), this\.mare,/.test(MONDO) && !!luce('tramonto') && !!luce('giorno') && luce('tramonto') !== luce('giorno'));
+  // 19-10: il fumetto sopra l'etichetta conta nell'ingombro (HUD, bordo) e l'etichetta piu' lontana sta sopra il fumetto davanti
+  const corpoUL = metodo('updateLabels');
+  t("fumetti: sopra l'etichetta (CSS), contati nell'ingombro e mai sotto l'HUD; etichette dei capannoni impilate per altezza",
+    /\.v-fum \{ position: absolute; left: 50%; bottom: 100%;/.test(CSS) && !/\.v-lbl\.con-fum \{/.test(CSS)
+    && /const sopra = a\.el\.classList\.contains\('con-fum'\) \? 40 : 0;/.test(corpoUL) && /y < hudB \+ 30 \+ sopra/.test(corpoUL)
+    && /t = y - \(a\.h \?\? 0\) - 4 - sopra/.test(corpoUL) && /if \(sopra && t < 0\) show = false;/.test(corpoUL)
+    && /if \(capannoni\.has\(a\)\) a\.el\.style\.zIndex = String\(Math\.max\(1, Math\.round\(h - y\)\)\);/.test(corpoUL));
+  t('moduli dentro il Villaggio: campi a 16 px e 44 px, solo sotto .vil .v-form; data per riga a 12 px nel modulo',
+    /\.vil \.v-form input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\), \.vil \.v-form select, \.vil \.v-form textarea \{ font-size: 16px; min-height: 44px; \}/.test(CSS)
+    && /\.vil \.v-form button, \.vil \.v-form \.chip, \.vil \.v-form \.datepick \{ min-height: 44px; \}/.test(CSS) && /\.vil \.v-form \.ds-btn \{ min-height: 44px !important; \}/.test(CSS)
+    && /gap: 6, fontSize: 12, color: 'var\(--ink-muted\)', marginTop: 4/.test(read('web/src/components/SupplierOrderForm.tsx')));
   eq('sveglia() resta in 8 posti, impasta in 9, ombre = false in 2', [conta(MONDO, /this\.sveglia\(\)/), conta(MONDO, /this\.impasta\(/), conta(MONDO, /\.ombre = false/)], [8, 9, 2]);
 }
 

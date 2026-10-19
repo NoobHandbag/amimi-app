@@ -32,8 +32,10 @@ export async function writeApi(action: string, payload: Record<string, unknown>,
       body: JSON.stringify({ action, payload, pin, chi, ...(force ? { force: true } : {}), ...(ctxId ? { ctx: ctxId } : {}) }),
     });
   } catch {
-    // fetch fallisce solo senza rete o con la richiesta interrotta: "Load failed" / "Failed to fetch" non dicono niente a chi usa l'app
-    throw new Error('Connessione assente: niente e\' stato salvato. Riprova quando c\'e\' rete.');
+    // fetch fallisce senza rete, ma anche quando la connessione cade DOPO l'invio (iPhone che manda l'app in background,
+    // edge che cade): la scrittura puo' essere gia' fatta, quindi l'esito e' incerto, come in leadApi.ts. "Load failed" e
+    // "Failed to fetch" non dicono niente a chi usa l'app; niente op_id (una persona sola): si controlla e poi si riprova
+    throw new Error('Connessione interrotta: non so se e\' stato salvato. Ricarica e controlla prima di riprovare.');
   }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {

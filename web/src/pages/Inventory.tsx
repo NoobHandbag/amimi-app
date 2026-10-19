@@ -23,10 +23,12 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
   const [sales, setSales] = useState<SaleRow[] | null>(null);
   const [purch, setPurch] = useState<PurchaseRow[] | null>(null);
   const [adjs, setAdjs] = useState<AdjustmentRow[] | null>(null);
+  // una lettura fallita si dice, mai come "Nessuna vendita" (dal 19-10 le tre letture lanciano invece di dare [])
+  const [errS, setErrS] = useState<string | null>(null), [errP, setErrP] = useState<string | null>(null), [errA, setErrA] = useState<string | null>(null);
   useEffect(() => {
-    fetchSalesByCodice(p.codice).then(setSales).catch(() => setSales([]));
-    fetchPurchasesByCodice(p.codice).then(setPurch).catch(() => setPurch([]));
-    fetchAdjustmentsByCodice(p.codice).then(setAdjs).catch(() => setAdjs([]));
+    fetchSalesByCodice(p.codice).then(setSales).catch((e: Error) => setErrS(e.message));
+    fetchPurchasesByCodice(p.codice).then(setPurch).catch((e: Error) => setErrP(e.message));
+    fetchAdjustmentsByCodice(p.codice).then(setAdjs).catch((e: Error) => setErrA(e.message));
   }, [p.codice]);
   // etichetta leggibile per le rettifiche: la conta deve VEDERSI (feedback 06-07 item 4)
   const adjLabel = (m: string | null) => {
@@ -54,7 +56,7 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
           </button>
         )}
         <section className="card"><h2>Acquisti{purch ? ` · ${purch.reduce((s, a) => s + Number(a.quantita), 0)} pz` : ''}</h2>
-          {purch == null ? <p className="muted center">…</p> : !purch.length ? <p className="muted center">Nessun acquisto registrato.</p> : (
+          {errP ? <p className="err center">Non riesco a leggere gli acquisti: {errP}</p> : purch == null ? <p className="muted center">…</p> : !purch.length ? <p className="muted center">Nessun acquisto registrato.</p> : (
             <div className="list">{purch.map((a) => (
               <div className="row" key={a.id}><div><div className="rt">{a.fornitore ?? '—'}</div>
                 <div className="rs">{a.data ?? ''}{a.costo_unitario != null ? ` · €${a.costo_unitario}/pz` : ''}</div></div>
@@ -62,6 +64,7 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
             ))}</div>
           )}
         </section>
+        {errA && <section className="card"><h2>Conte e rettifiche</h2><p className="err center">Non riesco a leggere le conte: {errA}</p></section>}
         {adjs != null && adjs.length > 0 && (
           <section className="card"><h2>Conte e rettifiche · {adjs.reduce((s, a) => s + Number(a.qty_delta), 0) >= 0 ? '+' : ''}{adjs.reduce((s, a) => s + Number(a.qty_delta), 0)} pz</h2>
             <div className="list">{adjs.map((a) => (
@@ -72,7 +75,7 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
           </section>
         )}
         <section className="card"><h2>Vendite{sales ? ` · ${sales.reduce((s, v) => s + Number(v.qty), 0)} pz` : ''}</h2>
-          {sales == null ? <p className="muted center">…</p> : !sales.length ? <p className="muted center">Nessuna vendita.</p> : (
+          {errS ? <p className="err center">Non riesco a leggere le vendite: {errS}</p> : sales == null ? <p className="muted center">…</p> : !sales.length ? <p className="muted center">Nessuna vendita.</p> : (
             <div className="list">{sales.map((s) => (
               <div className="row" key={s.source + s.id}><div><div className="rt">{s.source === 'qromo' ? '🏬 QROMO' : '🌐 Shopify'} · {s.descr}</div>
                 <div className="rs">{s.data ?? ''}{s.price != null ? ` · ${eur(s.price)}` : ''}{s.adminUrl ? <> · <a href={s.adminUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>apri su Shopify ↗</a></> : ''}</div></div>

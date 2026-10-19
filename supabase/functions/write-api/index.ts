@@ -605,7 +605,7 @@ async function handle(req: Request): Promise<Response> {
       .map((r) => `"${r.codice || r.item || '?'}": costo unitario non valido`);
     if (costoErrs.length) return json({ error: 'Righe non valide: ' + costoErrs.join(' · '), righe_non_valide: costoErrs }, 422);
     // v30: data_consegna, se data, e' una data vera e non precede l'ordine. Prima arrivava a Postgres com'era (un '' o
-    // '30/11/2026' tornavano come 400 grezzo); il modulo d'ordine lo controlla gia', Cowork e l'MCP no.
+    // '30/11/2026' tornavano come 400 grezzo); il modulo d'ordine lo controlla gia', una chiamata diretta (Cowork) no.
     const consegnaErrs = righe.filter((r) => r.data_consegna != null && r.data_consegna !== '' && !((isoDate(r.data_consegna) ?? '') >= dataOrdine))
       .map((r) => `"${r.codice || r.item || '?'}": consegna prevista non valida (${String(r.data_consegna)}): atteso YYYY-MM-DD, non prima dell'ordine`);
     if (consegnaErrs.length) return json({ error: 'Righe non valide: ' + consegnaErrs.join(' · '), righe_non_valide: consegnaErrs }, 422);

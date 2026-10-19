@@ -542,7 +542,7 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
       const [g, inv, rio] = await Promise.all([fetchOrdiniGruppi(), fetchInventory(), fetchReorder().catch((e: Error) => e)]);
       if (mia !== ultima.current) return;
       const m = costruisci(g, inv, oggi());
-      if (Array.isArray(rio)) { riordino.current = rio; setRioErr(null); } else setRioErr(rio.message);
+      if (Array.isArray(rio)) { riordino.current = rio; setRioErr(null); } else setRioErr(testoErrore(rio));
       const sf = riordino.current ? staFinendo(riordino.current, m, oggi()) : null;
       // le pile finite e senza niente in arrivo il villaggio non le disegna: quelle che stanno finendo si', con la bandierina
       if (sf) for (const k of sf.pile) if (!m.dati.pile.some((p) => p.key === k)) { const p = m.pile.get(k); if (p) m.dati.pile.push(p); }

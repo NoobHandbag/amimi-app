@@ -250,8 +250,8 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   ...", bottoni dei pannelli e della riga d'arrivo) e nessun testo sotto i 12 px nel Villaggio; campi a 16 px (Safari non
   ingrandisce); le stesse misure, solo sotto `.vil .v-form`, per i moduli di Ordini e Magazzino aperti nel Villaggio
   (passo 4 dell'ordine, giro di conta). Errori di rete in italiano: nel Villaggio "Sei senza rete o la rete non risponde",
-  e `writeApi` di lib/api.ts traduce un fetch fallito per tutti i moduli ("Connessione assente: niente e' stato salvato"),
-  al posto di "Load failed". Primo
+  e `writeApi` di lib/api.ts traduce un fetch fallito per tutti i moduli ("Connessione interrotta: non so se e' stato
+  salvato. Ricarica e controlla prima di riprovare": la connessione puo' cadere dopo l'invio), al posto di "Load failed". Primo
   avvio: dopo la presenza si rileggono solo gli eventi (`leggiEventi`, contatore suo), e i fumetti di Ginni in coda hanno
   "Salta". L'arrivo o la modifica scritti in una riga del laboratorio hanno la stessa guardia del modulo dell'ordine
   (`lascia()`: "Lasci la riga a meta'?", anche cambiando riga). *Isola che racconta*: `web/src/lib/villaggio/meteo.ts`
@@ -259,7 +259,8 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   (cache 30 minuti, errore = sereno, mai bloccante); la pagina chiama `Mondo.setAmbiente` all'apertura (subito, col meteo
   in cache), ogni 15 minuti a scheda visibile e al ritorno in primo piano. La camera dall'alto vede il mare e non il
   cielo, quindi il colore del momento lo porta anche il mare (`LUCI[momento].mare`): al tramonto rosato. Fumetti sopra
-  l'etichetta del capannone, al centro (a sinistra del nome allargavano l'etichetta e a 375 px si coprivano), dei laboratori con
+  l'etichetta del capannone, al centro (a sinistra del nome allargavano l'etichetta e a 375 px si coprivano; `updateLabels`
+  conta il fumetto nell'ingombro e mette l'etichetta piu' lontana sopra il fumetto di quella davanti), dei laboratori con
   fornitore (`Mondo.setFumetti`): cuore se verificato negli ultimi 3 giorni (anche con le date ancora passate), se no
   punto di domanda per righe senza data, orologio per righe oltre la data; il tocco apre la verifica di quel laboratorio
   (a Paillettes spente il laboratorio). La legenda "?" spiega bandierina arancio e fumetti.

@@ -651,9 +651,26 @@ for (const [nome, payload] of [
 
 console.log('\n== write-api v30: order_multi valida data_consegna ==');
 {
-  const OM = SRC.slice(SRC.indexOf("if (action === 'order_multi') {"), SRC.indexOf('const { data: prods, error: pe }', SRC.indexOf("if (action === 'order_multi') {")));
-  t("145 order_multi: data_consegna passa da isoDate e non precede l'ordine (422 prima di leggere il catalogo)",
-    OM.length > 0 && /const consegnaErrs = righe\.filter\(\(r\) => r\.data_consegna != null && r\.data_consegna !== '' && !\(\(isoDate\(r\.data_consegna\) \?\? ''\) >= dataOrdine\)\)/.test(OM) && /if \(consegnaErrs\.length\) return json\(.*, 422\);/.test(OM));
+  // il blocco senza commenti: un 422 messo dentro /* */ non deve passare per vero
+  const OM = SRC.slice(SRC.indexOf("if (action === 'order_multi') {"), SRC.indexOf('const { data: prods, error: pe }', SRC.indexOf("if (action === 'order_multi') {")))
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const ini = OM.indexOf('const consegnaErrs'), fin = OM.indexOf(', 422);', ini);
+  const BLOCCO = ini >= 0 && fin > ini ? OM.slice(ini, fin + 7) : '';
+  const TMPM = `${ROOT}tests/_order_multi_date.${process.pid}.tmp.ts`;
+  writeFileSync(TMPM, `import { isoDate } from '../supabase/functions/write-api/lib.ts';
+export function run(righe: any[], dataOrdine: string): any {
+  const json = (body: any, status = 200) => ({ status, body });
+${BLOCCO}
+  return null;
+}
+`, 'utf8');
+  let runM;
+  try { ({ run: runM } = await import(pathToFileURL(TMPM).href)); }
+  finally { try { unlinkSync(TMPM); } catch { /* niente */ } }
+  const esito = (dc) => { const r = runM([{ codice: 'LEA_BAG_ROSSO', qty_ordered: 2, data_consegna: dc }], '2026-10-10'); return r ? r.status : 'ok'; };
+  eq("145 order_multi (blocco vero): '' e null nessuna data, uguale all'ordine o dopo ok; '30/11/2026', '2026-02-30', un timestamp e prima dell'ordine 422",
+    BLOCCO ? ['', null, undefined, '2026-10-10', ' 2026-11-30 ', '30/11/2026', '2026-02-30', '2026-11-30T00:00:00Z', '2026-10-09'].map(esito) : 'blocco non trovato',
+    ['ok', 'ok', 'ok', 'ok', 'ok', 422, 422, 422, 422]);
   t("146 order_multi scrive la data normalizzata da isoDate ('' = nessuna data), mai la stringa com'arriva",
     /data_consegna: r\.data_consegna != null && r\.data_consegna !== '' \? isoDate\(r\.data_consegna\) : null,/.test(OM) && !/data_consegna: \(r\.data_consegna as string\)/.test(OM));
 }

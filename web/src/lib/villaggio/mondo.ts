@@ -1068,8 +1068,9 @@ export class Mondo {
     const dock = cand[0]; dock.y = 0;
     const anchor = this.addLabel('', new V3(sx, 6.4, sz), 'v-lbl', () => this.ev.onLab(data.key));
     anchor.cond = () => !(this.ctx && (this.ctx.type === 'wh' || this.ctx.type === 'lab'));
-    // il fumetto sta nell'etichetta del capannone, a sinistra del nome: sul telefono, a isola intera, un fumetto sopra
-    // l'artigiano finiva sotto l'etichetta. Il suo tocco (o Invio) apre la verifica e non arriva all'etichetta (onLab)
+    // il fumetto sta nell'etichetta del capannone, sopra il nome (classe con-fum, che updateLabels conta nell'ingombro):
+    // sul telefono, a isola intera, un fumetto sopra l'artigiano finiva sotto l'etichetta. Il suo tocco (o Invio) apre la
+    // verifica e non arriva all'etichetta (onLab)
     const suFumetto = (e: Event) => {
       if (!(e.target as Element | null)?.closest?.('.v-fum')) return;
       if (e instanceof KeyboardEvent && e.key !== 'Enter' && e.key !== ' ') return;
@@ -1798,13 +1799,17 @@ export class Mondo {
     // si nasconde solo l'etichetta che finirebbe sotto una pillola (a 1024x768 quella delle Paillettes copriva il Magazzino)
     const hudB = this.portrait && this.hudEl ? this.hudEl.offsetHeight + 4 : 0;
     const pillole = !this.portrait && this.hudEl ? [...this.hudEl.children].map((c) => c.getBoundingClientRect()).filter((r) => r.width > 0) : [];
+    const capannoni = new Set([...this.labs.values()].map((L) => L.anchor));
     for (const a of this.anchors) {
       let show = !!(a.cond ? a.cond(now) : true);
       let x = 0, y = 0;
+      // il fumetto di un capannone (con-fum) sta sopra l'etichetta, fuori dal suo riquadro: conta nell'ingombro, se no
+      // finisce sotto l'HUD (e il tocco apre la pillola) o fuori dallo schermo con l'etichetta ancora visibile
+      const sopra = a.el.classList.contains('con-fum') ? 40 : 0;
       if (show) {
         this.v3.copy(a.pos).project(this.camera);
         x = (this.v3.x + 1) / 2 * w; y = (1 - this.v3.y) / 2 * h;
-        if (!a.free && (this.v3.x < -1.05 || this.v3.x > 1.05 || this.v3.y < -1.05 || this.v3.y > 1.02 || y < hudB + 30)) show = false;
+        if (!a.free && (this.v3.x < -1.05 || this.v3.x > 1.05 || this.v3.y < -1.05 || this.v3.y > 1.02 || y < hudB + 30 + sopra)) show = false;
       }
       if (show && !a.free) {
         // misurata da visibile (nascosta darebbe 0); w = 0 dopo un cambio di testo la fa rimisurare
@@ -1812,12 +1817,16 @@ export class Mondo {
         const half = a.w / 2 + 8;
         x = Math.max(half, Math.min(w - half, x));
         // il riquadro sta sopra il punto, la punta scende di 11 px: 4 px di aria intorno
-        const l = x - a.w / 2 - 4, r = x + a.w / 2 + 4, t = y - (a.h ?? 0) - 4, b = y + 15;
+        const l = x - a.w / 2 - 4, r = x + a.w / 2 + 4, t = y - (a.h ?? 0) - 4 - sopra, b = y + 15;
+        if (sopra && t < 0) show = false;
         if (pillole.some((p) => l < p.right && r > p.left && t < p.bottom && b > p.top)) show = false;
       }
       if (a.el.hidden === show) a.el.hidden = !show;
       if (!show) continue;
       a.el.style.transform = 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) translate(-50%,-100%)';
+      // capannoni: l'etichetta piu' in alto sullo schermo (piu' lontana) sta sopra il fumetto di quella davanti, che se no
+      // ne prendeva i tocchi e apriva la verifica di un altro laboratorio (a 375 px Sarte Milano su Fiorella)
+      if (capannoni.has(a)) a.el.style.zIndex = String(Math.max(1, Math.round(h - y)));
     }
   }
 }
