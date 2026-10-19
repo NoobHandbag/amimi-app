@@ -24,11 +24,19 @@ export type Supplier = { name: string; kind: string | null };
 /** The single write path: PIN-checked Edge Function. Throws Error(message) on failure.
  *  force=true scavalca la protezione mesi chiusi (usarlo SOLO dopo conferma esplicita dell'utente). */
 export async function writeApi(action: string, payload: Record<string, unknown>, pin: string, chi: string, force = false) {
-  const r = await fetch(FN, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action, payload, pin, chi, ...(force ? { force: true } : {}), ...(ctxId ? { ctx: ctxId } : {}) }),
-  });
+  let r: Response;
+  try {
+    r = await fetch(FN, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action, payload, pin, chi, ...(force ? { force: true } : {}), ...(ctxId ? { ctx: ctxId } : {}) }),
+    });
+  } catch {
+    // fetch fallisce senza rete, ma anche quando la connessione cade DOPO l'invio (iPhone che manda l'app in background,
+    // edge che cade): la scrittura puo' essere gia' fatta, quindi l'esito e' incerto, come in leadApi.ts. "Load failed" e
+    // "Failed to fetch" non dicono niente a chi usa l'app; niente op_id (una persona sola): si controlla e poi si riprova
+    throw new Error('Connessione interrotta: non so se e\' stato salvato. Ricarica e controlla prima di riprovare.');
+  }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     const e = new Error(j.error || `Errore ${r.status}`) as Error & { closedMonth?: boolean; duplicato?: boolean };
@@ -240,13 +248,13 @@ export async function pullAds(pin: string, chi: string) {
 export { oggi } from './helpers';
 
 // ---------- FLOW 1: multi-bag supplier orders ----------
-export type OrdLine = Ordine & { nuovo_riordino: string | null; costo_unitario: number | null; data_consegna: string | null; data_consegna_display: string | null; wip?: boolean; note?: string | null };
+export type OrdLine = Ordine & { nuovo_riordino: string | null; costo_unitario: number | null; data_consegna: string | null; data_consegna_display: string | null; data_ultimo_arrivo?: string | null; wip?: boolean; note?: string | null };
 export type OrdGruppo = { gruppo: string; fornitore: string | null; data_ordine: string | null; righe: OrdLine[]; mancano: number; completo: boolean };
 
 export async function fetchOrdiniGruppi(): Promise<OrdGruppo[]> {
   const { data, error } = await supabase
     .from('v_ordini_arrivo')
-    .select('id,gruppo,codice,item,variant,fornitore,qty_ordered,qty_arrived,mancano,completo,nuovo_riordino,costo_unitario,data_consegna,data_consegna_display,data_ordine,image_url,wip,note')
+    .select('id,gruppo,codice,item,variant,fornitore,qty_ordered,qty_arrived,mancano,completo,nuovo_riordino,costo_unitario,data_consegna,data_consegna_display,data_ultimo_arrivo,data_ordine,image_url,wip,note')
     .order('data_ordine', { ascending: false });
   if (error) throw new Error(error.message);
   const byG = new Map<string, OrdGruppo>();
@@ -266,6 +274,18 @@ export async function fetchFornitoreProdotti(fornitore: string): Promise<FornPro
 
 export async function createOrderMulti(fornitore: string, dataOrdine: string, righe: Record<string, unknown>[], pin: string, chi: string) {
   return writeApi('order_multi', { fornitore, data_ordine: dataOrdine, righe }, pin, chi);
+}
+
+/** Tempo abituale dei laboratori (v_tempi_laboratori, migr 0167): giorni mediani fra data_ordine e primo arrivo negli
+ *  ultimi 365 giorni, solo per i fornitori con almeno 3 righe. Alimenta un suggerimento del modulo d'ordine e basta:
+ *  l'errore lancia come ogni lettura, e chi lo chiama nasconde il suggerimento (anche a vista non ancora applicata). */
+export type TempoLab = { fornitore: string; giorni_mediani: number; righe: number };
+export async function fetchTempiLaboratori(): Promise<TempoLab[]> {
+  const { data, error } = await supabase.from('v_tempi_laboratori').select('fornitore,giorni_mediani,righe');
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as { fornitore: string | null; giorni_mediani: number | string | null; righe: number | string | null }[])
+    .filter((r) => r.fornitore != null && r.giorni_mediani != null)
+    .map((r) => ({ fornitore: String(r.fornitore), giorni_mediani: Number(r.giorni_mediani), righe: Number(r.righe) || 0 }));
 }
 
 // ---------- FLOW 2: product-detail verification ----------
@@ -355,9 +375,12 @@ export const shopifyOrderUrl = (orderId: string | null | undefined): string | un
 
 export async function fetchSalesByCodice(codice: string): Promise<SaleRow[]> {
   const [q, s] = await Promise.all([
-    supabase.from('qromo_sales').select('id,data,quantita,prezzo,nome,cognome').eq('codice', codice).order('data', { ascending: false }).limit(40),
-    supabase.from('shopify_line_items').select('id,created_at,quantita,price,lineitem_name,order_id').eq('codice', codice).order('created_at', { ascending: false }).limit(40),
+    supabase.from('qromo_sales').select('id,data,quantita,prezzo,nome,cognome').eq('codice', codice).order('data', { ascending: false }).limit(300),
+    // created_at e' l'ora di import, non della vendita: con 40 righe i codici piu' venduti perdevano mesi interi (18-10)
+    supabase.from('shopify_line_items').select('id,created_at,quantita,price,lineitem_name,order_id').eq('codice', codice).order('created_at', { ascending: false }).limit(300),
   ]);
+  if (q.error) throw new Error('vendite in negozio: ' + q.error.message);
+  if (s.error) throw new Error('vendite online: ' + s.error.message);
   // resolve Shopify order customer names + REAL order date (feedback 06-07 item 9 + 22):
   // shopify_line_items.created_at e' il timestamp di import (tutto 07-01 per lo storico),
   // la data vera della vendita e' shopify_orders.created_at_shop.
@@ -365,7 +388,8 @@ export async function fetchSalesByCodice(codice: string): Promise<SaleRow[]> {
   const cust = new Map<string, string>();
   const odate = new Map<string, string>();
   if (oids.length) {
-    const { data: ords } = await supabase.from('shopify_orders').select('order_id, customer_name, created_at_shop').in('order_id', oids);
+    const { data: ords, error: oe } = await supabase.from('shopify_orders').select('order_id, customer_name, created_at_shop').in('order_id', oids);
+    if (oe) throw new Error('ordini online: ' + oe.message);
     (ords ?? []).forEach((o: { order_id: string; customer_name: string | null; created_at_shop: string | null }) => {
       if (o.customer_name) cust.set(o.order_id, o.customer_name);
       if (o.created_at_shop) odate.set(o.order_id, o.created_at_shop.slice(0, 10));
@@ -616,15 +640,17 @@ export async function fetchShopStockMap(): Promise<Map<string, number>> {
 }
 export type PurchaseRow = { id: string; data: string | null; quantita: number; costo_unitario: number | null; fornitore: string | null };
 export async function fetchPurchasesByCodice(codice: string): Promise<PurchaseRow[]> {
-  const { data } = await supabase.from('purchases').select('id,data,quantita,costo_unitario,fornitore')
+  const { data, error } = await supabase.from('purchases').select('id,data,quantita,costo_unitario,fornitore')
     .eq('codice_norm', cnorm(codice)).order('data', { ascending: false }).limit(60);
+  if (error) throw new Error('arrivi: ' + error.message);
   return (data ?? []) as PurchaseRow[];
 }
 // rettifiche stock (conte, cambi) per la scheda prodotto: il +1 da conta DEVE vedersi (item 4)
 export type AdjustmentRow = { id: string; data: string | null; qty_delta: number; motivo: string | null };
 export async function fetchAdjustmentsByCodice(codice: string): Promise<AdjustmentRow[]> {
-  const { data } = await supabase.from('stock_adjustments').select('id,data,qty_delta,motivo')
+  const { data, error } = await supabase.from('stock_adjustments').select('id,data,qty_delta,motivo')
     .eq('codice_norm', cnorm(codice)).order('data', { ascending: false }).limit(60);
+  if (error) throw new Error('conte e rettifiche: ' + error.message);
   return (data ?? []) as AdjustmentRow[];
 }
 
@@ -644,6 +670,12 @@ export const setArrival = (orderId: string, qty: number, attesi: number, data: s
 // cancella una riga ordine fornitore (item 10); il server blocca se ha arrivi registrati
 export const deleteOrder = (orderId: string, pin: string, chi: string) =>
   writeApi('order_delete', { order_id: orderId }, pin, chi);
+
+// corregge una riga d'ordine senza arrivi e non WIP (write-api v30 order_update) invece di cancellarla e rifarla. Vanno al
+// server solo i campi cambiati; null toglie il valore. Codice e fornitore non si toccano: per quelli resta cancella e rifai.
+export type RigaOrdineModifica = { qty_ordered?: number; costo_unitario?: number | null; note?: string | null; data_consegna?: string | null };
+export const aggiornaRigaOrdine = async (id: string, campi: RigaOrdineModifica, pin: string, chi: string) =>
+  (await writeApi('order_update', { id, ...campi }, pin, chi)) as unknown as { ok: boolean; id: string; cambiati: string[] };
 
 // archivio riordino (item 20): nasconde/ripristina un prodotto dalla lista riordino
 export const archiveReorder = (codice: string, archived: boolean, pin: string, chi: string) =>
@@ -880,10 +912,12 @@ export async function fetchVillaggioEventi(): Promise<Evento[]> {
 export async function segnaPresenza(chi: string) {
   return (await writeApi('villaggio_presenza', {}, 'x', chi)) as unknown as { ok: boolean; nuova: boolean; ignorata?: boolean };
 }
-export type VerificaRiga = { id: string; confermata: boolean; data_consegna: string | null };
-/** Verifica con il fornitore: conferma le righe aperte e mette o corregge le date di consegna (order_date nel change_log). */
+export type VerificaRiga = { id: string; confermata: boolean; data_consegna: string | null; chiudi?: boolean };
+/** Verifica con il fornitore: conferma le righe aperte e mette o corregge le date di consegna (order_date nel change_log).
+ *  Una riga con chiudi = true non arriva piu': il server ne chiude il residuo (order_close nel change_log, write-api v30). */
 export async function verificaFornitore(chi: string, payload: { fornitore: string; righe: VerificaRiga[]; nota?: string | null }) {
-  return (await writeApi('fornitore_verifica', payload, 'x', chi)) as unknown as { ok: boolean; check_id: string; date_cambiate: number };
+  // righe_chiuse arriva da write-api v30: con la v29 ancora in linea manca, e chiudi viene ignorato
+  return (await writeApi('fornitore_verifica', payload, 'x', chi)) as unknown as { ok: boolean; check_id: string; date_cambiate: number; righe_chiuse?: number };
 }
 /** Conta completa del mese, in fondo al giro di conta completo: `codici` = quanti ne ha contati in quel giro (serve solo al
  *  testo). Una al mese per chi (on conflict do nothing: la seconda risponde nuova = false); chi non gioca = ignorata. */

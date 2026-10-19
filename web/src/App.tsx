@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import type { Tab } from './lib/people';
+import { PEOPLE } from './lib/people';
 import { fetchMatEnabled } from './lib/matApi';
 import Materiali from './pages/Materiali';
 import Home from './pages/Home';
@@ -76,7 +77,18 @@ export default function App() {
     if (daRiprovare.current || (tab !== tabPrec.current && (tabPrec.current === 'negozi' || tabPrec.current === 'assistenza'))) leggiBadge();
     tabPrec.current = tab;
   }, [tab, leggiBadge]);
-  const [chi, setChiS] = useState(() => localStorage.getItem('amimi_chi') || 'Ale');
+  // ?chi=Ginevra: arriva dal Villaggio a se' installato, la cui Home apre l'app intera in un contesto suo (su iPhone con
+  // uno storage suo, dove si partirebbe da 'Ale' e gli arrivi di Ginni sarebbero firmati Ale). Letto una volta, salvato
+  // come la scelta della Home e tolto dall'indirizzo; il default per chi non arriva da li' resta quello di sempre.
+  const [chi, setChiS] = useState(() => {
+    const daVillaggio = new URLSearchParams(window.location.search).get('chi');
+    if (daVillaggio && (PEOPLE as readonly string[]).includes(daVillaggio)) {
+      localStorage.setItem('amimi_chi', daVillaggio);
+      window.history.replaceState(window.history.state, '', window.location.pathname + window.location.hash);
+      return daVillaggio;
+    }
+    return localStorage.getItem('amimi_chi') || 'Ale';
+  });
   const setChi = (c: string) => { setChiS(c); localStorage.setItem('amimi_chi', c); };
   const go = (t: Tab, p?: string) => {
     // swipe-back Android: ogni cambio tab spinge una entry di history che riporta al tab precedente

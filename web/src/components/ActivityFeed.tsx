@@ -28,7 +28,7 @@ const VERB: Record<string, string> = {
   arrival: 'Arrivo merce', arrival_set: 'Arrivo corretto', test_cleanup: 'Pulizia dati test',
   orphan_cleanup: 'Pulizia anagrafica', sale_correct: 'Vendita ri-mappata', guard_fix: 'Fix della guardia',
   qromo_sale: 'Vendita Qromo', gift: 'Regalo', return: 'Reso', product_delete: 'Prodotto rimosso',
-  order_date: 'Data di consegna',
+  order_date: 'Data di consegna', order_update: 'Riga ordine modificata', order_close: 'Riga ordine chiusa',
 };
 const TBLVERB: Record<string, string> = {
   purchases: 'Arrivo', counts: 'Conta', gifts_offline: 'Regalo', b2b_movements: 'Movimento B2B', products: 'Prodotto',
@@ -52,6 +52,8 @@ function ago(ts: string) {
   return `${Math.floor(s / 86400)}g fa`;
 }
 
+const giornoBreve = (d: string) => new Date(d.slice(0, 10) + 'T12:00:00').toLocaleDateString('it-IT', { day: 'numeric', month: 'short' });
+
 function summarize(r: Activity): string {
   const a = (r.after ?? {}) as Record<string, unknown>;
   const n = (k: string) => (a[k] != null ? Number(a[k]) : null);
@@ -69,8 +71,16 @@ function summarize(r: Activity): string {
     // verifica fornitore del Villaggio (write-api v29): after = { codice, fornitore, data_consegna nuova }
     case 'order_date': {
       const d = s('data_consegna');
-      return [s('codice'), d ? new Date(d.slice(0, 10) + 'T12:00:00').toLocaleDateString('it-IT', { day: 'numeric', month: 'short' }) : null].filter(Boolean).join(' · ');
+      return [s('codice'), d ? giornoBreve(d) : null].filter(Boolean).join(' · ');
     }
+    // write-api v30. order_update: after = codice, fornitore e i soli campi cambiati (null = valore tolto).
+    // order_close (residuo chiuso dalla verifica fornitore): after = codice, fornitore e le quantita' chiuse.
+    case 'order_update': {
+      const d = s('data_consegna'), q = n('qty_ordered'), c = n('costo_unitario');
+      const consegna = d ? `consegna ${giornoBreve(d)}` : 'data_consegna' in a ? 'consegna tolta' : null;
+      return [s('codice'), q != null ? `${q} pz` : null, c != null ? `${eur(c)} al pezzo` : null, consegna].filter(Boolean).join(' · ');
+    }
+    case 'order_close': return [s('codice'), s('fornitore')].filter(Boolean).join(' · ');
     default: {
       const codice = s('codice'); const qty = n('quantita'); const costo = n('costo');
       return [codice, qty != null ? `× ${qty}` : null, costo != null ? eur(Math.abs(costo)) : null].filter(Boolean).join(' ');

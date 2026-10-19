@@ -1,12 +1,13 @@
 // Villaggio (16-10): lo "studio delle borse" in forma di funzioni pure. Dal nome di una variante (v_inventory.variant,
 // o il nome scritto nell'ordine) ricava la FINITURA (materiale), la stampa e i COLORI; dall'item ricava il MODELLO (la
 // sagoma 3D). Solo import di TIPI (spariscono a runtime): lo usano la pagina, il mondo three.js e tests/villaggio_catalogo.mjs
-// (Node 24 strippa i tipi). In fondo costruisci() e arriviFra(): da v_ordini_arrivo e v_inventory alle pile e ai carrelli.
+// (Node 24 strippa i tipi). In fondo costruisci() e arriviFra(): da v_ordini_arrivo e v_inventory alle pile e ai carrelli;
+// poi, per la scheda della pila (fase 3, 18-10), staFinendo() e venditePerMese().
 // I nomi delle varianti non sono coerenti fra ordini e magazzino (COCCO_BORDOUX / COCCO_BURGUNDY, STRIPES_REED,
 // ORGANZA BIANCA sullo stesso codice di EMBROIDERY WHITE): qui ci sono gli alias, e per le righe d'ordine la pagina
 // legge l'aspetto dalla variante del MAGAZZINO con lo stesso codice, cosi' la pila e il carrello combaciano.
 
-import type { InvFull, OrdGruppo, OrdLine } from '../api';
+import type { InvFull, OrdGruppo, OrdLine, Reorder, SaleRow } from '../api';
 import type { DatiMondo, LabMondo, PilaMondo, RigaMondo } from './mondo';
 
 export type Fin = 'cocco' | 'patent' | 'suede' | 'sequin' | 'pony' | 'stripes' | 'checks' | 'pois' | 'embroidery' | 'roses'
@@ -244,6 +245,61 @@ export function arriviFra(prima: Map<string, number>, prec: Mod | null, nuovo: M
     const p = prima.get(l.id), ora = Number(l.qty_arrived) || 0;
     const info = prec.righe.get(l.id) ?? nuovo.righe.get(l.id);
     if (p != null && ora > p && info) out.push({ lab: info.lab, riga: info.riga, n: ora - p });
+  }
+  return out;
+}
+
+// --- La scheda della pila (fase 3) ---
+
+/** Soglie dell'avviso "sta finendo": vende almeno 3 pezzi in 60 giorni, ha meno di 30 giorni di stock (il tempo mediano di
+ *  Francesco fra ordine e primo arrivo) e nessuna riga d'ordine viva, cioe' aperta e mossa negli ultimi 60 giorni. */
+export const STA_FINENDO = { venduti: 3, giorni: 30, viva: 60 } as const;
+
+type RigaOrdine = OrdLine & { data_ultimo_arrivo?: string | null };
+/** L'ultimo giorno in cui la riga si e' mossa: ordinata o arrivata. Se la lettura non porta data_ultimo_arrivo vale
+ *  data_consegna_display, ma solo senza consegna promessa: v_ordini_arrivo la fa COALESCE(data_consegna, data_ultimo_arrivo). */
+function mossa(l: RigaOrdine): string | null {
+  const arrivo = l.data_ultimo_arrivo ?? (l.data_consegna ? null : l.data_consegna_display);
+  const date = [l.data_ordine, arrivo].filter((d): d is string => !!d).map((d) => d.slice(0, 10)).sort();
+  return date.length ? date[date.length - 1] : null;
+}
+
+/** I codici che stanno finendo (righe di v_reorder) e le pile che li contengono, per la bandierina nel mondo e il chip nella
+ *  scheda. Una riga ferma non conta come ordine: ANNIE_BAG_PAILLETTES_NUDE il 18-10 ha "5 in arrivo" da una riga mossa
+ *  l'ultima volta il 13-08. I codici archiviati nel Riordino sono una scelta gia' fatta (pelle finita) e restano fuori. */
+export function staFinendo(reorder: Reorder[], mod: Mod, oggi: string): { codici: Set<string>; pile: Set<string> } {
+  const vivi = new Set<string>();
+  // le righe aperte del modello sono tutte qui: in raw quelle disegnate, in extra quelle di modelli senza sagoma
+  for (const L of mod.labs) for (const l of [...L.raw, ...L.extra] as RigaOrdine[]) {
+    const g = giorniAllaConsegna(mossa(l), oggi);
+    if (g != null && g >= -STA_FINENDO.viva) vivi.add(l.codice);
+  }
+  const codici = new Set<string>(), pile = new Set<string>();
+  for (const r of reorder) {
+    if (r.riordino_archiviato || Number(r.venduto_60d) < STA_FINENDO.venduti || Number(r.giorni_stock) >= STA_FINENDO.giorni || vivi.has(r.codice)) continue;
+    codici.add(r.codice);
+    const k = mod.codeToPila.get(r.codice);
+    if (k) pile.add(k);
+  }
+  return { codici, pile };
+}
+
+export type MeseVendite = { mese: string; nome: string; pezzi: number };
+const MESI_BREVI = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
+
+/** Le vendite (fetchSalesByCodice: negozio e online insieme, anche di piu' codici) mese per mese, per le barre della scheda:
+ *  gli ultimi `mesi` mesi fino a quello di `oggi` compreso, dal piu' vecchio, anche quelli a zero (una barra vuota e'
+ *  un'informazione). Le righe senza data e quelle fuori dai mesi restano fuori. */
+export function venditePerMese(vendite: SaleRow[], oggi: string, mesi = 6): MeseVendite[] {
+  const ora = Number(oggi.slice(0, 4)) * 12 + Number(oggi.slice(5, 7)) - 1;
+  const out = Array.from({ length: mesi }, (_, i) => {
+    const k = ora - (mesi - 1 - i);
+    return { mese: Math.floor(k / 12) + '-' + String((k % 12) + 1).padStart(2, '0'), nome: MESI_BREVI[k % 12], pezzi: 0 };
+  });
+  const perMese = new Map(out.map((x) => [x.mese, x]));
+  for (const s of vendite) {
+    const x = s.data ? perMese.get(s.data.slice(0, 7)) : undefined;
+    if (x) x.pezzi += Number(s.qty) || 0;
   }
   return out;
 }

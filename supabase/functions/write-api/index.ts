@@ -23,6 +23,10 @@
 // della giocatrice, idempotente sulla PK), `villaggio_conta_completa` (una conta completa registrata al mese, idempotente
 // sulla PK) e `fornitore_verifica` (date di consegna delle righe aperte di un laboratorio + registro della verifica).
 // Tutte e tre 409 a flag villaggio_paillettes_enabled spento. logp accetta un `before` opzionale.
+//
+// v30 (2026-10-18, migr 0167, Villaggio fase 3): `fornitore_verifica` accetta `righe[].chiudi` ("non arriva piu'": chiude
+// il residuo di una riga aperta, change_log op order_close, `chiusa: true` in vil_verifiche.righe). Azione nuova
+// `order_update`: corregge quantita', costo, nota e consegna di una riga senza arrivi e non WIP, invece di cancella e rifai.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { num, isoDate, todayRome, ymFromIso, tok, cnorm, VALID_CATEGORIE } from './lib.ts';
 
@@ -367,6 +371,60 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, deleted: oid, stub_reaped, ...(stub_reap_error ? { stub_reap_error } : {}) });
   }
 
+  // --- ORDER_UPDATE (v30, 2026-10-18): corregge una riga d'ordine invece di cancellarla e rifarla ---
+  // Ginni correggeva gli ordini cancellando e rifacendo (18 order_delete in 90 giorni, tutti su righe senza arrivi e a meno
+  // di 30 minuti da un ordine): si perdevano lo storico della riga e le paillettes dell'ordine, e nascevano e sparivano stub.
+  // Solo righe senza arrivi e non WIP: il costo di una riga arrivata e' gia' nei purchases (CE), e una WIP ha quantita' e
+  // costo che si decidono all'arrivo. Codice e fornitore non si cambiano (toccano stub e anagrafica): per quelli resta
+  // cancella e rifai. Nessun effetto su CE e giacenze (i purchases nascono dagli arrivi), quindi niente guardia mesi chiusi;
+  // una persona sola, quindi niente compare-and-set. Campo assente = invariato; null o '' = tolto (la quantita' no).
+  if (action === 'order_update') {
+    const CAMPI = ['qty_ordered', 'costo_unitario', 'note', 'data_consegna'];
+    const id = String(payload.id ?? '').trim().toLowerCase();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) return json({ error: 'id della riga ordine mancante o non valido' }, 422);
+    const estranei = Object.keys(payload).filter((k) => k !== 'id' && !CAMPI.includes(k));
+    if (estranei.length) return json({ error: `Campi non modificabili: ${estranei.join(', ')}. Si cambiano quantita', costo, nota e consegna; per codice o fornitore elimina la riga e rifalla.`, campi_non_ammessi: estranei }, 422);
+    const chiesti = CAMPI.filter((k) => payload[k] !== undefined);
+    if (!chiesti.length) return json({ error: 'niente da modificare' }, 422);
+    const vuoto = (v: unknown) => v === null || v === '';
+    const nuovo: Record<string, unknown> = {};
+    if (payload.qty_ordered !== undefined) {
+      nuovo.qty_ordered = num(payload.qty_ordered, { integer: true, min: 1 });
+      if (nuovo.qty_ordered == null) return json({ error: "quantita' ordinata non valida (intero > 0)" }, 422);
+    }
+    if (payload.costo_unitario !== undefined) {
+      nuovo.costo_unitario = vuoto(payload.costo_unitario) ? null : num(payload.costo_unitario, { min: 0 });
+      if (!vuoto(payload.costo_unitario) && nuovo.costo_unitario == null) return json({ error: 'costo unitario non valido' }, 422);
+    }
+    if (payload.note !== undefined) {
+      if (!vuoto(payload.note) && typeof payload.note !== 'string') return json({ error: 'nota non valida' }, 422);
+      nuovo.note = vuoto(payload.note) ? null : String(payload.note).trim() || null;
+    }
+    if (payload.data_consegna !== undefined) {
+      nuovo.data_consegna = vuoto(payload.data_consegna) ? null : isoDate(payload.data_consegna);
+      if (!vuoto(payload.data_consegna) && nuovo.data_consegna == null) return json({ error: `data di consegna non valida (${String(payload.data_consegna)}): atteso YYYY-MM-DD` }, 422);
+    }
+    const { data: riga, error: re } = await retryOnce(() => sb.from('supplier_orders')
+      .select('id, codice, fornitore, qty_ordered, qty_arrived, costo_unitario, note, data_consegna, data_ordine, wip').eq('id', id).maybeSingle());
+    if (re) return json({ error: `riga ordine non leggibile (${re.message}): niente salvato, riprova` }, 503);
+    if (!riga) return json({ error: 'riga ordine non trovata' }, 404);
+    if ((num(riga.qty_arrived) ?? 0) > 0) return json({ error: `Questa riga ha gia' ${riga.qty_arrived} pezzi arrivati e non si modifica: il costo e' gia' negli acquisti. Correggi l'arrivo, oppure fai una riga nuova.`, has_arrivals: true }, 409);
+    if (riga.wip === true) return json({ error: "Riga da definire (WIP): quantita' e costo si decidono all'arrivo, non si modifica.", wip: true }, 409);
+    // solo cio' che cambia davvero: il before e l'after del change_log dicono quali campi sono stati toccati
+    const prima: Record<string, unknown> = {}, dopo: Record<string, unknown> = {};
+    for (const k of chiesti) {
+      const ora = k === 'qty_ordered' || k === 'costo_unitario' ? num(riga[k]) : (riga[k] ?? null);
+      if (ora !== nuovo[k]) { prima[k] = ora; dopo[k] = nuovo[k]; }
+    }
+    if (!Object.keys(dopo).length) return json({ ok: true, id, cambiati: [] });
+    // una consegna nuova non precede l'ordine (come in order_multi); una data vecchia storta non blocca gli altri campi
+    if (typeof dopo.data_consegna === 'string' && riga.data_ordine && dopo.data_consegna < String(riga.data_ordine).slice(0, 10)) return json({ error: `La consegna (${dopo.data_consegna}) viene prima dell'ordine (${String(riga.data_ordine).slice(0, 10)}).` }, 422);
+    const { error: ue } = await sb.from('supplier_orders').update(dopo).eq('id', id);
+    if (ue) return json({ error: `riga ordine non salvata (${ue.message}), riprova` }, 400);
+    await logp('supplier_orders', id, 'order_update', { codice: riga.codice, fornitore: riga.fornitore, ...dopo }, prima);
+    return json({ ok: true, id, cambiati: Object.keys(dopo) });
+  }
+
   // --- NEW (brief 2026-07-14): elimina una riga di anagrafica prodotto, guardrailed ---
   // Canale sanzionato per cancellare un doppione/stub da `products` con gli stessi standard delle altre
   // azioni (PIN, chi, audit change_log). UN codice per chiamata (stop-loss Regola 2). NON tocca MAI
@@ -546,6 +604,11 @@ async function handle(req: Request): Promise<Response> {
     const costoErrs = righe.filter((r) => r.costo_unitario != null && r.costo_unitario !== '' && num(r.costo_unitario, { min: 0 }) == null)
       .map((r) => `"${r.codice || r.item || '?'}": costo unitario non valido`);
     if (costoErrs.length) return json({ error: 'Righe non valide: ' + costoErrs.join(' · '), righe_non_valide: costoErrs }, 422);
+    // v30: data_consegna, se data, e' una data vera e non precede l'ordine. Prima arrivava a Postgres com'era (un '' o
+    // '30/11/2026' tornavano come 400 grezzo); il modulo d'ordine lo controlla gia', una chiamata diretta (Cowork) no.
+    const consegnaErrs = righe.filter((r) => r.data_consegna != null && r.data_consegna !== '' && !((isoDate(r.data_consegna) ?? '') >= dataOrdine))
+      .map((r) => `"${r.codice || r.item || '?'}": consegna prevista non valida (${String(r.data_consegna)}): atteso YYYY-MM-DD, non prima dell'ordine`);
+    if (consegnaErrs.length) return json({ error: 'Righe non valide: ' + consegnaErrs.join(' · '), righe_non_valide: consegnaErrs }, 422);
     const raw = righe.map((r) => ({
       codice: String(r.codice || ''), item: (r.item as string) ?? null, variant: (r.variant as string) ?? null,
       // riga WIP (feedback 06-07 item 18): quantita'/costo ancora ignoti (es. affinamento pelle);
@@ -554,7 +617,7 @@ async function handle(req: Request): Promise<Response> {
       qty_ordered: r.wip === true ? 0 : (num(r.qty_ordered, { integer: true, min: 1 }) ?? 0),
       nuovo_riordino: (r.nuovo_riordino as string) ?? null,
       costo_unitario: r.costo_unitario != null && r.costo_unitario !== '' ? num(r.costo_unitario, { min: 0 }) : null,
-      data_consegna: (r.data_consegna as string) ?? null, note: (r.note as string) ?? null,
+      data_consegna: r.data_consegna != null && r.data_consegna !== '' ? isoDate(r.data_consegna) : null, note: (r.note as string) ?? null,
     })).filter((r) => (r.codice || (r.item && r.variant)) && (r.qty_ordered > 0 || r.wip));
     if (!raw.length) return json({ error: 'righe non valide (CODICE o Modello+Variante, più quantità)' }, 422);
 
@@ -1200,7 +1263,7 @@ async function handle(req: Request): Promise<Response> {
     // vil_verifiche.chi e' NOT NULL: chi scrive la verifica deve essere noto prima di toccare le date
     if (!chi) return json({ error: 'chi mancante: scegli chi sei prima di salvare la verifica' }, 422);
     const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const chieste = new Map<string, { confermata: boolean; data: string | null }>();
+    const chieste = new Map<string, { confermata: boolean; data: string | null; chiudi: boolean }>();
     for (const r of righeIn) {
       const vuota = r?.data_consegna == null || r.data_consegna === '';
       const data = vuota ? null : isoDate(r.data_consegna);
@@ -1208,7 +1271,7 @@ async function handle(req: Request): Promise<Response> {
       // un id che non e' un uuid farebbe fallire la lettura intera: e' un id sconosciuto, si ignora come gli altri.
       // In minuscolo: Postgres risponde gli uuid in minuscolo, e la mappa si rilegge con l'id che torna dalla lettura
       const id = String(r?.id ?? '').trim().toLowerCase();
-      if (UUID.test(id)) chieste.set(id, { confermata: r.confermata === true, data });
+      if (UUID.test(id)) chieste.set(id, { confermata: r.confermata === true, data, chiudi: r.chiudi === true });
     }
     // le righe che non tornano (altro fornitore, id sconosciuto) o gia' chiuse (tutto arrivato) si ignorano: si verifica
     // solo cio' che il laboratorio sta ancora lavorando. Se non ne resta nessuna non c'e' verifica.
@@ -1221,10 +1284,23 @@ async function handle(req: Request): Promise<Response> {
     if (!aperte.length) return json({ error: `nessuna delle righe inviate e' una riga aperta di ${fornitore}: verifica non salvata` }, 422);
 
     const righe: Record<string, unknown>[] = [];
-    let cambiate = 0;
+    let cambiate = 0, chiuse = 0;
     for (const r of aperte) {
       const ch = chieste.get(String(r.id))!;
       const prima = r.data_consegna ?? null;
+      if (ch.chiudi) {
+        // v30, "non arriva piu'": ordinato = arrivato e wip spento, cosi' v_ordini_arrivo la da' completa (non wip e
+        // arrivati >= ordinati) e il riordino non la conta piu' in arrivo; una WIP senza arrivi si chiude a 0. Nessun effetto
+        // su CE e giacenze: i purchases nascono solo dagli arrivi. La data resta quella che era: una riga chiusa non prende
+        // anche una data (ne' i punti di una data aggiunta), e chiudere vale quanto spostare una data.
+        const arrivati = num(r.qty_arrived) ?? 0;
+        const { error: xe } = await sb.from('supplier_orders').update({ qty_ordered: arrivati, wip: false }).eq('id', r.id);
+        if (xe) return json({ error: `riga ${r.codice ?? r.id} non chiusa (${xe.message}): ${cambiate} date cambiate e ${chiuse} righe chiuse prima di questa, verifica non registrata, riprova` }, 400);
+        await logp('supplier_orders', String(r.id), 'order_close', { codice: r.codice, fornitore, qty_ordered: arrivati, qty_arrived: arrivati, wip: false }, { qty_ordered: num(r.qty_ordered), wip: r.wip === true });
+        chiuse++;
+        righe.push({ id: r.id, codice: r.codice, confermata: ch.confermata, data_prima: prima, data_dopo: prima, chiusa: true });
+        continue;
+      }
       // la verifica mette o corregge una data, non la toglie: una data vuota su una riga che ce l'ha si ignora
       const dopo = ch.data ?? prima;
       if (prima !== dopo) {
@@ -1238,8 +1314,8 @@ async function handle(req: Request): Promise<Response> {
     const nota = typeof payload.nota === 'string' && payload.nota.trim() ? payload.nota.trim().slice(0, 1000) : null;
     const { data: chk, error: ce } = await sb.from('vil_verifiche')
       .insert({ giorno: today, fornitore, chi, righe, nota }).select('id').single();
-    if (ce) return json({ error: `verifica non registrata (${ce.message}); date cambiate: ${cambiate}`, date_cambiate: cambiate }, 400);
-    return json({ ok: true, check_id: chk.id, date_cambiate: cambiate });
+    if (ce) return json({ error: `verifica non registrata (${ce.message}); date cambiate: ${cambiate}, righe chiuse: ${chiuse}`, date_cambiate: cambiate, righe_chiuse: chiuse }, 400);
+    return json({ ok: true, check_id: chk.id, date_cambiate: cambiate, righe_chiuse: chiuse });
   }
 
   // v21: l'insert generico 'order' bypassava derivazione e anti-doppione (codice testo libero,

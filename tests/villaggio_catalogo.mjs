@@ -15,12 +15,17 @@
 // history finta che fissa la meta di back() come Chromium), Esc nei campi, passo 3 sui dati veri, home() dell'app a
 // se', thumbAsync cancellabile, riposo, ombre, e impasta() vera sul three.js di web/node_modules (saltata con una nota
 // se manca: npm ci in web/).
+// Fase 3 (18-10): staFinendo() (l'avviso "sta finendo" della scheda della pila, da v_reorder e dalle righe aperte del
+// modello) e venditePerMese() (le barre delle vendite degli ultimi 6 mesi), su dati a mano e su una copia vera del 18-10.
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  modelOf, labOf, parseLook, nice, taglia, conTaglia, lastre, giorniAllaConsegna, costruisci, arriviFra,
-  MODEL_ORDER, COLMAP, FIN_IT, PRINT_IT,
+  modelOf, labOf, parseLook, nice, taglia, conTaglia, lastre, giorniAllaConsegna, costruisci, arriviFra, staFinendo, venditePerMese,
+  MODEL_ORDER, COLMAP, FIN_IT, PRINT_IT, STA_FINENDO,
 } from '../web/src/lib/villaggio/catalogo.ts';
+import {
+  stagioneDi, momentoDi, soleMilano, meseRoma, minutiRoma, meteoDaCodice, meteoInCache, ambienteDi, METEO_URL, METEO_TTL_MS, AMBIENTE_OGNI_MS,
+} from '../web/src/lib/villaggio/meteo.ts';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
@@ -659,6 +664,202 @@ console.log('\n== arriviFra(): il furgoncino fra due letture (prevArrived e prev
   eq('sessione come load(): [] -> 3 pezzi -> 3 pezzi (completa) -> []', giro, [[], [['LEA_BAG_COCCO_GREEN', 3]], [['LEA_BAG_COCCO_GREEN', 3]], []]);
 }
 
+// --- Fase 3: la scheda della pila. Righe di v_reorder con la forma di Reorder (web/src/lib/api.ts); giorni_stock come
+// nella vista: round(giacenza / (venduto_60d / 60)), null solo senza vendite ---
+const OGGI3 = '2026-10-18';
+const rr = (codice, venduto, giorni, extra = {}) => ({
+  codice, item: null, variant: null, image_url: null, giacenza: 0, disponibili: 0, on_shopify: true, venduto_60d: venduto,
+  in_arrivo: 0, giorni_stock: giorni, riordino_archiviato: false, ...extra,
+});
+// data_consegna_display come la vista: COALESCE(data_consegna, data_ultimo_arrivo)
+const mossaIl = (ordine, arrivo, consegna = null) => ({ data_ordine: ordine, data_ultimo_arrivo: arrivo, data_consegna: consegna, data_consegna_display: consegna ?? arrivo });
+const finendo = (reorder, m) => { const r = staFinendo(reorder, m, OGGI3); return [[...r.codici].sort(), [...r.pile].sort()]; };
+
+console.log('\n== staFinendo(): vende, ha meno di 30 giorni di stock e nessuna riga d\'ordine viva ==');
+{
+  eq('soglie del contratto: 3 pezzi in 60 giorni, meno di 30 giorni, riga viva = mossa negli ultimi 60', STA_FINENDO, { venduti: 3, giorni: 30, viva: 60 });
+  const inv = [
+    invRow('LEA_BAG_COCCO_GREEN', 'LEA BAG', 'COCCO GREEN', 4),
+    invRow('LEA_BAG_COCCO_BLACK', 'LEA BAG', 'COCCO BLACK', 1),
+    invRow('LEA_BAG_PONY_BAMBI', 'LEA BAG', 'PONY_BAMBI', 0),
+    invRow('LEA_BAG_ZEBRA', 'LEA BAG', 'ZEBRA', 2),
+    invRow('LAPTOP_COVER_COCCO_BLACK_30X20', 'LAPTOP COVER', 'COCCO BLACK 30X20', 1),
+    invRow('LAPTOP_COVER_COCCO_BLACK_40X30', 'LAPTOP COVER', 'COCCO BLACK 40X30', 0),
+    invRow('GIFT_CARD_50', 'GIFT CARD', '50 EURO', 1),
+  ];
+  const vuoto = costruisci([], inv, OGGI3);
+  const K = (codice) => vuoto.codeToPila.get(codice);
+
+  // soglie, senza righe d'ordine
+  eq('3 pezzi e 29 giorni: sta finendo, con la sua pila', finendo([rr('LEA_BAG_COCCO_GREEN', 3, 29)], vuoto), [['LEA_BAG_COCCO_GREEN'], [K('LEA_BAG_COCCO_GREEN')]]);
+  eq('2 pezzi in 60 giorni (anche a 0 giorni): no, non vende abbastanza', finendo([rr('LEA_BAG_COCCO_GREEN', 2, 0)], vuoto), [[], []]);
+  eq('30 giorni esatti: no (meno di 30)', finendo([rr('LEA_BAG_COCCO_GREEN', 36, 30)], vuoto), [[], []]);
+  eq('a 0 pezzi (0 giorni) e sotto zero (giorni negativi): si\'', finendo([rr('LEA_BAG_PONY_BAMBI', 12, 0), rr('LEA_BAG_ZEBRA', 8, -8)], vuoto),
+    [['LEA_BAG_PONY_BAMBI', 'LEA_BAG_ZEBRA'], [K('LEA_BAG_PONY_BAMBI'), K('LEA_BAG_ZEBRA')].sort()]);
+  eq('archiviato nel Riordino (scelta gia\' fatta): no', finendo([rr('LEA_BAG_PONY_BAMBI', 12, 0, { riordino_archiviato: true })], vuoto), [[], []]);
+  eq('numeri come stringhe (numeric di PostgREST): stesse soglie', finendo([rr('LEA_BAG_COCCO_GREEN', '3', '29'), rr('LEA_BAG_ZEBRA', '2', '0'), rr('LEA_BAG_COCCO_BLACK', '31', '30')], vuoto),
+    [['LEA_BAG_COCCO_GREEN'], [K('LEA_BAG_COCCO_GREEN')]]);
+  eq('nessuna riga di v_reorder: niente', finendo([], vuoto), [[], []]);
+
+  // righe d'ordine: viva = aperta e ordinata o arrivata negli ultimi 60 giorni (dal 19-08 compreso, oggi 18-10)
+  const R = [rr('LEA_BAG_COCCO_GREEN', 36, 7)];
+  const con = (...righe) => costruisci(gruppiDi(righe), inv, OGGI3);
+  const verde = (id, extra) => linea(id, 'LEA_BAG_COCCO_GREEN', 'LEA BAG', 'COCCO GREEN', 40, 10, extra);
+  eq('ordinata 60 giorni fa (19-08): viva, niente avviso', finendo(R, con(verde('a', mossaIl('2026-08-19', null)))), [[], []]);
+  eq('ordinata 61 giorni fa (18-08) e mai arrivata: ferma, avviso', finendo(R, con(verde('a', mossaIl('2026-08-18', null))))[0], ['LEA_BAG_COCCO_GREEN']);
+  eq('ordinata a giugno ma con un arrivo il 01-10: viva', finendo(R, con(verde('a', mossaIl('2026-06-01', '2026-10-01'))))[0], []);
+  eq('ordinata a giugno, ultimo arrivo il 13-08 (come ANNIE NUDE): ferma, avviso', finendo(R, con(verde('a', mossaIl('2026-06-16', '2026-08-13'))))[0], ['LEA_BAG_COCCO_GREEN']);
+  eq('consegna promessa passata ma arrivo recente: viva (conta il movimento, non la promessa)', finendo(R, con(verde('a', mossaIl('2026-04-23', '2026-09-25', '2026-05-20'))))[0], []);
+  eq('riga senza data d\'ordine ne\' arrivi: ferma', finendo(R, con(verde('a', mossaIl(null, null))))[0], ['LEA_BAG_COCCO_GREEN']);
+  eq('una ferma e una viva sullo stesso codice: basta la viva', finendo(R, con(verde('a', mossaIl('2026-06-16', '2026-08-13')), verde('b', mossaIl('2026-10-08', null))))[0], []);
+  eq('riga completa di ieri: non e\' un ordine aperto, avviso', finendo(R, con(linea('c', 'LEA_BAG_COCCO_GREEN', 'LEA BAG', 'COCCO GREEN', 10, 10, mossaIl('2026-10-17', '2026-10-17'))))[0], ['LEA_BAG_COCCO_GREEN']);
+  eq('riga WIP di settimana scorsa: e\' un ordine vivo', finendo(R, con(wipLinea('w', 'LEA_BAG_COCCO_GREEN', 'LEA BAG', 'COCCO GREEN', 0, mossaIl('2026-10-12', null))))[0], []);
+  eq('riga viva del laboratorio senza fornitore: vale lo stesso', finendo(R, con(verde('a', { fornitore: null, ...mossaIl('2026-10-08', null) })))[0], []);
+  eq('la riga viva di UN ALTRO codice non copre questo', finendo(R, con(linea('n', 'LEA_BAG_COCCO_BLACK', 'LEA BAG', 'COCCO BLACK', 30, 21, mossaIl('2026-08-03', '2026-10-08'))))[0], ['LEA_BAG_COCCO_GREEN']);
+  {
+    // modello senza sagoma: la riga sta in extra e vale come le altre; il codice senza pila e' nell'elenco ma non ha pila
+    const m = con(linea('g', 'GIFT_CARD_50', 'GIFT CARD', '50 EURO', 4, 0, mossaIl('2026-10-10', null)));
+    eq('premessa: la riga della gift card e\' in extra', m.labs[0].extra.map((l) => l.id), ['g']);
+    eq('riga viva in extra: niente avviso per la gift card', finendo([rr('GIFT_CARD_50', 5, 6)], m), [[], []]);
+    eq('gift card senza righe: nell\'elenco, senza pila (il Villaggio non la disegna)', finendo([rr('GIFT_CARD_50', 5, 6)], vuoto), [['GIFT_CARD_50'], []]);
+  }
+  {
+    // due taglie nella stessa pila: l'avviso e' per codice, la bandierina per pila
+    const lap = (codice, giorni) => rr(codice, 4, giorni);
+    const m = con(linea('t', 'LAPTOP_COVER_COCCO_BLACK_40X30', 'LAPTOP COVER', 'COCCO BLACK 40X30', 5, 0, mossaIl('2026-10-05', null)));
+    const [codici, pile] = finendo([lap('LAPTOP_COVER_COCCO_BLACK_30X20', 15), lap('LAPTOP_COVER_COCCO_BLACK_40X30', 0)], m);
+    eq('taglia 30x20 senza ordine: avviso; 40x30 con la riga viva: no', codici, ['LAPTOP_COVER_COCCO_BLACK_30X20']);
+    eq('una bandierina sola, sulla pila delle due taglie', [pile, K('LAPTOP_COVER_COCCO_BLACK_30X20') === K('LAPTOP_COVER_COCCO_BLACK_40X30')], [[K('LAPTOP_COVER_COCCO_BLACK_30X20')], true]);
+    const due = finendo([lap('LAPTOP_COVER_COCCO_BLACK_30X20', 15), lap('LAPTOP_COVER_COCCO_BLACK_40X30', 0)], vuoto);
+    eq('tutte e due senza ordine: due codici, sempre una pila', [due[0].length, due[1].length], [2, 1]);
+  }
+  {
+    // senza data_ultimo_arrivo nella lettura (fetchOrdiniGruppi lo legge dal 19-10: qui e' la rete di sicurezza di mossa())
+    // si ricava da data_consegna_display, ma solo se la riga non ha una consegna promessa (COALESCE della vista)
+    const senza = (o) => { const { data_ultimo_arrivo, ...r } = o; return r; };
+    eq('senza data_ultimo_arrivo e senza consegna: il display e\' l\'ultimo arrivo (01-10): viva', finendo(R, con(senza(verde('a', mossaIl('2026-06-01', '2026-10-01')))))[0], []);
+    eq('senza data_ultimo_arrivo ma con consegna promessa: l\'arrivo non si vede, conta solo l\'ordine', finendo(R, con(senza(verde('a', mossaIl('2026-04-23', '2026-09-25', '2026-05-20')))))[0], ['LEA_BAG_COCCO_GREEN']);
+    eq('con data_ultimo_arrivo vale lui, anche se il display dice altro', finendo(R, con(verde('a', { ...mossaIl('2026-06-01', '2026-10-01'), data_consegna_display: '2026-01-01' })))[0], []);
+  }
+  {
+    const reorder = [rr('LEA_BAG_COCCO_GREEN', 36, 7)], m = con(verde('a', mossaIl('2026-06-16', '2026-08-13')));
+    const a = JSON.stringify(reorder), b = JSON.stringify([...m.labs.map((L) => L.raw), [...m.codeToPila]]);
+    staFinendo(reorder, m, OGGI3);
+    t('non tocca ne\' le righe di v_reorder ne\' il modello', JSON.stringify(reorder) === a && JSON.stringify([...m.labs.map((L) => L.raw), [...m.codeToPila]]) === b);
+  }
+}
+
+// Copia datata, letta il 18-10-2026 in SOLA lettura (progetto imszbjeyplaiovylhkgl):
+// REORDER_VERI: select codice,item,variant,giacenza,venduto_60d,in_arrivo,giorni_stock from v_reorder where venduto_60d >= 3
+//               (nessuno archiviato; numeric come li da' la vista, stringhe comprese)
+// APERTE_VERE:  select id,codice,fornitore,qty_ordered,qty_arrived,data_ordine,data_consegna,data_ultimo_arrivo
+//               from v_ordini_arrivo where not completo (id accorciati ai primi 8 caratteri; item e variant dalla copia ORD)
+// La stessa regola in SQL sugli stessi dati (venduto_60d >= 3, giorni_stock < 30, nessuna riga aperta con
+// greatest(data_ordine, data_ultimo_arrivo) >= current_date - 60) dava 18 codici a rischio, 5 con una riga viva e 13 senza.
+const REORDER_VERI = [
+  ['AGATA_BAG_ROSE_PINK', 'AGATA BAG', 'ROSE PINK', '0', '6', '0.0', '0'], ['AGATA_BAG_ROSE_ROSE_BUTTER_LILLA', 'AGATA BAG', 'ROSE BUTTER LILLA', '3', '5', '0', '36'],
+  ['ANNIE_BAG_PAILLETTES_NUDE', 'ANNIE BAG', 'PAILLETTES NUDE', '0', '17', '5.0', '0'], ['ANNIE_BAG_PEARL_GREY', 'ANNIE BAG', 'PEARL GREY', '5', '5', '0', '60'],
+  ['ANNIE_BAG_SAMPLE', 'ANNIE BAG', 'SAMPLE', '0', '3', '0', '0'], ['CREDIT_CARD_CASE_COCCO_GREEN', 'CREDIT CARD CASE', 'COCCO GREEN', '1', '3', '5.0', '20'],
+  ['LAPTOP_COVER_26X37_STRIPES_CANDY_PINK', 'LAPTOP COVER', '26X37 STRIPES CANDY PINK', '18', '4', '0', '270'],
+  ['LAPTOP_COVER_26X37_STRIPES_LIME_PINK', 'LAPTOP COVER', '26X37 STRIPES LIME PINK', '5', '6', '0', '50'],
+  ['LEA_BAG_BLACK_WHITE_PONY', 'LEA BAG', 'BLACK WHITE PONY', '5', '5', '0', '60'], ['LEA_BAG_COCCO_BEIGE', 'LEA BAG', 'COCCO_BEIGE', '7', '3', '0', '140'],
+  ['LEA_BAG_COCCO_BLACK', 'LEA BAG', 'COCCO BLACK', '1', '31', '9.0', '2'], ['LEA_BAG_COCCO_BLUE', 'LEA BAG', 'COCCO_BLUE', '0', '3', '0', '0'],
+  ['LEA_BAG_COCCO_BURGUNDY', 'LEA BAG', 'COCCO_BURGUNDY', '2', '7', '0', '17'], ['LEA_BAG_COCCO_GREEN', 'LEA BAG', 'COCCO GREEN', '4', '36', '1.0', '7'],
+  ['LEA_BAG_COCCO_PURPLE', 'LEA BAG', 'COCCO_PURPLE', '17', '17', '0.0', '60'], ['LEA_BAG_MAXI_COCCO_BLACK', 'LEA BAG MAXI', 'COCCO BLACK', '31', '19', '0.0', '98'],
+  ['LEA_BAG_MAXI_COCCO_CHOCOLATE', 'LEA BAG MAXI', 'COCCO CHOCOLATE', '29', '11', '0', '158'], ['LEA_BAG_MAXI_COCCO_GREEN', 'LEA BAG MAXI', 'COCCO_GREEN', '2', '10', '0', '12'],
+  ['LEA_BAG_MAXI_SUEDE_CHOCOLATE', 'LEA BAG MAXI', 'SUEDE CHOCOLATE', '2', '6', '2', '20'],
+  ['LEA_BAG_MAXI_SUEDE_CHOCOLATE_CHARM', 'LEA BAG MAXI', 'SUEDE CHOCOLATE CHARM', '0', '6', '3', '0'],
+  ['LEA_BAG_MAXI_SUEDE_GREEN_CHARM', 'LEA BAG MAXI', 'SUEDE GREEN CHARM', '8', '4', '0', '120'], ['LEA_BAG_MILITARY_GREEN', 'LEA BAG', 'MILITARY GREEN', '9', '4', '0', '135'],
+  ['LEA_BAG_MUCCATA_MARRONE', 'LEA BAG', 'MUCCATA MARRONE', '27', '22', '30', '74'], ['LEA_BAG_PONY_BAMBI', 'LEA BAG', 'PONY_BAMBI', '0', '12', '0', '0'],
+  ['LEA_BAG_RED_PATENT', 'LEA BAG', 'RED PATENT', '29', '7', '0', '249'], ['LEA_BAG_TOASTED_LEATHER', 'LEA BAG', 'TOASTED LEATHER', '18', '9', '0', '120'],
+  ['LEA_BAG_ZEBRA', 'LEA BAG', 'ZEBRA', '2', '8', '0', '15'], ['LEA_BAG_ZEBRA_BROWN_PONY', 'LEA BAG', 'ZEBRA BROWN PONY', '2', '8', '0', '15'],
+  ['NINA_BAG_STRIPES_JUNGLE_GREEN', 'NINA BAG', 'STRIPES JUNGLE GREEN', '5', '3', '0', '100'], ['NINA_BAG_STRIPES_PETROL_BLUE', 'NINA BAG', 'STRIPES PETROL BLUE', '9', '3', '0', '180'],
+  ['SOPHIE_BAG_SUEDE_BROWN', 'SOPHIE BAG', 'SUEDE BROWN', '0', '5', '0', '0'], ['SOPHIE_BAG_SUEDE_BURGUNDY', 'SOPHIE BAG', 'SUEDE BURGUNDY', '1', '4', '0', '15'],
+  ['SOPHIE_BAG_SUEDE_LIGHT_BLUE', 'SOPHIE BAG', 'SUEDE LIGHT BLUE', '1', '4', '0', '15'], ['VALENTINA_BAG_CHOCOLATE', 'VALENTINA BAG', 'CHOCOLATE', '14', '4', '0', '210'],
+  ['VALENTINA_BAG_COCCO_BLACK', 'VALENTINA BAG', 'COCCO BLACK', '1', '3', '0', '20'],
+];
+const APERTE_VERE = [
+  ['eb1f906b', 'CREDIT_CARD_CASE_COCCO_PURPLE', 'Francesco (pelle)', 10, 5, '2026-04-23', '2026-05-20', '2026-09-25'],
+  ['e8599a91', 'CREDIT_CARD_CASE_COCCO_PINK', 'Francesco (pelle)', 10, 5, '2026-04-23', '2026-05-20', '2026-09-25'],
+  ['c0c2062c', 'CREDIT_CARD_CASE_COCCO_BEIGE', 'Francesco (pelle)', 10, 1, '2026-04-23', '2026-05-20', '2026-07-29'],
+  ['c0eee226', 'CREDIT_CARD_CASE_COCCO_GREEN', 'Francesco (pelle)', 10, 5, '2026-04-23', '2026-05-20', '2026-09-25'],
+  ['1d88f704', 'CREDIT_CARD_CASE_COCCO_ORANGE', 'Francesco (pelle)', 10, 1, '2026-04-23', '2026-05-20', '2026-07-29'],
+  ['fcbc1940', 'ANNIE_BAG_PAILLETTES_LIGHT_GREEN', 'Sarte Milano (tessuto)', 10, 5, '2026-06-16', '2026-07-09', '2026-07-10'],
+  ['525e428a', 'ANNIE_BAG_PAILLETTES_NUDE', 'Sarte Milano (tessuto)', 30, 25, '2026-06-16', '2026-06-26', '2026-08-13'],
+  ['71a3893b', 'AGATA_BAG_ROSE_BUTTER', 'Sarte Milano (tessuto)', 5, 0, '2026-06-16', null, null],
+  ['d9a5c521', 'AGATA_BAG_ROSE_BUTTER_LILLA', 'Sarte Milano (tessuto)', 5, 0, '2026-06-16', null, '2026-07-31'],
+  ['41b360cb', 'ANNIE_BAG_PAILLETTES_LIGHT_BLUE', 'Sarte Milano (tessuto)', 10, 5, '2026-06-16', '2026-07-09', '2026-07-10'],
+  ['1675a98a', 'ANNIE_BAG_PAILLETTES_GREY', 'Sarte Milano (tessuto)', 10, 0, '2026-06-16', '2026-07-09', null],
+  ['686e7206', 'AGATA_BAG_EMBROIDERY_WHITE', 'Sarte Milano (tessuto)', 5, 0, '2026-06-16', null, null],
+  ['56113020', 'LEA_BAG_WHITE_PIERCING', 'Francesco (pelle)', 20, 2, '2026-07-24', null, '2026-07-31'],
+  ['15833ce8', 'LEA_BAG_CAVALLINO_SAVANA', 'Francesco (pelle)', 10, 0, '2026-08-03', null, null],
+  ['bb41463f', 'LEA_BAG_MAXI_SUEDE_CHOCOLATE_CHARM', 'Francesco (pelle)', 10, 7, '2026-08-03', null, '2026-09-02'],
+  ['232b8561', 'LEA_BAG_MAXI_SUEDE_CHOCOLATE', 'Francesco (pelle)', 10, 8, '2026-08-03', null, '2026-09-02'],
+  ['74d1cf06', 'LEA_BAG_COCCO_BLACK', 'Francesco (pelle)', 30, 21, '2026-08-03', null, '2026-10-08'],
+  ['3c4734fc', 'LEA_BAG_COCCO_GREEN', 'Francesco (pelle)', 40, 39, '2026-09-08', null, '2026-10-14'],
+  ['1a5dd4a8', 'ANNIE_BAG_EMBROIDERY_COLORFULL', 'Fiorella (tessuto)', 3, 0, '2026-09-29', null, null],
+  ['16f942ed', 'LEA_BAG_MAXI_SUEDE_BLACK_CHARM', 'Vincenzo (pelle)', 30, 0, '2026-10-05', null, null],
+  ['baa41080', 'LEA_BAG_MUCCATA_MARRONE', 'Vincenzo (pelle)', 30, 0, '2026-10-05', null, null],
+  ['d2b86cde', 'LEA_BAG_MAXI_COCCO_BORDOUX', 'Francesco (pelle)', 10, 5, '2026-10-08', null, '2026-10-08'],
+];
+
+console.log('\n== staFinendo() sui dati veri del 18-10 ==');
+{
+  const ordBy = new Map(ORD.map((r) => [r[0], r]));
+  const reorder = REORDER_VERI.map(([codice, item, variant, giacenza, venduto, arrivo, giorni]) =>
+    rr(codice, venduto, giorni, { item, variant, giacenza, disponibili: giacenza, in_arrivo: arrivo }));
+  const inv = REORDER_VERI.map(([c, i, v, g]) => invRow(c, i, v, g));
+  const righe = APERTE_VERE.map(([id, codice, fornitore, o, a, ordine, consegna, arrivo]) =>
+    linea(id, codice, ordBy.get(codice)?.[1] ?? null, ordBy.get(codice)?.[2] ?? null, o, a, { fornitore, ...mossaIl(ordine, arrivo, consegna) }));
+  const m = costruisci(gruppiDi(righe), inv, OGGI3);
+  const { codici, pile } = staFinendo(reorder, m, OGGI3);
+  eq('premessa: le 22 righe aperte vere sono tutte nel modello (raw + extra)', m.labs.reduce((s, L) => s + L.raw.length + L.extra.length, 0), 22);
+  const rischio = reorder.filter((r) => Number(r.venduto_60d) >= 3 && Number(r.giorni_stock) < 30).map((r) => r.codice);
+  eq('18 codici che vendono hanno meno di 30 giorni di stock (come in SQL)', rischio.length, 18);
+  eq('13 senza una riga viva: gli stessi della regola in SQL', [...codici].sort(), [
+    'AGATA_BAG_ROSE_PINK', 'ANNIE_BAG_PAILLETTES_NUDE', 'ANNIE_BAG_SAMPLE', 'LEA_BAG_COCCO_BLUE', 'LEA_BAG_COCCO_BURGUNDY', 'LEA_BAG_MAXI_COCCO_GREEN',
+    'LEA_BAG_PONY_BAMBI', 'LEA_BAG_ZEBRA', 'LEA_BAG_ZEBRA_BROWN_PONY', 'SOPHIE_BAG_SUEDE_BROWN', 'SOPHIE_BAG_SUEDE_BURGUNDY', 'SOPHIE_BAG_SUEDE_LIGHT_BLUE',
+    'VALENTINA_BAG_COCCO_BLACK']);
+  eq('i 5 a rischio con una riga viva restano fuori', rischio.filter((c) => !codici.has(c)).sort(), ['CREDIT_CARD_CASE_COCCO_GREEN', 'LEA_BAG_COCCO_BLACK', 'LEA_BAG_COCCO_GREEN',
+    'LEA_BAG_MAXI_SUEDE_CHOCOLATE', 'LEA_BAG_MAXI_SUEDE_CHOCOLATE_CHARM']);
+  t('ANNIE_BAG_PAILLETTES_NUDE ha "5 in arrivo" da una riga ferma dal 13-08: avviso lo stesso', codici.has('ANNIE_BAG_PAILLETTES_NUDE') && Number(reorder.find((r) => r.codice === 'ANNIE_BAG_PAILLETTES_NUDE').in_arrivo) === 5);
+  t('LEA_BAG_COCCO_BLACK (1 pezzo, 31 venduti): la riga del 03-08 e\' viva per l\'arrivo dell\'08-10', !codici.has('LEA_BAG_COCCO_BLACK'));
+  eq('ogni codice in avviso ha la sua pila, una per codice', [[...codici].every((c) => pile.has(m.codeToPila.get(c))), pile.size], [true, 13]);
+  // costruisci() nasconde le pile a 0 pezzi senza niente in arrivo: proprio quelle finite del tutto. Per la bandierina la
+  // pagina le deve aggiungere lo stesso (sul magazzino vero del 18-10 gli altri codici di queste pile sono tutti a 0)
+  eq('5 pile in avviso sono finite e nascoste dal modello: la bandierina non puo\' contare su dati.pile',
+    [...codici].filter((c) => !m.dati.pile.some((p) => p.key === m.codeToPila.get(c))).sort(),
+    ['AGATA_BAG_ROSE_PINK', 'ANNIE_BAG_SAMPLE', 'LEA_BAG_COCCO_BLUE', 'LEA_BAG_PONY_BAMBI', 'SOPHIE_BAG_SUEDE_BROWN']);
+  // senza data_ultimo_arrivo (com'era la lettura della pagina fino al 18-10): con il solo display COCCO_BLACK resta giusta
+  // (nessuna consegna promessa), i porta-carte con la consegna del 20-05 perdono l'arrivo del 25-09
+  const senzaUltimo = costruisci(gruppiDi(righe.map(({ data_ultimo_arrivo, ...r }) => r)), inv, OGGI3);
+  const s2 = staFinendo(reorder, senzaUltimo, OGGI3).codici;
+  eq('senza data_ultimo_arrivo nella lettura: in piu\' solo CREDIT_CARD_CASE_COCCO_GREEN (serve leggerlo in fetchOrdiniGruppi)', [...s2].filter((c) => !codici.has(c)), ['CREDIT_CARD_CASE_COCCO_GREEN']);
+}
+
+console.log('\n== venditePerMese(): le barre degli ultimi 6 mesi della scheda della pila ==');
+{
+  // SaleRow di fetchSalesByCodice: negozio (qromo) e online (shopify), data 'YYYY-MM-DD' o null
+  const v = (source, data, qty) => ({ source, id: source + data + qty, data, qty, price: null, descr: '', ref: '' });
+  const mesi = (rows, oggi = OGGI3, n) => venditePerMese(rows, oggi, n).map((x) => [x.mese, x.nome, x.pezzi]);
+  const vendite = [v('qromo', '2026-10-03', 1), v('shopify', '2026-10-15', 2), v('shopify', '2026-09-30', 1), v('shopify', '2026-05-02', 3),
+    v('shopify', '2026-04-30', 9), v('qromo', null, 5), v('shopify', '2026-11-01', 4)];
+  eq('6 mesi fino a ottobre, dal piu\' vecchio, anche a zero; fuori aprile, la riga senza data e novembre', mesi(vendite),
+    [['2026-05', 'mag', 3], ['2026-06', 'giu', 0], ['2026-07', 'lug', 0], ['2026-08', 'ago', 0], ['2026-09', 'set', 1], ['2026-10', 'ott', 3]]);
+  eq('nessuna vendita: 6 mesi a zero', mesi([]).map((x) => x[2]), [0, 0, 0, 0, 0, 0]);
+  eq('a cavallo dell\'anno (oggi 10-02-2027)', mesi([v('shopify', '2026-12-24', 2), v('qromo', '2027-01-07', 1)], '2027-02-10'),
+    [['2026-09', 'set', 0], ['2026-10', 'ott', 0], ['2026-11', 'nov', 0], ['2026-12', 'dic', 2], ['2027-01', 'gen', 1], ['2027-02', 'feb', 0]]);
+  eq('il primo del mese e l\'ultimo giorno del mese prima', mesi([v('shopify', '2026-10-01', 1), v('shopify', '2026-09-30', 1)], '2026-10-01', 2),
+    [['2026-09', 'set', 1], ['2026-10', 'ott', 1]]);
+  eq('n mesi a scelta: 1 e 12 (da novembre 2025 a ottobre 2026)', [mesi(vendite, OGGI3, 1), mesi(vendite, OGGI3, 12).map((x) => x[0]).filter((_, i, a) => i === 0 || i === a.length - 1)],
+    [[['2026-10', 'ott', 3]], ['2025-11', '2026-10']]);
+  eq('piu\' codici della stessa pila insieme: si sommano', mesi([v('shopify', '2026-10-02', 1), v('shopify', '2026-10-02', 2), v('qromo', '2026-10-09', 1)], OGGI3, 1), [['2026-10', 'ott', 4]]);
+  eq('data con l\'ora e qty come stringa: conta il giorno, qty in numero', mesi([v('shopify', '2026-10-02T23:30:00+00:00', '2')], OGGI3, 1), [['2026-10', 'ott', 2]]);
+  const copia = JSON.stringify(vendite);
+  venditePerMese(vendite, OGGI3);
+  t('non tocca le vendite in ingresso', JSON.stringify(vendite) === copia);
+}
+
 // --- Cinture sul sorgente ---
 const IMPORT_RE = /^import\s+(?:(type)\s+)?(?:([^;'"]*?)\s+from\s+)?'([^']+)'/gm;
 const importi = (s) => [...s.matchAll(IMPORT_RE)].map((m) => ({ tipo: !!m[1], nomi: (m[2] ?? '').replace(/[{}*]/g, ' ').split(/[\s,]+/).filter((x) => x && x !== 'as'), da: m[3] }));
@@ -721,10 +922,18 @@ console.log('\n== cinture: le sole vie di scrittura sono ArrivoRow e SupplierOrd
 {
   // Paillettes (fase 2): CountForm di Magazzino per il giro di conta, paillettes.ts (funzioni pure, solo tipi) per i punti
   const OK_VIL = ['react', '../components/Icon', '../lib/api', './Ordini', '../components/SupplierOrderForm', '../components/CountForm', '../lib/people', '../lib/backnav',
-    '../lib/villaggio/catalogo', '../lib/villaggio/mondo', '../lib/villaggio/paillettes', '../styles/villaggio.css'];
+    '../lib/villaggio/catalogo', '../lib/villaggio/mondo', '../lib/villaggio/paillettes', '../styles/villaggio.css',
+    // fase 3 (18-10): stagione, luce e meteo dell'isola (il fetch verso Open-Meteo vive li', non nella pagina)
+    '../lib/villaggio/meteo'];
   eq('Villaggio.tsx importa (valori) solo da moduli noti', importi(VIL).filter((i) => !i.tipo && !OK_VIL.includes(i.da) && !/^@fontsource\//.test(i.da)).map((i) => i.da), []);
-  eq("da lib/api le letture fetchInventory, fetchOrdiniGruppi, fetchVillaggioEventi e oggi, e le tre scritture segnaPresenza, verificaFornitore e registraContaCompleta",
-    nomiDa(VIL, '../lib/api'), ['fetchInventory', 'fetchOrdiniGruppi', 'fetchVillaggioEventi', 'oggi', 'registraContaCompleta', 'segnaPresenza', 'verificaFornitore']);
+  // fase 3: la scheda della pila legge anche Riordino (v_reorder), vendite, arrivi e rettifiche del codice
+  const LETTURE_PILA = ['fetchAdjustmentsByCodice', 'fetchPurchasesByCodice', 'fetchReorder', 'fetchSalesByCodice'];
+  eq("da lib/api le letture fetchInventory, fetchOrdiniGruppi, fetchVillaggioEventi, oggi e quelle della scheda della pila, e le tre scritture segnaPresenza, verificaFornitore e registraContaCompleta",
+    nomiDa(VIL, '../lib/api'), [...LETTURE_PILA, 'fetchInventory', 'fetchOrdiniGruppi', 'fetchVillaggioEventi', 'oggi', 'registraContaCompleta', 'segnaPresenza', 'verificaFornitore'].sort());
+  for (const f of LETTURE_PILA) {
+    const corpo = ritaglia(API, `export async function ${f}(`, '\n}\n');
+    t(`${f} (scheda della pila) legge e basta: nessuna writeApi, insert, upsert, update, delete o rpc`, !!corpo && !/writeApi|\.(insert|upsert|update|delete|rpc)\(/.test(corpo));
+  }
   const corpoPres = ritaglia(API, 'export async function segnaPresenza(', '\n}\n'), corpoVer = ritaglia(API, 'export async function verificaFornitore(', '\n}\n');
   const corpoCC = ritaglia(API, 'export async function registraContaCompleta(', '\n}\n');
   t("segnaPresenza scrive solo l'azione villaggio_presenza, verificaFornitore solo fornitore_verifica, registraContaCompleta solo villaggio_conta_completa {codici}",
@@ -744,7 +953,8 @@ console.log('\n== cinture: le sole vie di scrittura sono ArrivoRow e SupplierOrd
   // 16-10 notte: il modulo chiama onDone 700 ms dopo il salvataggio, anche se nel frattempo il pannello e' cambiato
   t("dopo un ordine SupplierOrderForm ricarica SEMPRE con load (e lo dice); Laboratori e modulo pulito solo se si e' ancora su QUESTO passo 4",
     /<SupplierOrderForm\b[\s\S]*?onDone=\{\(\) => \{\s*load\(\); toast\('Ordine salvato: lo trovi anche in Ordini\.'\);\s*(?:\/\/[^\n]*\n\s*)*if \(sheetRef\.current !== s\) return;\s*formSporco\.current = false;\s*sheetRef\.current = \{ t: 'labs' \}; setSheet\(\{ t: 'labs' \}\);\s*\}\} \/>/.test(VIL));
-  const OK_VAPP = ['react', './pages/Villaggio.tsx', './components/ErrorBoundary.tsx', './lib/api.ts'];
+  // fase 3: le persone (PEOPLE, personaName) per chiedere chi scrive alla prima apertura
+  const OK_VAPP = ['react', './pages/Villaggio.tsx', './components/ErrorBoundary.tsx', './lib/api.ts', './lib/people.tsx'];
   eq('VillaggioApp.tsx importa (valori) solo da moduli noti', importi(VAPP).filter((i) => !i.tipo && !OK_VAPP.includes(i.da)).map((i) => i.da), []);
   eq('VillaggioApp.tsx da lib/api solo fetchVillaggioSettings e VILLAGGIO_SPENTO', nomiDa(VAPP, './lib/api.ts'), ['VILLAGGIO_SPENTO', 'fetchVillaggioSettings']);
   for (const f of ['web/src/lib/people.tsx', 'web/src/lib/backnav.ts', 'web/src/components/Icon.tsx', 'web/src/components/ErrorBoundary.tsx']) {
@@ -802,8 +1012,9 @@ console.log("\n== cinture: l'ordine a meta' non si perde (lascia, formSporco, Es
   const corpoChiudi = ritaglia(VIL, '  const chiudi = useCallback(() => {', '\n  }, [lascia]);', true);
   t('ritagli presenti: lascia, quandoArrivaIlBack, apri (con il suo handler di backnav), chiudi', [corpoLascia, corpoAttendi, corpoApri, corpoFn, corpoChiudi].every(Boolean));
   // Paillettes (fase 2): la stessa guardia protegge la verifica fornitore e il giro di conta
-  t("lascia(): chiede solo per un modulo gia' toccato: l'ordine (add, passo 4), la verifica, la conta del giro",
-    /const cosa = !s \|\| !formSporco\.current \? null\s*: s\.t === 'add' && s\.step === 4 \? "l'ordine" : s\.t === 'verifica' \? 'la verifica' : s\.t === 'giro' \? 'la conta' : null;\s*if \(!cosa\) return true;/.test(corpoLascia));
+  // fase 3 (proposta 8): anche la riga del laboratorio, dove si scrive un arrivo o la modifica della riga
+  t("lascia(): chiede solo per un modulo gia' toccato: l'ordine (add, passo 4), la verifica, la conta del giro, la riga del laboratorio",
+    /const cosa = !s \|\| !formSporco\.current \? null\s*: s\.t === 'add' && s\.step === 4 \? "l'ordine" : s\.t === 'verifica' \? 'la verifica' : s\.t === 'giro' \? 'la conta' : s\.t === 'lab' \? 'la riga' : null;\s*if \(!cosa\) return true;/.test(corpoLascia));
   const jsLascia = await sTS(corpoLascia.replace(/^  const lascia = useCallback\(/, 'const lascia = ').replace(/\n  \}, \[\]\);$/, '\n  };'));
   if (jsLascia) {
     const prova = (s, sporco, ok) => {
@@ -813,12 +1024,12 @@ console.log("\n== cinture: l'ordine a meta' non si perde (lascia, formSporco, Es
     };
     const LASCI = (cosa) => `Lasci ${cosa} a metà? Quello che hai scritto si perde.`;
     eq('lascia() vera: nessun pannello -> true senza chiedere', prova(null, true, false), [true, [], true]);
-    for (const [nome, s, cosa] of [['passo 4', { t: 'add', step: 4 }, "l'ordine"], ['verifica', { t: 'verifica', lab: 'x' }, 'la verifica'], ['giro', { t: 'giro', codici: ['A'] }, 'la conta']]) {
+    for (const [nome, s, cosa] of [['passo 4', { t: 'add', step: 4 }, "l'ordine"], ['verifica', { t: 'verifica', lab: 'x' }, 'la verifica'], ['giro', { t: 'giro', codici: ['A'] }, 'la conta'], ['laboratorio', { t: 'lab', key: 'x' }, 'la riga']]) {
       eq(`lascia() vera, ${nome} non toccato: true senza chiedere`, prova(s, false, false), [true, [], false]);
       eq(`lascia() vera, ${nome} toccato, Annulla: false, resta toccato`, prova(s, true, false), [false, [LASCI(cosa)], true]);
       eq(`lascia() vera, ${nome} toccato, OK: true, modulo pulito`, prova(s, true, true), [true, [LASCI(cosa)], false]);
     }
-    for (const s of [{ t: 'add', step: 3 }, { t: 'lab', key: 'x' }, { t: 'wh' }, { t: 'percorso' }, { t: 'missioni' }]) {
+    for (const s of [{ t: 'add', step: 3 }, { t: 'wh' }, { t: 'pila', key: 'Lea|x' }, { t: 'percorso' }, { t: 'missioni' }]) {
       eq(`lascia() vera, ${s.t}${s.step ? ' passo ' + s.step : ''} "toccato": non e' un modulo, true senza chiedere`, prova(s, true, false).slice(0, 2), [true, []]);
     }
   } else nota('lascia() non provata (ritaglio assente o node:module.stripTypeScriptTypes mancante)');
@@ -839,7 +1050,10 @@ console.log("\n== cinture: l'ordine a meta' non si perde (lascia, formSporco, Es
     /<button className="v-pill v-home" type="button" onClick=\{\(\) => \{ if \(lascia\(\)\) quandoArrivaIlBack\(onBack\); \}\} aria-label="Torna alla Home">/.test(VIL));
   t("giro di conta: 'Salta/Avanti' passa da lascia() prima di andare al codice dopo",
     /onClick=\{\(\) => \{ if \(lascia\(\)\) \{ pulisci\(\); setI\(\(x\) => x \+ 1\); \} \}\}>\{gia \? 'Avanti ›' : 'Salta ›'\}<\/button>/.test(VIL));
-  eq("lascia() la chiamano solo apri() (e il suo handler), chiudi(), '< Cambia colore', la Home e 'Salta/Avanti' del giro", [conta(VIL, /\blascia\(\)/), conta(corpoApri, /\blascia\(\)/), conta(corpoFn, /\blascia\(\)/), conta(corpoChiudi, /\blascia\(\)/)], [6, 2, 1, 1]);
+  // fase 3: anche "Arrivate/Chiudi" di una riga del laboratorio (cambiare riga smonterebbe la ArrivoRow toccata)
+  t("riga del laboratorio: 'Arrivate/Chiudi' passa da lascia() se una riga e' gia' aperta",
+    /onClick=\{\(\) => \{ if \(openLine && !lascia\(\)\) return; setOpenLine\(aperta \? null : r\.id\); \}\}>\{aperta \? 'Chiudi' : 'Arrivate'\}<\/button>/.test(VIL));
+  eq("lascia() la chiamano solo apri() (e il suo handler), chiudi(), '< Cambia colore', la Home, 'Salta/Avanti' del giro e 'Arrivate/Chiudi' del laboratorio", [conta(VIL, /\blascia\(\)/), conta(corpoApri, /\blascia\(\)/), conta(corpoFn, /\blascia\(\)/), conta(corpoChiudi, /\blascia\(\)/)], [7, 2, 1, 1]);
   const corpoNoGl = ritaglia(VIL, '{noGl && (', ')}');
   eq("onBack: diretto solo nel messaggio senza WebGL (li' nessun pannello si apre), altrove solo via quandoArrivaIlBack, mai chiamato a mano",
     [conta(VIL, /onClick=\{onBack\}/), corpoNoGl.includes('onClick={onBack}'), conta(VIL, /quandoArrivaIlBack\(onBack\)/), conta(VIL, /\bonBack\(/)], [1, true, 1, 0]);
@@ -1175,9 +1389,111 @@ console.log("\n== cinture: passi 3 e 4, laboratorio senza fornitore, chi scrive,
     [conta(VIL, /\{righe\(lab\.raw\.length \+ lab\.extra\.length\)\}, \{lab\.pz\} pz da arrivare/), conta(VIL, /\{righe\(L\.raw\.length \+ L\.extra\.length\)\} . \{L\.pz\} pz/), conta(VIL, /\} righe\b/)], [1, 1, 0]);
 
   // piccoli fix della stessa giornata
-  t('scroll al modello con getBoundingClientRect (offsetTop dipendeva dal genitore posizionato)', /b\.scrollTop \+= el\.getBoundingClientRect\(\)\.top - b\.getBoundingClientRect\(\)\.top - 8;/.test(VIL) && !/offsetTop/.test(VIL));
+  // (visualViewport.offsetTop, per la tastiera, e' un'altra cosa: lo scostamento della parte visibile)
+  t('scroll al modello con getBoundingClientRect (offsetTop dipendeva dal genitore posizionato)', /b\.scrollTop \+= el\.getBoundingClientRect\(\)\.top - b\.getBoundingClientRect\(\)\.top - 8;/.test(VIL) && !/(?<!vv)\.offsetTop/.test(VIL));
   t('Ginni: il timer della scrittura si ferma a testo completo', /const tutto = ridotto \|\| k >= testo\.length;\s*useEffect\(\(\) => \{\s*if \(tutto\) return;[\s\S]*?\}, \[testo, tutto\]\);/.test(VIL));
   t('Thumb: la richiesta della miniatura si cancella allo smontaggio', /const via = thumbAsync\(model, look, \(u\) => \{ if \(on\) setSrc\(u\); \}\); return \(\) => \{ on = false; via\(\); \};/.test(VIL));
+}
+
+console.log("\n== cinture: la pagina della fase 3 (scheda della pila, verifica che chiude, ritocchi per l'iPhone, isola che racconta) ==");
+{
+  // il mondo chiama la pagina: tocco su una pila = la sua scheda; tocco su un fumetto = la verifica di quel laboratorio
+  // (a Paillettes spente la verifica non c'e': il laboratorio)
+  t('Mondo: onPila apre la scheda della pila', /onPila: \(key\) => apri\(\{ t: 'pila', key \}\),/.test(VIL));
+  t("Mondo: onFumetto apre la verifica del laboratorio, o il laboratorio a Paillettes spente", /onFumetto: \(lab\) => apri\(paillettes \? \{ t: 'verifica', lab \} : \{ t: 'lab', key: lab \}\),/.test(VIL));
+  t('la tessera del pannello Magazzino apre la scheda della pila (non chiude piu\' il pannello)', /onClick=\{\(\) => apri\(\{ t: 'pila', key: p\.key \}\)\}/.test(VIL) && !/focusPila\(p\.key, false\)/.test(VIL));
+  t("scheda della pila: camera sulla pila e contesto 'pila' (si toccano le altre pile)", /else if \(s\.t === 'pila'\) \{ W\.focusPila\(s\.key\); W\.setCtx\(\{ type: 'pila' \}\); \}/.test(VIL));
+  t("scheda della pila: Ordina ancora = passo 4 col codice (il modulo di sempre), Conta = giro sui codici della pila",
+    /onConta=\{\(\) => apri\(\{ t: 'giro', codici: Pi\.codes\.map\(\(c\) => c\.codice\) \}\)\}/.test(VIL) && /onOrdina=\{\(codice, forn\) => apri\(\{ t: 'add', step: 4, model: Pi\.model, pila: Pi\.key, codice,/.test(VIL));
+  // le letture della scheda: un errore si vede ("Non riesco a leggere ..."), mai "zero"
+  const corpoSt = ritaglia(VIL, 'function useStorico<T>(', '\n}\n');
+  t("useStorico: errore = messaggio, mai righe vuote; una lettura vecchia (scheda smontata) non scrive", /\.catch\(\(e: unknown\) => \{ if \(vivo\) setS\(\{ righe: null, errore: testoErrore\(e\) \}\); \}\);/.test(corpoSt) && /return \(\) => \{ vivo = false; \};/.test(corpoSt));
+  t('useStorico per vendite, arrivi e conte della pila', ['fetchSalesByCodice', 'fetchPurchasesByCodice', 'fetchAdjustmentsByCodice'].every((f) => new RegExp('useStorico\\(codici, ' + f + '\\)').test(VIL)));
+  t("sta finendo: Riordino letto con ordini e magazzino, un errore non ferma il villaggio e tiene l'ultima lettura buona",
+    /fetchReorder\(\)\.catch\(\(e: Error\) => e\)/.test(VIL) && /if \(Array\.isArray\(rio\)\) \{ riordino\.current = rio; setRioErr\(null\); \} else setRioErr\(testoErrore\(rio\)\);/.test(VIL) && conta(VIL, /riordino\.current = /) === 1);
+  {
+    // le letture della scheda della pila (19-10): l'errore si dice, le vendite fino a 300 righe per tabella, l'ultimo arrivo letto
+    const vend = ritaglia(API, 'export async function fetchSalesByCodice(', '\n}\n');
+    t("storico: fetchSalesByCodice legge 300 righe da qromo_sales e shopify_line_items e lancia su ciascuna delle tre letture",
+      conta(vend, /\.limit\(300\)/g) === 2 && !/\.limit\(40\)/.test(vend) && /if \(q\.error\) throw new Error\('vendite in negozio: '/.test(vend)
+      && /if \(s\.error\) throw new Error\('vendite online: '/.test(vend) && /if \(oe\) throw new Error\('ordini online: '/.test(vend));
+    t("storico: arrivi e rettifiche lanciano sull'errore invece di dare []",
+      /if \(error\) throw new Error\('arrivi: '/.test(ritaglia(API, 'export async function fetchPurchasesByCodice(', '\n}\n'))
+      && /if \(error\) throw new Error\('conte e rettifiche: '/.test(ritaglia(API, 'export async function fetchAdjustmentsByCodice(', '\n}\n')));
+    t('fetchOrdiniGruppi legge data_ultimo_arrivo (staFinendo: una riga che riceve arrivi e\' viva)', /data_consegna_display,data_ultimo_arrivo,/.test(ritaglia(API, 'export async function fetchOrdiniGruppi(', '\n}\n')));
+    const wa = ritaglia(API, 'export async function writeApi(', '\n}\n');
+    t("writeApi: un fetch fallito e' un esito incerto, mai \"niente e' stato salvato\"", /\} catch \{/.test(wa) && /throw new Error\('Connessione interrotta: non so se e\\' stato salvato\./.test(wa) && !/niente e\\' stato salvato/.test(wa));
+    const INV = read('web/src/pages/Inventory.tsx'), RES = read('web/src/components/ReturnForm.tsx');
+    t("Magazzino e Resi: una lettura fallita dello storico si dice (nessun .catch(() => setX([])))",
+      !/\.catch\(\(\) => set(Sales|Purch|Adjs)\(\[\]\)\)/.test(INV + RES) && conta(INV, /Non riesco a leggere/g) === 3 && /Non riesco a leggere le vendite/.test(RES) && /Riprova/.test(RES));
+    t("Resi: la risposta tardiva del prodotto di prima non sovrascrive quello nuovo (vivo e cleanup nell'effetto)",
+      /let vivo = true;/.test(RES) && /\.then\(\(s\) => \{ if \(vivo\) setSales\(s\); \}\)\.catch\(\(e: Error\) => \{ if \(vivo\) setSalesErr\(e\.message\); \}\);/.test(RES) && /return \(\) => \{ vivo = false; \};\n  \}, \[prod, rilettura\]\);/.test(RES));
+  }
+  t("sta finendo: un errore di v_reorder si dice nel Magazzino e nella scheda della pila (mai come \"niente finisce\")",
+    conta(VIL, /\{rioErr && avvisoRiordini\(rioErr\)\}/) === 2 && /<SchedaPila key=\{Pi\.key\} pila=\{Pi\} finendo=\{finendo\} rioErr=\{rioErr\}/.test(VIL)
+    && /const avvisoRiordini = \(e: string\) => <p className="v-errl" role="alert">Non riesco a leggere i riordini/.test(VIL));
+  const iAgg = VIL.indexOf('W.aggiorna(m.dati);'), iAvv = VIL.indexOf('if (sf) W.setAvvisiPile(sf.pile);'), iPush = VIL.indexOf('if (p) m.dati.pile.push(p);');
+  t("sta finendo: le pile finite che stanno finendo si disegnano (prima di aggiorna), poi le bandierine", iPush > 0 && iAgg > iPush && iAvv > iAgg);
+  t('fumetti: cuore se verificato negli ultimi 3 giorni, se no domanda per le righe senza data, orologio per i ritardi; solo laboratori con fornitore',
+    /if \(!L\.forn\) continue;/.test(VIL) && /out\[L\.key\] = verificati\.has\(L\.forn\) \? 'cuore' : tutte\.some\(\(l\) => !l\.data_consegna\) \? 'domanda'\s*: tutte\.some\(\(l\) => \(giorniAllaConsegna\(l\.data_consegna, g\) \?\? 0\) < 0\) \? 'orologio' : null;/.test(VIL)
+    && /useEffect\(\(\) => \{ mondoRef\.current\?\.setFumetti\(fumetti\); \}, \[fumetti\]\);/.test(VIL));
+  // stagione, luce e meteo: subito con la cache (o sereno), poi la lettura vera ogni 15 minuti e in primo piano
+  t("ambiente: all'apertura stagione e luce subito, col meteo in cache o sereno",
+    /W\.setAmbiente\(ambienteDi\(new Date\(\), meteoInCache\(cache, Date\.now\(\)\) \?\? 'sereno'\)\);/.test(VIL));
+  t('ambiente: lettura vera solo a scheda visibile, ogni AMBIENTE_OGNI_MS e al ritorno in primo piano, non su un Mondo gia\' smontato',
+    /const cielo = \(\) => \{ if \(!document\.hidden\) leggiAmbiente\(\)\.then\(\(a\) => \{ if \(mondoRef\.current === W\) W\.setAmbiente\(a\); \}\); \};/.test(VIL)
+    && /const ogni = window\.setInterval\(cielo, AMBIENTE_OGNI_MS\);/.test(VIL) && /const onVis = \(\) => \{ if \(!document\.hidden\) \{ load\(\); cielo\(\); \} \};/.test(VIL)
+    && /return \(\) => \{ window\.clearInterval\(ogni\);/.test(VIL));
+  // primo avvio piu' svelto: dopo la presenza si rileggono solo gli eventi; "Salta" chiude i fumetti in coda
+  t('presenza nuova: si rileggono solo gli eventi (leggiEventi), non ordini e magazzino', /if \(r\.nuova\) \{ presenta\.current = 1; leggiEventi\(\); \}/.test(VIL));
+  t("eventi: un contatore loro (ultimaEv), cosi' la rilettura dei soli eventi non scarta il modello di load()",
+    /if \(!Array\.isArray\(ev\) \|\| mia !== ultimaEv\.current\) return;/.test(VIL) && /const mia = \+\+ultima\.current, miaEv = \+\+ultimaEv\.current;/.test(VIL) && /await applicaEventi\(eventiP, miaEv\);/.test(VIL));
+  t("fumetto di Ginni: 'Salta' c'e' solo con altri fumetti in coda e li chiude tutti",
+    /onSalta=\{say\.length > 1 \? \(\) => setSay\(\[\]\) : undefined\}/.test(VIL) && /\{onSalta && <button type="button" className="v-salta" onClick=\{onSalta\}>/.test(VIL));
+  // verifica: chiudi va al server solo quando e' vero (le altre righe restano come le manda la v29)
+  t('verifica: chiudi: true solo sulle righe da chiudere', /\.\.\.\(v\.chiudi \? \{ chiudi: true \} : \{\}\)/.test(VIL) && !/chiudi: false \}/.test(VIL.replace("cambia({ [l.id]: { chiudi: false } })", '')));
+  t("verifica: 'Non arriva piu'' chiede la conferma nella riga, niente window.confirm", /onClick=\{\(\) => setChiedi\(l\.id\)\}>Non arriva più<\/button>/.test(VIL) && /Sì, non arriva più<\/button>/.test(VIL));
+  t("verifica: 'una data per tutte' riempie le righe che la data non l'avevano (e non quelle da chiudere)",
+    /const senzaPrima = aperte\.filter\(\(l\) => !prima\(l\) && !valore\(l\)\.chiudi\);/.test(VIL) && /cambia\(Object\.fromEntries\(senzaPrima\.map\(\(l\) => \[l\.id, \{ data: d \}\]\)\)\)/.test(VIL));
+  // le funzioni vere, ritagliate e fatte girare
+  const rErr = ['const SENZA_RETE = ', 'const testoErrore = '].map((x) => ritaglia(VIL, x, x.startsWith('const SENZA') ? ';\n' : '\n};', true)).join('\n');
+  const jsErr = await sTS(rErr);
+  if (jsErr) {
+    const te = new Function(jsErr + '\nreturn testoErrore;')();
+    const RETE = 'Sei senza rete o la rete non risponde: riprova quando torna.';
+    eq("testoErrore (vera): 'Load failed' (iPhone), 'Failed to fetch' (Chrome), 'NetworkError ...' (Firefox) e un errore vuoto = senza rete",
+      [te(new TypeError('Load failed')), te(new TypeError('Failed to fetch')), te(new TypeError('NetworkError when attempting to fetch resource.')), te(new Error(''))], [RETE, RETE, RETE, RETE]);
+    eq("testoErrore (vera): i messaggi del server restano com'erano", [te(new Error('paillettes spente')), te('La conta completa la registra solo Ginni.')], ['paillettes spente', 'La conta completa la registra solo Ginni.']);
+  } else nota('testoErrore non provata (ritaglio assente o stripTypeScriptTypes mancante)');
+  const rCh = ritaglia(VIL, 'function chiusuraDi(l: OrdLine) {', '\n}\n', true);
+  const jsCh = await sTS(rCh);
+  if (jsCh) {
+    const ch = new Function(jsCh + '\nreturn chiusuraDi;')();
+    eq('chiusuraDi (vera): cosa succede chiudendo, per WIP e non, con e senza arrivi', [
+      ch({ wip: true, qty_arrived: 0, mancano: 0 }), ch({ wip: true, qty_arrived: 3, mancano: 0 }),
+      ch({ wip: false, qty_arrived: 0, mancano: 5 }), ch({ wip: false, qty_arrived: 0, mancano: 1 }),
+      ch({ wip: false, qty_arrived: 4, mancano: 6 }), ch({ wip: false, qty_arrived: 1, mancano: 1 })], [
+      'La riga si chiude: non arriva niente.', 'La riga si chiude con i 3 pezzi già arrivati.',
+      'La riga si chiude: i 5 pezzi ordinati non arrivano più.', 'La riga si chiude: il pezzo ordinato non arriva più.',
+      'La riga si chiude con i 4 pezzi già arrivati: gli altri 6 non arrivano più.', "La riga si chiude con l'unico pezzo già arrivato: l'ultimo non arriva più."]);
+  } else nota('chiusuraDi non provata (ritaglio assente o stripTypeScriptTypes mancante)');
+  // riga d'arrivo del laboratorio: senza doppioni (solo CSS, solo sotto .v-arrivo), pannello alto, chiusa dopo il salvataggio
+  t("riga d'arrivo: classe 'solo' e modulo segnato toccato a ogni input", /<div className="v-arrivo solo" onInput=\{sporca\}>/.test(VIL) && /<div className="v-list v-arrivo" onInput=\{sporca\}>/.test(VIL));
+  t('villaggio.css: intestazione e barra della ArrivoRow nascoste solo sotto .v-arrivo.solo', /\.v-arrivo\.solo \.ds-lhead, \.v-arrivo\.solo \.ds-progline/.test(CSS) && !/(^|\n)\.ds-(lhead|progline)\b/.test(CSS));
+  t("pannello del laboratorio piu' alto con una riga aperta", /cls: openLine \? 'labsheet tall' : 'labsheet',/.test(VIL));
+  t('una riga salvata (i dati cambiano) richiude la riga del Villaggio e pulisce il modulo, uno fallito no',
+    /if \(firmaPrima\.current === firmaLab\) return;\s*firmaPrima\.current = firmaLab;\s*setOpenLine\(null\);\s*if \(sheetRef\.current\?\.t === 'lab'\) formSporco\.current = false;/.test(VIL));
+  t('tastiera: il pannello si appoggia sopra (visualViewport, classe kb)', /el\.classList\.toggle\('kb', kb > 80\);/.test(VIL) && /\.vil\.kb \.v-sheet\.open \{ bottom: var\(--v-kb, 0px\);/.test(CSS));
+  // misure: nel Villaggio niente testo sotto i 12 px, e i bottoni di HUD, X e "< Cambia ..." da 44 px anche sul telefono
+  const piccoli = [...CSS.matchAll(/font(?:-size)?:[^;}]*?(?<![\d.])(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1])).filter((n) => n < 12);
+  eq('villaggio.css: nessun testo sotto i 12 px', piccoli, []);
+  t('villaggio.css: Home, ? e X a 44 px (anche sul telefono), "< Cambia ..." alti 44 px, bottoni alti almeno 44 px',
+    /\.v-home \{[^}]*width: 44px; height: 44px;/.test(CSS) && /\.v-qb \{[^}]*width: 44px; height: 44px;/.test(CSS) && /\.v-x \{[^}]*width: 44px; height: 44px;/.test(CSS)
+    && /\.v-home, \.v-qb \{ width: 44px; height: 44px;/.test(CSS) && /\.v-back \{[^}]*min-height: 44px;/.test(CSS) && /\.v-btn \{ min-height: 44px;/.test(CSS));
+  // chi scrive passa all'app intera: App.tsx legge ?chi= una volta, solo per una persona vera
+  const APP2 = read('web/src/App.tsx');
+  t("App.tsx: ?chi= letto una volta, solo per una persona di PEOPLE, salvato e tolto dall'indirizzo; senza, il default di sempre",
+    /const daVillaggio = new URLSearchParams\(window\.location\.search\)\.get\('chi'\);\s*if \(daVillaggio && \(PEOPLE as readonly string\[\]\)\.includes\(daVillaggio\)\) \{\s*localStorage\.setItem\('amimi_chi', daVillaggio\);\s*window\.history\.replaceState\(window\.history\.state, '', window\.location\.pathname \+ window\.location\.hash\);\s*return daVillaggio;\s*\}\s*return localStorage\.getItem\('amimi_chi'\) \|\| 'Ale';/.test(APP2));
 }
 
 console.log("\n== cinture su mondo.ts: miniature, riposo, ombre, mesh fuse, costruttore protetto ==");
@@ -1411,30 +1727,38 @@ console.log('\n== cinture: interruttore app_flags.villaggio_enabled (Regola Ferr
   // app a se': prima il flag, poi il Villaggio
   t('VillaggioApp: interruttori null finche\' non arrivano, tutto spento se la lettura fallisce',
     /const \[cfg, setCfg\] = useState<VillaggioSettings \| null>\(null\)/.test(VAPP) && /fetchVillaggioSettings\(\)\.then\(setCfg\)\.catch\(\(\) => setCfg\(VILLAGGIO_SPENTO\)\)/.test(VAPP));
-  const iNull = VAPP.indexOf('if (cfg === null) return'), iSpento = VAPP.indexOf('if (!cfg.enabled) {'), iVil = VAPP.indexOf('<Villaggio ');
-  t('VillaggioApp: attesa, poi flag spento, poi (solo dopo) <Villaggio>', iNull > 0 && iSpento > iNull && iVil > iSpento && /if \(!cfg\.enabled\) \{\s*return \(/.test(VAPP));
+  // fase 3: prima il flag spento (niente da chiedere), poi chi scrive se manca (gli interruttori intanto arrivano), poi
+  // l'attesa e solo dopo il Villaggio
+  const iSpento = VAPP.indexOf('if (cfg && !cfg.enabled) {'), iChi = VAPP.indexOf('if (!chi) {'), iNull = VAPP.indexOf('if (cfg === null) return'), iVil = VAPP.indexOf('<Villaggio ');
+  t('VillaggioApp: flag spento, poi chi scrive, poi attesa, poi (solo dopo) <Villaggio>', iSpento > 0 && iChi > iSpento && iNull > iChi && iVil > iNull && /if \(cfg && !cfg\.enabled\) \{\s*return \(/.test(VAPP));
+  t("VillaggioApp: senza chi la prima apertura chiede la persona (un bottone per persona di PEOPLE) e la salva con setChi",
+    /\{PEOPLE\.map\(\(p\) => <button key=\{p\}[^>]*onClick=\{\(\) => setChi\(p\)\}>\{personaName\(p\)\}<\/button>\)\}/.test(ritaglia(VAPP, 'if (!chi) {', 'if (cfg === null) return')));
   eq('VillaggioApp: <Villaggio> una volta sola', conta(VAPP, /<Villaggio\b/), 1);
-  t('VillaggioApp: <Villaggio> dentro <ErrorBoundary>', /<ErrorBoundary titolo="Villaggio" onBack=\{home\}><Villaggio\b[^>]*\/><\/ErrorBoundary>/.test(VAPP));
-  t("VillaggioApp: l'app a se' passa setChi (menu 'scrive'), paillettes e giocatrice", /<Villaggio pin="x" chi=\{chi\} setChi=\{setChi\} paillettes=\{cfg\.paillettes\} giocatrice=\{cfg\.giocatrice\} onBack=\{home\} \/>/.test(VAPP));
-  t("VillaggioApp: chi scrive parte da amimi_chi (o Ginevra) e ci torna a ogni cambio, con lo storage protetto",
-    /const leggiChi = \(\) => \{ try \{ return localStorage\.getItem\('amimi_chi'\) \|\| 'Ginevra' \} catch \{ return 'Ginevra' \} \}/.test(VAPP)
+  t('VillaggioApp: <Villaggio> dentro <ErrorBoundary>', /<ErrorBoundary titolo="Villaggio" onBack=\{casa\}><Villaggio\b[^>]*\/><\/ErrorBoundary>/.test(VAPP));
+  t("VillaggioApp: l'app a se' passa setChi (menu 'scrive'), paillettes e giocatrice", /<Villaggio pin="x" chi=\{chi\} setChi=\{setChi\} paillettes=\{cfg\.paillettes\} giocatrice=\{cfg\.giocatrice\} onBack=\{casa\} \/>/.test(VAPP));
+  t("VillaggioApp: la Home (casa) porta con se' chi scrive", /const casa = \(\) => home\(chi\)/.test(VAPP) && conta(VAPP, /\bhome\(/) === 1);
+  t("VillaggioApp: chi scrive parte da amimi_chi (vuoto = da chiedere, mai una persona a caso) e ci torna a ogni cambio, con lo storage protetto",
+    /const leggiChi = \(\) => \{ try \{ return localStorage\.getItem\('amimi_chi'\) \|\| '' \} catch \{ return '' \} \}/.test(VAPP)
     && /const setChi = \(c: string\) => \{ setChiS\(c\); try \{ localStorage\.setItem\('amimi_chi', c\) \} catch \{/.test(VAPP));
   // home(): la funzione vera, ritagliata e fatta girare su un window finto (installata su Android, su iPhone, nel browser)
   const rHome = ['const installata = ', 'const home = '].map((p) => VAPP.split('\n').find((r) => r.startsWith(p)) ?? '');
   t("VillaggioApp: installata() guarda display-mode standalone e navigator.standalone (iPhone)",
     /matchMedia\('\(display-mode: standalone\)'\)\.matches \|\| \(navigator as Navigator & \{ standalone\?: boolean \}\)\.standalone === true/.test(rHome[0]));
-  t("VillaggioApp: home() installata apre l'app intera con window.open in una finestra sua, altrimenti ci va",
-    /if \(installata\(\)\) window\.open\(import\.meta\.env\.BASE_URL, '_blank', 'noopener'\); else window\.location\.href = import\.meta\.env\.BASE_URL/.test(rHome[1]));
+  t("VillaggioApp: home() installata apre l'app intera con window.open in una finestra sua (con ?chi=), altrimenti ci va",
+    /if \(installata\(\)\) window\.open\(import\.meta\.env\.BASE_URL \+ \(chi \? '\?chi=' \+ encodeURIComponent\(chi\) : ''\), '_blank', 'noopener'\); else window\.location\.href = import\.meta\.env\.BASE_URL/.test(rHome[1]));
   const jsHome = rHome.every(Boolean) ? await sTS(rHome.join('\n').replace(/import\.meta\.env\.BASE_URL/g, 'BASE')) : null;
   if (jsHome) {
-    const prova = (standalone, iosStandalone) => {
+    const prova = (standalone, iosStandalone, chi) => {
       const log = [], win = { matchMedia: (q) => ({ matches: q === '(display-mode: standalone)' && standalone }), open: (...a) => { log.push(['open', ...a]); return null; }, location: { href: '/amimi-app/villaggio/' } };
-      new Function('window', 'navigator', 'BASE', jsHome + '\nreturn home;')(win, iosStandalone ? { standalone: true } : {}, '/amimi-app/')();
+      new Function('window', 'navigator', 'BASE', jsHome + '\nreturn home;')(win, iosStandalone ? { standalone: true } : {}, '/amimi-app/')(chi);
       return [log, win.location.href];
     };
     eq("home() nel browser: va all'app intera nella stessa scheda", prova(false, false), [[], '/amimi-app/']);
     eq("home() installata (Android, display-mode standalone): window.open e la finestra del Villaggio resta", prova(true, false), [[['open', '/amimi-app/', '_blank', 'noopener']], '/amimi-app/villaggio/']);
     eq("home() installata su iPhone (navigator.standalone): window.open", prova(false, true), [[['open', '/amimi-app/', '_blank', 'noopener']], '/amimi-app/villaggio/']);
+    // fase 3: la finestra dell'app intera su iPhone ha uno storage suo, chi viaggia nell'indirizzo; nel browser no (stesso storage)
+    eq("home('Ginevra') installata su iPhone: l'app intera si apre con ?chi=Ginevra", prova(false, true, 'Ginevra'), [[['open', '/amimi-app/?chi=Ginevra', '_blank', 'noopener']], '/amimi-app/villaggio/']);
+    eq("home('Ginevra') nel browser: stesso indirizzo di sempre", prova(false, false, 'Ginevra'), [[], '/amimi-app/']);
   } else nota('home() di VillaggioApp non provata (righe non trovate o node:module.stripTypeScriptTypes assente)');
   const MAIN = read('web/src/villaggio-main.tsx');
   t('villaggio-main.tsx monta VillaggioApp, non Villaggio direttamente', /import VillaggioApp from '\.\/VillaggioApp\.tsx'/.test(MAIN) && /<VillaggioApp\b/.test(MAIN)
@@ -1566,6 +1890,93 @@ console.log('\n== cinture sull\'app a se\' (per Ginni): build, html, manifest ==
       t('dist: villaggio/index.html punta a /amimi-app/villaggio/manifest.webmanifest, che esiste', /href="\/amimi-app\/villaggio\/manifest\.webmanifest"/.test(VH) && existsSync(ROOT + D + 'villaggio/manifest.webmanifest'));
     } else nota('web/dist/villaggio/index.html assente: controllo dell\'ingresso Villaggio saltato');
   } else nota('web/dist senza version.json o index.html: controllo della build saltato (serve npm run build in web/)');
+}
+
+// Fase 3 (18-10): l'ambiente dell'isola. meteo.ts e' puro tranne il fetch (si prova da Node); su mondo.ts le cinture di
+// ambiente, fumetti, bandierine delle pile e tocco sulle pile. Blocco preparato con mondo.ts e messo qui all'integrazione.
+const METEO = read('web/src/lib/villaggio/meteo.ts');
+console.log("\n== ambiente del Villaggio (fase 3): stagioni, luce del giorno e meteo di meteo.ts ==");
+{
+  eq('stagioni come le vede un albero di Milano: autunno solo ottobre e novembre', [1, 2, 3, 5, 6, 9, 10, 11, 12].map(stagioneDi),
+    ['inverno', 'inverno', 'primavera', 'primavera', 'estate', 'estate', 'autunno', 'autunno', 'inverno']);
+  const hm = (m) => Math.round(m);
+  const s = soleMilano(new Date('2026-10-18T12:00:00Z'));
+  t('sole di Milano il 18-10: alba verso le 7:40 e tramonto verso le 18:35 di Roma (5:42 e 16:35 UTC, +-10 min)', Math.abs(hm(s.alba) - 342) <= 10 && Math.abs(hm(s.tramonto) - 995) <= 10);
+  const g = soleMilano(new Date('2026-06-21T12:00:00Z')), d = soleMilano(new Date('2026-12-15T12:00:00Z'));
+  t('...il 21-6 tramonta verso le 21:15 di Roma, il 15-12 verso le 16:40', Math.abs(hm(g.tramonto) - 1155) <= 10 && Math.abs(hm(d.tramonto) - 941) <= 10);
+  eq('ora e mese di Roma con l\'ora legale (Intl, non il codice): 18-10 05:00 UTC = 07:00, 31-12 23:30 UTC = gennaio',
+    [minutiRoma(new Date('2026-10-18T05:00:00Z')), minutiRoma(new Date('2026-12-15T15:00:00Z')), meseRoma(new Date('2026-12-31T23:30:00Z'))], [420, 960, 1]);
+  const mom = (iso) => momentoDi(new Date(iso));
+  eq('momenti del 18-10 (ora di Roma): 7:00 sera, 9:00 mattina, 11:00 giorno, 17:30 giorno, 18:40 tramonto, 19:30 sera',
+    ['2026-10-18T05:00:00Z', '2026-10-18T07:00:00Z', '2026-10-18T09:00:00Z', '2026-10-18T15:30:00Z', '2026-10-18T16:40:00Z', '2026-10-18T17:30:00Z'].map(mom),
+    ['sera', 'mattina', 'giorno', 'giorno', 'tramonto', 'sera']);
+  eq('...in dicembre alle 16 e\' gia\' tramonto e alle 17:30 sera; in giugno alle 20 e\' ancora giorno, alle 21:30 tramonto',
+    ['2026-12-15T15:00:00Z', '2026-12-15T16:30:00Z', '2026-06-21T18:00:00Z', '2026-06-21T19:30:00Z', '2026-06-21T20:00:00Z'].map(mom), ['tramonto', 'sera', 'giorno', 'tramonto', 'sera']);
+  eq('...la mattina dura almeno fino alle 10:30 anche d\'estate', [mom('2026-06-21T08:00:00Z'), mom('2026-06-21T08:40:00Z')], ['mattina', 'giorno']);
+  eq('codici WMO -> meteo: sereno 0-1, nuvole 2-3, nebbia 45/48, pioggia pioviggine/pioggia/rovesci/temporali, neve 71-77/85-86, il resto sereno',
+    [0, 1, 2, 3, 45, 48, 51, 57, 61, 67, 71, 77, 80, 82, 85, 86, 95, 99, 100, -1, null, undefined, 'x', '61'].map(meteoDaCodice),
+    ['sereno', 'sereno', 'nuvole', 'nuvole', 'nebbia', 'nebbia', 'pioggia', 'pioggia', 'pioggia', 'pioggia', 'neve', 'neve', 'pioggia', 'pioggia', 'neve', 'neve', 'pioggia', 'pioggia', 'sereno', 'sereno', 'sereno', 'sereno', 'sereno', 'pioggia']);
+  const ora = 1_800_000_000_000, c = (x) => JSON.stringify(x);
+  eq('cache del meteo: vale meno di 30 minuti, poi null; storta, dal futuro o con un meteo sconosciuto null',
+    [meteoInCache(c({ t: ora - 1000, meteo: 'neve' }), ora), meteoInCache(c({ t: ora - METEO_TTL_MS, meteo: 'neve' }), ora), meteoInCache('{rotto', ora),
+      meteoInCache(c({ t: ora + 5000, meteo: 'neve' }), ora), meteoInCache(c({ t: ora, meteo: 'grandine' }), ora), meteoInCache(null, ora)],
+    ['neve', null, null, null, null, null]);
+  eq('ambienteDi: stagione e momento dalla data, meteo da chi lo legge', ambienteDi(new Date('2026-10-18T07:00:00Z'), 'nebbia'), { stagione: 'autunno', momento: 'mattina', meteo: 'nebbia' });
+  eq('30 minuti di cache, ricalcolo ogni 15', [METEO_TTL_MS, AMBIENTE_OGNI_MS], [1800000, 900000]);
+  t('Open-Meteo su Milano, solo weather_code e is_day, nessuna chiave', METEO_URL === 'https://api.open-meteo.com/v1/forecast?latitude=45.4642&longitude=9.19&current=weather_code,is_day');
+  t('meteo.ts: nessun import (si prova da Node), un solo fetch, verso METEO_URL', !/^import\s/m.test(METEO) && conta(METEO, /\bfetch\s*\(/) === 1 && /fetch\(METEO_URL, \{ signal: ctl\.signal \}\)/.test(METEO));
+  t("leggiMeteo non lancia: errore, risposta storta o timeout = 'sereno', e solo un codice numerico si salva",
+    /catch \{\n\s*return 'sereno';\n\s*\}/.test(METEO) && /if \(!r\.ok\) return 'sereno';/.test(METEO) && /if \(typeof code !== 'number'\) return 'sereno';/.test(METEO) && /setTimeout\(\(\) => ctl\.abort\(\), 8000\)/.test(METEO));
+}
+
+console.log("\n== cinture su mondo.ts (fase 3): ambiente, fumetti, avvisi, pile ==");
+{
+  t('mondo.ts da meteo.ts importa solo TIPI', /^import type \{ Ambiente, Meteo, Momento, Stagione \} from '\.\/meteo';$/m.test(MONDO) && !/^import \{[^}]*\} from '\.\/meteo'/m.test(MONDO));
+  t('Mondo pubblico: setAmbiente, setFumetti, setAvvisiPile', ['setAmbiente(a: Ambiente)', 'setFumetti(f: ', 'setAvvisiPile(keys: Iterable<string>)'].every((x) => MONDO.includes('\n  ' + x)));
+  t('eventi nuovi facoltativi: onPila e onFumetto', /onPila\?: \(key: string\) => void; onFumetto\?: \(labKey: string\) => void/.test(MONDO));
+  const corpoAmb = metodo('setAmbiente'), corpoIll = metodo('illumina'), corpoFT = metodo('frameTick'), corpoPM = metodo('passoMeteo');
+  t("setAmbiente non sveglia l'isola (un disegno solo: illumina mette dirty), ricostruisce solo cio' che cambia",
+    !/sveglia\(\)/.test(corpoAmb) && /if \(b\.stagione !== prima\.stagione\) this\.vesti\(\);/.test(corpoAmb) && /if \(b\.meteo !== prima\.meteo\) this\.preparaMeteo\(\);/.test(corpoAmb)
+    && /this\.shadowDirty = true; this\.dirty = true;/.test(corpoIll));
+  t('le particelle si muovono solo da sveglie: passoMeteo(now, vivo), e con muovi = false dt = 0',
+    /this\.passoMeteo\(now, vivo\);\n    this\.updateLabels\(now\);\n    this\.renderer\.render/.test(corpoFT) && /const dt = muovi \? Math\.min\(0\.1, [^\n]*\) : 0;/.test(corpoPM));
+  t('...e ogni spostamento passa da dt (fermo a riposo e con reduced motion)', /g\.v -= g\.vel \* dt;/.test(corpoPM) && /n\.a \+= dt \* 0\.02;/.test(corpoPM) && /o\.s \+= dt \* 0\.7;/.test(corpoPM));
+  t("la nebbia c'e' sempre (lontanissima se non serve): accenderla non ricompila i materiali", /this\.scene\.fog = new THREE\.Fog\(/.test(metodo('allestisci')) && !/scene\.fog = null/.test(MONDO));
+  t('gocce, fiocchi, nuvole e ombre: una InstancedMesh ciascuno', conta(metodo('preparaMeteo'), /new THREE\.InstancedMesh\(/g) === 3);
+  t('lampioni e lampade dei capannoni: accesi solo la sera (aloneMat.visible), senza luci vere', /this\.aloneMat\.visible = sera;/.test(corpoIll) && !/PointLight|SpotLight/.test(MONDO));
+  const corpoEL = metodo('etichettaLab');
+  t("fumetti: dentro l'etichetta del capannone, bottone suo (role, tabindex, aria-label col nome passato da esc)",
+    /'<span class="v-fum ' \+ f \+ '" role="button" tabindex="0" aria-label="' \+ esc\(DETTO\[f\]\(L\.data\.nome\)\)/.test(corpoEL) && /el\.classList\.toggle\('con-fum', !!f\);/.test(corpoEL));
+  t("...icone solo SVG: il testo dell'etichetta resta nome, pezzi e '!' (l'e2e lo confronta)", Object.keys({ domanda: 1, orologio: 1, cuore: 1 }).every((k) => new RegExp('  ' + k + ": '<svg ").test(MONDO)));
+  t("...il tocco (o Invio) sul fumetto chiama onFumetto e si ferma li': l'etichetta non apre il capannone",
+    /if \(!\(e\.target as Element \| null\)\?\.closest\?\.\('\.v-fum'\)\) return;/.test(MONDO) && /e\.preventDefault\(\); e\.stopPropagation\(\); this\.ev\.onFumetto\?\.\(data\.key\);/.test(MONDO)
+    && /anchor\.el\.addEventListener\('click', suFumetto, true\); anchor\.el\.addEventListener\('keydown', suFumetto, true\);/.test(MONDO));
+  t('...stesso contenuto, niente riscrittura (il fumetto non risalta a ogni lettura)', /if \(L\.html === html\) return;/.test(corpoEL) && /this\.etichettaLab\(L\);\n  \}$/.test(metodo('fillYard')));
+  const corpoPick = metodo('pick');
+  t('tocco su una pila o sulla sua bandierina: etichetta e onPila; dal Magazzino aperto si toccano solo le pile',
+    /if \(k === 'pile' \|\| k === 'avviso'\) \{/.test(corpoPick) && /this\.mostraPila\(key\); this\.ev\.onPila\?\.\(key\);/.test(corpoPick)
+    && /const soloPile = !!this\.ctx && \(this\.ctx\.type === 'wh' \|\| this\.ctx\.type === 'pila'\);/.test(corpoPick) && /if \(soloPile\) break;/.test(corpoPick));
+  t('bandierine rifatte dopo ogni disposizione del magazzino', /\n    this\.disegnaAvvisi\(\);\n  \}$/.test(metodo('layoutWarehouse')));
+  t('materiali e geometrie dell\'ambiente in keep e liberati in dispose', /for \(const x of this\.persistenti\(\)\) this\.keep\.add\(x\);/.test(metodo('allestisci')) && /for \(const x of this\.persistenti\(\)\) x\.dispose\(\);/.test(metodo('dispose')));
+  // i conteggi delle cinture di prima non cambiano: la fase 3 non aggiunge sveglie, fusioni ne' tween senza ombre
+  // 19-10: il mare porta il colore del momento (la camera dall'alto vede il mare, non il cielo)
+  const luce = (m) => (new RegExp('  ' + m + ': \\{ cielo: 0x[0-9a-f]+, mare: (0x[0-9a-f]+),').exec(MONDO) ?? [])[1];
+  t('mare: setHex(L.mare) in illumina, materiale suo tenuto in persistenti, al tramonto diverso dal giorno',
+    /this\.mare\.color\.setHex\(L\.mare\);/.test(corpoIll) && /this\.vetri, this\.mare, this\.luceLamp/.test(metodo('persistenti'))
+    && /new THREE\.PlaneGeometry\(400, 400\), this\.mare,/.test(MONDO) && !!luce('tramonto') && !!luce('giorno') && luce('tramonto') !== luce('giorno'));
+  // 19-10: il fumetto sopra l'etichetta conta nell'ingombro (HUD, bordo) e l'etichetta piu' lontana sta sopra il fumetto davanti
+  const corpoUL = metodo('updateLabels');
+  t("fumetti: sopra l'etichetta (CSS), contati nell'ingombro e mai sotto l'HUD; etichette dei capannoni impilate per altezza",
+    /\.v-fum \{ position: absolute; left: 50%; bottom: 100%;/.test(CSS) && !/\.v-lbl\.con-fum \{/.test(CSS)
+    && /const sopra = a\.el\.classList\.contains\('con-fum'\) \? 40 : 0;/.test(corpoUL) && /y < hudB \+ 30 \+ sopra/.test(corpoUL)
+    && /t = y - \(a\.h \?\? 0\) - 4 - sopra/.test(corpoUL) && /if \(sopra && t < 0\) show = false;/.test(corpoUL)
+    && /if \(capannoni\.has\(a\)\) a\.el\.style\.zIndex = String\(Math\.max\(1, Math\.round\(h - y\)\)\);/.test(corpoUL));
+  t("i \"+n\" e la festa stanno sopra le etichette dei capannoni (z-index per altezza)", /\.v-float \{ position: absolute; left: 0; top: 0; z-index: 10000;/.test(CSS));
+  t('moduli dentro il Villaggio: campi a 16 px e 44 px, solo sotto .vil .v-form; data per riga a 12 px nel modulo',
+    /\.vil \.v-form input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\), \.vil \.v-form select, \.vil \.v-form textarea \{ font-size: 16px; min-height: 44px; \}/.test(CSS)
+    && /\.vil \.v-form button, \.vil \.v-form \.chip, \.vil \.v-form \.datepick \{ min-height: 44px; \}/.test(CSS) && /\.vil \.v-form \.ds-btn \{ min-height: 44px !important; \}/.test(CSS)
+    && /gap: 6, fontSize: 12, color: 'var\(--ink-muted\)', marginTop: 4/.test(read('web/src/components/SupplierOrderForm.tsx')));
+  eq('sveglia() resta in 8 posti, impasta in 9, ombre = false in 2', [conta(MONDO, /this\.sveglia\(\)/), conta(MONDO, /this\.impasta\(/), conta(MONDO, /\.ombre = false/)], [8, 9, 2]);
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);

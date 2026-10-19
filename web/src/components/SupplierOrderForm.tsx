@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi, fetchActiveFornitori, fetchLastPurchase, fetchLastOrder, fetchModels } from '../lib/api';
-import type { Supplier, FornProd, Product } from '../lib/api';
+import { fetchSuppliers, fetchFornitoreProdotti, fetchProducts, createOrderMulti, oggi, fetchActiveFornitori, fetchLastPurchase, fetchLastOrder, fetchModels, fetchTempiLaboratori } from '../lib/api';
+import type { Supplier, FornProd, Product, TempoLab } from '../lib/api';
 import { toast } from '../lib/toast';
 import Icon from './Icon';
 import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
@@ -14,7 +14,15 @@ const variantTok = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '_').re
 
 // qty come TESTO: vuotabile (redesign 31-07: il default 5 hardcoded era concausa dell'ordine
 // fantasma COCCO; mai ordinata = campo vuoto da compilare, la validazione al salvataggio blocca).
-type Line = { codice: string; item: string | null; variant: string | null; qty: string; costo: string; nuovo: boolean; wip: boolean };
+// consegna: assente = la riga segue la consegna prevista dell'ordine; presente (anche vuota) = data sua.
+type Line = { codice: string; item: string | null; variant: string | null; qty: string; costo: string; nuovo: boolean; wip: boolean; consegna?: string };
+
+// "di solito Francesco consegna in circa 30 giorni": solo testo, la data la dice il laboratorio (proposta 3, 18-10). Il
+// nome senza il tipo fra parentesi ("Francesco (pelle)" -> "Francesco"), come labOf() del Villaggio
+const tempoAbituale = (forn: string, giorni: number) => {
+  const g = Math.round(giorni);
+  return `Di solito ${forn.replace(/\s*\([^)]*\)\s*$/, '').trim() || forn} consegna ${g <= 0 ? "lo stesso giorno dell'ordine" : g === 1 ? 'in circa 1 giorno' : `in circa ${g} giorni`}.`;
+};
 
 export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initialCodice }: { pin: string; chi: string; onDone: () => void; initialForn?: string; initialCodice?: string }) {
   const [sups, setSups] = useState<Supplier[]>([]);
@@ -27,6 +35,9 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   const [q, setQ] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
   const [dataOrd, setDataOrd] = useState(oggi());
+  // consegna prevista dell'ordine, facoltativa: vale per ogni riga che non ne ha una sua
+  const [consegna, setConsegna] = useState('');
+  const [tempi, setTempi] = useState<TempoLab[]>([]);
   const [newOpen, setNewOpen] = useState(false);
   const [nm, setNm] = useState(''); const [nv, setNv] = useState('');
   const [nmFree, setNmFree] = useState(false);
@@ -61,6 +72,14 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   }, []);
 
   useEffect(() => { fetchSuppliers().then(setSups).catch(() => {}); fetchProducts().then(setAll).catch(() => {}); fetchActiveFornitori().then((a) => setActive(new Set(a))).catch(() => {}); fetchModels().then((m) => setModelList(m.map((x) => x.model))).catch(() => {}); }, []);
+  // il tempo abituale e' solo un suggerimento: se la vista manca o la lettura fallisce il suggerimento non compare,
+  // e l'ordine si scrive come sempre
+  useEffect(() => { fetchTempiLaboratori().then(setTempi).catch(() => setTempi([])); }, []);
+  const tempo = useMemo(() => {
+    const f = forn.trim().toLowerCase();
+    return f ? tempi.find((t) => t.fornitore.trim().toLowerCase() === f) ?? null : null;
+  }, [tempi, forn]);
+  const consegnaDi = (l: Line) => l.consegna ?? consegna;
 
   // MODELLO da picklist (brief 23-07 C.2): tabella models + modelli gia' a catalogo. Il testo
   // libero resta come "+ nuovo modello" per il primo capo di una linea davvero nuova.
@@ -216,11 +235,16 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
     if (!lines.length) return toast('Aggiungi almeno una borsa', 'err');
     const invalid = lines.find((l) => !l.wip && !(Number(l.qty) > 0));
     if (invalid) return toast(`Quantità mancante per ${invalid.item ?? invalid.codice}: mettila o segna WIP`, 'err');
+    // lo stesso controllo di order_multi (v30: 422 su una data non valida o prima dell'ordine), qui prima di inviare
+    const dataStorta = lines.find((l) => { const c = consegnaDi(l); return c !== '' && (!/^\d{4}-\d{2}-\d{2}$/.test(c) || c < dataOrd); });
+    if (dataStorta) return toast(`Consegna prevista di ${dataStorta.item ?? dataStorta.codice}: dev'essere una data dal giorno dell'ordine in poi`, 'err');
     setBusy(true);
     try {
+      // senza consegna la riga resta quella di sempre (nessun campo in piu' nel payload)
       const righe = lines.map((l) => ({
         codice: l.codice, item: l.item, variant: l.variant, qty_ordered: l.wip ? 0 : Number(l.qty), wip: l.wip,
         nuovo_riordino: l.nuovo ? 'Nuovo' : 'Riordino', costo_unitario: l.costo === '' ? null : Number(l.costo),
+        ...(consegnaDi(l) ? { data_consegna: consegnaDi(l) } : {}),
       }));
       const r = await createOrderMulti(forn, dataOrd, righe, pin, chi) as unknown as { lines: number; stubs: number };
       toast(`Ordine salvato · ${r.lines} borse${r.stubs ? ` · ${r.stubs} nuove da verificare` : ''}`, 'ok');
@@ -316,7 +340,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
   return (
     <div className="form">
       <div className="ordtop">
-        <button className="chip on" onClick={() => { setForn(''); setLines([]); setQ(''); }}>{forn} ✕</button>
+        <button className="chip on" onClick={() => { setForn(''); setLines([]); setQ(''); setConsegna(''); }}>{forn} ✕</button>
         <label className="datepick">📅 <input type="date" value={dataOrd} onChange={(e) => setDataOrd(e.target.value)} /></label>
       </div>
 
@@ -339,6 +363,16 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
                   onClick={() => setLines((p) => p.map((x, j) => j === i ? { ...x, wip: !x.wip } : x))}>
                   {l.wip ? '⏳ WIP · quantità/costo da definire (tocca per annullare)' : 'non so la quantità? → segna WIP'}
                 </button>
+                {/* con una riga sola basta la consegna dell'ordine; la data per riga compare con piu' righe, o se la riga ne ha gia' una sua */}
+                {(lines.length > 1 || l.consegna !== undefined) && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink-muted)', marginTop: 4 }}>
+                    consegna
+                    {/* 16 px: con meno, Safari su iPhone ingrandisce la pagina quando si tocca il campo */}
+                    <input type="date" value={consegnaDi(l)} min={dataOrd} aria-label={`Consegna prevista di ${l.item ?? l.codice}`}
+                      onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, consegna: e.target.value } : x))}
+                      style={{ fontSize: 16, minWidth: 0, maxWidth: 160, border: '1px solid var(--line)', borderRadius: 8, padding: '3px 6px', background: 'var(--surface)', color: 'inherit' }} />
+                  </label>
+                )}
               </div>
               <input className="qbox" type="number" inputMode="numeric" placeholder="pezzi" value={l.wip ? '' : l.qty} disabled={l.wip}
                 onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, qty: e.target.value } : x))} />
@@ -405,6 +439,15 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
           )}
           <input className="txt" placeholder="Variante (opzionale)" value={nv} onChange={(e) => setNv(e.target.value)} />
           <button className="submit small" disabled={!nm.trim()} onClick={addNewBag}>Aggiungi</button>
+        </div>
+      )}
+
+      <label className="fl" htmlFor="sof-consegna">Consegna prevista (facoltativa)</label>
+      <input id="sof-consegna" className="txt" type="date" value={consegna} min={dataOrd} onChange={(e) => setConsegna(e.target.value)} />
+      {(tempo || lines.length > 1) && (
+        <div className="muted" style={{ fontSize: 12, margin: '5px 2px 0' }}>
+          {tempo && <div>{tempoAbituale(forn, tempo.giorni_mediani)} Metti comunque la data che ti dice il laboratorio.</div>}
+          {lines.length > 1 && <div>Vale per tutte le righe; ognuna si può cambiare nel carrello.</div>}
         </div>
       )}
 

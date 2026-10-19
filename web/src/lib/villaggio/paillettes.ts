@@ -5,6 +5,8 @@
 // tests/villaggio_paillettes.mjs (Node 24 strippa i tipi). Niente Date.now(): `oggi` (data di Roma, 'YYYY-MM-DD') arriva da
 // fuori, cosi' il calcolo e' ripetibile. I tetti (una volta al giorno, alla settimana, al mese, per riga) tolgono il gusto
 // di ripetere la stessa azione per fare punti.
+// Fase 3 (18-10): la verifica vale solo se ha SISTEMATO righe (la vista mette in n le righe con data aggiunta, data cambiata
+// o chiuse: confermare e basta non e' lavoro nuovo), e la data aggiunta arriva anche dall'ordine nato con la consegna.
 
 export type TipoEvento = 'presenza' | 'ordine' | 'arrivo' | 'conta' | 'conta_completa' | 'verifica' | 'data_aggiunta';
 export type Evento = { tipo: TipoEvento; giorno: string; ts: string; ref: string; n: number };
@@ -105,16 +107,17 @@ export function calcola(eventi: Evento[], oggi: string): Stato {
         if (unaVolta('a|' + e.ref + '|' + e.giorno)) voce(e, 'arrivo', VALORI.arrivo, 'Arrivo registrato · ' + e.n + ' pz');
         break;
       case 'verifica': {
-        // una verifica senza righe confermate non vale e non consuma la settimana di quel fornitore
+        // una verifica che non ha sistemato righe non vale e non consuma la settimana di quel fornitore
         const l = lunedi(d);
         if (e.n > 0 && unaVolta('v|' + e.ref + '|' + l)) {
-          voce(e, 'verifica', VALORI.verifica, 'Verifica con ' + nomeLab(e.ref) + ' · ' + (e.n === 1 ? '1 riga confermata' : e.n + ' righe confermate'));
+          voce(e, 'verifica', VALORI.verifica, 'Verifica con ' + nomeLab(e.ref) + ' · ' + (e.n === 1 ? '1 riga sistemata' : e.n + ' righe sistemate'));
           if (!labSettimana.has(l)) labSettimana.set(l, new Set());
           labSettimana.get(l)!.add(e.ref);
         }
         break;
       }
       case 'data_aggiunta':
+        // dalla verifica o dall'ordine nato con la data: il ref e' l'id della riga in tutti e due, quindi una volta sola
         if (unaVolta('d|' + e.ref)) voce(e, 'data_aggiunta', VALORI.dataAggiunta, 'Data di consegna aggiunta');
         break;
       case 'conta':
@@ -173,9 +176,10 @@ export type Missione = {
   azione: { t: 'verifica'; lab: string } | { t: 'conta'; codici: string[] } | { t: 'contaCompleta' };
 };
 
-/** Al massimo 3, in ordine di priorita': verifica del laboratorio piu' in ritardo, conta dei negativi, date mancanti, conta
- *  completa del mese (dal 20). `negativi` sono i codici con giacenza negativa: una conta li sistema e li toglie dalla lista,
- *  quindi perche' la missione resti visibile come fatta la pagina passa quelli della prima lettura del giorno. */
+/** Al massimo 3, in ordine di priorita': verifica del laboratorio con piu' righe da sistemare (in ritardo o senza data),
+ *  conta dei negativi, date mancanti, conta completa del mese (dal 20). `negativi` sono i codici con giacenza negativa: una
+ *  conta li sistema e li toglie dalla lista, quindi perche' la missione resti visibile come fatta la pagina passa quelli
+ *  della prima lettura del giorno. */
 export function missioni(input: { labs: LabMissione[]; negativi: string[]; eventi: Evento[]; oggi: string }): Missione[] {
   const { labs, negativi, eventi, oggi } = input;
   const t = num(oggi), l = lunedi(t), mese = oggi.slice(0, 7);
@@ -183,24 +187,26 @@ export function missioni(input: { labs: LabMissione[]; negativi: string[]; event
   let completaOggi = false, completaPrima = false;
   for (const e of eventi) {
     const d = num(e.giorno);
-    if (e.tipo === 'verifica' && d === t) oggiVerificati.add(e.ref);
-    else if (e.tipo === 'verifica' && d >= l && d < t) giaVerificati.add(e.ref);
+    // come per i punti, conta solo la verifica che ha sistemato almeno una riga: confermare tutto com'era lascia la missione
+    if (e.tipo === 'verifica' && e.n > 0 && d === t) oggiVerificati.add(e.ref);
+    else if (e.tipo === 'verifica' && e.n > 0 && d >= l && d < t) giaVerificati.add(e.ref);
     else if (e.tipo === 'conta' && d === t) contatiOggi.add(e.ref);
     else if (e.tipo === 'conta_completa' && meseDi(e) === mese) { if (d === t) completaOggi = true; else completaPrima = true; }
   }
-  const ritardi = (x: LabMissione) => x.righe.filter((r) => r.late).length;
+  // si sommano: una riga senza data non e' mai in ritardo (giorniAllaConsegna di catalogo.ts da' null)
+  const daSistemare = (x: LabMissione) => x.righe.filter((r) => r.late).length + x.senzaData;
   const fatto = (x: LabMissione) => oggiVerificati.has(x.forn!);
   // verificato in un giorno precedente di questa settimana = a posto fino a lunedi'. Un laboratorio verificato OGGI resta in
-  // cima anche se la verifica ha appena spostato le date (e quindi azzerato i ritardi): sparirebbe proprio quando e' fatta
+  // cima anche se la verifica ha appena sistemato le righe: sparirebbe proprio quando e' fatta
   const aperti = labs.filter((x) => x.forn && !giaVerificati.has(x.forn));
   const perPriorita = (k: (x: LabMissione) => number) => (a: LabMissione, b: LabMissione) =>
     Number(fatto(b)) - Number(fatto(a)) || k(b) - k(a) || a.nome.localeCompare(b.nome, 'it');
   const out: Missione[] = [];
 
-  const v = aperti.filter((x) => fatto(x) || ritardi(x) > 0).sort(perPriorita(ritardi))[0];
+  const v = aperti.filter((x) => fatto(x) || daSistemare(x) > 0).sort(perPriorita(daSistemare))[0];
   if (v) {
-    const n = ritardi(v);
-    out.push({ id: 'verifica:' + v.key, testo: 'Verifica con ' + v.nome + (n ? ' · ' + righe(n) + ' in ritardo' : ''),
+    const n = daSistemare(v);
+    out.push({ id: 'verifica:' + v.key, testo: 'Verifica con ' + v.nome + (n ? ' · ' + righe(n) + ' da sistemare' : ''),
       azione: { t: 'verifica', lab: v.key }, fatta: fatto(v) });
   }
   if (negativi.length) {
