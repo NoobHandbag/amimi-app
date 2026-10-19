@@ -263,14 +263,13 @@
 }
 
 /* Fase 3: il fumetto di un capannone (punto di domanda = righe senza data, orologio = righe oltre la data, cuore =
-   verificato da poco). Sta nell'etichetta del capannone, a sinistra del nome e un po' fuori, come l'adesivo "!" a destra:
-   un fumetto sopra l'artigiano, sul telefono a isola intera, finiva sotto l'etichetta. Il bersaglio del tocco e' 44 px;
-   dentro, il fumetto colorato con la sua punta, che entra con un saltello e poi sta fermo */
-.v-lbl.con-fum { padding-left: 36px; }
-.v-fum { position: absolute; left: -13px; top: 50%; width: 44px; height: 44px; margin-top: -24px; display: grid; place-items: center; cursor: pointer; }
+   verificato da poco). Sta sopra l'etichetta del capannone, al centro, con la punta verso il nome: a sinistra del nome
+   allargava l'etichetta e sul telefono (375 e 390 px) quella di Vincenzo copriva la coda di quella di Sarte Milano. Il
+   bersaglio del tocco e' 44 px; dentro, il fumetto colorato con la sua punta, che entra con un saltello e poi sta fermo */
+.v-fum { position: absolute; left: 50%; bottom: 100%; width: 44px; height: 44px; margin: 0 0 -4px -22px; display: grid; place-items: center; cursor: pointer; }
 .v-fumb { position: relative; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: var(--v-amber); color: var(--v-ink);
   border: 2px solid var(--v-paper); box-shadow: 0 3px 0 rgba(74, 53, 35, .22); animation: v-fumin .35s cubic-bezier(.2, .9, .3, 1.4) both, v-bob 2.4s ease-in-out .35s 2; }
-.v-fumb::after { content: ""; position: absolute; left: 1px; bottom: -2px; width: 12px; height: 12px; background: inherit; border-radius: 2px 2px 2px 0; transform: rotate(24deg) skewX(16deg); z-index: -1; }
+.v-fumb::after { content: ""; position: absolute; left: 50%; bottom: -3px; width: 12px; height: 12px; margin-left: -6px; background: inherit; border-radius: 2px; transform: rotate(45deg); z-index: -1; }
 .v-fumb svg { position: relative; width: 24px; height: 24px; display: block; }
 .v-fum.orologio .v-fumb { background: #e98a4c; color: var(--v-paper); }
 .v-fum.cuore .v-fumb { background: var(--v-pink); color: var(--v-paper); }
@@ -278,8 +277,6 @@
 .vil .v-fum:focus-visible .v-fumb { outline: 3px solid var(--v-amber); outline-offset: 2px; }
 @keyframes v-fumin { 0% { opacity: 0; transform: scale(.3); } 100% { opacity: 1; transform: none; } }
 @media (max-width: 480px) {
-  .v-lbl.con-fum { padding-left: 27px; }
-  .v-fum { left: -13px; }
   .v-fumb { width: 32px; height: 32px; }
   .v-fumb svg { width: 20px; height: 20px; }
 }
@@ -294,6 +291,16 @@
 .v-arrivo .ds-recvdate { font-size: 16px; }
 .v-arrivo .ds-segna { min-height: 44px; font-size: 15px; }
 .v-arrivo .ds-del, .v-arrivo .linkbtn { min-height: 44px; font-size: 13px; }
+/* I moduli di Ordini e Magazzino dentro il Villaggio (passo 4 dell'ordine, giro di conta): misure da dito. Campi a 16 px
+   (con meno Safari su iPhone ingrandisce la pagina al tocco) e bersagli di almeno 44 px. Solo sotto .vil .v-form: in
+   Ordini e Magazzino i moduli restano come sono. Il "segna WIP" ha la misura in linea, quindi qui serve !important. */
+.vil .v-form input:not([type="checkbox"]):not([type="radio"]), .vil .v-form select, .vil .v-form textarea { font-size: 16px; min-height: 44px; }
+.vil .v-form button, .vil .v-form .chip, .vil .v-form .datepick { min-height: 44px; }
+.vil .v-form .x { min-width: 44px; }
+/* il segnaposto puo' stare piu' piccolo (lo zoom di Safari guarda il testo del campo): "pezzi" a 16 px si tagliava */
+.vil .v-form .qbox::placeholder, .vil .v-form .cbox::placeholder { font-size: 13px; }
+.vil .v-form .qbox { width: 54px; }
+.vil .v-form .linkbtn { font-size: 12px !important; }
 /* la tastiera dell'iPhone: il pannello si appoggia sopra (variabili scritte dalla pagina con visualViewport) */
 .vil.kb .v-sheet.open { bottom: var(--v-kb, 0px); max-height: calc(var(--v-vvh, 100%) - 12px); padding-bottom: 0; }
 

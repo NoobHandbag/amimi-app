@@ -24,7 +24,7 @@
 // sulla PK) e `fornitore_verifica` (date di consegna delle righe aperte di un laboratorio + registro della verifica).
 // Tutte e tre 409 a flag villaggio_paillettes_enabled spento. logp accetta un `before` opzionale.
 //
-// v30 (2026-10-18, migr 0166, Villaggio fase 3): `fornitore_verifica` accetta `righe[].chiudi` ("non arriva piu'": chiude
+// v30 (2026-10-18, migr 0167, Villaggio fase 3): `fornitore_verifica` accetta `righe[].chiudi` ("non arriva piu'": chiude
 // il residuo di una riga aperta, change_log op order_close, `chiusa: true` in vil_verifiche.righe). Azione nuova
 // `order_update`: corregge quantita', costo, nota e consegna di una riga senza arrivi e non WIP, invece di cancella e rifai.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -405,7 +405,7 @@ async function handle(req: Request): Promise<Response> {
       if (!vuoto(payload.data_consegna) && nuovo.data_consegna == null) return json({ error: `data di consegna non valida (${String(payload.data_consegna)}): atteso YYYY-MM-DD` }, 422);
     }
     const { data: riga, error: re } = await retryOnce(() => sb.from('supplier_orders')
-      .select('id, codice, fornitore, qty_ordered, qty_arrived, costo_unitario, note, data_consegna, wip').eq('id', id).maybeSingle());
+      .select('id, codice, fornitore, qty_ordered, qty_arrived, costo_unitario, note, data_consegna, data_ordine, wip').eq('id', id).maybeSingle());
     if (re) return json({ error: `riga ordine non leggibile (${re.message}): niente salvato, riprova` }, 503);
     if (!riga) return json({ error: 'riga ordine non trovata' }, 404);
     if ((num(riga.qty_arrived) ?? 0) > 0) return json({ error: `Questa riga ha gia' ${riga.qty_arrived} pezzi arrivati e non si modifica: il costo e' gia' negli acquisti. Correggi l'arrivo, oppure fai una riga nuova.`, has_arrivals: true }, 409);
@@ -417,6 +417,8 @@ async function handle(req: Request): Promise<Response> {
       if (ora !== nuovo[k]) { prima[k] = ora; dopo[k] = nuovo[k]; }
     }
     if (!Object.keys(dopo).length) return json({ ok: true, id, cambiati: [] });
+    // una consegna nuova non precede l'ordine (come in order_multi); una data vecchia storta non blocca gli altri campi
+    if (typeof dopo.data_consegna === 'string' && riga.data_ordine && dopo.data_consegna < String(riga.data_ordine).slice(0, 10)) return json({ error: `La consegna (${dopo.data_consegna}) viene prima dell'ordine (${String(riga.data_ordine).slice(0, 10)}).` }, 422);
     const { error: ue } = await sb.from('supplier_orders').update(dopo).eq('id', id);
     if (ue) return json({ error: `riga ordine non salvata (${ue.message}), riprova` }, 400);
     await logp('supplier_orders', id, 'order_update', { codice: riga.codice, fornitore: riga.fornitore, ...dopo }, prima);
@@ -602,6 +604,11 @@ async function handle(req: Request): Promise<Response> {
     const costoErrs = righe.filter((r) => r.costo_unitario != null && r.costo_unitario !== '' && num(r.costo_unitario, { min: 0 }) == null)
       .map((r) => `"${r.codice || r.item || '?'}": costo unitario non valido`);
     if (costoErrs.length) return json({ error: 'Righe non valide: ' + costoErrs.join(' · '), righe_non_valide: costoErrs }, 422);
+    // v30: data_consegna, se data, e' una data vera e non precede l'ordine. Prima arrivava a Postgres com'era (un '' o
+    // '30/11/2026' tornavano come 400 grezzo); il modulo d'ordine lo controlla gia', Cowork e l'MCP no.
+    const consegnaErrs = righe.filter((r) => r.data_consegna != null && r.data_consegna !== '' && !((isoDate(r.data_consegna) ?? '') >= dataOrdine))
+      .map((r) => `"${r.codice || r.item || '?'}": consegna prevista non valida (${String(r.data_consegna)}): atteso YYYY-MM-DD, non prima dell'ordine`);
+    if (consegnaErrs.length) return json({ error: 'Righe non valide: ' + consegnaErrs.join(' · '), righe_non_valide: consegnaErrs }, 422);
     const raw = righe.map((r) => ({
       codice: String(r.codice || ''), item: (r.item as string) ?? null, variant: (r.variant as string) ?? null,
       // riga WIP (feedback 06-07 item 18): quantita'/costo ancora ignoti (es. affinamento pelle);
@@ -610,7 +617,7 @@ async function handle(req: Request): Promise<Response> {
       qty_ordered: r.wip === true ? 0 : (num(r.qty_ordered, { integer: true, min: 1 }) ?? 0),
       nuovo_riordino: (r.nuovo_riordino as string) ?? null,
       costo_unitario: r.costo_unitario != null && r.costo_unitario !== '' ? num(r.costo_unitario, { min: 0 }) : null,
-      data_consegna: (r.data_consegna as string) ?? null, note: (r.note as string) ?? null,
+      data_consegna: r.data_consegna != null && r.data_consegna !== '' ? isoDate(r.data_consegna) : null, note: (r.note as string) ?? null,
     })).filter((r) => (r.codice || (r.item && r.variant)) && (r.qty_ordered > 0 || r.wip));
     if (!raw.length) return json({ error: 'righe non valide (CODICE o Modello+Variante, più quantità)' }, 422);
 

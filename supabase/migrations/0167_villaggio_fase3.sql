@@ -1,4 +1,4 @@
--- 0166_villaggio_fase3.sql (2026-10-18): Villaggio fase 3, la parte di database. Nessuna tabella nuova, nessuna scrittura
+-- 0167_villaggio_fase3.sql (2026-10-18): Villaggio fase 3, la parte di database. Nessuna tabella nuova, nessuna scrittura
 -- di dati: due viste in sola lettura.
 -- (1) v_tempi_laboratori: il tempo abituale di ogni laboratorio, per il SUGGERIMENTO del modulo d'ordine ("di solito
 --     Francesco consegna in circa 30 giorni"). Solo un suggerimento: la data di consegna non si precompila mai.

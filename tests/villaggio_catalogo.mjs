@@ -1410,7 +1410,10 @@ console.log("\n== cinture: la pagina della fase 3 (scheda della pila, verifica c
   t("useStorico: errore = messaggio, mai righe vuote; una lettura vecchia (scheda smontata) non scrive", /\.catch\(\(e: unknown\) => \{ if \(vivo\) setS\(\{ righe: null, errore: testoErrore\(e\) \}\); \}\);/.test(corpoSt) && /return \(\) => \{ vivo = false; \};/.test(corpoSt));
   t('useStorico per vendite, arrivi e conte della pila', ['fetchSalesByCodice', 'fetchPurchasesByCodice', 'fetchAdjustmentsByCodice'].every((f) => new RegExp('useStorico\\(codici, ' + f + '\\)').test(VIL)));
   t("sta finendo: Riordino letto con ordini e magazzino, un errore non ferma il villaggio e tiene l'ultima lettura buona",
-    /fetchReorder\(\)\.catch\(\(e: Error\) => e\)/.test(VIL) && /if \(Array\.isArray\(rio\)\) riordino\.current = rio;/.test(VIL) && conta(VIL, /riordino\.current = /) === 1);
+    /fetchReorder\(\)\.catch\(\(e: Error\) => e\)/.test(VIL) && /if \(Array\.isArray\(rio\)\) \{ riordino\.current = rio; setRioErr\(null\); \} else setRioErr\(rio\.message\);/.test(VIL) && conta(VIL, /riordino\.current = /) === 1);
+  t("sta finendo: un errore di v_reorder si dice nel Magazzino e nella scheda della pila (mai come \"niente finisce\")",
+    conta(VIL, /\{rioErr && avvisoRiordini\(rioErr\)\}/) === 2 && /<SchedaPila key=\{Pi\.key\} pila=\{Pi\} finendo=\{finendo\} rioErr=\{rioErr\}/.test(VIL)
+    && /const avvisoRiordini = \(e: string\) => <p className="v-errl" role="alert">Non riesco a leggere i riordini/.test(VIL));
   const iAgg = VIL.indexOf('W.aggiorna(m.dati);'), iAvv = VIL.indexOf('if (sf) W.setAvvisiPile(sf.pile);'), iPush = VIL.indexOf('if (p) m.dati.pile.push(p);');
   t("sta finendo: le pile finite che stanno finendo si disegnano (prima di aggiorna), poi le bandierine", iPush > 0 && iAgg > iPush && iAvv > iAgg);
   t('fumetti: cuore se verificato negli ultimi 3 giorni, se no domanda per le righe senza data, orologio per i ritardi; solo laboratori con fornitore',

@@ -105,8 +105,9 @@ type Opzioni = {
   vendite?: Record<string, Vendita[]>; acquisti?: Record<string, Acquisto[]>; rettifiche?: Record<string, Rettifica[]>;
   /** Le tabelle dello storico che rispondono 500 (lettura fallita). */
   storicoKo?: ('qromo_sales' | 'shopify_line_items' | 'purchases' | 'stock_adjustments')[];
-  reorder?: Record<string, unknown>[];
-  /** v_tempi_laboratori: le righe, o '404' = vista non ancora applicata (migr 0166). */
+  /** v_reorder: le righe, o 'errore' = la lettura risponde 500. */
+  reorder?: Record<string, unknown>[] | 'errore';
+  /** v_tempi_laboratori: le righe, o '404' = vista non ancora applicata (migr 0167). */
   tempi?: { fornitore: string; giorni_mediani: number; righe: number }[] | '404';
   meteo?: MeteoFinto;
   /** L'ora del browser (page.clock, poi scorre normale): stagione e luce dell'isola dipendono da lei. */
@@ -225,7 +226,7 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
     }
     // il catalogo che SupplierOrderForm usa per nome e variante della riga precompilata
     if (url.pathname.endsWith('/rest/v1/products')) return json(dati.magazzino.map((g) => ({ codice: g.codice, item: g.item, variant: g.variant, categoria: 'Borse', image_url: null, retail_price: 120, cogs: 40 })));
-    if (url.pathname.endsWith('/rest/v1/v_reorder')) return json(opts.reorder ?? []);
+    if (url.pathname.endsWith('/rest/v1/v_reorder')) return opts.reorder === 'errore' ? json({ code: 'XX000', details: null, hint: null, message: 'lettura finta fallita' }, 500) : json(opts.reorder ?? []);
     if (url.pathname.endsWith('/rest/v1/v_tempi_laboratori')) {
       letture.tempi++;
       if (opts.tempi === '404') return json({ code: 'PGRST205', details: null, hint: null, message: 'Could not find the table \'public.v_tempi_laboratori\' in the schema cache' }, 404);
@@ -1515,12 +1516,10 @@ test.describe('fase 3: la scheda della pila', () => {
     expect(r.errori).toEqual([]);
   });
 
-  // BUG dell'app (18-10, integrazione fase 3): fetchOrdiniGruppi di lib/api.ts non chiede data_ultimo_arrivo a
-  // v_ordini_arrivo, quindi staFinendo() non vede l'arrivo recente di una riga che ha gia' una consegna promessa (passata):
-  // la riga sembra ferma e la pila "sta finendo" anche se il laboratorio sta consegnando. Il 18-10 succede a
-  // CREDIT_CARD_CASE_COCCO_GREEN. Quando lib/api.ts legge data_ultimo_arrivo, questo test diventa rosso: si toglie test.fail.
+  // staFinendo() guarda anche l'ultimo arrivo della riga (data_ultimo_arrivo di v_ordini_arrivo): una consegna promessa
+  // passata con un arrivo di pochi giorni fa e' una riga viva. Fino al 18-10 fetchOrdiniGruppi non chiedeva la colonna e
+  // la pila "stava finendo" anche col laboratorio che consegnava (CREDIT_CARD_CASE_COCCO_GREEN sui dati veri).
   test('una riga con la consegna promessa passata ma un arrivo di pochi giorni fa e\' viva: la sua pila non "sta finendo"', async ({ page }) => {
-    test.fail(true, 'lib/api.ts: fetchOrdiniGruppi non legge data_ultimo_arrivo (staFinendo usa allora la data di consegna promessa)');
     const dati = datiBase();
     // la zebrata: ordinata 90 giorni fa, promessa 70 giorni fa, 3 di 10 arrivati 5 giorni fa
     Object.assign(dati.ordini.find((x) => x.id === ID.zebra)!, { qty_ordered: 10, qty_arrived: 3, mancano: 7, completo: false, data_ordine: traGiorni(-90),
@@ -1535,12 +1534,9 @@ test.describe('fase 3: la scheda della pila', () => {
     expect(r.errori).toEqual([]);
   });
 
-  // BUG dell'app (18-10, integrazione fase 3): fetchSalesByCodice, fetchPurchasesByCodice e fetchAdjustmentsByCodice di
-  // lib/api.ts non guardano `error` (restituiscono data ?? []), quindi una lettura fallita si vede come "Nessuna vendita
-  // registrata." invece di "Non riesco a leggere le vendite." (il contratto: mai come zero). test.fail tiene il test in
-  // piedi finche' il bug c'e' e diventa rosso quando lo si sistema: allora si toglie test.fail.
+  // il contratto: una lettura fallita si dice, mai come zero. Fino al 18-10 le tre letture di lib/api.ts restituivano
+  // data ?? [] senza guardare error, e la scheda diceva "Nessuna vendita registrata."
   test('una lettura dello storico che fallisce si dice ("Non riesco a leggere ..."), non diventa "nessuna vendita"', async ({ page }) => {
-    test.fail(true, 'lib/api.ts: fetchSalesByCodice, fetchPurchasesByCodice e fetchAdjustmentsByCodice ignorano l\'errore della lettura');
     const dati = datiBase();
     const r = await apri(page, '#villaggio', dati, { storicoKo: ['qromo_sales', 'shopify_line_items', 'purchases', 'stock_adjustments'] });
     await hud(page, attesi(dati));
@@ -1555,6 +1551,21 @@ test.describe('fase 3: la scheda della pila', () => {
     await expect(dopoSezione(page, /^In arrivo/).locator('.v-voce')).toHaveCount(1);
     expect(senzaVoluti(r.errori, /status of 500/)).toEqual([]);
   });
+
+  test('v_reorder che non si legge si dice nel Magazzino e nella scheda della pila, e il villaggio va avanti', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati, { reorder: 'errore' });
+    await hud(page, attesi(dati));
+    await barra(page, 'Magazzino').click();
+    const s = page.locator('.v-sheet.open');
+    await expect(s.locator('.v-errl')).toContainText('Non riesco a leggere i riordini', ATTESA);
+    await tessera(page, 'Cocco nero').click();
+    await expect(s.locator('h2')).toHaveText('Lea · Cocco nero');
+    await expect(s.locator('.v-errl', { hasText: 'Non riesco a leggere i riordini' })).toHaveCount(1);
+    await expect(s.locator('.v-chip.fin')).toHaveCount(0);
+    expect(r.posts).toEqual([]);
+    expect(senzaVoluti(r.errori, /status of 500/)).toEqual([]);
+  });
 });
 
 test.describe('fase 3: consegna prevista nell\'ordine e tempo abituale del laboratorio', () => {
@@ -1566,7 +1577,7 @@ test.describe('fase 3: consegna prevista nell\'ordine e tempo abituale del labor
     const form = page.locator('.v-sheet.open .v-form');
     const consegna = form.locator('#sof-consegna');
     await expect(consegna).toHaveValue('');
-    await expect(form).toContainText('Di solito Francesco (pelle) consegna in circa 30 giorni. Metti comunque la data che ti dice il laboratorio.', ATTESA);
+    await expect(form).toContainText('Di solito Francesco consegna in circa 30 giorni. Metti comunque la data che ti dice il laboratorio.', ATTESA);
     expect(r.letture.tempi).toBeGreaterThan(0);
     // con una riga sola la data per riga non c'e': vale quella dell'ordine
     await expect(form.locator('.cartrow input[type="date"]')).toHaveCount(0);
@@ -1605,7 +1616,7 @@ test.describe('fase 3: consegna prevista nell\'ordine e tempo abituale del labor
     expect(r.errori).toEqual([]);
   });
 
-  test('senza v_tempi_laboratori (0166 non ancora applicata) il suggerimento non c\'e\' e l\'ordine senza consegna parte come sempre', async ({ page }) => {
+  test('senza v_tempi_laboratori (0167 non ancora applicata) il suggerimento non c\'e\' e l\'ordine senza consegna parte come sempre', async ({ page }) => {
     const dati = datiBase();
     const r = await apri(page, '#villaggio', dati, { tempi: '404' });
     await hud(page, attesi(dati));

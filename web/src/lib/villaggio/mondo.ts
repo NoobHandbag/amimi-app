@@ -514,12 +514,14 @@ const INGOMBRI: [number, number, number][] = [[FONTANA.x, FONTANA.z, 1.7], [CHIO
   ...[0, 1, 2, 3].map((i): [number, number, number] => [TAPPETO.x0 + 0.5 + i * (TAPPETO.x1 - TAPPETO.x0 - 1) / 3, GINNI.z, 0.9])];
 /* ambiente (fase 3). Luce: cielo, emisfero [cielo, terra, intensita'], sole [colore, intensita'], direzione del sole.
    Sono colori lineari come il resto (ColorManagement spento), tarati sugli screenshot delle 4 ore. */
-type Luce = { cielo: number; emi: [number, number, number]; sole: [number, number]; dir: [number, number, number]; nebbia: number };
+/** `mare`: la camera dall'alto vede il mare, non il cielo (lo sfondo resta per i bordi e la nebbia): il colore del
+ *  momento lo porta il mare. Al tramonto il turchese sotto la luce rosa diventava grigio-verde, quindi e' rosato. */
+type Luce = { cielo: number; mare: number; emi: [number, number, number]; sole: [number, number]; dir: [number, number, number]; nebbia: number };
 const LUCI: Record<Momento, Luce> = {
-  mattina: { cielo: 0x9fd8d0, emi: [0xffedd6, 0x8fa86c, 0.6], sole: [0xffd6a0, 0.66], dir: [-34, 26, 6], nebbia: 0xeee6d8 },
-  giorno: { cielo: 0x86d4d4, emi: [0xfff6e2, 0x88b86c, 0.62], sole: [0xfff0d0, 0.62], dir: [-14, 40, 22], nebbia: 0xe1e8e7 },
-  tramonto: { cielo: 0xe6b2ae, emi: [0xffd8d4, 0x8c7c96, 0.52], sole: [0xffa47e, 0.72], dir: [34, 20, 10], nebbia: 0xecd3d0 },
-  sera: { cielo: 0x2c4a74, emi: [0x9ab2e6, 0x34405e, 0.5], sole: [0xa9bcff, 0.22], dir: [-18, 40, 12], nebbia: 0x3a4866 },
+  mattina: { cielo: 0x9fd8d0, mare: 0x84d2cf, emi: [0xffedd6, 0x8fa86c, 0.6], sole: [0xffd6a0, 0.66], dir: [-34, 26, 6], nebbia: 0xeee6d8 },
+  giorno: { cielo: 0x86d4d4, mare: 0x7fd0d2, emi: [0xfff6e2, 0x88b86c, 0.62], sole: [0xfff0d0, 0.62], dir: [-14, 40, 22], nebbia: 0xe1e8e7 },
+  tramonto: { cielo: 0xe6b2ae, mare: 0xf8c8d6, emi: [0xffd8d4, 0x8c7c96, 0.52], sole: [0xffa47e, 0.72], dir: [34, 20, 10], nebbia: 0xecd3d0 },
+  sera: { cielo: 0x2c4a74, mare: 0x7fd0d2, emi: [0x9ab2e6, 0x34405e, 0.5], sole: [0xa9bcff, 0.22], dir: [-18, 40, 12], nebbia: 0x3a4866 },
 };
 /** Il meteo spegne un po' il sole, alza la luce diffusa e ingrigisce i colori (`grigio` = quanto verso il grigio). */
 const METEO_LUCE: Record<Meteo, { sole: number; emi: number; grigio: number }> = {
@@ -629,6 +631,7 @@ export class Mondo {
   private bianco = new THREE.MeshLambertMaterial({ color: 0xffffff });
   /** vetri del magazzino: di sera si accendono (emissive), di giorno sono vetro */
   private vetri = new THREE.MeshLambertMaterial({ color: 0xbfe6f4 });
+  private mare = new THREE.MeshLambertMaterial({ color: 0x7fd0d2 });
   private luceLamp = new THREE.MeshBasicMaterial({ color: 0xfff1b8 });
   /** l'alone dei lampioni sul selciato, solo di sera (material.visible: niente da ricostruire) */
   private aloneGeo = new THREE.CircleGeometry(1.7, 24).rotateX(-Math.PI / 2);
@@ -699,7 +702,7 @@ export class Mondo {
     sun.shadow.camera.updateProjectionMatrix(); sun.shadow.bias = -0.0006;
     this.scene.add(sun); this.sun = sun;
 
-    this.add(this.scene, new THREE.PlaneGeometry(400, 400), 0x7fd0d2, 0, -1.6, 0, { rx: -Math.PI / 2, cast: false });
+    this.add(this.scene, new THREE.PlaneGeometry(400, 400), this.mare, 0, -1.6, 0, { rx: -Math.PI / 2, cast: false });
     this.foam = this.add(this.scene, new THREE.TorusGeometry(28.8, 0.22, 6, 96), 0xf4fbf8, 0, -1.55, 0, { rx: Math.PI / 2, cast: false });
     this.add(this.scene, new THREE.CylinderGeometry(27.6, 28.6, 1.6, 72), 0xf1dfb0, 0, -1.9, 0, { cast: false });
     const island = new THREE.Mesh(new THREE.CylinderGeometry(25, 26, 2.4, 72), [this.mat(0xd8bf86), this.prato, this.mat(0xd8bf86)]);
@@ -762,7 +765,7 @@ export class Mondo {
   private svuota(g: THREE.Object3D) { while (g.children.length) { const c = g.children[0]; this.smaltisci(c); g.remove(c); } }
   /** Materiali e geometrie dell'ambiente che vivono quanto il Mondo (in keep: svuotando un gruppo restano). */
   private persistenti(): (THREE.Material | THREE.BufferGeometry)[] {
-    return [this.prato, this.chiazze, ...this.chiome.flat(), ...this.cespugli, this.fogliaGeo, this.bianco, this.vetri, this.luceLamp, this.aloneGeo, this.aloneMat, this.ombraMat, this.astaGeo, this.AVVISO];
+    return [this.prato, this.chiazze, ...this.chiome.flat(), ...this.cespugli, this.fogliaGeo, this.bianco, this.vetri, this.mare, this.luceLamp, this.aloneGeo, this.aloneMat, this.ombraMat, this.astaGeo, this.AVVISO];
   }
 
   /* ---------- piccoli attrezzi ---------- */
@@ -1332,6 +1335,7 @@ export class Mondo {
     this.sun.position.set(L.dir[0], L.dir[1], L.dir[2]);
     const fog = this.scene.fog as THREE.Fog, nebbia = this.amb.meteo === 'nebbia';
     (this.scene.background as THREE.Color).setHex(nebbia ? L.nebbia : grigio(L.cielo));
+    this.mare.color.setHex(L.mare);
     fog.color.setHex(L.nebbia); fog.near = nebbia ? 46 : 500; fog.far = nebbia ? 104 : 1000;
     this.vetri.color.setHex(sera ? 0xffe2a0 : 0xbfe6f4); this.vetri.emissive.setHex(sera ? 0xf2b458 : 0x000000);
     this.luceLamp.color.setHex(sera ? 0xffe08a : 0xf3ecd6);

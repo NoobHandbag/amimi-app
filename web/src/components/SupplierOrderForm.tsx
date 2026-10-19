@@ -17,10 +17,11 @@ const variantTok = (s: string) => s.trim().toUpperCase().replace(/\s+/g, '_').re
 // consegna: assente = la riga segue la consegna prevista dell'ordine; presente (anche vuota) = data sua.
 type Line = { codice: string; item: string | null; variant: string | null; qty: string; costo: string; nuovo: boolean; wip: boolean; consegna?: string };
 
-// "di solito Francesco consegna in circa 30 giorni": solo testo, la data la dice il laboratorio (proposta 3, 18-10)
+// "di solito Francesco consegna in circa 30 giorni": solo testo, la data la dice il laboratorio (proposta 3, 18-10). Il
+// nome senza il tipo fra parentesi ("Francesco (pelle)" -> "Francesco"), come labOf() del Villaggio
 const tempoAbituale = (forn: string, giorni: number) => {
   const g = Math.round(giorni);
-  return `Di solito ${forn} consegna ${g <= 0 ? "lo stesso giorno dell'ordine" : g === 1 ? 'in circa 1 giorno' : `in circa ${g} giorni`}.`;
+  return `Di solito ${forn.replace(/\s*\([^)]*\)\s*$/, '').trim() || forn} consegna ${g <= 0 ? "lo stesso giorno dell'ordine" : g === 1 ? 'in circa 1 giorno' : `in circa ${g} giorni`}.`;
 };
 
 export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initialCodice }: { pin: string; chi: string; onDone: () => void; initialForn?: string; initialCodice?: string }) {
@@ -364,7 +365,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
                 </button>
                 {/* con una riga sola basta la consegna dell'ordine; la data per riga compare con piu' righe, o se la riga ne ha gia' una sua */}
                 {(lines.length > 1 || l.consegna !== undefined) && (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ink-muted)', marginTop: 4 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink-muted)', marginTop: 4 }}>
                     consegna
                     {/* 16 px: con meno, Safari su iPhone ingrandisce la pagina quando si tocca il campo */}
                     <input type="date" value={consegnaDi(l)} min={dataOrd} aria-label={`Consegna prevista di ${l.item ?? l.codice}`}

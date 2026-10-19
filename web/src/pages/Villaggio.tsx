@@ -297,12 +297,14 @@ function useStorico<T>(codici: string, leggi: (codice: string) => Promise<T[]>):
   return s;
 }
 const piuRecenti = <T extends { data: string | null }>(xs: T[]) => [...xs].sort((a, b) => (b.data ?? '').localeCompare(a.data ?? ''));
+// v_reorder non letta: "sta finendo" resta quello dell'ultima lettura buona (o manca), e lo si dice, mai come "niente finisce"
+const avvisoRiordini = (e: string) => <p className="v-errl" role="alert">Non riesco a leggere i riordini, quindi "sta finendo" può mancare o non essere aggiornato. {e}</p>;
 
 /** La scheda di una pila del magazzino (fase 3, sola lettura): foto vera, giacenza per codice, vendite degli ultimi 6 mesi
  *  e le ultime 5, arrivi, conte e rettifiche, righe ancora in arrivo, l'avviso "sta finendo". Le due azioni aprono i moduli
  *  di sempre: "Ordina ancora" il passo 4 dell'ordine con il codice, "Conta" il giro di conta sui codici della pila. */
-function SchedaPila({ pila, foto, finendo, aperte, onOrdina, onConta, onMagazzino }: {
-  pila: Pila; foto: string | null; finendo: Set<string>; aperte: OrdLine[];
+function SchedaPila({ pila, foto, finendo, rioErr, aperte, onOrdina, onConta, onMagazzino }: {
+  pila: Pila; foto: string | null; finendo: Set<string>; rioErr: string | null; aperte: OrdLine[];
   onOrdina: (codice: string, fornitore: string | null) => void; onConta: () => void; onMagazzino: () => void;
 }) {
   const codici = pila.codes.map((c) => c.codice).join(' ');
@@ -333,6 +335,7 @@ function SchedaPila({ pila, foto, finendo, aperte, onOrdina, onConta, onMagazzin
       ))}</div>
     </div>
     {sta.length > 0 && <p className="v-note">Sta finendo: vende ({STA_FINENDO.venduti} pezzi o più in 60 giorni), ha meno di {STA_FINENDO.giorni} giorni di magazzino e nessun ordine in corso.</p>}
+    {rioErr && avvisoRiordini(rioErr)}
     <div className="v-azioni">
       <button className="v-btn alt" type="button" disabled={!daOrdinare} onClick={() => daOrdinare && onOrdina(daOrdinare, ultimoForn)}>+ Ordina ancora</button>
       <button className="v-btn" type="button" onClick={onConta}>Conta</button>
@@ -400,6 +403,7 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
   const [foto, setFoto] = useState<Map<string, string>>(() => new Map());
   const [finendo, setFinendo] = useState<Set<string>>(() => new Set());
   const riordino = useRef<Reorder[] | null>(null);
+  const [rioErr, setRioErr] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<Sheet>(null);
   useEffect(() => { sheetRef.current = sheet; }, [sheet]);
@@ -538,7 +542,7 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
       const [g, inv, rio] = await Promise.all([fetchOrdiniGruppi(), fetchInventory(), fetchReorder().catch((e: Error) => e)]);
       if (mia !== ultima.current) return;
       const m = costruisci(g, inv, oggi());
-      if (Array.isArray(rio)) riordino.current = rio;
+      if (Array.isArray(rio)) { riordino.current = rio; setRioErr(null); } else setRioErr(rio.message);
       const sf = riordino.current ? staFinendo(riordino.current, m, oggi()) : null;
       // le pile finite e senza niente in arrivo il villaggio non le disegna: quelle che stanno finendo si', con la bandierina
       if (sf) for (const k of sf.pile) if (!m.dati.pile.some((p) => p.key === k)) { const p = m.pile.get(k); if (p) m.dati.pile.push(p); }
@@ -895,6 +899,7 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
         cls: 'short',
         head: <><span className="v-hic" style={css(0xe57f9d)}><Icon name="box" size={22} /></span><div className="v-ht"><h2 id="v-sheet-title">Magazzino</h2><p>{tot.stock} pezzi · una pila per variante, più è alta più pezzi ci sono</p></div></>,
         body: <>
+        {rioErr && avvisoRiordini(rioErr)}
         {giro.length > 0 && <button className="v-btn wide" type="button" onClick={() => apri({ t: 'giro', codici: giro, completo: true })}>Giro di conta completo · {giro.length === 1 ? '1 codice' : giro.length + ' codici'}</button>}
         {MODEL_ORDER.map((m) => {
           const ps = mod.dati.pile.filter((p) => p.model === m).sort((a, b) => b.stock - a.stock);
@@ -930,7 +935,7 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
         head: <><span className="v-hic" style={css(0xe57f9d)}><Icon name="bag" size={22} /></span>
           <div className="v-ht"><h2 id="v-sheet-title">{Pi.model} · {Pi.name}</h2>
             <p>{Pi.stock < 0 ? `giacenza ${Pi.stock}, da sistemare` : st === 1 ? '1 pezzo in magazzino' : `${st} pezzi in magazzino`}{Pi.incoming > 0 ? ` · ${Pi.incoming} in arrivo` : ''}</p></div></>,
-        body: <SchedaPila key={Pi.key} pila={Pi} finendo={finendo}
+        body: <SchedaPila key={Pi.key} pila={Pi} finendo={finendo} rioErr={rioErr}
           foto={Pi.codes.map((c) => foto.get(c.codice)).find(Boolean) ?? null}
           aperte={Pi.codes.flatMap((c) => openByCodice.get(c.codice) ?? [])}
           onMagazzino={() => apri({ t: 'wh', model: Pi.model })}

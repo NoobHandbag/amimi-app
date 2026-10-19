@@ -222,20 +222,22 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   percorso, senza presenza ne' missioni; verifica e giro restano a tutti (la riga porta il suo chi, i punti contano solo
   per la giocatrice), ma la registrazione della conta completa no. Prove: `tests/villaggio_paillettes.mjs` (logica pura)
   e `tests/paillettes_guardie.mjs` (write-api).
-  **Fase 3** (18-10, migr 0166, write-api v30, scelte di Dan: proposte 1, 2, 3, 4, 7 e 8 della ricerca del 18-10).
+  **Fase 3** (18-10, migr 0167, write-api v30, scelte di Dan: proposte 1, 2, 3, 4, 7 e 8 della ricerca del 18-10).
   *Scheda della pila* (tocco su una pila nel mondo, `Mondo.ev.onPila`, o sulla sua tessera nel pannello Magazzino):
   foto vera (`v_inventory.image_url`, se no la miniatura 3D), i codici della pila con la giacenza (taglie separate),
   vendite degli ultimi 6 mesi a barre (`venditePerMese`) e le ultime 5 (negozio o online, senza nomi dei clienti), righe
   ancora in arrivo, ultimi arrivi (laboratorio, pezzi, costo) e ultime conte e rettifiche; ogni lettura
   (`fetchSalesByCodice`, `fetchPurchasesByCodice`, `fetchAdjustmentsByCodice`, per codice e poi unite) e' della scheda,
-  che si rimonta per pila, e se lancia dice "Non riesco a leggere ...", mai "zero". "Ordina ancora" apre il passo 4 di
+  che si rimonta per pila, e se lancia dice "Non riesco a leggere ...", mai "zero" (le tre letture guardano `error`;
+  vendite fino a 300 righe per codice, perche' `created_at` di Shopify e' l'ora di import e con 40 si perdevano mesi). "Ordina ancora" apre il passo 4 di
   Ordina con il codice (`SupplierOrderForm` con `initialCodice`: fornitore e costo dall'ultimo acquisto; Ginni decide i
   riordini), "Conta" il giro di conta sui codici della pila. *Sta finendo* (niente punti, niente missione): `load()` legge
   `v_reorder` (`fetchReorder`) insieme a ordini e magazzino, `staFinendo()` di catalogo.ts (vende almeno 3 pezzi in 60
-  giorni, meno di 30 giorni di stock, nessuna riga d'ordine viva; archiviati del Riordino fuori) da' codici e pile: le
+  giorni, meno di 30 giorni di stock, nessuna riga d'ordine viva, cioe' aperta e mossa negli ultimi 60 giorni (data d'ordine o ultimo arrivo, `data_ultimo_arrivo`); archiviati del Riordino fuori) da' codici e pile: le
   pile finite e senza arrivi, che il villaggio non disegna, si aggiungono a quelle da disegnare, poi
   `Mondo.setAvvisiPile` mette la bandierina arancio; chip "sta finendo" nella scheda e sulle tessere. Una lettura
-  fallita del Riordino non ferma il villaggio e tiene l'ultima buona. *Verifica che sistema*: ogni riga ha "Non arriva
+  fallita del Riordino non ferma il villaggio, tiene l'ultima buona e si dice nel Magazzino e nella scheda della pila
+  ("Non riesco a leggere i riordini ..."). *Verifica che sistema*: ogni riga ha "Non arriva
   piu'" con la conferma nella riga stessa (dice cosa succede: "La riga si chiude con i 4 pezzi gia' arrivati: gli altri 6
   non arrivano piu'"), mandata come `righe[].chiudi: true` solo sulle righe da chiudere; con piu' righe senza data, in
   cima "una data per tutte" le riempie (poi si corregge riga per riga). Il testo dice che la verifica vale le paillettes
@@ -246,13 +248,18 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   riga cambiata) la riga si richiude. Con la tastiera aperta il pannello si appoggia sopra (`visualViewport`, classe
   `kb`, variabili `--v-kb` e `--v-vvh`) e porta in vista il blocco del campo. Bottoni da 44 px (Home, "?", X, "< Cambia
   ...", bottoni dei pannelli e della riga d'arrivo) e nessun testo sotto i 12 px nel Villaggio; campi a 16 px (Safari non
-  ingrandisce). Errori di rete in italiano ("Sei senza rete o la rete non risponde", al posto di "Load failed"). Primo
+  ingrandisce); le stesse misure, solo sotto `.vil .v-form`, per i moduli di Ordini e Magazzino aperti nel Villaggio
+  (passo 4 dell'ordine, giro di conta). Errori di rete in italiano: nel Villaggio "Sei senza rete o la rete non risponde",
+  e `writeApi` di lib/api.ts traduce un fetch fallito per tutti i moduli ("Connessione assente: niente e' stato salvato"),
+  al posto di "Load failed". Primo
   avvio: dopo la presenza si rileggono solo gli eventi (`leggiEventi`, contatore suo), e i fumetti di Ginni in coda hanno
   "Salta". L'arrivo o la modifica scritti in una riga del laboratorio hanno la stessa guardia del modulo dell'ordine
   (`lascia()`: "Lasci la riga a meta'?", anche cambiando riga). *Isola che racconta*: `web/src/lib/villaggio/meteo.ts`
   calcola stagione (mese di Roma) e momento del giorno (sole vero di Milano) e legge il meteo di Milano da Open-Meteo
   (cache 30 minuti, errore = sereno, mai bloccante); la pagina chiama `Mondo.setAmbiente` all'apertura (subito, col meteo
-  in cache), ogni 15 minuti a scheda visibile e al ritorno in primo piano. Fumetti sopra i capannoni dei laboratori con
+  in cache), ogni 15 minuti a scheda visibile e al ritorno in primo piano. La camera dall'alto vede il mare e non il
+  cielo, quindi il colore del momento lo porta anche il mare (`LUCI[momento].mare`): al tramonto rosato. Fumetti sopra
+  l'etichetta del capannone, al centro (a sinistra del nome allargavano l'etichetta e a 375 px si coprivano), dei laboratori con
   fornitore (`Mondo.setFumetti`): cuore se verificato negli ultimi 3 giorni (anche con le date ancora passate), se no
   punto di domanda per righe senza data, orologio per righe oltre la data; il tocco apre la verifica di quel laboratorio
   (a Paillettes spente il laboratorio). La legenda "?" spiega bandierina arancio e fumetti.

@@ -8,7 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
 // aggiornate, eventi verifica e data_aggiunta), count (giacenza corretta, evento conta). Gli eventi nuovi li aggiunge il
 // finto server solo per la giocatrice, come la vista v_villaggio_eventi. I punti attesi sono contati a mano qui sotto, non
 // con paillettes.ts.
-// Fase 3 (18-10, write-api v30 e migr 0166): la verifica chiude le righe che non arrivano piu' (righe[].chiudi === true,
+// Fase 3 (18-10, write-api v30 e migr 0167): la verifica chiude le righe che non arrivano piu' (righe[].chiudi === true,
 // risposta con righe_chiuse) e l'evento verifica ha n = righe SISTEMATE (chiuse, o con una data messa o cambiata): una
 // verifica che conferma e basta ha n = 0 e non vale niente. Il meteo di Open-Meteo e' finto anche qui (sereno).
 // Lanciare dopo la build verso il progetto finto (come la CI), sempre col percorso del file:
@@ -233,7 +233,7 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
           return { id: r.id, chiusa: false, prima, dopo };
         });
         if (gioca) {
-          // come la vista (migr 0166): n = righe sistemate (chiuse, o con una data messa o cambiata); confermata non conta
+          // come la vista (migr 0167): n = righe sistemate (chiuse, o con una data messa o cambiata); confermata non conta
           eventi.push(ev('verifica', oggiS, pl.fornitore, fatte.filter((c) => c.chiusa || (!!c.dopo && c.dopo !== c.prima)).length, adesso()));
           for (const c of fatte) if (!c.chiusa && !c.prima && c.dopo) eventi.push(ev('data_aggiunta', oggiS, c.id, 1, adesso()));
         }

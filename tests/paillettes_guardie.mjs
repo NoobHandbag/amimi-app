@@ -7,7 +7,7 @@
 // non annullati, conte nel giorno in cui sono state fatte). Su write-api: il blocco delle tre azioni e' ritagliato DAL
 // SORGENTE che va in produzione ed eseguito contro un database finto in memoria (come tests/arrivo_adesso.mjs), piu' le
 // cinture sul sorgente. Nessuna rete.
-// Fase 3 (18-10, migr 0166, write-api v30): pin sulla 0166 (v_tempi_laboratori; v_villaggio_eventi uguale alla 0164 salvo
+// Fase 3 (18-10, migr 0167, write-api v30): pin sulla 0167 (v_tempi_laboratori; v_villaggio_eventi uguale alla 0164 salvo
 // la verifica che conta le righe sistemate e la data aggiunta dalle righe nate con la data), `chiudi` della verifica e la
 // nuova `order_update`, ritagliata anche lei dal sorgente e fatta girare sullo stesso DB finto.
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
@@ -390,8 +390,8 @@ for (const [nome, payload] of [
   eq('83 verifica non registrata: 400 con date_cambiate', [r.status, r.body.ok ?? false, r.body.date_cambiate], [400, false, 1]);
 }
 
-console.log('\n== migrazione 0166: due viste in sola lettura, una transazione ==');
-const M6 = read('supabase/migrations/0166_villaggio_fase3.sql');
+console.log('\n== migrazione 0167: due viste in sola lettura, una transazione ==');
+const M6 = read('supabase/migrations/0167_villaggio_fase3.sql');
 const m6 = noSql(M6);
 t('84 begin; ... commit; in una sola transazione', (M6.match(/^begin;$/gm) ?? []).length === 1 && /^commit;$/m.test(M6) && M6.indexOf('begin;') < M6.indexOf('commit;'));
 t('85 nessuna tabella, nessuna scrittura di dati, nessun flag: solo viste, owner, revoke e grant',
@@ -417,7 +417,7 @@ t('89 giorni = primo arrivo meno data_ordine, ultimi 365 giorni (oggi di Roma), 
   const CC = " union all select 'conta_completa'";
   // split/join e non replace: nessun $ del testo SQL diventa un pattern di sostituzione
   const atteso = V4.split(VER4).join(VER6).split(CC).join(' ' + NATA + CC);
-  t("90 v_villaggio_eventi della 0166 = quella della 0164 con SOLO il ramo verifica cambiato e il ramo data_aggiunta da supplier_orders in piu'",
+  t("90 v_villaggio_eventi della 0167 = quella della 0164 con SOLO il ramo verifica cambiato e il ramo data_aggiunta da supplier_orders in piu'",
     V4.length > 0 && V4.split(VER4).length === 2 && V4.split(CC).length === 2 && V6 === atteso, 'differisce dalla 0164 oltre i due rami');
   t('91 verifica: n = righe chiuse o con la data dopo diversa da quella di prima; confermare soltanto non conta', V6.includes(VER6) && !/'confermata'/.test(V6));
   t('92 data_aggiunta dalla nascita: righe con data, ma non una data arrivata dopo (order_date o order_update con before.data_consegna = null)', V6.includes(NATA));
@@ -455,7 +455,7 @@ if (ua < 0 || ub < 0 || ub < ua) { console.error('blocco order_update non trovat
 const UBLK = SRC.slice(ua, ub), UF = flat(UBLK);
 t('107 order_update sta fuori dal blocco Paillettes e non legge flag', ua < a && /if \(action === 'order_update'\) \{/.test(UBLK) && !/app_flags/.test(UBLK));
 t("108 una sola lettura, con retryOnce ed error destrutturato: 503 se fallisce, 404 se la riga non c'e'",
-  /const \{ data: riga, error: re \} = await retryOnce\(\(\) => sb\.from\('supplier_orders'\)\.select\('id, codice, fornitore, qty_ordered, qty_arrived, costo_unitario, note, data_consegna, wip'\)\.eq\('id', id\)\.maybeSingle\(\)\);/.test(UF)
+  /const \{ data: riga, error: re \} = await retryOnce\(\(\) => sb\.from\('supplier_orders'\)\.select\('id, codice, fornitore, qty_ordered, qty_arrived, costo_unitario, note, data_consegna, data_ordine, wip'\)\.eq\('id', id\)\.maybeSingle\(\)\);/.test(UF)
   && /if \(re\) return json\(\{ error: `[^`]*` \}, 503\);\n\s+if \(!riga\) return json\(\{ error: '[^']+' \}, 404\);/.test(UBLK));
 t('109 righe con arrivi o WIP = 409 prima della scrittura', /if \(\(num\(riga\.qty_arrived\) \?\? 0\) > 0\) return json\(\{ error: `[^`]*`, has_arrivals: true \}, 409\);/.test(UBLK)
   && /if \(riga\.wip === true\) return json\(\{ error: "[^"]*", wip: true \}, 409\);/.test(UBLK)
@@ -553,7 +553,7 @@ finally { try { unlinkSync(TMPU); } catch { /* niente */ } }
     [st.ordini[0].qty_ordered, st.ordini[0].costo_unitario, st.ordini[0].note, st.ordini[0].data_consegna, st.ordini[0].codice, st.ordini[0].fornitore, st.ordini[0].qty_arrived], [12, 15.5, 'interno cuoio', '2026-11-30', 'LEA_BAG_ROSSO', FR, 0]);
   eq('129 UNA lettura per id, UN update, nessuna lettura dei flag',
     [st.letture, st.update, st.chiamate['app_flags.select'] ?? 0],
-    [[{ cols: 'id, codice, fornitore, qty_ordered, qty_arrived, costo_unitario, note, data_consegna, wip', filtri: [['id', U1, 'eq']] }], [['qty_ordered', 'costo_unitario', 'note', 'data_consegna']], 0]);
+    [[{ cols: 'id, codice, fornitore, qty_ordered, qty_arrived, costo_unitario, note, data_consegna, data_ordine, wip', filtri: [['id', U1, 'eq']] }], [['qty_ordered', 'costo_unitario', 'note', 'data_consegna']], 0]);
   eq('130 change_log order_update: after con codice e fornitore, before con i valori di prima', st.log.map((l) => [l[0], l[1], l[2], l[3], l[4]]), [['supplier_orders', U1, 'order_update',
     { codice: 'LEA_BAG_ROSSO', fornitore: FR, qty_ordered: 12, costo_unitario: 15.5, note: 'interno cuoio', data_consegna: '2026-11-30' },
     { qty_ordered: 10, costo_unitario: null, note: null, data_consegna: null }]]);
@@ -608,6 +608,17 @@ for (const [nome, payload] of [
   const r = await runU(ctx('order_update', payload));
   eq(`136 ${nome}: 422, nessuna lettura ne' scrittura`, [r.status, st.letture.length, st.update.length, st.log.length], [422, 0, 0, 0]);
 }
+{ // una consegna nuova prima dell'ordine: 422 senza scrivere; uguale all'ordine va; una data vecchia storta non blocca la nota
+  const { st, ctx } = mondo();
+  Object.assign(st.ordini[0], { data_ordine: '2026-10-10' });
+  const r1 = await runU(ctx('order_update', { id: U1, data_consegna: '2026-10-09' }));
+  eq("142 consegna prima dell'ordine: 422, nessun update ne' change_log", [r1.status, st.update.length, st.log.length], [422, 0, 0]);
+  const r2 = await runU(ctx('order_update', { id: U1, data_consegna: '2026-10-10' }));
+  eq("143 consegna il giorno dell'ordine: 200", [r2.status, r2.body.cambiati], [200, ['data_consegna']]);
+  Object.assign(st.ordini[0], { data_consegna: '2026-10-01' });
+  const r3 = await runU(ctx('order_update', { id: U1, note: 'x' }));
+  eq('144 la data vecchia (gia\' prima dell\'ordine) non blocca la nota', [r3.status, r3.body.cambiati], [200, ['note']]);
+}
 { // righe con arrivi (anche tutti) e WIP: 409, zero scritture
   const { st, ctx } = mondo();
   const r1 = await runU(ctx('order_update', { id: U2, costo_unitario: 30 }));
@@ -636,6 +647,15 @@ for (const [nome, payload] of [
   const { st, ctx } = mondo({ rompi: 'supplier_orders.update' });
   const r = await runU(ctx('order_update', { id: U1, note: 'x' }));
   eq('141 update fallito: 400, nessun change_log', [r.status, r.body.ok ?? false, st.log.length], [400, false, 0]);
+}
+
+console.log('\n== write-api v30: order_multi valida data_consegna ==');
+{
+  const OM = SRC.slice(SRC.indexOf("if (action === 'order_multi') {"), SRC.indexOf('const { data: prods, error: pe }', SRC.indexOf("if (action === 'order_multi') {")));
+  t("145 order_multi: data_consegna passa da isoDate e non precede l'ordine (422 prima di leggere il catalogo)",
+    OM.length > 0 && /const consegnaErrs = righe\.filter\(\(r\) => r\.data_consegna != null && r\.data_consegna !== '' && !\(\(isoDate\(r\.data_consegna\) \?\? ''\) >= dataOrdine\)\)/.test(OM) && /if \(consegnaErrs\.length\) return json\(.*, 422\);/.test(OM));
+  t("146 order_multi scrive la data normalizzata da isoDate ('' = nessuna data), mai la stringa com'arriva",
+    /data_consegna: r\.data_consegna != null && r\.data_consegna !== '' \? isoDate\(r\.data_consegna\) : null,/.test(OM) && !/data_consegna: \(r\.data_consegna as string\)/.test(OM));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);
