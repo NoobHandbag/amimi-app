@@ -27,7 +27,15 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
   // una lettura fallita si dice con "Riprova": come "nessuna vendita" spingeva verso il reso senza vendita (canale qromo)
   const [salesErr, setSalesErr] = useState<string | null>(null);
   const [rilettura, setRilettura] = useState(0);
-  useEffect(() => { if (prod) { setSales(null); setSalesErr(null); fetchSalesByCodice(prod.codice).then(setSales).catch((e: Error) => setSalesErr(e.message)); } }, [prod, rilettura]);
+  // vivo: il form resta montato quando si cambia prodotto, e la risposta tardiva del prodotto di prima non deve
+  // sovrascrivere vendite o errore di quello nuovo (come useStorico del Villaggio)
+  useEffect(() => {
+    if (!prod) return;
+    let vivo = true;
+    setSales(null); setSalesErr(null);
+    fetchSalesByCodice(prod.codice).then((s) => { if (vivo) setSales(s); }).catch((e: Error) => { if (vivo) setSalesErr(e.message); });
+    return () => { vivo = false; };
+  }, [prod, rilettura]);
 
   const isCambio = motivo === 'Cambio';
   const canale = sale ? (sale.source === 'qromo' ? 'qromo' : 'online') : 'qromo';

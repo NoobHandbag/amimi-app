@@ -50,7 +50,8 @@
 .v-bang { position: absolute; top: -12px; right: -12px; width: 24px; height: 24px; border-radius: 50%; background: var(--v-red); color: var(--v-paper); font-weight: 700; font-size: 15px;
   display: grid; place-items: center; border: 2px solid var(--v-paper); animation: v-bob 1.1s ease-in-out infinite; }
 @keyframes v-bob { 50% { transform: translateY(-4px); } }
-.v-float { position: absolute; left: 0; top: 0; font: 700 24px var(--v-fd); color: var(--v-paper); white-space: nowrap; pointer-events: none; animation: v-rise 1.4s ease-out forwards;
+/* z-index: sopra le etichette dei capannoni, impilate per altezza con z-index fino all'altezza dello schermo (updateLabels) */
+.v-float { position: absolute; left: 0; top: 0; z-index: 10000; font: 700 24px var(--v-fd); color: var(--v-paper); white-space: nowrap; pointer-events: none; animation: v-rise 1.4s ease-out forwards;
   text-shadow: 0 2px 0 var(--v-leafd), 2px 0 0 var(--v-leafd), -2px 0 0 var(--v-leafd), 0 -2px 0 var(--v-leafd), 2px 2px 0 var(--v-leafd), -2px 2px 0 var(--v-leafd); }
 @keyframes v-rise { 0% { opacity: 0; margin-top: 14px; } 15% { opacity: 1; } 100% { opacity: 0; margin-top: -56px; } }
 /* Paillettes: "+n" e testo della festa sopra Ginni, dorati. La festa sta piu' in alto dei punti (arrivano insieme) e va a capo */
@@ -314,6 +315,8 @@
 /* la data per riga va a capo sotto "consegna" e prende tutta la larghezza: a 375 px, accanto, si leggeva solo "/2026" */
 .vil .v-form .cartinfo label:has(> input[type="date"]) { flex-direction: column; align-items: flex-start !important; }
 .vil .v-form .cartinfo input[type="date"] { width: 100%; max-width: none !important; }
+/* gli ultimi testi sotto i 12 px nel passo 4 e nel ProductPicker: "nuova", risultati della ricerca, fornitori, giacenza */
+.vil .v-form .newtag, .vil .v-form .ds-psub, .vil .v-form .ds-pbadge, .vil .v-form .ds-lp, .vil .v-form .ds-pcard-gia { font-size: 12px; }
 .vil .v-form .linkbtn { font-size: 12px !important; }
 /* la tastiera dell'iPhone: il pannello si appoggia sopra (variabili scritte dalla pagina con visualViewport) */
 .vil.kb .v-sheet.open { bottom: var(--v-kb, 0px); max-height: calc(var(--v-vvh, 100%) - 12px); padding-bottom: 0; }

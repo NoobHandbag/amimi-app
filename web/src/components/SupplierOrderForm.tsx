@@ -235,7 +235,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
     if (!lines.length) return toast('Aggiungi almeno una borsa', 'err');
     const invalid = lines.find((l) => !l.wip && !(Number(l.qty) > 0));
     if (invalid) return toast(`Quantità mancante per ${invalid.item ?? invalid.codice}: mettila o segna WIP`, 'err');
-    // order_multi scrive data_consegna cosi' com'arriva: qui si ferma una data che non e' una data o che precede l'ordine
+    // lo stesso controllo di order_multi (v30: 422 su una data non valida o prima dell'ordine), qui prima di inviare
     const dataStorta = lines.find((l) => { const c = consegnaDi(l); return c !== '' && (!/^\d{4}-\d{2}-\d{2}$/.test(c) || c < dataOrd); });
     if (dataStorta) return toast(`Consegna prevista di ${dataStorta.item ?? dataStorta.codice}: dev'essere una data dal giorno dell'ordine in poi`, 'err');
     setBusy(true);

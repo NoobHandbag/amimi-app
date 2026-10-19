@@ -1426,6 +1426,8 @@ console.log("\n== cinture: la pagina della fase 3 (scheda della pila, verifica c
     const INV = read('web/src/pages/Inventory.tsx'), RES = read('web/src/components/ReturnForm.tsx');
     t("Magazzino e Resi: una lettura fallita dello storico si dice (nessun .catch(() => setX([])))",
       !/\.catch\(\(\) => set(Sales|Purch|Adjs)\(\[\]\)\)/.test(INV + RES) && conta(INV, /Non riesco a leggere/g) === 3 && /Non riesco a leggere le vendite/.test(RES) && /Riprova/.test(RES));
+    t("Resi: la risposta tardiva del prodotto di prima non sovrascrive quello nuovo (vivo e cleanup nell'effetto)",
+      /let vivo = true;/.test(RES) && /\.then\(\(s\) => \{ if \(vivo\) setSales\(s\); \}\)\.catch\(\(e: Error\) => \{ if \(vivo\) setSalesErr\(e\.message\); \}\);/.test(RES) && /return \(\) => \{ vivo = false; \};\n  \}, \[prod, rilettura\]\);/.test(RES));
   }
   t("sta finendo: un errore di v_reorder si dice nel Magazzino e nella scheda della pila (mai come \"niente finisce\")",
     conta(VIL, /\{rioErr && avvisoRiordini\(rioErr\)\}/) === 2 && /<SchedaPila key=\{Pi\.key\} pila=\{Pi\} finendo=\{finendo\} rioErr=\{rioErr\}/.test(VIL)
@@ -1969,6 +1971,7 @@ console.log("\n== cinture su mondo.ts (fase 3): ambiente, fumetti, avvisi, pile 
     && /const sopra = a\.el\.classList\.contains\('con-fum'\) \? 40 : 0;/.test(corpoUL) && /y < hudB \+ 30 \+ sopra/.test(corpoUL)
     && /t = y - \(a\.h \?\? 0\) - 4 - sopra/.test(corpoUL) && /if \(sopra && t < 0\) show = false;/.test(corpoUL)
     && /if \(capannoni\.has\(a\)\) a\.el\.style\.zIndex = String\(Math\.max\(1, Math\.round\(h - y\)\)\);/.test(corpoUL));
+  t("i \"+n\" e la festa stanno sopra le etichette dei capannoni (z-index per altezza)", /\.v-float \{ position: absolute; left: 0; top: 0; z-index: 10000;/.test(CSS));
   t('moduli dentro il Villaggio: campi a 16 px e 44 px, solo sotto .vil .v-form; data per riga a 12 px nel modulo',
     /\.vil \.v-form input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\), \.vil \.v-form select, \.vil \.v-form textarea \{ font-size: 16px; min-height: 44px; \}/.test(CSS)
     && /\.vil \.v-form button, \.vil \.v-form \.chip, \.vil \.v-form \.datepick \{ min-height: 44px; \}/.test(CSS) && /\.vil \.v-form \.ds-btn \{ min-height: 44px !important; \}/.test(CSS)
