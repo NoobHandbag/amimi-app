@@ -1,3 +1,7 @@
+// push-api v2 (2026-10-18, push-eventi): additiva. `invia` accetta `chi` facoltativo (Ale, Bene o Ginevra) e allora manda
+// solo ai telefoni di quella persona (il riepilogo serale e' uno a testa); senza `chi` tutto come la v1. `config`
+// restituisce anche `predefinito_per` di ogni tema (migr 0166: le persone per cui il tema parte spuntato all'iscrizione),
+// quindi si deploya DOPO la 0166: prima la select di quella colonna fallirebbe e config risponderebbe 503.
 // push-api v1 (2026-10-17): notifiche native dell'app (Web Push standard, VAPID, RFC 8030/8291/8292) al posto di ntfy.
 // Brief: Cowork12/_CLAUDE_CODE_INBOX/2026-10-17_BRIEF_notifiche_native_web_push.md (sez. 4.2). Modulo push_* (Regola 19):
 // scrive SOLO push_subscriptions, del core legge solo app_flags.push_enabled. A flag spento ogni azione utente risponde
@@ -10,7 +14,7 @@
 //   Il PIN dell'app non vale mai: da qui partono notifiche verso telefoni veri.
 //
 // Azioni utente (POST JSON {action, ...}):
-//   config      {}                                  -> {enabled, vapidPublicKey, temi:[{key, etichetta, descrizione}]}
+//   config      {}                                  -> {enabled, vapidPublicKey, temi:[{key, etichetta, descrizione, predefinito_per}]}
 //   iscrivi     {chi, device_id, subscription:{endpoint, keys:{p256dh, auth}}, temi, etichetta} -> {ok, id}
 //   rinnova     {device_id, subscription}           -> {ok, trovato}   (non tocca chi e temi)
 //   temi        {device_id, temi}                   -> {ok, trovato}
@@ -19,8 +23,10 @@
 //   rimuovi     {id}                                -> {ok, rimossi}
 //   prova       {device_id}                         -> {ok, esito, messaggio}; 429 se l'ultima prova ha meno di un minuto
 // Azione servizio:
-//   invia       {tema, titolo, testo, url?, urgente?, dryRun?} -> {ok: inviati>=1, inviati, falliti, rimossi, destinatari, esiti}
-//               tema spento o inesistente -> {ok:false, skipped:'tema_spento', inviati:0}
+//   invia       {tema, titolo, testo, url?, urgente?, dryRun?, chi?} -> {ok: inviati>=1, inviati, falliti, rimossi, destinatari, esiti}
+//               tema spento o inesistente -> {ok:false, skipped:'tema_spento', inviati:0}; chi fuori dalle tre chiavi -> 422
+//               La risposta (anche in dryRun) rimanda `chi` (la persona, o null = tutti): Gate 3 del 18-10 (RF-7), push-eventi
+//               chiude come persa una push per una persona se la risposta non lo rimanda uguale (una push-api v1 manda a tutti).
 // Endpoint e chiavi di un telefono non escono MAI da qui, ne' nelle risposte ne' nei log: bastano a mandargli notifiche.
 // Dal 17-10 (Gate 2) nemmeno il device_id degli altri: e' l'unica chiave di rinnova, temi, disiscrivi e prova.
 //
@@ -210,6 +216,27 @@ function provaTroppoPresto(lastTestAt: unknown, ora: number): boolean {
   return Number.isFinite(t) && Math.abs(ora - t) < PROVA_OGNI_MS;
 }
 // ==== PURE:push-valida END ====
+
+// ==== PURE:push-destinatari BEGIN ====
+// v2 (18-10, push-eventi). `chi` di invia: assente, null o vuoto = tutti gli iscritti al tema (la v1, ce-guard e
+// sales-guard); altrimenti una delle tre chiavi esatte, e la lettura delle iscrizioni filtra su quella sola. Un valore
+// sbagliato e' un errore, mai un ripiego su "tutti": il riepilogo di una persona finirebbe sui telefoni degli altri.
+// Il filtro e' sempre una lista per `.in('chi', ...)`: senza chi sono le tre chiavi del check di push_subscriptions.
+function chiDestinatario(v: unknown): { ok: true; filtro: string[]; chi: string | null } | { ok: false } {
+  if (v === undefined || v === null || v === '') return { ok: true, filtro: [...CHI_AMMESSI], chi: null };
+  if (typeof v === 'string' && CHI_AMMESSI.includes(v)) return { ok: true, filtro: [v], chi: v };
+  return { ok: false };
+}
+// Temi per config, campo per campo. predefinito_per (migr 0166) arriva come text[]: qui restano solo le tre chiavi, una
+// volta sola, nell'ordine della riga; assente o non array = nessuno (la scheda allora spunta tutti, come prima).
+function vistaTemi(righe: unknown): { key: unknown; etichetta: unknown; descrizione: unknown; predefinito_per: string[] }[] {
+  return (Array.isArray(righe) ? righe : []).map((x) => {
+    const r = (x && typeof x === 'object' ? x : {}) as Record<string, unknown>;
+    const p = Array.isArray(r.predefinito_per) ? r.predefinito_per.filter((c): c is string => typeof c === 'string' && CHI_AMMESSI.includes(c)) : [];
+    return { key: r.key, etichetta: r.etichetta, descrizione: r.descrizione, predefinito_per: [...new Set(p)] };
+  });
+}
+// ==== PURE:push-destinatari END ====
 
 // ==== PURE:push-payload BEGIN ====
 // Declarative Web Push (WebKit): JSON con web_push 8030, che Safari 18.4+ mostra anche senza service worker; gli altri
@@ -469,18 +496,20 @@ async function inviaTema(sb: Sb, body: Record<string, unknown>): Promise<Respons
   const tema = typeof body.tema === 'string' ? body.tema.trim() : '';
   if (!TEMA_RE.test(tema)) return json({ error: 'tema non valido' }, 422);
   if (!pulisciTesto(body.titolo) && !pulisciTesto(body.testo)) return json({ error: 'titolo o testo mancanti' }, 422);
+  const dest = chiDestinatario(body.chi);
+  if (!dest.ok) return json({ error: 'chi non valido (Ale, Bene o Ginevra)' }, 422);
   // tema spento (push_temi.attivo = false) o inesistente: niente invio (Gate 2, 17-10). Prima un tema tolto dalla scheda
   // continuava ad arrivare ai telefoni che l'avevano gia', senza piu' la casella per toglierlo.
   if (!(await temiAttivi(sb, [tema])).includes(tema)) return json({ ok: false, skipped: 'tema_spento', inviati: 0 });
   const { vapid, motivo } = await vapidDaEnv();
   if (!vapid) return json({ error: motivo }, 503);
-  const { data: righe, error } = await retryOnce(() => sb.from('push_subscriptions').select('id, endpoint, p256dh, auth, fail_count').contains('temi', [tema]).order('created_at', { ascending: true }).limit(51));
+  const { data: righe, error } = await retryOnce(() => sb.from('push_subscriptions').select('id, endpoint, p256dh, auth, fail_count').contains('temi', [tema]).in('chi', dest.filtro).order('created_at', { ascending: true }).limit(51));
   if (error) throw new ReadError('iscrizioni non leggibili, riprova');
   const lista = (righe ?? []) as Riga[];
   if (lista.length > 50) return json({ ok: false, error: `oltre 50 telefoni iscritti al tema ${tema}: invio fermato`, inviati: 0 }, 503);
   const destinatari = lista.length;
   const payload = costruisciPayload({ titolo: body.titolo, testo: body.testo, url: body.url });
-  if (body.dryRun === true) return json({ ok: destinatari >= 1, dryRun: true, inviati: 0, falliti: 0, rimossi: 0, destinatari });
+  if (body.dryRun === true) return json({ ok: destinatari >= 1, dryRun: true, inviati: 0, falliti: 0, rimossi: 0, destinatari, chi: dest.chi });
 
   const opz = { ttl: TTL_INVIO, urgency: body.urgente === true ? 'high' : 'normal', topic: topicDi(tema) };
   const g = await giroInvio(lista, {
@@ -489,8 +518,8 @@ async function inviaTema(sb: Sb, body: Record<string, unknown>): Promise<Respons
     adesso: Date.now,
     fine: Date.now() + GIRO_MAX_MS,
   });
-  console.log(JSON.stringify({ azione: 'invia', tema, destinatari, inviati: g.inviati, falliti: g.falliti, rimossi: g.rimossi, esiti: g.esiti, fermato: g.fermato }));
-  return json({ ok: g.ok, inviati: g.inviati, falliti: g.falliti, rimossi: g.rimossi, destinatari, esiti: g.esiti, ...(g.fermato ? { fermato: g.fermato } : {}) });
+  console.log(JSON.stringify({ azione: 'invia', tema, chi: dest.chi ?? 'tutti', destinatari, inviati: g.inviati, falliti: g.falliti, rimossi: g.rimossi, esiti: g.esiti, fermato: g.fermato }));
+  return json({ ok: g.ok, inviati: g.inviati, falliti: g.falliti, rimossi: g.rimossi, destinatari, esiti: g.esiti, chi: dest.chi, ...(g.fermato ? { fermato: g.fermato } : {}) });
 }
 
 Deno.serve(async (req) => {
@@ -535,9 +564,9 @@ async function handle(req: Request): Promise<Response> {
   if (action === 'config') {
     const { vapid, motivo } = await vapidDaEnv();
     if (!vapid) return json({ enabled: false, reason: motivo });
-    const { data, error } = await retryOnce(() => sb.from('push_temi').select('key, etichetta, descrizione').eq('attivo', true).order('ordine', { ascending: true }).order('key', { ascending: true }).limit(100));
+    const { data, error } = await retryOnce(() => sb.from('push_temi').select('key, etichetta, descrizione, predefinito_per').eq('attivo', true).order('ordine', { ascending: true }).order('key', { ascending: true }).limit(100));
     if (error) throw new ReadError('temi non leggibili, riprova');
-    return json({ enabled: true, vapidPublicKey: vapid.publicKey, temi: data ?? [] });
+    return json({ enabled: true, vapidPublicKey: vapid.publicKey, temi: vistaTemi(data) });
   }
 
   if (action === 'iscrivi') {

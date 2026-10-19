@@ -6,13 +6,17 @@
 //    iPhone succede dopo un aggiornamento); se e' sparita, o il server non conosce piu' il telefono, un avviso porta alla
 //    scheda Notifiche. Non registra MAI il service worker (lo fa solo la scheda Notifiche): qui lo si cerca soltanto.
 // 2. Il tocco su una notifica con l'app gia' aperta arriva dal service worker come messaggio {tipo:'amimi-apri', hash}:
-//    si cambia scheda con go(), mai scrivendo location.hash (il backnav leggerebbe il cambio come "indietro").
+//    si cambia scheda con go(), mai scrivendo location.hash (il backnav leggerebbe il cambio come "indietro"). Per una
+//    scheda con sotto-rotte lette dall'hash (oggi Negozi, #negozi/outreach/<id>; 18-10, Gate 3 push-eventi) la rotta va
+//    nell'URL con history.replaceState DOPO go(), che non manda ne' popstate ne' hashchange e lascia l'URL della voce
+//    precedente com'era, poi EVENTO_ROTTA dice alla pagina gia' montata di rileggerla; una pagina non ancora montata la
+//    legge dall'URL nascendo. Prima ad app aperta si finiva sulla lista, o sul negozio aperto prima.
 // 3. L'avviso non compare sulla scheda Notifiche (nascondi, da App: lo stato vero e' gia' li') e sparisce del tutto dopo
 //    un "Attiva" o un "Disattiva" riuscito (EVENTO_ISCRIZIONE): prima restava fino al riavvio anche a notifiche riattivate.
 import { useEffect, useRef, useState } from 'react';
 import type { Tab } from '../lib/people';
 import { csClient } from '../lib/csClient';
-import { EVENTO_ISCRIZIONE, leggiDevice, rinnova, spento, swSupportato, tabDaHash } from '../lib/push';
+import { EVENTO_ISCRIZIONE, EVENTO_ROTTA, leggiDevice, rinnova, rottaDaHash, spento, swSupportato, tabDaHash } from '../lib/push';
 
 export default function PushKeeper({ attivo, nascondi, go }: { attivo: boolean; nascondi: boolean; go: (t: Tab, p?: string) => void }) {
   const [spente, setSpente] = useState(false);
@@ -35,7 +39,12 @@ export default function PushKeeper({ attivo, nascondi, go }: { attivo: boolean; 
       if (!d || d.tipo !== 'amimi-apri' || typeof d.hash !== 'string') return;
       // hash vuoto o sconosciuto: l'app viene solo in primo piano, senza perdere cio' che era aperto
       const t = tabDaHash(d.hash);
-      if (t) goRef.current(t);
+      if (!t) return;
+      goRef.current(t);
+      const rotta = rottaDaHash(d.hash);
+      if (rotta === null) return;
+      history.replaceState(history.state, '', rotta);
+      window.dispatchEvent(new Event(EVENTO_ROTTA));
     };
     sw.addEventListener('message', suMessaggio);
     // con addEventListener (a differenza di onmessage) la coda dei messaggi parte solo da qui

@@ -8,11 +8,20 @@
 //      navigate fra le opzioni (salterebbe notificationclick);
 //   3. notificationclick: URL fuori scope -> radice dell'app; finestra dell'app aperta -> focus e messaggio
 //      {tipo:'amimi-apri', hash}; nessuna finestra (o solo il Villaggio a se') -> openWindow.
-//   5. sorgente del web (Gate 3 del 17-10): gli hash di tabDaHash (lib/push.ts) sono quelli del link diretto in App.tsx;
-//      il service worker si registra solo da lib/push.ts e preparaRegistrazione si chiama solo dalla scheda Notifiche.
-// Autocontrollo: cinque rilevatori devono accorgersi di un difetto piantato apposta in una copia del sorgente.
-//   node tests/push_sw.mjs   (nessuna rete, nessuna dipendenza)
-import { readFileSync, readdirSync } from 'node:fs';
+//   5. sorgente del web (Gate 3 del 17-10): gli hash di tabDaHash (lib/push.ts) sono quelli del link diretto in App.tsx,
+//      #assistenza e #salute compresi (18-10, push-eventi); il service worker si registra solo da lib/push.ts e
+//      preparaRegistrazione si chiama solo dalla scheda Notifiche.
+//      Link B2B ad app aperta (18-10, Gate 3 push-eventi, K2): PushKeeper mette la rotta nell'URL con replaceState DOPO
+//      go() (mai location.hash) e manda EVENTO_ROTTA, che Negozi.tsx ascolta con lo stesso nome.
+//   6. blocco PURE:push-web di lib/push.ts (18-10) ritagliato dal sorgente ed eseguito: tabDaHash, rottaDaHash (la
+//      rotta di Negozi da mettere nell'URL) e temiPredefiniti (i temi spuntati alla prima iscrizione secondo
+//      push_temi.predefinito_per, tutti se nessun tema ne ha).
+// Autocontrollo: ogni rilevatore deve accorgersi di un difetto piantato apposta in una copia del sorgente.
+//   node tests/push_sw.mjs   (nessuna rete, nessuna dipendenza; Node 24 per il blocco TypeScript)
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 
 const SRC = readFileSync(new URL('../web/public/sw.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -256,8 +265,14 @@ const daPush = hashDiTabDaHash(PUSH_TS), daApp = hashDiApp(APP_TSX);
 check('tabDaHash letto (almeno negozi e notifiche)', daPush.includes('negozi') && daPush.includes('notifiche'), JSON.stringify(daPush));
 check('App.tsx: catena degli hash letta, ogni hash apre la scheda col suo nome', daApp.length >= 2 && daApp.every((h) => !h.includes('->')), JSON.stringify(daApp));
 eq('stessi hash, nello stesso ordine, in tabDaHash e nel link diretto di App.tsx', daPush, daApp);
+// i link di push-eventi (18-10): l'Assistenza e la Salute devono aprirsi sia ad app chiusa (App.tsx) sia aperta (tabDaHash)
+for (const h of ['assistenza', 'salute']) {
+  check(`#${h} nel link diretto di App.tsx e in tabDaHash`, daApp.includes(h) && daPush.includes(h), JSON.stringify({ daApp, daPush }));
+}
 check('autocontrollo: una scheda nuova aggiunta solo ad App.tsx e\' vista',
   JSON.stringify(hashDiTabDaHash(PUSH_TS)) !== JSON.stringify(hashDiApp(APP_TSX.replace("window.location.hash.startsWith('#notifiche') ? 'notifiche' :", "window.location.hash.startsWith('#notifiche') ? 'notifiche' : window.location.hash.startsWith('#nuova') ? 'nuova' :"))));
+check('autocontrollo: #salute tolto dal solo App.tsx e\' visto',
+  JSON.stringify(hashDiTabDaHash(PUSH_TS)) !== JSON.stringify(hashDiApp(APP_TSX.replace(" window.location.hash.startsWith('#salute') ? 'salute' :", ''))));
 
 /** Ogni .ts/.tsx sotto web/src, con percorso relativo a web/src. */
 function sorgenti(dir = new URL('../web/src/', import.meta.url), pre = '') {
@@ -272,11 +287,151 @@ const WEB = sorgenti();
 eq('serviceWorker.register solo in lib/push.ts', WEB.filter((f) => /serviceWorker\.register\(/.test(f.src)).map((f) => f.rel), ['lib/push.ts']);
 eq('preparaRegistrazione chiamata solo dalla scheda Notifiche',
   WEB.filter((f) => /(?<!function )preparaRegistrazione\(/.test(f.src)).map((f) => f.rel), ['pages/Notifiche.tsx']);
+// K2 (Gate 3 del 18-10): il tocco su una notifica B2B ad app aperta deve aprire il negozio della notifica. PushKeeper,
+// nel listener del messaggio amimi-apri: go(t), poi rottaDaHash, replaceState (sulla voce nuova di go, cosi' quella di
+// prima tiene il suo URL), poi EVENTO_ROTTA; mai location.hash (popstate = "indietro" per il backnav). Negozi.tsx
+// rilegge la rotta su quell'evento, col nome scritto per esteso (non importa il modulo notifiche).
+const PUSHKEEPER = leggi('web/src/components/PushKeeper.tsx');
+const NEGOZI = leggi('web/src/pages/Negozi.tsx');
+function rottaNellUrl(pk, neg, push) {
+  const nome = push.match(/export const EVENTO_ROTTA = '([^']+)';/)?.[1];
+  const corpo = pk.match(/const suMessaggio = [\s\S]*?\n {4}};\n/)?.[0] ?? '';
+  const go = corpo.indexOf('goRef.current(t);');
+  const calcolo = corpo.indexOf('const rotta = rottaDaHash(d.hash);');
+  const sostituisci = corpo.indexOf("history.replaceState(history.state, '', rotta);");
+  const evento = corpo.indexOf('window.dispatchEvent(new Event(EVENTO_ROTTA));');
+  return !!nome && go > 0 && calcolo > go && sostituisci > calcolo && evento > sostituisci
+    && !/location\.hash\s*=(?!=)/.test(pk)
+    && neg.includes(`window.addEventListener('${nome}', h);`) && neg.includes(`window.removeEventListener('${nome}', h);`);
+}
+check('K2: PushKeeper mette la rotta con replaceState dopo go() e manda EVENTO_ROTTA; Negozi lo ascolta con lo stesso nome', rottaNellUrl(PUSHKEEPER, NEGOZI, PUSH_TS));
+{
+  const pk = (da, a) => { const n = PUSHKEEPER.split(da).length - 1; check(`autocontrollo: il punto da guastare in PushKeeper esiste una volta: ${da.trim().split('\n')[0]}`, n === 1); return PUSHKEEPER.replace(da, a); };
+  check('autocontrollo: EVENTO_ROTTA non mandato e\' visto', !rottaNellUrl(pk('      window.dispatchEvent(new Event(EVENTO_ROTTA));\n', ''), NEGOZI, PUSH_TS));
+  check('autocontrollo: location.hash al posto di replaceState e\' visto', !rottaNellUrl(pk("history.replaceState(history.state, '', rotta);", 'location.hash = rotta;'), NEGOZI, PUSH_TS));
+  check('autocontrollo: replaceState prima di go() e\' visto (la voce di prima prenderebbe l\'URL del negozio)',
+    !rottaNellUrl(pk('      goRef.current(t);\n      const rotta = rottaDaHash(d.hash);\n      if (rotta === null) return;\n      history.replaceState(history.state, \'\', rotta);\n',
+      '      const rotta = rottaDaHash(d.hash);\n      if (rotta !== null) history.replaceState(history.state, \'\', rotta);\n      goRef.current(t);\n      if (rotta === null) return;\n'), NEGOZI, PUSH_TS));
+  const n = NEGOZI.split("window.addEventListener('amimi-rotta', h);").length - 1;
+  check('autocontrollo: il listener di Negozi da togliere esiste una volta', n === 1);
+  check('autocontrollo: Negozi che non ascolta l\'evento e\' visto', !rottaNellUrl(PUSHKEEPER, NEGOZI.replace(" window.addEventListener('amimi-rotta', h);", ''), PUSH_TS));
+  check('autocontrollo: un nome diverso in lib/push.ts e\' visto', !rottaNellUrl(PUSHKEEPER, NEGOZI, PUSH_TS.replace("export const EVENTO_ROTTA = 'amimi-rotta';", "export const EVENTO_ROTTA = 'amimi-rotta-negozi';")));
+}
+
 // G2-ISO-6: il worker c'e' su ogni telefono che ha aperto la scheda Notifiche, non solo su chi si e' iscritto
 const affermazioneFalsa = /non si e' (?:mai )?iscritto non (?:ce l'ha|ne ha uno)/;
 eq('nessun commento dice che senza iscrizione il service worker non c\'e\'',
   [['web/public/sw.js', SRC], ['web/src/lib/push.ts', PUSH_TS], ['web/src/components/PushKeeper.tsx', leggi('web/src/components/PushKeeper.tsx')]]
     .filter(([, s]) => affermazioneFalsa.test(s)).map(([f]) => f), []);
+
+console.log('\n== 6. blocco PURE:push-web di lib/push.ts (tabDaHash, temiPredefiniti) ==');
+/** Il blocco fra i marcatori, null se mancano. */
+function bloccoWeb(src) {
+  const B = '// ==== PURE:push-web BEGIN ====', E = '// ==== PURE:push-web END ====';
+  const a = src.indexOf(B), b = src.indexOf(E);
+  return a < 0 || b < a ? null : src.slice(a + B.length, b);
+}
+/** Il blocco eseguito davvero: scritto come .mts in una cartella temporanea (Node 24 toglie i tipi da solo). */
+async function caricaBlocco(src) {
+  const corpo = bloccoWeb(src);
+  if (corpo === null) return null;
+  const dir = mkdtempSync(join(tmpdir(), 'push_sw-'));
+  try {
+    const f = join(dir, 'push_web.mts');
+    writeFileSync(f, corpo, 'utf8');
+    return await import(pathToFileURL(f).href);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+const BLOCCO = bloccoWeb(PUSH_TS);
+check('marcatori PURE:push-web presenti in lib/push.ts', BLOCCO !== null);
+check('blocco PURE senza import, rete, storage o browser', BLOCCO !== null && !/\bimport\b|fetch\(|csClient|localStorage|navigator|window\.|document\./.test(BLOCCO));
+const W = await caricaBlocco(PUSH_TS);
+check('blocco PURE eseguibile ed esporta tabDaHash, rottaDaHash e temiPredefiniti', typeof W?.tabDaHash === 'function' && typeof W?.rottaDaHash === 'function' && typeof W?.temiPredefiniti === 'function');
+
+/** tabDaHash: gli hash dei link delle notifiche aprono la scheda giusta, il resto nessuna. */
+function tabGiuste(m) {
+  if (typeof m?.tabDaHash !== 'function') return false;
+  const casi = [
+    ['#assistenza', 'assistenza'], ['#salute', 'salute'], ['#notifiche', 'notifiche'], ['#negozi', 'negozi'],
+    ['#negozi/outreach/7f1c', 'negozi'], ['#villaggio', 'villaggio'], ['', null], ['#', null], ['#boh', null], ['assistenza', null],
+  ];
+  return casi.every(([h, t]) => m.tabDaHash(h) === t);
+}
+check('tabDaHash: #assistenza, #salute e gli altri hash aprono la loro scheda; vuoto, sconosciuto o senza # nessuna', !!W && tabGiuste(W),
+  W ? JSON.stringify(['#assistenza', '#salute', '#negozi/outreach/7f1c', '#boh', ''].map((h) => [h, W.tabDaHash(h)])) : '');
+
+/** rottaDaHash (K2, 18-10): la rotta di Negozi va nell'URL com'e' (link di b2b_risposta_negozio, dossier, coda);
+ *  caratteri inattesi -> la lista; le altre schede non hanno rotte e l'URL non si tocca. */
+const NEGOZIO = '7f1c2a3b-0000-4000-8000-00000000abcd';
+function rotteGiuste(m) {
+  if (typeof m?.rottaDaHash !== 'function') return false;
+  const casi = [
+    ['#negozi/outreach/' + NEGOZIO, '#negozi/outreach/' + NEGOZIO], ['#negozi', '#negozi'], ['#negozi/outreach', '#negozi/outreach'],
+    ['#negozi/outreach/coda', '#negozi/outreach/coda'], ['#negozi/' + NEGOZIO, '#negozi/' + NEGOZIO],
+    ['#negozi/outreach/x?y=1', '#negozi'], ['#negozi/outreach/<b>', '#negozi'], ['#negozi//', '#negozi'], ['#negozix', '#negozi'],
+    ['#assistenza', null], ['#salute', null], ['#notifiche', null], ['#villaggio', null], ['', null], ['#boh', null], ['negozi/outreach/1', null],
+  ];
+  return casi.every(([h, r]) => m.rottaDaHash(h) === r);
+}
+check('rottaDaHash: #negozi/... nell\'URL com\'e\', caratteri inattesi -> #negozi, altre schede e hash sconosciuti null', !!W && rotteGiuste(W),
+  typeof W?.rottaDaHash === 'function' ? JSON.stringify(['#negozi/outreach/' + NEGOZIO, '#negozi/outreach/x?y=1', '#assistenza', ''].map((h) => [h, W.rottaDaHash(h)])) : 'rottaDaHash assente');
+
+// i temi del 18-10 come li manda config dopo la migrazione 0166 (le etichette qui non contano)
+const T = (key, predefinito_per) => ({ key, etichetta: key, descrizione: null, ...(predefinito_per === undefined ? {} : { predefinito_per }) });
+const TEMI_18 = [
+  T('conti', ['Ale']), T('vendite', ['Ale']), T('negozi', ['Ale', 'Bene']), T('assistenza', ['Ginevra']),
+  T('spedizioni', ['Ginevra']), T('sistema', ['Ale']), T('riepilogo', ['Ale', 'Bene', 'Ginevra']),
+];
+/** temiPredefiniti: le persone del contratto 18-10 e i ripieghi. */
+function predefinitiGiusti(m) {
+  if (typeof m?.temiPredefiniti !== 'function') return false;
+  const p = m.temiPredefiniti;
+  const casi = [
+    [p(TEMI_18, 'Ale'), ['conti', 'vendite', 'negozi', 'sistema', 'riepilogo']],
+    [p(TEMI_18, 'Bene'), ['negozi', 'riepilogo']],
+    [p(TEMI_18, 'Ginevra'), ['assistenza', 'spedizioni', 'riepilogo']],
+    // push-api di prima del 18-10: nessun campo, partono tutti come prima
+    [p([T('conti'), T('vendite')], 'Ginevra'), ['conti', 'vendite']],
+    // campo presente ma vuoto ovunque: stesso ripiego
+    [p([T('conti', []), T('vendite', [])], 'Bene'), ['conti', 'vendite']],
+    // campo rotto (null, stringa) letto come vuoto; un tema con predefiniti basta a non ripiegare su tutti
+    [p([T('conti', null), T('vendite', 'Ale'), T('negozi', ['Bene'])], 'Bene'), ['negozi']],
+    [p([T('conti', null), T('vendite', 'Ale'), T('negozi', ['Bene'])], 'Ale'), []],
+    // persona sconosciuta: niente spuntato (Attiva resta comunque spento senza persona valida)
+    [p(TEMI_18, 'Mario'), []],
+    [p([], 'Ale'), []],
+  ];
+  return casi.every(([got, exp]) => JSON.stringify(got) === JSON.stringify(exp));
+}
+check('temiPredefiniti: Ale, Benny e Ginni hanno i loro temi, nell\'ordine di config; tutti se nessun tema ha predefiniti', !!W && predefinitiGiusti(W),
+  W ? JSON.stringify(['Ale', 'Bene', 'Ginevra'].map((c) => [c, W.temiPredefiniti(TEMI_18, c)])) : '');
+check('temiPredefiniti non tocca la lista che riceve', !!W && (() => { const prima = JSON.stringify(TEMI_18); W.temiPredefiniti(TEMI_18, 'Ale'); return JSON.stringify(TEMI_18) === prima; })());
+
+const piantaWeb = (nome, da, a) => {
+  const n = PUSH_TS.split(da).length - 1;
+  check(`autocontrollo: il punto da guastare per "${nome}" esiste una volta`, n === 1, `trovato ${n} volte: ${da}`);
+  return PUSH_TS.replace(da, a);
+};
+{
+  const m = await caricaBlocco(piantaWeb('ripiego su tutti', 'if (!temi.some((t) => lista(t).length > 0)) return temi.map((t) => t.key);\n', ''));
+  check('autocontrollo: senza il ripiego su tutti i temi e\' visto', !!m && !predefinitiGiusti(m));
+}
+{
+  const m = await caricaBlocco(piantaWeb('filtro per persona', 'return temi.filter((t) => lista(t).includes(chi)).map((t) => t.key);', 'return temi.map((t) => t.key);'));
+  check('autocontrollo: tutti i temi spuntati per chiunque e\' visto', !!m && !predefinitiGiusti(m));
+}
+{
+  const m = await caricaBlocco(piantaWeb('hash di salute', ", 'assistenza', 'salute'] as const", ", 'assistenza'] as const"));
+  check('autocontrollo: #salute tolto da tabDaHash e\' visto', !!m && !tabGiuste(m));
+}
+{
+  const m = await caricaBlocco(piantaWeb('rotta solo per Negozi', "if (tabDaHash(hash) !== 'negozi') return null;\n", "if (tabDaHash(hash) === null) return null;\n"));
+  check('autocontrollo: una rotta scritta anche per le altre schede e\' vista', !!m && !rotteGiuste(m));
+}
+{
+  const m = await caricaBlocco(piantaWeb('controllo dei caratteri', "return /^#negozi(?:\\/[0-9A-Za-z_-]+)*$/.test(hash) ? hash : '#negozi';", 'return hash;'));
+  check('autocontrollo: un hash con caratteri inattesi messo nell\'URL e\' visto', !!m && !rotteGiuste(m));
+}
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

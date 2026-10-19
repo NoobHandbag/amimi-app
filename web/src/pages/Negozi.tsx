@@ -105,7 +105,14 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
   };
   const closeDetail = (fallback: Route) => { if (depth.current > 0) popBack(); else setSection(fallback); };
   const goRoute = (r: Route) => (r.view === 'scheda' || r.view === 'oscheda' ? openDetail(r) : setSection(r));
-  useEffect(() => { const h = () => setRoute(parseHash()); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
+  // 'amimi-rotta' (18-10, Gate 3 push-eventi): il tocco su una notifica B2B ad app aperta mette #negozi/outreach/<id>
+  // nell'URL con replaceState, che non manda hashchange (PushKeeper, EVENTO_ROTTA di lib/push.ts; nome per esteso per
+  // non importare il modulo notifiche): si rilegge la rotta anche li', altrimenti restava la lista o il negozio di prima
+  useEffect(() => {
+    const h = () => setRoute(parseHash());
+    window.addEventListener('hashchange', h); window.addEventListener('amimi-rotta', h);
+    return () => { window.removeEventListener('hashchange', h); window.removeEventListener('amimi-rotta', h); };
+  }, []);
   const [fStato, setFStato] = useState<string>('attivi');
   const [fTier, setFTier] = useState<string>('tutti');
   const [fTipo, setFTipo] = useState<string>('tutti');

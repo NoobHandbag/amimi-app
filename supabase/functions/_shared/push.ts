@@ -1,16 +1,22 @@
 // _shared/push.ts: il secondo canale degli avvisi di ce-guard e sales-guard: la notifica dell'app (Web Push) via push-api.
 // PR B delle notifiche native (17-10-2026, brief Cowork12/_CLAUDE_CODE_INBOX/2026-10-17_BRIEF_notifiche_guardie_PR_B.md).
+// Dal 18-10 lo importa anche push-eventi, che usa SOLO inviaPush (mai consegnaAvviso: niente ripiego su ntfy).
 // I guardiani NON importano web-push: chiamano push-api (azione `invia`, chiave di servizio) con un POST, e la spedizione
 // ai telefoni resta tutta li'. L'interruttore e' app_flags.push_canale_guardie ('ntfy' | 'entrambi' | 'push', nasce 'ntfy');
 // a push_enabled spento vale sempre 'ntfy'.
 // Nessun import: i test lo caricano coi tipi tolti e lo guidano con spedizioni e fetch finti (tests/shopify_sync_guardie.mjs).
 
 export type Canale = 'ntfy' | 'entrambi' | 'push';
+// chi (Gate 3 del 18-10, RF-7): la persona a cui push-api v2 dice di aver mandato (null = tutti gli iscritti al tema);
+// assente = una push-api che non lo rimanda (la v1, che ignora chi e manda a tutti). push-eventi lo confronta col chi del
+// riepilogo; ce-guard e sales-guard non lo guardano.
 export type EsitoPush = {
   ok: boolean; inviati: number; falliti: number; destinatari: number | null; status: number | null;
-  skipped?: string; dryRun?: boolean; errore?: string;
+  skipped?: string; dryRun?: boolean; errore?: string; chi?: string | null;
 };
-export type MsgPush = { tema: string; titolo: string; testo: string; url?: string; urgente?: boolean; dryRun?: boolean };
+// chi (18-10, push-eventi): facoltativo, solo i telefoni di quella persona (il riepilogo serale e' uno a testa). Assente
+// = tutti gli iscritti al tema, come prima: ce-guard e sales-guard non lo passano e non cambiano.
+export type MsgPush = { tema: string; titolo: string; testo: string; url?: string; urgente?: boolean; dryRun?: boolean; chi?: string };
 
 export const APP_URL = 'https://noobhandbag.github.io/amimi-app/';
 // push-api spedisce in sequenza con 10 s al massimo per telefono (giro intero al massimo 100 s) e le sue letture possono
@@ -79,6 +85,8 @@ export function esitoDaRisposta(status: number, corpo: unknown): EsitoPush {
   };
   if (typeof o.skipped === 'string') e.skipped = o.skipped.slice(0, 40);
   if (dry) e.dryRun = true;
+  if (typeof o.chi === 'string') e.chi = o.chi.slice(0, 20);
+  else if (o.chi === null) e.chi = null;
   if (!ok2xx) e.errore = typeof o.error === 'string' && o.error ? o.error.slice(0, 200) : `push-api ha risposto ${status}`;
   else if (corpo === null || typeof corpo !== 'object' || Array.isArray(corpo)) e.errore = 'risposta di push-api non leggibile';
   return e;
@@ -99,6 +107,7 @@ export async function inviaPush(msg: MsgPush, env?: { url?: string; key?: string
       body: JSON.stringify({
         action: 'invia', tema: msg.tema, titolo: msg.titolo, testo: msg.testo, url: msg.url ?? APP_URL, urgente: msg.urgente === true,
         ...(msg.dryRun === true ? { dryRun: true } : {}),
+        ...(typeof msg.chi === 'string' && msg.chi ? { chi: msg.chi } : {}),
       }),
       signal: AbortSignal.timeout(TIMEOUT_PUSH_MS),
     });

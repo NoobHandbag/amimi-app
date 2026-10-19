@@ -3,7 +3,7 @@ import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { PEOPLE, PersonaPicker, personaName } from '../lib/people';
 import {
   supportoPush, chiaveVapid, preparaRegistrazione, datiIscrizione, etichettaDispositivo, leggiDevice, salvaDevice, togliDevice,
-  pushConfig, dispositivi, iscrivi, salvaTemi, disiscrivi, rimuovi, prova, spento, EVENTO_ISCRIZIONE, type Tema, type Dispositivo,
+  pushConfig, dispositivi, iscrivi, salvaTemi, disiscrivi, rimuovi, prova, spento, temiPredefiniti, EVENTO_ISCRIZIONE, type Tema, type Dispositivo,
 } from '../lib/push';
 
 // Scheda Notifiche (17-10, brief notifiche native, PR A): ogni telefono si iscrive per conto suo e sceglie i temi.
@@ -51,6 +51,11 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
   const deviceRef = useRef(deviceId);
   const impostaDevice = (id: string | null) => { deviceRef.current = id; setDeviceIdS(id); };
   const [sceltiLocali, setSceltiLocali] = useState<string[] | null>(null);
+  // Persona scelta su QUESTO telefono (18-10, Gate 3 push-eventi, F2): senza amimi_chi App ripiega su 'Ale', e l'app
+  // installata su iPhone ha uno storage suo, quindi Benny e Ginni arriverebbero qui con Ale e i suoi temi gia' scelti, e
+  // un tocco su Attiva le iscriverebbe come Ale (riepilogo di Ale, niente Assistenza). Finche' non si sceglie, o finche'
+  // il server non conosce gia' questo telefono (mio), nessuna persona e' segnata, i temi sono fermi e Attiva e' spento.
+  const [personaScelta, setPersonaScelta] = useState(() => { try { return localStorage.getItem('amimi_chi') !== null; } catch { return false; } });
   const [permesso, setPermesso] = useState<NotificationPermission>(permessoOra);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState<Msg>(null);
@@ -136,9 +141,11 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
   // solo i temi attivi in config: uno spento dopo, rimasto nella riga, non ha casella e iscrivi lo rifiuterebbe (422)
   const chiaviAttive = new Set(temi.map((t) => t.key));
   const soloAttivi = (ks: string[]) => ks.filter((k) => chiaviAttive.has(k));
-  // prima dell'iscrizione tutti i temi spuntati; da iscritto valgono quelli salvati sul server
-  const scelti = soloAttivi(attivo && mio ? mio.temi : (sceltiLocali ?? mio?.temi ?? temi.map((t) => t.key)));
-  const chiValido = (PEOPLE as readonly string[]).includes(chi);
+  const chiValido = (personaScelta || !!mio) && (PEOPLE as readonly string[]).includes(chi);
+  // con una riga sul server valgono i temi salvati; prima dell'iscrizione quelli predefiniti della persona scelta (18-10,
+  // push_temi.predefinito_per), ricalcolati a ogni cambio di persona finche' non si tocca una casella (sceltiLocali);
+  // senza persona scelta nessuno
+  const scelti = soloAttivi(attivo && mio ? mio.temi : (sceltiLocali ?? mio?.temi ?? (chiValido ? temiPredefiniti(temi, chi) : [])));
 
   // Il server ha tolto questo telefono (invia ha avuto 404/410) ma il browser tiene l'iscrizione: subscribe con la stessa
   // chiave la restituirebbe uguale e "Attiva" registrerebbe di nuovo un endpoint morto. La si toglie UNA volta per
@@ -364,7 +371,7 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
 
       <div className="card">
         <h2>Chi usa questo telefono</h2>
-        <PersonaPicker chi={chi} setChi={setChi} />
+        <PersonaPicker chi={personaScelta || mio ? chi : ''} setChi={(c) => { setPersonaScelta(true); setChi(c); }} />
         {attivo && mio && chiValido && mio.chi !== chi && (
           <div className="note">
             Iscritto come {personaName(mio.chi)}.{' '}
@@ -378,7 +385,7 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
         {temi.length === 0 && <div className="muted">Nessun tema attivo sul server.</div>}
         {temi.map((t) => (
           <label key={t.key} className="ds-toggle" style={{ display: 'flex', alignItems: 'flex-start', padding: '8px 0' }}>
-            <input type="checkbox" checked={scelti.includes(t.key)} onChange={() => { void cambiaTema(t.key); }} disabled={!!busy || lista === null} />
+            <input type="checkbox" checked={scelti.includes(t.key)} onChange={() => { void cambiaTema(t.key); }} disabled={!!busy || lista === null || (!attivo && !chiValido)} />
             <span className="track" style={{ marginTop: 1 }}><span className="knob" /></span>
             <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <span>{t.etichetta}</span>
@@ -386,7 +393,7 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
             </span>
           </label>
         ))}
-        {nessunTema && temi.length > 0 && <div className="note">Nessun tema scelto: {attivo ? 'questo telefono non riceve niente.' : 'scegline almeno uno.'}</div>}
+        {nessunTema && temi.length > 0 && (chiValido || attivo) && <div className="note">Nessun tema scelto: {attivo ? 'questo telefono non riceve niente.' : 'scegline almeno uno.'}</div>}
       </div>
 
       {!attivo && (

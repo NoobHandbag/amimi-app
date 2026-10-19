@@ -212,6 +212,11 @@ console.log('\n== push: esitoDaRisposta (la risposta di push-api) ==');
   t('62 errore di push-api: non ok, testo del servizio', e503.ok === false && e503.status === 503 && /oltre 50/.test(e503.errore));
   t('63 corpo assente, array o stringa: non ok, errore generico sui non-2xx', esitoDaRisposta(401, null).errore === 'push-api ha risposto 401'
     && esitoDaRisposta(200, [1]).ok === false && esitoDaRisposta(200, 'x').ok === false && esitoDaRisposta(500, { ok: true, inviati: 5 }).ok === false);
+  // RF-7 (Gate 3 del 18-10, push-eventi): il chi rimandato da push-api v2 passa nell'esito (null = tutti), e assente resta
+  // assente (push-api v1): push-eventi distingue cosi' una push per una persona finita a tutti. I guardiani non lo guardano.
+  const conChi = esitoDaRisposta(200, { ok: true, inviati: 1, destinatari: 1, chi: 'Bene' }), tutti = esitoDaRisposta(200, { ok: true, inviati: 1, destinatari: 1, chi: null });
+  t('63b chi rimandato: stringa (tagliata a 20) o null riportati; assente o di altro tipo -> nessuna chiave chi', conChi.chi === 'Bene' && tutti.chi === null && 'chi' in tutti
+    && !('chi' in e1) && !('chi' in esitoDaRisposta(200, { ok: true, inviati: 1, chi: 3 })) && esitoDaRisposta(200, { ok: true, inviati: 1, chi: 'x'.repeat(40) }).chi.length === 20);
 }
 
 console.log('\n== push: inviaPush (POST a push-api, mai un\'eccezione) ==');
@@ -233,6 +238,12 @@ console.log('\n== push: inviaPush (POST a push-api, mai un\'eccezione) ==');
   e = await inviaPush({ ...msg, dryRun: true, urgente: undefined }, ENV, fetchFinto(risposta(200, { ok: false, dryRun: true, inviati: 0, destinatari: 0 })));
   const b2 = JSON.parse(visto.init.body);
   t('69 dryRun passato a push-api; urgente assente = false', b2.dryRun === true && b2.urgente === false && e.dryRun === true && e.ok === false);
+  // 18-10 (push-eventi): chi facoltativo passa a push-api solo se c'e'; i guardiani non lo mandano e il corpo resta quello di prima
+  await inviaPush({ ...msg, chi: 'Bene' }, ENV, fetchFinto(risposta(200, { ok: true, inviati: 1, destinatari: 1 })));
+  const b3 = JSON.parse(visto.init.body);
+  await inviaPush({ ...msg, chi: '' }, ENV, fetchFinto(risposta(200, { ok: true, inviati: 1, destinatari: 1 })));
+  const b4 = JSON.parse(visto.init.body);
+  t('69b chi passato solo se dato (Bene -> chi: Bene); vuoto o assente -> nessuna chiave chi, come i guardiani', b3.chi === 'Bene' && !('chi' in b4) && !('chi' in body), { b3, b4 });
   const esiti = [];
   esiti.push(await inviaPush(msg, ENV, fetchFinto(new Error(`rete giu verso ${KEY}`))));
   esiti.push(await inviaPush(msg, ENV, fetchFinto(new DOMException('signal timed out', 'TimeoutError'))));
@@ -248,7 +259,8 @@ console.log('\n== push: inviaPush (POST a push-api, mai un\'eccezione) ==');
   t('75 la chiave non compare in nessun esito', [e, ...esiti, senzaChiave].every((x) => !JSON.stringify(x).includes(KEY)));
   t('76 in produzione legge SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY', /Deno\.env\.get\('SUPABASE_URL'\)/.test(PUSH_SRC) && /Deno\.env\.get\('SUPABASE_SERVICE_ROLE_KEY'\)/.test(PUSH_SRC));
   t('77 il modulo condiviso non importa niente (i guardiani restano senza web-push)', !/^\s*import\s/m.test(PUSH_SRC));
-  t('78 push-api legge esattamente i campi che manda inviaPush', ['tema', 'titolo', 'testo', 'url'].every((k) => PUSH_API.includes(`body.${k}`)) && /body\.urgente === true/.test(PUSH_API) && /body\.dryRun === true/.test(PUSH_API));
+  t('78 push-api legge esattamente i campi che manda inviaPush (dal 18-10 anche chi, validato da chiDestinatario)', ['tema', 'titolo', 'testo', 'url'].every((k) => PUSH_API.includes(`body.${k}`)) && /body\.urgente === true/.test(PUSH_API) && /body\.dryRun === true/.test(PUSH_API)
+    && PUSH_API.includes('chiDestinatario(body.chi)'));
   const apiUrl = PUSH_API.match(/const APP_URL = '([^']+)'/)?.[1];
   t('79 APP_URL uguale a quello di push-api e al click di ntfy di ce-guard', APP_URL === apiUrl && GUARD.includes(`click: '${APP_URL}'`), apiUrl);
 }
@@ -321,9 +333,13 @@ console.log('\n== push: guardie sul sorgente di ce-guard e sales-guard ==');
     [GUARD, SALES].every((s) => /const av = await consegnaAvviso\(canale, mandaNtfy, /.test(s) && (s.match(/consegnaAvviso\(/g) ?? []).length === 1));
   // Gate 2 del 17-10 (C3): _shared/push.ts finisce nel bundle di OGNI edge che lo importa, quindi una modifica si deploya
   // su tutte. L'elenco sta in EDGE_FUNCTIONS.md (ce-guard v10): un importatore nuovo fa diventare rosso questo caso.
+  // 18-10: push-eventi e' il terzo (usa solo inviaPush; caso 103 e tests/push_eventi_core.mjs).
   const importatori = readdirSync(FN, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync(`${FN}/${d.name}/index.ts`))
     .filter((d) => /from '\.\.\/_shared\/push\.ts'/.test(readFileSync(`${FN}/${d.name}/index.ts`, 'utf8'))).map((d) => d.name).sort();
-  t('102 _shared/push.ts e\' importato solo da ce-guard e sales-guard (una modifica = deploy di entrambe)', importatori.join() === 'ce-guard,sales-guard', importatori);
+  t('102 _shared/push.ts e\' importato solo da ce-guard, push-eventi e sales-guard (una modifica = deploy di tutte e tre)', importatori.join() === 'ce-guard,push-eventi,sales-guard', importatori);
+  const PE = existsSync(`${FN}/push-eventi/index.ts`) ? readFileSync(`${FN}/push-eventi/index.ts`, 'utf8').replace(/^\s*\/\/[^\n]*$/gm, '') : '';
+  t('103 push-eventi importa SOLO inviaPush (piu\' il tipo dell\'esito): mai consegnaAvviso, quindi mai il ripiego su ntfy',
+    /import \{ inviaPush \} from '\.\.\/_shared\/push\.ts';/.test(PE) && !/consegnaAvviso|canaleEffettivo|ntfy/i.test(PE));
 }
 
 console.log('\n== migr 0165: interruttore ==');
