@@ -1,4 +1,5 @@
 // push-eventi v1 (2026-10-18): gli eventi che esistono gia' nei dati diventano notifiche native per profilo.
+// v2 (2026-10-19): le push su una cliente dicono chi e' (nome, o email senza nome), decisione di Dan del 19-10 (Privacy, sotto).
 // Brief: Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
 // (Regola 19, migr 0166): scrive SOLO push_eventi_inviati (il registro), push_eventi (ultimo_giro_at, baseline_at) e la sua
 // riga di telemetria in health_log (k = 'push_eventi', una per giorno UTC: Gate 3 del 18-10, un giro che fallisce deve
@@ -9,7 +10,8 @@
 //
 // Chiamata: POST {pin, action}. PIN = app_config.pin_hash come sales-guard. Il PIN dell'app e' pubblico ('x' nel web e nei
 // cron, verificato il 18-10), quindi vale come cancello solo per `run`, che e' idempotente; `anteprima` restituisce chiavi e
-// testi (numeri d'ordine, LDV, nomi dei negozi, id delle conversazioni) e vuole in piu' il Bearer della chiave di servizio.
+// testi (numeri d'ordine, LDV, nomi dei negozi, dal 19-10 nomi o email delle clienti, id delle conversazioni) e vuole in
+// piu' il Bearer della chiave di servizio.
 //   run        (cron ogni 5 minuti) NO-OP se push_eventi_enabled o push_enabled non valgono 'true' (nessuna lettura degli
 //              eventi, nessuna scrittura, neanche health_log); legge SOLO gli eventi con attivo = true. Risposta e log:
 //              conteggi ed errori per evento, mai chiavi o testi delle push.
@@ -26,9 +28,14 @@
 // conteggi e la causa scritta nel codice (mai il messaggio di PostgREST, che puo' citare valori di una riga); nello stesso
 // giorno UTC la gravita' non scende mai, e la label tiene il primo problema del giorno. La freschezza del giro (edge ferma,
 // cron spento) la controlla la funzione SQL push_eventi_salute della 0166, perche' una edge ferma non scrive niente.
-// Privacy (vincolante): mai nome, email, oggetto, snippet o testo delle clienti, mai il motivo d'urgenza scritto dall'AI,
-// mai il referente di un negozio; le select non chiedono nemmeno quelle colonne. Ammessi: categoria, numero d'ordine,
-// stato del corriere, conteggi, importi, nome commerciale del negozio B2B.
+// Privacy (vincolante). Decisione di Dan del 19-10, "RIMUOVI QUESTO. ANZI, DEVE DIRLO!!": rovescia la regola del 18-10
+// (nessuna notifica con nome o email di una cliente). Le push su una cliente DEVONO dire chi e': cs_urgente e
+// cs_cliente_ha_riscritto col nome (customer_name) o, senza nome, l'email (customer_email); spedizione_eccezione col nome
+// (la vista non ha l'email). Passano solo da nomeCliente. Restano fuori: oggetto, snippet, riassunto e testo dei messaggi,
+// il motivo d'urgenza scritto dall'AI, stato_by, il referente di un negozio, la label di cs_sync; le select non chiedono
+// nemmeno quelle colonne. Ammessi anche: categoria, numero d'ordine, stato del corriere, conteggi, importi, nome
+// commerciale del negozio B2B. Il riepilogo serale non porta dati delle clienti. Risposta del run, log, registro e
+// health_log restano senza testi: il nome sta solo nella push (e nell'anteprima, che vuole la chiave di servizio).
 // Blocchi PURE (base, tempo di Roma, candidati e messaggi, registro, giro, salute): `node tests/push_eventi_core.mjs`, che
 // guida anche il resto della edge (letture, giro, run) con un client finto.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -103,6 +110,23 @@ function statoCorriere(v: unknown): string {
   const s = pulisci(v, 40).toUpperCase();
   return /^[\p{L}\p{N} ./'()-]+$/u.test(s) ? s : '';
 }
+// Chi e' la cliente, per le push che la riguardano (decisione di Dan del 19-10, Privacy in testa): il nome ripulito come
+// gli altri testi dei dati e tagliato a 60 punti di codice; senza nome l'email, solo se ha la forma di un'email
+// (minuscola, al massimo 80: un'email tagliata non e' piu' un'email e resta fuori); altrimenti vuoto, e il testo dice "Una
+// cliente". Il nome lo sceglie chi scrive (il mittente di Gmail, il modulo del sito): via anche i caratteri di formato
+// (\p{Cf}: direzione del testo, larghezza zero), che sul telefono rovescerebbero o nasconderebbero il resto del titolo.
+// Un nome che e' un'email (il mittente senza nome: 3 urgenti su 19 negli ultimi 30 giorni, misurato il 19-10) segue le
+// regole dell'email, non quelle del nome: minuscola, mai tagliata a 60; se non le passa vale l'email della cliente.
+const EMAIL_CLIENTE_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+function emailCliente(v: unknown): string {
+  const e = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return e.length <= 80 && EMAIL_CLIENTE_RE.test(e) && !/\p{C}/u.test(e) ? e : '';
+}
+function nomeCliente(nome: unknown, email: unknown): string {
+  const grezzo = typeof nome === 'string' ? nome.replace(/\p{Cf}/gu, '') : nome;
+  if (typeof grezzo === 'string' && EMAIL_CLIENTE_RE.test(grezzo.trim())) return emailCliente(grezzo) || emailCliente(email);
+  return pulisci(grezzo, 60) || emailCliente(email);
+}
 // ==== PURE:pe-base END ====
 
 // ==== PURE:pe-tempo BEGIN ====
@@ -156,8 +180,9 @@ function giorniLavorativiDopo(da: string, a: string): number {
 // ==== PURE:pe-messaggi BEGIN ====
 // Due passi per ogni evento: i CANDIDATI (chiave del registro, istante dell'evento, riferimenti) escono dalle righe
 // sorgente; i MESSAGGI si compongono solo per i candidati che partono davvero (o per l'anteprima), cosi' i conteggi del
-// testo non si rileggono a ogni giro. Le funzioni copiano solo i campi ammessi: una riga con altri campi (nomi, email,
-// oggetto) non li fa arrivare nel testo.
+// testo non si rileggono a ogni giro. Le funzioni copiano solo i campi ammessi: una riga con altri campi (oggetto,
+// snippet, riassunto, telefono, indirizzo) non li fa arrivare nel testo. Nome ed email della cliente entrano solo nei
+// titoli dei tre eventi che la riguardano, e solo da nomeCliente (decisione di Dan del 19-10).
 type Cand = { chiave: string; ts: number; rif: Record<string, string> };
 type Msg = { chiave: string; titolo: string; testo: string; url: string; tema: string; chi?: string; urgente?: boolean };
 type Riga = Record<string, unknown>;
@@ -241,6 +266,9 @@ function motivoFisso(v: unknown): string {
 // stato_by 'auto' o vuoto con quel motivo = una chiusura giudicata da cs_reopen_skip_closure (un "grazie"): niente push.
 // stato_by e' il nome di chi del team ha chiuso, non entra mai nel testo.
 // C2 (18-10): '2+ messaggi' su una chat_notifica e' una raffica di pochi minuti, non un sollecito: il motivo non si scrive.
+// 19-10 (decisione di Dan): il titolo dice da chi viene ("Richiesta urgente da Maria Rossi"), la categoria passa in testa
+// al testo, prima del motivo fisso e delle urgenti aperte. Senza nome ne' email titolo e testo restano quelli del 18-10
+// (categoria nel titolo): la decisione chiede il nome, non un'altra impaginazione.
 function msgCsUrgente(cands: Cand[], conv: Record<string, Riga>, aperte: number): Msg[] {
   const out: Msg[] = [];
   for (const c of cands) {
@@ -250,10 +278,12 @@ function msgCsUrgente(cands: Cand[], conv: Record<string, Riga>, aperte: number)
       && typeof v.stato_by === 'string' && v.stato_by.trim() !== '' && v.stato_by !== 'auto';
     if (v.stato === 'fatto' && !riapertaDopoChiusuraAMano) continue;
     const cat = pulisci(v.categoria, 40);
+    const cliente = nomeCliente(v.customer_name, v.customer_email);
     const motivo = v.urgenza_motivo === PIU_MESSAGGI && v.canale === 'chat_notifica' ? '' : motivoFisso(v.urgenza_motivo);
-    const parti = [motivo, aperte > 0 ? plurale(aperte, 'urgente aperta', 'urgenti aperte') : ''].filter(Boolean);
+    const parti = [cliente ? cat : '', motivo, aperte > 0 ? plurale(aperte, 'urgente aperta', 'urgenti aperte') : ''].filter(Boolean);
     out.push({ chiave: c.chiave, tema: TEMA_EVENTO.cs_urgente, url: LINK_ASSISTENZA, urgente: true,
-      titolo: cat ? `Richiesta urgente: ${cat}` : 'Richiesta urgente', testo: parti.length ? parti.join('. ') + '.' : 'Apri l\'Assistenza.' });
+      titolo: cliente ? `Richiesta urgente da ${cliente}` : cat ? `Richiesta urgente: ${cat}` : 'Richiesta urgente',
+      testo: parti.length ? parti.join('. ') + '.' : 'Apri l\'Assistenza.' });
   }
   return out;
 }
@@ -275,15 +305,19 @@ function candCsRiscritto(righe: Riga[]): Cand[] {
   }
   return ordinaRecenti([...per.values()]);
 }
+// 19-10 (decisione di Dan): "Maria Rossi ha riscritto", la categoria in testa al testo; senza nome ne' email il titolo e
+// il testo del 18-10 ("Una cliente ha riscritto: Reso"), come in msgCsUrgente
 function msgCsRiscritto(cands: Cand[], conv: Record<string, Riga>, inAttesa: number): Msg[] {
   const out: Msg[] = [];
   for (const c of cands) {
     const v = conv[c.rif.conv];
     if (!v || v.canale === 'rumore' || v.stato === 'fatto') continue;
     const cat = pulisci(v.categoria, 40);
+    const cliente = nomeCliente(v.customer_name, v.customer_email);
+    const parti = [cliente ? cat : '', inAttesa > 0 ? `${plurale(inAttesa, 'richiesta aspetta', 'richieste aspettano')} una risposta` : ''].filter(Boolean);
     out.push({ chiave: c.chiave, tema: TEMA_EVENTO.cs_cliente_ha_riscritto, url: LINK_ASSISTENZA,
-      titolo: cat ? `Una cliente ha riscritto: ${cat}` : 'Una cliente ha riscritto',
-      testo: inAttesa > 0 ? `${plurale(inAttesa, 'richiesta aspetta', 'richieste aspettano')} una risposta.` : 'Apri l\'Assistenza.' });
+      titolo: cliente ? `${cliente} ha riscritto` : cat ? `Una cliente ha riscritto: ${cat}` : 'Una cliente ha riscritto',
+      testo: parti.length ? parti.join('. ') + '.' : 'Apri l\'Assistenza.' });
   }
   return out;
 }
@@ -296,17 +330,30 @@ function candSpedizione(righe: Riga[]): Cand[] {
   for (const r of righe ?? []) {
     if (r?.classe !== 'eccezione' || typeof r.ldv !== 'string' || !LDV_RE.test(r.ldv)) continue;
     const stato = statoCorriere(r.stato_tws);
-    // nella chiave lo stato senza spazi ne' punteggiatura: la chiave passa da un filtro .in() di PostgREST
-    out.push({ chiave: `${r.ldv}:${(stato || 'ALTRO').replace(/[^\p{L}\p{N}]+/gu, '_')}`, ts: msDi(r.updated_at), rif: { ordine: numeroOrdine(r.order_name), stato } });
+    // nella chiave lo stato senza spazi ne' punteggiatura: la chiave passa da un filtro .in() di PostgREST. Il nome della
+    // cliente (19-10) sta solo in rif, per il titolo: mai nella chiave, che finisce nel registro
+    out.push({ chiave: `${r.ldv}:${(stato || 'ALTRO').replace(/[^\p{L}\p{N}]+/gu, '_')}`, ts: msDi(r.updated_at),
+      rif: { ordine: numeroOrdine(r.order_name), stato, cliente: nomeCliente(r.customer_name, null) } });
   }
   return ordinaRecenti(out);
 }
+// push-api taglia il titolo a 120 punti di codice (TITOLO_MAX, stesso numero pinnato dal test): qui si accorcia il nome
+// della cliente, non lo stato del corriere, che e' la notizia. Con ordine e stato lunghi al massimo restano 54 caratteri.
+const TITOLO_MAX_PUSH = 120;
+// 19-10 (decisione di Dan): "Spedizione #1890: INDIRIZZO ERRATO (Maria Rossi)"; senza nome niente parentesi. La notizia
+// sta davanti al nome: sul telefono chiuso il titolo e' una riga sola, e il pezzo che si perde e' la coda (misurato il
+// 19-10 sulle 18 eccezioni dei 90 giorni: col nome in mezzo i titoli arrivavano a 73 caratteri e lo stato partiva fino
+// al 48esimo).
 function msgSpedizione(cands: Cand[], settimana: number): Msg[] {
-  return cands.map((c) => ({
-    chiave: c.chiave, tema: TEMA_EVENTO.spedizione_eccezione, url: APP_URL,
-    titolo: `Spedizione${c.rif.ordine ? ' ' + c.rif.ordine : ''}: ${c.rif.stato || 'problema del corriere'}`,
-    testo: settimana > 1 ? `Il corriere segnala un problema. ${plurale(settimana, 'spedizione', 'spedizioni')} con un problema negli ultimi 7 giorni.` : 'Il corriere segnala un problema su questa spedizione.',
-  }));
+  return cands.map((c) => {
+    const notizia = `Spedizione${c.rif.ordine ? ' ' + c.rif.ordine : ''}: ${c.rif.stato || 'problema del corriere'}`;
+    const cliente = c.rif.cliente ? pulisci(c.rif.cliente, TITOLO_MAX_PUSH - Array.from(`${notizia} ()`).length) : '';
+    return {
+      chiave: c.chiave, tema: TEMA_EVENTO.spedizione_eccezione, url: APP_URL,
+      titolo: cliente ? `${notizia} (${cliente})` : notizia,
+      testo: settimana > 1 ? `Il corriere segnala un problema. ${plurale(settimana, 'spedizione', 'spedizioni')} con un problema negli ultimi 7 giorni.` : 'Il corriere segnala un problema su questa spedizione.',
+    };
+  });
 }
 
 // sistema_cs_sync_fermo: la riga cs_sync di health_log (riscritta da cs-sync a ogni giro). FERMA = la riga piu' recente
@@ -687,12 +734,13 @@ async function conta(q: PromiseLike<{ count: number | null; error: unknown }>, c
   if (error || count == null) throw new LetturaFallita(cosa, error ?? 'conteggio assente');
   return count;
 }
-// conversazioni dell'Assistenza: SOLO stato (e chi l'ha messo), canale, categoria e urgenza (mai cliente, oggetto, snippet
-// o riassunto). stato_by e' il nome di chi del team ha chiuso: serve a msgCsUrgente, non entra nel testo.
+// conversazioni dell'Assistenza: SOLO stato (e chi l'ha messo), canale, categoria, urgenza e, dal 19-10 (decisione di Dan),
+// nome ed email della cliente per il titolo (nomeCliente); mai oggetto, snippet o riassunto. stato_by e' il nome di chi
+// del team ha chiuso: serve a msgCsUrgente, non entra nel testo.
 async function leggiConversazioni(sb: Sb, ids: string[]): Promise<Record<string, Riga>> {
   const out: Record<string, Riga> = {};
   if (!ids.length) return out;
-  const { data, error } = await retryOnce(() => sb.from('cs_conversations').select('id, canale, categoria, urgente, urgenza_motivo, stato, stato_by').in('id', ids).limit(ids.length + 1));
+  const { data, error } = await retryOnce(() => sb.from('cs_conversations').select('id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email').in('id', ids).limit(ids.length + 1));
   if (error) throw new LetturaFallita('cs_conversations', error);
   for (const r of (data ?? []) as Riga[]) out[String(r.id).toLowerCase()] = r;
   return out;
@@ -731,8 +779,8 @@ const EVENTI: Record<string, DefEvento> = {
   },
   spedizione_eccezione: {
     candidati: async (sb, ctx) => {
-      // la vista porta customer_name: qui non si chiede
-      const { data, error } = await retryOnce(() => sb.from('v_spedizioni_eccezioni').select('ldv, order_name, stato_tws, updated_at, classe').eq('classe', 'eccezione').gte('updated_at', dalle(ctx, FINESTRA_MS)).order('updated_at', { ascending: false }).limit(LIMITE));
+      // customer_name per il titolo (decisione di Dan del 19-10; la vista non ha l'email); le altre colonne della vista no
+      const { data, error } = await retryOnce(() => sb.from('v_spedizioni_eccezioni').select('ldv, order_name, stato_tws, updated_at, classe, customer_name').eq('classe', 'eccezione').gte('updated_at', dalle(ctx, FINESTRA_MS)).order('updated_at', { ascending: false }).limit(LIMITE));
       if (error) throw new LetturaFallita('v_spedizioni_eccezioni', error);
       return candSpedizione((data ?? []) as Riga[]);
     },
