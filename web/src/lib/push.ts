@@ -14,8 +14,14 @@ const BASE = import.meta.env.BASE_URL;
 export const CHIAVE_DEVICE = 'amimi_push_device';
 /** Evento sulla window dopo un "Attiva" o un "Disattiva" riuscito: PushKeeper toglie l'avviso "Notifiche spente". */
 export const EVENTO_ISCRIZIONE = 'amimi-push-iscrizione';
+/** Evento sulla window (18-10, Gate 3 push-eventi): PushKeeper ha messo nell'URL la rotta interna di una notifica con
+ *  history.replaceState, che non manda hashchange, e la pagina gia' aperta deve rileggerla. Negozi.tsx lo ascolta col
+ *  nome scritto per esteso, senza importare questo modulo (Regola 19): tests/push_sw.mjs controlla che i nomi coincidano. */
+export const EVENTO_ROTTA = 'amimi-rotta';
 
-export type Tema = { key: string; etichetta: string; descrizione: string | null };
+/** predefinito_per (18-10, migr 0166): le persone per cui il tema parte spuntato alla prima iscrizione. Facoltativo: una
+ *  push-api di prima del 18-10 (o riportata indietro) non lo manda, e allora partono tutti i temi come prima. */
+export type Tema = { key: string; etichetta: string; descrizione: string | null; predefinito_per?: string[] };
 /** reason: solo a flag acceso ma chiavi VAPID mancanti o rotte sul server (push-api config, {enabled:false, reason}). */
 export type PushConfig = { enabled: boolean; vapidPublicKey?: string; temi?: Tema[]; reason?: string };
 /** Il device_id degli altri telefoni non arriva mai (Gate 3 del 17-10: basta a riscriverne la riga): push-api dice solo
@@ -26,18 +32,41 @@ export type Dispositivo = {
 };
 type Disattivo = { enabled: false; reason?: string };
 
-// ---------------------------------------------------------------- navigazione da hash
+// ---------------------------------------------------------------- navigazione da hash e temi predefiniti
+// Blocco PURE (18-10): tests/push_sw.mjs lo ritaglia da qui e lo esegue in node, quindi niente import, rete o browser.
+// ==== PURE:push-web BEGIN ====
 /** Scheda dell'app per l'hash di una notifica toccata con l'app gia' aperta (PushKeeper). null = hash che non apre una
  *  scheda: si resta dove si e' e l'app viene solo in primo piano. Stessi hash del link diretto all'avvio in App.tsx, che
  *  resta nel core e non dipende da questo modulo (Regola 19; la guardia 25 di tests/mat_guardie.mjs lo legge li'). */
 export function tabDaHash(hash: string): Tab | null {
   // #negozi la sezione B2B (10-09), #ads la reportistica Meta (18-09), #materiali il catalogo materie prime (22-09),
-  // #premia la dashboard fedelta' (27-09), #villaggio l'isola 3D (16-10), #notifiche questa scheda (17-10)
-  for (const t of ['negozi', 'ads', 'materiali', 'premia', 'villaggio', 'notifiche'] as const) {
+  // #premia la dashboard fedelta' (27-09), #villaggio l'isola 3D (16-10), #notifiche questa scheda (17-10),
+  // #assistenza e #salute dalle notifiche degli eventi di push-eventi (18-10)
+  for (const t of ['negozi', 'ads', 'materiali', 'premia', 'villaggio', 'notifiche', 'assistenza', 'salute'] as const) {
     if (hash.startsWith('#' + t)) return t;
   }
   return null;
 }
+
+/** La rotta interna da mettere nell'URL quando il tocco su una notifica, ad app gia' aperta, porta in una scheda che ha
+ *  sotto-rotte sue lette dall'hash (18-10, Gate 3 push-eventi): oggi solo Negozi B2B, dove b2b_risposta_negozio porta a
+ *  #negozi/outreach/<id negozio>. Prima si cambiava solo scheda: si finiva sulla lista, o sul negozio aperto prima.
+ *  null = scheda senza sotto-rotte, l'URL non si tocca. Una sotto-rotta con caratteri inattesi apre la lista. */
+export function rottaDaHash(hash: string): string | null {
+  if (tabDaHash(hash) !== 'negozi') return null;
+  return /^#negozi(?:\/[0-9A-Za-z_-]+)*$/.test(hash) ? hash : '#negozi';
+}
+
+/** Temi spuntati prima della prima iscrizione (18-10, brief push-eventi): quelli che hanno la persona in predefinito_per,
+ *  nell'ordine di config, cosi' Ginni non riceve i conti e Ale non riceve l'Assistenza se non li sceglie. Se nessun tema
+ *  ha predefiniti (push-api di prima del 18-10) partono tutti, come prima: meglio una notifica in piu' che un telefono
+ *  iscritto a niente. */
+export function temiPredefiniti(temi: readonly Tema[], chi: string): string[] {
+  const lista = (t: Tema) => (Array.isArray(t.predefinito_per) ? t.predefinito_per : []);
+  if (!temi.some((t) => lista(t).length > 0)) return temi.map((t) => t.key);
+  return temi.filter((t) => lista(t).includes(chi)).map((t) => t.key);
+}
+// ==== PURE:push-web END ====
 
 // ---------------------------------------------------------------- dispositivo
 export function leggiDevice(): string | null {

@@ -9,6 +9,7 @@
 // Gate 3 (17-10): anche le decisioni che prima vivevano solo nel sorgente sono blocchi PURE provati qui (coppia e padding
 // delle chiavi VAPID, punto p256dh sulla curva, flag, effetto dell'esito sulla riga, giro di invia con spedizione finta,
 // elenco dispositivi senza device_id, log ripulito); il resto e' fissato da guardie esatte, ognuna col suo autocontrollo.
+// v2 (18-10, push-eventi): blocco PURE push-destinatari (chi di invia, predefinito_per di config), casi 87-93 e A26.
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { createECDH, createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -17,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SRC = readFileSync(`${ROOT}supabase/functions/push-api/index.ts`, 'utf8').replace(/\r\n/g, '\n');
 const CONFIG = readFileSync(`${ROOT}supabase/config.toml`, 'utf8').replace(/\r\n/g, '\n');
-const BLOCCHI = ['push-confronto', 'push-endpoint', 'push-valida', 'push-payload', 'push-esito', 'push-topic', 'push-flag', 'push-giro', 'push-dispositivi'];
+const BLOCCHI = ['push-confronto', 'push-endpoint', 'push-valida', 'push-destinatari', 'push-payload', 'push-esito', 'push-topic', 'push-flag', 'push-giro', 'push-dispositivi'];
 const cut = (s, name) => {
   const B = `// ==== PURE:${name} BEGIN ====`, E = `// ==== PURE:${name} END ====`;
   const a = s.indexOf(B), b = s.indexOf(E);
@@ -28,7 +29,7 @@ for (const b of BLOCCHI) if (cut(SRC, b) === null) { console.error(`marcatori PU
 const ESPORTA = ['ugualeCostante', 'endpointAmmesso', 'byteB64url', 'normDevice', 'normEtichetta', 'normTemi', 'temiNonAmmessi', 'validaSubscription',
   'validaIscrizione', 'controllaVapid', 'provaTroppoPresto', 'CHI_AMMESSI', 'APP_URL', 'PAYLOAD_MAX', 'pulisciTesto', 'navigaSicuro', 'costruisciPayload',
   'esitoInvio', 'MESSAGGI_ESITO', 'topicDi', 'puntoP256', 'vapidDa', 'coppiaVapidCoerente', 'vapidControllato', 'SUBJECT_DEFAULT', 'azioneEsito',
-  'riassuntoErrore', 'flagVero', 'giroInvio', 'vistaDispositivi'];
+  'riassuntoErrore', 'flagVero', 'giroInvio', 'vistaDispositivi', 'chiDestinatario', 'vistaTemi'];
 const TMP = `${ROOT}tests/_push_core.tmp.ts`;
 writeFileSync(TMP, `${BLOCCHI.map((b) => cut(SRC, b)).join('\n')}\nexport { ${ESPORTA.join(', ')} };\n`, 'utf8');
 let M;
@@ -36,7 +37,7 @@ try { M = await import(pathToFileURL(TMP).href); }
 finally { try { unlinkSync(TMP); } catch { /* niente */ } }
 const { ugualeCostante, endpointAmmesso, byteB64url, normDevice, normEtichetta, normTemi, temiNonAmmessi, validaSubscription, validaIscrizione, controllaVapid,
   provaTroppoPresto, CHI_AMMESSI, APP_URL, PAYLOAD_MAX, pulisciTesto, navigaSicuro, costruisciPayload, esitoInvio, MESSAGGI_ESITO, topicDi, puntoP256, vapidDa,
-  coppiaVapidCoerente, vapidControllato, SUBJECT_DEFAULT, azioneEsito, riassuntoErrore, flagVero, giroInvio, vistaDispositivi } = M;
+  coppiaVapidCoerente, vapidControllato, SUBJECT_DEFAULT, azioneEsito, riassuntoErrore, flagVero, giroInvio, vistaDispositivi, chiDestinatario, vistaTemi } = M;
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra !== '' ? '  <- ' + JSON.stringify(extra).slice(0, 220) : '')); } };
@@ -385,6 +386,31 @@ console.log('\n== confronto a tempo costante ==');
   t('44 nessun ritorno dentro il ciclo, un solo return in fondo', ciclo && !ciclo.includes('return') && (corpo.match(/return /g) ?? []).length === 1, ciclo);
 }
 
+console.log('\n== v2 (18-10): chi di invia e predefinito_per di config ==');
+{
+  const tutti = ['Ale', 'Bene', 'Ginevra'];
+  const senza = [undefined, null, ''].map((v) => chiDestinatario(v));
+  t('87 chi assente, null o vuoto: filtro sulle tre chiavi (come la v1), chi null', senza.every((d) => d.ok === true && isDeepStrictEqual(d.filtro, tutti) && d.chi === null), senza);
+  t('88 chi valido: filtro su quella sola persona', tutti.every((c) => { const d = chiDestinatario(c); return d.ok === true && isDeepStrictEqual(d.filtro, [c]) && d.chi === c; }));
+  const sbagliati = ['Benny', 'Ginni', 'ale', 'ALE', ' Ale', 'Ale ', 'tutti', 'Dan', 0, 1, true, false, {}, [], ['Ale'], { toString: () => 'Ale' }];
+  const passati = sbagliati.filter((v) => chiDestinatario(v).ok !== false);
+  t('89 chi sbagliato (nome mostrato, minuscole, spazi, "tutti", non stringa, array) -> errore, mai un ripiego su tutti', passati.length === 0, passati);
+  t('89b il filtro e\' una copia: modificarlo non tocca CHI_AMMESSI', (() => { const d = chiDestinatario(undefined); d.filtro.push('x'); return CHI_AMMESSI.length === 3 && chiDestinatario(undefined).filtro.length === 3; })());
+  const righe = [
+    { key: 'negozi', etichetta: 'Negozi', descrizione: 'x', ordine: 30, attivo: true, predefinito_per: ['Ale', 'Bene'] },
+    { key: 'assistenza', etichetta: 'Assistenza', descrizione: null, predefinito_per: ['Ginevra', 'Benny', 'Ginevra', 3, null] },
+    { key: 'conti', etichetta: 'Conti', descrizione: 'y' },
+    { key: 'vendite', etichetta: 'Vendite', descrizione: 'z', predefinito_per: 'Ale' },
+  ];
+  const v = vistaTemi(righe);
+  t('90 vistaTemi: solo key, etichetta, descrizione, predefinito_per (niente ordine o attivo), nell\'ordine della lettura',
+    v.length === 4 && v.every((r) => Object.keys(r).join() === 'key,etichetta,descrizione,predefinito_per') && v.map((r) => r.key).join() === 'negozi,assistenza,conti,vendite', v);
+  t('91 predefinito_per: solo le tre chiavi, senza doppioni; assente o non array -> []', isDeepStrictEqual(v[0].predefinito_per, ['Ale', 'Bene'])
+    && isDeepStrictEqual(v[1].predefinito_per, ['Ginevra']) && isDeepStrictEqual(v[2].predefinito_per, []) && isDeepStrictEqual(v[3].predefinito_per, []), v.map((r) => r.predefinito_per));
+  t('92 vistaTemi: lettura non array -> [], righe nulle -> campi undefined senza lanciare', vistaTemi(null).length === 0 && vistaTemi('x').length === 0
+    && vistaTemi([null, 3]).every((r) => r.key === undefined && isDeepStrictEqual(r.predefinito_per, [])));
+}
+
 console.log('\n== guardie sul sorgente ==');
 const codice = (s) => s.replace(/^\s*\/\/[^\n]*$/gm, '');
 const fuoriPure = (s) => { let r = s; for (const b of BLOCCHI) { const x = cut(r, b); if (x !== null) r = r.replace(x, ''); } return r; };
@@ -436,12 +462,19 @@ const giroDiInvia = (s) => {
   const f = codice(corpoFunzione(s, 'async function inviaTema('));
   const lettura = f.indexOf(".contains('temi', [tema])");
   const stop = f.indexOf('if (lista.length > 50) return json({ ok: false, error: `oltre 50 telefoni iscritti al tema ${tema}: invio fermato`, inviati: 0 }, 503);');
-  const dry = f.indexOf('if (body.dryRun === true) return json({ ok: destinatari >= 1, dryRun: true, inviati: 0, falliti: 0, rimossi: 0, destinatari });');
+  const dry = f.indexOf('if (body.dryRun === true) return json({ ok: destinatari >= 1, dryRun: true, inviati: 0, falliti: 0, rimossi: 0, destinatari, chi: dest.chi });');
   const g = f.indexOf('const g = await giroInvio(lista, {');
   return lettura > 0 && stop > lettura && dry > stop && g > dry && (f.match(/giroInvio\(/g) ?? []).length === 1 && (f.match(/spedisci\(/g) ?? []).length === 1
     && f.includes('spedisci: (r) => spedisci(r, payload, opz, vapid),') && f.includes('registra: (r, esito, res) => chiudiInvio(sb, r, esito, res),')
     && f.includes('adesso: Date.now,') && f.includes('fine: Date.now() + GIRO_MAX_MS,')
-    && f.includes('return json({ ok: g.ok, inviati: g.inviati, falliti: g.falliti, rimossi: g.rimossi, destinatari, esiti: g.esiti, ...(g.fermato ? { fermato: g.fermato } : {}) });');
+    && f.includes('return json({ ok: g.ok, inviati: g.inviati, falliti: g.falliti, rimossi: g.rimossi, destinatari, esiti: g.esiti, chi: dest.chi, ...(g.fermato ? { fermato: g.fermato } : {}) });');
+};
+// RF-7 (Gate 3 del 18-10): la risposta di invia (anche dryRun) rimanda il chi applicato (null = tutti): push-eventi chiude
+// come persa una push per una persona se non torna uguale (una push-api v1 ignorava chi e mandava a tutti)
+const chiRimandato = (s) => {
+  const f = codice(corpoFunzione(s, 'async function inviaTema('));
+  const risposte = f.split('\n').filter((l) => /return json\(\{ ok: (?:destinatari >= 1|g\.ok),/.test(l));
+  return risposte.length === 2 && risposte.every((l) => l.includes(', chi: dest.chi')) && f.indexOf('const dest = chiDestinatario(body.chi);') < f.indexOf('if (body.dryRun === true) return json(');
 };
 const temaSpentoFermato = (s) => {
   const f = codice(corpoFunzione(s, 'async function inviaTema('));
@@ -466,7 +499,19 @@ const cancellazioniFiltrate = (s) => {
   return r.includes("const { data, error } = await sb.from('push_subscriptions').delete().eq('id', id).select('id');") && !r.includes('.neq(') && (r.match(/\.delete\(/g) ?? []).length === 1
     && d.includes("const { data, error } = await sb.from('push_subscriptions').delete().eq('device_id', deviceId).select('id');") && !d.includes('.neq(') && (d.match(/\.delete\(/g) ?? []).length === 1;
 };
-const configSoloAttivi = (s) => codice(ramo(s, 'config')).includes(".from('push_temi').select('key, etichetta, descrizione').eq('attivo', true).order('ordine', { ascending: true })");
+// v2 (18-10): chi validato DOPO tema e testo e PRIMA del tema spento, delle chiavi e delle iscrizioni; la lettura delle
+// iscrizioni filtra sempre con il filtro di chiDestinatario (mai body.chi grezzo), e chi entra nel log
+const chiFiltrato = (s) => {
+  const f = codice(corpoFunzione(s, 'async function inviaTema('));
+  const d = f.indexOf('const dest = chiDestinatario(body.chi);');
+  const no = f.indexOf("if (!dest.ok) return json({ error: 'chi non valido (Ale, Bene o Ginevra)' }, 422);");
+  const lettura = f.split('\n').find((l) => l.includes(".contains('temi', [tema])")) ?? '';
+  return d > f.indexOf('if (!pulisciTesto(body.titolo) && !pulisciTesto(body.testo))') && no > d && no < f.indexOf('await temiAttivi(sb, [tema])')
+    && no < f.indexOf('await vapidDaEnv()') && lettura.includes(".contains('temi', [tema]).in('chi', dest.filtro).order(") && (f.match(/body\.chi/g) ?? []).length === 1
+    && (f.match(/chiDestinatario\(/g) ?? []).length === 1 && f.includes("console.log(JSON.stringify({ azione: 'invia', tema, chi: dest.chi ?? 'tutti', destinatari,");
+};
+const configSoloAttivi = (s) => codice(ramo(s, 'config')).includes(".from('push_temi').select('key, etichetta, descrizione, predefinito_per').eq('attivo', true).order('ordine', { ascending: true })")
+  && codice(ramo(s, 'config')).includes('return json({ enabled: true, vapidPublicKey: vapid.publicKey, temi: vistaTemi(data) });');
 const dispositiviDallaVista = (s) => codice(ramo(s, 'dispositivi')).includes('return json({ dispositivi: vistaDispositivi(data, normDevice(body.device_id)) });')
   && (codice(ramo(s, 'dispositivi')).match(/json\(/g) ?? []).length === 1;
 const logDiOgniInvio = (s) => {
@@ -550,11 +595,13 @@ t('53 payload solo da costruisciPayload, una sola chiamata a sendNotification', 
   t('80 iscrivi: a 30 righe un telefono nuovo -> 422 (dentro `if (count >= MAX_ISCRIZIONI)`, prima di ogni scrittura)', tetto30(SRC));
   t('81 azione temi: temiAttivi e 422 sui temi spenti PRIMA dell\'update', temiControllati(SRC));
   t('82 rimuovi cancella con .eq(id), disiscrivi con .eq(device_id): una delete ciascuno, mai .neq', cancellazioniFiltrate(SRC));
-  t('83 config: solo temi attivi (.eq(attivo, true)), per ordine', configSoloAttivi(SRC));
+  t('83 config: solo temi attivi (.eq(attivo, true)), per ordine, con predefinito_per e risposta da vistaTemi (v2, 18-10)', configSoloAttivi(SRC));
   t('84 ogni invio (invia e prova) passa da chiudiInvio: log col riassunto ripulito se non ok, poi registraEsito (che nessun altro chiama)', logDiOgniInvio(SRC));
   const cs = consoleConSegreti(SRC);
   t('85 nessun console.* riceve endpoint, p256dh, auth, la riga intera o il corpo grezzo dell\'errore', cs.length === 0 && (codice(SRC).match(/console\.\w+\(/g) ?? []).length >= 4, cs[0]);
   t('86 vapidDaEnv passa i segreti grezzi a vapidControllato (padding tolto e coppia verificata), e config, invia e prova lo attendono', vapidVerificato(SRC));
+  t('93 invia (v2): chi validato con chiDestinatario prima di temi, chiavi e iscrizioni (422), lettura con .in(chi, dest.filtro), chi nel log', chiFiltrato(SRC));
+  t('94 RF-7: la risposta di invia, vera e dryRun, rimanda il chi applicato (dest.chi, null = tutti)', chiRimandato(SRC));
 }
 
 console.log('\n== autocontrollo dei rilevatori ==');
@@ -599,7 +646,8 @@ console.log('\n== autocontrollo dei rilevatori ==');
     pianta(".delete().eq('id', id).select('id');", ".delete().neq('id', id).select('id');"),
     pianta(".delete().eq('device_id', deviceId).select('id');", ".delete().neq('device_id', deviceId).select('id');"),
   ].every((s) => !cancellazioniFiltrate(s)));
-  t('A21 config che restituisce anche i temi spenti -> visto', !configSoloAttivi(pianta(".select('key, etichetta, descrizione').eq('attivo', true).order(", ".select('key, etichetta, descrizione').order(")));
+  t('A21 config che restituisce anche i temi spenti, o le righe grezze senza vistaTemi -> visto', [pianta(".select('key, etichetta, descrizione, predefinito_per').eq('attivo', true).order(", ".select('key, etichetta, descrizione, predefinito_per').order("),
+    pianta('temi: vistaTemi(data) });', 'temi: data ?? [] });')].every((s) => !configSoloAttivi(s)));
   t('A22 dispositivi che restituisce le righe grezze (device_id compreso) -> visto', !dispositiviDallaVista(pianta('return json({ dispositivi: vistaDispositivi(data, normDevice(body.device_id)) });', 'return json({ dispositivi: data ?? [] });')));
   t('A23 prova che salta il log, o log senza riassunto -> visto', [pianta('await chiudiInvio(sb, riga as Riga, esito, res);', 'await registraEsito(sb, riga as Riga, esito, res.status);'),
     pianta('motivo: riassuntoErrore(res.nome, res.status, res.corpo)', 'motivo: res.corpo')].every((s) => !logDiOgniInvio(s)));
@@ -611,6 +659,13 @@ console.log('\n== autocontrollo dei rilevatori ==');
     pianta("if (action === 'config') {\n    const { vapid, motivo } = await vapidDaEnv();", "if (action === 'config') {\n    const { vapid, motivo } = vapidDa(Deno.env.get('VAPID_PUBLIC_KEY'), Deno.env.get('VAPID_PRIVATE_KEY'), '');"),
     pianta('if (!(await coppiaVapidCoerente(r.vapid.publicKey, r.vapid.privateKey, segnala))) return { vapid: null, motivo:', 'if (false) return { vapid: null, motivo:'),
   ].every((s) => !vapidVerificato(s)));
+  t('A26 invia senza il filtro chi, con body.chi grezzo nella lettura, o con il 422 tolto -> visto', [
+    pianta(".contains('temi', [tema]).in('chi', dest.filtro).order(", ".contains('temi', [tema]).order("),
+    pianta(".in('chi', dest.filtro)", ".in('chi', [body.chi])"),
+    pianta("if (!dest.ok) return json({ error: 'chi non valido (Ale, Bene o Ginevra)' }, 422);", ''),
+  ].every((s) => !chiFiltrato(s)));
+  t('A27 risposta di invia senza chi (vera o dryRun) -> vista', [pianta('esiti: g.esiti, chi: dest.chi, ...(g.fermato', 'esiti: g.esiti, ...(g.fermato'),
+    pianta('rimossi: 0, destinatari, chi: dest.chi });', 'rimossi: 0, destinatari });')].every((s) => !chiRimandato(s)));
   const ingenuo = (s) => typeof s === 'string' && /fcm\.googleapis\.com|push\.apple\.com|push\.services\.mozilla\.com|notify\.windows\.com/.test(s);
   t('A11 i casi di rifiuto battono un controllo ingenuo "contiene il dominio"', RIFIUTA.filter(ingenuo).length >= 10, RIFIUTA.filter(ingenuo).length);
   const esitoIngenuo = (s) => (s >= 200 && s < 300 ? 'ok' : s >= 400 && s < 500 ? 'rimuovi' : 'transitorio');

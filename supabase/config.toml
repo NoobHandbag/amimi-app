@@ -99,3 +99,7 @@ verify_jwt = false
 # Notifiche native (17-10): la edge controlla da sola il JWT utente (getUser + dominio del team) o la chiave di servizio.
 [functions.push-api]
 verify_jwt = false
+
+# Eventi delle notifiche (18-10): la chiama il cron senza JWT; la edge controlla il PIN (e la chiave di servizio per anteprima).
+[functions.push-eventi]
+verify_jwt = false

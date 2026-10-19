@@ -212,6 +212,11 @@ console.log('\n== push: esitoDaRisposta (la risposta di push-api) ==');
   t('62 errore di push-api: non ok, testo del servizio', e503.ok === false && e503.status === 503 && /oltre 50/.test(e503.errore));
   t('63 corpo assente, array o stringa: non ok, errore generico sui non-2xx', esitoDaRisposta(401, null).errore === 'push-api ha risposto 401'
     && esitoDaRisposta(200, [1]).ok === false && esitoDaRisposta(200, 'x').ok === false && esitoDaRisposta(500, { ok: true, inviati: 5 }).ok === false);
+  // RF-7 (Gate 3 del 18-10, push-eventi): il chi rimandato da push-api v2 passa nell'esito (null = tutti), e assente resta
+  // assente (push-api v1): push-eventi distingue cosi' una push per una persona finita a tutti. I guardiani non lo guardano.
+  const conChi = esitoDaRisposta(200, { ok: true, inviati: 1, destinatari: 1, chi: 'Bene' }), tutti = esitoDaRisposta(200, { ok: true, inviati: 1, destinatari: 1, chi: null });
+  t('63b chi rimandato: stringa (tagliata a 20) o null riportati; assente o di altro tipo -> nessuna chiave chi', conChi.chi === 'Bene' && tutti.chi === null && 'chi' in tutti
+    && !('chi' in e1) && !('chi' in esitoDaRisposta(200, { ok: true, inviati: 1, chi: 3 })) && esitoDaRisposta(200, { ok: true, inviati: 1, chi: 'x'.repeat(40) }).chi.length === 20);
 }
 
 console.log('\n== push: inviaPush (POST a push-api, mai un\'eccezione) ==');
@@ -233,6 +238,12 @@ console.log('\n== push: inviaPush (POST a push-api, mai un\'eccezione) ==');
   e = await inviaPush({ ...msg, dryRun: true, urgente: undefined }, ENV, fetchFinto(risposta(200, { ok: false, dryRun: true, inviati: 0, destinatari: 0 })));
   const b2 = JSON.parse(visto.init.body);
   t('69 dryRun passato a push-api; urgente assente = false', b2.dryRun === true && b2.urgente === false && e.dryRun === true && e.ok === false);
+  // 18-10 (push-eventi): chi facoltativo passa a push-api solo se c'e'; i guardiani non lo mandano e il corpo resta quello di prima
+  await inviaPush({ ...msg, chi: 'Bene' }, ENV, fetchFinto(risposta(200, { ok: true, inviati: 1, destinatari: 1 })));
+  const b3 = JSON.parse(visto.init.body);
+  await inviaPush({ ...msg, chi: '' }, ENV, fetchFinto(risposta(200, { ok: true, inviati: 1, destinatari: 1 })));
+  const b4 = JSON.parse(visto.init.body);
+  t('69b chi passato solo se dato (Bene -> chi: Bene); vuoto o assente -> nessuna chiave chi, come i guardiani', b3.chi === 'Bene' && !('chi' in b4) && !('chi' in body), { b3, b4 });
   const esiti = [];
   esiti.push(await inviaPush(msg, ENV, fetchFinto(new Error(`rete giu verso ${KEY}`))));
   esiti.push(await inviaPush(msg, ENV, fetchFinto(new DOMException('signal timed out', 'TimeoutError'))));
@@ -248,7 +259,8 @@ console.log('\n== push: inviaPush (POST a push-api, mai un\'eccezione) ==');
   t('75 la chiave non compare in nessun esito', [e, ...esiti, senzaChiave].every((x) => !JSON.stringify(x).includes(KEY)));
   t('76 in produzione legge SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY', /Deno\.env\.get\('SUPABASE_URL'\)/.test(PUSH_SRC) && /Deno\.env\.get\('SUPABASE_SERVICE_ROLE_KEY'\)/.test(PUSH_SRC));
   t('77 il modulo condiviso non importa niente (i guardiani restano senza web-push)', !/^\s*import\s/m.test(PUSH_SRC));
-  t('78 push-api legge esattamente i campi che manda inviaPush', ['tema', 'titolo', 'testo', 'url'].every((k) => PUSH_API.includes(`body.${k}`)) && /body\.urgente === true/.test(PUSH_API) && /body\.dryRun === true/.test(PUSH_API));
+  t('78 push-api legge esattamente i campi che manda inviaPush (dal 18-10 anche chi, validato da chiDestinatario)', ['tema', 'titolo', 'testo', 'url'].every((k) => PUSH_API.includes(`body.${k}`)) && /body\.urgente === true/.test(PUSH_API) && /body\.dryRun === true/.test(PUSH_API)
+    && PUSH_API.includes('chiDestinatario(body.chi)'));
   const apiUrl = PUSH_API.match(/const APP_URL = '([^']+)'/)?.[1];
   t('79 APP_URL uguale a quello di push-api e al click di ntfy di ce-guard', APP_URL === apiUrl && GUARD.includes(`click: '${APP_URL}'`), apiUrl);
 }
@@ -321,15 +333,84 @@ console.log('\n== push: guardie sul sorgente di ce-guard e sales-guard ==');
     [GUARD, SALES].every((s) => /const av = await consegnaAvviso\(canale, mandaNtfy, /.test(s) && (s.match(/consegnaAvviso\(/g) ?? []).length === 1));
   // Gate 2 del 17-10 (C3): _shared/push.ts finisce nel bundle di OGNI edge che lo importa, quindi una modifica si deploya
   // su tutte. L'elenco sta in EDGE_FUNCTIONS.md (ce-guard v10): un importatore nuovo fa diventare rosso questo caso.
+  // 18-10: push-eventi e' il terzo (usa solo inviaPush; caso 103 e tests/push_eventi_core.mjs).
   const importatori = readdirSync(FN, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync(`${FN}/${d.name}/index.ts`))
     .filter((d) => /from '\.\.\/_shared\/push\.ts'/.test(readFileSync(`${FN}/${d.name}/index.ts`, 'utf8'))).map((d) => d.name).sort();
-  t('102 _shared/push.ts e\' importato solo da ce-guard e sales-guard (una modifica = deploy di entrambe)', importatori.join() === 'ce-guard,sales-guard', importatori);
+  t('102 _shared/push.ts e\' importato solo da ce-guard, push-eventi e sales-guard (una modifica = deploy di tutte e tre)', importatori.join() === 'ce-guard,push-eventi,sales-guard', importatori);
+  const PE = existsSync(`${FN}/push-eventi/index.ts`) ? readFileSync(`${FN}/push-eventi/index.ts`, 'utf8').replace(/^\s*\/\/[^\n]*$/gm, '') : '';
+  t('103 push-eventi importa SOLO inviaPush (piu\' il tipo dell\'esito): mai consegnaAvviso, quindi mai il ripiego su ntfy',
+    /import \{ inviaPush \} from '\.\.\/_shared\/push\.ts';/.test(PE) && !/consegnaAvviso|canaleEffettivo|ntfy/i.test(PE));
 }
 
 console.log('\n== migr 0165: interruttore ==');
 {
   t('98 push_canale_guardie nasce ntfy, senza sovrascrivere un valore gia\' cambiato', /insert into app_flags \(key, value\) values \('push_canale_guardie', 'ntfy'\) on conflict \(key\) do nothing/.test(MIG165));
   t('99 controllo a fine migrazione con RAISE', /raise exception '0165: push_canale_guardie nato qui vale % invece di ntfy'/.test(MIG165) && /raise exception '0165: manca app_flags\.push_canale_guardie'/.test(MIG165));
+}
+
+// ==== ce-guard v11 (18-10-2026): ce_shopify_reconcile conta solo gli ordini nati prima dell'ora piena del giro ====
+// Il 17-10 alle 11:30 ce-guard contava Shopify fino ad ADESSO contro un DB fermo al sync delle 11:07: #1912, nato alle
+// 11:14:18, era su Shopify e non ancora nell'app, e il check e' diventato rosso per un'ora (falso allarme da tempi, 34
+// episodi nei primi 17 giorni di ottobre). Report: Cowork12/_CLAUDE_CODE_INBOX/REPORT_ntfy_429_e_riconciliazione_ordini_
+// 2026-10-17.md, proposta A. Qui si ritaglia il blocco PURE:ceguard-reconcile dal sorgente e lo si guida con ordini finti.
+console.log('\n== ce-guard: riconciliazione ordini fino all\'ora piena (v11) ==');
+{
+  const B = '// ==== PURE:ceguard-reconcile BEGIN ====', E = '// ==== PURE:ceguard-reconcile END ====';
+  const a = GUARD.indexOf(B), b = GUARD.indexOf(E);
+  t('103 il blocco PURE:ceguard-reconcile c\'e\' in ce-guard', a >= 0 && b > a);
+  let finestraReconcile = null;
+  if (a >= 0 && b > a) {
+    const dir = mkdtempSync(join(tmpdir(), 'amimi-reconcile-'));
+    const f = join(dir, 'reconcile.mjs');
+    writeFileSync(f, stripTypeScriptTypes(GUARD.slice(a + B.length, b)) + '\nexport { finestraReconcile };\n', 'utf8');
+    try { ({ finestraReconcile } = await import(pathToFileURL(f).href)); } finally { try { rmSync(dir, { recursive: true, force: true }); } catch { /* niente */ } }
+  }
+  if (finestraReconcile) {
+    const W = (now, y, m) => finestraReconcile(new Date(now), y, m);
+    const ms = (s) => Date.parse(s);
+    // il modello dei due conteggi: l'API conta min <= creato <= max (created_at_max e' incluso per Shopify), il DB conta
+    // gli ordini gia' entrati col sync e nati prima del cutoff (year/month UTC, come shopify-sync)
+    const conta = (w, ordini) => w.vuota ? { api: 0, db: 0 } : {
+      api: ordini.filter((o) => ms(o.creato) >= ms(w.min) && ms(o.creato) <= ms(w.max)).length,
+      db: ordini.filter((o) => o.nelDb && ms(o.creato) >= ms(w.min) && ms(o.creato) < ms(w.cutoff)).length,
+    };
+    // la finestra di prima (v10): API da inizio mese a fine mese, DB solo year/month
+    const contaPrima = (ordini) => ({ api: ordini.length, db: ordini.filter((o) => o.nelDb).length });
+    const GIRO = '2026-10-17T11:30:00Z';
+    const w = W(GIRO, 2026, 10);
+    t('104 giro delle 11:30 del 17-10: da inizio mese alle 10:59:59, cutoff 11:00', w.vuota === false && w.min === '2026-10-01T00:00:00Z'
+      && w.max === '2026-10-17T10:59:59Z' && w.cutoff === '2026-10-17T11:00:00Z', JSON.stringify(w));
+    const base = [{ creato: '2026-10-02T09:00:00Z', nelDb: true }, { creato: '2026-10-17T10:40:00Z', nelDb: true }];
+    const caso = [...base, { creato: '2026-10-17T11:14:18Z', nelDb: false }];
+    const c1 = conta(w, caso), p1 = contaPrima(caso);
+    t('105 il caso del 17-10: l\'ordine nato alle 11:14:18 e non ancora nel DB resta fuori dai due conti (prima: api = db + 1)',
+      c1.api === c1.db && c1.api === 2 && p1.api === p1.db + 1, JSON.stringify({ c1, p1 }));
+    const c2 = conta(w, [...base, { creato: '2026-10-17T11:00:00Z', nelDb: false }]);
+    t('106 un ordine nato alle 11:00:00 esatte e\' fuori da tutti e due (non riaccende l\'error)', c2.api === c2.db, JSON.stringify(c2));
+    const c3 = conta(w, [...base, { creato: '2026-10-17T10:59:59Z', nelDb: true }]);
+    t('107 uno nato alle 10:59:59 ed entrato col sync conta su tutti e due', c3.api === 3 && c3.db === 3, JSON.stringify(c3));
+    const c4 = conta(w, [...base, { creato: '2026-10-17T10:20:00Z', nelDb: false }]);
+    t('108 un ammanco vero resta visibile: un ordine delle 10:20 che il DB non ha -> api = db + 1', c4.api === c4.db + 1, JSON.stringify(c4));
+    const ws = W(GIRO, 2026, 9);
+    t('109 il mese prima e\' intero, fino all\'ultimo secondo', ws.vuota === false && ws.min === '2026-09-01T00:00:00Z' && ws.max === '2026-09-30T23:59:59Z', JSON.stringify(ws));
+    const cs = conta(ws, [{ creato: '2026-10-01T00:00:00Z', nelDb: false }, { creato: '2026-09-30T23:59:59Z', nelDb: true }]);
+    t('110 un ordine nato alle 00:00:00 del primo del mese non conta piu\' anche nel mese prima', cs.api === 1 && cs.db === 1, JSON.stringify(cs));
+    const nov = W('2026-11-01T00:30:00Z', 2026, 11), ott = W('2026-11-01T00:30:00Z', 2026, 10);
+    t('111 giro delle 00:30 del primo del mese: mese nuovo vuoto (0 = 0), quello prima intero',
+      nov.vuota === true && JSON.stringify(conta(nov, caso)) === '{"api":0,"db":0}' && ott.vuota === false && ott.max === '2026-10-31T23:59:59Z', JSON.stringify({ nov, ott }));
+    const gen = W('2027-01-01T00:30:00Z', 2027, 1), dic = W('2027-01-01T00:30:00Z', 2026, 12);
+    t('112 dicembre -> gennaio: dicembre fino al 31 alle 23:59:59, gennaio vuoto', gen.vuota && dic.min === '2026-12-01T00:00:00Z' && dic.max === '2026-12-31T23:59:59Z', JSON.stringify({ gen, dic }));
+    t('113 bordo dell\'ora: alle 00:59:59.999 il cutoff e\' 00:00, alle 01:00:00 e\' 01:00',
+      W('2026-10-18T00:59:59.999Z', 2026, 10).cutoff === '2026-10-18T00:00:00Z' && W('2026-10-18T01:00:00Z', 2026, 10).cutoff === '2026-10-18T01:00:00Z');
+  } else t('104-113 comportamento della finestra non provato: blocco assente o non caricabile', false);
+  const RUN8 = GUARD.slice(GUARD.indexOf('// 8) riconciliazione ESTERNA Shopify'), GUARD.indexOf("add('ce_shopify_token'"));
+  t('114 la finestra si calcola per ogni mese del ciclo', /for \(const \[y, m\] of months\) \{\s*const w = finestraReconcile\(now, y, m\);/.test(RUN8));
+  t('115 finestra vuota: 0 = 0 contato e nessuna chiamata (il continue sta prima della fetch)',
+    /if \(w\.vuota\) \{ shopifyChecked\+\+; continue; \}/.test(RUN8) && RUN8.indexOf('if (w.vuota)') >= 0 && RUN8.indexOf('if (w.vuota)') < RUN8.indexOf('await fetch('));
+  t('116 l\'API Shopify riceve gli estremi della finestra', /created_at_min=\$\{w\.min\}&created_at_max=\$\{w\.max\}/.test(RUN8) && !/created_at_max=\$\{to\}/.test(RUN8));
+  t('117 il conteggio DB e\' year/month piu\' created_at_shop < cutoff, sempre da read()',
+    /read\(`shopify_orders \$\{y\}-\$\{m\}`, await sb\.from\('shopify_orders'\)\.select\('\*', \{ count: 'exact', head: true \}\)\.eq\('year', y\)\.eq\('month', m\)\.lt\('created_at_shop', w\.cutoff\)\)/.test(RUN8));
+  t('118 l\'etichetta dice fino a che ora si e\' contato', /il corrente fino alle \$\{oraPiena\} UTC\)` \+ \(shopDetails/.test(GUARD));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);
