@@ -21,10 +21,27 @@ const SESSIONE = JSON.stringify({
 // chiave pubblica VAPID finta ma ben formata (P-256 non compressa: 65 byte, il primo 0x04), base64url
 const VAPID_BYTES = [4, ...Array.from({ length: 64 }, (_, i) => i + 1)];
 const VAPID = Buffer.from(VAPID_BYTES).toString('base64url');
+// i temi come li mandava push-api prima del 18-10, senza predefinito_per: alla prima iscrizione partono tutti spuntati
 const TEMI = [
   { key: 'conti', etichetta: 'Controlli contabili', descrizione: 'Quando il controllo dei conti trova un errore nuovo' },
   { key: 'vendite', etichetta: 'Vendite ferme', descrizione: 'Quando non arrivano ordini da 24 ore' },
 ];
+// i temi dal 18-10 (migr 0166, brief push-eventi): predefinito_per dice per chi partono spuntati. Etichette del test.
+const TEMI_18 = [
+  { ...TEMI[0], predefinito_per: ['Ale'] },
+  { ...TEMI[1], predefinito_per: ['Ale'] },
+  { key: 'negozi', etichetta: 'Negozi B2B', descrizione: 'Quando un negozio contattato risponde', predefinito_per: ['Ale', 'Bene'] },
+  { key: 'assistenza', etichetta: 'Assistenza clienti', descrizione: 'Richieste urgenti', predefinito_per: ['Ginevra'] },
+  { key: 'spedizioni', etichetta: 'Spedizioni', descrizione: 'Problemi segnalati dal corriere', predefinito_per: ['Ginevra'] },
+  { key: 'sistema', etichetta: 'Sistema', descrizione: 'Lettura della posta clienti ferma', predefinito_per: ['Ale'] },
+  { key: 'riepilogo', etichetta: 'Riepilogo serale', descrizione: 'Alle 18:30, solo se c’è qualcosa', predefinito_per: ['Ale', 'Bene', 'Ginevra'] },
+];
+const CONFIG_18 = { enabled: true, vapidPublicKey: VAPID, temi: TEMI_18 };
+const PREDEFINITI = {
+  Ale: ['conti', 'vendite', 'negozi', 'sistema', 'riepilogo'],
+  Bene: ['negozi', 'riepilogo'],
+  Ginevra: ['assistenza', 'spedizioni', 'riepilogo'],
+};
 const E1 = 'https://fcm.googleapis.com/fcm/send/vecchia';
 const E2 = 'https://fcm.googleapis.com/fcm/send/nuova';
 const QUI = '00000000-0000-0000-0000-0000000000e9';
@@ -50,6 +67,8 @@ type Finto = { sub?: string | null; nuovo?: string; readyManuale?: boolean };
 type Opzioni = {
   flag: 'true' | 'false'; sessione?: boolean; chi?: string; device?: string; config?: unknown; righe?: Riga[];
   finto?: Finto; dispositiviKo?: boolean; dispositiviMs?: number;
+  /** righe di v_lead_outreach per la pipeline di Negozi B2B (link delle notifiche B2B, 18-10); senza, [] come il resto */
+  outreach?: unknown[];
 };
 type Corpo = Record<string, unknown> & { action: string };
 
@@ -151,6 +170,8 @@ async function apri(page: Page, hash: string, opts: Opzioni) {
       const riga = { key: 'push_enabled', value: opts.flag };
       return json((req.headers()['accept'] ?? '').includes('application/vnd.pgrst.object+json') ? riga : [riga]);
     }
+    // solo le GET della pipeline: le HEAD del badge B2B restano come prima (conteggio assente = 0)
+    if (opts.outreach && url.pathname.endsWith('/rest/v1/v_lead_outreach') && req.method() === 'GET') return json(opts.outreach);
     return json([]);
   });
   await page.goto(hash);
@@ -167,6 +188,15 @@ const logSw = (page: Page) => page.evaluate(() => [...(window as unknown as { __
 // le scritture della scheda; rinnova e' di PushKeeper all'avvio (telefono con device e iscrizione) e non tocca chi ne' temi
 const scritture = (azioni: string[]) => azioni.filter((a) => !['config', 'dispositivi', 'rinnova'].includes(a));
 const iscriviDi = (corpi: Corpo[]) => corpi.filter((c) => c.action === 'iscrivi');
+/** Le chiavi dei temi spuntati a schermo, nell'ordine di TEMI_18 (il testo della casella comincia con l'etichetta). Una
+ *  sola lettura della pagina: sette isChecked uno dopo l'altro, con il Villaggio che gira nell'altro worker, superavano
+ *  il tempo di expect.poll (flaky del 18-10). */
+async function spuntati(page: Page): Promise<string[]> {
+  const caselle = await page.locator('label.ds-toggle').evaluateAll((ls) =>
+    ls.map((l) => ({ testo: (l.textContent ?? '').trim(), on: !!l.querySelector<HTMLInputElement>('input[type=checkbox]')?.checked })));
+  return TEMI_18.filter((t) => caselle.some((c) => c.on && c.testo.startsWith(t.etichetta))).map((t) => t.key);
+}
+const bottonePersona = (page: Page, nome: string) => page.locator('.card', { hasText: 'Chi usa questo telefono' }).locator('.seg button', { hasText: nome });
 /** Alla scheda Notifiche dalla Home con "Cerca un'azione", non dall'avviso (la voce in "Altro" puo' finire sotto l'avviso fisso). */
 async function vaiDallaHome(page: Page) {
   await page.getByLabel('Cerca azione').fill('notific');
@@ -378,7 +408,8 @@ test('B1: mentre l\'elenco si carica Attiva resta spento e un tocco non scrive',
 });
 
 test('B2: iscrizione nel browser senza riga sul server: tolta prima di ogni tocco, Attiva ne crea una nuova', async ({ page }) => {
-  const r = await apri(page, '#notifiche', { flag: 'true', sessione: true, device: QUI, righe: [ANDROID_ALE], finto: { sub: E1, nuovo: E2 } });
+  // chi esplicito (18-10, F2): senza persona scelta su questo telefono e senza riga sul server Attiva resta spento
+  const r = await apri(page, '#notifiche', { flag: 'true', sessione: true, chi: 'Ale', device: QUI, righe: [ANDROID_ALE], finto: { sub: E1, nuovo: E2 } });
   await expect(statoTelefono(page)).toContainText('Spente su questo telefono.');
   const prima = await logSw(page);
   expect(prima.filter((x) => x.startsWith('unsubscribe'))).toEqual(['unsubscribe ' + E1]);
@@ -440,6 +471,39 @@ test('messaggio amimi-apri dal service worker: cambia scheda con go(), un hash s
   expect(r.errori).toEqual([]);
 });
 
+// push-eventi (18-10): l'Assistenza e la Salute sono dove portano le notifiche degli eventi, ad app chiusa (link diretto
+// all'avvio in App.tsx) e ad app aperta (messaggio amimi-apri, tabDaHash)
+test('link diretto #assistenza apre l\'Assistenza', async ({ page }) => {
+  const r = await apri(page, '#assistenza', { flag: 'true' });
+  // senza sessione l'Assistenza chiede il suo login
+  await expect(page.locator('.cs-logo')).toContainText('assistenza');
+  await expect(page.locator('.hello h1')).toHaveCount(0);
+  expect(r.errori).toEqual([]);
+});
+
+test('link diretto #salute apre la Salute', async ({ page }) => {
+  const r = await apri(page, '#salute', { flag: 'true' });
+  await expect(page.locator('h1')).toContainText('Salute');
+  await expect(page.locator('.hello h1')).toHaveCount(0);
+  expect(r.errori).toEqual([]);
+});
+
+test('messaggio amimi-apri con #assistenza e #salute: cambia scheda senza toccare location.hash', async ({ page }) => {
+  const r = await apri(page, '', { flag: 'true', sessione: true, finto: { sub: null } });
+  await expect(page.locator('.hello h1')).toContainText('Ciao');
+  const manda = (hash: string) => page.evaluate((h) => {
+    navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { tipo: 'amimi-apri', hash: h } }));
+  }, hash);
+  await manda('#assistenza');
+  // con la sessione del team e nessuna identita' salvata l'Assistenza chiede "Chi sei?"
+  await expect(page.locator('.cs-logo')).toContainText('Chi sei?');
+  await manda('#salute');
+  await expect(page.locator('h1')).toContainText('Salute');
+  await expect(page.locator('.cs-logo')).toHaveCount(0);
+  expect(await page.evaluate(() => location.hash)).toBe('');
+  expect(r.errori).toEqual([]);
+});
+
 test('PushKeeper: rinnova con trovato:false mostra l\'avviso, che sulla scheda Notifiche non compare', async ({ page }) => {
   const r = await apri(page, '', { flag: 'true', sessione: true, device: QUI, righe: [ANDROID_ALE], finto: { sub: E1 } });
   await expect(avviso(page)).toBeVisible();
@@ -453,7 +517,8 @@ test('PushKeeper: rinnova con trovato:false mostra l\'avviso, che sulla scheda N
 });
 
 test('PushKeeper: dopo un "Attiva" riuscito l\'avviso non torna in Home', async ({ page }) => {
-  const r = await apri(page, '', { flag: 'true', sessione: true, device: QUI, righe: [ANDROID_ALE], finto: { sub: E1, nuovo: E2 } });
+  // chi esplicito (18-10, F2): il server non ha la riga di questo telefono, quindi la persona va scelta
+  const r = await apri(page, '', { flag: 'true', sessione: true, chi: 'Ale', device: QUI, righe: [ANDROID_ALE], finto: { sub: E1, nuovo: E2 } });
   await expect(avviso(page)).toBeVisible();
   await vaiDallaHome(page);
   await expect(statoTelefono(page)).toContainText('Spente su questo telefono.');
@@ -500,5 +565,198 @@ test('temi: cambiando persona un tema spento rimasto nella riga non torna al ser
   await page.getByRole('button', { name: 'Usa Benny' }).click();
   await expect(page.locator('.msg.ok')).toContainText('Ora questo telefono riceve come Benny.');
   expect(iscriviDi(r.corpi).map((c) => [c.chi, c.temi])).toEqual([['Bene', ['conti']]]);
+  expect(r.errori).toEqual([]);
+});
+
+// Temi predefiniti per persona (18-10, brief push-eventi): alla prima iscrizione partono spuntati i temi che hanno la
+// persona in predefinito_per; dopo l'iscrizione valgono quelli salvati sul server.
+test('predefiniti: per Ginni partono spuntati Assistenza, Spedizioni e Riepilogo', async ({ page }) => {
+  const r = await apri(page, '#notifiche', { flag: 'true', sessione: true, chi: 'Ginevra', config: CONFIG_18 });
+  await expect(bottonePersona(page, 'Ginni')).toHaveClass(/\bon\b/);
+  await expect.poll(() => spuntati(page)).toEqual(['assistenza', 'spedizioni', 'riepilogo']);
+  await expect(statoTelefono(page)).toContainText('Spente su questo telefono.');
+  expect([...new Set(r.azioni)].sort()).toEqual(['config', 'dispositivi']);
+  expect(r.errori).toEqual([]);
+});
+
+test('predefiniti: per Ale partono spuntati conti, vendite, negozi, sistema e riepilogo', async ({ page }) => {
+  const r = await apri(page, '#notifiche', { flag: 'true', sessione: true, chi: 'Ale', config: CONFIG_18 });
+  await expect(bottonePersona(page, 'Ale')).toHaveClass(/\bon\b/);
+  await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Ale);
+  expect([...new Set(r.azioni)].sort()).toEqual(['config', 'dispositivi']);
+  expect(r.errori).toEqual([]);
+});
+
+test('predefiniti: cambiare persona prima di iscriversi cambia i temi spuntati, finche\' non si tocca una casella', async ({ page }) => {
+  const r = await apri(page, '#notifiche', { flag: 'true', sessione: true, chi: 'Ale', config: CONFIG_18 });
+  await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Ale);
+  await bottonePersona(page, 'Ginni').click();
+  await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Ginevra);
+  await bottonePersona(page, 'Benny').click();
+  await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Bene);
+  // una casella toccata vince sui predefiniti: cambiando persona la scelta resta
+  await page.getByText('Riepilogo serale', { exact: true }).click();
+  await expect.poll(() => spuntati(page)).toEqual(['negozi']);
+  await bottonePersona(page, 'Ginni').click();
+  await expect(bottonePersona(page, 'Ginni')).toHaveClass(/\bon\b/);
+  await page.waitForTimeout(300);
+  expect(await spuntati(page)).toEqual(['negozi']);
+  // tutto solo a schermo: nessuna scrittura prima di "Attiva"
+  expect([...new Set(r.azioni)].sort()).toEqual(['config', 'dispositivi']);
+  expect(r.errori).toEqual([]);
+});
+
+test('predefiniti: iscrivi porta i temi predefiniti della persona scelta per ultima, poi valgono quelli salvati', async ({ page }) => {
+  const r = await apri(page, '#notifiche', { flag: 'true', sessione: true, chi: 'Ale', config: CONFIG_18, finto: { sub: null, nuovo: E2 } });
+  await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Ale);
+  await bottonePersona(page, 'Ginni').click();
+  await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Ginevra);
+  await expect(attiva(page)).toBeEnabled();
+  await attiva(page).click();
+  await expect(statoTelefono(page)).toContainText('Attive per Ginni');
+  expect(iscriviDi(r.corpi).map((c) => [c.chi, c.temi])).toEqual([['Ginevra', PREDEFINITI.Ginevra]]);
+  // da iscritto la persona cambiata in alto non riporta i predefiniti: restano i temi salvati, e il cambio passa da "Usa Ale"
+  await bottonePersona(page, 'Ale').click();
+  await expect(page.getByRole('button', { name: 'Usa Ale' })).toBeVisible();
+  await page.waitForTimeout(300);
+  expect(await spuntati(page)).toEqual(PREDEFINITI.Ginevra);
+  expect(iscriviDi(r.corpi)).toHaveLength(1);
+  expect(r.errori).toEqual([]);
+});
+
+test('predefiniti: con la riga sul server valgono i temi salvati, anche a iscrizione del browser sparita', async ({ page }) => {
+  // riga di Ale con il solo tema vendite, iscrizione del browser sparita ("si sono spente"): riattivando torna vendite,
+  // non i cinque predefiniti di Ale
+  const r = await apri(page, '#notifiche', { flag: 'true', sessione: true, chi: 'Ale', device: QUI, righe: [rigaQui(['vendite'], 'Ale')], config: CONFIG_18, finto: { sub: null, nuovo: E2 } });
+  await expect(statoTelefono(page)).toContainText('si sono spente');
+  await expect.poll(() => spuntati(page)).toEqual(['vendite']);
+  await attiva(page).click();
+  await expect(statoTelefono(page)).toContainText('Attive per Ale');
+  expect(iscriviDi(r.corpi).map((c) => [c.chi, c.temi])).toEqual([['Ale', ['vendite']]]);
+  expect(r.errori).toEqual([]);
+});
+
+test('predefiniti: nessun tema con predefinito_per (push-api di prima): partono tutti spuntati per chiunque', async ({ page }) => {
+  const r = await apri(page, '#notifiche', { flag: 'true', sessione: true, chi: 'Ginevra', config: { enabled: true, vapidPublicKey: VAPID, temi: TEMI_18.map((t) => ({ ...t, predefinito_per: [] })) } });
+  await expect.poll(() => spuntati(page)).toEqual(TEMI_18.map((t) => t.key));
+  expect(r.errori).toEqual([]);
+});
+
+// F2 (Gate 3 del 18-10): su un telefono nuovo amimi_chi non c'e' (l'app installata su iPhone ha uno storage suo) e App
+// ripiega su 'Ale'. Prima la scheda segnava Ale con i suoi cinque temi e un tocco su Attiva iscriveva come Ale anche il
+// telefono di Ginni. Ora nessuna persona e' segnata, i temi sono fermi e vuoti e Attiva e' spento finche' non si sceglie.
+test('F2: telefono nuovo senza persona scelta: nessuna persona segnata, temi vuoti e fermi, Attiva spento; scelta Ginni partono i suoi', async ({ page }) => {
+  const r = await apri(page, '#notifiche', { flag: 'true', sessione: true, config: CONFIG_18, finto: { sub: null, nuovo: E2 } });
+  // elenco e iscrizione del browser letti, registrazione pronta: Attiva spento solo per la persona
+  await expect(statoTelefono(page)).toContainText('Spente su questo telefono.');
+  await expect(page.getByText('Preparo il telefono…')).toHaveCount(0);
+  const persona = page.locator('.card', { hasText: 'Chi usa questo telefono' });
+  await expect(persona.locator('.seg button')).toHaveText(['Ale', 'Benny', 'Ginni']);
+  await expect(persona.locator('.seg button.on')).toHaveCount(0);
+  expect(await spuntati(page)).toEqual([]);
+  await expect(page.getByRole('checkbox', { name: /Assistenza clienti/ })).toBeDisabled();
+  await expect(page.getByRole('checkbox', { name: /Controlli contabili/ })).toBeDisabled();
+  await expect(attiva(page)).toBeDisabled();
+  await expect(page.getByText('Scegli chi usa questo telefono.')).toBeVisible();
+  await expect(page.getByText(/Nessun tema scelto/)).toHaveCount(0);
+  await attiva(page).click({ force: true });
+  await page.waitForTimeout(300);
+  expect(scritture(r.azioni)).toEqual([]);
+
+  await bottonePersona(page, 'Ginni').click();
+  await expect(bottonePersona(page, 'Ginni')).toHaveClass(/\bon\b/);
+  await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Ginevra);
+  await expect(page.getByRole('checkbox', { name: /Assistenza clienti/ })).toBeEnabled();
+  await expect(page.getByText('Scegli chi usa questo telefono.')).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('amimi_chi'))).toBe('Ginevra');
+  await expect(attiva(page)).toBeEnabled();
+  await attiva(page).click();
+  await expect(statoTelefono(page)).toContainText('Attive per Ginni');
+  expect(iscriviDi(r.corpi).map((c) => [c.chi, c.temi])).toEqual([['Ginevra', PREDEFINITI.Ginevra]]);
+  expect(r.errori).toEqual([]);
+});
+
+test('F2: telefono gia\' iscritto sul server senza persona salvata: la persona viene dalla riga, niente e\' spento', async ({ page }) => {
+  const r = await apri(page, '#notifiche', { flag: 'true', sessione: true, config: CONFIG_18, device: QUI, righe: [rigaQui(['conti'], 'Ale')], finto: { sub: E1 } });
+  await expect(statoTelefono(page)).toContainText('Attive per Ale');
+  await expect(bottonePersona(page, 'Ale')).toHaveClass(/\bon\b/);
+  await expect(page.getByRole('checkbox', { name: /Controlli contabili/ })).toBeEnabled();
+  await expect(page.getByRole('checkbox', { name: /Controlli contabili/ })).toBeChecked();
+  await expect(page.getByText('Scegli chi usa questo telefono.')).toHaveCount(0);
+  expect(scritture(r.azioni)).toEqual([]);
+  expect(r.errori).toEqual([]);
+});
+
+// K2 / F1 (Gate 3 del 18-10): b2b_risposta_negozio porta a #negozi/outreach/<id>. Ad app aperta il service worker manda
+// amimi-apri: prima PushKeeper cambiava solo scheda e Negozi, che legge la rotta dall'hash, mostrava la lista, non faceva
+// niente o riapriva il negozio di prima. Ora la rotta va nell'URL con history.replaceState (mai location.hash) e la
+// pagina gia' aperta la rilegge con l'evento amimi-rotta. Pipeline finta con due negozi dal nome diverso: si controlla il
+// titolo della scheda, non solo l'URL (mentre la pipeline si carica la rotta mostra la lista: si aspetta con expect).
+const NEG_X = '00000000-0000-0000-0000-0000000000a1';
+const NEG_Y = '00000000-0000-0000-0000-0000000000a2';
+const rigaPipeline = (id: string, nome: string) => ({
+  id, nome, tipo: 'boutique', citta: 'Milano', provincia: null, paese: 'IT', website: null, ig_handle: null, email_generica: 'info@negozio.test', telefono: null,
+  lead_stage: 'risposto', verdetto: 'da_contattare', verdetto_motivo: null, tier: null, gancio: null, prossima_azione: null, prossima_azione_at: null,
+  owner_outreach: null, owner_note: null, totale: 80, tier_proposto: 'A', ultimo_tocco_at: '2026-10-18T09:00:00Z', ultimo_canale: 'email',
+  ultima_direzione: 'in', ultimo_esito: null, ultimo_chi: 'auto', n_tocchi: 2, n_email_out: 1, giorni_da_ultimo: 0, scaduta: false, da_gestire: true,
+  thumb: null, follower: null, telefono_maps: null, email_sito: null, n_opt_out: 0, bozza_auto_tocco: null,
+});
+const PIPELINE = [rigaPipeline(NEG_X, 'Negozio Ics'), rigaPipeline(NEG_Y, 'Negozio Ipsilon')];
+const mandaApri = (page: Page, hash: string) => page.evaluate((h) => {
+  navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { tipo: 'amimi-apri', hash: h } }));
+}, hash);
+const titolo = (page: Page) => page.locator('main h1');
+const lunghezzaStoria = (page: Page) => page.evaluate(() => history.length);
+
+test('K2: notifica B2B con l\'app su un\'altra scheda: si apre il negozio della notifica; indietro torna alla Home col suo URL', async ({ page }) => {
+  const r = await apri(page, '', { flag: 'true', sessione: true, chi: 'Bene', finto: { sub: null }, outreach: PIPELINE });
+  await expect(page.locator('.hello h1')).toContainText('Ciao');
+  const prima = await lunghezzaStoria(page);
+  await mandaApri(page, '#negozi/outreach/' + NEG_Y);
+  await expect(titolo(page)).toHaveText('Negozio Ipsilon');
+  expect(await page.evaluate(() => location.hash)).toBe('#negozi/outreach/' + NEG_Y);
+  // una sola voce in piu', quella di go() per il cambio scheda: replaceState non ne aggiunge
+  expect(await lunghezzaStoria(page)).toBe(prima + 1);
+  await page.goBack();
+  await expect(page.locator('.hello h1')).toContainText('Ciao');
+  // la rotta e' stata scritta DOPO go(), sulla voce nuova: la voce della Home ha tenuto il suo URL
+  expect(await page.evaluate(() => location.hash)).toBe('');
+  expect(r.errori).toEqual([]);
+});
+
+test('K2: notifica B2B con l\'app gia\' su Negozi (lista): si apre il negozio della notifica senza voci nuove nella storia', async ({ page }) => {
+  const r = await apri(page, '#negozi', { flag: 'true', sessione: true, chi: 'Bene', finto: { sub: null }, outreach: PIPELINE });
+  await expect(titolo(page)).toHaveText('Negozi B2B');
+  const prima = await lunghezzaStoria(page);
+  await mandaApri(page, '#negozi/outreach/' + NEG_Y);
+  await expect(titolo(page)).toHaveText('Negozio Ipsilon');
+  expect(await page.evaluate(() => location.hash)).toBe('#negozi/outreach/' + NEG_Y);
+  expect(await lunghezzaStoria(page)).toBe(prima);
+  expect(r.errori).toEqual([]);
+});
+
+test('K2: negozio X aperto, Home dalla barra, poi notifica per Y: si apre Y, non X', async ({ page }) => {
+  const r = await apri(page, '#negozi/outreach/' + NEG_X, { flag: 'true', sessione: true, chi: 'Bene', finto: { sub: null }, outreach: PIPELINE });
+  await expect(titolo(page)).toHaveText('Negozio Ics');
+  await page.locator('.bottomnav button', { hasText: /^Home/ }).click();
+  await expect(page.locator('.hello h1')).toContainText('Ciao');
+  await mandaApri(page, '#negozi/outreach/' + NEG_Y);
+  await expect(titolo(page)).toHaveText('Negozio Ipsilon');
+  expect(await page.evaluate(() => location.hash)).toBe('#negozi/outreach/' + NEG_Y);
+  expect(r.errori).toEqual([]);
+});
+
+test('K2: scheda X aperta dalla pipeline, notifica per Y: si apre Y e indietro torna alla pipeline', async ({ page }) => {
+  const r = await apri(page, '#negozi/outreach', { flag: 'true', sessione: true, chi: 'Bene', finto: { sub: null }, outreach: PIPELINE });
+  await expect(titolo(page)).toHaveText('Pipeline outreach');
+  await page.locator('.or-card', { hasText: 'Negozio Ics' }).click();
+  await expect(titolo(page)).toHaveText('Negozio Ics');
+  const prima = await lunghezzaStoria(page);
+  await mandaApri(page, '#negozi/outreach/' + NEG_Y);
+  await expect(titolo(page)).toHaveText('Negozio Ipsilon');
+  expect(await lunghezzaStoria(page)).toBe(prima);
+  await page.goBack();
+  await expect(titolo(page)).toHaveText('Pipeline outreach');
+  expect(await page.evaluate(() => location.hash)).toBe('#negozi/outreach');
   expect(r.errori).toEqual([]);
 });
