@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, RefObject } from 'react';
 import Icon from '../components/Icon';
-import { fetchInventory, fetchOrdiniGruppi, fetchVillaggioEventi, oggi, registraContaCompleta, segnaPresenza, verificaFornitore } from '../lib/api';
-import type { InvFull, OrdGruppo, OrdLine } from '../lib/api';
+import { fetchAdjustmentsByCodice, fetchInventory, fetchOrdiniGruppi, fetchPurchasesByCodice, fetchReorder, fetchSalesByCodice, fetchVillaggioEventi, oggi, registraContaCompleta, segnaPresenza, verificaFornitore } from '../lib/api';
+import type { InvFull, OrdGruppo, OrdLine, Reorder } from '../lib/api';
 import { ArrivoRow } from './Ordini';
 import SupplierOrderForm from '../components/SupplierOrderForm';
 import CountForm from '../components/CountForm';
 import { PEOPLE, personaName } from '../lib/people';
 import { killBack, popBack, pushBack } from '../lib/backnav';
-import { MODEL_ORDER, FIN_IT, PRINT_IT, arriviFra, conTaglia, costruisci, giorniAllaConsegna, labOf, modelOf } from '../lib/villaggio/catalogo';
+import { MODEL_ORDER, FIN_IT, PRINT_IT, STA_FINENDO, arriviFra, conTaglia, costruisci, giorniAllaConsegna, labOf, modelOf, staFinendo, venditePerMese } from '../lib/villaggio/catalogo';
 import type { Lab, Look, Mod, Modello, Pila } from '../lib/villaggio/catalogo';
 import { Mondo, labColor, swatchURL, thumbAsync } from '../lib/villaggio/mondo';
-import type { RigaMondo } from '../lib/villaggio/mondo';
+import type { Fumetto, RigaMondo } from '../lib/villaggio/mondo';
+import { AMBIENTE_OGNI_MS, METEO_KEY, ambienteDi, leggiAmbiente, meteoInCache } from '../lib/villaggio/meteo';
 import { LIVELLI, MEDAGLIE, VALORI, calcola, differenza, missioni } from '../lib/villaggio/paillettes';
 import type { Evento, Stato } from '../lib/villaggio/paillettes';
 import '@fontsource/fredoka/400.css';
@@ -29,9 +30,12 @@ import '../styles/villaggio.css';
 // sole scritture, la presenza, la verifica fornitore e la conta completa del mese, con segnaPresenza, verificaFornitore e
 // registraContaCompleta di lib/api; i punti non si scrivono da nessuna parte, si ricalcolano da v_villaggio_eventi con
 // lib/villaggio/paillettes.ts.
+// Fase 3 (18-10): la scheda della pila (storico in sola lettura, "sta finendo" da v_reorder, Ordina ancora e Conta con i
+// moduli di sempre), la verifica che chiude le righe che non arrivano piu', e l'isola che racconta: stagione, luce e meteo
+// vero (lib/villaggio/meteo.ts) e i fumetti sopra i capannoni.
 // Interruttori: app_flags.villaggio_enabled (migr 0162) e villaggio_paillettes_enabled, letti da App.tsx e da VillaggioApp.tsx.
 
-type Sheet = { t: 'lab'; key: string } | { t: 'wh'; model?: Modello } | { t: 'labs' } | { t: 'help' }
+type Sheet = { t: 'lab'; key: string } | { t: 'wh'; model?: Modello } | { t: 'labs' } | { t: 'help' } | { t: 'pila'; key: string }
   | { t: 'add'; step: 1 | 2 | 3 | 4; lab?: string; model?: Modello; pila?: string; codice?: string }
   | { t: 'percorso' } | { t: 'missioni' } | { t: 'verifica'; lab: string } | { t: 'giro'; codici: string[]; completo?: boolean } | null;
 
@@ -53,6 +57,13 @@ const PREMI = ['', 'Lungo i sentieri sono spuntate le aiuole fiorite.', 'Davanti
   'Sono arrivati i lampioni e una panchina.', 'Ora c\'è il chiosco-boutique con la tenda a righe rosa.',
   'Guarda in cielo: c\'è una mongolfiera rosa.', 'Corona d\'oro e tappeto rosso fino al magazzino.'];
 const GIORNI = ['L', 'M', 'M', 'G', 'V'];
+const SENZA_RETE = 'Sei senza rete o la rete non risponde: riprova quando torna.';
+/** Il testo di un errore per chi usa il Villaggio: senza rete il browser dice "Load failed" (iPhone) o "Failed to fetch". */
+const testoErrore = (e: unknown) => {
+  const m = e instanceof Error ? e.message : String(e ?? '');
+  return !m || /load failed|failed to fetch|networkerror|network request failed/i.test(m) ? SENZA_RETE : m;
+};
+const euro = (n: number) => n.toLocaleString('it-IT', { style: 'currency', currency: 'EUR' });
 
 function Thumb({ model, look }: { model: Modello; look: Look }) {
   const [src, setSrc] = useState<string | null>(null);
@@ -65,8 +76,9 @@ function Pezzi({ a, o }: { a: number; o: number }) {
   return <div className="v-pz" aria-hidden="true">{Array.from({ length: n }, (_, i) => <i key={i} className={i < on ? 'on' : ''} />)}</div>;
 }
 
-/** Il fumetto di Ginni con il testo che si scrive da solo: stato proprio, cosi' la pagina non rifa' il render a ogni lettera. */
-function Dialogo({ testo, onAvanti }: { testo: string; onAvanti: () => void }) {
+/** Il fumetto di Ginni con il testo che si scrive da solo: stato proprio, cosi' la pagina non rifa' il render a ogni lettera.
+ *  Con altri fumetti in coda (le missioni del mattino, l'introduzione) c'e' "Salta", che li chiude tutti in un tocco. */
+function Dialogo({ testo, onAvanti, onSalta }: { testo: string; onAvanti: () => void; onSalta?: () => void }) {
   const ridotto = useMemo(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches, []);
   const [k, setK] = useState(ridotto ? testo.length : 0);
   const tutto = ridotto || k >= testo.length;
@@ -76,9 +88,12 @@ function Dialogo({ testo, onAvanti }: { testo: string; onAvanti: () => void }) {
     return () => window.clearInterval(id);
   }, [testo, tutto]);
   return (
-    <button type="button" className="v-dlg" aria-label={'Ginni: ' + testo} onClick={() => (tutto ? onAvanti() : setK(testo.length))}>
-      <span className="tag">Ginni</span><span className="v-dlgp" aria-hidden="true">{ridotto ? testo : testo.slice(0, k)}</span><span className="more" aria-hidden="true">▼</span>
-    </button>
+    <div className="v-dlgw">
+      <button type="button" className="v-dlg" aria-label={'Ginni: ' + testo} onClick={() => (tutto ? onAvanti() : setK(testo.length))}>
+        <span className="tag">Ginni</span><span className="v-dlgp" aria-hidden="true">{ridotto ? testo : testo.slice(0, k)}</span><span className="more" aria-hidden="true">▼</span>
+      </button>
+      {onSalta && <button type="button" className="v-salta" onClick={onSalta}><span>Salta</span></button>}
+    </div>
   );
 }
 
@@ -105,42 +120,67 @@ function giroMagazzino(mod: Mod) {
   return [...new Set([...neg, ...perPila, ...fuori])];
 }
 
-type Scelta = { confermata?: boolean; data?: string };
-/** Verifica con il fornitore: una riga per riga aperta del laboratorio, confermata (acceso di default) e con la data di
- *  consegna attuale da mettere o correggere. La bozza vive qui: cambiando pannello sparisce, quindi toccata la protegge
- *  la stessa guardia del modulo dell'ordine. */
-function Verifica({ lab, mod, chi, sporca, onSalvata }: { lab: Lab; mod: Mod; chi: string; sporca: () => void; onSalvata: (dateCambiate: number) => void }) {
+type Scelta = { confermata?: boolean; data?: string; chiudi?: boolean };
+/** Cosa succede chiudendo una riga (write-api: qty_ordered = qty_arrived, wip = false), detto prima della conferma. */
+function chiusuraDi(l: OrdLine) {
+  const gia = Number(l.qty_arrived) || 0, mancano = Math.max(0, Number(l.mancano) || 0);
+  const arrivati = gia === 1 ? "l'unico pezzo già arrivato" : `i ${gia} pezzi già arrivati`;
+  if (l.wip) return gia ? `La riga si chiude con ${arrivati}.` : 'La riga si chiude: non arriva niente.';
+  return gia ? `La riga si chiude con ${arrivati}: ${mancano === 1 ? "l'ultimo non arriva" : `gli altri ${mancano} non arrivano`} più.`
+    : `La riga si chiude: ${mancano === 1 ? 'il pezzo ordinato non arriva' : `i ${mancano} pezzi ordinati non arrivano`} più.`;
+}
+/** Verifica con il fornitore: una riga per riga aperta del laboratorio, confermata (acceso di default), con la data di
+ *  consegna da mettere o correggere e "Non arriva più" per chiudere il residuo (con la conferma qui nella scheda). Una
+ *  data in cima riempie in un colpo le righe senza data, poi si corregge riga per riga. La bozza vive qui: cambiando
+ *  pannello sparisce, quindi toccata la protegge la stessa guardia del modulo dell'ordine. */
+function Verifica({ lab, mod, chi, gioca, sporca, onSalvata }: {
+  lab: Lab; mod: Mod; chi: string; gioca: boolean; sporca: () => void; onSalvata: (dateCambiate: number, chiuse: number | undefined, daChiudere: number) => void;
+}) {
   const [scelte, setScelte] = useState<Record<string, Scelta>>({});
   const [nota, setNota] = useState('');
+  const [tutte, setTutte] = useState('');
+  // la riga di cui si sta chiedendo la conferma di "Non arriva più"
+  const [chiedi, setChiedi] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [errore, setErrore] = useState<string | null>(null);
   const aperte = [...lab.raw, ...lab.extra];
   const prima = (l: OrdLine) => String(l.data_consegna ?? '').slice(0, 10);
-  const valore = (l: OrdLine) => ({ confermata: scelte[l.id]?.confermata ?? true, data: scelte[l.id]?.data ?? prima(l) });
-  const cambia = (id: string, x: Scelta) => { sporca(); setScelte((s) => ({ ...s, [id]: { ...s[id], ...x } })); };
+  const valore = (l: OrdLine) => ({ confermata: scelte[l.id]?.confermata ?? true, data: scelte[l.id]?.data ?? prima(l), chiudi: !!scelte[l.id]?.chiudi });
+  const cambia = (x: Record<string, Scelta>) => {
+    sporca();
+    setScelte((s) => { const n = { ...s }; for (const [id, v] of Object.entries(x)) n[id] = { ...s[id], ...v }; return n; });
+  };
   // la verifica mette o corregge la data, non la toglie: un campo svuotato su una riga che la data l'aveva la lascia com'e'
   const inviata = (l: OrdLine) => valore(l).data || prima(l);
-  const senzaData = aperte.filter((l) => !inviata(l)).length;
+  const senzaData = aperte.filter((l) => !valore(l).chiudi && !inviata(l)).length;
+  // "una data per tutte": vale per le righe che la data non l'avevano, anche se intanto se ne e' scritta una a mano
+  const senzaPrima = aperte.filter((l) => !prima(l) && !valore(l).chiudi);
   async function salva() {
     setBusy(true); setErrore(null);
     try {
+      const daChiudere = aperte.filter((l) => valore(l).chiudi).length;
       const r = await verificaFornitore(chi, {
         fornitore: lab.forn ?? '', nota: nota.trim() || null,
-        righe: aperte.map((l) => ({ id: l.id, confermata: valore(l).confermata, data_consegna: inviata(l) || null })),
+        righe: aperte.map((l) => { const v = valore(l); return { id: l.id, confermata: v.confermata, data_consegna: inviata(l) || null, ...(v.chiudi ? { chiudi: true } : {}) }; }),
       });
-      onSalvata(Number(r.date_cambiate) || 0);
+      onSalvata(Number(r.date_cambiate) || 0, r.righe_chiuse == null ? undefined : Number(r.righe_chiuse) || 0, daChiudere);
     } catch (e) {
-      setErrore((e as Error).message);
+      setErrore(testoErrore(e));
     } finally {
       setBusy(false);
     }
   }
   return <>
     <p className="v-note">{righe(aperte.length)}{senzaData ? ` · ${senzaData} senza data` : ''}. Spegni quelle che {lab.nome} non sta lavorando.</p>
+    {gioca && <p className="v-note">Vale +{VALORI.verifica} paillettes (una a settimana per laboratorio) solo se sistema qualcosa: una data messa o spostata, o una riga che non arriva più. Confermare e basta non le dà.</p>}
+    {senzaPrima.length > 1 && (
+      <label className="v-dt v-tutte"><small>Una data per tutte le {righe(senzaPrima.length)} senza data</small>
+        <input type="date" value={tutte} onChange={(e) => { const d = e.target.value; setTutte(d); cambia(Object.fromEntries(senzaPrima.map((l) => [l.id, { data: d }]))); }} /></label>
+    )}
     <div className="v-list">{aperte.map((l) => {
       const info = mod.righe.get(l.id), v = valore(l), d = giorniAllaConsegna(l.data_consegna, oggi());
       return (
-        <div key={l.id} className={'v-row v-vrow' + (v.confermata ? '' : ' no')}>
+        <div key={l.id} className={'v-row v-vrow' + (v.confermata ? '' : ' no') + (v.chiudi ? ' chiusa' : '')}>
           {info ? <Thumb model={info.riga.model} look={info.riga.look} /> : <span className="v-th" />}
           <div className="v-rt">
             <b>{info ? `${info.riga.model} · ${info.riga.label}` : `${l.item ?? l.codice} · ${conTaglia(l.variant)}`}</b>
@@ -149,11 +189,19 @@ function Verifica({ lab, mod, chi, sporca, onSalvata }: { lab: Lab; mod: Mod; ch
               {d != null && d < 0 && <span className={'v-chip ' + (-d >= 30 ? 'verylate' : 'late')}>{-d === 1 ? '1 giorno di ritardo' : `${-d} giorni di ritardo`}</span>}
             </div>
           </div>
-          <div className="v-vctl">
-            <label className="v-sw"><input type="checkbox" checked={v.confermata} onChange={(e) => cambia(l.id, { confermata: e.target.checked })} /><i aria-hidden="true" />{v.confermata ? 'confermata' : 'non confermata'}</label>
-            <label className={'v-dt' + (inviata(l) ? '' : ' manca')}><small>{v.data ? 'consegna' : prima(l) ? `resta il ${dataBreve(prima(l))}` : 'manca la data'}</small>
-              <input type="date" value={v.data} onChange={(e) => cambia(l.id, { data: e.target.value })} /></label>
-          </div>
+          {v.chiudi
+            ? <div className="v-vctl"><span className="v-chiusa">Non arriva più: si chiude salvando la verifica.</span>
+              <button className="v-btn sm ghost" type="button" onClick={() => cambia({ [l.id]: { chiudi: false } })}>Annulla</button></div>
+            : chiedi === l.id
+              ? <div className="v-vctl v-chiedi"><span>{chiusuraDi(l)} Confermi?</span>
+                <span className="v-sibtn"><button className="v-btn sm" type="button" onClick={() => { cambia({ [l.id]: { chiudi: true } }); setChiedi(null); }}>Sì, non arriva più</button>
+                  <button className="v-btn sm ghost" type="button" onClick={() => setChiedi(null)}>No</button></span></div>
+              : <div className="v-vctl">
+                <label className="v-sw"><input type="checkbox" checked={v.confermata} onChange={(e) => cambia({ [l.id]: { confermata: e.target.checked } })} /><i aria-hidden="true" />{v.confermata ? 'confermata' : 'non confermata'}</label>
+                <label className={'v-dt' + (inviata(l) ? '' : ' manca')}><small>{v.data ? 'consegna' : prima(l) ? `resta il ${dataBreve(prima(l))}` : 'manca la data'}</small>
+                  <input type="date" value={v.data} onChange={(e) => cambia({ [l.id]: { data: e.target.value } })} /></label>
+                <button className="v-btn sm ghost v-nonpiu" type="button" onClick={() => setChiedi(l.id)}>Non arriva più</button>
+              </div>}
         </div>
       );
     })}</div>
@@ -198,7 +246,7 @@ function Giro({ codici, completo, registrata, onRegistra, mod, nomi, contatiOggi
     const registra = async () => {
       if (!onRegistra) return;
       setSalvo(true); setErrore(null);
-      try { await onRegistra(contati); setFatta(true); } catch (e) { setErrore((e as Error).message); } finally { setSalvo(false); }
+      try { await onRegistra(contati); setFatta(true); } catch (e) { setErrore(testoErrore(e)); } finally { setSalvo(false); }
     };
     return <>
       <p className="v-fine">Giro finito: {contati === 1 ? '1 codice contato' : contati + ' codici contati'} su {codici.length}.</p>
@@ -234,6 +282,99 @@ function Giro({ codici, completo, registrata, onRegistra, mod, nomi, contatiOggi
   </>;
 }
 
+type Storico<T> = { righe: T[] | null; errore: string | null };
+/** Una lettura dello storico della pila, codice per codice (le taglie hanno codici loro) e poi unita. null finche' non
+ *  arriva; una lettura fallita si dice, mai come "zero". La scheda si rimonta per pila (key), quindi si legge una volta. */
+function useStorico<T>(codici: string, leggi: (codice: string) => Promise<T[]>): Storico<T> {
+  const [s, setS] = useState<Storico<T>>({ righe: null, errore: null });
+  useEffect(() => {
+    let vivo = true;
+    Promise.all(codici.split(' ').map((c) => leggi(c)))
+      .then((xs) => { if (vivo) setS({ righe: xs.flat(), errore: null }); })
+      .catch((e: unknown) => { if (vivo) setS({ righe: null, errore: testoErrore(e) }); });
+    return () => { vivo = false; };
+  }, [codici, leggi]);
+  return s;
+}
+const piuRecenti = <T extends { data: string | null }>(xs: T[]) => [...xs].sort((a, b) => (b.data ?? '').localeCompare(a.data ?? ''));
+
+/** La scheda di una pila del magazzino (fase 3, sola lettura): foto vera, giacenza per codice, vendite degli ultimi 6 mesi
+ *  e le ultime 5, arrivi, conte e rettifiche, righe ancora in arrivo, l'avviso "sta finendo". Le due azioni aprono i moduli
+ *  di sempre: "Ordina ancora" il passo 4 dell'ordine con il codice, "Conta" il giro di conta sui codici della pila. */
+function SchedaPila({ pila, foto, finendo, aperte, onOrdina, onConta, onMagazzino }: {
+  pila: Pila; foto: string | null; finendo: Set<string>; aperte: OrdLine[];
+  onOrdina: (codice: string, fornitore: string | null) => void; onConta: () => void; onMagazzino: () => void;
+}) {
+  const codici = pila.codes.map((c) => c.codice).join(' ');
+  const vendite = useStorico(codici, fetchSalesByCodice);
+  const arrivi = useStorico(codici, fetchPurchasesByCodice);
+  const conte = useStorico(codici, fetchAdjustmentsByCodice);
+  const mesi = vendite.righe ? venditePerMese(vendite.righe, oggi()) : null;
+  const alto = Math.max(1, ...(mesi ?? []).map((m) => m.pezzi));
+  const sta = pila.codes.filter((c) => finendo.has(c.codice));
+  // il codice da riordinare: quello che sta finendo, se no il primo (al passo 4 "Cambia colore" porta agli altri)
+  const daOrdinare = sta[0]?.codice ?? pila.codes[0]?.codice;
+  const ultimoForn = arrivi.righe ? piuRecenti(arrivi.righe).find((a) => a.fornitore)?.fornitore ?? null : null;
+  // errore, lettura in corso o niente da mostrare; null quando ci sono righe
+  const stato = <T,>(s: Storico<T>, cosa: string, vuoto: string) =>
+    s.errore ? <p className="v-errl" role="alert">Non riesco a leggere {cosa}. {s.errore}</p>
+      : !s.righe ? <p className="v-empty">Leggo {cosa}…</p>
+        : !s.righe.length ? <p className="v-empty">{vuoto}</p> : null;
+  return <>
+    <button className="v-back" type="button" onClick={onMagazzino}>‹ Magazzino · {pila.model}</button>
+    <div className="v-pila">
+      {foto ? <img className="v-foto" src={foto} alt={`Foto di ${pila.model} ${pila.name.toLowerCase()}`} /> : <Thumb model={pila.model} look={pila.look} />}
+      <div className="v-pcod">{pila.codes.map((c) => (
+        <div key={c.codice}>
+          <b>{pila.codes.length > 1 ? conTaglia(c.variant) : pila.name}</b><small>{c.codice}</small>
+          <span className="v-meta"><span className={'v-chip stock' + (c.stock < 0 ? ' neg' : '')}>in magazzino {c.stock}</span>
+            {finendo.has(c.codice) && <span className="v-chip fin">sta finendo</span>}</span>
+        </div>
+      ))}</div>
+    </div>
+    {sta.length > 0 && <p className="v-note">Sta finendo: vende ({STA_FINENDO.venduti} pezzi o più in 60 giorni), ha meno di {STA_FINENDO.giorni} giorni di magazzino e nessun ordine in corso.</p>}
+    <div className="v-azioni">
+      <button className="v-btn alt" type="button" disabled={!daOrdinare} onClick={() => daOrdinare && onOrdina(daOrdinare, ultimoForn)}>+ Ordina ancora</button>
+      <button className="v-btn" type="button" onClick={onConta}>Conta</button>
+    </div>
+
+    <h3 className="v-sec">Vendite<small>negozio e online, ultimi 6 mesi</small></h3>
+    {stato(vendite, 'le vendite', 'Nessuna vendita registrata.') ?? (vendite.righe && mesi && <>
+      <div className="v-bars" role="img" aria-label={'Pezzi venduti: ' + mesi.map((m) => `${m.nome} ${m.pezzi}`).join(', ')}>
+        {mesi.map((m) => <span key={m.mese}><b>{m.pezzi || ''}</b><i style={{ height: Math.round((m.pezzi / alto) * 100) + '%' }} /><small>{m.nome}</small></span>)}
+      </div>
+      <div className="v-list">{piuRecenti(vendite.righe).slice(0, 5).map((s) => (
+        <div key={s.source + s.id} className="v-voce"><span className="pt pz">{s.qty} pz</span><span><b>{s.source === 'qromo' ? 'In negozio' : 'Online'}</b><small>{dataBreve(s.data)}</small></span></div>
+      ))}</div>
+    </>)}
+
+    <h3 className="v-sec">In arrivo</h3>
+    {aperte.length
+      ? <div className="v-list">{aperte.map((l) => {
+        const d = giorniAllaConsegna(l.data_consegna, oggi());
+        return (
+          <div key={l.id} className="v-voce"><span className="pt pz">{l.wip ? '?' : Math.max(0, Number(l.mancano) || 0)} pz</span>
+            <span><b>{labOf(l.fornitore).nome}</b><small>{l.wip ? 'quantità da definire' : `${Number(l.qty_arrived) || 0} di ${l.qty_ordered ?? '?'} arrivate`}
+              {' · '}{d == null ? 'senza data' : d < 0 ? (-d === 1 ? '1 giorno di ritardo' : `${-d} giorni di ritardo`) : `consegna ${dataBreve(l.data_consegna)}`}</small></span></div>
+        );
+      })}</div>
+      : <p className="v-empty">Nessuna riga d'ordine aperta.</p>}
+
+    <h3 className="v-sec">Arrivi<small>dai laboratori</small></h3>
+    {stato(arrivi, 'gli arrivi', 'Nessun arrivo registrato.') ?? (arrivi.righe && <div className="v-list">{piuRecenti(arrivi.righe).slice(0, 5).map((a) => (
+      <div key={a.id} className="v-voce"><span className="pt pz">{Number(a.quantita) || 0} pz</span>
+        <span><b>{a.fornitore ? labOf(a.fornitore).nome : 'Laboratorio non indicato'}</b><small>{[dataBreve(a.data), a.costo_unitario != null ? euro(Number(a.costo_unitario)) + ' al pezzo' : ''].filter(Boolean).join(' · ')}</small></span></div>
+    ))}</div>)}
+
+    <h3 className="v-sec">Conte e rettifiche</h3>
+    {stato(conte, 'le conte', 'Nessuna conta né rettifica.') ?? (conte.righe && <div className="v-list">{piuRecenti(conte.righe).slice(0, 5).map((r) => {
+      const n = Number(r.qty_delta) || 0;
+      const motivo = r.motivo ? r.motivo.charAt(0).toUpperCase() + r.motivo.slice(1) : 'Rettifica';
+      return <div key={r.id} className="v-voce"><span className="pt pz">{n > 0 ? '+' + n : n}</span><span><b>{motivo}</b><small>{dataBreve(r.data)}</small></span></div>;
+    })}</div>)}
+  </>;
+}
+
 export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false, giocatrice = null }: {
   pin: string; chi: string; setChi?: (c: string) => void; onBack: () => void; paillettes?: boolean; giocatrice?: string | null;
 }) {
@@ -254,6 +395,12 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
   const [say, setSay] = useState<string[]>([]);
   const [toastMsg, setToastMsg] = useState<{ m: string; pai: boolean } | null>(null);
   const [furgoni, setFurgoni] = useState(0);
+  // fase 3: le foto vere dei codici (v_inventory.image_url) e i codici che stanno finendo (v_reorder, staFinendo); il
+  // Riordino dell'ultima lettura buona resta se una lettura fallisce (e' un avviso, non blocca il villaggio)
+  const [foto, setFoto] = useState<Map<string, string>>(() => new Map());
+  const [finendo, setFinendo] = useState<Set<string>>(() => new Set());
+  const riordino = useRef<Reorder[] | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<Sheet>(null);
   useEffect(() => { sheetRef.current = sheet; }, [sheet]);
 
@@ -283,13 +430,14 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
     window.setTimeout(() => { if (toastOra.current === m) toastOra.current = null; setToastMsg((x) => (x?.m === m ? null : x)); }, 3200);
   }, []);
 
-  // I moduli toccati non si perdono senza chiedere: l'ordine al passo 4, la verifica fornitore e la conta del giro. Vale
-  // per Esc, "indietro", la X, le etichette della mappa e la barra in basso; su questi pannelli la mappa non chiude (W.onTap).
+  // I moduli toccati non si perdono senza chiedere: l'ordine al passo 4, la verifica fornitore, la conta del giro e (fase
+  // 3) l'arrivo o la modifica scritti in una riga del laboratorio. Vale per Esc, "indietro", la X, le etichette della mappa
+  // e la barra in basso; sui primi tre la mappa non chiude (W.onTap), sul laboratorio chiede come la X.
   const formSporco = useRef(false);
   const lascia = useCallback(() => {
     const s = sheetRef.current;
     const cosa = !s || !formSporco.current ? null
-      : s.t === 'add' && s.step === 4 ? "l'ordine" : s.t === 'verifica' ? 'la verifica' : s.t === 'giro' ? 'la conta' : null;
+      : s.t === 'add' && s.step === 4 ? "l'ordine" : s.t === 'verifica' ? 'la verifica' : s.t === 'giro' ? 'la conta' : s.t === 'lab' ? 'la riga' : null;
     if (!cosa) return true;
     if (!window.confirm(`Lasci ${cosa} a metà? Quello che hai scritto si perde.`)) return false;
     formSporco.current = false;
@@ -343,53 +491,12 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
   const sporca = () => { formSporco.current = true; };
   const pulisci = () => { formSporco.current = false; };
 
-  // carica (o ricarica dopo una scrittura); se qualche riga ha nuovi arrivi fa partire il furgoncino.
-  // Conta solo l'ultima lettura partita: una risposta vecchia non sovrascrive quella nuova.
-  const load = useCallback(async () => {
-    const mia = ++ultima.current;
-    // gli eventi delle Paillettes partono insieme ma si aspettano dopo: HUD, carrelli e pannelli non attendono le loro
-    // pagine. Se falliscono il villaggio va avanti e i punti restano quelli dell'ultima lettura buona (mai "zero eventi")
-    const eventiP = paillettes ? fetchVillaggioEventi().catch((e: Error) => e) : null;
-    try {
-      const [g, inv] = await Promise.all([fetchOrdiniGruppi(), fetchInventory()]);
-      if (mia !== ultima.current) return;
-      const m = costruisci(g, inv, oggi());
-      const arrivi = arriviFra(prevArrived.current, prevMod.current, m, g);
-      prevArrived.current = new Map(g.flatMap((gr) => gr.righe.map((l) => [l.id, Number(l.qty_arrived) || 0] as [string, number])));
-      prevMod.current = m;
-      setMod(m); setErr(null);
-      const W = mondoRef.current;
-      if (W) {
-        // il molo e' quello del capannone dopo l'aggiornamento (i posti scorrono quando un laboratorio sparisce); quello
-        // letto prima serve solo se il capannone non c'e' piu' (ha chiuso la sua ultima riga)
-        const prima = arrivi.map((x) => W.dockOf(x.lab));
-        W.aggiorna(m.dati);
-        arrivi.forEach((x, i) => {
-          W.arrivo(W.dockOf(x.lab) ?? prima[i], x.riga, x.n, m.codeToPila.get(x.riga.codice) ?? '');
-          toast(`${x.n} ${x.riga.model} ${x.riga.label.replace(/ \(WIP\)$/, '').toLowerCase()} in magazzino.`);
-        });
-      }
-      if (paillettes) {
-        setNomi(dettagli(g, inv));
-        const giorno = oggi();
-        if (negRef.current.giorno !== giorno) {
-          let primi: string[] | null = null;
-          try {
-            const v = JSON.parse(localStorage.getItem(NEGATIVI_KEY) ?? 'null') as { giorno?: unknown; codici?: unknown } | null;
-            if (v && v.giorno === giorno && Array.isArray(v.codici)) primi = v.codici.map(String);
-          } catch { /* storage non disponibile o valore storto: vale questa lettura */ }
-          if (!primi) {
-            primi = [...m.stockCodice].filter(([, n]) => n < 0).map(([c]) => c);
-            try { localStorage.setItem(NEGATIVI_KEY, JSON.stringify({ giorno, codici: primi })); } catch { /* resta per la sessione */ }
-          }
-          negRef.current = { giorno, codici: primi };
-          setNegOggi(negRef.current);
-        }
-      }
-    } catch (e) { if (mia === ultima.current) setErr((e as Error).message); }
-
+  // Gli eventi delle Paillettes, letti da load() con ordini e magazzino o da soli dopo una presenza nuova (leggiEventi):
+  // conta l'ultima lettura di eventi partita, con un contatore suo, cosi' quella da sola non scarta il modello di load().
+  const ultimaEv = useRef(0);
+  const applicaEventi = useCallback(async (eventiP: Promise<Evento[] | Error> | null, mia: number) => {
     const ev = await eventiP;
-    if (!Array.isArray(ev) || mia !== ultima.current) return;
+    if (!Array.isArray(ev) || mia !== ultimaEv.current) return;
     const W = mondoRef.current;
     const st = calcola(ev, oggi());
     const prima = prevStato.current;
@@ -416,7 +523,63 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
     if (W && d.punti > 0) W.puntiFlottanti(d.punti);
     const avviso = [d.punti > 0 ? `+${migliaia(d.punti)} paillettes` : '', ...d.medaglieNuove.map((x) => `Medaglia nuova: ${x.nome}!`)].filter(Boolean).join(' · ');
     if (avviso) toast(toastOra.current ? toastOra.current + ' ' + avviso : avviso, true);
-  }, [toast, paillettes]);
+  }, [toast]);
+  const leggiEventi = useCallback(() => applicaEventi(fetchVillaggioEventi().catch((e: Error) => e), ++ultimaEv.current), [applicaEventi]);
+
+  // carica (o ricarica dopo una scrittura); se qualche riga ha nuovi arrivi fa partire il furgoncino.
+  // Conta solo l'ultima lettura partita: una risposta vecchia non sovrascrive quella nuova.
+  const load = useCallback(async () => {
+    const mia = ++ultima.current, miaEv = ++ultimaEv.current;
+    // gli eventi delle Paillettes partono insieme ma si aspettano dopo: HUD, carrelli e pannelli non attendono le loro
+    // pagine. Se falliscono il villaggio va avanti e i punti restano quelli dell'ultima lettura buona (mai "zero eventi")
+    const eventiP = paillettes ? fetchVillaggioEventi().catch((e: Error) => e) : null;
+    try {
+      // v_reorder (le pile che stanno finendo) arriva con ordini e magazzino: le pile da disegnare dipendono anche da lei
+      const [g, inv, rio] = await Promise.all([fetchOrdiniGruppi(), fetchInventory(), fetchReorder().catch((e: Error) => e)]);
+      if (mia !== ultima.current) return;
+      const m = costruisci(g, inv, oggi());
+      if (Array.isArray(rio)) riordino.current = rio;
+      const sf = riordino.current ? staFinendo(riordino.current, m, oggi()) : null;
+      // le pile finite e senza niente in arrivo il villaggio non le disegna: quelle che stanno finendo si', con la bandierina
+      if (sf) for (const k of sf.pile) if (!m.dati.pile.some((p) => p.key === k)) { const p = m.pile.get(k); if (p) m.dati.pile.push(p); }
+      const arrivi = arriviFra(prevArrived.current, prevMod.current, m, g);
+      prevArrived.current = new Map(g.flatMap((gr) => gr.righe.map((l) => [l.id, Number(l.qty_arrived) || 0] as [string, number])));
+      prevMod.current = m;
+      setMod(m); setErr(null);
+      setFoto(new Map(inv.filter((r) => r.image_url).map((r) => [r.codice, r.image_url as string])));
+      if (sf) setFinendo(sf.codici);
+      const W = mondoRef.current;
+      if (W) {
+        // il molo e' quello del capannone dopo l'aggiornamento (i posti scorrono quando un laboratorio sparisce); quello
+        // letto prima serve solo se il capannone non c'e' piu' (ha chiuso la sua ultima riga)
+        const prima = arrivi.map((x) => W.dockOf(x.lab));
+        W.aggiorna(m.dati);
+        if (sf) W.setAvvisiPile(sf.pile);
+        arrivi.forEach((x, i) => {
+          W.arrivo(W.dockOf(x.lab) ?? prima[i], x.riga, x.n, m.codeToPila.get(x.riga.codice) ?? '');
+          toast(`${x.n} ${x.riga.model} ${x.riga.label.replace(/ \(WIP\)$/, '').toLowerCase()} in magazzino.`);
+        });
+      }
+      if (paillettes) {
+        setNomi(dettagli(g, inv));
+        const giorno = oggi();
+        if (negRef.current.giorno !== giorno) {
+          let primi: string[] | null = null;
+          try {
+            const v = JSON.parse(localStorage.getItem(NEGATIVI_KEY) ?? 'null') as { giorno?: unknown; codici?: unknown } | null;
+            if (v && v.giorno === giorno && Array.isArray(v.codici)) primi = v.codici.map(String);
+          } catch { /* storage non disponibile o valore storto: vale questa lettura */ }
+          if (!primi) {
+            primi = [...m.stockCodice].filter(([, n]) => n < 0).map(([c]) => c);
+            try { localStorage.setItem(NEGATIVI_KEY, JSON.stringify({ giorno, codici: primi })); } catch { /* resta per la sessione */ }
+          }
+          negRef.current = { giorno, codici: primi };
+          setNegOggi(negRef.current);
+        }
+      }
+    } catch (e) { if (mia === ultima.current) setErr(testoErrore(e)); }
+    await applicaEventi(eventiP, miaEv);
+  }, [toast, paillettes, applicaEventi]);
 
   // il mondo 3D vive finche' la pagina e' montata; senza WebGL resta un messaggio, non una pagina bianca
   useEffect(() => {
@@ -430,6 +593,9 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
         onGinni: () => setSay((s) => (s.length ? s : ['__fatto__'])),
         onCarro: () => toast('Con il furgoncino porto le borse dai laboratori al magazzino.'),
         onPartenza: () => setFurgoni((n) => n + 1),
+        onPila: (key) => apri({ t: 'pila', key }),
+        // il fumetto porta alla verifica di quel laboratorio; a Paillettes spente la verifica non c'e', resta il laboratorio
+        onFumetto: (lab) => apri(paillettes ? { t: 'verifica', lab } : { t: 'lab', key: lab }),
       });
     } catch { setNoGl(true); return; }
     // tocco sull'isola con un pannello aperto: lo chiude, tranne i moduli che non si perdono a meta' (ordine al passo 4,
@@ -448,15 +614,24 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
         'Tocca un laboratorio per segnare gli arrivi, col + ordini borse nuove. Si scrive con gli stessi moduli di Ordini.']);
       try { localStorage.setItem(INTRO_KEY, '1'); } catch { /* storage non disponibile: l'intro tornera' la prossima volta */ }
     }
-    const onVis = () => { if (!document.hidden) load(); };
+    // stagione e luce subito, dall'ora di Roma, col meteo in cache (o sereno); poi il meteo vero di Milano, ogni 15 minuti
+    // e al ritorno in primo piano. leggiAmbiente non lancia mai e tiene la lettura 30 minuti: a scheda nascosta non si chiede
+    let cache: string | null = null;
+    try { cache = localStorage.getItem(METEO_KEY); } catch { /* senza storage si parte sereni */ }
+    W.setAmbiente(ambienteDi(new Date(), meteoInCache(cache, Date.now()) ?? 'sereno'));
+    const cielo = () => { if (!document.hidden) leggiAmbiente().then((a) => { if (mondoRef.current === W) W.setAmbiente(a); }); };
+    cielo();
+    const ogni = window.setInterval(cielo, AMBIENTE_OGNI_MS);
+    const onVis = () => { if (!document.hidden) { load(); cielo(); } };
     document.addEventListener('visibilitychange', onVis);
-    return () => { document.removeEventListener('visibilitychange', onVis); W.dispose(); mondoRef.current = null; };
-  }, [load, toast, apri, chiudi]);
+    return () => { window.clearInterval(ogni); document.removeEventListener('visibilitychange', onVis); W.dispose(); mondoRef.current = null; };
+  }, [load, toast, apri, chiudi, paillettes]);
 
   // Presenza del giorno, solo per chi gioca: una volta al giorno su questo telefono (il server e' comunque idempotente),
   // anche quando la PWA rimasta aperta torna in primo piano il giorno dopo. Se non va (flag spento = 409, niente rete) non
   // succede niente e si riprova alla prossima apertura. Parte dopo la prima lettura, cosi' la rilettura che segue ha un
   // "prima" con cui fare la differenza (il +5 si vede); la prima presenza del giorno fa presentare le missioni a Ginni.
+  // Dopo la presenza si rileggono solo gli eventi: ordini e magazzino non sono cambiati (primo avvio piu' svelto).
   const pronto = !!mod;
   // una presenza alla volta: piu' ritorni in primo piano di fila (o l'effetto che riparte) mandano una POST sola
   const presenzaInVolo = useRef(false);
@@ -469,7 +644,7 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
       presenzaInVolo.current = true;
       segnaPresenza(chi).then((r) => {
         try { localStorage.setItem(PRESENZA_KEY, k); } catch { /* come sopra */ }
-        if (r.nuova) { presenta.current = 1; load(); }
+        if (r.nuova) { presenta.current = 1; leggiEventi(); }
       }).catch(() => { /* vedi sopra: si riprova alla prossima apertura */ })
         .finally(() => { presenzaInVolo.current = false; });
     };
@@ -477,10 +652,10 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
     const onVis = () => { if (!document.hidden) segna(); };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
-  }, [gioca, pronto, chi, load]);
+  }, [gioca, pronto, chi, leggiEventi]);
 
   // pannello aperto -> camera e contesto del mondo; cambiando pannello la riga d'arrivo si richiude e Ginni tace
-  const sheetId = sheet ? sheet.t + ':' + (sheet.t === 'lab' ? sheet.key : sheet.t === 'verifica' ? sheet.lab : sheet.t === 'wh' ? sheet.model ?? '' : '') : '';
+  const sheetId = sheet ? sheet.t + ':' + (sheet.t === 'lab' || sheet.t === 'pila' ? sheet.key : sheet.t === 'verifica' ? sheet.lab : sheet.t === 'wh' ? sheet.model ?? '' : '') : '';
   useEffect(() => {
     setOpenLine(null);
     const s = sheetRef.current;
@@ -491,8 +666,37 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
     if (s.t === 'lab') W.focusLab(s.key);
     else if (s.t === 'verifica') W.focusLab(s.lab);
     else if (s.t === 'wh') W.focusMagazzino(s.model);
+    // camera sulla pila; il contesto 'pila' lascia toccare le altre pile (si passa da una scheda all'altra)
+    else if (s.t === 'pila') { W.focusPila(s.key); W.setCtx({ type: 'pila' }); }
     else W.setCtx({ type: s.t });
   }, [sheetId]);
+  // iPhone: la tastiera copre il fondo della pagina (che e' fissa) senza rimpicciolirla. Il pannello si appoggia sopra la
+  // tastiera, non va oltre la parte visibile e porta in vista il campo toccato con il suo bottone ("Segna arrivati")
+  useEffect(() => {
+    const vv = window.visualViewport, el = rootRef.current;
+    if (!vv || !el) return;
+    const f = () => {
+      // con la pagina ingrandita (pinch) la parte visibile e' piu' piccola, ma non e' la tastiera
+      const kb = vv.scale > 1.01 ? 0 : Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+      el.style.setProperty('--v-kb', kb + 'px');
+      el.style.setProperty('--v-vvh', Math.round(vv.height) + 'px');
+      el.classList.toggle('kb', kb > 80);
+      if (kb <= 80) return;
+      requestAnimationFrame(() => {
+        const a = document.activeElement as HTMLElement | null, b = sbodyRef.current;
+        if (!a || !b || !b.contains(a)) return;
+        // il blocco del campo (riga d'arrivo, riga della verifica, riga del carrello), se ci sta; se no il campo e basta
+        const blocco = a.closest<HTMLElement>('.ds-recv, .v-vrow, .v-tutte, .cartrow, .v-fl');
+        const vista = b.getBoundingClientRect();
+        const box = blocco && blocco.getBoundingClientRect().height < vista.height - 16 ? blocco : a;
+        const giu = box.getBoundingClientRect().bottom - vista.bottom + 8;
+        if (giu > 0) b.scrollTop += giu;
+      });
+    };
+    f();
+    vv.addEventListener('resize', f); vv.addEventListener('scroll', f);
+    return () => { vv.removeEventListener('resize', f); vv.removeEventListener('scroll', f); };
+  }, []);
   useEffect(() => {
     const s = sheetRef.current;
     if (!s) return;
@@ -574,15 +778,44 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
     if (finita) out.push(`${finita.model} ${finita.name.toLowerCase()} è finita in magazzino, ma ne arrivano ${finita.incoming}: la vedi trasparente.`);
     const alta = [...mod.dati.pile].sort((a, b) => b.stock - a.stock)[0];
     if (alta) out.push(`La pila più alta è ${alta.model} ${alta.name.toLowerCase()}: ${alta.stock} pezzi.`);
+    if (finendo.size) out.push(`${finendo.size === 1 ? 'Una borsa sta finendo' : `${finendo.size} borse stanno finendo`}: le riconosci dalla bandierina arancio in magazzino.`);
     if (gioca && stato?.prossimo) out.push(`Ti mancano ${migliaia(stato.prossimo.da - stato.totale)} paillettes per diventare ${stato.prossimo.nome}.`);
     return out;
-  }, [mod, gioca, stato]);
+  }, [mod, gioca, stato, finendo]);
   const fattoI = useRef(0);
   useEffect(() => {
     if (say[0] === '__fatto__') setSay(fatti.length ? [fatti[fattoI.current++ % fatti.length]] : []);
   }, [say, fatti]);
 
   const lab = sheet?.t === 'lab' ? mod?.labs.find((l) => l.key === sheet.key) : undefined;
+  // una riga del laboratorio salvata (arrivo, modifica, cancellazione: lo dice la rilettura, che la mostra cambiata) richiude
+  // la riga del Villaggio e il modulo non e' piu' "toccato". Un salvataggio fallito non cambia i dati: il modulo compilato
+  // resta aperto e protetto
+  const firmaLab = lab ? [...lab.raw, ...lab.extra].map((l) => [l.id, l.qty_arrived, l.qty_ordered, l.costo_unitario, l.note, l.data_consegna].join(':')).join('|') : '';
+  const firmaPrima = useRef(firmaLab);
+  useEffect(() => {
+    if (firmaPrima.current === firmaLab) return;
+    firmaPrima.current = firmaLab;
+    setOpenLine(null);
+    if (sheetRef.current?.t === 'lab') formSporco.current = false;
+  }, [firmaLab]);
+  // i fumetti sopra i capannoni, solo dei laboratori con un fornitore (sono persone vere, niente facce tristi): cuore =
+  // verificato negli ultimi 3 giorni, anche se le date restano passate (i ritardi non dipendono da Ginni); se no punto di
+  // domanda per le righe senza data, orologio per quelle oltre la data; niente se e' tutto a posto
+  const fumetti = useMemo(() => {
+    const out: Record<string, Fumetto | null> = {};
+    if (!mod) return out;
+    const g = oggi();
+    const verificati = new Set((eventi ?? []).filter((e) => e.tipo === 'verifica' && (giorniAllaConsegna(e.giorno, g) ?? -99) >= -2).map((e) => e.ref));
+    for (const L of mod.labs) {
+      if (!L.forn) continue;
+      const tutte = [...L.raw, ...L.extra];
+      out[L.key] = verificati.has(L.forn) ? 'cuore' : tutte.some((l) => !l.data_consegna) ? 'domanda'
+        : tutte.some((l) => (giorniAllaConsegna(l.data_consegna, g) ?? 0) < 0) ? 'orologio' : null;
+    }
+    return out;
+  }, [mod, eventi]);
+  useEffect(() => { mondoRef.current?.setFumetti(fumetti); }, [fumetti]);
   const labIndex = (key: string) => (mod ? Math.max(0, mod.labs.findIndex((l) => l.key === key)) : 0);
   const tot = mod?.tot ?? { stock: 0, prep: 0, open: 0, fuori: 0 };
   const stockDi = (codice: string | undefined) => (codice && mod ? mod.stockCodice.get(codice) ?? 0 : 0);
@@ -610,9 +843,10 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
             <span className={'v-chip stock' + (stockDi(r.codice) < 0 ? ' neg' : '')}>in magazzino {stockDi(r.codice)}</span>
           </div>
         </div>
-        <button className={'v-btn sm' + (aperta ? ' ghost' : '')} type="button" aria-expanded={aperta} onClick={() => setOpenLine(aperta ? null : r.id)}>{aperta ? 'Chiudi' : 'Arrivate'}</button>
+        <button className={'v-btn sm' + (aperta ? ' ghost' : '')} type="button" aria-expanded={aperta} onClick={() => { if (openLine && !lascia()) return; setOpenLine(aperta ? null : r.id); }}>{aperta ? 'Chiudi' : 'Arrivate'}</button>
         {aperta && (
-          <div className="v-arrivo">
+          // "solo": foto, nome e avanzamento li mostra gia' la riga del Villaggio, quindi la ArrivoRow tiene solo il modulo
+          <div className="v-arrivo solo" onInput={sporca}>
             <ArrivoRow l={raw} pin={pin} chi={chi} reload={load} defaultOpen altri={(openByCodice.get(raw.codice) ?? []).filter((x) => x.id !== raw.id)} />
           </div>
         )}
@@ -630,7 +864,8 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
         .sort((x, y) => (y.r.late ? 1000 : 0) - (x.r.late ? 1000 : 0) + (resto(y.r) - resto(x.r)) * 0.001)
         .forEach((x) => { const a = gruppi.get(x.r.model) ?? []; a.push(x); gruppi.set(x.r.model, a); });
       return {
-        cls: 'labsheet',
+        // con una riga d'arrivo aperta il pannello si alza: il campo e "Segna arrivati" non finiscono sotto la piega
+        cls: openLine ? 'labsheet tall' : 'labsheet',
         head: <><span className="v-hic" style={css(labColor(labIndex(lab.key)))}><Icon name="store" size={22} /></span>
           <div className="v-ht"><h2 id="v-sheet-title">{lab.nome} sta preparando</h2><p>{lab.tipo ? `Laboratorio ${lab.tipo} · ` : ''}{righe(lab.raw.length + lab.extra.length)}, {lab.pz} pz da arrivare</p></div></>,
         body: <>
@@ -643,7 +878,7 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
           {lab.extra.length > 0 && (
             <div>
               <div className="v-gh"><b>Altri prodotti</b><small>modelli che il villaggio non sa ancora disegnare</small></div>
-              <div className="v-list v-arrivo">{lab.extra.map((l) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={load} altri={(openByCodice.get(l.codice) ?? []).filter((x) => x.id !== l.id)} />)}</div>
+              <div className="v-list v-arrivo" onInput={sporca}>{lab.extra.map((l) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={load} altri={(openByCodice.get(l.codice) ?? []).filter((x) => x.id !== l.id)} />)}</div>
             </div>
           )}
           <p className="v-note">Nel capannone c'è un carrello per variante: la pila è quanto deve ancora arrivare (una lastra = 2 pezzi). Gli arrivi si registrano con la stessa riga di Ordini.</p>
@@ -673,9 +908,10 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
                 const st = Math.max(0, p.stock);
                 return (
                   <button key={p.key} type="button" className={'v-vt' + (p.stock < 0 || p.neg ? ' neg' : st === 0 ? ' out' : st <= 2 ? ' low' : '')}
-                    onClick={() => { chiudi(); window.setTimeout(() => mondoRef.current?.focusPila(p.key, false), 30); }}>
+                    onClick={() => apri({ t: 'pila', key: p.key })}>
                     <Thumb model={p.model} look={p.look} />
                     <b>{p.stock < 0 ? p.stock : st}</b><small>{p.name}</small>{p.incoming > 0 && <small className="inc">+{p.incoming} in arrivo</small>}
+                    {mod.pile.get(p.key)?.codes.some((c) => finendo.has(c.codice)) && <small className="fin">sta finendo</small>}
                   </button>
                 );
               })}</div>
@@ -683,6 +919,23 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
           );
         })}
         {tot.fuori > 0 && <p className="v-note">Altri {tot.fuori} pezzi sono di modelli che il villaggio non sa ancora disegnare: li trovi nella pagina Magazzino.</p>}</>,
+      };
+    }
+    if (sheet.t === 'pila') {
+      const Pi = mod.pile.get(sheet.key);
+      if (!Pi) return { cls: '', head: <div className="v-ht"><h2 id="v-sheet-title">Magazzino</h2></div>, body: <p className="v-empty">Questa pila non c'è più in magazzino.</p> };
+      const st = Math.max(0, Pi.stock);
+      return {
+        cls: '',
+        head: <><span className="v-hic" style={css(0xe57f9d)}><Icon name="bag" size={22} /></span>
+          <div className="v-ht"><h2 id="v-sheet-title">{Pi.model} · {Pi.name}</h2>
+            <p>{Pi.stock < 0 ? `giacenza ${Pi.stock}, da sistemare` : st === 1 ? '1 pezzo in magazzino' : `${st} pezzi in magazzino`}{Pi.incoming > 0 ? ` · ${Pi.incoming} in arrivo` : ''}</p></div></>,
+        body: <SchedaPila key={Pi.key} pila={Pi} finendo={finendo}
+          foto={Pi.codes.map((c) => foto.get(c.codice)).find(Boolean) ?? null}
+          aperte={Pi.codes.flatMap((c) => openByCodice.get(c.codice) ?? [])}
+          onMagazzino={() => apri({ t: 'wh', model: Pi.model })}
+          onConta={() => apri({ t: 'giro', codici: Pi.codes.map((c) => c.codice) })}
+          onOrdina={(codice, forn) => apri({ t: 'add', step: 4, model: Pi.model, pila: Pi.key, codice, lab: mod.labs.find((x) => x.forn && x.forn === forn)?.key })} />,
       };
     }
     if (sheet.t === 'labs') {
@@ -718,6 +971,10 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
           <div className="v-sig"><span className="mk" style={{ background: '#9fd3ec' }} /><span><b>Borsa trasparente su anello azzurro</b>Finita in magazzino, ma c'è un ordine aperto.</span></div>
           <div className="v-sig"><span className="mk" style={{ background: '#e0574b' }} /><span><b>Anello rosso</b>Giacenza negativa: venduta senza carico, da sistemare.</span></div>
           <div className="v-sig"><span className="mk" style={{ background: '#e0574b', borderRadius: '4px 50% 50% 4px' }} /><span><b>Bandierina rossa sul carrello</b>Quella variante ha passato la data di consegna.</span></div>
+          <div className="v-sig"><span className="mk" style={{ background: '#f2852f', borderRadius: '4px 50% 50% 4px' }} /><span><b>Bandierina arancio sulla pila</b>Sta finendo: vende, ha meno di {STA_FINENDO.giorni} giorni di magazzino e nessun ordine in corso. Toccala per la sua scheda.</span></div>
+          <div className="v-sig"><span className="mk" style={{ background: '#f2b84b' }}>?</span><span><b>Punto di domanda sul capannone</b>Ci sono righe senza data di consegna: chiedila al laboratorio.</span></div>
+          <div className="v-sig"><span className="mk" style={{ background: '#e98a4c' }}>◷</span><span><b>Orologio sul capannone</b>Ci sono righe oltre la data di consegna.</span></div>
+          <div className="v-sig"><span className="mk" style={{ background: '#e57f9d' }}>♥</span><span><b>Cuore sul capannone</b>Verificato con il laboratorio negli ultimi 3 giorni. Tocca un fumetto per la verifica.</span></div>
           <div className="v-sig"><span className="mk" style={{ background: '#eee' }} /><span><b>Pile e carrelli</b>Ogni lastra vale 2 pezzi, ovunque. In magazzino la pila è quello che c'è, nei laboratori quello che deve ancora arrivare.</span></div>
         </>,
       };
@@ -764,8 +1021,8 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
             <li><b>+{VALORI.presenza}</b> presenza, una al giorno; <b>+{VALORI.settimanaPiena}</b> con la settimana piena, da lunedì a venerdì</li>
             <li><b>+{VALORI.ordine}</b> ordine, più <b>+{VALORI.rigaOrdine}</b> a riga</li>
             <li><b>+{VALORI.arrivo}</b> arrivo registrato, a riga</li>
-            <li><b>+{VALORI.verifica}</b> verifica con un laboratorio, una a settimana</li>
-            <li><b>+{VALORI.dataAggiunta}</b> data di consegna aggiunta a una riga</li>
+            <li><b>+{VALORI.verifica}</b> verifica con un laboratorio, una a settimana, se sistema almeno una riga: una data messa o spostata, o una riga che non arriva più</li>
+            <li><b>+{VALORI.dataAggiunta}</b> data di consegna aggiunta a una riga, anche già nell'ordine nuovo</li>
             <li><b>+{VALORI.conta}</b> conta di un codice, una al giorno; <b>+{VALORI.contaCompleta}</b> per la conta completa, registrata in fondo al giro di conta completo del Magazzino, una al mese</li>
           </ul>
         </>,
@@ -799,9 +1056,13 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
       return {
         cls: 'tall',
         head: <><span className="v-hic" style={css(labColor(labIndex(L.key)))}><Icon name="check" size={22} /></span>
-          <div className="v-ht"><h2 id="v-sheet-title">Verifica con {L.nome}</h2><p>Le righe aperte: confermale con {L.nome} e metti o correggi la data di consegna</p></div></>,
-        body: <Verifica key={L.key} lab={L} mod={mod} chi={chi} sporca={sporca} onSalvata={(n) => {
-          toast(`Verifica con ${L.nome} salvata${n ? `: ${n === 1 ? '1 data aggiornata' : n + ' date aggiornate'}` : ''}.`);
+          <div className="v-ht"><h2 id="v-sheet-title">Verifica con {L.nome}</h2><p>Le righe aperte: confermale con {L.nome}, metti o correggi la data di consegna, chiudi quelle che non arrivano più</p></div></>,
+        body: <Verifica key={L.key} lab={L} mod={mod} chi={chi} gioca={gioca} sporca={sporca} onSalvata={(n, chiuse, daChiudere) => {
+          const fatto = [n ? (n === 1 ? '1 data aggiornata' : n + ' date aggiornate') : '', chiuse ? (chiuse === 1 ? '1 riga chiusa' : chiuse + ' righe chiuse') : ''].filter(Boolean).join(', ');
+          // la write-api di prima (v29) non conosce chiudi e non risponde righe_chiuse: le righe restano aperte, e lo si dice
+          const nota = daChiudere && chiuse == null ? ' Le righe da chiudere sono rimaste aperte: la write-api in linea non le chiude ancora.'
+            : gioca && !fatto ? ' Niente da sistemare, quindi niente paillettes.' : '';
+          toast(`Verifica con ${L.nome} salvata${fatto ? ': ' + fatto : ''}.${nota}`);
           load();
           // si torna al laboratorio solo se si e' ancora su QUESTA verifica
           if (sheetRef.current !== s) return;
@@ -876,7 +1137,7 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
   const P = pannello();
 
   return (
-    <div className="vil" data-furgoni={furgoni}>
+    <div ref={rootRef} className="vil" data-furgoni={furgoni}>
       <div ref={sceneRef} className="v-scene" />
       <div ref={labelsRef} className="v-labels" />
       <header ref={hudRef} className="v-hud">
@@ -911,7 +1172,7 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
         <div className="v-err">Questo dispositivo non riesce a disegnare il villaggio (manca il WebGL). Ordini e Magazzino funzionano come sempre.
           <button type="button" onClick={onBack}>Torna alla Home</button></div>
       )}
-      {err && !noGl && <div className="v-err">Non riesco a leggere i dati: {err}. <button type="button" onClick={load}>Riprova</button></div>}
+      {err && !noGl && <div className="v-err">{err === SENZA_RETE ? err : `Non riesco a leggere i dati: ${err}.`} <button type="button" onClick={load}>Riprova</button></div>}
       {!mod && !err && !noGl && <div className="v-loading">Carico il villaggio…</div>}
       {!noGl && <nav className="v-bar" aria-label="Azioni del villaggio">
         <button className="v-rb" type="button" onClick={() => apri({ t: 'wh' })}><span className="c"><Icon name="box" size={28} /></span><span className="t">Magazzino</span></button>
@@ -919,7 +1180,7 @@ export default function Villaggio({ pin, chi, setChi, onBack, paillettes = false
         <button className="v-rb" type="button" onClick={() => apri({ t: 'labs' })}><span className="c"><Icon name="store" size={28} /></span><span className="t">Laboratori</span></button>
       </nav>}
       {toastMsg && <div className={'v-toast' + (toastMsg.pai ? ' v-tpai' : '')} role="status"><b>Ginni</b>{toastMsg.m}</div>}
-      {say.length > 0 && say[0] !== '__fatto__' && <Dialogo key={say[0]} testo={say[0]} onAvanti={() => setSay((x) => x.slice(1))} />}
+      {say.length > 0 && say[0] !== '__fatto__' && <Dialogo key={say[0]} testo={say[0]} onAvanti={() => setSay((x) => x.slice(1))} onSalta={say.length > 1 ? () => setSay([]) : undefined} />}
       <section className={'v-sheet' + (P ? ' open ' + P.cls : '')} role="dialog" aria-modal="false" aria-labelledby="v-sheet-title" aria-hidden={!P}>
         {P && <>
           <div className="v-grab" />

@@ -7,6 +7,9 @@
 // non annullati, conte nel giorno in cui sono state fatte). Su write-api: il blocco delle tre azioni e' ritagliato DAL
 // SORGENTE che va in produzione ed eseguito contro un database finto in memoria (come tests/arrivo_adesso.mjs), piu' le
 // cinture sul sorgente. Nessuna rete.
+// Fase 3 (18-10, migr 0166, write-api v30): pin sulla 0166 (v_tempi_laboratori; v_villaggio_eventi uguale alla 0164 salvo
+// la verifica che conta le righe sistemate e la data aggiunta dalle righe nate con la data), `chiudi` della verifica e la
+// nuova `order_update`, ritagliata anche lei dal sorgente e fatta girare sullo stesso DB finto.
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -141,13 +144,13 @@ const mondo = ({ acceso = 'true', giocatrice = 'Ginevra', rompi = null, today = 
     flags: [{ key: 'villaggio_paillettes_enabled', value: acceso }, { key: 'villaggio_paillettes_chi', value: giocatrice }],
     presenze: [], conte: [], checks: [], log: [], letture: [], update: [], chiamate: {},
     ordini: [
-      { id: U1, codice: 'LEA_BAG_ROSSO', fornitore: FR, data_consegna: null, qty_ordered: 10, qty_arrived: 0, wip: false },
-      { id: U2, codice: 'AGATA_NERO', fornitore: FR, data_consegna: '2026-10-20', qty_ordered: 6, qty_arrived: 2, wip: false },
-      { id: U3, codice: 'RITA_VERDE', fornitore: 'Altro lab', data_consegna: null, qty_ordered: 4, qty_arrived: 0, wip: false },
+      { id: U1, codice: 'LEA_BAG_ROSSO', fornitore: FR, data_consegna: null, qty_ordered: 10, qty_arrived: 0, wip: false, costo_unitario: null, note: null },
+      { id: U2, codice: 'AGATA_NERO', fornitore: FR, data_consegna: '2026-10-20', qty_ordered: 6, qty_arrived: 2, wip: false, costo_unitario: 40, note: null },
+      { id: U3, codice: 'RITA_VERDE', fornitore: 'Altro lab', data_consegna: null, qty_ordered: 4, qty_arrived: 0, wip: false, costo_unitario: '38.50', note: 'interno nero' },
       // chiusa: tutto arrivato, non si verifica piu'
-      { id: U4, codice: 'LEA_BAG_NERO', fornitore: FR, data_consegna: null, qty_ordered: 5, qty_arrived: 5, wip: false },
+      { id: U4, codice: 'LEA_BAG_NERO', fornitore: FR, data_consegna: null, qty_ordered: 5, qty_arrived: 5, wip: false, costo_unitario: 42, note: null },
       // WIP: quantita' da definire (qty 0), e' aperta
-      { id: U5, codice: 'MIA_BAG_ORO', fornitore: FR, data_consegna: null, qty_ordered: 0, qty_arrived: 0, wip: true },
+      { id: U5, codice: 'MIA_BAG_ORO', fornitore: FR, data_consegna: null, qty_ordered: 0, qty_arrived: 0, wip: true, costo_unitario: null, note: null },
     ],
   };
   const exec = (q) => {
@@ -167,7 +170,12 @@ const mondo = ({ acceso = 'true', giocatrice = 'Ginevra', rompi = null, today = 
       if (st.conte.some((p) => p.chi === c.chi && p.mese === c.mese)) return { data: [], error: null };
       st.conte.push({ ...c }); return { data: [{ mese: c.mese }], error: null };
     }
-    if (q.tbl === 'supplier_orders' && q.op === 'select') { st.letture.push({ cols: q.cols, filtri: q.filtri }); return { data: st.ordini.filter(passa).map((r) => ({ ...r })), error: null }; }
+    if (q.tbl === 'supplier_orders' && q.op === 'select') {
+      st.letture.push({ cols: q.cols, filtri: q.filtri });
+      const trovate = st.ordini.filter(passa).map((r) => ({ ...r }));
+      if (q.uno && trovate.length > 1) throw new Error('maybeSingle con piu\' di una riga');
+      return { data: q.uno ? (trovate[0] ?? null) : trovate, error: null };
+    }
     if (q.tbl === 'supplier_orders' && q.op === 'update') {
       st.update.push(Object.keys(q.body));
       st.ordini.filter(passa).forEach((r) => Object.assign(r, q.body)); return { data: null, error: null };
@@ -185,6 +193,7 @@ const mondo = ({ acceso = 'true', giocatrice = 'Ginevra', rompi = null, today = 
       eq(c, v) { q.filtri.push([c, v, 'eq']); return k; },
       in(c, v) { q.filtri.push([c, v, 'in']); return k; },
       single() { return k; },
+      maybeSingle() { q.uno = true; return k; },
       then(res, rej) { return Promise.resolve().then(() => exec(q)).then(res, rej); },
     };
     return k;
@@ -293,7 +302,7 @@ console.log('\n   -- verifica fornitore --');
     { id: U5, confermata: true, data_consegna: null },
     { id: 'non-un-uuid', confermata: true, data_consegna: null },
   ], { nota: '  tutto in lavorazione  ' })));
-  eq('67 verifica: ok, check_id, una data cambiata', [r.status, r.body], [200, { ok: true, check_id: 'chk1', date_cambiate: 1 }]);
+  eq('67 verifica: ok, check_id, una data cambiata, nessuna riga chiusa', [r.status, r.body], [200, { ok: true, check_id: 'chk1', date_cambiate: 1, righe_chiuse: 0 }]);
   eq('68 UNA lettura: id (solo uuid) e fornitore, con quantita\' e wip', st.letture, [{ cols: 'id, codice, data_consegna, qty_ordered, qty_arrived, wip', filtri: [['id', [U1, U2, U3, U4, U5], 'in'], ['fornitore', FR, 'eq']] }]);
   eq('69 update solo sulla riga cambiata e solo della data; la riga chiusa non si tocca',
     [st.update, st.ordini.map((o) => o.data_consegna)], [[['data_consegna']], ['2026-10-30', '2026-10-20', null, null, null]]);
@@ -379,6 +388,254 @@ for (const [nome, payload] of [
   const { ctx } = mondo({ rompi: 'vil_verifiche.insert' });
   const r = await run(ctx('fornitore_verifica', verifica([{ id: U1, confermata: true, data_consegna: '2026-10-30' }])));
   eq('83 verifica non registrata: 400 con date_cambiate', [r.status, r.body.ok ?? false, r.body.date_cambiate], [400, false, 1]);
+}
+
+console.log('\n== migrazione 0166: due viste in sola lettura, una transazione ==');
+const M6 = read('supabase/migrations/0166_villaggio_fase3.sql');
+const m6 = noSql(M6);
+t('84 begin; ... commit; in una sola transazione', (M6.match(/^begin;$/gm) ?? []).length === 1 && /^commit;$/m.test(M6) && M6.indexOf('begin;') < M6.indexOf('commit;'));
+t('85 nessuna tabella, nessuna scrittura di dati, nessun flag: solo viste, owner, revoke e grant',
+  !/create table/i.test(m6) && !/\b(insert into|delete from|alter table|drop )/i.test(m6) && !/\bupdate\s+\w+\s+set\b/i.test(m6)
+  && !/app_flags \(/.test(m6) && !/v_villaggio_settings/.test(m6));
+t('86 v_tempi_laboratori: fornitore, giorni_mediani (mediana arrotondata, intera), righe; solo laboratori con almeno 3 righe',
+  /create or replace view v_tempi_laboratori as\n/.test(m6)
+  && /select fornitore,\n\s+round\(percentile_cont\(0\.5\) within group \(order by giorni\)::numeric\)::int as giorni_mediani,\n\s+count\(\*\)::int as righe\nfrom righe\ngroup by fornitore\nhaving count\(\*\) >= 3;/.test(m6));
+t('87 primo arrivo = primo AUMENTO in change_log da arrival (qty) o arrival_set (delta), cast solo sui numeri',
+  /select c\.row_id, min\(c\.ts\) as ts\n\s+from change_log c\n\s+where c\.tbl = 'supplier_orders' and c\.op in \('arrival', 'arrival_set'\)\n\s+and coalesce\(case when jsonb_typeof\(c\.after -> 'delta'\) = 'number' then \(c\.after -> 'delta'\)::numeric end,\n\s+case when jsonb_typeof\(c\.after -> 'qty'\) = 'number' then \(c\.after -> 'qty'\)::numeric end, 0\) > 0\n\s+group by c\.row_id/.test(m6));
+t("88 solo righe scritte PRIMA dell'arrivo: giorno del primo arrivo dopo il giorno di creazione (date di Roma)",
+  /and \(p\.ts at time zone 'Europe\/Rome'\)::date > \(so\.created_at at time zone 'Europe\/Rome'\)::date/.test(m6));
+t('89 giorni = primo arrivo meno data_ordine, ultimi 365 giorni (oggi di Roma), mai un primo arrivo prima di data_ordine',
+  /\(p\.ts at time zone 'Europe\/Rome'\)::date - so\.data_ordine as giorni/.test(m6) && /and so\.data_ordine >= \(now\(\) at time zone 'Europe\/Rome'\)::date - 365/.test(m6)
+  && /and \(p\.ts at time zone 'Europe\/Rome'\)::date >= so\.data_ordine\n\)/.test(m6));
+{
+  const vista = (s) => { const i = s.indexOf('create or replace view v_villaggio_eventi as'), j = s.indexOf('where cfg.acceso and ev.chi = cfg.chi and ev.ts >= cfg.dal;', i); return i < 0 || j < 0 ? '' : s.slice(i, j); };
+  const norm = (s) => s.replace(/\s+/g, ' ').trim();
+  const V4 = norm(vista(m)), V6 = norm(vista(m6));
+  const VER4 = norm(`select 'verifica', s.giorno, s.ts, s.fornitore, (select count(*)::int from jsonb_array_elements(s.righe) e where e -> 'confermata' = 'true'::jsonb), s.chi from vil_verifiche s`);
+  const VER6 = norm(`select 'verifica', s.giorno, s.ts, s.fornitore, (select count(*)::int from jsonb_array_elements(s.righe) e where e -> 'chiusa' = 'true'::jsonb or ((e ->> 'data_dopo') is not null and (e ->> 'data_dopo') is distinct from (e ->> 'data_prima'))), s.chi from vil_verifiche s`);
+  const NATA = norm(`union all select 'data_aggiunta', (so.created_at at time zone 'Europe/Rome')::date, so.created_at, so.id::text, 1, so.chi from supplier_orders so where so.data_consegna is not null and not exists (select 1 from change_log c where c.tbl = 'supplier_orders' and c.row_id = so.id::text and c.op in ('order_date', 'order_update') and c.before -> 'data_consegna' = 'null'::jsonb)`);
+  const CC = " union all select 'conta_completa'";
+  // split/join e non replace: nessun $ del testo SQL diventa un pattern di sostituzione
+  const atteso = V4.split(VER4).join(VER6).split(CC).join(' ' + NATA + CC);
+  t("90 v_villaggio_eventi della 0166 = quella della 0164 con SOLO il ramo verifica cambiato e il ramo data_aggiunta da supplier_orders in piu'",
+    V4.length > 0 && V4.split(VER4).length === 2 && V4.split(CC).length === 2 && V6 === atteso, 'differisce dalla 0164 oltre i due rami');
+  t('91 verifica: n = righe chiuse o con la data dopo diversa da quella di prima; confermare soltanto non conta', V6.includes(VER6) && !/'confermata'/.test(V6));
+  t('92 data_aggiunta dalla nascita: righe con data, ma non una data arrivata dopo (order_date o order_update con before.data_consegna = null)', V6.includes(NATA));
+  t('93 filtri della 0164 intatti (flag acceso, giocatrice, dal)', /\)\nselect ev\.tipo, ev\.giorno, ev\.ts, ev\.ref, ev\.n\nfrom ev\ncross join cfg\nwhere cfg\.acceso and ev\.chi = cfg\.chi and ev\.ts >= cfg\.dal;/.test(m6));
+}
+t('94 owner postgres per entrambe, senza security_invoker', /alter view v_villaggio_eventi owner to postgres;/.test(m6) && /alter view v_tempi_laboratori owner to postgres;/.test(m6) && !/security_invoker/.test(m6));
+t('95 revoke da public, anon, authenticated e poi SOLO select su entrambe', /revoke all on v_villaggio_eventi, v_tempi_laboratori from public, anon, authenticated;\ngrant select on v_villaggio_eventi, v_tempi_laboratori to anon, authenticated;/.test(m6) && !/grant (insert|update|delete|all)/i.test(m6));
+t('96 rollback dichiarato in fondo', /-- Rollback: drop view v_tempi_laboratori;/.test(M6));
+
+console.log('\n== contratto fra vista, write-api e web ==');
+t("97 la vista legge chiusa: true, la chiave che scrive la write-api", /chiusa: true \}\);/.test(BLK) && /e -> 'chiusa' = 'true'::jsonb/.test(m6));
+t("98 le op dell'esclusione esistono nella write-api col before di data_consegna (order_date, order_update)",
+  /'order_date', \{ codice: r\.codice, fornitore, data_consegna: dopo \}, \{ data_consegna: prima \}\)/.test(BLK) && /logp\('supplier_orders', id, 'order_update', \{[^}]*\.\.\.dopo \}, prima\);/.test(SRC));
+{
+  const API = read('web/src/lib/api.ts');
+  t('99 il web legge v_tempi_laboratori con le colonne della vista', /from\('v_tempi_laboratori'\)\.select\('fornitore,giorni_mediani,righe'\)/.test(API));
+  t('100 il web manda order_update con id (non order_id)', /writeApi\('order_update', \{ id\b/.test(API));
+}
+
+console.log('\n== write-api v30: cinture sul sorgente ==');
+t('101 chiudi vale solo se === true', /chieste\.set\(id, \{ confermata: r\.confermata === true, data, chiudi: r\.chiudi === true \}\);/.test(BLK));
+t('102 chiusura: ordinato = arrivato (num) e wip spento, sulla sola riga, senza compare-and-set',
+  /const arrivati = num\(r\.qty_arrived\) \?\? 0;\n\s+const \{ error: xe \} = await sb\.from\('supplier_orders'\)\.update\(\{ qty_ordered: arrivati, wip: false \}\)\.eq\('id', r\.id\);/.test(BLK));
+t('103 chiusura: change_log order_close con before (ordinato e wip di prima) e after',
+  /await logp\('supplier_orders', String\(r\.id\), 'order_close', \{ codice: r\.codice, fornitore, qty_ordered: arrivati, qty_arrived: arrivati, wip: false \}, \{ qty_ordered: num\(r\.qty_ordered\), wip: r\.wip === true \}\);/.test(BLK));
+t('104 una riga chiusa tiene la sua data (data_dopo = data_prima) e salta il ramo delle date',
+  /righe\.push\(\{ id: r\.id, codice: r\.codice, confermata: ch\.confermata, data_prima: prima, data_dopo: prima, chiusa: true \}\);\n\s+continue;/.test(BLK)
+  && BLK.indexOf("'order_close'") < BLK.indexOf('const dopo = ch.data ?? prima;'));
+t('105 si chiude solo dentro il giro delle righe APERTE lette per quel fornitore',
+  BLK.indexOf(".eq('fornitore', fornitore)") > 0 && BLK.indexOf(".eq('fornitore', fornitore)") < BLK.indexOf('for (const r of aperte)') && BLK.indexOf('for (const r of aperte)') < BLK.indexOf('if (ch.chiudi)'));
+t("106 risposta con righe_chiuse, anche sull'errore della verifica", /return json\(\{ ok: true, check_id: chk\.id, date_cambiate: cambiate, righe_chiuse: chiuse \}\);/.test(BLK) && /date_cambiate: cambiate, righe_chiuse: chiuse \}, 400\)/.test(BLK));
+const UB = '  // --- ORDER_UPDATE (v30', UE = '  // --- NEW (brief 2026-07-14): elimina una riga di anagrafica prodotto';
+const ua = SRC.indexOf(UB), ub = SRC.indexOf(UE);
+if (ua < 0 || ub < 0 || ub < ua) { console.error('blocco order_update non trovato in write-api/index.ts'); process.exit(1); }
+const UBLK = SRC.slice(ua, ub), UF = flat(UBLK);
+t('107 order_update sta fuori dal blocco Paillettes e non legge flag', ua < a && /if \(action === 'order_update'\) \{/.test(UBLK) && !/app_flags/.test(UBLK));
+t("108 una sola lettura, con retryOnce ed error destrutturato: 503 se fallisce, 404 se la riga non c'e'",
+  /const \{ data: riga, error: re \} = await retryOnce\(\(\) => sb\.from\('supplier_orders'\)\.select\('id, codice, fornitore, qty_ordered, qty_arrived, costo_unitario, note, data_consegna, wip'\)\.eq\('id', id\)\.maybeSingle\(\)\);/.test(UF)
+  && /if \(re\) return json\(\{ error: `[^`]*` \}, 503\);\n\s+if \(!riga\) return json\(\{ error: '[^']+' \}, 404\);/.test(UBLK));
+t('109 righe con arrivi o WIP = 409 prima della scrittura', /if \(\(num\(riga\.qty_arrived\) \?\? 0\) > 0\) return json\(\{ error: `[^`]*`, has_arrivals: true \}, 409\);/.test(UBLK)
+  && /if \(riga\.wip === true\) return json\(\{ error: "[^"]*", wip: true \}, 409\);/.test(UBLK)
+  && UBLK.indexOf('has_arrivals: true') < UBLK.indexOf('.update(') && UBLK.indexOf('wip: true }, 409') < UBLK.indexOf('.update('));
+t("110 si cambiano solo quantita', costo, nota e consegna: ogni altro campo (codice, fornitore...) = 422",
+  /const CAMPI = \['qty_ordered', 'costo_unitario', 'note', 'data_consegna'\];/.test(UBLK) && /const estranei = Object\.keys\(payload\)\.filter\(\(k\) => k !== 'id' && !CAMPI\.includes\(k\)\);/.test(UBLK));
+t('111 update della sola riga coi soli campi cambiati, change_log order_update con before e after',
+  /const \{ error: ue \} = await sb\.from\('supplier_orders'\)\.update\(dopo\)\.eq\('id', id\);/.test(UBLK) && /await logp\('supplier_orders', id, 'order_update', \{ codice: riga\.codice, fornitore: riga\.fornitore, \.\.\.dopo \}, prima\);/.test(UBLK));
+t('112 niente guardia mesi chiusi (nessun effetto sul CE), niente compare-and-set, niente op_id',
+  !/closed(Date|Month|Err)/.test(UBLK) && !/\.update\(dopo\)\.eq\('id', id\)\.eq\(/.test(UF) && !/op_id/.test(noTs(UBLK)));
+t("113 numeri con num() e date con isoDate (lib.ts), mai Number() ne' new Date()",
+  /num\(payload\.qty_ordered, \{ integer: true, min: 1 \}\)/.test(UBLK) && /num\(payload\.costo_unitario, \{ min: 0 \}\)/.test(UBLK) && /isoDate\(payload\.data_consegna\)/.test(UBLK) && !/Number\(|new Date\(/.test(UBLK));
+t('114 nessun retry su una scrittura', !/retryOnce\(\(\) => sb\.from\('[^']+'\)\.(insert|update|upsert|delete)\(/.test(UF));
+
+console.log("\n== write-api v30: chiudi nella verifica (blocco vero, DB finto) ==");
+{ // una data spostata e due righe chiuse (una parziale, una WIP) nella stessa verifica
+  const { st, ctx } = mondo();
+  const r = await run(ctx('fornitore_verifica', verifica([
+    { id: U1, confermata: true, data_consegna: '2026-10-30' },
+    { id: U2, confermata: true, data_consegna: '2026-12-24', chiudi: true },
+    { id: U5, confermata: false, data_consegna: null, chiudi: true },
+  ])));
+  eq('115 risposta: una data cambiata, due righe chiuse', [r.status, r.body], [200, { ok: true, check_id: 'chk1', date_cambiate: 1, righe_chiuse: 2 }]);
+  eq('116 a DB: U2 ordinato = arrivato (2), U5 WIP chiusa a 0 e wip spento, date di U2 e U5 non toccate',
+    st.ordini.filter((o) => [U1, U2, U5].includes(o.id)).map((o) => [o.id, o.qty_ordered, o.qty_arrived, o.wip, o.data_consegna]),
+    [[U1, 10, 0, false, '2026-10-30'], [U2, 2, 2, false, '2026-10-20'], [U5, 0, 0, false, null]]);
+  eq('117 update: la sola data sulla prima, solo ordinato e wip sulle chiuse', st.update, [['data_consegna'], ['qty_ordered', 'wip'], ['qty_ordered', 'wip']]);
+  eq('118 change_log: order_date, poi order_close con before e after per ogni riga chiusa', st.log.map((l) => [l[2], l[1], l[3], l[4]]), [
+    ['order_date', U1, { codice: 'LEA_BAG_ROSSO', fornitore: FR, data_consegna: '2026-10-30' }, { data_consegna: null }],
+    ['order_close', U2, { codice: 'AGATA_NERO', fornitore: FR, qty_ordered: 2, qty_arrived: 2, wip: false }, { qty_ordered: 6, wip: false }],
+    ['order_close', U5, { codice: 'MIA_BAG_ORO', fornitore: FR, qty_ordered: 0, qty_arrived: 0, wip: false }, { qty_ordered: 0, wip: true }],
+  ]);
+  eq('119 vil_verifiche: chiusa true solo sulle chiuse, con data_dopo = data_prima', st.checks[0].righe, [
+    { id: U1, codice: 'LEA_BAG_ROSSO', confermata: true, data_prima: null, data_dopo: '2026-10-30' },
+    { id: U2, codice: 'AGATA_NERO', confermata: true, data_prima: '2026-10-20', data_dopo: '2026-10-20', chiusa: true },
+    { id: U5, codice: 'MIA_BAG_ORO', confermata: false, data_prima: null, data_dopo: null, chiusa: true },
+  ]);
+}
+{ // chiudere non scrive la data che arriva col client e non toglie quella che c'e': niente data aggiunta da una chiusura
+  const { st, ctx } = mondo();
+  const r = await run(ctx('fornitore_verifica', verifica([{ id: U1, confermata: true, data_consegna: '2026-11-11', chiudi: true }, { id: U2, confermata: true, data_consegna: null, chiudi: true }])));
+  eq('120 chiudi con una data o senza: nessun order_date, U1 resta senza data, U2 tiene la sua',
+    [r.body.date_cambiate, r.body.righe_chiuse, st.log.map((l) => l[2]), st.ordini[0].data_consegna, st.ordini[1].data_consegna, st.checks[0].righe.map((x) => [x.data_prima, x.data_dopo])],
+    [0, 2, ['order_close', 'order_close'], null, '2026-10-20', [[null, null], ['2026-10-20', '2026-10-20']]]);
+  eq('121 U1 chiusa senza arrivi: ordinato 0 (completa per v_ordini_arrivo)', [st.ordini[0].qty_ordered, st.ordini[0].qty_arrived, st.ordini[0].wip], [0, 0, false]);
+}
+{ // chiudi vale solo === true e solo sulle righe aperte di quel fornitore
+  const { st, ctx } = mondo();
+  const r = await run(ctx('fornitore_verifica', verifica([
+    { id: U1, confermata: true, data_consegna: null, chiudi: 'true' },
+    { id: U3, confermata: true, data_consegna: null, chiudi: true },
+    { id: U4, confermata: true, data_consegna: null, chiudi: true },
+    { id: U5, confermata: true, data_consegna: null, chiudi: 1 },
+  ])));
+  eq("122 chiudi 'true' o 1 non chiude; riga di un altro fornitore e riga gia' completa ignorate",
+    [r.status, r.body.righe_chiuse, st.update.length, st.log.length, st.ordini.map((o) => o.qty_ordered), st.checks[0].righe.map((x) => [x.id, x.chiusa ?? false])],
+    [200, 0, 0, 0, [10, 6, 4, 5, 0], [[U1, false], [U5, false]]]);
+}
+{ // chiusura fallita a meta': la prima resta col suo change_log, la verifica non si registra (come per le date)
+  const { st, ctx } = mondo({ rompi: 'supplier_orders.update#2' });
+  const r = await run(ctx('fornitore_verifica', verifica([{ id: U1, confermata: true, data_consegna: null, chiudi: true }, { id: U2, confermata: true, data_consegna: null, chiudi: true }])));
+  eq('123 seconda chiusura fallita: 400, la prima chiusa e loggata, nessuna verifica',
+    [r.status, r.body.ok ?? false, st.ordini[0].qty_ordered, st.ordini[1].qty_ordered, st.log.map((l) => l[2]), st.checks.length], [400, false, 0, 6, ['order_close'], 0]);
+  t("124 ... e il messaggio dice cosa e' gia' stato fatto", /0 date cambiate e 1 righe chiuse prima di questa/.test(r.body.error ?? ''), r.body.error);
+}
+{ // insert della verifica fallito dopo una chiusura
+  const { ctx } = mondo({ rompi: 'vil_verifiche.insert' });
+  const r = await run(ctx('fornitore_verifica', verifica([{ id: U2, confermata: true, data_consegna: null, chiudi: true }])));
+  eq('125 verifica non registrata dopo una chiusura: 400 con righe_chiuse 1', [r.status, r.body.date_cambiate, r.body.righe_chiuse], [400, 0, 1]);
+}
+{ // flag spento: niente si chiude
+  const { st, ctx } = mondo({ acceso: 'false' });
+  const r = await run(ctx('fornitore_verifica', verifica([{ id: U2, confermata: true, data_consegna: null, chiudi: true }])));
+  eq('126 flag spento: 409 e nessuna riga chiusa', [r.status, st.update.length, st.ordini[1].qty_ordered], [409, 0, 6]);
+}
+
+console.log('\n== write-api v30: order_update (blocco vero, DB finto) ==');
+const TMPU = `${ROOT}tests/_order_update.${process.pid}.tmp.ts`;
+writeFileSync(TMPU, `import { isoDate, num } from '../supabase/functions/write-api/lib.ts';
+export async function run(ctx: any): Promise<any> {
+  const { action, payload, sb, json, retryOnce, logp } = ctx;
+${UBLK}
+  return json({ fallthrough: true }, 599);
+}
+`, 'utf8');
+let runU;
+try { ({ run: runU } = await import(pathToFileURL(TMPU).href)); }
+finally { try { unlinkSync(TMPU); } catch { /* niente */ } }
+
+{ // la correzione tipica, a Paillettes spente (order_update non dipende dal gioco)
+  const { st, ctx } = mondo({ acceso: 'false' });
+  const r = await runU(ctx('order_update', { id: U1, qty_ordered: 12, costo_unitario: '15.5', note: '  interno cuoio  ', data_consegna: '2026-11-30' }));
+  eq('127 order_update: 200 con i quattro campi cambiati', [r.status, r.body], [200, { ok: true, id: U1, cambiati: ['qty_ordered', 'costo_unitario', 'note', 'data_consegna'] }]);
+  eq('128 riga a DB: numeri da num(), nota ripulita, codice e fornitore intatti',
+    [st.ordini[0].qty_ordered, st.ordini[0].costo_unitario, st.ordini[0].note, st.ordini[0].data_consegna, st.ordini[0].codice, st.ordini[0].fornitore, st.ordini[0].qty_arrived], [12, 15.5, 'interno cuoio', '2026-11-30', 'LEA_BAG_ROSSO', FR, 0]);
+  eq('129 UNA lettura per id, UN update, nessuna lettura dei flag',
+    [st.letture, st.update, st.chiamate['app_flags.select'] ?? 0],
+    [[{ cols: 'id, codice, fornitore, qty_ordered, qty_arrived, costo_unitario, note, data_consegna, wip', filtri: [['id', U1, 'eq']] }], [['qty_ordered', 'costo_unitario', 'note', 'data_consegna']], 0]);
+  eq('130 change_log order_update: after con codice e fornitore, before con i valori di prima', st.log.map((l) => [l[0], l[1], l[2], l[3], l[4]]), [['supplier_orders', U1, 'order_update',
+    { codice: 'LEA_BAG_ROSSO', fornitore: FR, qty_ordered: 12, costo_unitario: 15.5, note: 'interno cuoio', data_consegna: '2026-11-30' },
+    { qty_ordered: 10, costo_unitario: null, note: null, data_consegna: null }]]);
+  t('131 ... il before porta data_consegna come JSON null, cioe\' cio\' che la vista cerca per non contarla come data aggiunta', String(JSON.stringify(st.log[0]?.[4])).includes('"data_consegna":null'));
+}
+{ // solo cio' che cambia: numeric di PostgREST come stringa ('38.50') uguale a 38.5
+  const { st, ctx } = mondo();
+  const r = await runU(ctx('order_update', { id: U3, qty_ordered: '4', costo_unitario: 38.5, note: 'interno nero e cuoio' }));
+  eq("132 quantita' e costo uguali a quelli a DB: cambia solo la nota, ed e' l'unica nel before e nell'after",
+    [r.body.cambiati, st.update, st.log[0]?.[3], st.log[0]?.[4]], [['note'], [['note']], { codice: 'RITA_VERDE', fornitore: 'Altro lab', note: 'interno nero e cuoio' }, { note: 'interno nero' }]);
+}
+{ // niente cambia: nessuna scrittura
+  const { st, ctx } = mondo();
+  const r = await runU(ctx('order_update', { id: U1, qty_ordered: 10, note: null }));
+  eq("133 tutto uguale: 200 cambiati [] e nessun update ne' change_log", [r.status, r.body, st.update.length, st.log.length], [200, { ok: true, id: U1, cambiati: [] }, 0, 0]);
+}
+{ // null o '' tolgono costo, nota e consegna
+  const { st, ctx } = mondo();
+  Object.assign(st.ordini[2], { data_consegna: '2026-11-03' });
+  const r = await runU(ctx('order_update', { id: U3, costo_unitario: null, note: '', data_consegna: '' }));
+  eq("134 null o '' tolgono costo, nota e consegna, col valore di prima nel before",
+    [r.body.cambiati, [st.ordini[2].costo_unitario, st.ordini[2].note, st.ordini[2].data_consegna], st.log[0]?.[4]],
+    [['costo_unitario', 'note', 'data_consegna'], [null, null, null], { costo_unitario: 38.5, note: 'interno nero', data_consegna: '2026-11-03' }]);
+}
+{ // id con maiuscole e spazi: Postgres risponde gli uuid in minuscolo
+  const { st, ctx } = mondo();
+  const U6 = 'abcdef01-2345-4678-9abc-def012345678';
+  st.ordini.push({ id: U6, codice: 'LEA_BAG_BLU', fornitore: FR, data_consegna: null, qty_ordered: 3, qty_arrived: 0, wip: false, costo_unitario: null, note: null });
+  const r = await runU(ctx('order_update', { id: '  ' + U6.toUpperCase() + ' ', note: 'x' }));
+  eq('135 id con maiuscole e spazi: trovato e scritto in minuscolo', [r.status, st.letture[0]?.filtri, st.log[0]?.[1]], [200, [['id', U6, 'eq']], U6]);
+}
+for (const [nome, payload] of [
+  ['id assente', { note: 'x' }],
+  ['order_id al posto di id', { order_id: U1, note: 'x' }],
+  ['id non uuid', { id: 'riga-1', note: 'x' }],
+  ['nessun campo', { id: U1 }],
+  ['codice', { id: U1, codice: 'LEA_BAG_NERO' }],
+  ['fornitore', { id: U1, fornitore: 'Altro lab', note: 'x' }],
+  ['qty_arrived', { id: U1, qty_arrived: 3 }],
+  ['wip', { id: U1, wip: true }],
+  ["quantita' 0", { id: U1, qty_ordered: 0 }],
+  ["quantita' 1.5", { id: U1, qty_ordered: 1.5 }],
+  ["quantita' ''", { id: U1, qty_ordered: '' }],
+  ["quantita' null", { id: U1, qty_ordered: null }],
+  ['costo -1', { id: U1, costo_unitario: -1 }],
+  ["costo '12,50'", { id: U1, costo_unitario: '12,50' }],
+  ['nota numero', { id: U1, note: 5 }],
+  ['data 2026-02-30', { id: U1, data_consegna: '2026-02-30' }],
+  ['data 30/11/2026', { id: U1, data_consegna: '30/11/2026' }],
+]) {
+  const { st, ctx } = mondo();
+  const r = await runU(ctx('order_update', payload));
+  eq(`136 ${nome}: 422, nessuna lettura ne' scrittura`, [r.status, st.letture.length, st.update.length, st.log.length], [422, 0, 0, 0]);
+}
+{ // righe con arrivi (anche tutti) e WIP: 409, zero scritture
+  const { st, ctx } = mondo();
+  const r1 = await runU(ctx('order_update', { id: U2, costo_unitario: 30 }));
+  const r2 = await runU(ctx('order_update', { id: U5, qty_ordered: 4 }));
+  const r3 = await runU(ctx('order_update', { id: U4, note: 'x' }));
+  eq('137 arrivi = 409 has_arrivals, WIP = 409 wip, zero scritture',
+    [r1.status, r1.body.has_arrivals, r2.status, r2.body.wip, r3.status, r3.body.has_arrivals, st.update.length, st.log.length], [409, true, 409, true, 409, true, 0, 0]);
+}
+{ // qty_arrived come stringa numerica di PostgREST
+  const { st, ctx } = mondo();
+  Object.assign(st.ordini[0], { qty_arrived: '1' });
+  const r = await runU(ctx('order_update', { id: U1, note: 'x' }));
+  eq("138 qty_arrived '1': ha arrivi, 409", [r.status, st.update.length], [409, 0]);
+}
+{ // riga che non c'e'
+  const { st, ctx } = mondo();
+  const r = await runU(ctx('order_update', { id: '99999999-9999-4999-8999-999999999999', note: 'x' }));
+  eq('139 riga inesistente: 404, nessuna scrittura', [r.status, st.update.length], [404, 0]);
+}
+{ // lettura fallita: 503, mai "riga senza arrivi"
+  const { st, ctx } = mondo({ rompi: 'supplier_orders.select' });
+  const r = await runU(ctx('order_update', { id: U1, note: 'x' }));
+  eq('140 lettura fallita: 503, nessuna scrittura', [r.status, st.update.length, st.log.length], [503, 0, 0]);
+}
+{ // update fallito: niente change_log
+  const { st, ctx } = mondo({ rompi: 'supplier_orders.update' });
+  const r = await runU(ctx('order_update', { id: U1, note: 'x' }));
+  eq('141 update fallito: 400, nessun change_log', [r.status, r.body.ok ?? false, st.log.length], [400, false, 0]);
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);

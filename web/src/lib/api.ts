@@ -268,6 +268,18 @@ export async function createOrderMulti(fornitore: string, dataOrdine: string, ri
   return writeApi('order_multi', { fornitore, data_ordine: dataOrdine, righe }, pin, chi);
 }
 
+/** Tempo abituale dei laboratori (v_tempi_laboratori, migr 0166): giorni mediani fra data_ordine e primo arrivo negli
+ *  ultimi 365 giorni, solo per i fornitori con almeno 3 righe. Alimenta un suggerimento del modulo d'ordine e basta:
+ *  l'errore lancia come ogni lettura, e chi lo chiama nasconde il suggerimento (anche a vista non ancora applicata). */
+export type TempoLab = { fornitore: string; giorni_mediani: number; righe: number };
+export async function fetchTempiLaboratori(): Promise<TempoLab[]> {
+  const { data, error } = await supabase.from('v_tempi_laboratori').select('fornitore,giorni_mediani,righe');
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as { fornitore: string | null; giorni_mediani: number | string | null; righe: number | string | null }[])
+    .filter((r) => r.fornitore != null && r.giorni_mediani != null)
+    .map((r) => ({ fornitore: String(r.fornitore), giorni_mediani: Number(r.giorni_mediani), righe: Number(r.righe) || 0 }));
+}
+
 // ---------- FLOW 2: product-detail verification ----------
 export type ProdBucket = 'nuovo' | 'costo_ricavo' | 'pulizia';
 export type ProdTodo = {
@@ -645,6 +657,12 @@ export const setArrival = (orderId: string, qty: number, attesi: number, data: s
 export const deleteOrder = (orderId: string, pin: string, chi: string) =>
   writeApi('order_delete', { order_id: orderId }, pin, chi);
 
+// corregge una riga d'ordine senza arrivi e non WIP (write-api v30 order_update) invece di cancellarla e rifarla. Vanno al
+// server solo i campi cambiati; null toglie il valore. Codice e fornitore non si toccano: per quelli resta cancella e rifai.
+export type RigaOrdineModifica = { qty_ordered?: number; costo_unitario?: number | null; note?: string | null; data_consegna?: string | null };
+export const aggiornaRigaOrdine = async (id: string, campi: RigaOrdineModifica, pin: string, chi: string) =>
+  (await writeApi('order_update', { id, ...campi }, pin, chi)) as unknown as { ok: boolean; id: string; cambiati: string[] };
+
 // archivio riordino (item 20): nasconde/ripristina un prodotto dalla lista riordino
 export const archiveReorder = (codice: string, archived: boolean, pin: string, chi: string) =>
   writeApi('reorder_archive', { codice, archived }, pin, chi);
@@ -880,10 +898,12 @@ export async function fetchVillaggioEventi(): Promise<Evento[]> {
 export async function segnaPresenza(chi: string) {
   return (await writeApi('villaggio_presenza', {}, 'x', chi)) as unknown as { ok: boolean; nuova: boolean; ignorata?: boolean };
 }
-export type VerificaRiga = { id: string; confermata: boolean; data_consegna: string | null };
-/** Verifica con il fornitore: conferma le righe aperte e mette o corregge le date di consegna (order_date nel change_log). */
+export type VerificaRiga = { id: string; confermata: boolean; data_consegna: string | null; chiudi?: boolean };
+/** Verifica con il fornitore: conferma le righe aperte e mette o corregge le date di consegna (order_date nel change_log).
+ *  Una riga con chiudi = true non arriva piu': il server ne chiude il residuo (order_close nel change_log, write-api v30). */
 export async function verificaFornitore(chi: string, payload: { fornitore: string; righe: VerificaRiga[]; nota?: string | null }) {
-  return (await writeApi('fornitore_verifica', payload, 'x', chi)) as unknown as { ok: boolean; check_id: string; date_cambiate: number };
+  // righe_chiuse arriva da write-api v30: con la v29 ancora in linea manca, e chiudi viene ignorato
+  return (await writeApi('fornitore_verifica', payload, 'x', chi)) as unknown as { ok: boolean; check_id: string; date_cambiate: number; righe_chiuse?: number };
 }
 /** Conta completa del mese, in fondo al giro di conta completo: `codici` = quanti ne ha contati in quel giro (serve solo al
  *  testo). Una al mese per chi (on conflict do nothing: la seconda risponde nuova = false); chi non gioca = ignorata. */

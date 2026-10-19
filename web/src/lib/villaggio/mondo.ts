@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { lastre, parseLook } from './catalogo';
 import type { Look, Modello } from './catalogo';
+import type { Ambiente, Meteo, Momento, Stagione } from './meteo';
 
 export type RigaMondo = { id: string; codice: string; model: Modello; look: Look; label: string; a: number; o: number; late: boolean; wip?: boolean };
 /** `pz` = pezzi in arrivo del laboratorio come li conta la pagina (WIP escluse, prodotti non disegnabili inclusi): l'etichetta 3D dice lo stesso numero del pannello. */
@@ -13,7 +14,12 @@ export type LabMondo = { key: string; nome: string; tipo: string; righe: RigaMon
 /** `neg` = almeno un codice della pila ha giacenza negativa (anche se la somma della pila e' positiva). */
 export type PilaMondo = { key: string; model: Modello; look: Look; name: string; stock: number; incoming: number; neg?: boolean };
 export type DatiMondo = { labs: LabMondo[]; pile: PilaMondo[]; totale: number };
-export type EventiMondo = { onLab: (key: string) => void; onMagazzino: (model?: Modello) => void; onGinni: () => void; onCarro: () => void; onPartenza?: (n: number) => void };
+/** Il fumetto sopra l'artigiano (fase 3): righe senza data, righe oltre la data, verificato da poco. Dice com'e' messa
+ *  l'informazione, non giudica il laboratorio: niente facce. */
+export type Fumetto = 'domanda' | 'orologio' | 'cuore';
+/** `onPila`: tocco su una pila (o sulla sua bandierina) del magazzino; `onFumetto`: tocco sul fumetto di un capannone. */
+export type EventiMondo = { onLab: (key: string) => void; onMagazzino: (model?: Modello) => void; onGinni: () => void; onCarro: () => void; onPartenza?: (n: number) => void;
+  onPila?: (key: string) => void; onFumetto?: (labKey: string) => void };
 type Ctx = { type: string; lab?: string } | null;
 type Anchor = { el: HTMLElement; pos: THREE.Vector3; cond?: (now: number) => boolean; free?: boolean; w?: number; h?: number; until?: number };
 type Tween = { t0: number; dur: number; fn: (p: number) => void; done?: () => void; dead?: boolean; ombre?: boolean };
@@ -466,6 +472,16 @@ function righeMat(a: number, b: number, rep: number) {
   return new THREE.MeshLambertMaterial({ map: t });
 }
 
+/** Macchia di luce calda, piena al centro e sfumata ai bordi: l'alone dei lampioni accesi. */
+function alone() {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const x = cv.getContext('2d') as CanvasRenderingContext2D;
+  const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,0.85)'); gr.addColorStop(0.45, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(cv);
+}
+
 /* ---------- geometria del villaggio ---------- */
 const WX0 = -16, WX1 = 2, WZ0 = -13, WZ1 = -1, WCX = (WX0 + WX1) / 2, WCZ = (WZ0 + WZ1) / 2, WW = WX1 - WX0, WD = WZ1 - WZ0;
 const LAB_W = 6.4, LAB_D = 6.0, LAB_COLS = 5, LAB_CELL = 1.12, LAB_ROW = 1.1;
@@ -496,13 +512,50 @@ const TAPPETO = { x0: WX1 + 0.05, x1: GINNI.x + 0.8 };
 const INGOMBRI: [number, number, number][] = [[FONTANA.x, FONTANA.z, 1.7], [CHIOSCO.x, CHIOSCO.z, 1.4], [PANCHINA.x, PANCHINA.z, 1.0],
   ...LAMPIONI.map(([x, z]): [number, number, number] => [x, z, 0.7]), [GINNI.x, GINNI.z, 1.0],
   ...[0, 1, 2, 3].map((i): [number, number, number] => [TAPPETO.x0 + 0.5 + i * (TAPPETO.x1 - TAPPETO.x0 - 1) / 3, GINNI.z, 0.9])];
+/* ambiente (fase 3). Luce: cielo, emisfero [cielo, terra, intensita'], sole [colore, intensita'], direzione del sole.
+   Sono colori lineari come il resto (ColorManagement spento), tarati sugli screenshot delle 4 ore. */
+type Luce = { cielo: number; emi: [number, number, number]; sole: [number, number]; dir: [number, number, number]; nebbia: number };
+const LUCI: Record<Momento, Luce> = {
+  mattina: { cielo: 0x9fd8d0, emi: [0xffedd6, 0x8fa86c, 0.6], sole: [0xffd6a0, 0.66], dir: [-34, 26, 6], nebbia: 0xeee6d8 },
+  giorno: { cielo: 0x86d4d4, emi: [0xfff6e2, 0x88b86c, 0.62], sole: [0xfff0d0, 0.62], dir: [-14, 40, 22], nebbia: 0xe1e8e7 },
+  tramonto: { cielo: 0xe6b2ae, emi: [0xffd8d4, 0x8c7c96, 0.52], sole: [0xffa47e, 0.72], dir: [34, 20, 10], nebbia: 0xecd3d0 },
+  sera: { cielo: 0x2c4a74, emi: [0x9ab2e6, 0x34405e, 0.5], sole: [0xa9bcff, 0.22], dir: [-18, 40, 12], nebbia: 0x3a4866 },
+};
+/** Il meteo spegne un po' il sole, alza la luce diffusa e ingrigisce i colori (`grigio` = quanto verso il grigio). */
+const METEO_LUCE: Record<Meteo, { sole: number; emi: number; grigio: number }> = {
+  sereno: { sole: 1, emi: 1, grigio: 0 }, nuvole: { sole: 0.55, emi: 1.04, grigio: 0.22 }, pioggia: { sole: 0.3, emi: 0.86, grigio: 0.45 },
+  neve: { sole: 0.5, emi: 1.1, grigio: 0.3 }, nebbia: { sole: 0.45, emi: 1.04, grigio: 0.32 },
+};
+/** Le vesti delle stagioni: prato, chiazze d'erba (d'inverno neve), chiome per tipo d'albero [chioma, cima] (0 = tondo,
+ *  1 = fiorito, 2 = acero), cespugli, foglie a terra. */
+type Veste = { prato: number; chiazze: number; chiome: [number, number][]; cespugli: [number, number, number]; foglie: boolean };
+const VESTI: Record<Stagione, Veste> = {
+  primavera: { prato: 0x96d46a, chiazze: 0x8acd5f, chiome: [[0x86cf55, 0x86cf55], [0xf5a9c5, 0xf8bfd4], [0xfadbe6, 0xfde8ef]], cespugli: [0x78c84e, 0x88d65c, 0x6cbc46], foglie: false },
+  estate: { prato: 0x93d26c, chiazze: 0x87c962, chiome: [[0x76c04f, 0x76c04f], [0x6bb848, 0x6bb848], [0x5fae42, 0x5fae42]], cespugli: [0x6db54a, 0x7cc456, 0x63a843], foglie: false },
+  autunno: { prato: 0xa2c866, chiazze: 0x96bd5a, chiome: [[0xf0a24b, 0xf4b45e], [0xc9653f, 0xd2774c], [0xe9b949, 0xf0c95e]], cespugli: [0x98ad48, 0xb5a646, 0x8a9c40], foglie: true },
+  inverno: { prato: 0xa9c09c, chiazze: 0xeef3f3, chiome: [[0xd9e5e2, 0xf7fafb], [0x4f8a5c, 0xf4f8f9], [0xcfdcda, 0xf7fafb]], cespugli: [0x6f9070, 0xe6eef0, 0x67866a], foglie: false },
+};
+const FOGLIE = [0xe9973a, 0xc9653f, 0xe6b33f, 0xd9822f];
+/** Icone dei fumetti, disegnate a mano (niente emoji: ogni telefono le disegna a modo suo). */
+const ICONA: Record<Fumetto, string> = {
+  domanda: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.9 9.1a3.1 3.1 0 1 1 4.4 2.8c-.9.5-1.3 1.1-1.3 2.1v.6" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="18.7" r="1.75" fill="currentColor"/></svg>',
+  orologio: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="M12 7.4V12l3.2 2.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  cuore: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.4c-.4 0-7.9-4.7-7.9-10.3A4.4 4.4 0 0 1 12 7.5a4.4 4.4 0 0 1 7.9 2.6c0 5.6-7.5 10.3-7.9 10.3z" fill="currentColor"/></svg>',
+};
+const DETTO: Record<Fumetto, (nome: string) => string> = {
+  domanda: (n) => n + ': ci sono righe senza data di consegna. Tocca per la verifica',
+  orologio: (n) => n + ': ci sono righe oltre la data di consegna. Tocca per la verifica',
+  cuore: (n) => n + ': verificato da poco',
+};
+/** `k` e' una chiave propria di `o` (non 'constructor' o simili ereditati): i valori arrivano dalla pagina. */
+const di = <T extends object>(o: T, k: unknown): k is keyof T => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
 const distSeg = (x: number, z: number, a: THREE.Vector3, b: THREE.Vector3) => {
   const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz;
   const t = l2 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / l2)) : 0;
   return Math.hypot(x - a.x - dx * t, z - a.z - dz * t);
 };
 
-type LabG = { g: THREE.Group; yard: THREE.Group; ch: THREE.Group; puffs: THREE.Mesh[]; hideSlot: THREE.Group; rollSlot: THREE.Group; spoolSlot: THREE.Group; dock: THREE.Vector3; anchor: Anchor; pileAnchors: Anchor[]; data: LabMondo; index: number };
+type LabG = { g: THREE.Group; yard: THREE.Group; ch: THREE.Group; puffs: THREE.Mesh[]; hideSlot: THREE.Group; rollSlot: THREE.Group; spoolSlot: THREE.Group; dock: THREE.Vector3; anchor: Anchor; pileAnchors: Anchor[]; testo: string; html: string; data: LabMondo; index: number };
 type PilaG = PilaMondo & { x: number; z: number; cell: number; top: number; g: THREE.Group; anchor: Anchor };
 type Zona = { x: number; z: number; w: number; d: number; anchor: Anchor };
 
@@ -562,6 +615,43 @@ export class Mondo {
   private ultimoInput = performance.now();
   /** gia' in posa di riposo */
   private fermo = false;
+  /* ambiente (fase 3): luci e materiali che cambiano colore con l'ora e la stagione, senza ricostruire niente */
+  private amb: Ambiente = { stagione: 'estate', momento: 'giorno', meteo: 'sereno' };
+  private hemi!: THREE.HemisphereLight;
+  private sun!: THREE.DirectionalLight;
+  private prato = new THREE.MeshLambertMaterial({ color: 0x93d26c });
+  private chiazze = new THREE.MeshLambertMaterial({ color: 0x87c962 });
+  /** [chioma, lato, cima] per tipo d'albero; il lato e' la chioma un po' piu' scura */
+  private chiome = [0, 1, 2].map(() => [0, 1, 2].map(() => new THREE.MeshLambertMaterial()));
+  private cespugli = [0, 1, 2].map(() => new THREE.MeshLambertMaterial());
+  private foglieTerra: THREE.InstancedMesh | null = null;
+  private fogliaGeo = new THREE.CircleGeometry(0.17, 7).scale(1.7, 1, 1).rotateX(-Math.PI / 2);
+  private bianco = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  /** vetri del magazzino: di sera si accendono (emissive), di giorno sono vetro */
+  private vetri = new THREE.MeshLambertMaterial({ color: 0xbfe6f4 });
+  private luceLamp = new THREE.MeshBasicMaterial({ color: 0xfff1b8 });
+  /** l'alone dei lampioni sul selciato, solo di sera (material.visible: niente da ricostruire) */
+  private aloneGeo = new THREE.CircleGeometry(1.7, 24).rotateX(-Math.PI / 2);
+  private aloneMat = new THREE.MeshBasicMaterial({ map: alone(), color: 0xffcf7a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  /** gocce e fiocchi: nel riferimento della camera, scalati con lo zoom (stessa densita' sullo schermo a ogni distanza) */
+  private schermo = new THREE.Group();
+  /** nuvole (girano intorno all'isola, sopra il mare: non coprono mai pile e capannoni) e le loro ombre sull'isola */
+  private cielo = new THREE.Group();
+  private gocce: THREE.InstancedMesh | null = null;
+  private nubi: THREE.InstancedMesh | null = null;
+  private ombre: THREE.InstancedMesh | null = null;
+  /** ombra di nuvola: la stessa macchia sfumata degli aloni, scura; scurisce tutto quello che copre (niente depthTest) */
+  private ombraMat = new THREE.MeshBasicMaterial({ map: this.aloneMat.map, color: 0x0d1b2a, transparent: true, depthTest: false, depthWrite: false, fog: false });
+  private gp: { u: number; v: number; s: number; vel: number; fase: number }[] = [];
+  private np: { a: number; r: number; h: number; k: number }[] = [];
+  private op: { s: number; w: number; k: number }[] = [];
+  private tMeteo = 0;
+  private tVento = 0;
+  private fumi = new Map<string, Fumetto>();
+  private avvisi = new Set<string>();
+  private bandiere: THREE.InstancedMesh[] = [];
+  private astaGeo = new THREE.CylinderGeometry(0.024, 0.024, 1, 6).translate(0, 0.5, 0);
+  private AVVISO = new THREE.MeshLambertMaterial({ color: 0xf2852f, side: THREE.DoubleSide });
 
   /** Crea il proprio canvas dentro `container` (e lo toglie in dispose): un contesto WebGL nuovo a ogni montaggio. Lancia se il WebGL non c'e'. */
   constructor(container: HTMLElement, labelsEl: HTMLElement, hudEl: HTMLElement | null, ev: EventiMondo) {
@@ -591,29 +681,33 @@ export class Mondo {
     // le ombre si ricalcolano solo quando qualcosa si muove o cambia (aggiorna, tween, furgoncino), non a ogni frame
     this.renderer.shadowMap.autoUpdate = false;
     for (const x of [this.disc, this.DISC.low, this.DISC.neg, this.DISC.inc, this.wheelGeo, this.rollGeo, this.spoolGeo, this.hideGeo, this.FLAG, this.flagGeo, this.stoneGeo]) this.keep.add(x);
+    for (const x of this.persistenti()) this.keep.add(x);
     this.scene.background = new THREE.Color(0x86d4d4);
+    // la nebbia c'e' sempre (lontanissima se non serve): accenderla dopo ricompilerebbe tutti i materiali
+    this.scene.fog = new THREE.Fog(0xe1e8e7, 500, 1000);
     this.target = this.portrait ? new V3(0.6, 0, 0.6) : new V3(-2.6, 0, -2.6);
     this.viewH = Math.min(78, Math.max(30, 32 / (innerWidth / innerHeight)));
     this.resize(); this.placeCam();
     const onResize = () => this.resize();
     addEventListener('resize', onResize); this.off.push(() => removeEventListener('resize', onResize));
 
-    this.scene.add(new THREE.HemisphereLight(0xfff6e2, 0x88b86c, 0.62 * Math.PI));
+    this.hemi = new THREE.HemisphereLight(0xfff6e2, 0x88b86c, 0.62 * Math.PI);
+    this.scene.add(this.hemi);
     const sun = new THREE.DirectionalLight(0xfff0d0, 0.62 * Math.PI);
     sun.position.set(-14, 40, 22); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
     Object.assign(sun.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 120 });
     sun.shadow.camera.updateProjectionMatrix(); sun.shadow.bias = -0.0006;
-    this.scene.add(sun);
+    this.scene.add(sun); this.sun = sun;
 
     this.add(this.scene, new THREE.PlaneGeometry(400, 400), 0x7fd0d2, 0, -1.6, 0, { rx: -Math.PI / 2, cast: false });
     this.foam = this.add(this.scene, new THREE.TorusGeometry(28.8, 0.22, 6, 96), 0xf4fbf8, 0, -1.55, 0, { rx: Math.PI / 2, cast: false });
     this.add(this.scene, new THREE.CylinderGeometry(27.6, 28.6, 1.6, 72), 0xf1dfb0, 0, -1.9, 0, { cast: false });
-    const island = new THREE.Mesh(new THREE.CylinderGeometry(25, 26, 2.4, 72), [this.mat(0xd8bf86), this.mat(0x93d26c), this.mat(0xd8bf86)]);
+    const island = new THREE.Mesh(new THREE.CylinderGeometry(25, 26, 2.4, 72), [this.mat(0xd8bf86), this.prato, this.mat(0xd8bf86)]);
     island.position.y = -1.2; island.receiveShadow = true; this.scene.add(island);
     const erba = new THREE.Group(); this.scene.add(erba);
     for (let i = 0; i < 16; i++) {
       const a = this.rnd() * 6.283, r = 6 + this.rnd() * 14;
-      this.add(erba, new THREE.CircleGeometry(1.2 + this.rnd() * 2, 22), 0x87c962, Math.cos(a) * r, 0.012, Math.sin(a) * r, { rx: -Math.PI / 2, cast: false });
+      this.add(erba, new THREE.CircleGeometry(1.2 + this.rnd() * 2, 22), this.chiazze, Math.cos(a) * r, 0.012, Math.sin(a) * r, { rx: -Math.PI / 2, cast: false });
     }
     this.impasta(erba);
     this.buildWarehouseShell();
@@ -625,6 +719,8 @@ export class Mondo {
     this.buildCart();
     this.buildFence();
     this.scene.add(this.paths); this.scene.add(this.decor); this.scene.add(this.premi);
+    this.scene.add(this.schermo); this.scene.add(this.cielo);
+    this.vesti(); this.illumina();
     this.bindPointer();
     const loop = (now: number) => { this.raf = requestAnimationFrame(loop); this.frameTick(now); };
     this.raf = requestAnimationFrame(loop);
@@ -640,6 +736,9 @@ export class Mondo {
     this.anchors = [];
     this.cartQ = [];
     this.smaltisci(this.scene, true);
+    // quelli dell'ambiente che in questo momento nessuna mesh usa (alone di giorno, bandiere senza avvisi)
+    this.aloneMat.map?.dispose();
+    for (const x of this.persistenti()) x.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
     this.canvas.remove();
@@ -661,6 +760,10 @@ export class Mondo {
     });
   }
   private svuota(g: THREE.Object3D) { while (g.children.length) { const c = g.children[0]; this.smaltisci(c); g.remove(c); } }
+  /** Materiali e geometrie dell'ambiente che vivono quanto il Mondo (in keep: svuotando un gruppo restano). */
+  private persistenti(): (THREE.Material | THREE.BufferGeometry)[] {
+    return [this.prato, this.chiazze, ...this.chiome.flat(), ...this.cespugli, this.fogliaGeo, this.bianco, this.vetri, this.luceLamp, this.aloneGeo, this.aloneMat, this.ombraMat, this.astaGeo, this.AVVISO];
+  }
 
   /* ---------- piccoli attrezzi ---------- */
   private MC: Record<number, THREE.MeshLambertMaterial> = {};
@@ -764,7 +867,7 @@ export class Mondo {
   /* ---------- magazzino ---------- */
   private buildWarehouseShell() {
     const WH = this.wh; WH.userData.kind = 'wh'; this.scene.add(WH); this.pickables.push(WH);
-    const PINK = 0xf3a7bb, CREAM = 0xfff1dc, GLASS = 0xbfe6f4;
+    const PINK = 0xf3a7bb, CREAM = 0xfff1dc;
     this.add(WH, box(WW, 0.4, WD), 0xdcb388, WCX, 0.2, WCZ);
     for (let i = 0; i < 9; i++) this.add(WH, box(WW - 0.1, 0.02, 0.06), 0xc79c6f, WCX, 0.41, WZ0 + 0.7 + i * 1.3, { cast: false });
     this.add(WH, box(WW, 4.2, 0.5), PINK, WCX, 2.5, WZ0 + 0.25);
@@ -777,8 +880,8 @@ export class Mondo {
     const slope = Math.atan2(GH, GW), sl = Math.hypot(GH, GW) + 0.3;
     this.add(WH, box(sl, 0.35, 0.7), CREAM, WCX - GW / 2, 4.6 + GH / 2, WZ0 + 0.25, { rz: slope });
     this.add(WH, box(sl, 0.35, 0.7), CREAM, WCX + GW / 2, 4.6 + GH / 2, WZ0 + 0.25, { rz: -slope });
-    for (const x of [WX0 + 3, WX1 - 3]) { this.add(WH, box(1.8, 1.5, 0.12), CREAM, x, 3.1, WZ0 + 0.53); this.add(WH, box(1.4, 1.1, 0.14), GLASS, x, 3.1, WZ0 + 0.54); }
-    this.add(WH, box(0.12, 1.5, 1.8), CREAM, WX0 + 0.53, 3.1, WCZ); this.add(WH, box(0.14, 1.1, 1.4), GLASS, WX0 + 0.54, 3.1, WCZ);
+    for (const x of [WX0 + 3, WX1 - 3]) { this.add(WH, box(1.8, 1.5, 0.12), CREAM, x, 3.1, WZ0 + 0.53); this.add(WH, box(1.4, 1.1, 0.14), this.vetri, x, 3.1, WZ0 + 0.54); }
+    this.add(WH, box(0.12, 1.5, 1.8), CREAM, WX0 + 0.53, 3.1, WCZ); this.add(WH, box(0.14, 1.1, 1.4), this.vetri, WX0 + 0.54, 3.1, WCZ);
     for (const [x, z] of [[WX1 - 0.15, WZ1 - 0.15], [WX0 + 0.15, WZ1 - 0.15], [WX1 - 0.15, WZ0 + 0.15]]) this.add(WH, new THREE.CylinderGeometry(0.22, 0.22, 4.4, 10), CREAM, x, 2.4, z);
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(5, 1.25), signMat('AMIMI', '', 0xc4607f));
     sign.position.set(WCX, 5.7, WZ0 + 0.56); WH.add(sign);
@@ -835,6 +938,7 @@ export class Mondo {
       }
       break;
     }
+    this.disegnaAvvisi();
   }
   private fillPile(p: PilaG, shrink: number) {
     const g = p.g;
@@ -861,9 +965,32 @@ export class Mondo {
     b.scale.setScalar(sc); b.position.y = top; b.rotation.y = 0.5;
     g.add(b);
     p.top = 0.52 + top + P.h * sc;
-    p.anchor.el.innerHTML = esc(p.model) + '<small>' + esc(p.name) + ' · ' + (p.stock < 0 ? p.stock + ' pz (negativo)' : st + ' pz') + (p.incoming ? ' · ' + p.incoming + ' in arrivo' : '') + '</small>';
+    p.anchor.el.innerHTML = this.testoPila(p);
     p.anchor.w = 0;
     p.anchor.pos.set(p.x, p.top + 0.15, p.z);
+  }
+  private testoPila(p: PilaG) {
+    const st = Math.max(0, p.stock);
+    return esc(p.model) + '<small>' + esc(p.name) + ' · ' + (p.stock < 0 ? p.stock + ' pz (negativo)' : st + ' pz') + (p.incoming ? ' · ' + p.incoming + ' in arrivo' : '')
+      + (this.avvisi.has(p.key) ? ' · sta finendo' : '') + '</small>';
+  }
+  /** Bandierine arancio sulle pile che stanno finendo (setAvvisiPile): due InstancedMesh per tutte (aste e teli),
+   *  rifatte quando cambiano le pile o gli avvisi. Stanno dietro la pila (verso il fondo del fienile) e spuntano sopra. */
+  private disegnaAvvisi() {
+    for (const m of this.bandiere) if (m.parent) { m.parent.remove(m); m.dispose(); }
+    this.bandiere = [];
+    const ps = [...this.avvisi].map((k) => this.piles.get(k)).filter((p): p is PilaG => !!p);
+    this.shadowDirty = true; this.dirty = true;
+    if (!ps.length) return;
+    const keys = ps.map((p) => p.key);
+    const aste = new THREE.InstancedMesh(this.astaGeo, this.mat(0x5a4a3a), ps.length), teli = new THREE.InstancedMesh(this.flagGeo, this.AVVISO, ps.length);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion().setFromAxisAngle(new V3(0, 1, 0), Math.PI / 4), uno = new THREE.Quaternion();
+    ps.forEach((p, i) => {
+      const x = p.x + AWAY.x * p.cell * 0.34, z = p.z + AWAY.z * p.cell * 0.34, h = p.top - 0.52 + 0.42;
+      aste.setMatrixAt(i, m4.compose(new V3(x, 0.52, z), uno, new V3(1, h, 1)));
+      teli.setMatrixAt(i, m4.compose(new V3(x, 0.52 + h, z), q, new V3(1.5, 1.5, 1.5)));
+    });
+    for (const m of [aste, teli]) { m.castShadow = true; m.userData = { kind: 'avviso', keys }; this.whInside.add(m); this.bandiere.push(m); }
   }
 
   /* ---------- laboratori: capannoni di produzione aperti davanti ---------- */
@@ -921,6 +1048,10 @@ export class Mondo {
     for (const y of [1.48, 2.18]) this.add(g, box(1.2, 0.06, 0.5), 0xa8743f, 2.3, y, -2.45);
     for (const x of [1.72, 2.88]) this.add(g, box(0.06, 1.5, 0.5), 0x9a6a3f, x, 1.55, -2.45);
     const rollSlot = new THREE.Group(); g.add(rollSlot);
+    // la lampada del banco: la accende la sera (illumina), con la sua pozza di luce sul pavimento
+    this.add(g, new THREE.CylinderGeometry(0.01, 0.01, 0.5, 4), 0x3d3a45, -0.3, 2.98, -2.3);
+    this.add(g, new THREE.SphereGeometry(0.15, 10, 8), this.luceLamp, -0.3, 2.68, -2.3, { cast: false });
+    const pozza = new THREE.Mesh(this.aloneGeo, this.aloneMat); pozza.position.set(-0.4, 0.32, -1.5); pozza.scale.setScalar(1.25); g.add(pozza);
     const ch = this.makeChar(shirt, hair); ch.position.set(-2.45, 0.3, -1.45); g.add(ch);
     const puffs: THREE.Mesh[] = [];
     for (let i = 0; i < 4; i++) {
@@ -934,7 +1065,15 @@ export class Mondo {
     const dock = cand[0]; dock.y = 0;
     const anchor = this.addLabel('', new V3(sx, 6.4, sz), 'v-lbl', () => this.ev.onLab(data.key));
     anchor.cond = () => !(this.ctx && (this.ctx.type === 'wh' || this.ctx.type === 'lab'));
-    const L: LabG = { g, yard, ch, puffs, hideSlot, rollSlot, spoolSlot, dock, anchor, pileAnchors: [], data, index };
+    // il fumetto sta nell'etichetta del capannone, a sinistra del nome: sul telefono, a isola intera, un fumetto sopra
+    // l'artigiano finiva sotto l'etichetta. Il suo tocco (o Invio) apre la verifica e non arriva all'etichetta (onLab)
+    const suFumetto = (e: Event) => {
+      if (!(e.target as Element | null)?.closest?.('.v-fum')) return;
+      if (e instanceof KeyboardEvent && e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault(); e.stopPropagation(); this.ev.onFumetto?.(data.key);
+    };
+    anchor.el.addEventListener('click', suFumetto, true); anchor.el.addEventListener('keydown', suFumetto, true);
+    const L: LabG = { g, yard, ch, puffs, hideSlot, rollSlot, spoolSlot, dock, anchor, pileAnchors: [], testo: '', html: '', data, index };
     this.stones(CART_HOME.x, CART_HOME.z, dock.x, dock.z);
     this.impasta(g, [ch, yard, hideSlot, rollSlot, spoolSlot, ...puffs]);
     return L;
@@ -985,8 +1124,8 @@ export class Mondo {
     looks.slice(0, 3).forEach((lk, i) => { this.add(L.spoolSlot, this.spoolGeo, lk.cols[0], 0, 0, i * 0.18); });
     const pz = L.data.pz;
     const late = o.filter((l) => l.late).length;
-    L.anchor.el.innerHTML = '<b>' + esc(L.data.nome) + '</b><small>' + (o.length ? pz + ' pz in preparazione' : 'tutto arrivato') + '</small>' + (late ? '<span class="v-bang" title="' + late + ' righe in ritardo">!</span>' : '');
-    L.anchor.w = 0;
+    L.testo = '<b>' + esc(L.data.nome) + '</b><small>' + (o.length ? pz + ' pz in preparazione' : 'tutto arrivato') + '</small>' + (late ? '<span class="v-bang" title="' + late + ' righe in ritardo">!</span>' : '');
+    this.etichettaLab(L);
   }
 
   /* ---------- furgoncino, staccionata, alberi, sentieri ---------- */
@@ -1029,31 +1168,48 @@ export class Mondo {
     this.svuota(D);
     this.occupati = [];
     const free = (x: number, z: number, r: number) => used.every(([ux, uz]) => Math.hypot(ux - x, uz - z) > r);
-    const tree = (x: number, z: number, col: number, sc: number) => {
+    const alberi: [number, number, number][] = [];
+    // i colori di chiome, cespugli e prato li mette vesti() (stagione): qui i materiali, uno per tipo e per parte
+    const tree = (x: number, z: number, tipo: number, sc: number) => {
       if (!free(x, z, 6.2)) return;
-      this.occupati.push([x, z, 2 * sc]);
+      this.occupati.push([x, z, 2 * sc]); alberi.push([x, z, sc]);
       const g = new THREE.Group(); g.position.set(x, 0, z); g.scale.setScalar(sc); D.add(g);
+      const [chioma, lato, cima] = this.chiome[tipo];
       this.add(g, new THREE.CylinderGeometry(0.28, 0.4, 1.7, 9), 0x9a6a43, 0, 0.85, 0);
-      const c2 = new THREE.Color(col).multiplyScalar(0.88).getHex();
-      this.add(g, new THREE.SphereGeometry(1.4, 16, 12), col, 0, 2.5, 0);
-      this.add(g, new THREE.SphereGeometry(1.0, 14, 10), c2, 0.85, 2.1, 0.3);
-      this.add(g, new THREE.SphereGeometry(1.0, 14, 10), c2, -0.75, 2.15, -0.25);
-      this.add(g, new THREE.SphereGeometry(0.9, 14, 10), col, 0.1, 3.3, 0.1);
+      this.add(g, new THREE.SphereGeometry(1.4, 16, 12), chioma, 0, 2.5, 0);
+      this.add(g, new THREE.SphereGeometry(1.0, 14, 10), lato, 0.85, 2.1, 0.3);
+      this.add(g, new THREE.SphereGeometry(1.0, 14, 10), lato, -0.75, 2.15, -0.25);
+      this.add(g, new THREE.SphereGeometry(0.9, 14, 10), cima, 0.1, 3.3, 0.1);
     };
     const bush = (x: number, z: number, s: number) => {
       if (!free(x, z, 5.2)) return;
       this.occupati.push([x, z, 1.6 * s]);
       const g = new THREE.Group(); g.position.set(x, 0, z); g.scale.setScalar(s); D.add(g);
-      this.add(g, new THREE.SphereGeometry(0.9, 12, 10), 0x6db54a, 0, 0.55, 0);
-      this.add(g, new THREE.SphereGeometry(0.7, 12, 10), 0x7cc456, 0.8, 0.45, 0.2);
-      this.add(g, new THREE.SphereGeometry(0.65, 12, 10), 0x63a843, -0.7, 0.42, 0.1);
+      this.add(g, new THREE.SphereGeometry(0.9, 12, 10), this.cespugli[0], 0, 0.55, 0);
+      this.add(g, new THREE.SphereGeometry(0.7, 12, 10), this.cespugli[1], 0.8, 0.45, 0.2);
+      this.add(g, new THREE.SphereGeometry(0.65, 12, 10), this.cespugli[2], -0.7, 0.42, 0.1);
       const FL = [0xf27a8c, 0xf6d04d, 0xffffff, 0xb08ae0];
       for (let i = 0; i < 5; i++) this.add(g, new THREE.SphereGeometry(0.14, 8, 6), FL[i % 4], (this.rnd() - 0.5) * 1.6, 0.9 + this.rnd() * 0.4, (this.rnd() - 0.5) * 1.0, { cast: false });
     };
-    const GREEN = 0x76c04f, BLOSSOM = 0xf5a9c5, AUTUMN = 0xf0a24b;
-    ([[-19, -8.5, GREEN, 1.05], [-12, -16.5, BLOSSOM, 1], [-4, -15.8, GREEN, 1.15], [5.5, -15, BLOSSOM, 0.95], [10, -16, GREEN, 1], [15, -12.5, GREEN, 1.05],
-      [18, -4, AUTUMN, 1], [-19, -2, GREEN, 1.05], [-17, 4.5, BLOSSOM, 1], [-13.5, 3.4, AUTUMN, 0.85], [19, 2.5, GREEN, 0.9]] as [number, number, number, number][]).forEach((t) => tree(t[0], t[1], t[2], t[3]));
+    ([[-19, -8.5, 0, 1.05], [-12, -16.5, 1, 1], [-4, -15.8, 0, 1.15], [5.5, -15, 1, 0.95], [10, -16, 0, 1], [15, -12.5, 0, 1.05],
+      [18, -4, 2, 1], [-19, -2, 0, 1.05], [-17, 4.5, 1, 1], [-13.5, 3.4, 2, 0.85], [19, 2.5, 0, 0.9]] as [number, number, number, number][]).forEach((t) => tree(t[0], t[1], t[2], t[3]));
     ([[14, 12], [7.5, 17], [-2, 17.5], [-12, 14.5], [17.5, 8.5], [-16, 10], [0.5, 5.2], [-9.5, 3.5]] as [number, number][]).forEach((b) => bush(b[0], b[1], 0.9 + this.rnd() * 0.3));
+    // foglie a terra sotto gli alberi: una InstancedMesh sola, accesa da vesti() solo d'autunno
+    const N = alberi.length * 9;
+    this.foglieTerra = null;
+    if (N) {
+      const F = new THREE.InstancedMesh(this.fogliaGeo, this.bianco, N), R = rngFor('foglie'), m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color();
+      alberi.forEach(([x, z, sc], t) => {
+        for (let i = 0; i < 9; i++) {
+          const a = R() * 6.283, r = (1.1 + R() * 1.7) * sc, k = t * 9 + i;
+          q.setFromAxisAngle(new V3(0, 1, 0), R() * 6.283);
+          F.setMatrixAt(k, m4.compose(new V3(x + Math.cos(a) * r, 0.03 + R() * 0.01, z + Math.sin(a) * r), q, new V3(1, 1, 1).multiplyScalar(0.8 + R() * 0.5)));
+          F.setColorAt(k, c.setHex(FOGLIE[k % FOGLIE.length]));
+        }
+      });
+      F.receiveShadow = true; F.visible = VESTI[this.amb.stagione].foglie;
+      D.add(F); this.foglieTerra = F;
+    }
     this.impasta(D);
   }
 
@@ -1119,6 +1275,152 @@ export class Mondo {
   }
   /** Mostra l'etichetta della pila per qualche secondo (tocco su una pila). */
   mostraPila(key: string) { const p = this.piles.get(key); if (p) p.anchor.until = performance.now() + 3500; }
+
+  /* ---------- ambiente (fase 3): stagione, luce del giorno, meteo, fumetti, avvisi ---------- */
+  /** Stagione (chiome, prato, foglie a terra), momento del giorno (cielo, luci, finestre e lampioni accesi la sera) e
+   *  meteo (nuvole, gocce, fiocchi, foschia). La pagina lo chiama all'apertura e ogni 15 minuti (meteo.ts): cambia
+   *  colori e luci una volta e chiede un disegno solo, senza svegliare l'isola. Valori sconosciuti = giorno sereno d'estate. */
+  setAmbiente(a: Ambiente) {
+    const b: Ambiente = { stagione: di(VESTI, a.stagione) ? a.stagione : 'estate', momento: di(LUCI, a.momento) ? a.momento : 'giorno', meteo: di(METEO_LUCE, a.meteo) ? a.meteo : 'sereno' };
+    const prima = this.amb;
+    this.amb = b;
+    if (b.stagione !== prima.stagione) this.vesti();
+    if (b.meteo !== prima.meteo) this.preparaMeteo();
+    this.illumina();
+  }
+  /** I fumetti sopra gli artigiani, per chiave di laboratorio (null o assente = nessun fumetto). Il tocco chiama onFumetto. */
+  setFumetti(f: Map<string, Fumetto | null> | Record<string, Fumetto | null>) {
+    this.fumi.clear();
+    for (const [k, v] of f instanceof Map ? f : Object.entries(f)) if (di(ICONA, v)) this.fumi.set(k, v);
+    for (const L of this.labs.values()) this.etichettaLab(L);
+  }
+  /** Le pile (chiavi di PilaMondo) che stanno finendo: una bandierina arancio e "sta finendo" nell'etichetta. */
+  setAvvisiPile(keys: Iterable<string>) {
+    const nuovi = new Set(keys), prima = this.avvisi;
+    if (nuovi.size === prima.size && [...nuovi].every((k) => prima.has(k))) return;
+    this.avvisi = nuovi;
+    for (const p of this.piles.values()) if (prima.has(p.key) !== nuovi.has(p.key)) { p.anchor.el.innerHTML = this.testoPila(p); p.anchor.w = 0; }
+    this.disegnaAvvisi();
+  }
+  /** L'etichetta del capannone (testo di fillYard) con il fumetto, se c'e', come bottone suo (icone SVG: niente testo
+   *  in piu' nell'etichetta). */
+  private etichettaLab(L: LabG) {
+    const f = this.fumi.get(L.data.key), el = L.anchor.el;
+    const html = L.testo + (f ? '<span class="v-fum ' + f + '" role="button" tabindex="0" aria-label="' + esc(DETTO[f](L.data.nome)) + '" title="' + esc(DETTO[f](L.data.nome)) + '"><span class="v-fumb">' + ICONA[f] + '</span></span>' : '');
+    // stesso contenuto: niente da riscrivere (il fumetto rifarebbe il suo salto d'ingresso a ogni lettura dei dati)
+    if (L.html === html) return;
+    L.html = html; el.innerHTML = html;
+    el.classList.toggle('con-fum', !!f);
+    L.anchor.w = 0;
+  }
+
+  /** Colori della stagione sui materiali condivisi di prato, alberi e cespugli; le foglie a terra solo d'autunno. */
+  private vesti() {
+    const V = VESTI[this.amb.stagione];
+    this.prato.color.setHex(V.prato); this.chiazze.color.setHex(V.chiazze);
+    V.chiome.forEach(([c, cima], i) => { const [chioma, lato, alto] = this.chiome[i]; chioma.color.setHex(c); lato.color.setHex(c).multiplyScalar(0.88); alto.color.setHex(cima); });
+    V.cespugli.forEach((c, i) => this.cespugli[i].color.setHex(c));
+    if (this.foglieTerra) this.foglieTerra.visible = V.foglie;
+    this.dirty = true;
+  }
+  /** Luci del momento corrette dal meteo, cielo e nebbia, finestre e lampioni (accesi solo la sera). */
+  private illumina() {
+    const L = LUCI[this.amb.momento], M = METEO_LUCE[this.amb.meteo], sera = this.amb.momento === 'sera';
+    const grigio = (c: number) => mix(c, sera ? 0x46506a : 0xb6bec8, M.grigio);
+    this.hemi.color.setHex(grigio(L.emi[0])); this.hemi.groundColor.setHex(L.emi[1]); this.hemi.intensity = L.emi[2] * M.emi * Math.PI;
+    this.sun.color.setHex(grigio(L.sole[0])); this.sun.intensity = L.sole[1] * M.sole * Math.PI;
+    this.sun.position.set(L.dir[0], L.dir[1], L.dir[2]);
+    const fog = this.scene.fog as THREE.Fog, nebbia = this.amb.meteo === 'nebbia';
+    (this.scene.background as THREE.Color).setHex(nebbia ? L.nebbia : grigio(L.cielo));
+    fog.color.setHex(L.nebbia); fog.near = nebbia ? 46 : 500; fog.far = nebbia ? 104 : 1000;
+    this.vetri.color.setHex(sera ? 0xffe2a0 : 0xbfe6f4); this.vetri.emissive.setHex(sera ? 0xf2b458 : 0x000000);
+    this.luceLamp.color.setHex(sera ? 0xffe08a : 0xf3ecd6);
+    this.aloneMat.visible = sera;
+    if (this.nubi) (this.nubi.material as THREE.MeshLambertMaterial).emissive.setHex(sera ? 0x1c2440 : 0x2a2a2a);
+    this.shadowDirty = true; this.dirty = true;
+  }
+  /** Gocce o fiocchi (nel riferimento della camera) e nuvole (nel mondo) del meteo di adesso: una InstancedMesh ciascuno. */
+  private preparaMeteo() {
+    this.svuota(this.schermo); this.svuota(this.cielo);
+    this.gocce = null; this.nubi = null; this.ombre = null; this.gp = []; this.np = []; this.op = [];
+    const meteo = this.amb.meteo, R = rngFor('meteo' + meteo);
+    if (meteo === 'pioggia' || meteo === 'neve') {
+      const neve = meteo === 'neve', N = neve ? 150 : 190;
+      // misure in altezze dello schermo: il gruppo e' scalato di viewH
+      const geo = neve ? new THREE.CircleGeometry(0.0062, 7) : new THREE.PlaneGeometry(0.0028, 0.046);
+      const mat = new THREE.MeshBasicMaterial({ color: neve ? 0xffffff : 0xe2eef8, transparent: true, opacity: neve ? 0.95 : 0.5, depthTest: false, depthWrite: false, fog: false });
+      const m = new THREE.InstancedMesh(geo, mat, N);
+      m.frustumCulled = false; m.renderOrder = 10;
+      this.gp = Array.from({ length: N }, () => ({ u: R() - 0.5, v: R() * 1.1 - 0.55, s: 0.6 + R() * 0.8, vel: neve ? 0.045 + R() * 0.045 : 0.75 + R() * 0.45, fase: R() * 6.283 }));
+      this.schermo.add(m); this.gocce = m;
+    }
+    const quante = meteo === 'nuvole' ? 6 : meteo === 'pioggia' ? 8 : meteo === 'neve' ? 5 : 0;
+    if (quante) {
+      // nuvoletta: cinque sfere fuse, la pancia schiacciata
+      const sfere = [[0, 0, 0, 1], [1.05, -0.12, 0.15, 0.74], [-1.0, -0.16, -0.05, 0.7], [0.42, 0.5, 0, 0.66], [-0.45, 0.38, 0.1, 0.6]].map(([x, y, z, r]) => new THREE.SphereGeometry(r, 12, 9).translate(x, y, z));
+      const geo = mergeGeometries(sfere, false) as THREE.BufferGeometry;
+      sfere.forEach((g) => g.dispose());
+      geo.scale(1, 0.72, 0.8);
+      const col = meteo === 'pioggia' ? 0xa7b0bb : meteo === 'neve' ? 0xeef2f5 : 0xffffff;
+      const mat = new THREE.MeshLambertMaterial({ color: col, emissive: this.amb.momento === 'sera' ? 0x1c2440 : 0x2a2a2a, transparent: true, opacity: 0.9, depthWrite: false });
+      const m = new THREE.InstancedMesh(geo, mat, quante);
+      m.frustumCulled = false;
+      this.np = Array.from({ length: quante }, (_, k) => ({ a: (k + R() * 0.6) / quante * 6.283, r: 30 + R() * 5, h: 6 + R() * 3, k: 1.0 + R() * 0.7 }));
+      this.cielo.add(m); this.nubi = m;
+      if (meteo !== 'neve') {
+        const n = 5, o = new THREE.InstancedMesh(this.aloneGeo, this.ombraMat, n);
+        o.frustumCulled = false; o.renderOrder = 5;
+        this.ombraMat.opacity = meteo === 'pioggia' ? 0.34 : 0.28;
+        this.op = Array.from({ length: n }, (_, k) => ({ s: (k / n) * 70 - 35 + R() * 5, w: -16 + R() * 30, k: 2.6 + R() * 1.6 }));
+        this.cielo.add(o); this.ombre = o;
+      }
+    }
+    this.tMeteo = performance.now();
+    this.dirty = true;
+  }
+  /** Le gocce cadono, i fiocchi ondeggiano e le nuvole passano solo da sveglia (`muovi`); a riposo e con
+   *  prefers-reduced-motion restano dove sono. Le matrici si ricompongono a ogni disegno: lo zoom e la forma dello
+   *  schermo cambiano anche da fermi. */
+  private passoMeteo(now: number, muovi: boolean) {
+    const dt = muovi ? Math.min(0.1, Math.max(0, now - this.tMeteo) / 1000) : 0;
+    this.tMeteo = now; this.tVento += dt;
+    const m4 = new THREE.Matrix4(), s3 = new V3(), p3 = new V3();
+    if (this.gocce) {
+      const a = innerWidth / innerHeight, neve = this.amb.meteo === 'neve', inclina = neve ? 0 : 0.14;
+      const q = new THREE.Quaternion().setFromAxisAngle(new V3(0, 0, 1), -inclina);
+      this.schermo.position.copy(this.target); this.schermo.quaternion.copy(this.camera.quaternion); this.schermo.scale.set(this.viewH, this.viewH, 1);
+      // tutte su uno schermo largo; su uno stretto (telefono in verticale) meno, cosi' la pioggia e' fitta uguale
+      const quante = Math.max(1, Math.min(this.gp.length, Math.round(this.gp.length * a / 1.6)));
+      this.gocce.count = quante;
+      this.gp.slice(0, quante).forEach((g, i) => {
+        if (dt) {
+          g.v -= g.vel * dt;
+          g.u -= g.vel * dt * Math.sin(inclina) / a;
+          if (g.v < -0.55) g.v += 1.1;
+          g.u = ((g.u + 0.5) % 1 + 1) % 1 - 0.5;
+        }
+        const x = g.u * a * 1.06 + (neve ? Math.sin(this.tVento * 0.9 + g.fase) * 0.012 : 0);
+        this.gocce?.setMatrixAt(i, m4.compose(p3.set(x, g.v, 40), q, s3.set(g.s, neve ? g.s : 0.8 + g.s * 0.3, 1)));
+      });
+      this.gocce.instanceMatrix.needsUpdate = true;
+    }
+    const uno = new THREE.Quaternion();
+    if (this.nubi) {
+      this.np.forEach((n, i) => {
+        n.a += dt * 0.02;
+        this.nubi?.setMatrixAt(i, m4.compose(p3.set(Math.cos(n.a) * n.r, n.h, Math.sin(n.a) * n.r), uno, s3.setScalar(n.k)));
+      });
+      this.nubi.instanceMatrix.needsUpdate = true;
+    }
+    if (this.ombre) {
+      this.op.forEach((o, i) => {
+        o.s += dt * 0.7; if (o.s > 36) o.s -= 72;
+        p3.copy(RIGHT).multiplyScalar(o.s).addScaledVector(AWAY, o.w); p3.y = 0.05;
+        this.ombre?.setMatrixAt(i, m4.compose(p3, uno, s3.set(o.k, 1, o.k * 0.7)));
+      });
+      this.ombre.instanceMatrix.needsUpdate = true;
+    }
+  }
 
   /* ---------- Paillettes: premi dei livelli, festa, punti ---------- */
   /** Decorazioni sbloccate fino al livello `i` (0 Stagista .. 6 Executive Queen), cumulative. Lo stesso livello non ricostruisce. */
@@ -1201,15 +1503,19 @@ export class Mondo {
   }
   /** Livello 3: lampioni intorno alla fontana e una panchina che la guarda. */
   private lampioni() {
-    const SCURO = 0x3d3a45, LEGNO = 0xbb8650, luce = new THREE.MeshBasicMaterial({ color: 0xfff1b8 });
-    for (const [x, z] of LAMPIONI) {
+    const SCURO = 0x3d3a45, LEGNO = 0xbb8650;
+    // la lanterna e l'alone a terra sono dell'ambiente: di sera si accendono (illumina), una draw call per tutti gli aloni
+    const aloni = new THREE.InstancedMesh(this.aloneGeo, this.aloneMat, LAMPIONI.length), m4 = new THREE.Matrix4();
+    LAMPIONI.forEach(([x, z], i) => {
       const g = new THREE.Group(); g.position.set(x, 0, z); this.premi.add(g);
       this.add(g, new THREE.CylinderGeometry(0.14, 0.19, 0.22, 8), SCURO, 0, 0.11, 0);
       this.add(g, new THREE.CylinderGeometry(0.05, 0.065, 2.1, 8), SCURO, 0, 1.25, 0);
-      this.add(g, new THREE.CylinderGeometry(0.17, 0.12, 0.34, 8), luce, 0, 2.47, 0, { cast: false });
+      this.add(g, new THREE.CylinderGeometry(0.17, 0.12, 0.34, 8), this.luceLamp, 0, 2.47, 0, { cast: false });
       this.add(g, new THREE.CylinderGeometry(0.03, 0.24, 0.18, 8), SCURO, 0, 2.73, 0);
       this.add(g, new THREE.SphereGeometry(0.055, 8, 6), GOLD, 0, 2.85, 0);
-    }
+      aloni.setMatrixAt(i, m4.makeTranslation(x, 0.025 + i * 0.002, z));
+    });
+    aloni.renderOrder = 1; this.premi.add(aloni);
     const b = new THREE.Group(); b.position.copy(PANCHINA); b.rotation.y = Math.PI / 2; this.premi.add(b);
     for (const sx of [-0.68, 0.68]) { this.add(b, box(0.08, 0.42, 0.44), SCURO, sx, 0.21, 0); this.add(b, box(0.07, 0.55, 0.07), SCURO, sx, 0.7, -0.24); }
     for (const sz of [-0.15, 0, 0.15]) this.add(b, box(1.56, 0.06, 0.13), LEGNO, 0, 0.45, sz);
@@ -1354,14 +1660,22 @@ export class Mondo {
   private pick(x: number, y: number) {
     const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1);
     ray.setFromCamera(ndc, this.camera);
-    if (this.ctx) { this.onTap?.(false); return; }
+    // con un pannello aperto il tocco lo chiude; dal Magazzino (o dalla scheda di una pila) si puo' toccare una pila
+    const soloPile = !!this.ctx && (this.ctx.type === 'wh' || this.ctx.type === 'pila');
+    if (this.ctx && !soloPile) { this.onTap?.(false); return; }
     for (const h of ray.intersectObjects([...this.pickables, this.ginni], true)) {
       let o: THREE.Object3D | null = h.object;
       while (o && !o.userData.kind) o = o.parent;
       if (!o) continue;
       const k = o.userData.kind;
+      if (k === 'pile' || k === 'avviso') {
+        const key: string | undefined = k === 'pile' ? o.userData.key : o.userData.keys?.[h.instanceId ?? -1];
+        if (!key) continue;
+        this.mostraPila(key); this.ev.onPila?.(key);
+        return;
+      }
+      if (soloPile) break;
       if (k === 'lab') { this.ev.onLab(o.userData.key); return; }
-      if (k === 'pile') { this.mostraPila(o.userData.key); return; }
       if (k === 'wh') { this.ev.onMagazzino(); return; }
       if (k === 'ginni') { this.ev.onGinni(); return; }
       if (k === 'cart') { this.ev.onCarro(); return; }
@@ -1415,6 +1729,7 @@ export class Mondo {
         (L.ch.userData.arm as THREE.Group).rotation.x = busy ? -0.4 + Math.sin(t * 7 + L.index) * 0.55 : 0;
       }
     }
+    this.passoMeteo(now, vivo);
     this.updateLabels(now);
     this.renderer.render(this.scene, this.camera);
   }

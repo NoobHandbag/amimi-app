@@ -9,6 +9,9 @@
 // giorno, conta completa REGISTRATA (17-10: non piu' calcolata dalle conte) una volta per mese), poi i confini dei
 // livelli, le medaglie, le missioni (con quella della conta completa dal 20 del mese), la differenza fra due letture e gli
 // accenti veri nei testi. In fondo la taratura: gli eventi VERI di Ginevra dal 17-08 (copia datata).
+// Fase 3 (18-10): la verifica vale se ha SISTEMATO righe (n della vista = righe con data aggiunta, cambiata o chiuse), la
+// data aggiunta arriva anche dall'ordine nato con la data (stesso ref = id della riga), la missione del laboratorio parla di
+// righe da sistemare (in ritardo o senza data) ed e' fatta solo da una verifica di oggi che ne ha sistemata almeno una.
 //
 // Calendario usato: lunedi' 2026-10-12 ... venerdi' 2026-10-16, sabato 17, domenica 18, lunedi' 19, martedi' 20.
 import { readFileSync } from 'node:fs';
@@ -103,21 +106,30 @@ eq('stessa riga in due giorni = 20', tot(VEN, E('arrivo', GIO, 'r1', 5), E('arri
 eq('due righe lo stesso giorno = 20', tot(VEN, E('arrivo', VEN, 'r1', 5), E('arrivo', VEN, 'r2', 3)), 20);
 eq('testo con i pezzi', C(VEN, E('arrivo', VEN, 'r1', 12)).voci[0].testo, 'Arrivo registrato · 12 pz');
 
-console.log('\n== verifica: 50, una volta per (fornitore, settimana ISO), solo con righe confermate ==');
+console.log('\n== verifica: 50, una volta per (fornitore, settimana ISO), solo se ha sistemato righe ==');
 const FR = 'Francesco (pelle)', SA = 'Sarte Milano (tessuto)', VI = 'Vincenzo (pelle)', FI = 'Fiorella (tessuto)';
 eq('lunedi\' e venerdi\' stesso fornitore = 50', tot(VEN, E('verifica', LUN, FR, 3), E('verifica', VEN, FR, 3)), 50);
 eq('domenica e\' ancora la stessa settimana ISO = 50', tot(DOM, E('verifica', LUN, FR, 3), E('verifica', DOM, FR, 3)), 50);
 eq('lunedi\' dopo = settimana nuova = 100', tot(LUN2, E('verifica', LUN, FR, 3), E('verifica', LUN2, FR, 3)), 100);
-eq('verifica senza righe confermate = 0', tot(VEN, E('verifica', VEN, FR, 0)), 0);
-eq('una verifica a 0 non consuma la settimana: dopo, con 2 confermate = 50', tot(VEN, E('verifica', LUN, FR, 0), E('verifica', MER, FR, 2)), 50);
+eq('verifica che non ha sistemato righe (n = 0, tutte confermate com\'erano) = 0', tot(VEN, E('verifica', VEN, FR, 0)), 0);
+eq('una verifica a 0 non consuma la settimana: dopo, con 2 sistemate = 50', tot(VEN, E('verifica', LUN, FR, 0), E('verifica', MER, FR, 2)), 50);
+eq('n sono le righe sistemate ma i punti no: 1 riga o 12 righe, sempre 50', [tot(VEN, E('verifica', VEN, FR, 1)), tot(VEN, E('verifica', VEN, FR, 12))], [50, 50]);
 eq('due fornitori la stessa settimana = 100', tot(VEN, E('verifica', LUN, FR, 3), E('verifica', LUN, SA, 1)), 100);
 eq('testo col nome del laboratorio', [C(VEN, E('verifica', VEN, FR, 3)).voci[0].testo, C(VEN, E('verifica', VEN, SA, 1)).voci[0].testo],
-  ['Verifica con Francesco · 3 righe confermate', 'Verifica con Sarte Milano · 1 riga confermata']);
+  ['Verifica con Francesco · 3 righe sistemate', 'Verifica con Sarte Milano · 1 riga sistemata']);
 
 console.log('\n== data aggiunta: 15 per riga, una volta per riga in assoluto ==');
 eq('stessa riga in due giorni = 15', tot(VEN, E('data_aggiunta', LUN, 'r1'), E('data_aggiunta', VEN, 'r1')), 15);
 eq('stessa riga a mesi di distanza = 15', tot(VEN, E('data_aggiunta', '2026-08-03', 'r1'), E('data_aggiunta', VEN, 'r1')), 15);
 eq('due righe = 30', tot(VEN, E('data_aggiunta', VEN, 'r1'), E('data_aggiunta', VEN, 'r2')), 30);
+// fase 3: la vista la scrive anche per la riga nata dall'ordine con la data gia' messa (ref = id della riga, come la verifica)
+eq('riga nata con la data (lunedi\') e poi data messa in verifica (venerdi\'): 15 una volta, la voce e\' la prima',
+  [tot(VEN, E('data_aggiunta', LUN, 'r1', 1, '09:00:00'), E('data_aggiunta', VEN, 'r1', 1, '16:00:00')),
+    C(VEN, E('data_aggiunta', VEN, 'r1', 1, '16:00:00'), E('data_aggiunta', LUN, 'r1', 1, '09:00:00')).voci.map((v) => [v.giorno, v.testo])],
+  [15, [[LUN, 'Data di consegna aggiunta']]]);
+eq('lo stesso giorno, ordine e verifica sulla stessa riga: 15', tot(VEN, E('data_aggiunta', VEN, 'r1', 1, '09:00:00'), E('data_aggiunta', VEN, 'r1', 1, '16:00:00')), 15);
+eq('l\'ordine con la data vale anche i suoi 20 + 5 per riga: ordine da 2 righe con la data = 30 + 15 + 15', tot(VEN, E('ordine', VEN, 'g1', 2),
+  E('data_aggiunta', VEN, 'r1'), E('data_aggiunta', VEN, 'r2')), 60);
 
 console.log('\n== conta: 2 per codice, una volta per (codice, giorno) ==');
 eq('stesso codice due volte lo stesso giorno = 2', tot(VEN, E('conta', VEN, 'LEA', 1, '09:00:00'), E('conta', VEN, 'LEA', 1, '09:05:00')), 2);
@@ -191,11 +203,11 @@ console.log('\n== medaglie ==');
   t('prima-presenza con una presenza', ha('prima-presenza', P(VEN)));
   t('settimana-perfetta: no a 4 su 5 + sabato', !ha('settimana-perfetta', SETTIMANA.slice(0, 4).map((g) => P(g)), P(SAB)));
   t('settimana-perfetta: si\' a 5 su 5', ha('settimana-perfetta', SETTIMANA.map((g) => P(g))));
-  t('prima-verifica: no con 0 righe confermate', !ha('prima-verifica', E('verifica', VEN, FR, 0)));
+  t('prima-verifica: no con 0 righe sistemate', !ha('prima-verifica', E('verifica', VEN, FR, 0)));
   t('prima-verifica: si\' con 1', ha('prima-verifica', E('verifica', VEN, FR, 1)));
   t('tutti-i-laboratori: 4 fornitori nella stessa settimana', ha('tutti-i-laboratori', [FR, SA, VI, FI].map((f, i) => E('verifica', SETTIMANA[i], f, 1))));
   t('tutti-i-laboratori: no con 3 + 1 la settimana dopo', !ha('tutti-i-laboratori', [FR, SA, VI].map((f) => E('verifica', LUN, f, 1)), E('verifica', LUN2, FI, 1)));
-  t('tutti-i-laboratori: no se uno dei 4 non ha righe confermate', !ha('tutti-i-laboratori', [FR, SA, VI].map((f) => E('verifica', LUN, f, 1)), E('verifica', LUN, FI, 0)));
+  t('tutti-i-laboratori: no se uno dei 4 non ha sistemato righe', !ha('tutti-i-laboratori', [FR, SA, VI].map((f) => E('verifica', LUN, f, 1)), E('verifica', LUN, FI, 0)));
   t('tutti-i-laboratori: no con lo stesso fornitore 4 volte', !ha('tutti-i-laboratori', SETTIMANA.slice(0, 4).map((g) => E('verifica', g, FR, 1))));
   t('prima-conta-completa: con la conta completa registrata', ha('prima-conta-completa', CC('2026-10-25')));
   t('prima-conta-completa: no con tante conte singole e nessuna registrazione', !ha('prima-conta-completa', Array.from({ length: 300 }, (_, i) => E('conta', VEN, 'K' + i))));
@@ -227,23 +239,35 @@ console.log('\n== missioni: al massimo 3, verifica > conta > date > conta comple
   const LABS = [LX, LV, LS, LF, LFI];
   const M = (eventi = [], negativi = [], labs = LABS, oggi = VEN) => missioni({ labs, negativi, eventi, oggi });
   const forma = (ms) => ms.map((m) => [m.id, m.testo, m.azione, m.fatta]);
+  // da sistemare = in ritardo + senza data: Francesco 5 + 7 = 12, Sarte Milano 4 + 4 = 8, Vincenzo 2, Fiorella 1
   eq('niente di fatto, 2 negativi: le 3 missioni in ordine', forma(M([], ['N1', 'N2'])), [
-    ['verifica:' + FR, 'Verifica con Francesco · 5 righe in ritardo', { t: 'verifica', lab: FR }, false],
+    ['verifica:' + FR, 'Verifica con Francesco · 12 righe da sistemare', { t: 'verifica', lab: FR }, false],
     ['conta-negativi', 'Conta i 2 codici negativi', { t: 'conta', codici: ['N1', 'N2'] }, false],
     ['date:' + SA, 'Chiedi a Sarte Milano la data di 4 righe', { t: 'verifica', lab: SA }, false],
   ]);
   t('il laboratorio senza fornitore non e\' mai una missione', !M([], ['N1']).some((m) => m.azione.t === 'verifica' && m.azione.lab === ''));
   eq('Francesco verificato lunedi\': tocca a Sarte, e le date a Vincenzo', M([E('verifica', LUN, FR, 3)]).map((m) => m.id), ['verifica:' + SA, 'date:' + VI]);
   eq('Francesco verificato la settimana scorsa: torna in cima', M([E('verifica', '2026-10-09', FR, 3)]).map((m) => m.id), ['verifica:' + FR, 'date:' + SA]);
-  eq('una verifica a 0 righe confermate e\' comunque una verifica (la missione e\' passare le righe)', M([E('verifica', LUN, FR, 0)])[0].id, 'verifica:' + SA);
+  eq('una verifica di lunedi\' che non ha sistemato righe (n = 0) non toglie il laboratorio: Francesco resta in cima',
+    M([E('verifica', LUN, FR, 0)]).map((m) => [m.id, m.fatta]), [['verifica:' + FR, false], ['date:' + SA, false]]);
+  eq('una verifica di oggi a 0 righe sistemate non fa la missione', forma(M([E('verifica', VEN, FR, 0)]))[0],
+    ['verifica:' + FR, 'Verifica con Francesco · 12 righe da sistemare', { t: 'verifica', lab: FR }, false]);
+  eq('a 0 la mattina e a 1 il pomeriggio: fatta', M([E('verifica', VEN, FR, 0, '09:00:00'), E('verifica', VEN, FR, 1, '15:00:00')])[0].fatta, true);
   {
     const dopo = [lab(FR, 'Francesco', 0, 12, 0), LS, LV, LFI];
-    eq('Francesco verificato oggi, date spostate (ritardi a 0): la missione resta sua, fatta', forma(M([E('verifica', VEN, FR, 12)], [], dopo))[0],
+    eq('Francesco verificato oggi, righe sistemate (niente piu\' da sistemare): la missione resta sua, fatta', forma(M([E('verifica', VEN, FR, 12)], [], dopo))[0],
       ['verifica:' + FR, 'Verifica con Francesco', { t: 'verifica', lab: FR }, true]);
     eq('e la missione date passa al prossimo laboratorio', M([E('verifica', VEN, FR, 12)], [], dopo)[1].id, 'date:' + SA);
+    const unaSola = [lab(FR, 'Francesco', 5, 7, 6), LS, LV, LFI];
+    eq('sistemata una riga su 12: fatta, e il testo dice quante ne restano', forma(M([E('verifica', VEN, FR, 1)], [], unaSola))[0],
+      ['verifica:' + FR, 'Verifica con Francesco · 11 righe da sistemare', { t: 'verifica', lab: FR }, true]);
   }
   eq('verificato oggi un altro laboratorio: e\' quello la missione verifica, fatta', forma(M([E('verifica', VEN, VI, 2)]))[0],
-    ['verifica:' + VI, 'Verifica con Vincenzo', { t: 'verifica', lab: VI }, true]);
+    ['verifica:' + VI, 'Verifica con Vincenzo · 2 righe da sistemare', { t: 'verifica', lab: VI }, true]);
+  eq('le righe senza data contano come quelle in ritardo: 0 + 5 batte 3 + 0', missioni({ labs: [lab(FR, 'Francesco', 3, 0, 0), lab(SA, 'Sarte Milano', 0, 5, 5)],
+    negativi: [], eventi: [], oggi: VEN }).map((m) => m.testo), ['Verifica con Sarte Milano · 5 righe da sistemare']);
+  eq('e si sommano: 3 in ritardo + 3 senza data (6) batte 5 in ritardo', missioni({ labs: [lab(FR, 'Francesco', 5, 0, 0), lab(SA, 'Sarte Milano', 3, 3, 3)],
+    negativi: [], eventi: [], oggi: VEN })[0].testo, 'Verifica con Sarte Milano · 6 righe da sistemare');
   eq('due verificati oggi: verifica e date tutte e due fatte', M([E('verifica', VEN, FR, 3), E('verifica', VEN, SA, 2)]).map((m) => [m.id, m.fatta]),
     [['verifica:' + FR, true], ['date:' + SA, true]]);
   eq('verifica di ieri non fa "fatta" oggi, ma toglie il laboratorio per la settimana', M([E('verifica', GIO, SA, 2)]).map((m) => [m.id, m.fatta]),
@@ -251,9 +275,10 @@ console.log('\n== missioni: al massimo 3, verifica > conta > date > conta comple
   eq('conta: fatta quando tutti i negativi sono contati oggi', [M([E('conta', VEN, 'N1')], ['N1', 'N2'])[1].fatta,
     M([E('conta', VEN, 'N1'), E('conta', VEN, 'N2')], ['N1', 'N2'])[1].fatta, M([E('conta', GIO, 'N1'), E('conta', GIO, 'N2')], ['N1', 'N2'])[1].fatta], [false, true, false]);
   eq('niente negativi, niente missione conta', M([], []).some((m) => m.id === 'conta-negativi'), false);
-  eq('singolari', forma(missioni({ labs: [lab(FR, 'Francesco', 1, 0, 0), lab(SA, 'Sarte Milano', 0, 1, 1)], negativi: ['N1'], eventi: [], oggi: VEN })).map((m) => m[1]),
-    ['Verifica con Francesco · 1 riga in ritardo', 'Conta il codice negativo', 'Chiedi a Sarte Milano la data di 1 riga']);
-  eq('nessun ritardo: niente missione verifica, resta quella delle date', M([], [], [LV, LFI]).map((m) => m.id), ['date:' + VI]);
+  eq('singolari (1 a 1: vince il nome in ordine alfabetico)', forma(missioni({ labs: [lab(FR, 'Francesco', 1, 0, 0), lab(SA, 'Sarte Milano', 0, 1, 1)], negativi: ['N1'], eventi: [], oggi: VEN })).map((m) => m[1]),
+    ['Verifica con Francesco · 1 riga da sistemare', 'Conta il codice negativo', 'Chiedi a Sarte Milano la data di 1 riga']);
+  eq('nessun ritardo ma righe senza data: la verifica va a chi ne ha di piu\', le date al prossimo', M([], [], [LV, LFI]).map((m) => m.testo),
+    ['Verifica con Vincenzo · 2 righe da sistemare', 'Chiedi a Fiorella la data di 1 riga']);
   eq('ritardi pari: vince il nome in ordine alfabetico', missioni({ labs: [lab(SA, 'Sarte Milano', 2, 0, 0), lab(FR, 'Francesco', 2, 0, 0)], negativi: [], eventi: [], oggi: VEN })[0].id,
     'verifica:' + FR);
   eq('tutto a posto: nessuna missione', missioni({ labs: [lab(FR, 'Francesco', 0, 3, 0)], negativi: [], eventi: [], oggi: VEN }), []);
@@ -280,6 +305,29 @@ console.log('\n== missioni: al massimo 3, verifica > conta > date > conta comple
   eq('con verifica, negativi e date: non c\'e\' posto (sempre 3)', M([], ['N1', 'N2'], LABS, MAR2).map((m) => m.id), ['verifica:' + FR, 'conta-negativi', 'date:' + SA]);
   eq('con una sola altra missione: seconda', M([], ['N1'], [], MAR2).map((m) => m.id), ['conta-negativi', 'conta-completa:2026-10']);
   eq('la missione non da\' punti: registrata = solo i 500 della conta completa', tot(MAR2, CC(MAR2)), 500);
+}
+
+// --- Le missioni di lunedi' 19-10 sui dati veri ---
+// Copia datata, letta il 18-10-2026 in SOLA lettura (progetto imszbjeyplaiovylhkgl): righe aperte di v_ordini_arrivo per
+// fornitore, contate come fa la pagina (in ritardo = data_consegna passata, senza data = data_consegna nulla), e i codici
+// con giacenza negativa di v_inventory. Le 5 righe in ritardo di Francesco sono i porta-carte cocco del 23-04 (consegna
+// promessa il 20-05); nessuna riga aperta ha una data futura.
+console.log('\n== missioni di lunedi\' 19-10 sui dati veri del 18-10 ==');
+{
+  const VERE = [['Francesco (pelle)', 'Francesco', 5, 7], ['Sarte Milano (tessuto)', 'Sarte Milano', 4, 3], ['Vincenzo (pelle)', 'Vincenzo', 0, 2],
+    ['Fiorella (tessuto)', 'Fiorella', 0, 1]].map(([forn, nome, late, senza]) =>
+    ({ key: forn, nome, forn, senzaData: senza, righe: [...Array(late).fill({ late: true, wip: false }), ...Array(senza).fill({ late: false, wip: false })] }));
+  const NEG = ['AGATA_BAG_FLORAL_LIGHT_GREY', 'ANNIE_BAG_EMBROIDERY_COLORFULL'];
+  eq('la prima missione parla delle 12 righe di Francesco da sistemare, non piu\' solo delle 5 in ritardo',
+    missioni({ labs: VERE, negativi: NEG, eventi: [], oggi: LUN2 }).map((m) => [m.id, m.testo]), [
+      ['verifica:Francesco (pelle)', 'Verifica con Francesco · 12 righe da sistemare'],
+      ['conta-negativi', 'Conta i 2 codici negativi'],
+      ['date:Sarte Milano (tessuto)', 'Chiedi a Sarte Milano la data di 3 righe'],
+    ]);
+  eq('verifica con Francesco che chiude i 5 porta-carte (n = 5): fatta, +50', [missioni({ labs: VERE, negativi: NEG, eventi: [E('verifica', LUN2, 'Francesco (pelle)', 5)], oggi: LUN2 })[0].fatta,
+    tot(LUN2, E('verifica', LUN2, 'Francesco (pelle)', 5))], [true, 50]);
+  eq('verifica con Francesco che conferma tutto com\'era (n = 0): non fatta, 0', [missioni({ labs: VERE, negativi: NEG, eventi: [E('verifica', LUN2, 'Francesco (pelle)', 0)], oggi: LUN2 })[0].fatta,
+    tot(LUN2, E('verifica', LUN2, 'Francesco (pelle)', 0))], [false, 0]);
 }
 
 console.log('\n== differenza fra due letture ==');

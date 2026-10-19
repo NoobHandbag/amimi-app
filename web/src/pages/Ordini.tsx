@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import SupplierOrderForm from '../components/SupplierOrderForm';
 import FoglioOrdine from '../components/FoglioOrdine';
 import { fetchMatSettings } from '../lib/matApi';
-import { fetchOrdiniGruppi, oggi, setArrival, deleteOrder } from '../lib/api';
-import type { OrdGruppo, OrdLine } from '../lib/api';
+import { fetchOrdiniGruppi, oggi, setArrival, deleteOrder, aggiornaRigaOrdine } from '../lib/api';
+import type { OrdGruppo, OrdLine, RigaOrdineModifica } from '../lib/api';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
 import NumberStepper from '../components/NumberStepper';
@@ -16,6 +16,11 @@ import { toast } from '../lib/toast';
 // in 'totale' il totale gia' registrato
 const campoIniziale = (m: ModoArrivo, gia: number, mancano: number, wip: boolean, done: boolean) =>
   m === 'totale' ? String(gia) : (wip || done || mancano <= 0 ? '' : String(mancano));
+
+// modulo "Modifica" di ArrivoRow. Campi a 16 px: con meno, Safari su iPhone ingrandisce la pagina quando si tocca il
+// campo; flex none perche' dentro l'etichetta in colonna la base di .ds-recvdate (116 px) diventerebbe l'altezza
+const etichetta = { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--ink-muted)', minWidth: 0 } as const;
+const campo = { fontSize: 16, flex: 'none' } as const;
 
 /* register an arrival against one order line (riusata dal Villaggio: un solo punto che scrive gli arrivi) */
 export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLine; pin: string; chi: string; reload: () => void; defaultOpen?: boolean; altri?: OrdLine[] }) {
@@ -34,6 +39,16 @@ export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l:
   const [d, setD] = useState(oggi());
   const [costo, setCosto] = useState(l.costo_unitario != null ? String(l.costo_unitario) : '');
   const [busy, setBusy] = useState(false);
+  // Modifica della riga (proposta 8, 18-10) al posto di "cancella e rifai": come vuole write-api order_update, solo
+  // finche' non e' arrivato niente e non per le WIP (quantita' e costo si decidono all'arrivo). Codice e fornitore no.
+  const modificabile = !done && gia === 0 && !wip;
+  const [edit, setEdit] = useState(false);
+  const [eq, setEq] = useState(''); const [ec, setEc] = useState(''); const [en, setEn] = useState(''); const [ed, setEd] = useState('');
+  const consegnaRiga = l.data_consegna ? String(l.data_consegna).slice(0, 10) : '';
+  const apriModifica = () => {
+    setEq(l.qty_ordered != null ? String(l.qty_ordered) : ''); setEc(l.costo_unitario != null ? String(l.costo_unitario) : '');
+    setEn(l.note ?? ''); setEd(consegnaRiga); setEdit(true);
+  };
   // la riga e' cambiata (arrivo appena salvato, o registrato da un altro telefono): il campo riparte dal
   // nuovo stato, altrimenti resterebbe precompilato con il numero dell'arrivo precedente
   useEffect(() => {
@@ -44,7 +59,7 @@ export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l:
   // attiva per l'arrivo successivo (era l'equivoco di partenza, a rovescio). Se il modo e' gia' quello,
   // il numero digitato resta: un tocco per sbaglio sull'intestazione non lo deve cancellare.
   const tornaAlModoBase = () => { if (modo !== modoBase) cambiaModo(modoBase); };
-  const apriChiudi = () => { setOpen((o) => !o); tornaAlModoBase(); };
+  const apriChiudi = () => { setOpen((o) => !o); tornaAlModoBase(); setEdit(false); };
 
   const piano = pianoArrivo(modo, n, gia);
 
@@ -101,6 +116,30 @@ export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l:
     finally { setBusy(false); reload(); }
   }
 
+  // al server vanno solo i campi cambiati (vuoto = togli il valore); se il salvataggio fallisce il modulo resta compilato
+  async function salvaModifica() {
+    const campi: RigaOrdineModifica = {};
+    const q = Number(eq);
+    if (eq.trim() === '' || !Number.isInteger(q) || q < 1) return toast('Pezzi ordinati: un numero intero, almeno 1', 'err');
+    if (q !== Number(l.qty_ordered)) campi.qty_ordered = q;
+    const c = ec.trim() === '' ? null : Number(ec);
+    if (c != null && !(Number.isFinite(c) && c >= 0)) return toast('€ al pezzo: un numero da 0 in su, oppure vuoto', 'err');
+    if (c !== (l.costo_unitario == null ? null : Number(l.costo_unitario))) campi.costo_unitario = c;
+    const nota = en.trim() || null;
+    if (nota !== ((l.note ?? '').trim() || null)) campi.note = nota;
+    if (ed !== consegnaRiga) {
+      // controllata solo se cambia: una vecchia riga importata con una data storta non blocca le altre correzioni
+      const dOrd = String(l.data_ordine ?? '').slice(0, 10);
+      if (ed && (!/^\d{4}-\d{2}-\d{2}$/.test(ed) || (dOrd !== '' && ed < dOrd))) return toast("Consegna prevista: dev'essere una data dal giorno dell'ordine in poi", 'err');
+      campi.data_consegna = ed || null;
+    }
+    if (!Object.keys(campi).length) { setEdit(false); return toast('Nessuna modifica da salvare'); }
+    setBusy(true);
+    try { await aggiornaRigaOrdine(l.id, campi, pin, chi); toast('Riga ordine aggiornata', 'ok'); setEdit(false); }
+    catch (e) { toast((e as Error).message, 'err'); }
+    finally { setBusy(false); reload(); }
+  }
+
   const ordered = l.wip ? 0 : l.qty_ordered;
   const pct = ordered > 0 ? Math.min(100, Math.round((l.qty_arrived / ordered) * 100)) : (done ? 100 : 0);
 
@@ -121,7 +160,34 @@ export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l:
         <span className="ds-progtxt">{l.qty_arrived} / {l.wip ? '?' : l.qty_ordered}</span>
       </div>
       {l.data_consegna_display && <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 5 }}>Consegna prevista: {String(l.data_consegna_display).slice(0, 10)}</div>}
-      {open && (
+      {open && edit && modificabile && (
+        <div className="ds-recv">
+          <div className="rl">Modifica la riga (non è arrivato ancora niente)</div>
+          <div className="ds-recvrow">
+            <label style={{ ...etichetta, flex: '1 1 110px' }}>
+              Pezzi ordinati
+              <input className="ds-recvdate" style={campo} type="number" inputMode="numeric" min={1} value={eq} onChange={(e) => setEq(e.target.value)} />
+            </label>
+            <label style={{ ...etichetta, flex: '1 1 110px' }}>
+              € al pezzo
+              <input className="ds-recvdate" style={campo} type="number" inputMode="decimal" min={0} value={ec} onChange={(e) => setEc(e.target.value)} placeholder="non lo so ancora" />
+            </label>
+            <label style={{ ...etichetta, flex: '1 1 140px' }}>
+              Consegna prevista
+              <input className="ds-recvdate" style={campo} type="date" value={ed} min={String(l.data_ordine ?? '').slice(0, 10) || undefined} onChange={(e) => setEd(e.target.value)} />
+            </label>
+          </div>
+          <label style={{ ...etichetta, marginTop: 8 }}>
+            Nota
+            <input className="ds-recvdate" style={campo} type="text" value={en} onChange={(e) => setEn(e.target.value)} placeholder="facoltativa" />
+          </label>
+          <div className="ds-recvfoot" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <button type="button" className="linkbtn" style={{ textDecoration: 'underline', color: 'var(--ink-muted)', fontSize: 12 }} disabled={busy} onClick={() => setEdit(false)}>Annulla</button>
+            <button type="button" className="ds-segna" style={{ flex: 'none' }} disabled={busy} onClick={salvaModifica}>{busy ? '…' : 'Salva modifiche'}</button>
+          </div>
+        </div>
+      )}
+      {open && !(edit && modificabile) && (
         <div className="ds-recv">
           {altri.length > 0 && (
             // fix b (31-07): il vero antidoto al doppio conteggio: chi registra VEDE che esistono
@@ -151,7 +217,10 @@ export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l:
             <button type="button" className="linkbtn" style={{ textDecoration: 'underline', color: 'var(--ink-muted)', fontSize: 12 }} disabled={busy} onClick={() => cambiaModo(modo === 'adesso' ? 'totale' : 'adesso')}>
               {modo === 'adesso' ? 'Correggi il totale' : done ? 'Registra un altro arrivo' : 'Registra un arrivo'}
             </button>
-            <button type="button" className="ds-del" disabled={busy} onClick={remove}><Icon name="trash" size={14} /> Elimina riga</button>
+            <span style={{ display: 'flex', gap: 6 }}>
+              {modificabile && <button type="button" className="ds-del" style={{ color: 'var(--ink)', background: 'var(--surface-alt)' }} disabled={busy} onClick={apriModifica}>Modifica</button>}
+              <button type="button" className="ds-del" disabled={busy} onClick={remove}><Icon name="trash" size={14} /> Elimina riga</button>
+            </span>
           </div>
         </div>
       )}

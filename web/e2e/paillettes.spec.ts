@@ -8,6 +8,9 @@ import { test, expect, type Page } from '@playwright/test';
 // aggiornate, eventi verifica e data_aggiunta), count (giacenza corretta, evento conta). Gli eventi nuovi li aggiunge il
 // finto server solo per la giocatrice, come la vista v_villaggio_eventi. I punti attesi sono contati a mano qui sotto, non
 // con paillettes.ts.
+// Fase 3 (18-10, write-api v30 e migr 0166): la verifica chiude le righe che non arrivano piu' (righe[].chiudi === true,
+// risposta con righe_chiuse) e l'evento verifica ha n = righe SISTEMATE (chiuse, o con una data messa o cambiata): una
+// verifica che conferma e basta ha n = 0 e non vale niente. Il meteo di Open-Meteo e' finto anche qui (sereno).
 // Lanciare dopo la build verso il progetto finto (come la CI), sempre col percorso del file:
 //   VITE_SUPABASE_URL=https://e2e-progetto-finto.supabase.co VITE_SUPABASE_ANON_KEY=sb_publishable_e2e_finto npx vite build --outDir <cartella>
 //   npx vite preview --outDir <cartella> --port <porta libera> --strictPort
@@ -179,6 +182,8 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
   }, { chi: opts.chi ?? null, presenza: opts.presenzaFatta ? `${GIOCATRICE}|${oggiS}` : null, livello: opts.livello ?? null });
   if (opts.presenzaFatta && !eventi.some((e) => e.tipo === 'presenza' && e.giorno === oggiS)) eventi.push(ev('presenza', oggiS, oggiS, 1, '06:45'));
   await page.route(/fonts\.(googleapis|gstatic)\.com\//, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  // il meteo vero di Milano non si chiede mai dai test (villaggio.spec.ts prova pioggia ed errore)
+  await page.route(/api\.open-meteo\.com\//, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ current: { weather_code: 0, is_day: 1 } }) }));
   await page.route(/supabase\.co\//, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -208,23 +213,31 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
       }
       if (a === 'fornitore_verifica') {
         await aspetta('verifica');
-        const pl = p.body.payload as { fornitore: string; righe: { id: string; confermata: boolean; data_consegna: string | null }[]; nota?: string | null };
+        const pl = p.body.payload as { fornitore: string; righe: { id: string; confermata: boolean; data_consegna: string | null; chiudi?: unknown }[]; nota?: string | null };
         if (!pl.fornitore || !Array.isArray(pl.righe) || !pl.righe.length) return json({ error: 'fornitore e righe obbligatori' }, 422);
-        // come write-api: si leggono solo le righe di quel fornitore, le altre si ignorano
-        const lette = pl.righe.flatMap((x) => { const r = dati.ordini.find((o) => o.id === x.id && o.fornitore === pl.fornitore); return r ? [{ x, r }] : []; });
-        if (!lette.length) return json({ error: 'nessuna riga del fornitore' }, 422);
-        let cambiate = 0;
+        // come write-api v30: si leggono solo le righe APERTE di quel fornitore, le altre si ignorano
+        const lette = pl.righe.flatMap((x) => { const r = dati.ordini.find((o) => o.id === x.id && o.fornitore === pl.fornitore && !o.completo); return r ? [{ x, r }] : []; });
+        if (!lette.length) return json({ error: 'nessuna riga aperta del fornitore' }, 422);
+        let cambiate = 0, chiuse = 0;
         const fatte = lette.map(({ x, r }) => {
-          // come write-api: una data vuota su una riga che la data l'ha non la cancella
-          const prima = r.data_consegna, dopo = x.data_consegna || prima;
+          const prima = r.data_consegna;
+          // chiudi solo se === true: il residuo non arriva piu' (ordinati = arrivati, non WIP); la data resta quella che era
+          if (x.chiudi === true) {
+            Object.assign(r, { qty_ordered: r.qty_arrived, mancano: 0, completo: true, wip: false });
+            chiuse++;
+            return { id: r.id, chiusa: true, prima, dopo: prima };
+          }
+          // una data vuota su una riga che la data l'ha non la cancella
+          const dopo = x.data_consegna || prima;
           if (prima !== dopo) { r.data_consegna = dopo; r.data_consegna_display = dopo; cambiate++; }
-          return { id: r.id, confermata: x.confermata, prima, dopo };
+          return { id: r.id, chiusa: false, prima, dopo };
         });
         if (gioca) {
-          eventi.push(ev('verifica', oggiS, pl.fornitore, fatte.filter((c) => c.confermata).length, adesso()));
-          for (const c of fatte) if (!c.prima && c.dopo) eventi.push(ev('data_aggiunta', oggiS, c.id, 1, adesso()));
+          // come la vista (migr 0166): n = righe sistemate (chiuse, o con una data messa o cambiata); confermata non conta
+          eventi.push(ev('verifica', oggiS, pl.fornitore, fatte.filter((c) => c.chiusa || (!!c.dopo && c.dopo !== c.prima)).length, adesso()));
+          for (const c of fatte) if (!c.chiusa && !c.prima && c.dopo) eventi.push(ev('data_aggiunta', oggiS, c.id, 1, adesso()));
         }
-        return json({ ok: true, check_id: '00000000-0000-0000-0000-00000000c4ec', date_cambiate: cambiate });
+        return json({ ok: true, check_id: '00000000-0000-0000-0000-00000000c4ec', date_cambiate: cambiate, righe_chiuse: chiuse });
       }
       if (a === 'count') {
         const pl = p.body.payload as { codice: string; contati: number; data_conta: string };
@@ -306,7 +319,7 @@ for (const caso of [
     test.use({ viewport: { width: 390, height: 844 } });
     test('Ginni sul suo telefono: niente pillola, missioni, presenza, verifica ne\' giro di conta; nessun evento letto', async ({ page }) => {
       const dati = datiBase();
-      const r = await apri(page, 'villaggio/', dati, { paillettes: caso.flag });
+      const r = await apri(page, 'villaggio/', dati, { chi: 'Ginevra', paillettes: caso.flag });
       await hud(page);
       await expect(page.locator('.v-hud .v-chi select')).toHaveValue('Ginevra');
       await page.waitForTimeout(2500);   // il tempo per una presenza e una rilettura, se partissero
@@ -390,7 +403,7 @@ test.describe('Paillettes accese, gioca Ginni', () => {
 
   test('presenza: una sola villaggio_presenza al giorno con chi Ginevra, anche ricaricando o tornando in primo piano; il giorno dopo si riprova', async ({ page }) => {
     const dati = datiBase();
-    const r = await apri(page, 'villaggio/', dati);
+    const r = await apri(page, 'villaggio/', dati, { chi: 'Ginevra' });
     await hud(page);
     await expect.poll(() => presenze(r.posts).length, ATTESA).toBe(1);
     const p = presenze(r.posts)[0];
@@ -426,7 +439,7 @@ test.describe('Paillettes accese, gioca Ginni', () => {
 
   test('presenza in volo: tre ritorni in primo piano mentre la POST aspetta la risposta non ne mandano una seconda', async ({ page }) => {
     const dati = datiBase();
-    const r = await apri(page, 'villaggio/', dati, { trattieni: ['presenza'] });
+    const r = await apri(page, 'villaggio/', dati, { chi: 'Ginevra', trattieni: ['presenza'] });
     await hud(page);
     await pillola(page, String(BASE), 'Stagista');
     await expect.poll(() => presenze(r.posts).length, ATTESA).toBe(1);
@@ -476,7 +489,7 @@ test.describe('Paillettes accese, gioca Ginni', () => {
 
   test('soglia: la presenza porta da 297 a 302, "+5" dorato, festa e "Sei diventata Junior!", la pillola sale di livello', async ({ page }) => {
     const dati = datiBase();
-    const r = await apri(page, 'villaggio/', dati, { eventi: eventiDa297() });
+    const r = await apri(page, 'villaggio/', dati, { chi: 'Ginevra', eventi: eventiDa297() });
     await hud(page);
     await expect.poll(() => presenze(r.posts).length, ATTESA).toBe(1);
     await pillola(page, '302', 'Junior');
@@ -596,7 +609,9 @@ test.describe('Paillettes accese, gioca Ginni', () => {
     r.sblocca('verifica');
 
     // salvata: toast con le date, la rilettura porta +50 e la prima medaglia nuova, e si torna al laboratorio
-    await compare(page, '__avvisi', 'Verifica con Francesco salvata: 1 data aggiornata. +50 paillettes · Medaglia nuova: Prima verifica!');
+    // il toast delle paillettes si accoda a quello della verifica se la rilettura arriva in tempo, se no esce da solo: le due parti
+    await compare(page, '__avvisi', 'Verifica con Francesco salvata: 1 data aggiornata.');
+    await compare(page, '__avvisi', '+50 paillettes · Medaglia nuova: Prima verifica!');
     await compare(page, '__float', '+50');
     await pillola(page, '337', 'Junior');
     await expect(sheet(page).locator('h2')).toHaveText('Francesco sta preparando', ATTESA);
@@ -608,7 +623,7 @@ test.describe('Paillettes accese, gioca Ginni', () => {
     expect(r.errori).toEqual([]);
   });
 
-  test('verifica: la data mancante si vede; una data svuotata resta quella di prima; il laboratorio che sparisce chiude la verifica toccata', async ({ page }) => {
+  test('verifica: la data mancante si vede; una data svuotata resta quella di prima; il laboratorio che sparisce chiude la verifica toccata; senza niente da sistemare niente paillettes', async ({ page }) => {
     const dati = datiBase();
     const r = await apri(page, '#villaggio', dati, { chi: 'Ginevra', presenzaFatta: true });
     await hud(page);
@@ -658,13 +673,237 @@ test.describe('Paillettes accese, gioca Ginni', () => {
       fornitore: FRANCESCO, nota: null,
       righe: [{ id: ID.lea, confermata: true, data_consegna: traGiorni(-10) }, { id: ID.sophie, confermata: true, data_consegna: traGiorni(20) }],
     });
-    // nessuna data cambiata: il toast non ne parla
-    await compare(page, '__avvisi', 'Verifica con Francesco salvata. +50 paillettes · Medaglia nuova: Prima verifica!');
-    await pillola(page, '337', 'Junior');
+    // nessuna data cambiata e nessuna riga chiusa: la verifica e' salvata ma non sistema niente, quindi niente paillettes
+    // (fase 3: verifica.n = righe sistemate, qui 0) e la missione di Francesco resta da fare
+    await compare(page, '__avvisi', 'Verifica con Francesco salvata. Niente da sistemare, quindi niente paillettes.');
     expect(dati.ordini.find((x) => x.id === ID.lea)?.data_consegna).toBe(traGiorni(-10));
+    expect(r.eventi.filter((e) => e.tipo === 'verifica')).toMatchObject([{ giorno: OGGI, ref: FRANCESCO, n: 0 }]);
     expect(r.eventi.filter((e) => e.tipo === 'data_aggiunta' && e.giorno === OGGI)).toEqual([]);
+    await expect(sheet(page).locator('h2')).toHaveText('Francesco sta preparando', ATTESA);
+    await page.waitForTimeout(1500);
+    await pillola(page, '287', 'Stagista');
+    expect(await piu(page), 'nessun "+n"').toEqual([]);
+    expect((await registrati(page, '__avvisi')).filter((t) => /paillettes ·|\+\d+ paillettes|Medaglia/.test(t))).toEqual([]);
+    await page.keyboard.press('Escape');
+    // Sarte Milano non ha piu' righe aperte: restano la verifica di Francesco e il codice negativo, tutte e due da fare
+    await expect(page.locator('.v-hud .v-mis')).toHaveAttribute('aria-label', 'Missioni di oggi: 2 da fare', ATTESA);
+    await page.locator('.v-hud .v-mis').click();
+    await expect(sheet(page).locator('.v-mrow', { hasText: 'Verifica con Francesco' }).locator('.v-chip')).toHaveText('da fare');
+    await page.keyboard.press('Escape');
     expect(r.dialoghi).toEqual([]);
     expect(r.posts.map((x) => x.body.action)).toEqual(['fornitore_verifica']);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('verifica: "Non arriva più" chiede conferma nella riga e si annulla; salvata manda chiudi solo su quella riga, chiude il residuo, vale +50 e la missione e\' fatta', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati, { chi: 'Ginevra', presenzaFatta: true });
+    await hud(page);
+    await pillola(page, '287', 'Stagista');
+    await etichettaLab(page, 'Francesco').click();
+    await sheet(page).getByRole('button', { name: '✓ Verifica con Francesco' }).click();
+    const s = sheet(page);
+    await expect(s.locator('h2')).toHaveText('Verifica con Francesco');
+    // la regola dei punti e' detta prima di cominciare
+    await expect(s.locator('.v-note').nth(1)).toHaveText('Vale +50 paillettes (una a settimana per laboratorio) solo se sistema qualcosa: una data messa o spostata, o una riga che non arriva più. Confermare e basta non le dà.');
+    const lea = s.locator('.v-vrow', { hasText: 'Cocco nero' }), sophie = s.locator('.v-vrow', { hasText: 'Camoscio marrone' });
+    // il primo tocco chiede, nella riga, con quello che succede ai pezzi; No lascia la riga com'era
+    await lea.getByRole('button', { name: 'Non arriva più' }).click();
+    await expect(lea.locator('.v-chiedi > span').first()).toHaveText('La riga si chiude con i 4 pezzi già arrivati: gli altri 6 non arrivano più. Confermi?');
+    await lea.getByRole('button', { name: 'No', exact: true }).click();
+    await expect(lea.locator('.v-chiedi')).toHaveCount(0);
+    await expect(lea.locator('input[type="date"]')).toHaveValue(traGiorni(-10));
+    await sophie.getByRole('button', { name: 'Non arriva più' }).click();
+    await expect(sophie.locator('.v-chiedi > span').first()).toHaveText('La riga si chiude: i 5 pezzi ordinati non arrivano più. Confermi?');
+    await sophie.getByRole('button', { name: 'No', exact: true }).click();
+    await expect(sophie.locator('.v-chiedi')).toHaveCount(0);
+    // Si': la riga e' segnata (si chiude salvando), senza data da mettere; Annulla la riapre
+    await lea.getByRole('button', { name: 'Non arriva più' }).click();
+    await lea.getByRole('button', { name: 'Sì, non arriva più' }).click();
+    await expect(lea.locator('.v-chiusa')).toHaveText('Non arriva più: si chiude salvando la verifica.');
+    await expect(lea).toHaveClass(/(^|\s)chiusa(\s|$)/);
+    await expect(lea.locator('input[type="date"]')).toHaveCount(0);
+    await lea.getByRole('button', { name: 'Annulla' }).click();
+    await expect(lea.locator('.v-chiusa')).toHaveCount(0);
+    await expect(lea.locator('input[type="date"]')).toHaveValue(traGiorni(-10));
+    await lea.getByRole('button', { name: 'Non arriva più' }).click();
+    await lea.getByRole('button', { name: 'Sì, non arriva più' }).click();
+    await expect(lea.locator('.v-chiusa')).toBeVisible();
+    // toccata, la verifica non si perde senza chiedere
+    r.conferme.accetta = false;
+    await page.locator('.v-sheet .v-x').click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(1);
+    expect(r.dialoghi[0]).toBe('Lasci la verifica a metà? Quello che hai scritto si perde.');
+    await expect(lea.locator('.v-chiusa')).toBeVisible();
+    r.conferme.accetta = true;
+    expect(r.posts).toEqual([]);
+    await s.getByRole('button', { name: 'Salva la verifica' }).click();
+    await expect.poll(() => di(r.posts, 'fornitore_verifica').length, ATTESA).toBe(1);
+    // solo le righe aperte di Francesco (non la zebrata completa, non Nina di Sarte Milano); chiudi solo su Lea, con la sua data
+    const p = di(r.posts, 'fornitore_verifica')[0];
+    expect(corpo(p)).toMatchObject({ action: 'fornitore_verifica', pin: 'x', chi: 'Ginevra' });
+    expect(p.body.payload).toEqual({
+      fornitore: FRANCESCO, nota: null,
+      righe: [{ id: ID.lea, confermata: true, data_consegna: traGiorni(-10), chiudi: true }, { id: ID.sophie, confermata: true, data_consegna: traGiorni(20) }],
+    });
+    // una riga chiusa e' una riga sistemata: +50 e la prima medaglia; il residuo di Lea (6) non e' piu' in preparazione
+    // il toast delle paillettes si accoda a quello della verifica se la rilettura arriva in tempo, se no esce da solo: le due parti
+    await compare(page, '__avvisi', 'Verifica con Francesco salvata: 1 riga chiusa.');
+    await compare(page, '__avvisi', '+50 paillettes · Medaglia nuova: Prima verifica!');
+    await compare(page, '__float', '+50');
+    await pillola(page, '337', 'Junior');
+    expect(dati.ordini.find((x) => x.id === ID.lea)).toMatchObject({ qty_ordered: 4, qty_arrived: 4, completo: true, data_consegna: traGiorni(-10) });
+    expect(r.eventi.filter((e) => e.tipo === 'verifica')).toMatchObject([{ giorno: OGGI, ref: FRANCESCO, n: 1 }]);
+    expect(r.eventi.filter((e) => e.tipo === 'data_aggiunta' && e.giorno === OGGI)).toEqual([]);
+    await expect(pill(page, 'in preparazione')).toHaveText('13', ATTESA);
+    await expect(pill(page, 'righe aperte')).toHaveText('2');
+    await expect(pill(page, 'in magazzino')).toHaveText('10');
+    await expect(s.locator('h2')).toHaveText('Francesco sta preparando', ATTESA);
+    await expect(s.locator('.v-shead p')).toHaveText('Laboratorio pelle · 1 riga, 5 pz da arrivare');
+    await expect(s.locator('.v-row')).toHaveCount(1);
+    // la missione della verifica di Francesco e' fatta (e non chiede piu' righe da sistemare)
+    await page.keyboard.press('Escape');
+    const stella = page.locator('.v-hud .v-mis');
+    await expect(stella).toHaveAttribute('aria-label', 'Missioni di oggi: 2 da fare', ATTESA);
+    await stella.click();
+    await expect(s.locator('.v-mrow b')).toHaveText(['Verifica con Francesco', 'Conta il codice negativo', 'Chiedi a Sarte Milano la data di 1 riga']);
+    await expect(s.locator('.v-mrow .v-chip')).toHaveText(['fatta', 'da fare', 'da fare']);
+    expect(r.dialoghi).toHaveLength(1);
+    expect(r.posts.map((x) => x.body.action)).toEqual(['fornitore_verifica']);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('verifica: "una data per tutte" riempie le righe senza data e lascia quella che la data l\'ha; poi si corregge riga per riga; due date aggiunte = +50 e +30', async ({ page }) => {
+    const dati = datiBase();
+    const CHECKS = '00000000-0000-0000-0000-0000000000b4', BLU = '00000000-0000-0000-0000-0000000000b5';
+    dati.ordini.push(
+      riga(CHECKS, 'G2', SARTE, 'NINA_BAG_CHECKS_BLUE', 'NINA BAG', 'CHECKS BLUE', 4, 0, null),
+      riga(BLU, 'G2', SARTE, 'NINA_BAG_STRIPES_BLUE', 'NINA BAG', 'STRIPES BLUE', 3, 0, traGiorni(9)),
+    );
+    const r = await apri(page, '#villaggio', dati, { chi: 'Ginevra', presenzaFatta: true });
+    await expect(pill(page, 'in preparazione')).toHaveText('26', ATTESA);   // 19 + 4 + 3
+    await pillola(page, '287', 'Stagista');
+    await barra(page, 'Laboratori').click();
+    await sheet(page).locator('.v-lrow', { hasText: 'Sarte Milano' }).click();
+    await sheet(page).getByRole('button', { name: '✓ Verifica con Sarte Milano' }).click();
+    const s = sheet(page);
+    await expect(s.locator('h2')).toHaveText('Verifica con Sarte Milano');
+    await expect(s.locator('.v-note').first()).toHaveText('3 righe · 2 senza data. Spegni quelle che Sarte Milano non sta lavorando.');
+    const tutte = s.locator('.v-tutte');
+    await expect(tutte.locator('small')).toHaveText('Una data per tutte le 2 righe senza data');
+    const nina = s.locator('.v-vrow', { hasText: 'Righe rosso' }), checks = s.locator('.v-vrow', { hasText: 'Quadretti blu' }), blu = s.locator('.v-vrow').filter({ hasNotText: 'Righe rosso' }).filter({ hasNotText: 'Quadretti blu' });
+    await expect(blu).toHaveCount(1);
+    await tutte.locator('input[type="date"]').fill(traGiorni(14));
+    await expect(nina.locator('input[type="date"]')).toHaveValue(traGiorni(14));
+    await expect(checks.locator('input[type="date"]')).toHaveValue(traGiorni(14));
+    await expect(blu.locator('input[type="date"]')).toHaveValue(traGiorni(9));   // aveva la sua: resta
+    await expect(s.locator('.v-note').first()).toHaveText('3 righe. Spegni quelle che Sarte Milano non sta lavorando.');
+    // il laboratorio ha dato un'altra data per i quadretti: si corregge nella riga
+    await checks.locator('input[type="date"]').fill(traGiorni(21));
+    await expect(nina.locator('input[type="date"]')).toHaveValue(traGiorni(14));
+    await s.getByRole('button', { name: 'Salva la verifica' }).click();
+    await expect.poll(() => di(r.posts, 'fornitore_verifica').length, ATTESA).toBe(1);
+    const pl = di(r.posts, 'fornitore_verifica')[0].body.payload as { fornitore: string; righe: { id: string }[] };
+    expect(pl.fornitore).toBe(SARTE);
+    expect([...pl.righe].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: ID.nina, confermata: true, data_consegna: traGiorni(14) },
+      { id: CHECKS, confermata: true, data_consegna: traGiorni(21) },
+      { id: BLU, confermata: true, data_consegna: traGiorni(9) },
+    ]);
+    // due date messe: la verifica vale (n = 2) e ogni data aggiunta +15, una volta per riga
+    // il toast delle paillettes si accoda a quello della verifica se la rilettura arriva in tempo, se no esce da solo: le due parti
+    await compare(page, '__avvisi', 'Verifica con Sarte Milano salvata: 2 date aggiornate.');
+    await compare(page, '__avvisi', '+80 paillettes · Medaglia nuova: Prima verifica!');
+    await pillola(page, '367', 'Junior');
+    expect(r.eventi.filter((e) => e.tipo === 'verifica')).toMatchObject([{ ref: SARTE, n: 2 }]);
+    expect(r.eventi.filter((e) => e.tipo === 'data_aggiunta' && e.giorno === OGGI).map((e) => e.ref).sort()).toEqual([CHECKS, ID.nina].sort());
+    expect(r.errori).toEqual([]);
+  });
+
+  test('fumetti a Paillettes accese: cuore = verificato negli ultimi 3 giorni (oggi, ieri, l\'altro ieri), punto di domanda per le righe senza data; il tocco apre la verifica di quel laboratorio', async ({ page }) => {
+    const dati = datiBase();
+    // Francesco verificato l'altro ieri (cuore, anche con la riga di Lea in ritardo); Sarte Milano tre giorni fa (no)
+    const eventi = [...eventiBase(), ev('verifica', traGiorni(-2), FRANCESCO, 1), ev('verifica', traGiorni(-3), SARTE, 1)];
+    const r = await apri(page, '#villaggio', dati, { chi: 'Ginevra', presenzaFatta: true, eventi });
+    await hud(page);
+    await expect(pai(page)).toHaveCount(1, ATTESA);
+    const fFr = etichettaLab(page, 'Francesco').locator('.v-fum'), fSa = etichettaLab(page, 'Sarte Milano').locator('.v-fum');
+    await expect(fFr).toHaveClass(/(^|\s)cuore(\s|$)/, ATTESA);
+    await expect(fFr).toHaveAttribute('aria-label', 'Francesco: verificato da poco');
+    await expect(fSa).toHaveClass(/(^|\s)domanda(\s|$)/);
+    await fSa.click();
+    await expect(sheet(page).locator('h2')).toHaveText('Verifica con Sarte Milano');
+    await expect(sheet(page).locator('.v-vrow')).toHaveCount(1);
+    // non toccata: la X chiude senza chiedere, e il fumetto di Francesco porta alla sua
+    await page.locator('.v-sheet .v-x').click();
+    await expect(sheet(page)).toHaveCount(0, ATTESA);
+    await expect(fFr).toBeVisible(ATTESA);
+    await fFr.click();
+    await expect(sheet(page).locator('h2')).toHaveText('Verifica con Francesco');
+    await page.keyboard.press('Escape');
+    await expect(sheet(page)).toHaveCount(0, ATTESA);
+    expect(r.dialoghi).toEqual([]);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('telefono da 375 px: "Salta" chiude i fumetti del mattino; stella, fumetti, interruttori, date e bottoni della verifica almeno 44 px, testi almeno 12 px', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    const dati = datiBase();
+    const r = await apri(page, 'villaggio/', dati, { chi: 'Ginevra' });
+    await hud(page);
+    await expect.poll(() => presenze(r.posts).length, ATTESA).toBe(1);
+    await compare(page, '__fumetti', 'Buongiorno! Oggi ho 3 missioni per te: le trovi sotto la stella.');
+    // come in villaggio.spec.ts: i controlli sotto i 44 px (almeno uno deve esserci) e i testi sotto i 12 px
+    const piccoli = async (sel: string, largo = false) => {
+      const xs = await page.locator(sel).evaluateAll((els) => els
+        .filter((el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden')
+        .map((el) => { const b = el.getBoundingClientRect(); return { cosa: ((el.getAttribute('aria-label') || el.textContent || el.className) ?? '').trim().slice(0, 40), w: Math.round(b.width), h: Math.round(b.height) }; }));
+      expect(xs.length, `nessun controllo visibile per ${sel}`).toBeGreaterThan(0);
+      return xs.filter((x) => x.h < 44 || (largo && x.w < 44));
+    };
+    const testiPiccoli = async () => {
+      const { visti, out } = await page.evaluate(() => {
+        const out: string[] = [];
+        let visti = 0;
+        const w = document.createTreeWalker(document.querySelector('.vil') ?? document.body, NodeFilter.SHOW_TEXT);
+        while (w.nextNode()) {
+          const t = w.currentNode as Text, el = t.parentElement;
+          if (!el || !(t.textContent ?? '').trim() || el.closest('.v-form, .v-conta, [aria-hidden="true"]') || !el.getClientRects().length) continue;
+          visti++;
+          const fs = parseFloat(getComputedStyle(el).fontSize);
+          if (fs < 12) out.push(`${fs}px ${el.tagName.toLowerCase()}.${el.className}: ${(t.textContent ?? '').trim().slice(0, 30)}`);
+        }
+        return { visti, out };
+      });
+      expect(visti, 'nessun testo visibile da misurare').toBeGreaterThan(5);
+      return out;
+    };
+    const salta = page.locator('.v-salta');
+    await expect(salta).toBeVisible(ATTESA);
+    expect(await piccoli('.v-salta', true), 'Salta').toEqual([]);
+    expect(await piccoli('.v-hud .v-mis, .v-hud .v-qb, .v-hud .v-home', true), 'stella, ? e Home').toEqual([]);
+    expect(await piccoli('.v-hud .v-pai', false), 'pillola delle paillettes').toEqual([]);
+    expect(await testiPiccoli(), 'testi con il fumetto').toEqual([]);
+    // "Salta" chiude in un tocco il saluto e tutte le missioni in coda
+    await salta.click();
+    await expect(page.locator('.v-dlg')).toHaveCount(0);
+    await page.waitForTimeout(1000);
+    await expect(page.locator('.v-dlg')).toHaveCount(0);
+    expect(await piccoli('.v-labels .v-fum', true), 'fumetti dei capannoni').toEqual([]);
+    // la verifica di Francesco
+    await page.locator('.v-hud .v-mis').click();
+    await sheet(page).locator('.v-mrow', { hasText: 'Verifica con Francesco' }).click();
+    const s = sheet(page);
+    await expect(s.locator('h2')).toHaveText('Verifica con Francesco');
+    expect(await piccoli('.v-sheet.open .v-vrow .v-sw', false), 'interruttori').toEqual([]);
+    expect(await piccoli('.v-sheet.open .v-vrow input[type="date"]', false), 'date').toEqual([]);
+    expect(await piccoli('.v-sheet.open .v-sbody button', false), 'bottoni della verifica').toEqual([]);
+    expect(await testiPiccoli(), 'testi della verifica').toEqual([]);
+    await s.locator('.v-vrow', { hasText: 'Cocco nero' }).getByRole('button', { name: 'Non arriva più' }).click();
+    expect(await piccoli('.v-sheet.open .v-chiedi button', false), 'conferma di "Non arriva più"').toEqual([]);
+    expect(await testiPiccoli(), 'testi della conferma').toEqual([]);
+    expect(r.posts.map((x) => x.body.action)).toEqual(['villaggio_presenza']);
     expect(r.errori).toEqual([]);
   });
 
@@ -860,7 +1099,7 @@ test.describe('Paillettes accese, gioca Ginni', () => {
     await hud(page);
     await expect.poll(() => presenze(r.posts).length, ATTESA).toBe(1);
     await pillola(page, String(BASE + 5), 'Stagista');
-    const testi = ['Verifica con Francesco · 1 riga in ritardo', 'Conta il codice negativo', 'Chiedi a Sarte Milano la data di 1 riga'];
+    const testi = ['Verifica con Francesco · 1 riga da sistemare', 'Conta il codice negativo', 'Chiedi a Sarte Milano la data di 1 riga'];
     // alla prima presenza del giorno Ginni le presenta nel fumetto, una per una
     await compare(page, '__fumetti', 'Buongiorno! Oggi ho 3 missioni per te: le trovi sotto la stella.');
     const dlg = page.locator('.v-dlg');
@@ -925,7 +1164,7 @@ test.describe('Paillettes accese, gioca Ginni', () => {
 // La missione della conta completa compare solo dal 20 del mese: l'orologio del browser e' finto (page.clock), e dati,
 // eventi e finto server usano quel giorno. Senza negativi le missioni di base sono due, cosi' c'e' posto per la terza.
 test.describe('Missione della conta completa (orologio finto)', () => {
-  const MISSIONI = ['Verifica con Francesco · 1 riga in ritardo', 'Chiedi a Sarte Milano la data di 1 riga'];
+  const MISSIONI = ['Verifica con Francesco · 1 riga da sistemare', 'Chiedi a Sarte Milano la data di 1 riga'];
   for (const caso of [
     { giorno: '2026-10-19', nome: 'il 19 non c\'e\' ancora', missione: false, gia: null },
     { giorno: '2026-10-20', nome: 'dal 20 c\'e\', per ultima; apre il giro completo e registrata diventa fatta', missione: true, gia: null },
@@ -1043,18 +1282,32 @@ test.describe('Paillettes accese, chi non gioca', () => {
 // Il feed "Attività recente" di Salute & Movimenti: la data spostata da una verifica (op order_date, write-api v29) ha la
 // sua etichetta e il riassunto "codice · data breve", non il nome della tabella
 test.describe('Feed attività: la data di consegna della verifica', () => {
-  test('Salute & Movimenti mostra "Data di consegna · Ginni" con codice e data nuova', async ({ page }) => {
+  test('Salute & Movimenti mostra "Data di consegna · Ginni" con codice e data nuova; e (write-api v30) la riga modificata e quella chiusa', async ({ page }) => {
     const dati = datiBase();
-    const dopo = traGiorni(7);
+    const dopo = traGiorni(7), consegna = traGiorni(25);
+    const ts = new Date().toISOString();
     const r = await apri(page, '', dati, {
       chi: 'Ale',
-      changeLog: [{ id: 901, tbl: 'supplier_orders', row_id: ID.lea, op: 'order_date', chi: 'Ginevra', ts: new Date().toISOString(),
-        after: { codice: 'LEA_BAG_COCCO_BLACK', fornitore: FRANCESCO, data_consegna: dopo } }],
+      changeLog: [
+        { id: 901, tbl: 'supplier_orders', row_id: ID.lea, op: 'order_date', chi: 'Ginevra', ts, after: { codice: 'LEA_BAG_COCCO_BLACK', fornitore: FRANCESCO, data_consegna: dopo } },
+        // order_update: after = codice, fornitore e i soli campi cambiati
+        { id: 902, tbl: 'supplier_orders', row_id: ID.sophie, op: 'order_update', chi: 'Ale', ts, before: { qty_ordered: 5, data_consegna: traGiorni(20) },
+          after: { codice: 'SOPHIE_BAG_SUEDE_BROWN', fornitore: FRANCESCO, qty_ordered: 6, data_consegna: consegna } },
+        // order_close (la verifica, "Non arriva piu'"): after = codice, fornitore e le quantita' chiuse
+        { id: 903, tbl: 'supplier_orders', row_id: ID.nina, op: 'order_close', chi: 'Ginevra', ts, before: { qty_ordered: 8, wip: false },
+          after: { codice: 'NINA_BAG_STRIPES_RED', fornitore: SARTE, qty_ordered: 0, qty_arrived: 0, wip: false } },
+      ],
     });
     await page.getByRole('button', { name: /Salute & Movimenti/ }).first().click();
     const riga = page.locator('.ds-act', { hasText: 'Data di consegna' });
     await expect(riga.locator('.ds-actverb')).toHaveText('Data di consegna · Ginni', ATTESA);
     await expect(riga.locator('.ds-actsum')).toHaveText(`LEA_BAG_COCCO_BLACK · ${dataCorta(dopo)}`);
+    const modificata = page.locator('.ds-act', { hasText: 'Riga ordine modificata' });
+    await expect(modificata.locator('.ds-actverb')).toHaveText('Riga ordine modificata · Ale');
+    await expect(modificata.locator('.ds-actsum')).toHaveText(`SOPHIE_BAG_SUEDE_BROWN · 6 pz · consegna ${dataCorta(consegna)}`);
+    const chiusa = page.locator('.ds-act', { hasText: 'Riga ordine chiusa' });
+    await expect(chiusa.locator('.ds-actverb')).toHaveText('Riga ordine chiusa · Ginni');
+    await expect(chiusa.locator('.ds-actsum')).toHaveText(`NINA_BAG_STRIPES_RED · ${SARTE}`);
     expect(r.posts).toEqual([]);
   });
 });

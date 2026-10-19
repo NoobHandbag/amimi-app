@@ -14,6 +14,9 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 // Se altre sessioni rifanno web/dist nello stesso worktree: build con --outDir in una cartella propria, `npx vite preview
 // --outDir <cartella> --port <porta> --strictPort` a parte e CI=1 davanti a playwright, che cosi' riusa quella preview.
 
+// Fase 3 (18-10): anche lo storico della scheda della pila (qromo_sales, shopify_line_items, purchases, stock_adjustments
+// per codice), v_reorder ("sta finendo"), v_tempi_laboratori (il tempo abituale nel modulo d'ordine), il meteo di Milano
+// (api.open-meteo.com, finto anche lui: sereno, pioggia o errore) e la order_update della ArrivoRow ("Modifica").
 // Senza GPU (headless, CI) il WebGL e' SwiftShader: la scena con le ombre gira a ~2 fotogrammi al secondo, e ogni azione
 // di Playwright aspetta fotogrammi stabili. Tempi larghi per questo file, non per gli altri. 300 s e non 150: con un'altra
 // suite WebGL in parallelo sulla stessa macchina (worktree o sessioni diverse) i test di arrivo arrivavano in fondo a ~150 s.
@@ -86,15 +89,39 @@ type Post = { url: string; body: { action: string; payload: Record<string, unkno
 /** Interruttore app_flags.villaggio_enabled come lo vede l'app: 'true' / 'false' nella vista, o '404' = vista assente
  *  (migr 0162 non ancora applicata: PostgREST risponde 404 PGRST205). */
 type Flag = 'true' | 'false' | '404';
-type Opzioni = { chi?: string; intro?: boolean; flag?: Flag; rispostaScrittura?: (p: Post) => { status: number; body: unknown } | null };
+/** Una vendita della scheda della pila: in negozio (qromo_sales) o online (shopify_line_items). */
+type Vendita = { canale: 'negozio' | 'online'; data: string; qty: number };
+type Acquisto = { id: string; data: string | null; quantita: number; costo_unitario: number | null; fornitore: string | null };
+type Rettifica = { id: string; data: string | null; qty_delta: number; motivo: string | null };
+/** Le righe di v_reorder che servono a "sta finendo": il resto delle colonne ha valori neutri. */
+const rio = (codice: string, venduto_60d: number, giorni_stock: number | null, extra: Record<string, unknown> = {}) => ({
+  codice, item: null, variant: null, image_url: null, giacenza: 0, disponibili: 0, on_shopify: true, venduto_60d, in_arrivo: 0, giorni_stock, riordino_archiviato: false, ...extra,
+});
+/** Il meteo finto di Open-Meteo (codici WMO): sereno 0, nuvole 3, pioggia 61, neve 73, nebbia 45, o una risposta 500. */
+type MeteoFinto = 'sole' | 'nuvole' | 'pioggia' | 'neve' | 'nebbia' | 'errore';
+const WMO: Record<Exclude<MeteoFinto, 'errore'>, number> = { sole: 0, nuvole: 3, pioggia: 61, neve: 73, nebbia: 45 };
+type Opzioni = {
+  chi?: string; intro?: boolean; flag?: Flag; rispostaScrittura?: (p: Post) => { status: number; body: unknown } | null;
+  vendite?: Record<string, Vendita[]>; acquisti?: Record<string, Acquisto[]>; rettifiche?: Record<string, Rettifica[]>;
+  /** Le tabelle dello storico che rispondono 500 (lettura fallita). */
+  storicoKo?: ('qromo_sales' | 'shopify_line_items' | 'purchases' | 'stock_adjustments')[];
+  reorder?: Record<string, unknown>[];
+  /** v_tempi_laboratori: le righe, o '404' = vista non ancora applicata (migr 0166). */
+  tempi?: { fornitore: string; giorni_mediani: number; righe: number }[] | '404';
+  meteo?: MeteoFinto;
+  /** L'ora del browser (page.clock, poi scorre normale): stagione e luce dell'isola dipendono da lei. */
+  ora?: string;
+};
 
-// le scritture di ogni pagina, per il controllo dopo ogni test: dal Villaggio escono solo queste due azioni
-const AZIONI_CONSENTITE = new Set(['arrival_set', 'order_multi']);
+// le scritture di ogni pagina, per il controllo dopo ogni test: dal Villaggio escono solo queste tre azioni (a Paillettes
+// spente; le loro scritture le prova paillettes.spec.ts)
+const AZIONI_CONSENTITE = new Set(['arrival_set', 'order_multi', 'order_update']);
 const registro = new WeakMap<Page, Post[]>();
 test.afterEach(async ({ page }) => {
   const fuori = (registro.get(page) ?? []).map((p) => p.body.action).filter((a) => !AZIONI_CONSENTITE.has(a));
-  expect(fuori, 'azioni write-api diverse da arrival_set e order_multi').toEqual([]);
+  expect(fuori, 'azioni write-api diverse da arrival_set, order_multi e order_update').toEqual([]);
 });
+const URL_METEO = 'https://api.open-meteo.com/v1/forecast?latitude=45.4642&longitude=9.19&current=weather_code,is_day';
 
 async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
   const posts: Post[] = [];
@@ -103,11 +130,13 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
   const dialoghi: string[] = [];
   // ogni window.confirm e' contato in `dialoghi` e risposto qui: OK di default, Annulla con conferme.accetta = false
   const conferme = { accetta: true };
-  const letture = { ordini: 0, magazzino: 0, flag: 0 };
+  const letture = { ordini: 0, magazzino: 0, flag: 0, meteo: [] as string[], storico: [] as string[], tempi: 0 };
   const flag: Flag = opts.flag ?? 'true';
-  page.on('console', (m) => { if (m.type() === 'error') errori.push(m.text()); });
+  // una risorsa che non si carica (le letture fallite volute dal test) la scrive Chromium da solo: col suo indirizzo, per filtrarla
+  page.on('console', (m) => { if (m.type() === 'error') errori.push(m.text() + (/^Failed to load resource/.test(m.text()) ? ' @ ' + m.location().url : '')); });
   page.on('pageerror', (e) => errori.push('pageerror: ' + e.message));
   page.on('dialog', (d) => { dialoghi.push(d.message()); void (conferme.accetta ? d.accept() : d.dismiss()); });
+  if (opts.ora) await page.clock.install({ time: new Date(opts.ora) });
   await page.addInitScript(({ chi, intro }) => {
     if (chi) localStorage.setItem('amimi_chi', chi);
     if (!intro) localStorage.setItem('amimi_villaggio_intro', '1');
@@ -123,6 +152,13 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
   }, { chi: opts.chi ?? null, intro: !!opts.intro });
   // i font del Villaggio sono nel bundle (@fontsource); se tornasse un link a Google Fonts, in test un foglio vuoto (niente rete)
   await page.route(/fonts\.(googleapis|gstatic)\.com\//, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  // il meteo vero di Milano non si chiede mai dai test: sereno di default
+  const meteo: MeteoFinto = opts.meteo ?? 'sole';
+  await page.route(/api\.open-meteo\.com\//, (route) => {
+    letture.meteo.push(route.request().url());
+    if (meteo === 'errore') return route.fulfill({ status: 500, contentType: 'text/plain', body: 'errore finto' });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ current: { time: OGGI + 'T10:00', interval: 900, weather_code: WMO[meteo], is_day: 1 } }) });
+  });
   await page.route(/supabase\.co\//, async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -132,12 +168,28 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
       posts.push(p);
       const custom = opts.rispostaScrittura?.(p);
       if (custom) return json(custom.body, custom.status);
+      if (p.body.action === 'order_update') {
+        // come write-api v30: solo righe senza arrivi e non WIP, solo i campi ammessi, si scrive cio' che cambia
+        const pl = p.body.payload as { id?: string; qty_ordered?: number; costo_unitario?: number | null; note?: string | null; data_consegna?: string | null };
+        const fuori = Object.keys(pl).filter((k) => !['id', 'qty_ordered', 'costo_unitario', 'note', 'data_consegna'].includes(k));
+        if (fuori.length) return json({ error: 'campi non ammessi', campi_non_ammessi: fuori }, 422);
+        const r = dati.ordini.find((x) => x.id === pl.id);
+        if (!r) return json({ error: 'riga ordine non trovata' }, 404);
+        if (r.qty_arrived > 0) return json({ error: 'la riga ha gia\' degli arrivi', has_arrivals: true }, 409);
+        if (r.wip) return json({ error: 'riga WIP', wip: true }, 409);
+        const cambiati: string[] = [];
+        if ('qty_ordered' in pl && Number(pl.qty_ordered) !== r.qty_ordered) { r.qty_ordered = Number(pl.qty_ordered); r.mancano = r.qty_ordered - r.qty_arrived; cambiati.push('qty_ordered'); }
+        if ('costo_unitario' in pl && (pl.costo_unitario ?? null) !== r.costo_unitario) { r.costo_unitario = pl.costo_unitario ?? null; cambiati.push('costo_unitario'); }
+        if ('note' in pl && (pl.note || null) !== r.note) { r.note = pl.note || null; cambiati.push('note'); }
+        if ('data_consegna' in pl && (pl.data_consegna || null) !== r.data_consegna) { r.data_consegna = pl.data_consegna || null; r.data_consegna_display = r.data_consegna; cambiati.push('data_consegna'); }
+        return json({ ok: true, id: r.id, cambiati });
+      }
       if (p.body.action === 'order_multi') {
         // come write-api: una riga supplier_orders per riga del carrello, nello stesso gruppo; la vista la mostra aperta
-        const pl = p.body.payload as { fornitore: string; data_ordine: string; righe: { codice: string; item: string | null; variant: string | null; qty_ordered: number; wip: boolean; costo_unitario: number | null }[] };
+        const pl = p.body.payload as { fornitore: string; data_ordine: string; righe: { codice: string; item: string | null; variant: string | null; qty_ordered: number; wip: boolean; costo_unitario: number | null; data_consegna?: string }[] };
         if (!pl.fornitore || !Array.isArray(pl.righe) || !pl.righe.length) return json({ error: 'order_multi senza fornitore o righe' }, 400);
         const gruppo = 'G' + (new Set(dati.ordini.map((x) => x.gruppo)).size + 1);
-        pl.righe.forEach((x, i) => dati.ordini.push(riga(`00000000-0000-0000-0000-0000000000c${i}`, gruppo, pl.fornitore, x.codice, x.item ?? x.codice, x.variant ?? '', x.qty_ordered, 0, null,
+        pl.righe.forEach((x, i) => dati.ordini.push(riga(`00000000-0000-0000-0000-0000000000c${i}`, gruppo, pl.fornitore, x.codice, x.item ?? x.codice, x.variant ?? '', x.qty_ordered, 0, x.data_consegna ?? null,
           { wip: x.wip, completo: false, costo_unitario: x.costo_unitario, data_ordine: pl.data_ordine })));
         return json({ ok: true, id: gruppo, lines: pl.righe.length, stubs: 0 });
       }
@@ -159,10 +211,39 @@ async function apri(page: Page, path: string, dati: Dati, opts: Opzioni = {}) {
       const rigaFlag = { key: 'villaggio_enabled', value: flag };
       return json((req.headers()['accept'] ?? '').includes('application/vnd.pgrst.object+json') ? rigaFlag : [rigaFlag]);
     }
-    if (url.pathname.endsWith('/rest/v1/v_ordini_arrivo')) { letture.ordini++; return json(dati.ordini); }
-    if (url.pathname.endsWith('/rest/v1/v_inventory')) { letture.magazzino++; return json(dati.magazzino); }
+    if (url.pathname.endsWith('/rest/v1/v_ordini_arrivo')) {
+      letture.ordini++;
+      // come PostgREST: solo le colonne chieste, cosi' un campo che la pagina non legge non le arriva per sbaglio
+      const cols = (url.searchParams.get('select') ?? '*').split(',');
+      return json(cols.includes('*') ? dati.ordini : dati.ordini.map((o) => Object.fromEntries(cols.filter((c) => c in o).map((c) => [c, (o as Record<string, unknown>)[c]]))));
+    }
+    if (url.pathname.endsWith('/rest/v1/v_inventory')) {
+      // la giacenza di un codice solo (fetchGiacenzaOne di CountForm: codice=eq.X) non conta come lettura del magazzino
+      const c = url.searchParams.get('codice');
+      if (c?.startsWith('eq.')) return json(dati.magazzino.filter((g) => g.codice === c.slice(3)));
+      letture.magazzino++; return json(dati.magazzino);
+    }
     // il catalogo che SupplierOrderForm usa per nome e variante della riga precompilata
     if (url.pathname.endsWith('/rest/v1/products')) return json(dati.magazzino.map((g) => ({ codice: g.codice, item: g.item, variant: g.variant, categoria: 'Borse', image_url: null, retail_price: 120, cogs: 40 })));
+    if (url.pathname.endsWith('/rest/v1/v_reorder')) return json(opts.reorder ?? []);
+    if (url.pathname.endsWith('/rest/v1/v_tempi_laboratori')) {
+      letture.tempi++;
+      if (opts.tempi === '404') return json({ code: 'PGRST205', details: null, hint: null, message: 'Could not find the table \'public.v_tempi_laboratori\' in the schema cache' }, 404);
+      return json(opts.tempi ?? []);
+    }
+    // lo storico della scheda della pila, un codice alla volta (codice=eq.X o codice_norm=eq.X)
+    const tab = /\/rest\/v1\/(qromo_sales|shopify_line_items|purchases|stock_adjustments)$/.exec(url.pathname)?.[1] as NonNullable<Opzioni['storicoKo']>[number] | undefined;
+    if (tab) {
+      const cod = (url.searchParams.get('codice') ?? url.searchParams.get('codice_norm') ?? '').replace(/^eq\./, '');
+      letture.storico.push(tab + ':' + cod);
+      if (opts.storicoKo?.includes(tab)) return json({ code: 'XX000', details: null, hint: null, message: 'lettura finta fallita' }, 500);
+      if (tab === 'qromo_sales') return json((opts.vendite?.[cod] ?? []).filter((v) => v.canale === 'negozio')
+        .map((v, i) => ({ id: `q-${cod}-${i}`, data: v.data, quantita: v.qty, prezzo: 120, nome: 'Cliente', cognome: 'Negozio' })));
+      if (tab === 'shopify_line_items') return json((opts.vendite?.[cod] ?? []).filter((v) => v.canale === 'online')
+        .map((v, i) => ({ id: `s-${cod}-${i}`, created_at: v.data + 'T10:00:00+00:00', quantita: v.qty, price: 120, lineitem_name: cod, order_id: '#10' + i })));
+      if (tab === 'purchases') return json(opts.acquisti?.[cod] ?? []);
+      return json(opts.rettifiche?.[cod] ?? []);
+    }
     return json([]);
   });
   await page.goto(path);
@@ -889,10 +970,21 @@ test.describe('scheda #villaggio dell\'app intera', () => {
 test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test('si carica col suo manifest, scrive come Ginevra, e Home porta all\'app intera', async ({ page }) => {
+  test('si carica col suo manifest; alla prima apertura chiede chi usa il telefono, scelta Ginni scrive come Ginevra; Home porta all\'app intera', async ({ page }) => {
     const dati = datiBase();
     const r = await apri(page, 'villaggio/', dati);
     await expect(page).toHaveTitle('Villaggio Amimì');
+    // fase 3: senza una persona salvata su questo telefono non si parte da nessuno (mai da Ale): si chiede, e intanto il
+    // villaggio non e' montato (niente letture sue)
+    await expect(page.getByText('Chi usa questo telefono?')).toBeVisible(ATTESA);
+    const scelte = page.locator('.screen .card button');
+    await expect(scelte).toHaveText(['Ale', 'Benny', 'Ginni']);
+    await expect(page.locator('.vil')).toHaveCount(0);
+    expect(r.letture.ordini).toBe(0);
+    expect(await page.evaluate(() => localStorage.getItem('amimi_chi'))).toBeNull();
+    await scelte.filter({ hasText: 'Ginni' }).click();
+    expect(await page.evaluate(() => localStorage.getItem('amimi_chi'))).toBe('Ginevra');
+    await expect(page.locator('.v-hud .v-chi select')).toHaveValue('Ginevra', ATTESA);
     const href = await page.locator('link[rel="manifest"]').getAttribute('href');
     expect(href).toBe('/amimi-app/villaggio/manifest.webmanifest');
     const man = await page.request.get(new URL(href!, page.url()).toString());
@@ -911,7 +1003,7 @@ test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
     await hud(page, attesi(dati));
     await expect(fienile(page)).toHaveText(`Magazzino${attesi(dati).stock} pezzi`);
 
-    // senza persona scelta su questo telefono le scritture sono firmate Ginevra
+    // scelta Ginni, le scritture sono firmate Ginevra
     await etichettaLab(page, 'Francesco').click();
     await expect(page.locator('.v-sheet.open h2')).toHaveText('Francesco sta preparando');
     const sophie = page.locator('.v-sheet.open .v-row', { hasText: 'Camoscio marrone' });
@@ -933,7 +1025,7 @@ test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
 
   test('non installata, passo 4 toccato: Home chiede; Annulla tiene il modulo, OK porta a /amimi-app/; non toccato esce senza chiedere', async ({ page }) => {
     const dati = datiBase();
-    const r = await apri(page, 'villaggio/', dati);
+    const r = await apri(page, 'villaggio/', dati, { chi: 'Ginevra' });
     await hud(page, attesi(dati));
     const qty = await alPasso4(page);
     await qty.fill('5');
@@ -962,7 +1054,7 @@ test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
     expect(r.errori).toEqual([]);
   });
 
-  test('installata (display-mode standalone): Home apre l\'app intera in una finestra sua e il Villaggio resta', async ({ page }) => {
+  test('installata (display-mode standalone): Home apre l\'app intera in una finestra sua, con chi scrive, e il Villaggio resta', async ({ page }) => {
     await page.addInitScript(() => {
       const orig = window.matchMedia.bind(window);
       window.matchMedia = ((q: string) => (/display-mode:\s*standalone/.test(q)
@@ -973,10 +1065,11 @@ test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
       window.open = ((...a: unknown[]) => { aperte.push(a); return null; }) as typeof window.open;
     });
     const dati = datiBase();
-    const r = await apri(page, 'villaggio/', dati);
+    const r = await apri(page, 'villaggio/', dati, { chi: 'Ginevra' });
     await hud(page, attesi(dati));
     await page.locator('.v-hud .v-home').click();
-    await expect.poll(() => page.evaluate(() => (window as unknown as { __aperte: unknown[][] }).__aperte), ATTESA).toEqual([['/amimi-app/', '_blank', 'noopener']]);
+    // fase 3: su iPhone la finestra nuova ha uno storage suo, dove si partirebbe da Ale: ?chi= le dice chi scrive
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __aperte: unknown[][] }).__aperte), ATTESA).toEqual([['/amimi-app/?chi=Ginevra', '_blank', 'noopener']]);
     await page.waitForTimeout(500);
     await expect(page).toHaveURL(/\/amimi-app\/villaggio\/$/);
     await expect(page.locator('.vil')).toHaveCount(1);
@@ -986,12 +1079,14 @@ test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
   test('il menu "scrive" sceglie chi firma (Ginni, Ale, Benny), resta sul telefono e l\'arrival_set porta la persona scelta', async ({ page }) => {
     const dati = datiBase();
     const r = await apri(page, 'villaggio/', dati);
+    // prima apertura: si sceglie Ginni nella schermata di benvenuto, poi si cambia dal menu
+    await page.locator('.screen .card button', { hasText: 'Ginni' }).click();
     await hud(page, attesi(dati));
     const menu = page.locator('.v-hud .v-chi select');
     await expect(menu).toHaveCount(1);
     await expect(menu).toBeEnabled();
     await expect(page.getByRole('combobox', { name: 'Chi scrive' })).toHaveCount(1);
-    // le persone dell'app (Ale, Bene, Ginevra) coi loro nomi; senza scelta su questo telefono scrive Ginevra
+    // le persone dell'app (Ale, Bene, Ginevra) coi loro nomi; scelta Ginni, scrive Ginevra
     await expect(menu.locator('option')).toHaveText(['Ale', 'Benny', 'Ginni']);
     await expect(menu).toHaveValue('Ginevra');
     // un giro completo: ogni scelta vale subito per il dispositivo (amimi_chi, la stessa chiave dell'app intera)
@@ -1027,7 +1122,7 @@ test.describe('telefono con schermo denso (deviceScaleFactor 3)', () => {
 
   test('in verticale il canvas ha il tetto 1,5x; girato in orizzontale torna al tetto 2x', async ({ page }) => {
     const dati = datiBase();
-    const r = await apri(page, 'villaggio/', dati);
+    const r = await apri(page, 'villaggio/', dati, { chi: 'Ginevra' });
     await hud(page, attesi(dati));
     const c = page.locator('canvas.v-canvas');
     await canvasVivo(page);
@@ -1206,7 +1301,7 @@ test.describe('robustezza: il Villaggio non porta giu\' l\'app', () => {
         return (orig as (...a: unknown[]) => unknown).call(this, type, ...rest);
       } as typeof orig;
     });
-    const r = await apri(page, 'villaggio/', datiBase());
+    const r = await apri(page, 'villaggio/', datiBase(), { chi: 'Ginevra' });
     await page.waitForTimeout(1500);
     await expect(page.locator('.v-hud .v-home'), `errori: ${r.errori.join(' | ')}`).toBeVisible();
     await expect(page.locator('.v-err')).toContainText('manca il WebGL');
@@ -1217,5 +1312,600 @@ test.describe('robustezza: il Villaggio non porta giu\' l\'app', () => {
     await expect(page.locator('.v-bar')).toHaveCount(0);
     await expect(page.locator('.v-loading')).toHaveCount(0);
     expect(r.posts).toEqual([]);
+  });
+});
+
+// ---------- Fase 3 (18-10): scheda della pila, consegna nell'ordine, Modifica della riga, fumetti, meteo, telefono ----------
+
+/** Il giorno `giorno` del mese di `k` mesi fa (calendario di Roma, come oggi() della pagina). */
+const mesiFa = (k: number, giorno: number) => {
+  const n = Number(OGGI.slice(0, 4)) * 12 + Number(OGGI.slice(5, 7)) - 1 - k;
+  return `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}-${String(giorno).padStart(2, '0')}`;
+};
+/** "ott": il mese breve come lo scrive la barra delle vendite. */
+const meseBreve = (iso: string) => new Date(iso.slice(0, 7) + '-15T12:00:00').toLocaleDateString('it-IT', { month: 'short' });
+/** "7 ottobre": la data delle voci della scheda e della verifica. */
+const dataLunga = (iso: string) => new Date(iso + 'T12:00:00').toLocaleDateString('it-IT', { day: 'numeric', month: 'long' });
+/** L'elemento `n` dopo il titolo di sezione della scheda (h3.v-sec): le barre, l'elenco o il messaggio di quella sezione. */
+const dopoSezione = (page: Page, titolo: RegExp, n = 1) => page.locator('.v-sheet.open h3.v-sec', { hasText: titolo }).locator(`xpath=following-sibling::*[${n}]`);
+const tessera = (page: Page, nome: string) => page.locator('.v-sheet.open .v-vgrid .v-vt', { has: page.locator('small', { hasText: new RegExp(`^${nome}$`) }) });
+/** Le etichette delle pile nel mondo (nascoste finche' non si tocca la pila, ma col testo sempre aggiornato). */
+const etichettaPila = (page: Page, nome: string) => page.locator('.v-labels > .v-lbl.v-mini:not(.v-yard)', { hasText: nome });
+const FOTO = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+/** Gli errori di console tranne le risorse che il test fa fallire apposta (il meteo, una lettura dello storico). */
+const senzaVoluti = (errori: string[], re: RegExp) => errori.filter((e) => !(/^Failed to load resource/.test(e) && re.test(e)));
+
+test.describe('fase 3: la scheda della pila', () => {
+  // Lea cocco nero: 6 vendite (l'ultima fuori dai 6 mesi), 2 arrivi, 2 conte; la riga di Francesco ancora in arrivo
+  const VENDITE: Vendita[] = [
+    { canale: 'negozio', data: OGGI, qty: 2 }, { canale: 'online', data: mesiFa(1, 20), qty: 3 }, { canale: 'negozio', data: mesiFa(1, 8), qty: 1 },
+    { canale: 'online', data: mesiFa(2, 15), qty: 1 }, { canale: 'online', data: mesiFa(3, 3), qty: 4 }, { canale: 'negozio', data: mesiFa(8, 10), qty: 5 },
+  ];
+  const ACQUISTI: Acquisto[] = [   // dal piu' recente, come la lettura ordinata per data
+    { id: 'p2', data: traGiorni(-12), quantita: 4, costo_unitario: 40, fornitore: FRANCESCO },
+    { id: 'p1', data: mesiFa(5, 3), quantita: 6, costo_unitario: 38.5, fornitore: null },
+  ];
+  const RETTIFICHE: Rettifica[] = [{ id: 'r2', data: traGiorni(-5), qty_delta: 1, motivo: 'conta' }, { id: 'r1', data: traGiorni(-60), qty_delta: -2, motivo: null }];
+
+  test('dal Magazzino: foto vera, codice e giacenza, barre dei 6 mesi, ultime 5 vendite, in arrivo, arrivi, conte; "Ordina ancora" apre il passo 4 col codice', async ({ page }) => {
+    const dati = datiBase();
+    Object.assign(dati.magazzino.find((g) => g.codice === 'LEA_BAG_COCCO_BLACK')!, { image_url: FOTO });
+    const r = await apri(page, '#villaggio', dati, {
+      vendite: { LEA_BAG_COCCO_BLACK: VENDITE }, acquisti: { LEA_BAG_COCCO_BLACK: ACQUISTI }, rettifiche: { LEA_BAG_COCCO_BLACK: RETTIFICHE },
+      reorder: [rio('LEA_BAG_COCCO_BLACK', 6, 10)],   // vende e ha pochi giorni di magazzino, ma la riga di Francesco e' viva
+    });
+    await hud(page, attesi(dati));
+    await barra(page, 'Magazzino').click();
+    await expect(tessera(page, 'Cocco nero').locator('.fin')).toHaveCount(0, ATTESA);
+    await tessera(page, 'Cocco nero').click();
+    const s = page.locator('.v-sheet.open');
+    await expect(s.locator('h2')).toHaveText('Lea · Cocco nero');
+    await expect(s.locator('.v-shead p')).toHaveText('7 pezzi in magazzino · 6 in arrivo');
+    await expect(s.locator('img.v-foto')).toHaveAttribute('src', FOTO);
+    await expect(s.locator('img.v-foto')).toHaveAttribute('alt', 'Foto di Lea cocco nero');
+    await expect(s.locator('.v-pcod > div')).toHaveCount(1);
+    await expect(s.locator('.v-pcod small')).toHaveText('LEA_BAG_COCCO_BLACK');
+    await expect(s.locator('.v-pcod .v-chip.stock')).toHaveText('in magazzino 7');
+    await expect(s.locator('.v-chip.fin')).toHaveCount(0);
+    await expect(s.locator('.v-note', { hasText: 'Sta finendo' })).toHaveCount(0);
+    // vendite: una barra per mese, dal piu' vecchio a questo; i mesi a zero ci sono (vuoti), la vendita di 8 mesi fa no
+    const mesi = [5, 4, 3, 2, 1, 0].map((k) => meseBreve(mesiFa(k, 15)));
+    const pezzi = [0, 0, 4, 1, 4, 2];
+    const barre = dopoSezione(page, /^Vendite/, 1);
+    await expect(barre).toHaveClass(/(^|\s)v-bars(\s|$)/, ATTESA);
+    await expect(barre.locator('small')).toHaveText(mesi);
+    await expect(barre.locator('b')).toHaveText(pezzi.map((n) => (n ? String(n) : '')));
+    await expect(barre).toHaveAttribute('aria-label', 'Pezzi venduti: ' + mesi.map((m, i) => `${m} ${pezzi[i]}`).join(', '));
+    // le ultime 5, la piu' recente prima, negozio (Qromo) e online (Shopify) insieme
+    const ultime = dopoSezione(page, /^Vendite/, 2).locator('.v-voce');
+    await expect(ultime.locator('.pt')).toHaveText(['2 pz', '3 pz', '1 pz', '1 pz', '4 pz']);
+    await expect(ultime.locator('b')).toHaveText(['In negozio', 'Online', 'In negozio', 'Online', 'Online']);
+    await expect(ultime.locator('small')).toHaveText(VENDITE.slice(0, 5).map((v) => dataLunga(v.data)));
+    // la riga ancora in arrivo, dal modello del Villaggio
+    const inArrivo = dopoSezione(page, /^In arrivo/).locator('.v-voce');
+    await expect(inArrivo).toHaveCount(1);
+    await expect(inArrivo.locator('.pt')).toHaveText('6 pz');
+    await expect(inArrivo.locator('b')).toHaveText('Francesco');
+    await expect(inArrivo.locator('small')).toHaveText('4 di 10 arrivate · 10 giorni di ritardo');
+    // arrivi dai laboratori (purchases) e conte e rettifiche (stock_adjustments)
+    const arrivi = dopoSezione(page, /^Arrivi/).locator('.v-voce');
+    await expect(arrivi.locator('.pt')).toHaveText(['4 pz', '6 pz']);
+    await expect(arrivi.locator('b')).toHaveText(['Francesco', 'Laboratorio non indicato']);
+    await expect(arrivi.locator('small')).toHaveText([`${dataLunga(traGiorni(-12))} · 40,00 € al pezzo`, `${dataLunga(mesiFa(5, 3))} · 38,50 € al pezzo`]);
+    const conte = dopoSezione(page, /^Conte e rettifiche/).locator('.v-voce');
+    await expect(conte.locator('.pt')).toHaveText(['+1', '-2']);
+    await expect(conte.locator('b')).toHaveText(['Conta', 'Rettifica']);
+    // una lettura per tabella e per codice
+    for (const t of ['qromo_sales', 'shopify_line_items', 'purchases', 'stock_adjustments']) expect(r.letture.storico, t).toContain(t + ':LEA_BAG_COCCO_BLACK');
+    expect(r.posts).toEqual([]);
+
+    // "Ordina ancora": il passo 4 dell'ordine con quel codice, dal laboratorio dell'ultimo arrivo
+    await s.getByRole('button', { name: '+ Ordina ancora' }).click();
+    await expect(s.locator('h2')).toHaveText('Ordina borse');
+    await expect(passo(page)).toHaveText('Quantità e prezzo');
+    await expect(s.locator('.v-qty small')).toHaveText('LEA_BAG_COCCO_BLACK · da Francesco · in magazzino 7');
+    await expect(s.locator('.v-form .ordtop .chip.on')).toHaveText(`${FRANCESCO} ✕`, ATTESA);
+    await expect(s.locator('.v-form .cartrow[data-cart-codice="LEA_BAG_COCCO_BLACK"]')).toBeVisible(ATTESA);
+    // non toccato: la X chiude senza chiedere e non scrive niente
+    await page.locator('.v-sheet .v-x').click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    expect(r.dialoghi).toEqual([]);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('"sta finendo": bandierina nel mondo, chip e nota nella scheda solo sulle pile che vendono senza un ordine vivo; la pila finita che sta finendo si vede; "Conta" fa il giro sui codici della pila', async ({ page }) => {
+    const dati = datiBase();
+    // Cocco verde: finita e senza niente in arrivo (il villaggio non la disegnerebbe); Verde militare: una pila, due codici
+    dati.magazzino.push(inv('LEA_BAG_COCCO_GREEN', 'LEA BAG', 'COCCO GREEN', 0), inv('LEA_BAG_MILITARY_GREEN', 'LEA BAG', 'MILITARY GREEN', 2), inv('LEA_BAG_GREEN_MILITARY', 'LEA BAG', 'GREEN MILITARY', 1));
+    const r = await apri(page, '#villaggio', dati, {
+      reorder: [
+        rio('LEA_BAG_PONY_ZEBRA', 5, 12),                                    // vende, 12 giorni, nessuna riga aperta: sta finendo
+        rio('LEA_BAG_COCCO_GREEN', 4, 0),                                    // finita: sta finendo
+        rio('LEA_BAG_COCCO_BLACK', 6, 10),                                   // la riga di Francesco e' viva (ordinata 30 giorni fa)
+        rio('SOPHIE_BAG_SUEDE_BROWN', 2, 1),                                 // 2 pezzi in 60 giorni: non vende abbastanza
+        rio('LEA_BAG_MILITARY_GREEN', 3, 20, { riordino_archiviato: true }), // archiviato nel Riordino: scelta gia' fatta
+      ],
+    });
+    await hud(page, attesi(dati));
+    // nel mondo: "sta finendo" nell'etichetta della pila (con la bandierina), e la pila finita c'e'
+    await expect(etichettaPila(page, 'Pony zebrato')).toContainText('sta finendo', ATTESA);
+    await expect(etichettaPila(page, 'Cocco verde')).toHaveCount(1);
+    await expect(etichettaPila(page, 'Cocco verde')).toContainText('0 pz · sta finendo');
+    await expect(etichettaPila(page, 'Cocco nero')).not.toContainText('sta finendo');
+    await expect(etichettaPila(page, 'Verde militare')).not.toContainText('sta finendo');
+    await expect(etichettaPila(page, 'Camoscio marrone')).not.toContainText('sta finendo');
+    // nel pannello Magazzino: la tessera dice "sta finendo", anche quella della pila finita
+    await barra(page, 'Magazzino').click();
+    await expect(tessera(page, 'Pony zebrato').locator('small.fin')).toHaveText('sta finendo', ATTESA);
+    await expect(tessera(page, 'Cocco verde').locator('small.fin')).toHaveText('sta finendo');
+    await expect(tessera(page, 'Cocco verde').locator('b')).toHaveText('0');
+    for (const n of ['Cocco nero', 'Verde militare', 'Camoscio marrone']) await expect(tessera(page, n).locator('.fin'), n).toHaveCount(0);
+
+    await tessera(page, 'Pony zebrato').click();
+    const s = page.locator('.v-sheet.open');
+    await expect(s.locator('h2')).toHaveText('Lea · Pony zebrato');
+    await expect(s.locator('.v-shead p')).toHaveText('3 pezzi in magazzino');
+    await expect(s.locator('.v-pcod .v-chip.fin')).toHaveText('sta finendo');
+    await expect(s.locator('.v-note', { hasText: 'Sta finendo' })).toHaveText('Sta finendo: vende (3 pezzi o più in 60 giorni), ha meno di 30 giorni di magazzino e nessun ordine in corso.');
+    // niente storico: lo dice, sezione per sezione (letture riuscite e vuote)
+    await expect(dopoSezione(page, /^Vendite/)).toHaveText('Nessuna vendita registrata.', ATTESA);
+    await expect(dopoSezione(page, /^In arrivo/)).toHaveText('Nessuna riga d\'ordine aperta.');
+    await expect(dopoSezione(page, /^Arrivi/)).toHaveText('Nessun arrivo registrato.');
+    await expect(dopoSezione(page, /^Conte e rettifiche/)).toHaveText('Nessuna conta né rettifica.');
+    // "Conta": il giro di conta su quel codice, col CountForm di Magazzino gia' sul prodotto; Salta non scrive niente
+    await s.getByRole('button', { name: 'Conta', exact: true }).click();
+    await expect(s.locator('h2')).toHaveText('Giro di conta');
+    await expect(s.locator('.v-giro b')).toHaveText('1 / 1');
+    await expect(s.locator('.v-qty small')).toHaveText('LEA_BAG_PONY_ZEBRA · in magazzino 3');
+    await expect(s.locator('.v-conta .sysrow b')).toHaveText('3 pz', ATTESA);
+    await s.getByRole('button', { name: 'Salta ›' }).click();
+    await expect(s.locator('.v-fine')).toHaveText('Giro finito: 0 codici contati su 1.');
+    await s.getByRole('button', { name: 'Chiudi il giro' }).click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+
+    // la pila con due codici: ogni codice col suo numero, lo storico letto codice per codice, il giro su tutti e due
+    await barra(page, 'Magazzino').click();
+    await tessera(page, 'Verde militare').click();
+    await expect(s.locator('h2')).toHaveText('Lea · Verde militare');
+    await expect(s.locator('.v-shead p')).toHaveText('3 pezzi in magazzino');
+    await expect(s.locator('.v-pcod > div')).toHaveCount(2);
+    expect((await s.locator('.v-pcod small').allTextContents()).sort()).toEqual(['LEA_BAG_GREEN_MILITARY', 'LEA_BAG_MILITARY_GREEN']);
+    await expect(s.locator('.v-pcod .v-chip.stock')).toHaveText(['in magazzino 2', 'in magazzino 1']);
+    await expect(s.locator('.v-chip.fin')).toHaveCount(0);
+    await expect(dopoSezione(page, /^Vendite/)).toHaveText('Nessuna vendita registrata.', ATTESA);
+    for (const c of ['LEA_BAG_MILITARY_GREEN', 'LEA_BAG_GREEN_MILITARY']) for (const t of ['qromo_sales', 'shopify_line_items', 'purchases', 'stock_adjustments']) expect(r.letture.storico).toContain(t + ':' + c);
+    await s.getByRole('button', { name: 'Conta', exact: true }).click();
+    await expect(s.locator('.v-giro b')).toHaveText('1 / 2');
+    await page.locator('.v-sheet .v-x').click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    expect(r.dialoghi).toEqual([]);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('il tocco su una pila nel mondo, col Magazzino aperto, apre la scheda di quella pila', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    await barra(page, 'Magazzino').click();
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Magazzino');
+    // la scheda di Sophie dalla tessera: la camera va vicino alla sua pila, dove si vedono le etichette delle zone. Nina
+    // ha una pila sola, e l'etichetta della sua zona sta proprio sopra di lei: si aspetta che la camera si fermi (due
+    // letture uguali) e si tocca il corpo della borsa, 55 px sotto la punta (piu' su si passa nel manico e si prende il muro)
+    await tessera(page, 'Camoscio marrone').click();
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Sophie · Camoscio marrone');
+    const zona = page.locator('.v-labels .v-zone', { hasText: /^Nina/ });
+    await expect(zona).toBeVisible(ATTESA);
+    await page.waitForTimeout(1000);   // il tween della camera dura 560 ms
+    let prima = '', punto: { x: number; y: number } | null = null;
+    for (let k = 0; k < 30 && !punto; k++) {
+      const b = await zona.boundingBox();
+      const ora = b ? `${Math.round(b.x)},${Math.round(b.y)}` : '';
+      if (b && ora === prima) punto = { x: b.x + b.width / 2, y: b.y + b.height + 55 };
+      prima = ora;
+      await page.waitForTimeout(400);
+    }
+    expect(punto, 'posizione della pila di Nina sullo schermo').not.toBeNull();
+    await page.mouse.click(punto!.x, punto!.y);
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Nina · Righe rosso', ATTESA);
+    await expect(page.locator('.v-sheet.open .v-pcod small')).toHaveText('NINA_BAG_STRIPES_RED');
+    await expect(page.locator('.v-sheet.open .v-shead p')).toHaveText('0 pezzi in magazzino · 8 in arrivo');
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+
+  // BUG dell'app (18-10, integrazione fase 3): fetchOrdiniGruppi di lib/api.ts non chiede data_ultimo_arrivo a
+  // v_ordini_arrivo, quindi staFinendo() non vede l'arrivo recente di una riga che ha gia' una consegna promessa (passata):
+  // la riga sembra ferma e la pila "sta finendo" anche se il laboratorio sta consegnando. Il 18-10 succede a
+  // CREDIT_CARD_CASE_COCCO_GREEN. Quando lib/api.ts legge data_ultimo_arrivo, questo test diventa rosso: si toglie test.fail.
+  test('una riga con la consegna promessa passata ma un arrivo di pochi giorni fa e\' viva: la sua pila non "sta finendo"', async ({ page }) => {
+    test.fail(true, 'lib/api.ts: fetchOrdiniGruppi non legge data_ultimo_arrivo (staFinendo usa allora la data di consegna promessa)');
+    const dati = datiBase();
+    // la zebrata: ordinata 90 giorni fa, promessa 70 giorni fa, 3 di 10 arrivati 5 giorni fa
+    Object.assign(dati.ordini.find((x) => x.id === ID.zebra)!, { qty_ordered: 10, qty_arrived: 3, mancano: 7, completo: false, data_ordine: traGiorni(-90),
+      data_consegna: traGiorni(-70), data_consegna_display: traGiorni(-70), data_ultimo_arrivo: traGiorni(-5) });
+    const r = await apri(page, '#villaggio', dati, { reorder: [rio('LEA_BAG_PONY_ZEBRA', 5, 12)] });
+    await hud(page, attesi(dati));
+    await barra(page, 'Magazzino').click();
+    await expect(tessera(page, 'Pony zebrato')).toBeVisible(ATTESA);
+    await page.waitForTimeout(1000);
+    await expect(tessera(page, 'Pony zebrato').locator('.fin')).toHaveCount(0, { timeout: 3000 });
+    await expect(etichettaPila(page, 'Pony zebrato')).not.toContainText('sta finendo', { timeout: 3000 });
+    expect(r.errori).toEqual([]);
+  });
+
+  // BUG dell'app (18-10, integrazione fase 3): fetchSalesByCodice, fetchPurchasesByCodice e fetchAdjustmentsByCodice di
+  // lib/api.ts non guardano `error` (restituiscono data ?? []), quindi una lettura fallita si vede come "Nessuna vendita
+  // registrata." invece di "Non riesco a leggere le vendite." (il contratto: mai come zero). test.fail tiene il test in
+  // piedi finche' il bug c'e' e diventa rosso quando lo si sistema: allora si toglie test.fail.
+  test('una lettura dello storico che fallisce si dice ("Non riesco a leggere ..."), non diventa "nessuna vendita"', async ({ page }) => {
+    test.fail(true, 'lib/api.ts: fetchSalesByCodice, fetchPurchasesByCodice e fetchAdjustmentsByCodice ignorano l\'errore della lettura');
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati, { storicoKo: ['qromo_sales', 'shopify_line_items', 'purchases', 'stock_adjustments'] });
+    await hud(page, attesi(dati));
+    await barra(page, 'Magazzino').click();
+    await tessera(page, 'Cocco nero').click();
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Lea · Cocco nero');
+    await expect.poll(() => r.letture.storico.length, ATTESA).toBeGreaterThanOrEqual(4);
+    await expect(dopoSezione(page, /^Vendite/)).toContainText('Non riesco a leggere le vendite.', { timeout: 10000 });
+    await expect(dopoSezione(page, /^Arrivi/)).toContainText('Non riesco a leggere gli arrivi.', { timeout: 5000 });
+    await expect(dopoSezione(page, /^Conte e rettifiche/)).toContainText('Non riesco a leggere le conte.', { timeout: 5000 });
+    // la riga in arrivo viene dal modello del Villaggio, non da queste letture: c'e' comunque
+    await expect(dopoSezione(page, /^In arrivo/).locator('.v-voce')).toHaveCount(1);
+    expect(senzaVoluti(r.errori, /status of 500/)).toEqual([]);
+  });
+});
+
+test.describe('fase 3: consegna prevista nell\'ordine e tempo abituale del laboratorio', () => {
+  test('passo 4: la consegna e\' facoltativa e mai precompilata, il tempo di Francesco e\' un suggerimento, una data prima dell\'ordine non parte; con due righe ognuna ha la sua', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati, { chi: 'Ginevra', tempi: [{ fornitore: FRANCESCO, giorni_mediani: 30, righe: 24 }, { fornitore: SARTE, giorni_mediani: 24, righe: 11 }] });
+    await hud(page, attesi(dati));
+    const qty = await alPasso4(page);
+    const form = page.locator('.v-sheet.open .v-form');
+    const consegna = form.locator('#sof-consegna');
+    await expect(consegna).toHaveValue('');
+    await expect(form).toContainText('Di solito Francesco (pelle) consegna in circa 30 giorni. Metti comunque la data che ti dice il laboratorio.', ATTESA);
+    expect(r.letture.tempi).toBeGreaterThan(0);
+    // con una riga sola la data per riga non c'e': vale quella dell'ordine
+    await expect(form.locator('.cartrow input[type="date"]')).toHaveCount(0);
+    await qty.fill('5');
+    // una data prima del giorno dell'ordine si ferma qui, senza scrivere
+    await consegna.fill(traGiorni(-1));
+    await form.getByRole('button', { name: 'Salva ordine (1)' }).click();
+    await avvisoCon(page, 'Consegna prevista di LEA BAG: dev\'essere una data dal giorno dell\'ordine in poi');
+    await page.waitForTimeout(500);
+    expect(r.posts).toEqual([]);
+    await consegna.fill(traGiorni(30));
+    // seconda riga dalla ricerca: compaiono le date per riga, tutte e due su quella dell'ordine; la zebrata si sposta
+    await form.locator('.ds-search input').fill('zebra');
+    await form.locator('.ds-prow', { hasText: 'PONY ZEBRA' }).click();
+    const zebra = form.locator('.cartrow[data-cart-codice="LEA_BAG_PONY_ZEBRA"]');
+    await expect(zebra).toBeVisible(ATTESA);
+    const dataCocco = form.locator('.cartrow[data-cart-codice="LEA_BAG_COCCO_BLACK"] input[type="date"]'), dataZebra = zebra.locator('input[type="date"]');
+    await expect(dataCocco).toHaveValue(traGiorni(30));
+    await expect(dataZebra).toHaveValue(traGiorni(30));
+    await expect(form).toContainText('Vale per tutte le righe; ognuna si può cambiare nel carrello.');
+    await dataZebra.fill(traGiorni(45));
+    await zebra.locator('input.qbox').fill('2');
+    await form.getByRole('button', { name: 'Salva ordine (2)' }).click();
+    await expect.poll(() => r.posts.length, ATTESA).toBe(1);
+    const p = r.posts[0];
+    expect(p.body.action).toBe('order_multi');
+    expect(p.body.chi).toBe('Ginevra');
+    expect(p.body.payload).toMatchObject({ fornitore: FRANCESCO, data_ordine: OGGI, righe: [
+      { codice: 'LEA_BAG_COCCO_BLACK', qty_ordered: 5, wip: false, data_consegna: traGiorni(30) },
+      { codice: 'LEA_BAG_PONY_ZEBRA', qty_ordered: 2, wip: false, data_consegna: traGiorni(45) },
+    ] });
+    // la riga nuova arriva con la data: niente "senza data" nel pannello del laboratorio
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Laboratori', ATTESA);
+    await page.locator('.v-sheet.open .v-lrow', { hasText: 'Francesco' }).click();
+    await expect(page.locator('.v-sheet.open .v-row', { hasText: 'Pony zebrato' }).filter({ hasText: '0 di 2 arrivate' })).toContainText(`consegna ${dataLunga(traGiorni(45))}`, ATTESA);
+    expect(r.errori).toEqual([]);
+  });
+
+  test('senza v_tempi_laboratori (0166 non ancora applicata) il suggerimento non c\'e\' e l\'ordine senza consegna parte come sempre', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '#villaggio', dati, { tempi: '404' });
+    await hud(page, attesi(dati));
+    const qty = await alPasso4(page);
+    const form = page.locator('.v-sheet.open .v-form');
+    await expect.poll(() => r.letture.tempi, ATTESA).toBeGreaterThan(0);
+    await page.waitForTimeout(500);
+    await expect(form).not.toContainText('Di solito');
+    await qty.fill('3');
+    await form.getByRole('button', { name: 'Salva ordine (1)' }).click();
+    await expect.poll(() => r.posts.length, ATTESA).toBe(1);
+    // senza consegna la riga non porta data_consegna (order_multi non riceve mai '')
+    expect(r.posts[0].body.payload).toEqual({
+      fornitore: FRANCESCO, data_ordine: OGGI,
+      righe: [{ codice: 'LEA_BAG_COCCO_BLACK', item: 'LEA BAG', variant: 'COCCO BLACK', qty_ordered: 3, wip: false, nuovo_riordino: 'Riordino', costo_unitario: null }],
+    });
+    expect(senza404(r.errori)).toEqual([]);
+  });
+});
+
+test.describe('fase 3: Modifica di una riga d\'ordine (order_update)', () => {
+  test('solo righe senza arrivi e non WIP; vanno al server solo i campi cambiati; toccata chiede prima di chiudere; salvata la riga si richiude', async ({ page }) => {
+    const dati = datiBase();
+    dati.ordini.push(riga(ID.wip, 'G2', SARTE, 'NINA_BAG_CHECKS_BLUE', 'NINA BAG', 'CHECKS BLUE', 0, 0, traGiorni(15), { wip: true, completo: false, costo_unitario: null }));
+    const prima = attesi(dati);
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, prima);
+    await etichettaLab(page, 'Francesco').click();
+    const sheet = page.locator('.v-sheet.open');
+    // Lea cocco nero ha gia' 4 arrivi: niente Modifica, resta "Elimina riga"
+    const lea = sheet.locator('.v-row', { hasText: 'Cocco nero' });
+    await lea.getByRole('button', { name: 'Arrivate' }).click();
+    await expect(lea.locator('.v-arrivo .ds-del', { hasText: 'Elimina riga' })).toBeVisible();
+    await expect(lea.getByRole('button', { name: 'Modifica', exact: true })).toHaveCount(0);
+    // Sophie camoscio 0/5: Modifica, col modulo gia' compilato con i valori della riga
+    const sophie = sheet.locator('.v-row', { hasText: 'Camoscio marrone' });
+    await sophie.getByRole('button', { name: 'Arrivate' }).click();
+    await expect(lea.locator('.v-arrivo')).toHaveCount(0);
+    await sophie.getByRole('button', { name: 'Modifica', exact: true }).click();
+    await expect(sophie.locator('.ds-recv .rl')).toHaveText('Modifica la riga (non è arrivato ancora niente)');
+    await expect(sophie.getByLabel('Pezzi ordinati')).toHaveValue('5');
+    await expect(sophie.getByLabel('€ al pezzo')).toHaveValue('40');
+    await expect(sophie.getByLabel('Consegna prevista')).toHaveValue(traGiorni(20));
+    await expect(sophie.getByLabel('Nota')).toHaveValue('');
+    await sophie.getByLabel('Pezzi ordinati').fill('6');
+    // toccata, la X chiede (lascia() della pagina); Annulla tiene il modulo
+    r.conferme.accetta = false;
+    await page.locator('.v-sheet .v-x').click();
+    await expect.poll(() => r.dialoghi.length, ATTESA).toBe(1);
+    expect(r.dialoghi[0]).toBe('Lasci la riga a metà? Quello che hai scritto si perde.');
+    await expect(sheet.locator('h2')).toHaveText('Francesco sta preparando');
+    await expect(sophie.getByLabel('Pezzi ordinati')).toHaveValue('6');
+    r.conferme.accetta = true;
+    await sophie.getByLabel('Consegna prevista').fill(traGiorni(25));
+    await sophie.getByLabel('Nota').fill('  colore da confermare ');
+    expect(r.posts).toEqual([]);
+    await sophie.getByRole('button', { name: 'Salva modifiche' }).click();
+    await expect.poll(() => r.posts.length, ATTESA).toBe(1);
+    const p = r.posts[0];
+    expect(p.body.action).toBe('order_update');
+    expect(p.body.chi).toBe('Ale');
+    // il costo non e' cambiato: non va; la nota va senza spazi intorno
+    expect(p.body.payload).toEqual({ id: ID.sophie, qty_ordered: 6, data_consegna: traGiorni(25), note: 'colore da confermare' });
+    await avvisoCon(page, 'Riga ordine aggiornata');
+    // la rilettura: 6 + 6 da arrivare, la riga del Villaggio richiusa e il modulo non piu' "toccato"
+    await expect(sheet.locator('.v-shead p')).toHaveText('Laboratorio pelle · 2 righe, 12 pz da arrivare', ATTESA);
+    await expect(sophie).toContainText('0 di 6 arrivate');
+    await expect(sophie.locator('.v-chip.ok')).toHaveText(`consegna ${dataLunga(traGiorni(25))}`);
+    await expect(sophie.locator('.v-arrivo')).toHaveCount(0);
+    await expect(sophie.getByRole('button', { name: 'Arrivate' })).toBeVisible();
+    await hud(page, { ...prima, prep: prima.prep + 1 });
+    await page.locator('.v-sheet .v-x').click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    expect(r.dialoghi).toHaveLength(1);
+
+    // Sarte Milano: la WIP non ha Modifica (quantita' e costo si decidono all'arrivo); Nina si', e senza cambiamenti non scrive
+    await etichettaLab(page, 'Sarte Milano').click();
+    const wip = sheet.locator('.v-row', { hasText: '(WIP)' });
+    await wip.getByRole('button', { name: 'Arrivate' }).click();
+    await expect(wip.locator('.v-arrivo .ds-del', { hasText: 'Elimina riga' })).toBeVisible();
+    await expect(wip.getByRole('button', { name: 'Modifica', exact: true })).toHaveCount(0);
+    const nina = sheet.locator('.v-row', { hasText: 'Righe rosso' });
+    await nina.getByRole('button', { name: 'Arrivate' }).click();
+    await nina.getByRole('button', { name: 'Modifica', exact: true }).click();
+    await expect(nina.getByLabel('Consegna prevista')).toHaveValue('');
+    await nina.getByRole('button', { name: 'Salva modifiche' }).click();
+    await avvisoCon(page, 'Nessuna modifica da salvare');
+    await page.waitForTimeout(500);
+    expect(r.posts).toHaveLength(1);
+    expect(r.errori).toEqual([]);
+  });
+});
+
+test.describe('fase 3: i fumetti sui capannoni', () => {
+  test('orologio = righe oltre la data, punto di domanda = righe senza data, niente se tutto a posto; il fumetto (44 px) col tocco o Invio apre il laboratorio a Paillettes spente', async ({ page }) => {
+    const dati = datiBase();
+    // Vincenzo: una sola riga, con la data fra due settimane: niente da dire. Senza fornitore: righe senza data, ma non
+    // c'e' una persona con cui verificare, quindi niente fumetto
+    dati.ordini.push(riga('00000000-0000-0000-0000-0000000000f1', 'G3', 'Vincenzo (pelle)', 'LEA_BAG_PONY_ZEBRA', 'LEA BAG', 'PONY ZEBRA', 2, 0, traGiorni(14)),
+      riga(ID.anonimo, 'G4', null, 'SOPHIE_BAG_SUEDE_BROWN', 'SOPHIE BAG', 'SUEDE BROWN', 1, 0, null));
+    const r = await apri(page, '#villaggio', dati);
+    await hud(page, attesi(dati));
+    const fFr = etichettaLab(page, 'Francesco').locator('.v-fum'), fSa = etichettaLab(page, 'Sarte Milano').locator('.v-fum');
+    await expect(fFr).toHaveClass(/(^|\s)orologio(\s|$)/, ATTESA);
+    await expect(fFr).toHaveAttribute('aria-label', 'Francesco: ci sono righe oltre la data di consegna. Tocca per la verifica');
+    await expect(fSa).toHaveClass(/(^|\s)domanda(\s|$)/);
+    await expect(fSa).toHaveAttribute('aria-label', 'Sarte Milano: ci sono righe senza data di consegna. Tocca per la verifica');
+    await expect(etichettaLab(page, 'Vincenzo')).toBeVisible();
+    await expect(etichettaLab(page, 'Vincenzo').locator('.v-fum')).toHaveCount(0);
+    await expect(etichettaLab(page, 'Vincenzo')).not.toHaveClass(/con-fum/);
+    await expect(etichettaLab(page, 'Senza fornitore')).toBeVisible();
+    await expect(etichettaLab(page, 'Senza fornitore').locator('.v-fum')).toHaveCount(0);
+    // il fumetto e' solo un'icona: il testo dell'etichetta resta nome, pezzi e "!"
+    await expect(etichettaLab(page, 'Francesco')).toHaveText(/^Francesco11 pz in preparazione!$/);
+    for (const f of [fFr, fSa]) {
+      const b = await f.boundingBox();
+      expect(b && Math.min(b.width, b.height), 'bersaglio del fumetto').toBeGreaterThanOrEqual(44);
+    }
+    // a Paillettes spente la verifica non c'e': il fumetto apre il laboratorio (non l'etichetta di sotto due volte)
+    await fFr.click();
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Francesco sta preparando');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    await expect(fSa).toBeVisible(ATTESA);
+    await fSa.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Sarte Milano sta preparando');
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
+  });
+});
+
+test.describe('fase 3: stagioni, luce e meteo di Milano', () => {
+  for (const caso of [
+    { meteo: 'sole' as const, salvato: 'sereno' },
+    { meteo: 'pioggia' as const, salvato: 'pioggia' },
+    { meteo: 'errore' as const, salvato: null },
+  ]) {
+    test(`Open-Meteo ${caso.meteo}: una sola lettura all'indirizzo del contratto, in cache 30 minuti${caso.salvato ? '' : ' (l\'errore no: sereno in silenzio e si riprova)'}; il villaggio funziona come sempre`, async ({ page }) => {
+      const dati = datiBase();
+      const r = await apri(page, '#villaggio', dati, { meteo: caso.meteo });
+      await hud(page, attesi(dati));
+      await canvasVivo(page);
+      await expect.poll(() => r.letture.meteo.length, ATTESA).toBe(1);
+      expect(r.letture.meteo[0]).toBe(URL_METEO);
+      const cache = async () => { const v = await page.evaluate(() => localStorage.getItem('amimi_villaggio_meteo')); return v ? (JSON.parse(v) as { meteo: string }).meteo : null; };
+      await expect.poll(cache, ATTESA).toBe(caso.salvato);
+      // nessun avviso e nessun errore a video: il meteo e' decorazione
+      await expect(page.locator('.v-err')).toHaveCount(0);
+      expect(await avvisi(page)).toEqual([]);
+      await etichettaLab(page, 'Francesco').click();
+      await expect(page.locator('.v-sheet.open h2')).toHaveText('Francesco sta preparando');
+      await page.keyboard.press('Escape');
+      await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+      // riaperto: dalla cache non si richiede; dopo un errore si riprova
+      await page.reload();
+      await hud(page, attesi(dati));
+      await page.waitForTimeout(1500);
+      expect(r.letture.meteo).toHaveLength(caso.salvato ? 1 : 2);
+      // il ritorno in primo piano non richiede il meteo in cache
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      await page.waitForTimeout(1000);
+      expect(r.letture.meteo).toHaveLength(caso.salvato ? 1 : 3);
+      expect(r.posts).toEqual([]);
+      expect(senzaVoluti(r.errori, /api\.open-meteo\.com/)).toEqual([]);
+    });
+  }
+
+  // l'orologio del browser e' finto (page.clock, poi scorre): stagione e momento del giorno vengono da li'
+  for (const caso of [
+    { nome: 'inverno, sera, neve', ora: '2027-01-14T18:30:00Z', meteo: 'neve' as const, salvato: 'neve' },
+    { nome: 'primavera, mattina, nebbia', ora: '2026-04-15T06:30:00Z', meteo: 'nebbia' as const, salvato: 'nebbia' },
+    { nome: 'estate, tramonto, nuvole', ora: '2026-07-10T18:30:00Z', meteo: 'nuvole' as const, salvato: 'nuvole' },
+  ]) {
+    test(`stagione e luce (${caso.nome}): l'isola si disegna, i pannelli si aprono, nessun errore`, async ({ page }) => {
+      const dati = datiBase();
+      const r = await apri(page, '#villaggio', dati, { ora: caso.ora, meteo: caso.meteo });
+      await hud(page, attesi(dati));
+      await canvasVivo(page);
+      await expect.poll(async () => { const v = await page.evaluate(() => localStorage.getItem('amimi_villaggio_meteo')); return v ? (JSON.parse(v) as { meteo: string }).meteo : null; }, ATTESA).toBe(caso.salvato);
+      await expect(fienile(page)).toHaveText(`Magazzino${attesi(dati).stock} pezzi`);
+      await barra(page, 'Magazzino').click();
+      await expect(page.locator('.v-sheet.open h2')).toHaveText('Magazzino');
+      await page.keyboard.press('Escape');
+      await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+      await page.waitForTimeout(1500);   // qualche fotogramma da sveglia, con le particelle che si muovono
+      await canvasVivo(page);
+      await expect(page.locator('.v-err')).toHaveCount(0);
+      expect(r.letture.meteo).toHaveLength(1);
+      expect(r.posts).toEqual([]);
+      expect(r.errori).toEqual([]);
+    });
+  }
+});
+
+test.describe('fase 3: chi scrive non parte mai da Ale per sbaglio', () => {
+  test('l\'app intera aperta dal Villaggio installato con ?chi=Ginevra firma Ginevra, lo ricorda e toglie ?chi dall\'indirizzo; un ?chi sconosciuto non conta', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, '?chi=Ginevra#villaggio', dati);
+    await hud(page, attesi(dati));
+    await expect(page.locator('.v-hud .v-chi b')).toHaveText('Ginni');
+    await expect(page).toHaveURL(/\/amimi-app\/#villaggio$/);
+    expect(await page.evaluate(() => localStorage.getItem('amimi_chi'))).toBe('Ginevra');
+    await etichettaLab(page, 'Francesco').click();
+    const sophie = page.locator('.v-sheet.open .v-row', { hasText: 'Camoscio marrone' });
+    await sophie.getByRole('button', { name: 'Arrivate' }).click();
+    await sophie.locator('.ds-recv input.num').fill('1');
+    await sophie.locator('.ds-segna').click();
+    await expect.poll(() => r.posts.length, ATTESA).toBe(1);
+    expect(r.posts[0].body).toMatchObject({ action: 'arrival_set', chi: 'Ginevra' });
+    // un nome che non e' una persona dell'app non cambia chi scrive
+    await page.goto('?chi=Mario#villaggio');
+    await hud(page, attesi(dati));
+    await expect(page.locator('.v-hud .v-chi b')).toHaveText('Ginni');
+    expect(await page.evaluate(() => localStorage.getItem('amimi_chi'))).toBe('Ginevra');
+    expect(r.errori).toEqual([]);
+  });
+});
+
+test.describe('fase 3: telefono da 375 px', () => {
+  test.use({ viewport: { width: 375, height: 812 } });
+
+  /** I controlli visibili di `sel` piu' bassi (o stretti, con `largo`) di 44 px, con un nome per riconoscerli; vuoto se
+   *  vanno tutti bene. Almeno uno deve esserci: un selettore che non trova niente non e' un controllo passato. */
+  const piccoli = async (page: Page, sel: string, largo = false) => {
+    const xs = await page.locator(sel).evaluateAll((els) => els
+      .filter((el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden')
+      .map((el) => { const b = el.getBoundingClientRect(); return { cosa: ((el.getAttribute('aria-label') || el.textContent || el.className) ?? '').trim().slice(0, 40), w: Math.round(b.width), h: Math.round(b.height) }; }));
+    expect(xs.length, `nessun controllo visibile per ${sel}`).toBeGreaterThan(0);
+    return xs.filter((x) => x.h < 44 || (largo && x.w < 44));
+  };
+  /** I testi visibili del Villaggio sotto i 12 px (fuori dai moduli di Ordini e Magazzino, che hanno i loro stili). */
+  const testiPiccoli = async (page: Page) => {
+    const { visti, out } = await page.evaluate(() => {
+      const out: string[] = [];
+      let visti = 0;
+      const w = document.createTreeWalker(document.querySelector('.vil') ?? document.body, NodeFilter.SHOW_TEXT);
+      while (w.nextNode()) {
+        const t = w.currentNode as Text, el = t.parentElement;
+        if (!el || !(t.textContent ?? '').trim() || el.closest('.v-form, .v-conta, [aria-hidden="true"]') || !el.getClientRects().length) continue;
+        visti++;
+        const fs = parseFloat(getComputedStyle(el).fontSize);
+        if (fs < 12) out.push(`${fs}px ${el.tagName.toLowerCase()}.${el.className}: ${(t.textContent ?? '').trim().slice(0, 30)}`);
+      }
+      return { visti, out };
+    });
+    expect(visti, 'nessun testo visibile da misurare').toBeGreaterThan(5);
+    return out;
+  };
+
+  test('chi al primo avvio, HUD, barra, X, "Cambia ...", bottoni dei pannelli e della riga d\'arrivo almeno 44 px; testi del Villaggio almeno 12 px', async ({ page }) => {
+    const dati = datiBase();
+    const r = await apri(page, 'villaggio/', dati);
+    await expect(page.getByText('Chi usa questo telefono?')).toBeVisible(ATTESA);
+    expect(await piccoli(page, '.screen .card button', true)).toEqual([]);
+    await page.locator('.screen .card button', { hasText: 'Ginni' }).click();
+    await hud(page, attesi(dati));
+    expect(await piccoli(page, '.v-hud button, .v-hud .v-chi', false), 'HUD').toEqual([]);
+    expect(await piccoli(page, '.v-hud .v-home, .v-hud .v-qb', true), 'Home e ?').toEqual([]);
+    expect(await piccoli(page, '.v-bar .v-rb', true), 'barra in basso').toEqual([]);
+    expect(await testiPiccoli(page), 'testi dell\'isola').toEqual([]);
+    // il laboratorio con la riga d'arrivo aperta
+    await etichettaLab(page, 'Francesco').click();
+    const sophie = page.locator('.v-sheet.open .v-row', { hasText: 'Camoscio marrone' });
+    await sophie.getByRole('button', { name: 'Arrivate' }).click();
+    await expect(sophie.locator('.ds-segna')).toBeVisible();
+    expect(await piccoli(page, '.v-sheet.open .v-x', true), 'X').toEqual([]);
+    expect(await piccoli(page, '.v-sheet.open .v-sbody .v-btn', false), 'bottoni del laboratorio').toEqual([]);
+    expect(await piccoli(page, '.v-sheet.open .v-arrivo .ds-segna, .v-sheet.open .v-arrivo .ds-del, .v-sheet.open .v-arrivo .linkbtn', false), 'riga d\'arrivo').toEqual([]);
+    expect(await testiPiccoli(page), 'testi del laboratorio').toEqual([]);
+    await page.locator('.v-sheet .v-x').click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    // i passi dell'ordine: "Cambia fornitore / modello / colore" sono bottoni veri
+    await page.getByRole('button', { name: 'Ordina borse', exact: true }).click();
+    await tile(page, 'Francesco').click();
+    expect(await piccoli(page, '.v-sheet.open .v-back', false), 'Cambia fornitore').toEqual([]);
+    await tile(page, 'Lea').click();
+    expect(await piccoli(page, '.v-sheet.open .v-back', false), 'Cambia modello').toEqual([]);
+    expect(await testiPiccoli(page), 'testi del passo 3').toEqual([]);
+    await page.locator('.v-sheet.open .v-vt', { hasText: 'Cocco nero' }).click();
+    await expect(passo(page)).toHaveText('Quantità e prezzo');
+    expect(await piccoli(page, '.v-sheet.open .v-back', false), 'Cambia colore').toEqual([]);
+    await page.locator('.v-sheet .v-x').click();
+    await expect(page.locator('.v-sheet.open')).toHaveCount(0, ATTESA);
+    // Magazzino e scheda della pila
+    await barra(page, 'Magazzino').click();
+    expect(await testiPiccoli(page), 'testi del Magazzino').toEqual([]);
+    await tessera(page, 'Cocco nero').click();
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Lea · Cocco nero');
+    await expect(dopoSezione(page, /^Vendite/)).toBeVisible(ATTESA);
+    expect(await piccoli(page, '.v-sheet.open .v-sbody button', false), 'bottoni della scheda della pila').toEqual([]);
+    expect(await testiPiccoli(page), 'testi della scheda della pila').toEqual([]);
+    // la legenda
+    await page.locator('.v-sheet .v-x').click();
+    await page.locator('.v-hud .v-qb', { hasText: '?' }).click();
+    await expect(page.locator('.v-sheet.open h2')).toHaveText('Come leggere il villaggio');
+    // i segnali nuovi della fase 3 sono spiegati
+    await expect(page.locator('.v-sheet.open .v-sig b')).toContainText(['Bandierina arancio sulla pila', 'Punto di domanda sul capannone', 'Orologio sul capannone', 'Cuore sul capannone']);
+    expect(await testiPiccoli(page), 'testi della legenda').toEqual([]);
+    expect(r.posts).toEqual([]);
+    expect(r.errori).toEqual([]);
   });
 });
