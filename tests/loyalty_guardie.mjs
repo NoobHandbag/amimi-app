@@ -359,7 +359,7 @@ t('182 Tostiamo?: i punti passano SOLO da winGame (memory_win, cancello una al g
   && (PAGE.match(/api\('memory_win'\)/g) || []).length === 1 && /async function winGame\(modale, frase\)\{/.test(PAGE));
 t('183 Tostiamo?: vale dal 21-10 al 02-11 (date di Roma, dalle parti di Intl) poi torna il memory; ?gioco= lo forza; senza Intl si gioca al memory',
   PAGE.includes("tostiamo: { dal:'2026-10-21', al:'2026-11-02', durata:40 }") && PAGE.includes("new Intl.DateTimeFormat('en-US', { timeZone:'Europe/Rome', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date())")
-  && PAGE.includes("oggi>=CONFIG.tostiamo.dal && oggi<=CONFIG.tostiamo.al) ? 'toast' : 'memory';") && PAGE.includes("if(GIOCO==='toast') apriTostiamo(); else startGame();"));
+  && PAGE.includes("return (OGGI && OGGI>=CONFIG.tostiamo.dal && OGGI<=CONFIG.tostiamo.al) ? 'toast' : 'memory';") && PAGE.includes("if(GIOCO==='toast') apriTostiamo(); else startGame();"));
 t('184 Tostiamo?: le leve del banco (window.__tostiamo, ?tdur=, ?oggi=) esistono solo col server finto; l\'atlante illeggibile ripiega sul memory',
   TSTPAGE.includes('if(window.__AMIMI_BANCO) window.__tostiamo=TST.gioco;') && TSTPAGE.includes("const d=window.__AMIMI_BANCO ? Number(new URLSearchParams(location.search).get('tdur')) : 0;")
   && PAGE.includes("let oggi=(window.__AMIMI_BANCO && new URLSearchParams(location.search).get('oggi')) || '';")
@@ -370,5 +370,14 @@ t('186 Tostiamo? (Gate 2): la tela si misura anche sull\'altezza dello schermo (
 t('185 Tostiamo?: la riga fissa degli eventi non promette piu\' +20 (ogni evento decide i suoi punti, Galiano 100)',
   PAGE.includes("rows.push(['Vieni a un evento Amimì','punti con il QR'])") && !PAGE.includes("'+20 con il QR'"));
 
+// owner 21-10 sera: la Tovaglia (takeover della collab) e la velocita' che sale a ogni toast
+t('187 Tovaglia: si accende solo con Tostiamo? e con l\'atlante pronto, il nastro prende il posto della scritta amimi\' e resta un link al sito, la riga dopo la serata cambia da sola',
+  TSTPAGE.includes('tovaglia(im);') && TSTPAGE.includes("document.querySelector('.logo').classList.add('hidden'); el('collab').classList.remove('hidden'); document.body.classList.add('collab');")
+  && /<a class="nastro hidden" id="collab" href="\/" aria-label="[^"]+">/.test(PAGE) && TSTPAGE.includes("(OGGI && OGGI<=CONFIG.tovaglia.serata) ? CONFIG.tovaglia.prima : CONFIG.tovaglia.dopo")
+  && PAGE.includes("tovaglia: { serata:'2026-10-22',") && /body\.collab \.hero\{/.test(PAGE) && /@media \(prefers-reduced-motion:reduce\)\{ \.volo\{animation:none/.test(PAGE));
+t('189 Tovaglia: il nastro ha una classe sua (nastro), body.collab non prende mai i suoi stili (21-10: con lo stesso nome tutta la pagina diventava verde)',
+  !/\n  \.collab[{ :]/.test(PAGE) && /\n  \.nastro\{/.test(PAGE));
+t('188 Tostiamo?: la velocita\' delle borse sale del 50% a ogni toast fatto, al massimo il quadruplo',
+  PAGE.includes('vy:140*Math.min(4, 1+0.5*fatti)*rnd(0.9,1.12),'));
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
