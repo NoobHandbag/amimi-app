@@ -57,7 +57,7 @@ export default function Ingest({ pin, chi, initial }: {
       <AppBar
         title={cur?.label ?? 'Registra'}
         onBack={sel ? () => popBack(() => setSel(null)) : undefined}
-        backLabel="Registra"
+        backAria="Indietro"
         actions={<span className="badge" title="A chi viene attribuito il movimento">{personaName(chi)}</span>}
       />
 

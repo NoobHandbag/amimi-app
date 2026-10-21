@@ -13,7 +13,7 @@ const eur2 = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', 
 const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const nz = (v: unknown): number | null => (v == null || v === '' ? null : num(v));
 const CPA_TARGET = 45, CPA_BREAKEVEN = 76.7;
-const cpaTone = (cpa: number | null) => (cpa == null ? '' : cpa <= CPA_TARGET ? 'green' : cpa <= CPA_BREAKEVEN ? 'accent' : 'red');
+const cpaTone = (cpa: number | null) => (cpa == null ? '' : cpa <= CPA_TARGET ? 'green' : cpa <= CPA_BREAKEVEN ? 'warn' : 'red');
 const faticaCls = (s: string) => (s === 'alta' ? 'pill warn' : s === 'media' ? 'pill muted' : 'pill ok');
 const dmy = (iso: string) => { const d = new Date(iso.slice(0, 10) + 'T12:00:00'); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`; };
 

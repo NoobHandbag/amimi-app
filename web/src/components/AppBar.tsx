@@ -5,17 +5,18 @@
 import type { ReactNode } from 'react';
 import Icon from './Icon';
 
-export default function AppBar({ title, onBack, backLabel = 'Home', actions }: {
+export default function AppBar({ title, onBack, backLabel = 'Home', backAria, actions }: {
   title?: ReactNode;
   onBack?: () => void;
   backLabel?: string;
+  backAria?: string;   // nome completo del bottone quando la destinazione non ha un nome (es. "Indietro")
   actions?: ReactNode;
 }) {
   return (
     <header className="appbar">
       <div className="appbar-l">
         {onBack && (
-          <button className="appbar-back" type="button" onClick={onBack} aria-label={`Torna a ${backLabel}`} title={`Torna a ${backLabel}`}>
+          <button className="appbar-back" type="button" onClick={onBack} aria-label={backAria ?? `Torna a ${backLabel}`} title={backAria ?? `Torna a ${backLabel}`}>
             <Icon name="back" size={20} />
           </button>
         )}

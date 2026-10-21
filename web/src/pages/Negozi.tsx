@@ -502,7 +502,7 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
                 <div className="lead-scale-med" style={{ left: pct(pb.borse.mediana) }} />
                 <div className="lead-scale-amimi" style={{ left: pct(AMIMI_MIN), width: `calc(${pct(AMIMI_MAX)} - ${pct(AMIMI_MIN)})` }} />
               </div>
-              <div className="lead-scale-leg"><i style={{ background: 'var(--interactive-tint)', border: '1px solid var(--interactive)' }} /> negozio <i style={{ background: 'var(--accent-coral-tint)', border: '1px solid var(--accent-coral-strong)' }} /> Amimi&#8217; {AMIMI_MIN}–{AMIMI_MAX}€ <i style={{ background: 'var(--ink)', width: 3 }} /> mediana · asse fino a {eur(axisMax)}</div>
+              <div className="lead-scale-leg"><i style={{ background: 'var(--interactive-tint)', border: '1px solid var(--interactive)' }} /> negozio <i style={{ background: 'var(--surface-alt)', border: '1px solid var(--chart-4)' }} /> Amimi&#8217; {AMIMI_MIN}–{AMIMI_MAX}€ <i style={{ background: 'var(--ink)', width: 3 }} /> mediana · asse fino a {eur(axisMax)}</div>
             </div>
           )}
           {bc?.vendors?.length ? <p className="note">Brand a catalogo: {bc.vendors.slice(0, 40).join(', ')}{bc.vendors.length > 40 ? '…' : ''}</p> : null}

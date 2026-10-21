@@ -19,24 +19,24 @@
   --amimi-fill: #ebebf0;
   --amimi-ink: #0c0c10;
   --amimi-ink-2: #1b1b21;             /* inchiostro un filo piu' chiaro, per la card scura sopra l'inchiostro */
-  --amimi-muted: #6a6a75;
+  --amimi-muted: #666671;             /* 4,8:1 anche sul grigio dei selettori */
   --amimi-faint: #a3a3ad;
   --amimi-line: #e6e6eb;
   --amimi-line-strong: #d9d9e0;
-  --amimi-bar: #d3d3db;               /* barre neutre dei grafici */
+  --amimi-bar: #8e8e99;               /* barre neutre dei grafici: 3,2:1 sul bianco, come chiede un oggetto grafico */
   --amimi-bordeaux: #7a2231;
   --amimi-bordeaux-hover: #6b1e2b;    /* derivato: bordeaux 88% + nero */
   --amimi-bordeaux-pressed: #5c1a25;  /* derivato: bordeaux 76% + nero */
   --amimi-bordeaux-tint: #ece0e2;     /* derivato: bordeaux 14% su bianco */
   --amimi-bordeaux-soft: #f6f0f1;     /* derivato: bordeaux 7% su bianco */
   --amimi-bordeaux-light: #c39ca2;    /* derivato: bordeaux 45% su bianco; l'accento sopra il nero */
-  --amimi-ok: #15803d;
+  --amimi-ok: #137537;
   --amimi-ok-ink: #166534;
   --amimi-ok-tint: #e7f5ec;
   --amimi-warn: #a85507;
   --amimi-warn-ink: #8a4504;
   --amimi-warn-tint: #fbf0e3;
-  --amimi-bad: #d92d20;
+  --amimi-bad: #c4271b;
   --amimi-bad-ink: #b42318;
   --amimi-bad-tint: #fdecea;
 

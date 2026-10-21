@@ -15,12 +15,19 @@ h2 { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--in
 .hello h1 { font-size: 30px; }
 
 /* ---- barra in alto (components/AppBar.tsx) ---- */
-.appbar { display: grid; grid-template-columns: 1fr minmax(0, auto) 1fr; align-items: center; gap: 10px; min-height: 44px; margin: 2px 0 14px; }
+.appbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 44px; margin: 2px 0 14px; }
 .appbar-l { display: flex; justify-content: flex-start; }
 .appbar-r { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 .appbar-back { width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--surface); color: var(--ink); display: grid; place-items: center; cursor: pointer; flex: none; }
 .appbar-back:hover { background: var(--surface-alt); }
 .appbar-title { font-size: 17px; font-weight: 600; letter-spacing: -.01em; text-align: center; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* viste annidate (una tabella aperta in Tabelle, un prodotto in Prodotti): resta solo la barra piu' interna */
+.appbar:has(~ * .appbar) { display: none; }
+/* sezioni principali (senza indietro): titolo grande a sinistra */
+.appbar-l:empty + .appbar-title { text-align: left; font-size: 24px; letter-spacing: -.03em; }
+/* PDF e CSV nella barra: bottoni tondi con la sola icona; il nome resta in aria-label */
+.appbar-r .exp { width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: var(--surface); color: var(--ink); }
+.appbar-r .exp .explbl { display: none; }
 .appbar-r .badge, .appbar-r .ds-btn, .appbar-r button { flex: none; }
 @media print { .appbar-back { display: none !important; } }
 
@@ -36,6 +43,16 @@ h2 { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--in
 .ds-kpi.hero, .ds-hero { background: var(--grad-hero); box-shadow: none; border-radius: 24px; }
 .ds-hero .big { font-weight: 600; letter-spacing: -.04em; }
 .mini { background: var(--surface-alt); border-radius: 14px; }
+.kpi.clickable.on { box-shadow: inset 0 0 0 2px var(--interactive); background: var(--interactive-tint-soft); }
+.kpi.clickable:hover { box-shadow: inset 0 0 0 1px var(--interactive); }
+/* stati "attenzione": in A l'enfasi neutra e' il nero (--accent), l'attenzione resta arancio */
+.kpi.warn .v { color: var(--warning-700); }
+.pill.warn, .tag.cv, .deltabadge.pos, .misschip, .whytag.over, .ai-badge.low { color: var(--warning-700); }
+/* fascia dei prezzi in Negozi: Amimi in grigio, il negozio in bordeaux, la mediana in nero */
+.lead-scale-amimi { background: var(--surface-alt); border-color: var(--chart-4); }
+/* la barra del mix canali in Salute usa la classe .seg: non e' un selettore */
+.bar .seg { padding: 0; border-radius: 0; }
+.bar .seg.of, .barleg .dot.of { background: var(--chart-4); }
 
 /* ---- pillole, chip, selettori: pieni, senza bordo ---- */
 .badge { font-size: 12px; font-weight: 600; color: var(--ink); background: var(--surface-alt); border: 0; padding: 5px 10px; }
@@ -49,8 +66,24 @@ h2 { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--in
 .ds-seg button { border-radius: 999px; }
 .chip, .ds-fp { border: 0; background: var(--surface); color: var(--ink); font-weight: 500; }
 .chip.on, .ds-fp.on { background: var(--ink); color: var(--surface); border-color: transparent; }
+.ds-fp.ds-fp-todo { color: var(--negative-700); }
+.ds-fp.ds-fp-todo.on { background: var(--negative); color: var(--surface); }
+.chip.on.mat-low { color: var(--warning-700) !important; box-shadow: inset 0 0 0 2px var(--warning); }
+.chip.on .newtag { background: var(--interactive-on-dark); color: var(--ink); }
+.ds-hero .chip { color: var(--surface); }
 .subtabs button { font-weight: 600; }
 .subtabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
+
+/* dentro le superfici bianche chip, filtri, lenti, selettori di persona e KPI prendono il fondo grigio, altrimenti spariscono */
+:is(.card, .ds-card, .ds-expcard) :is(.chip, .ds-fp, .ds-lp, .seg.wrap button):not(.on) { background: var(--surface-alt); }
+.card .kpi, .card .ds-kpi:not(.hero) { background: var(--surface-alt); }
+.card .ds-search, .ds-card .ds-search { background: var(--surface-alt); }
+.ds-lp { border: 0; background: var(--surface); color: var(--ink-muted); font-size: 12.5px; font-weight: 500; padding: 7px 12px; }
+.ds-lp.on { background: var(--ink); color: var(--surface); font-weight: 600; }
+.ds-lens .ll { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; }
+.or-nav button { border: 0; font-weight: 600; }
+.or-nav button.on { background: var(--ink); color: var(--surface); }
+.exp { border: 0; color: var(--ink); }
 
 /* ---- bottoni ---- */
 .ds-btn { border-radius: 14px; font-weight: 600; }
@@ -80,3 +113,11 @@ h2 { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--in
 .bottomnav button.on { width: auto; padding: 0 16px 0 13px; gap: 7px; font-size: 13px; font-weight: 600; background: var(--interactive-on-dark); color: var(--ink); }
 .bottomnav button span svg { width: 20px; height: 20px; }
 .bottomnav .navbdg { background: var(--negative); top: -6px; left: calc(50% + 4px); }
+.bottomnav :focus-visible { outline-color: var(--interactive-on-dark); }
+/* cio' che sta sopra la barra si alza della stessa misura (la barra ora galleggia e rispetta la zona sicura):
+   ordine dal basso: barra, "Chiedi ad Amimi" e avvisi, banner dell'aggiornamento, banner delle notifiche */
+.ai-fab { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); background: var(--interactive); }
+#toast-host, .cs-toast { bottom: calc(90px + env(safe-area-inset-bottom, 0px)); }
+.upd-banner { bottom: calc(136px + env(safe-area-inset-bottom, 0px)); }
+.cs-toast button { color: var(--interactive-on-dark); }
+.cs-moremenu { box-shadow: var(--e-float); }

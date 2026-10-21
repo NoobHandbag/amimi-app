@@ -89,3 +89,16 @@ Il 20-10 Dan ha detto che i colori di prima non gli piacevano e che l'app sembra
 - `pages/Home.tsx`: tessere neutre, solo la prima azione rapida nel colore d'accento.
 
 **Fasi**: questa e' la fase "cornice", che cambia la faccia di tutte le schermate insieme. Seguono le singole schermate, ognuna con la sua PR e gli screenshot prima/dopo (`e2e/tema-schermate.spec.ts`). Il Villaggio ha uno stile suo e resta fuori.
+**Verifica della cornice (21-10)**
+- La migrazione verso `AppBar` e' passata da 8 agenti, uno per gruppo di pagine, ciascuno con un revisore indipendente. In tutto circa 45 viste.
+- Gate 2: 4 lenti (navigazione, cascata dei token, impaginazione su telefono, accessibilita' e test), 72 agenti, 30 rilievi sopravvissuti, nessuno di classe A. Sono stati chiusi tutti nella Gate 3:
+  - "Chiedi ad Amimi'", avvisi e banner alzati sopra la barra flottante, anche nella zona sicura dell'iPhone;
+  - gli stati "attenzione" tornano arancio (`--warning-700`), perche' in A `--accent` e' il nero dell'enfasi;
+  - chip, filtri, lenti e KPI dentro le card bianche hanno il fondo grigio;
+  - il KPI selezionato in Salute ha un anello;
+  - la fascia prezzi in Negozi distingue Amimi' dal negozio;
+  - l'anello di focus si vede sulla barra scura;
+  - nelle viste annidate resta una sola barra in alto (`.appbar:has(~ * .appbar)`);
+  - "indietro" in Registra si chiama "Indietro" (`backAria`);
+  - contrasti AA (grigio #666671, rosso #c4271b, verde #137537, barre dei grafici #8e8e99).
+- Il contrasto ora e' controllato in automatico da `tema_colori_guardie` (sezione 6).
