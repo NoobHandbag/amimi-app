@@ -524,7 +524,7 @@ test('PushKeeper: dopo un "Attiva" riuscito l\'avviso non torna in Home', async 
   await expect(statoTelefono(page)).toContainText('Spente su questo telefono.');
   await attiva(page).click();
   await expect(statoTelefono(page)).toContainText('Attive per Ale');
-  await page.getByRole('button', { name: '‹ Home' }).click();
+  await page.getByRole('button', { name: 'Torna a Home' }).click();
   await expect(page.locator('.hello h1')).toContainText('Ciao');
   await page.waitForTimeout(300);
   await expect(avviso(page)).toHaveCount(0);
@@ -540,7 +540,7 @@ test('PushKeeper: dopo un "Disattiva" riuscito l\'avviso non torna in Home', asy
   await disattiva(page).click();
   await expect(statoTelefono(page)).toContainText('Spente su questo telefono.');
   expect(r.corpi.filter((c) => c.action === 'disiscrivi')).toEqual([{ action: 'disiscrivi', device_id: QUI }]);
-  await page.getByRole('button', { name: '‹ Home' }).click();
+  await page.getByRole('button', { name: 'Torna a Home' }).click();
   await expect(page.locator('.hello h1')).toContainText('Ciao');
   await page.waitForTimeout(300);
   await expect(avviso(page)).toHaveCount(0);

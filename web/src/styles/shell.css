@@ -1,0 +1,82 @@
+/* ============================================================================
+   Cornice del tema A "Contrasto" (21-10-2026). Caricato DOPO index.css e components.css: qui stanno
+   le regole condivise da tutte le schermate (barra in alto, titoli, card, controlli, barra in basso),
+   cosi' le pagine cambiano faccia senza toccare la loro CSS. Una regola che serve a una schermata sola
+   va nella fase di quella schermata, non qui. Solo token di ruolo, niente hex.
+   ============================================================================ */
+
+.screen { padding: 10px 16px 40px; }
+:focus-visible { outline: 2px solid var(--interactive); outline-offset: 2px; }
+
+/* ---- tipografia: titoli in minuscolo e in nero, numeri grandi e stretti ---- */
+h1 { font-size: 28px; font-weight: 600; letter-spacing: -.03em; line-height: 1.1; }
+h2 { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--ink); text-transform: none; margin: 0 0 10px; }
+.hello { margin: 4px 0 18px; }
+.hello h1 { font-size: 30px; }
+
+/* ---- barra in alto (components/AppBar.tsx) ---- */
+.appbar { display: grid; grid-template-columns: 1fr minmax(0, auto) 1fr; align-items: center; gap: 10px; min-height: 44px; margin: 2px 0 14px; }
+.appbar-l { display: flex; justify-content: flex-start; }
+.appbar-r { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.appbar-back { width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--surface); color: var(--ink); display: grid; place-items: center; cursor: pointer; flex: none; }
+.appbar-back:hover { background: var(--surface-alt); }
+.appbar-title { font-size: 17px; font-weight: 600; letter-spacing: -.01em; text-align: center; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.appbar-r .badge, .appbar-r .ds-btn, .appbar-r button { flex: none; }
+@media print { .appbar-back { display: none !important; } }
+
+/* link "indietro" dei pezzi non ancora passati alla barra: pillola piena con la freccia, mai testo nudo */
+.back { display: inline-flex; align-items: center; gap: 6px; background: var(--surface); color: var(--ink); border-radius: 999px; padding: 8px 14px; font-size: 14px; font-weight: 600; margin: 0 0 12px; }
+
+/* ---- superfici: bianche, senza bordo ne' ombra, si staccano dal fondo grigio ---- */
+.card, .ds-card { border: 0; box-shadow: none; border-radius: 20px; padding: 16px; }
+.kpi, .ds-kpi { border: 0; box-shadow: none; border-radius: 18px; }
+.kpi .v, .ds-kpi .v { font-size: 24px; font-weight: 600; letter-spacing: -.035em; }
+.kpi .k, .ds-kpi .l { font-size: 12.5px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--ink-muted); }
+.ds-kpi.accent { border-top: 0; }
+.ds-kpi.hero, .ds-hero { background: var(--grad-hero); box-shadow: none; border-radius: 24px; }
+.ds-hero .big { font-weight: 600; letter-spacing: -.04em; }
+.mini { background: var(--surface-alt); border-radius: 14px; }
+
+/* ---- pillole, chip, selettori: pieni, senza bordo ---- */
+.badge { font-size: 12px; font-weight: 600; color: var(--ink); background: var(--surface-alt); border: 0; padding: 5px 10px; }
+.seg { border: 0; background: var(--surface-alt); border-radius: 999px; padding: 3px; gap: 2px; overflow: visible; }
+.seg button { background: transparent; color: var(--ink-muted); font-weight: 600; border-radius: 999px; padding: 7px 14px; }
+.seg button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(12,12,16,.12); }
+.seg.wrap { background: none; padding: 0; gap: 6px; }
+.seg.wrap button { border: 0; background: var(--surface); }
+.seg.wrap button.on { background: var(--ink); color: var(--surface); box-shadow: none; }
+.ds-seg { border-radius: 999px; }
+.ds-seg button { border-radius: 999px; }
+.chip, .ds-fp { border: 0; background: var(--surface); color: var(--ink); font-weight: 500; }
+.chip.on, .ds-fp.on { background: var(--ink); color: var(--surface); border-color: transparent; }
+.subtabs button { font-weight: 600; }
+.subtabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
+
+/* ---- bottoni ---- */
+.ds-btn { border-radius: 14px; font-weight: 600; }
+.ds-btn.primary { background: var(--interactive); box-shadow: none; }
+.ds-btn.secondary { background: var(--surface-alt); border: 0; }
+
+/* ---- Home: azioni rapide e gestione come tessere bianche; le tinte le decide Home.tsx ---- */
+.ds-seclb { font-size: 17px; font-weight: 600; letter-spacing: -.015em; text-transform: none; color: var(--ink); }
+.ds-qbtn { border: 0; box-shadow: none; border-radius: 18px; }
+.ds-qbtn .qi { width: 46px; height: 46px; border-radius: 14px; }
+.ds-qbtn .ql { font-size: 12.5px; font-weight: 500; }
+.ds-mcard { border: 0; box-shadow: none; border-radius: 16px; }
+.ds-mcard .ml { font-weight: 500; }
+.ds-search { border: 0; box-shadow: none; border-radius: 14px; }
+
+/* ---- grafici: barre neutre, il mese corrente in bordeaux ---- */
+.ds-tbar, .ds-bars .b { background: var(--chart-bar); }
+.ds-tbar.cur, .ds-bars .b.cur { background: var(--chart-current); }
+
+/* ---- barra in basso: pillola scura che galleggia; la sezione attiva si allarga e mostra il nome ---- */
+.app { padding-bottom: 104px; }
+.app::after { content: ""; position: fixed; left: 0; right: 0; bottom: 0; height: calc(104px + env(safe-area-inset-bottom, 0px)); pointer-events: none; z-index: 19;
+  background: linear-gradient(180deg, transparent, var(--bg) 58%); }
+.bottomnav { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); height: 62px; max-width: 736px; border-radius: 31px;
+  background: var(--ink); border-top: 0; box-shadow: var(--e-float); padding: 0 9px; justify-content: space-between; align-items: center; }
+.bottomnav button { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 999px; padding: 0; gap: 0; flex-direction: row; font-size: 0; color: var(--ink-faint); }
+.bottomnav button.on { width: auto; padding: 0 16px 0 13px; gap: 7px; font-size: 13px; font-weight: 600; background: var(--interactive-on-dark); color: var(--ink); }
+.bottomnav button span svg { width: 20px; height: 20px; }
+.bottomnav .navbdg { background: var(--negative); top: -6px; left: calc(50% + 4px); }

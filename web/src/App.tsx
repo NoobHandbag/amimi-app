@@ -26,6 +26,7 @@ import { fetchLeadTodo } from './lib/leadApi';
 import { VILLAGGIO_SPENTO, fetchPushEnabled, fetchVillaggioSettings } from './lib/api';
 import type { VillaggioSettings } from './lib/api';
 import ErrorBoundary from './components/ErrorBoundary';
+import AppBar from './components/AppBar';
 // three.js pesa: il Villaggio si scarica solo quando lo si apre
 const Villaggio = lazy(() => import('./pages/Villaggio'));
 
@@ -107,7 +108,7 @@ export default function App() {
         {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} matEnabled={matEnabled} vilEnabled={vilEnabled === true} pushEnabled={pushEnabled === true} />}
         {tab === 'materiali' && (matEnabled
           ? <Materiali chi={chi} onBack={() => go('home')} onProdotti={() => go('ordini')} />
-          : <div className="screen"><header><h1>Materie prime</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">Sezione non attiva (flag mat_enabled spento).</div></div>)}
+          : <div className="screen"><AppBar title="Materie prime" onBack={() => go('home')} /><div className="card muted center">Sezione non attiva (flag mat_enabled spento).</div></div>)}
         {tab === 'cruscotto' && <Report onBack={() => go('home')} onDetail={() => go('ce')} onAds={() => go('ads')} onVillaggio={vilEnabled ? () => go('villaggio') : undefined} />}
         {tab === 'ads' && <Ads onBack={() => go('home')} pin={pin} chi={chi} />}
         {tab === 'ce' && <CeDetail onBack={() => go('home')} />}
@@ -122,10 +123,10 @@ export default function App() {
         {tab === 'magazzino' && <Inventory pin={pin} chi={chi} initial={param} go={go} />}
         {tab === 'villaggio' && (vilEnabled
           ? <ErrorBoundary titolo="Villaggio" onBack={() => go('home')}><Suspense fallback={<div className="screen"><div className="card muted center">Carico il villaggio…</div></div>}><Villaggio pin={pin} chi={chi} paillettes={vil?.paillettes === true} giocatrice={vil?.giocatrice} onBack={() => go('home')} /></Suspense></ErrorBoundary>
-          : <div className="screen"><header><h1>Villaggio</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">{vilEnabled === null ? 'Carico…' : 'Sezione non attiva (flag villaggio_enabled spento).'}</div></div>)}
+          : <div className="screen"><AppBar title="Villaggio" onBack={() => go('home')} /><div className="card muted center">{vilEnabled === null ? 'Carico…' : 'Sezione non attiva (flag villaggio_enabled spento).'}</div></div>)}
         {tab === 'notifiche' && (pushEnabled
           ? <Notifiche chi={chi} setChi={setChi} onBack={() => go('home')} />
-          : <div className="screen"><header><h1>Notifiche</h1><button className="badge" onClick={() => go('home')} type="button">‹ Home</button></header><div className="card muted center">{pushEnabled === null ? 'Carico…' : 'Sezione non attiva (flag push_enabled spento).'}</div></div>)}
+          : <div className="screen"><AppBar title="Notifiche" onBack={() => go('home')} /><div className="card muted center">{pushEnabled === null ? 'Carico…' : 'Sezione non attiva (flag push_enabled spento).'}</div></div>)}
       </main>
       {/* nav ridotta (decisione call 06-07, item 13+28): Registra e Ordini vivono nella Home
           ("la home page fa tutto"); al loro posto l'accesso diretto alle Tabelle (dati grezzi). */}

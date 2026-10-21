@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import ExportBtn from '../components/ExportBtn';
 import Icon from '../components/Icon';
+import AppBar from '../components/AppBar';
 
 // Raw-data browser (AppSheet-style): curated business tables, read-only, searchable + CSV.
 // NEVER include app_flags/app_config (secrets) or change_log/health_log (noise).
@@ -70,11 +71,12 @@ function TableView({ cfg, onBack }: { cfg: TableCfg; onBack: () => void }) {
 
   return (
     <div>
-      <button className="back" onClick={onBack}>← Tutte le tabelle</button>
-      <div className="lblrow" style={{ marginBottom: 10 }}>
-        <h2 className="sech" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}><Icon name={cfg.icon} size={20} /> {cfg.label}</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{rows != null && <span className="ds-dt-count">{sorted.length} righe</span>}<ExportBtn name={cfg.key} rows={() => sorted} /></div>
-      </div>
+      <AppBar
+        title={<><Icon name={cfg.icon} size={18} /> {cfg.label}</>}
+        onBack={onBack}
+        backLabel="Tutte le tabelle"
+        actions={<>{rows != null && <span className="ds-dt-count">{sorted.length} righe</span>}<ExportBtn name={cfg.key} rows={() => sorted} /></>}
+      />
       <div className="ds-search"><Icon name="search" size={18} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca in tabella…" aria-label="Cerca" /></div>
       {err ? <div className="card err">Niente accesso a questa tabella ({err}).</div>
         : rows == null ? <p className="muted center">Carico…</p>

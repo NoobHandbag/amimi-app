@@ -9,6 +9,7 @@ import type { Movimenti, OpsFlags, HealthRow, DigestPersone, DigestOrdine, Diges
 import { nowMonth, nowYear } from '../lib/helpers';
 import ActivityFeed from '../components/ActivityFeed';
 import Icon from '../components/Icon';
+import AppBar from '../components/AppBar';
 
 const MESI_B = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 
@@ -240,11 +241,7 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
 
   return (
     <div className="screen">
-      <header>
-        <h1>Amim&igrave; &middot; Salute &amp; Movimenti</h1>
-        <div className="operbar"><span className="badge">ultimi 14 giorni</span></div>
-      </header>
-      {onBack && <button className="back" onClick={onBack}>&larr; Home</button>}
+      <AppBar title={<>Salute &amp; Movimenti</>} onBack={onBack} actions={<span className="badge">14 giorni</span>} />
 
       {/* Semaforo salute ecosistema (health_log dell'ultimo giro ce-guard) */}
       <section className="card" style={{ borderLeft: `4px solid ${SEV_COLOR[overall]}` }}>

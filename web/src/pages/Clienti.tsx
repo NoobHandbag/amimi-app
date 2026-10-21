@@ -3,6 +3,7 @@ import { fetchClientiRfm, fetchCoorti } from '../lib/api';
 import type { ClienteRfm, Coorte } from '../lib/api';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
+import AppBar from '../components/AppBar';
 
 // Pagina "Clienti" (audit dashboard 06-09). Le viste v_clienti_rfm e v_clienti_coorti (migr 0088)
 // esistevano senza schermata: 678 clienti segmentati e un riacquisto a 90 giorni quasi nullo che
@@ -44,8 +45,8 @@ export default function Clienti({ onBack }: { onBack?: () => void }) {
     return (rfm ?? []).filter((r) => (!seg || r.segmento === seg) && (!s || (r.email ?? '').toLowerCase().includes(s)));
   }, [rfm, seg, q]);
 
-  if (err) return <div className="screen"><header><h1>Clienti</h1></header><div className="card err">Errore: {err}</div></div>;
-  if (!rfm || !coorti) return <div className="screen"><header><h1>Clienti</h1></header><p className="muted center">Carico i clienti…</p></div>;
+  if (err) return <div className="screen"><AppBar title="Clienti" onBack={onBack} /><div className="card err">Errore: {err}</div></div>;
+  if (!rfm || !coorti) return <div className="screen"><AppBar title="Clienti" onBack={onBack} /><p className="muted center">Carico i clienti…</p></div>;
 
   const tot = rfm.length || 1;
   const ripetuti = rfm.filter((r) => r.frequency >= 2).length;
@@ -56,14 +57,10 @@ export default function Clienti({ onBack }: { onBack?: () => void }) {
 
   return (
     <div className="screen">
-      <header>
-        <h1>Clienti</h1>
-        <div className="operbar">
-          <PrintBtn />
-          <ExportBtn name={`clienti_${seg ?? 'tutti'}`} rows={() => list.map((r) => ({ email: r.email, segmento: r.segmento, ordini: r.frequency, spesa: Math.round(r.monetary), aov: Math.round(r.aov), primo_ordine: r.primo_ordine, ultimo_ordine: r.ultimo_ordine, giorni_da_ultimo: r.recency_giorni }))} />
-        </div>
-      </header>
-      {onBack && <button className="back" onClick={onBack}>← Home</button>}
+      <AppBar title="Clienti" onBack={onBack} actions={<>
+        <PrintBtn />
+        <ExportBtn name={`clienti_${seg ?? 'tutti'}`} rows={() => list.map((r) => ({ email: r.email, segmento: r.segmento, ordini: r.frequency, spesa: Math.round(r.monetary), aov: Math.round(r.aov), primo_ordine: r.primo_ordine, ultimo_ordine: r.ultimo_ordine, giorni_da_ultimo: r.recency_giorni }))} />
+      </>} />
 
       <div className="kpis">
         <div className="ds-kpi"><div className="v">{rfm.length}</div><div className="l">Clienti online</div><div className="s">con almeno un ordine</div></div>

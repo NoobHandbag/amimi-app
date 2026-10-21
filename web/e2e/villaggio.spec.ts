@@ -1174,7 +1174,7 @@ for (const caso of [
       expect(r.letture.ordini).toBe(0);   // il Villaggio non e' montato: niente letture sue
 
       // Home: nessuna tile, ne' tra le azioni ne' cercandola
-      await page.getByRole('button', { name: '‹ Home' }).click();
+      await page.getByRole('button', { name: 'Torna a Home' }).click();
       await expect(page.locator('.hello h1')).toContainText('Ciao');
       await expect(page.locator('.ds-qbtn', { hasText: 'Cruscotto finanze' })).toBeVisible();   // le altre tile ci sono
       await expect(tileVillaggio(page)).toHaveCount(0);

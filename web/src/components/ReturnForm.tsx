@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import ProductPicker from './ProductPicker';
 import NumberStepper from './NumberStepper';
+import Icon from './Icon';
 import { addReturn, fetchSalesByCodice, oggi } from '../lib/api';
 import type { Product, SaleRow } from '../lib/api';
 import { toast } from '../lib/toast';
@@ -80,7 +81,7 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
   // STEP 2 — the sale
   if (!sale) return (
     <div>
-      <button className="back" onClick={() => setProd(null)}>← {nm(prod)}</button>
+      <button className="back" type="button" onClick={() => setProd(null)}><Icon name="back" size={16} />{nm(prod)}</button>
       <p className="note">Quale vendita di <b>{nm(prod)}</b> è stata resa?</p>
       {salesErr ? (
           <div className="card center"><p className="err">Non riesco a leggere le vendite: {salesErr}</p>
@@ -106,7 +107,7 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
   // STEP 3 — details
   return (
     <div className="form">
-      <button className="back" onClick={() => setSale(null)}>← vendite di {nm(prod)}</button>
+      <button className="back" type="button" onClick={() => setSale(null)}><Icon name="back" size={16} />Vendite di {nm(prod)}</button>
       <div className="picked">
         <Thumb p={prod} />
         <div className="pickedtxt">

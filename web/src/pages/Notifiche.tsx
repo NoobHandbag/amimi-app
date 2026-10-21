@@ -5,6 +5,7 @@ import {
   supportoPush, chiaveVapid, preparaRegistrazione, datiIscrizione, etichettaDispositivo, leggiDevice, salvaDevice, togliDevice,
   pushConfig, dispositivi, iscrivi, salvaTemi, disiscrivi, rimuovi, prova, spento, temiPredefiniti, EVENTO_ISCRIZIONE, type Tema, type Dispositivo,
 } from '../lib/push';
+import AppBar from '../components/AppBar';
 
 // Scheda Notifiche (17-10, brief notifiche native, PR A): ogni telefono si iscrive per conto suo e sceglie i temi.
 // Stati in ordine: push non supportate (iPhone fuori dalla schermata Home) -> login del team (push-api vuole il JWT) ->
@@ -273,7 +274,7 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
     } finally { setBusy(''); }
   };
 
-  const testata = <header><h1>Notifiche</h1><button className="badge" onClick={onBack} type="button">‹ Home</button></header>;
+  const testata = <AppBar title="Notifiche" onBack={onBack} backLabel="Home" />;
 
   if (supporto !== 'ok') return (
     <div className="screen">
@@ -308,7 +309,7 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
   if (session === '?') return <div className="screen">{testata}<p className="muted center">Controllo l&#8217;accesso…</p></div>;
   if (session === 'out') return (
     <div className="screen">
-      <header><button className="badge" onClick={onBack} type="button">‹ Home</button></header>
+      {testata}
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; notifiche</span></div>
         <div className="cs-lt">Per iscrivere questo telefono accedi con il tuo account Amimì</div>

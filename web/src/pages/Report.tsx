@@ -7,6 +7,7 @@ import { useSort } from '../lib/sortable';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
 import Icon from '../components/Icon';
+import AppBar from '../components/AppBar';
 import { nowMonth, nowYear } from '../lib/helpers';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
@@ -80,8 +81,8 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
     }
   }
 
-  if (loading) return <div className="screen"><p className="muted center">Carico i dati…</p></div>;
-  if (err) return <div className="screen"><div className="card err">Errore: {err}</div></div>;
+  if (loading) return <div className="screen"><AppBar title="Cruscotto" onBack={onBack} /><p className="muted center">Carico i dati…</p></div>;
+  if (err) return <div className="screen"><AppBar title="Cruscotto" onBack={onBack} /><div className="card err">Errore: {err}</div></div>;
 
   const visMonths = rows.map((r) => r.month).filter((m) => m <= CURRENT_MONTH && (scope === 'totale' || m >= 2));
   const picked = rows.filter((r) => sel.has(r.month));
@@ -113,15 +114,11 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
 
   return (
     <div className="screen">
-      <header>
-        <h1>Amimì · Cruscotto</h1>
-        <div className="operbar">
-          <PrintBtn />
-          <ExportBtn name="conto_economico" rows={() => rows.map((r) => ({ mese: MESI[r.month], netto: Math.round(r.netto), lordo: Math.round(r.lordo), mc1: Math.round(r.mc1), mc2: Math.round(r.mc2), online: Math.round(r.online), offline: Math.round(r.offline), b2b: Math.round(r.b2b) }))} />
-          <span className="badge">replica</span>
-        </div>
-      </header>
-      {onBack && <button className="back" onClick={onBack}>← Home</button>}
+      <AppBar title="Cruscotto" onBack={onBack} backLabel="Home" actions={<>
+        <PrintBtn />
+        <ExportBtn name="conto_economico" rows={() => rows.map((r) => ({ mese: MESI[r.month], netto: Math.round(r.netto), lordo: Math.round(r.lordo), mc1: Math.round(r.mc1), mc2: Math.round(r.mc2), online: Math.round(r.online), offline: Math.round(r.offline), b2b: Math.round(r.b2b) }))} />
+        <span className="badge">replica</span>
+      </>} />
 
       <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={doSync} disabled={syncing}>
         <Icon name="recycle" size={18} />{syncing ? 'Sincronizzo…' : (syncMsg || 'Sincronizza Shopify')}

@@ -4,6 +4,7 @@ import type { MargOrdine, MargSku } from '../lib/api';
 import { nowMonth, prettyName } from '../lib/helpers';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
+import AppBar from '../components/AppBar';
 
 // Pagina "Margini" (audit dashboard 06-09). Le viste v_margine_ordine (migr 0083) e v_margine_sku
 // (0083/0089) esistevano da agosto senza nessuna schermata: 16 ordini in perdita e i modelli a
@@ -51,8 +52,8 @@ export default function Margini({ onBack }: { onBack?: () => void }) {
     return [...m.entries()].sort((a, b) => a[0] - b[0]);
   }, [ordF]);
 
-  if (err) return <div className="screen"><header><h1>Margini</h1></header><div className="card err">Errore: {err}</div></div>;
-  if (!ord || !sku) return <div className="screen"><header><h1>Margini</h1></header><p className="muted center">Carico i margini…</p></div>;
+  if (err) return <div className="screen"><AppBar title="Margini" onBack={onBack} /><div className="card err">Errore: {err}</div></div>;
+  if (!ord || !sku) return <div className="screen"><AppBar title="Margini" onBack={onBack} /><p className="muted center">Carico i margini…</p></div>;
 
   const netto = ordF.reduce((s, o) => s + o.ricavo_netto, 0);
   const margine = ordF.reduce((s, o) => s + o.margine_contribuzione, 0);
@@ -64,14 +65,10 @@ export default function Margini({ onBack }: { onBack?: () => void }) {
 
   return (
     <div className="screen">
-      <header>
-        <h1>Margini</h1>
-        <div className="operbar">
-          <PrintBtn />
-          <ExportBtn name="margini_modello" rows={() => perModello.map((r) => ({ modello: r.item, pezzi: r.pezzi, netto: Math.round(r.netto), cogs: Math.round(r.cogs), margine: Math.round(r.margine), margine_pct: r.netto ? Math.round(r.margine / r.netto * 100) : '' }))} />
-        </div>
-      </header>
-      {onBack && <button className="back" onClick={onBack}>← Home</button>}
+      <AppBar title="Margini" onBack={onBack} backLabel="Home" actions={<>
+        <PrintBtn />
+        <ExportBtn name="margini_modello" rows={() => perModello.map((r) => ({ modello: r.item, pezzi: r.pezzi, netto: Math.round(r.netto), cogs: Math.round(r.cogs), margine: Math.round(r.margine), margine_pct: r.netto ? Math.round(r.margine / r.netto * 100) : '' }))} />
+      </>} />
 
       <div className="ctrlbar cedt-ctrl">
         <div className="ds-seg">

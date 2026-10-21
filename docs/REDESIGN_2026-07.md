@@ -69,3 +69,23 @@ La fase 0 e' online dalle 20:03 del 15-10 (web `1b4f81b`, pubblicata dalla sessi
   - Predeploy: rifiuta un host diverso dal progetto vero e un bundle verso il progetto finto degli e2e.
 - **Guardia**: `tests/tema_colori_guardie.mjs` (vedi `TEST_INVARIANTS.md`).
 - **Restano**: i circa 480 `style={{}}` inline (struttura, non colore) e i 139 colori lasciati apposta. Una passata di UX/UI si decide con l'owner schermata per schermata.
+
+## Tema A "Contrasto" con accento bordeaux (scelto il 21-10-2026)
+
+Il 20-10 Dan ha detto che i colori di prima non gli piacevano e che l'app sembrava "vecchia scuola". Ha confrontato tre direzioni sulle stesse tre schermate (Home, Cruscotto, Magazzino), sulla pagina "Nuovo look Amimì" (artifact https://claude.ai/artifact/UxHm9cjMRZAMsNUr8J9k6X): A Contrasto, B Atelier, C Nativo. Ha scelto **A con l'accento Bordeaux** ("contrasto, bordeaux").
+
+**Cosa vuol dire A**
+- Fondo grigio freddo (`--bg` #f3f3f5) e superfici bianche senza bordo ne' ombra: i blocchi si staccano per contrasto.
+- Testo e struttura in inchiostro (#0c0c10). Una sola card scura per schermata, col numero che conta (`--grad-hero` pieno, inchiostro).
+- Un solo accento, bordeaux #7a2231: azione, tab attivi, focus, mese corrente nei grafici. Sopra il nero si usa il bordeaux chiaro #c39ca2 (`--interactive-on-dark`). Verde, arancio e rosso servono solo per gli esiti.
+- Carattere Geist (`@fontsource/geist`, self-hosted; Roboto resta solo per l'entry del Villaggio). Titoli in minuscolo, numeri grandi e stretti (600, tracking negativo).
+- Barra in alto: indietro come bottone tondo con l'icona, titolo piccolo al centro, azioni a destra (`components/AppBar.tsx`). Sparisce il link di testo "← Home".
+- Barra in basso: pillola scura che galleggia; la sezione attiva si allarga e mostra il nome, le altre sono solo icone.
+
+**Come e' fatto**
+- `styles/tokens.css`: la palette di A e' l'unico blocco con gli hex (`--amimi-*`). I nomi di ruolo (`--interactive`, `--accent-coral`, `--sec-*`, `--grad-*`) restano e puntano li', quindi i componenti non cambiano. `--e1`/`--e2` sono ombre nulle; `--e-float` e' solo per cio' che galleggia.
+- `styles/shell.css` (caricato per ultimo in `main.tsx`): la cornice condivisa. Contiene barra in alto, titoli, card e KPI, pillole, chip, selettori, bottoni, tessere della Home, barre dei grafici e barra in basso. Le regole di una sola schermata non vanno qui ma nella fase di quella schermata.
+- `components/AppBar.tsx`: la barra in alto di ogni vista; `backLabel` dice dove si torna ed e' il nome accessibile del bottone ("Torna a Home").
+- `pages/Home.tsx`: tessere neutre, solo la prima azione rapida nel colore d'accento.
+
+**Fasi**: questa e' la fase "cornice", che cambia la faccia di tutte le schermate insieme. Seguono le singole schermate, ognuna con la sua PR e gli screenshot prima/dopo (`e2e/tema-schermate.spec.ts`). Il Villaggio ha uno stile suo e resta fuori.

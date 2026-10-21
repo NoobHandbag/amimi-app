@@ -8,6 +8,6 @@ test('assistenza: mostra il cancello di login (nessun dato senza auth)', async (
   await page.getByRole('button', { name: /Assistenza clienti/ }).click();
   await expect(page.getByRole('button', { name: /Accedi con Google/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /^Entra$/ })).toBeVisible();
-  // nessuna coda visibile senza login
-  await expect(page.getByText('Assistenza', { exact: true })).toHaveCount(0);
+  // nessuna coda visibile senza login (il titolo "Assistenza" ora sta nella AppBar anche sul login: si guardano i filtri della coda)
+  await expect(page.locator('.cs-filterbar')).toHaveCount(0);
 });
