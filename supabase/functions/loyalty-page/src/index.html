@@ -8,7 +8,7 @@
   Area Membri Amimi' - PRODUZIONE (dati REALI via App Proxy). Pagina nuova dal 2026-10-11 (call del 09-10):
   solo punti Mimi' (niente livelli, niente timbri), sentiero a giro con la bandierina a scacchi al traguardo (scelta owner 12-10), elenco di tutti i codici
   riscattati, memory con le foto vere delle borse, presenza agli eventi dal QR (?evento=CODICE).
-  Dal 22-10 (collab con Panini Galiano, serata del 22-10) al posto del memory c'e' "Tostiamo?" finche' vale CONFIG.tostiamo:
+  Dal 21-10 (collab con Panini Galiano, serata del 22-10) al posto del memory c'e' "Tostiamo?" finche' vale CONFIG.tostiamo:
   stesso bottone, stesso premio (memory_win), poi torna il memory da solo. Le sue immagini sono src/tostiamo.webp (un atlante,
   che build.mjs inserisce al posto del suo segnaposto); il verde e l'oro del cartellino della collab vivono solo dentro al gioco.
   Va servita SAME-ORIGIN su amimi.it, cosi' le fetch a /apps/premia/* portano il logged_in_customer_id firmato da
@@ -452,7 +452,7 @@
   const CONFIG = {
     codiciVisibili: 3,     // codici mostrati prima di "Mostra tutti"
     coppie: 3,             // coppie del memory
-    tostiamo: { dal:'2026-10-22', al:'2026-11-02', durata:40 },   // Tostiamo? al posto del memory (date di Roma, estremi compresi), secondi a partita
+    tostiamo: { dal:'2026-10-21', al:'2026-11-02', durata:40 },   // Tostiamo? al posto del memory (date di Roma, estremi compresi), secondi a partita
     fotoMax: 3,            // foto per recensione o look (lo stesso tetto sta a DB, migr 0153)
     fotoLato: 1600,        // lato lungo delle foto dopo il rimpicciolimento nel telefono (JPEG: via anche i dati dello scatto)
     eventoOre: 12,         // per quante ore il codice di un QR resta in attesa dell'accesso

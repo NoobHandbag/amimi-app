@@ -331,8 +331,8 @@
       assert(cl.bottom<=H, w+'x'+h+': "Chiudi" fuori dallo schermo'); assert(cv.width>=200, w+'x'+h+': tela troppo stretta '+cv.width);
     } } finally { f.style.height=''; }
   });
-  await test('Tostiamo?: senza ?gioco decide la data di Roma, estremi compresi (21-10 memory, 22-10 e 02-11 toast, 03-11 memory)', async()=>{
-    for(const [d,g] of [['2026-10-21','memory'],['2026-10-22','toast'],['2026-11-02','toast'],['2026-11-03','memory']]){
+  await test('Tostiamo?: senza ?gioco decide la data di Roma, estremi compresi (20-10 memory, 21-10 e 02-11 toast, 03-11 memory)', async()=>{
+    for(const [d,g] of [['2026-10-20','memory'],['2026-10-21','toast'],['2026-11-02','toast'],['2026-11-03','memory']]){
       const c=await open('p45', { gioco:null, oggi:d });
       has(c.txt('#btnGame'), g==='toast' ? 'Gioca a Tostiamo?' : 'Gioca al memory', d);
     }

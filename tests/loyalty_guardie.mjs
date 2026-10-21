@@ -357,8 +357,8 @@ t('181 Tostiamo? (21-10): un solo segnaposto dell\'atlante, riempito da build.mj
 t('182 Tostiamo?: i punti passano SOLO da winGame (memory_win, cancello una al giorno), nessuna azione nuova e nessun numero di punti deciso dal gioco',
   TSTPAGE.length > 2000 && !/api\(/.test(TSTPAGE) && TSTPAGE.includes("if(vinta){ TST.attesa=true; winGame('tstModal', 'Che toast! Brava.').finally(()=>{ TST.attesa=false; }); } else closeModal('tstModal');")
   && (PAGE.match(/api\('memory_win'\)/g) || []).length === 1 && /async function winGame\(modale, frase\)\{/.test(PAGE));
-t('183 Tostiamo?: vale dal 22-10 al 02-11 (date di Roma, dalle parti di Intl) poi torna il memory; ?gioco= lo forza; senza Intl si gioca al memory',
-  PAGE.includes("tostiamo: { dal:'2026-10-22', al:'2026-11-02', durata:40 }") && PAGE.includes("new Intl.DateTimeFormat('en-US', { timeZone:'Europe/Rome', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date())")
+t('183 Tostiamo?: vale dal 21-10 al 02-11 (date di Roma, dalle parti di Intl) poi torna il memory; ?gioco= lo forza; senza Intl si gioca al memory',
+  PAGE.includes("tostiamo: { dal:'2026-10-21', al:'2026-11-02', durata:40 }") && PAGE.includes("new Intl.DateTimeFormat('en-US', { timeZone:'Europe/Rome', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date())")
   && PAGE.includes("oggi>=CONFIG.tostiamo.dal && oggi<=CONFIG.tostiamo.al) ? 'toast' : 'memory';") && PAGE.includes("if(GIOCO==='toast') apriTostiamo(); else startGame();"));
 t('184 Tostiamo?: le leve del banco (window.__tostiamo, ?tdur=, ?oggi=) esistono solo col server finto; l\'atlante illeggibile ripiega sul memory',
   TSTPAGE.includes('if(window.__AMIMI_BANCO) window.__tostiamo=TST.gioco;') && TSTPAGE.includes("const d=window.__AMIMI_BANCO ? Number(new URLSearchParams(location.search).get('tdur')) : 0;")
