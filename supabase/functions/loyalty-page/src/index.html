@@ -10,7 +10,9 @@
   riscattati, memory con le foto vere delle borse, presenza agli eventi dal QR (?evento=CODICE).
   Dal 21-10 (collab con Panini Galiano, serata del 22-10) al posto del memory c'e' "Tostiamo?" finche' vale CONFIG.tostiamo:
   stesso bottone, stesso premio (memory_win), poi torna il memory da solo. Le sue immagini sono src/tostiamo.webp (un atlante,
-  che build.mjs inserisce al posto del suo segnaposto); il verde e l'oro del cartellino della collab vivono solo dentro al gioco.
+  che build.mjs inserisce al posto del suo segnaposto). Con Tostiamo? la pagina si veste della collab ("Tovaglia", scelta owner 21-10):
+  il nastro amimi' x GALIANO prende il posto della scritta amimi' in alto, tovaglia a quadri e toast che volano dietro al saluto,
+  bandierina e bottone del gioco in verde e oro. Fuori dalle date di Tostiamo? la pagina torna quella di sempre.
   Va servita SAME-ORIGIN su amimi.it, cosi' le fetch a /apps/premia/* portano il logged_in_customer_id firmato da
   Shopify (nessun secondo login). Servita da un altro dominio NON funziona: il cookie di login e' su amimi.it.
   Contratto edge loyalty-proxy v14: state | coccola | memory_win | rewards | redeem | profile | profile_save | track | deck | checkin.
@@ -30,7 +32,8 @@
     --body:"Work Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     --ease:cubic-bezier(.3,.8,.3,1);
     --chk:conic-gradient(var(--red) 90deg,var(--white) 90deg 180deg,var(--red) 180deg 270deg,var(--white) 270deg);
-    --gal-green:#23524C; --gal-gold:#F2BD00;   /* cartellino amimi' x GALIANO: solo dentro a Tostiamo? */
+    --gal-green:#23524C; --gal-gold:#F2BD00; --gal-cream:#FBF3DC; --gal-line:#E7D79B;   /* cartellino amimi' x GALIANO: solo con Tostiamo? */
+    --gal-chk:conic-gradient(var(--gal-green) 90deg,var(--gal-gold) 90deg 180deg,var(--gal-green) 180deg 270deg,var(--gal-gold) 270deg);
     color-scheme:light;
   }
   *{box-sizing:border-box;margin:0;padding:0}
@@ -241,6 +244,29 @@
   @keyframes hop{0%,100%{transform:translateY(0)}35%{transform:translateY(-16px) rotate(-5deg)}70%{transform:translateY(0) rotate(3deg)}}
   .sheet h2{font-size:29px;margin-bottom:4px}
   .sheet p{font-size:14px;color:var(--muted)}
+  /* Tovaglia (collab con Panini Galiano, finche' c'e' Tostiamo?): nastro al posto della scritta amimi', tovaglia a quadri e
+     toast che volano dietro al saluto. Tutto sotto body.collab, che la pagina accende solo con l'atlante pronto. */
+  .nastro{position:relative;display:block;margin:0 0 2px;background:var(--gal-green);border-radius:16px;padding:12px 14px 18px;text-align:center;color:var(--gal-cream);text-decoration:none;overflow:hidden}
+  .nastro::after{content:"";position:absolute;left:0;right:0;bottom:0;height:7px;background:var(--gal-chk) 0 0/14px 14px}
+  .nastro .loghi{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:6px}
+  .nastro .loghi img{display:block;height:21px;width:auto}
+  .nastro .loghi img.g{height:15px}
+  .nastro .loghi span{font-family:var(--display);font-size:17px;line-height:1;color:var(--gal-gold)}
+  .nastro .riga{display:block;font-size:12.5px;line-height:1.45;letter-spacing:.02em}
+  .nastro .riga b{color:var(--gal-gold);font-weight:600}
+  body.collab .hero{position:relative;isolation:isolate;overflow:hidden;margin:0 -16px;padding:18px 16px 20px;border-radius:0 0 26px 26px}
+  body.collab .hero::before{content:"";position:absolute;inset:0;z-index:-2;background:repeating-linear-gradient(0deg,rgba(242,189,0,.30) 0 18px,transparent 18px 36px),repeating-linear-gradient(90deg,rgba(35,82,76,.16) 0 18px,transparent 18px 36px),var(--gal-cream)}
+  body.collab .hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:8px;z-index:-1;background:var(--gal-chk) 0 0/16px 16px}
+  body.collab .hello{color:var(--gal-green)}
+  body.collab .says,body.collab .says::after{border-color:var(--gal-line)}
+  body.collab .flag::before{background:var(--gal-green)}
+  body.collab .flag i{border-color:var(--gal-green);background:var(--gal-chk) 0 0/8px 8px}
+  body.collab #btnGame.act.tap{background:var(--gal-green);border-color:var(--gal-green);color:var(--gal-gold)}
+  body.collab #btnGame.act.tap small{color:var(--gal-cream)}
+  .volo{position:absolute;z-index:-1;height:auto;pointer-events:none;filter:drop-shadow(0 6px 6px rgba(80,40,10,.18));animation:vola var(--d) linear var(--r) infinite}
+  @keyframes vola{0%{transform:translate(0,40px) rotate(var(--a0));opacity:0}10%{opacity:1}88%{opacity:1}100%{transform:translate(var(--dx),-250px) rotate(var(--a1));opacity:0}}
+  @media (prefers-reduced-motion:reduce){ .volo{animation:none;opacity:.9} }
+  @media (min-width:481px){ body.collab .hero{margin:0;border-radius:22px} }   /* su schermo largo la tovaglia sta in colonna col nastro */
   /* Tostiamo?: finestra piu' stretta ai lati per dare spazio alla tela; sopra la tela l'intro e la fine */
   #tstModal{padding-top:58px}
   .sheet-gioco{padding:16px 14px 8px}
@@ -285,6 +311,7 @@
 </head>
 <body>
   <a class="logo" href="/" aria-label="Amimì, torna al sito">amìmì</a>
+  <a class="nastro hidden" id="collab" href="/"><span class="loghi"><img id="collabAmimi" alt="Amimì"><span aria-hidden="true">x</span><img class="g" id="collabGaliano" alt="Panini Galiano"></span><span class="riga">Una collab tutta da <b>TOASTare</b></span><span class="riga" id="collabQuando"></span></a>
 
   <!-- stato: caricamento -->
   <div id="loading" class="skel" role="status" aria-label="Carico i tuoi punti Mimì">
@@ -374,7 +401,7 @@
 
     <footer class="ciao">
       <img data-mimi alt="">
-      <p><b>A presto, amica</b>Torna a trovarmi ogni giorno: ti aspetto con la coccola e il memory. <a href="/" id="shopFine">Vai allo shop</a></p>
+      <p><b>A presto, amica</b>Torna a trovarmi ogni giorno: ti aspetto con la coccola e <span id="ciaoGioco">il memory</span>. <a href="/" id="shopFine">Vai allo shop</a></p>
     </footer>
   </main>
 
@@ -453,6 +480,7 @@
     codiciVisibili: 3,     // codici mostrati prima di "Mostra tutti"
     coppie: 3,             // coppie del memory
     tostiamo: { dal:'2026-10-21', al:'2026-11-02', durata:40 },   // Tostiamo? al posto del memory (date di Roma, estremi compresi), secondi a partita
+    tovaglia: { serata:'2026-10-22', prima:'giovedì 22 ottobre · Via Melzo 3', dopo:'Tostiamo? è il gioco di oggi fino al 2 novembre' },   // riga del nastro fino alla serata compresa, poi
     fotoMax: 3,            // foto per recensione o look (lo stesso tetto sta a DB, migr 0153)
     fotoLato: 1600,        // lato lungo delle foto dopo il rimpicciolimento nel telefono (JPEG: via anche i dati dello scatto)
     eventoOre: 12,         // per quante ore il codice di un QR resta in attesa dell'accesso
@@ -468,12 +496,16 @@
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));   // tutto cio' che entra in innerHTML passa da qui (audit T7)
   const reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   // il gioco di oggi: Tostiamo? dentro CONFIG.tostiamo (data di Roma), altrimenti il memory; ?gioco=memory|toast lo forza
+  function oggiRoma(){
+    let oggi=(window.__AMIMI_BANCO && new URLSearchParams(location.search).get('oggi')) || '';   // il banco sposta il giorno
+    if(!oggi){ try { const p={}; new Intl.DateTimeFormat('en-US', { timeZone:'Europe/Rome', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date()).forEach(x=>{ p[x.type]=x.value; }); oggi=p.year+'-'+p.month+'-'+p.day; } catch(_) { oggi=''; } }   // senza Intl col fuso: memory
+    return /^\d{4}-\d{2}-\d{2}$/.test(oggi) ? oggi : '';
+  }
+  const OGGI = oggiRoma();
   function giocoDiOggi(){
     const q=new URLSearchParams(location.search).get('gioco');
     if(q==='memory' || q==='toast') return q;
-    let oggi=(window.__AMIMI_BANCO && new URLSearchParams(location.search).get('oggi')) || '';   // il banco sposta il giorno
-    if(!oggi){ try { const p={}; new Intl.DateTimeFormat('en-US', { timeZone:'Europe/Rome', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date()).forEach(x=>{ p[x.type]=x.value; }); oggi=p.year+'-'+p.month+'-'+p.day; } catch(_) { oggi=''; } }   // senza Intl col fuso: memory
-    return (/^\d{4}-\d{2}-\d{2}$/.test(oggi) && oggi>=CONFIG.tostiamo.dal && oggi<=CONFIG.tostiamo.al) ? 'toast' : 'memory';
+    return (OGGI && OGGI>=CONFIG.tostiamo.dal && OGGI<=CONFIG.tostiamo.al) ? 'toast' : 'memory';
   }
   const GIOCO = giocoDiOggi();
   let S = null;                          // stato reale dall'edge
@@ -986,8 +1018,8 @@
     function nuovaBorsa(){
       let k; do { k=Math.floor(Math.random()*BAGS.length); } while(k===ultima);
       ultima=k;
-      const p=clock/DURATA, f=FR['bag_'+BAGS[k]];
-      cadono.push({ k:BAGS[k], x:rnd(34, W-34), y:BAND-GH*0.6, w:f[2]*GH/f[3], vy:lerp(125,290,p)*rnd(0.9,1.12), ph:rnd(0,6), persa:false });
+      const f=FR['bag_'+BAGS[k]];   // la velocita' sale del 50% a ogni toast fatto (owner 21-10), al massimo x4
+      cadono.push({ k:BAGS[k], x:rnd(34, W-34), y:BAND-GH*0.6, w:f[2]*GH/f[3], vy:140*Math.min(4, 1+0.5*fatti)*rnd(0.9,1.12), ph:rnd(0,6), persa:false });
     }
     function brucia(x, y, n, oro){
       if(calmo) return;
@@ -1124,6 +1156,7 @@
         ctx.globalAlpha=Math.min(1, (1.25-scritta.t)*3);
         ctx.lineWidth=6; ctx.strokeStyle='#FFFBFB'; ctx.strokeText('Toast pronto!', W/2, y);
         ctx.fillStyle='#23524C'; ctx.fillText('Toast pronto!', W/2, y);
+        if(fatti<=6 && clock<DURATA-2){ ctx.font='600 14px "Work Sans", system-ui, sans-serif'; ctx.lineWidth=4; ctx.strokeText('ora più veloce', W/2, y+28); ctx.fillStyle='#A30008'; ctx.fillText('ora più veloce', W/2, y+28); }   // dal settimo toast la velocita' e' gia' al massimo
         ctx.globalAlpha=1;
       }
       hud();
@@ -1145,7 +1178,7 @@
       avvia(){ azzera(); st='gioca'; raf=requestAnimationFrame(frame); try{ cv.focus({ preventScroll:true }); }catch(_){} },
       ferma(){ ferma(); st='fermo'; },
       pronto(){ azzera(); },                                                     // tela pulita, partita ferma
-      stato(){ return { st, clock, fatti, pila:pila.length, px, cadono:cadono.map(c=>({ x:c.x, y:c.y, persa:c.persa })) }; },   // per il banco di prova
+      stato(){ return { st, clock, fatti, pila:pila.length, px, cadono:cadono.map(c=>({ x:c.x, y:c.y, vy:c.vy, persa:c.persa })) }; },   // per il banco di prova
     };
   }
 
@@ -1162,10 +1195,26 @@
       c.width=w; c.height=h; c.getContext('2d').drawImage(im, f[0], f[1], f[2], f[3], 0, 0, w, h);
       ICO_TOAST='<img class="ico tostino" alt="" src="'+c.toDataURL('image/png')+'">';
       const i=el('btnGame').querySelector('.ico'); if(S && i) i.outerHTML=ICO_TOAST;
+      tovaglia(im);
     };
     im.src=TOSTIAMO_ATLAS; TST.img=im; return im;
   }
   if(GIOCO==='toast') caricaAtlante();
+  // la Tovaglia: nastro coi loghi del cartellino al posto della scritta amimi' (resta il link al sito), tovaglia e toast che
+  // volano dietro a Mimi' (solo nella colonna di Mimi', mai sopra al saluto). Senza atlante la pagina resta quella di sempre.
+  function ritaglio(im, k, h){ const f=TOSTIAMO_FRAMES[k], c=document.createElement('canvas'), w=Math.round(f[2]*h/f[3]); c.width=w; c.height=h; c.getContext('2d').drawImage(im, f[0], f[1], f[2], f[3], 0, 0, w, h); return c.toDataURL('image/png'); }
+  function tovaglia(im){
+    el('collabAmimi').src=ritaglio(im, 'logo_amimi', 42); el('collabGaliano').src=ritaglio(im, 'logo_galiano', 30);
+    el('collabQuando').textContent = (OGGI && OGGI<=CONFIG.tovaglia.serata) ? CONFIG.tovaglia.prima : CONFIG.tovaglia.dopo;
+    el('ciaoGioco').textContent='il gioco del toast';
+    const toast=ritaglio(im, 'bread_top', 120), hero=document.querySelector('.hero');
+    [[58,150,13,-2,-25,30,24,62],[70,175,15,-8,10,-20,-18,52],[80,140,12,-5,-15,40,20,58],[90,165,16,-11,20,-30,-14,50],[64,190,14,-13,-10,25,16,46]].forEach(([x,y,d,r,a0,a1,dx,w])=>{
+      const v=document.createElement('img'); v.className='volo'; v.alt=''; v.src=toast;
+      v.style.cssText='left:'+x+'%;top:'+y+'px;width:'+w+'px;--d:'+d+'s;--r:'+r+'s;--a0:'+a0+'deg;--a1:'+a1+'deg;--dx:'+dx+'px';
+      hero.appendChild(v);
+    });
+    document.querySelector('.logo').classList.add('hidden'); el('collab').classList.remove('hidden'); document.body.classList.add('collab');
+  }
   function tstOver(html){ const o=el('tstOver'); o.innerHTML=html; o.classList.toggle('hidden', !html); const b=o.querySelector('button'); if(b) b.focus({ preventScroll:true }); }
   function tstDurata(){ const d=window.__AMIMI_BANCO ? Number(new URLSearchParams(location.search).get('tdur')) : 0; return d>0 ? d : CONFIG.tostiamo.durata; }   // il banco di prova accorcia la partita
   function tstIntro(){
