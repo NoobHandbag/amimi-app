@@ -334,10 +334,13 @@ t('179 pagina (21-10): senza borse comprate online la recensione e\' spenta a ri
   && UGCPAGE.includes("Mostraci il look con la tua Amimì<small>") && PAGE.includes("['Mostraci il look con la tua Amimì',") && !/Mandaci il tuo look|Foto del tuo look|foto del tuo look/.test(PAGE)
   && UGCPAGE.includes(INATTESA) && UGCPAGE.includes("attesa=soloLook && inAttesa();"));
 const UGCMODAL = PAGE.slice(PAGE.indexOf('<div class="modal" id="ugcModal"'), PAGE.indexOf('<div id="toast"'));
-t('180 pagina (21-10): finestra di recensione e look con la X (44 px, aria-label) e il tocco fuori; il tocco fuori deve partire e finire sullo sfondo, non chiude mentre invia e con testo, stelle o foto chiede prima nella pagina; Esc con la domanda aperta resta nel modulo',
+t('180 pagina (21-10, Gate 2 chiuso): finestra di recensione e look con la X (44 px, aria-label, fuori dalla colonna dei campi, non sposta il titolo) e il tocco fuori; il tocco fuori deve partire e finire sullo sfondo, a finestra aperta da 400 ms e non in chiusura, non chiude mentre invia e con testo, stelle o foto chiede prima nella pagina; Esc con la domanda aperta resta nel modulo, tornando a un campo la domanda sparisce',
   /<button class="sheet-x" id="ugcX" type="button" aria-label="Chiudi">/.test(UGCMODAL) && /id="ugcEsci" role="alertdialog"/.test(UGCMODAL) && /\.sheet-x\{position:sticky;[^}]*width:44px;height:44px/.test(PAGE)
-  && UGCPAGE.includes("el('ugcModal').addEventListener('pointerdown', e=>{ ugcGiuFuori = e.target===el('ugcModal'); });")
-  && UGCPAGE.includes("const fuori = e.target===el('ugcModal') && ugcGiuFuori; ugcGiuFuori=false; if(fuori) toccoFuori();")
+  && UGCPAGE.includes("el('ugcModal').addEventListener(PE ? 'pointerdown' : 'mousedown', e=>{ ugcGiuFuori = e.target===el('ugcModal');")
+  && UGCPAGE.includes("el('ugcModal').addEventListener(PE ? 'pointerup' : 'mouseup', e=>{ ugcSuFuori = e.target===el('ugcModal'); });")
+  && UGCPAGE.includes("const fuori = e.target===el('ugcModal') && ugcGiuFuori && ugcSuFuori && el('ugcModal').classList.contains('on') && Date.now()-(UGC.aperto||0) > 400;")
+  && UGCPAGE.includes("nascondiUscita(); UGC.aperto=Date.now();") && UGCPAGE.includes("el('ugcForm').addEventListener('focusin', nascondiUscita);")
+  && /\.sheet-x\{[^}]*margin:-20px -36px -24px auto;/.test(PAGE)
   && UGCPAGE.includes("function ugcCompilato(){ return Boolean(UGC.foto.length || UGC.scelta || UGC.stelle || el('ugcTesto').value.trim()); }")
   && /function toccoFuori\(\)\{\s*if\(UGC\.busy\)\{ toast\('Un attimo, sto inviando'\); return; \}\s*if\(!ugcCompilato\(\)\)\{ chiudiUgc\(\); return; \}/.test(UGCPAGE)
   && /function chiudiUgc\(\)\{[^}]*\n\s*if\(UGC\.busy\)\{ toast\('Un attimo, sto inviando'\); return; \}\s*nascondiUscita\(\);/.test(UGCPAGE)

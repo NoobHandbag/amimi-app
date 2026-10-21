@@ -173,7 +173,7 @@
   .sheet-form h2,.sheet-form .sub{text-align:center}
   .sheet-form .btnghost{display:block;margin:4px auto 0}
   .sheet-form h2{padding:0 34px}
-  .sheet-x{position:sticky;top:-78px;z-index:2;display:block;width:44px;height:44px;margin:-20px -16px -44px auto;border:none;background:none;padding:0;cursor:pointer}   /* resta in vista mentre il modulo si scorre, a 6 px dal bordo dello schermo (lo sticky conta dai 84 px di padding di .modal); margini negativi: non sposta il contenuto */
+  .sheet-x{position:sticky;top:-78px;z-index:2;display:block;width:44px;height:44px;margin:-20px -36px -24px auto;border:none;background:none;padding:0;cursor:pointer}   /* resta in vista mentre il modulo si scorre, a 6 px dal bordo dello schermo (lo sticky conta dai 84 px di padding di .modal); a cavallo del bordo della finestra e 4 px dentro lo schermo (nessuno scorrimento di lato), fuori dalla colonna dei campi: un tocco sul bordo di un campo non chiude; -20+44-24 = 0: non sposta il contenuto */
   .sheet-x i{display:block;width:32px;height:32px;margin:6px;border-radius:50%;background:var(--white);border:1.5px solid var(--red);color:var(--red-deep);font-style:normal;font-size:22px;line-height:28px;text-align:center}
   #ugcModal .sheet-peek{right:auto;left:14px}   /* la X sta a destra: qui Mimi' sporge a sinistra */
   .ugc-esci{position:fixed;left:16px;right:16px;bottom:16px;z-index:3;max-width:360px;margin:0 auto;background:var(--white);border:1.5px solid var(--red);border-radius:16px;padding:14px 16px 6px;text-align:center;box-shadow:0 10px 30px rgba(43,18,21,.35)}
@@ -407,7 +407,7 @@
     </form>
     <button class="btnghost" id="ugcClose" type="button">Chiudi</button>
     <div class="ugc-esci hidden" id="ugcEsci" role="alertdialog" aria-labelledby="ugcEsciT">
-      <p id="ugcEsciT"><b>Vuoi chiudere?</b> Quello che hai scritto e le foto non restano.</p>
+      <p id="ugcEsciT"><b>Vuoi chiudere?</b> Quello che hai inserito non resta salvato.</p>
       <button class="btn" id="ugcResta" type="button">Continua</button>
       <button class="btnghost" id="ugcEsciSi" type="button">Chiudi lo stesso</button>
     </div>
@@ -971,7 +971,7 @@
     el('ugcFotoL').textContent= look ? 'Foto con la tua Amimì (almeno una, fino a '+CONFIG.fotoMax+')' : 'Foto (se vuoi, fino a '+CONFIG.fotoMax+')';
     el('ugcTesto').value=''; el('ugcConta').textContent='0/600'; el('ugcConsenso').checked=false; el('ugcErr').textContent='';
     el('ugcConsensoT').textContent=String(S._ugc.consenso||'');
-    stelleHTML(); fotoHTML(); nascondiUscita();
+    stelleHTML(); fotoHTML(); nascondiUscita(); UGC.aperto=Date.now();
     openModal('ugcModal', el('ugcBorsa'));
   }
   function chiudiUgc(){
@@ -981,18 +981,26 @@
   }
   // X, "Chiudi" ed Esc chiudono subito (gesto voluto). Un tocco fuori dalla finestra chiude solo un modulo vuoto: con testo,
   // stelle o foto chiede prima dentro la pagina, cosi' un tocco sbagliato non butta il lavoro. La firma non conta (resta
-  // dall'invio di prima). Il tocco deve partire E finire sullo sfondo: una selezione trascinata fuori non chiude.
+  // dall'invio di prima). Il tocco deve partire E finire sullo sfondo (una selezione trascinata fuori non chiude), a finestra
+  // aperta da almeno 400 ms (il secondo tocco di un doppio tocco sul bottone non la richiude) e non mentre si sta chiudendo.
   function ugcCompilato(){ return Boolean(UGC.foto.length || UGC.scelta || UGC.stelle || el('ugcTesto').value.trim()); }
   function nascondiUscita(){ el('ugcEsci').classList.add('hidden'); }
-  function restaNelModulo(){ nascondiUscita(); el('ugcBorsa').focus({ preventScroll:true }); }
+  function restaNelModulo(){ nascondiUscita(); const f=UGC.fuoco; UGC.fuoco=null; (f && document.contains(f) && el('ugcForm').contains(f) ? f : el('ugcBorsa')).focus({ preventScroll:true }); }   // si torna al campo di prima
   function toccoFuori(){
     if(UGC.busy){ toast('Un attimo, sto inviando'); return; }
     if(!ugcCompilato()){ chiudiUgc(); return; }
     el('ugcEsci').classList.remove('hidden'); el('ugcResta').focus({ preventScroll:true });
   }
-  let ugcGiuFuori=false;
-  el('ugcModal').addEventListener('pointerdown', e=>{ ugcGiuFuori = e.target===el('ugcModal'); });
-  el('ugcModal').addEventListener('click', e=>{ const fuori = e.target===el('ugcModal') && ugcGiuFuori; ugcGiuFuori=false; if(fuori) toccoFuori(); });
+  let ugcGiuFuori=false, ugcSuFuori=false;
+  const PE=('PointerEvent' in window);                                                   // senza eventi pointer (iOS vecchi) si usa il mouse
+  el('ugcModal').addEventListener(PE ? 'pointerdown' : 'mousedown', e=>{ ugcGiuFuori = e.target===el('ugcModal'); if(ugcGiuFuori) UGC.fuoco=document.activeElement; });
+  el('ugcModal').addEventListener(PE ? 'pointerup' : 'mouseup', e=>{ ugcSuFuori = e.target===el('ugcModal'); });
+  el('ugcModal').addEventListener('click', e=>{
+    const fuori = e.target===el('ugcModal') && ugcGiuFuori && ugcSuFuori && el('ugcModal').classList.contains('on') && Date.now()-(UGC.aperto||0) > 400;
+    ugcGiuFuori=false; ugcSuFuori=false;
+    if(fuori) toccoFuori();
+  });
+  el('ugcForm').addEventListener('focusin', nascondiUscita);                              // si torna a scrivere: la domanda non copre Invia
   el('ugcResta').addEventListener('click', restaNelModulo);
   el('ugcEsciSi').addEventListener('click', chiudiUgc);
   el('btnRecensione').addEventListener('click', ()=>apriUgc('recensione'));
