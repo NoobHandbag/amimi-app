@@ -12,6 +12,11 @@
 // riga (oggetto, snippet, riassunto, corpo, motivo dell'AI, stato_by, referente) resta fuori, e b2b, riepilogo e sistema
 // non portano dati delle clienti. Casi N1-N13 e autocontrolli AN1-AN2; N14-N16 dalla Gate 2 del 19-10 (la notizia della
 // spedizione prima del nome, senza nome i testi del 18-10, un nome che e' un'email segue le regole dell'email).
+// 21-10 (v3, OK di Dan in chat): spedizioni solo sugli stati che sono un problema vero (SP1-SP4) ed evento attivita_team
+// con la migr 0168 (AT, GR, AG, M): una push per persona e tipo, ogni riga di change_log coperta una volta sola.
+// Gate 2 dello stesso giorno: elenco dei problemi allargato (SP1), settimana troncata (Q9), anteprima prima
+// dell'accensione (AG12, AG13), GR13 e AG7 che contano invece di `every` su elenchi forse vuoti, 0168 confrontata intera
+// e con la prova finale che puo' davvero fallire (M2-M4, AM1).
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripTypeScriptTypes } from 'node:module';
@@ -39,7 +44,9 @@ const ESPORTA = ['APP_URL', 'LINK_ASSISTENZA', 'LINK_SALUTE', 'CHI_PERSONE', 'TE
   'giorniLavorativiDopo', 'candB2b', 'msgB2b', 'candCsUrgente', 'msgCsUrgente', 'motivoFisso', 'MOTIVI_FISSI', 'candCsRiscritto', 'msgCsRiscritto',
   'candSpedizione', 'msgSpedizione', 'candCsSync', 'msgCsSync', 'durata', 'candRiepilogo', 'righeRiepilogo', 'msgRiepilogo', 'sommaOrdini', 'sommaCassa',
   'ordiniInRitardo', 'STALLO_MS', 'PRENOTATO_SCADUTO_MS', 'MAX_TENTATIVI', 'TETTO_INVII', 'serveBaseline', 'pianifica', 'statoDaEsito', 'esitoDaSalvare', 'eseguiPiano',
-  'contaArrivi', 'RITARDO_LETTURA_MAX_MS', 'FINESTRA_RISCRITTO_MS', 'EVENTI_DI_STATO', 'baselineDi', 'chiusura', 'saluteGiro', 'conPrecedente', 'causaSicura', 'SEP_PRIMO'];
+  'contaArrivi', 'RITARDO_LETTURA_MAX_MS', 'FINESTRA_RISCRITTO_MS', 'EVENTI_DI_STATO', 'baselineDi', 'chiusura', 'saluteGiro', 'conPrecedente', 'causaSicura', 'SEP_PRIMO',
+  // 21-10 (v3): stati del corriere che sono un problema vero, evento attivita_team e giro a gruppi
+  'statoProblema', 'contaProblemi', 'PROBLEMI_CORRIERE', 'candAttivita', 'msgGruppoAttivita', 'msgAttivita', 'PERSONA_TEAM', 'OP_ATTIVITA', 'eseguiGruppi'];
 // Gate 3 (18-10): il resto della edge (letture degli eventi, giro, run, salute, anteprima) ritagliato DAL SORGENTE e
 // guidato con un client finto che registra ogni chiamata. Tolti solo gli import e Deno.serve; inviaPush e sleep arrivano
 // dal test (sleep registra la pausa e non aspetta: la rilettura di cs_sync e il ritentativo restano veri, solo istantanei).
@@ -51,7 +58,7 @@ const IMPURO = (() => {
 })();
 if (IMPURO === null) { console.error('parte impura di push-eventi non ritagliabile (marcatori, Deno.serve, anteprima o sleep cambiati)'); process.exit(1); }
 const ESPORTA_IMPURO = ['EVENTI', 'ORDINE', 'giroEvento', 'eseguiRun', 'anteprima', 'leggiRegistro', 'depGiro', 'contaPerse24h', 'scriviSalute', 'LetturaFallita',
-  'ScritturaFallita', 'causaDi', 'RILETTURA_CS_SYNC_MS', 'TEMPO_EVENTI_MS', 'SCADENZA_INVII_MS'];
+  'ScritturaFallita', 'causaDi', 'RILETTURA_CS_SYNC_MS', 'TEMPO_EVENTI_MS', 'SCADENZA_INVII_MS', 'leggiRigheOrdini', 'LIMITE_ATTIVITA', 'RIGHE_ORDINE_MAX'];
 // fuori dal repo (come shopify_sync_guardie): una run interrotta non lascia un file da committare per sbaglio
 const TMP_DIR = mkdtempSync(join(tmpdir(), 'amimi-push-eventi-'));
 const TMP = join(TMP_DIR, 'pe.mjs'), TMP_I = join(TMP_DIR, 'pe_impuro.mjs'), TMP_P = join(TMP_DIR, 'push_payload.mjs');
@@ -68,7 +75,8 @@ const { APP_URL, LINK_ASSISTENZA, LINK_SALUTE, CHI_PERSONE, TEMA_EVENTO, temaDi,
   statoCorriere, nomeCliente, TITOLO_MAX_PUSH, partiRoma, offsetRomaMin, dataRoma, mezzanotteRoma, finestraRiepilogo, giorniLavorativiDopo, candB2b, msgB2b, candCsUrgente, msgCsUrgente, motivoFisso,
   MOTIVI_FISSI, candCsRiscritto, msgCsRiscritto, candSpedizione, msgSpedizione, candCsSync, msgCsSync, durata, candRiepilogo, righeRiepilogo, msgRiepilogo, sommaOrdini,
   sommaCassa, ordiniInRitardo, STALLO_MS, PRENOTATO_SCADUTO_MS, MAX_TENTATIVI, TETTO_INVII, serveBaseline, pianifica, statoDaEsito, esitoDaSalvare, eseguiPiano,
-  contaArrivi, RITARDO_LETTURA_MAX_MS, FINESTRA_RISCRITTO_MS, EVENTI_DI_STATO, baselineDi, chiusura, saluteGiro, conPrecedente, causaSicura, SEP_PRIMO } = M;
+  contaArrivi, RITARDO_LETTURA_MAX_MS, FINESTRA_RISCRITTO_MS, EVENTI_DI_STATO, baselineDi, chiusura, saluteGiro, conPrecedente, causaSicura, SEP_PRIMO,
+  statoProblema, contaProblemi, PROBLEMI_CORRIERE, candAttivita, msgGruppoAttivita, msgAttivita, PERSONA_TEAM, OP_ATTIVITA, eseguiGruppi } = M;
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra !== '' ? '  <- ' + JSON.stringify(extra).slice(0, 260) : '')); } };
@@ -96,8 +104,8 @@ console.log('== base ==');
     && APP_URL === (SHARED.match(/export const APP_URL = '([^']+)'/) ?? [])[1] && LINK_ASSISTENZA === APP_URL + '#assistenza' && LINK_SALUTE === APP_URL + '#salute');
   const chiApi = (PUSH_API.match(/const CHI_AMMESSI = (\[[^\]]+\])/) ?? [])[1];
   t('2  CHI_PERSONE = CHI_AMMESSI di push-api (Ale, Bene, Ginevra)', JSON.stringify(CHI_PERSONE) === '["Ale","Bene","Ginevra"]' && chiApi === "['Ale', 'Bene', 'Ginevra']", chiApi);
-  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
-    cs_cliente_ha_riscritto: 'assistenza', spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo' }));
+  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo e, dalla 0168 del 21-10, attivita', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
+    cs_cliente_ha_riscritto: 'assistenza', spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita' }));
   t('4  temaDi: la riga a DB vince se e\' una chiave valida, altrimenti il tema del codice; evento sconosciuto -> vuoto', temaDi('negozi_vip', 'b2b_risposta_negozio') === 'negozi_vip'
     && temaDi(null, 'cs_urgente') === 'assistenza' && temaDi('Assistenza!', 'cs_urgente') === 'assistenza' && temaDi(42, 'riepilogo') === 'riepilogo' && temaDi(null, 'boh') === '');
   t('5  linkNegozio: uuid -> #negozi/outreach/<id> minuscolo; altro (anche iniezioni) -> la pipeline', linkNegozio(U1.toUpperCase()) === APP_URL + '#negozi/outreach/' + U1
@@ -282,17 +290,22 @@ console.log('\n== candidati e messaggi (privacy) ==');
     ['Richiesta urgente: Reso e rimborso', 'Rischio di contestazione del pagamento. 1 urgente aperta.'], ['Richiesta urgente: Reso e rimborso', 'Apri l\'Assistenza.'],
     ['Una cliente ha riscritto: Reso e rimborso', '2 richieste aspettano una risposta.'], ['Una cliente ha riscritto: Reso e rimborso', 'Apri l\'Assistenza.']]), v1);
 
+  // 21-10 (v3): solo gli stati che sono un problema vero; uno stato illeggibile (prima: chiave ALTRO e "problema del
+  // corriere") o di transito normale non e' piu' un candidato
   const sp = candSpedizione([conPII({ ldv: 'ABC123/1', order_name: '1890', stato_tws: 'INDIRIZZO ERRATO', classe: 'eccezione', updated_at: at }),
     conPII({ ldv: 'ABC124', order_name: '#1891', stato_tws: 'CONSEGNATA', classe: 'consegnata', updated_at: at }),
     conPII({ ldv: 'AB C', order_name: '1892', stato_tws: 'INDIRIZZO ERRATO', classe: 'eccezione', updated_at: at }),
-    conPII({ ldv: 'ABC125', order_name: 'Maria Rossi', stato_tws: 'nota: chiamare Maria Rossi', classe: 'eccezione', updated_at: '2026-10-19T09:00:00Z' })]);
-  t('32 spedizione: solo classe eccezione con LDV in forma; chiave = LDV + stato senza spazi (stato strano -> ALTRO)', sp.length === 2 && sp[0].chiave === 'ABC123/1:INDIRIZZO_ERRATO'
-    && sp[1].chiave === 'ABC125:ALTRO' && candSpedizione([{ ldv: 'X1', stato_tws: 'N. CIVICO MANCANTE/ERRATO', classe: 'eccezione', updated_at: at }])[0].chiave === 'X1:N_CIVICO_MANCANTE_ERRATO', sp.map((x) => x.chiave));
+    conPII({ ldv: 'ABC125', order_name: 'Maria Rossi', stato_tws: 'DESTINATARIO ASSENTE', classe: 'eccezione', updated_at: '2026-10-19T09:00:00Z' }),
+    conPII({ ldv: 'ABC126', order_name: '1893', stato_tws: 'nota: chiamare Maria Rossi', classe: 'eccezione', updated_at: at }),
+    conPII({ ldv: 'ABC127', order_name: '1894', stato_tws: 'IN CONSEGNA MATT.', classe: 'eccezione', updated_at: at })]);
+  t('32 spedizione: solo classe eccezione con LDV in forma e stato che e\' un problema vero (21-10: illeggibile o di transito -> nessun candidato); chiave = LDV + stato senza spazi',
+    sp.length === 2 && sp[0].chiave === 'ABC123/1:INDIRIZZO_ERRATO' && sp[1].chiave === 'ABC125:DESTINATARIO_ASSENTE'
+    && candSpedizione([{ ldv: 'X1', stato_tws: 'N. CIVICO MANCANTE/ERRATO', classe: 'eccezione', updated_at: at }])[0].chiave === 'X1:N_CIVICO_MANCANTE_ERRATO', sp.map((x) => x.chiave));
   t('32b ogni chiave dei candidati e\' fatta di caratteri sicuri per un filtro .in() (niente spazi, virgole, parentesi, virgolette)', [...sp, ...candB2b(righe), ...candCsUrgente([{ conversation_id: U1, azione: 'classify', urgente: 'true', at }]),
     ...candCsSync({ severity: 'error', created_at: at }, T(at), 15), ...candRiepilogo({ aperta: true, data: '2026-10-19', ts: 0 })].every((x) => /^[A-Za-z0-9_.:/-]+$/.test(x.chiave)));
   const ms = msgSpedizione(sp, 3);
-  t('33 spedizione (19-10): "Spedizione #1890: INDIRIZZO ERRATO (<nome della cliente>)", radice dell\'app; ordine o stato non validi -> "problema del corriere"; nessun altro dato personale',
-    ms[0].titolo === `Spedizione #1890: INDIRIZZO ERRATO (${CLIENTE})` && ms[0].url === APP_URL && ms[0].tema === 'spedizioni' && ms[1].titolo === `Spedizione: problema del corriere (${CLIENTE})`
+  t('33 spedizione (19-10): "Spedizione #1890: INDIRIZZO ERRATO (<nome della cliente>)", radice dell\'app; ordine non valido -> senza numero; nessun altro dato personale',
+    ms.length === 2 && ms[0].titolo === `Spedizione #1890: INDIRIZZO ERRATO (${CLIENTE})` && ms[0].url === APP_URL && ms[0].tema === 'spedizioni' && ms[1].titolo === `Spedizione: DESTINATARIO ASSENTE (${CLIENTE})`
     && ms[0].testo === 'Il corriere segnala un problema. 3 spedizioni con un problema negli ultimi 7 giorni.' && perde(ms).length === 0 && testoValido(ms), { ms, perde: perde(ms) });
   t('33b spedizione: una sola nella settimana -> testo senza totale', msgSpedizione(sp.slice(0, 1), 1)[0].testo === 'Il corriere segnala un problema su questa spedizione.');
   // la vista non ha l'email: anche se una riga ne portasse una, non entra; senza nome niente parentesi
@@ -300,7 +313,7 @@ console.log('\n== candidati e messaggi (privacy) ==');
   t('N8 spedizione senza nome -> "Spedizione #1890: INDIRIZZO ERRATO", senza parentesi e mai l\'email', spSenza[0].titolo === 'Spedizione #1890: INDIRIZZO ERRATO'
     && perdeTutto(spSenza).length === 0, spSenza);
   // C1 della Gate 2 del 19-10: sul telefono chiuso il titolo e' una riga sola; il nome in mezzo spingeva lo stato fuori
-  const coppie = [['1890', 'INDIRIZZO ERRATO'], ['', 'DESTINATARIO ASSENTE'], ['123456789', 'N. CIVICO MANCANTE/ERRATO'], ['1891', 'nota: chiamare']].map(([o, s]) => {
+  const coppie = [['1890', 'INDIRIZZO ERRATO'], ['', 'DESTINATARIO ASSENTE'], ['123456789', 'N. CIVICO MANCANTE/ERRATO'], ['1891', 'IN GIACENZA']].map(([o, s]) => {
     const r = { ldv: 'L2', order_name: o, stato_tws: s, classe: 'eccezione', updated_at: at };
     return [msgSpedizione(candSpedizione([{ ...r, customer_name: 'Anna Maria Bianchi Verdi' }]), 1)[0].titolo, msgSpedizione(candSpedizione([r]), 1)[0].titolo];
   });
@@ -310,7 +323,8 @@ console.log('\n== candidati e messaggi (privacy) ==');
     && [...sp, ...rs, ...cu].every((x) => !x.chiave.includes('Maria') && !x.chiave.includes('@')), sp.map((x) => x.chiave));
   // push-api taglia il titolo a TITOLO_MAX punti di codice e il payload a PAYLOAD_MAX byte: coi nomi al massimo (emoji da 4
   // byte) nessun titolo si taglia, lo stato del corriere resta intero e nessun testo prende i tre puntini
-  const NOME_MAX = EMOJI.repeat(70), STATO_MAX = 'A'.repeat(40);
+  // stato del corriere lungo al massimo (40) e che e' un problema vero (21-10: gli altri non diventano candidati)
+  const NOME_MAX = EMOJI.repeat(70), STATO_MAX = 'DESTINATARIO ASSENTE ' + 'A'.repeat(19);
   const spMax = msgSpedizione(candSpedizione([{ ldv: 'L1', order_name: '123456789', stato_tws: STATO_MAX, classe: 'eccezione', updated_at: at, customer_name: NOME_MAX }]), 999)[0];
   const convMax = { [U1]: { ...conv[U1], customer_name: NOME_MAX, categoria: EMOJI.repeat(50), urgenza_motivo: 'thread riaperto (sollecito)', stato: 'fatto', stato_by: 'Ale' } };
   const peggiori = [spMax, msgCsUrgente(cu, convMax, 999)[0], msgCsRiscritto(rs.slice(1), { [U1]: { ...convMax[U1], stato: 'da_fare' } }, 999)[0],
@@ -340,6 +354,117 @@ console.log('\n== candidati e messaggi (privacy) ==');
     && perdeTutto(mcs).length === 0 && !JSON.stringify(mcs).includes('Maria'), mcs.map((x) => x.testo));
   t('37b durata: 1 minuto, 119 minuti, 2 ore, 24 ore, 2 giorni', durata(1) === '1 minuto' && durata(119) === '119 minuti' && durata(120) === '2 ore' && durata(1440) === '24 ore' && durata(2880) === '2 giorni');
 }
+
+// 21-10 (v3, OK di Dan): in 3 giorni la classe 'eccezione' della vista aveva dato 20 candidati, 18 di transito normale
+console.log('\n== spedizioni: solo gli stati che sono un problema vero (21-10) ==');
+// una sezione che lancia (sorgente di prima, guasto piantato) e' un KO, non ferma la suite
+try {
+  // tutti gli stati mai visti in shipping_status (misurato il 21-10) e quelli di transito che la vista mette in eccezione
+  const VISTI_PROBLEMA = ['DESTINATARIO ASSENTE', 'INDIRIZZO ERRATO', 'RIFIUTATA DAL DESTINATARIO', 'N. CIVICO MANCANTE/ERRATO'];
+  const VISTI_NORMALI = ['CONSEGNATA', 'NUOVA', 'IN ATTESA DI AFFIDO', 'IN TRANSITO', 'PARTITA', 'IN PARTENZA TWS', 'RM - CONSEGNATA', 'FERIE'];
+  const TRANSITO = ['IN CONSEGNA MATT.', 'IN CONSEGNA', 'RITIRATA', 'IN CONSEGNA POM.'];
+  // stati del corriere che non abbiamo ancora visto ma che sono problemi (uno per voce dell'elenco), e trappole per un
+  // confronto ingenuo "contiene" (PRESO contiene RESO, CORRETTO non e' ERRATO)
+  const ALTRI_PROBLEMI = ['IN GIACENZA', 'SPEDIZIONE SMARRITA', 'MERCE DANNEGGIATA', 'RESPINTA', 'RESO AL MITTENTE', 'DESTINATARIO IRREPERIBILE', 'INDIRIZZO INESISTENTE',
+    'DESTINATARIO SCONOSCIUTO', 'destinatario assente', 'Indirizzo errato', 'CIVICO MANCANTE',
+    // Gate 2 del 21-10 (R12-C1, R5): le diciture comuni di una consegna non riuscita o di un rientro, una per pezzo nuovo
+    'MANCATA CONSEGNA', 'TENTATA CONSEGNA', 'TENTATIVO DI CONSEGNA', 'CONSEGNA FALLITA', 'NON CONSEGNABILE', 'IN RESTITUZIONE AL MITTENTE', 'RIENTRO AL MITTENTE',
+    'RITORNO AL MITTENTE', 'IN ATTESA ISTRUZIONI', 'INDIRIZZO INCOMPLETO', 'INDIRIZZO INSUFFICIENTE', 'DESTINATARIO CHIUSO', 'ESERCIZIO CHIUSO'];
+  const TRAPPOLE = ['PRESO IN CARICO', 'INDIRIZZO CORRETTO', 'IN LAVORAZIONE', '', null, undefined, 42, 'nota: chiamare Maria Rossi',
+    'SPEDIZIONE CHIUSA', 'PRATICA CHIUSA', 'CONSEGNABILE'];
+  const sbagliatiP = [...VISTI_PROBLEMA, ...ALTRI_PROBLEMI].filter((s) => !statoProblema(s));
+  const sbagliatiN = [...VISTI_NORMALI, ...TRANSITO, ...TRAPPOLE].filter((s) => statoProblema(s));
+  // ogni pezzo dell'elenco ha almeno una voce qui che lo usa (un pezzo tolto o scritto male si vede)
+  const senzaVoce = PROBLEMI_CORRIERE.filter((p) => ![...VISTI_PROBLEMA, ...ALTRI_PROBLEMI].some((s) => new RegExp(`(?:^|[^\\p{L}])${p}`, 'u').test(String(s).toUpperCase())));
+  t('SP1 statoProblema: i 4 problemi visti e una voce per ogni pezzo dell\'elenco (maiuscole o no) si\'; gli 8 stati normali visti, i 4 di transito, PRESO, CORRETTO, SPEDIZIONE o PRATICA CHIUSA, illeggibili no',
+    sbagliatiP.length === 0 && sbagliatiN.length === 0 && PROBLEMI_CORRIERE.length === 23 && senzaVoce.length === 0, { sbagliatiP, sbagliatiN, senzaVoce });
+  const tre = [...Array(8).fill('IN CONSEGNA MATT.'), ...Array(4).fill('IN CONSEGNA'), ...Array(4).fill('RITIRATA'), ...Array(2).fill('IN CONSEGNA POM.'), ...Array(2).fill('DESTINATARIO ASSENTE')]
+    .map((s, i) => ({ ldv: 'L' + i, order_name: String(1900 + i), stato_tws: s, classe: 'eccezione', updated_at: '2026-10-21T10:00:00Z', customer_name: 'Carla Bianchi' }));
+  const c3 = candSpedizione(tre);
+  t('SP2 i 20 candidati dei 3 giorni prima del 21-10 (18 di transito, 2 DESTINATARIO ASSENTE) -> 2 candidati, solo i DESTINATARIO ASSENTE', c3.length === 2
+    && c3.every((x) => x.rif.stato === 'DESTINATARIO ASSENTE') && isDeepStrictEqual(c3.map((x) => x.chiave).sort(), ['L18:DESTINATARIO_ASSENTE', 'L19:DESTINATARIO_ASSENTE']), c3.map((x) => x.chiave));
+  t('SP3 ogni stato mai visto passato da candSpedizione: candidati solo i quattro problemi', isDeepStrictEqual(candSpedizione([...VISTI_PROBLEMA, ...VISTI_NORMALI, ...TRANSITO]
+    .map((s, i) => ({ ldv: 'V' + i, stato_tws: s, classe: 'eccezione', updated_at: '2026-10-21T10:00:00Z' }))).map((x) => x.rif.stato).sort(), [...VISTI_PROBLEMA].sort()));
+  t('SP4 il totale dei 7 giorni conta i soli problemi veri della classe eccezione (20 righe dei 3 giorni -> 2; una consegnata con ASSENTE non conta)',
+    contaProblemi(tre) === 2 && contaProblemi([...tre, { stato_tws: 'DESTINATARIO ASSENTE', classe: 'consegnata' }, null]) === 2 && contaProblemi(null) === 0);
+} catch (e) { t('SP! eccezione nella sezione', false, String(e?.message ?? e)); }
+
+// 21-10 (v3, OK di Dan in chat): "vorrei anche esser notificato quando le ragazze fanno operazioni tipo registra ordine,
+// pezzi arrivati, e conta fisica". Righe con la forma di quelle vere di change_log (lette il 21-10: codici prodotto e
+// fornitori, nessun dato di clienti); i campi di after arrivano come testo (after->>campo), l'id come numero.
+const UA = '3ebca1e0-34ed-4461-afe8-a604cf9e9ade', UB = 'b00a4606-f191-48ff-a38c-18f6a7d7c43c', UC = '7c9c2bcb-36a4-403a-ab15-e82ff87cd6ed', UD = 'aea8a1f9-1c7a-4df0-aa93-a1303aaf4847';
+const clArr = (id, codice, delta, ts = '2026-10-19T15:35:00Z', chi = 'Ginevra') => ({ id, ts, op: 'arrival_set', chi, codice, delta: String(delta), contati: null, giac_prima: null, fornitore: null, righe: null, gruppo: null });
+const clOrd = (id, fornitore, righe, gruppo, ts = '2026-10-19T15:34:00Z', chi = 'Ginevra') => ({ id, ts, op: 'order_multi', chi, codice: null, delta: null, contati: null, giac_prima: null, fornitore, righe: String(righe), gruppo });
+const clConta = (id, codice, contati, prima, ts = '2026-10-14T11:03:00Z', chi = 'Bene') => ({ id, ts, op: 'count_apply', chi, codice, delta: String(contati - prima), contati: String(contati), giac_prima: String(prima), fornitore: null, righe: null, gruppo: null });
+console.log('\n== attivita del team: candidati e testi (21-10) ==');
+// una sezione che lancia (sorgente di prima, guasto piantato) e' un KO, non ferma la suite
+try {
+  t('AT1 persone e azioni: solo Benny (Bene) e Ginni (Ginevra), mai Ale; solo order_multi, arrival_set, count_apply', isDeepStrictEqual(PERSONA_TEAM, { Bene: 'Benny', Ginevra: 'Ginni' })
+    && Object.keys(PERSONA_TEAM).every((k) => CHI_PERSONE.includes(k)) && !('Ale' in PERSONA_TEAM) && isDeepStrictEqual(OP_ATTIVITA, ['order_multi', 'arrival_set', 'count_apply']));
+  const righe = [
+    { ...clArr(2341, 'GALIANO_TOAST_BAG_GREEN', 20, '2026-10-21T11:54:57Z'), ctx: '5f083d29', purchase_id: '08985bf5-d6f1-4311-9fd7-88c4931eaacc', costo: '7.9', customer_name: CLIENTE },
+    clArr(1631, 'LEA_BAG_X', 5, '2026-10-21T11:00:00Z', 'Claude-Code'), clConta(1485, 'LEA_BAG_X', 5, 4, '2026-10-21T11:00:00Z', 'Ale'),
+    { ...clArr(5, 'LEA_BAG_X', 3), op: 'order' }, clArr(6, 'LEA_BAG_X', 0), { ...clArr(7, 'LEA_BAG_X', 1), delta: null }, { ...clConta(8, 'LEA_BAG_X', 1, 1), id: 'x' },
+    { ...clConta(9, 'LEA_BAG_X', 1, 1), id: -3 }, clConta(13, 'LEA_BAG_X', 1, 1, '2026-10-21T11:00:00Z', 'constructor'), clConta(14, 'LEA_BAG_X', 1, 1, '2026-10-21T11:00:00Z', 'bene'),
+    { ...clConta('10', 'LEA_BAG_COCCO_BLACK', 0, 2, '2026-10-21T10:00:00Z') }, clOrd(11, 'Vincenzo\n(pelle)', 1, UA.toUpperCase(), '2026-10-21T09:00:00Z'),
+    clArr(12, 'LEA BAG <x>', -3, '2026-10-21T08:00:00Z'),
+  ];
+  const ca = candAttivita(righe);
+  t('AT2 candAttivita: una riga di change_log = un candidato cl:<id> (dal piu\' recente); fuori Ale, Claude-Code, chi strani o in minuscolo, azioni diverse, arrivi a delta 0 o senza delta, id non validi',
+    isDeepStrictEqual(ca.map((c) => c.chiave), ['cl:2341', 'cl:10', 'cl:11', 'cl:12']) && ca[0].ts === T('2026-10-21T11:54:57Z')
+    && isDeepStrictEqual(ca.map((c) => c.rif.gruppo), ['Ginevra:arrival_set', 'Bene:count_apply', 'Ginevra:order_multi', 'Ginevra:arrival_set']), ca.map((c) => c.chiave));
+  t('AT3 rif: soli campi del testo (codice valido o vuoto, numeri interi, fornitore ripulito, ordine uuid minuscolo); mai ctx, purchase_id, costo o altro della riga',
+    ca.every((c) => Object.keys(c.rif).join() === 'id,chi,op,gruppo,codice,delta,contati,prima,fornitore,righe,ordine') && ca[1].rif.contati === '0' && ca[1].rif.prima === '2'
+    && ca[2].rif.fornitore === 'Vincenzo (pelle)' && ca[2].rif.ordine === UA && ca[3].rif.codice === '' && ca[3].rif.delta === '-3'
+    && !/5f083d29|08985bf5|7\.9|Maria/.test(JSON.stringify(ca)) && ca.every((c) => /^[A-Za-z0-9_.:/-]+$/.test(c.chiave)), ca.map((c) => c.rif));
+  const g = (rows, ordini = {}) => msgGruppoAttivita(candAttivita(rows), ordini);
+  const arr = g([clArr(2319, 'AIRPODS_CASE_COCCO_BROWN', 70), clArr(2320, 'AIRPODS_CASE_BROWN_WHITE_PONY', 42), clArr(2321, 'AIRPODS_CASE_MILITARY_GREEN', 21)]);
+  t('AT4 arrivi (19-10, tre arrivi di Ginni): "Ginni: pezzi arrivati", codici col +N in ordine di registrazione e il totale; radice dell\'app, tema attivita, nessun chi',
+    arr?.titolo === 'Ginni: pezzi arrivati' && arr?.testo === 'AIRPODS_CASE_COCCO_BROWN +70, AIRPODS_CASE_BROWN_WHITE_PONY +42, AIRPODS_CASE_MILITARY_GREEN +21. In tutto 133 pezzi'
+    && arr.url === APP_URL && arr.tema === 'attivita' && !('chi' in arr) && arr.urgente === undefined && testoValido([arr]), arr);
+  const uno = g([clArr(2341, 'GALIANO_TOAST_BAG_GREEN', 20)]), netto = g([clArr(1, 'LEA_BAG_X', 10), clArr(2, 'LEA_BAG_X', -10), clArr(3, 'AGATA_BAG_Y', 4)]);
+  const corr = g([clArr(4, 'LEA_BAG_X', -2)]), zero = g([clArr(5, 'LEA_BAG_X', 5), clArr(6, 'LEA_BAG_X', -5)]), tanti = g([1, 2, 3, 4, 5, 6].map((i) => clArr(i, 'COD_' + i, i)));
+  t('AT5 arrivi: uno solo senza totale; al netto per codice (+10 e -10 sullo stesso codice spariscono); solo correzioni -> "arrivi corretti"; netto zero; oltre 4 codici "e altri N"',
+    uno?.testo === 'GALIANO_TOAST_BAG_GREEN +20' && netto?.titolo === 'Ginni: pezzi arrivati' && netto?.testo === 'AGATA_BAG_Y +4'
+    && corr?.titolo === 'Ginni: arrivi corretti' && corr?.testo === 'LEA_BAG_X -2' && zero?.titolo === 'Ginni: arrivi corretti' && zero?.testo === 'Arrivi corretti, nessun pezzo in piu\' o in meno.'
+    && tanti?.testo === 'COD_1 +1, COD_2 +2, COD_3 +3, COD_4 +4, e altri 2. In tutto 21 pezzi', [uno, netto, corr, zero, tanti].map((m) => m && [m.titolo, m.testo]));
+  const ORD = { [UA]: [{ gruppo: UA, codice: 'LEA_BAG_COCCO_BLACK', qty_ordered: 30, wip: false }],
+    [UB]: [{ gruppo: UB, codice: 'AIRPODS_CASE_COCCO_BROWN', qty_ordered: '70', wip: false }],
+    [UC]: ['LEA_BAG_E', 'LEA_BAG_B', 'LEA_BAG_D', 'LEA_BAG_A', 'LEA_BAG_C'].map((codice, i) => ({ gruppo: UC, codice, qty_ordered: i === 1 ? 0 : 5, wip: i === 1 })) };
+  const o1 = g([clOrd(2329, 'Vincenzo (pelle)', 1, UA)], ORD), o3 = g([clOrd(2316, 'Vincenzo (pelle)', 1, UA), clOrd(2317, 'INDIA (tessuto)', 1, UB), clOrd(2318, 'Vincenzo (pelle)', 2, UD)], ORD);
+  t('AT6 ordine: "Ginni ha registrato un ordine", "<fornitore>: 1 riga (CODICE x30)" dalle righe dell\'ordine; tre ordini: una riga di testo per ordine, un ordine senza righe lette dice fornitore e righe',
+    o1?.titolo === 'Ginni ha registrato un ordine' && o1?.testo === 'Vincenzo (pelle): 1 riga (LEA_BAG_COCCO_BLACK x30)' && o3?.titolo === 'Ginni ha registrato 3 ordini'
+    && o3?.testo === 'Vincenzo (pelle): 1 riga (LEA_BAG_COCCO_BLACK x30)\nINDIA (tessuto): 1 riga (AIRPODS_CASE_COCCO_BROWN x70)\nVincenzo (pelle): 2 righe' && testoValido([o1, o3]), [o1, o3].map((m) => m && [m.titolo, m.testo]));
+  const o5 = g([clOrd(2400, 'Pelletteria Rossi', 5, UC)], ORD), o6 = g([1, 2, 3, 4, 5, 6].map((i) => clOrd(i, 'F' + i, 1, '')), ORD), oSenza = g([clOrd(2401, '', 0, '')], ORD);
+  t('AT7 ordine: codici in ordine alfabetico, al massimo 3 e "e altri N", una riga WIP senza quantita\'; oltre 4 ordini "e altri N ordini"; senza fornitore ne\' righe "Fornitore"',
+    o5?.testo === 'Pelletteria Rossi: 5 righe (LEA_BAG_A x5, LEA_BAG_B, LEA_BAG_C x5 e altri 2)' && o6?.titolo === 'Ginni ha registrato 6 ordini'
+    && o6?.testo === 'F1: 1 riga\nF2: 1 riga\nF3: 1 riga\nF4: 1 riga\ne altri 2 ordini' && oSenza?.testo === 'Fornitore', [o5, o6, oSenza].map((m) => m && m.testo));
+  const c1 = g([clConta(2215, 'LEA_BAG_LEOPARDO_SAVANA', 5, 4)]), c6 = g([1, 2, 3, 4, 5, 6].map((i) => clConta(2215 + i, 'COD_' + i, i, i + 1)));
+  const cZero = g([{ ...clConta(3000, 'LEA_BAG_X', 0, 0), contati: '0' }]), cIll = g([{ ...clConta(3001, 'LEA_BAG_X', 1, 1), contati: 'x', giac_prima: null }]);
+  t('AT8 conta: "Benny ha fatto una conta", "CODICE: contati (prima N)"; sei conte: "Benny ha fatto 6 conte", quattro e "e altri 2"; contati 0 resta 0; contati illeggibile -> "contato"',
+    c1?.titolo === 'Benny ha fatto una conta' && c1?.testo === 'LEA_BAG_LEOPARDO_SAVANA: 5 (prima 4)' && c6?.titolo === 'Benny ha fatto 6 conte'
+    && c6?.testo === 'COD_1: 1 (prima 2), COD_2: 2 (prima 3), COD_3: 3 (prima 4), COD_4: 4 (prima 5), e altri 2' && cZero?.testo === 'LEA_BAG_X: 0 (prima 0)' && cIll?.testo === 'LEA_BAG_X: contato'
+    && testoValido([c1, c6]), [c1, c6, cZero, cIll].map((m) => m && [m.titolo, m.testo]));
+  const misti = candAttivita([clArr(1, 'A', 1), clConta(2, 'B', 1, 1, '2026-10-19T15:36:00Z')]);
+  t('AT9 un gruppo e\' una persona e un tipo: righe miste, vuote o non candidati -> nessun messaggio', msgGruppoAttivita(misti, {}) === null && msgGruppoAttivita([], {}) === null
+    && msgGruppoAttivita([...candAttivita([clArr(1, 'A', 1)]), { chiave: 'x', ts: 0, rif: { chi: 'Ale', op: 'arrival_set', id: '9' } }], {}) === null
+    && msgGruppoAttivita(candAttivita([clArr(1, 'A', 1, undefined, 'Bene'), clArr(2, 'B', 1)]), {}) === null);
+  const tutti = msgAttivita(candAttivita([clArr(10, 'A', 1, '2026-10-19T15:40:00Z'), clConta(11, 'B', 2, 1, '2026-10-19T15:41:00Z'), clOrd(12, 'F', 1, UA, '2026-10-19T15:42:00Z'), clArr(13, 'C', 2, '2026-10-19T15:43:00Z'),
+    clArr(14, 'D', 3, '2026-10-19T15:44:00Z', 'Bene')]), ORD);
+  t('AT10 msgAttivita: un messaggio per persona e tipo (Ginni arrivi, Benny conte, Ginni ordini, Benny arrivi), ognuno con le sue sole righe', isDeepStrictEqual(tutti.map((m) => [m.chiave, m.titolo, m.testo]).sort(), [
+    ['Bene:arrival_set', 'Benny: pezzi arrivati', 'D +3'], ['Bene:count_apply', 'Benny ha fatto una conta', 'B: 2 (prima 1)'], ['Ginevra:arrival_set', 'Ginni: pezzi arrivati', 'A +1, C +2. In tutto 3 pezzi'],
+    ['Ginevra:order_multi', 'Ginni ha registrato un ordine', 'F: 1 riga (LEA_BAG_COCCO_BLACK x30)']]), tutti.map((m) => [m.chiave, m.titolo, m.testo]));
+  const lungo = g([1, 2, 3, 4].map((i) => clOrd(i, 'X'.repeat(60), 8, UC)), ORD);
+  t('AT11 testi corti: titolo sotto i 40 caratteri, payload di push-api sotto il limite senza tagli anche col caso peggiore', [arr, o3, c6, lungo].every((m) => Array.from(m.titolo).length <= 40
+    && new TextEncoder().encode(MP.costruisciPayload(m)).length < MP.PAYLOAD_MAX && JSON.parse(MP.costruisciPayload(m)).notification.body === m.testo), lungo?.testo);
+  // le cinque conte vere di Benny del 14-10 (1 minuto e mezzo, giacenze negative portate a 0): UNA push
+  const b14 = g([clConta(2215, 'LEA_BAG_BLACK_PIERCING', 0, -1, '2026-10-14T11:02:04Z'), clConta(2216, 'LEA_BAG_RED_PATENT', 0, -1, '2026-10-14T11:02:42Z'),
+    clConta(2217, 'AGATA_BAG_ROSE_PINK', 0, -1, '2026-10-14T11:02:56Z'), clConta(2218, 'AGATA_BAG_ROSE_BUTTER_GREEN', 0, -2, '2026-10-14T11:03:02Z'), clConta(2219, 'ANNIE_BAG_BROWN_CHOCOLATE', 0, -1, '2026-10-14T11:03:32Z')]);
+  const o4 = g([clOrd(2402, 'Pelletteria Rossi', 4, UC)], { [UC]: ORD[UC].slice(0, 4) });
+  t('AT12 le cinque conte di Benny del 14-10: "Benny ha fatto 5 conte", quattro voci con la giacenza negativa di prima e "e un altro"; un codice in piu\' nell\'ordine: "e un altro"',
+    b14?.titolo === 'Benny ha fatto 5 conte' && b14?.testo === 'LEA_BAG_BLACK_PIERCING: 0 (prima -1), LEA_BAG_RED_PATENT: 0 (prima -1), AGATA_BAG_ROSE_PINK: 0 (prima -1), AGATA_BAG_ROSE_BUTTER_GREEN: 0 (prima -2), e un altro'
+    && o4?.testo === 'Pelletteria Rossi: 4 righe (LEA_BAG_A x5, LEA_BAG_B, LEA_BAG_D x5 e un altro)', [b14?.testo, o4?.testo]);
+} catch (e) { t('AT! eccezione nella sezione', false, String(e?.message ?? e)); }
 
 console.log('\n== riepilogo ==');
 {
@@ -528,6 +653,90 @@ console.log('\n== giro di un evento (scritture e invio finti) ==');
   t('73e RF-7: push-api v2 che rimanda chi = Bene -> inviato', r.inviati === 1 && r.esauriti === 0 && f.log.find((x) => x[0] === 'chiudi').length === 5);
 }
 
+// 21-10 (v3): il giro a gruppi di attivita_team, con scritture e invio finti. Ogni riga di change_log ha la sua riga di
+// registro; una push per persona e tipo, col testo delle sole righe prese da QUESTO giro.
+console.log('\n== attivita del team: giro a gruppi (scritture e invio finti) ==');
+// una sezione che lancia (sorgente di prima, guasto piantato) e' un KO, non ferma la suite
+try {
+  const H = 3600000, ORA_T = T('2026-10-19T15:40:00Z');
+  const finto = (o = {}) => {
+    const log = [];
+    const d = {
+      salta: async (righe) => { log.push(['salta', righe.map((x) => x.chiave + ':' + x.motivo).join('|')]); },
+      prenota: async (k) => { log.push(['prenota', k]); if (o.prenotaLancia) throw new Error('db giu'); return (o.conflitto ?? []).includes(k) ? null : { id: 'id-' + k }; },
+      riprendi: async (r) => { log.push(['riprendi', r.chiave]); return !(o.ripresaPersa ?? []).includes(r.chiave); },
+      invia: async (m) => { log.push(['invia', m.titolo, m.testo]); if (o.inviaLancia) throw new Error('x'); return o.esito ? o.esito(m) : { ok: true, inviati: 1, falliti: 0, destinatari: 1, status: 200 }; },
+      chiudi: async (id, ten, stato, esito, definitivo) => { log.push(['chiudi', id, ten, stato, ...(definitivo ? ['definitivo'] : [])]); return !(o.chiudiFallisce ?? []).includes(id); },
+      adesso: () => o.adesso ?? 0,
+    };
+    return { d, log };
+  };
+  const pianoDi = (rows, R = new Map(), baseline = false) => pianifica(candAttivita(rows), R, { ora: ORA_T, baseline, etaMaxMs: 6 * H });
+  const comp = (cs) => msgGruppoAttivita(cs, {});
+  const regA = (k, stato, tentativi, minFa = 30) => ({ id: 'id-' + k, chiave: k, stato, tentativi, updated_at: new Date(ORA_T - minFa * 60000).toISOString() });
+  const ginni = [clArr(2319, 'AIRPODS_CASE_COCCO_BROWN', 70), clArr(2320, 'AIRPODS_CASE_BROWN_WHITE_PONY', 42), clArr(2321, 'AIRPODS_CASE_MILITARY_GREEN', 21)];
+  const benny = [clConta(2322, 'LEA_BAG_X', 5, 4, '2026-10-19T15:36:00Z')];
+
+  let f = finto(), b = { invii: 20, scade: 1 };
+  let r = await eseguiGruppi(pianoDi([...ginni, ...benny]), (c) => c.rif.gruppo, comp, b, f.d);
+  const invii = (l) => l.filter((x) => x[0] === 'invia').map((x) => [x[1], x[2]]);
+  t('GR1 quattro righe di due persone -> DUE push (una per persona e tipo), ogni riga prenotata e chiusa inviata una volta, budget scalato di 2',
+    isDeepStrictEqual(invii(f.log), [['Ginni: pezzi arrivati', 'AIRPODS_CASE_COCCO_BROWN +70, AIRPODS_CASE_BROWN_WHITE_PONY +42, AIRPODS_CASE_MILITARY_GREEN +21. In tutto 133 pezzi'],
+      ['Benny ha fatto una conta', 'LEA_BAG_X: 5 (prima 4)']]) && f.log.filter((x) => x[0] === 'prenota').length === 4
+    && isDeepStrictEqual(f.log.filter((x) => x[0] === 'chiudi').map((x) => x.slice(1).join(':')).sort(), ['id-cl:2319:1:inviato', 'id-cl:2320:1:inviato', 'id-cl:2321:1:inviato', 'id-cl:2322:1:inviato'])
+    && r.inviati === 2 && r.candidati === 4 && b.invii === 18, f.log);
+  // la prenotazione di cl:2320 e' di un altro giro sovrapposto: questo giro non la manda e non la dice
+  f = finto({ conflitto: ['cl:2320'] });
+  r = await eseguiGruppi(pianoDi(ginni), (c) => c.rif.gruppo, comp, { invii: 20, scade: 1 }, f.d);
+  t('GR2 una riga presa da un altro giro: la push dice SOLO le righe prese da questo (testo senza BROWN_WHITE_PONY), presi_da_altri 1, chiuse le sole due',
+    isDeepStrictEqual(invii(f.log), [['Ginni: pezzi arrivati', 'AIRPODS_CASE_COCCO_BROWN +70, AIRPODS_CASE_MILITARY_GREEN +21. In tutto 91 pezzi']]) && r.presi_da_altri === 1
+    && f.log.filter((x) => x[0] === 'chiudi').length === 2 && !f.log.some((x) => x[0] === 'chiudi' && x[1] === 'id-cl:2320'), f.log);
+  f = finto(); b = { invii: 1, scade: 1 };
+  r = await eseguiGruppi(pianoDi([...ginni, ...benny]), (c) => c.rif.gruppo, comp, b, f.d);
+  t('GR3 tetto: con un invio disponibile parte il gruppo piu\' vecchio; le righe dell\'altro non si prenotano (rimandate al giro dopo, nessuna riga di registro)',
+    r.inviati === 1 && r.rimandati === 1 && !f.log.some((x) => x[0] === 'prenota' && x[1] === 'cl:2322') && b.invii === 0 && invii(f.log)[0][0] === 'Ginni: pezzi arrivati', r);
+  f = finto({ adesso: 10 }); r = await eseguiGruppi(pianoDi(ginni), (c) => c.rif.gruppo, comp, { invii: 20, scade: 5 }, f.d);
+  t('GR4 tempo scaduto: nessuna prenotazione e nessun invio, le tre righe rimandate', r.rimandati === 3 && f.log.length === 0);
+  // ritenta: cl:2319 fallita al giro prima (1 tentativo), cl:2323 nuova: una push sola con tutte e due
+  const R = new Map([['cl:2319', regA('cl:2319', 'fallito', 1)], ['cl:2320', regA('cl:2320', 'inviato', 1)], ['cl:2321', regA('cl:2321', 'fallito', 3)]]);
+  f = finto();
+  r = await eseguiGruppi(pianoDi([...ginni, clArr(2323, 'LEA_BAG_Y', 4, '2026-10-19T15:38:00Z')], R), (c) => c.rif.gruppo, comp, { invii: 20, scade: 1 }, f.d);
+  t('GR5 una riga fallita si riprende INSIEME alla nuova dello stesso gruppo: una push, la ripresa chiusa coi suoi tentativi (2), la nuova con 1; inviata e tentativi esauriti ferme',
+    isDeepStrictEqual(invii(f.log), [['Ginni: pezzi arrivati', 'AIRPODS_CASE_COCCO_BROWN +70, LEA_BAG_Y +4. In tutto 74 pezzi']]) && isDeepStrictEqual(f.log.filter((x) => x[0] === 'riprendi').map((x) => x[1]), ['cl:2319'])
+    && isDeepStrictEqual(f.log.filter((x) => x[0] === 'chiudi').map((x) => x.slice(1).join(':')), ['id-cl:2319:2:inviato', 'id-cl:2323:1:inviato']) && r.gia_gestiti === 2 && r.esauriti === 1, f.log);
+  f = finto({ ripresaPersa: ['cl:2319'] });
+  r = await eseguiGruppi(pianoDi(ginni.slice(0, 1), R), (c) => c.rif.gruppo, comp, { invii: 20, scade: 1 }, f.d);
+  t('GR6 ripresa persa (un altro giro ha cambiato stato o tentativi) e nessun\'altra riga: nessun invio, budget intatto', r.presi_da_altri === 1 && !f.log.some((x) => x[0] === 'invia'));
+  f = finto(); r = await eseguiGruppi(pianoDi(ginni, new Map(), true), (c) => c.rif.gruppo, comp, { invii: 20, scade: 1 }, f.d);
+  t('GR7 baseline (prima accensione): UNA scrittura dei saltati per tutte le righe, nessuna prenotazione, nessun invio', isDeepStrictEqual(f.log, [['salta', 'cl:2319:baseline|cl:2320:baseline|cl:2321:baseline']]) && r.saltati === 3);
+  f = finto(); r = await eseguiGruppi(pianoDi([clArr(2300, 'VECCHIO', 3, '2026-10-19T08:00:00Z'), ...ginni]), (c) => c.rif.gruppo, comp, { invii: 20, scade: 1 }, f.d);
+  t('GR8 una riga di oltre 6 ore non parte (saltata vecchia) e non finisce nel testo delle nuove', isDeepStrictEqual(f.log[0], ['salta', 'cl:2300:vecchio']) && !invii(f.log)[0][1].includes('VECCHIO'));
+  f = finto({ esito: () => ({ ok: false, inviati: 0, falliti: 0, destinatari: null, status: 503, errore: 'push-api ha risposto 503' }) });
+  r = await eseguiGruppi(pianoDi(ginni), (c) => c.rif.gruppo, comp, { invii: 20, scade: 1 }, f.d);
+  t('GR9 push-api giu\': UNA push fallita, le tre righe chiuse fallite (si riprenderanno insieme), non definitive', r.falliti === 1 && r.inviati === 0
+    && f.log.filter((x) => x[0] === 'chiudi').every((x) => x[3] === 'fallito' && x.length === 4) && f.log.filter((x) => x[0] === 'chiudi').length === 3, f.log);
+  f = finto({ esito: () => ({ ok: false, inviati: 0, falliti: 0, destinatari: null, status: null, errore: 'TimeoutError: signal timed out' }) });
+  r = await eseguiGruppi(pianoDi(ginni), (c) => c.rif.gruppo, comp, { invii: 20, scade: 1 }, f.d);
+  t('GR10 timeout del client (push-api puo\' aver consegnato): tutte le righe della push chiuse fallite DEFINITIVE, mai rimandate', r.esauriti === 1
+    && f.log.filter((x) => x[0] === 'chiudi').every((x) => x[3] === 'fallito' && x[4] === 'definitivo') && f.log.filter((x) => x[0] === 'chiudi').length === 3);
+  f = finto({ inviaLancia: true }); r = await eseguiGruppi(pianoDi(benny), (c) => c.rif.gruppo, comp, { invii: 20, scade: 1 }, f.d);
+  t('GR11 un invio che lancia conta come fallito e le righe si chiudono lo stesso', r.falliti === 1 && f.log.find((x) => x[0] === 'chiudi')[3] === 'fallito');
+  f = finto({ chiudiFallisce: ['id-cl:2320'] }); r = await eseguiGruppi(pianoDi(ginni), (c) => c.rif.gruppo, comp, { invii: 20, scade: 1 }, f.d);
+  t('GR12 esito non scritto su una riga: contato in scritture_fallite (una per riga), la push conta una volta', r.scritture_fallite === 1 && r.inviati === 1);
+  f = finto(); r = await eseguiGruppi(pianoDi(ginni), (c) => c.rif.gruppo, () => null, { invii: 20, scade: 1 }, f.d);
+  // Gate 2 del 21-10 (R1): anche il numero delle chiusure, perche' `every` su un elenco vuoto e' vero e una riga lasciata
+  // prenotata passava
+  t('GR13 nessun testo per righe gia\' prese: chiuse saltate (finali, mai lasciate prenotate), nessun invio, budget intatto', r.saltati === 3 && !f.log.some((x) => x[0] === 'invia')
+    && f.log.filter((x) => x[0] === 'chiudi').every((x) => x[3] === 'saltato') && f.log.filter((x) => x[0] === 'chiudi').length === 3
+    && f.log.filter((x) => x[0] === 'prenota').length === 3, f.log);
+  f = finto(); r = await eseguiGruppi(pianoDi(ginni), () => '', comp, { invii: 20, scade: 1 }, f.d);
+  t('GR14 righe senza gruppo: le nuove si chiudono saltate (niente_da_dire), nessuna prenotazione', isDeepStrictEqual(f.log, [['salta', 'cl:2319:niente_da_dire|cl:2320:niente_da_dire|cl:2321:niente_da_dire']]));
+  f = finto({ prenotaLancia: true }); let lanciato = false;
+  try { await eseguiGruppi(pianoDi(ginni), (c) => c.rif.gruppo, comp, { invii: 20, scade: 1 }, f.d); } catch { lanciato = true; }
+  t('GR15 prenotazione fallita (errore del DB): si ferma senza inviare', lanciato && !f.log.some((x) => x[0] === 'invia'));
+  t('GR16 resoconto: soli numeri', Object.values(r).every((v) => typeof v === 'number'));
+} catch (e) { t('GR! eccezione nella sezione', false, String(e?.message ?? e)); }
+
 console.log('\n== salute del giro (PURE) ==');
 {
   const ORA_S = T('2026-10-18T22:30:00Z'), min = (m) => new Date(ORA_S - m * 60000).toISOString();
@@ -697,7 +906,9 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
     // spedizione_eccezione
     [`v_spedizioni_eccezioni select ldv, order_name, stato_tws, updated_at, classe, customer_name eq:classe|eccezione gte:updated_at|${G} updated_at:desc limit:50`]:
       { data: [{ ldv: 'L1', order_name: '1890', stato_tws: 'INDIRIZZO ERRATO', updated_at: '2026-10-19T16:00:00Z', classe: 'eccezione', customer_name: 'Carla Bianchi' }] },
-    'v_spedizioni_eccezioni select ldv head eq:classe|eccezione gte:updated_at|2026-10-12T17:00:00.000Z': { count: 47 },
+    // 21-10: le righe della settimana (LDV, stato, classe) per contare i soli problemi veri, non un conteggio della classe
+    'v_spedizioni_eccezioni select ldv, stato_tws, classe eq:classe|eccezione gte:updated_at|2026-10-12T17:00:00.000Z limit:501':
+      { data: ['DESTINATARIO ASSENTE', 'IN CONSEGNA MATT.', 'INDIRIZZO ERRATO', 'RITIRATA', 'N. CIVICO MANCANTE/ERRATO', 'IN CONSEGNA'].map((s, i) => ({ ldv: 'L' + i, stato_tws: s, classe: 'eccezione' })) },
     // b2b_risposta_negozio (B1: chi auto e opt_out_da_verificare nella lettura, created_at per l'eta')
     [`lead_touches select id, account_id, direzione, esito, chi, at, created_at eq:direzione|in eq:chi|auto or:esito.is.null,esito.eq.opt_out_da_verificare gte:created_at|${G} created_at:desc limit:50`]:
       { data: [{ id: U1, account_id: U2, direzione: 'in', esito: null, chi: 'auto', at: '2026-10-18T22:40:00Z', created_at: '2026-10-19T16:45:00Z' }] },
@@ -742,8 +953,8 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
     nonViste.length === 0 && inattese.length === 0 && w.scritte.length === 0, { nonViste, inattese, msgs });
   t('Q2 cs_urgente: il nome della cliente nel titolo (19-10); categoria, motivo fisso, il conteggio delle urgenti aperte nel testo', isDeepStrictEqual(msgs.cs_urgente,
     [['Richiesta urgente da Carla Bianchi', 'Reso. Rischio di contestazione del pagamento. 43 urgenti aperte.', '']]), msgs.cs_urgente);
-  t('Q3 spedizione: ordine, nome della cliente (19-10), stato, il conteggio della settimana', isDeepStrictEqual(msgs.spedizione_eccezione,
-    [['Spedizione #1890: INDIRIZZO ERRATO (Carla Bianchi)', 'Il corriere segnala un problema. 47 spedizioni con un problema negli ultimi 7 giorni.', '']]), msgs.spedizione_eccezione);
+  t('Q3 spedizione: ordine, nome della cliente (19-10), stato, il conteggio della settimana dei soli problemi veri (21-10: 3 su 6 righe)', isDeepStrictEqual(msgs.spedizione_eccezione,
+    [['Spedizione #1890: INDIRIZZO ERRATO (Carla Bianchi)', 'Il corriere segnala un problema. 3 spedizioni con un problema negli ultimi 7 giorni.', '']]), msgs.spedizione_eccezione);
   t('Q4 b2b: nome commerciale e risposte da gestire', isDeepStrictEqual(msgs.b2b_risposta_negozio, [['Glitter ha risposto', 'In Negozi B2B: 53 risposte da gestire.', '']]), msgs.b2b_risposta_negozio);
   t('Q5 riscritto: senza nome l\'email della cliente, minuscola, nel titolo (19-10); categoria e richieste in attesa nel testo', isDeepStrictEqual(msgs.cs_cliente_ha_riscritto,
     [['lucia.verdi@example.com ha riscritto', 'Spedizione. 59 richieste aspettano una risposta.', '']]), msgs.cs_cliente_ha_riscritto);
@@ -759,6 +970,19 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
   let tr = null;
   try { await MI.EVENTI.riepilogo.componi(tante.sb, ctx, evRiga('riepilogo'), candRiepilogo(ctx.finestra)); } catch (e) { tr = e; }
   t('Q8 B3: oltre 500 righe di arrivi = lettura troncata, il riepilogo si ferma (mai un numero falso)', tr instanceof MI.LetturaFallita && tr.cosa === 'arrivi del giorno');
+  // Gate 2 del 21-10 (R4): il totale dei 7 giorni delle spedizioni si conta dalle righe (contaProblemi); una lettura piena
+  // fino al limite o fallita ferma l'evento invece di dare un numero piu' basso del vero (Regola 20b)
+  const SETT = 'v_spedizioni_eccezioni select ldv, stato_tws, classe eq:classe|eccezione gte:updated_at|2026-10-12T17:00:00.000Z limit:501';
+  const sped = async (risposta) => {
+    const w9 = mondo({ risposte: (q, f) => (f === SETT ? risposta : f in LETTURE ? { data: null, count: null, error: null, ...LETTURE[f] } : undefined) });
+    const ev = evRiga('spedizione_eccezione');
+    try { await MI.EVENTI.spedizione_eccezione.componi(w9.sb, ctx, ev, await MI.EVENTI.spedizione_eccezione.candidati(w9.sb, ctx, ev)); return null; } catch (e) { return e; }
+  };
+  const sp501 = await sped({ data: Array.from({ length: 501 }, (_, i) => ({ ldv: 'L' + i, stato_tws: 'DESTINATARIO ASSENTE', classe: 'eccezione' })), error: null });
+  const spGiu = await sped({ data: null, error: { message: 'giu' } });
+  const sp500 = await sped({ data: Array.from({ length: 500 }, (_, i) => ({ ldv: 'L' + i, stato_tws: 'DESTINATARIO ASSENTE', classe: 'eccezione' })), error: null });
+  t('Q9 spedizioni: oltre 500 righe della settimana (lettura troncata) o lettura fallita = l\'evento si ferma (eccezioni della settimana); 500 righe passano',
+    [sp501, spGiu].every((e) => e instanceof MI.LetturaFallita && e.cosa === 'eccezioni della settimana') && sp500 === null, [String(sp501?.message), String(spGiu?.message), String(sp500?.message)]);
 }
 
 console.log('\n== giro di un evento col client finto (F3, RF-4, RF-6, RF-3) ==');
@@ -803,6 +1027,115 @@ console.log('\n== giro di un evento col client finto (F3, RF-4, RF-6, RF-3) ==')
     chiusure(scad.w).length === 2 && chiusure(scad.w).every((s) => s.payload.stato === 'fallito' && s.payload.tentativi === MAX_TENTATIVI && s.payload.esito.timeout === true && s.ritorna === 'id')
     && dopo.every((p) => p.azione === 'fermo' && p.motivo === 'tentativi_esauriti') && scad.r.esauriti === 2, { c: chiusure(scad.w).map((s) => s.payload), dopo: dopo.map((p) => p.motivo) });
 }
+
+// 21-10 (v3): attivita_team dalla lettura al registro, col client finto e il registro simulato (UNIQUE evento + chiave,
+// confronti di ripresa e chiusura). La prova chiesta: righe che arrivano in due giri di fila, ognuna in UNA push.
+console.log('\n== attivita del team: giri di fila col client finto (letture, registro, una riga una volta) ==');
+// una sezione che lancia (sorgente di prima, guasto piantato) e' un KO, non ferma la suite
+try {
+  const ORA_A = T('2026-10-21T12:00:00Z'), MIN = 60000;
+  const CL = (ora) => `change_log select id, ts, op, chi, codice:after->>codice, delta:after->>delta, contati:after->>contati, giac_prima:after->>giac_prima, fornitore:after->>fornitore, righe:after->>righe, gruppo:after->>gruppo in:op|["order_multi","arrival_set","count_apply"] in:chi|["Bene","Ginevra"] gte:ts|${new Date(ora - 86400000).toISOString()} id:desc limit:201`;
+  const SO = (gruppi) => `supplier_orders select gruppo, codice, qty_ordered, wip in:gruppo|${JSON.stringify(gruppi)} limit:501`;
+  const giraAtt = async (ora, righeCl, o = {}) => {
+    inviate.length = 0;
+    const w = mondo({ registro: o.registro, risposte: (q, f) => (f === CL(ora) ? (o.clRisposta ?? { data: righeCl, error: null })
+      : q.table === 'supplier_orders' && q.op === 'select' ? (o.so ? o.so(f) : { data: null, error: { message: 'lettura non prevista: ' + f } }) : undefined) });
+    const ev = evRiga('attivita_team', { baseline_at: 'baseline_at' in o ? o.baseline_at : new Date(ora - 3000 * MIN).toISOString(), ultimo_giro_at: new Date(ora - 5 * MIN).toISOString() });
+    let r = null, err = null;
+    try { r = await MI.giroEvento(w.sb, ev, ctxDi(ora), { invii: 20, scade: Infinity }, () => 0); } catch (e) { err = e; }
+    return { r, err, w, push: inviate.map((m) => [m.titolo, m.testo]), meta: inviate.map((m) => [m.tema, m.url, m.chi ?? null, m.urgente]), reg: [...w.reg.values()].map((x) => ({ ...x })) };
+  };
+  const a100 = clArr(100, 'GALIANO_TOAST_BAG_GREEN', 20, '2026-10-21T11:54:54Z'), a101 = clArr(101, 'GALIANO_TOAST_BAG_BUTTER_YELLOW', 20, '2026-10-21T11:54:57Z');
+  const a102 = clArr(102, 'LEA_BAG_COCCO_BLACK', 30, '2026-10-21T12:03:00Z');
+  const g1 = await giraAtt(ORA_A, [a101, a100]);
+  t('AG1 giro 1: due arrivi di Ginni -> UNA push "Ginni: pezzi arrivati" con tutti e due, tema attivita, radice dell\'app, a tutti gli iscritti al tema (nessun chi), non urgente; cl:100 e cl:101 inviate',
+    isDeepStrictEqual(g1.push, [['Ginni: pezzi arrivati', 'GALIANO_TOAST_BAG_GREEN +20, GALIANO_TOAST_BAG_BUTTER_YELLOW +20. In tutto 40 pezzi']])
+    && isDeepStrictEqual(g1.meta, [['attivita', APP_URL, null, false]]) && isDeepStrictEqual(g1.reg.map((x) => `${x.chiave}:${x.stato}:${x.tentativi}`).sort(), ['cl:100:inviato:1', 'cl:101:inviato:1'])
+    && g1.r?.inviati === 1 && g1.r?.candidati === 2, { push: g1.push, reg: g1.reg, err: g1.err?.message });
+  const g2 = await giraAtt(ORA_A + 5 * MIN, [a102, a101, a100], { registro: g1.reg });
+  t('AG2 giro 2 (5 minuti dopo): la lettura rivede 100 e 101 e trova la nuova 102 -> UNA push con la SOLA 102; 100 e 101 non ripartono (registro: inviate)',
+    isDeepStrictEqual(g2.push, [['Ginni: pezzi arrivati', 'LEA_BAG_COCCO_BLACK +30']]) && g2.r?.gia_gestiti === 2 && g2.r?.inviati === 1
+    && isDeepStrictEqual(g2.reg.map((x) => `${x.chiave}:${x.stato}`).sort(), ['cl:100:inviato', 'cl:101:inviato', 'cl:102:inviato']), { push: g2.push, r: g2.r, err: g2.err?.message });
+  const g3 = await giraAtt(ORA_A + 10 * MIN, [a102, a101, a100], { registro: g2.reg });
+  const prenotazioni = [g1, g2, g3].flatMap((g) => g.w.scritte.filter((s) => s.table === 'push_eventi_inviati' && s.op === 'upsert' && !Array.isArray(s.payload)).map((s) => s.payload.chiave));
+  t('AG3 giro 3 senza righe nuove: nessuna push; in tre giri ogni riga di change_log prenotata UNA volta sola (cl:100, cl:101, cl:102)', g3.push.length === 0 && g3.r?.gia_gestiti === 3
+    && isDeepStrictEqual(prenotazioni.sort(), ['cl:100', 'cl:101', 'cl:102']), prenotazioni);
+  // push-api giu' al giro 1, al giro 2 riparte con la riga nuova: una push sola con tutte e tre
+  globalThis.__esitoInvio = () => ({ ok: false, inviati: 0, falliti: 0, destinatari: null, status: 503, errore: 'push-api ha risposto 503' });
+  const f1 = await giraAtt(ORA_A, [a101, a100]);
+  globalThis.__esitoInvio = null;
+  const f2 = await giraAtt(ORA_A + 5 * MIN, [a102, a101, a100], { registro: f1.reg });
+  t('AG4 invio fallito al giro 1 (righe fallite, 1 tentativo); al giro 2 le due riprese e la nuova partono in UNA push, chiuse coi loro tentativi (2, 2, 1)',
+    f1.r?.falliti === 1 && f1.reg.every((x) => x.stato === 'fallito' && x.tentativi === 1)
+    && isDeepStrictEqual(f2.push, [['Ginni: pezzi arrivati', 'GALIANO_TOAST_BAG_GREEN +20, GALIANO_TOAST_BAG_BUTTER_YELLOW +20, LEA_BAG_COCCO_BLACK +30. In tutto 70 pezzi']])
+    && isDeepStrictEqual(f2.reg.map((x) => `${x.chiave}:${x.stato}:${x.tentativi}`).sort(), ['cl:100:inviato:2', 'cl:101:inviato:2', 'cl:102:inviato:1']), { f1: f1.reg, f2: f2.reg, push: f2.push });
+  // un giro con le tre operazioni: tre push, i codici dell'ordine da supplier_orders (una lettura sui soli gruppi)
+  const o200 = clOrd(200, 'Vincenzo (pelle)', 1, UC, '2026-10-21T11:50:00Z'), c300 = clConta(300, 'LEA_BAG_LEOPARDO_SAVANA', 5, 4, '2026-10-21T11:52:00Z');
+  const m3 = await giraAtt(ORA_A, [a101, c300, a100, o200], { so: (f) => (f === SO([UC]) ? { data: [{ gruppo: UC, codice: 'LEA_BAG_COCCO_BLACK', qty_ordered: 30, wip: false }], error: null } : undefined) });
+  t('AG5 un giro con ordine, conta e arrivi -> tre push (Ginni ordine, Benny conta, Ginni arrivi), dalla piu\' vecchia; supplier_orders letta UNA volta sui soli gruppi degli ordini',
+    isDeepStrictEqual(m3.push, [['Ginni ha registrato un ordine', 'Vincenzo (pelle): 1 riga (LEA_BAG_COCCO_BLACK x30)'], ['Benny ha fatto una conta', 'LEA_BAG_LEOPARDO_SAVANA: 5 (prima 4)'],
+      ['Ginni: pezzi arrivati', 'GALIANO_TOAST_BAG_GREEN +20, GALIANO_TOAST_BAG_BUTTER_YELLOW +20. In tutto 40 pezzi']]) && m3.w.log.filter((q) => q.table === 'supplier_orders').length === 1
+    && m3.w.log.filter((q) => firma(q) === CL(ORA_A)).length === 1, { push: m3.push, err: m3.err?.message });
+  const firme = m3.w.log.filter((q) => q.op === 'select').map(firma);
+  t('AG6 letture: change_log (soli campi del testo, azioni e persone filtrate, 24 ore, dalla piu\' recente, limite 201), il registro sulle sole chiavi, supplier_orders sui soli gruppi; nient\'altro',
+    isDeepStrictEqual(firme, [CL(ORA_A), `push_eventi_inviati select id, chiave, stato, tentativi, updated_at eq:evento|attivita_team in:chiave|${JSON.stringify(['cl:101', 'cl:100', 'cl:300', 'cl:200'])} limit:5`, SO([UC])]), firme);
+  const b1 = await giraAtt(ORA_A, [a101, a100], { baseline_at: null });
+  t('AG7 prima accensione: le righe che ci sono gia\' si segnano saltate (baseline) senza nessuna push, baseline_at scritto', b1.push.length === 0 && b1.reg.length === 2
+    && b1.reg.every((x) => x.stato === 'saltato' && x.esito.motivo === 'baseline') && b1.w.scritte.some((s) => s.table === 'push_eventi' && 'baseline_at' in s.payload), b1.reg);
+  const v1 = await giraAtt(ORA_A, [a101, clArr(99, 'VECCHIO', 5, '2026-10-21T05:30:00Z')]);
+  t('AG8 una riga di oltre 6 ore non diventa mai una push (saltata vecchia); quella giovane parte', isDeepStrictEqual(v1.push, [['Ginni: pezzi arrivati', 'GALIANO_TOAST_BAG_BUTTER_YELLOW +20']])
+    && v1.reg.find((x) => x.chiave === 'cl:99')?.esito?.motivo === 'vecchio');
+  const pieno = await giraAtt(ORA_A, Array.from({ length: 201 }, (_, i) => clArr(1000 - i, 'X', 1, '2026-10-21T11:00:00Z')));
+  const giu = await giraAtt(ORA_A, [], { clRisposta: { data: null, error: { message: 'giu' } } });
+  t('AG9 lettura piena fino al limite (righe piu\' vecchie forse non viste) o fallita: l\'evento si ferma con la causa del codice, nessuna scrittura (Regola 20)',
+    pieno.err instanceof MI.LetturaFallita && pieno.err.cosa === 'change_log attivita' && pieno.w.scritte.length === 0 && MI.LIMITE_ATTIVITA === 200
+    && giu.err instanceof MI.LetturaFallita && giu.w.scritte.length === 0 && giu.w.log.filter((q) => firma(q) === CL(ORA_A)).length === 2, [pieno.err?.message, giu.err?.message]);
+  const soGiu = await giraAtt(ORA_A, [o200], { so: () => ({ data: null, error: { message: 'giu' } }) });
+  const soPiena = await giraAtt(ORA_A, [o200], { so: () => ({ data: Array.from({ length: 501 }, () => ({ gruppo: UC, codice: 'X', qty_ordered: 1, wip: false })), error: null }) });
+  t('AG10 righe degli ordini non leggibili o oltre il limite: l\'evento si ferma PRIMA di prenotare (nessuna riga di registro presa, nessuna push)',
+    [soGiu, soPiena].every((x) => x.err instanceof MI.LetturaFallita && x.err.cosa === 'righe degli ordini' && x.w.scritte.length === 0 && x.push.length === 0) && MI.RIGHE_ORDINE_MAX === 500);
+  // run intero con l'evento acceso: la risposta e il log non portano codici, fornitori o testi
+  const logA = [];
+  inviate.length = 0;
+  const wr = mondo({ eventi: [evRiga('attivita_team', { baseline_at: new Date(ORA_A - 3000 * MIN).toISOString(), ultimo_giro_at: new Date(ORA_A - 5 * MIN).toISOString() })],
+    risposte: (q, f) => (f === CL(ORA_A) ? { data: [a101, a100, o200], error: null } : q.table === 'supplier_orders' ? { data: [{ gruppo: UC, codice: 'LEA_BAG_COCCO_BLACK', qty_ordered: 30, wip: false }], error: null } : undefined) });
+  const l0 = console.log, e0 = console.error;
+  console.log = (...x) => { logA.push(x.join(' ')); }; console.error = (...x) => { logA.push(x.join(' ')); };
+  let corpoRun;
+  try { corpoRun = await (await MI.eseguiRun(wr.sb, ctxDi(ORA_A), () => 0)).json(); } finally { console.log = l0; console.error = e0; }
+  const fuori = JSON.stringify(corpoRun) + logA.join('') + JSON.stringify(wr.scritte);
+  t('AG11 run con attivita_team acceso: due push, salute ok ("1 evento acceso, 2 push inviate"); risposta, log, registro e health_log senza codici, fornitori o testi',
+    inviate.length === 2 && corpoRun.ok === true && wr.health?.label === '1 evento acceso, 2 push inviate' && wr.health?.severity === 'ok'
+    && !/GALIANO|LEA_BAG|Vincenzo|Ginni|pezzi arrivati/.test(fuori), { corpoRun, h: wr.health });
+  // anteprima: per ogni riga il testo del suo gruppo (solo per quelle che partirebbero), partirebbe = push
+  const wa = mondo({ eventi: [evRiga('attivita_team', { baseline_at: new Date(ORA_A - 3000 * MIN).toISOString(), ultimo_giro_at: new Date(ORA_A - 5 * MIN).toISOString() })],
+    registro: [{ id: 'id-cl:100', chiave: 'cl:100', stato: 'inviato', tentativi: 1, updated_at: new Date(ORA_A - 60000).toISOString() }],
+    risposte: (q, f) => (f === CL(ORA_A) ? { data: [a102, a101, a100, c300], error: null } : q.op === 'select' && q.head ? { count: 0, error: null }
+      : q.op === 'select' && !['push_eventi', 'push_eventi_inviati', 'change_log'].includes(q.table) ? { data: [], error: null } : undefined) });
+  inviate.length = 0;
+  const ant = await (await MI.anteprima(wa.sb, ctxDi(ORA_A), false)).json();
+  const ea = ant.eventi.find((e) => e.evento === 'attivita_team');
+  const perChiave = Object.fromEntries((ea?.messaggi ?? []).map((m) => [m.chiave, m.titolo ? `${m.decisione}|${m.titolo}|${m.testo}${m.non_partirebbe ? '|non_partirebbe' : ''}` : `${m.decisione}|-`]));
+  t('AG12 anteprima di attivita_team: 2 push (Ginni arrivi con le sole 101 e 102, Benny conta); la riga gia\' inviata col testo del suo gruppo di righe ferme, segnata non_partirebbe (Gate 2, C2); nessuna scrittura ne\' invio',
+    ea?.partirebbe === 2 && ea?.candidati === 4 && perChiave['cl:100'] === 'fermo|Ginni: pezzi arrivati|GALIANO_TOAST_BAG_GREEN +20|non_partirebbe'
+    && perChiave['cl:101'] === 'nuovo|Ginni: pezzi arrivati|GALIANO_TOAST_BAG_BUTTER_YELLOW +20, LEA_BAG_COCCO_BLACK +30. In tutto 50 pezzi'
+    && perChiave['cl:102'] === perChiave['cl:101'] && perChiave['cl:300'] === 'nuovo|Benny ha fatto una conta|LEA_BAG_LEOPARDO_SAVANA: 5 (prima 4)' && wa.scritte.length === 0 && inviate.length === 0, { ea, err: ea?.errore });
+  // Gate 2 del 21-10 (C2): prima dell'accensione (baseline_at vuoto) ogni riga e' baseline; l'anteprima deve far vedere
+  // lo stesso i titoli e i testi veri dei gruppi, segnati non_partirebbe, e partirebbe 0
+  const wb = mondo({ eventi: [evRiga('attivita_team', { baseline_at: null, ultimo_giro_at: null })],
+    risposte: (q, f) => (f === CL(ORA_A) ? { data: [c300, a101, a100, o200], error: null }
+      : q.table === 'supplier_orders' && q.op === 'select' ? (f === SO([UC]) ? { data: [{ gruppo: UC, codice: 'LEA_BAG_COCCO_BLACK', qty_ordered: 30, wip: false }], error: null } : { data: null, error: { message: 'lettura non prevista: ' + f } })
+      : q.op === 'select' && q.head ? { count: 0, error: null } : q.op === 'select' && !['push_eventi', 'push_eventi_inviati', 'change_log'].includes(q.table) ? { data: [], error: null } : undefined) });
+  inviate.length = 0;
+  const antB = await (await MI.anteprima(wb.sb, ctxDi(ORA_A), false)).json();
+  const eb = antB.eventi.find((e) => e.evento === 'attivita_team');
+  const perB = Object.fromEntries((eb?.messaggi ?? []).map((m) => [m.chiave, m.titolo ? `${m.decisione}|${m.motivo}|${m.titolo}|${m.testo}|${m.non_partirebbe === true}` : `${m.decisione}|-`]));
+  t('AG13 anteprima prima dell\'accensione (baseline): partirebbe 0, ma ogni riga col titolo e il testo veri del suo gruppo, segnati non_partirebbe; nessuna scrittura ne\' invio',
+    eb?.partirebbe === 0 && eb?.candidati === 4 && eb?.baseline === true
+    && perB['cl:100'] === 'salta|baseline|Ginni: pezzi arrivati|GALIANO_TOAST_BAG_GREEN +20, GALIANO_TOAST_BAG_BUTTER_YELLOW +20. In tutto 40 pezzi|true' && perB['cl:101'] === perB['cl:100']
+    && perB['cl:200'] === 'salta|baseline|Ginni ha registrato un ordine|Vincenzo (pelle): 1 riga (LEA_BAG_COCCO_BLACK x30)|true'
+    && perB['cl:300'] === 'salta|baseline|Benny ha fatto una conta|LEA_BAG_LEOPARDO_SAVANA: 5 (prima 4)|true' && wb.scritte.length === 0 && inviate.length === 0, { eb, err: eb?.errore });
+} catch (e) { t('AG! eccezione nella sezione', false, String(e?.message ?? e)); }
 
 console.log('\n== run col client finto: salute in health_log (K1, RF-2, B6, MIG-B1, RF-5, RF-6) ==');
 const runs = [], logRun = [], scritteRun = [], inviateRun = [];
@@ -907,8 +1240,8 @@ console.log('\n== anteprima col client finto ==');
   const w = mondo({ eventi: [], risposte: (q) => (q.op === 'select' && q.head ? { count: 0, error: null } : q.op === 'select' && q.table !== 'push_eventi' && q.table !== 'push_eventi_inviati' ? { data: [], error: null } : undefined) });
   const res = await MI.anteprima(w.sb, ctxDi(ORA_A), true);
   const corpo = await res.json();
-  t('V1 anteprima: nessuna scrittura (registro, push_eventi, health_log) e nessun invio, tutti e sei gli eventi', w.scritte.length === 0 && inviate.length === 0
-    && corpo.eventi.length === 6 && corpo.eventi.every((e) => !e.errore), corpo.eventi.map((e) => e.errore ?? e.evento));
+  t('V1 anteprima: nessuna scrittura (registro, push_eventi, health_log) e nessun invio, tutti e sette gli eventi', w.scritte.length === 0 && inviate.length === 0
+    && corpo.eventi.length === 7 && corpo.eventi.every((e) => !e.errore), corpo.eventi.map((e) => e.errore ?? e.evento));
 }
 
 console.log('\n== guardie sul sorgente ==');
@@ -981,7 +1314,10 @@ const AMMESSE = {
   v_spedizioni_eccezioni: ['ldv', 'order_name', 'stato_tws', 'updated_at', 'classe', 'customer_name'],
   lead_touches: ['id', 'account_id', 'direzione', 'esito', 'chi', 'at', 'created_at'], lead_accounts: ['id', 'nome'],
   v_lead_outreach: ['id'], v_lead_inbound: ['conv_id'], v_products_todo: ['codice'], loyalty_ugc: ['id'], shipping_status: ['ldv'],
-  shopify_orders: ['gross_total', 'order_number', 'created_at_shop'], qromo_sales: ['order_id', 'prezzo'], change_log: ['id', 'row_id', 'after->>delta', 'after->>qty'],
+  shopify_orders: ['gross_total', 'order_number', 'created_at_shop'], qromo_sales: ['order_id', 'prezzo'],
+  // 21-10 (attivita_team): istante, azione, chi e i soli campi di after che finiscono nel testo; mai ctx, purchase_id, costo
+  change_log: ['id', 'row_id', 'after->>delta', 'after->>qty', 'ts', 'op', 'chi', 'after->>codice', 'after->>contati', 'after->>giac_prima', 'after->>fornitore', 'after->>righe', 'after->>gruppo'],
+  supplier_orders: ['gruppo', 'codice', 'qty_ordered', 'wip'],
 };
 const selectFuoriElenco = (s) => {
   const out = [];
@@ -1017,7 +1353,7 @@ const lettureCliente = (s) => {
 };
 const anteprimaSoloLettura = (s) => {
   const f = codice(corpoFunzione(s, 'async function anteprima('));
-  return f.length > 200 && !SCRITTURA.test(f) && !/depGiro|eseguiPiano|inviaPush|giroEvento|eseguiRun|scriviSalute|health_log/.test(f)
+  return f.length > 200 && !SCRITTURA.test(f) && !/depGiro|eseguiPiano|eseguiGruppi|inviaPush|giroEvento|eseguiRun|scriviSalute|health_log/.test(f)
     && f.includes(".from('push_eventi').select('evento, tema, attivo, soglie, baseline_at, ultimo_giro_at').limit(50)") && f.includes('const { baseline, ripartenza } = baselineDi(ev, c.ora);')
     && f.includes("motivoBaseline: ripartenza ? 'stallo' : 'baseline' });");
 };
@@ -1034,7 +1370,12 @@ const PIANIFICA_GIRO = "const piano = pianifica(cands, registro, { ora: ctx.ora,
 const giroComposto = (s) => {
   const f = codice(corpoFunzione(s, 'async function giroEvento('));
   const bl = f.indexOf(BASELINE_DI), pl = f.indexOf(PIANIFICA_GIRO), co = f.indexOf("const daComporre = piano.filter((p) => p.azione === 'nuovo' || p.azione === 'ritenta').map((p) => p.cand);");
-  const es = f.indexOf('const r = await eseguiPiano(piano, msgs, budget, depGiro(sb, ev.evento, tema, adesso));');
+  // 21-10 (v3): due rami dopo la composizione, a gruppi (eseguiGruppi, dettagli letti PRIMA di ogni prenotazione) e per
+  // candidato (eseguiPiano), con lo stesso piano e lo stesso depGiro; ultimo_giro_at dopo entrambi
+  const dp = f.indexOf('const dep = depGiro(sb, ev.evento, tema, adesso);'), dt = f.indexOf('const dettagli = daComporre.length ? await g.dettagli(sb, ctx, ev, daComporre) : {};');
+  const eg = f.indexOf('r = await eseguiGruppi(piano, g.gruppoDi, (cs) => { const m = g.messaggio(cs, dettagli); return m && { ...m, tema }; }, budget, dep);');
+  const es = Math.max(eg, f.indexOf('r = await eseguiPiano(piano, msgs, budget, dep);'));
+  if (!(dp > co && dt > dp && eg > dt && f.indexOf('r = await eseguiPiano(piano, msgs, budget, dep);') > eg && (f.match(/await eseguiGruppi\(|await eseguiPiano\(/g) ?? []).length === 2)) return false;
   const up = f.indexOf(".from('push_eventi').update(seme ? { ultimo_giro_at: fine, baseline_at: fine } : { ultimo_giro_at: fine }).eq('evento', ev.evento);");
   const assegna = (f.match(/\b(?:const|let|var)\s+(?:\{[^}]*\b(?:seme|baseline|ripartenza)\b[^}]*\}|(?:seme|baseline|ripartenza)\b)|\b(?:seme|baseline|ripartenza)\s*=[^=>]/g) ?? []).length;
   return bl > 0 && pl > bl && co > pl && es > co && up > es && assegna === 1 && f.includes('const registro = await leggiRegistro(sb, ev.evento, cands.map((c) => c.chiave));')
@@ -1100,7 +1441,7 @@ t('89c RF-1: cs_sync riletta dopo 3 s solo se la prima lettura dice ferma, e dec
   t('90 blocchi PURE senza Deno, import, client, rete, log o invio', impuri.length === 0, impuri);
   const ordine = (SRC.match(/const ORDINE = (\[[^\]]+\])/) ?? [])[1] ?? '';
   const eventi = [...(SRC.slice(SRC.indexOf('const EVENTI: Record<string, DefEvento> = {'), SRC.indexOf('const ORDINE = ')).matchAll(/^ {2}(\w+): \{$/gm))].map((m) => m[1]);
-  t('91 i sei eventi del contratto, in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'riepilogo']"
+  t('91 i sette eventi del contratto (attivita_team dal 21-10, prima del riepilogo), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'attivita_team', 'riepilogo']"
     && eventi.slice().sort().join() === Object.keys(TEMA_EVENTO).sort().join(), { ordine, eventi });
   const run92 = corpoRun(SRC);
   t('92 tetto e tempo: budget di TETTO_INVII per giro, nessun invio nuovo dopo 15 s e nessun evento cominciato dopo 30 s (RF-5, timeout del cron 60 s); finestra 24 ore, limite 50',
@@ -1121,6 +1462,7 @@ t('89c RF-1: cs_sync riletta dopo 3 s solo se la prima lettura dice ferma, e dec
 // sul nome evento senza cifre: b2b_risposta_negozio sarebbe stato rifiutato e la migrazione intera annullata all'apply.
 console.log('\n== contratto con la migrazione 0166, push-api e il web ==');
 const MIGR = read('supabase/migrations/0166_push_eventi.sql');
+const MIGR_0168 = read('supabase/migrations/0168_push_attivita.sql');
 const MIGR_0138 = read('supabase/migrations/0138_loyalty_orders_cron.sql');
 const RLS = read('tests/push_eventi_rls.sql');
 const WEB_PUSH = read('web/src/lib/push.ts');
@@ -1160,19 +1502,24 @@ const cronCoerente = (m) => {
 };
 const temiCoerenti = (m) => {
   const temi = temiMigr(m);
+  // 21-10: il tema attivita nasce nella 0168; i temi delle due migrazioni insieme coprono quelli degli eventi
+  const tutti = { ...temi, ...temiMigr(MIGR_0168) };
   const chiCheck = listaSql((m.match(/check \(predefinito_per <@ array\[([^\]]*)\]::text\[\]\)/) ?? [])[1]);
   const people = listaSql((WEB_PEOPLE.match(/export const PEOPLE = \[([^\]]*)\]/) ?? [])[1]);
   const temaApi = new RegExp((PUSH_API.match(/const TEMA_RE = \/(.+)\/;/) ?? [])[1] ?? '^$');
   return isDeepStrictEqual(temi, TEMI_ATTESI) && isDeepStrictEqual(chiCheck, CHI_PERSONE) && isDeepStrictEqual(people, CHI_PERSONE)
-    && Object.values(TEMA_EVENTO).every((k) => k in temi) && Object.keys(temi).every((k) => temaApi.test(k) && temaDi(k, 'x') === k)
+    && Object.values(TEMA_EVENTO).every((k) => k in tutti) && Object.keys(tutti).every((k) => temaApi.test(k) && temaDi(k, 'x') === k)
     && /update push_temi set predefinito_per = array\['Ale'\]\n where key in \('conti', 'vendite'\)/.test(m);
 };
 {
   const fuori = eventiFuoriCheck(MIGR);
   t('96 ogni evento della edge passa il CHECK push_eventi_evento_ck della 0166 (b2b_risposta_negozio ha una cifra)', fuori.length === 0, fuori);
-  const em = eventiMigr(MIGR);
+  // 21-10: il settimo (attivita_team) nasce nella 0168; le due migrazioni insieme sono il contratto con la edge
+  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168) };
   const rls = Object.fromEntries([...tra(RLS, 'join (values', ') x(ev, tema)').matchAll(/\('([^']+)', '([^']+)'\)/g)].map((x) => [x[1], x[2]]));
-  t('97 i sei eventi della 0166 (e della prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema', isDeepStrictEqual(em, TEMA_EVENTO) && isDeepStrictEqual(rls, TEMA_EVENTO), { em, rls });
+  t('97 i sei eventi della 0166 piu\' attivita_team della 0168 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
+    Object.keys(eventiMigr(MIGR)).length === 6 && isDeepStrictEqual(eventiMigr(MIGR_0168), { attivita_team: 'attivita' }) && isDeepStrictEqual(em, TEMA_EVENTO) && isDeepStrictEqual(rls, TEMA_EVENTO)
+    && RLS.includes("if n <> 7 then raise exception 'KO D:"), { em, rls });
   t('98 temi nuovi e predefinito_per come il contratto; le tre chiavi = CHECK della 0166 = PEOPLE del web = CHI_PERSONE; chiavi valide per push-api; conti e vendite ad Ale',
     temiCoerenti(MIGR), temiMigr(MIGR));
   const stati = listaSql((MIGR.match(/push_eventi_inviati_stato_ck check \(stato in \(([^)]*)\)\)/) ?? [])[1]);
@@ -1233,6 +1580,108 @@ const temiCoerenti = (m) => {
     pianta(MIGR, 'revoke all on function public.push_eventi_salute() from public, anon, authenticated;', 'revoke all on function public.push_eventi_salute() from public;'),
     pianta(MIGR, "select cron.schedule('push-eventi-salute', '3,33 * * * *',", "select cron.schedule('push-eventi-salute', '1,31 * * * *',"),
   ].every((m) => !saluteSql(m)));
+
+  // 21-10: la 0168 (tema attivita, evento attivita_team, il tema sul telefono di Ale), contratto con la edge e push-api
+  const temaAtt = (m) => (m.match(/insert into push_temi \(key, etichetta, descrizione, ordine, predefinito_per\) values\n {4}\('attivita', '((?:[^']|'')*)', '((?:[^']|'')*)', (\d+), array\[([^\]]*)\]\)\n {2}on conflict \(key\) do nothing;/) ?? []).slice(1);
+  const contrattoAtt = (m) => {
+    const [etichetta, descrizione, ordine, persone] = temaAtt(m);
+    const temaApi = new RegExp((PUSH_API.match(/const TEMA_RE = \/(.+)\/;/) ?? [])[1] ?? '^$');
+    return etichetta === 'Attivit' + String.fromCodePoint(0xe0) + ' del team' && descrizione === 'Quando Benny o Ginni registrano ordini, arrivi o conte' && ordine === '80'
+      && isDeepStrictEqual(listaSql(persone), ['Ale']) && temaApi.test('attivita') && TEMA_EVENTO.attivita_team === 'attivita'
+      && isDeepStrictEqual(eventiMigr(m), { attivita_team: 'attivita' }) && Object.keys(temiMigr(m)).join() === 'attivita'
+      && !/\\u00e0|\\xe0|&agrave;/i.test(m) && !/\b(insert into|update|delete from) app_flags\b/i.test(m) && !/create table|cron\.schedule|alter table/i.test(m)
+      && m.startsWith('-- 0168_push_attivita.sql') && /\nbegin;\n/.test(m) && m.trimEnd().endsWith('commit;');
+  };
+  t('M1 0168: tema attivita "Attività del team" (a accentata vera nel file, non un escape), descrizione e ordine 80, predefinito per la sola Ale; evento attivita_team spento sul tema attivita; nessun flag, tabella o cron toccati',
+    contrattoAtt(MIGR_0168), temaAtt(MIGR_0168));
+  // Gate 2 del 21-10 (R3): il passo 3 si confronta INTERO, non a pezzi (un `or s.chi = 'Bene'` aggiunto o il prima preso
+  // dal dopo lasciavano tutti i pezzi al loro posto), e cosi' la riga del passo 1 che decide se il tema e' nato qui
+  const PASSO3 = [
+    "  if current_setting('amimi.push_attivita_tema_nato_qui', true) = 'true' then",
+    '    with prima as (',
+    '      select s.id, s.temi from push_subscriptions s',
+    "       where exists (select 1 from push_temi t where t.key = 'attivita' and s.chi = any(t.predefinito_per))",
+    "         and not ('attivita' = any(s.temi))",
+    '       for update),',
+    '    agg as (',
+    '      update push_subscriptions s',
+    "         set temi = s.temi || array['attivita'],",
+    '             updated_at = now()',
+    '        from prima p',
+    '       where s.id = p.id',
+    '      returning s.id, p.temi as temi_prima, s.temi as temi_dopo),',
+    '    ins as (',
+    '      insert into change_log (tbl, row_id, op, before, after, chi, source)',
+    "      select 'push_subscriptions', id::text, 'temi_aggiunti', jsonb_build_object('temi', temi_prima),",
+    "             jsonb_build_object('temi', temi_dopo, 'migr', '0168_push_attivita'), 'claude-code', 'push-eventi'",
+    '        from agg',
+    '      returning 1)',
+    '    select (select count(*) from push_subscriptions s',
+    "             where exists (select 1 from push_temi t where t.key = 'attivita' and t.predefinito_per @> array[s.chi])",
+    "               and not (s.temi @> array['attivita'])),",
+    '           (select count(*) from agg), (select count(*) from ins)',
+    '      into v_attesi, v_aggiornati, v_log;',
+    '  end if;',
+    "  perform set_config('amimi.push_attivita_telefoni_attesi', v_attesi::text, true);",
+    "  perform set_config('amimi.push_attivita_telefoni_aggiornati', v_aggiornati::text, true);",
+    "  perform set_config('amimi.push_attivita_righe_log', v_log::text, true);",
+    'end $$;',
+  ].join('\n');
+  const telefoni = (m) => {
+    const p3 = tra(m, '-- 3)', '-- 4)');
+    const corpo = p3.slice(p3.indexOf('\nbegin\n') + 7, p3.lastIndexOf('end $$;') + 7);
+    return corpo === PASSO3 && (p3.match(/\bupdate \w+/gi) ?? []).join() === 'update push_subscriptions';
+  };
+  t('M2 0168: il tema si aggiunge ai telefoni del profilo (Ale) SOLO se e\' nato qui, in fondo e senza doppioni, con una riga di change_log per telefono (prima e dopo dei soli temi); passo 3 confrontato intero (Gate 2, R3)',
+    telefoni(MIGR_0168), tra(MIGR_0168, '-- 3)', '-- 4)').slice(-900));
+  const nascita = (m) => {
+    const p1 = tra(m, '-- 1)', '-- 2)'), p2 = tra(m, '-- 2)', '-- 3)');
+    return p1.includes("\n  perform set_config('amimi.push_attivita_tema_nato_qui', found::text, true);\nend $$;")
+      && p2.includes("\n  perform set_config('amimi.push_attivita_evento_nato_qui', found::text, true);\nend $$;")
+      && p1.includes('insert into push_temi (') && !p1.includes('push_eventi') && p2.includes('insert into push_eventi (') && !p2.includes('push_temi')
+      && m.indexOf('insert into push_temi (') < m.indexOf('insert into push_eventi (');
+  };
+  t('M4 0168 (Gate 2, R3): "nato qui" viene da found subito dopo ogni insert; il tema nasce PRIMA dell\'evento che lo cita (chiave esterna)', nascita(MIGR_0168));
+  const prova0168 = (m) => {
+    const p4 = tra(m, '-- 4)', '\ncommit;');
+    return ["raise exception '0168: manca il tema attivita';", "raise exception '0168: manca l''evento attivita_team sul tema attivita';",
+      "and attivo = false and soglie = '{}'::jsonb", "raise exception '0168: un telefono del profilo non ha ricevuto il tema attivita';",
+      "raise exception '0168: un telefono iscritto ha un tema doppio';", "raise exception '0168: push_enabled o push_eventi_enabled cambiati dalla migrazione';",
+      "and etichetta = 'Attivit" + String.fromCodePoint(0xe0) + " del team'",
+      // Gate 2 del 21-10 (R2): i tre conteggi del passo 3 devono coincidere, nessun telefono fuori dal profilo, dopo = prima + attivita
+      "or v_attesi < 0 or v_aggiornati < 0 or v_log < 0 then", "if v_tema_nato and (v_aggiornati <> v_attesi or v_log <> v_aggiornati) then",
+      "raise exception '0168: un telefono fuori dal profilo ha il tema attivita';",
+      "and (after->'temi') is distinct from ((before->'temi') || '[\"attivita\"]'::jsonb)) then"].every((x) => p4.includes(x))
+      && !/v_log\s*<\s*v_aggiornati/.test(p4);
+  };
+  t('M3 0168: prova finale nella stessa transazione (tema, evento spento, telefoni dentro e fuori dal profilo, conteggi che coincidono, change_log, doppioni, interruttori invariati); 5 blocchi DO e nessun `return` (MIG-C2)',
+    prova0168(MIGR_0168) && corpiDo(MIGR_0168).length === 5 && returnNeiDo(MIGR_0168).length === 0, returnNeiDo(MIGR_0168));
+  const scambiati = (() => {
+    const b1 = '-- 1)' + tra(MIGR_0168, '-- 1)', '-- 2)'), b2 = '-- 2)' + tra(MIGR_0168, '-- 2)', '-- 3)');
+    return MIGR_0168.replace(b1 + b2, b2 + b1);
+  })();
+  const passi = (m) => contrattoAtt(m) && telefoni(m) && nascita(m) && prova0168(m) && returnNeiDo(m).length === 0;
+  t('AM1 0168 col tema per Bene, l\'evento acceso, la a senza accento, un flag toccato, un return, il tema aggiunto anche a un re-run, il prima preso dal dopo, un telefono di Bene nel passo 3, l\'evento prima del tema o una prova finale indebolita -> visto', [
+    pianta(MIGR_0168, "80, array['Ale'])", "80, array['Ale', 'Bene'])"), pianta(MIGR_0168, "('attivita_team', 'attivita', false,", "('attivita_team', 'attivita', true,"),
+    pianta(MIGR_0168, "('attivita', 'Attivit" + String.fromCodePoint(0xe0) + " del team',", "('attivita', 'Attivita'' del team',"),
+    pianta(MIGR_0168, '\ncommit;', "\nupdate app_flags set value = 'true' where key = 'push_eventi_enabled';\ncommit;"),
+  ].every((m) => !contrattoAtt(m)) && returnNeiDo(pianta(MIGR_0168, "  if current_setting('amimi.push_attivita_tema_nato_qui', true) = 'true' then\n    with prima", "  if v_log > 0 then return; end if;\n  if current_setting('amimi.push_attivita_tema_nato_qui', true) = 'true' then\n    with prima")).length === 1
+    && [
+      pianta(MIGR_0168, "  if current_setting('amimi.push_attivita_tema_nato_qui', true) = 'true' then\n    with prima", '  if true then\n    with prima'),
+      // MIG1: il prima della riga di change_log preso dal dopo
+      pianta(MIGR_0168, "'temi_aggiunti', jsonb_build_object('temi', temi_prima),", "'temi_aggiunti', jsonb_build_object('temi', temi_dopo),"),
+      // MIG2: anche il telefono di Bene nel passo 3
+      pianta(MIGR_0168, "         and not ('attivita' = any(s.temi))\n       for update),", "            or s.chi = 'Bene'\n         and not ('attivita' = any(s.temi))\n       for update),"),
+      // MIG3: "nato qui" sempre vero, un re-run rimetterebbe il tema tolto
+      pianta(MIGR_0168, "perform set_config('amimi.push_attivita_tema_nato_qui', found::text, true);", "perform set_config('amimi.push_attivita_tema_nato_qui', 'true', true);"),
+      // l'evento prima del tema: all'apply la chiave esterna (23503), nella prova annullata o qui
+      scambiati,
+      // R2: la prova finale torna al confronto che non poteva fallire, o perde il controllo dei telefoni fuori profilo
+      pianta(MIGR_0168, 'if v_tema_nato and (v_aggiornati <> v_attesi or v_log <> v_aggiornati) then', 'if v_tema_nato and v_log < v_aggiornati then'),
+      pianta(MIGR_0168, "raise exception '0168: un telefono fuori dal profilo ha il tema attivita';", 'null;'),
+      // il conteggio dei telefoni attesi preso dagli aggiornati
+      pianta(MIGR_0168, "    select (select count(*) from push_subscriptions s\n             where exists (select 1 from push_temi t where t.key = 'attivita' and t.predefinito_per @> array[s.chi])\n               and not (s.temi @> array['attivita'])),", '    select (select count(*) from agg),'),
+    ].every((m) => m !== MIGR_0168 && !passi(m)) && passi(MIGR_0168) && scambiati !== MIGR_0168);
 }
 
 console.log('\n== autocontrollo dei rilevatori ==');
@@ -1261,9 +1710,11 @@ console.log('\n== autocontrollo dei rilevatori ==');
     pianta("select('severity, created_at')", "select('severity, created_at, label')"), pianta("select('id, account_id, direzione, esito, chi, at, created_at')", "select('id, account_id, direzione, esito, chi, at, created_at, subject')"),
     pianta("select('id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email')", "select('*')"), pianta(".from('shopify_orders').select('gross_total')", ".from('shopify_orders').select('gross_total, raw')"),
     pianta("select('id, nome')", "select('id, nome, email_generica')"), pianta("select('row_id, delta:after->>delta, qty:after->>qty')", "select('row_id, d:after')")].every((s) => selectFuoriElenco(s).length >= 1));
-  t('A12 anteprima che scrive, invia o scrive la salute -> visto', [pianta("const partirebbe = piano.filter(", "await sb.from('push_eventi_inviati').upsert({ evento: nome });\n      const partirebbe = piano.filter("),
-    pianta("const partirebbe = piano.filter(", "await eseguiPiano(piano, msgs, { invii: 1, scade: 0 }, depGiro(sb, nome, tema, Date.now));\n      const partirebbe = piano.filter("),
-    pianta("const partirebbe = piano.filter(", "await scriviSalute(sb, c.ora, saluteGiro({}, {}, c.ora, 0, 0));\n      const partirebbe = piano.filter(")].every((s) => !anteprimaSoloLettura(s)));
+  const PART = 'const partirebbe = new Set(piano.filter(';
+  t('A12 anteprima che scrive, invia (anche a gruppi, 21-10) o scrive la salute -> visto', [pianta(PART, "await sb.from('push_eventi_inviati').upsert({ evento: nome });\n      " + PART),
+    pianta(PART, "await eseguiPiano(piano, msgs, { invii: 1, scade: 0 }, depGiro(sb, nome, tema, Date.now));\n      " + PART),
+    pianta(PART, "await eseguiGruppi(piano, (x) => x.chiave, () => null, { invii: 1, scade: 0 }, depGiro(sb, nome, tema, Date.now));\n      " + PART),
+    pianta(PART, "await scriviSalute(sb, c.ora, saluteGiro({}, {}, c.ora, 0, 0));\n      " + PART)].every((s) => !anteprimaSoloLettura(s)));
   t('A13 prenotazione senza ignoreDuplicates, ripresa senza confronto, esito senza tentativi -> visto', [pianta("stato: 'prenotato', tentativi: 1, updated_at: ora() }, { onConflict: 'evento,chiave', ignoreDuplicates: true }).select('id');", "stato: 'prenotato', tentativi: 1, updated_at: ora() }, { onConflict: 'evento,chiave' }).select('id');"),
     pianta(".eq('stato', r.stato).eq('tentativi', r.tentativi)", ''), pianta(".eq('id', id).eq('tentativi', tentativi).select('id');", ".eq('id', id).select('id');"),
     pianta('      return !error && (data ?? []).length > 0;\n    },\n    adesso,', '      return !error;\n    },\n    adesso,'),
@@ -1305,7 +1756,7 @@ console.log('\n== autocontrollo dei rilevatori ==');
   // 19-10: N13 vede nome ed email letti dove non servono (anche dove l'elenco F5 della tabella li ammette) o usati fuori da nomeCliente
   t('AN1 nome o email della cliente in un conteggio, in un\'altra tabella, o una delle due letture cambiata -> vista', [
     pianta(".from('cs_conversations').select('id', { count: 'exact', head: true }).eq('urgente', true)", ".from('cs_conversations').select('id, customer_name', { count: 'exact', head: true }).eq('urgente', true)"),
-    pianta(".from('v_spedizioni_eccezioni').select('ldv', { count: 'exact', head: true })", ".from('v_spedizioni_eccezioni').select('ldv, customer_name', { count: 'exact', head: true })"),
+    pianta(".from('v_spedizioni_eccezioni').select('ldv, stato_tws, classe')", ".from('v_spedizioni_eccezioni').select('ldv, stato_tws, classe, customer_name')"),
     pianta("select('id, nome')", "select('id, nome, customer_name')"),
     pianta("stato_by, customer_name, customer_email')", "stato_by, customer_name')"),
   ].every((s) => lettureCliente(s).length >= 1));

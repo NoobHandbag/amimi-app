@@ -1,3 +1,7 @@
+// push-api v3 (2026-10-21, OK di Dan in chat): niente header Topic verso Apple (topicPer: APNs rispondeva 400
+// BadWebPushTopic a ogni invio visto e l'iPhone di Benny non riceveva niente dal 20-10) e un 400 BadWebPushTopic e' un
+// errore nostro ('config': la riga resta e fail_count non cresce), non un transitorio. Nessun Topic nemmeno per il tema
+// attivita (TEMI_SENZA_TOPIC, Gate 2 del 21-10): ogni push e' un fatto a se', non uno stato da sostituire. Il resto come la v2.
 // push-api v2 (2026-10-18, push-eventi): additiva. `invia` accetta `chi` facoltativo (Ale, Bene o Ginevra) e allora manda
 // solo ai telefoni di quella persona (il riepilogo serale e' uno a testa); senza `chi` tutto come la v1. `config`
 // restituisce anche `predefinito_per` di ogni tema (migr 0166: le persone per cui il tema parte spuntato all'iscrizione),
@@ -288,8 +292,12 @@ function costruisciPayload(p: { titolo?: unknown; testo?: unknown; url?: unknown
 // Cosa fare dopo una consegna, dal codice HTTP del servizio push (brief 4.2):
 //   2xx ok | 404/410 iscrizione morta: si cancella | 400/403 con VapidPkHashMismatch (Apple) o "do not correspond" (FCM):
 //   iscrizione nata con un'altra chiave VAPID, non tornera' valida: si cancella | altri 401/403: errore NOSTRO di
-//   configurazione, la riga resta | 413 payload | 429 il servizio chiede di rallentare: si ferma il giro | il resto
-//   (5xx, 400 generico, rete, timeout) e' transitorio: fail_count + 1.
+//   configurazione, la riga resta | 400 con BadWebPushTopic (Apple): errore NOSTRO (l'header Topic), la riga resta | 413
+//   payload | 429 il servizio chiede di rallentare: si ferma il giro | il resto (5xx, 400 generico, rete, timeout) e'
+//   transitorio: fail_count + 1.
+// 21-10: l'iPhone di Benny (web.push.apple.com) non riceveva niente dal 20-10, 7 tentativi tutti 400 BadWebPushTopic.
+// Contati come transitori facevano crescere fail_count come se il telefono fosse guasto, e push-eventi ritentava: il
+// guasto era nostro (topicPer, sotto), quindi 'config'.
 type Esito = 'ok' | 'rimuovi' | 'config' | 'payload' | 'limite' | 'transitorio';
 function esitoInvio(status: unknown, corpo: unknown): Esito {
   const s = typeof status === 'number' && Number.isFinite(status) ? status : 0;
@@ -299,6 +307,7 @@ function esitoInvio(status: unknown, corpo: unknown): Esito {
   if (s >= 200 && s < 300) return 'ok';
   if (s === 404 || s === 410) return 'rimuovi';
   if ((s === 400 || s === 403) && (testo.includes('VapidPkHashMismatch') || /do not correspond/i.test(testo))) return 'rimuovi';
+  if (s === 400 && testo.includes('BadWebPushTopic')) return 'config';
   if (s === 401 || s === 403) return 'config';
   if (s === 413) return 'payload';
   if (s === 429) return 'limite';
@@ -307,7 +316,7 @@ function esitoInvio(status: unknown, corpo: unknown): Esito {
 const MESSAGGI_ESITO: Record<Esito, string> = {
   ok: 'Prova inviata: la notifica arriva di solito in pochi secondi.',
   rimuovi: 'Il servizio push non riconosce piu\' questo telefono e l\'iscrizione e\' stata tolta: riattiva le notifiche.',
-  config: 'Il servizio push rifiuta le chiavi del server: la prova non e\' partita, va controllata la configurazione.',
+  config: 'Il servizio push rifiuta la richiesta del server (chiavi o intestazioni): la prova non e\' partita, va controllata la configurazione.',
   payload: 'Il servizio push ha rifiutato il messaggio perche\' troppo grande.',
   limite: 'Il servizio push chiede di rallentare: riprova fra qualche minuto.',
   transitorio: 'Il servizio push non ha risposto come doveva: riprova fra poco.',
@@ -351,9 +360,28 @@ function riassuntoErrore(nome: unknown, status: unknown, corpo: unknown): string
 // Header Topic (RFC 8030 5.4): una notifica non ancora consegnata viene SOSTITUITA dalla successiva con lo stesso Topic
 // (telefono spento: al risveglio arriva l'ultimo avviso di quel tema, non la fila). Solo caratteri base64url e al massimo
 // 32, altrimenti web-push lancia: il tema si riduce invece di far fallire l'invio.
+// 21-10 (Gate 2, OK di Dan del 21-10 sull'evento): i temi in TEMI_SENZA_TOPIC sono un flusso di fatti separati, non uno
+// stato che si aggiorna. Per `attivita` (ordini, arrivi e conte di Benny e Ginni) la sostituzione perdeva notizie: col
+// telefono di Ale in riposo (FCM trattiene le push a urgenza normale) un ordine e il suo arrivo di pochi secondi dopo
+// diventavano la sola push dell'arrivo, e il registro diceva `inviato` per tutte e due. Senza Topic arrivano tutte (circa
+// una al giorno nei 30 giorni misurati, nessuna valanga al risveglio).
+const TEMI_SENZA_TOPIC = ['attivita'];
 function topicDi(tema: unknown): string | undefined {
   const t = String(tema ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32);
-  return t || undefined;
+  return t && !TEMI_SENZA_TOPIC.includes(t) ? t : undefined;
+}
+// 21-10: il servizio push di Apple ha risposto 400 {"reason":"BadWebPushTopic"} a tutti i 7 invii visti col Topic (temi
+// 'riepilogo' e 'prova'), mentre FCM accetta lo stesso header: l'iPhone di Benny non riceveva niente dal 20-10. La causa
+// esatta non e' provata: o Apple rifiuta ogni Topic, o rifiuta quelli la cui lunghezza non e' una base64url decodificabile
+// (9 e 5 caratteri lasciano resto 1 su 4; anche 'conti' ne ha 5). La correzione vale in tutti e due i casi: verso Apple
+// (web.push.apple.com e i sottodomini di push.apple.com, gli stessi host di endpointAmmesso) il Topic non si manda; FCM,
+// Mozilla e WNS lo tengono. Costo accettato: a iPhone spento le notifiche dello stesso tema arrivano tutte invece della
+// sola ultima. Endpoint illeggibile = nessun Topic (endpointAmmesso lo ferma comunque prima dell'invio).
+function topicPer(endpoint: unknown, topic: string | undefined): string | undefined {
+  let host = '';
+  try { host = new URL(String(endpoint ?? '')).hostname.toLowerCase(); } catch { return undefined; }
+  if (!host || host === 'web.push.apple.com' || host.endsWith('.push.apple.com')) return undefined;
+  return topic;
 }
 // ==== PURE:push-topic END ====
 
@@ -454,11 +482,12 @@ async function temiAttivi(sb: Sb, temi: string[]): Promise<string[]> {
 
 // UNICO punto che chiama la libreria; il payload arriva gia' costruito da costruisciPayload. Un errore senza codice HTTP
 // (rete, timeout, libreria) torna con status null e finisce fra i transitori; nome e testo servono solo al log.
+// Il Topic passa da topicPer sull'endpoint di questo telefono (21-10: mai verso Apple), per invia e per prova.
 async function spedisci(r: Riga, payload: string, o: { ttl: number; urgency: string; topic: string | undefined }, v: Vapid): Promise<Spedito> {
   try {
     const res = await webpush.sendNotification({ endpoint: r.endpoint, keys: { p256dh: r.p256dh, auth: r.auth } }, payload, {
       vapidDetails: { subject: v.subject, publicKey: v.publicKey, privateKey: v.privateKey },
-      TTL: o.ttl, urgency: o.urgency, topic: o.topic, contentEncoding: 'aes128gcm', timeout: TIMEOUT_INVIO_MS,
+      TTL: o.ttl, urgency: o.urgency, topic: topicPer(r.endpoint, o.topic), contentEncoding: 'aes128gcm', timeout: TIMEOUT_INVIO_MS,
     });
     return { status: res.statusCode, corpo: '', nome: '' };
   } catch (e) {
