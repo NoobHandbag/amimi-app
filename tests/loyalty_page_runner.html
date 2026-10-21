@@ -388,7 +388,9 @@
   });
   await test('ugc: a flag acceso sezione con i punti del server, regole e Mimì che chiede la recensione', async()=>{
     const c=await open('ugc_on'); assert(c.vis('#ugcSec'),'sezione visibile'); has(c.txt('#ugcIntro'),'+20 punti Mimì'); has(c.txt('#ugcIntro'),'+30');
-    has(c.txt('#btnRecensione'),'Scrivi una recensione'); has(c.txt('#btnLook'),'Mandaci il tuo look'); has(c.txt('#regole'),'Recensisci una borsa'); has(c.txt('#regole'),'+30 se approvato');
+    has(c.txt('#btnRecensione'),'Scrivi una recensione'); has(c.txt('#btnRecensione'),'+20 punti'); has(c.txt('#btnLook'),'Mostraci il look con la tua Amimì'); has(c.txt('#ugcIntro'),'look con la tua Amimì');
+    assert(!c.$('#btnRecensione').classList.contains('done') && c.$('#btnRecensione').getAttribute('aria-disabled')==='false','recensione aperta a chi ha comprato online');
+    has(c.txt('#regole'),'Recensisci una borsa comprata su amimi.it'); has(c.txt('#regole'),'Mostraci il look con la tua Amimì'); has(c.txt('#regole'),'+30 se approvato');
     c.$('#mimi').click(); await until(()=>c.txt('#pts')==='65', 3000, 'coccola dal tocco');
     const viste=[]; for(let i=0;i<5;i++){ c.$('#mimi').click(); viste.push(c.txt('#mood')); }
     assert(viste.some(t=>t==='Mi racconti una delle tue borse?'),'Mimì chiede la recensione: '+viste.join(' | '));
@@ -412,7 +414,7 @@
   });
   await test('ugc: look con una foto grande: rimpicciolita a JPEG 1600 px, caricata sul link firmato, l\'invio porta il percorso del server', async()=>{
     const c=await open('ugc_on'); await apriModulo(c,'look');
-    has(c.txt('#ugcTitle'),'Il tuo look'); assert(c.$('#ugcStelleBox').classList.contains('hidden'),'niente stelle per il look');
+    has(c.txt('#ugcTitle'),'Il look con la tua Amimì'); has(c.txt('#ugcFotoL'),'Foto con la tua Amimì'); assert(c.$('#ugcStelleBox').classList.contains('hidden'),'niente stelle per il look');
     const og=c.$$('#ugcBorsa optgroup').map(g=>g.label); assert(og[0]==='Le tue borse' && og[1]==='Altre borse Amimì','borse mie e catalogo: '+og.join(','));
     assert(c.$$('#ugcBorsa option').filter(o=>o.value==='COD_0').length===1,'nessun doppione fra le mie e il catalogo');
     c.$('#ugcConsenso').click(); c.$('#ugcInvia').click(); await sleep(50); has(c.txt('#ugcErr'),'almeno una foto');
@@ -456,11 +458,13 @@
     const c=await open('ugc_mine'); const li=c.$$('#ugcMine li'); assert(li.length===3,'tre invii');
     has(li[0].textContent,'Non approvato: '); has(li[0].textContent,'non si vede la borsa'); assert(!/punti/.test(li[0].textContent),'nessun punto accanto a un rifiuto'); has(li[1].textContent,'+20 punti'); has(li[1].textContent,'approvata'); has(li[2].textContent,'Inviata il'); has(li[2].textContent,'In revisione');
     assert(!c.win.__xss && !c.$('#xt') && c.$$('#ugcMine img, #ugcMine b').length===0,'nessun elemento nato dai dati');
+    assert(!c.$('#btnRecensione').classList.contains('done'),'con borse comprate online il bottone non e\' spento anche se sono tutte recensite');
     c.$('#btnRecensione').click(); await sleep(80); has(c.toast(),'già recensito tutte'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
     await apriModulo(c,'look'); assert(c.$$('#ugcBorsa option').some(o=>o.value==='NINA_BAG_PONY_ZEBRA'),'il look rifiutato si puo\' rimandare');
   });
   await test('ugc: borse viste dal ripiego Shopify ma non ancora accreditate: la pagina non propone una recensione che il server rifiuterebbe', async()=>{
     const c=await open('ugc_ripiego'); assert(c.$$('#ward .witem').length===2,'le borse si vedono nel guardaroba');
+    assert(c.$('#btnRecensione').classList.contains('done') && c.$('#btnRecensione').getAttribute('aria-disabled')==='true','recensione spenta a riposo');
     c.$('#btnRecensione').click(); await sleep(80); has(c.toast(),'borse comprate su amimi.it'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
     c.$('#mimi').click(); await until(()=>c.txt('#pts')==='65', 3000, 'coccola'); const viste=[]; for(let i=0;i<5;i++){ c.$('#mimi').click(); viste.push(c.txt('#mood')); }
     assert(viste.every(t=>!/Mi racconti/.test(t)),'Mimì non chiede una recensione impossibile: '+viste.join(' | '));
@@ -510,7 +514,11 @@
     await until(()=>c.txt('#pts')==='60', 2000, 'saldo a 60'); assert(c.vis('#btnCoccola') && c.vis('#walk'),'il resto della pagina e\' disegnato');
   });
   await test('ugc: senza borse comprate online la recensione spiega perché, il look resta aperto col catalogo', async()=>{
-    const c=await open('ugc_vuoto'); c.$('#btnRecensione').click(); await sleep(80); has(c.toast(),'borse comprate su amimi.it'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
+    const c=await open('ugc_vuoto'); const br=c.$('#btnRecensione');
+    assert(br.classList.contains('done') && br.getAttribute('aria-disabled')==='true','a riposo il bottone e\' spento'); has(c.txt('#btnRecensione'),'Solo per le borse comprate su amimi.it'); assert(!/\+20/.test(c.txt('#btnRecensione')),'nessun punto promesso sul bottone spento');
+    has(c.txt('#ugcIntro'),'Le recensioni sono per le borse comprate su amimi.it'); has(c.txt('#ugcIntro'),'boutique o a un evento'); has(c.txt('#ugcIntro'),'Mostraci il look: +30');
+    assert(!c.$('#btnLook').classList.contains('done') && c.$('#btnLook').getAttribute('aria-disabled')!=='true','il look resta aperto');
+    br.click(); await sleep(80); has(c.toast(),'borse comprate su amimi.it'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
     await apriModulo(c,'look'); assert(c.$$('#ugcBorsa optgroup').length===1 && c.$('#ugcBorsa optgroup').label==='Altre borse Amimì','solo il catalogo');
   });
   await test('ugc: Esc chiude e il fuoco torna al bottone; apertura e invio tracciati', async()=>{

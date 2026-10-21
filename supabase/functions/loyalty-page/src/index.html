@@ -664,7 +664,7 @@
     const rw=reward0(), pr=S._profile;
     const rows=[['Compri su amimi.it','1 punto per ogni euro'],['Coccoli Mimì','+5 al giorno'],['Giochi al memory','+5 al giorno']];
     if(pr && pr.checkin_enabled) rows.push(['Vieni a un evento Amimì','+20 con il QR']);
-    const ug=S._ugc; if(ug){ rows.push(['Recensisci una borsa','+'+puntiUgc('recensione')+' se approvata']); rows.push(['Mandaci il tuo look','+'+puntiUgc('look')+' se approvato']); }
+    const ug=S._ugc; if(ug){ rows.push(['Recensisci una borsa comprata su amimi.it','+'+puntiUgc('recensione')+' se approvata']); rows.push(['Mostraci il look con la tua Amimì','+'+puntiUgc('look')+' se approvato']); }
     el('regole').innerHTML=rows.map(r=>'<li><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></li>').join('');
     el('regoleNota').innerHTML = rw ? 'Ogni <b>'+esc(rw.cost_points)+' punti Mimì</b> sblocchi '+(percento(rw) ? 'uno sconto del <b>'+percento(rw)+'%</b>' : esc(rw.label))+' su un ordine. Quando lo riscatti i punti si scalano. Il codice vale una volta e non si somma ad altri sconti.' : '';
   }
@@ -909,10 +909,13 @@
     const sec=el('ugcSec'), u=S._ugc;
     if(!u){ sec.classList.add('hidden'); return; }
     sec.classList.remove('hidden');
-    const pr=puntiUgc('recensione'), pl=puntiUgc('look');
-    el('ugcIntro').textContent='Una recensione vale +'+pr+' punti Mimì, una foto del tuo look +'+pl+'. I punti arrivano dopo la nostra approvazione.';
-    el('btnRecensione').innerHTML='<span class="ico stella"></span>Scrivi una recensione<small>+'+pr+' punti</small>';
-    el('btnLook').innerHTML='<span class="ico foto"></span>Mandaci il tuo look<small>+'+pl+' punti</small>';
+    const pr=puntiUgc('recensione'), pl=puntiUgc('look'), soloLook=!comprate().length;   // nessuna borsa comprata online: la recensione lo dice gia' a riposo (il tocco resta il toast), il look vale col catalogo
+    el('ugcIntro').textContent= soloLook
+      ? 'Le recensioni sono per le borse comprate su amimi.it. Hai preso la tua Amimì in boutique o a un evento? Mostraci il look: +'+pl+' punti Mimì dopo la nostra approvazione.'
+      : 'Una recensione vale +'+pr+' punti Mimì, una foto del look con la tua Amimì +'+pl+'. I punti arrivano dopo la nostra approvazione.';
+    const br=el('btnRecensione'); br.classList.toggle('done', soloLook); br.setAttribute('aria-disabled', String(soloLook));
+    br.innerHTML='<span class="ico stella"></span>Scrivi una recensione<small>'+(soloLook ? 'Solo per le borse comprate su amimi.it' : '+'+pr+' punti')+'</small>';
+    el('btnLook').innerHTML='<span class="ico foto"></span>Mostraci il look con la tua Amimì<small>+'+pl+' punti</small>';
     el('ugcMine').innerHTML=(u.mine||[]).filter(Boolean).slice(0,10).map(x=>{
       const look=x.kind==='look', cosa=(look ? 'Look' : 'Recensione')+' · '+(x.titolo||x.codice);
       const quando=(look ? 'Inviato il ' : 'Inviata il ')+itDate(x.created_day);
@@ -945,11 +948,11 @@
     el('ugcBorsa').innerHTML= look
       ? (p.mie.length ? '<optgroup label="Le tue borse">'+p.mie.map(opt).join('')+'</optgroup>' : '')+(p.altre.length ? '<optgroup label="Altre borse Amimì">'+p.altre.map(opt).join('')+'</optgroup>' : '')
       : rec.map(opt).join('');
-    el('ugcTitle').textContent= look ? 'Il tuo look' : 'La tua recensione';
+    el('ugcTitle').textContent= look ? 'Il look con la tua Amimì' : 'La tua recensione';
     el('ugcSub').textContent='+'+puntiUgc(kind)+' punti Mimì dopo la nostra approvazione.';
     el('ugcStelleBox').classList.toggle('hidden', look);
     el('ugcTestoL').textContent= look ? 'Due parole sul tuo look (se vuoi)' : 'Com\'è la tua borsa? (almeno due righe)';
-    el('ugcFotoL').textContent= look ? 'Foto del tuo look (almeno una, fino a '+CONFIG.fotoMax+')' : 'Foto (se vuoi, fino a '+CONFIG.fotoMax+')';
+    el('ugcFotoL').textContent= look ? 'Foto con la tua Amimì (almeno una, fino a '+CONFIG.fotoMax+')' : 'Foto (se vuoi, fino a '+CONFIG.fotoMax+')';
     el('ugcTesto').value=''; el('ugcConta').textContent='0/600'; el('ugcConsenso').checked=false; el('ugcErr').textContent='';
     el('ugcConsensoT').textContent=String(S._ugc.consenso||'');
     stelleHTML(); fotoHTML();
@@ -1011,7 +1014,7 @@
   function motivoUgc(r){
     return ({ no_consent:'Per inviare serve il tuo consenso.', unknown_bag:'Questa borsa non la trovo: scegline un\'altra.', bad_rating:'Scegli quante stelle le dai.',
       short_text:'Scrivi almeno due righe sulla tua borsa.', too_long:'Il testo è troppo lungo.', too_many_photos:'Al massimo '+CONFIG.fotoMax+' foto.',
-      no_photo:'Aggiungi almeno una foto del tuo look.', bad_photo:'Le foto non sono arrivate: riprova.', photo_missing:'Le foto non sono arrivate: riprova.',
+      no_photo:'Aggiungi almeno una foto con la tua Amimì.', bad_photo:'Le foto non sono arrivate: riprova.', photo_missing:'Le foto non sono arrivate: riprova.',
       not_bought:'Le recensioni sono per le borse comprate su amimi.it: questa non la trovo nei tuoi ordini.',
       already_sent: UGC.kind==='look' ? 'Hai già mandato un look con questa borsa.' : 'Hai già recensito questa borsa.',
       limit:'Per oggi hai inviato tanto: riprova domani.' })[r] || 'Non riesco a inviare in questo momento. Riprova.';
@@ -1025,7 +1028,7 @@
     if(!codice) return err('Scegli la borsa.');
     if(kind==='recensione' && !UGC.stelle) return err('Scegli quante stelle le dai.');
     if(kind==='recensione' && testo.length<15) return err('Scrivi almeno due righe sulla tua borsa.');
-    if(kind==='look' && !UGC.foto.length) return err('Aggiungi almeno una foto del tuo look.');
+    if(kind==='look' && !UGC.foto.length) return err('Aggiungi almeno una foto con la tua Amimì.');
     if(!el('ugcConsenso').checked) return err('Per inviare serve il tuo consenso.');
     err(''); UGC.busy=true; const b=el('ugcInvia'); b.disabled=true;
     track('tap','ugc_send');

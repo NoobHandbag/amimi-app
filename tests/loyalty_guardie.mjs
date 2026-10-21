@@ -325,5 +325,12 @@ t('177 app (Gate 2): approvare chiede un secondo tocco, un tocco alla volta per 
 const UGCSQL = read('tests/loyalty_ugc_idempotenza.sql');
 t('178 0153: la prova viva lavora su un cliente finto creato nella transazione, controlla i permessi a catalogo e un\'email @amimi.it solo dichiarata, e finisce SEMPRE in rollback', /c\s+constant text := 'TEST_0153_A';/.test(UGCSQL) && !/10147859530055/.test(UGCSQL.replace(/^\s*--.*$/gm, '')) && /has_function_privilege\('anon', fn, 'execute'\)/.test(UGCSQL) && /'finto@amimi\.it'/.test(UGCSQL) && /loyalty_ugc_decide\(id_rec, null, null\)/.test(UGCSQL) && /raise exception 'TEST_OK:[^']*\(rollback voluto\)';\s*\nend \$\$;\s*$/.test(UGCSQL));
 
+// richiesta owner del 21-10 (serata da Galliano): il look "con la tua Amimi'" e la recensione che si spiega prima del tocco
+t('179 pagina (21-10): senza borse comprate online la recensione e\' spenta a riposo e dice "su amimi.it" (la regola a DB vale solo per gli ordini online), il tocco resta il toast; il look vale col catalogo; nessun "Mandaci il tuo look"',
+  UGCPAGE.includes("soloLook=!comprate().length") && UGCPAGE.includes("br.classList.toggle('done', soloLook); br.setAttribute('aria-disabled', String(soloLook));")
+  && UGCPAGE.includes("(soloLook ? 'Solo per le borse comprate su amimi.it' : '+'+pr+' punti')") && UGCPAGE.includes("? 'Le recensioni sono per le borse comprate su amimi.it.")
+  && UGCPAGE.includes("toast(comprate().length ? 'Hai già recensito tutte le tue borse' : 'Le recensioni sono per le borse comprate su amimi.it')")
+  && UGCPAGE.includes("Mostraci il look con la tua Amimì<small>") && PAGE.includes("['Mostraci il look con la tua Amimì',") && !/Mandaci il tuo look|Foto del tuo look|foto del tuo look/.test(PAGE));
+
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
