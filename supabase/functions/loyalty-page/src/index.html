@@ -462,7 +462,7 @@
   const PROXY = '/apps/premia';         // same-origin su amimi.it
   const MIMI = '__MIMI_DATA_URI__';
   const TOSTIAMO_ATLAS = '__TOSTIAMO_DATA_URI__';   // build.mjs: src/tostiamo.webp in base64 (borse, strati, fette, loghi)
-  const TOSTIAMO_FRAMES = {"bag_zebra":[0,0,92,176],"bag_bambi":[96,0,87,176],"bag_mucca":[187,0,89,176],"bag_leopardo":[280,0,79,176],"bag_cocco_green":[363,0,89,176],"bag_cocco_pink":[456,0,89,176],"bag_red_patent":[549,0,89,176],"slab_zebra":[642,0,248,64],"slab_bambi":[0,180,248,64],"slab_mucca":[252,180,248,64],"slab_leopardo":[504,180,248,64],"slab_cocco_green":[756,180,248,64],"slab_cocco_pink":[0,248,248,64],"slab_red_patent":[252,248,248,64],"bread_top":[504,248,252,151],"bread_bot":[760,248,252,90],"logo_amimi":[0,403,150,40],"logo_galiano":[154,403,150,35]};   // [x, y, larghezza, altezza] nell'atlante, dallo script degli sprite
+  const TOSTIAMO_FRAMES = {"bag_zebra":[0,0,92,176],"bag_bambi":[96,0,87,176],"bag_mucca":[187,0,89,176],"bag_leopardo":[280,0,79,176],"bag_cocco_green":[363,0,89,176],"bag_cocco_pink":[456,0,89,176],"bag_red_patent":[549,0,89,176],"slab_zebra":[642,0,248,64],"slab_bambi":[0,180,248,64],"slab_mucca":[252,180,248,64],"slab_leopardo":[504,180,248,64],"slab_cocco_green":[756,180,248,64],"slab_cocco_pink":[0,248,248,64],"slab_red_patent":[252,248,248,64],"bread_top":[504,248,252,151],"bread_bot":[760,248,252,90],"logo_amimi":[0,403,150,40],"logo_galiano":[154,403,150,22]};   // [x, y, larghezza, altezza] nell'atlante, dallo script degli sprite
   const ICO_MIMI = '<img class="ico" alt="" src="'+MIMI+'">', ICO_CARTA = '<span class="ico carta"></span>';   // le due azioni del giorno: Mimi' e la carta a scacchi del memory
   const el = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));   // tutto cio' che entra in innerHTML passa da qui (audit T7)
@@ -1083,7 +1083,7 @@
       ctx.fillStyle='#23524C'; ctx.fillRect(0,0,W,BAND);
       ctx.fillStyle='rgba(242,189,0,.55)'; ctx.fillRect(0,BAND-1,W,1);
       const la=FR.logo_amimi, lg=FR.logo_galiano;
-      const ha=20, wa=la[2]*ha/la[3], hg=17, wg=lg[2]*hg/lg[3], gap=22, tot=wa+gap+wg, x0=(W-tot)/2;
+      const ha=20, wa=la[2]*ha/la[3], hg=15, wg=lg[2]*hg/lg[3], gap=22, tot=wa+gap+wg, x0=(W-tot)/2;
       spr('logo_amimi', x0, (BAND-ha)/2-1, wa, ha);
       ctx.fillStyle='#F2BD00'; ctx.font='500 15px "Cormorant Garamond", Georgia, serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
       ctx.fillText('x', x0+wa+gap/2, BAND/2);
