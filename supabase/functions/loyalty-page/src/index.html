@@ -8,6 +8,9 @@
   Area Membri Amimi' - PRODUZIONE (dati REALI via App Proxy). Pagina nuova dal 2026-10-11 (call del 09-10):
   solo punti Mimi' (niente livelli, niente timbri), sentiero a giro con la bandierina a scacchi al traguardo (scelta owner 12-10), elenco di tutti i codici
   riscattati, memory con le foto vere delle borse, presenza agli eventi dal QR (?evento=CODICE).
+  Dal 21-10 (collab con Panini Galiano, serata del 22-10) al posto del memory c'e' "Tostiamo?" finche' vale CONFIG.tostiamo:
+  stesso bottone, stesso premio (memory_win), poi torna il memory da solo. Le sue immagini sono src/tostiamo.webp (un atlante,
+  che build.mjs inserisce al posto del suo segnaposto); il verde e l'oro del cartellino della collab vivono solo dentro al gioco.
   Va servita SAME-ORIGIN su amimi.it, cosi' le fetch a /apps/premia/* portano il logged_in_customer_id firmato da
   Shopify (nessun secondo login). Servita da un altro dominio NON funziona: il cookie di login e' su amimi.it.
   Contratto edge loyalty-proxy v14: state | coccola | memory_win | rewards | redeem | profile | profile_save | track | deck | checkin.
@@ -27,6 +30,7 @@
     --body:"Work Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     --ease:cubic-bezier(.3,.8,.3,1);
     --chk:conic-gradient(var(--red) 90deg,var(--white) 90deg 180deg,var(--red) 180deg 270deg,var(--white) 270deg);
+    --gal-green:#23524C; --gal-gold:#F2BD00;   /* cartellino amimi' x GALIANO: solo dentro a Tostiamo? */
     color-scheme:light;
   }
   *{box-sizing:border-box;margin:0;padding:0}
@@ -237,6 +241,16 @@
   @keyframes hop{0%,100%{transform:translateY(0)}35%{transform:translateY(-16px) rotate(-5deg)}70%{transform:translateY(0) rotate(3deg)}}
   .sheet h2{font-size:29px;margin-bottom:4px}
   .sheet p{font-size:14px;color:var(--muted)}
+  /* Tostiamo?: finestra piu' stretta ai lati per dare spazio alla tela; sopra la tela l'intro e la fine */
+  .sheet-gioco{padding:20px 14px 12px}
+  .tst{position:relative;margin:12px auto 6px;width:100%;max-width:320px}
+  .tst canvas{display:block;width:100%;height:auto;aspect-ratio:2/3;border-radius:16px;touch-action:none;-webkit-user-select:none;user-select:none;background:#F4DEDA;box-shadow:0 0 0 1.5px var(--gal-green)}
+  .tst-over{position:absolute;left:0;right:0;bottom:0;top:9.2%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px;text-align:center;background:rgba(255,251,251,.88);border-radius:0 0 16px 16px}
+  .tst-over b{font-family:var(--display);font-weight:700;font-size:31px;line-height:1.05;color:var(--gal-green)}
+  .tst-over p{font-size:14px;color:var(--ink);max-width:25ch}
+  .tst-over small{font-size:12.5px;color:var(--muted)}
+  .tst .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .act img.ico.tostino{width:auto;height:44px;padding:0;background:none;border-radius:0}
   .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:16px 0 10px}
   .card{position:relative;aspect-ratio:3/4;border:none;padding:0;background:none;border-radius:12px;cursor:pointer;perspective:700px}
   .card[disabled]{cursor:default}
@@ -370,6 +384,19 @@
     <button class="btnghost" id="gameClose" type="button">Chiudi</button>
   </div></div>
 
+  <!-- Tostiamo? (collab con Panini Galiano): al posto del memory finche' vale CONFIG.tostiamo -->
+  <div class="modal" id="tstModal" role="dialog" aria-modal="true" aria-labelledby="tstTitle" aria-hidden="true"><div class="sheet sheet-gioco">
+    <div class="sheet-peek" id="tstMimi"><img data-mimi alt=""></div>
+    <h2 id="tstTitle">Tostiamo?</h2>
+    <p>Prendi 5 borse col toast: poi arriva la fetta di sopra.</p>
+    <div class="tst">
+      <canvas id="tstCanvas" width="320" height="480" tabindex="0" role="img" aria-label="Gioco Tostiamo?: sposta il toast col dito o con le frecce per prendere le borse"></canvas>
+      <div class="tst-over hidden" id="tstOver"></div>
+      <span class="sr" id="tstLive" aria-live="polite"></span>
+    </div>
+    <button class="btnghost" id="tstClose" type="button">Chiudi</button>
+  </div></div>
+
   <!-- premio -->
   <div class="modal" id="rewardModal" role="dialog" aria-modal="true" aria-labelledby="rewardTitle" aria-hidden="true"><div class="sheet">
     <div class="sheet-mimi"><img data-mimi alt=""></div>
@@ -423,6 +450,7 @@
   const CONFIG = {
     codiciVisibili: 3,     // codici mostrati prima di "Mostra tutti"
     coppie: 3,             // coppie del memory
+    tostiamo: { dal:'2026-10-21', al:'2026-11-02', durata:40 },   // Tostiamo? al posto del memory (date di Roma, estremi compresi), secondi a partita
     fotoMax: 3,            // foto per recensione o look (lo stesso tetto sta a DB, migr 0153)
     fotoLato: 1600,        // lato lungo delle foto dopo il rimpicciolimento nel telefono (JPEG: via anche i dati dello scatto)
     eventoOre: 12,         // per quante ore il codice di un QR resta in attesa dell'accesso
@@ -431,10 +459,20 @@
   };
   const PROXY = '/apps/premia';         // same-origin su amimi.it
   const MIMI = '__MIMI_DATA_URI__';
+  const TOSTIAMO_ATLAS = '__TOSTIAMO_DATA_URI__';   // build.mjs: src/tostiamo.webp in base64 (borse, strati, fette, loghi)
+  const TOSTIAMO_FRAMES = {"bag_zebra":[0,0,92,176],"bag_bambi":[96,0,87,176],"bag_mucca":[187,0,89,176],"bag_leopardo":[280,0,79,176],"bag_cocco_green":[363,0,89,176],"bag_cocco_pink":[456,0,89,176],"bag_red_patent":[549,0,89,176],"slab_zebra":[642,0,248,64],"slab_bambi":[0,180,248,64],"slab_mucca":[252,180,248,64],"slab_leopardo":[504,180,248,64],"slab_cocco_green":[756,180,248,64],"slab_cocco_pink":[0,248,248,64],"slab_red_patent":[252,248,248,64],"bread_top":[504,248,252,151],"bread_bot":[760,248,252,90],"logo_amimi":[0,403,150,40],"logo_galiano":[154,403,150,35]};   // [x, y, larghezza, altezza] nell'atlante, dallo script degli sprite
   const ICO_MIMI = '<img class="ico" alt="" src="'+MIMI+'">', ICO_CARTA = '<span class="ico carta"></span>';   // le due azioni del giorno: Mimi' e la carta a scacchi del memory
   const el = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));   // tutto cio' che entra in innerHTML passa da qui (audit T7)
   const reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  // il gioco di oggi: Tostiamo? dentro CONFIG.tostiamo (data di Roma), altrimenti il memory; ?gioco=memory|toast lo forza
+  function giocoDiOggi(){
+    const q=new URLSearchParams(location.search).get('gioco');
+    if(q==='memory' || q==='toast') return q;
+    let oggi=''; try { oggi=new Date().toLocaleDateString('sv-SE', { timeZone:'Europe/Rome' }); } catch(_) { oggi=''; }   // senza Intl col fuso: memory
+    return (/^\d{4}-\d{2}-\d{2}$/.test(oggi) && oggi>=CONFIG.tostiamo.dal && oggi<=CONFIG.tostiamo.al) ? 'toast' : 'memory';
+  }
+  const GIOCO = giocoDiOggi();
   let S = null;                          // stato reale dall'edge
   let tuttiICodici = false;
   document.querySelectorAll('[data-mimi]').forEach(i => { i.src = MIMI; });
@@ -499,7 +537,7 @@
   let lastFocus=null;
   function openModal(id, focusNode){ const m=el(id); lastFocus=document.activeElement; m.classList.add('on'); m.setAttribute('aria-hidden','false'); setTimeout(()=>{ const f=focusNode||m.querySelector('button:not([disabled])'); if(f) f.focus({ preventScroll:true }); m.scrollTop=0; },80); }   // su uno schermo basso la finestra parte dall'alto, con Mimi' intera
   function closeModal(id){ const m=el(id); if(!m.classList.contains('on')) return; m.classList.remove('on'); m.setAttribute('aria-hidden','true'); const back=(lastFocus && lastFocus!==document.body && document.contains(lastFocus)) ? lastFocus : el('redeem'); if(back && back.focus) back.focus(); }   // il bottone di partenza puo' essere stato ridisegnato: si torna alla card dei punti
-  document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal('gameModal'); closeModal('rewardModal'); if(!el('ugcEsci').classList.contains('hidden')) restaNelModulo(); else chiudiUgc(); } });   // con la domanda "Vuoi chiudere?" aperta, Esc la chiude e si resta nel modulo
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ chiudiTostiamo(); closeModal('gameModal'); closeModal('rewardModal'); if(!el('ugcEsci').classList.contains('hidden')) restaNelModulo(); else chiudiUgc(); } });   // con la domanda "Vuoi chiudere?" aperta, Esc la chiude e si resta nel modulo
   function reward(title,prize,msg,code){
     el('rewardTitle').textContent=title; el('rewardPrize').textContent=prize; el('rewardMsg').textContent=msg||'';
     el('rewardCode').innerHTML = code ? '<div class="codechip"><span class="c">'+esc(code)+'</span><button class="cp tap" type="button" data-code="'+esc(code)+'">Copia</button></div>' : '';
@@ -537,8 +575,9 @@
     else { bc.className='act main tap'; bc.innerHTML=ICO_MIMI+'Coccola Mimì<small>+5 punti, una al giorno</small>'; }
     bc.setAttribute('aria-disabled', String(!S.coccola_disponibile));
     const bg=el('btnGame');
-    if(!S.memory_disponibile){ bg.className='act done'; bg.innerHTML=ICO_CARTA+'Giocato<small>torna domani</small>'; }
-    else { bg.className='act tap'; bg.innerHTML=ICO_CARTA+'Gioca al memory<small>+5 punti, una al giorno</small>'; }
+    const icoG = GIOCO==='toast' ? ICO_TOAST : ICO_CARTA;
+    if(!S.memory_disponibile){ bg.className='act done'; bg.innerHTML=icoG+'Giocato<small>torna domani</small>'; }
+    else { bg.className='act tap'; bg.innerHTML=icoG+(GIOCO==='toast' ? 'Gioca a Tostiamo?' : 'Gioca al memory')+'<small>+5 punti, una al giorno</small>'; }
     bg.setAttribute('aria-disabled', String(!S.memory_disponibile));
     // le tue borse (quelle realmente acquistate)
     const w=el('ward'), items=S.wardrobe;
@@ -559,7 +598,7 @@
     const pronto = cost>0 && p>=cost && !attesa;
     out.push(S.coccola_disponibile ? 'Mi fai la coccola di oggi? Toccami!' : 'Coccolata! Sono al settimo cielo.');
     if(pronto){ const k=Math.floor(p/cost); out.push(k===1 ? (pc ? 'Hai uno sconto pronto. Lo usiamo?' : 'Hai un premio pronto. Lo usiamo?') : 'Hai '+k+(pc ? ' sconti pronti' : ' premi pronti')+'. Ne usiamo uno?'); }
-    if(S.memory_disponibile) out.push('Giochiamo al memory insieme?');
+    if(S.memory_disponibile) out.push(GIOCO==='toast' ? 'Facciamo un toast di borse?' : 'Giochiamo al memory insieme?');
     if(S._ugc && daRecensire().length) out.push('Mi racconti una delle tue borse?');
     if(cost>0 && !pronto && !attesa){ const m=cost-(p%cost); out.push('Ancora '+(m===1 ? '1 punto' : m+' punti')+' e '+(pc ? 'lo sconto' : 'il premio')+' è tuo.'); }
     if(!S.coccola_disponibile && !S.memory_disponibile) out.push('Per oggi è tutto. A domani!');
@@ -675,8 +714,8 @@
   // === come prendi i punti: le regole decise nella call del 09-10; costo e valore del premio dal server ===
   function renderRules(){
     const rw=reward0(), pr=S._profile;
-    const rows=[['Compri su amimi.it','1 punto per ogni euro'],['Coccoli Mimì','+5 al giorno'],['Giochi al memory','+5 al giorno']];
-    if(pr && pr.checkin_enabled) rows.push(['Vieni a un evento Amimì','+20 con il QR']);
+    const rows=[['Compri su amimi.it','1 punto per ogni euro'],['Coccoli Mimì','+5 al giorno'],[GIOCO==='toast' ? 'Giochi a Tostiamo?' : 'Giochi al memory','+5 al giorno']];
+    if(pr && pr.checkin_enabled) rows.push(['Vieni a un evento Amimì','punti con il QR']);   // quanti, lo dice ogni evento (Galiano: 100)
     const ug=S._ugc; if(ug){ rows.push(['Recensisci una borsa comprata su amimi.it','+'+puntiUgc('recensione')+' se approvata']); rows.push(['Mostraci il look con la tua Amimì','+'+puntiUgc('look')+' se approvato']); }
     el('regole').innerHTML=rows.map(r=>'<li><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></li>').join('');
     el('regoleNota').innerHTML = rw ? 'Ogni <b>'+esc(rw.cost_points)+' punti Mimì</b> sblocchi '+(percento(rw) ? 'uno sconto del <b>'+percento(rw)+'%</b>' : esc(rw.label))+' su un ordine. Quando lo riscatti i punti si scalano. Il codice vale una volta e non si somma ad altri sconti.' : '';
@@ -861,7 +900,7 @@
     return '<span class="front glyph word">amìmì</span>';
   }
   function faceName(c, i){ return c.img ? c.titolo : (c.g==='mimi' ? 'Mimì' : (c.g==='chk' ? 'Scacchi' : 'Amimì')); }
-  el('btnGame').addEventListener('click', ()=>{ if(!S||!S.memory_disponibile){ toast('Torna domani per un nuovo gioco'); return; } track('tap','gioco'); startGame(); });
+  el('btnGame').addEventListener('click', ()=>{ if(!S||!S.memory_disponibile){ toast('Torna domani per un nuovo gioco'); return; } track('tap','gioco'); if(GIOCO==='toast') apriTostiamo(); else startGame(); });
   el('gameClose').addEventListener('click', ()=>closeModal('gameModal'));
   let partita=0;                                                                          // una sola partita alla volta riempie la griglia
   async function startGame(){
@@ -891,14 +930,275 @@
     });
     const first=grid.querySelector('.card'); if(first) first.focus();
   }
-  async function winGame(){
-    closeModal('gameModal');
+  async function winGame(modale, frase){                                                  // memory e Tostiamo?: stesso premio, stesso cancello
+    closeModal(modale || 'gameModal');
     const { data } = await api('memory_win');
     if(data.done_today){ S.memory_disponibile=false; if(typeof data.points==='number') S.points=data.points; render(); toast('Hai già giocato oggi'); return; }
     if(data.error || typeof data.points!=='number'){ toast('Riprova fra poco'); return; }   // solo un saldo vero dal server muove i punti
     S.points=data.points; S.memory_disponibile=false; render();
-    reward('Hai vinto!', '+'+(data.added||5), 'punti Mimì aggiunti al tuo saldo'); parla(false,'Che memoria! Brava.');
+    reward('Hai vinto!', '+'+(data.added||5), 'punti Mimì aggiunti al tuo saldo'); parla(false, frase || 'Che memoria! Brava.');
   }
+
+  // === Tostiamo? (collab con Panini Galiano, serata del 22-10-2026). Cadono le borse vere, la cliente sposta il toast
+  // col dito (o con le frecce) e le prende: alla quinta cade la fetta di sopra con lo stecco e il toast e' pronto.
+  // 40 secondi, nessuna vita: una borsa persa cade dietro e basta. Il gioco conta solo i toast; il premio lo decide
+  // memory_win come per il memory (stesso cancello "una al giorno"). Grafica: un atlante solo (TOSTIAMO_ATLAS),
+  // ritagliato dalle foto del catalogo, dalla foto "Animalier Toast" della campagna e dal cartellino della collab. ===
+  function creaTostiamo(cv, opt){
+    const W=320, H=480, BAND=44, FLOOR=438, DURATA=opt.durata||40, PER_TOAST=5;
+    const BAGS=['zebra','bambi','mucca','leopardo','cocco_green','cocco_pink','red_patent'];
+    const FR=opt.frames, IMG=opt.atlas, ctx=cv.getContext('2d'), calmo=!!opt.reduced;
+    const BW=124, BH_PANE=FR.bread_bot[3]*BW/FR.bread_bot[2];           // fetta di sotto
+    const TW=128, TH=FR.bread_top[3]*TW/FR.bread_top[2];                 // fetta di sopra, con lo stecco
+    const SW=116, SH=FR.slab_zebra[3]*SW/FR.slab_zebra[2], STEP=15;      // strato della pila
+    const GH=86;                                                         // borsa che cade (altezza)
+    const CATCH=SW*0.5*0.95;
+    const breadY=FLOOR+8-BH_PANE, baseY=breadY+BH_PANE*0.52;
+    let raf=0, last=0, st='fermo', clock=0, fatti=0, spawnT=0, ultima=-1;
+    let px=W/2, tx=W/2, keyDir=0, drag=false;
+    let pila=[], cadono=[], briciole=[], sopra=null, uscita=null, entrata=0, scritta=null;
+
+    const dpr=Math.min(3, window.devicePixelRatio||1);
+    cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
+    const rnd=(a,b)=>a+Math.random()*(b-a), clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), lerp=(a,b,t)=>a+(b-a)*t;
+    function spr(k, x, y, w, h, alpha){
+      const f=FR[k]; if(!f) return;
+      if(alpha!==undefined) ctx.globalAlpha=alpha;
+      ctx.drawImage(IMG, f[0], f[1], f[2], f[3], x, y, w, h);
+      ctx.globalAlpha=1;
+    }
+
+    // === comandi: dito o mouse (il toast va dove tocchi), frecce da tastiera ===
+    function puntaA(e){ const r=cv.getBoundingClientRect(); if(!r.width) return; tx=clamp((e.clientX-r.left)*W/r.width, BW/2-8, W-BW/2+8); }
+    cv.addEventListener('pointerdown', e=>{ drag=true; try{ cv.setPointerCapture(e.pointerId); }catch(_){} puntaA(e); });
+    cv.addEventListener('pointermove', e=>{ if(drag || e.pointerType==='mouse') puntaA(e); });
+    const molla=()=>{ drag=false; };
+    cv.addEventListener('pointerup', molla); cv.addEventListener('pointercancel', molla);
+    cv.addEventListener('keydown', e=>{ if(e.key==='ArrowLeft'){ keyDir=-1; e.preventDefault(); } else if(e.key==='ArrowRight'){ keyDir=1; e.preventDefault(); } });
+    cv.addEventListener('keyup', e=>{ if((e.key==='ArrowLeft'&&keyDir<0)||(e.key==='ArrowRight'&&keyDir>0)) keyDir=0; });
+
+    function topX(){ return pila.length ? pila[pila.length-1].dx : px; }
+    function lineaPresa(){ return baseY-pila.length*STEP-6; }
+    function nuovaBorsa(){
+      let k; do { k=Math.floor(Math.random()*BAGS.length); } while(k===ultima);
+      ultima=k;
+      const p=clock/DURATA, f=FR['bag_'+BAGS[k]];
+      cadono.push({ k:BAGS[k], x:rnd(34, W-34), y:BAND-GH*0.6, w:f[2]*GH/f[3], vy:lerp(125,290,p)*rnd(0.9,1.12), ph:rnd(0,6), persa:false });
+    }
+    function brucia(x, y, n, oro){
+      if(calmo) return;
+      for(let i=0;i<n;i++) briciole.push({ x, y, vx:rnd(-90,90), vy:rnd(-170,-40), r:rnd(1.4,3.2), t:0, life:rnd(.45,.8), c: oro && i%3===0 ? '#F2BD00' : (i%2 ? '#C98A45' : '#E2B272') });
+    }
+    function prendi(it){
+      const off=clamp((it.x-topX())*0.55, -16, 16);
+      pila.push({ k:it.k, off, dx:it.x, sq:1 });
+      brucia(it.x, lineaPresa()+6, 6, false);
+      if(opt.onPresa) opt.onPresa(pila.length);
+      if(pila.length===PER_TOAST){ st='chiude'; sopra={ x:topX(), y:-TH, vy:0, giu:false, sq:0 }; }
+    }
+
+    function update(dt){
+      if(st==='gioca') clock=Math.min(DURATA, clock+dt);
+      if(keyDir) tx=clamp(tx+keyDir*330*dt, BW/2-8, W-BW/2+8);
+      if(entrata>0) entrata=Math.max(0, entrata-dt*3.2);
+      px+= (tx-px)*(1-Math.exp(-dt*18));
+      for(let i=0;i<pila.length;i++){
+        const L=pila[i], base=(i===0 ? px : pila[i-1].dx)+L.off;
+        L.dx+=(base-L.dx)*(1-Math.exp(-dt*(calmo ? 40 : 24-i*3)));
+        L.sq=Math.max(0, L.sq-dt*6);
+      }
+      if(st==='gioca'){
+        spawnT-=dt;
+        if(spawnT<=0 && cadono.filter(c=>!c.persa).length<3){ nuovaBorsa(); spawnT=lerp(1.05,0.55,clock/DURATA)*rnd(0.85,1.15); }
+      }
+      for(const it of cadono){
+        const prima=it.y+GH/2;
+        it.y+=it.vy*dt;
+        if(st==='gioca' && !it.persa){
+          const linea=lineaPresa(), giu=it.y+GH/2;
+          if(prima<linea && giu>=linea){ if(Math.abs(it.x-topX())<=CATCH+it.w*0.25) { it.preso=true; prendi(it); } else it.persa=true; }
+        } else if(!it.preso && it.y+GH/2>lineaPresa()) it.persa=true;
+      }
+      cadono=cadono.filter(it=>!it.preso && it.y<H+GH);
+      if(sopra && !sopra.giu){
+        sopra.x+=(topX()-sopra.x)*(1-Math.exp(-dt*20));
+        sopra.vy+=1900*dt; sopra.y+=sopra.vy*dt;
+        const fondo=baseY-(PER_TOAST-1)*STEP-SH*0.36;
+        if(sopra.y+TH>=fondo){ sopra.y=fondo-TH; sopra.giu=true; sopra.sq=1; fatti++; scritta={ t:0 }; brucia(sopra.x, fondo-TH*0.35, 16, true); if(opt.onToast) opt.onToast(fatti); }
+      }
+      if(sopra && sopra.giu){ sopra.x=topX(); sopra.sq=Math.max(0, sopra.sq-dt*5); }
+      if(scritta){ scritta.t+=dt; if(scritta.t>0.85 && !uscita) uscita={ t:0 }; }
+      if(uscita){
+        uscita.t+=dt;
+        if(uscita.t>=0.42){ pila=[]; sopra=null; uscita=null; scritta=null; entrata=1; if(st==='chiude') st = clock>=DURATA ? 'fine' : 'gioca'; }
+      }
+      for(const b of briciole){ b.t+=dt; b.vy+=620*dt; b.x+=b.vx*dt; b.y+=b.vy*dt; }
+      briciole=briciole.filter(b=>b.t<b.life);
+      if(st==='gioca' && clock>=DURATA) st='fine';
+    }
+
+    // === disegno ===
+    function sfondo(){
+      const g=ctx.createLinearGradient(0,BAND,0,FLOOR); g.addColorStop(0,'#F4DEDA'); g.addColorStop(1,'#ECCBC6');
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+      const v=ctx.createRadialGradient(W/2,FLOOR-120,40,W/2,FLOOR-120,300); v.addColorStop(0,'rgba(255,250,246,.55)'); v.addColorStop(1,'rgba(255,250,246,0)');
+      ctx.fillStyle=v; ctx.fillRect(0,BAND,W,FLOOR-BAND);
+      // tagliere di legno, come la foto del toast incartato
+      const t=ctx.createLinearGradient(0,FLOOR,0,H); t.addColorStop(0,'#C99764'); t.addColorStop(.25,'#B6824F'); t.addColorStop(1,'#8E5C34');
+      ctx.fillStyle=t; ctx.fillRect(0,FLOOR,W,H-FLOOR);
+      ctx.fillStyle='rgba(255,236,210,.35)'; ctx.fillRect(0,FLOOR,W,2);
+      ctx.strokeStyle='rgba(90,50,22,.22)'; ctx.lineWidth=1;
+      for(let i=0;i<5;i++){ const y=FLOOR+9+i*8; ctx.beginPath(); ctx.moveTo(0,y); ctx.bezierCurveTo(W*.3,y+(i%2?3:-3),W*.7,y+(i%2?-2:3),W,y+1); ctx.stroke(); }
+    }
+    function ombra(x){
+      const w=BW*0.62; ctx.fillStyle='rgba(80,36,20,.20)';
+      ctx.beginPath(); ctx.ellipse(x, FLOOR+6, w, 6, 0, 0, Math.PI*2); ctx.fill();
+    }
+    function borsa(it){
+      const a=Math.sin(clock*3+it.ph)*0.13;
+      ctx.save(); ctx.translate(it.x, it.y); ctx.rotate(a);
+      spr('bag_'+it.k, -it.w/2, -GH/2, it.w, GH, it.persa ? 0.55 : 1);
+      ctx.restore();
+    }
+    function toastIntero(dx, dy, s, alpha){
+      ctx.save(); ctx.globalAlpha=alpha; ctx.translate(dx, dy); ctx.scale(s, s);
+      spr('bread_bot', px-BW/2, breadY, BW, BH_PANE);
+      pila.forEach((L,i)=>{
+        const b=baseY-i*STEP, sy=1+0.32*L.sq, sx=1-0.08*L.sq;
+        ctx.save(); ctx.translate(L.dx, b); ctx.scale(sx, sy);
+        spr('slab_'+L.k, -SW/2, -SH, SW, SH);
+        ctx.restore();
+      });
+      if(sopra){
+        ctx.save(); ctx.translate(sopra.x, sopra.y+TH); ctx.scale(1+0.06*sopra.sq, 1-0.10*sopra.sq);
+        spr('bread_top', -TW/2, -TH, TW, TH);
+        ctx.restore();
+      }
+      ctx.restore(); ctx.globalAlpha=1;
+    }
+    function hud(){
+      ctx.fillStyle='#23524C'; ctx.fillRect(0,0,W,BAND);
+      ctx.fillStyle='rgba(242,189,0,.55)'; ctx.fillRect(0,BAND-1,W,1);
+      const la=FR.logo_amimi, lg=FR.logo_galiano;
+      const ha=20, wa=la[2]*ha/la[3], hg=17, wg=lg[2]*hg/lg[3], gap=22, tot=wa+gap+wg, x0=(W-tot)/2;
+      spr('logo_amimi', x0, (BAND-ha)/2-1, wa, ha);
+      ctx.fillStyle='#F2BD00'; ctx.font='500 15px "Cormorant Garamond", Georgia, serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('x', x0+wa+gap/2, BAND/2);
+      spr('logo_galiano', x0+wa+gap, (BAND-hg)/2, wg, hg);
+      // tempo: barra sotto la fascia e secondi a destra; toast pronti a sinistra
+      const resto=Math.max(0, DURATA-clock);
+      ctx.fillStyle='rgba(35,82,76,.12)'; ctx.fillRect(0,BAND,W,4);
+      ctx.fillStyle= resto<=8 ? '#E10A0A' : '#F2BD00'; ctx.fillRect(0,BAND,W*resto/DURATA,4);
+      ctx.textBaseline='middle'; ctx.font='600 15px "Work Sans", system-ui, sans-serif';
+      ctx.fillStyle= resto<=8 ? '#A30008' : '#2B1215'; ctx.textAlign='right';
+      ctx.fillText('0:'+String(Math.ceil(resto)).padStart(2,'0'), W-12, BAND+20);
+      const iw=30, ih=FR.bread_top[3]*iw/FR.bread_top[2];
+      spr('bread_top', 8, BAND+20-ih*0.62, iw, ih);
+      ctx.textAlign='left'; ctx.fillStyle='#2B1215'; ctx.fillText('× '+fatti, 8+iw+4, BAND+21);
+      // cinque tacche: quante borse mancano al toast
+      for(let i=0;i<PER_TOAST;i++){
+        const cx=W/2-28+i*14, cy=BAND+20, on=i<pila.length;
+        ctx.beginPath(); ctx.arc(cx,cy,4.2,0,Math.PI*2);
+        ctx.fillStyle= on ? '#E10A0A' : 'rgba(43,18,21,.14)'; ctx.fill();
+      }
+    }
+    function draw(){
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      sfondo();
+      cadono.filter(c=>c.persa).forEach(borsa);
+      let dx=0, dy=0, s=1, al=1;
+      if(uscita){ const u=Math.min(1, uscita.t/0.42), e=u*u; dx=lerp(0, 30-px, e); dy=lerp(0, -(FLOOR-BAND-30), e); s=lerp(1, 0.25, e); al=1-u*0.9; }
+      const ent=entrata ? -entrata*entrata*60 : 0;
+      ombra(px);
+      if(uscita){ ctx.save(); ctx.translate(px*(1-s)+dx, (FLOOR)*(1-s)+dy); toastIntero(0,0,s,al); ctx.restore(); }
+      else { ctx.save(); ctx.translate(0, ent); toastIntero(0,0,1,1); ctx.restore(); }
+      cadono.filter(c=>!c.persa).forEach(borsa);
+      for(const b of briciole){ ctx.globalAlpha=1-b.t/b.life; ctx.fillStyle=b.c; ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill(); }
+      ctx.globalAlpha=1;
+      if(scritta){
+        const u=Math.min(1, scritta.t/0.18), y=lerp(baseY-178, baseY-196, u);
+        ctx.font='italic 700 34px "Cormorant Garamond", Georgia, serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.globalAlpha=Math.min(1, (1.25-scritta.t)*3);
+        ctx.lineWidth=6; ctx.strokeStyle='#FFFBFB'; ctx.strokeText('Toast pronto!', W/2, y);
+        ctx.fillStyle='#23524C'; ctx.fillText('Toast pronto!', W/2, y);
+        ctx.globalAlpha=1;
+      }
+      hud();
+    }
+    function frame(ts){
+      const dt=last ? Math.min(0.05, (ts-last)/1000) : 0; last=ts;
+      update(dt); draw();
+      if(st==='fine'){ ferma(); st='finito'; if(opt.onFine) opt.onFine(fatti); return; }
+      raf=requestAnimationFrame(frame);
+    }
+    function ferma(){ if(raf) cancelAnimationFrame(raf); raf=0; last=0; }
+    function azzera(){
+      ferma(); st='fermo'; clock=0; fatti=0; spawnT=0.5; ultima=-1; px=tx=W/2; keyDir=0; drag=false;
+      pila=[]; cadono=[]; briciole=[]; sopra=null; uscita=null; entrata=0; scritta=null;
+      ctx.setTransform(dpr,0,0,dpr,0,0); draw();
+    }
+    azzera();
+    return {
+      avvia(){ azzera(); st='gioca'; raf=requestAnimationFrame(frame); try{ cv.focus({ preventScroll:true }); }catch(_){} },
+      ferma(){ ferma(); st='fermo'; },
+      disegna(){ ctx.setTransform(dpr,0,0,dpr,0,0); draw(); },
+      get fatti(){ return fatti; },
+      stato(){ return { st, clock, fatti, pila:pila.length, px, cadono:cadono.map(c=>({ x:c.x, y:c.y, persa:c.persa })) }; },   // per il banco di prova
+    };
+  }
+
+  // === Tostiamo? nella pagina: intro, partita, fine. Con almeno un toast i punti si prendono col bottone o chiudendo la
+  // finestra (non si perdono); premio e cancello "una al giorno" restano quelli del memory (winGame -> memory_win). ===
+  const TST = { gioco:null, img:null, vinta:false };
+  let ICO_TOAST = ICO_CARTA;                                                               // finche' l'atlante non e' pronto
+  function caricaAtlante(){
+    if(TST.img) return TST.img;
+    const im=new Image();
+    im.onload=()=>{                                                                        // icona del bottone: la fetta con lo stecco, ritagliata dall'atlante
+      const f=TOSTIAMO_FRAMES.bread_top, c=document.createElement('canvas'), h=88, w=Math.round(f[2]*h/f[3]);
+      c.width=w; c.height=h; c.getContext('2d').drawImage(im, f[0], f[1], f[2], f[3], 0, 0, w, h);
+      ICO_TOAST='<img class="ico tostino" alt="" src="'+c.toDataURL('image/png')+'">';
+      const i=el('btnGame').querySelector('.ico'); if(S && i) i.outerHTML=ICO_TOAST;
+    };
+    im.src=TOSTIAMO_ATLAS; TST.img=im; return im;
+  }
+  if(GIOCO==='toast') caricaAtlante();
+  function tstOver(html){ const o=el('tstOver'); o.innerHTML=html; o.classList.toggle('hidden', !html); const b=o.querySelector('button'); if(b) b.focus({ preventScroll:true }); }
+  function tstDurata(){ const d=window.__AMIMI_BANCO ? Number(new URLSearchParams(location.search).get('tdur')) : 0; return d>0 ? d : CONFIG.tostiamo.durata; }   // il banco di prova accorcia la partita
+  function tstIntro(){
+    tstOver('<b>Pronta a tostare?</b><p>Sposta il toast col dito e prendi le borse. Alla quinta arriva la fetta di sopra.</p><button class="btn" type="button" id="tstVia">Inizia</button><small>'+CONFIG.tostiamo.durata+' secondi · basta un toast per i punti di oggi</small>');
+    el('tstVia').addEventListener('click', ()=>{ tstOver(''); el('tstLive').textContent=''; TST.gioco.avvia(); });
+  }
+  function tstFine(n){
+    if(n>0){
+      TST.vinta=true;
+      tstOver('<b>Hai tostato '+n+' toast!</b><p>'+(n>=4 ? 'Da Galiano ti assumono subito.' : 'Buonissimi.')+' Sono tuoi i punti di oggi.</p><button class="btn" type="button" id="tstPunti">Prendi i punti</button>');
+      el('tstPunti').addEventListener('click', chiudiTostiamo);
+    } else {
+      tstOver('<b>Tempo scaduto</b><p>Per i punti basta un toast: cinque borse e la fetta di sopra.</p><button class="btn" type="button" id="tstAncora">Riprova</button>');
+      el('tstAncora').addEventListener('click', ()=>{ tstOver(''); TST.gioco.avvia(); });
+    }
+  }
+  function apriTostiamo(){
+    const im=caricaAtlante();
+    if(!im.complete){ const poi=()=>apriTostiamo(); im.addEventListener('load', poi, { once:true }); im.addEventListener('error', poi, { once:true }); return; }
+    if(!im.naturalWidth){ startGame(); return; }                                          // atlante illeggibile: si gioca al memory
+    if(!TST.gioco){
+      TST.gioco=creaTostiamo(el('tstCanvas'), { atlas:im, frames:TOSTIAMO_FRAMES, reduced, durata:tstDurata(),
+        onToast:n=>{ const m=el('tstMimi'); m.classList.remove('hop'); void m.offsetWidth; m.classList.add('hop'); el('tstLive').textContent='Toast pronti: '+n; },
+        onFine:tstFine });
+      if(window.__AMIMI_BANCO) window.__tostiamo=TST.gioco;
+    } else { TST.gioco.ferma(); TST.gioco.disegna(); }
+    TST.vinta=false; tstIntro();
+    openModal('tstModal', el('tstVia'));
+  }
+  function chiudiTostiamo(){
+    if(!el('tstModal').classList.contains('on')) return;
+    if(TST.gioco) TST.gioco.ferma();
+    const vinta=TST.vinta; TST.vinta=false;
+    if(vinta) winGame('tstModal', 'Che toast! Brava.'); else closeModal('tstModal');
+  }
+  el('tstClose').addEventListener('click', chiudiTostiamo);
 
   // === racconta la tua borsa (migr 0153, loyalty-proxy v15). La cliente manda una recensione (borse comprate online:
   // l'elenco `recensibili` lo calcola il server con la STESSA regola dell'invio) o una foto del suo look; il team la

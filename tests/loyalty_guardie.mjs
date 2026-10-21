@@ -346,5 +346,25 @@ t('180 pagina (21-10, Gate 2 chiuso): finestra di recensione e look con la X (44
   && /function chiudiUgc\(\)\{[^}]*\n\s*if\(UGC\.busy\)\{ toast\('Un attimo, sto inviando'\); return; \}\s*nascondiUscita\(\);/.test(UGCPAGE)
   && UGCPAGE.includes("el('ugcX').addEventListener('click', chiudiUgc);") && PAGE.includes("if(!el('ugcEsci').classList.contains('hidden')) restaNelModulo(); else chiudiUgc();"));
 
+
+// richiesta owner del 21-10: "Tostiamo?" al posto del memory per la collab con Panini Galiano (stesso premio, nessuna azione nuova)
+const HARN = read('tests/loyalty_page_harness.mjs');
+const TSTPAGE = PAGE.slice(PAGE.indexOf('// === Tostiamo? (collab con Panini Galiano'), PAGE.indexOf('// === racconta la tua borsa'));
+t('181 Tostiamo? (21-10): un solo segnaposto dell\'atlante, riempito da build.mjs e dal banco con src/tostiamo.webp; la pagina di prima non lo ha',
+  PAGE.split('__TOSTIAMO_DATA_URI__').length === 2 && !PAGE_V1.includes('__TOSTIAMO_DATA_URI__')
+  && /html\.split\(TOSTIAMO_TOKEN\)\.length !== 2/.test(BUILD) && BUILD.includes("readFileSync(DIR + 'src/tostiamo.webp')")
+  && HARN.includes("readFileSync(SRC + 'tostiamo.webp')") && readdirSync(ROOT + 'supabase/functions/loyalty-page/src').includes('tostiamo.webp'));
+t('182 Tostiamo?: i punti passano SOLO da winGame (memory_win, cancello una al giorno), nessuna azione nuova e nessun numero di punti deciso dal gioco',
+  TSTPAGE.length > 2000 && !/api\(/.test(TSTPAGE) && TSTPAGE.includes("if(vinta) winGame('tstModal', 'Che toast! Brava.'); else closeModal('tstModal');")
+  && (PAGE.match(/api\('memory_win'\)/g) || []).length === 1 && /async function winGame\(modale, frase\)\{/.test(PAGE));
+t('183 Tostiamo?: vale dal 21-10 al 02-11 (date di Roma) poi torna il memory; ?gioco= lo forza; senza Intl si gioca al memory',
+  PAGE.includes("tostiamo: { dal:'2026-10-21', al:'2026-11-02', durata:40 }") && PAGE.includes("new Date().toLocaleDateString('sv-SE', { timeZone:'Europe/Rome' })")
+  && PAGE.includes("oggi>=CONFIG.tostiamo.dal && oggi<=CONFIG.tostiamo.al) ? 'toast' : 'memory';") && PAGE.includes("if(GIOCO==='toast') apriTostiamo(); else startGame();"));
+t('184 Tostiamo?: le leve del banco (window.__tostiamo, ?tdur=) esistono solo col server finto; l\'atlante illeggibile ripiega sul memory',
+  TSTPAGE.includes('if(window.__AMIMI_BANCO) window.__tostiamo=TST.gioco;') && TSTPAGE.includes("const d=window.__AMIMI_BANCO ? Number(new URLSearchParams(location.search).get('tdur')) : 0;")
+  && (PAGE.match(/__AMIMI_BANCO/g) || []).length === 2 && TSTPAGE.includes('if(!im.naturalWidth){ startGame(); return; }'));
+t('185 Tostiamo?: la riga fissa degli eventi non promette piu\' +20 (ogni evento decide i suoi punti, Galiano 100)',
+  PAGE.includes("rows.push(['Vieni a un evento Amimì','punti con il QR'])") && !PAGE.includes("'+20 con il QR'"));
+
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

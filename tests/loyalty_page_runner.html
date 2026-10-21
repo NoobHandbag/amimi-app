@@ -43,7 +43,7 @@
     o=o||{};
     if(!o.keepStore){ try{ localStorage.removeItem('mimi_evento'); }catch(_){} }
     f.style.width=(o.w||375)+'px';
-    const q='index.html?s='+encodeURIComponent(s)+(o.evento!==undefined?'&evento='+encodeURIComponent(o.evento):'')+(o.lento?'&lento='+o.lento:'')+'&raf='+(o.raf||'timer')+'&_='+Date.now()+Math.random();
+    const q='index.html?s='+encodeURIComponent(s)+(o.evento!==undefined?'&evento='+encodeURIComponent(o.evento):'')+(o.lento?'&lento='+o.lento:'')+'&gioco='+(o.gioco||'memory')+(o.tdur?'&tdur='+o.tdur:'')+'&raf='+(o.raf||'timer')+'&_='+Date.now()+Math.random();
     await new Promise(r=>{ f.onload=r; f.src=q; });
     const win=f.contentWindow, doc=win.document;
     const $=sel=>doc.querySelector(sel), $$=sel=>Array.from(doc.querySelectorAll(sel));
@@ -294,6 +294,63 @@
     c.doc.dispatchEvent(new c.win.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
     assert(!c.$('#gameModal').classList.contains('on') && c.$('#gameModal').getAttribute('aria-hidden')==='true','chiuso'); assert(c.doc.activeElement===c.$('#btnGame'),'fuoco tornato a Gioca');
     await sleep(900); assert(c.calls('memory_win').length===0,'nessun premio senza partita');
+  });
+
+  // ---------- Tostiamo? (collab Panini Galiano, 21-10): al posto del memory, stesso premio memory_win ----------
+  // il pilota porta il toast sotto la borsa piu' bassa finche' la partita non finisce (o sta fermo a sinistra)
+  async function pilota(c, ms, fermo){
+    const cv=c.$('#tstCanvas');
+    const t=setInterval(()=>{
+      const s=c.win.__tostiamo.stato(), r=cv.getBoundingClientRect(), v=s.cadono.filter(x=>!x.persa).sort((a,b)=>b.y-a.y);
+      const x=fermo ? 0 : (v.length ? v[0].x : 160);
+      cv.dispatchEvent(new c.win.PointerEvent('pointermove',{ clientX:r.left+x*r.width/320, clientY:r.top+r.height*0.9, pointerType:'mouse', bubbles:true }));
+    }, 30);
+    try { await until(()=>c.win.__tostiamo && c.win.__tostiamo.stato().st==='finito', ms, 'fine partita'); } finally { clearInterval(t); }
+  }
+  async function apriToast(c){
+    await until(()=>c.$$('#btnGame img.ico.tostino').length===1, 3000, 'icona del toast');
+    c.$('#btnGame').focus(); c.$('#btnGame').click();
+    await until(()=>c.$('#tstModal').classList.contains('on') && c.vis('#tstVia'), 2000, 'Tostiamo? aperto');
+  }
+  await test('Tostiamo?: bottone e regole parlano del toast; intro sopra la tela; Esc chiude senza premio', async()=>{
+    const c=await open('p45', { gioco:'toast' });
+    has(c.txt('#btnGame'),'Gioca a Tostiamo?'); has(c.txt('#btnGame'),'+5 punti, una al giorno'); has(c.txt('#regole'),'Giochi a Tostiamo?');
+    await apriToast(c);
+    assert(!c.$('#gameModal').classList.contains('on'),'il memory resta chiuso'); has(c.txt('#tstOver'),'Pronta a tostare?'); has(c.txt('#tstOver'),'40 secondi');
+    const cv=c.$('#tstCanvas').getBoundingClientRect(), sh=c.$('#tstModal .sheet').getBoundingClientRect();
+    assert(cv.width>=280 && cv.right<=sh.right && cv.left>=sh.left,'tela dentro la finestra a 375 px: '+cv.width);
+    c.doc.dispatchEvent(new c.win.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    assert(!c.$('#tstModal').classList.contains('on'),'chiuso'); assert(c.doc.activeElement===c.$('#btnGame'),'fuoco tornato a Gioca');
+    await sleep(500); assert(c.calls('memory_win').length===0 && c.calls('deck').length===0,'nessun premio e nessun mazzo del memory');
+  });
+  await test('Tostiamo?: partita vera col pilota, almeno un toast, "Prendi i punti" = una memory_win e +5', async()=>{
+    const c=await open('p45', { gioco:'toast', tdur:12 }); await apriToast(c);
+    c.$('#tstVia').click(); await sleep(60); assert(c.win.__tostiamo.stato().st==='gioca','partita partita');
+    await pilota(c, 30000);
+    const n=c.win.__tostiamo.stato().fatti; assert(n>=1,'toast fatti: '+n);
+    await until(()=>c.vis('#tstPunti'), 1500, 'bottone dei punti'); has(c.txt('#tstOver'),'Hai tostato '+n+' toast!'); has(c.txt('#tstLive'),'Toast pronti: '+n);
+    assert(c.$('#tstMimi').classList.contains('hop'),'Mimì salta al toast pronto'); assert(c.calls('memory_win').length===0,'il premio arriva col tocco');
+    c.$('#tstPunti').click();
+    await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'premio'); has(c.txt('#rewardPrize'),'+5'); assert(!c.$('#tstModal').classList.contains('on'),'gioco chiuso');
+    assert(c.calls('memory_win').length===1,'una memory_win'); has(c.txt('#mood'),'Che toast! Brava.');
+    c.$('#rewardOk').click(); await until(()=>c.txt('#pts')==='50', 2000, 'saldo 50'); assert(c.$('#btnGame').classList.contains('done'),'gioco fatto per oggi');
+    c.$('#btnGame').click(); await sleep(120); has(c.toast(),'Torna domani'); assert(!c.$('#tstModal').classList.contains('on'),'non si riapre');
+  });
+  await test('Tostiamo?: chiudere la finestra dopo un toast non perde i punti', async()=>{
+    const c=await open('p45', { gioco:'toast', tdur:12 }); await apriToast(c); c.$('#tstVia').click();
+    await pilota(c, 30000); assert(c.win.__tostiamo.stato().fatti>=1,'almeno un toast');
+    c.$('#tstClose').click();
+    await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'premio anche chiudendo'); assert(c.calls('memory_win').length===1,'una memory_win');
+    c.doc.dispatchEvent(new c.win.KeyboardEvent('keydown',{key:'Escape',bubbles:true})); await sleep(300); assert(c.calls('memory_win').length===1,'Esc dopo non ne chiede un\'altra');
+  });
+  await test('Tostiamo?: zero toast = "Riprova" senza premio; si riparte; gia\' giocato altrove resta un avviso', async()=>{
+    let c=await open('p45', { gioco:'toast', tdur:2 }); await apriToast(c); c.$('#tstVia').click();
+    await pilota(c, 8000, true); assert(c.win.__tostiamo.stato().fatti===0,'nessun toast in 2 secondi');
+    await until(()=>c.vis('#tstAncora'), 1500, 'Riprova'); has(c.txt('#tstOver'),'Tempo scaduto');
+    c.$('#tstAncora').click(); await sleep(60); assert(c.win.__tostiamo.stato().st==='gioca' && c.$('#tstOver').classList.contains('hidden'),'ripartita');
+    c.$('#tstClose').click(); await sleep(400); assert(!c.$('#tstModal').classList.contains('on') && c.calls('memory_win').length===0,'chiusa senza premio');
+    c=await open('memory_gia', { gioco:'toast', tdur:12 }); await apriToast(c); c.$('#tstVia').click(); await pilota(c, 30000); await until(()=>c.vis('#tstPunti'), 1500, 'bottone dei punti'); c.$('#tstPunti').click();
+    await until(()=>/già giocato oggi/.test(c.toast()), 4000, 'avviso'); await until(()=>c.txt('#pts')==='60', 2000, 'saldo invariato a 60');
   });
 
   // ---------- Mimi' presente (owner 12-10): parla nel fumetto, si coccola con un tocco, e' nelle finestre ----------

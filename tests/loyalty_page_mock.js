@@ -4,6 +4,7 @@
 // un riscatto li scala e aggiunge un codice. window.__calls tiene l'elenco delle chiamate fatte dalla pagina.
 (function () {
   'use strict';
+  window.__AMIMI_BANCO = true;   // la pagina espone il gioco Tostiamo? (window.__tostiamo) e accetta ?tdur= solo qui
   var CDN = 'https://cdn.shopify.com/s/files/1/0952/1574/7399/files/';
   var FOTO = [
     ['LEA BAG COCCO BLUE', CDN + 'Lea_Bag_COCCO_BLUE-01-hero.jpg?v=1785248333'],

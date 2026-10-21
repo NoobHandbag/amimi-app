@@ -19,6 +19,9 @@ const TOKEN = '__MIMI_DATA_URI__';
 let html = readFileSync(SRC + 'index.html', 'utf8').replace(/\r\n/g, '\n');
 if (html.split(TOKEN).length !== 2) { console.error('segnaposto ' + TOKEN + ' non trovato una volta sola'); process.exit(1); }
 html = html.replace(TOKEN, 'data:image/webp;base64,' + readFileSync(SRC + 'mimi.webp').toString('base64'));
+const TOKEN_TST = '__TOSTIAMO_DATA_URI__';   // l'atlante di Tostiamo?, come in build.mjs
+if (html.split(TOKEN_TST).length !== 2) { console.error('segnaposto ' + TOKEN_TST + ' non trovato una volta sola'); process.exit(1); }
+html = html.replace(TOKEN_TST, 'data:image/webp;base64,' + readFileSync(SRC + 'tostiamo.webp').toString('base64'));
 if (html.split('<body>').length !== 2) { console.error('<body> non trovato una volta sola'); process.exit(1); }
 const mock = readFileSync(ROOT + 'tests/loyalty_page_mock.js', 'utf8');
 html = html.replace('<body>', '<body>\n<script>\n' + mock + '\n</script>');

@@ -20,12 +20,15 @@ import { fileURLToPath } from 'node:url';
 
 const DIR = fileURLToPath(new URL('./', import.meta.url));
 const MIMI_TOKEN = '__MIMI_DATA_URI__';   // segnaposto nella costante MIMI di src/index.html: qui diventa src/mimi.webp in base64
+const TOSTIAMO_TOKEN = '__TOSTIAMO_DATA_URI__';   // dal 21-10: l'atlante di Tostiamo? (src/tostiamo.webp), solo nella pagina nuova
 const fail = (msg) => { console.error('loyalty-page: ' + msg); process.exit(1); };
 const wrap = (file, withMimi) => {
   let html = readFileSync(DIR + 'src/' + file, 'utf8').replace(/\r\n/g, '\n');
   if (withMimi) {
     if (html.split(MIMI_TOKEN).length !== 2) fail(file + ' deve contenere il segnaposto ' + MIMI_TOKEN + ' una volta sola');
     html = html.replace(MIMI_TOKEN, 'data:image/webp;base64,' + readFileSync(DIR + 'src/mimi.webp').toString('base64'));
+    if (html.split(TOSTIAMO_TOKEN).length !== 2) fail(file + ' deve contenere il segnaposto ' + TOSTIAMO_TOKEN + ' una volta sola');
+    html = html.replace(TOSTIAMO_TOKEN, 'data:image/webp;base64,' + readFileSync(DIR + 'src/tostiamo.webp').toString('base64'));
   }
   if (/\{%-?\s*endraw\s*-?%\}/.test(html)) fail(file + ' contiene un tag endraw di Liquid, la pagina si romperebbe');
   return '{% layout none %}{% raw %}' + html + '{% endraw %}';
