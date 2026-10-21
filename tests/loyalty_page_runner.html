@@ -43,7 +43,7 @@
     o=o||{};
     if(!o.keepStore){ try{ localStorage.removeItem('mimi_evento'); }catch(_){} }
     f.style.width=(o.w||375)+'px';
-    const q='index.html?s='+encodeURIComponent(s)+(o.evento!==undefined?'&evento='+encodeURIComponent(o.evento):'')+(o.lento?'&lento='+o.lento:'')+'&gioco='+(o.gioco||'memory')+(o.tdur?'&tdur='+o.tdur:'')+'&raf='+(o.raf||'timer')+'&_='+Date.now()+Math.random();
+    const q='index.html?s='+encodeURIComponent(s)+(o.evento!==undefined?'&evento='+encodeURIComponent(o.evento):'')+(o.lento?'&lento='+o.lento:'')+(o.gioco===null ? '' : '&gioco='+(o.gioco||'memory'))+(o.tdur?'&tdur='+o.tdur:'')+(o.oggi?'&oggi='+o.oggi:'')+'&raf='+(o.raf||'timer')+'&_='+Date.now()+Math.random();
     await new Promise(r=>{ f.onload=r; f.src=q; });
     const win=f.contentWindow, doc=win.document;
     const $=sel=>doc.querySelector(sel), $$=sel=>Array.from(doc.querySelectorAll(sel));
@@ -318,17 +318,31 @@
     await apriToast(c);
     assert(!c.$('#gameModal').classList.contains('on'),'il memory resta chiuso'); has(c.txt('#tstOver'),'Pronta a tostare?'); has(c.txt('#tstOver'),'40 secondi');
     const cv=c.$('#tstCanvas').getBoundingClientRect(), sh=c.$('#tstModal .sheet').getBoundingClientRect();
-    assert(cv.width>=280 && cv.right<=sh.right && cv.left>=sh.left,'tela dentro la finestra a 375 px: '+cv.width);
+    assert(cv.width>=200 && cv.right<=sh.right && cv.left>=sh.left,'tela dentro la finestra a 375 px: '+cv.width);
     c.doc.dispatchEvent(new c.win.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
     assert(!c.$('#tstModal').classList.contains('on'),'chiuso'); assert(c.doc.activeElement===c.$('#btnGame'),'fuoco tornato a Gioca');
     await sleep(500); assert(c.calls('memory_win').length===0 && c.calls('deck').length===0,'nessun premio e nessun mazzo del memory');
+  });
+  await test('Tostiamo? (Gate 2): su un telefono basso (375x548, 360x640) toast e "Chiudi" restano nello schermo', async()=>{
+    try { for(const [w,h] of [[375,548],[360,640],[390,844]]){
+      f.style.height=h+'px'; const c=await open('p45', { gioco:'toast', w }); await apriToast(c);
+      const cv=c.$('#tstCanvas').getBoundingClientRect(), cl=c.$('#tstClose').getBoundingClientRect(), H=c.win.innerHeight;
+      assert(cv.top+cv.height*446/480<=H, w+'x'+h+': il toast sta sotto lo schermo ('+Math.round(cv.top+cv.height*446/480)+' > '+H+')');
+      assert(cl.bottom<=H, w+'x'+h+': "Chiudi" fuori dallo schermo'); assert(cv.width>=200, w+'x'+h+': tela troppo stretta '+cv.width);
+    } } finally { f.style.height=''; }
+  });
+  await test('Tostiamo?: senza ?gioco decide la data di Roma, estremi compresi (20-10 memory, 21-10 e 02-11 toast, 03-11 memory)', async()=>{
+    for(const [d,g] of [['2026-10-20','memory'],['2026-10-21','toast'],['2026-11-02','toast'],['2026-11-03','memory']]){
+      const c=await open('p45', { gioco:null, oggi:d });
+      has(c.txt('#btnGame'), g==='toast' ? 'Gioca a Tostiamo?' : 'Gioca al memory', d);
+    }
   });
   await test('Tostiamo?: partita vera col pilota, almeno un toast, "Prendi i punti" = una memory_win e +5', async()=>{
     const c=await open('p45', { gioco:'toast', tdur:12 }); await apriToast(c);
     c.$('#tstVia').click(); await sleep(60); assert(c.win.__tostiamo.stato().st==='gioca','partita partita');
     await pilota(c, 30000);
     const n=c.win.__tostiamo.stato().fatti; assert(n>=1,'toast fatti: '+n);
-    await until(()=>c.vis('#tstPunti'), 1500, 'bottone dei punti'); has(c.txt('#tstOver'),'Hai tostato '+n+' toast!'); has(c.txt('#tstLive'),'Toast pronti: '+n);
+    await until(()=>c.vis('#tstPunti'), 1500, 'bottone dei punti'); has(c.txt('#tstOver'),'Hai tostato '+n+' toast!'); has(c.txt('#tstLive'),'Hai tostato '+n+' toast');
     assert(c.$('#tstMimi').classList.contains('hop'),'Mimì salta al toast pronto'); assert(c.calls('memory_win').length===0,'il premio arriva col tocco');
     c.$('#tstPunti').click();
     await until(()=>c.$('#rewardModal').classList.contains('on'), 4000, 'premio'); has(c.txt('#rewardPrize'),'+5'); assert(!c.$('#tstModal').classList.contains('on'),'gioco chiuso');

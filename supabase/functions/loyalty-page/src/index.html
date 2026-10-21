@@ -242,8 +242,11 @@
   .sheet h2{font-size:29px;margin-bottom:4px}
   .sheet p{font-size:14px;color:var(--muted)}
   /* Tostiamo?: finestra piu' stretta ai lati per dare spazio alla tela; sopra la tela l'intro e la fine */
-  .sheet-gioco{padding:20px 14px 12px}
-  .tst{position:relative;margin:12px auto 6px;width:100%;max-width:320px}
+  #tstModal{padding-top:58px}
+  .sheet-gioco{padding:16px 14px 8px}
+  .sheet-gioco h2{font-size:25px;margin-bottom:0}
+  .tst{position:relative;margin:8px auto 2px;max-width:320px;width:min(100%, max(200px, calc((100vh - 190px) * 2 / 3)))}
+  @supports (height:100svh){ .tst{width:min(100%, max(200px, calc((100svh - 190px) * 2 / 3)))} }   /* svh: lo schermo con le barre di Safari aperte */
   .tst canvas{display:block;width:100%;height:auto;aspect-ratio:2/3;border-radius:16px;touch-action:none;-webkit-user-select:none;user-select:none;background:#F4DEDA;box-shadow:0 0 0 1.5px var(--gal-green)}
   .tst-over{position:absolute;left:0;right:0;bottom:0;top:9.2%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px;text-align:center;background:rgba(255,251,251,.88);border-radius:0 0 16px 16px}
   .tst-over b{font-family:var(--display);font-weight:700;font-size:31px;line-height:1.05;color:var(--gal-green)}
@@ -388,7 +391,6 @@
   <div class="modal" id="tstModal" role="dialog" aria-modal="true" aria-labelledby="tstTitle" aria-hidden="true"><div class="sheet sheet-gioco">
     <div class="sheet-peek" id="tstMimi"><img data-mimi alt=""></div>
     <h2 id="tstTitle">Tostiamo?</h2>
-    <p>Prendi 5 borse col toast: poi arriva la fetta di sopra.</p>
     <div class="tst">
       <canvas id="tstCanvas" width="320" height="480" tabindex="0" role="img" aria-label="Gioco Tostiamo?: sposta il toast col dito o con le frecce per prendere le borse"></canvas>
       <div class="tst-over hidden" id="tstOver"></div>
@@ -469,7 +471,8 @@
   function giocoDiOggi(){
     const q=new URLSearchParams(location.search).get('gioco');
     if(q==='memory' || q==='toast') return q;
-    let oggi=''; try { oggi=new Date().toLocaleDateString('sv-SE', { timeZone:'Europe/Rome' }); } catch(_) { oggi=''; }   // senza Intl col fuso: memory
+    let oggi=(window.__AMIMI_BANCO && new URLSearchParams(location.search).get('oggi')) || '';   // il banco sposta il giorno
+    if(!oggi){ try { const p={}; new Intl.DateTimeFormat('en-US', { timeZone:'Europe/Rome', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date()).forEach(x=>{ p[x.type]=x.value; }); oggi=p.year+'-'+p.month+'-'+p.day; } catch(_) { oggi=''; } }   // senza Intl col fuso: memory
     return (/^\d{4}-\d{2}-\d{2}$/.test(oggi) && oggi>=CONFIG.tostiamo.dal && oggi<=CONFIG.tostiamo.al) ? 'toast' : 'memory';
   }
   const GIOCO = giocoDiOggi();
@@ -975,6 +978,7 @@
     const molla=()=>{ drag=false; };
     cv.addEventListener('pointerup', molla); cv.addEventListener('pointercancel', molla);
     cv.addEventListener('keydown', e=>{ if(e.key==='ArrowLeft'){ keyDir=-1; e.preventDefault(); } else if(e.key==='ArrowRight'){ keyDir=1; e.preventDefault(); } });
+    cv.addEventListener('blur', ()=>{ keyDir=0; drag=false; });
     cv.addEventListener('keyup', e=>{ if((e.key==='ArrowLeft'&&keyDir<0)||(e.key==='ArrowRight'&&keyDir>0)) keyDir=0; });
 
     function topX(){ return pila.length ? pila[pila.length-1].dx : px; }
@@ -1012,11 +1016,10 @@
         if(spawnT<=0 && cadono.filter(c=>!c.persa).length<3){ nuovaBorsa(); spawnT=lerp(1.05,0.55,clock/DURATA)*rnd(0.85,1.15); }
       }
       for(const it of cadono){
-        const prima=it.y+GH/2;
         it.y+=it.vy*dt;
         if(st==='gioca' && !it.persa){
           const linea=lineaPresa(), giu=it.y+GH/2;
-          if(prima<linea && giu>=linea){ if(Math.abs(it.x-topX())<=CATCH+it.w*0.25) { it.preso=true; prendi(it); } else it.persa=true; }
+          if(giu>=linea){ if(Math.abs(it.x-topX())<=CATCH+it.w*0.25) { it.preso=true; prendi(it); } else it.persa=true; }
         } else if(!it.preso && it.y+GH/2>lineaPresa()) it.persa=true;
       }
       cadono=cadono.filter(it=>!it.preso && it.y<H+GH);
@@ -1141,15 +1144,15 @@
     return {
       avvia(){ azzera(); st='gioca'; raf=requestAnimationFrame(frame); try{ cv.focus({ preventScroll:true }); }catch(_){} },
       ferma(){ ferma(); st='fermo'; },
-      disegna(){ ctx.setTransform(dpr,0,0,dpr,0,0); draw(); },
-      get fatti(){ return fatti; },
+      pronto(){ azzera(); },                                                     // tela pulita, partita ferma
       stato(){ return { st, clock, fatti, pila:pila.length, px, cadono:cadono.map(c=>({ x:c.x, y:c.y, persa:c.persa })) }; },   // per il banco di prova
     };
   }
 
-  // === Tostiamo? nella pagina: intro, partita, fine. Con almeno un toast i punti si prendono col bottone o chiudendo la
-  // finestra (non si perdono); premio e cancello "una al giorno" restano quelli del memory (winGame -> memory_win). ===
-  const TST = { gioco:null, img:null, vinta:false };
+  // === Tostiamo? nella pagina: intro, partita, fine. A partita finita con almeno un toast i punti si prendono col bottone
+  // o chiudendo la finestra (non si perdono); chiudere a meta' partita non da' niente. Premio e cancello "una al giorno"
+  // restano quelli del memory (winGame -> memory_win). ===
+  const TST = { gioco:null, img:null, vinta:false, attesa:false };
   let ICO_TOAST = ICO_CARTA;                                                               // finche' l'atlante non e' pronto
   function caricaAtlante(){
     if(TST.img) return TST.img;
@@ -1171,15 +1174,17 @@
   }
   function tstFine(n){
     if(n>0){
-      TST.vinta=true;
+      TST.vinta=true; el('tstLive').textContent='Hai tostato '+n+' toast. Sono tuoi i punti di oggi.';
       tstOver('<b>Hai tostato '+n+' toast!</b><p>'+(n>=4 ? 'Da Galiano ti assumono subito.' : 'Buonissimi.')+' Sono tuoi i punti di oggi.</p><button class="btn" type="button" id="tstPunti">Prendi i punti</button>');
       el('tstPunti').addEventListener('click', chiudiTostiamo);
     } else {
+      el('tstLive').textContent='Tempo scaduto, nessun toast.';
       tstOver('<b>Tempo scaduto</b><p>Per i punti basta un toast: cinque borse e la fetta di sopra.</p><button class="btn" type="button" id="tstAncora">Riprova</button>');
       el('tstAncora').addEventListener('click', ()=>{ tstOver(''); TST.gioco.avvia(); });
     }
   }
   function apriTostiamo(){
+    if(TST.attesa) return;                                                                 // il premio di questa partita sta arrivando
     const im=caricaAtlante();
     if(!im.complete){ const poi=()=>apriTostiamo(); im.addEventListener('load', poi, { once:true }); im.addEventListener('error', poi, { once:true }); return; }
     if(!im.naturalWidth){ startGame(); return; }                                          // atlante illeggibile: si gioca al memory
@@ -1188,7 +1193,7 @@
         onToast:n=>{ const m=el('tstMimi'); m.classList.remove('hop'); void m.offsetWidth; m.classList.add('hop'); el('tstLive').textContent='Toast pronti: '+n; },
         onFine:tstFine });
       if(window.__AMIMI_BANCO) window.__tostiamo=TST.gioco;
-    } else { TST.gioco.ferma(); TST.gioco.disegna(); }
+    } else TST.gioco.pronto();
     TST.vinta=false; tstIntro();
     openModal('tstModal', el('tstVia'));
   }
@@ -1196,7 +1201,7 @@
     if(!el('tstModal').classList.contains('on')) return;
     if(TST.gioco) TST.gioco.ferma();
     const vinta=TST.vinta; TST.vinta=false;
-    if(vinta) winGame('tstModal', 'Che toast! Brava.'); else closeModal('tstModal');
+    if(vinta){ TST.attesa=true; winGame('tstModal', 'Che toast! Brava.').finally(()=>{ TST.attesa=false; }); } else closeModal('tstModal');
   }
   el('tstClose').addEventListener('click', chiudiTostiamo);
 
