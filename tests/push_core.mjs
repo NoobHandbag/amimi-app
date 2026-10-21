@@ -10,6 +10,9 @@
 // delle chiavi VAPID, punto p256dh sulla curva, flag, effetto dell'esito sulla riga, giro di invia con spedizione finta,
 // elenco dispositivi senza device_id, log ripulito); il resto e' fissato da guardie esatte, ognuna col suo autocontrollo.
 // v2 (18-10, push-eventi): blocco PURE push-destinatari (chi di invia, predefinito_per di config), casi 87-93 e A26.
+// v3 (21-10): niente Topic verso Apple (topicPer, e spedisci vero guidato con una libreria finta che fa come APNs) e 400
+// BadWebPushTopic come errore nostro, casi 20, 20b, 23g, 42b, 42c, 60 e A28; Gate 2 dello stesso giorno: nessun Topic per
+// il tema attivita (42d) e host sosia di Apple in 42b.
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { createECDH, createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -29,15 +32,21 @@ for (const b of BLOCCHI) if (cut(SRC, b) === null) { console.error(`marcatori PU
 const ESPORTA = ['ugualeCostante', 'endpointAmmesso', 'byteB64url', 'normDevice', 'normEtichetta', 'normTemi', 'temiNonAmmessi', 'validaSubscription',
   'validaIscrizione', 'controllaVapid', 'provaTroppoPresto', 'CHI_AMMESSI', 'APP_URL', 'PAYLOAD_MAX', 'pulisciTesto', 'navigaSicuro', 'costruisciPayload',
   'esitoInvio', 'MESSAGGI_ESITO', 'topicDi', 'puntoP256', 'vapidDa', 'coppiaVapidCoerente', 'vapidControllato', 'SUBJECT_DEFAULT', 'azioneEsito',
-  'riassuntoErrore', 'flagVero', 'giroInvio', 'vistaDispositivi', 'chiDestinatario', 'vistaTemi'];
+  'riassuntoErrore', 'flagVero', 'giroInvio', 'vistaDispositivi', 'chiDestinatario', 'vistaTemi', 'topicPer', 'spedisci'];
+// 21-10 (v3): anche `spedisci`, l'unico punto che chiama web-push, ritagliato dal sorgente e guidato con una libreria finta
+// (globalThis.__webpush) che si comporta come APNs: col Topic risponde 400 BadWebPushTopic. Le costanti e i tipi che
+// usa stanno fuori dai blocchi PURE: la costante si rimette qui, i tipi spariscono col type stripping di Node.
+const corpoDi = (s, firma) => { const i = s.indexOf(firma); if (i < 0) return ''; const j = s.indexOf('\n}\n', i); return j < 0 ? '' : s.slice(i, j + 2); };
+const SPEDISCI = corpoDi(SRC, 'async function spedisci(');
+if (!SPEDISCI) { console.error('funzione spedisci non trovata in push-api'); process.exit(1); }
 const TMP = `${ROOT}tests/_push_core.tmp.ts`;
-writeFileSync(TMP, `${BLOCCHI.map((b) => cut(SRC, b)).join('\n')}\nexport { ${ESPORTA.join(', ')} };\n`, 'utf8');
+writeFileSync(TMP, `const webpush = { sendNotification: (...a) => globalThis.__webpush(...a) };\nconst TIMEOUT_INVIO_MS = 10000;\n${BLOCCHI.map((b) => cut(SRC, b)).join('\n')}\n${SPEDISCI}\nexport { ${ESPORTA.join(', ')} };\n`, 'utf8');
 let M;
 try { M = await import(pathToFileURL(TMP).href); }
 finally { try { unlinkSync(TMP); } catch { /* niente */ } }
 const { ugualeCostante, endpointAmmesso, byteB64url, normDevice, normEtichetta, normTemi, temiNonAmmessi, validaSubscription, validaIscrizione, controllaVapid,
   provaTroppoPresto, CHI_AMMESSI, APP_URL, PAYLOAD_MAX, pulisciTesto, navigaSicuro, costruisciPayload, esitoInvio, MESSAGGI_ESITO, topicDi, puntoP256, vapidDa,
-  coppiaVapidCoerente, vapidControllato, SUBJECT_DEFAULT, azioneEsito, riassuntoErrore, flagVero, giroInvio, vistaDispositivi, chiDestinatario, vistaTemi } = M;
+  coppiaVapidCoerente, vapidControllato, SUBJECT_DEFAULT, azioneEsito, riassuntoErrore, flagVero, giroInvio, vistaDispositivi, chiDestinatario, vistaTemi, topicPer, spedisci } = M;
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra !== '' ? '  <- ' + JSON.stringify(extra).slice(0, 220) : '')); } };
@@ -115,12 +124,17 @@ console.log('\n== esiti del servizio push ==');
     [400, 'Credentials DO NOT CORRESPOND', 'rimuovi'], [403, { reason: 'VapidPkHashMismatch' }, 'rimuovi'],
     [403, '{"reason":"BadJwtToken"}', 'config'], [403, '', 'config'], [401, '', 'config'], [401, '{"reason":"ExpiredJwtToken"}', 'config'],
     [413, '', 'payload'], [429, 'slow down', 'limite'],
-    [500, '', 'transitorio'], [502, '', 'transitorio'], [503, '', 'transitorio'], [504, '', 'transitorio'], [400, '{"reason":"BadWebPushTopic"}', 'transitorio'],
+    [500, '', 'transitorio'], [502, '', 'transitorio'], [503, '', 'transitorio'], [504, '', 'transitorio'], [400, '{"reason":"BadWebPushTopic"}', 'config'],
     [null, 'Socket timeout', 'transitorio'], [undefined, '', 'transitorio'], [NaN, '', 'transitorio'], ['201', '', 'transitorio'],
-    [201, 'VapidPkHashMismatch', 'ok'],
+    [201, 'VapidPkHashMismatch', 'ok'], [400, '{"reason":"BadDeviceToken"}', 'transitorio'], [400, '', 'transitorio'], [201, 'BadWebPushTopic', 'ok'],
+    [400, { reason: 'BadWebPushTopic' }, 'config'], [500, 'BadWebPushTopic', 'transitorio'],
   ];
   const sbagli = casi.filter(([s, c, e]) => esitoInvio(s, c) !== e).map(([s, c, e]) => ({ s, c, atteso: e, dato: esitoInvio(s, c) }));
-  t('20 tutte le classi di codice del brief (2xx, 404/410, mismatch VAPID, 401/403, 413, 429, 5xx, rete)', sbagli.length === 0, sbagli);
+  t('20 tutte le classi di codice del brief (2xx, 404/410, mismatch VAPID, 401/403, 400 BadWebPushTopic dal 21-10, 413, 429, 5xx, rete)', sbagli.length === 0, sbagli);
+  // 21-10: 7 invii all'iPhone di Benny, tutti 400 BadWebPushTopic, contati come transitori (fail_count + 1 a ogni giro)
+  const topic400 = azioneEsito(esitoInvio(400, '{"reason":"BadWebPushTopic"}'), 400, 6, '2026-10-21T10:00:00.000Z');
+  t('20b 400 BadWebPushTopic (Apple, 21-10) = errore NOSTRO: la riga resta, fail_count non cresce, last_status 400', topic400.cancella === false
+    && isDeepStrictEqual(topic400.patch, { last_status: 400, updated_at: '2026-10-21T10:00:00.000Z' }), topic400);
   const effetto = (s, c) => azioneEsito(esitoInvio(s, c), s, 0, 'T').cancella;
   t('21 un 403 di mismatch cancella la riga, un 403 qualunque no (errore nostro: la riga resta)', esitoInvio(403, 'VapidPkHashMismatch') === 'rimuovi' && esitoInvio(403, 'Forbidden') === 'config'
     && effetto(403, 'VapidPkHashMismatch') === true && effetto(403, 'Forbidden') === false && effetto(401, '') === false);
@@ -155,6 +169,8 @@ console.log('\n== log di un invio non riuscito ==');
     && rete.includes('[url]') && rete.startsWith('TypeError (nessuna risposta HTTP): ') && rete.includes('connection reset'), rete);
   const apple = riassuntoErrore('WebPushError', 403, '{"reason":"BadJwtToken"}');
   t('23c codice HTTP e corpo del servizio push tenuti', apple === 'WebPushError (403): {"reason":"BadJwtToken"}', apple);
+  const topicLog = riassuntoErrore('WebPushError', 400, '{"reason":"BadWebPushTopic"}');
+  t('23g il motivo di Apple resta nel log come il 21-10 (BadWebPushTopic, codice 400)', topicLog === 'WebPushError (400): {"reason":"BadWebPushTopic"}', topicLog);
   const lunghi = [riassuntoErrore('E', 500, 'x'.repeat(195) + ' https://web.push.apple.com/QGx2SEGRETO'), riassuntoErrore('E', 500, 'x'.repeat(150) + ' https://web.push.apple.com/QGx2SEGRETO fine')];
   t('23d testo al massimo 200 punti di codice; nessun pezzo di endpoint, ne\' al bordo del taglio ne\' in fondo al testo', lunghi.every((l) => Array.from(l.slice(l.indexOf(': ') + 2)).length <= 200
     && !l.includes('SEGRETO') && !l.includes('apple')) && lunghi[1].endsWith('[url] fine') && Array.from(riassuntoErrore('E', 500, EMOJI.repeat(500)).split(': ')[1]).length === 200, lunghi.map((l) => l.slice(-20)));
@@ -374,6 +390,39 @@ console.log('\n== Topic ==');
   t('41 Topic: tema ridotto a [A-Za-z0-9_-], al massimo 32', topicDi('conti') === 'conti' && topicDi('vendite ferme!') === 'venditeferme' && topicDi('x'.repeat(40)).length === 32
     && vari.every((v) => /^[A-Za-z0-9_-]{1,32}$/.test(topicDi(v))));
   t('42 Topic vuoto -> nessun header (undefined)', topicDi('') === undefined && topicDi(null) === undefined && topicDi('àè') === undefined && topicDi('!!!') === undefined);
+  // 21-10 (v3): APNs ha rifiutato tutti gli invii visti col Topic (400 BadWebPushTopic), FCM lo accetta
+  const APPLE = ['https://web.push.apple.com/QGx2bX8uVn0eY7K5S3dM6gZxR1vY9jK2mP4nQ8wE3tH5', 'https://api.push.apple.com/3/device/abc', 'https://WEB.PUSH.APPLE.COM/QGx2'];
+  const ALTRI = ['https://fcm.googleapis.com/fcm/send/dGVzdA:APA91b', 'https://updates.push.services.mozilla.com/wpush/v2/gAAAA', 'https://wns2-par02p.notify.windows.com/w/?token=BQ'];
+  // Gate 2 del 21-10 (R12-C3): host che somigliano a Apple senza esserlo tengono il Topic, cosi' un controllo piu' lasco
+  // (endsWith('push.apple.com') senza il punto, includes('.push.apple.com')) non passa
+  const SOSIA = ['https://evilpush.apple.com.example.org/x', 'https://evilpush.apple.com/x', 'https://web.push.apple.com.evil.com/x', 'https://web.push.apple.com./x'];
+  t('42b topicPer: verso Apple (web.push.apple.com e sottodomini di push.apple.com, maiuscole comprese) nessun Topic; FCM, Mozilla, WNS e gli host sosia lo tengono; endpoint illeggibile -> nessuno',
+    APPLE.every((e) => topicPer(e, 'riepilogo') === undefined) && ALTRI.every((e) => topicPer(e, 'riepilogo') === 'riepilogo')
+    && [null, '', 'non un url', 42].every((e) => topicPer(e, 'conti') === undefined) && topicPer(ALTRI[0], undefined) === undefined
+    && SOSIA.every((e) => topicPer(e, 'conti') === 'conti')
+    && AMMETTE.every((e) => (topicPer(e, 'conti') === undefined) === new URL(e).hostname.endsWith('.push.apple.com')), { apple: APPLE.map((e) => topicPer(e, 'riepilogo')), sosia: SOSIA.map((e) => topicPer(e, 'conti')) });
+  // Gate 2 del 21-10 (B1): il tema attivita e' un flusso di fatti, non uno stato: nessun Topic verso nessun servizio, cosi'
+  // una push non ancora consegnata (telefono di Ale in riposo) non viene sostituita dalla successiva dello stesso tema
+  t('42d tema attivita (TEMI_SENZA_TOPIC): nessun Topic, nemmeno verso FCM; gli altri temi lo tengono', topicDi('attivita') === undefined
+    && ALTRI.every((e) => topicPer(e, topicDi('attivita')) === undefined)
+    && ['riepilogo', 'conti', 'spedizioni', 'assistenza', 'negozi', 'sistema', 'prova'].every((x) => topicDi(x) === x)
+    && topicDi('attivita_team') === 'attivita_team', [topicDi('attivita'), topicDi('riepilogo')]);
+  // spedisci vero (ritagliato dal sorgente) contro una libreria finta che fa come APNs e FCM il 21-10
+  const opzioni = [];
+  globalThis.__webpush = async (sub, payload, o) => {
+    opzioni.push({ host: new URL(sub.endpoint).hostname, topic: o.topic, ttl: o.TTL, urgency: o.urgency });
+    if (o.topic !== undefined && new URL(sub.endpoint).hostname.endsWith('push.apple.com')) throw Object.assign(new Error('Received unexpected response code'), { name: 'WebPushError', statusCode: 400, body: '{"reason":"BadWebPushTopic"}' });
+    return { statusCode: 201 };
+  };
+  const V = { subject: 'mailto:info@amimi.it', publicKey: 'p', privateKey: 'k' };
+  const riga = (endpoint) => ({ id: 'r1', endpoint, p256dh: 'x', auth: 'y', fail_count: 0 });
+  const iphone = await spedisci(riga(APPLE[0]), '{}', { ttl: 86400, urgency: 'normal', topic: topicDi('riepilogo') }, V);
+  const android = await spedisci(riga(ALTRI[0]), '{}', { ttl: 86400, urgency: 'high', topic: topicDi('riepilogo') }, V);
+  const attivita = await spedisci(riga(ALTRI[0]), '{}', { ttl: 86400, urgency: 'normal', topic: topicDi('attivita') }, V);
+  t('42c spedisci (21-10): all\'iPhone parte SENZA Topic e arriva (201, ok); ad Android col Topic del tema, senza per il tema attivita (Gate 2); TTL e Urgency invariati',
+    esitoInvio(iphone.status, iphone.corpo) === 'ok' && esitoInvio(android.status, android.corpo) === 'ok' && esitoInvio(attivita.status, attivita.corpo) === 'ok'
+    && isDeepStrictEqual(opzioni, [{ host: 'web.push.apple.com', topic: undefined, ttl: 86400, urgency: 'normal' }, { host: 'fcm.googleapis.com', topic: 'riepilogo', ttl: 86400, urgency: 'high' },
+      { host: 'fcm.googleapis.com', topic: undefined, ttl: 86400, urgency: 'normal' }]), { iphone, android, opzioni });
 }
 
 console.log('\n== confronto a tempo costante ==');
@@ -531,6 +580,13 @@ const vapidVerificato = (s) => {
     && (c.match(/await vapidDaEnv\(\)/g) ?? []).length === 3 && (c.match(/vapidDaEnv\(\)/g) ?? []).length === 4
     && codice(corpoFunzione(s, 'async function vapidControllato(')).includes('if (!(await coppiaVapidCoerente(r.vapid.publicKey, r.vapid.privateKey, segnala))) return { vapid: null, motivo:');
 };
+// 21-10 (v3): web-push riceve il Topic SOLO da topicPer sull'endpoint della riga, dentro spedisci (unica chiamata alla
+// libreria, per invia e per prova): mai o.topic grezzo, che verso Apple dava 400 BadWebPushTopic a ogni invio
+const topicSoloDaTopicPer = (s) => {
+  const f = codice(corpoFunzione(s, 'async function spedisci('));
+  return f.includes("TTL: o.ttl, urgency: o.urgency, topic: topicPer(r.endpoint, o.topic), contentEncoding: 'aes128gcm', timeout: TIMEOUT_INVIO_MS,")
+    && (f.match(/o\.topic/g) ?? []).length === 1 && (codice(fuoriPure(s)).match(/topicPer\(/g) ?? []).length === 1;
+};
 const payloadSoloDalCostruttore = (s) => {
   const f = codice(fuoriPure(s));
   const chiamate = [...f.matchAll(/(?<!function )spedisci\(([^,]+), ([^,]+),/g)];
@@ -570,9 +626,8 @@ t('53 payload solo da costruisciPayload, una sola chiamata a sendNotification', 
   const tt = pv.indexOf('.update({ last_test_at: ora })'), tk = pv.indexOf('if (tErr) return json('), sp = pv.indexOf('spedisci(');
   t('59 prova: 429 "aspetta un minuto", last_test_at scritto PRIMA dell\'invio e invio fermo se la scrittura fallisce', tt > 0 && tk > tt && sp > tk
     && pv.includes("if (provaTroppoPresto(riga.last_test_at, Date.now())) return json({ error: 'aspetta un minuto' }, 429);") && pv.indexOf('aspetta un minuto') < tt);
-  t('60 opzioni di invio: aes128gcm, TTL 86400 (prova 300), Urgency high solo se urgente, Topic dal tema', SRC.includes("contentEncoding: 'aes128gcm'")
-    && SRC.includes('const TTL_INVIO = 86400;') && SRC.includes('const TTL_PROVA = 300;') && SRC.includes("urgency: body.urgente === true ? 'high' : 'normal', topic: topicDi(tema)")
-    && SRC.includes('TTL: o.ttl, urgency: o.urgency, topic: o.topic,'));
+  t('60 opzioni di invio: aes128gcm, TTL 86400 (prova 300), Urgency high solo se urgente, Topic dal tema e, dal 21-10, mai verso Apple (topicPer sull\'endpoint del telefono)',
+    topicSoloDaTopicPer(SRC) && SRC.includes('const TTL_INVIO = 86400;') && SRC.includes('const TTL_PROVA = 300;') && SRC.includes("urgency: body.urgente === true ? 'high' : 'normal', topic: topicDi(tema)"));
   const isc = SRC.slice(SRC.indexOf("if (action === 'iscrivi')"), SRC.indexOf("if (action === 'rinnova')"));
   t('61 iscrivi: tetto 30 con count head:true, via la riga vecchia dello stesso telefono, poi upsert sull\'endpoint', SRC.includes('const MAX_ISCRIZIONI = 30;')
     && isc.includes(".select('id', { count: 'exact', head: true })") && isc.includes('if (cErr || count == null) throw new ReadError(') && isc.includes('if (count >= MAX_ISCRIZIONI)')
@@ -666,6 +721,10 @@ console.log('\n== autocontrollo dei rilevatori ==');
   ].every((s) => !chiFiltrato(s)));
   t('A27 risposta di invia senza chi (vera o dryRun) -> vista', [pianta('esiti: g.esiti, chi: dest.chi, ...(g.fermato', 'esiti: g.esiti, ...(g.fermato'),
     pianta('rimossi: 0, destinatari, chi: dest.chi });', 'rimossi: 0, destinatari });')].every((s) => !chiRimandato(s)));
+  t('A28 spedisci che passa a web-push il Topic grezzo (o.topic) o lo calcola sull\'endpoint sbagliato -> visto', [
+    pianta('topic: topicPer(r.endpoint, o.topic),', 'topic: o.topic,'),
+    pianta('topic: topicPer(r.endpoint, o.topic),', "topic: topicPer('https://fcm.googleapis.com/x', o.topic),"),
+  ].every((s) => !topicSoloDaTopicPer(s)));
   const ingenuo = (s) => typeof s === 'string' && /fcm\.googleapis\.com|push\.apple\.com|push\.services\.mozilla\.com|notify\.windows\.com/.test(s);
   t('A11 i casi di rifiuto battono un controllo ingenuo "contiene il dominio"', RIFIUTA.filter(ingenuo).length >= 10, RIFIUTA.filter(ingenuo).length);
   const esitoIngenuo = (s) => (s >= 200 && s < 300 ? 'ok' : s >= 400 && s < 500 ? 'rimuovi' : 'transitorio');

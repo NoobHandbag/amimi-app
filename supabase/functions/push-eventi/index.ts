@@ -1,5 +1,9 @@
 // push-eventi v1 (2026-10-18): gli eventi che esistono gia' nei dati diventano notifiche native per profilo.
 // v2 (2026-10-19): le push su una cliente dicono chi e' (nome, o email senza nome), decisione di Dan del 19-10 (Privacy, sotto).
+// v3 (2026-10-21, OK di Dan in chat): spedizione_eccezione solo sugli stati del corriere che sono un problema vero
+// (statoProblema: la classe della vista prendeva anche il transito normale); evento nuovo attivita_team (migr 0168, tema
+// attivita): ordini, arrivi e conte di Benny e Ginni da change_log, UNA push per persona e tipo per giro (eseguiGruppi),
+// con supplier_orders letto per i codici degli ordini. Anche change_log e supplier_orders si LEGGONO soltanto.
 // Brief: Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
 // (Regola 19, migr 0166): scrive SOLO push_eventi_inviati (il registro), push_eventi (ultimo_giro_at, baseline_at) e la sua
 // riga di telemetria in health_log (k = 'push_eventi', una per giorno UTC: Gate 3 del 18-10, un giro che fallisce deve
@@ -52,9 +56,10 @@ const CHI_PERSONE = ['Ale', 'Bene', 'Ginevra'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TEMA_RE = /^[a-z_]{2,32}$/;
 // tema di ogni evento (righe di push_eventi della 0166); la riga a DB vince se e' una chiave valida
+// (attivita_team dalla 0168 del 21-10)
 const TEMA_EVENTO: Record<string, string> = {
   b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza', cs_cliente_ha_riscritto: 'assistenza',
-  spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo',
+  spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
 };
 function temaDi(daDb: unknown, evento: string): string {
   return typeof daDb === 'string' && TEMA_RE.test(daDb) ? daDb : (TEMA_EVENTO[evento] ?? '');
@@ -324,18 +329,42 @@ function msgCsRiscritto(cands: Cand[], conv: Record<string, Riga>, inAttesa: num
 
 // spedizione_eccezione: righe classe 'eccezione' nuove o cambiate. Chiave = LDV + stato, cosi' un cambio di stato
 // (da INDIRIZZO ERRATO a DESTINATARIO ASSENTE) e' una push nuova. LDV fuori forma: nessun candidato.
+// 21-10 (OK di Dan in chat): la vista v_spedizioni_eccezioni (core, la usa anche cs-assist: non si tocca) mette in classe
+// 'eccezione' ogni stato fuori da una lista corta, quindi anche il transito normale. In 3 giorni 20 candidati: 'IN
+// CONSEGNA MATT.' 8, 'IN CONSEGNA' 4, 'RITIRATA' 4, 'IN CONSEGNA POM.' 2 e solo 2 veri ('DESTINATARIO ASSENTE'). Ora una
+// riga diventa candidato solo se lo stato del corriere e' un problema vero (statoProblema): un pezzo di parola di
+// PROBLEMI_CORRIERE all'inizio di una parola dello stato ripulito, cosi' RESO non prende PRESO ed ERRAT prende anche N.
+// CIVICO MANCANTE/ERRATO. Gli stati normali (IN CONSEGNA*, RITIRATA, IN TRANSITO, PARTITA, NUOVA, CONSEGNATA, FERIE,
+// IN ATTESA DI AFFIDO, IN PARTENZA TWS, RM - CONSEGNATA) e uno stato illeggibile non diventano mai una push.
+// Gate 2 del 21-10: ai 12 pezzi del brief (che diceva "almeno") si aggiungono le diciture comuni di una consegna non
+// riuscita o di un rientro, nessuna delle quali prende uno dei 16 stati visti: MANCATA o TENTATA CONSEGNA, CONSEGNA
+// FALLITA, NON CONSEGNABILE, IN RESTITUZIONE, RIENTRO o RITORNO AL MITTENTE, IN ATTESA ISTRUZIONI, INDIRIZZO INCOMPLETO o
+// INSUFFICIENTE, DESTINATARIO o ESERCIZIO CHIUSO. CHIUSO al maschile e non CHIUS: "SPEDIZIONE CHIUSA" o "PRATICA CHIUSA"
+// possono essere la fine normale di una spedizione.
 const LDV_RE = /^[A-Za-z0-9_./-]{1,64}$/;
+const PROBLEMI_CORRIERE = ['ASSENTE', 'ERRAT', 'MANCANT', 'RIFIUT', 'GIACENZA', 'SMARRIT', 'DANNEGG', 'RESPINT', 'RESO', 'IRREPERIBIL', 'INESISTENT', 'SCONOSCIUT',
+  'MANCAT', 'TENTAT', 'FALLIT', 'NON CONSEGN', 'RESTITU', 'RIENTR', 'RITORN', 'ISTRUZION', 'INCOMPLET', 'INSUFFICIENT', 'CHIUSO'];
+const PROBLEMA_RE = new RegExp(`(?:^|[^\\p{L}])(?:${PROBLEMI_CORRIERE.join('|')})`, 'u');
+function statoProblema(v: unknown): boolean {
+  const s = statoCorriere(v);
+  return s !== '' && PROBLEMA_RE.test(s);
+}
 function candSpedizione(righe: Riga[]): Cand[] {
   const out: Cand[] = [];
   for (const r of righe ?? []) {
-    if (r?.classe !== 'eccezione' || typeof r.ldv !== 'string' || !LDV_RE.test(r.ldv)) continue;
+    if (r?.classe !== 'eccezione' || typeof r.ldv !== 'string' || !LDV_RE.test(r.ldv) || !statoProblema(r.stato_tws)) continue;
     const stato = statoCorriere(r.stato_tws);
     // nella chiave lo stato senza spazi ne' punteggiatura: la chiave passa da un filtro .in() di PostgREST. Il nome della
     // cliente (19-10) sta solo in rif, per il titolo: mai nella chiave, che finisce nel registro
-    out.push({ chiave: `${r.ldv}:${(stato || 'ALTRO').replace(/[^\p{L}\p{N}]+/gu, '_')}`, ts: msDi(r.updated_at),
+    out.push({ chiave: `${r.ldv}:${stato.replace(/[^\p{L}\p{N}]+/gu, '_')}`, ts: msDi(r.updated_at),
       rif: { ordine: numeroOrdine(r.order_name), stato, cliente: nomeCliente(r.customer_name, null) } });
   }
   return ordinaRecenti(out);
+}
+// il totale dei 7 giorni nel testo conta le sole spedizioni con un problema vero (21-10): contate dalla classe della vista
+// sarebbero state 20 in 3 giorni invece di 2
+function contaProblemi(righe: Riga[]): number {
+  return (righe ?? []).filter((r) => r?.classe === 'eccezione' && statoProblema(r.stato_tws)).length;
 }
 // push-api taglia il titolo a 120 punti di codice (TITOLO_MAX, stesso numero pinnato dal test): qui si accorcia il nome
 // della cliente, non lo stato del corriere, che e' la notizia. Con ordine e stato lunghi al massimo restano 54 caratteri.
@@ -476,6 +505,94 @@ function contaArrivi(righe: Riga[]): number {
   let n = 0;
   for (const v of netto.values()) if (v > 0) n++;
   return n;
+}
+
+// attivita_team (21-10, OK di Dan in chat: "vorrei anche esser notificato quando le ragazze fanno operazioni tipo
+// registra ordine, pezzi arrivati, e conta fisica"). Sorgente: change_log (core, sola lettura), le righe che write-api
+// scrive con order_multi, arrival_set e count_apply. Solo quelle di Benny e Ginni (chi 'Bene' e 'Ginevra', chiavi di
+// PEOPLE): mai quelle di Ale, di Claude-Code o dei giri automatici. Un candidato per riga di change_log (chiave
+// cl:<id>): il registro copre ogni riga una volta sola, e il giro le raggruppa per persona e tipo (eseguiGruppi), UNA
+// push per gruppo. Un arrivo a delta 0 (risalvataggio, solo il costo: 10 su 109 nei 120 giorni) non muove pezzi e non e'
+// un candidato; uno negativo (correzione o storno) si'. Nel testo solo codici prodotto, nomi dei fornitori e numeri.
+const OP_ATTIVITA = ['order_multi', 'arrival_set', 'count_apply'];
+const PERSONA_TEAM: Record<string, string> = { Bene: 'Benny', Ginevra: 'Ginni' };
+const persona = (chi: unknown): string => (typeof chi === 'string' && Object.prototype.hasOwnProperty.call(PERSONA_TEAM, chi) ? PERSONA_TEAM[chi] : '');
+const CODICE_RE = /^[A-Za-z0-9_.-]{1,60}$/;
+const codiceProdotto = (v: unknown): string => { const s = typeof v === 'string' ? v.trim() : ''; return CODICE_RE.test(s) ? s : ''; };
+// intero da un numero o dal testo di after->>campo; altrimenti vuoto
+const intero = (v: unknown): string => {
+  const n = typeof v === 'number' || (typeof v === 'string' && v.trim() !== '') ? Number(v) : NaN;
+  return Number.isSafeInteger(n) ? String(n) : '';
+};
+function candAttivita(righe: Riga[]): Cand[] {
+  const out: Cand[] = [];
+  for (const r of righe ?? []) {
+    const id = intero(r?.id), chi = typeof r?.chi === 'string' && persona(r.chi) ? r.chi : '';
+    const op = typeof r?.op === 'string' && OP_ATTIVITA.includes(r.op) ? r.op : '';
+    if (!id || Number(id) <= 0 || !chi || !op) continue;
+    const delta = intero(r.delta);
+    if (op === 'arrival_set' && (delta === '' || delta === '0')) continue;
+    out.push({ chiave: 'cl:' + id, ts: msDi(r.ts), rif: { id, chi, op, gruppo: `${chi}:${op}`, codice: codiceProdotto(r.codice), delta,
+      contati: intero(r.contati), prima: intero(r.giac_prima), fornitore: pulisci(r.fornitore, 40), righe: intero(r.righe),
+      ordine: typeof r.gruppo === 'string' && UUID_RE.test(r.gruppo) ? r.gruppo.toLowerCase() : '' } });
+  }
+  return ordinaRecenti(out);
+}
+const VOCI_MAX = 4;
+const primeVoci = (voci: string[], sep: string, altri: (n: number) => string) => voci.slice(0, VOCI_MAX).join(sep) + (voci.length > VOCI_MAX ? sep + altri(voci.length - VOCI_MAX) : '');
+const eAltri = (n: number) => (n === 1 ? 'e un altro' : `e altri ${n}`);
+// un ordine: "<fornitore>: N righe (CODICE x20, CODICE e altri N)". Codici e quantita' dalle righe dell'ordine
+// (supplier_orders per gruppo); una riga WIP (quantita' ancora da definire) senza quantita'. Un ordine cancellato dopo
+// non ha righe: restano fornitore e numero di righe.
+function rigaOrdine(c: Cand, ordini: Record<string, Riga[]>): string {
+  const f = c.rif.fornitore || 'Fornitore';
+  const lette = (ordini?.[c.rif.ordine] ?? []).map((r) => {
+    const k = codiceProdotto(r?.codice), q = intero(r?.qty_ordered);
+    return k ? (r?.wip !== true && Number(q) > 0 ? `${k} x${q}` : k) : '';
+  }).filter(Boolean).sort();
+  const n = Number(c.rif.righe) > 0 ? Number(c.rif.righe) : lette.length;
+  const codici = lette.length ? ` (${lette.slice(0, 3).join(', ')}${lette.length > 3 ? ' ' + eAltri(lette.length - 3) : ''})` : '';
+  return n > 0 ? `${f}: ${plurale(n, 'riga', 'righe')}${codici}` : f + codici;
+}
+// UNA push per un gruppo (stessa persona, stesso tipo), con le sole righe passate: il giro le passa dopo averle
+// prenotate, quindi il testo dice esattamente le righe che questa push copre. Righe di persone o tipi diversi = nessun
+// messaggio (non e' un gruppo).
+function msgGruppoAttivita(cands: Cand[], ordini: Record<string, Riga[]>): Msg | null {
+  const cs = (cands ?? []).filter((c) => c?.rif && persona(c.rif.chi) && OP_ATTIVITA.includes(c.rif.op)).sort((a, b) => Number(a.rif.id) - Number(b.rif.id));
+  if (!cs.length || cs.length !== (cands ?? []).length) return null;
+  const { chi, op } = cs[0].rif;
+  if (cs.some((c) => c.rif.chi !== chi || c.rif.op !== op)) return null;
+  const p = persona(chi);
+  const base = { chiave: `${chi}:${op}`, tema: TEMA_EVENTO.attivita_team, url: APP_URL };
+  if (op === 'order_multi') {
+    return { ...base, titolo: cs.length === 1 ? `${p} ha registrato un ordine` : `${p} ha registrato ${cs.length} ordini`,
+      testo: primeVoci(cs.map((c) => rigaOrdine(c, ordini)), '\n', (n) => (n === 1 ? 'e un altro ordine' : `e altri ${n} ordini`)) };
+  }
+  if (op === 'arrival_set') {
+    // al netto per codice: un +10 e un -10 sullo stesso codice nello stesso gruppo non sono pezzi arrivati
+    const netto = new Map<string, number>();
+    for (const c of cs) { const k = c.rif.codice || 'codice illeggibile'; netto.set(k, (netto.get(k) ?? 0) + (Number(c.rif.delta) || 0)); }
+    const voci = [...netto].filter(([, v]) => v !== 0).map(([k, v]) => `${k} ${v > 0 ? '+' : ''}${v}`);
+    const totale = [...netto.values()].reduce((s, v) => s + v, 0);
+    return { ...base, titolo: totale > 0 ? `${p}: pezzi arrivati` : `${p}: arrivi corretti`,
+      testo: voci.length ? primeVoci(voci, ', ', eAltri) + (voci.length > 1 && totale > 0 ? `. In tutto ${plurale(totale, 'pezzo', 'pezzi')}` : '')
+        : 'Arrivi corretti, nessun pezzo in piu\' o in meno.' };
+  }
+  const voci = cs.map((c) => `${c.rif.codice || 'codice illeggibile'}: ${c.rif.contati !== '' ? c.rif.contati + (c.rif.prima !== '' ? ` (prima ${c.rif.prima})` : '') : 'contato'}`);
+  return { ...base, titolo: cs.length === 1 ? `${p} ha fatto una conta` : `${p} ha fatto ${cs.length} conte`, testo: primeVoci(voci, ', ', eAltri) };
+}
+// i gruppi di un elenco di candidati (anteprima e componi): uno per persona e tipo, nell'ordine del primo candidato
+function msgAttivita(cands: Cand[], ordini: Record<string, Riga[]>): Msg[] {
+  const per = new Map<string, Cand[]>();
+  for (const c of cands ?? []) {
+    const g = c?.rif?.gruppo;
+    if (typeof g !== 'string' || !g) continue;
+    const l = per.get(g);
+    if (l) l.push(c); else per.set(g, [c]);
+  }
+  const out: Msg[] = [];
+  for (const cs of per.values()) { const m = msgGruppoAttivita(cs, ordini); if (m) out.push(m); }
+  return out;
 }
 // ==== PURE:pe-messaggi END ====
 
@@ -618,6 +735,63 @@ async function eseguiPiano(piano: Decisione[], msgs: Map<string, Msg>, budget: B
   }
   return r;
 }
+// Il giro di un evento A GRUPPI (attivita_team, 21-10): UNA push per gruppo (persona e tipo di operazione) e per giro,
+// e ogni riga sorgente coperta una volta sola. Il registro resta quello degli altri eventi, una riga per candidato (per
+// attivita_team la riga di change_log, chiave cl:<id>, UNIQUE evento + chiave): pianifica decide riga per riga (nuovo,
+// ritenta, salta per baseline o eta', fermo) con le stesse regole, e qui per ogni gruppo:
+//  1. si prenotano le righe nuove (prenota: chi non la inserisce non la prende, la ha un altro giro) e si riprendono
+//     quelle da ritentare (riprendi: confronto su stato e tentativi);
+//  2. il testo si compone SOLO con le righe prese (componi), quindi dice esattamente cosa la push copre;
+//  3. un invio, e lo stesso esito su ognuna delle righe prese, ciascuna coi suoi tentativi.
+// Cosi' una riga non parte due volte (la prende un giro solo, e una volta inviata e' finale) e non si perde: una riga che
+// arriva dopo un giro e' nuova al giro dopo e parte in una push sua; una non presa per tetto o tempo resta senza riga di
+// registro e la prende il giro dopo; un invio fallito lascia le sue righe `fallito` e il giro dopo le rimanda insieme
+// alle nuove dello stesso gruppo (al massimo 3 tentativi, entro 6 ore, poi push persa e la salute lo dice). Una prenotazione
+// interrotta (la edge cade) lascia righe `prenotato` che dopo 15 minuti si riprendono come negli altri eventi.
+// Conteggi: inviati, falliti, nessun_iscritto ed esauriti per push; presi_da_altri, rimandati, saltati e
+// scritture_fallite per riga.
+async function eseguiGruppi(piano: Decisione[], gruppoDi: (c: Cand) => string, componi: (cs: Cand[]) => Msg | null, budget: Budget, d: DepGiro): Promise<Resoconto> {
+  const r: Resoconto = { candidati: piano.length, inviati: 0, nessun_iscritto: 0, falliti: 0, esauriti: 0, saltati: 0, rimandati: 0, gia_gestiti: 0, presi_da_altri: 0, scritture_fallite: 0 };
+  const gruppi = new Map<string, Decisione[]>();
+  const salti: { chiave: string; motivo: string }[] = [];
+  for (const p of piano) {
+    if (p.azione === 'salta') { salti.push({ chiave: p.cand.chiave, motivo: p.motivo }); continue; }
+    if (p.azione === 'fermo') { r.gia_gestiti++; if (p.motivo === 'tentativi_esauriti') r.esauriti++; continue; }
+    const g = gruppoDi(p.cand);
+    // senza gruppo non c'e' un messaggio: una riga nuova si chiude saltata, una da ritentare resta com'e'
+    if (!g) { if (p.azione === 'nuovo') salti.push({ chiave: p.cand.chiave, motivo: 'niente_da_dire' }); else r.gia_gestiti++; continue; }
+    const l = gruppi.get(g);
+    if (l) l.push(p); else gruppi.set(g, [p]);
+  }
+  if (salti.length) { await d.salta(salti); r.saltati = salti.length; }
+  for (const membri of gruppi.values()) {
+    if (budget.invii <= 0 || d.adesso() > budget.scade) { r.rimandati += membri.length; continue; }
+    const presi: { cand: Cand; id: number | string; tent: number }[] = [];
+    for (const p of membri) {
+      if (p.azione === 'nuovo') {
+        const pr = await d.prenota(p.cand.chiave);
+        if (pr) presi.push({ cand: p.cand, id: pr.id, tent: 1 }); else r.presi_da_altri++;
+      } else if (p.reg && (await d.riprendi(p.reg))) presi.push({ cand: p.cand, id: p.reg.id, tent: p.reg.tentativi + 1 });
+      else r.presi_da_altri++;
+    }
+    if (!presi.length) continue;
+    const m = componi(presi.map((x) => x.cand));
+    if (!m) {
+      // nessun testo per righe gia' prese: si chiudono saltate (finale), mai lasciate prenotate
+      for (const x of presi) if (!(await d.chiudi(x.id, x.tent, 'saltato', { motivo: 'niente_da_dire' }, false))) r.scritture_fallite++;
+      r.saltati += presi.length;
+      continue;
+    }
+    budget.invii--;
+    let e: EsitoPush;
+    try { e = await d.invia(m); } catch { e = { ok: false, inviati: 0, falliti: 0, destinatari: null, status: null, errore: 'invio non riuscito' }; }
+    const c = chiusura(e, m);
+    if (c.stato === 'inviato') r.inviati++; else if (c.stato === 'nessun_iscritto') r.nessun_iscritto++; else r.falliti++;
+    if (c.definitivo) r.esauriti++;
+    for (const x of presi) if (!(await d.chiudi(x.id, x.tent, c.stato, c.esito, c.definitivo))) r.scritture_fallite++;
+  }
+  return r;
+}
 // ==== PURE:pe-giro END ====
 
 // ==== PURE:pe-salute BEGIN ====
@@ -710,7 +884,10 @@ const causaDi = (e: unknown) => e instanceof LetturaFallita ? 'lettura ' + e.cos
 type Sb = SupabaseClient;
 type RigaEvento = { evento: string; tema: unknown; attivo: unknown; soglie: unknown; baseline_at: unknown; ultimo_giro_at: unknown };
 type Ctx = { ora: number; flags: Record<string, string>; finestra: { aperta: boolean; data: string; ts: number } };
-type DefEvento = { candidati: (sb: Sb, ctx: Ctx, ev: RigaEvento) => Promise<Cand[]>; componi: (sb: Sb, ctx: Ctx, ev: RigaEvento, cands: Cand[]) => Promise<Msg[]> };
+// gruppi (attivita_team, 21-10): l'evento manda una push per gruppo di candidati (eseguiGruppi). dettagli legge PRIMA di
+// ogni prenotazione quello che serve ai testi, messaggio compone il testo delle sole righe prese
+type Gruppi = { dettagli: (sb: Sb, ctx: Ctx, ev: RigaEvento, cands: Cand[]) => Promise<Record<string, Riga[]>>; gruppoDi: (c: Cand) => string; messaggio: (cs: Cand[], d: Record<string, Riga[]>) => Msg | null };
+type DefEvento = { candidati: (sb: Sb, ctx: Ctx, ev: RigaEvento) => Promise<Cand[]>; componi: (sb: Sb, ctx: Ctx, ev: RigaEvento, cands: Cand[]) => Promise<Msg[]>; gruppi?: Gruppi };
 
 // finestra dei candidati: 24 ore sull'istante in cui la riga e' nata o cambiata. Quelli con l'evento oltre le 6 ore
 // entrano lo stesso e si segnano `saltato` (vecchio): restano nel registro come traccia.
@@ -745,6 +922,26 @@ async function leggiConversazioni(sb: Sb, ids: string[]): Promise<Record<string,
   for (const r of (data ?? []) as Riga[]) out[String(r.id).toLowerCase()] = r;
   return out;
 }
+
+// attivita_team: le righe degli ordini (supplier_orders, core, sola lettura) per i codici nel testo. Solo gruppo, codice,
+// quantita' e wip, con .in() sui soli gruppi dei candidati, a blocchi di 50 (Regola 20b); oltre il limite la lettura e'
+// troncata e l'evento si ferma (massimo misurato il 21-10: 8 righe per ordine).
+const RIGHE_ORDINE_MAX = 500;
+async function leggiRigheOrdini(sb: Sb, cands: Cand[]): Promise<Record<string, Riga[]>> {
+  const out: Record<string, Riga[]> = {};
+  const gruppi = [...new Set(cands.filter((c) => c.rif.op === 'order_multi' && UUID_RE.test(c.rif.ordine ?? '')).map((c) => c.rif.ordine))];
+  for (let i = 0; i < gruppi.length; i += 50) {
+    const blocco = gruppi.slice(i, i + 50);
+    const { data, error } = await retryOnce(() => sb.from('supplier_orders').select('gruppo, codice, qty_ordered, wip').in('gruppo', blocco).limit(RIGHE_ORDINE_MAX + 1));
+    if (error || (data ?? []).length > RIGHE_ORDINE_MAX) throw new LetturaFallita('righe degli ordini', error ?? `oltre ${RIGHE_ORDINE_MAX} righe`);
+    for (const r of (data ?? []) as Riga[]) { const k = String(r.gruppo).toLowerCase(); (out[k] ??= []).push(r); }
+  }
+  return out;
+}
+// change_log delle attivita': nel massimo misurato (120 giorni fino al 21-10) 15 righe in 24 ore e 9 in 5 minuti. Una
+// lettura piena fino al limite e' troncata (righe piu' vecchie non viste): l'evento si ferma con un errore visibile
+// invece di saltarle in silenzio (Regola 20b).
+const LIMITE_ATTIVITA = 200;
 
 const EVENTI: Record<string, DefEvento> = {
   sistema_cs_sync_fermo: {
@@ -785,8 +982,11 @@ const EVENTI: Record<string, DefEvento> = {
       return candSpedizione((data ?? []) as Riga[]);
     },
     componi: async (sb, ctx, _ev, cands) => {
-      const settimana = await conta(retryOnce(() => sb.from('v_spedizioni_eccezioni').select('ldv', { count: 'exact', head: true }).eq('classe', 'eccezione').gte('updated_at', dalle(ctx, 7 * 86400000))), 'eccezioni della settimana');
-      return msgSpedizione(cands, settimana);
+      // 21-10: le righe della settimana (solo LDV, stato e classe) e non un conteggio della classe, per contare i soli
+      // problemi veri (contaProblemi); un elenco pieno fino al limite e' troncato e ferma l'evento (Regola 20b)
+      const { data, error } = await retryOnce(() => sb.from('v_spedizioni_eccezioni').select('ldv, stato_tws, classe').eq('classe', 'eccezione').gte('updated_at', dalle(ctx, 7 * 86400000)).limit(501));
+      if (error || (data ?? []).length > 500) throw new LetturaFallita('eccezioni della settimana', error ?? 'oltre 500 righe');
+      return msgSpedizione(cands, contaProblemi((data ?? []) as Riga[]));
     },
   },
   b2b_risposta_negozio: {
@@ -821,6 +1021,18 @@ const EVENTI: Record<string, DefEvento> = {
       const inAttesa = await conta(retryOnce(() => sb.from('cs_conversations').select('id', { count: 'exact', head: true }).eq('stato', 'da_fare').eq('last_direction', 'in').neq('canale', 'rumore')), 'richieste in attesa');
       return msgCsRiscritto(cands, conv, inAttesa);
     },
+  },
+  attivita_team: {
+    candidati: async (sb, ctx) => {
+      // solo id, istante, azione, chi e i campi di `after` che finiscono nel testo (mai ctx, purchase_id o costo); le
+      // azioni e le persone filtrate gia' nella lettura, cosi' le righe di Ale e dei giri automatici non occupano il limite
+      const { data, error } = await retryOnce(() => sb.from('change_log').select('id, ts, op, chi, codice:after->>codice, delta:after->>delta, contati:after->>contati, giac_prima:after->>giac_prima, fornitore:after->>fornitore, righe:after->>righe, gruppo:after->>gruppo').in('op', OP_ATTIVITA).in('chi', Object.keys(PERSONA_TEAM)).gte('ts', dalle(ctx, FINESTRA_MS)).order('id', { ascending: false }).limit(LIMITE_ATTIVITA + 1));
+      if (error || (data ?? []).length > LIMITE_ATTIVITA) throw new LetturaFallita('change_log attivita', error ?? `oltre ${LIMITE_ATTIVITA} righe`);
+      return candAttivita((data ?? []) as Riga[]);
+    },
+    // anteprima: i gruppi di tutti i candidati passati
+    componi: async (sb, _ctx, _ev, cands) => msgAttivita(cands, await leggiRigheOrdini(sb, cands)),
+    gruppi: { dettagli: (sb, _ctx, _ev, cands) => leggiRigheOrdini(sb, cands), gruppoDi: (c) => c.rif.gruppo ?? '', messaggio: (cs, d) => msgGruppoAttivita(cs, d) },
   },
   riepilogo: {
     candidati: async (_sb, ctx) => candRiepilogo(ctx.finestra),
@@ -869,8 +1081,9 @@ const EVENTI: Record<string, DefEvento> = {
     },
   },
 };
-// priorita' nel tetto di 20 invii: prima il sistema e l'urgente, il riepilogo per ultimo
-const ORDINE = ['sistema_cs_sync_fermo', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'riepilogo'];
+// priorita' nel tetto di 20 invii: prima il sistema e l'urgente, l'attivita' del team (informazione per Ale, 21-10)
+// prima del riepilogo, il riepilogo per ultimo
+const ORDINE = ['sistema_cs_sync_fermo', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'attivita_team', 'riepilogo'];
 
 // registro: .in() sulle sole chiavi dei candidati, a blocchi di 100 (Regola 20b), mai la tabella intera
 async function leggiRegistro(sb: Sb, evento: string, chiavi: string[]): Promise<Map<string, Reg>> {
@@ -925,9 +1138,19 @@ async function giroEvento(sb: Sb, ev: RigaEvento, ctx: Ctx, budget: Budget, ades
   const registro = await leggiRegistro(sb, ev.evento, cands.map((c) => c.chiave));
   const piano = pianifica(cands, registro, { ora: ctx.ora, baseline, etaMaxMs: soglia(ev.soglie, 'eta_max_ore', 6, 1, 48) * 3600000, motivoBaseline: ripartenza ? 'stallo' : 'baseline' });
   const daComporre = piano.filter((p) => p.azione === 'nuovo' || p.azione === 'ritenta').map((p) => p.cand);
-  const msgs = new Map<string, Msg>();
-  if (daComporre.length) for (const m of await def.componi(sb, ctx, ev, daComporre)) msgs.set(m.chiave, { ...m, tema });
-  const r = await eseguiPiano(piano, msgs, budget, depGiro(sb, ev.evento, tema, adesso));
+  const dep = depGiro(sb, ev.evento, tema, adesso);
+  let r: Resoconto;
+  const g = def.gruppi;
+  if (g) {
+    // attivita_team (21-10): le letture per i testi prima di ogni prenotazione; poi una push per gruppo, col testo delle
+    // sole righe prese (eseguiGruppi)
+    const dettagli = daComporre.length ? await g.dettagli(sb, ctx, ev, daComporre) : {};
+    r = await eseguiGruppi(piano, g.gruppoDi, (cs) => { const m = g.messaggio(cs, dettagli); return m && { ...m, tema }; }, budget, dep);
+  } else {
+    const msgs = new Map<string, Msg>();
+    if (daComporre.length) for (const m of await def.componi(sb, ctx, ev, daComporre)) msgs.set(m.chiave, { ...m, tema });
+    r = await eseguiPiano(piano, msgs, budget, dep);
+  }
   const persi_stallo = piano.filter((p) => p.azione === 'salta' && p.motivo === 'stallo').length;
   // fine del giro dell'evento: ultimo_giro_at sempre, baseline_at quando si e' seminato
   const fine = new Date().toISOString();
@@ -1054,14 +1277,27 @@ async function anteprima(sb: Sb, ctx: Ctx, forzaRiepilogo: boolean): Promise<Res
       const cands = await EVENTI[nome].candidati(sb, c, ev);
       const registro = await leggiRegistro(sb, nome, cands.map((x) => x.chiave));
       const piano = pianifica(cands, registro, { ora: c.ora, baseline, etaMaxMs: soglia(ev.soglie, 'eta_max_ore', 6, 1, 48) * 3600000, motivoBaseline: ripartenza ? 'stallo' : 'baseline' });
+      // a gruppi (attivita_team, 21-10): il testo di un gruppo si compone dalle sole righe che partirebbero, e ogni riga
+      // mostra quello del suo gruppo; partirebbe conta le push, non le righe
+      const g = EVENTI[nome].gruppi;
+      const parte = (p: Decisione) => p.azione === 'nuovo' || p.azione === 'ritenta';
+      const daComporre = g ? piano.filter(parte).map((p) => p.cand) : cands;
+      const chiaveMsg = (x: Cand) => (g ? g.gruppoDi(x) : x.chiave);
       const msgs = new Map<string, Msg>();
-      if (cands.length) for (const m of await EVENTI[nome].componi(sb, c, ev, cands)) msgs.set(m.chiave, { ...m, tema });
-      const partirebbe = piano.filter((p) => (p.azione === 'nuovo' || p.azione === 'ritenta') && msgs.has(p.cand.chiave)).length;
+      if (daComporre.length) for (const m of await EVENTI[nome].componi(sb, c, ev, daComporre)) msgs.set(m.chiave, { ...m, tema });
+      // Gate 2 del 21-10 (C2): a gruppi, anche le righe che NON partirebbero (baseline alla prima accensione, vecchie, gia'
+      // gestite) mostrano un testo, quello del loro gruppo composto dalle sole righe ferme, segnato non_partirebbe: senza,
+      // l'anteprima prima dell'accensione di attivita_team non faceva vedere nessun titolo ne' testo vero
+      const ferme = new Map<string, Msg>();
+      const resto = g ? piano.filter((p) => !parte(p)).map((p) => p.cand) : [];
+      if (resto.length) for (const m of await EVENTI[nome].componi(sb, c, ev, resto)) ferme.set(m.chiave, { ...m, tema });
+      const partirebbe = new Set(piano.filter((p) => parte(p) && msgs.has(chiaveMsg(p.cand))).map((p) => chiaveMsg(p.cand))).size;
       eventi.push({ evento: nome, tema, attivo: ev.attivo === true, riga_a_db: perNome.has(nome), baseline, candidati: cands.length, partirebbe,
         messaggi: piano.slice(0, 20).map((p) => {
-          const m = msgs.get(p.cand.chiave);
+          const m = !g || parte(p) ? msgs.get(chiaveMsg(p.cand)) : ferme.get(chiaveMsg(p.cand));
           return { chiave: p.cand.chiave, decisione: p.azione, ...(p.motivo ? { motivo: p.motivo } : {}),
-            ...(m ? { titolo: m.titolo, testo: m.testo, url: m.url, tema: m.tema, chi: m.chi ?? 'tutti gli iscritti al tema', urgente: m.urgente === true } : {}) };
+            ...(m ? { titolo: m.titolo, testo: m.testo, url: m.url, tema: m.tema, chi: m.chi ?? 'tutti gli iscritti al tema', urgente: m.urgente === true } : {}),
+            ...(m && g && !parte(p) ? { non_partirebbe: true } : {}) };
         }) });
     } catch (e) {
       eventi.push({ evento: nome, tema, attivo: ev.attivo === true, riga_a_db: perNome.has(nome), baseline, errore: errTesto(e) });

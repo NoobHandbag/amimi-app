@@ -9,7 +9,8 @@
 --      prenota salta); stessa chiave su un altro evento ammessa; evento e tema inesistenti = 23503; chiave vuota,
 --      tentativi negativi, soglie non oggetto, nome evento maiuscolo, predefinito_per con un nome mostrato ('Benny') =
 --      23514; predefinito_per null = 23502; un tema usato da un evento e un evento con invii non si cancellano
---   D  i sei eventi del contratto con push-eventi esistono, ognuno sul suo tema
+--   D  i sette eventi del contratto con push-eventi esistono, ognuno sul suo tema (il settimo, attivita_team sul tema
+--      attivita, nasce nella migr 0168 del 21-10: da lanciare dopo l'apply anche di quella)
 --   S  il service_role (la edge push-eventi) legge e scrive le due tabelle e usa la sequenza dell'id
 --   U  authenticated con un JWT del team: select, insert, update e delete su push_eventi e push_eventi_inviati,
 --      nextval della sequenza, lettura e scrittura di predefinito_per = 42501 (nessuna policy: neanche il team accende
@@ -163,12 +164,12 @@ begin
   end;
   if st <> '23503' or cn is distinct from 'push_eventi_inviati_evento_fk' then raise exception 'KO V: evento con invii cancellato = % %', st, cn; end if;
 
-  -- D
+  -- D (dal 21-10 anche attivita_team della migr 0168: va lanciata dopo l'apply di tutte e due)
   select count(*) into n from push_eventi e
     join (values ('b2b_risposta_negozio', 'negozi'), ('cs_urgente', 'assistenza'), ('cs_cliente_ha_riscritto', 'assistenza'),
-                 ('spedizione_eccezione', 'spedizioni'), ('sistema_cs_sync_fermo', 'sistema'), ('riepilogo', 'riepilogo')) x(ev, tema)
+                 ('spedizione_eccezione', 'spedizioni'), ('sistema_cs_sync_fermo', 'sistema'), ('riepilogo', 'riepilogo'), ('attivita_team', 'attivita')) x(ev, tema)
       on x.ev = e.evento and x.tema = e.tema;
-  if n <> 6 then raise exception 'KO D: dei sei eventi del contratto ne tornano % sul tema giusto', n; end if;
+  if n <> 7 then raise exception 'KO D: dei sette eventi del contratto (0166 e 0168) ne tornano % sul tema giusto', n; end if;
 
   -- S (dal catalogo: il ruolo della edge non si assume da qui)
   if not (has_table_privilege('service_role', 'public.push_eventi', 'select') and has_table_privilege('service_role', 'public.push_eventi', 'update')
