@@ -1,5 +1,6 @@
 import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
+import AppBar from './AppBar';
 
 // Rete per le pagine pesanti caricate a parte (il Villaggio con three.js, 16-10): se il pezzo non si scarica (dopo un
 // deploy il file vecchio non c'e' piu') o la pagina lancia, si vede un messaggio con "Ricarica" invece di #root bianco.
@@ -12,7 +13,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode; tito
     const ricarica = () => { const base = location.href.split('?')[0].split('#')[0]; location.replace(`${base}?v=${Date.now()}${location.hash}`); };
     return (
       <div className="screen">
-        <header><h1>{this.props.titolo}</h1>{this.props.onBack && <button className="badge" type="button" onClick={this.props.onBack}>‹ Home</button>}</header>
+        <AppBar title={this.props.titolo} onBack={this.props.onBack} backLabel="Home" />
         <div className="card muted center">
           <p>{this.props.titolo} non si è aperto: {this.state.err.message}</p>
           <button className="chip on" type="button" onClick={ricarica}>Ricarica</button>

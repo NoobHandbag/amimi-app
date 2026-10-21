@@ -3,6 +3,7 @@ import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { pushBack, popBack } from '../lib/backnav';
 import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato, BozzaSalvata } from '../lib/csApi';
+import AppBar from '../components/AppBar';
 
 // email in testo semplice: preserva gli a-capo (CSS pre-wrap) e collassa i vuoti multipli (feedback 24-07)
 const cleanBody = (t: string) => (t || '').replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -452,7 +453,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   if (session === 'out') return (
     <div className="screen">
-      <header><button className="badge" onClick={onBack} type="button">‹ Home app</button></header>
+      <AppBar title="Assistenza" onBack={onBack} backLabel="Home" />
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; assistenza</span></div>
         <div className="cs-lt">Accedi con il tuo account Amimi&#8217;</div>
@@ -477,7 +478,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // ---- "chi sei?" ----
   if (!ident) return (
     <div className="screen">
-      <header><button className="badge" onClick={onBack} type="button">‹ Home app</button><button className="badge" onClick={logout} type="button">Esci</button></header>
+      <AppBar title="Assistenza" onBack={onBack} backLabel="Home" actions={<button className="badge" onClick={logout} type="button">Esci</button>} />
       <div className="cs-login">
         <div className="cs-logo" style={{ fontSize: 24 }}>Chi sei?</div>
         <div className="cs-lt">L&#8217;identita&#8217; firma le tue risposte, il login no</div>
@@ -504,11 +505,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     ].filter(Boolean).join(' · ') : '';
     return (
       <div className="screen">
-        <header>
-          {/* l'etichetta dice dove si torna davvero: un thread aperto dal Rumore torna al Rumore */}
-          <button className="badge" onClick={goCoda} type="button">{daDove === 'rumore' ? '‹ Rumore' : '‹ Coda'}</button>
-          <button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} ▾</button>
-        </header>
+        {/* l'etichetta dice dove si torna davvero: un thread aperto dal Rumore torna al Rumore */}
+        <AppBar title="Assistenza" onBack={goCoda} backLabel={daDove === 'rumore' ? 'Rumore' : 'Coda'}
+          actions={<button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} ▾</button>} />
         {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
         {/* testata: compatta; in modalita' bozza si comprime a nome + ordine/categoria + urgenza */}
         <div className="card">
@@ -938,11 +937,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // ---- rumore ----
   if (view === 'rumore') return (
     <div className="screen">
-      <header>
-        <button className="badge" onClick={goCoda} type="button">‹ Coda</button>
-        <h1 style={{ fontSize: 18 }}>Rumore</h1>
-        <span style={{ width: 40 }} />
-      </header>
+      <AppBar title="Rumore" onBack={goCoda} backLabel="Coda" />
       {err && <div className="err">{err}</div>}
       {rumore === null ? <div className="muted center" style={{ padding: 20 }}>Carico…</div> :
         rumore.length === 0 ? <div className="muted center" style={{ padding: 20 }}>Niente rumore.</div> :
@@ -1003,6 +998,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="screen">
+      <AppBar title="Assistenza" />
       <header>
         {/* UAT 02-08: via "aiutiamo dei clienti", resta il saluto. */}
         <button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--dark)', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 9 }}>

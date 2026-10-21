@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { pushBack, popBack } from '../lib/backnav';
 import { fetchInventory, fetchContoVendita, syncNowShopify, fetchReorder, fetchShopStockMap, fetchSalesByCodice, fetchPurchasesByCodice, fetchAdjustmentsByCodice, fetchLastSaleMap, archiveReorder } from '../lib/api';
 import Icon from '../components/Icon';
+import AppBar from '../components/AppBar';
 import type { InvFull, CV, Reorder, SaleRow, PurchaseRow, AdjustmentRow } from '../lib/api';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
@@ -301,8 +302,8 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
 
   return (
     <div className="screen">
+      <AppBar title="Magazzino" actions={<><PrintBtn /><ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} /></>} />
       <header className="invhead">
-        <h1>Magazzino</h1>
         <div className="ds-seg">
           <button type="button" className={tab === 'mag' ? 'on' : ''} onClick={() => setTab('mag')}>Magazzino</button>
           <button type="button" className={tab === 'riordino' ? 'on' : ''} onClick={() => setTab('riordino')}>Riordino</button>
@@ -314,7 +315,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
               <Icon name="recycle" size={15} />{nowBusy ? 'Sincronizzo…' : 'Aggiorna Shopify'}
             </button>
           )}
-          <PrintBtn /><ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} /></div>
+        </div>
       </header>
 
       {tab === 'mag' && (

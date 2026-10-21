@@ -10,19 +10,8 @@ import { VERSIONE_MIA } from '../lib/version';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 
-// tinta icon-tile per nome icona (bg tint + stroke 700). Semantico dove ha senso.
-const TC: Record<string, [string, string]> = {
-  bag: ['--accent-coral-tint', '--accent-coral-700'], rocket: ['--accent-coral-tint', '--accent-coral-700'],
-  chart: ['--interactive-tint', '--interactive-700'], plus: ['--interactive-tint', '--interactive-700'],
-  box: ['--interactive-tint', '--interactive-700'], inbox: ['--interactive-tint', '--interactive-700'],
-  table: ['--interactive-tint', '--interactive-700'], tag: ['--interactive-tint', '--interactive-700'],
-  count: ['--sec-lavender-tint', '--sec-lavender-700'], search: ['--sec-lavender-tint', '--sec-lavender-700'],
-  store: ['--sec-lavender-tint', '--sec-lavender-700'],
-  euro: ['--warning-tint', '--warning-700'], pulse: ['--warning-tint', '--warning-700'], sparkles: ['--warning-tint', '--warning-700'],
-  recycle: ['--positive-tint', '--positive-700'], handshake: ['--positive-tint', '--positive-700'],
-  return: ['--negative-tint', '--negative-700'],
-};
-const tileTint = (icon: string) => TC[icon] ?? ['--interactive-tint', '--interactive-700'];
+// tema A "Contrasto" (21-10): tessere neutre, solo la prima azione rapida nel colore d'accento
+const tileTint = (kind: 'q' | 'm', i: number): [string, string] => (kind === 'q' && i === 0 ? ['--interactive', '--surface'] : ['--surface-alt', '--ink']);
 const keyOf = (t: Tile) => `${t.tab}:${t.param ?? ''}`;
 // azioni "di gestione" (mockup: Prodotti, Reso, B2B, Salute...) per il tier centrale
 const GEST = new Set(['registra:catalogo', 'registra:product', 'registra:reso', 'registra:b2b', 'salute:', 'registra:pubblica']);
@@ -113,7 +102,7 @@ export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled =
   }, [query, quick, gestione, altro]);
 
   const tile = (t: Tile, i: number, kind: 'q' | 'm') => {
-    const [bg, fg] = tileTint(t.icon);
+    const [bg, fg] = tileTint(kind, i);
     const b = badge(t.badge);
     return (
       <button key={kind + i} className={kind === 'q' ? 'ds-qbtn' : 'ds-mcard'} type="button" onClick={() => go(t.tab, t.param)}>

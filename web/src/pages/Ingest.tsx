@@ -10,6 +10,7 @@ import RecentFeed from '../components/RecentFeed';
 import { ProdVerify, Publish, Catalog } from './Prodotti';
 import { DataTables } from './Tables';
 import Icon from '../components/Icon';
+import AppBar from '../components/AppBar';
 import { personaName } from '../lib/people';
 
 // at the end of a flow, jump straight to that flow's full table
@@ -53,7 +54,12 @@ export default function Ingest({ pin, chi, initial }: {
 
   return (
     <div className="screen">
-      <header><h1>Registra</h1><span className="badge" title="A chi viene attribuito il movimento">{personaName(chi)}</span></header>
+      <AppBar
+        title={cur?.label ?? 'Registra'}
+        onBack={sel ? () => popBack(() => setSel(null)) : undefined}
+        backAria="Indietro"
+        actions={<span className="badge" title="A chi viene attribuito il movimento">{personaName(chi)}</span>}
+      />
 
       {!sel ? (
         <>
@@ -70,7 +76,6 @@ export default function Ingest({ pin, chi, initial }: {
         </>
       ) : (
         <>
-          <button className="back" onClick={() => popBack(() => setSel(null))} type="button">← {cur?.label}</button>
           {sel === 'count' && <CountForm pin={pin} chi={chi} initialCodice={arg} />}
           {sel === 'product' && <NewProductForm pin={pin} chi={chi} />}
           {sel === 'gift' && <GiftForm pin={pin} chi={chi} />}

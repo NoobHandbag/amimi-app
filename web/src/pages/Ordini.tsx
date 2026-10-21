@@ -8,6 +8,7 @@ import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
 import NumberStepper from '../components/NumberStepper';
 import Icon from '../components/Icon';
+import AppBar from '../components/AppBar';
 import { prettyName, pianoArrivo } from '../lib/helpers';
 import type { ModoArrivo } from '../lib/helpers';
 import { toast } from '../lib/toast';
@@ -238,8 +239,7 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload, openByCodice }: 
   const done = sup.lines.filter((l) => l.completo).sort((a, b) => dcons(b).localeCompare(dcons(a)));
   return (
     <div className="screen">
-      <header><h1>{sup.fornitore}</h1></header>
-      <button className="back" onClick={onBack}>← Tutti i fornitori</button>
+      <AppBar title={sup.fornitore} onBack={onBack} backLabel="Tutti i fornitori" />
       <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={onAdd}><Icon name="plus" size={17} /> Nuovo ordine per {sup.fornitore}</button>
       <div className="ds-seclb">In arrivo <span className="c">{open.length}</span></div>
       {/* fix d (31-07): niente riga auto-aperta: cosi' com'era, un tocco accidentale su "Segna
@@ -308,19 +308,17 @@ export default function Ordini({ pin, chi, initial, onMateriali }: { pin: string
     }).sort((a, b) => b.aperte - a.aperte || a.fornitore.localeCompare(b.fornitore));
   }, [grp]);
 
-  if (err) return <div className="screen"><div className="card err">Errore: {err}</div></div>;
+  if (err) return <div className="screen"><AppBar title="Ordini" /><div className="card err">Errore: {err}</div></div>;
 
   if (adding) return (
     <div className="screen">
-      <header><h1>Nuovo ordine</h1></header>
-      <button className="back" onClick={() => { setAdding(false); setAddForn(undefined); setAddCodice(undefined); }}>← Ordini</button>
+      <AppBar title="Nuovo ordine" onBack={() => { setAdding(false); setAddForn(undefined); setAddCodice(undefined); }} backLabel="Ordini" />
       <SupplierOrderForm pin={pin} chi={chi} initialForn={addForn} initialCodice={addCodice} onDone={() => { setAdding(false); setAddForn(undefined); setAddCodice(undefined); load(); }} />
     </div>
   );
 
   if (foglio) return (
     <div className="screen">
-      <header><h1>Ordine da foglio</h1></header>
       <FoglioOrdine pin={pin} chi={chi} onCancel={() => setFoglio(false)} onDone={() => { setFoglio(false); load(); }} />
     </div>
   );
@@ -328,11 +326,12 @@ export default function Ordini({ pin, chi, initial, onMateriali }: { pin: string
   if (forn) {
     const sup = byForn.find((s) => s.fornitore === forn);
     if (sup) return <SupplierDetail sup={sup} pin={pin} chi={chi} onBack={() => setForn(null)} onAdd={() => { setAddForn(forn ?? undefined); setAdding(true); }} reload={load} openByCodice={openByCodice} />;
-    return <div className="screen"><button className="back" onClick={() => setForn(null)}>← Ordini</button><div className="card muted center">Nessun ordine per {forn}.</div></div>;
+    return <div className="screen"><AppBar title={forn} onBack={() => setForn(null)} backLabel="Ordini" /><div className="card muted center">Nessun ordine per {forn}.</div></div>;
   }
 
   return (
     <div className="screen">
+      <AppBar title="Ordini" actions={<div className="hbtns"><PrintBtn /><ExportBtn name="ordini" rows={() => grp.flatMap((g) => g.righe).map((l) => ({ fornitore: l.fornitore, codice: l.codice, modello: l.item, variante: l.variant, ordinati: l.qty_ordered, arrivati: l.qty_arrived, mancano: l.mancano, completo: l.completo ? 'si' : 'no', data_ordine: l.data_ordine, data_consegna: l.data_consegna, costo_unitario: l.costo_unitario, tipo: l.nuovo_riordino }))} /></div>} />
       {/* Area Fornitori in due meta' (brief catalogo 22-09): PRODOTTI = questa pagina (borse finite, arrivi, stock);
           MATERIE PRIME = catalogo pelli/tessuti (pagina Materiali). Il segmented compare solo a modulo acceso. */}
       {onMateriali && (
@@ -341,7 +340,6 @@ export default function Ordini({ pin, chi, initial, onMateriali }: { pin: string
           <button type="button" onClick={onMateriali}>Materie prime</button>
         </div>
       )}
-      <header><h1>Ordini</h1><div className="hbtns"><PrintBtn /><ExportBtn name="ordini" rows={() => grp.flatMap((g) => g.righe).map((l) => ({ fornitore: l.fornitore, codice: l.codice, modello: l.item, variante: l.variant, ordinati: l.qty_ordered, arrivati: l.qty_arrived, mancano: l.mancano, completo: l.completo ? 'si' : 'no', data_ordine: l.data_ordine, data_consegna: l.data_consegna, costo_unitario: l.costo_unitario, tipo: l.nuovo_riordino }))} /></div></header>
       <button className="ds-btn secondary full" style={{ marginBottom: aiOn ? 8 : 14 }} onClick={() => setAdding(true)}><Icon name="plus" size={17} /> Nuovo ordine fornitore</button>
       {aiOn && <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={() => setFoglio(true)}><Icon name="sparkles" size={17} /> Ordine da foglio (foto)</button>}
       {byForn.length === 0 && <div className="card muted center">Nessun ordine. Tocca “Nuovo ordine fornitore”.</div>}

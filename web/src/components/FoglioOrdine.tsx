@@ -7,6 +7,7 @@ import type { PropostaFoglio, RigaFoglio } from '../lib/matApi';
 import { deriveCodice, tok } from '../lib/helpers';
 import { toast } from '../lib/toast';
 import Icon from './Icon';
+import AppBar from './AppBar';
 
 // Ordine da FOGLIO scritto a mano col fornitore (04-10, per Ginevra). Sul foglio la variante non e' scritta: e' il
 // campione di pelle spillato. L'AI (ai-compila, target foglio_ordine, un foglio per chiamata) legge righe, quantita',
@@ -223,7 +224,7 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
 
   if (logged === false) return (
     <div className="form">
-      <button className="back" onClick={onCancel}>← Ordini</button>
+      <AppBar title="Ordine da foglio" onBack={onCancel} backLabel="Ordini" />
       <div className="mat-aibox">
         <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Per leggere i fogli serve il login del team, {EMAIL_TEAM_TESTO} (una volta per dispositivo).</div>
         <input className="txt" type="email" autoCapitalize="none" autoCorrect="off" value={lgEmail} onChange={(e) => setLgEmail(e.target.value)} placeholder="Email del team" style={{ width: '100%', marginBottom: 6 }} />
@@ -241,7 +242,7 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
 
   return (
     <div className="form">
-      <button className="back" onClick={esci}>← Ordini</button>
+      <AppBar title="Ordine da foglio" onBack={esci} backLabel="Ordini" />
       <div className="muted" style={{ fontSize: 13, marginBottom: 10, lineHeight: 1.45 }}>
         Fotografa i fogli fatti col fornitore, uno per foto, dritti e interi. Leggo quantità, interno e note; la variante di ogni campione la scegli tu.
       </div>

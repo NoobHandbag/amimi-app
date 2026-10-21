@@ -4,6 +4,7 @@ import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft, InviataCandidata
 import { negozioCiHaScritto, dopoInvioManuale, rispostaPreparata, avvisiTesto, ordinaConversazione, propostaSalvata, propostaStantia, giaRisposto, modoIniziale, NON_CONVERSAZIONE } from '../lib/leadRegole';
 import type { ElementoConv } from '../lib/leadRegole';
 import { EMAIL_TEAM_TESTO } from '../lib/csClient';
+import AppBar from '../components/AppBar';
 
 // Sezione Outreach (tappa 1 del PIANO_Outreach_CRM.md): pipeline per stadio, coda del giorno, scheda del negozio
 // (conversazione a bolle e un compositore, come Assistenza, dal 15-10), sequenze. Le email partono dalla edge
@@ -575,10 +576,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
 
   return (
     <div className="screen">
-      <header>
-        <button className="lead-back" onClick={onBack} type="button">‹ Pipeline</button>
-        <span className="badge" style={{ background: 'var(--interactive-700)', color: '#fff' }}>{STAGE_LABEL[r.lead_stage]}</span>
-      </header>
+      <AppBar onBack={onBack} backLabel="Pipeline" actions={<span className="badge" style={{ background: 'var(--interactive-700)', color: '#fff' }}>{STAGE_LABEL[r.lead_stage]}</span>} />
       <div className="or-head">
         {r.thumb && urls[r.thumb] ? <img src={urls[r.thumb]} alt="" /> : <span className="or-thumb-empty big" />}
         <div>

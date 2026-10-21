@@ -124,5 +124,35 @@ const guard = readFileSync(join(ROOT, 'web', 'scripts', 'check-bundle-env.mjs'),
 check('check-bundle-env: host confrontato col progetto vero', /HOST_PROD\s*=\s*'imszbjeyplaiovylhkgl\.supabase\.co'/.test(guard) && /host\s*!==\s*HOST_PROD/.test(guard));
 check('check-bundle-env: bundle col progetto finto fermato', /includes\('e2e-progetto-finto'\)\)\)\s*stop\(/.test(guard));
 
+// ---- 6. contrasti dei token (Gate 2 del tema A "Contrasto", 21-10): testo 4,5:1, oggetti grafici 3:1 ----
+// La palette si ritocca a mano: senza questo controllo un grigio o un rosso possono scendere sotto la soglia in silenzio
+// (il 21-10 erano tre: grigio secondario sul grigio dei selettori, rosso e verde sulle loro tinte).
+console.log('\n== 6. contrasti minimi dei token di tokens.css ==');
+const rawTok = {};
+for (const m of senzaCommenti(src[TOKENS], true).matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)) if (!(m[1] in rawTok)) rawTok[m[1]] = m[2].trim();
+function risolvi(v, prof = 0) {
+  const m = /^var\(--([a-z0-9-]+)\)$/.exec(v);
+  if (m) return prof < 10 && rawTok[m[1]] != null ? risolvi(rawTok[m[1]], prof + 1) : null;
+  return /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : null;
+}
+const coloreDi = (t) => (t.startsWith('#') ? t : risolvi(`var(--${t})`));
+const lumi = (hex) => [1, 3, 5].map((i) => { const c = parseInt(hex.slice(i, i + 2), 16) / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; })
+  .reduce((s, c, i) => s + c * [0.2126, 0.7152, 0.0722][i], 0);
+const contrasto = (a, b) => { const [x, y] = [lumi(a), lumi(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+check('autocontrollo: #777777 su bianco sta sotto 4,5:1, #767676 no', contrasto('#777777', '#ffffff') < 4.5 && contrasto('#767676', '#ffffff') >= 4.5);
+const COPPIE = [
+  ['ink', 'bg', 4.5], ['ink', 'surface', 4.5], ['ink-muted', 'bg', 4.5], ['ink-muted', 'surface', 4.5], ['ink-muted', 'surface-alt', 4.5],
+  ['#ffffff', 'interactive', 4.5], ['interactive', 'surface', 4.5], ['interactive-700', 'interactive-tint', 4.5],
+  ['positive', 'positive-tint', 4.5], ['negative', 'negative-tint', 4.5], ['negative', 'bg', 4.5], ['warning-700', 'warning-tint', 4.5],
+  ['positive-700', 'positive-tint', 4.5], ['negative-700', 'negative-tint', 4.5], ['ink', 'interactive-on-dark', 4.5],
+  ['interactive-on-dark', 'ink', 3], ['chart-bar', 'surface', 3], ['chart-current', 'surface', 3],
+];
+for (const [fg, bgk, min] of COPPIE) {
+  const a = coloreDi(fg), b = coloreDi(bgk);
+  if (!a || !b) { check(`${fg} su ${bgk}: token risolti`, false, `${fg}=${a} ${bgk}=${b}`); continue; }
+  const r = contrasto(a, b);
+  check(`${fg} su ${bgk}: ${r.toFixed(2)}:1 >= ${min}`, r >= min, `${a} su ${b}`);
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

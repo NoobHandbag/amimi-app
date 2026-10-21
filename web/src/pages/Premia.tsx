@@ -4,6 +4,7 @@ import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { fetchPremiaDashboard } from '../lib/premiaApi';
 import type { PremiaDash, HealthItem, KpiDay } from '../lib/premiaApi';
 import PremiaUgc from './PremiaUgc';
+import AppBar from '../components/AppBar';
 
 // Pagina "Premia" (sola lettura, migr 0146): salute del programma fedelta', uso dell'Area Membri, premio AMICA12,
 // membri, effetto sulle vendite e (Fase 2) il funnel dei tap. Una sola RPC con il login @amimi.it; nessun dato
@@ -121,12 +122,7 @@ export default function Premia({ onBack }: { onBack: () => void }) {
     if (error) { setBusy(false); setErr('Google non attivo: accedi con email e password.'); }
   };
 
-  const header = (
-    <header>
-      <h1>Premia</h1>
-      <button className="badge" onClick={onBack} type="button">&#8249; Home</button>
-    </header>
-  );
+  const header = <AppBar title="Premia" onBack={onBack} backLabel="Home" />;
 
   if (session === 'loading') return <div className="screen">{header}<p className="muted center">Controllo l&#8217;accesso&#8230;</p></div>;
   if (session === 'out') return (

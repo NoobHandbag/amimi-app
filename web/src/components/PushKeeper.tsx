@@ -75,7 +75,7 @@ export default function PushKeeper({ attivo, nascondi, go }: { attivo: boolean; 
   if (!attivo || !spente || chiuso || nascondi) return null;
   return (
     // sopra l'avviso "versione nuova" (bottom 124px, alto ~56px): se compaiono insieme restano tutti e due toccabili
-    <div className="upd-banner" role="status" style={{ bottom: 186 }}>
+    <div className="upd-banner" role="status" style={{ bottom: 'calc(198px + env(safe-area-inset-bottom, 0px))' }}>
       <button type="button" className="upd-txt" style={{ background: 'none', border: 0, color: 'inherit', font: 'inherit', textAlign: 'left', padding: 0, cursor: 'pointer' }}
         onClick={() => { setChiuso(true); go('notifiche'); }}>
         Notifiche spente su questo telefono, tocca per riattivarle

@@ -3,6 +3,7 @@ import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { CATEGORIE, TINTA, UNITA, aiCompila, bassa, fetchAcquisti, fetchAssets, fetchCatalogo, fetchFornitori, fetchMatSettings, fmtPrezzo, matApi, raggruppa, signedUrls, uploadInbox, v } from '../lib/matApi';
 import type { AiCampo, MatAcquisto, MatAsset, MatCatalogo, MatFornitore, MatGruppo, MatSettings, PropostaFornitore, PropostaMateriale } from '../lib/matApi';
 import Icon from '../components/Icon';
+import AppBar from '../components/AppBar';
 import { toast } from '../lib/toast';
 
 // Sezione "Materie prime" (modulo mat_*, migr 0140 + 0144): il catalogo dei materiali offerti o acquistati dai
@@ -154,8 +155,7 @@ function NuovoMateriale({ chi, settings, fornitori, gruppi, onBack, onSaved }: {
 
   return (
     <div className="screen">
-      <header><h1>Nuovo materiale</h1></header>
-      <button className="back" onClick={onBack} type="button">← Catalogo</button>
+      <AppBar title="Nuovo materiale" onBack={onBack} backLabel="Catalogo" />
       <AiBox files={files} setFiles={setFiles} testo={testo} setTesto={setTesto} busy={busy} onCompila={compila} abilitato={settings.ai} avviso={avviso} />
       {files.some((fl) => fl.type.startsWith('image/')) && (
         <div className="chips" style={{ marginTop: -6, marginBottom: 10, alignItems: 'center' }}>
@@ -239,8 +239,7 @@ function NuovoFornitore({ chi, settings, fornitori, onBack, onSaved }: { chi: st
   const campi: [keyof typeof f, string][] = [['nome', 'Nome corto (es. Vicenza Pelli)'], ['ragione_sociale', 'Ragione sociale'], ['categoria_principale', 'Cosa vende (es. pelli stampate)'], ['email', 'Email'], ['telefono', 'Telefono'], ['referente', 'Referente'], ['indirizzo', 'Indirizzo'], ['piva_vat', 'P.IVA'], ['deposito_luogo', 'Deposito / luogo'], ['condizioni_pagamento', 'Condizioni di pagamento'], ['note', 'Note']];
   return (
     <div className="screen">
-      <header><h1>Nuovo fornitore</h1></header>
-      <button className="back" onClick={onBack} type="button">← Fornitori</button>
+      <AppBar title="Nuovo fornitore" onBack={onBack} backLabel="Fornitori" />
       <AiBox files={files} setFiles={setFiles} testo={testo} setTesto={setTesto} busy={busy} onCompila={compila} abilitato={settings.ai} avviso={avviso} />
       <div className="card mat-form">
         {esiste && <div className="card warn" style={{ marginBottom: 8 }}>Esiste gia' "{esiste.nome}": salvando aggiorni i campi compilati, gli altri restano.</div>}
@@ -309,8 +308,7 @@ function Scheda({ g, acquisti, materialiFornitore, settings, chi, onBack, onChan
 
   return (
     <div className="screen">
-      <header><h1 style={{ fontSize: 20 }}>{g.materiale}</h1></header>
-      <button className="back" onClick={onBack} type="button">← Catalogo</button>
+      <AppBar title={g.materiale} onBack={onBack} backLabel="Catalogo" />
       {foto.length > 0
         ? <div className="mat-photos">{foto.map((a) => urls[a.path] ? <a key={a.id} href={urls[a.path]} target="_blank" rel="noreferrer"><img src={urls[a.path]} alt={a.titolo ?? ''} /></a> : null)}</div>
         : <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 12 }}><Segno cat={g.categoria} label={`${g.categoria} · nessuna foto ancora`} big /></div>}
@@ -478,10 +476,10 @@ export default function Materiali({ chi, onBack, onProdotti }: { chi: string; on
     </div>
   );
 
-  if (session === 'loading') return <div className="screen"><header><h1>Materie prime</h1></header><p className="muted center">Controllo l&#8217;accesso…</p></div>;
+  if (session === 'loading') return <div className="screen"><AppBar title="Materie prime" onBack={onBack} /><p className="muted center">Controllo l&#8217;accesso…</p></div>;
   if (session === 'out') return (
     <div className="screen">
-      <header><button className="badge" onClick={onBack} type="button">‹ Home app</button></header>
+      <AppBar title="Materie prime" onBack={onBack} backLabel="Home" />
       {segmented}
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; materie prime</span></div>
@@ -507,7 +505,7 @@ export default function Materiali({ chi, onBack, onProdotti }: { chi: string; on
 
   return (
     <div className="screen">
-      <header><h1>Materie prime</h1><button className="badge" onClick={onBack} type="button">‹ Home</button></header>
+      <AppBar title="Materie prime" onBack={onBack} backLabel="Home" />
       {segmented}
       <div className="seg wrap" style={{ marginBottom: 10 }}>
         <button type="button" className={view === 'catalogo' ? 'on' : ''} onClick={() => setView('catalogo')}>Catalogo{rows ? ` (${gruppi.length})` : ''}</button>

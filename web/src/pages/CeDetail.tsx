@@ -6,6 +6,7 @@ import type { CeFull, DrillExp, DrillCogs, DrillSale } from '../lib/api';
 import { nowMonth } from '../lib/helpers';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
+import AppBar from '../components/AppBar';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const CUR = nowMonth();
@@ -154,23 +155,19 @@ export default function CeDetail({ onBack }: { onBack?: () => void }) {
     return '';
   }
 
-  if (loading) return <div className="screen"><header><h1>CE dettagliato</h1></header><p className="muted center">Carico i dati…</p></div>;
-  if (err) return <div className="screen"><header><h1>CE dettagliato</h1></header><div className="card err">Errore: {err}</div></div>;
+  if (loading) return <div className="screen"><AppBar title="CE dettagliato" onBack={onBack} /><p className="muted center">Carico i dati…</p></div>;
+  if (err) return <div className="screen"><AppBar title="CE dettagliato" onBack={onBack} /><div className="card err">Errore: {err}</div></div>;
 
   return (
     <div className="screen">
-      <header>
-        <h1>CE dettagliato</h1>
-        <div className="operbar">
-          <PrintBtn />
-          <ExportBtn name={`ce_dettaglio_${scope}`} rows={() => shown.filter((r) => r.k && !r.grp && !r.pctOf).map((r) => {
-            const o: Record<string, string | number> = { voce: r.lab! };
-            months.forEach((m) => { o[MESI[m]] = Math.round(val(byMonth.get(m)!, r.k!)); });
-            return o;
-          })} />
-        </div>
-      </header>
-      {onBack && <button className="back" onClick={onBack}>← Home</button>}
+      <AppBar title="CE dettagliato" onBack={onBack} backLabel="Home" actions={<>
+        <PrintBtn />
+        <ExportBtn name={`ce_dettaglio_${scope}`} rows={() => shown.filter((r) => r.k && !r.grp && !r.pctOf).map((r) => {
+          const o: Record<string, string | number> = { voce: r.lab! };
+          months.forEach((m) => { o[MESI[m]] = Math.round(val(byMonth.get(m)!, r.k!)); });
+          return o;
+        })} />
+      </>} />
 
       <div className="ctrlbar cedt-ctrl">
         <div className="ds-seg">

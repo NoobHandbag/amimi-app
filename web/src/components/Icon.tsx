@@ -32,6 +32,8 @@ const P: Record<string, ReactNode> = {
   mail: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M4 7l8 6 8-6" /></>,
   trash: <><polyline points="3 6 5 6 21 6" /><path d="M8 6V4h8v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6" /></>,
   check: <><polyline points="4 12 10 18 20 6" /></>,
+  back: <><polyline points="15 5 8 12 15 19" /></>,
+  chevron: <><polyline points="9 6 15 12 9 18" /></>,
 };
 
 export default function Icon({ name, size = 24 }: { name: string; size?: number }) {

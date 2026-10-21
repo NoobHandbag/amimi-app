@@ -5,6 +5,7 @@ import { fetchEvidence, fetchContacts, fetchReviews, addReview, assetPathsOf, TI
 import type { LeadDossier, LeadLista, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
 import { PEOPLE, personaName } from '../lib/people';
 import ExportBtn from '../components/ExportBtn';
+import AppBar from '../components/AppBar';
 import type { LeadOutreach, LeadSequence } from '../lib/leadApi';
 import { leggiCache, caricaLista, caricaPipeline, caricaSequenzeSettings, aggiornaRigaLista, righeMancanti, dossierInCache, caricaDossier, urlsValidi, daFirmare, firma } from '../lib/leadCache';
 import { OutreachBoard, OutreachCoda, OutreachScheda, OutreachSequenze } from './Outreach';
@@ -229,10 +230,10 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
     </div>
   );
 
-  if (session === '?') return <div className="screen"><header><h1>Negozi B2B</h1></header><p className="muted center">Controllo l&#8217;accesso…</p></div>;
+  if (session === '?') return <div className="screen"><AppBar title="Negozi B2B" onBack={onBack} /><p className="muted center">Controllo l&#8217;accesso…</p></div>;
   if (session === 'out') return (
     <div className="screen">
-      <header><button className="lead-back" onClick={onBack} type="button">‹ Home app</button></header>
+      <AppBar title="Negozi B2B" onBack={onBack} backLabel="Home" />
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; negozi B2B</span></div>
         <div className="cs-lt">Accedi con il tuo account Amimi&#8217; (dati di terzi: serve il login)</div>
@@ -251,7 +252,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
     const fermo = dossier && dossier.id === route.id && !dossier.loading ? dossier : null;
     return (
       <div className="screen">
-        <header><button className="lead-back" onClick={closeScheda} type="button">‹ Negozi</button></header>
+        <AppBar title="Negozio" onBack={closeScheda} backLabel="Negozi" />
         {!fermo ? <p className="muted center">Carico la scheda…</p> : fermo.err ? <div className="card err">Errore: {fermo.err}</div> : <p className="muted">Negozio non trovato (forse scartato o rinominato).</p>}
       </div>
     );
@@ -259,8 +260,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
   if (route.view === 'oscheda' && ocur) return <OutreachScheda key={ocur.id} r={ocur} urls={urls} who={who} sequences={sequences} settings={settings} onBack={() => closeDetail({ view: 'pipeline' })} onOpenDossier={(id) => goRoute({ view: 'scheda', id })} onChanged={() => ricaricaOutreach(ocur.id)} />;
   if (route.view === 'pipeline' || route.view === 'coda' || route.view === 'sequenze' || (route.view === 'oscheda' && orows && !ocur)) return (
     <div className="screen">
-      <header><h1>{route.view === 'coda' ? 'Coda' : route.view === 'sequenze' ? 'Sequenze' : 'Pipeline outreach'}</h1><div className="operbar"><button className="badge" onClick={() => load(true)} type="button">Aggiorna</button></div></header>
-      {onBack && <button className="back" onClick={onBack} type="button">← Home</button>}
+      <AppBar title={route.view === 'coda' ? 'Coda' : route.view === 'sequenze' ? 'Sequenze' : 'Pipeline outreach'} onBack={onBack} backLabel="Home" actions={<button className="badge" onClick={() => load(true)} type="button">Aggiorna</button>} />
       {nav}
       {err && <div className="card err">Errore: {err}</div>}
       {!orows ? <p className="muted center">Carico la pipeline…</p> : route.view === 'coda' ? <OutreachCoda rows={orows} onOpen={(id) => goRoute({ view: 'oscheda', id })} who={who} onChanged={async () => { await loadPipeline(Date.now()); }} aiOn={settings.lead_outreach_ai_enabled === 'true'} /> : route.view === 'sequenze' ? <OutreachSequenze sequences={sequences} settings={settings} /> : route.view === 'oscheda' ? <p className="muted">Negozio non in pipeline.</p> : <OutreachBoard rows={orows} urls={urls} onOpen={(id) => goRoute({ view: 'oscheda', id })} />}
@@ -273,15 +273,11 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
 
   return (
     <div className="screen">
-      <header>
-        <h1>Negozi B2B</h1>
-        <div className="operbar">
-          {setChi && <label className="lead-who">Firmi come <select value={chi} onChange={(e) => setChi(e.target.value)}>{PEOPLE.map((p) => <option key={p} value={p}>{personaName(p)}</option>)}</select></label>}
-          <button className="badge" onClick={() => load(true)} type="button">Aggiorna</button>
-          <ExportBtn name="negozi_b2b" rows={() => list.map((r) => ({ nome: r.nome, tipo: r.tipo, citta: r.citta, paese: r.paese, stato: r.stato_ricerca, totale: r.totale, tier_proposto: r.tier_proposto, tier: r.tier, follower: r.ig_metrics?.follower ?? null, rating: r.maps?.rating ?? null, recensioni: r.maps?.recensioni ?? null, borse_mediana: r.price_band?.borse?.mediana ?? null, brand_affini: (r.brands_carried?.peer_match ?? []).join(' '), sito: r.website, instagram: r.ig_handle, email: r.email_generica, telefono: r.telefono ?? r.maps?.telefono ?? null, gancio: r.gancio, nota: r.owner_note }))} />
-        </div>
-      </header>
-      {onBack && <button className="back" onClick={onBack} type="button">← Home</button>}
+      <AppBar title="Negozi B2B" onBack={onBack} backLabel="Home" actions={<>
+        <button className="badge" onClick={() => load(true)} type="button">Aggiorna</button>
+        <ExportBtn name="negozi_b2b" rows={() => list.map((r) => ({ nome: r.nome, tipo: r.tipo, citta: r.citta, paese: r.paese, stato: r.stato_ricerca, totale: r.totale, tier_proposto: r.tier_proposto, tier: r.tier, follower: r.ig_metrics?.follower ?? null, rating: r.maps?.rating ?? null, recensioni: r.maps?.recensioni ?? null, borse_mediana: r.price_band?.borse?.mediana ?? null, brand_affini: (r.brands_carried?.peer_match ?? []).join(' '), sito: r.website, instagram: r.ig_handle, email: r.email_generica, telefono: r.telefono ?? r.maps?.telefono ?? null, gancio: r.gancio, nota: r.owner_note }))} />
+      </>} />
+      {setChi && <div className="operbar"><label className="lead-who">Firmi come <select value={chi} onChange={(e) => setChi(e.target.value)}>{PEOPLE.map((p) => <option key={p} value={p}>{personaName(p)}</option>)}</select></label></div>}
       {nav}
       {err && <div className="card err">Errore: {err}</div>}
       {!rows ? <p className="muted center">Carico i negozi…</p> : (
@@ -441,10 +437,7 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
 
   return (
     <div className="screen">
-      <header>
-        <button className="lead-back" onClick={onBack} type="button">‹ Negozi</button>
-        <span className="badge" style={{ background: tierColor(r.tier ?? r.tier_proposto), color: '#fff' }}>{r.tier ? `Tier ${r.tier}` : r.tier_proposto ? `Proposto ${r.tier_proposto}` : STATO_LABEL[r.stato_ricerca]}</span>
-      </header>
+      <AppBar onBack={onBack} backLabel="Negozi" actions={<span className="badge" style={{ background: tierColor(r.tier ?? r.tier_proposto), color: '#fff' }}>{r.tier ? `Tier ${r.tier}` : r.tier_proposto ? `Proposto ${r.tier_proposto}` : STATO_LABEL[r.stato_ricerca]}</span>} />
       <h1 style={{ margin: '4px 0 0' }}>{r.nome}</h1>
       <div className="muted" style={{ marginBottom: 6 }}>{[TIPO_LABEL[r.tipo] ?? r.tipo, r.citta, r.provincia, r.paese !== 'IT' ? r.paese : null, r.gruppo_nome ? `gruppo: ${r.gruppo_nome}` : null].filter(Boolean).join(' · ')}</div>
       {avviso && <div className="card err">Scheda non aggiornata ({avviso}): quella che vedi e&#8217; la lettura di prima.</div>}
@@ -509,7 +502,7 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
                 <div className="lead-scale-med" style={{ left: pct(pb.borse.mediana) }} />
                 <div className="lead-scale-amimi" style={{ left: pct(AMIMI_MIN), width: `calc(${pct(AMIMI_MAX)} - ${pct(AMIMI_MIN)})` }} />
               </div>
-              <div className="lead-scale-leg"><i style={{ background: 'var(--interactive-tint)', border: '1px solid var(--interactive)' }} /> negozio <i style={{ background: 'var(--accent-coral-tint)', border: '1px solid var(--accent-coral-strong)' }} /> Amimi&#8217; {AMIMI_MIN}–{AMIMI_MAX}€ <i style={{ background: 'var(--ink)', width: 3 }} /> mediana · asse fino a {eur(axisMax)}</div>
+              <div className="lead-scale-leg"><i style={{ background: 'var(--interactive-tint)', border: '1px solid var(--interactive)' }} /> negozio <i style={{ background: 'var(--surface-alt)', border: '1px solid var(--chart-4)' }} /> Amimi&#8217; {AMIMI_MIN}–{AMIMI_MAX}€ <i style={{ background: 'var(--ink)', width: 3 }} /> mediana · asse fino a {eur(axisMax)}</div>
             </div>
           )}
           {bc?.vendors?.length ? <p className="note">Brand a catalogo: {bc.vendors.slice(0, 40).join(', ')}{bc.vendors.length > 40 ? '…' : ''}</p> : null}

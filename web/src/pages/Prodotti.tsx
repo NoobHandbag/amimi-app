@@ -6,6 +6,7 @@ import type { ProdTodo } from '../lib/api';
 import { suggestPrice, marginOf, genSeoTitle, prettyName } from '../lib/helpers';
 import { toast } from '../lib/toast';
 import Icon from '../components/Icon';
+import AppBar from '../components/AppBar';
 
 const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s);
 
@@ -80,7 +81,7 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
   }
   return (
     <div className="form">
-      <button className="back" onClick={onDone}>← {p.codice}</button>
+      <AppBar title={p.codice} onBack={onDone} backLabel="elenco prodotti" />
       <div className="grid2">
         <div><label className="fl">Modello *</label><input className="txt" style={{ textTransform: 'uppercase' }} value={item} onChange={(e) => setItem(e.target.value)} /></div>
         <div><label className="fl">Variante *</label><input className="txt" style={{ textTransform: 'uppercase' }} value={variant} onChange={(e) => setVariant(e.target.value)} /></div>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchAdsCreativeStatus, fetchAdsWeekly, fetchAdsSetModelli, fetchAdsCatalogoModelli, pullAds } from '../lib/api';
 import type { AdsCreativeStatus, AdsWeekly, AdsSetModello, AdsCatModello } from '../lib/api';
+import AppBar from '../components/AppBar';
 
 // Pagina "Ads" (redesign 2026-09-19, richiesta owner). Mostra l'ARCHITETTURA reale (solo le campagne con ad attivi:
 // COLD e SUPER HOT; le altre sono obsolete), con gli ASSET visibili (le foto da image_url, i video dal frame_url
@@ -12,7 +13,7 @@ const eur2 = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', 
 const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const nz = (v: unknown): number | null => (v == null || v === '' ? null : num(v));
 const CPA_TARGET = 45, CPA_BREAKEVEN = 76.7;
-const cpaTone = (cpa: number | null) => (cpa == null ? '' : cpa <= CPA_TARGET ? 'green' : cpa <= CPA_BREAKEVEN ? 'accent' : 'red');
+const cpaTone = (cpa: number | null) => (cpa == null ? '' : cpa <= CPA_TARGET ? 'green' : cpa <= CPA_BREAKEVEN ? 'warn' : 'red');
 const faticaCls = (s: string) => (s === 'alta' ? 'pill warn' : s === 'media' ? 'pill muted' : 'pill ok');
 const dmy = (iso: string) => { const d = new Date(iso.slice(0, 10) + 'T12:00:00'); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`; };
 
@@ -166,8 +167,8 @@ export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: st
     finally { setPulling(false); }
   };
 
-  if (err) return <div className="screen"><header><h1>Ads</h1></header>{onBack && <button className="back" onClick={onBack}>← Home</button>}<div className="card err">Errore: {err}</div></div>;
-  if (!rows || !weeks || !setMod || !catMod) return <div className="screen"><header><h1>Ads</h1></header><p className="muted center">Carico le creativita'…</p></div>;
+  if (err) return <div className="screen"><AppBar title="Ads" onBack={onBack} /><div className="card err">Errore: {err}</div></div>;
+  if (!rows || !weeks || !setMod || !catMod) return <div className="screen"><AppBar title="Ads" onBack={onBack} /><p className="muted center">Carico le creativita'…</p></div>;
 
   const asOf = rows.find((r) => r.as_of)?.as_of ?? null;
   const staleDays = asOf ? Math.floor((Date.now() - new Date(String(asOf).slice(0, 10) + 'T12:00:00').getTime()) / 86400000) : null;
@@ -177,8 +178,7 @@ export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: st
 
   return (
     <div className="screen">
-      <header><h1>Ads</h1><span className="badge">Meta · per creativita'</span></header>
-      {onBack && <button className="back" onClick={onBack}>← Home</button>}
+      <AppBar title="Ads" onBack={onBack} actions={<span className="badge">Meta · per creativita'</span>} />
 
       <p className="note" style={{ marginTop: 0 }}>
         Dati al <strong>{asOf ? String(asOf).slice(0, 10) : 'n/d'}</strong>
