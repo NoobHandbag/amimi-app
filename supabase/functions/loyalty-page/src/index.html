@@ -311,7 +311,7 @@
 </head>
 <body>
   <a class="logo" href="/" aria-label="Amimì, torna al sito">amìmì</a>
-  <a class="nastro hidden" id="collab" href="/" aria-label="Amimì per Panini Galiano, torna al sito"><span class="loghi"><img id="collabAmimi" alt=""><span>x</span><img class="g" id="collabGaliano" alt=""></span><span class="riga">Una collab tutta da <b>TOASTare</b></span><span class="riga" id="collabQuando"></span></a>
+  <a class="nastro hidden" id="collab" href="/"><span class="loghi"><img id="collabAmimi" alt="Amimì"><span aria-hidden="true">x</span><img class="g" id="collabGaliano" alt="Panini Galiano"></span><span class="riga">Una collab tutta da <b>TOASTare</b></span><span class="riga" id="collabQuando"></span></a>
 
   <!-- stato: caricamento -->
   <div id="loading" class="skel" role="status" aria-label="Carico i tuoi punti Mimì">
@@ -1156,7 +1156,7 @@
         ctx.globalAlpha=Math.min(1, (1.25-scritta.t)*3);
         ctx.lineWidth=6; ctx.strokeStyle='#FFFBFB'; ctx.strokeText('Toast pronto!', W/2, y);
         ctx.fillStyle='#23524C'; ctx.fillText('Toast pronto!', W/2, y);
-        ctx.font='600 14px "Work Sans", system-ui, sans-serif'; ctx.lineWidth=4; ctx.strokeText('ora più veloce', W/2, y+28); ctx.fillStyle='#A30008'; ctx.fillText('ora più veloce', W/2, y+28);
+        if(fatti<=6 && clock<DURATA-2){ ctx.font='600 14px "Work Sans", system-ui, sans-serif'; ctx.lineWidth=4; ctx.strokeText('ora più veloce', W/2, y+28); ctx.fillStyle='#A30008'; ctx.fillText('ora più veloce', W/2, y+28); }   // dal settimo toast la velocita' e' gia' al massimo
         ctx.globalAlpha=1;
       }
       hud();

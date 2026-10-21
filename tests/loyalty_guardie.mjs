@@ -373,10 +373,10 @@ t('185 Tostiamo?: la riga fissa degli eventi non promette piu\' +20 (ogni evento
 // owner 21-10 sera: la Tovaglia (takeover della collab) e la velocita' che sale a ogni toast
 t('187 Tovaglia: si accende solo con Tostiamo? e con l\'atlante pronto, il nastro prende il posto della scritta amimi\' e resta un link al sito, la riga dopo la serata cambia da sola',
   TSTPAGE.includes('tovaglia(im);') && TSTPAGE.includes("document.querySelector('.logo').classList.add('hidden'); el('collab').classList.remove('hidden'); document.body.classList.add('collab');")
-  && /<a class="nastro hidden" id="collab" href="\/" aria-label="[^"]+">/.test(PAGE) && TSTPAGE.includes("(OGGI && OGGI<=CONFIG.tovaglia.serata) ? CONFIG.tovaglia.prima : CONFIG.tovaglia.dopo")
+  && PAGE.includes('<a class="nastro hidden" id="collab" href="/"><span class="loghi"><img id="collabAmimi" alt="Amimì"><span aria-hidden="true">x</span><img class="g" id="collabGaliano" alt="Panini Galiano"></span>') && TSTPAGE.includes("(OGGI && OGGI<=CONFIG.tovaglia.serata) ? CONFIG.tovaglia.prima : CONFIG.tovaglia.dopo")
   && PAGE.includes("tovaglia: { serata:'2026-10-22',") && /body\.collab \.hero\{/.test(PAGE) && /@media \(prefers-reduced-motion:reduce\)\{ \.volo\{animation:none/.test(PAGE));
 t('189 Tovaglia: il nastro ha una classe sua (nastro), body.collab non prende mai i suoi stili (21-10: con lo stesso nome tutta la pagina diventava verde)',
-  !/\n  \.collab[{ :]/.test(PAGE) && /\n  \.nastro\{/.test(PAGE));
+  !/\.collab\b/.test(PAGE.replace(/body\.collab/g, '')) && /\n  \.nastro\{/.test(PAGE));
 t('188 Tostiamo?: la velocita\' delle borse sale del 50% a ogni toast fatto, al massimo il quadruplo',
   PAGE.includes('vy:140*Math.min(4, 1+0.5*fatti)*rnd(0.9,1.12),'));
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
