@@ -624,8 +624,11 @@ test.describe('Paillettes accese, gioca Ginni', () => {
   });
 
   test('verifica: la data mancante si vede; una data svuotata resta quella di prima; il laboratorio che sparisce chiude la verifica toccata; senza niente da sistemare niente paillettes', async ({ page }) => {
-    const dati = datiBase();
-    const r = await apri(page, '#villaggio', dati, { chi: 'Ginevra', presenzaFatta: true });
+    // orologio finto su un giorno prima del 20: qui Sarte Milano sparisce e le missioni di base scendono a due, e dal 20 del
+    // mese si aggiungerebbe la conta completa (quel caso lo prova "Missione della conta completa")
+    const giorno = '2026-10-14', g = (n: number) => sposta(giorno, n);
+    const dati = datiBase(giorno);
+    const r = await apri(page, '#villaggio', dati, { chi: 'Ginevra', presenzaFatta: true, oggi: giorno });
     await hud(page);
     await pillola(page, '287', 'Stagista');
     // Sarte Milano: Nina non ha la data, la riga lo dice e la nota la conta
@@ -638,7 +641,7 @@ test.describe('Paillettes accese, gioca Ginni', () => {
     const nina = s.locator('.v-vrow');   // l'unica riga aperta di Sarte Milano
     await expect(nina.locator('.v-dt small')).toHaveText('manca la data');
     await expect(nina.locator('.v-dt')).toHaveClass(/(^|\s)manca(\s|$)/);
-    await nina.locator('input[type="date"]').fill(traGiorni(12));
+    await nina.locator('input[type="date"]').fill(g(12));
     await expect(nina.locator('.v-dt small')).toHaveText('consegna');
     await expect(nina.locator('.v-dt')).not.toHaveClass(/(^|\s)manca(\s|$)/);
     await expect(s.locator('.v-note').first()).toHaveText('1 riga. Spegni quelle che Sarte Milano non sta lavorando.');
@@ -664,21 +667,21 @@ test.describe('Paillettes accese, gioca Ginni', () => {
     const lea = s.locator('.v-vrow', { hasText: 'Cocco nero' });
     await lea.locator('input[type="date"]').fill('');
     await expect(lea.locator('input[type="date"]')).toHaveValue('');
-    await expect(lea.locator('.v-dt small')).toHaveText(`resta il ${dataLunga(traGiorni(-10))}`);
+    await expect(lea.locator('.v-dt small')).toHaveText(`resta il ${dataLunga(g(-10))}`);
     await expect(lea.locator('.v-dt')).not.toHaveClass(/(^|\s)manca(\s|$)/);
     await expect(s.locator('.v-note').first()).toHaveText('2 righe. Spegni quelle che Francesco non sta lavorando.');
     await s.getByRole('button', { name: 'Salva la verifica' }).click();
     await expect.poll(() => di(r.posts, 'fornitore_verifica').length, ATTESA).toBe(1);
     expect(di(r.posts, 'fornitore_verifica')[0].body.payload).toEqual({
       fornitore: FRANCESCO, nota: null,
-      righe: [{ id: ID.lea, confermata: true, data_consegna: traGiorni(-10) }, { id: ID.sophie, confermata: true, data_consegna: traGiorni(20) }],
+      righe: [{ id: ID.lea, confermata: true, data_consegna: g(-10) }, { id: ID.sophie, confermata: true, data_consegna: g(20) }],
     });
     // nessuna data cambiata e nessuna riga chiusa: la verifica e' salvata ma non sistema niente, quindi niente paillettes
     // (fase 3: verifica.n = righe sistemate, qui 0) e la missione di Francesco resta da fare
     await compare(page, '__avvisi', 'Verifica con Francesco salvata. Niente da sistemare, quindi niente paillettes.');
-    expect(dati.ordini.find((x) => x.id === ID.lea)?.data_consegna).toBe(traGiorni(-10));
-    expect(r.eventi.filter((e) => e.tipo === 'verifica')).toMatchObject([{ giorno: OGGI, ref: FRANCESCO, n: 0 }]);
-    expect(r.eventi.filter((e) => e.tipo === 'data_aggiunta' && e.giorno === OGGI)).toEqual([]);
+    expect(dati.ordini.find((x) => x.id === ID.lea)?.data_consegna).toBe(g(-10));
+    expect(r.eventi.filter((e) => e.tipo === 'verifica')).toMatchObject([{ giorno, ref: FRANCESCO, n: 0 }]);
+    expect(r.eventi.filter((e) => e.tipo === 'data_aggiunta' && e.giorno === giorno)).toEqual([]);
     await expect(sheet(page).locator('h2')).toHaveText('Francesco sta preparando', ATTESA);
     await page.waitForTimeout(1500);
     await pillola(page, '287', 'Stagista');
