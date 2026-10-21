@@ -172,6 +172,13 @@
   .sheet-form{text-align:left}
   .sheet-form h2,.sheet-form .sub{text-align:center}
   .sheet-form .btnghost{display:block;margin:4px auto 0}
+  .sheet-form h2{padding:0 34px}
+  .sheet-x{position:sticky;top:-78px;z-index:2;display:block;width:44px;height:44px;margin:-20px -16px -44px auto;border:none;background:none;padding:0;cursor:pointer}   /* resta in vista mentre il modulo si scorre, a 6 px dal bordo dello schermo (lo sticky conta dai 84 px di padding di .modal); margini negativi: non sposta il contenuto */
+  .sheet-x i{display:block;width:32px;height:32px;margin:6px;border-radius:50%;background:var(--white);border:1.5px solid var(--red);color:var(--red-deep);font-style:normal;font-size:22px;line-height:28px;text-align:center}
+  #ugcModal .sheet-peek{right:auto;left:14px}   /* la X sta a destra: qui Mimi' sporge a sinistra */
+  .ugc-esci{position:fixed;left:16px;right:16px;bottom:16px;z-index:3;max-width:360px;margin:0 auto;background:var(--white);border:1.5px solid var(--red);border-radius:16px;padding:14px 16px 6px;text-align:center;box-shadow:0 10px 30px rgba(43,18,21,.35)}
+  .sheet .ugc-esci p{color:var(--ink)}
+  .sheet .ugc-esci .btn{margin-top:10px}
   .fotos .add[disabled]{border-color:var(--line);color:var(--muted);cursor:default}
   .f-l{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:14px 0 5px}
   .f-in{display:block;width:100%;border:1.5px solid var(--line);border-radius:14px;background:var(--white);padding:11px 12px;font:inherit;font-size:16px;color:var(--ink)}
@@ -375,6 +382,7 @@
 
   <!-- recensione o look -->
   <div class="modal" id="ugcModal" role="dialog" aria-modal="true" aria-labelledby="ugcTitle" aria-hidden="true"><div class="sheet sheet-form">
+    <button class="sheet-x" id="ugcX" type="button" aria-label="Chiudi"><i aria-hidden="true">&times;</i></button>
     <div class="sheet-peek"><img data-mimi alt=""></div>
     <h2 id="ugcTitle"></h2>
     <p class="sub" id="ugcSub"></p>
@@ -398,6 +406,11 @@
       <button class="btn" id="ugcInvia" type="submit">Invia</button>
     </form>
     <button class="btnghost" id="ugcClose" type="button">Chiudi</button>
+    <div class="ugc-esci hidden" id="ugcEsci" role="alertdialog" aria-labelledby="ugcEsciT">
+      <p id="ugcEsciT"><b>Vuoi chiudere?</b> Quello che hai scritto e le foto non restano.</p>
+      <button class="btn" id="ugcResta" type="button">Continua</button>
+      <button class="btnghost" id="ugcEsciSi" type="button">Chiudi lo stesso</button>
+    </div>
   </div></div>
 
   <div id="toast" role="status" aria-live="polite"></div>
@@ -486,7 +499,7 @@
   let lastFocus=null;
   function openModal(id, focusNode){ const m=el(id); lastFocus=document.activeElement; m.classList.add('on'); m.setAttribute('aria-hidden','false'); setTimeout(()=>{ const f=focusNode||m.querySelector('button:not([disabled])'); if(f) f.focus({ preventScroll:true }); m.scrollTop=0; },80); }   // su uno schermo basso la finestra parte dall'alto, con Mimi' intera
   function closeModal(id){ const m=el(id); if(!m.classList.contains('on')) return; m.classList.remove('on'); m.setAttribute('aria-hidden','true'); const back=(lastFocus && lastFocus!==document.body && document.contains(lastFocus)) ? lastFocus : el('redeem'); if(back && back.focus) back.focus(); }   // il bottone di partenza puo' essere stato ridisegnato: si torna alla card dei punti
-  document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal('gameModal'); closeModal('rewardModal'); chiudiUgc(); } });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ closeModal('gameModal'); closeModal('rewardModal'); if(!el('ugcEsci').classList.contains('hidden')) restaNelModulo(); else chiudiUgc(); } });   // con la domanda "Vuoi chiudere?" aperta, Esc la chiude e si resta nel modulo
   function reward(title,prize,msg,code){
     el('rewardTitle').textContent=title; el('rewardPrize').textContent=prize; el('rewardMsg').textContent=msg||'';
     el('rewardCode').innerHTML = code ? '<div class="codechip"><span class="c">'+esc(code)+'</span><button class="cp tap" type="button" data-code="'+esc(code)+'">Copia</button></div>' : '';
@@ -899,6 +912,7 @@
   function inviati(k){ const u=S && S._ugc; return new Set(((u && u.mine) || []).filter(x=>x && x.kind===k && x.status!=='rifiutata').map(x=>String(x.codice))); }
   function comprate(){ const u=S && S._ugc; return ((u && u.recensibili) || []).filter(b=>b && b.codice); }
   function daRecensire(){ const fatti=inviati('recensione'); return comprate().filter(b=>!fatti.has(String(b.codice))); }
+  function inAttesa(){ return S && S.wardrobe_source==='api' && Array.isArray(S.wardrobe) && S.wardrobe.length>0; }   // borse lette dagli ordini Shopify ma non ancora accreditate: comprate online, non ancora recensibili
   function perLook(){
     const fatti=inviati('look'), mie=comprate().filter(b=>!fatti.has(String(b.codice)));
     const giaMie=new Set(comprate().map(b=>String(b.codice)));
@@ -909,12 +923,14 @@
     const sec=el('ugcSec'), u=S._ugc;
     if(!u){ sec.classList.add('hidden'); return; }
     sec.classList.remove('hidden');
-    const pr=puntiUgc('recensione'), pl=puntiUgc('look'), soloLook=!comprate().length;   // nessuna borsa comprata online: la recensione lo dice gia' a riposo (il tocco resta il toast), il look vale col catalogo
-    el('ugcIntro').textContent= soloLook
+    const pr=puntiUgc('recensione'), pl=puntiUgc('look'), soloLook=!comprate().length, attesa=soloLook && inAttesa();   // nessuna borsa comprata online: la recensione lo dice gia' a riposo (il tocco resta il toast), il look vale col catalogo
+    el('ugcIntro').textContent= attesa
+      ? 'Le recensioni sono per le borse comprate su amimi.it, e le tue non le trovo ancora fra gli ordini. Intanto mostraci il look con la tua Amimì: +'+pl+' punti Mimì dopo la nostra approvazione.'
+      : soloLook
       ? 'Le recensioni sono per le borse comprate su amimi.it. Hai preso la tua Amimì in boutique o a un evento? Mostraci il look: +'+pl+' punti Mimì dopo la nostra approvazione.'
       : 'Una recensione vale +'+pr+' punti Mimì, una foto del look con la tua Amimì +'+pl+'. I punti arrivano dopo la nostra approvazione.';
-    const br=el('btnRecensione'); br.classList.toggle('done', soloLook); br.setAttribute('aria-disabled', String(soloLook));
-    br.innerHTML='<span class="ico stella"></span>Scrivi una recensione<small>'+(soloLook ? 'Solo per le borse comprate su amimi.it' : '+'+pr+' punti')+'</small>';
+    const br=el('btnRecensione'); br.classList.toggle('done', soloLook); br.classList.toggle('tap', !soloLook); br.setAttribute('aria-disabled', String(soloLook));
+    br.innerHTML='<span class="ico stella"></span>Scrivi una recensione<small>'+(attesa ? 'Non trovo ancora i tuoi ordini' : soloLook ? 'Solo per le borse comprate su amimi.it' : '+'+pr+' punti')+'</small>';
     el('btnLook').innerHTML='<span class="ico foto"></span>Mostraci il look con la tua Amimì<small>+'+pl+' punti</small>';
     el('ugcMine').innerHTML=(u.mine||[]).filter(Boolean).slice(0,10).map(x=>{
       const look=x.kind==='look', cosa=(look ? 'Look' : 'Recensione')+' · '+(x.titolo||x.codice);
@@ -940,7 +956,7 @@
   function apriUgc(kind){
     if(!S || !S._ugc || UGC.busy) return;
     const look=kind==='look', p=perLook(), rec=daRecensire();
-    if(!look && !rec.length){ toast(comprate().length ? 'Hai già recensito tutte le tue borse' : 'Le recensioni sono per le borse comprate su amimi.it'); return; }
+    if(!look && !rec.length){ toast(comprate().length ? 'Hai già recensito tutte le tue borse' : inAttesa() ? 'Non trovo ancora le tue borse fra gli ordini di amimi.it' : 'Le recensioni sono per le borse comprate su amimi.it'); return; }
     if(look && !p.mie.length && !p.altre.length){ toast('Hai già mandato un look per ogni borsa'); return; }
     track('tap','ugc_open');
     UGC.kind=kind; UGC.stelle=0; UGC.idemp=null; UGC.scelta=0; UGC.giro++; liberaFoto();
@@ -955,17 +971,34 @@
     el('ugcFotoL').textContent= look ? 'Foto con la tua Amimì (almeno una, fino a '+CONFIG.fotoMax+')' : 'Foto (se vuoi, fino a '+CONFIG.fotoMax+')';
     el('ugcTesto').value=''; el('ugcConta').textContent='0/600'; el('ugcConsenso').checked=false; el('ugcErr').textContent='';
     el('ugcConsensoT').textContent=String(S._ugc.consenso||'');
-    stelleHTML(); fotoHTML();
+    stelleHTML(); fotoHTML(); nascondiUscita();
     openModal('ugcModal', el('ugcBorsa'));
   }
   function chiudiUgc(){
     if(!el('ugcModal').classList.contains('on')) return;
     if(UGC.busy){ toast('Un attimo, sto inviando'); return; }
-    UGC.giro++; UGC.scelta=0; closeModal('ugcModal'); liberaFoto();
+    nascondiUscita(); UGC.giro++; UGC.scelta=0; closeModal('ugcModal'); liberaFoto();
   }
+  // X, "Chiudi" ed Esc chiudono subito (gesto voluto). Un tocco fuori dalla finestra chiude solo un modulo vuoto: con testo,
+  // stelle o foto chiede prima dentro la pagina, cosi' un tocco sbagliato non butta il lavoro. La firma non conta (resta
+  // dall'invio di prima). Il tocco deve partire E finire sullo sfondo: una selezione trascinata fuori non chiude.
+  function ugcCompilato(){ return Boolean(UGC.foto.length || UGC.scelta || UGC.stelle || el('ugcTesto').value.trim()); }
+  function nascondiUscita(){ el('ugcEsci').classList.add('hidden'); }
+  function restaNelModulo(){ nascondiUscita(); el('ugcBorsa').focus({ preventScroll:true }); }
+  function toccoFuori(){
+    if(UGC.busy){ toast('Un attimo, sto inviando'); return; }
+    if(!ugcCompilato()){ chiudiUgc(); return; }
+    el('ugcEsci').classList.remove('hidden'); el('ugcResta').focus({ preventScroll:true });
+  }
+  let ugcGiuFuori=false;
+  el('ugcModal').addEventListener('pointerdown', e=>{ ugcGiuFuori = e.target===el('ugcModal'); });
+  el('ugcModal').addEventListener('click', e=>{ const fuori = e.target===el('ugcModal') && ugcGiuFuori; ugcGiuFuori=false; if(fuori) toccoFuori(); });
+  el('ugcResta').addEventListener('click', restaNelModulo);
+  el('ugcEsciSi').addEventListener('click', chiudiUgc);
   el('btnRecensione').addEventListener('click', ()=>apriUgc('recensione'));
   el('btnLook').addEventListener('click', ()=>apriUgc('look'));
   el('ugcClose').addEventListener('click', chiudiUgc);
+  el('ugcX').addEventListener('click', chiudiUgc);
   el('ugcStelle').addEventListener('click', e=>{ const b=e.target.closest('[data-st]'); if(b && !UGC.busy) mettiStelle(Number(b.dataset.st)); });
   el('ugcStelle').addEventListener('keydown', e=>{ const d=({ ArrowRight:1, ArrowUp:1, ArrowLeft:-1, ArrowDown:-1 })[e.key]; if(!d || UGC.busy) return; e.preventDefault(); mettiStelle((UGC.stelle||0)+d); });
   // se cambia il contenuto dopo un invio rimasto senza risposta, il prossimo e' un invio nuovo
@@ -1022,6 +1055,7 @@
   el('ugcForm').addEventListener('submit', async e=>{
     e.preventDefault();
     if(UGC.busy || !S || !S._ugc) return;
+    nascondiUscita();
     const err=m=>{ el('ugcErr').textContent=m; };
     const kind=UGC.kind, codice=el('ugcBorsa').value, testo=el('ugcTesto').value.trim(), firma=el('ugcFirma').value.trim();
     if(UGC.scelta) return err('Un attimo, sto preparando le foto.');
