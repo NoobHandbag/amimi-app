@@ -355,3 +355,10 @@ Livelli: `loyalty_tier_of`, `v_loyalty_members.tier_saldo/tier_cumulato`, `loyal
 ### 16.3 Rollback e fine
 - Tornare al memory prima del 02-11: deploy di `loyalty-page` con `al` a una data passata (o il commit prima di questo). Nessun flag, nessun dato toccato.
 - Dopo il 02-11 non serve niente: torna il memory da solo. Quando si vuole pulire: via l'atlante, `TOSTIAMO_*`, il blocco del gioco e le guardie 181-186.
+
+### 16.4 Stato del deploy
+- **21-10, 17:29 UTC**: `loyalty-page` versione 19, dal branch `claude/tostiamo` (commit `1496b00`, che contiene `origin/main` e i commit della #92 gia' online con la versione 18). Prima del deploy la pagina viva era identica byte per byte al build di `e53005d` (#92), quindi nessun lavoro di un'altra sessione e' stato tolto. Dopo: `?v=2` e pagina di prima identiche al build, `amimi.it/apps/premia/club` 200 `text/html` (261 KB attraverso l'App Proxy, atlante dentro, nessun segnaposto rimasto), smoke `tests/loyalty_smoke.mjs` 15/15, Regola 19 identica (CE di ottobre 13.316,26 / MC2 8.999,86, giacenze 1.175 pezzi / 81.161,00 EUR / 209 righe).
+- **Stasera (21-10)** le clienti hanno ancora il memory; l'owner prova il gioco vero col suo account su `amimi.it/apps/premia/club?gioco=toast`. Dal 22-10 alle 00:00 ora di Roma passa da solo a Tostiamo?.
+- **Attenzione a chi deploya `loyalty-page` dopo**: finche' la PR #93 non e' in main, un deploy da `main` toglie il gioco. Partire da `claude/tostiamo` o da un main che la contiene.
+- **Non provato dal vivo**: la partita con un account vero e il premio (`memory_win`) dalla pagina vera; provati sul banco con il server finto.
+
