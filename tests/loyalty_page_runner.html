@@ -388,7 +388,9 @@
   });
   await test('ugc: a flag acceso sezione con i punti del server, regole e Mimì che chiede la recensione', async()=>{
     const c=await open('ugc_on'); assert(c.vis('#ugcSec'),'sezione visibile'); has(c.txt('#ugcIntro'),'+20 punti Mimì'); has(c.txt('#ugcIntro'),'+30');
-    has(c.txt('#btnRecensione'),'Scrivi una recensione'); has(c.txt('#btnLook'),'Mandaci il tuo look'); has(c.txt('#regole'),'Recensisci una borsa'); has(c.txt('#regole'),'+30 se approvato');
+    has(c.txt('#btnRecensione'),'Scrivi una recensione'); has(c.txt('#btnRecensione'),'+20 punti'); has(c.txt('#btnLook'),'Mostraci il look con la tua Amimì'); has(c.txt('#ugcIntro'),'look con la tua Amimì');
+    assert(!c.$('#btnRecensione').classList.contains('done') && c.$('#btnRecensione').getAttribute('aria-disabled')==='false','recensione aperta a chi ha comprato online');
+    has(c.txt('#regole'),'Recensisci una borsa comprata su amimi.it'); has(c.txt('#regole'),'Mostraci il look con la tua Amimì'); has(c.txt('#regole'),'+30 se approvato');
     c.$('#mimi').click(); await until(()=>c.txt('#pts')==='65', 3000, 'coccola dal tocco');
     const viste=[]; for(let i=0;i<5;i++){ c.$('#mimi').click(); viste.push(c.txt('#mood')); }
     assert(viste.some(t=>t==='Mi racconti una delle tue borse?'),'Mimì chiede la recensione: '+viste.join(' | '));
@@ -412,7 +414,7 @@
   });
   await test('ugc: look con una foto grande: rimpicciolita a JPEG 1600 px, caricata sul link firmato, l\'invio porta il percorso del server', async()=>{
     const c=await open('ugc_on'); await apriModulo(c,'look');
-    has(c.txt('#ugcTitle'),'Il tuo look'); assert(c.$('#ugcStelleBox').classList.contains('hidden'),'niente stelle per il look');
+    has(c.txt('#ugcTitle'),'Il look con la tua Amimì'); has(c.txt('#ugcFotoL'),'Foto con la tua Amimì'); assert(c.$('#ugcStelleBox').classList.contains('hidden'),'niente stelle per il look');
     const og=c.$$('#ugcBorsa optgroup').map(g=>g.label); assert(og[0]==='Le tue borse' && og[1]==='Altre borse Amimì','borse mie e catalogo: '+og.join(','));
     assert(c.$$('#ugcBorsa option').filter(o=>o.value==='COD_0').length===1,'nessun doppione fra le mie e il catalogo');
     c.$('#ugcConsenso').click(); c.$('#ugcInvia').click(); await sleep(50); has(c.txt('#ugcErr'),'almeno una foto');
@@ -456,12 +458,15 @@
     const c=await open('ugc_mine'); const li=c.$$('#ugcMine li'); assert(li.length===3,'tre invii');
     has(li[0].textContent,'Non approvato: '); has(li[0].textContent,'non si vede la borsa'); assert(!/punti/.test(li[0].textContent),'nessun punto accanto a un rifiuto'); has(li[1].textContent,'+20 punti'); has(li[1].textContent,'approvata'); has(li[2].textContent,'Inviata il'); has(li[2].textContent,'In revisione');
     assert(!c.win.__xss && !c.$('#xt') && c.$$('#ugcMine img, #ugcMine b').length===0,'nessun elemento nato dai dati');
+    assert(!c.$('#btnRecensione').classList.contains('done'),'con borse comprate online il bottone non e\' spento anche se sono tutte recensite');
     c.$('#btnRecensione').click(); await sleep(80); has(c.toast(),'già recensito tutte'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
     await apriModulo(c,'look'); assert(c.$$('#ugcBorsa option').some(o=>o.value==='NINA_BAG_PONY_ZEBRA'),'il look rifiutato si puo\' rimandare');
   });
   await test('ugc: borse viste dal ripiego Shopify ma non ancora accreditate: la pagina non propone una recensione che il server rifiuterebbe', async()=>{
     const c=await open('ugc_ripiego'); assert(c.$$('#ward .witem').length===2,'le borse si vedono nel guardaroba');
-    c.$('#btnRecensione').click(); await sleep(80); has(c.toast(),'borse comprate su amimi.it'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
+    assert(c.$('#btnRecensione').classList.contains('done') && !c.$('#btnRecensione').classList.contains('tap') && c.$('#btnRecensione').getAttribute('aria-disabled')==='true','recensione spenta a riposo');
+    has(c.txt('#btnRecensione'),'Non trovo ancora i tuoi ordini'); has(c.txt('#ugcIntro'),'le tue non le trovo ancora fra gli ordini'); assert(!/boutique/.test(c.txt('#ugcIntro')),'a chi ha comprato online non si parla di boutique');
+    c.$('#btnRecensione').click(); await sleep(80); has(c.toast(),'Non trovo ancora le tue borse fra gli ordini di amimi.it'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
     c.$('#mimi').click(); await until(()=>c.txt('#pts')==='65', 3000, 'coccola'); const viste=[]; for(let i=0;i<5;i++){ c.$('#mimi').click(); viste.push(c.txt('#mood')); }
     assert(viste.every(t=>!/Mi racconti/.test(t)),'Mimì non chiede una recensione impossibile: '+viste.join(' | '));
   });
@@ -510,7 +515,11 @@
     await until(()=>c.txt('#pts')==='60', 2000, 'saldo a 60'); assert(c.vis('#btnCoccola') && c.vis('#walk'),'il resto della pagina e\' disegnato');
   });
   await test('ugc: senza borse comprate online la recensione spiega perché, il look resta aperto col catalogo', async()=>{
-    const c=await open('ugc_vuoto'); c.$('#btnRecensione').click(); await sleep(80); has(c.toast(),'borse comprate su amimi.it'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
+    const c=await open('ugc_vuoto'); const br=c.$('#btnRecensione');
+    assert(br.classList.contains('done') && br.getAttribute('aria-disabled')==='true','a riposo il bottone e\' spento'); has(c.txt('#btnRecensione'),'Solo per le borse comprate su amimi.it'); assert(!/\+20/.test(c.txt('#btnRecensione')),'nessun punto promesso sul bottone spento');
+    has(c.txt('#ugcIntro'),'Le recensioni sono per le borse comprate su amimi.it'); has(c.txt('#ugcIntro'),'boutique o a un evento'); has(c.txt('#ugcIntro'),'Mostraci il look: +30');
+    assert(!c.$('#btnLook').classList.contains('done') && c.$('#btnLook').getAttribute('aria-disabled')!=='true','il look resta aperto');
+    br.click(); await sleep(80); has(c.toast(),'borse comprate su amimi.it'); assert(!c.$('#ugcModal').classList.contains('on'),'modulo non aperto');
     await apriModulo(c,'look'); assert(c.$$('#ugcBorsa optgroup').length===1 && c.$('#ugcBorsa optgroup').label==='Altre borse Amimì','solo il catalogo');
   });
   await test('ugc: Esc chiude e il fuoco torna al bottone; apertura e invio tracciati', async()=>{
@@ -522,11 +531,66 @@
     await until(()=>eventiTrack(c).some(x=>x.e==='tap' && x.el==='ugc_send'), 8000, 'invio tracciato');
     const ev=eventiTrack(c); assert(ev.filter(x=>x.e==='tap' && x.el==='ugc_open').length===2,'due aperture tracciate');
   });
+  // finestra di recensione e look: X, tocco fuori, domanda prima di buttare il lavoro (richiesta owner del 21-10)
+  const toccaFuoriSubito=c=>{ const m=c.$('#ugcModal'); m.dispatchEvent(new c.win.PointerEvent('pointerdown',{bubbles:true})); m.dispatchEvent(new c.win.PointerEvent('pointerup',{bubbles:true})); m.click(); };
+  const toccaFuori=async c=>{ await sleep(420); toccaFuoriSubito(c); };   // la finestra ignora il tocco fuori nei primi 400 ms (doppio tocco sul bottone che la apre)
+  await test('ugc: la X in alto a destra chiude (tocco di 44 px, Mimì non la copre); un tocco fuori a modulo vuoto chiude; un trascinamento partito dentro no', async()=>{
+    const c=await open('ugc_on'); c.$('#btnLook').focus(); await apriModulo(c,'look');
+    const x=c.$('#ugcX'), rx=x.getBoundingClientRect(), rs=c.$('#ugcModal .sheet').getBoundingClientRect(), rp=c.$('#ugcModal .sheet-peek').getBoundingClientRect();
+    assert(rx.width>=44 && rx.height>=44,'area di tocco '+rx.width+'x'+rx.height); assert(rx.left<rs.right && rx.right>rs.right && rx.right<=c.win.innerWidth && rx.top<rs.top+20,'X in alto a destra, a cavallo del bordo della finestra e dentro lo schermo');
+    const rt0=c.doc.createRange(); rt0.selectNodeContents(c.$('#ugcTitle')); assert(Math.abs(rt0.getBoundingClientRect().top-rs.top-24)<8,'il titolo resta dove era, al padding della finestra ('+Math.round(rt0.getBoundingClientRect().top-rs.top)+')');
+    assert(x.getAttribute('aria-label')==='Chiudi' && rp.right<rx.left,'nome per i lettori di schermo, Mimì sporge a sinistra');
+    const rt=c.doc.createRange(); rt.selectNodeContents(c.$('#ugcTitle')); const destraTitolo=Math.max.apply(null, Array.from(rt.getClientRects()).map(r=>r.right));
+    assert(destraTitolo<=rx.left+1,'il testo del titolo non passa sotto la X ('+Math.round(destraTitolo)+' / '+Math.round(rx.left)+')');
+    x.click(); assert(!c.$('#ugcModal').classList.contains('on') && c.doc.activeElement===c.$('#btnLook'),'chiuso con la X, fuoco tornato');
+    await apriModulo(c,'look'); const m=c.$('#ugcModal');
+    toccaFuoriSubito(c); assert(m.classList.contains('on'),'il secondo tocco di un doppio tocco sul bottone non la richiude'); await sleep(420);
+    c.$('#ugcTesto').dispatchEvent(new c.win.PointerEvent('pointerdown',{bubbles:true})); m.dispatchEvent(new c.win.PointerEvent('pointerup',{bubbles:true})); m.click(); assert(m.classList.contains('on'),'un trascinamento partito dentro non chiude');
+    m.dispatchEvent(new c.win.PointerEvent('pointerdown',{bubbles:true})); c.$('#ugcTesto').dispatchEvent(new c.win.PointerEvent('pointerup',{bubbles:true})); m.click(); assert(m.classList.contains('on'),'un tocco partito fuori e finito dentro non chiude');
+    c.$('#ugcTitle').click(); assert(m.classList.contains('on'),'un tocco dentro la finestra non chiude');
+    await toccaFuori(c); assert(!m.classList.contains('on') && !c.vis('#ugcEsci'),'un tocco fuori a modulo vuoto chiude, senza domanda');
+    toccaFuoriSubito(c); assert(!c.vis('#ugcEsci'),'un tocco fuori mentre la finestra si chiude non fa niente');
+  });
+  await test('ugc: un tocco fuori con testo, stelle o foto chiede prima; Continua ed Esc tengono tutto; "Chiudi lo stesso" chiude', async()=>{
+    const c=await open('ugc_on'); await apriModulo(c,'recensione'); const m=c.$('#ugcModal'); await sleep(150);   // openModal mette il fuoco sulla borsa dopo 80 ms
+    c.$('#ugcStelle [data-st="4"]').click(); c.$('#ugcTesto').value='Bellissima, la porto ogni giorno.';
+    c.$('#ugcTesto').focus(); await toccaFuori(c); assert(m.classList.contains('on') && c.vis('#ugcEsci'),'resta aperto e chiede'); has(c.txt('#ugcEsci'),'Vuoi chiudere?'); assert(c.doc.activeElement===c.$('#ugcResta'),'fuoco su Continua');
+    c.$('#ugcResta').click(); assert(!c.vis('#ugcEsci') && m.classList.contains('on') && c.doc.activeElement===c.$('#ugcTesto'),'Continua: si resta nel modulo, sul campo di prima');
+    assert(c.$('#ugcTesto').value==='Bellissima, la porto ogni giorno.' && c.$$('#ugcStelle button.on').length===4,'testo e stelle intatti');
+    await toccaFuori(c); c.doc.dispatchEvent(new c.win.KeyboardEvent('keydown',{key:'Escape',bubbles:true})); assert(!c.vis('#ugcEsci') && m.classList.contains('on') && c.$('#ugcForm').contains(c.doc.activeElement),'Esc chiude solo la domanda, il fuoco torna nel modulo');
+    await toccaFuori(c); c.$('#ugcFirma').focus(); c.$('#ugcFirma').dispatchEvent(new c.win.FocusEvent('focusin',{bubbles:true}));   // nell'iframe senza il fuoco della finestra focus() non manda focusin: lo manda il tocco vero
+    assert(!c.vis('#ugcEsci') && m.classList.contains('on'),'tornando a un campo la domanda sparisce');
+    await toccaFuori(c); c.$('#ugcEsciSi').click(); assert(!m.classList.contains('on') && !c.vis('#ugcEsci'),'Chiudi lo stesso chiude');
+    toccaFuoriSubito(c); assert(!c.vis('#ugcEsci'),'un secondo tocco rapido dopo la chiusura non riapre la domanda');
+    await apriModulo(c,'look'); assert(!c.vis('#ugcEsci') && c.$('#ugcTesto').value==='','riaperto pulito, senza la domanda');
+    await aggiungiFoto(c,[await fotoFinta(c,600,800)]); await toccaFuori(c); assert(m.classList.contains('on') && c.vis('#ugcEsci'),'con una foto chiede');
+    c.$('#ugcX').click(); assert(!m.classList.contains('on') && !c.vis('#ugcEsci'),'la X chiude subito anche con una foto');
+  });
+  await test('ugc: un tocco fuori mentre invia non chiude e non chiede', async()=>{
+    const c=await open('ugc_on',{lento:700}); await apriModulo(c,'recensione'); const m=c.$('#ugcModal');
+    c.$('#ugcStelle [data-st="5"]').click(); c.$('#ugcTesto').value='Comoda e capiente, la uso sempre.'; c.$('#ugcConsenso').click(); c.$('#ugcInvia').click(); await sleep(60);
+    await sleep(420); toccaFuoriSubito(c); assert(m.classList.contains('on') && !c.vis('#ugcEsci'),'resta aperto, nessuna domanda'); has(c.toast(),'sto inviando');
+    await until(()=>c.$('#rewardModal').classList.contains('on'), 6000, 'grazie'); assert(c.calls('ugc_submit').length===1,'un invio');
+  });
+  await test('ugc: telefono piccolo (375x568), modulo scorso in fondo: la X resta in vista e la domanda sta nello schermo', async()=>{
+    f.style.height='568px';
+    try{
+      const c=await open('ugc_on'); await apriModulo(c,'look'); await aggiungiFoto(c,[await fotoFinta(c,300,400),await fotoFinta(c,300,400),await fotoFinta(c,300,400)]);
+      const m=c.$('#ugcModal'); assert(m.scrollHeight>m.clientHeight+100,'il modulo e\' piu\' alto dello schermo ('+m.scrollHeight+' su '+m.clientHeight+')');
+      m.scrollTop=m.scrollHeight; await sleep(80); assert(m.scrollTop>100,'scorso');
+      const rx=c.$('#ugcX').getBoundingClientRect(); assert(rx.top>=0 && rx.bottom<=c.win.innerHeight && rx.right<=c.win.innerWidth,'X in vista dopo lo scorrimento: '+Math.round(rx.top)+'..'+Math.round(rx.bottom));
+      const campo=c.$('#ugcTesto').getBoundingClientRect(); assert(rx.left>=campo.right-9,'la X sta fuori dalla colonna dei campi ('+Math.round(rx.left)+' / '+Math.round(campo.right)+')');
+      assert(m.scrollWidth<=m.clientWidth+1,'nessuno scorrimento di lato');
+      await toccaFuori(c); const re=c.$('#ugcEsci').getBoundingClientRect(); assert(c.vis('#ugcEsci') && re.top>=0 && re.bottom<=c.win.innerHeight && re.left>=0 && re.right<=c.win.innerWidth,'domanda nello schermo');
+      assert(c.$('#ugcResta').getBoundingClientRect().height>=44 && c.$('#ugcEsciSi').getBoundingClientRect().height>=44,'bottoni da almeno 44 px');
+    } finally { f.style.height=''; }
+  });
   await test('ugc: a 320px il modulo con tre foto sta nello schermo e si scorre', async()=>{
     const c=await open('ugc_on',{w:320}); await apriModulo(c,'look');
     await aggiungiFoto(c,[await fotoFinta(c,300,400),await fotoFinta(c,300,400),await fotoFinta(c,300,400)]);
     const sh=c.$('#ugcModal .sheet'), m=c.$('#ugcModal');
-    assert(sh.scrollWidth<=sh.clientWidth+1,'niente scorrimento orizzontale nel modulo');
+    const x=c.$('#ugcX'); x.style.display='none'; const sw=sh.scrollWidth, cw=sh.clientWidth; x.style.display='';   // la X sta di proposito a cavallo del bordo: si misura il resto
+    assert(sw<=cw+1,'niente scorrimento orizzontale nel modulo'); assert(m.scrollWidth<=m.clientWidth+1,'la finestra non scorre di lato');
     const fuori=Array.from(sh.querySelectorAll('*')).filter(n=>{ const r=n.getBoundingClientRect(); return r.width>0 && (r.right>c.win.innerWidth+1 || r.left<-1); });
     assert(fuori.length===0,'elementi fuori schermo: '+fuori.slice(0,3).map(n=>n.tagName+'.'+n.className).join(', '));
     assert(c.win.getComputedStyle(m).overflowY==='auto','la finestra si scorre');

@@ -105,7 +105,7 @@
                     { id: 1, kind: 'recensione', codice: 'COD_0', titolo: 'LEA BAG COCCO BLUE', rating: 4, foto: 1, status: 'in_revisione', motivo: null, punti: 20, created_day: '2026-10-08' }] }) }),
     ugc_vuoto:    base(60, { wardrobe: [], ugc: ugc({ recensibili: [] }) }),
     // guardaroba letto dal ripiego Shopify (ordine non ancora accreditato): le borse si vedono ma NON sono recensibili
-    ugc_ripiego:  base(60, { ugc: ugc({ recensibili: [] }) }),
+    ugc_ripiego:  base(60, { wardrobeSource: 'api', ugc: ugc({ recensibili: [] }) }),
     ugc_put_una:  base(60, { ugc: ugc({ putMode: 'ko_seconda' }) }),
     ugc_foto_ko:  base(60, { ugc: ugc({ submitReason: 'photo_missing' }) }),
     ugc_storto:   base(60, { ugc: ugc({ mine: [null, { id: 9, kind: 'look', codice: 'COD_1', titolo: null, rating: null, foto: 1, status: 'in_revisione', motivo: null, punti: 30, created_day: null }] }) }),
@@ -138,7 +138,7 @@
   function handle(action, body) {
     if (db.stateRaw && (action === 'state' || action === 'rewards' || action === 'profile')) return RAW502;
     if (db.state && (action === 'state' || action === 'rewards' || action === 'profile')) return reply(db.state, db.stateStatus || 200);
-    if (action === 'state') return reply({ points: db.points, nanna: false, coccola_disponibile: db.coccola, memory_disponibile: db.memory, worn: null, wardrobe: db.wardrobe, wardrobe_source: 'db' });
+    if (action === 'state') return reply({ points: db.points, nanna: false, coccola_disponibile: db.coccola, memory_disponibile: db.memory, worn: null, wardrobe: db.wardrobe, wardrobe_source: db.wardrobeSource || 'db' });
     if (action === 'rewards') return db.rewardsOff ? reply({ state: 'off' }) : reply({ points: db.points, rewards: db.rewards, redemptions: db.redemptions });
     if (action === 'profile') { var p = JSON.parse(JSON.stringify(db.profile)); if (db.old) delete p.checkin_enabled; return reply(p); }
     if (action === 'coccola') {
