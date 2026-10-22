@@ -377,7 +377,12 @@ Livelli: `loyalty_tier_of`, `v_loyalty_members.tier_saldo/tier_cumulato`, `loyal
 - **Voce ACCEDI** nel menu principale (`main-menu`, Shopify admin -> Contenuti -> Menu; mai codice del tema): porta a `/apps/premia/club`. Lo stesso menu alimenta l'header, il menu del telefono e i "Quick links" del footer. La parola resta ACCEDI anche su `/en` (la pagina e' solo in italiano).
 - **Indirizzo corto** `amimi.it/punti` (redirect Shopify verso `/apps/premia/club`): conserva la query (`/punti?evento=CODICE` arriva con il codice) e il prefisso `/en`. Per bio di Instagram, mail, bigliettini e QR. `/it/...` non esiste sul sito: l'italiano sta alla radice.
 - **Menu dell'account** (`customer-account-main-menu`, account.amimi.it): "Punti Mimì" accanto a Ordini e Profilo.
-- **Link di accesso del negozio** (Impostazioni -> Account clienti): fino al 22-10 spenti (`loginLinksVisibleOnStorefrontAndCheckout = false`). Il tema Symmetry disegna l'icona dell'account solo se sono accesi (`shop.customer_accounts_enabled` in `sections/header.liquid`). Non c'e' una mutation Admin API per accenderli: si fa dall'admin.
+- **Link di accesso del negozio** (Impostazioni -> Account clienti -> "Mostra link di accesso"): spenti fino al 22-10. Il tema Symmetry disegna l'icona dell'account solo se sono accesi (`shop.customer_accounts_enabled` in `sections/header.liquid`).
+  - **Accesi il 22-10 in mattinata** su richiesta di Dan ("si', usa Claude in Chrome").
+  - Come: non c'e' una mutation Admin API, e il browser integrato non ha la sessione dell'admin. Si e' usato il Chrome di Dan, con l'admin aperto come info@amimi.it (store `amimi-10000`). L'interruttore e' un `s-internal-switch` con la casella dentro uno shadow root: un clic da JavaScript, poi Shopify risponde "Modifiche salvate".
+  - Dopo, dall'API: `loginLinksVisibleOnStorefrontAndCheckout` = true, `customerAccounts` OPTIONAL, `loginRequiredAtCheckout` ancora false (chi compra senza account continua a farlo).
+  - Sul sito, dopo circa 30 secondi, l'header ha l'icona dell'account (link `/customer_authentication/redirect`); il checkout ha un "Accedi" facoltativo.
+  - Rollback: lo stesso interruttore, spento.
 - **Bigliettino col QR** negli ordini e ai pop-up: fatto dal team (owner, 22-10).
 - **Mail**: blocco nel flusso Klaviyo "Customer Thank You" e mail di annuncio: da fare (`CASI_APERTI.md` n.31).
 
