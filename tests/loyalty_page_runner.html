@@ -100,14 +100,27 @@
     let c=await open('login');
     has(c.txt('#gateMsg'),'diventano sconti'); assert(c.vis('#vetrinaCome') && c.vis('#vetrina'), 'vetrina sotto il bottone'); has(c.txt('#vetrinaCome'),'niente password');
     assert(c.$$('#vetrinaRegole li').length===3, 'tre righe, come le regole base dell\'area');
-    has(c.txt('#vetrinaRegole'),'1 punto per ogni euro'); has(c.txt('#vetrinaRegole'),'Giochi al memory'); has(c.txt('#vetrina'),'Entra con la mail dei tuoi ordini');
-    assert(!/\d+ ?%|\d+ punti/.test(c.txt('#vetrina')+' '+c.txt('#vetrinaCome')+' '+c.txt('#gateMsg')), 'nessun premio scritto a mano (costo e valore arrivano dal server solo dopo l\'accesso)');
+    has(c.txt('#vetrinaRegole'),'1 punto per ogni euro'); has(c.txt('#vetrinaRegole'),'Giochi al memory'); has(c.txt('#vetrina'),'Entra con la mail che hai usato per ordinare');
+    has(c.txt('#vetrina'),'solo il telefono'); has(c.$('#vetrina .fine a').getAttribute('href'),'/pages/contact-us','chi ha lasciato solo il telefono ha dove scriverci');
+    const fisso=(c.txt('#vetrina')+' '+c.txt('#vetrinaCome')+' '+c.txt('#gateMsg')).replace(c.txt('#vetrinaRegole'),'');
+    assert(!/\d/.test(fisso), 'nessuna cifra nel testo fisso, quindi nessun premio scritto a mano: '+fisso);
+    assert(c.win.getComputedStyle(c.$('#vetrina .fine')).fontSize==='13px' && c.win.getComputedStyle(c.$('#vetrinaCome')).fontSize==='13px', 'le note della vetrina a 13px come la nota dell\'area');
     assert(c.$('#vetrina').compareDocumentPosition(c.$('#gateBtn')) & Node.DOCUMENT_POSITION_PRECEDING, 'il bottone Accedi viene prima della vetrina');
     c=await open('login', { gioco:'toast', oggi:'2026-10-22' });
     has(c.txt('#vetrinaRegole'),'Giochi a Tostiamo?');
     c=await open('login',{evento:'GALLIANO22'});
     assert(!c.vis('#vetrina') && !c.vis('#vetrinaCome'), 'il cancello del QR resta com\'era, senza vetrina');
-    for(const s of ['spento','errore','firma']){ c=await open(s); assert(c.vis('#gate') && !c.vis('#vetrina') && !c.vis('#vetrinaCome'), 'nessuna vetrina con '+s); }
+    c=await open('login',{keepStore:true});   // stesso telefono, piu' tardi, dalla voce ACCEDI: niente ?evento= ma il codice e' ancora in attesa
+    has(c.txt('#gateTitle'),'registrare la tua presenza'); assert(!c.vis('#vetrina') && !c.vis('#vetrinaCome'), 'QR in attesa nel telefono: cancello dell\'evento, senza vetrina');
+    for(const s of ['spento','errore','firma']){ c=await open(s); assert(c.vis('#gate') && !c.vis('#vetrina') && !c.vis('#vetrinaCome'), 'nessuna vetrina all\'apertura con '+s); }
+  });
+  await test('vetrina: da Riprova al cancello d\'accesso compare la vetrina e sparisce Riprova', async()=>{
+    const c=await open('errore');
+    assert(c.vis('#gateRetry') && !c.vis('#vetrina'), 'prima: solo Riprova');
+    c.win.__mock.db.state={ state:'login_required' }; c.win.__mock.db.stateStatus=200;   // la seconda lettura risponde "accesso richiesto"
+    c.$('#gateRetry').click();
+    await until(()=>c.vis('#vetrina') && c.vis('#vetrinaCome') && c.vis('#gateBtn') && !c.vis('#gateRetry'), 3000, 'vetrina dopo Riprova');
+    assert(c.$$('#vetrinaRegole li').length===3, 'tre righe anche dopo Riprova');
   });
   await test('stato: programma spento', async()=>{
     const c=await open('spento');

@@ -14,7 +14,9 @@
   il nastro amimi' x GALIANO prende il posto della scritta amimi' in alto, tovaglia a quadri e toast che volano dietro al saluto,
   bandierina e bottone del gioco in verde e oro. Fuori dalle date di Tostiamo? la pagina torna quella di sempre.
   Dal 22-10 (voce "ACCEDI" nel menu del sito) chi arriva senza aver fatto l'accesso e senza un QR vede la vetrina: come si
-  prendono i punti e come si entra (codice via mail), sotto il bottone. Il cancello di un evento (?evento=) resta com'era.
+  prendono i punti e come si entra (codice via mail), sotto il bottone. Il cancello di un evento (?evento= o un QR ancora
+  in attesa nel telefono) resta com'era. I punti stanno sull'id cliente Shopify dell'ordine, non sulla mail: chi ha ordinato
+  lasciando solo il telefono non li ritrova entrando con una mail nuova, e la vetrina le dice di scriverci (Gate 2 del 22-10).
   Va servita SAME-ORIGIN su amimi.it, cosi' le fetch a /apps/premia/* portano il logged_in_customer_id firmato da
   Shopify (nessun secondo login). Servita da un altro dominio NON funziona: il cookie di login e' su amimi.it.
   Contratto edge loyalty-proxy v14: state | coccola | memory_win | rewards | redeem | profile | profile_save | track | deck | checkin.
@@ -67,7 +69,7 @@
   /* vetrina (22-10): chi arriva dal menu del sito senza aver fatto l'accesso vede come si prendono i punti prima di dare la mail */
   .vetrina{width:100%;text-align:left;margin-top:14px;padding-top:22px;border-top:1.5px dashed var(--line)}
   .gate .v-come{font-size:13px;text-align:center;max-width:32ch;margin:-2px auto 0}
-  .gate .vetrina .fine{max-width:none}
+  .gate .vetrina .fine{max-width:none;font-size:13px}   /* .gate p la porterebbe a 15px: qui resta come la nota dell'area */
 
   /* saluto + Mimi': e' lei che parla (il fumetto) e si lascia coccolare con un tocco (owner 12-10: "piu' presente") */
   .hero{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px}
@@ -335,7 +337,7 @@
     <section id="vetrina" class="vetrina hidden">
       <h2>Come prendi i punti</h2>
       <ul class="regole" id="vetrinaRegole"></ul>
-      <p class="fine">Hai già comprato su amimi.it? Entra con la mail dei tuoi ordini: i loro punti ti aspettano.</p>
+      <p class="fine">Hai già comprato su amimi.it? Entra con la mail che hai usato per ordinare: i punti dei tuoi acquisti ti aspettano. Se all'ordine hai lasciato solo il telefono, <a href="/pages/contact-us">scrivici</a> e ti aiutiamo noi.</p>
     </section>
   </div>
 
