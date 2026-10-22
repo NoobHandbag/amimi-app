@@ -96,6 +96,19 @@
     has(c.$('#gateBtn').getAttribute('href'),'/customer_authentication/login?return_to=','link di accesso con ritorno');
     assert(c.$('#gate img').getAttribute('src').indexOf('data:image/webp')===0, 'Mimì nel cancello');
   });
+  await test('vetrina (22-10): senza accesso e senza QR, come si prendono i punti e come si entra', async()=>{
+    let c=await open('login');
+    has(c.txt('#gateMsg'),'diventano sconti'); assert(c.vis('#vetrinaCome') && c.vis('#vetrina'), 'vetrina sotto il bottone'); has(c.txt('#vetrinaCome'),'niente password');
+    assert(c.$$('#vetrinaRegole li').length===3, 'tre righe, come le regole base dell\'area');
+    has(c.txt('#vetrinaRegole'),'1 punto per ogni euro'); has(c.txt('#vetrinaRegole'),'Giochi al memory'); has(c.txt('#vetrina'),'Entra con la mail dei tuoi ordini');
+    assert(!/\d+ ?%|\d+ punti/.test(c.txt('#vetrina')+' '+c.txt('#vetrinaCome')+' '+c.txt('#gateMsg')), 'nessun premio scritto a mano (costo e valore arrivano dal server solo dopo l\'accesso)');
+    assert(c.$('#vetrina').compareDocumentPosition(c.$('#gateBtn')) & Node.DOCUMENT_POSITION_PRECEDING, 'il bottone Accedi viene prima della vetrina');
+    c=await open('login', { gioco:'toast', oggi:'2026-10-22' });
+    has(c.txt('#vetrinaRegole'),'Giochi a Tostiamo?');
+    c=await open('login',{evento:'GALLIANO22'});
+    assert(!c.vis('#vetrina') && !c.vis('#vetrinaCome'), 'il cancello del QR resta com\'era, senza vetrina');
+    for(const s of ['spento','errore','firma']){ c=await open(s); assert(c.vis('#gate') && !c.vis('#vetrina') && !c.vis('#vetrinaCome'), 'nessuna vetrina con '+s); }
+  });
   await test('stato: programma spento', async()=>{
     const c=await open('spento');
     assert(c.vis('#gate') && !c.vis('#gateBtn') && !c.vis('#gateRetry'), 'messaggio senza bottoni'); has(c.txt('#gateTitle'),'stanno arrivando');
@@ -105,6 +118,7 @@
     assert(c.vis('#gate') && c.vis('#gateRetry') && !c.vis('#gateBtn'), 'solo Riprova'); has(c.txt('#gateMsg'),'Non riesco a leggere');
     const n=c.calls('state').length; c.$('#gateRetry').click();
     await until(()=>c.calls('state').length===n+1 && c.vis('#gate'), 3000, 'seconda lettura e cancello di nuovo');
+    assert(!c.vis('#vetrina'), 'nessuna vetrina dopo Riprova');
   });
   await test('stato: rete assente', async()=>{ const c=await open('rete'); assert(c.vis('#gate') && c.vis('#gateRetry'), 'cancello con Riprova'); });
   await test('stato: gateway rotto (502 senza JSON) non diventa un profilo a zero punti', async()=>{ const c=await open('gateway'); assert(c.vis('#gate') && c.vis('#gateRetry') && !c.vis('#app'), 'cancello con Riprova, nessun profilo'); });
@@ -766,7 +780,7 @@
       assert(fuori.length===0,'elementi fuori schermo: '+fuori.slice(0,3).map(n=>n.tagName+'.'+n.className).join(', '));
       const bassi=c.$$('.rbtn,.act,.cp,.btn,.link,.sbtn,.mini').filter(n=>n.getClientRects().length && n.getBoundingClientRect().height<44);
       assert(bassi.length===0,'bottoni sotto i 44px: '+bassi.slice(0,3).map(n=>n.className+'='+Math.round(n.getBoundingClientRect().height)).join(', '));
-      const tagliati=c.$$('main h1, main h2, main p, main li, main button, main figcaption, .gate h1, .gate p').filter(n=>n.getClientRects().length && n.scrollWidth>n.clientWidth+1);
+      const tagliati=c.$$('main h1, main h2, main p, main li, main button, main figcaption, .gate h1, .gate h2, .gate p, .gate li').filter(n=>n.getClientRects().length && n.scrollWidth>n.clientWidth+1);
       assert(tagliati.length===0,'testi tagliati: '+tagliati.slice(0,3).map(n=>n.tagName+':'+n.textContent.slice(0,30)).join(' | '));
     });
   }
