@@ -376,7 +376,7 @@ Livelli: `loyalty_tier_of`, `v_loyalty_members.tier_saldo/tier_cumulato`, `loyal
 ### 17.1 Gli ingressi
 - **Voce ACCEDI** nel menu principale (`main-menu`, Shopify admin -> Contenuti -> Menu; mai codice del tema): porta a `/apps/premia/club`. Lo stesso menu alimenta l'header, il menu del telefono e i "Quick links" del footer. La parola resta ACCEDI anche su `/en` (la pagina e' solo in italiano).
 - **Indirizzo corto** `amimi.it/punti` (redirect Shopify verso `/apps/premia/club`): conserva la query (`/punti?evento=CODICE` arriva con il codice) e il prefisso `/en`. Per bio di Instagram, mail, bigliettini e QR. `/it/...` non esiste sul sito: l'italiano sta alla radice.
-- **Menu dell'account** (`customer-account-main-menu`, account.amimi.it): dal 22-10 solo **Ordini** e **Punti Mimì**.
+- **Menu dell'account** (`customer-account-main-menu`, account.amimi.it): dal 22-10 solo **Punti Mimì** e **Ordini**, in quest'ordine (Dan, 22-10). L'ordine del menu non cambia la pagina d'arrivo: dopo il login Shopify porta sempre agli ordini ("Order index", doc dei customer accounts), quindi chi tocca l'icona arriva su Ordini, con Punti Mimì come prima voce in alto.
   - "Profilo" e' stato tolto dal menu su richiesta di Dan: l'icona dell'account del tema porta lì e non ai punti, e cambiarla vorrebbe dire toccare il tema.
   - La pagina profilo (dati, indirizzi, preferenze, "Esci") esiste ancora su `account.amimi.it/profile`. Che resti raggiungibile anche dal menu in alto a destra dell'account non e' verificato dal vivo: serve l'accesso di una cliente.
   - Rimetterlo: `menuUpdate` con la voce `CUSTOMER_ACCOUNT_PAGE`, `resourceId` `gid://shopify/CustomerAccountPage/128010748231`, titolo "Profilo".
