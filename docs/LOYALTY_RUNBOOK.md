@@ -370,3 +370,35 @@ Livelli: `loyalty_tier_of`, `v_loyalty_members.tier_saldo/tier_cumulato`, `loyal
 - Prove: banco della pagina 132/132 (Tovaglia accesa e spenta, cancello, righe del nastro prima e dopo la serata; velocita' piu' alta dopo il primo toast nella partita col pilota), guardie 187-189, Gate 1 verde; foto a 320, 360, 390 e 1280 px senza scorrimento di lato.
 - Gate 2 (revisione indipendente veloce): nessun A ne' B. C chiusi: il nome del link del nastro e' il testo che si vede (loghi con alt), "ora piu' veloce" non compare a velocita' gia' al massimo o a fine tempo, guardia 189 piu' stretta, margine della prova sulla velocita'. Rinunce: le stelline della coccola sopra Mimi' si tagliano di qualche pixel in cima alla tovaglia (sono gia' quasi sparite); con `?gioco=toast` forzato fuori dalle date il nastro dice comunque la riga del dopo serata; con la tastiera, a velocita' x4, il toast fatica a stare dietro alle borse (tocca solo il punteggio).
 - **Deploy** (21-10, 19:31 UTC): `loyalty-page` versione 22 dal branch `claude/tostiamo-tovaglia` (contiene `origin/main`; prima la pagina viva era identica a main). Dopo: bundle vivo identico al build, `/apps/premia/club` 200, smoke 15/15, Regola 19 identica; sulla pagina vera senza accesso il nastro sta al posto della scritta amimi', una sola scritta, nessun errore, nessuno scorrimento di lato.
+
+## 17. Dove sta l'Area Membri sul sito e la vetrina per chi non ha fatto l'accesso (decisioni owner del 22-10)
+
+### 17.1 Gli ingressi
+- **Voce ACCEDI** nel menu principale (`main-menu`, Shopify admin -> Contenuti -> Menu; mai codice del tema): porta a `/apps/premia/club`. Lo stesso menu alimenta l'header, il menu del telefono e i "Quick links" del footer. La parola resta ACCEDI anche su `/en` (la pagina e' solo in italiano).
+- **Indirizzo corto** `amimi.it/punti` (redirect Shopify verso `/apps/premia/club`): conserva la query (`/punti?evento=CODICE` arriva con il codice) e il prefisso `/en`. Per bio di Instagram, mail, bigliettini e QR. `/it/...` non esiste sul sito: l'italiano sta alla radice.
+- **Menu dell'account** (`customer-account-main-menu`, account.amimi.it): "Punti Mimì" accanto a Ordini e Profilo.
+- **Link di accesso del negozio** (Impostazioni -> Account clienti): fino al 22-10 spenti (`loginLinksVisibleOnStorefrontAndCheckout = false`). Il tema Symmetry disegna l'icona dell'account solo se sono accesi (`shop.customer_accounts_enabled` in `sections/header.liquid`). Non c'e' una mutation Admin API per accenderli: si fa dall'admin.
+- **Bigliettino col QR** negli ordini e ai pop-up: fatto dal team (owner, 22-10).
+- **Mail**: blocco nel flusso Klaviyo "Customer Thank You" e mail di annuncio: da fare (`CASI_APERTI.md` n.31).
+
+### 17.2 La vetrina (solo `loyalty-page`)
+- Quando `state` risponde `login_required` e non c'e' un codice evento (ne' `?evento=` ne' un QR ancora in attesa nel telefono), il cancello mostra un messaggio nuovo e, sotto il bottone Accedi:
+  - come si entra: codice via mail, niente password, la prima volta l'account si crea in un minuto;
+  - "Come prendi i punti", con le stesse tre righe dell'area (`regoleBase()`, una sola lista);
+  - "Hai gia' comprato su amimi.it? Entra con la mail che hai usato per ordinare... Se all'ordine hai lasciato solo il telefono, scrivici" (pagina contatti).
+- Nessun numero di premio nel testo fisso: costo e valore arrivano dal server solo dopo l'accesso. Il cancello dell'evento, "programma spento" ed errore/Riprova sono quelli di prima.
+- **Gotcha (Gate 2, B)**: i punti stanno sull'id cliente Shopify dell'ordine, non sulla mail. Al 22-10, 19 clienti hanno ordinato lasciando solo il telefono (circa 1.840 punti). Se entrano con una mail nuova, Shopify crea un altro cliente e la pagina mostra 0. La vetrina dice di scriverci. Spostare i loro punti e' una procedura ancora da definire (`CASI_APERTI.md` n.31).
+- Prove: guardie 190-192 (la 191 provata con una mutazione: un premio in euro nel testo fisso la fa diventare rossa) e il banco della pagina, con le prove "vetrina (22-10)" (QR in URL e in attesa, stati senza vetrina, note a 13px, nessuna cifra nel testo fisso) e "da Riprova al cancello d'accesso". L'impaginazione da 320 a 1280 px ora guarda anche h2 e li del cancello.
+- Gate 2 (22-10): workflow con cinque lenti (stati, promesse, layout, prove, sicurezza) e refuter indipendenti. Nessun A. B chiuso: il caso del solo telefono. C chiusi: font della nota, guardia sulle cifre, prova del QR in attesa, prova di Riprova. Confutato: il conteggio dei `showGate` nella guardia 190.
+- Rollback: rideploy di `loyalty-page` dal commit prima di questo. Nessun flag, nessun dato.
+
+### 17.3 Stato del deploy (22-10)
+- **09:49 UTC**: `loyalty-page` versione 23 dal branch `claude/premia-vetrina` (commit `18982c9`, contiene `origin/main`). Prima la pagina viva (versione 22) era identica byte per byte al build di `main`, quindi nessun lavoro di un'altra sessione e' stato tolto.
+- Dopo il deploy: bundle vivo identico al build, `verify_jwt` false, `/apps/premia/club` 200 con la vetrina, smoke 15/15. Regola 19 identica prima (09:44) e dopo (09:49): CE di ottobre 13.527,74 / MC2 9.144,66, giacenze 1.173 pezzi / 80.891,00 EUR / 209 righe. Ledger senza scarti.
+- Dal vivo, senza accesso: `amimi.it/punti` mostra la vetrina con la Tovaglia, la console e' pulita. `amimi.it/punti?evento=VERIFICA-VETRINA` mostra il cancello dell'evento di prima, senza vetrina, e il ritorno dopo l'accesso conserva il codice (localStorage pulito dopo la prova).
+- Shopify, con le scritture via Admin API autorizzate da Dan in chat:
+  - redirect `/punti` -> `/apps/premia/club` (09:3x UTC);
+  - voce ACCEDI in fondo a `main-menu`: albero passato intero a `menuUpdate`, 31 voci con id e url identici prima e dopo, e ACCEDI visibile in header, menu del telefono e footer;
+  - "Punti Mimì" nel menu dell'account.
+- Effetto sul layout: con la settima voce, Symmetry porta il menu sotto il logo fra circa 1.100 e 1.250 px di larghezza della finestra (fallback del tema). Da 1.280 px in su resta su una riga.
+- Non provato dal vivo: il menu dell'account visto da una cliente con l'accesso fatto, e il giro completo di una cliente nuova dalla vetrina all'area.
