@@ -353,14 +353,14 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
             <>
               <div className="ds-lens scrollx" role="group" aria-label="Modello">
                 <span className="ll">Modello</span>
-                <button type="button" className={`ds-lp ${!fItem ? 'on' : ''}`} onClick={() => setFItem(null)}>Tutti</button>
+                <button type="button" className={`ds-lp ${!fItem ? 'on' : ''}`} onClick={() => setFItem(null)}>Tutti i modelli</button>
                 {models.map((m) => (
                   <button key={m} type="button" className={`ds-lp ${fItem === m ? 'on' : ''}`} onClick={() => setFItem(fItem === m ? null : m)}>{prettyName(m, null)}</button>
                 ))}
               </div>
               <div className="ds-lens scrollx" role="group" aria-label="Shopify">
                 <span className="ll">Shopify</span>
-                {([[null, 'Tutti'], ['pub', 'Pubblicato'], ['out', 'Esaurito online'], ['load', 'Da caricare']] as [FShop, string][]).map(([k, l]) => (
+                {([[null, 'Tutti gli stati'], ['pub', 'Pubblicato'], ['out', 'Esaurito online'], ['load', 'Da caricare']] as [FShop, string][]).map(([k, l]) => (
                   <button key={l} type="button" className={`ds-lp ${fShop === k ? 'on' : ''}`} onClick={() => setFShop(k)}>{l}</button>
                 ))}
               </div>
