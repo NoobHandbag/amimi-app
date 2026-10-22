@@ -115,40 +115,44 @@ function ReorderView({ pin, chi, goOrdini }: { pin: string; chi: string; goOrdin
 
   const riga = (p: Reorder, archived: boolean) => (
     <div className="row" key={p.codice}>
-      <button className="invleft" type="button" style={{ background: 'none', border: 'none', padding: 0, cursor: goOrdini ? 'pointer' : 'default', textAlign: 'left' }}
+      <button className={`invleft rio-open${goOrdini && !archived ? '' : ' static'}`} type="button"
         onClick={() => !archived && goOrdini && goOrdini(`new:${p.codice}`)}
         title={archived ? '' : 'Tocca per creare un nuovo ordine precompilato'}>
         <Tile url={p.image_url} label={p.item ?? p.codice} />
-        <div><div className="rt">{nome(p.item, p.variant)} {!archived && urgent(p) && <span className="hot">da riprodurre</span>}</div>
+        <div className="rio-info"><div className="rt">{nome(p.item, p.variant)}</div>
           <div className="invtags">
             <span className="tag cv">{p.venduto_60d} venduti/60g</span>
             {p.in_arrivo > 0 && <span className="tag live">{p.in_arrivo} in arrivo</span>}
             {p.giorni_stock != null && <span className="tag off">~{p.giorni_stock}g stock</span>}
           </div>
+          {!archived && urgent(p) && <span className="hot">da riprodurre</span>}
         </div>
       </button>
-      <div className={`giac ${p.disponibili <= 0 ? 'neg' : ''}`}>{p.disponibili}</div>
-      <button className="chip rio-arch" type="button" disabled={busy === p.codice} title={archived ? 'Ripristina nel riordino' : 'Archivia (es. pelle finita): sparisce da qui, resta nell’archivio'}
-        onClick={() => setArch(p.codice, !archived)}>{busy === p.codice ? '…' : archived ? '↩︎' : <Icon name="inbox" size={16} />}</button>
+      <div className={`giac rio-n ${p.disponibili <= 0 ? 'neg' : ''}`}>{p.disponibili}<small>disponibili</small></div>
+      <button className="rio-arch" type="button" disabled={busy === p.codice} aria-label={archived ? 'Ripristina' : 'Archivia'}
+        title={archived ? 'Ripristina nel riordino' : 'Archivia (es. pelle finita): sparisce da qui, resta nell’archivio'}
+        onClick={() => setArch(p.codice, !archived)}>{busy === p.codice ? '…' : <Icon name={archived ? 'return' : 'inbox'} size={18} />}</button>
     </div>
   );
 
   return (
     <>
-      <div className="filters"><button className={`fchip ${soloVend ? 'on' : ''}`} onClick={() => setSoloVend(true)}>Solo venduti</button>
-        <button className={`fchip ${!soloVend ? 'on' : ''}`} onClick={() => setSoloVend(false)}>Tutti</button></div>
-      <p className="note">Ordinati per urgenza (vendite 60g ÷ stock disponibile). Tocca una borsa per creare il riordino già precompilato; il bottone <span style={{ whiteSpace: 'nowrap' }}>Archivia (<Icon name="inbox" size={14} />)</span> la sposta nell'archivio (es. pelle esaurita).</p>
-      <div className="card"><div className="list">
+      <div className="ds-seg full rio-filtro" role="group" aria-label="Quali prodotti">
+        <button type="button" className={soloVend ? 'on' : ''} onClick={() => setSoloVend(true)}>Solo venduti</button>
+        <button type="button" className={!soloVend ? 'on' : ''} onClick={() => setSoloVend(false)}>Tutti</button>
+      </div>
+      <p className="note">Ordinati per urgenza (vendite 60g ÷ stock disponibile). Tocca una borsa per creare il riordino già precompilato; il bottone <span className="rio-k">Archivia (<Icon name="inbox" size={14} />)</span> la sposta nell'archivio (es. pelle esaurita).</p>
+      <div className="ds-group list rio-list">
         {list.slice(0, 120).map((p) => riga(p, false))}
         {!list.length && <p className="muted center">Nessun prodotto.</p>}
-      </div></div>
+      </div>
       {archiviati.length > 0 && (
-        <section className="card ask">
-          <button className="askhead" type="button" aria-expanded={showArch} onClick={() => setShowArch((s) => !s)}><Icon name="inbox" size={18} />Archivio riordino · {archiviati.length} <span className="muted">{showArch ? '−' : '+'}</span></button>
+        <section className="card ask rio-archivio">
+          <button className="askhead" type="button" aria-expanded={showArch} onClick={() => setShowArch((s) => !s)}><Icon name="inbox" size={18} />Archivio riordino<span className="h2n">{archiviati.length}</span><Icon name="chevron" size={18} /></button>
           {showArch && (
             <div className="askbody">
-              <p className="note">Prodotti messi da parte (pelle/materiale finito). Se il materiale ricompare, ↩︎ li riporta nel riordino.</p>
-              <div className="list">{archiviati.map((p) => riga(p, true))}</div>
+              <p className="note">Prodotti messi da parte (pelle/materiale finito). Se il materiale ricompare, il bottone <span className="rio-k">Ripristina (<Icon name="return" size={14} />)</span> li riporta nel riordino.</p>
+              <div className="ds-group list rio-list">{archiviati.map((p) => riga(p, true))}</div>
             </div>
           )}
         </section>
@@ -178,16 +182,17 @@ function LineePanel({ inv, go }: { inv: InvFull[]; go?: (t: 'registra' | 'ordini
       <button className="askhead" type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Icon name="chart" size={18} />Per linea · sell-through<Icon name="chevron" size={18} /></button>
       {open && (
         <div className="askbody">
-          <p className="note" style={{ marginTop: 0 }}>Venduto su acquistato per modello: sopra 80% forte domanda, sotto 30% slow mover. Non giudicare le linee lanciate da meno di 60-90 giorni.</p>
-          <div className="tablewrap"><table className="sortable">
-            <thead><tr><th>Modello</th><th>Acq.</th><th>Vend.</th><th>Giac.</th><th>Sell-through</th><th>Valore</th></tr></thead>
-            <tbody>{rows.map((r) => (
-              <tr key={r.item}><td className="l">{prettyName(r.item, null)} <span className="muted">({r.n})</span></td><td>{r.acq}</td><td>{r.vend}</td><td>{r.giac}</td><td className={stCls(r.st)}>{r.st == null ? '—' : Math.round(r.st * 100) + '%'}</td><td>{eur(r.valore)}</td></tr>
-            ))}</tbody>
-          </table></div>
+          <p className="note">Venduto su acquistato per modello: sopra 80% forte domanda, sotto 30% slow mover. Non giudicare le linee lanciate da meno di 60-90 giorni.</p>
+          <ul className="st-list" role="list">{rows.map((r) => (
+            <li key={r.item}>
+              <div className="st-info"><div className="rt">{prettyName(r.item, null)} <span className="muted">({r.n})</span></div>
+                <div className="st-facts"><span>{r.acq} acquistati</span><span>{r.vend} venduti</span><span>{r.giac} in giacenza</span><span>valore {eur(r.valore)}</span></div></div>
+              <div className={`st ${stCls(r.st)}`}>{r.st == null ? '—' : Math.round(r.st * 100) + '%'}</div>
+            </li>
+          ))}</ul>
           {senzaCat > 0 && (
             <p className="note">{senzaCat} codici senza categoria: gli aggregati per categoria li perdono.{' '}
-              {go && <button className="chip" type="button" onClick={() => go('registra', 'pulizia')}>Apri Pulizia dati</button>}</p>
+              {go && <button className="ds-btn secondary sm" type="button" onClick={() => go('registra', 'pulizia')}>Apri Pulizia dati</button>}</p>
           )}
         </div>
       )}
