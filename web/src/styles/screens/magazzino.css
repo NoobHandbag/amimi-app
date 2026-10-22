@@ -1,0 +1,105 @@
+/* ============================================================================
+   Magazzino (tema A, PR 4, 22-10-2026): regole della sola schermata, tutte sotto .scr-mag (pages/Inventory.tsx),
+   scheda prodotto compresa (il cassetto sta dentro la radice). Vengono gia' da shell.css: l'azione tonda "Aggiorna
+   Shopify", .askhead, .ds-group, le file che scorrono, velatura, angoli e chiudi del cassetto.
+   .ds-prow e .ds-pbadge li usano anche Prodotti e il foglio d'ordine (anche nel Villaggio): qui solo dentro .inv-list.
+   La scheda Riordino (ReorderView) resta com'e': prende solo il selettore delle schede.
+   ============================================================================ */
+
+/* ---- schede Magazzino / Riordino e lente: selettore pieno, largo quanto la pagina ---- */
+.scr-mag .invhead { margin: 0 0 14px; }
+.scr-mag .ds-seg.full button { min-height: 36px; padding: 8px 6px; font-size: 14px; white-space: nowrap; }
+/* lente a 13 px: le quattro voci stanno su una riga anche in 288 px (telefono da 320). Il selettore .full e' a 14 px:
+   serve un selettore piu' specifico del suo */
+.scr-mag .inv-lens { margin-bottom: 10px; }
+.scr-mag .ds-seg.full.inv-lens button { font-size: 13px; }
+/* ricerca a 16 px: sotto, iOS ingrandisce la pagina al tocco. Il riquadro non ha bordo e components.css toglie il
+   contorno al campo: l'anello di focus va sul riquadro, come quello di shell.css */
+.scr-mag .ds-search input { font-size: 16px; }
+.scr-mag .ds-search:focus-within { outline: 2px solid var(--interactive); outline-offset: 2px; }
+/* Lente, Modello, Shopify: sullo schermo il nome sta nell'aria-label del gruppo; sul foglio torna (vedi la stampa) */
+.scr-mag :is(.inv-lens, .ds-lens) .ll { display: none; }
+.scr-mag .ds-lens { margin-bottom: 8px; }
+.scr-mag .ds-lens + .ds-lens { margin-bottom: 14px; }
+
+/* ---- riepilogo: la card scura della schermata, come il KPI scuro del Cruscotto (numero a 40 px, sotto etichetta e
+   dettaglio in bianco attenuato); i quattro stati Shopify in fila sotto un filo. Sul nero solo bianco e colori on-dark ---- */
+.scr-mag .ds-macro.hero { grid-template-columns: 1fr; gap: 0; background: var(--grad-hero); border-radius: 24px; padding: 20px 20px 16px; margin-bottom: 14px; }
+.scr-mag .ds-macro.hero .mcell { background: none; border: 0; border-radius: 0; padding: 0; box-shadow: none; }
+.scr-mag .ds-macro.hero .mval { font-size: 40px; font-weight: 600; letter-spacing: -.045em; line-height: 1.05; color: var(--surface); }
+.scr-mag .ds-macro.hero :is(.mlab, .msub) { color: var(--surface); opacity: .72; }
+.scr-mag .ds-macro.hero .mlab { margin-top: 4px; font-size: 12.5px; font-weight: 500; text-transform: none; letter-spacing: 0; }
+.scr-mag .ds-macro.hero .msub { margin-top: 2px; font-size: 12px; }
+.scr-mag .ds-macro.hero .ds-stgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--surface) 16%, transparent); }
+.scr-mag .ds-macro.hero .ds-st { background: none; border-radius: 0; padding: 0; }
+.scr-mag .ds-macro.hero .ds-st .v { font-size: 20px; font-weight: 600; letter-spacing: -.02em; color: var(--surface); }
+.scr-mag .ds-macro.hero .ds-st .l { margin-top: 2px; font-size: 11.5px; font-weight: 500; line-height: 1.25; color: var(--surface); opacity: .72; }
+.scr-mag .ds-macro.hero .ds-st.out .v { color: var(--negative-on-dark); }
+.scr-mag .ds-macro.hero .ds-st.load .v { color: var(--warning-on-dark); }
+
+/* ---- Per linea: intestazione .askhead di shell.css; il testo non attacca al titolo ---- */
+.scr-mag .inv-linee .askbody { margin-top: 12px; }
+
+/* ---- lista prodotti (anche Nei negozi): una sola superficie, .ds-group di shell.css; il separatore parte dal testo
+   (16 di margine + 52 di foto + 12) ---- */
+.scr-mag .inv-list { --sep-inset: 80px; margin-bottom: 14px; }
+.scr-mag .inv-list .ds-prow { gap: 12px; padding: 12px 16px; }
+.scr-mag .inv-list .ds-thumb { width: 52px; height: 52px; border-radius: 14px; font-size: 13px; font-weight: 600; }
+.scr-mag .inv-list .ds-pn { font-size: 15px; font-weight: 500; letter-spacing: -.01em; line-height: 1.25; }
+.scr-mag .inv-list .ds-psub { margin-top: 2px; font-size: 12.5px; }
+.scr-mag .inv-list .ds-gia .g { font-size: 20px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }
+.scr-mag .inv-list .ds-gia :is(.gp, .val) { font-size: 11.5px; }
+/* stato Shopify: pallino e parola nel colore dell'esito, senza fondo ne' anello. Pubblicato e' un esito buono, quindi
+   verde; esaurito e da caricare tengono rosso e arancio di components.css. Il pallino e' un bordo, non un fondo:
+   sul foglio senza "grafica di sfondo" resta */
+.scr-mag .inv-list .ds-pbadge { display: inline-flex; align-items: center; gap: 5px; margin-top: 4px; padding: 0; border-radius: 0; background: none; box-shadow: none; font-size: 11.5px; font-weight: 600; }
+.scr-mag .inv-list .ds-pbadge::before { content: ''; width: 6px; height: 6px; box-sizing: border-box; border: 3px solid currentColor; border-radius: 50%; }
+.scr-mag .inv-list .ds-pbadge.pub { color: var(--positive-700); }
+
+/* ---- scheda prodotto (cassetto) ---- */
+.scr-mag .drawer { padding: 18px 16px 32px; }
+.scr-mag .drawerhead { gap: 12px; }
+.scr-mag .drawerhead .invimg { width: 56px; height: 56px; border-radius: 14px; }
+.scr-mag .drawerhead .rt { font-size: 20px; font-weight: 600; letter-spacing: -.02em; line-height: 1.15; }
+.scr-mag .drawerhead .rs { margin-top: 2px; font-size: 12.5px; }
+/* i tre stock sono la card scura del cassetto: il magazzino grande in cima, conto vendita e Shopify sotto un filo;
+   una giacenza negativa resta rossa (on-dark) */
+.scr-mag .drawer .kpis.hero { grid-template-columns: 1fr 1fr; gap: 12px 16px; background: var(--grad-hero); border-radius: 24px; padding: 20px 20px 16px; margin-bottom: 12px; }
+.scr-mag .drawer .kpis.hero .kpi { background: none; border-radius: 0; padding: 0; }
+.scr-mag .drawer .kpis.hero .kpi:first-child { grid-column: 1 / -1; padding-bottom: 14px; border-bottom: 1px solid color-mix(in srgb, var(--surface) 16%, transparent); }
+.scr-mag .drawer .kpis.hero .kpi .v { font-size: 20px; letter-spacing: -.02em; color: var(--surface); }
+.scr-mag .drawer .kpis.hero .kpi:first-child .v { font-size: 40px; letter-spacing: -.045em; line-height: 1.05; }
+.scr-mag .drawer .kpis.hero .kpi.red .v { color: var(--negative-on-dark); }
+.scr-mag .drawer .kpis.hero .kpi .k { margin-top: 2px; color: var(--surface); opacity: .72; }
+/* "Registra conta": l'unica azione del cassetto, piena in bordeaux */
+.scr-mag .inv-conta { min-height: 48px; margin-bottom: 14px; font-size: 15px; }
+/* storico: titolo a sinistra e totale a destra in grigio, righe piu' ariose; le vendite in inchiostro, il rosso resta
+   solo a una rettifica in meno */
+.scr-mag .drawer h2 { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.scr-mag .drawer .h2n { font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.scr-mag .drawer .row { gap: 12px; padding: 11px 0; }
+.scr-mag .drawer .row .rt { font-size: 15px; font-weight: 500; }
+.scr-mag .drawer .giac { font-size: 17px; font-weight: 600; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.scr-mag .drawer .giac.neg { color: var(--negative); }
+/* il link resta sottolineato: il bordeaux sul grigio del testo intorno non basta da solo (1,8:1) */
+.scr-mag .drawer .rs a { color: var(--interactive); font-weight: 600; }
+
+/* ---- stampa (PDF): le due card scure restano scure; il resto come a schermo ---- */
+@media print {
+  .scr-mag :is(.ds-macro.hero, .drawer .kpis.hero) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* il filo di .ds-group e' un fondo e sul foglio senza grafica sparirebbe: qui e' un bordo; le righe non si spezzano */
+  .scr-mag .inv-list > * + *::before { height: 0; background: none; border-top: 1px solid var(--border); }
+  .scr-mag .inv-list > * { break-inside: avoid; }
+  /* la scheda Magazzino ripeteva il titolo; Riordino resta, a sinistra, perche' dice cosa c'e' sul foglio */
+  .scr-mag .invhead:has(.ds-seg > button.on:first-child) { display: none; }
+  .scr-mag .ds-seg.full { padding: 0; }
+  .scr-mag .ds-seg.full button { flex: none; padding-left: 0; }
+  /* Lente, Modello, Shopify tornano davanti alla scelta attiva */
+  .scr-mag :is(.inv-lens, .ds-lens) .ll { display: inline; align-self: center; margin-right: 8px; font-size: 12px; font-weight: 600; color: var(--ink-muted); }
+  /* le tre scelte attive alla stessa distanza dal nome e alla stessa misura */
+  .scr-mag .inv-lens { gap: 6px; }
+  .scr-mag :is(.ds-seg.full.inv-lens button, .ds-lens .ds-lp).on { padding-left: 0; font-size: 12.5px; }
+  /* !important: Icon scrive display: inline-block nel suo style */
+  .scr-mag .inv-linee .askhead > svg:last-child { display: none !important; }
+}

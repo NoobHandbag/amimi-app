@@ -8,6 +8,7 @@ import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
 import { toast } from '../lib/toast';
 import { prettyName } from '../lib/helpers';
+import '../styles/screens/magazzino.css';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const daysSince = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : Infinity);
@@ -34,9 +35,9 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
   // etichetta leggibile per le rettifiche: la conta deve VEDERSI (feedback 06-07 item 4)
   const adjLabel = (m: string | null) => {
     const mm = (m ?? '').toLowerCase();
-    if (mm.includes('conta')) return '🔢 Conta fisica';
-    if (mm.includes('cambio')) return '↔️ Cambio (sostituto uscito)';
-    return '🧮 Rettifica';
+    if (mm.includes('conta')) return 'Conta fisica';
+    if (mm.includes('cambio')) return 'Cambio (sostituto uscito)';
+    return 'Rettifica';
   };
   return (
     <div className="drawerwrap" onClick={onClose}>
@@ -46,17 +47,17 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
           <div className="grow"><div className="rt">{nome(p.item, p.variant)}</div><div className="rs">{p.codice}</div></div>
           <button className="drawerx" onClick={onClose} type="button" aria-label="Chiudi"><Icon name="close" size={18} /></button>
         </div>
-        <div className="kpis">
+        <div className="kpis hero">
           <div className={`kpi ${p.giacenza_attuale < 0 ? 'red' : 'accent'}`}><div className="v">{p.giacenza_attuale}</div><div className="k">Magazzino</div></div>
           <div className="kpi"><div className="v">{p.in_conto_vendita}</div><div className="k">In conto vendita</div></div>
           <div className="kpi"><div className="v">{p.on_shopify ? (shopQty ?? '—') : '—'}</div><div className="k">Su Shopify</div></div>
         </div>
         {go && (
-          <button className="bigadd" type="button" onClick={() => go('registra', `count:${p.codice}`)}>
-            🔢 Registra conta di questo prodotto
+          <button className="ds-btn primary full inv-conta" type="button" onClick={() => go('registra', `count:${p.codice}`)}>
+            <Icon name="count" size={18} />Registra conta di questo prodotto
           </button>
         )}
-        <section className="card"><h2>Acquisti{purch ? ` · ${purch.reduce((s, a) => s + Number(a.quantita), 0)} pz` : ''}</h2>
+        <section className="card"><h2>Acquisti{purch ? <span className="h2n">{purch.reduce((s, a) => s + Number(a.quantita), 0)} pz</span> : null}</h2>
           {errP ? <p className="err center">Non riesco a leggere gli acquisti: {errP}</p> : purch == null ? <p className="muted center">…</p> : !purch.length ? <p className="muted center">Nessun acquisto registrato.</p> : (
             <div className="list">{purch.map((a) => (
               <div className="row" key={a.id}><div><div className="rt">{a.fornitore ?? '—'}</div>
@@ -67,7 +68,7 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
         </section>
         {errA && <section className="card"><h2>Conte e rettifiche</h2><p className="err center">Non riesco a leggere le conte: {errA}</p></section>}
         {adjs != null && adjs.length > 0 && (
-          <section className="card"><h2>Conte e rettifiche · {adjs.reduce((s, a) => s + Number(a.qty_delta), 0) >= 0 ? '+' : ''}{adjs.reduce((s, a) => s + Number(a.qty_delta), 0)} pz</h2>
+          <section className="card"><h2>Conte e rettifiche<span className="h2n">{adjs.reduce((s, a) => s + Number(a.qty_delta), 0) >= 0 ? '+' : ''}{adjs.reduce((s, a) => s + Number(a.qty_delta), 0)} pz</span></h2>
             <div className="list">{adjs.map((a) => (
               <div className="row" key={a.id}><div><div className="rt">{adjLabel(a.motivo)}</div>
                 <div className="rs">{a.data ?? ''}{a.motivo ? ` · ${a.motivo}` : ''}</div></div>
@@ -75,12 +76,12 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
             ))}</div>
           </section>
         )}
-        <section className="card"><h2>Vendite{sales ? ` · ${sales.reduce((s, v) => s + Number(v.qty), 0)} pz` : ''}</h2>
+        <section className="card"><h2>Vendite{sales ? <span className="h2n">{sales.reduce((s, v) => s + Number(v.qty), 0)} pz</span> : null}</h2>
           {errS ? <p className="err center">Non riesco a leggere le vendite: {errS}</p> : sales == null ? <p className="muted center">…</p> : !sales.length ? <p className="muted center">Nessuna vendita.</p> : (
             <div className="list">{sales.map((s) => (
-              <div className="row" key={s.source + s.id}><div><div className="rt">{s.source === 'qromo' ? '🏬 QROMO' : '🌐 Shopify'} · {s.descr}</div>
+              <div className="row" key={s.source + s.id}><div><div className="rt">{s.source === 'qromo' ? 'QROMO' : 'Shopify'} · {s.descr}</div>
                 <div className="rs">{s.data ?? ''}{s.price != null ? ` · ${eur(s.price)}` : ''}{s.adminUrl ? <> · <a href={s.adminUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>apri su Shopify ↗</a></> : ''}</div></div>
-                <div className="giac neg">−{s.qty}</div></div>
+                <div className="giac">−{s.qty}</div></div>
             ))}</div>
           )}
         </section>
@@ -173,8 +174,8 @@ function LineePanel({ inv, go }: { inv: InvFull[]; go?: (t: 'registra' | 'ordini
   const senzaCat = inv.filter((p) => !p.categoria).length;
   const stCls = (st: number | null) => (st == null ? '' : st >= 0.8 ? 'pos' : st < 0.3 ? 'neg' : '');
   return (
-    <section className="card ask">
-      <button className="askhead" type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}>📈 Per linea · sell-through <span className="muted">{open ? '−' : '+'}</span></button>
+    <section className="card ask inv-linee">
+      <button className="askhead" type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}><Icon name="chart" size={18} />Per linea · sell-through<Icon name="chevron" size={18} /></button>
       {open && (
         <div className="askbody">
           <p className="note" style={{ marginTop: 0 }}>Venduto su acquistato per modello: sopra 80% forte domanda, sotto 30% slow mover. Non giudicare le linee lanciate da meno di 60-90 giorni.</p>
@@ -301,7 +302,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
   const LENSES: [Lens, string][] = [['giacenza', 'Giacenza'], ['valore', 'Valore'], ['shopify', 'Shopify'], ['negozi', 'Nei negozi']];
 
   return (
-    <div className="screen">
+    <div className="screen scr-mag">
       <AppBar title="Magazzino" actions={<>{tab === 'mag' && (
         <button type="button" className={nowBusy ? 'exp busy' : 'exp'} onClick={syncNow} disabled={nowBusy} aria-label="Aggiorna Shopify"
           title="Aggiorna Shopify. Esegue subito il giro orario completo: legge Shopify e riallinea le quantità allo stock reale. Rispetta gli interruttori di scrittura Shopify.">
@@ -310,7 +311,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
       )}<PrintBtn /><ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} /></>} />
       <p className="note appbar-st" role="status">{nowBusy ? 'Sincronizzo…' : null}</p>
       <header className="invhead">
-        <div className="ds-seg">
+        <div className="ds-seg full">
           <button type="button" className={tab === 'mag' ? 'on' : ''} onClick={() => setTab('mag')}>Magazzino</button>
           <button type="button" className={tab === 'riordino' ? 'on' : ''} onClick={() => setTab('riordino')}>Riordino</button>
         </div>
@@ -318,7 +319,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
 
       {tab === 'mag' && (
         <>
-          <div className="ds-macro">
+          <div className="ds-macro hero">
             <div className="mcell">
               <div className="mval">{eur(totVal)}</div>
               <div className="mlab">Valore a magazzino</div>
@@ -343,21 +344,21 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca prodotto…" aria-label="Cerca prodotto" />
           </div>
 
-          <div className="ds-lens">
+          <div className="ds-seg full inv-lens" role="group" aria-label="Lente">
             <span className="ll">Lente</span>
-            {LENSES.map(([k, l]) => <button key={k} type="button" className={`ds-lp ${lens === k ? 'on' : ''}`} onClick={() => setLens(k)}>{l}</button>)}
+            {LENSES.map(([k, l]) => <button key={k} type="button" className={lens === k ? 'on' : ''} onClick={() => setLens(k)}>{l}</button>)}
           </div>
 
           {lens !== 'negozi' && (
             <>
-              <div className="ds-lens scrollx">
+              <div className="ds-lens scrollx" role="group" aria-label="Modello">
                 <span className="ll">Modello</span>
                 <button type="button" className={`ds-lp ${!fItem ? 'on' : ''}`} onClick={() => setFItem(null)}>Tutti</button>
                 {models.map((m) => (
                   <button key={m} type="button" className={`ds-lp ${fItem === m ? 'on' : ''}`} onClick={() => setFItem(fItem === m ? null : m)}>{prettyName(m, null)}</button>
                 ))}
               </div>
-              <div className="ds-lens">
+              <div className="ds-lens scrollx" role="group" aria-label="Shopify">
                 <span className="ll">Shopify</span>
                 {([[null, 'Tutti'], ['pub', 'Pubblicato'], ['out', 'Esaurito online'], ['load', 'Da caricare']] as [FShop, string][]).map(([k, l]) => (
                   <button key={l} type="button" className={`ds-lp ${fShop === k ? 'on' : ''}`} onClick={() => setFShop(k)}>{l}</button>
@@ -368,27 +369,29 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
 
           {lens === 'negozi' ? (
             cvList.length === 0 ? <div className="card muted center">Nessuna merce in conto vendita. Registra un movimento B2B (invio) da Registra ▸ B2B.</div> : (
-              cvList.map((r) => (
+              <div className="ds-group inv-list">{cvList.map((r) => (
                 <button className="ds-prow" type="button" key={r.negozio + r.codice} onClick={() => go && go('registra', `b2b:${r.negozio}`)}>
                   <Thumb2 url={r.image_url} label={r.item ?? r.codice} />
                   <div className="ds-pinfo">
                     <div className="ds-pn">{nome(r.item, r.variant)}</div>
-                    <div className="ds-psub">@ {r.negozio}{r.last_date ? ` · ultima vendita ${r.last_date}` : ' · mai venduto'}</div>
+                    <div className="ds-psub">{r.negozio}{r.last_date ? ` · ultima vendita ${r.last_date}` : ' · mai venduto'}</div>
                   </div>
                   <div className="ds-gia"><div className="g">{r.pezzi}</div><div className="gp">pz</div></div>
                 </button>
-              ))
+              ))}</div>
             )
           ) : (
             <>
-              {rows.map((p) => {
+              {rows.length > 0 && <div className="ds-group inv-list">{rows.map((p) => {
                 const st = shopStatus(p);
                 return (
                   <button type="button" key={p.codice} className="ds-prow" onClick={() => { pushBack(() => setSel(null)); setSel(p); }}>
                     <Thumb2 url={p.image_url} label={p.item ?? p.codice} />
                     <div className="ds-pinfo">
                       <div className="ds-pn">{nome(p.item, p.variant)}</div>
-                      <div className="ds-psub">{p.giacenza_attuale} a magazzino{p.on_shopify && <> · 🌐 {shopQ(p) ?? '—'} su Shopify</>}{p.in_conto_vendita > 0 && <> · conto {p.in_conto_vendita}</>}</div>
+                      {(p.on_shopify || p.in_conto_vendita > 0) && (
+                        <div className="ds-psub">{p.on_shopify && <>{shopQ(p) ?? '—'} su Shopify</>}{p.on_shopify && p.in_conto_vendita > 0 && ' · '}{p.in_conto_vendita > 0 && <>conto {p.in_conto_vendita}</>}</div>
+                      )}
                       {st && <span className={`ds-pbadge ${st.cls}`}>{st.label}</span>}
                     </div>
                     <div className="ds-gia">
@@ -398,7 +401,7 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
                     </div>
                   </button>
                 );
-              })}
+              })}</div>}
               {!rows.length && <p className="muted center">Nessun prodotto.</p>}
             </>
           )}
