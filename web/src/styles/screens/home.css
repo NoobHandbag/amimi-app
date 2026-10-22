@@ -1,0 +1,47 @@
+/* ============================================================================
+   Home (tema A, PR 3, 22-10-2026): regole della sola schermata, tutte sotto .scr-home (pages/Home.tsx).
+   Decisione di Dan del 22-10: la Home tiene le tessere (azioni rapide, Gestione, Altro, selettore di persona);
+   cambiano solo la card scura, la ricerca e l'avviso dei controlli contabili (components/HealthBanner.tsx).
+   Tessere, "pulisci" della ricerca (.ds-search-x), .ds-more e .askhead vengono gia' da shell.css.
+   ============================================================================ */
+
+/* ---- card scura: una colonna. In alto l'etichetta e "Cruscotto" come pillola piena, poi il netto grande, l'esito,
+   la linea larga quanto la card e in fondo l'utile dei mesi chiusi. La pillola sta sulla riga dell'etichetta,
+   non accanto al numero: a 320 px il numero ha tutta la larghezza e la pillola non esce mai dal bordo ---- */
+.scr-home .ds-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 12px; padding: 18px 20px 16px; }
+.scr-home .ds-hero > * { grid-column: 1 / -1; min-width: 0; }
+.scr-home .ds-hero > .l { grid-column: 1; grid-row: 1; }
+.scr-home .ds-hero > .go { grid-column: 2; grid-row: 1; }
+/* testo sullo scuro solo bianco, anche a opacita' ridotta (come le etichette del KPI scuro) */
+.scr-home .ds-hero .l { font-size: 13px; font-weight: 500; opacity: .72; }
+.scr-home .ds-hero > .big { margin-top: 6px; font-size: 40px; letter-spacing: -.045em; line-height: 1.05; }
+.scr-home .ds-hero .go { display: inline-flex; align-items: center; gap: 2px; align-self: center; margin: 0; border: 0; border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 14%, transparent); color: var(--surface); font-size: 13px; font-weight: 600; padding: 7px 8px 7px 13px; }
+/* esito a pari giorni: pillola piena verde o rossa col segno (bianco sopra, 5,8:1 e 5,7:1; il fondo regge 3,4:1 sul nero),
+   poi il confronto in bianco tenue */
+.scr-home .ds-hero .delta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 10px; }
+.scr-home .ds-hero .chip { margin: 0; font-size: 12.5px; font-weight: 600; }
+.scr-home .ds-hero .chip.up { background: var(--positive); }
+.scr-home .ds-hero .chip.down { background: var(--negative); }
+.scr-home .ds-hero .vs { font-size: 12.5px; opacity: .72; }
+/* la linea prende il colore del testo e tutta la larghezza; il tratto resta di 2,2 px anche stirato */
+.scr-home .ds-hero .spark { width: 100%; height: 32px; margin-top: 14px; overflow: visible; }
+.scr-home .ds-hero .spark polyline { vector-effect: non-scaling-stroke; }
+/* utile dei mesi chiusi: riga in fondo, etichetta a sinistra e importo a destra, separata da una riga bianca tenue */
+.scr-home .ds-hero .sec { flex-direction: row; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 14px; padding: 12px 0 0;
+  border-left: 0; border-top: 1px solid color-mix(in srgb, var(--surface) 16%, transparent); }
+
+/* ---- ricerca: 16 px (iOS non ingrandisce la pagina al tocco), alta 48 px come i campi del kit, tocco su tutta l'altezza ---- */
+.scr-home .ds-search { min-height: 48px; padding-top: 0; padding-bottom: 0; }
+.scr-home .ds-search input { align-self: stretch; font-size: 16px; }
+.scr-home .ds-manage > .nessuna { grid-column: 1 / -1; padding: 8px 2px; }
+
+/* ---- avviso dei controlli contabili (HealthBanner): pieno in tinta rossa, senza bordo; l'intestazione e' .askhead
+   (freccia che ruota con aria-expanded), qui solo colore e misura; un controllo per riga, il conteggio a destra ---- */
+.scr-home .hb { margin-top: 20px; padding: 0 16px; border-radius: 20px; background: var(--negative-tint); color: var(--negative-700); }
+.scr-home .hb .askhead { min-height: 52px; font-size: 15px; color: inherit; }
+.scr-home .hb .askhead > svg:last-child { color: inherit; }
+.scr-home .hb-list { list-style: none; margin: 0; padding: 0 0 4px; color: var(--ink); font-size: 14px; line-height: 1.35; }
+.scr-home .hb-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 11px 0;
+  border-top: 1px solid color-mix(in srgb, var(--negative) 18%, transparent); }
+.scr-home .hb-list b { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }

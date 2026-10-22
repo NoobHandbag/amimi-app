@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import Icon from './Icon';
 
 // Banner "salute contabile": rende VISIBILE nell'app cio' che prima finiva solo in health_log
 // (che nessuno guardava). Legge i detector strutturali live (v_health, severity 'bad') + l'ultimo
@@ -31,25 +32,18 @@ export default function HealthBanner() {
 
   if (!items.length) return null;
 
+  // tema A (Home, 22-10): avviso pieno in tinta rossa, intestazione .askhead di shell.css con la freccia che ruota,
+  // un controllo per riga col conteggio a destra. Lo stile sta in styles/screens/home.css (.scr-home .hb): lo usa solo la Home
   return (
-    <div
-      style={{
-        background: 'var(--negative-tint)', border: '1px solid var(--negative)',
-        borderRadius: 12, padding: '10px 12px', marginTop: 18, color: 'var(--negative-700)',
-      }}
-    >
-      <button
-        type="button" onClick={() => setOpen((v) => !v)}
-        style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'inherit', fontWeight: 800, fontSize: 15, textAlign: 'left' }}
-      >
-        <span aria-hidden>⚠</span>
+    <div className="hb">
+      <button type="button" className="askhead" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
         <span>{items.length} {items.length === 1 ? 'controllo contabile da vedere' : 'controlli contabili da vedere'}</span>
-        <span style={{ marginLeft: 'auto', opacity: .8 }}>{open ? '▲' : '▼'}</span>
+        <Icon name="chevron" size={18} />
       </button>
       {open && (
-        <ul style={{ margin: '10px 0 2px', paddingLeft: 18, color: 'var(--ink)', fontSize: 13.5, lineHeight: 1.5 }}>
+        <ul className="hb-list" role="list">
           {items.map((r) => (
-            <li key={r.k}><strong>{r.n}</strong> · {r.label}</li>
+            <li key={r.k}><span>{r.label}</span><b>{r.n}</b></li>
           ))}
         </ul>
       )}
