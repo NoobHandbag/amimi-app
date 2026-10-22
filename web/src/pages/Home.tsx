@@ -7,6 +7,7 @@ import { fetchNettoMtd } from '../lib/api';
 import Icon from '../components/Icon';
 import HealthBanner from '../components/HealthBanner';
 import { VERSIONE_MIA } from '../lib/version';
+import '../styles/screens/home.css';
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 
@@ -114,7 +115,7 @@ export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled =
   };
 
   return (
-    <div className="screen">
+    <div className="screen scr-home">
       <div className="hello">
         <h1>Ciao, {personaName(chi)} 👋</h1>
         <div className="sub">Cosa vuoi fare?</div>
@@ -129,29 +130,30 @@ export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled =
 
       {query ? (
         <div className="ds-manage">
-          {matches.length ? matches.map((t, i) => tile(t, i, 'm')) : <div className="muted" style={{ gridColumn: '1 / -1', padding: '8px 2px' }}>Nessuna azione trovata.</div>}
+          {matches.length ? matches.map((t, i) => tile(t, i, 'm')) : <div className="muted nessuna">Nessuna azione trovata.</div>}
         </div>
       ) : (
         <>
           {cfg.finance && fin && (
             <button className="ds-hero" onClick={() => go('cruscotto')} type="button">
-              <div>
-                <div className="l">Netto {meseNome(nowMonth())}</div>
-                <div className="big">{eur(fin.netto)}</div>
-                {fin.deltaPct !== null && (
-                  <span className="chip">{fin.deltaPct >= 0 ? '▲' : '▼'} {fin.deltaPct >= 0 ? '+' : ''}{fin.deltaPct}% vs primi {fin.giorno} gg di {meseNome(nowMonth() - 1)}</span>
-                )}
-                {fin.spark.length > 1 && (
-                  <svg className="spark" width="150" height="26" viewBox="0 0 150 26" preserveAspectRatio="none" aria-hidden="true">
-                    <polyline fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" points={sparkPoints(fin.spark)} />
-                  </svg>
-                )}
-              </div>
+              <div className="l">Netto {meseNome(nowMonth())}</div>
+              <div className="big">{eur(fin.netto)}</div>
+              {fin.deltaPct !== null && (
+                <div className="delta">
+                  <span className={'chip ' + (fin.deltaPct >= 0 ? 'up' : 'down')}>{fin.deltaPct >= 0 ? '+' : ''}{fin.deltaPct}%</span>{' '}
+                  <span className="vs">vs primi {fin.giorno} gg di {meseNome(nowMonth() - 1)}</span>
+                </div>
+              )}
+              {fin.spark.length > 1 && (
+                <svg className="spark" width="150" height="26" viewBox="0 0 150 26" preserveAspectRatio="none" aria-hidden="true">
+                  <polyline fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" points={sparkPoints(fin.spark)} />
+                </svg>
+              )}
               <div className="sec">
                 <div className="l">Utile (mesi chiusi)</div>
                 <div className="big">{eur(fin.mc2)}</div>
               </div>
-              <span className="go">Cruscotto ›</span>
+              <span className="go">Cruscotto<Icon name="chevron" size={16} /></span>
             </button>
           )}
 
