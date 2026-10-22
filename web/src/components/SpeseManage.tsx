@@ -100,8 +100,8 @@ export default function SpeseManage({ pin, chi }: { pin: string; chi: string }) 
   }
 
   return (
-    <div>
-      <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={() => setAdding((a) => !a)}>
+    <div className="reg-spese">
+      <button className="ds-btn secondary full spese-add" onClick={() => setAdding((a) => !a)}>
         {adding ? 'Chiudi' : <><Icon name="plus" size={17} /> Aggiungi spesa</>}
       </button>
       {adding && <ExpenseForm pin={pin} chi={chi} mode="expense_manual" onDone={() => { setAdding(false); load(); }} />}
@@ -119,7 +119,7 @@ export default function SpeseManage({ pin, chi }: { pin: string; chi: string }) 
             return (
               <div className="ds-expcard" key={e.id}>
                 <div className="ds-exptop">
-                  <div style={{ minWidth: 0 }}>
+                  <div className="ds-expwho">
                     <div className="ds-expvendor">{vendor}</div>
                     <div className="ds-expmeta">{MESI[e.month] || ''} {e.year}{e.date_paid ? ` · ${e.date_paid}` : ''}{e.status === 'pending' ? ' · proposta' : ''}</div>
                   </div>
@@ -140,16 +140,16 @@ export default function SpeseManage({ pin, chi }: { pin: string; chi: string }) 
                   <div className="ds-exprecode">
                     <div>
                       <div className="ds-sublabel">Categoria</div>
-                      <div className="ds-linefilters" style={{ marginTop: 6 }}>{CATS.map((c) => <button key={c} type="button" className={`ds-fp ${v.categoria === c ? 'on' : ''}`} onClick={() => setEdit(e.id, { categoria: c })}>{c}</button>)}</div>
+                      <div className="ds-linefilters">{CATS.map((c) => <button key={c} type="button" className={`ds-fp ${v.categoria === c ? 'on' : ''}`} onClick={() => setEdit(e.id, { categoria: c })}>{c}</button>)}</div>
                     </div>
                     <div>
                       <div className="ds-sublabel">Sottocategoria</div>
-                      <input className="ds-expsel" style={{ marginTop: 6 }} value={v.sottocategoria} placeholder="es. Spedizioni, Carburante…" onChange={(ev) => setEdit(e.id, { sottocategoria: ev.target.value })} />
+                      <input className="ds-expsel" value={v.sottocategoria} placeholder="es. Spedizioni, Carburante…" onChange={(ev) => setEdit(e.id, { sottocategoria: ev.target.value })} />
                     </div>
-                    {v.categoria === 'LOGISTICA' && <div className="muted" style={{ fontSize: 11 }}>Sottocategoria "Spedizioni" = costo variabile nel CE, altrimenti logistica fissa.</div>}
+                    {v.categoria === 'LOGISTICA' && <div className="muted ds-exphint">Sottocategoria "Spedizioni" = costo variabile nel CE, altrimenti logistica fissa.</div>}
                     <label className="ds-toggle"><input type="checkbox" checked={v.amimi} onChange={(ev) => setEdit(e.id, { amimi: ev.target.checked })} /><span className="track"><span className="knob" /></span> Spesa Amimì (brand)</label>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="ds-btn primary sm" style={{ flex: 1 }} disabled={busy === e.id} onClick={() => confirm(e)}>{changed ? 'Salva ricodifica' : 'Conferma'}</button>
+                    <div className="ds-exprow">
+                      <button className="ds-btn primary sm" disabled={busy === e.id} onClick={() => confirm(e)}>{changed ? 'Salva ricodifica' : 'Conferma'}</button>
                       <button className="ds-btn secondary sm" onClick={() => toggleSet(setRecoding, e.id)}>Annulla</button>
                       {e.status === 'pending' && <button className="ds-btn danger soft sm" disabled={busy === e.id} onClick={() => reject(e)}>Rifiuta</button>}
                     </div>

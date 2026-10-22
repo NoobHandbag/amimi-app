@@ -30,7 +30,7 @@ export default function ExpenseForm({ pin, chi, mode, onDone }: {
   }
 
   return (
-    <div className="form">
+    <div className="form reg-spesa">
       <label className="fl">Descrizione</label>
       <input className="txt" value={operazione} onChange={(e) => setOp(e.target.value)} placeholder="es. Meta Ads, materiale, spedizione" />
 
