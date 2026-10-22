@@ -152,6 +152,9 @@ const COPPIE = [
   // cornice 2, Gate 3: l'anello arancio di .mat-low (oggetto grafico, 3:1) sulla sua tinta e sulle superfici dove sta il campo,
   // e il segnaposto grigio dentro un campo a confidenza bassa
   ['warning', 'warning-tint', 3], ['warning', 'surface', 3], ['warning', 'surface-alt', 3], ['ink-muted', 'warning-tint', 4.5],
+  // cornice 3 (22-10): i segni dei grafici del Cruscotto (--ink online e utile, --ink-muted B2B, --chart-bar) e l'icona
+  // dell'azione tonda sul bianco non hanno coppie nuove: --ink e --ink-muted su --surface sono gia' nella prima riga a
+  // 4,5:1, piu' severa del 3:1, e --chart-bar e' sopra. Che i segni usino davvero quei token lo dice la sezione 8
 ];
 for (const [fg, bgk, min] of COPPIE) {
   const a = coloreDi(fg), b = coloreDi(bgk);
@@ -192,6 +195,36 @@ check('shell.css: un campo a confidenza bassa (.mat-low) ha l\'anello interno ar
   regoleShell.some(([s, d]) => /\.mat-low/.test(s) && /\binput\b/.test(s) && /box-shadow\s*:\s*inset[^;]*var\(--warning\)/.test(d)));
 check('shell.css: il segnaposto dei campi del kit e\' --ink-muted (non il grigio del browser, 3,9:1 sul grigio)',
   regoleShell.some(([s, d]) => /input\.txt/.test(s) && /::placeholder/.test(s) && /(?<![\w-])color\s*:\s*var\(--ink-muted\)/.test(d)));
+
+// ---- 8. grafici del Cruscotto (cornice 3, 22-10): ogni segno regge 3:1 sul bianco della card ----
+// La sezione 6 dice solo che i token reggono: qui si guarda che i segni usino davvero token che reggono. Un ritorno della
+// barra B2B a --ink-faint (2,50:1 sul bianco, quasi uguale all'offline) passava tutte le altre guardie.
+console.log('\n== 8. grafici del Cruscotto: segni a 3:1 sul bianco ==');
+const SEGNO = /\.ds-ch-(?:on|of|b2)(?![\w-])|\.ds-tbar(?![\w-])|\.ds-bars \.b(?![\w-])/;
+function segniGrafici(css, tsx) {
+  const out = [];
+  for (const m of senzaCommenti(css, true).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!SEGNO.test(m[1])) continue;
+    for (const d of m[2].matchAll(/(?<![\w-])background(?:-color)?\s*:\s*([^;]+)/g)) out.push([m[1].trim(), d[1].trim()]);
+  }
+  // l'imbuto passa il colore a funnelRow(...) come stringa 'var(--x)'
+  for (const m of senzaCommenti(tsx, false).matchAll(/funnelRow\([^\n]*?'(var\(--[a-z0-9-]+\))'\)/g)) out.push(['funnelRow', m[1]]);
+  return out;
+}
+const sottoSoglia = (segni) => segni.filter(([, v]) => { const c = /^var\(--[a-z0-9-]+\)$/.test(v) ? risolvi(v) : null; return !c || contrasto(c, coloreDi('surface')) < 3; });
+const finti = segniGrafici('.scr-crusc .ds-ch-b2 { background: var(--ink-faint); } .ds-chbar { background: var(--ink-faint) } @media print { .ds-tbar.cur { background: red } }',
+  "{funnelRow('MC2', null, 1, 1, 'var(--ink-faint)')}");
+check('autocontrollo: --ink-faint su una barra dei canali e nell\'imbuto, un colore non da token sul trend: 3 sotto soglia; .ds-chbar (la traccia) non e\' un segno',
+  finti.length === 3 && sottoSoglia(finti).length === 3);
+const segniCss = Object.entries(src).filter(([f]) => isCss(f)).flatMap(([f, t]) => segniGrafici(t, '').map(([s, v]) => [`${f}: ${s}`, v]));
+const segniImbuto = segniGrafici('', src['pages/Report.tsx'] ?? '');
+check('i segni si trovano: barre dei canali (online, offline, B2B) in cruscotto.css e i quattro colori dell\'imbuto in Report.tsx',
+  ['on', 'of', 'b2'].every((k) => segniCss.some(([s]) => s.startsWith('styles/screens/cruscotto.css') && s.includes(`.ds-ch-${k}`))) && segniImbuto.length === 4,
+  `canali ${segniCss.length}, imbuto ${segniImbuto.length}`);
+for (const [s, v] of [...segniCss, ...segniImbuto]) {
+  const c = /^var\(--[a-z0-9-]+\)$/.test(v) ? risolvi(v) : null;
+  check(`${s}: ${v} ${c ? contrasto(c, coloreDi('surface')).toFixed(2) + ':1' : 'non risolto'} >= 3 sul bianco`, sottoSoglia([[s, v]]).length === 0);
+}
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

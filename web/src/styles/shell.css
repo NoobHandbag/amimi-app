@@ -29,7 +29,6 @@ h2 { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--in
 .appbar-r .exp { width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: var(--surface); color: var(--ink); }
 .appbar-r .exp .explbl { display: none; }
 .appbar-r .badge, .appbar-r .ds-btn, .appbar-r button { flex: none; }
-@media print { .appbar-back { display: none !important; } }
 
 /* link "indietro" dei pezzi non ancora passati alla barra: pillola piena con la freccia, mai testo nudo */
 .back { display: inline-flex; align-items: center; gap: 6px; background: var(--surface); color: var(--ink); border-radius: 999px; padding: 8px 14px; font-size: 14px; font-weight: 600; margin: 0 0 12px; }
@@ -257,3 +256,51 @@ input.num { font-weight: 600; letter-spacing: -.03em; }
 .ds-aisum { border: 0; border-radius: 16px; background: var(--surface); }
 .card .ds-aisum { background: var(--surface-alt); }
 .ds-aisum-h { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
+
+/* ============================================================================
+   Cornice 3 (22-10-2026): sincronizza e aggiorna come azione tonda nella barra, e la stampa di ogni schermata.
+   ============================================================================ */
+
+/* ---- stato sotto la barra (Sincronizzo..., esito): la riga c'e' sempre, cosi' un lettore di schermo sente il cambio;
+   vuota non occupa spazio ---- */
+.appbar-st { margin: -8px 0 12px; }
+.appbar-st:empty { margin: 0; }
+
+/* ---- stampa (bottone PDF o Ctrl+P): il foglio e' la schermata, senza barra in basso, assistente e comandi.
+   Si controlla con e2e/tema-schermate.spec.ts: <nome>-stampa.png e <nome>-stampa.pdf ---- */
+@media print {
+  /* #root alto quanto lo schermo (100svh) in stampa vale un foglio: una pagina corta ne aggiungeva una bianca */
+  #root { min-height: 0; }
+  .app { padding-bottom: 0; }
+  .app::after { display: none; }
+  /* barra in alto: il titolo a sinistra fa da intestazione; restano i badge (sono dati), non i bottoni */
+  .appbar { grid-template-columns: minmax(0, 1fr) auto; }
+  .appbar-l, .appbar-r button, .appbar-st { display: none !important; }
+  .appbar-title { text-align: left; font-size: 24px; letter-spacing: -.03em; }
+  /* card scura: resta scura anche senza "grafica di sfondo", altrimenti il suo testo bianco finisce sul foglio bianco.
+     Barre a segmenti (canali nel Cruscotto, segmenti in Clienti coi pallini scritti nel style) e pillola "da riprodurre":
+     il colore e' uno sfondo, senza questa regola sul foglio resta un buco o il bianco su bianco */
+  .ds-kpi.hero, .ds-hero, .ds-chbar, .ds-chleg, .card:has(> .ds-chbar) .rt > i, .hot { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* sul foglio niente bottoni d'azione, ricerche vuote e sezioni chiuse (sarebbero solo un titolo) */
+  .ds-btn, .ds-search:has(input:placeholder-shown), .card:has(> .askhead[aria-expanded=false]) { display: none !important; }
+  /* selettori e filtri: resta la scelta attiva, che dice cosa c'e' sul foglio, scritta in nero; il bianco sulla
+     pillola nera senza "grafica di sfondo" usciva grigio chiaro, piu' tenue delle opzioni non scelte */
+  :is(.ds-seg button, .ds-fp, .ds-lp, .fchip):not(.on) { display: none !important; }
+  .ds-seg, :is(.ds-seg button, .ds-fp, .ds-lp, .fchip).on { background: none !important; color: var(--ink) !important; box-shadow: none !important; }
+  /* una tabella larga non si taglia nel suo riquadro che scorre: esce intera e Chromium rimpicciolisce il foglio, ma al
+     massimo di 1,5 volte (con i margini di default oltre 1077 px taglia a destra) */
+  :is(.tablewrap, .cedt-scroll) { overflow: visible; }
+  /* CE dettagliato: un mese in piu' ogni mese, a dicembre 12. Sul foglio via la colonna Trend (i numeri ci sono, anche
+     la sua cella vuota nelle righe in %) e celle piu' strette */
+  table.cedt :is(th.sparkh, td.spark), table.cedt tr.pct td:last-child { display: none; }
+  table.cedt :is(thead th:not(:first-child), td.val, td.ytd, tr.pct td:not(.lab)) { padding-left: 6px; padding-right: 6px; }
+  table.cedt .lab { min-width: 140px; max-width: 140px; }
+  /* index.css tiene ogni card intera su un foglio: una card lunga (12 righe o piu') saltava tutta al foglio dopo e
+     lasciava quello prima quasi vuoto (CE, Riordino, clienti). Ora scorre; le righe non si spezzano, il titolo resta
+     con quello che segue */
+  .card:has(tbody > tr:nth-child(12), .list > :nth-child(12)) { break-inside: auto; }
+  tr { break-inside: avoid; }
+  .card > h2 { break-after: avoid; }
+  /* le file che scorrono fino al bordo dello schermo: in stampa la pagina non ha margine, i -16 px allargavano il foglio */
+  :is(.hscroll, .ds-lens.scrollx) { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; flex-wrap: wrap; }
+}

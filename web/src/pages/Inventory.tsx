@@ -127,8 +127,8 @@ function ReorderView({ pin, chi, goOrdini }: { pin: string; chi: string; goOrdin
         </div>
       </button>
       <div className={`giac ${p.disponibili <= 0 ? 'neg' : ''}`}>{p.disponibili}</div>
-      <button className="chip" type="button" disabled={busy === p.codice} title={archived ? 'Ripristina nel riordino' : 'Archivia (es. pelle finita): sparisce da qui, resta nell’archivio'}
-        onClick={() => setArch(p.codice, !archived)}>{busy === p.codice ? '…' : archived ? '↩︎' : '🗄️'}</button>
+      <button className="chip rio-arch" type="button" disabled={busy === p.codice} title={archived ? 'Ripristina nel riordino' : 'Archivia (es. pelle finita): sparisce da qui, resta nell’archivio'}
+        onClick={() => setArch(p.codice, !archived)}>{busy === p.codice ? '…' : archived ? '↩︎' : <Icon name="inbox" size={16} />}</button>
     </div>
   );
 
@@ -136,14 +136,14 @@ function ReorderView({ pin, chi, goOrdini }: { pin: string; chi: string; goOrdin
     <>
       <div className="filters"><button className={`fchip ${soloVend ? 'on' : ''}`} onClick={() => setSoloVend(true)}>Solo venduti</button>
         <button className={`fchip ${!soloVend ? 'on' : ''}`} onClick={() => setSoloVend(false)}>Tutti</button></div>
-      <p className="note">Ordinati per urgenza (vendite 60g ÷ stock disponibile). Tocca una borsa per creare il riordino già precompilato; 🗄️ la sposta nell'archivio (es. pelle esaurita).</p>
+      <p className="note">Ordinati per urgenza (vendite 60g ÷ stock disponibile). Tocca una borsa per creare il riordino già precompilato; il bottone <span style={{ whiteSpace: 'nowrap' }}>Archivia (<Icon name="inbox" size={14} />)</span> la sposta nell'archivio (es. pelle esaurita).</p>
       <div className="card"><div className="list">
         {list.slice(0, 120).map((p) => riga(p, false))}
         {!list.length && <p className="muted center">Nessun prodotto.</p>}
       </div></div>
       {archiviati.length > 0 && (
         <section className="card ask">
-          <button className="askhead" type="button" onClick={() => setShowArch((s) => !s)}>🗄️ Archivio riordino · {archiviati.length} <span className="muted">{showArch ? '−' : '+'}</span></button>
+          <button className="askhead" type="button" aria-expanded={showArch} onClick={() => setShowArch((s) => !s)}><Icon name="inbox" size={18} />Archivio riordino · {archiviati.length} <span className="muted">{showArch ? '−' : '+'}</span></button>
           {showArch && (
             <div className="askbody">
               <p className="note">Prodotti messi da parte (pelle/materiale finito). Se il materiale ricompare, ↩︎ li riporta nel riordino.</p>
@@ -174,7 +174,7 @@ function LineePanel({ inv, go }: { inv: InvFull[]; go?: (t: 'registra' | 'ordini
   const stCls = (st: number | null) => (st == null ? '' : st >= 0.8 ? 'pos' : st < 0.3 ? 'neg' : '');
   return (
     <section className="card ask">
-      <button className="askhead" type="button" onClick={() => setOpen((o) => !o)}>📈 Per linea · sell-through <span className="muted">{open ? '−' : '+'}</span></button>
+      <button className="askhead" type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}>📈 Per linea · sell-through <span className="muted">{open ? '−' : '+'}</span></button>
       {open && (
         <div className="askbody">
           <p className="note" style={{ marginTop: 0 }}>Venduto su acquistato per modello: sopra 80% forte domanda, sotto 30% slow mover. Non giudicare le linee lanciate da meno di 60-90 giorni.</p>
@@ -302,19 +302,17 @@ export default function Inventory({ pin, chi, initial, go }: { pin: string; chi:
 
   return (
     <div className="screen">
-      <AppBar title="Magazzino" actions={<><PrintBtn /><ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} /></>} />
+      <AppBar title="Magazzino" actions={<>{tab === 'mag' && (
+        <button type="button" className={nowBusy ? 'exp busy' : 'exp'} onClick={syncNow} disabled={nowBusy} aria-label="Aggiorna Shopify"
+          title="Aggiorna Shopify. Esegue subito il giro orario completo: legge Shopify e riallinea le quantità allo stock reale. Rispetta gli interruttori di scrittura Shopify.">
+          <Icon name="recycle" size={18} />
+        </button>
+      )}<PrintBtn /><ExportBtn name="inventario" rows={() => inv.map((p) => ({ codice: p.codice, prodotto: nome(p.item, p.variant), modello: p.item, variante: p.variant, categoria: p.categoria, magazzino: p.giacenza_attuale, conto_vendita: p.in_conto_vendita, su_shopify: p.on_shopify ? 'si' : 'no', shopify_qty: shopQ(p) ?? '', prezzo: p.retail_price, cogs: p.cogs, valore: p.valore }))} /></>} />
+      <p className="note appbar-st" role="status">{nowBusy ? 'Sincronizzo…' : null}</p>
       <header className="invhead">
         <div className="ds-seg">
           <button type="button" className={tab === 'mag' ? 'on' : ''} onClick={() => setTab('mag')}>Magazzino</button>
           <button type="button" className={tab === 'riordino' ? 'on' : ''} onClick={() => setTab('riordino')}>Riordino</button>
-        </div>
-        <div className="hbtns">
-          {tab === 'mag' && (
-            <button className="ds-btn primary sm" onClick={syncNow} disabled={nowBusy}
-              title="Esegue subito il giro orario completo: legge Shopify e riallinea le quantità allo stock reale. Rispetta gli interruttori di scrittura Shopify.">
-              <Icon name="recycle" size={15} />{nowBusy ? 'Sincronizzo…' : 'Aggiorna Shopify'}
-            </button>
-          )}
         </div>
       </header>
 

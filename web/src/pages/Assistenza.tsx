@@ -4,6 +4,7 @@ import { pushBack, popBack } from '../lib/backnav';
 import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato, BozzaSalvata } from '../lib/csApi';
 import AppBar from '../components/AppBar';
+import Icon from '../components/Icon';
 
 // email in testo semplice: preserva gli a-capo (CSS pre-wrap) e collassa i vuoti multipli (feedback 24-07)
 const cleanBody = (t: string) => (t || '').replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -998,15 +999,17 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="screen">
-      <AppBar title="Assistenza" />
+      {/* UAT 02-08: "Aggiorna" in alto a destra; dalla cornice 3 (22-10) e' l'azione tonda della barra */}
+      <AppBar title="Assistenza" actions={
+        <button type="button" className={refreshing ? 'exp busy' : 'exp'} onClick={doRefresh} disabled={refreshing} aria-label="Aggiorna" title="Aggiorna"><Icon name="recycle" size={18} /></button>
+      } />
+      <p className="note appbar-st" role="status">{refreshing ? 'Aggiorno…' : null}</p>
       <header>
         {/* UAT 02-08: via "aiutiamo dei clienti", resta il saluto. */}
         <button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--dark)', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 9 }}>
           <Avatar k={ident} size={30} />
           <span>Ciao {IDENTS[ident]?.n ?? ident} <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 400 }}>▾</span></span>
         </button>
-        {/* UAT 02-08: "Aggiorna" in alto a destra. Stava in fondo alla riga dei conteggi, che non c'e' piu'. */}
-        <button onClick={doRefresh} disabled={refreshing} type="button" style={{ background: 'none', border: '1px solid var(--line)', borderRadius: 999, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, color: 'var(--rose)', cursor: 'pointer', opacity: refreshing ? 0.6 : 1 }}>{refreshing ? 'Aggiorno…' : '↻ Aggiorna'}</button>
       </header>
       {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
 

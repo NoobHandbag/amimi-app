@@ -116,14 +116,11 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
   return (
     <div className="screen scr-crusc">
       <AppBar title="Cruscotto" onBack={onBack} backLabel="Home" actions={<>
+        <button type="button" className={syncing ? 'exp busy' : 'exp'} onClick={doSync} disabled={syncing} aria-label="Sincronizza Shopify" title="Sincronizza Shopify"><Icon name="recycle" size={18} /></button>
         <PrintBtn />
         <ExportBtn name="conto_economico" rows={() => rows.map((r) => ({ mese: MESI[r.month], netto: Math.round(r.netto), lordo: Math.round(r.lordo), mc1: Math.round(r.mc1), mc2: Math.round(r.mc2), online: Math.round(r.online), offline: Math.round(r.offline), b2b: Math.round(r.b2b) }))} />
-        <span className="badge">replica</span>
       </>} />
-
-      <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={doSync} disabled={syncing}>
-        <Icon name="recycle" size={18} />{syncing ? 'Sincronizzo…' : (syncMsg || 'Sincronizza Shopify')}
-      </button>
+      <p className="note appbar-st" role="status">{syncing ? 'Sincronizzo…' : syncMsg}</p>
 
       <div className="ctrlbar">
         <div className="ds-seg">
@@ -280,7 +277,7 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
       </section>
 
       {onVillaggio && (
-        <section className="card">
+        <section className="card crusc-vil">
           <h2>Villaggio</h2>
           <p className="muted" style={{ marginTop: 0 }}>Ordini e magazzino come un'isola 3D: i laboratori con quello che deve arrivare, il magazzino con una pila per variante.</p>
           <button className="ds-btn secondary sm" type="button" onClick={onVillaggio}>Apri il Villaggio<Icon name="chevron" size={16} /></button>

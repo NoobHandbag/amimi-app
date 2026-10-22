@@ -58,13 +58,12 @@
 .scr-crusc .cbox::placeholder { color: var(--ink-muted); opacity: 1; font-weight: 500; }
 .scr-crusc .cartrow .x { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 50%; color: var(--ink-muted); }
 
-/* ---- stampa (PDF). Oggi il PDF del Cruscotto esce bianco come quello di ogni schermata: il @media print del report
-   dell'assistente in index.css (22-07) nasconde #root in ogni stampa, non solo quando c'e' il portale. Queste regole
-   contano da quando quella regola vale solo col portale: KPI scuro e grafici come a schermo anche senza "grafica di
-   sfondo"; i bottoni che portano altrove e la freccia del calcolatore non si stampano ---- */
+/* ---- stampa (PDF, dalla cornice 3 del 22-10): imbuto e trend come a schermo anche senza "grafica di sfondo"; il Villaggio
+   senza il suo bottone e la freccia del calcolatore non si stampano. In shell.css: KPI scuro tenuto scuro, barra e legenda
+   dei canali coi loro colori, bottoni e calcolatore chiuso tolti ---- */
 @media print {
-  .scr-crusc :is(.ds-kpi.hero, .ds-funnel, .ds-trend, .ds-chbar, .ds-chleg) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .scr-crusc .ds-btn.sm { display: none; }
+  .scr-crusc :is(.ds-funnel, .ds-trend) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .scr-crusc .crusc-vil { display: none; }
   /* !important: Icon scrive display: inline-block nel suo style */
   .scr-crusc .askhead > svg { display: none !important; }
 }
