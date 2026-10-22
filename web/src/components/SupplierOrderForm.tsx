@@ -277,7 +277,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
                 onChange={(e) => { setAiFiles((p) => [...p, ...[...(e.target.files ?? [])]].slice(0, 4)); e.target.value = ''; }} />
               <div className="mat-files">
                 {aiFiles.map((f, i) => <span key={i} className="chip" onClick={() => setAiFiles((p) => p.filter((_, j) => j !== i))}>{f.name.slice(0, 22)} ✕</span>)}
-                <button type="button" className="chip" onClick={() => aiFileRef.current?.click()} disabled={aiFiles.length >= 4}>+ foto conferma d'ordine</button>
+                <button type="button" className="chip" onClick={() => aiFileRef.current?.click()} disabled={aiFiles.length >= 4}><Icon name="plus" size={14} /> foto conferma d'ordine</button>
               </div>
               <textarea className="txt" rows={2} value={aiTesto} onChange={(e) => setAiTesto(e.target.value)} placeholder={`Nota: es. "a ${forn || 'Francesco'} dieci Lea leopardo savana e cinque Agata nera"`} style={{ width: '100%', marginTop: 8 }} />
               <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
@@ -287,7 +287,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
               {aiNonTrovate.length > 0 && (
                 <div style={{ marginTop: 8, fontSize: 12 }}>
                   <div className="muted">Non a catalogo (tocca per aprirle come borsa nuova, il codice resta provvisorio):</div>
-                  {aiNonTrovate.map((r, i) => <button key={i} type="button" className="linkbtn" style={{ display: 'block', padding: '4px 0', fontWeight: 700 }} onClick={() => { setNewOpen(true); setNmFree(true); setNm(r.modello); setNv(r.variante); }}>+ {r.modello} {r.variante}{r.quantita != null ? ` · ${r.quantita} pz` : ''}</button>)}
+                  {aiNonTrovate.map((r, i) => <button key={i} type="button" className="linkbtn" style={{ display: 'block', padding: '4px 0', fontWeight: 700 }} onClick={() => { setNewOpen(true); setNmFree(true); setNm(r.modello); setNv(r.variante); }}><Icon name="plus" size={14} /> {r.modello} {r.variante}{r.quantita != null ? ` · ${r.quantita} pz` : ''}</button>)}
                 </div>)}
             </div>)}
     </div>
@@ -328,7 +328,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
         )}
         {!fs && vecchiTutti.length > 0 && (
           <>
-            <button className="addnew" type="button" onClick={() => setShowOld((v) => !v)}>{showOld ? '− Nascondi vecchi fornitori' : `Vecchi fornitori (${vecchiTutti.length})`}</button>
+            <button className="addnew" type="button" onClick={() => setShowOld((v) => !v)}>{showOld ? 'Nascondi vecchi fornitori' : `Vecchi fornitori (${vecchiTutti.length})`}</button>
             {showOld && <div className="ds-lens">{vecchiTutti.map((name) => <button key={name} type="button" className="ds-lp" onClick={() => setForn(name)}>{name}</button>)}</div>}
           </>
         )}
@@ -341,16 +341,17 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
     <div className="form">
       <div className="ordtop">
         <button className="chip on" onClick={() => { setForn(''); setLines([]); setQ(''); setConsegna(''); }}>{forn} ✕</button>
-        <label className="datepick">📅 <input type="date" value={dataOrd} onChange={(e) => setDataOrd(e.target.value)} /></label>
+        <label className="datepick"><input type="date" aria-label="Data dell'ordine" value={dataOrd} onChange={(e) => setDataOrd(e.target.value)} /></label>
       </div>
 
       {lines.length > 0 && (
         <div className="cart">
-          {/* etichette esplicite Pezzi / € al pezzo: in call Ginni li aveva invertiti (item 28) */}
-          <div className="cartrow" style={{ opacity: .7, fontSize: 11, fontWeight: 700, paddingBottom: 0 }}>
-            <div className="cartinfo">BORSA</div>
-            <div className="qbox" style={{ textAlign: 'center', border: 'none', background: 'none' }}>PEZZI</div>
-            <div className="cbox" style={{ textAlign: 'center', border: 'none', background: 'none' }}>€ AL PEZZO</div>
+          {/* etichette esplicite Pezzi / € al pezzo: in call Ginni li aveva invertiti (item 28). Resta il primo .cartrow
+              con lo spazio in fondo: villaggio.css li misura cosi' */}
+          <div className="cartrow cart-head">
+            <div className="cartinfo">Borsa</div>
+            <div className="qbox">Pezzi</div>
+            <div className="cbox">€ al pezzo</div>
             <span style={{ width: 28 }} />
           </div>
           {lines.map((l, i) => (
@@ -358,10 +359,10 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
               <div className="cartinfo">
                 <div className="rt">{l.item ?? l.codice} {l.nuovo && <span className="newtag">nuova</span>}</div>
                 <div className="rs">{l.variant ?? (l.codice.endsWith('_') ? 'variante da definire' : '')}</div>
-                <button type="button" className="linkbtn" style={{ fontSize: 11, padding: 0 }}
+                <button type="button" className="linkbtn ord-wipbtn"
                   title="WIP = non so ancora quanti pezzi/che costo (es. affinamento pelle): si definisce all'arrivo"
                   onClick={() => setLines((p) => p.map((x, j) => j === i ? { ...x, wip: !x.wip } : x))}>
-                  {l.wip ? '⏳ WIP · quantità/costo da definire (tocca per annullare)' : 'non so la quantità? → segna WIP'}
+                  {l.wip ? <><span className="ord-wip">WIP · quantità/costo da definire</span> (tocca per annullare)</> : 'Non so la quantità? Segna WIP'}
                 </button>
                 {/* con una riga sola basta la consegna dell'ordine; la data per riga compare con piu' righe, o se la riga ne ha gia' una sua */}
                 {(lines.length > 1 || l.consegna !== undefined) && (
@@ -370,7 +371,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
                     {/* 16 px: con meno, Safari su iPhone ingrandisce la pagina quando si tocca il campo */}
                     <input type="date" value={consegnaDi(l)} min={dataOrd} aria-label={`Consegna prevista di ${l.item ?? l.codice}`}
                       onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, consegna: e.target.value } : x))}
-                      style={{ fontSize: 16, minWidth: 0, maxWidth: 160, border: '1px solid var(--line)', borderRadius: 8, padding: '3px 6px', background: 'var(--surface)', color: 'inherit' }} />
+                      className="ord-dateline" />
                   </label>
                 )}
               </div>
@@ -378,10 +379,14 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
                 onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, qty: e.target.value } : x))} />
               <input className="cbox" type="number" inputMode="decimal" placeholder="€/pz" value={l.costo}
                 onChange={(e) => setLines((p) => p.map((x, j) => j === i ? { ...x, costo: e.target.value } : x))} />
-              <button className="x" onClick={() => setLines((p) => p.filter((_, j) => j !== i))}>✕</button>
+              <button className="x" type="button" aria-label="Togli" onClick={() => setLines((p) => p.filter((_, j) => j !== i))}><Icon name="close" size={16} /></button>
             </div>
           ))}
-          <div className="carttot">{lines.length} borse · {tot} pezzi{lines.some((l) => l.wip) ? ' · + WIP' : ''}</div>
+          {/* il totale di sempre, a pezzi: senza stile si legge come prima ("2 borse · 35 pezzi"), in Ordini e' la card
+              scura (.hero) col numero dei pezzi davanti */}
+          <div className="carttot ord-tot hero">
+            <span className="ord-tot-b">{lines.length} borse</span><span className="ord-tot-s">{' · '}</span><span className="ord-tot-p"><span className="n">{tot}</span> pezzi</span>{lines.some((l) => l.wip) && <span className="ord-tot-w">{' · + WIP'}</span>}
+          </div>
         </div>
       )}
 
@@ -392,7 +397,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
         <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Cerca una borsa da ordinare a ${forn}…`} autoFocus={!initialCodice} />
       </div>
       {q.trim() && searchHits.length > 0 && (
-        <div style={{ marginBottom: 4 }}>
+        <div className="ord-hits" style={{ marginBottom: 4 }}>
           {searchHits.map((h) => {
             const already = inCart.has(h.codice);
             return (
@@ -404,7 +409,10 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
                     ? `già ordinata ${h.storico.n_ordini} ${h.storico.n_ordini === 1 ? 'volta' : 'volte'}${h.storico.ultimo_costo != null ? ` · ultimo €${h.storico.ultimo_costo}` : ''}`
                     : 'mai ordinata da questo fornitore'}</span>
                 </span>
-                {already ? <span className="ds-pbadge pub">✓ nell’ordine</span> : <span className="ds-pbadge off">+ aggiungi</span>}
+                {/* in Ordini un tondo con l'icona; la parola resta per i lettori di schermo */}
+                {already
+                  ? <span className="ds-pbadge pub ord-add in"><Icon name="check" size={12} /> nell’ordine</span>
+                  : <span className="ds-pbadge off ord-add"><Icon name="plus" size={12} /> aggiungi</span>}
               </button>
             );
           })}
@@ -415,13 +423,13 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
           Nessuna borsa trovata per “{q.trim()}”.
           <button type="button" className="linkbtn" style={{ display: 'block', padding: '6px 0 0', fontWeight: 700 }}
             onClick={() => { setNewOpen(true); setNmFree(true); setNm(q.trim()); setQ(''); }}>
-            + Borsa nuova “{q.trim()}”
+            <Icon name="plus" size={14} /> Borsa nuova “{q.trim()}”
           </button>
         </div>
       )}
 
       {!newOpen ? (
-        <button className="addnew" onClick={() => setNewOpen(true)}>+ Borsa nuova (senza codice finale)</button>
+        <button className="addnew" onClick={() => setNewOpen(true)}><Icon name="plus" size={15} /> Borsa nuova (senza codice finale)</button>
       ) : (
         <div className="newbag">
           {nmFree ? (
@@ -433,7 +441,7 @@ export default function SupplierOrderForm({ pin, chi, onDone, initialForn, initi
                 {modelOpts.map((m) => (
                   <button key={m} type="button" className={`supcard${nm === m ? ' alt' : ''}`} onClick={() => setNm(nm === m ? '' : m)}>{m}</button>
                 ))}
-                <button type="button" className="supcard old" onClick={() => { setNmFree(true); setNm(''); }}>+ nuovo modello</button>
+                <button type="button" className="supcard old" onClick={() => { setNmFree(true); setNm(''); }}><Icon name="plus" size={14} /> nuovo modello</button>
               </div>
             </>
           )}

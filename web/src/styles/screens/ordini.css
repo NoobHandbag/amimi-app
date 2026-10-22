@@ -2,7 +2,7 @@
    Ordini (tema A, PR 7, 22-10-2026): lista dei fornitori, dettaglio del fornitore e righe d'arrivo (pages/Ordini.tsx).
    Regole della schermata sotto .scr-ordini, sul div .screen di ogni vista di Ordini (anche errore, nuovo ordine, foglio).
    Gruppo (.ds-group), "Gia' arrivati" (.ds-more), bottoni, passo e campi del kit vengono gia' da shell.css.
-   Nuovo ordine (SupplierOrderForm) resta com'e': ha la sua PR.
+   Nuovo ordine (SupplierOrderForm, PR 8) ha la sua sezione in fondo.
    ============================================================================ */
 
 /* ---- in cima: "Nuovo ordine fornitore" e' l'azione (primario bordeaux); i secondari sono bianchi da shell.css ---- */
@@ -76,4 +76,105 @@
 @media print {
   .scr-ordini .ds-group > * + *::before { height: 0; background: none; border-top: 1px solid var(--border); }
   .scr-ordini .ds-scard .chev { display: none; }
+}
+
+/* ============================================================================
+   Nuovo ordine fornitore (tema A, PR 8, 22-10-2026): components/SupplierOrderForm.tsx dentro .scr-ordini.
+   Lo stesso modulo gira nel Villaggio (passo 4 di "Ordina borse", sotto .vil .v-form): le regole del tema nuovo stanno
+   sotto .scr-ordini, cosi' li' resta com'e'; senza .scr-ordini solo gli ex style del TSX, che rifanno l'aspetto di prima. Etichette, campi del kit, pillole, "aggiungi" e box AI vengono gia' da
+   shell.css (Cornice 2). Nel build questo file sta nel CSS caricato prima di shell.css: dove tocca le stesse cose,
+   ogni regola e' piu' specifica di quella di shell.css.
+   ============================================================================ */
+
+/* ---- ex style del TSX, senza .scr-ordini: rifanno l'aspetto di prima, che il Villaggio tiene (villaggio.css ci mette
+   le sue misure). L'intestazione del carrello resta il primo .cartrow, con lo spazio in fondo ---- */
+.cartrow.cart-head { opacity: .7; padding-bottom: 0; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.cart-head > :is(.qbox, .cbox) { border: 0; background: none; text-align: center; }
+.linkbtn.ord-wipbtn { padding: 0; font-size: 11px; }
+.ord-dateline { min-width: 0; max-width: 160px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: inherit; font-size: 16px; }
+
+/* ---- in cima: il fornitore scelto e la data dell'ordine in una pillola bianca, campo a 16 px (con meno iPhone
+   ingrandisce la pagina al tocco). Su un telefono stretto la data scende sotto ---- */
+.scr-ordini .ordtop { flex-wrap: wrap; row-gap: 8px; margin-bottom: 14px; }
+.scr-ordini .datepick { min-height: 40px; padding: 4px 10px 4px 14px; border: 0; border-radius: 999px; background: var(--surface); }
+.scr-ordini .datepick input { min-width: 0; padding: 0; font-family: inherit; font-size: 16px; font-weight: 500; color: var(--ink); }
+
+/* ---- carrello: intestazione in minuscolo sul fondo, righe in un gruppo bianco coi separatori rientrati, come
+   .ds-group (che qui non si usa: il Villaggio lo prenderebbe). Nome e variante accanto ai campi, WIP e consegna sotto,
+   larghi quanto la riga. Pezzi resta prima di EUR al pezzo (CASI_APERTI 28) ---- */
+.scr-ordini .cart { margin-bottom: 14px; padding: 0; border: 0; border-radius: 0; background: none; }
+.scr-ordini .cart > .cartrow { display: grid; grid-template-columns: minmax(0, 1fr) 56px 68px 36px; column-gap: 8px; align-items: center; padding: 12px 16px; border-bottom: 0; }
+.scr-ordini .cart > .cart-head { padding: 0 16px 6px; opacity: 1; font-size: 12.5px; font-weight: 500; color: var(--ink-muted); text-transform: none; }
+.scr-ordini .cart > .cart-head > :is(.qbox, .cbox) { width: auto; padding: 0; font-weight: 500; white-space: nowrap; }
+.scr-ordini .cart > .cartrow[data-cart-codice] { position: relative; border-radius: 0; background: var(--surface); }
+.scr-ordini .cart > .cart-head + .cartrow { border-radius: 20px 20px 0 0; }
+.scr-ordini .cart > .cartrow[data-cart-codice]:nth-last-child(2) { border-bottom-left-radius: 20px; border-bottom-right-radius: 20px; }
+.scr-ordini .cart > .cartrow[data-cart-codice] + .cartrow::before { content: ''; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--border); }
+/* la riga appena aggiunta lampeggia (index.css): qui sfuma sul bianco della riga, non sul fondo grigio */
+.scr-ordini .cart > .cartrow.flash { animation-name: ord-flash; }
+@keyframes ord-flash { from { background-color: var(--positive-tint); } to { background-color: var(--surface); } }
+@media (prefers-reduced-motion: reduce) { .scr-ordini .cart > .cartrow.flash { animation: none; background: var(--positive-tint); } }
+.scr-ordini .cartrow[data-cart-codice] > .cartinfo { display: contents; }
+/* nome e variante vanno a capo anche senza spazi (codice al posto del nome, varianti nuove con "_"): la colonna e' stretta
+   e il testo non deve finire sotto i campi */
+.scr-ordini .cartrow[data-cart-codice] .rt { grid-area: 1 / 1; font-size: 15px; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; overflow-wrap: anywhere; }
+.scr-ordini .cartrow[data-cart-codice] .rs { grid-area: 2 / 1; margin-top: 1px; font-size: 13px; color: var(--ink-muted); overflow-wrap: anywhere; }
+.scr-ordini .cartrow[data-cart-codice] > .qbox { grid-area: 1 / 2 / 3; }
+.scr-ordini .cartrow[data-cart-codice] > .cbox { grid-area: 1 / 3 / 3; }
+.scr-ordini .cartrow[data-cart-codice] > .x { grid-area: 1 / 4 / 3; }
+.scr-ordini .cartrow[data-cart-codice] .cartinfo > button { grid-area: 3 / 1 / auto / -1; justify-self: start; }
+.scr-ordini .cartrow[data-cart-codice] .cartinfo > label { grid-area: 4 / 1 / auto / -1; }
+/* pezzi e costo pieni, a 16 px, numeri a 600; segnaposto in --ink-muted (il grigio del browser scende a 3,9:1) */
+.scr-ordini .cartrow input:is(.qbox, .cbox) { width: 100%; min-width: 0; min-height: 44px; padding: 0 4px; border: 0; border-radius: 12px; background: var(--surface-alt); color: var(--ink); font-family: inherit; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; }
+/* le frecce del campo numerico (solo desktop) tengono il loro posto anche nascoste e spostano il numero dal centro */
+.scr-ordini .cartrow input:is(.qbox, .cbox)::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+/* il segnaposto puo' stare piu' piccolo (lo zoom di Safari guarda il testo del campo): "pezzi" a 16 px si tagliava */
+.scr-ordini .cartrow input:is(.qbox, .cbox)::placeholder { color: var(--ink-muted); opacity: 1; font-size: 13px; font-weight: 500; }
+/* riga in WIP: pezzi e' disabilitato. Il riempimento qui sopra copre il grigio del browser, quindi sbiadisce come gli
+   altri disabilitati del tema, se no sembra un campo vuoto da scrivere */
+.scr-ordini .cartrow input:is(.qbox, .cbox):disabled { opacity: .4; cursor: default; }
+/* togli: tondo grigio da 36 px con l'icona close, tocco da 44 */
+.scr-ordini .cartrow .x { position: relative; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: 50%; background: var(--surface-alt); color: var(--ink-muted); }
+.scr-ordini .cartrow .x::after { content: ''; position: absolute; inset: -4px; }
+/* WIP: l'interruttore e' testo bordeaux; acceso diventa una pillola arancio, il resto in grigio */
+.scr-ordini .cartrow .linkbtn.ord-wipbtn { margin-top: 8px; padding: 4px 0; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--interactive); text-align: left; }
+.scr-ordini .cartrow .linkbtn.ord-wipbtn:has(> .ord-wip) { font-size: 12px; font-weight: 500; color: var(--ink-muted); }
+.scr-ordini .ord-wip { display: inline-block; margin-right: 2px; padding: 3px 9px; border-radius: 999px; background: var(--warning-tint); color: var(--warning-700); font-weight: 600; }
+/* consegna della riga: campo pieno, sempre a 16 px */
+.scr-ordini .ord-dateline { min-height: 36px; padding: 4px 10px; border: 0; border-radius: 10px; background: var(--surface-alt); color: var(--ink); font-family: inherit; }
+
+/* ---- totale dell'ordine: la card scura della schermata. Stessi numeri e stesso conto di prima, davanti i pezzi;
+   sul nero solo bianco e colori on-dark ---- */
+.scr-ordini .carttot.ord-tot.hero { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 10px; padding: 18px 20px; border-radius: 24px; background: var(--grad-hero); color: var(--surface); text-align: left; font-size: 15px; font-weight: 500; }
+.scr-ordini .ord-tot.hero .ord-tot-p { order: -1; margin-right: auto; }
+.scr-ordini .ord-tot.hero .ord-tot-p .n { margin-right: 2px; font-size: 34px; font-weight: 600; letter-spacing: -.04em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.scr-ordini .ord-tot.hero .ord-tot-s { display: none; }
+.scr-ordini .ord-tot.hero :is(.ord-tot-b, .ord-tot-w) { font-size: 14px; color: var(--surface); opacity: .72; }
+.scr-ordini .ord-tot.hero .ord-tot-w { color: var(--warning-on-dark); opacity: 1; }
+
+/* ---- risultati della ricerca: righe in un gruppo bianco come il carrello, separatore dal testo. "aggiungi" e
+   "nell'ordine" sono un tondo con l'icona (grigio col +, nero con la spunta, come le scelte a pillola); la parola resta
+   per i lettori di schermo. .ds-prow e .ds-pbadge li usano anche Magazzino, Prodotti e il Villaggio ---- */
+.scr-ordini .ord-hits { overflow: hidden; border-radius: 20px; background: var(--surface); }
+.scr-ordini .ord-hits > .ds-prow { position: relative; gap: 12px; margin: 0; padding: 12px 16px; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.scr-ordini .ord-hits > .ds-prow + .ds-prow::before { content: ''; position: absolute; top: 0; left: 68px; right: 0; height: 1px; background: var(--border); }
+.scr-ordini .ord-hits > .ds-prow:active { background: var(--surface-alt); }
+/* overflow: hidden taglierebbe l'anello di focus disegnato fuori dalla riga */
+.scr-ordini .ord-hits :focus-visible { outline-offset: -2px; }
+/* nome e storico sono span: senza display block lo storico si attaccava al nome ("SAVANAgia' ordinata") */
+.scr-ordini .ord-hits :is(.ds-pn, .ds-psub) { display: block; }
+.scr-ordini .ord-hits .ds-pn { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.scr-ordini .ord-hits .ds-psub { margin-top: 3px; font-size: 12.5px; }
+.scr-ordini .ord-hits .ds-pbadge.ord-add { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 32px; height: 32px; margin: 0; padding: 0; border-radius: 50%; background: var(--surface-alt); color: var(--interactive); font-size: 0; box-shadow: none; }
+.scr-ordini .ord-hits .ds-pbadge.ord-add svg { width: 16px; height: 16px; }
+.scr-ordini .ord-hits .ds-pbadge.ord-add.in { background: var(--ink); color: var(--surface); }
+
+/* ---- borsa nuova: i modelli sono pillole (shell.css), quello scelto pieno in nero. Qui .supcard.alt vuol dire
+   "scelto", in Registra "altra opzione": solo sotto .newbag ---- */
+.scr-ordini .newbag .supcard.alt { border: 0; background: var(--ink); color: var(--surface); }
+.scr-ordini .newbag .supcard.old { opacity: 1; color: var(--interactive); }
+
+/* ---- stampa: la card scura del totale resta scura anche senza "grafica di sfondo" ---- */
+@media print {
+  .scr-ordini .carttot.ord-tot.hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
