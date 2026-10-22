@@ -12,13 +12,14 @@ import { DataTables } from './Tables';
 import Icon from '../components/Icon';
 import AppBar from '../components/AppBar';
 import { personaName } from '../lib/people';
+import '../styles/screens/registra.css';
 
-// at the end of a flow, jump straight to that flow's full table
+// in fondo a ogni flusso, porta alla sua tabella intera (frase intera, "tutti" o "tutte" secondo il nome)
 const SEE_ALL: Record<string, { key: string; label: string }> = {
-  gift: { key: 'regali', label: 'i regali' }, reso: { key: 'resi', label: 'i resi' },
-  b2b: { key: 'b2b', label: 'i movimenti B2B' }, count: { key: 'conte', label: 'le conte' },
-  product: { key: 'prodotti', label: 'i prodotti' }, spesa: { key: 'spese', label: 'le spese' },
-  catalogo: { key: 'prodotti', label: 'i prodotti' },
+  gift: { key: 'regali', label: 'Vedi tutti i regali' }, reso: { key: 'resi', label: 'Vedi tutti i resi' },
+  b2b: { key: 'b2b', label: 'Vedi tutti i movimenti B2B' }, count: { key: 'conte', label: 'Vedi tutte le conte' },
+  product: { key: 'prodotti', label: 'Vedi tutti i prodotti' }, spesa: { key: 'spese', label: 'Vedi tutte le spese' },
+  catalogo: { key: 'prodotti', label: 'Vedi tutti i prodotti' },
 };
 
 // Same actions for everyone (only the Home is persona-personalized). "Arrivo/Acquisto" lives in Ordini.
@@ -53,7 +54,7 @@ export default function Ingest({ pin, chi, initial }: {
   const seeAll = sel ? SEE_ALL[sel] : undefined;
 
   return (
-    <div className="screen">
+    <div className="screen scr-registra">
       <AppBar
         title={cur?.label ?? 'Registra'}
         onBack={sel ? () => popBack(() => setSel(null)) : undefined}
@@ -63,10 +64,10 @@ export default function Ingest({ pin, chi, initial }: {
 
       {!sel ? (
         <>
-          <div className="tipi">
+          <div className="tipi reg-tipi">
             {TIPI.map((t) => (
               <button key={t.k} className="tipo" onClick={() => { setTableInit(undefined); pushBack(() => setSel(null)); setSel(t.k); }} type="button">
-                <span className="ti"><Icon name={t.icon} size={26} /></span>
+                <span className="ti"><Icon name={t.icon} size={22} /></span>
                 <span className="tt">{t.label}</span>
                 <span className="td">{t.desc}</span>
               </button>
@@ -88,7 +89,7 @@ export default function Ingest({ pin, chi, initial }: {
           {sel === 'tabelle' && <DataTables initial={tableInit} />}
           {seeAll && (
             <button className="seeall" type="button" onClick={() => { setTableInit(seeAll.key); setSel('tabelle'); }}>
-              <Icon name="table" size={16} /> Vedi tutti {seeAll.label} →
+              <Icon name="table" size={16} /> {seeAll.label}
             </button>
           )}
         </>
