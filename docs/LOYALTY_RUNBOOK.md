@@ -397,7 +397,7 @@ Livelli: `loyalty_tier_of`, `v_loyalty_members.tier_saldo/tier_cumulato`, `loyal
 - Dopo il deploy: bundle vivo identico al build, `verify_jwt` false, `/apps/premia/club` 200 con la vetrina, smoke 15/15. Regola 19 identica prima (09:44) e dopo (09:49): CE di ottobre 13.527,74 / MC2 9.144,66, giacenze 1.173 pezzi / 80.891,00 EUR / 209 righe. Ledger senza scarti.
 - Dal vivo, senza accesso: `amimi.it/punti` mostra la vetrina con la Tovaglia, la console e' pulita. `amimi.it/punti?evento=VERIFICA-VETRINA` mostra il cancello dell'evento di prima, senza vetrina, e il ritorno dopo l'accesso conserva il codice (localStorage pulito dopo la prova).
 - Shopify, con le scritture via Admin API autorizzate da Dan in chat:
-  - redirect `/punti` -> `/apps/premia/club` (09:3x UTC);
+  - redirect `/punti` -> `/apps/premia/club`, creato poco prima del deploy;
   - voce ACCEDI in fondo a `main-menu`: albero passato intero a `menuUpdate`, 31 voci con id e url identici prima e dopo, e ACCEDI visibile in header, menu del telefono e footer;
   - "Punti Mimì" nel menu dell'account.
 - Effetto sul layout: con la settima voce, Symmetry porta il menu sotto il logo fra circa 1.100 e 1.250 px di larghezza della finestra (fallback del tema). Da 1.280 px in su resta su una riga.
