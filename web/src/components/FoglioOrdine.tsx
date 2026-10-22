@@ -274,7 +274,7 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
               <b style={{ fontSize: 14 }}>Foglio {fi + 1}</b>
               {/* il modello e' l'intestazione del foglio: vale per tutte le sue righe; cambiarlo azzera varianti e candidati */}
               {rs.length > 0 && (
-                <select className="txt" style={{ padding: '4px 6px', fontSize: 13, width: 'auto' }} value={rs[0].modello}
+                <select className="txt ord-modello" value={rs[0].modello}
                   onChange={(e) => setRighe((all0) => all0.map((x) => (x.foglioId === f.id ? { ...x, modello: e.target.value, scelta: null, candidati: [], primoScelto: false } : x)))}>
                   {!modelli.includes(rs[0].modello) && <option value={rs[0].modello}>{rs[0].modello || '(modello non letto)'}</option>}
                   {modelli.map((m) => <option key={m} value={m}>{m}</option>)}

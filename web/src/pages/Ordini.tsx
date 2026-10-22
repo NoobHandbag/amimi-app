@@ -12,16 +12,12 @@ import AppBar from '../components/AppBar';
 import { prettyName, pianoArrivo } from '../lib/helpers';
 import type { ModoArrivo } from '../lib/helpers';
 import { toast } from '../lib/toast';
+import '../styles/screens/ordini.css';
 
 // valore di partenza del campo: in 'adesso' i pezzi che mancano (come prima, quando era precompilato l'ordinato),
 // in 'totale' il totale gia' registrato
 const campoIniziale = (m: ModoArrivo, gia: number, mancano: number, wip: boolean, done: boolean) =>
   m === 'totale' ? String(gia) : (wip || done || mancano <= 0 ? '' : String(mancano));
-
-// modulo "Modifica" di ArrivoRow. Campi a 16 px: con meno, Safari su iPhone ingrandisce la pagina quando si tocca il
-// campo; flex none perche' dentro l'etichetta in colonna la base di .ds-recvdate (116 px) diventerebbe l'altezza
-const etichetta = { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--ink-muted)', minWidth: 0 } as const;
-const campo = { fontSize: 16, flex: 'none' } as const;
 
 /* register an arrival against one order line (riusata dal Villaggio: un solo punto che scrive gli arrivi) */
 export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l: OrdLine; pin: string; chi: string; reload: () => void; defaultOpen?: boolean; altri?: OrdLine[] }) {
@@ -150,7 +146,7 @@ export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l:
         {l.image_url ? <span className="ds-thumb"><img src={l.image_url} alt="" /></span> : <span className="ds-thumb">{(l.item ?? l.codice).slice(0, 2).toUpperCase()}</span>}
         <div className="ds-lname">
           <div className="lm">{prettyName(l.item, l.variant, l.codice)}{l.wip && <span className="wip" title="quantità/costo da definire: si risolvono all'arrivo">WIP</span>}</div>
-          {l.note && <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 2 }}>{l.note}</div>}
+          {l.note && <div className="ord-note">{l.note}</div>}
         </div>
         {done
           ? <div className="ds-miss done"><Icon name="check" size={15} /><small>arrivato</small></div>
@@ -160,30 +156,30 @@ export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l:
         <div className="ds-prog"><div className={`ds-progfill ${done ? 'done' : ''}`} style={{ width: `${pct}%` }} /></div>
         <span className="ds-progtxt">{l.qty_arrived} / {l.wip ? '?' : l.qty_ordered}</span>
       </div>
-      {l.data_consegna_display && <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 5 }}>Consegna prevista: {String(l.data_consegna_display).slice(0, 10)}</div>}
+      {l.data_consegna_display && <div className="ord-cons">Consegna prevista: {String(l.data_consegna_display).slice(0, 10)}</div>}
       {open && edit && modificabile && (
         <div className="ds-recv">
           <div className="rl">Modifica la riga (non è arrivato ancora niente)</div>
           <div className="ds-recvrow">
-            <label style={{ ...etichetta, flex: '1 1 110px' }}>
+            <label className="ord-lab" style={{ flex: '1 1 110px' }}>
               Pezzi ordinati
-              <input className="ds-recvdate" style={campo} type="number" inputMode="numeric" min={1} value={eq} onChange={(e) => setEq(e.target.value)} />
+              <input className="ds-recvdate" type="number" inputMode="numeric" min={1} value={eq} onChange={(e) => setEq(e.target.value)} />
             </label>
-            <label style={{ ...etichetta, flex: '1 1 110px' }}>
+            <label className="ord-lab" style={{ flex: '1 1 110px' }}>
               € al pezzo
-              <input className="ds-recvdate" style={campo} type="number" inputMode="decimal" min={0} value={ec} onChange={(e) => setEc(e.target.value)} placeholder="non lo so ancora" />
+              <input className="ds-recvdate" type="number" inputMode="decimal" min={0} value={ec} onChange={(e) => setEc(e.target.value)} placeholder="non lo so ancora" />
             </label>
-            <label style={{ ...etichetta, flex: '1 1 140px' }}>
+            <label className="ord-lab" style={{ flex: '1 1 140px' }}>
               Consegna prevista
-              <input className="ds-recvdate" style={campo} type="date" value={ed} min={String(l.data_ordine ?? '').slice(0, 10) || undefined} onChange={(e) => setEd(e.target.value)} />
+              <input className="ds-recvdate" type="date" value={ed} min={String(l.data_ordine ?? '').slice(0, 10) || undefined} onChange={(e) => setEd(e.target.value)} />
             </label>
           </div>
-          <label style={{ ...etichetta, marginTop: 8 }}>
+          <label className="ord-lab">
             Nota
-            <input className="ds-recvdate" style={campo} type="text" value={en} onChange={(e) => setEn(e.target.value)} placeholder="facoltativa" />
+            <input className="ds-recvdate" type="text" value={en} onChange={(e) => setEn(e.target.value)} placeholder="facoltativa" />
           </label>
           <div className="ds-recvfoot" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <button type="button" className="linkbtn" style={{ textDecoration: 'underline', color: 'var(--ink-muted)', fontSize: 12 }} disabled={busy} onClick={() => setEdit(false)}>Annulla</button>
+            <button type="button" className="linkbtn ord-link" disabled={busy} onClick={() => setEdit(false)}>Annulla</button>
             <button type="button" className="ds-segna" style={{ flex: 'none' }} disabled={busy} onClick={salvaModifica}>{busy ? '…' : 'Salva modifiche'}</button>
           </div>
         </div>
@@ -193,7 +189,7 @@ export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l:
           {altri.length > 0 && (
             // fix b (31-07): il vero antidoto al doppio conteggio: chi registra VEDE che esistono
             // altre righe ordine aperte per la stessa borsa e controlla di essere su quella giusta.
-            <div style={{ background: 'var(--warning-tint)', border: '1px solid var(--warning)', color: 'var(--warning-700)', borderRadius: 10, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}>
+            <div className="ord-alert">
               Attenzione: {altri.length === 1 ? "c'e' un altro ordine aperto" : `ci sono ${altri.length} altri ordini aperti`} per questa borsa
               ({altri.map((a) => `${a.fornitore ?? '?'}: ${a.wip ? '?' : a.mancano} mancano, ordine del ${String(a.data_ordine ?? '').slice(0, 10)}`).join(' · ')}).
               Controlla di registrare l'arrivo sulla riga giusta.
@@ -215,11 +211,11 @@ export function ArrivoRow({ l, pin, chi, reload, defaultOpen, altri = [] }: { l:
             <input className="ds-recvdate" style={{ marginTop: 8, flexBasis: '100%', width: '100%' }} type="number" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="€ al pezzo (se ora lo sai)" />
           )}
           <div className="ds-recvfoot" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-            <button type="button" className="linkbtn" style={{ textDecoration: 'underline', color: 'var(--ink-muted)', fontSize: 12 }} disabled={busy} onClick={() => cambiaModo(modo === 'adesso' ? 'totale' : 'adesso')}>
+            <button type="button" className="linkbtn ord-link" disabled={busy} onClick={() => cambiaModo(modo === 'adesso' ? 'totale' : 'adesso')}>
               {modo === 'adesso' ? 'Correggi il totale' : done ? 'Registra un altro arrivo' : 'Registra un arrivo'}
             </button>
             <span style={{ display: 'flex', gap: 6 }}>
-              {modificabile && <button type="button" className="ds-del" style={{ color: 'var(--ink)', background: 'var(--surface-alt)' }} disabled={busy} onClick={apriModifica}>Modifica</button>}
+              {modificabile && <button type="button" className="ds-del neutro" disabled={busy} onClick={apriModifica}>Modifica</button>}
               <button type="button" className="ds-del" disabled={busy} onClick={remove}><Icon name="trash" size={14} /> Elimina riga</button>
             </span>
           </div>
@@ -238,9 +234,9 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload, openByCodice }: 
   const dcons = (l: OrdLine) => String(l.data_consegna_display ?? l.data_consegna ?? '').slice(0, 10);
   const done = sup.lines.filter((l) => l.completo).sort((a, b) => dcons(b).localeCompare(dcons(a)));
   return (
-    <div className="screen">
+    <div className="screen scr-ordini">
       <AppBar title={sup.fornitore} onBack={onBack} backLabel="Tutti i fornitori" />
-      <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={onAdd}><Icon name="plus" size={17} /> Nuovo ordine per {sup.fornitore}</button>
+      <button className="ds-btn secondary full" onClick={onAdd}><Icon name="plus" size={17} /> Nuovo ordine per {sup.fornitore}</button>
       <div className="ds-seclb">In arrivo <span className="c">{open.length}</span></div>
       {/* fix d (31-07): niente riga auto-aperta: cosi' com'era, un tocco accidentale su "Segna
           arrivati" registrava un arrivo COMPLETO (quantita' precompilata + pannello gia' aperto). */}
@@ -248,11 +244,11 @@ function SupplierDetail({ sup, pin, chi, onBack, onAdd, reload, openByCodice }: 
         : open.map((l) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} altri={(openByCodice.get(l.codice) ?? []).filter((x) => x.id !== l.id)} />)}
       {done.length > 0 && (
         <>
-          <button type="button" className="ds-more" style={{ marginTop: 8 }} onClick={() => setShowDone((s) => !s)}>
-            <span>Già arrivati <span style={{ opacity: .7 }}>({done.length})</span></span>
-            <b>{showDone ? 'Nascondi ▲' : 'Mostra ›'}</b>
+          <button type="button" className="ds-more" aria-expanded={showDone} onClick={() => setShowDone((s) => !s)}>
+            <span>Già arrivati <span className="c">{done.length}</span></span>
+            <b>{showDone ? 'Nascondi' : 'Mostra'}<Icon name="chevron" size={16} /></b>
           </button>
-          {showDone && <div style={{ marginTop: 10 }}>{done.map((l) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} />)}</div>}
+          {showDone && <div className="ord-done">{done.map((l) => <ArrivoRow key={l.id} l={l} pin={pin} chi={chi} reload={reload} />)}</div>}
         </>
       )}
     </div>
@@ -308,17 +304,17 @@ export default function Ordini({ pin, chi, initial, onMateriali }: { pin: string
     }).sort((a, b) => b.aperte - a.aperte || a.fornitore.localeCompare(b.fornitore));
   }, [grp]);
 
-  if (err) return <div className="screen"><AppBar title="Ordini" /><div className="card err">Errore: {err}</div></div>;
+  if (err) return <div className="screen scr-ordini"><AppBar title="Ordini" /><div className="card err">Errore: {err}</div></div>;
 
   if (adding) return (
-    <div className="screen">
+    <div className="screen scr-ordini">
       <AppBar title="Nuovo ordine" onBack={() => { setAdding(false); setAddForn(undefined); setAddCodice(undefined); }} backLabel="Ordini" />
       <SupplierOrderForm pin={pin} chi={chi} initialForn={addForn} initialCodice={addCodice} onDone={() => { setAdding(false); setAddForn(undefined); setAddCodice(undefined); load(); }} />
     </div>
   );
 
   if (foglio) return (
-    <div className="screen">
+    <div className="screen scr-ordini">
       <FoglioOrdine pin={pin} chi={chi} onCancel={() => setFoglio(false)} onDone={() => { setFoglio(false); load(); }} />
     </div>
   );
@@ -326,11 +322,11 @@ export default function Ordini({ pin, chi, initial, onMateriali }: { pin: string
   if (forn) {
     const sup = byForn.find((s) => s.fornitore === forn);
     if (sup) return <SupplierDetail sup={sup} pin={pin} chi={chi} onBack={() => setForn(null)} onAdd={() => { setAddForn(forn ?? undefined); setAdding(true); }} reload={load} openByCodice={openByCodice} />;
-    return <div className="screen"><AppBar title={forn} onBack={() => setForn(null)} backLabel="Ordini" /><div className="card muted center">Nessun ordine per {forn}.</div></div>;
+    return <div className="screen scr-ordini"><AppBar title={forn} onBack={() => setForn(null)} backLabel="Ordini" /><div className="card muted center">Nessun ordine per {forn}.</div></div>;
   }
 
   return (
-    <div className="screen">
+    <div className="screen scr-ordini">
       <AppBar title="Ordini" actions={<div className="hbtns"><PrintBtn /><ExportBtn name="ordini" rows={() => grp.flatMap((g) => g.righe).map((l) => ({ fornitore: l.fornitore, codice: l.codice, modello: l.item, variante: l.variant, ordinati: l.qty_ordered, arrivati: l.qty_arrived, mancano: l.mancano, completo: l.completo ? 'si' : 'no', data_ordine: l.data_ordine, data_consegna: l.data_consegna, costo_unitario: l.costo_unitario, tipo: l.nuovo_riordino }))} /></div>} />
       {/* Area Fornitori in due meta' (brief catalogo 22-09): PRODOTTI = questa pagina (borse finite, arrivi, stock);
           MATERIE PRIME = catalogo pelli/tessuti (pagina Materiali). Il segmented compare solo a modulo acceso. */}
@@ -340,21 +336,26 @@ export default function Ordini({ pin, chi, initial, onMateriali }: { pin: string
           <button type="button" onClick={onMateriali}>Materie prime</button>
         </div>
       )}
-      <button className="ds-btn secondary full" style={{ marginBottom: aiOn ? 8 : 14 }} onClick={() => setAdding(true)}><Icon name="plus" size={17} /> Nuovo ordine fornitore</button>
-      {aiOn && <button className="ds-btn secondary full" style={{ marginBottom: 14 }} onClick={() => setFoglio(true)}><Icon name="sparkles" size={17} /> Ordine da foglio (foto)</button>}
+      <button className="ds-btn primary full" onClick={() => setAdding(true)}><Icon name="plus" size={17} /> Nuovo ordine fornitore</button>
+      {aiOn && <button className="ds-btn secondary full" onClick={() => setFoglio(true)}><Icon name="sparkles" size={17} /> Ordine da foglio (foto)</button>}
       {byForn.length === 0 && <div className="card muted center">Nessun ordine. Tocca “Nuovo ordine fornitore”.</div>}
-      {byForn.map((s) => (
-        <button className="ds-scard" key={s.fornitore} onClick={() => setForn(s.fornitore)} type="button">
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="sn">{s.fornitore}</div>
-            <div className="ds-schips">
-              {s.aperte > 0 ? <span className="a">{s.aperte} in arrivo · {s.pezzi} pz</span> : <span className="ok">tutto arrivato</span>}
-              <span className="r">{s.lines.length} righe</span>
-            </div>
-          </div>
-          <span className="chev" style={{ color: 'var(--ink-muted)', fontSize: 20 }}>›</span>
-        </button>
-      ))}
+      {byForn.length > 0 && (
+        <div className="ds-group">
+          {byForn.map((s) => (
+            <button className="ds-scard" key={s.fornitore} onClick={() => setForn(s.fornitore)} type="button">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="sn">{s.fornitore}</div>
+                <div className="ds-schips">
+                  {s.aperte > 0 ? <span className="a">{s.aperte} in arrivo</span> : <span className="ok">tutto arrivato</span>}
+                  <span className="r">{s.lines.length} {s.lines.length === 1 ? 'riga' : 'righe'}</span>
+                </div>
+              </div>
+              {s.aperte > 0 && <span className="ord-val">{s.pezzi}<small> pz</small></span>}
+              <span className="chev"><Icon name="chevron" size={18} /></span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,0 +1,79 @@
+/* ============================================================================
+   Ordini (tema A, PR 7, 22-10-2026): lista dei fornitori, dettaglio del fornitore e righe d'arrivo (pages/Ordini.tsx).
+   Regole della schermata sotto .scr-ordini, sul div .screen di ogni vista di Ordini (anche errore, nuovo ordine, foglio).
+   Gruppo (.ds-group), "Gia' arrivati" (.ds-more), bottoni, passo e campi del kit vengono gia' da shell.css.
+   Nuovo ordine (SupplierOrderForm) resta com'e': ha la sua PR.
+   ============================================================================ */
+
+/* ---- in cima: "Nuovo ordine fornitore" e' l'azione (primario bordeaux); i secondari sono bianchi da shell.css ---- */
+.scr-ordini > .ds-btn.full { margin-bottom: 14px; }
+.scr-ordini > .ds-btn.full:has(+ .ds-btn.full) { margin-bottom: 8px; }
+
+/* ---- lista dei fornitori: righe in un gruppo bianco (.ds-group); sotto il nome lo stato in grigio, a destra i pezzi
+   che mancano. .ds-scard serve anche a Materiali: qui solo sotto .scr-ordini ---- */
+.scr-ordini .ds-scard { padding: 14px 16px; }
+.scr-ordini .ds-scard .sn { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.scr-ordini .ds-schips { gap: 0 5px; margin-top: 3px; }
+.scr-ordini .ds-schips span { background: none; padding: 0; border-radius: 0; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+/* "tutto arrivato" e' un esito: verde, solo il testo */
+.scr-ordini .ds-schips .ok { color: var(--positive-700); }
+.scr-ordini .ds-schips span + span::before { content: "·"; margin-right: 5px; color: var(--ink-muted); }
+.scr-ordini .ord-val { flex: none; white-space: nowrap; font-size: 20px; font-weight: 600; letter-spacing: -.03em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.scr-ordini .ord-val small { font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--ink-muted); }
+.scr-ordini .ds-scard .chev { display: grid; color: var(--ink-muted); }
+
+/* ---- dettaglio: il conteggio accanto a "In arrivo" come quello di "Gia' arrivati" (.ds-more .c), testo grigio
+   (candidato per shell.css: Salute e Spese tengono la pillola) ---- */
+.scr-ordini .ds-seclb .c { background: none; padding: 0; font-size: inherit; font-weight: 500; letter-spacing: inherit; color: var(--ink-muted); }
+.scr-ordini .ord-done { margin-top: 10px; }
+
+/* ---- righe d'arrivo: card bianche senza bordo; "mancano" e' il numero grande. La barra e' in inchiostro (avanzamento,
+   non un'azione) e verde solo a riga completa, come il numero ---- */
+.scr-ordini .ds-lrow { border: 0; border-radius: 18px; padding: 14px 16px; margin-bottom: 8px; }
+.scr-ordini .ds-lname .lm { font-size: 15px; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+.scr-ordini .ds-lname .wip { border-radius: 999px; padding: 2px 7px; font-size: 11px; font-weight: 600; color: var(--warning-700); }
+.scr-ordini .ds-miss { font-size: 22px; font-weight: 600; letter-spacing: -.035em; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.scr-ordini .ds-miss small { font-size: 12px; font-weight: 500; letter-spacing: 0; }
+.scr-ordini .ds-miss.done { color: var(--positive-700); }
+.scr-ordini .ds-prog { height: 6px; }
+.scr-ordini .ds-progfill:not(.done) { background: var(--ink); }
+.scr-ordini .ds-progtxt { font-size: 12px; font-weight: 600; }
+
+/* ---- modulo d'arrivo e di modifica: niente riga sopra ne' etichetta in maiuscolo; data e campi pieni a 16 px e alti
+   48 px come quelli del kit (con meno iPhone ingrandisce la pagina al tocco); "Segna arrivati" bordeaux piatto ---- */
+.scr-ordini .ds-recv { margin-top: 14px; padding-top: 0; border-top: 0; }
+.scr-ordini .ds-recv .rl { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+.scr-ordini .ds-recvdate { min-height: 48px; border: 0; border-radius: 14px; background: var(--surface-alt); font-size: 16px; }
+/* .ds-recvdate non e' un campo del kit (.txt/.num), quindi la regola del segnaposto di shell.css non lo prende: sul grigio
+   il segnaposto di default del browser scende a 3,9:1, --ink-muted regge 4,77:1 */
+.scr-ordini .ds-recvdate::placeholder { color: var(--ink-muted); opacity: 1; }
+.scr-ordini .ds-segna { min-height: 48px; border-radius: 14px; background: var(--interactive); box-shadow: none; font-family: inherit; font-size: 15px; font-weight: 600; }
+.scr-ordini .ds-del { min-height: 36px; padding: 8px 12px; border-radius: 999px; font-size: 12.5px; }
+/* piede della riga: link a sinistra, pillole a destra. Sotto i 375 px link, Modifica ed Elimina non ci stanno su una riga:
+   le pillole scendono sotto, sempre a destra, invece di andare a capo dentro ("Elimina / riga") */
+.scr-ordini .ds-recvfoot { flex-wrap: wrap; gap: 8px; }
+.scr-ordini .ds-recvfoot > span { margin-left: auto; }
+.scr-ordini :is(.ds-recvfoot .ord-link, .ds-del) { white-space: nowrap; }
+
+/* ---- pezzi del TSX di ArrivoRow, che il Villaggio riusa: classi senza .scr-ordini (prima erano style scritti nel TSX).
+   villaggio.css (.v-arrivo) tiene le sue misure da dito e nella vista "solo" nasconde la riga della consegna (.ord-cons) ---- */
+.ord-note { margin-top: 2px; font-size: 13px; color: var(--ink-muted); }
+.ord-cons { margin-top: 6px; font-size: 12.5px; color: var(--ink-muted); }
+.ord-alert { margin-bottom: 10px; padding: 10px 12px; border-radius: 14px; background: var(--warning-tint); color: var(--warning-700); font-size: 13px; line-height: 1.4; }
+.ord-lab { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 13px; color: var(--ink-muted); }
+/* campi a 16 px (iOS); flex none: nell'etichetta in colonna la base di .ds-recvdate (116 px) diventerebbe l'altezza */
+.ord-lab input { flex: none; font-size: 16px; }
+.ds-recvrow + .ord-lab { margin-top: 9px; }
+.ord-link { min-height: 36px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--interactive); }
+.ds-del.neutro { color: var(--ink); background: var(--surface-alt); }
+
+/* ---- ordine da foglio (components/FoglioOrdine.tsx): il modello del foglio e' un select del kit, largo quanto il nome ---- */
+.scr-ordini .ord-modello { width: auto; max-width: 100%; min-width: 0; }
+
+/* ---- stampa (bottone PDF della lista): i separatori del gruppo sono uno sfondo e senza "grafica di sfondo" sparirebbero,
+   sul foglio diventano un bordo (candidato per shell.css: vale per ogni .ds-group); la freccia porta al dettaglio,
+   sul foglio non serve ---- */
+@media print {
+  .scr-ordini .ds-group > * + *::before { height: 0; background: none; border-top: 1px solid var(--border); }
+  .scr-ordini .ds-scard .chev { display: none; }
+}
