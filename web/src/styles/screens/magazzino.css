@@ -3,7 +3,7 @@
    scheda prodotto compresa (il cassetto sta dentro la radice). Vengono gia' da shell.css: l'azione tonda "Aggiorna
    Shopify", .askhead, .ds-group, le file che scorrono, velatura, angoli e chiudi del cassetto.
    .ds-prow e .ds-pbadge li usano anche Prodotti e il foglio d'ordine (anche nel Villaggio): qui solo dentro .inv-list.
-   La scheda Riordino (ReorderView) resta com'e': prende solo il selettore delle schede.
+   La scheda Riordino (ReorderView) e la lista "Per linea" hanno la loro sezione in fondo (PR 9).
    ============================================================================ */
 
 /* ---- schede Magazzino / Riordino e lente: selettore pieno, largo quanto la pagina ---- */
@@ -102,4 +102,98 @@
   .scr-mag :is(.ds-seg.full.inv-lens button, .ds-lens .ds-lp).on { padding-left: 0; font-size: 12.5px; }
   /* !important: Icon scrive display: inline-block nel suo style */
   .scr-mag .inv-linee .askhead > svg:last-child { display: none !important; }
+}
+
+/* ============================================================================
+   Riordino (tema A, PR 9, 22-10-2026): la scheda Riordino (ReorderView) e, in fondo, la lista "Per linea" del
+   Magazzino. Sempre sotto .scr-mag. .hot e .tag li usa anche Prodotti: qui solo dentro .rio-list. Archivia e
+   ripristina tengono .rio-arch, che index.css toglie dal foglio.
+   ============================================================================ */
+
+/* ---- Solo venduti / Tutti: lo stesso selettore pieno delle schede (.ds-seg.full sopra) ---- */
+.scr-mag .rio-filtro { margin-bottom: 10px; }
+/* "Archivia (icona)" e "Ripristina (icona)" nelle note non vanno a capo */
+.scr-mag .rio-k { white-space: nowrap; }
+
+/* ---- lista: una sola superficie (.ds-group di shell.css), il separatore parte dal testo (16 + 52 di foto + 12).
+   Numero e tondo occupano la destra: spazi fra le colonne a 8 px e 12 a destra (il tondo ha gia' il suo vuoto),
+   cosi' a 390 px due dati stanno su una riga ---- */
+.scr-mag .rio-list { --sep-inset: 80px; margin: 12px 0 14px; }
+.scr-mag .rio-list > .row { gap: 8px; padding: 12px 12px 12px 16px; }
+.scr-mag .rio-list > p { padding: 16px; }
+.scr-mag .rio-open { flex: 1; min-width: 0; gap: 12px; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.scr-mag .rio-open.static { cursor: default; }
+.scr-mag .rio-info { flex: 1; min-width: 0; }
+.scr-mag .rio-list .invimg { width: 52px; height: 52px; border-radius: 14px; }
+.scr-mag .rio-list .invimg.ph { font-weight: 600; }
+.scr-mag .rio-list .rt { font-size: 15px; font-weight: 500; letter-spacing: -.01em; line-height: 1.25; }
+/* telefono da 320: con foto a 52 al nome restavano 95 px e andava a capo su tre o quattro righe */
+@media (max-width: 359px) {
+  .scr-mag .rio-list { --sep-inset: 66px; }
+  .scr-mag .rio-list .invimg { width: 40px; height: 40px; border-radius: 12px; }
+  .scr-mag .rio-open { gap: 10px; }
+}
+/* venduti, in arrivo, giorni di stock (e in Per linea i quattro numeri): una riga grigia, separati da un punto. Ogni
+   pezzo porta il suo punto davanti; il punto del primo pezzo di ogni riga cade nei 14 px tagliati a sinistra, cosi'
+   una riga che va a capo non comincia col punto. Il punto non si legge (testo alternativo vuoto) */
+.scr-mag :is(.rio-list .invtags, .st-list .st-facts) { display: flex; flex-wrap: wrap; gap: 0; margin: 2px 0 0 -14px; clip-path: inset(0 0 0 14px);
+  font-size: 12.5px; line-height: 1.35; color: var(--ink-muted); }
+.scr-mag :is(.rio-list .tag, .st-facts > span) { white-space: nowrap; }
+.scr-mag :is(.rio-list .tag, .st-facts > span)::before { content: '·'; content: '·' / ''; display: inline-block; width: 14px; text-align: center; color: var(--ink-faint); }
+.scr-mag .rio-list .tag { padding: 0; border-radius: 0; background: none; font-size: 12.5px; font-weight: 400; color: var(--ink-muted); }
+/* "in arrivo" e' un esito buono: verde. Le vendite non sono un allarme: grigie come il resto */
+.scr-mag .rio-list .tag.live { color: var(--positive-700); font-weight: 500; }
+/* da riprodurre: attenzione, quindi pallino arancio e parola (non la pillola bordeaux, che e' azione). Il pallino e'
+   un bordo: resta sul foglio anche senza grafica di sfondo */
+.scr-mag .rio-list .hot { display: inline-flex; align-items: center; gap: 5px; margin: 4px 0 0; padding: 0; border-radius: 0; background: none;
+  font-size: 11.5px; font-weight: 600; color: var(--warning-700); }
+.scr-mag .rio-list .hot::before { content: ''; width: 6px; height: 6px; box-sizing: border-box; border: 3px solid currentColor; border-radius: 50%; }
+/* disponibili: numero grande e stretto, la parola piccola sotto; a zero o sotto in rosso, come nella lista Magazzino */
+.scr-mag .rio-list .rio-n { display: grid; justify-items: end; flex: none; min-width: 0; font-size: 20px; font-weight: 600; letter-spacing: -.02em;
+  line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.scr-mag .rio-list .rio-n small { font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--ink-muted); }
+.scr-mag .rio-list .rio-n.neg { color: var(--negative); }
+/* archivia / ripristina: tondo con l'icona come le azioni della barra; il nome e' nell'aria-label. Tondo da 34 px,
+   tocco da 44 */
+.scr-mag .rio-arch { position: relative; flex: none; display: grid; place-items: center; width: 34px; height: 34px; margin-left: 4px; padding: 0; border: 0;
+  border-radius: 50%; background: var(--surface-alt); color: var(--ink); font: inherit; cursor: pointer; }
+.scr-mag .rio-arch::after { content: ''; position: absolute; inset: -5px; }
+.scr-mag .rio-arch:disabled { opacity: .55; cursor: default; }
+/* .ds-group fa grigia la riga premuta, anche quando si preme il tondo (che ci sparirebbe dentro) o una riga che non apre
+   nulla (archivio, senza ordini): li' la riga resta bianca e, sul tondo, si scurisce solo il tondo */
+.scr-mag .rio-list > .row:has(.rio-arch:active, .rio-open.static:active) { background: none; }
+.scr-mag .rio-arch:not(:disabled):active { background: var(--border-strong); }
+
+/* ---- archivio: .askhead di shell.css col numero a destra prima della freccia; le righe arrivano ai bordi della card ---- */
+.scr-mag .rio-archivio .askhead .h2n { margin-left: auto; font-size: 13px; font-weight: 500; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.scr-mag .rio-archivio .askhead > svg:last-child { margin-left: 0; }
+.scr-mag .rio-archivio .askbody { margin-top: 12px; }
+.scr-mag .rio-archivio .askbody > .note { margin-top: 0; }
+.scr-mag .rio-archivio .rio-list { margin: 4px -16px -16px; }
+
+/* ---- Per linea: la tabella a sei colonne (a 390 px scorreva) e' una lista. Modello e numeri a sinistra, il
+   sell-through grande a destra nel colore dell'esito (stCls: verde da 80%, rosso sotto 30%). Stesse righe, stesso ordine ---- */
+.scr-mag .inv-linee .askbody > .note:first-child { margin-top: 0; }
+.scr-mag .st-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.scr-mag .st-list li { display: flex; align-items: center; gap: 12px; padding: 11px 0; }
+.scr-mag .st-list li + li { border-top: 1px solid var(--border); }
+.scr-mag .st-info { flex: 1; min-width: 0; }
+.scr-mag .st-list .rt { font-size: 15px; font-weight: 500; letter-spacing: -.01em; line-height: 1.25; }
+.scr-mag .st-list .rt .muted { font-weight: 400; }
+.scr-mag .st-list .st { flex: none; font-size: 20px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.scr-mag .st-list .st.pos { color: var(--positive-700); }
+.scr-mag .st-list .st.neg { color: var(--negative-700); }
+.scr-mag .inv-linee .note .ds-btn { display: flex; margin-top: 8px; }
+
+/* ---- stampa: il filo di .ds-group e' un fondo e sul foglio sparirebbe, qui e' un bordo; le righe non si spezzano ---- */
+@media print {
+  .scr-mag .rio-list > * + *::before { height: 0; background: none; border-top: 1px solid var(--border); }
+  .scr-mag .st-list li { break-inside: avoid; }
+  /* index.css tiene ogni card intera su un foglio e shell.css lo toglie alle card lunghe solo con tbody o .list: da 12
+     modelli "Per linea" saltava tutta al foglio dopo e lasciava il primo quasi vuoto. Il titolo e la nota restano con
+     la prima riga */
+  .scr-mag .inv-linee:has(.st-list > li:nth-child(12)) { break-inside: auto; }
+  .scr-mag .inv-linee :is(.askhead, .askbody > .note:first-child) { break-after: avoid; }
+  /* !important: Icon scrive display: inline-block nel suo style */
+  .scr-mag .rio-archivio .askhead > svg:last-child { display: none !important; }
 }
