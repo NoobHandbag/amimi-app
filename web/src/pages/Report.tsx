@@ -9,6 +9,7 @@ import PrintBtn from '../components/PrintBtn';
 import Icon from '../components/Icon';
 import AppBar from '../components/AppBar';
 import { nowMonth, nowYear } from '../lib/helpers';
+import '../styles/screens/cruscotto.css';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
@@ -113,7 +114,7 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
   const allOn = visMonths.every((m) => sel.has(m));
 
   return (
-    <div className="screen">
+    <div className="screen scr-crusc">
       <AppBar title="Cruscotto" onBack={onBack} backLabel="Home" actions={<>
         <PrintBtn />
         <ExportBtn name="conto_economico" rows={() => rows.map((r) => ({ mese: MESI[r.month], netto: Math.round(r.netto), lordo: Math.round(r.lordo), mc1: Math.round(r.mc1), mc2: Math.round(r.mc2), online: Math.round(r.online), offline: Math.round(r.offline), b2b: Math.round(r.b2b) }))} />
@@ -140,18 +141,18 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
       <div className="kpis">
         <div className="ds-kpi accent"><div className="v">{eur(lordo)}</div><div className="l">Fatturato lordo</div><div className="s">incl. IVA</div></div>
         <div className="ds-kpi"><div className="v">{eur(netto)}</div><div className="l">Fatturato netto</div><div className="s">IVA 22% esclusa</div></div>
-        <div className={`ds-kpi ${mc1 >= 0 ? 'pos' : 'neg'}`}><div className="v">{eur(mc1)}</div><div className="l">MC1 · margine</div><div className="s">{pct1(mc1 / nettoClosed)} su netto · mesi chiusi</div></div>
+        <div className={`ds-kpi ${mc1 < 0 ? 'neg' : ''}`}><div className="v">{eur(mc1)}</div><div className="l">MC1 · margine</div><div className="s">{pct1(mc1 / nettoClosed)} su netto · mesi chiusi</div></div>
         <div className="ds-kpi hero"><div className="v">{eur(mc2)}</div><div className="l">MC2 · Utile</div><div className="s">{pct1(mc2 / nettoClosed)} su netto · mesi chiusi</div></div>
       </div>
 
       {lordo > 0 && (
         <section className="card ds-funnel">
           <h2>Dal lordo all'utile</h2>
-          <p className="note" style={{ marginTop: -4, marginBottom: 12 }}>Dove se ne va il valore, dai ricavi ai costi. MC su mesi chiusi.</p>
-          {funnelRow('Fatturato lordo', null, lordo, lordo, 'var(--grad-action)')}
-          {funnelRow('Fatturato netto', 'meno IVA', netto, lordo, 'var(--interactive)')}
-          {funnelRow('MC1', 'meno costi variabili', mc1, lordo, 'var(--sec-lavender)')}
-          {funnelRow('MC2 · Utile', 'meno costi fissi', mc2, lordo, 'var(--sec-cabaret)')}
+          <p className="note">Dove se ne va il valore, dai ricavi ai costi. MC su mesi chiusi.</p>
+          {funnelRow('Fatturato lordo', null, lordo, lordo, 'var(--chart-bar)')}
+          {funnelRow('Fatturato netto', 'meno IVA', netto, lordo, 'var(--chart-bar)')}
+          {funnelRow('MC1', 'meno costi variabili', mc1, lordo, 'var(--chart-bar)')}
+          {funnelRow('MC2 · Utile', 'meno costi fissi', mc2, lordo, 'var(--ink)')}
         </section>
       )}
 
@@ -180,21 +181,21 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
       <section className="card">
         <h2>Canali · periodo selezionato</h2>
         <div className="ds-chbar">
-          <div className="ds-ch-on" style={{ flex: onY }} />
-          <div className="ds-ch-of" style={{ flex: ofY }} />
+          {onY > 0 && <div className="ds-ch-on" style={{ flex: onY }} />}
+          {ofY > 0 && <div className="ds-ch-of" style={{ flex: ofY }} />}
           {b2bY > 0 && <div className="ds-ch-b2" style={{ flex: b2bY }} />}
         </div>
         <div className="ds-chleg">
-          <span><i className="ds-ch-on" />Online {pct(onY / totCh)} · {eur(onY)}</span>
-          <span><i className="ds-ch-of" />Offline {pct(ofY / totCh)} · {eur(ofY)}</span>
-          {b2bY > 0 && <span><i className="ds-ch-b2" />B2B {pct(b2bY / totCh)} · {eur(b2bY)}</span>}
+          <span><i className="ds-ch-on" />Online <b>{pct(onY / totCh)} · {eur(onY)}</b></span>
+          <span><i className="ds-ch-of" />Offline <b>{pct(ofY / totCh)} · {eur(ofY)}</b></span>
+          {b2bY > 0 && <span><i className="ds-ch-b2" />B2B <b>{pct(b2bY / totCh)} · {eur(b2bY)}</b></span>}
         </div>
       </section>
 
       <section className="card">
         <div className="dethead">
-          <h2>Conto Economico mensile</h2>
-          {onDetail && <button className="ds-btn secondary" onClick={onDetail}>Vedi dettaglio ›</button>}
+          <h2>Conto economico mensile</h2>
+          {onDetail && <button className="ds-btn secondary sm" type="button" onClick={onDetail}>Vedi dettaglio<Icon name="chevron" size={16} /></button>}
         </div>
         <div className="tablewrap">
           <table className="sortable">
@@ -202,19 +203,22 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
               <th onClick={() => ceSort.toggle('month')}>Mese{ceSort.arrow('month')}</th>
               <th onClick={() => ceSort.toggle('netto')}>Netto{ceSort.arrow('netto')}</th>
               <th onClick={() => ceSort.toggle('mc1')}>MC1{ceSort.arrow('mc1')}</th>
-              <th>MC1%</th>
               <th onClick={() => ceSort.toggle('mc2')}>MC2{ceSort.arrow('mc2')}</th>
-              <th>MC2%</th>
             </tr></thead>
             <tbody>
+              {/* la % su netto sta sotto l'importo (erano le colonne MC1% e MC2%); MC1 e' rosso solo se negativo, MC2 (utile) e' l'esito */}
               {(ceSort.sorted as unknown as Row[]).filter((r) => scope === 'totale' || r.month >= 2).map((r) => (
                 <tr key={r.month} className={sel.has(r.month) ? '' : 'dim'}>
                   <td className="l">{MESI[r.month]}{r.month === CURRENT_MONTH ? ' *' : ''}</td>
                   <td>{eur(r.netto)}</td>
-                  <td className={r.month < CURRENT_MONTH ? (r.mc1 > 0 ? 'pos' : r.mc1 < 0 ? 'neg' : '') : ''}>{r.month < CURRENT_MONTH ? eur(r.mc1) : '—'}</td>
-                  <td>{r.month < CURRENT_MONTH && r.netto ? pct(r.mc1 / r.netto) : '—'}</td>
-                  <td className={r.month < CURRENT_MONTH ? (r.mc2 > 0 ? 'pos' : r.mc2 < 0 ? 'neg' : '') : ''}>{r.month < CURRENT_MONTH ? eur(r.mc2) : '—'}</td>
-                  <td>{r.month < CURRENT_MONTH && r.netto ? pct(r.mc2 / r.netto) : '—'}</td>
+                  <td className={r.month < CURRENT_MONTH && r.mc1 < 0 ? 'neg' : ''}>
+                    {r.month < CURRENT_MONTH ? eur(r.mc1) : '—'}
+                    {r.month < CURRENT_MONTH && r.netto ? <small className="sub">{pct(r.mc1 / r.netto)}</small> : null}
+                  </td>
+                  <td className={r.month < CURRENT_MONTH ? (r.mc2 > 0 ? 'pos' : r.mc2 < 0 ? 'neg' : '') : ''}>
+                    {r.month < CURRENT_MONTH ? eur(r.mc2) : '—'}
+                    {r.month < CURRENT_MONTH && r.netto ? <small className="sub">{pct(r.mc2 / r.netto)}</small> : null}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -269,7 +273,7 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
                 <div className="rt">{p.item ?? p.codice}</div>
                 <div className="rs">{(p.variant ?? '').replace(/_/g, ' ')}{p.margine != null ? ` · MdC ${pct(p.margine)}` : ''}</div>
               </div>
-              <div className="giac" style={{ color: 'var(--rose)' }}>{p.venduto}</div>
+              <div className="giac">{p.venduto}</div>
             </div>
           ))}
         </div>
@@ -279,7 +283,7 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
         <section className="card">
           <h2>Villaggio</h2>
           <p className="muted" style={{ marginTop: 0 }}>Ordini e magazzino come un'isola 3D: i laboratori con quello che deve arrivare, il magazzino con una pila per variante.</p>
-          <button className="chip on" type="button" onClick={onVillaggio}>Apri il Villaggio →</button>
+          <button className="ds-btn secondary sm" type="button" onClick={onVillaggio}>Apri il Villaggio<Icon name="chevron" size={16} /></button>
         </section>
       )}
       <AdsCard onAds={onAds} />
@@ -309,11 +313,11 @@ function AdsCard({ onAds }: { onAds?: () => void }) {
       {/* 18-09: l'ingest continuo esiste (edge ads-sync, tab Ads); questa tabella resta la vecchia serie mensile a livello
           campagna (meta_ads_daily), ferma al 01-07, finche' non viene ripuntata a una vista mensile delle tabelle nuove. */}
       {staleDays != null && staleDays > 7 && (
-        <p className="note" style={{ color: 'var(--warning-700)', fontWeight: 600, marginTop: 0 }}>
-          ⚠ Questa tabella mensile e' la vecchia serie a livello campagna, ferma al {lastDay} ({staleDays} giorni fa). I dati vivi, per creativita' e aggiornati ogni mattina, sono nella tab Ads.
+        <p className="note warn">
+          Questa tabella mensile e' la vecchia serie a livello campagna, ferma al {lastDay} ({staleDays} giorni fa). I dati vivi, per creativita' e aggiornati ogni mattina, sono nella tab Ads.
         </p>
       )}
-      {onAds && <p style={{ marginTop: 0 }}><button className="chip on" type="button" onClick={onAds}>Apri Ads per creativita' →</button></p>}
+      {onAds && <p style={{ marginTop: 0 }}><button className="ds-btn secondary sm" type="button" onClick={onAds}>Apri Ads per creativita'<Icon name="chevron" size={16} /></button></p>}
       <div className="kpis">
         <Kpi label="Spesa ads" value={eur(spend)} tone="accent" />
         <Kpi label="ROAS" value={roas.toFixed(2) + '×'} tone={roas >= 1 ? 'green' : 'red'} />
@@ -361,20 +365,20 @@ function ScontiCard() {
   return (
     <section className="card">
       <h2>Sconti e fasce ordine · {nowYear()}</h2>
-      <p className="note" style={{ marginTop: 0 }}>{conSconto} ordini su {tot} con uno sconto ({pct(conSconto / tot)}). Margine = contribuzione dopo COGS, commissioni, packaging e rimborsi.</p>
+      <p className="note">{conSconto} ordini su {tot} con uno sconto ({pct(conSconto / tot)}). Margine = contribuzione dopo COGS, commissioni, packaging e rimborsi.</p>
       {codes.length > 0 && (
         <div className="tablewrap"><table className="sortable">
           <thead><tr><th>Codice</th><th>Ordini</th><th>Netto</th><th>Sconto</th><th>Margine</th><th>%</th></tr></thead>
           <tbody>{codes.map(([c, v]) => (
-            <tr key={c}><td className="l">{c}</td><td>{v.ordini}</td><td>{eur(v.netto)}</td><td className="neg">{eur(-Math.abs(v.sconto))}</td><td className={v.margine < 0 ? 'neg' : ''}>{eur(v.margine)}</td><td>{v.netto ? pct(v.margine / v.netto) : '—'}</td></tr>
+            <tr key={c}><td className="l">{c}</td><td>{v.ordini}</td><td>{eur(v.netto)}</td><td>{eur(-Math.abs(v.sconto))}</td><td className={v.margine < 0 ? 'neg' : ''}>{eur(v.margine)}</td><td>{v.netto ? pct(v.margine / v.netto) : '—'}</td></tr>
           ))}</tbody>
         </table></div>
       )}
-      <div className="ds-funnel" style={{ marginTop: 10 }}>
+      <div className="ds-funnel fasce">
         {counts.map(([lab, n]) => (
           <div className="fb" key={lab}>
             <div className="fname">{lab}<small>{pct(n / tot)} degli ordini</small></div>
-            <div className="ftrack"><div className="ffill" style={{ width: `${Math.round(n / maxF * 100)}%`, background: 'var(--sec-lavender)' }} /></div>
+            <div className="ftrack"><div className="ffill" style={{ width: `${Math.round(n / maxF * 100)}%`, background: 'var(--chart-bar)' }} /></div>
             <div className="fval">{n}</div>
           </div>
         ))}
@@ -400,10 +404,10 @@ function DealCalc() {
 
   return (
     <section className="card ask">
-      <button className="askhead" onClick={() => setOpen((o) => !o)}>🧮 Calcolatore offerte B2B <span className="muted">{open ? '−' : '+'}</span></button>
+      <button className="askhead" type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}>Calcolatore offerte B2B<Icon name="chevron" size={18} /></button>
       {open && (
         <div className="askbody">
-          {picking ? <ProductPicker selected={null} onPick={add} /> : <button className="bigadd" onClick={() => setPicking(true)}>+ Aggiungi prodotto</button>}
+          {picking ? <ProductPicker selected={null} onPick={add} /> : <button className="bigadd" type="button" onClick={() => setPicking(true)}><Icon name="plus" size={18} />Aggiungi prodotto</button>}
           {lines.map((l, i) => {
             const cogs = l.p.cogs || 0; const sellin = Number(l.sellin || 0);
             const mWhole = sellin > 0 ? (sellin - cogs) / sellin : 0;
@@ -414,7 +418,7 @@ function DealCalc() {
                   <div className="rs">COGS €{cogs} · whole {Math.round(mWhole * 100)}% · c/vendita €{cvNet.toFixed(0)}/pz</div></div>
                 <input className="qbox" type="number" value={l.qty} onChange={(e) => setLines((x) => x.map((y, j) => j === i ? { ...y, qty: Number(e.target.value) } : y))} />
                 <input className="cbox" type="number" placeholder="€/pz" value={l.sellin} onChange={(e) => setLines((x) => x.map((y, j) => j === i ? { ...y, sellin: e.target.value } : y))} />
-                <button className="x" onClick={() => setLines((x) => x.filter((_, j) => j !== i))}>✕</button>
+                <button className="x" type="button" aria-label="Togli" onClick={() => setLines((x) => x.filter((_, j) => j !== i))}><Icon name="close" size={16} /></button>
               </div>
             );
           })}
