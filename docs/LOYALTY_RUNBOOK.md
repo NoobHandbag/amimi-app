@@ -376,7 +376,10 @@ Livelli: `loyalty_tier_of`, `v_loyalty_members.tier_saldo/tier_cumulato`, `loyal
 ### 17.1 Gli ingressi
 - **Voce ACCEDI** nel menu principale (`main-menu`, Shopify admin -> Contenuti -> Menu; mai codice del tema): porta a `/apps/premia/club`. Lo stesso menu alimenta l'header, il menu del telefono e i "Quick links" del footer. La parola resta ACCEDI anche su `/en` (la pagina e' solo in italiano).
 - **Indirizzo corto** `amimi.it/punti` (redirect Shopify verso `/apps/premia/club`): conserva la query (`/punti?evento=CODICE` arriva con il codice) e il prefisso `/en`. Per bio di Instagram, mail, bigliettini e QR. `/it/...` non esiste sul sito: l'italiano sta alla radice.
-- **Menu dell'account** (`customer-account-main-menu`, account.amimi.it): "Punti Mimì" accanto a Ordini e Profilo.
+- **Menu dell'account** (`customer-account-main-menu`, account.amimi.it): dal 22-10 solo **Ordini** e **Punti Mimì**.
+  - "Profilo" e' stato tolto dal menu su richiesta di Dan: l'icona dell'account del tema porta lì e non ai punti, e cambiarla vorrebbe dire toccare il tema.
+  - La pagina profilo (dati, indirizzi, preferenze, "Esci") esiste ancora su `account.amimi.it/profile`. Che resti raggiungibile anche dal menu in alto a destra dell'account non e' verificato dal vivo: serve l'accesso di una cliente.
+  - Rimetterlo: `menuUpdate` con la voce `CUSTOMER_ACCOUNT_PAGE`, `resourceId` `gid://shopify/CustomerAccountPage/128010748231`, titolo "Profilo".
 - **Link di accesso del negozio** (Impostazioni -> Account clienti -> "Mostra link di accesso"): spenti fino al 22-10. Il tema Symmetry disegna l'icona dell'account solo se sono accesi (`shop.customer_accounts_enabled` in `sections/header.liquid`).
   - **Accesi il 22-10 in mattinata** su richiesta di Dan ("si', usa Claude in Chrome").
   - Come: non c'e' una mutation Admin API, e il browser integrato non ha la sessione dell'admin. Si e' usato il Chrome di Dan, con l'admin aperto come info@amimi.it (store `amimi-10000`). L'interruttore e' un `s-internal-switch` con la casella dentro uno shadow root: un clic da JavaScript, poi Shopify risponde "Modifiche salvate".
