@@ -234,9 +234,6 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 .arrrow { display: flex; gap: 8px; margin-top: 11px; }
 .arrrow .num { flex: 1; margin: 0; }
 .submit.small { margin-top: 0; padding: 12px 18px; white-space: nowrap; }
-.syncbtn { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px; font-weight: 700; font-size: 13px; color: var(--rose); cursor: pointer; margin-bottom: 14px; }
-.syncbtn:disabled { opacity: .6; }
-.syncbtn.ghost { font-weight: 600; opacity: .85; }
 
 /* Cruscotto controls */
 .ctrlbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
@@ -464,7 +461,8 @@ tr.dim { opacity: .6; }
 .ai-report-testo { font-size: 14px; line-height: 1.6; margin: 0 0 16px; }
 .ai-report-foot { margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
 @media print {
-  #root { display: none !important; }
+  /* solo col portale del report si nasconde l'app (era #root sempre: dal 22-07 ogni bottone PDF stampava un foglio bianco) */
+  body:has(> .ai-print-portal) > #root { display: none !important; }
   .ai-print-portal { display: block !important; }
   .ai-print-portal, .ai-print-portal * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 }
@@ -566,7 +564,11 @@ table.sortable thead th:hover { color: var(--rose); }
 
 /* ---- Print to PDF (browser "Save as PDF") ---- */
 @media print {
-  .bottomnav, .subtabs, .seg, .exp, .back, .bigadd, .syncbtn, .submit, .addnew, #toast-host, .toast { display: none !important; }
+  /* l'assistente (bottone, pannello, velatura) e gli avvisi sono fixed: in stampa tornerebbero su ogni foglio.
+     .bar > .seg e' la barra del mix canali in Salute, un grafico e non un selettore; .rio-arch e' archivia/ripristina della
+     riga del Riordino */
+  .bottomnav, .subtabs, .seg:not(.bar > .seg), .exp, .back, .bigadd, .submit, .addnew, #toast-host, .toast, .cs-toast,
+  .ai-fab, .ai-panel, .ai-scrim, .rio-arch { display: none !important; }
   html, body, #root, .app { background: #fff !important; max-width: none !important; }
   .screen { padding: 0 !important; }
   header { margin: 0 0 12px; }

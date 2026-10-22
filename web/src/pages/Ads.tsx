@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { fetchAdsCreativeStatus, fetchAdsWeekly, fetchAdsSetModelli, fetchAdsCatalogoModelli, pullAds } from '../lib/api';
 import type { AdsCreativeStatus, AdsWeekly, AdsSetModello, AdsCatModello } from '../lib/api';
 import AppBar from '../components/AppBar';
+import Icon from '../components/Icon';
 
 // Pagina "Ads" (redesign 2026-09-19, richiesta owner). Mostra l'ARCHITETTURA reale (solo le campagne con ad attivi:
 // COLD e SUPER HOT; le altre sono obsolete), con gli ASSET visibili (le foto da image_url, i video dal frame_url
 // risolto lato server, fallback al thumbnail 64px), la fatica sulla frequency VERA a 7 giorni, e per ogni ad i MODELLI che pubblicizza con quante borse
-// sono LIVE. Legge solo le viste v_ads_* (anon). "Pull ora" invoca l'edge ads-sync. Soglie CPA dalla prior art.
+// sono LIVE. Legge solo le viste v_ads_* (anon). "Pull ora" (dalla cornice 3 l'azione tonda nella barra) invoca l'edge ads-sync. Soglie CPA dalla prior art.
 
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const eur2 = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
@@ -178,14 +179,16 @@ export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: st
 
   return (
     <div className="screen">
-      <AppBar title="Ads" onBack={onBack} actions={<span className="badge">Meta · per creativita'</span>} />
+      <AppBar title="Ads" onBack={onBack} actions={<>
+        <span className="badge">Meta · per creativita'</span>
+        <button type="button" className={pulling ? 'exp busy' : 'exp'} onClick={pull} disabled={pulling} aria-label="Pull ora" title="Pull ora: aggiorna i dati Ads"><Icon name="recycle" size={18} /></button>
+      </>} />
+      <p className="note appbar-st" role="status">{pulling ? 'Aggiorno…' : pullMsg}</p>
 
       <p className="note" style={{ marginTop: 0 }}>
         Dati al <strong>{asOf ? String(asOf).slice(0, 10) : 'n/d'}</strong>
         {staleDays != null && staleDays > 2 && <span className="err"> ({staleDays} giorni fa: il cron non ha girato)</span>}
-        {' '}· ogni mattina.{' '}
-        <button className="chip" type="button" onClick={pull} disabled={pulling}>{pulling ? 'Aggiorno…' : 'Pull ora'}</button>
-        {pullMsg && <span className="muted"> {pullMsg}</span>}
+        {' '}· ogni mattina.
       </p>
 
       <section className={`card ${azioni.length ? 'warn' : ''}`}>

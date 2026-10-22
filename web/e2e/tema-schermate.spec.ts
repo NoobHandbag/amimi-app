@@ -9,6 +9,11 @@ import { join } from 'node:path';
 // Non e' un test: non asserisce niente, salva un PNG per schermata, cosi' prima e dopo un cambio di stile si confrontano
 // sugli stessi dati. Fuori dalla CI, che nomina solo `negozi`, `e2e/notifiche.spec.ts`, `e2e/villaggio.spec.ts` ed
 // `e2e/paillettes.spec.ts`.
+// Stampa (cornice 3, 22-10): le schermate col bottone PDF (CON_STAMPA) salvano anche `<nome>-stampa.png`, la pagina col
+// foglio di stampa larga quanto un A4 coi margini di Chromium (718 px), e `<nome>-stampa.pdf`, il PDF vero in A4 con 1 cm di
+// margine e senza "grafica di sfondo" (come la stampa di default di Chrome); poi la pagina torna allo schermo. Una vista di stampa bianca o coperta
+// dalla barra in basso o da "Chiedi ad Amimi'" e' un difetto. Il PNG mostra i fondi e non rimpicciolisce: una tabella piu'
+// larga del foglio (il CE dettagliato) esce intera solo nel PDF, e solo il PDF dice cosa sparisce senza i fondi.
 // Rete: NESSUNA richiesta esce. Ogni richiesta che non va a localhost e' intercettata: quelle a *.supabase.co ricevono
 // dati finti (rispondi), tutte le altre sono interrotte. La sessione del team e' un oggetto finto in localStorage.
 // Dati: le viste e tabelle elencate in TABELLE hanno righe scritte a mano per una piccola marca milanese di borse fatte a
@@ -847,24 +852,39 @@ async function apri(page: Page, hash = '') {
 // la cambiano), poi si fotografa la finestra. Cosi' la barra in basso e il bottone dell'assistente (fixed) restano in
 // fondo, e il pannello dell'assistente, chiuso appena sotto il bordo, non compare come in uno screenshot fullPage. Per
 // i pannelli sovrapposti (scheda prodotto) resta il telefono, 390x844.
-async function scatta(page: Page, nome: string, { intera = true } = {}) {
+async function allunga(page: Page, larga: number, alta: number) {
+  for (let giro = 0; giro < 5; giro++) {
+    const h = await page.evaluate(() => Math.ceil(Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)));
+    if (h <= alta && giro > 0) break;
+    alta = Math.max(alta, h);
+    await page.setViewportSize({ width: larga, height: alta });
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(300);
+  }
+}
+
+async function scatta(page: Page, nome: string, { intera = true, stampa = false } = {}) {
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(600);
-  if (intera) {
-    let alta = 844;
-    for (let giro = 0; giro < 5; giro++) {
-      const h = await page.evaluate(() => Math.ceil(Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)));
-      if (h <= alta && giro > 0) break;
-      alta = Math.max(alta, h);
-      await page.setViewportSize({ width: 390, height: alta });
-      await page.waitForLoadState('networkidle');
-      await page.waitForTimeout(300);
-    }
-  }
+  if (intera) await allunga(page, 390, 844);
   // una pagina che scorre di lato a 390 px e' un difetto che lo screenshot non mostra: lo dice il log
   const largo = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   if (largo > 0) console.log(`[schermate] ${nome}: la pagina scorre di lato di ${largo} px`);
   await page.screenshot({ path: join(DIR, `${nome}.png`), animations: 'disabled' });
+  if (stampa) await stampaDi(page, nome);
+}
+
+// la vista di stampa: 718 px = A4 (794) meno i margini di default di Chrome (circa 1 cm per lato); il PDF lo impagina
+// Chromium con gli stessi margini (senza `margin` page.pdf li mette a zero e impagina a 794 px, piu' largo del vero)
+async function stampaDi(page: Page, nome: string) {
+  const prima = page.viewportSize()!;
+  await page.emulateMedia({ media: 'print' });
+  await page.setViewportSize({ width: 718, height: 600 });
+  await allunga(page, 718, 600);
+  await page.screenshot({ path: join(DIR, `${nome}-stampa.png`), animations: 'disabled' });
+  await page.pdf({ path: join(DIR, `${nome}-stampa.pdf`), format: 'A4', printBackground: false, margin: { top: '1cm', right: '1cm', bottom: '1cm', left: '1cm' } });
+  await page.emulateMedia({ media: null });
+  await page.setViewportSize(prima);
 }
 
 async function cerca(page: Page, etichetta: string) {
@@ -880,6 +900,8 @@ const DA_HOME: [string, string][] = [
   ['11-ordini-arrivi', 'Ordini in arrivo'], ['12-nuovo-ordine', 'Nuovo ordine fornitore'], ['13-pulizia-dati', 'Pulizia dati'],
 ];
 const DA_NAV: [string, string][] = [['14-magazzino', 'Magazzino'], ['15-tabelle', 'Tabelle'], ['16-assistenza', 'Assistenza'], ['17-b2b', 'B2B']];
+// le schermate col bottone PDF (components/PrintBtn): anche la vista di stampa
+const CON_STAMPA = new Set(['02-cruscotto', '03-ce-dettagliato', '04-margini', '05-clienti', '11-ordini-arrivi', '14-magazzino', '23-riordino']);
 
 test.describe('schermate tema', () => {
   test.use({ viewport: { width: 390, height: 844 }, locale: 'it-IT', timezoneId: 'Europe/Rome' });
@@ -893,7 +915,7 @@ test.describe('schermate tema', () => {
     test(nome, async ({ page }) => {
       await apri(page);
       await cerca(page, etichetta);
-      await scatta(page, nome);
+      await scatta(page, nome, { stampa: CON_STAMPA.has(nome) });
     });
   }
 
@@ -901,7 +923,7 @@ test.describe('schermate tema', () => {
     test(nome, async ({ page }) => {
       await apri(page);
       await nav(page, etichetta);
-      await scatta(page, nome);
+      await scatta(page, nome, { stampa: CON_STAMPA.has(nome) });
     });
   }
 
@@ -950,7 +972,7 @@ test.describe('schermate tema', () => {
     await apri(page);
     await cerca(page, 'Cosa riprodurre');
     await page.locator('.list .row').first().waitFor();
-    await scatta(page, '23-riordino');
+    await scatta(page, '23-riordino', { stampa: CON_STAMPA.has('23-riordino') });
   });
 
   test('24-tabella-aperta', async ({ page }) => {
