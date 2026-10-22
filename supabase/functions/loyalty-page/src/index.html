@@ -13,6 +13,10 @@
   che build.mjs inserisce al posto del suo segnaposto). Con Tostiamo? la pagina si veste della collab ("Tovaglia", scelta owner 21-10):
   il nastro amimi' x GALIANO prende il posto della scritta amimi' in alto, tovaglia a quadri e toast che volano dietro al saluto,
   bandierina e bottone del gioco in verde e oro. Fuori dalle date di Tostiamo? la pagina torna quella di sempre.
+  Dal 22-10 (voce "ACCEDI" nel menu del sito) chi arriva senza aver fatto l'accesso e senza un QR vede la vetrina: come si
+  prendono i punti e come si entra (codice via mail), sotto il bottone. Il cancello di un evento (?evento= o un QR ancora
+  in attesa nel telefono) resta com'era. I punti stanno sull'id cliente Shopify dell'ordine, non sulla mail: chi ha ordinato
+  lasciando solo il telefono non li ritrova entrando con una mail nuova, e la vetrina le dice di scriverci (Gate 2 del 22-10).
   Va servita SAME-ORIGIN su amimi.it, cosi' le fetch a /apps/premia/* portano il logged_in_customer_id firmato da
   Shopify (nessun secondo login). Servita da un altro dominio NON funziona: il cookie di login e' su amimi.it.
   Contratto edge loyalty-proxy v14: state | coccola | memory_win | rewards | redeem | profile | profile_save | track | deck | checkin.
@@ -62,6 +66,10 @@
   .gate img{width:164px;height:auto;animation:floaty 3.6s ease-in-out infinite}
   .gate h1{font-family:var(--display);font-size:32px;font-weight:700;line-height:1.05;text-wrap:balance}
   .gate p{font-size:15px;color:var(--muted);max-width:34ch}
+  /* vetrina (22-10): chi arriva dal menu del sito senza aver fatto l'accesso vede come si prendono i punti prima di dare la mail */
+  .vetrina{width:100%;text-align:left;margin-top:14px;padding-top:22px;border-top:1.5px dashed var(--line)}
+  .gate .v-come{font-size:13px;text-align:center;max-width:32ch;margin:-2px auto 0}
+  .gate .vetrina .fine{max-width:none;font-size:13px}   /* .gate p la porterebbe a 15px: qui resta come la nota dell'area */
 
   /* saluto + Mimi': e' lei che parla (il fumetto) e si lascia coccolare con un tocco (owner 12-10: "piu' presente") */
   .hero{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px}
@@ -325,6 +333,12 @@
     <p id="gateMsg"></p>
     <a id="gateBtn" class="btn" href="/account">Accedi</a>
     <button id="gateRetry" class="btn hidden" type="button">Riprova</button>
+    <p id="vetrinaCome" class="v-come hidden">Ti mandiamo un codice via mail, niente password. Se è la prima volta, l'account si crea in un minuto.</p>
+    <section id="vetrina" class="vetrina hidden">
+      <h2>Come prendi i punti</h2>
+      <ul class="regole" id="vetrinaRegole"></ul>
+      <p class="fine">Hai già comprato su amimi.it? Entra con la mail che hai usato per ordinare: i punti dei tuoi acquisti ti aspettano. Se all'ordine hai lasciato solo il telefono, <a href="/pages/contact-us">scrivici</a> e ti aiutiamo noi.</p>
+    </section>
   </div>
 
   <!-- area membri -->
@@ -583,12 +597,15 @@
 
   // === stati della pagina ===
   function loginUrl(){ return '/customer_authentication/login?return_to='+encodeURIComponent(location.pathname+location.search); }   // account clienti nuovi: dopo l'accesso si torna qui (anche con ?evento=)
-  function showGate(title,msg,mode){
+  function showGate(title,msg,mode,vetrina){
     el('loading').classList.add('hidden'); el('app').classList.add('hidden'); const g=el('gate'); g.classList.remove('hidden');
     el('gateTitle').textContent=title; el('gateMsg').textContent=msg;
     const login = mode===true || mode==='login';
     el('gateBtn').classList.toggle('hidden',!login); if(login) el('gateBtn').href=loginUrl();
     el('gateRetry').classList.toggle('hidden', mode!=='retry');
+    const v = !!vetrina && login;   // solo all'accesso senza QR: il cancello dell'evento resta com'era
+    el('vetrinaCome').classList.toggle('hidden',!v); el('vetrina').classList.toggle('hidden',!v);
+    if(v) el('vetrinaRegole').innerHTML=righeRegole(regoleBase());
   }
   el('gateRetry').addEventListener('click', ()=>{ el('gate').classList.add('hidden'); el('loading').classList.remove('hidden'); refresh(false); });
 
@@ -747,12 +764,14 @@
   el('codiciTutti').addEventListener('click', ()=>{ track('tap','codici_tutti'); tuttiICodici=!tuttiICodici; renderCodes(); });
 
   // === come prendi i punti: le regole decise nella call del 09-10; costo e valore del premio dal server ===
+  function regoleBase(){ return [['Compri su amimi.it','1 punto per ogni euro'],['Coccoli Mimì','+5 al giorno'],[GIOCO==='toast' ? 'Giochi a Tostiamo?' : 'Giochi al memory','+5 al giorno']]; }   // le stesse righe nell'area e nella vetrina
+  function righeRegole(rows){ return rows.map(r=>'<li><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></li>').join(''); }
   function renderRules(){
     const rw=reward0(), pr=S._profile;
-    const rows=[['Compri su amimi.it','1 punto per ogni euro'],['Coccoli Mimì','+5 al giorno'],[GIOCO==='toast' ? 'Giochi a Tostiamo?' : 'Giochi al memory','+5 al giorno']];
+    const rows=regoleBase();
     if(pr && pr.checkin_enabled) rows.push(['Vieni a un evento Amimì','punti con il QR']);   // quanti, lo dice ogni evento (Galiano: 100)
     const ug=S._ugc; if(ug){ rows.push(['Recensisci una borsa comprata su amimi.it','+'+puntiUgc('recensione')+' se approvata']); rows.push(['Mostraci il look con la tua Amimì','+'+puntiUgc('look')+' se approvato']); }
-    el('regole').innerHTML=rows.map(r=>'<li><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></li>').join('');
+    el('regole').innerHTML=righeRegole(rows);
     el('regoleNota').innerHTML = rw ? 'Ogni <b>'+esc(rw.cost_points)+' punti Mimì</b> sblocchi '+(percento(rw) ? 'uno sconto del <b>'+percento(rw)+'%</b>' : esc(rw.label))+' su un ordine. Quando lo riscatti i punti si scalano. Il codice vale una volta e non si somma ad altri sconti.' : '';
   }
   el('ward').addEventListener('click', e=>{ if(e.target.closest('#shopLink')) track('tap','shop'); });
@@ -824,7 +843,7 @@
   async function refresh(animate){
     const [st, rw, pf, ug] = await Promise.all([api('state'), api('rewards'), api('profile'), api('ugc')]);   // rewards/profile/ugc: OFF finche' i flag sono spenti
     const { status, data } = st;
-    if (data.state==='login_required') return showGate(EVT ? 'Accedi per registrare la tua presenza' : 'I tuoi punti Mimì', EVT ? 'Entra con il tuo account Amimì, oppure creane uno in un minuto. Se l\'evento è in corso, i punti arrivano subito dopo.' : 'Accedi con il tuo account Amimì per vedere i tuoi punti e coccolare Mimì.', 'login');
+    if (data.state==='login_required') return showGate(EVT ? 'Accedi per registrare la tua presenza' : 'I tuoi punti Mimì', EVT ? 'Entra con il tuo account Amimì, oppure creane uno in un minuto. Se l\'evento è in corso, i punti arrivano subito dopo.' : 'Con i punti Mimì i tuoi acquisti su amimi.it diventano sconti. Accedi per vedere i tuoi e coccolare Mimì.', 'login', !EVT);
     if (data.state==='needs_secret' || data.state==='off') return showGate('I punti Mimì stanno arrivando','Il programma parte a breve. Torna presto!', '');
     if (status===503 || data.error || typeof data.points!=='number') return showGate('Un attimo...','Non riesco a leggere i tuoi punti in questo momento.', 'retry');   // senza un saldo vero non si disegna nessun profilo
     S = data;

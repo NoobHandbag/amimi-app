@@ -379,5 +379,22 @@ t('189 Tovaglia: il nastro ha una classe sua (nastro), body.collab non prende ma
   !/\.collab\b/.test(PAGE.replace(/body\.collab/g, '')) && /\n  \.nastro\{/.test(PAGE));
 t('188 Tostiamo?: la velocita\' delle borse sale del 50% a ogni toast fatto, al massimo il quadruplo',
   PAGE.includes('vy:140*Math.min(4, 1+0.5*fatti)*rnd(0.9,1.12),'));
+
+// 22-10: la vetrina per chi arriva dal menu del sito senza aver fatto l'accesso (voce ACCEDI, owner)
+const VETR = (PAGE.match(/<section id="vetrina"[\s\S]*?<\/section>/) || [''])[0];
+t('190 vetrina: solo al cancello d\'accesso senza QR; il cancello dell\'evento ha lo stesso testo di prima e nessuna vetrina',
+  PAGE.includes("'login', !EVT);") && PAGE.includes("const v = !!vetrina && login;")
+  && PAGE.includes("EVT ? 'Accedi per registrare la tua presenza' : 'I tuoi punti Mimì', EVT ? 'Entra con il tuo account Amimì, oppure creane uno in un minuto. Se l\\'evento è in corso, i punti arrivano subito dopo.'")
+  && (PAGE.match(/showGate\(/g) || []).length === 4);
+const VCOME = (PAGE.match(/id="vetrinaCome"[^<]*/) || [''])[0];
+const VMSG = (PAGE.match(/: '(Con i punti Mimì[^']*)', 'login', !EVT\);/) || ['', ''])[1];
+const REGBASE = (PAGE.match(/function regoleBase\(\)\{ return (\[\[[^\n]*?\]\]); \}/) || ['', ''])[1];
+t('191 vetrina: le righe sono quelle dell\'area (una sola lista, regoleBase, tre righe) e passano da esc; nessuna cifra nel testo fisso della vetrina, quindi nessun premio scritto a mano (costo e valore arrivano dal server solo dopo l\'accesso)',
+  PAGE.includes('const rows=regoleBase();') && PAGE.includes("el('vetrinaRegole').innerHTML=righeRegole(regoleBase());")
+  && PAGE.includes("function righeRegole(rows){ return rows.map(r=>'<li><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></li>').join(''); }")
+  && VETR.length > 100 && VCOME.length > 40 && VMSG.length > 40 && !/\d/.test(VETR.replace(/<[^>]*>/g, '') + VCOME + VMSG)
+  && REGBASE.split('],[').length === 3 && !/%|€/.test(REGBASE));
+t('192 vetrina (Gate 2 del 22-10, B): i punti stanno sull\'id cliente dell\'ordine, non sulla mail; se la vetrina promette che i punti aspettano, dice anche cosa fa chi ha lasciato solo il telefono',
+  !/ti aspettano/.test(VETR) || (/solo il telefono/.test(VETR) && VETR.includes('<a href="/pages/contact-us">scrivici</a>')));
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
