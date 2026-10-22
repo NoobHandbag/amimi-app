@@ -7,6 +7,7 @@ import { nowMonth } from '../lib/helpers';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
 import AppBar from '../components/AppBar';
+import Icon from '../components/Icon';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const CUR = nowMonth();
@@ -293,7 +294,7 @@ function Drawer({ d, scope, onClose }: { d: DrillState; scope: Scope; onClose: (
       <div className="cedt-scrim" onClick={onClose} />
       <aside className="cedt-drawer" role="dialog" aria-label={`Dettaglio ${d.label}`}>
         <div className="cedt-dwhead">
-          <button className="cedt-x" onClick={onClose} aria-label="Chiudi">✕</button>
+          <button className="cedt-x" onClick={onClose} aria-label="Chiudi"><Icon name="close" size={16} /></button>
           <div className="eyk">{MESI[d.month]} · {scope === 'amimi' ? 'Amimì' : 'Totale'}</div>
           <h3>{d.label}</h3>
           <div className={`amt ${d.amount < 0 ? 'neg' : d.amount > 0 ? 'pos' : ''}`}>{d.key.endsWith('pezzi') ? num(d.amount) + ' pezzi' : money(d.amount)}</div>
