@@ -1147,7 +1147,7 @@ test.describe('Cruscotto', () => {
     await page.locator('.ds-qbtn', { hasText: 'Cruscotto finanze' }).click();
     const sez = page.locator('section.card', { has: page.locator('h2', { hasText: /^Villaggio$/ }) });
     await expect(sez).toBeVisible();
-    await sez.getByRole('button', { name: 'Apri il Villaggio →' }).click();
+    await sez.getByRole('button', { name: 'Apri il Villaggio' }).click();
     await canvasVivo(page);
     await hud(page, attesi(dati));
     // la Home dell'HUD torna alla Home dell'app
@@ -1288,7 +1288,7 @@ test.describe('robustezza: il Villaggio non porta giu\' l\'app', () => {
     await expect(sez).toBeVisible();
     // gh-pages sostituisce dist: il Villaggio-<hash>.js che questa scheda conosce non esiste piu'
     await page.route(/\/amimi-app\/assets\/Villaggio-[^/]+\.js$/, (route) => route.fulfill({ status: 404, contentType: 'text/html', body: 'Not Found' }));
-    await sez.getByRole('button', { name: 'Apri il Villaggio →' }).click();
+    await sez.getByRole('button', { name: 'Apri il Villaggio' }).click();
     await page.waitForTimeout(1500);
     // atteso: un messaggio e la barra per tornare indietro; non una pagina bianca da ricaricare a mano
     await expect(page.locator('.bottomnav'), `errori: ${r.errori.join(' | ')}`).toBeVisible();
