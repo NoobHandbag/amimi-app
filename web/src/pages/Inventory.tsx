@@ -44,7 +44,7 @@ function ProductDrawer({ p, shopQty, onClose, go }: { p: InvFull; shopQty: numbe
         <div className="drawerhead">
           <Tile url={p.image_url} label={p.item ?? p.codice} />
           <div className="grow"><div className="rt">{nome(p.item, p.variant)}</div><div className="rs">{p.codice}</div></div>
-          <button className="drawerx" onClick={onClose} type="button">✕</button>
+          <button className="drawerx" onClick={onClose} type="button" aria-label="Chiudi"><Icon name="close" size={18} /></button>
         </div>
         <div className="kpis">
           <div className={`kpi ${p.giacenza_attuale < 0 ? 'red' : 'accent'}`}><div className="v">{p.giacenza_attuale}</div><div className="k">Magazzino</div></div>

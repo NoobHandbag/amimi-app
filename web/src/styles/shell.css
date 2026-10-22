@@ -75,7 +75,7 @@ h2 { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--in
 .subtabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
 
 /* dentro le superfici bianche chip, filtri, lenti, selettori di persona e KPI prendono il fondo grigio, altrimenti spariscono */
-:is(.card, .ds-card, .ds-expcard) :is(.chip, .ds-fp, .ds-lp, .seg.wrap button):not(.on) { background: var(--surface-alt); }
+:is(.card, .ds-card, .ds-expcard, .mat-aibox) :is(.chip, .ds-fp, .ds-lp, .seg.wrap button):not(.on) { background: var(--surface-alt); }
 .card .kpi, .card .ds-kpi:not(.hero) { background: var(--surface-alt); }
 .card .ds-search, .ds-card .ds-search { background: var(--surface-alt); }
 .ds-lp { border: 0; background: var(--surface); color: var(--ink-muted); font-size: 12.5px; font-weight: 500; padding: 7px 12px; }
@@ -88,7 +88,13 @@ h2 { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--in
 /* ---- bottoni ---- */
 .ds-btn { border-radius: 14px; font-weight: 600; }
 .ds-btn.primary { background: var(--interactive); box-shadow: none; }
-.ds-btn.secondary { background: var(--surface-alt); border: 0; }
+/* il secondario e' bianco sul fondo grigio e grigio dentro le superfici bianche (grigio su grigio spariva);
+   nei pozzi grigi dentro una card (riepilogo AI, box AI) torna bianco */
+.ds-btn.secondary { background: var(--surface); border: 0; }
+:is(.card, .ds-card, .ds-expcard, .cs-card, .cs-sendmodal, .mat-aibox) .ds-btn.secondary { background: var(--surface-alt); }
+:is(.card, .ds-card) :is(.ds-aisum, .mat-aibox) .ds-btn.secondary { background: var(--surface); }
+.submit { background: var(--interactive); font-family: inherit; font-weight: 600; border-radius: 14px; }
+.ds-pill { font-weight: 600; }
 
 /* ---- Home: azioni rapide e gestione come tessere bianche; le tinte le decide Home.tsx ---- */
 .ds-seclb { font-size: 17px; font-weight: 600; letter-spacing: -.015em; text-transform: none; color: var(--ink); }
@@ -121,3 +127,133 @@ h2 { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--in
 .upd-banner { bottom: calc(136px + env(safe-area-inset-bottom, 0px)); }
 .cs-toast button { color: var(--interactive-on-dark); }
 .cs-moremenu { box-shadow: var(--e-float); }
+
+/* ============================================================================
+   Cornice 2 (22-10-2026): i tratti vecchi che tornavano su molte schermate, sistemati una volta qui.
+   Il resto lo fa ogni schermata nel suo file, styles/screens/<nome>.css sotto la classe .scr-<nome>
+   (regola in docs/REDESIGN_2026-07.md, "Cornice 2"). Il Villaggio vince sempre: dove toccano gli stessi
+   elementi (campi, passo, bottoni dei moduli) le sue regole .vil .v-form sono piu' specifiche di queste.
+   ============================================================================ */
+
+/* ---- KPI scuro: largo quanto la griglia e per primo; numero bianco anche quando e' un esito ---- */
+.kpis .ds-kpi.hero { grid-column: 1 / -1; order: -1; padding: 20px 20px 18px; }
+.ds-kpi.hero .v { font-size: 40px; letter-spacing: -.045em; line-height: 1.05; }
+.ds-kpi.hero :is(.l, .s) { color: var(--surface); opacity: .72; }
+.ds-kpi.hero:is(.neg, .pos) .v { color: var(--surface); }
+.ds-kpi .s { font-size: 12px; }
+/* col KPI scuro in cima restano gli altri: se sono dispari, l'ultimo prende la riga intera (Cruscotto e CE: 3 su 2 colonne);
+   sul desktop, KPI scuro piu' tre, le colonne diventano tre. Senza :has() resta la cella vuota, niente di peggio */
+@media (max-width: 1023px) {
+  .kpis:has(> .ds-kpi.hero):has(> :last-child:nth-child(even)) > .ds-kpi:not(.hero):not(:has(~ .ds-kpi:not(.hero))) { grid-column: 1 / -1; }
+}
+@media (min-width: 1024px) {
+  .kpis:has(> .ds-kpi.hero):has(> :nth-child(4):last-child) { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* ---- tabelle: intestazioni in minuscolo e grigie, niente riga sotto l'ultima (CE e Tabelle hanno le loro) ---- */
+:where(table:not(.cedt, .ds-dt)) thead th, .dtable thead th { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 500; color: var(--ink-muted); }
+td { font-variant-numeric: tabular-nums; }
+table:not(.ds-dt, .cedt) tbody tr:last-child td { border-bottom: 0; }
+table.sortable thead th:hover { color: var(--ink); }
+
+/* ---- moduli: etichette in minuscolo, campi pieni senza bordo, mai sotto i 16 px (iOS non ingrandisce).
+   Solo sugli elementi: le celle .num/.txt di Tabelle restano fuori ---- */
+.fl { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+:is(input.txt, input.num, input.search, select.txt, select.num, textarea.txt) { border: 0; border-radius: 14px; min-height: 48px; background: var(--surface); font-family: inherit; font-size: 16px; }
+input[type=date]:is(.txt, .num) { min-height: 48px; }
+/* il numero del passo (Conta, arrivi) resta il dato della riga: piu' grande del testo, sempre sopra i 16 px */
+.stepper input.num { font-size: 20px; }
+:is(.card, .ds-card, .ds-lrow, .mat-aibox) :is(input.txt, input.num, input.search, select.txt, select.num, textarea.txt) { background: var(--surface-alt); }
+input.num { font-weight: 600; letter-spacing: -.03em; }
+:is(input[type=date], select).num { font-weight: 500; letter-spacing: 0; text-align: left; }
+/* il segnaposto resta leggibile anche sul grigio (il grigio di default del browser scende a 3,9:1) */
+:is(input.txt, input.num, input.search, textarea.txt)::placeholder { color: var(--ink-muted); opacity: 1; }
+/* confidenza bassa dell'AI (Materiali, foglio d'ordine): senza bordo il contorno arancio di .mat-low sparirebbe,
+   quindi diventa un anello interno, come per la chip scelta (.chip.on.mat-low) */
+:is(input, select, textarea).mat-low { box-shadow: inset 0 0 0 2px var(--warning); }
+
+/* ---- controlli dei moduli: passo tondo, scelte a pillola (nera quella scelta), "aggiungi" come testo bordeaux.
+   .supcard.alt tiene il tratteggio: in Registra e' "altra opzione", in Ordini e' "scelta", lo decide ogni schermata ---- */
+.stepbtn { width: 48px; border: 0; border-radius: 50%; color: var(--ink); font-family: inherit; font-weight: 500; }
+:is(.card, .ds-card, .ds-lrow) .stepbtn { background: var(--surface-alt); }
+:is(.card, .ds-card, .ds-lrow) .stepbtn:active { background: var(--border-strong); }
+.supcard { border: 0; border-radius: 999px; background: var(--surface); font-family: inherit; font-weight: 500; }
+.supcard.on { background: var(--ink); color: var(--surface); }
+.supcard.alt { border: 1px dashed var(--border-strong); }
+:is(.card, .ds-card) .supcard:not(.on) { background: var(--surface-alt); }
+.addnew { border: 0; border-radius: 999px; color: var(--interactive); font-family: inherit; font-weight: 600; }
+:is(.card, .ds-card) .addnew { background: var(--surface-alt); }
+/* box AI (foto o nota): bianco sul fondo, grigio dentro una card, e allora i campi tornano bianchi */
+.mat-aibox { border: 0; border-radius: 20px; background: var(--surface); }
+:is(.card, .ds-card) .mat-aibox { background: var(--surface-alt); }
+:is(.card, .ds-card) .mat-aibox :is(input.txt, input.num, input.search, select.txt, select.num, textarea.txt) { background: var(--surface); }
+
+/* ---- barra in alto: badge bianchi; l'azione tonda (sincronizza, aggiorna) gira mentre lavora ---- */
+.appbar-r .badge { background: var(--surface); }
+.appbar-r .exp:disabled { opacity: .5; }
+.appbar-r .exp.busy svg { animation: amimi-spin 1s linear infinite; }
+@keyframes amimi-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .appbar-r .exp.busy svg { animation: none; } }
+
+/* ---- intestazioni che si aprono: un solo aspetto, la freccia a destra ruota ---- */
+.askhead { display: flex; align-items: center; gap: 12px; width: 100%; background: none; border: 0; padding: 0; font: inherit; font-size: 16px; font-weight: 600; color: var(--ink); text-align: left; cursor: pointer; }
+.askhead > svg:last-child, .askhead > .muted:last-child { margin-left: auto; }
+/* la freccia dice se e' aperta: --ink-muted (almeno 4,77:1 sulle superfici chiare), non --ink-faint (2,1-2,5:1) */
+.askhead > svg:last-child { color: var(--ink-muted); transition: transform .15s; }
+.askhead[aria-expanded=true] > svg:last-child { transform: rotate(90deg); }
+.tgl svg { transform: rotate(90deg); }
+.tgl.open svg { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) { .askhead > svg:last-child { transition: none; } }
+
+/* ---- "Altro", "Gia' arrivati": titolo di sezione con l'interruttore in bordeaux a destra ---- */
+/* min-height 44 px: l'aspetto e' da titolo ma il tocco resta largo; i margini scalano gli 11 px in piu' sopra e sotto */
+.ds-more { background: none; padding: 0 2px; min-height: 44px; margin: 13px 0 0; font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--ink); }
+.ds-more .c { color: var(--ink-muted); font-weight: 500; }
+.ds-more b { color: var(--interactive); font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 2px; }
+.ds-more[aria-expanded=true] b svg { transform: rotate(-90deg); }
+
+/* ---- lista raggruppata: righe in una sola superficie bianca, separatori rientrati (--sep-inset per riga con foto) ---- */
+.ds-group { background: var(--surface); border-radius: 20px; overflow: hidden; }
+.ds-group > * { position: relative; border: 0; border-radius: 0; margin: 0; box-shadow: none; }
+.ds-group > * + *::before { content: ''; position: absolute; top: 0; left: var(--sep-inset, 16px); right: var(--sep-end, 0); height: 1px; background: var(--border); }
+.ds-group > :active { background: var(--surface-alt); }
+/* overflow:hidden taglierebbe l'anello di focus disegnato fuori dalla riga: dentro il gruppo va all'interno */
+.ds-group :focus-visible { outline-offset: -2px; }
+
+/* ---- file di chip che scorrono di lato fino al bordo dello schermo (16 px = margine della pagina e delle card) ---- */
+.hscroll, .ds-lens.scrollx { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-left: -16px; margin-right: -16px; padding: 0 16px 2px; }
+.hscroll::-webkit-scrollbar, .ds-lens.scrollx::-webkit-scrollbar { display: none; }
+.hscroll > *, .ds-lens.scrollx > * { flex: none; }
+
+/* ---- velature e ombre: inchiostro, non piu' il prugna ritirato ---- */
+:is(.drawerwrap, .cedt-scrim, .cs-sendwrap) { background: color-mix(in srgb, var(--ink) 45%, transparent); }
+.ai-scrim { background: color-mix(in srgb, var(--ink) 40%, transparent); }
+:is(.ai-panel, .cedt-drawer, .cs-sendmodal, .cs-toast, .cs-menu, .upd-banner) { box-shadow: var(--e-float); }
+.lead-post span, .lead-shot:not(.lead-shot-empty) span, .ai-pc-rk { background: color-mix(in srgb, var(--ink) 65%, transparent); }
+.drawer { border-radius: 24px 24px 0 0; }
+
+/* ---- chiudi (icona close): tondo pieno, senza bordo; nota sotto il titolo di una card ---- */
+.drawerx { border: 0; background: var(--surface); color: var(--ink); display: grid; place-items: center; }
+:is(.card, .ds-card) .drawerx { background: var(--surface-alt); }
+/* "pulisci" della ricerca (Home): classe sua, non quella del cassetto; tondo da 30 px, tocco da 44 px */
+.ds-search-x { position: relative; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: var(--surface-alt); color: var(--ink); display: grid; place-items: center; cursor: pointer; }
+.ds-search-x::after { content: ''; position: absolute; inset: -7px; }
+.ds-search .ds-search-x svg { width: 14px; height: 14px; stroke: currentColor; }
+:is(.card, .ds-card) .ds-search-x { background: var(--surface); }
+.cedt-x, .ai-x { display: grid; place-items: center; color: var(--ink); }
+.ai-x { border: 0; background: var(--surface); }
+.card > h2 + .note { margin: -4px 0 12px; }
+
+/* ---- ingresso con PIN o email (Assistenza, Premia, Materiali, Negozi, Notifiche) ---- */
+.cs-logo { font-size: 28px; font-weight: 600; letter-spacing: -.035em; color: var(--ink); }
+.cs-logo span { color: var(--ink-muted); font-weight: 500; }
+.cs-login .cs-fld label { font-size: 13px; font-weight: 500; text-transform: none; }
+.cs-login .cs-fld input { border: 0; background: var(--surface); border-radius: 14px; font-size: 16px; }
+.cs-or { display: flex; align-items: center; gap: 10px; color: var(--ink-muted); font-size: 12.5px; }
+.cs-or::before, .cs-or::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.cs-btn { font-family: inherit; }
+
+/* ---- riepilogo AI (Salute, "In breve" in Assistenza): superficie piena, titolo in minuscolo ---- */
+.ds-aisum { border: 0; border-radius: 16px; background: var(--surface); }
+.card .ds-aisum { background: var(--surface-alt); }
+.ds-aisum-h { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 600; color: var(--ink); }

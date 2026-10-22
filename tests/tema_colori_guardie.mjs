@@ -145,7 +145,13 @@ const COPPIE = [
   ['#ffffff', 'interactive', 4.5], ['interactive', 'surface', 4.5], ['interactive-700', 'interactive-tint', 4.5],
   ['positive', 'positive-tint', 4.5], ['negative', 'negative-tint', 4.5], ['negative', 'bg', 4.5], ['warning-700', 'warning-tint', 4.5],
   ['positive-700', 'positive-tint', 4.5], ['negative-700', 'negative-tint', 4.5], ['ink', 'interactive-on-dark', 4.5],
-  ['interactive-on-dark', 'ink', 3], ['chart-bar', 'surface', 3], ['chart-current', 'surface', 3],
+  ['chart-bar', 'surface', 3], ['chart-current', 'surface', 3],
+  // cornice 2 (22-10): sulla card scura testo ed esiti solo con questi (piu' il bianco), a 4,5:1 come testo;
+  // --interactive-on-dark sul nero e' gia' la coppia ink/interactive-on-dark qui sopra (il contrasto e' simmetrico)
+  ['warning-on-dark', 'ink', 4.5], ['negative-on-dark', 'ink', 4.5], ['ink-faint', 'ink', 4.5],
+  // cornice 2, Gate 3: l'anello arancio di .mat-low (oggetto grafico, 3:1) sulla sua tinta e sulle superfici dove sta il campo,
+  // e il segnaposto grigio dentro un campo a confidenza bassa
+  ['warning', 'warning-tint', 3], ['warning', 'surface', 3], ['warning', 'surface-alt', 3], ['ink-muted', 'warning-tint', 4.5],
 ];
 for (const [fg, bgk, min] of COPPIE) {
   const a = coloreDi(fg), b = coloreDi(bgk);
@@ -153,6 +159,39 @@ for (const [fg, bgk, min] of COPPIE) {
   const r = contrasto(a, b);
   check(`${fg} su ${bgk}: ${r.toFixed(2)}:1 >= ${min}`, r >= min, `${a} su ${b}`);
 }
+
+// ---- 7. cornice 2 (Gate 3, 22-10): colori sulla card scura e stati dei campi che non devono sparire ----
+// Le coppie della sezione 6 dicono solo che i token on-dark reggono sul nero: qui si controlla che le regole CSS della card
+// scura (.hero, .ds-hero) usino davvero solo quelli. --negative (3,40:1) o --negative-tint sul nero passerebbero la sezione 6.
+console.log('\n== 7. card scura e stati della cornice ==');
+const SCURO_OK = new Set(['#fff', '#ffffff', 'var(--surface)', 'var(--warning-on-dark)', 'var(--negative-on-dark)',
+  'var(--ink-faint)', 'var(--interactive-on-dark)', 'inherit', 'currentcolor']);
+function coloriSulloScuro(testo) {
+  const out = [];
+  for (const m of senzaCommenti(testo, true).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/\.(?:ds-)?hero(?![\w-])/.test(m[1])) continue;
+    for (const d of m[2].matchAll(/(?<![\w-])color\s*:\s*([^;]+)/g)) {
+      const v = d[1].replace(/!important/i, '').trim().toLowerCase();
+      if (!SCURO_OK.has(v)) out.push(`${m[1].trim()} { color: ${v} }`);
+    }
+  }
+  return out;
+}
+check('autocontrollo: color: var(--negative) sul KPI scuro e\' visto (anche dentro @media); var(--surface), #fff e background-color no',
+  coloriSulloScuro('.ds-kpi.hero .v{color:var(--surface)} .ds-hero{color:#fff;background-color:var(--negative)} @media (x){.ds-kpi.hero.neg .v{color:var(--negative) !important}} .heros{color:red}')
+    .join() === '.ds-kpi.hero.neg .v { color: var(--negative) }');
+for (const [f, t] of Object.entries(src)) {
+  if (!isCss(f)) continue;
+  const o = coloriSulloScuro(t);
+  check(`${f}: sulla card scura solo bianco e colori on-dark`, o.length === 0, o.join(' | '));
+}
+const SHELL = senzaCommenti(src['styles/shell.css'] ?? '', true);
+const regoleShell = [...SHELL.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => [m[1].trim(), m[2]]);
+// i campi del kit non hanno bordo: .mat-low (index.css) ridipinge solo border-color, quindi serve un anello che non dipende dal bordo
+check('shell.css: un campo a confidenza bassa (.mat-low) ha l\'anello interno arancio',
+  regoleShell.some(([s, d]) => /\.mat-low/.test(s) && /\binput\b/.test(s) && /box-shadow\s*:\s*inset[^;]*var\(--warning\)/.test(d)));
+check('shell.css: il segnaposto dei campi del kit e\' --ink-muted (non il grigio del browser, 3,9:1 sul grigio)',
+  regoleShell.some(([s, d]) => /input\.txt/.test(s) && /::placeholder/.test(s) && /(?<![\w-])color\s*:\s*var\(--ink-muted\)/.test(d)));
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

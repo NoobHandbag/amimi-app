@@ -34,11 +34,13 @@ const P: Record<string, ReactNode> = {
   check: <><polyline points="4 12 10 18 20 6" /></>,
   back: <><polyline points="15 5 8 12 15 19" /></>,
   chevron: <><polyline points="9 6 15 12 9 18" /></>,
+  // chiudi (cornice 2, 22-10): due linee incrociate, per cassetti, pannelli e "pulisci"
+  close: <><line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" /></>,
 };
 
-export default function Icon({ name, size = 24 }: { name: string; size?: number }) {
+export default function Icon({ name, size = 24, className }: { name: string; size?: number; className?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
       style={{ display: 'inline-block', verticalAlign: 'middle' }}>
       {P[name] ?? <circle cx="12" cy="12" r="8" />}

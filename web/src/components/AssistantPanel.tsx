@@ -2,6 +2,7 @@
 // Read-only: calls the `assistant` edge (gated by ai_enabled). Self-gates — renders nothing when the flag is off.
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import Icon from './Icon';
 import { askAssistant, fetchOpsFlags, writeApi, type AsstResult, type AsstMsg, type AsstGrafico, type AsstProdotto, type AsstAzione } from '../lib/api';
 
 type Turn = { user: string; res?: AsstResult };
@@ -269,7 +270,7 @@ export default function AssistantPanel({ pin, chi, nascondiFab = false }: { pin:
             <span className="ai-chip"><span className="ai-dot" />dati live · sola lettura</span>
           </div>
           <span style={{ flex: 1 }} />
-          <button className="ai-x" onClick={() => setOpen(false)} type="button" aria-label="Chiudi">✕</button>
+          <button className="ai-x" onClick={() => setOpen(false)} type="button" aria-label="Chiudi"><Icon name="close" size={16} /></button>
         </div>
 
         <div className="ai-thread" ref={threadRef}>

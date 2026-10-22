@@ -124,7 +124,7 @@ export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled =
       <div className="ds-search">
         <Icon name="search" size={19} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca un'azione…" aria-label="Cerca azione" />
-        {q ? <button type="button" onClick={() => setQ('')} className="drawerx" style={{ width: 30, height: 30, fontSize: 13 }} aria-label="Pulisci">✕</button> : null}
+        {q ? <button type="button" onClick={() => setQ('')} className="ds-search-x" aria-label="Pulisci"><Icon name="close" size={14} /></button> : null}
       </div>
 
       {query ? (

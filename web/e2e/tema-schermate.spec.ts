@@ -861,6 +861,9 @@ async function scatta(page: Page, nome: string, { intera = true } = {}) {
       await page.waitForTimeout(300);
     }
   }
+  // una pagina che scorre di lato a 390 px e' un difetto che lo screenshot non mostra: lo dice il log
+  const largo = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  if (largo > 0) console.log(`[schermate] ${nome}: la pagina scorre di lato di ${largo} px`);
   await page.screenshot({ path: join(DIR, `${nome}.png`), animations: 'disabled' });
 }
 

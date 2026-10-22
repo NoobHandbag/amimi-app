@@ -39,6 +39,8 @@
   --amimi-bad: #c4271b;
   --amimi-bad-ink: #b42318;
   --amimi-bad-tint: #fdecea;
+  --amimi-warn-on-dark: #fdba74;      /* arancio chiaro: l'esito "attenzione" sopra la card scura */
+  --amimi-bad-on-dark: #fca5a5;       /* rosso chiaro: l'esito negativo sopra la card scura */
 
   /* ---- superfici / testo ---- */
   --bg: var(--amimi-canvas);
@@ -74,6 +76,10 @@
   --warning: var(--amimi-warn);
   --warning-700: var(--amimi-warn-ink);
   --warning-tint: var(--amimi-warn-tint);
+  /* sopra una card scura (oggi --grad-hero: .ds-kpi.hero e .ds-hero) gli unici colori d'esito ammessi, insieme al bianco,
+     --ink-faint e --interactive-on-dark; le tinte chiare (--negative-tint e simili) sul nero non si usano */
+  --warning-on-dark: var(--amimi-warn-on-dark);
+  --negative-on-dark: var(--amimi-bad-on-dark);
   --info: var(--amimi-bordeaux);
   --info-700: var(--amimi-bordeaux-pressed);
   --info-tint: var(--amimi-bordeaux-tint);
