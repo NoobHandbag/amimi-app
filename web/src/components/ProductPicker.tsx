@@ -42,7 +42,7 @@ export default function ProductPicker({ selected, onPick }: { selected: Product 
       <div className="ds-picked">
         <span className="ds-picked-img">{selected.image_url ? <img src={selected.image_url} alt="" /> : initials(selected.item ?? selected.codice)}</span>
         <div className="ds-picked-txt">{prettyName(selected.item, selected.variant, selected.codice)}</div>
-        <button className="ds-btn secondary" style={{ minHeight: 36, padding: '7px 14px', fontSize: 13 }} onClick={() => onPick(null)} type="button">Cambia</button>
+        <button className="ds-btn secondary sm" onClick={() => onPick(null)} type="button">Cambia</button>
       </div>
     );
   }
@@ -57,7 +57,7 @@ export default function ProductPicker({ selected, onPick }: { selected: Product 
   );
 
   return (
-    <div>
+    <div className="ds-picker">
       <div className="ds-search">
         <Icon name="search" size={18} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca prodotto…" aria-label="Cerca prodotto" autoFocus />

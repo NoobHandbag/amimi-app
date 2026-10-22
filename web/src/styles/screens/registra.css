@@ -1,0 +1,60 @@
+/* ============================================================================
+   Registra (tema A, PR 6, 22-10-2026): regole della sola schermata, tutte sotto .scr-registra (pages/Ingest.tsx).
+   La radice avvolge anche Conta, Reso, B2B, Spese, Prodotti, Pulizia e Tabelle, che hanno le loro PR: qui solo l'hub
+   (.reg-tipi), il feed (components/RecentFeed.tsx), il modulo Regalo / Vendita manuale (.giftform), ProductPicker
+   (.ds-picker, .ds-pcard, .ds-picked) e "Vedi tutti". Etichette, campi, passo e "aggiungi" vengono da shell.css (Cornice 2).
+   ProductPicker vive anche nel Villaggio e nel calcolatore del Cruscotto: fuori da .scr-registra resta com'era.
+   ============================================================================ */
+
+/* ---- hub: tessere bianche senza bordo, icona in una tessera neutra (dieci tessere bordeaux si facevano concorrenza) ---- */
+.scr-registra .reg-tipi { gap: 8px; }
+.scr-registra .reg-tipi .tipo { border: 0; box-shadow: none; border-radius: 20px; padding: 14px; gap: 2px; }
+.scr-registra .reg-tipi .tipo:active { background: var(--surface-alt); }
+.scr-registra .reg-tipi .ti { width: 40px; height: 40px; border-radius: 12px; background: var(--surface-alt); color: var(--ink); margin-bottom: 8px; }
+.scr-registra .reg-tipi .tt { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.scr-registra .reg-tipi .td { font-size: 12.5px; line-height: 1.35; }
+
+/* ---- Ultimi inserimenti: titolo sul fondo, righe in un .ds-group (shell.css), icona a linea in una tessera neutra ---- */
+.scr-registra .feed { margin-top: 24px; }
+/* separatore rientrato fin dove comincia il testo: 16 di margine, 32 dell'icona, 12 di spazio */
+.scr-registra .feedlist { --sep-inset: 60px; }
+.scr-registra .feedlist .clickrow { gap: 12px; padding: 12px 16px; border-bottom: 0; }
+/* un CODICE_AMIIMI lungo e' una parola sola: va a capo dentro la colonna, non sotto l'ora */
+.scr-registra .feedlist .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.scr-registra .feedic { width: 32px; height: 32px; border-radius: 10px; background: var(--surface-alt); color: var(--ink); display: grid; place-items: center; flex: none; }
+.scr-registra .feedago { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.scr-registra .feedlist .feeddetail { margin: 0 16px 12px; }
+
+/* ---- "Vedi tutti ..." in fondo a ogni flusso: pillola piena senza bordo, senza la freccia di testo ---- */
+.scr-registra .seeall { border: 0; border-radius: 999px; background: var(--surface); color: var(--interactive); font-weight: 600; padding: 14px; margin-top: 24px; }
+.scr-registra .seeall:active { background: var(--surface-alt); }
+
+/* ---- ProductPicker: ricerca alta 48 px a 16 px come in Home (sotto 16 px iOS ingrandisce la pagina) ---- */
+.scr-registra .ds-picker .ds-search { min-height: 48px; padding-top: 0; padding-bottom: 0; }
+.scr-registra .ds-picker .ds-search input { align-self: stretch; font-size: 16px; }
+
+/* linee su una fila che scorre fino al bordo: copia di .hscroll di shell.css, da cambiare insieme. Qui e non con la
+   classe condivisa: .hscroll cambierebbe anche il picker del Villaggio e del calcolatore del Cruscotto */
+.scr-registra .ds-picker > .ds-linefilters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 10px -16px; padding: 0 16px 2px; }
+.scr-registra .ds-picker > .ds-linefilters::-webkit-scrollbar { display: none; }
+.scr-registra .ds-picker > .ds-linefilters > * { flex: none; }
+/* la fila che scorre taglia quello che esce: anello dentro la pillola, come in .ds-group */
+.scr-registra .ds-picker > .ds-linefilters :focus-visible { outline-offset: -2px; }
+@media print { .scr-registra .ds-picker > .ds-linefilters { margin-left: 0; margin-right: 0; padding: 0; flex-wrap: wrap; } }
+
+/* tessere senza bordo; la giacenza e' un dato, non un'azione: pillola neutra, arancio o rosso solo se bassa o a zero */
+.scr-registra .ds-pcard { border: 0; box-shadow: none; border-radius: 16px; padding: 6px 6px 10px; }
+.scr-registra .ds-pcard-img { border-radius: 12px; }
+.scr-registra .ds-pcard-nm { font-weight: 500; }
+.scr-registra .ds-pcard-gia { background: var(--surface-alt); color: var(--ink-muted); font-size: 11px; font-weight: 600; padding: 2px 8px; }
+.scr-registra .ds-pcard-gia.low { background: var(--warning-tint); color: var(--warning-700); }
+.scr-registra .ds-pcard-gia.zero { background: var(--negative-tint); color: var(--negative-700); box-shadow: none; }
+
+/* prodotto scelto: riga bianca sul fondo (era grigio su grigio); "Cambia" allora grigio, come il secondario dentro le card */
+.scr-registra .ds-picked { background: var(--surface); border-radius: 18px; }
+.scr-registra .ds-picked .ds-btn.secondary { background: var(--surface-alt); }
+
+/* ---- Regalo / Vendita manuale: i campi di una riga allineati in basso (l'etichetta del prezzo va su due righe),
+   bottone principale alto come .submit ---- */
+.scr-registra .giftform .grid2 { align-items: end; }
+.scr-registra .giftform > .ds-btn.primary.full { min-height: 52px; margin-top: 24px; font-size: 16px; letter-spacing: -.01em; }
