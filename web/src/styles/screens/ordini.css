@@ -178,3 +178,101 @@
 @media print {
   .scr-ordini .carttot.ord-tot.hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* ============================================================================
+   Ordine da foglio (tema A, PR 17, 23-10-2026): components/FoglioOrdine.tsx dentro .scr-ordini (solo Ordini: il
+   Villaggio non lo usa). Campi del kit, chip, box AI, avviso e la card scura .ds-hero (anche in stampa) vengono gia'
+   da shell.css; il select del modello resta il select del kit della sezione Ordini (.ord-modello). Nel build questo
+   file sta prima di shell.css: dove toccano la stessa cosa, le regole qui sono piu' specifiche.
+   ============================================================================ */
+
+/* ---- in cima: la spiegazione, le foto dei fogli in una fila con "Foto del foglio" (secondario, pillola) e
+   "Leggi i fogli", l'azione del passo (primario bordeaux) ---- */
+.scr-ordini .fo-intro { margin-bottom: 12px; font-size: 14px; line-height: 1.45; color: var(--ink-muted); }
+.scr-ordini .fo-fogli { align-items: center; gap: 8px; margin-bottom: 12px; }
+.scr-ordini .fo-fogli .ds-btn { border-radius: 999px; padding: 8px 16px 8px 13px; }
+.scr-ordini .fo-foto { display: inline-flex; align-items: center; gap: 8px; padding: 3px 12px 3px 3px; }
+.scr-ordini .fo-foto .ds-thumb { width: 30px; height: 30px; border-radius: 50%; }
+.scr-ordini .fo-foto .ds-thumb img { object-fit: cover; }
+.scr-ordini .fo-st.ok { color: var(--positive-700); }
+.scr-ordini .fo-st.err { color: var(--negative-700); }
+.scr-ordini .fo-leggi { margin-bottom: 14px; }
+
+/* ---- un foglio: titolo, il modello come pillola piena (resta il select del kit a 16 px), le righe a destra ---- */
+.scr-ordini .fo-foglio { margin-bottom: 14px; }
+.scr-ordini .fo-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 14px 0 10px; }
+.scr-ordini .fo-head h2 { margin: 0; }
+.scr-ordini .fo-head .ord-modello { border-radius: 999px; font-weight: 600; }
+.scr-ordini .fo-n { margin-left: auto; font-size: 13px; color: var(--ink-muted); }
+.scr-ordini .fo-stato { font-size: 13px; }
+/* errore di lettura: "Riprova" a destra, fuori dalla frase, cosi' tiene i 36 px senza allargare le righe del testo */
+.scr-ordini .fo-stato:has(> .fo-link) { display: flex; align-items: center; justify-content: space-between; gap: 4px 12px; }
+.scr-ordini .fo-nota { margin: 0 2px 10px; font-size: 13px; color: var(--ink-muted); }
+
+/* ---- riga del foglio: card bianca, titolo e descrizione su due righe. Una riga tolta sbiadisce tranne "Rimetti",
+   che resta leggibile (a opacita' .5 il bordeaux scenderebbe sotto 3:1) ---- */
+.scr-ordini .fo-riga { padding: 14px; margin-bottom: 10px; }
+.scr-ordini .fo-riga.off { background: color-mix(in srgb, var(--surface) 50%, transparent); }
+.scr-ordini .fo-riga.off > :not(.fo-rh), .scr-ordini .fo-riga.off .fo-rh > div { opacity: .5; }
+.scr-ordini .fo-rh { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.scr-ordini .fo-rt { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.scr-ordini .fo-rd { margin-top: 1px; font-size: 13px; color: var(--ink-muted); }
+/* "Togli", "cambia", "tutta", "Riprova": testo bordeaux senza sottolineatura; "Togli" in grigio, non e' l'azione */
+.scr-ordini .fo-link { min-height: 36px; padding: 0 4px; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--interactive); white-space: nowrap; }
+.scr-ordini .fo-link.neutro { color: var(--ink-muted); }
+/* etichette: .fl di shell.css, qui solo lo spazio */
+.scr-ordini .fo-riga .fl { margin: 10px 0 6px; }
+
+/* ---- varianti: tessera grigia con la foto; quella scelta ha l'anello bordeaux. Nel box di ricerca (grigio) la
+   tessera torna bianca. Le tessere di una fila sono alte uguali (nome su una o due righe); "Altra..." e "+ Nuova"
+   stanno al centro della fila, non alti quanto le tessere ---- */
+.scr-ordini .fo-cand { gap: 8px; margin-bottom: 6px; }
+.scr-ordini .fo-cand > .chip { align-self: center; }
+.scr-ordini .fo-scelta { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.scr-ordini .fo-tile { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; width: 92px; padding: 4px 4px 6px; border: 0; border-radius: 14px; background: var(--surface-alt); color: var(--ink); font-family: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+.scr-ordini .fo-tile-img { display: grid; place-items: center; width: 82px; height: 82px; overflow: hidden; border-radius: 10px; background: var(--thumb-bg); color: var(--thumb-ink); font-weight: 600; }
+.scr-ordini .fo-tile-img img { width: 100%; height: 100%; object-fit: cover; }
+.scr-ordini .fo-tile-l { line-height: 1.15; overflow-wrap: anywhere; text-align: center; }
+.scr-ordini .fo-tile.on { background: var(--interactive-tint-soft); box-shadow: inset 0 0 0 2px var(--interactive); }
+.scr-ordini .fo-tile.on .fo-tile-l { font-weight: 600; color: var(--interactive); }
+.scr-ordini .mat-aibox .fo-tile:not(.on) { background: var(--surface); }
+/* variante nuova scelta: stesso stato "scelta" della tessera (anello e testo bordeaux), non piu' la chip nera */
+.scr-ordini .fo-nuovascelta { background: var(--interactive-tint-soft); box-shadow: inset 0 0 0 2px var(--interactive); color: var(--interactive); font-weight: 600; }
+.scr-ordini .fo-nuovascelta .newtag { margin-left: 2px; padding: 2px 7px; border-radius: 999px; background: var(--surface); color: var(--interactive); }
+.scr-ordini .fo-cerca input { margin-bottom: 8px; }
+.scr-ordini .fo-cerca .mat-files { gap: 8px; }
+.scr-ordini .fo-vuoto { font-size: 13px; color: var(--ink-muted); }
+.scr-ordini .fo-nuova { display: flex; align-items: center; gap: 8px; }
+.scr-ordini .fo-nuova input { flex: 1; min-width: 0; }
+
+/* ---- pezzi, interno, costo: campi del kit (pieni, 16 px, 48 px), larghi quanto serve ---- */
+.scr-ordini .fo-campi { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; }
+.scr-ordini .fo-qtyrow { display: flex; align-items: center; gap: 6px; }
+.scr-ordini .fo-qty { width: 72px; }
+.scr-ordini .fo-int { width: 96px; }
+.scr-ordini .fo-eur { width: 80px; }
+
+/* ---- in fondo: fornitore e data sono h2 (stile di shell.css, qui solo lo spazio); il fornitore scelto e' una
+   pillola, non una barra ---- */
+.scr-ordini .fo-sez { margin: 22px 0 10px; }
+.scr-ordini .fo-sez + .chip { align-self: flex-start; }
+.scr-ordini .fo-altro { display: flex; gap: 8px; }
+.scr-ordini .fo-altro input { flex: 1; min-width: 0; }
+
+/* ---- totale: la card scura della schermata. Stesso conto di prima, davanti i pezzi con "+ N da definire
+   all'arrivo" accanto (qualifica i pezzi, non le righe), sotto le righe; sul nero solo bianco e colori on-dark. Cosa
+   manca per inserire: sotto, in arancio ---- */
+.scr-ordini .ds-hero.fo-tot { flex-direction: column; align-items: flex-start; gap: 2px; margin: 18px 0 0; padding: 18px 20px; cursor: default; color: var(--surface); }
+.scr-ordini .ds-hero.fo-tot .fo-tot-p { font-size: 15px; font-weight: 500; }
+.scr-ordini .ds-hero.fo-tot .fo-tot-p .n { margin-right: 2px; font-size: 34px; font-weight: 600; letter-spacing: -.04em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.scr-ordini .ds-hero.fo-tot .fo-tot-r { font-size: 14px; }
+.scr-ordini .ds-hero.fo-tot .fo-tot-b { color: var(--surface); opacity: .72; }
+/* se non ci sta va a capo intera, non a meta' */
+.scr-ordini .ds-hero.fo-tot .fo-tot-w { font-size: 14px; white-space: nowrap; color: var(--warning-on-dark); }
+.scr-ordini .fo-prob { margin-top: 10px; font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--warning-700); }
+
+/* ---- stampa: il titolo di un foglio (con avviso e nota) e quelli di fornitore e data non restano soli in fondo al
+   foglio di carta, le righe sotto sulla pagina dopo ---- */
+@media print {
+  .scr-ordini :is(.fo-head, .fo-head ~ .card.warn, .fo-nota, .fo-sez) { break-after: avoid; }
+}
