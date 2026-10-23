@@ -1,0 +1,95 @@
+/* ============================================================================
+   "Chiedi ad Amimi'" (tema A, PR 14, 23-10-2026): regole del solo assistente, tutte sotto .scr-ai
+   (components/AssistantPanel.tsx). Il componente non ha un contenitore unico: .scr-ai sta sul bottone flottante,
+   sul pannello e sul portale del report, che vive in body. Velatura, ombra del pannello, bottone chiudi pieno e
+   colore del bottone flottante vengono gia' da shell.css (Cornice 2); la stampa che nasconde #root solo col
+   portale e il pannello fuori dal foglio stanno in index.css (Cornice 3).
+   ============================================================================ */
+
+/* ---- bottoni e campi in Geist: senza, bottoni e campi prendono il carattere di sistema ---- */
+.scr-ai.ai-fab, .scr-ai :is(button, input, select) { font-family: inherit; }
+/* Geist e' caricato a 400, 500, 600 e 700: 650 diventava 700 */
+.scr-ai.ai-fab { font-weight: 600; }
+
+/* ---- testata: niente filo sotto, titolo come la barra in alto, "dati live" neutro (e' un dato, non un'azione) ---- */
+.scr-ai.ai-panel { border-radius: 24px 24px 0 0; }
+.scr-ai .ai-head { border-bottom: 0; padding: 4px 16px 8px; gap: 12px; }
+.scr-ai .ai-ttl { font-size: 17px; font-weight: 600; letter-spacing: -.015em; }
+.scr-ai .ai-chip { margin-top: 4px; padding: 3px 9px; border-radius: 999px; background: var(--surface); color: var(--ink-muted); font-size: 12px; font-weight: 500; }
+.scr-ai .ai-x { width: 40px; height: 40px; }
+
+/* ---- conversazione: il segno della testata resta l'unico blocco nero; risposte e vuoto con il segno chiaro ---- */
+.scr-ai .ai-thread { padding-left: 16px; padding-right: 16px; }
+.scr-ai :is(.ai-who-m, .ai-empty-m) { background: var(--surface); color: var(--ink); }
+.scr-ai .ai-who span { font-weight: 600; }
+.scr-ai .ai-a p { font-size: 15px; }
+.scr-ai .ai-u { border-radius: 18px 18px 6px 18px; }
+/* chiave mancante: nota neutra, non piu' in tinta bordeaux */
+.scr-ai .ai-a .ai-note { background: var(--surface); border: 0; border-radius: 16px; padding: 12px 14px; font-size: 14px; color: var(--ink); }
+
+/* ---- grafici: card senza bordo, titolo in minuscolo, barre neutre come Cruscotto e Home ---- */
+.scr-ai .ai-viz { border: 0; border-radius: 20px; padding: 14px 16px 8px; }
+.scr-ai .ai-viz-h { text-transform: none; letter-spacing: 0; font-size: 15px; font-weight: 600; color: var(--ink); margin-bottom: 12px; }
+.scr-ai .ai-bar-fill { background: var(--chart-bar); }
+.scr-ai .ai-bar-nm { font-size: 12.5px; font-weight: 500; text-align: left; }
+.scr-ai .ai-bar-v { font-weight: 600; letter-spacing: -.01em; }
+.scr-ai .ai-xaxis { font-size: 11px; }
+/* torta: i colori li scrive Chart() dai token; la legenda porta nomi e valori. Legenda da 120 (index.css 130): a 320 px
+   la card senza bordo ha 256 px dentro e la legenda resta accanto alla torta (120 + 14 + 120) */
+.scr-ai .ai-legend { min-width: 120px; }
+.scr-ai .ai-leg b { font-weight: 600; }
+
+/* ---- schede prodotto: senza bordo, numeri stretti; la giacenza e' grigia sopra 2 pz, arancio e rossa senza anello,
+   come la pillola del picker di Registra ---- */
+.scr-ai .ai-pc { border: 0; border-radius: 18px; }
+.scr-ai .ai-pc-rk { font-weight: 600; }
+.scr-ai .ai-pc-nm { font-weight: 600; }
+.scr-ai :is(.ai-pc-sold, .ai-pc-pr) { font-weight: 600; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.scr-ai .ai-badge { font-weight: 600; border-radius: 999px; }
+.scr-ai .ai-badge.out { box-shadow: none; }
+.scr-ai .ai-badge.ok { color: var(--ink-muted); background: var(--surface-alt); }
+
+/* ---- fonti: pillola bianca con la freccia che ruota; dentro restano SQL e tabella grezza ---- */
+.scr-ai .ai-src summary { display: inline-flex; align-items: center; gap: 4px; list-style: none; padding: 6px 10px 6px 12px; border-radius: 999px; background: var(--surface); color: var(--ink-muted); font-weight: 500; }
+.scr-ai .ai-src summary::-webkit-details-marker { display: none; }
+.scr-ai .ai-src summary svg { transition: transform .15s; }
+.scr-ai .ai-src[open] summary svg { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .scr-ai .ai-src summary svg { transition: none; } }
+.scr-ai .ai-sql { background: var(--surface); border-radius: 12px; padding: 10px 12px; }
+/* la prima colonna a sinistra come la sua intestazione (index.css allinea a destra ogni cella) */
+.scr-ai .ai-src td:first-child { text-align: left; }
+
+/* ---- suggerimenti e campo: pieni, senza bordo; il campo a 16 px (iOS non ingrandisce), invia senza alone ---- */
+.scr-ai .ai-chips { border-top: 0; padding: 6px 16px 4px; }
+.scr-ai .ai-chipbtn { border: 0; border-radius: 999px; background: var(--surface); color: var(--ink); font-weight: 500; padding: 8px 14px; }
+.scr-ai .ai-composer { padding-left: 16px; padding-right: 16px; }
+/* a 320 px il segnaposto non ci sta: finisce coi puntini invece di tagliarsi a meta' parola */
+.scr-ai .ai-field { min-width: 0; min-height: 48px; border: 0; border-radius: 999px; background: var(--surface); padding: 12px 18px; font-size: 16px; color: var(--ink); text-overflow: ellipsis; }
+.scr-ai .ai-field::placeholder { color: var(--ink-muted); opacity: 1; }
+.scr-ai .ai-send { width: 48px; height: 48px; box-shadow: none; color: var(--surface); }
+
+/* ---- spesa proposta: card senza bordo, campi pieni a 16 px e alti 48, "Annulla" pieno ---- */
+.scr-ai .ai-action { border: 0; border-radius: 20px; padding: 16px; }
+.scr-ai .ai-action-h { font-size: 17px; font-weight: 600; letter-spacing: -.015em; margin-bottom: 12px; }
+/* minmax(0, 1fr): select e campi non allargano piu' la card (scorreva di 3 px a 390 e di 73 a 320) */
+.scr-ai .ai-action-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 10px; }
+.scr-ai .ai-action-grid label { gap: 6px; font-size: 13px; font-weight: 500; }
+.scr-ai .ai-action-grid :is(input:not([type=checkbox]), select) { width: 100%; min-width: 0; min-height: 48px; border: 0; border-radius: 14px; padding: 0 14px; background: var(--surface-alt); color: var(--ink); font-size: 16px; }
+.scr-ai .ai-action-btns { gap: 10px; margin-top: 14px; }
+.scr-ai :is(.ai-action-no, .ai-action-yes) { min-height: 44px; border-radius: 14px; font-size: 14px; font-weight: 600; }
+.scr-ai .ai-action-no { border: 0; background: var(--surface-alt); color: var(--ink); }
+/* telefono stretto: un campo per riga (il select tagliava la categoria) e "Conferma e proponi" su una riga */
+@media (max-width: 359px) {
+  .scr-ai .ai-action-grid { grid-template-columns: minmax(0, 1fr); }
+  .scr-ai :is(.ai-action-no, .ai-action-yes) { padding-left: 12px; padding-right: 12px; }
+}
+
+/* ---- report da salvare in PDF: Geist come l'app, non piu' il carattere di sistema ---- */
+.scr-ai .ai-report { font-family: var(--font-sans); }
+/* sul foglio bianco la card non si stacca dal fondo: il grafico si allinea al testo, le schede prendono un bordo
+   (il portale stampa i colori, index.css) */
+.scr-ai .ai-report .ai-viz { padding: 4px 0 0; }
+.scr-ai .ai-report .ai-pc { border: 1px solid var(--border); }
+/* sul foglio A4 tre schede per riga e nessuna spezzata fra due fogli (prima la terza e la quarta finivano a meta') */
+.scr-ai .ai-report .ai-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.scr-ai .ai-report :is(.ai-pc, .ai-viz) { break-inside: avoid; }
