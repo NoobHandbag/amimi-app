@@ -1,0 +1,106 @@
+/* ============================================================================
+   Prodotti & prezzi, Pulizia dati e Pubblica su Shopify (tema A, PR 11, 22-10-2026): le viste di pages/Prodotti.tsx,
+   dentro la radice di Registra (.scr-registra, pages/Ingest.tsx). Ogni regola sta sotto .scr-registra e la classe
+   della sua vista: .prod-cat (catalogo), .prod-edit (scheda), .prod-todo (Pulizia), .prod-pub (Pubblica).
+   .ds-prow, .ds-thumb e .ds-pcode li usano anche Magazzino, il foglio d'ordine e il Villaggio; .hot il Riordino; .ds-reco
+   il Nuovo prodotto: fuori da queste viste restano come sono.
+   Vengono gia' da shell.css: .ds-group, .hscroll, .tgl, i campi del kit, .ds-fp-todo rosso, la card arancio senza bordo.
+   ============================================================================ */
+
+/* ---- catalogo: ricerca alta 48 px e a 16 px come in Home (sotto 16 px iOS ingrandisce la pagina) ---- */
+.scr-registra .prod-cat > .ds-search { min-height: 48px; padding-top: 0; padding-bottom: 0; }
+.scr-registra .prod-cat > .ds-search input { align-self: stretch; font-size: 16px; }
+/* filtri su una fila che scorre (.hscroll): la fila taglia sopra e sotto, 4 px di padding tengono l'anello fuori dalla
+   pillola (dentro, sulla pillola nera o rossa scelta, non si vedeva). Le pillole restano dov'erano: sopra -4 px, che
+   si sommano ai 10 px di .ds-count (margini che collassano), sotto 8 px al posto di 10 */
+.scr-registra .prod-cat .hscroll { padding-top: 4px; padding-bottom: 4px; margin-top: -4px; margin-bottom: 8px; }
+
+/* ---- catalogo: una sola superficie (.ds-group), il separatore parte dal testo (16 + 44 di foto + 12). A destra il
+   prezzo; sotto il codice una riga grigia con COGS e margine, arancio solo sotto il 65% ---- */
+.scr-registra .prod-cat .prod-list { --sep-inset: 72px; }
+.scr-registra .prod-cat .prod-list .ds-prow { gap: 12px; padding: 12px 12px 12px 16px; }
+.scr-registra .prod-cat .prod-list .ds-thumb { width: 44px; height: 44px; border-radius: 12px; font-weight: 600; }
+.scr-registra .prod-cat .prod-list .ds-pn { font-size: 15px; font-weight: 500; letter-spacing: -.01em; line-height: 1.25; }
+.scr-registra .prod-cat .prod-list .ds-pcode { margin-top: 2px; font-size: 10.5px; }
+.scr-registra .prod-cat .prod-costo { margin-top: 3px; font-size: 12.5px; line-height: 1.35; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+/* "margine 70%" non va a capo a meta' (telefono da 320) */
+.scr-registra .prod-cat .prod-costo :is(.marg, .marglow) { white-space: nowrap; }
+.scr-registra .prod-cat .prod-costo .marglow { color: var(--warning-700); font-weight: 600; }
+.scr-registra .prod-cat .prod-prezzo { flex: none; text-align: right; white-space: nowrap; font-size: 16px; font-weight: 600; letter-spacing: -.02em;
+  color: var(--ink); font-variant-numeric: tabular-nums; }
+/* solo le due scritte "manca": la riga incompleta ha ancora la classe miss e non va in grassetto */
+.scr-registra .prod-cat :is(.prod-costo, .prod-prezzo) .miss { color: var(--negative-700); font-weight: 600; }
+.scr-registra .prod-cat .prod-prezzo .miss { font-size: 13px; letter-spacing: 0; }
+.scr-registra .prod-cat .prod-list .chev { margin-left: -4px; color: var(--ink-muted); }
+
+/* ---- scheda: nome del prodotto come titolo, il codice sotto, tutti e due nella colonna centrale della barra ---- */
+.scr-registra .prod-edit .appbar-title > span { display: block; overflow: hidden; text-overflow: ellipsis; }
+.scr-registra .prod-edit .appbar-title > .ds-pcode { margin-top: 1px; font-size: 11px; font-weight: 500; letter-spacing: 0; line-height: 1.3; }
+.scr-registra .prod-edit .txt.upper { text-transform: uppercase; }
+.scr-registra .prod-edit .note.tight { margin: 4px 0 0; }
+.scr-registra .prod-edit .note.gap { margin-top: 12px; }
+/* il bottone sta a 18 px dai campi, a 6 px dalla nota "Per verificare mancano" (prima scritto nello style) */
+.scr-registra .prod-edit > .ds-btn.primary { margin-top: 18px; }
+.scr-registra .prod-edit > .note.gap + .ds-btn.primary { margin-top: 6px; }
+/* prezzo consigliato e "genera": bianchi sul fondo come il box AI della cornice, senza bordo, bordeaux perche' sono
+   azioni. La tinta tenue va sul riquadro dell'icona: sul fondo grigio il box tinto non si staccava (1,02:1) */
+.scr-registra .prod-edit .ds-reco { border: 0; border-radius: 16px; background: var(--surface); padding: 12px 14px; gap: 12px; }
+.scr-registra .prod-edit .ds-reco .ic { width: 32px; height: 32px; border-radius: 10px; background: var(--interactive-tint-soft); color: var(--interactive); }
+.scr-registra .prod-edit .ds-reco .ht { font-size: 13px; font-weight: 500; color: var(--ink); line-height: 1.4; }
+.scr-registra .prod-edit .ds-reco .ht b { font-weight: 600; }
+.scr-registra .prod-edit .minibtn { border: 0; border-radius: 999px; background: var(--surface); color: var(--interactive); font-family: inherit; font-size: 12.5px;
+  font-weight: 600; padding: 6px 12px; }
+
+/* ---- Pulizia: titoli di gruppo come i titoli di sezione, righe in un .ds-group (separatore dal testo: 16 + 44 + 12) ---- */
+.scr-registra .prod-todo .todogroup { margin-bottom: 24px; }
+.scr-registra .prod-todo .todoghead { padding: 0 2px; margin: 0 0 4px; font: inherit; color: inherit; text-align: left; }
+.scr-registra .prod-todo .todogt { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--ink); }
+.scr-registra .prod-todo .todogt.dim { color: var(--ink-muted); }
+.scr-registra .prod-todo .todogn { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 500; color: var(--ink-muted);
+  font-variant-numeric: tabular-nums; }
+.scr-registra .prod-todo .todogsub { font-size: 12.5px; margin: 0 2px 10px; }
+/* "Pulizia anagrafica": l'aspetto e' da titolo, il tocco alto 44 px */
+.scr-registra .prod-todo .todoghead.clk { min-height: 44px; margin: -10px 0 -6px; }
+.scr-registra .prod-todo .ds-group { --sep-inset: 72px; }
+.scr-registra .prod-todo .todocard { gap: 12px; padding: 12px 12px 12px 16px; font: inherit; color: inherit; }
+.scr-registra .prod-todo .todocard .invimg { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; overflow: hidden;
+  font-size: 12px; font-weight: 600; color: var(--thumb-ink); }
+.scr-registra .prod-todo .todocard .invimg img { width: 100%; height: 100%; object-fit: contain; }
+/* nome e pillole in una fila che va a capo: una pillola che scende comincia la riga, senza rientro */
+.scr-registra .prod-todo .todocard .rt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 15px; font-weight: 500;
+  letter-spacing: -.01em; line-height: 1.3; }
+.scr-registra .prod-todo .todocard .chev { color: var(--ink-muted); }
+/* righe facoltative: index.css le sbiadisce tutte (.62) e pillole, chip e freccia scendevano sotto 3:1; qui e' grigio
+   solo il nome, il titolo del gruppo dice gia' "facoltativa" */
+.scr-registra .prod-todo .todocard.dim { opacity: 1; }
+.scr-registra .prod-todo .todocard.dim .rt { color: var(--ink-muted); }
+/* cosa manca: pillola arancio tenue senza bordo, in minuscolo (il colore del testo e' quello di shell.css) */
+.scr-registra .prod-todo .missrow { gap: 4px; margin-top: 6px; }
+.scr-registra .prod-todo .misschip { border: 0; border-radius: 999px; padding: 2px 8px; font-size: 11.5px; font-weight: 600; background: var(--warning-tint); }
+/* "venduto N×" e "nuovo modello" sono dati, non esiti: pillola neutra */
+.scr-registra .prod-todo :is(.hot, .newmod) { display: inline-block; margin: 0; padding: 2px 8px; border-radius: 999px; background: var(--surface-alt);
+  color: var(--ink-muted); font-size: 11px; font-weight: 600; line-height: 1.4; letter-spacing: 0; white-space: nowrap; vertical-align: 1px; }
+
+/* ---- Pubblica: filtri per modello come le pillole della cornice, prodotti in un .ds-group ---- */
+.scr-registra .prod-pub .kpichip { border: 0; background: var(--surface); color: var(--ink); font-family: inherit; font-size: 12.5px; font-weight: 500; padding: 8px 14px; }
+.scr-registra .prod-pub .kpichip b { margin-left: 4px; color: var(--ink-muted); font-weight: 600; }
+.scr-registra .prod-pub .kpichip.on { background: var(--ink); color: var(--surface); }
+.scr-registra .prod-pub .kpichip.on b { color: inherit; }
+.scr-registra .prod-pub .ds-group > .row { gap: 12px; padding: 12px 12px 12px 16px; }
+/* le righe non si aprono: premute restano bianche */
+.scr-registra .prod-pub .ds-group > .row:active { background: none; }
+.scr-registra .prod-pub .ds-group .rt { font-size: 15px; font-weight: 500; letter-spacing: -.01em; }
+.scr-registra .prod-pub .ds-group .rs { margin-top: 2px; font-size: 12.5px; }
+.scr-registra .prod-pub .newtag { margin-left: 6px; padding: 2px 8px; border-radius: 999px; background: var(--warning-tint); color: var(--warning-700);
+  font-size: 11px; font-weight: 600; vertical-align: 1px; }
+/* "pubblica" e' spento finche' il server non lo abilita: grigio dentro la superficie bianca */
+.scr-registra .prod-pub .ds-group .chip { flex: none; background: var(--surface-alt); color: var(--ink-muted); font-family: inherit; cursor: default; }
+
+/* ---- stampa: il filo di .ds-group e' un fondo e sul foglio senza grafica sparirebbe, qui e' un bordo (come in Magazzino) ---- */
+@media print {
+  .scr-registra :is(.prod-cat, .prod-todo, .prod-pub) .ds-group > * + *::before { height: 0; background: none; border-top: 1px solid var(--border); }
+  .scr-registra :is(.prod-cat, .prod-todo, .prod-pub) .ds-group > * { break-inside: avoid; }
+  /* filtri di Pubblica: come .ds-fp in shell.css resta solo la scelta, in nero (il bianco sulla pillola nera usciva grigio) */
+  .scr-registra .prod-pub .kpichip:not(.on) { display: none; }
+  .scr-registra .prod-pub .kpichip.on { background: none; color: var(--ink); }
+}
