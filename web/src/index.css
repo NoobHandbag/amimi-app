@@ -872,12 +872,10 @@ button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-
 /* audit 10-09 (pagina vista loggati): textarea dei form lead in monospace da 167px e bottoni senza bordo */
 .lead-verd textarea, .cs-fld textarea, .or-form textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; line-height: 1.4; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); resize: vertical; }
 .lead-actions .ds-btn, .or-move .ds-btn, .or-form + .ds-btn { border: 1px solid var(--border-strong); border-radius: 10px; }
-.lead-verd .lead-actions .ds-btn { font-weight: 700; min-width: 120px; justify-content: center; }
 .lead-verd-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 /* Outreach (tappa 1, 10-09) */
 .or-nav { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 12px; }
 .or-nav button { border: 1px solid var(--border); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 7px 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
-.or-nav button.on { background: var(--interactive); border-color: var(--interactive); color: #fff; }
 .or-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 10px; overflow-x: auto; padding-bottom: 8px; }
 .or-col { background: var(--surface-alt); border-radius: var(--r-md); padding: 8px; min-height: 160px; }
 .or-col h3 { font-size: 11px; margin: 2px 4px 8px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .04em; display: flex; justify-content: space-between; }
@@ -978,11 +976,10 @@ a.ds-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .mat-low, .chip.mat-low { background: var(--warning-tint) !important; border-color: var(--warning) !important; }
 
 /* Negozi B2B, audit UI/UX 22-09: bottone "indietro" leggibile (prima un badge arancio 11px a 2,27:1), persona che firma,
-   compositore per primo su telefono, pill di navigazione e titoli con la tinta -700 (WCAG AA) */
+   compositore per primo su telefono, titoli con la tinta -700 (WCAG AA) */
 .lead-back { background: none; border: 0; color: var(--interactive-700); font-weight: 700; font-size: 14px; padding: 8px 2px; cursor: pointer; min-height: 40px; }
 .lead-who { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-muted); }
 .lead-who select { font: inherit; font-weight: 700; color: var(--ink); border: 1px solid var(--border); border-radius: 999px; padding: 6px 10px; background: var(--surface); min-height: 36px; }
-.or-nav button.on { background: var(--interactive-700); border-color: var(--interactive-700); }
 .lead-verd h2 { color: var(--interactive-700); }
 
 /* Negozi B2B su telefono (report UI/UX 22-09, righe "Alta"; Blocco 2). Tabella: la colonna Negozio resta ferma mentre
