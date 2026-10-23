@@ -7,8 +7,11 @@ import { suggestPrice, marginOf, genSeoTitle, prettyName } from '../lib/helpers'
 import { toast } from '../lib/toast';
 import Icon from '../components/Icon';
 import AppBar from '../components/AppBar';
+import '../styles/screens/prodotti.css';
 
 const titleCase = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s);
+// solo per mostrare (catalogo): 317.5 diventa "317,50 €", 159 resta "159 €"; i valori salvati e inviati non passano di qui
+const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }).format(n);
 
 /* ---------- Da completare (Benny) ---------- */
 // v21 (brief 23-07 C.1): la CATEGORIA non e' piu' un input manuale — la deriva la tabella
@@ -71,7 +74,7 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
       const res = await verifyProduct({ codice: p.codice, item: itemUp, variant: variantUp, retail_price: price === '' ? null : Number(price), cogs: cogs === '' ? null : Number(cogs), image_url: img, description: descr, seo_title: seo, ...(isVerifica && completo ? { confirm: true } : {}) }, pin, chi) as unknown as { codice?: string; renamed?: boolean; verificato?: boolean; warning?: string };
       // feedback esplicito (item 24): in call Benny non capiva dove fosse finito il prodotto salvato
       if (res.verificato) {
-        toast(`✓ Salvato — ${itemUp} ${variantUp} è completo: ora lo trovi in Magazzino.${res.renamed ? ` Codice definitivo: ${res.codice}.` : ''}${remaining != null && remaining > 0 ? ` Ne restano ${remaining} da sistemare.` : remaining === 0 ? ' Erano gli ultimi: tutto pulito! 🎉' : ''}`, 'ok');
+        toast(`Salvato. ${itemUp} ${variantUp} è completo: ora lo trovi in Magazzino.${res.renamed ? ` Codice definitivo: ${res.codice}.` : ''}${remaining != null && remaining > 0 ? ` Ne restano ${remaining} da sistemare.` : remaining === 0 ? ' Erano gli ultimi: tutto pulito!' : ''}`, 'ok');
       } else {
         toast(`Salvato. ${itemUp} ${variantUp} non è ancora completo: resta in lista.`, 'ok');
       }
@@ -80,13 +83,13 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
     } catch (e) { toast((e as Error).message, 'err'); setBusy(false); }
   }
   return (
-    <div className="form">
-      <AppBar title={p.codice} onBack={onDone} backLabel="elenco prodotti" />
+    <div className="form prod-edit">
+      <AppBar title={<><span>{prettyName(p.item, p.variant, p.codice)}</span><span className="ds-pcode">{p.codice}</span></>} onBack={onDone} backLabel="elenco prodotti" />
       <div className="grid2">
-        <div><label className="fl">Modello *</label><input className="txt" style={{ textTransform: 'uppercase' }} value={item} onChange={(e) => setItem(e.target.value)} /></div>
-        <div><label className="fl">Variante *</label><input className="txt" style={{ textTransform: 'uppercase' }} value={variant} onChange={(e) => setVariant(e.target.value)} /></div>
+        <div><label className="fl">Modello *</label><input className="txt upper" value={item} onChange={(e) => setItem(e.target.value)} /></div>
+        <div><label className="fl">Variante *</label><input className="txt upper" value={variant} onChange={(e) => setVariant(e.target.value)} /></div>
       </div>
-      <p className="note" style={{ margin: '4px 0 0' }}>I nomi si salvano sempre in MAIUSCOLO (regola condivisa). La categoria la deriva il sistema dal modello.</p>
+      <p className="note tight">I nomi si salvano sempre in MAIUSCOLO (regola condivisa). La categoria la deriva il sistema dal modello.</p>
       <div className="grid2">
         <div><label className="fl">Prezzo € (IVA incl.)</label><input className="num" type="number" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></div>
         <div><label className="fl">COGS € (costo unitario){cogsAuto ? ' · dall’ordine di Ginni' : ''}</label><input className="num" type="number" inputMode="decimal" value={cogs} onChange={(e) => { setCogs(e.target.value); setCogsAuto(false); }} placeholder="—" /></div>
@@ -105,9 +108,9 @@ function ProdEdit({ p, pin, chi, onDone, remaining }: { p: ProdTodo; pin: string
       <input className="txt" value={seo} onChange={(e) => setSeo(e.target.value)} placeholder="Borsa … AMIMI … Made in Italy" />
       {seo && <div className="charcount">{seo.length} caratteri{seo.length >= 60 && seo.length <= 70 ? ' ✓' : ' (target 60–70)'}</div>}
       {isVerifica && !completo && (
-        <p className="note" style={{ marginTop: 12 }}>Per verificare mancano: <b>{bloccanti.join(', ')}</b>. Puoi comunque salvare quello che hai: resta in lista.</p>
+        <p className="note gap">Per verificare mancano: <b>{bloccanti.join(', ')}</b>. Puoi comunque salvare quello che hai: resta in lista.</p>
       )}
-      <button className="ds-btn primary full" style={{ marginTop: isVerifica && !completo ? 6 : 18 }} disabled={busy} onClick={save}>
+      <button className="ds-btn primary full" disabled={busy} onClick={save}>
         {busy ? 'Salvo…' : isVerifica ? (completo ? 'Verifica e salva' : 'Salva (incompleto)') : 'Salva modifiche'}
       </button>
       <p className="note">Le modifiche valgono per l'app: prezzo e COGS contano per vendite e margini FUTURI (lo storico non si ricalcola) e <b>non cambiano nulla su Shopify</b>.</p>
@@ -128,13 +131,13 @@ export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
   useEffect(() => { load(); }, []);
   if (edit) return <ProdEdit p={edit} pin={pin} chi={chi} onDone={() => { popBack(() => setEdit(null)); load(); }}
     remaining={list.filter((x) => x.bucket !== 'pulizia' && x.codice !== edit.codice).length} />;
-  if (!list.length) return <div className="card muted center">Tutti i prodotti sono verificati. 🎉</div>;
+  if (!list.length) return <div className="card muted center">Tutti i prodotti sono verificati.</div>;
 
-  // DESCR e' richiesta solo per i modelli NUOVI: per le varianti di item esistenti
+  // La descrizione e' richiesta solo per i modelli NUOVI: per le varianti di item esistenti
   // la descrizione vive a livello di modello (gia' scritta), il tag sarebbe rumore.
   const miss = (p: ProdTodo) => [
-    !p.item && 'MODELLO', !p.variant && 'VARIANTE', !p.image_url && 'IMG',
-    (!p.retail_price && 'PREZZO'), (!p.description && p.is_new_model && 'DESCR'),
+    !p.item && 'Modello', !p.variant && 'Variante', !p.image_url && 'Immagine',
+    (!p.retail_price && 'Prezzo'), (!p.description && p.is_new_model && 'Descrizione'),
   ].filter(Boolean) as string[];
 
   const card = (p: ProdTodo, dim = false) => (
@@ -147,7 +150,7 @@ export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
         </div>
         <div className="missrow">{miss(p).map((m) => <span key={m} className="misschip">{m}</span>)}</div>
       </div>
-      <span className="chev">›</span>
+      <Icon name="chevron" size={18} className="chev" />
     </button>
   );
 
@@ -156,7 +159,7 @@ export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
   const actionable = groups.reduce((n, g) => n + g.items.length, 0);
 
   return (
-    <div className="list">
+    <div className="list prod-todo">
       {actionable === 0 && (
         <p className="note">Nessun prodotto nuovo o con buchi su prezzo/COGS. Sotto resta solo la pulizia anagrafica, facoltativa.</p>
       )}
@@ -164,19 +167,19 @@ export function ProdVerify({ pin, chi }: { pin: string; chi: string }) {
         <section key={g.key} className="todogroup">
           <div className="todoghead"><span className="todogt">{g.title}</span><span className="todogn">{g.items.length}</span></div>
           <p className="todogsub">{g.sub}</p>
-          {g.items.map((p) => card(p))}
+          <div className="ds-group">{g.items.map((p) => card(p))}</div>
         </section>
       ) : null)}
       {clean.length ? (
         <section className="todogroup">
-          <button type="button" className="todoghead clk" onClick={() => setShowClean((v) => !v)}>
+          <button type="button" className="todoghead clk" aria-expanded={showClean} onClick={() => setShowClean((v) => !v)}>
             <span className="todogt dim">Pulizia anagrafica (facoltativa)</span>
-            <span className="todogn">{clean.length} {showClean ? '▲' : '▼'}</span>
+            <span className="todogn">{clean.length} <span className={showClean ? 'tgl open' : 'tgl'}><Icon name="chevron" size={14} /></span></span>
           </button>
           {showClean && (
             <>
               <p className="todogsub">Prezzo e COGS già presenti. Manca solo immagine, descrizione o modello/variante. Completa quando hai tempo.</p>
-              {clean.map((p) => card(p, true))}
+              <div className="ds-group">{clean.map((p) => card(p, true))}</div>
             </>
           )}
         </section>
@@ -206,13 +209,13 @@ export function Publish() {
   const shown = filt ? (ready ?? []).filter((p) => (p.item ?? p.codice) === filt) : (ready ?? []);
 
   return (
-    <div>
+    <div className="prod-pub">
       <div className="card warn">
         <b>Pubblicazione live disattivata.</b> Quando un prodotto è verificato e pronto, si pubblica su Shopify + Qromo da qui.
         La pubblicazione automatica su Shopify è disattivata per sicurezza e va riattivata da chi gestisce il sistema.
       </div>
       {ready == null ? <p className="muted center">…</p> : !ready.length ? (
-        <div className="card muted center">Niente da pubblicare. Tutti i prodotti completi sono già su Shopify (bozze incluse). 🎉</div>
+        <div className="card muted center">Niente da pubblicare. Tutti i prodotti completi sono già su Shopify (bozze incluse).</div>
       ) : (
         <div className="list">
           <p className="note">{ready.length} prodotti completi (scheda + foto) non ancora su Shopify, nemmeno in bozza.</p>
@@ -222,12 +225,14 @@ export function Publish() {
               <button key={k} className={`kpichip ${filt === k ? 'on' : ''}`} onClick={() => setFilt(filt === k ? null : k)}>{k} <b>{n}</b></button>
             ))}
           </div>
-          {shown.map((p) => (
-            <div className="row" key={p.codice}>
-              <div><div className="rt">{p.item ?? p.codice}{p.pronto_stock === false && <span className="newtag" title="Ordine non ancora arrivato: si può preparare la bozza, il go-live aspetta lo stock">in arrivo</span>}</div><div className="rs">{p.variant ?? ''}</div></div>
-              <button className="chip" disabled title="abilitazione lato server richiesta">pubblica</button>
-            </div>
-          ))}
+          <div className="ds-group">
+            {shown.map((p) => (
+              <div className="row" key={p.codice}>
+                <div><div className="rt">{p.item ?? p.codice}{p.pronto_stock === false && <span className="newtag" title="Ordine non ancora arrivato: si può preparare la bozza, il go-live aspetta lo stock">in arrivo</span>}</div><div className="rs">{p.variant ?? ''}</div></div>
+                <button className="chip" disabled title="abilitazione lato server richiesta">pubblica</button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -278,7 +283,7 @@ export function Catalog({ pin, chi }: { pin: string; chi: string }) {
   const todoCount = (rows ?? []).filter(isTodo).length;
 
   return (
-    <div>
+    <div className="prod-cat">
       <div className="ds-search">
         <Icon name="search" size={18} />
         <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca per nome, variante o CODICE…" aria-label="Cerca prodotto" />
@@ -286,31 +291,36 @@ export function Catalog({ pin, chi }: { pin: string; chi: string }) {
       {rows == null ? <p className="muted center">…</p> : (
         <>
           <div className="ds-count">{found.length} prodotti{found.length > shown.length ? ` · mostro i primi ${shown.length}` : ''} · tocca per modificare prezzo, COGS e scheda.</div>
-          <div className="ds-linefilters">
+          {/* "Da completare" in testa: nella fila che scorre, in fondo restava fuori dallo schermo */}
+          <div className="ds-linefilters hscroll">
+            <button type="button" className={`ds-fp${todoCount > 0 ? ' ds-fp-todo' : ''}${todoOnly ? ' on' : ''}`} onClick={() => setTodoOnly((v) => !v)}>Da completare · {todoCount}</button>
+            <span className="ds-fp-div" />
             <button type="button" className={`ds-fp ${line === '' ? 'on' : ''}`} onClick={() => setLine('')}>Tutte</button>
             {lines.map((l) => <button key={l} type="button" className={`ds-fp ${line === l ? 'on' : ''}`} onClick={() => setLine(line === l ? '' : l)}>{titleCase(l)}</button>)}
-            <span className="ds-fp-div" />
-            <button type="button" className={`ds-fp ds-fp-todo ${todoOnly ? 'on' : ''}`} onClick={() => setTodoOnly((v) => !v)}>Da completare · {todoCount}</button>
           </div>
-          {shown.map((r) => {
-            const missing = isTodo(r);
-            const marg = r.retail_price != null && r.cogs != null && r.retail_price > 0 ? (r.retail_price - r.cogs) / r.retail_price : null;
-            return (
-              <button key={r.codice} className={`ds-prow ${missing ? 'miss' : ''}`} onClick={() => { pushBack(() => setEdit(null)); setEdit(r); }}>
-                <span className="ds-thumb">{r.image_url ? <img src={r.image_url} alt="" loading="lazy" /> : (r.item ?? r.codice).slice(0, 2).toUpperCase()}</span>
-                <div className="ds-pinfo">
-                  <div className="ds-pn">{prettyName(r.item, r.variant, r.codice)}</div>
-                  <div className="ds-pcode">{r.codice}</div>
-                  <div className="ds-dchips">
-                    {r.retail_price != null ? <span className="ds-dchip price">€{r.retail_price}</span> : <span className="ds-dchip miss">Prezzo manca</span>}
-                    {r.cogs != null ? <span className="ds-dchip cogs">COGS €{r.cogs}</span> : <span className="ds-dchip miss">COGS manca</span>}
-                    {marg != null && <span className={`ds-dchip ${marg >= 0.65 ? 'marg' : 'marglow'}`}>margine {Math.round(marg * 100)}%</span>}
-                  </div>
-                </div>
-                <span className="chev">›</span>
-              </button>
-            );
-          })}
+          {shown.length > 0 && (
+            <div className="ds-group prod-list">
+              {shown.map((r) => {
+                const missing = isTodo(r);
+                const marg = r.retail_price != null && r.cogs != null && r.retail_price > 0 ? (r.retail_price - r.cogs) / r.retail_price : null;
+                return (
+                  <button key={r.codice} className={`ds-prow ${missing ? 'miss' : ''}`} onClick={() => { pushBack(() => setEdit(null)); setEdit(r); }}>
+                    <span className="ds-thumb">{r.image_url ? <img src={r.image_url} alt="" loading="lazy" /> : (r.item ?? r.codice).slice(0, 2).toUpperCase()}</span>
+                    <div className="ds-pinfo">
+                      <div className="ds-pn">{prettyName(r.item, r.variant, r.codice)}</div>
+                      <div className="ds-pcode">{r.codice}</div>
+                      <div className="prod-costo">
+                        {r.cogs != null ? <>COGS {eur(r.cogs)}</> : <span className="miss">COGS manca</span>}
+                        {marg != null && <> · <span className={marg >= 0.65 ? 'marg' : 'marglow'}>margine {Math.round(marg * 100)}%</span></>}
+                      </div>
+                    </div>
+                    <span className="prod-prezzo">{r.retail_price != null ? eur(r.retail_price) : <span className="miss">Prezzo manca</span>}</span>
+                    <Icon name="chevron" size={18} className="chev" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {!found.length && <p className="muted center">Nessun prodotto.</p>}
         </>
       )}
