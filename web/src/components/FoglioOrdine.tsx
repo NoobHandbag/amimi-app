@@ -39,19 +39,17 @@ function Ritaglio({ f, box }: { f: Foglio; box: number[] | null }) {
   if (cw < 8 || ch < 8) return null;
   const px = f.w - cw > 0 ? ((x0 / 1000) * f.w) / (f.w - cw) * 100 : 0;
   const py = f.h - ch > 0 ? ((y0 / 1000) * f.h) / (f.h - ch) * 100 : 0;
-  return <div style={{ width: '100%', aspectRatio: `${cw} / ${ch}`, backgroundImage: `url(${f.url})`, backgroundSize: `${(f.w / cw) * 100}% auto`, backgroundPosition: `${px}% ${py}%`, backgroundRepeat: 'no-repeat', borderRadius: 10, border: '1px solid var(--line)', marginBottom: 8 }} />;
+  return <div style={{ width: '100%', aspectRatio: `${cw} / ${ch}`, backgroundImage: `url(${f.url})`, backgroundSize: `${(f.w / cw) * 100}% auto`, backgroundPosition: `${px}% ${py}%`, backgroundRepeat: 'no-repeat', borderRadius: 10, marginBottom: 8 }} />;
 }
-
-const LAB = { fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--ink-muted)', margin: '6px 0 3px' } as const;
 
 // tessera variante: foto Shopify grande quanto basta per confrontarla col campione del ritaglio
 function Pill({ img, label, on, onClick }: { img: string; label: string; on?: boolean; onClick: () => void }) {
   return (
-    <button type="button" className={'chip' + (on ? ' on' : '')} onClick={onClick} style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: 4, borderRadius: 12, width: 92 }}>
-      <span style={{ width: 82, height: 82, borderRadius: 9, overflow: 'hidden', background: 'var(--thumb-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, color: 'var(--thumb-ink)' }}>
-        {img ? <img src={img} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : label.slice(0, 2)}
+    <button type="button" className={'fo-tile' + (on ? ' on' : '')} onClick={onClick}>
+      <span className="fo-tile-img">
+        {img ? <img src={img} alt="" loading="lazy" /> : label.slice(0, 2)}
       </span>
-      <span style={{ fontSize: 11, lineHeight: 1.15, overflowWrap: 'anywhere' }}>{label}</span>
+      <span className="fo-tile-l">{label}</span>
     </button>
   );
 }
@@ -243,24 +241,24 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
   return (
     <div className="form">
       <AppBar title="Ordine da foglio" onBack={esci} backLabel="Ordini" />
-      <div className="muted" style={{ fontSize: 13, marginBottom: 10, lineHeight: 1.45 }}>
+      <div className="fo-intro">
         Fotografa i fogli fatti col fornitore, uno per foto, dritti e interi. Leggo quantità, interno e note; la variante di ogni campione la scegli tu.
       </div>
 
       <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }}
         onChange={(e) => { const fl = [...(e.target.files ?? [])]; e.target.value = ''; aggiungiFoto(fl); }} />
-      <div className="mat-files" style={{ marginBottom: 10 }}>
+      <div className="mat-files fo-fogli">
         {fogli.map((f, i) => (
-          <span key={f.id} className="chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px 3px 3px' }}>
-            <span className="ds-thumb" style={{ width: 30, height: 30, borderRadius: 7 }}><img src={f.url} alt="" /></span>
-            Foglio {i + 1}{f.stato === 'leggo' ? ' · leggo…' : f.stato === 'ok' ? ' · letto' : f.stato === 'errore' ? ' · errore' : ''}
+          <span key={f.id} className="chip fo-foto">
+            <span className="ds-thumb"><img src={f.url} alt="" /></span>
+            <span>Foglio {i + 1}{f.stato === 'leggo' ? ' · leggo…' : f.stato === 'ok' ? <span className="fo-st ok"> · letto</span> : f.stato === 'errore' ? <span className="fo-st err"> · errore</span> : ''}</span>
             {f.stato === 'attesa' && <button type="button" className="linkbtn" onClick={() => togliFoto(f.id)} aria-label="Togli foto">✕</button>}
           </span>
         ))}
-        {fogli.length < MAX_FOGLI && <button type="button" className="chip" disabled={preparo} onClick={() => fileRef.current?.click()}>{preparo ? 'Preparo le foto…' : '+ foto foglio'}</button>}
+        {fogli.length < MAX_FOGLI && <button type="button" className="ds-btn secondary" disabled={preparo} onClick={() => fileRef.current?.click()}>{preparo ? 'Preparo le foto…' : <><Icon name="plus" size={16} /> Foto del foglio</>}</button>}
       </div>
       {daLeggere > 0 && (
-        <button type="button" className="ds-btn secondary full" style={{ marginBottom: 12 }} disabled={!all.length || logged === null || fogli.some((f) => f.stato === 'leggo')} onClick={leggiTutti}>
+        <button type="button" className="ds-btn primary full fo-leggi" disabled={!all.length || logged === null || fogli.some((f) => f.stato === 'leggo')} onClick={leggiTutti}>
           <Icon name="sparkles" size={15} /> {fogli.some((f) => f.stato === 'leggo') ? 'Leggo i fogli…' : `Leggi ${daLeggere === 1 ? 'il foglio' : `i ${daLeggere} fogli`}`}
         </button>
       )}
@@ -269,9 +267,9 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
         const rs = righe.filter((r) => r.foglioId === f.id).sort((a, b) => a.posizione - b.posizione);
         if (f.stato === 'attesa') return null;
         return (
-          <div key={f.id} style={{ marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '6px 0 8px', flexWrap: 'wrap' }}>
-              <b style={{ fontSize: 14 }}>Foglio {fi + 1}</b>
+          <div key={f.id} className="fo-foglio">
+            <div className="fo-head">
+              <h2>Foglio {fi + 1}</h2>
               {/* il modello e' l'intestazione del foglio: vale per tutte le sue righe; cambiarlo azzera varianti e candidati */}
               {rs.length > 0 && (
                 <select className="txt ord-modello" value={rs[0].modello}
@@ -280,74 +278,77 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
                   {modelli.map((m) => <option key={m} value={m}>{m}</option>)}
                 </select>
               )}
-              {f.stato === 'ok' && <span className="muted" style={{ fontSize: 12.5 }}>{rs.length} righe</span>}
+              {f.stato === 'ok' && <span className="fo-n">{rs.length} righe</span>}
             </div>
-            {f.stato === 'leggo' && <div className="card muted" style={{ fontSize: 13 }}>Leggo il foglio, di solito 10-20 secondi…</div>}
-            {f.stato === 'errore' && <div className="card" style={{ fontSize: 13 }}><span className="err">Non sono riuscito a leggerlo: {f.errore}</span> <button type="button" className="linkbtn" style={{ fontWeight: 700 }} onClick={() => leggi(f)}>Riprova</button></div>}
+            {f.stato === 'leggo' && <div className="card muted fo-stato">Leggo il foglio, di solito 10-20 secondi…</div>}
+            {f.stato === 'errore' && <div className="card fo-stato"><span className="err">Non sono riuscito a leggerlo: {f.errore}</span> <button type="button" className="linkbtn fo-link" onClick={() => leggi(f)}>Riprova</button></div>}
             {f.avviso && <div className="card warn">{f.avviso}</div>}
-            {f.nota && <div className="muted" style={{ fontSize: 12, margin: '0 2px 8px' }}>Sul foglio, fuori ordine: {f.nota}</div>}
+            {f.nota && <div className="fo-nota">Sul foglio, fuori ordine: {f.nota}</div>}
             {rs.map((r) => {
               const varianti = perModello.get(norm(r.modello)) ?? [];
               const scelto = r.scelta?.tipo === 'esistente' ? byCodice.get(r.scelta.codice) : null;
               const qCerca = cerca?.key === r.key ? norm(cerca.q) : '';
               const trovate = cerca?.key === r.key ? varianti.filter((p) => !qCerca || norm(p.variant).includes(qCerca)).slice(0, 24) : [];
               return (
-                <div key={r.key} className="card" style={{ padding: 12, opacity: r.inclusa ? 1 : 0.5 }}>
+                <div key={r.key} className={'card fo-riga' + (r.inclusa ? '' : ' off')}>
                   <Ritaglio f={f} box={r.box} />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline', marginBottom: 6 }}>
-                    <div style={{ fontSize: 13 }}><b>Riga {r.posizione}</b> <span className="muted">{r.descr}{r.scritto ? ` · scritto "${r.scritto}"` : ''}</span></div>
-                    <button type="button" className="linkbtn" style={{ fontSize: 12, textDecoration: 'underline', whiteSpace: 'nowrap' }} onClick={() => patch(r.key, { inclusa: !r.inclusa })}>{r.inclusa ? 'Togli' : 'Rimetti'}</button>
+                  <div className="fo-rh">
+                    <div>
+                      <b className="fo-rt">Riga {r.posizione}</b>
+                      {(r.descr || r.scritto) && <div className="fo-rd">{r.descr}{r.scritto ? ` · scritto "${r.scritto}"` : ''}</div>}
+                    </div>
+                    <button type="button" className={'linkbtn fo-link' + (r.inclusa ? ' neutro' : '')} onClick={() => patch(r.key, { inclusa: !r.inclusa })}>{r.inclusa ? 'Togli' : 'Rimetti'}</button>
                   </div>
                   {r.inclusa && (
                     <>
-                      <div style={LAB}>Variante{r.modello !== rs[0].modello ? ` · ${r.modello}` : ''}</div>
+                      <div className="fl">Variante{r.modello !== rs[0].modello ? ` · ${r.modello}` : ''}</div>
                       {r.scelta ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <div className="fo-scelta">
                           {scelto ? <Pill img={img.get(scelto.codice) ?? ''} label={scelto.variant ?? scelto.codice} on onClick={() => patch(r.key, { scelta: null, primoScelto: false })} />
-                            : <span className="chip on">{tok(r.scelta.tipo === 'nuova' ? r.scelta.variant : '')} <span className="newtag">nuova</span></span>}
-                          <button type="button" className="linkbtn" style={{ fontSize: 12, textDecoration: 'underline' }} onClick={() => patch(r.key, { scelta: null, primoScelto: false })}>cambia</button>
+                            : <span className="chip fo-nuovascelta">{tok(r.scelta.tipo === 'nuova' ? r.scelta.variant : '')} <span className="newtag">nuova</span></span>}
+                          <button type="button" className="linkbtn fo-link" onClick={() => patch(r.key, { scelta: null, primoScelto: false })}>cambia</button>
                         </div>
                       ) : (
-                        <div className="mat-files" style={{ marginBottom: 6 }}>
+                        <div className="mat-files fo-cand">
                           {r.candidati.map((c) => { const p = byCodice.get(c); return p ? <Pill key={c} img={img.get(c) ?? ''} label={p.variant ?? c} onClick={() => scegli(r, p)} /> : null; })}
                           <button type="button" className="chip" onClick={() => { setNuova(null); setCerca(cerca?.key === r.key ? null : { key: r.key, q: '' }); }}>{r.candidati.length ? 'Altra…' : 'Scegli variante…'}</button>
                           <button type="button" className="chip" onClick={() => { setCerca(null); setNuova(nuova?.key === r.key ? null : { key: r.key, v: r.scritto ?? '' }); }}>+ Nuova</button>
                         </div>
                       )}
                       {cerca?.key === r.key && !r.scelta && (
-                        <div className="mat-aibox">
-                          <input className="txt" autoFocus value={cerca.q} onChange={(e) => setCerca({ key: r.key, q: e.target.value })} placeholder={`Cerca fra le ${varianti.length} varianti di ${r.modello}`} style={{ width: '100%', marginBottom: 6 }} />
+                        <div className="mat-aibox fo-cerca">
+                          <input className="txt" autoFocus value={cerca.q} onChange={(e) => setCerca({ key: r.key, q: e.target.value })} placeholder={`Cerca fra le ${varianti.length} varianti di ${r.modello}`} />
                           <div className="mat-files">{trovate.map((p) => <Pill key={p.codice} img={img.get(p.codice) ?? ''} label={p.variant ?? p.codice} onClick={() => scegli(r, p)} />)}</div>
-                          {!trovate.length && <div className="muted" style={{ fontSize: 12 }}>Nessuna variante trovata: usa "+ Nuova".</div>}
+                          {!trovate.length && <div className="fo-vuoto">Nessuna variante trovata: usa "+ Nuova".</div>}
                         </div>
                       )}
                       {nuova?.key === r.key && !r.scelta && (
-                        <div className="mat-aibox" style={{ display: 'flex', gap: 6 }}>
-                          <input className="txt" autoFocus value={nuova.v} onChange={(e) => setNuova({ key: r.key, v: e.target.value })} placeholder="Nome variante (es. Cavallino tigrato)" style={{ flex: 1 }} />
+                        <div className="mat-aibox fo-nuova">
+                          <input className="txt" autoFocus value={nuova.v} onChange={(e) => setNuova({ key: r.key, v: e.target.value })} placeholder="Nome variante (es. Cavallino tigrato)" />
                           <button type="button" className="submit small" disabled={!tok(nuova.v)} onClick={() => { patch(r.key, { scelta: { tipo: 'nuova', variant: nuova.v.trim() }, primoScelto: false }); setNuova(null); toast('Variante nuova: codice provvisorio, da verificare in pulizia dati'); }}>Usa</button>
                         </div>
                       )}
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div className="fo-campi">
                         <div>
-                          <div style={LAB}>Pezzi</div>
+                          <div className="fl">Pezzi</div>
                           {r.wip
                             ? <button type="button" className="chip on" title="TUTTA: i pezzi si sanno all'arrivo" onClick={() => patch(r.key, { wip: false })}>da definire all'arrivo ✕</button>
-                            : <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                <input className={'txt' + (r.qtyBassa ? ' mat-low' : '')} style={{ width: 72 }} type="number" inputMode="numeric" value={r.qty} onChange={(e) => patch(r.key, { qty: e.target.value, qtyBassa: false })} placeholder="pz" />
-                                <button type="button" className="linkbtn" style={{ fontSize: 11.5, textDecoration: 'underline' }} onClick={() => patch(r.key, { wip: true })}>tutta</button>
+                            : <div className="fo-qtyrow">
+                                <input className={'txt fo-qty' + (r.qtyBassa ? ' mat-low' : '')} type="number" inputMode="numeric" value={r.qty} onChange={(e) => patch(r.key, { qty: e.target.value, qtyBassa: false })} placeholder="pz" />
+                                <button type="button" className="linkbtn fo-link" onClick={() => patch(r.key, { wip: true })}>tutta</button>
                               </div>}
                         </div>
                         <div>
-                          <div style={LAB}>Interno</div>
-                          <input className={'txt' + (r.internoBassa ? ' mat-low' : '')} style={{ width: 96 }} value={r.interno} onChange={(e) => patch(r.key, { interno: e.target.value, internoBassa: false })} placeholder="es. 91" />
+                          <div className="fl">Interno</div>
+                          <input className={'txt fo-int' + (r.internoBassa ? ' mat-low' : '')} value={r.interno} onChange={(e) => patch(r.key, { interno: e.target.value, internoBassa: false })} placeholder="es. 91" />
                         </div>
                         <div>
-                          <div style={LAB}>€ al pezzo</div>
-                          <input className="txt" style={{ width: 80 }} type="number" inputMode="decimal" value={r.costo} onChange={(e) => patch(r.key, { costo: e.target.value, costoAuto: false })} placeholder="€/pz" />
+                          <div className="fl">€ al pezzo</div>
+                          <input className="txt fo-eur" type="number" inputMode="decimal" value={r.costo} onChange={(e) => patch(r.key, { costo: e.target.value, costoAuto: false })} placeholder="€/pz" />
                         </div>
                       </div>
-                      <div style={LAB}>Nota</div>
-                      <input className="txt" style={{ width: '100%' }} value={r.nota} onChange={(e) => patch(r.key, { nota: e.target.value })} placeholder="es. con asole" />
+                      <div className="fl">Nota</div>
+                      <input className="txt" value={r.nota} onChange={(e) => patch(r.key, { nota: e.target.value })} placeholder="es. con asole" />
                     </>
                   )}
                 </div>
@@ -359,23 +360,28 @@ export default function FoglioOrdine({ pin, chi, onDone, onCancel }: { pin: stri
 
       {righe.length > 0 && (
         <>
-          <div style={{ ...LAB, marginTop: 14 }}>Fornitore</div>
+          <h2 className="fo-sez">Fornitore</h2>
           {forn ? (
             <button type="button" className="chip on" onClick={() => setForn('')}>{forn} ✕</button>
           ) : (
             <>
-              <div className="ds-lens" style={{ marginTop: 2 }}>{fornitori.attivi.map((n) => <button key={n} type="button" className="ds-fp" onClick={() => setForn(n)}>{n}</button>)}</div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input className="txt" style={{ flex: 1 }} value={fq} onChange={(e) => setFq(e.target.value)} placeholder="Altro fornitore…" list="foglio-fornitori" />
+              <div className="ds-lens">{fornitori.attivi.map((n) => <button key={n} type="button" className="ds-fp" onClick={() => setForn(n)}>{n}</button>)}</div>
+              <div className="fo-altro">
+                <input className="txt" value={fq} onChange={(e) => setFq(e.target.value)} placeholder="Altro fornitore…" list="foglio-fornitori" />
                 <datalist id="foglio-fornitori">{fornitori.tutti.filter((n) => !fs || n.toLowerCase().includes(fs)).map((n) => <option key={n} value={n} />)}</datalist>
                 <button type="button" className="chip" disabled={!fq.trim()} onClick={() => { setForn(fq.trim()); setFq(''); }}>Usa</button>
               </div>
             </>
           )}
-          <div style={{ ...LAB, marginTop: 12 }}>Data ordine</div>
-          <input className="txt" type="date" value={dataOrd} onChange={(e) => setDataOrd(e.target.value)} />
-          <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>{incluse.length} righe · {pezzi} pezzi{nWip ? ` + ${nWip} da definire all'arrivo` : ''}</div>
-          {problemi.length > 0 && <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>Prima di inserire: {problemi.join(' · ')}</div>}
+          <h2 className="fo-sez">Data ordine</h2>
+          <input className="txt" type="date" aria-label="Data ordine" value={dataOrd} onChange={(e) => setDataOrd(e.target.value)} />
+          {/* la card scura della schermata: lo stesso conto di prima, davanti i pezzi; "+ N da definire all'arrivo" resta
+              attaccato ai pezzi (sono le righe TUTTA, gia' contate fra le righe), le righe sotto */}
+          <div className="ds-hero fo-tot">
+            <div className="fo-tot-p"><span className="n">{pezzi}</span> pezzi{nWip ? <>{' '}<span className="fo-tot-w">{`+ ${nWip} da definire all'arrivo`}</span></> : ''}</div>
+            <div className="fo-tot-r"><span className="fo-tot-b">{incluse.length} righe</span></div>
+          </div>
+          {problemi.length > 0 && <div className="fo-prob">Prima di inserire: {problemi.join(' · ')}</div>}
           <button className="submit" disabled={busy || problemi.length > 0} onClick={inserisci}>{busy ? 'Salvo…' : `Inserisci ordine (${incluse.length} righe)`}</button>
         </>
       )}
