@@ -3,6 +3,7 @@ import { fetchAdsCreativeStatus, fetchAdsWeekly, fetchAdsSetModelli, fetchAdsCat
 import type { AdsCreativeStatus, AdsWeekly, AdsSetModello, AdsCatModello } from '../lib/api';
 import AppBar from '../components/AppBar';
 import Icon from '../components/Icon';
+import '../styles/screens/ads.css';
 
 // Pagina "Ads" (redesign 2026-09-19, richiesta owner). Mostra l'ARCHITETTURA reale (solo le campagne con ad attivi:
 // COLD e SUPER HOT; le altre sono obsolete), con gli ASSET visibili (le foto da image_url, i video dal frame_url
@@ -16,6 +17,8 @@ const nz = (v: unknown): number | null => (v == null || v === '' ? null : num(v)
 const CPA_TARGET = 45, CPA_BREAKEVEN = 76.7;
 const cpaTone = (cpa: number | null) => (cpa == null ? '' : cpa <= CPA_TARGET ? 'green' : cpa <= CPA_BREAKEVEN ? 'warn' : 'red');
 const faticaCls = (s: string) => (s === 'alta' ? 'pill warn' : s === 'media' ? 'pill muted' : 'pill ok');
+// esito del CPA sulla card scura: la pillola dice dove sta il numero rispetto alle due soglie (stesso cpaTone)
+const CPA_ESITO: Record<string, [string, string]> = { green: ['pos', 'sotto target'], warn: ['warn', 'sotto break-even'], red: ['neg', 'sopra break-even'] };
 const dmy = (iso: string) => { const d = new Date(iso.slice(0, 10) + 'T12:00:00'); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`; };
 
 type Row = {
@@ -43,8 +46,8 @@ function AdThumb({ img, thumb, video }: { img: string | null; thumb: string | nu
       {src
         ? <img className="adthumb" src={src} alt="" loading="lazy" referrerPolicy="no-referrer"
             onError={() => { if (!triedThumb && thumb && thumb !== src) { setSrc(thumb); setTriedThumb(true); } else setSrc(null); }} />
-        : <div className="adthumb ph" style={{ fontSize: video ? 22 : 11 }}>{video ? '▶' : 'no img'}</div>}
-      {video && <span className="vtag">VIDEO</span>}
+        : <div className="adthumb ph">{video ? 'Video' : 'Senza foto'}</div>}
+      {video && src && <span className="vtag">Video</span>}
     </div>
   );
 }
@@ -71,11 +74,11 @@ function AdCardView({ r, modelli }: { r: Row; modelli: { modello: string; prodot
           {!paused && r.stato_fatica !== 'ok' && <span className={faticaCls(r.stato_fatica)}>fatica {r.stato_fatica}</span>}
         </div>
         <div className="admetrics">
-          <span>spesa 7g <b>{eur(r.spend_7)}</b></span>
-          <span>CPA <b className={r.cpa_7 != null && r.cpa_7 > CPA_BREAKEVEN ? 'neg' : ''}>{r.cpa_7 == null ? 'n/d' : eur2(r.cpa_7)}</b></span>
-          <span>ROAS <b>{r.roas_7 == null ? 'n/d' : r.roas_7.toFixed(1) + '×'}</b></span>
-          <span>CTR <b>{r.ctr_7 == null ? 'n/d' : r.ctr_7.toFixed(2) + '%'}</b>{ctrArrow(r.ctr_7, r.ctr_prev7)}<span className="muted"> (90g {r.ctr_90 == null ? '–' : r.ctr_90.toFixed(2)})</span></span>
-          <span>freq 7g <b>{r.freq_7g == null ? 'n/d' : r.freq_7g.toFixed(1)}</b></span>
+          <div className="ads-m"><b>{eur(r.spend_7)}</b><span>spesa 7g</span></div>
+          <div className="ads-m"><b className={r.cpa_7 != null && r.cpa_7 > CPA_BREAKEVEN ? 'neg' : ''}>{r.cpa_7 == null ? 'n/d' : eur2(r.cpa_7)}</b><span>CPA</span></div>
+          <div className="ads-m"><b>{r.roas_7 == null ? 'n/d' : r.roas_7.toFixed(1) + '×'}</b><span>ROAS</span></div>
+          <div className="ads-m"><b>{r.ctr_7 == null ? 'n/d' : r.ctr_7.toFixed(2) + '%'}{ctrArrow(r.ctr_7, r.ctr_prev7)}</b><span>CTR (90g {r.ctr_90 == null ? '–' : r.ctr_90.toFixed(2)})</span></div>
+          <div className="ads-m"><b>{r.freq_7g == null ? 'n/d' : r.freq_7g.toFixed(1)}</b><span>freq 7g</span></div>
         </div>
         {mods.length > 0 && (
           <div className="admod">
@@ -168,54 +171,64 @@ export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: st
     finally { setPulling(false); }
   };
 
-  if (err) return <div className="screen"><AppBar title="Ads" onBack={onBack} /><div className="card err">Errore: {err}</div></div>;
-  if (!rows || !weeks || !setMod || !catMod) return <div className="screen"><AppBar title="Ads" onBack={onBack} /><p className="muted center">Carico le creativita'…</p></div>;
+  if (err) return <div className="screen scr-ads"><AppBar title="Ads" onBack={onBack} /><div className="card err">Errore: {err}</div></div>;
+  if (!rows || !weeks || !setMod || !catMod) return <div className="screen scr-ads"><AppBar title="Ads" onBack={onBack} /><p className="muted center">Carico le creativita'…</p></div>;
 
   const asOf = rows.find((r) => r.as_of)?.as_of ?? null;
   const staleDays = asOf ? Math.floor((Date.now() - new Date(String(asOf).slice(0, 10) + 'T12:00:00').getTime()) / 86400000) : null;
   const spend7 = rows.reduce((s, r) => s + r.spend_7, 0), purch7 = rows.reduce((s, r) => s + r.purchases_7, 0), val7 = rows.reduce((s, r) => s + r.value_7, 0);
   const cpa7 = purch7 > 0 ? spend7 / purch7 : null, roas7 = spend7 > 0 ? val7 / spend7 : null;
   const inCorso = (s: string) => new Date(s.slice(0, 10) + 'T00:00:00').getTime() + 6 * 86400000 >= Date.now();
+  const cpaEsito = CPA_ESITO[cpaTone(cpa7)];
 
   return (
-    <div className="screen">
-      <AppBar title="Ads" onBack={onBack} actions={<>
-        <span className="badge">Meta · per creativita'</span>
+    <div className="screen scr-ads">
+      <AppBar title="Ads" onBack={onBack} actions={
         <button type="button" className={pulling ? 'exp busy' : 'exp'} onClick={pull} disabled={pulling} aria-label="Pull ora" title="Pull ora: aggiorna i dati Ads"><Icon name="recycle" size={18} /></button>
-      </>} />
+      } />
       <p className="note appbar-st" role="status">{pulling ? 'Aggiorno…' : pullMsg}</p>
 
-      <p className="note" style={{ marginTop: 0 }}>
-        Dati al <strong>{asOf ? String(asOf).slice(0, 10) : 'n/d'}</strong>
-        {staleDays != null && staleDays > 2 && <span className="err"> ({staleDays} giorni fa: il cron non ha girato)</span>}
-        {' '}· ogni mattina.
+      <p className="note ads-dati">
+        Meta, per creativita' · dati al <strong>{asOf ? String(asOf).slice(0, 10) : 'n/d'}</strong> · ogni mattina
+        {staleDays != null && staleDays > 2 && <> <span className="ds-pill neg">{staleDays} giorni fa: il cron non ha girato</span></>}
       </p>
 
-      <section className={`card ${azioni.length ? 'warn' : ''}`}>
-        <h2>Azioni proposte</h2>
-        {azioni.length === 0 && <p className="muted" style={{ margin: 0 }}>Nessuna: nessun ad attivo in fatica ne' set scoperto.</p>}
-        {azioni.map((r) => (<div key={r.ad_id} style={{ marginBottom: 6 }}><strong>{r.ad_name}</strong> <span className="muted">({r.campaign_name}, {eur(r.spend_7)}/7g)</span><br />{r.azione}</div>))}
+      <section className="card ads-azioni">
+        <h2>Azioni proposte{azioni.length > 0 && <span className="ds-pill warn">{azioni.length}</span>}</h2>
+        {azioni.length === 0 && <p className="note">Nessuna: nessun ad attivo in fatica ne' set scoperto.</p>}
+        {azioni.map((r) => (
+          <div className="ads-azione" key={r.ad_id}>
+            <div className="rt">{r.ad_name}</div>
+            <div className="rs">{r.campaign_name} · {eur(r.spend_7)}/7g</div>
+            <div>{r.azione}</div>
+          </div>
+        ))}
       </section>
 
       <div className="kpis">
-        <Kpi label="Spesa 7g" value={eur(spend7)} tone="accent" sub={weeks[1] ? `sett. prec. ${eur(num(weeks[1].spend))}` : undefined} />
+        <div className="ds-kpi hero">
+          <div className="v">{cpa7 == null ? 'n/d' : eur2(cpa7)}</div>
+          <div className="l">CPA 7g</div>
+          <div className="s">target {eur(CPA_TARGET)} · break-even {eur2(CPA_BREAKEVEN)}</div>
+          {cpaEsito && <span className={`ds-pill ${cpaEsito[0]}`}>{cpaEsito[1]}</span>}
+        </div>
+        <Kpi label="Spesa 7g" value={eur(spend7)} tone="" sub={weeks[1] ? `sett. prec. ${eur(num(weeks[1].spend))}` : undefined} />
         <Kpi label="Acquisti 7g" value={String(purch7)} tone="" sub={`valore ${eur(val7)}`} />
-        <Kpi label="CPA 7g" value={cpa7 == null ? 'n/d' : eur2(cpa7)} tone={cpaTone(cpa7)} sub={`target ${eur(CPA_TARGET)} · break ${eur2(CPA_BREAKEVEN)}`} />
-        <Kpi label="ROAS 7g" value={roas7 == null ? 'n/d' : roas7.toFixed(2) + '×'} tone={roas7 == null ? '' : roas7 >= 1 ? 'green' : 'red'} sub="valore ÷ spesa" />
+        <Kpi label="ROAS 7g" value={roas7 == null ? 'n/d' : roas7.toFixed(2) + '×'} tone={roas7 == null ? '' : roas7 >= 1 ? 'pos' : 'neg'} sub="valore ÷ spesa" />
       </div>
 
       <section className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <h2 style={{ margin: 0 }}>Architettura</h2>
+        <div className="ads-head ads-sec">
+          <h2>Architettura</h2>
           <button className={`chip ${showPaused ? 'on' : ''}`} type="button" onClick={() => setShowPaused((v) => !v)}>{showPaused ? 'nascondi in pausa' : 'mostra in pausa'}</button>
         </div>
-        <p className="note" style={{ marginTop: 4 }}>Solo le campagne con ad attivi (le altre sono obsolete). Ogni ad con la sua anteprima, la fatica sulla frequency vera a 7 giorni, e i modelli che pubblicizza con quante borse sono live.</p>
+        <p className="note ads-sub">Solo le campagne con ad attivi (le altre sono obsolete). Ogni ad con la sua anteprima, la fatica sulla frequency vera a 7 giorni, e i modelli che pubblicizza con quante borse sono live.</p>
         {arch.map((c) => (
           <div className="camp" key={c.camp}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <div className="ads-head">
               <h3>{c.camp}</h3>
               <span className="badge">{c.attivi} attivi</span>
-              <span className="muted" style={{ fontSize: 12 }}>{eur(c.spend7)} in 7g</span>
+              <span className="muted ads-spesa">{eur(c.spend7)} in 7g</span>
             </div>
             {c.adsets.map((a) => {
               const visible = showPaused ? a.ads : a.ads.filter((r) => r.effective_status === 'ACTIVE');
@@ -233,29 +246,25 @@ export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: st
 
       <section className="card">
         <h2>Modelli in advertising vs disponibilita'</h2>
-        <p className="note" style={{ marginTop: 4 }}>I modelli che gli ad attivi possono mostrare (dai loro product set), e quante borse di quel modello sono <strong>live</strong> (su Shopify e a stock) in catalogo. Poche borse live su un modello molto spinto = si pubblicizza qualcosa che non si puo' comprare.</p>
-        <div className="tablewrap"><table>
-          <thead><tr><th>Modello</th><th>Categoria</th><th>Live in catalogo</th><th>Su Shopify</th><th>Totali</th><th>Ad attivi</th></tr></thead>
-          <tbody>{advModels.map((m) => (
-            <tr key={m.modello}>
-              <td className="l"><strong>{m.modello}</strong></td>
-              <td>{m.categoria}</td>
-              <td className={m.live <= 2 ? 'neg' : ''}><strong>{m.live}</strong></td>
-              <td>{m.su_shopify}</td>
-              <td>{m.prodotti}</td>
-              <td>{m.adCount}</td>
-            </tr>
-          ))}</tbody>
-        </table></div>
+        <p className="note">I modelli che gli ad attivi possono mostrare (dai loro product set), e quante borse di quel modello sono <strong>live</strong> (su Shopify e a stock) in catalogo. Poche borse live su un modello molto spinto = si pubblicizza qualcosa che non si puo' comprare.</p>
+        <div className="list ads-modelli">{advModels.map((m) => (
+          <div className="row" key={m.modello}>
+            <div className="ads-mi">
+              <div className="rt">{m.modello}</div>
+              <div className="rs">{m.categoria} · {m.su_shopify} su Shopify · {m.prodotti} totali · {m.adCount} {m.adCount === 1 ? 'ad attivo' : 'ad attivi'}</div>
+            </div>
+            <div className={`ads-live${m.live <= 2 ? ' neg' : ''}`}>{m.live}<small>live in catalogo</small></div>
+          </div>
+        ))}</div>
       </section>
 
-      <section className="card">
+      <section className="card ads-sett">
         <h2>Settimane</h2>
         <div className="tablewrap"><table>
           <thead><tr><th>Settimana</th><th>Spesa</th><th>Acq.</th><th>CPA</th><th>ROAS</th><th>Δ spesa</th></tr></thead>
           <tbody>{weeks.slice(0, 10).map((w) => {
             const cpa = nz(w.cpa), roas = nz(w.roas), dS = nz(w.spend_wow);
-            return (<tr key={w.settimana}>
+            return (<tr key={w.settimana} className={inCorso(w.settimana) ? 'cur' : undefined}>
               <td className="l">{dmy(w.settimana)}{inCorso(w.settimana) ? <span className="muted"> (in corso)</span> : ''}</td>
               <td>{eur(num(w.spend))}</td><td>{num(w.purchases)}</td>
               <td className={cpa != null && cpa > CPA_BREAKEVEN ? 'neg' : ''}>{cpa == null ? 'n/d' : eur2(cpa)}</td>
@@ -270,5 +279,5 @@ export default function Ads({ onBack, pin, chi }: { onBack?: () => void; pin: st
 }
 
 function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone: string }) {
-  return <div className={`kpi ${tone}`}><div className="v">{value}</div><div className="k">{label}</div>{sub && <div className="ksub">{sub}</div>}</div>;
+  return <div className={`ds-kpi ${tone}`}><div className="v">{value}</div><div className="l">{label}</div>{sub && <div className="s">{sub}</div>}</div>;
 }

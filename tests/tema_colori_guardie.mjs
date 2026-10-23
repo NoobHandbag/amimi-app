@@ -157,6 +157,8 @@ const COPPIE = [
   // 4,5:1, piu' severa del 3:1, e --chart-bar e' sopra. Che i segni usino davvero quei token lo dice la sezione 8
   // Home (22-10): la pillola del delta nella card scura, testo bianco sul verde e sul rosso pieni
   ['#ffffff', 'positive', 4.5], ['#ffffff', 'negative', 4.5],
+  // Ads (23-10): la pillola d'esito del CPA sulla card scura ha anche l'arancio pieno ("sotto break-even")
+  ['#ffffff', 'warning', 4.5],
 ];
 for (const [fg, bgk, min] of COPPIE) {
   const a = coloreDi(fg), b = coloreDi(bgk);
