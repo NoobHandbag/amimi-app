@@ -10,15 +10,17 @@ const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', c
 const CHI: Record<string, string> = { 'qromo-forward': 'Qromo', 'shopify-sync': 'Shopify', cron: 'Automatico', claude: 'Assistente', Bene: 'Benny', Ginevra: 'Ginni' };
 const AUTO = new Set(['qromo-forward', 'shopify-sync', 'cron', 'claude', 'ce-guard']);
 
+// avatar neutri (tema A, 23-10): le persone in inchiostro, gli attori automatici in grigio. Il verde e il bordeaux di
+// prima dicevano un esito e un'azione, non una persona; il nome resta scritto accanto
 function avatar(chi: string | null): { i: string; bg: string; name: string } {
   const c = chi ?? '';
   const name = CHI[c] ?? (c || '—');
-  if (AUTO.has(c)) return { i: '•', bg: 'var(--ink-muted)', name };
+  if (AUTO.has(c)) return { i: '•', bg: 'var(--chart-bar)', name };
   const k = c.toLowerCase();
-  if (k.startsWith('bene') || k.startsWith('benny')) return { i: 'B', bg: 'var(--positive)', name: 'Benny' };
-  if (k.startsWith('gin')) return { i: 'G', bg: 'var(--sec-cabaret-700)', name: 'Ginni' };
-  if (k.startsWith('ale') || k.startsWith('dan')) return { i: 'A', bg: 'var(--interactive)', name: 'Ale' };
-  return { i: (c || '?').slice(0, 1).toUpperCase(), bg: 'var(--sec-lavender)', name };
+  if (k.startsWith('bene') || k.startsWith('benny')) return { i: 'B', bg: 'var(--ink)', name: 'Benny' };
+  if (k.startsWith('gin')) return { i: 'G', bg: 'var(--ink)', name: 'Ginni' };
+  if (k.startsWith('ale') || k.startsWith('dan')) return { i: 'A', bg: 'var(--ink)', name: 'Ale' };
+  return { i: (c || '?').slice(0, 1).toUpperCase(), bg: 'var(--ink)', name };
 }
 
 const VERB: Record<string, string> = {
@@ -147,10 +149,11 @@ export default function ActivityFeed({ pin = 'x' }: { pin?: string }) {
         </div>
       )}
 
-      <div className="ds-linefilters">
-        {PERSONE.map(([k, l]) => <button key={k} type="button" className={`ds-fp ${who === k ? 'on' : ''}`} onClick={() => setWho(k)}>{l}</button>)}
+      {/* persona: selettore a segmenti (la scelta bianca); tipo: chip su una fila che scorre. Una sola chip nera */}
+      <div className="seg act-who" role="group" aria-label="Persona">
+        {PERSONE.map(([k, l]) => <button key={k} type="button" className={who === k ? 'on' : ''} onClick={() => setWho(k)}>{l}</button>)}
       </div>
-      <div className="ds-linefilters" style={{ marginTop: -4 }}>
+      <div className="ds-linefilters hscroll" role="group" aria-label="Tipo">
         <button type="button" className={`ds-fp ${tipo === '' ? 'on' : ''}`} onClick={() => setTipo('')}>Tutto</button>
         {TIPI.map((t) => <button key={t} type="button" className={`ds-fp ${tipo === t ? 'on' : ''}`} onClick={() => setTipo(tipo === t ? '' : t)}>{t}</button>)}
       </div>

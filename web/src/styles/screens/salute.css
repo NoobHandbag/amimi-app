@@ -1,0 +1,93 @@
+/* ============================================================================
+   Salute & Movimenti (tema A, PR 19, 23-10-2026): regole della sola schermata, tutte sotto .scr-salute
+   (pages/Salute.tsx e components/ActivityFeed.tsx, che usa solo lei). Vengono gia' da shell.css: il riepilogo AI
+   (.ds-aisum pieno, titolo in minuscolo), le intestazioni delle tabelle del dettaglio, la freccia .tgl che ruota, la
+   fila che scorre (.hscroll), il KPI selezionato con l'anello (Cornice 2 e 4).
+   Separatori come bordi e non come ombre: in stampa index.css toglie ogni box-shadow.
+   ============================================================================ */
+
+/* ---- Salute ecosistema, la card scura: titolo e righe in bianco; verde, arancio e rosso solo come pallini e barra
+   (sul nero 3,4-3,7:1: bastano a un segno, non a un testo). Nessun numero nuovo: titolo e righe di prima ---- */
+.scr-salute .card.hero { background: var(--grad-hero); color: var(--surface); border-radius: 24px; padding: 20px; }
+.scr-salute .card.hero h2 { margin: 0; color: var(--surface); }
+/* pallino e titolo sulla stessa riga (il titolo va a capo nella sua colonna), la data del check sotto il titolo */
+.scr-salute .sal-head { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; }
+.scr-salute .sal-dot { width: 12px; height: 12px; margin-top: 7px; border-radius: 50%; background: var(--sev); }
+.scr-salute .card.hero .sal-check { grid-column: 2; margin-top: 2px; font-size: 12px; color: var(--surface); opacity: .72; }
+.scr-salute .card.hero .ds-hbar { margin: 16px 0 8px; background: color-mix(in srgb, var(--surface) 14%, transparent); }
+.scr-salute .card.hero .ds-hlegend { color: var(--surface); }
+.scr-salute .card.hero .note { color: var(--surface); opacity: .72; }
+.scr-salute .card.hero .sal-alerts { margin-top: 10px; }
+.scr-salute .card.hero .sal-dots li + li { border-top-color: color-mix(in srgb, var(--surface) 14%, transparent); }
+
+/* ---- righe col pallino della gravita' (avvisi della card scura, dettaglio Salute sistema e Riconciliazioni CE):
+   prima un "•" scritto davanti al pallino del browser ---- */
+.scr-salute .sal-dots { list-style: none; margin: 4px 0 0; padding: 0; font-size: 14px; line-height: 1.45; }
+.scr-salute .sal-dots li { position: relative; padding: 8px 0 8px 18px; }
+.scr-salute .sal-dots li + li { border-top: 1px solid var(--border); }
+.scr-salute .sal-dots li::before { content: ''; position: absolute; left: 0; top: calc(8px + .725em - 4px); width: 8px; height: 8px; border-radius: 50%; background: var(--sev); }
+.scr-salute .sal-dots strong { font-weight: 600; }
+
+/* ---- da sistemare: righe bianche senza bordo, icona in un tondo, la freccia e' l'icona chevron ---- */
+.scr-salute .ds-todo { border: 0; border-radius: 16px; padding: 12px 14px; }
+.scr-salute .ds-todo .ic { border-radius: 50%; }
+.scr-salute .ds-todo .tn { font-weight: 600; }
+.scr-salute .ds-todo .chev { display: grid; place-items: center; color: var(--ink-muted); }
+
+/* ---- KPI cliccabili: la freccia (chevron, ruota con .tgl) al posto di ▾/▴; delta come pillola col segno ---- */
+.scr-salute .kpi .tap { top: 10px; right: 10px; line-height: 0; color: var(--ink-muted); }
+.scr-salute .ds-delta { border-radius: 999px; padding: 2px 7px; font-size: 11.5px; font-weight: 600; }
+/* a zero la pillola e' grigia come le tessere: sulle tessere diventa bianca, nelle righe su fondo bianco resta grigia */
+.scr-salute .kpis:not(.sal-list) .ds-delta.flat { background: var(--surface); }
+.scr-salute .drill { border-top: 0; padding-top: 4px; }
+.scr-salute .drill h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); }
+/* le celle numeriche del dettaglio sono .num, che in index.css e' anche il campo dei moduli: bordo, angoli tondi, 24 px in
+   grassetto (il lordo degli ordini usciva dalla card). Qui restano celle; .dtable td.num le tiene a destra. Carattere
+   solo sulle celle del corpo: le intestazioni th.num restano a 12 px medio di shell.css, come le altre */
+.scr-salute .dtable :is(th, td).num { width: auto; border-width: 0 0 1px; border-radius: 0; background: none; }
+.scr-salute .dtable td.num { font-size: inherit; font-weight: inherit; }
+
+/* ---- Movimenti operativi e Catalogo: conteggi senza dettaglio come righe, il numero a destra (prima tessere grigie
+   dentro la card bianca); 0,4,0 batte .card .kpi di shell.css ---- */
+.scr-salute .kpis.sal-list { display: block; margin: 0; }
+.scr-salute .sal-list .kpi { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'k v' 's v'; column-gap: 12px; align-items: center;
+  background: none; border-radius: 0; padding: 11px 0; }
+.scr-salute .sal-list .kpi:first-child { padding-top: 0; }
+.scr-salute .sal-list .kpi:last-child { padding-bottom: 0; }
+.scr-salute .sal-list .kpi + .kpi { border-top: 1px solid var(--border); }
+.scr-salute .sal-list .kpi .v { grid-area: v; font-size: 20px; text-align: right; }
+.scr-salute .sal-list .kpi .k { grid-area: k; margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
+.scr-salute .sal-list .kpi .ksub { grid-area: s; margin-top: 2px; font-size: 12px; }
+
+/* ---- flag operativi: pillole piene con lo stato a parole; "Blocca rialzi" e il buffer neutri ---- */
+.scr-salute .pillrow { gap: 8px; margin-top: 14px; }
+.scr-salute .sal-flag { background: var(--surface-alt); color: var(--ink); }
+
+/* ---- valori delle righe (Spedizioni, Freschezza): 14 px, su una riga; giorni e stato sotto ---- */
+.scr-salute .list .row { gap: 12px; }
+.scr-salute .sal-val { flex: none; font-size: 14px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; }
+.scr-salute .sal-val :is(.rs, .sal-state) { margin-top: 1px; font-weight: 500; letter-spacing: 0; }
+.scr-salute .sal-state { font-size: 12px; }
+
+/* ---- attivita' recente: persona come selettore a segmenti largo quanto la card, tipo su una fila che scorre ---- */
+.scr-salute .act-who { display: flex; margin-top: 12px; }
+.scr-salute .act-who button { flex: 1; font-family: inherit; }
+.scr-salute .ds-linefilters.hscroll { margin-top: 6px; margin-bottom: 8px; }
+/* avatar tondi e neutri; il filo fra le righe parte dal testo */
+.scr-salute .ds-act { position: relative; border-bottom: 0; padding: 11px 0; }
+.scr-salute .ds-act + .ds-act::before { content: ''; position: absolute; top: 0; left: 43px; right: 0; border-top: 1px solid var(--border); }
+.scr-salute .ds-actav { width: 32px; height: 32px; border-radius: 50%; font-size: 12px; font-weight: 600; }
+.scr-salute .ds-actverb { font-weight: 600; }
+.scr-salute .ds-acttag { border-radius: 999px; padding: 2px 8px; font-weight: 600; }
+
+/* ---- stampa (Ctrl+P, la schermata non ha il bottone PDF): la card scura resta scura e i pallini restano, anche
+   senza "grafica di sfondo" ---- */
+@media print {
+  .scr-salute :is(.card.hero, .sal-dots li, .ds-actav) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .scr-salute .kpi .tap { display: none; }
+  /* persona del feed: index.css toglie ogni .seg dal foglio; qui resta la scelta attiva scritta in nero, come le chip
+     della Cornice 3, cosi' il foglio dice per chi e' filtrato (0,4,0 con !important batte .seg:not(.bar > .seg)) */
+  .scr-salute .card .seg.act-who { display: flex !important; background: none; padding: 0; }
+  .scr-salute .act-who button:not(.on) { display: none; }
+  .scr-salute .act-who button.on { flex: none; background: none; color: var(--ink); }
+}

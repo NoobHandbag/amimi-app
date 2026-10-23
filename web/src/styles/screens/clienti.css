@@ -1,0 +1,46 @@
+/* ============================================================================
+   Clienti (tema A, PR 19, 23-10-2026): regole della sola schermata, tutte sotto .scr-clienti (pages/Clienti.tsx).
+   Vengono gia' da shell.css: il KPI scuro largo quanto la griglia e per primo (e l'ultimo dei tre sotto sulla riga
+   intera), le intestazioni delle tabelle in minuscolo (Cornice 2), in stampa il KPI scuro e la barra dei segmenti
+   coi loro colori (Cornice 3). Separatori come bordi e non come ombre: in stampa index.css toglie ogni box-shadow.
+   ============================================================================ */
+
+/* ---- Riacquisto a 90 gg, la card scura: l'esito sulla soglia del 10% e' una pillola piena col testo bianco, come
+   l'esito di Home e Ads (bianco sul verde 5,8:1, sul rosso 5,7:1; i fondi reggono 3,4:1 sul nero). In stampa resta piena:
+   eredita print-color-adjust dal KPI scuro (shell.css) ---- */
+.scr-clienti .ds-kpi.hero .ds-pill { margin-top: 12px; padding: 4px 11px; font-size: 12.5px; color: var(--surface); }
+.scr-clienti .ds-kpi.hero .ds-pill.pos { background: var(--positive); }
+.scr-clienti .ds-kpi.hero .ds-pill.neg { background: var(--negative); }
+
+/* ---- segmenti: barra in grigi con 2 px di bianco fra un segmento e l'altro (grigi vicini restano distinti);
+   senza clienti la barra vuota torna la traccia grigia ---- */
+.scr-clienti .ds-chbar { gap: 2px; background: none; }
+.scr-clienti .ds-chbar:empty { background: var(--surface-alt); }
+
+/* righe dei segmenti: sono bottoni, prendono il carattere della pagina (prima Arial a 13 px) e il filo di .row */
+.scr-clienti .cli-segs { margin-top: 8px; }
+.scr-clienti .cli-seg { width: 100%; gap: 12px; padding: 12px 2px; background: none; border: 0; border-bottom: 1px solid var(--border); border-radius: 0;
+  font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.scr-clienti .cli-seg:last-child { border-bottom: 0; }
+/* il segmento filtrato: fondo bordeaux tenue che sborda di 8 px, il testo resta dov'era */
+.scr-clienti .cli-seg.on { background: var(--interactive-tint-soft); border-radius: 14px; border-bottom-color: transparent; margin: 0 -8px; padding: 12px 10px; width: calc(100% + 16px); }
+.scr-clienti .cli-seg .giac { flex: none; white-space: nowrap; font-size: 17px; font-weight: 600; letter-spacing: -.02em; color: var(--ink); }
+.scr-clienti .cli-seg .giac .muted { font-size: 12.5px; font-weight: 500; letter-spacing: 0; }
+.scr-clienti .cli-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: 0; }
+
+/* ---- coorti: le piu' giovani di 90 giorni in grigio sul testo, non sbiadite (l'opacita' sbiadiva anche i fili);
+   --ink-muted e non --ink-faint, che sul bianco sta a 2,5:1 ---- */
+.scr-clienti tr.dim { opacity: 1; }
+.scr-clienti tr.dim td { color: var(--ink-muted); }
+/* "Primo ordine" e "Netto medio" vanno a capo: a 390 px la tabella sta nella card e "Netto medio" non e' piu' tagliato */
+.scr-clienti thead th { vertical-align: bottom; }
+.scr-clienti thead th:is(:first-child, :last-child) { white-space: normal; }
+
+/* ---- tutti i clienti: lista, l'email a sinistra va a capo dove serve (e' l'unico dato che dice chi e', si legge
+   intera come nella tabella di prima), la spesa a destra non va a capo ---- */
+.scr-clienti .cli-list .row { gap: 12px; padding: 11px 0; }
+.scr-clienti .cli-list .row > div:first-child { min-width: 0; }
+.scr-clienti .cli-list .rt { overflow-wrap: anywhere; }
+.scr-clienti .cli-list .rs { margin-top: 1px; }
+.scr-clienti .cli-amt { flex: none; text-align: right; font-size: 15px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.scr-clienti .cli-amt .rs { font-weight: 400; letter-spacing: 0; }

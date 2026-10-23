@@ -159,6 +159,8 @@ const COPPIE = [
   ['#ffffff', 'positive', 4.5], ['#ffffff', 'negative', 4.5],
   // Ads (23-10): la pillola d'esito del CPA sulla card scura ha anche l'arancio pieno ("sotto break-even")
   ['#ffffff', 'warning', 4.5],
+  // Salute (23-10): i pallini di gravita' sulla card scura sono oggetti grafici, 3:1 sul nero
+  ['positive', 'ink', 3], ['warning', 'ink', 3], ['negative', 'ink', 3],
 ];
 for (const [fg, bgk, min] of COPPIE) {
   const a = coloreDi(fg), b = coloreDi(bgk);
