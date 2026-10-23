@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import ExportBtn from '../components/ExportBtn';
 import Icon from '../components/Icon';
 import AppBar from '../components/AppBar';
+import '../styles/screens/tabelle.css';
 
 // Raw-data browser (AppSheet-style): curated business tables, read-only, searchable + CSV.
 // NEVER include app_flags/app_config (secrets) or change_log/health_log (noise).
@@ -70,26 +71,27 @@ function TableView({ cfg, onBack }: { cfg: TableCfg; onBack: () => void }) {
   const toggleSort = (field: string) => setSort((cur) => (cur && cur.field === field ? { field, asc: !cur.asc } : { field, asc: true }));
 
   return (
-    <div>
+    <div className="tab-view">
       <AppBar
-        title={<><Icon name={cfg.icon} size={18} /> {cfg.label}</>}
+        title={cfg.label}
         onBack={onBack}
         backLabel="Tutte le tabelle"
-        actions={<>{rows != null && <span className="ds-dt-count">{sorted.length} righe</span>}<ExportBtn name={cfg.key} rows={() => sorted} /></>}
+        actions={<ExportBtn name={cfg.key} rows={() => sorted} />}
       />
       <div className="ds-search"><Icon name="search" size={18} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cerca in tabella…" aria-label="Cerca" /></div>
+      {rows != null && <p className="ds-count">{sorted.length} righe{q ? ' (filtrate)' : ''}{rows.length >= limit ? ` · prime ${limit}` : ''} · valori grezzi, sola lettura.</p>}
       {err ? <div className="card err">Niente accesso a questa tabella ({err}).</div>
         : rows == null ? <p className="muted center">Carico…</p>
         : !sorted.length ? <div className="card muted center">Nessuna riga.</div> : (
           <>
             <div className="ds-dtwrap"><table className="ds-dt">
               <thead><tr>{cols.map((c) => (
-                <th key={c.field} className={isNum(c.field) ? 'num' : 'txt'} onClick={() => toggleSort(c.field)} title="Ordina">
+                <th key={c.field} className={isNum(c.field) ? 'c-num' : 'c-txt'} onClick={() => toggleSort(c.field)} title="Ordina">
                   {c.label}{sort?.field === c.field && <span className="ar">{sort.asc ? '▲' : '▼'}</span>}
                 </th>
               ))}</tr></thead>
               <tbody>{sorted.map((r, i) => (
-                <tr key={i}>{cols.map((c) => <td key={c.field} className={isNum(c.field) ? 'num' : 'txt'}>{fmt(r[c.field])}</td>)}</tr>
+                <tr key={i}>{cols.map((c) => <td key={c.field} className={isNum(c.field) ? 'c-num' : 'c-txt'}>{fmt(r[c.field])}</td>)}</tr>
               ))}</tbody>
             </table></div>
             {emptyCols.length > 0 && (
@@ -98,7 +100,6 @@ function TableView({ cfg, onBack }: { cfg: TableCfg; onBack: () => void }) {
           </>
         )}
       {rows && rows.length >= limit && <button className="addnew" onClick={() => setLimit((l) => l + 100)}>Carica altre 100</button>}
-      {rows != null && <p className="note">{sorted.length} righe{q ? ' (filtrate)' : ''}{rows.length >= limit ? ` · prime ${limit}` : ''} · valori grezzi, sola lettura.</p>}
     </div>
   );
 }
@@ -118,17 +119,18 @@ export function DataTables({ initial }: { initial?: string }) {
   const cfg = TABLES.find((t) => t.key === openKey);
   if (cfg) return <TableView cfg={cfg} onBack={() => setOpenKey(undefined)} />;
   return (
-    <>
+    <div className="tab-idx">
       <p className="note">Sfoglia i dati grezzi. Sola lettura.</p>
-      <div className="tipi">
+      <div className="tipi ds-group">
         {TABLES.map((t) => (
           <button key={t.key} className="tipo" type="button" onClick={() => setOpenKey(t.key)}>
-            <span className="ti"><Icon name={t.icon} size={26} /></span>
+            <span className="ti"><Icon name={t.icon} size={20} /></span>
             <span className="tt">{t.label}</span>
-            <span className="td">{counts[t.key] != null ? `${counts[t.key].toLocaleString('it-IT')} righe` : t.desc}</span>
+            <span className="td">{t.desc}</span>
+            {counts[t.key] != null && <span className="tv"><b>{counts[t.key].toLocaleString('it-IT')}</b> righe</span>}
           </button>
         ))}
       </div>
-    </>
+    </div>
   );
 }

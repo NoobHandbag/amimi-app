@@ -316,8 +316,8 @@
 .ds-dt th:hover { color: var(--interactive-700); }
 .ds-dt th .ar { opacity: .8; margin-left: 3px; color: var(--interactive-700); }
 .ds-dt td { color: var(--ink); }
-.ds-dt .num { text-align: right; font-variant-numeric: tabular-nums; }
-.ds-dt .txt { text-align: left; }
+.ds-dt .c-num { text-align: right; font-variant-numeric: tabular-nums; }
+.ds-dt .c-txt { text-align: left; }
 .ds-dt tbody td { background: var(--surface); }
 .ds-dt tbody tr:nth-child(even) td { background: var(--surface-alt); }
 .ds-dt th:first-child, .ds-dt td:first-child { position: sticky; left: 0; }
