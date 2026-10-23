@@ -278,15 +278,15 @@ input.num { font-weight: 600; letter-spacing: -.03em; }
   .appbar-l, .appbar-r button, .appbar-st { display: none !important; }
   .appbar-title { text-align: left; font-size: 24px; letter-spacing: -.03em; }
   /* card scura: resta scura anche senza "grafica di sfondo", altrimenti il suo testo bianco finisce sul foglio bianco.
-     Barre a segmenti (canali nel Cruscotto, segmenti in Clienti coi pallini scritti nel style) e pillola "da riprodurre":
-     il colore e' uno sfondo, senza questa regola sul foglio resta un buco o il bianco su bianco */
+     Barre a segmenti (canali nel Cruscotto, segmenti in Clienti coi pallini scritti nel style) e pillola "venduto N×"
+     di Prodotti (.hot): il colore e' uno sfondo, senza questa regola sul foglio resta un buco o il bianco su bianco */
   .ds-kpi.hero, .ds-hero, .ds-chbar, .ds-chleg, .card:has(> .ds-chbar) .rt > i, .hot { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   /* sul foglio niente bottoni d'azione, ricerche vuote e sezioni chiuse (sarebbero solo un titolo) */
   .ds-btn, .ds-search:has(input:placeholder-shown), .card:has(> .askhead[aria-expanded=false]) { display: none !important; }
   /* selettori e filtri: resta la scelta attiva, che dice cosa c'e' sul foglio, scritta in nero; il bianco sulla
      pillola nera senza "grafica di sfondo" usciva grigio chiaro, piu' tenue delle opzioni non scelte */
-  :is(.ds-seg button, .ds-fp, .ds-lp, .fchip):not(.on) { display: none !important; }
-  .ds-seg, :is(.ds-seg button, .ds-fp, .ds-lp, .fchip).on { background: none !important; color: var(--ink) !important; box-shadow: none !important; }
+  :is(.ds-seg button, .ds-fp, .ds-lp):not(.on) { display: none !important; }
+  .ds-seg, :is(.ds-seg button, .ds-fp, .ds-lp).on { background: none !important; color: var(--ink) !important; box-shadow: none !important; }
   /* una tabella larga non si taglia nel suo riquadro che scorre: esce intera e Chromium rimpicciolisce il foglio, ma al
      massimo di 1,5 volte (con i margini di default oltre 1077 px taglia a destra) */
   :is(.tablewrap, .cedt-scroll) { overflow: visible; }
@@ -303,4 +303,33 @@ input.num { font-weight: 600; letter-spacing: -.03em; }
   .card > h2 { break-after: avoid; }
   /* le file che scorrono fino al bordo dello schermo: in stampa la pagina non ha margine, i -16 px allargavano il foglio */
   :is(.hscroll, .ds-lens.scrollx) { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; flex-wrap: wrap; }
+}
+
+/* ============================================================================
+   Cornice 4 (23-10-2026): i rilievi delle PR per schermata che valgono per tutte. Telefono stretto (320 px), anello di
+   focus nelle file che scorrono, separatori di .ds-group sul foglio. La ricerca (.ds-search) sta in components.css.
+   ============================================================================ */
+
+/* ---- due campi su una riga (.grid2): sotto i 390 px non ci stanno. Il passo vuole 108 px di bottoni e la data non
+   scende sotto i 177 px (Chromium): a 320 la pagina scorreva di lato e il numero del passo spariva; a 375 (iPhone SE e
+   mini) accanto alla data, anche col margine ridotto qui sotto, al numero restano 40 px e "0,00" ne vuole 46.
+   Una colonna, come gli altri campi ---- */
+@media (max-width: 389px) {
+  .grid2 { grid-template-columns: minmax(0, 1fr); }
+}
+/* il numero del passo ha sempre il suo posto: 44 px (tre cifre a 20 px) e poco margine ai lati, come negli arrivi */
+.stepper input.num { min-width: 44px; padding-left: 4px; padding-right: 4px; }
+
+/* ---- file che scorrono (.hscroll, .ds-lens.scrollx): overflow-x taglia anche sopra e sotto. L'anello sta attaccato
+   alla chip (fuori, anche su quella scelta, nera) e 2 px di padding sopra, tolti al margine, gli fanno posto; sotto ci
+   sono gia'. Il margine sotto lo decidono le schermate, quindi qui non si tocca. :where, cosi' il Villaggio
+   (.vil button:focus-visible) resta piu' specifico ---- */
+.hscroll, .ds-lens.scrollx { padding-top: 2px; margin-top: -2px; }
+:where(.hscroll, .ds-lens.scrollx) :focus-visible { outline-offset: 0; }
+
+@media print {
+  /* il filo di .ds-group e' un fondo e sul foglio senza "grafica di sfondo" sparirebbe: diventa un bordo; le righe non si
+     spezzano fra due fogli */
+  .ds-group > * + *::before { height: 0; background: none; border-top: 1px solid var(--border); }
+  .ds-group > * { break-inside: avoid; }
 }

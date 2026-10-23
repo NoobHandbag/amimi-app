@@ -56,9 +56,12 @@
 .ds-search { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border);
   border-radius: 13px; padding: 11px 14px; margin-bottom: 16px; box-shadow: var(--e1); }
 .ds-search svg { width: 19px; height: 19px; stroke: var(--ink-muted); flex: none; }
-.ds-search input { flex: 1; border: 0; background: none; font-family: inherit; font-size: 14.5px; color: var(--ink); min-width: 0; }
+/* 16 px: sotto, iOS ingrandisce la pagina al tocco (Cornice 4, 23-10) */
+.ds-search input { flex: 1; border: 0; background: none; font-family: inherit; font-size: 16px; color: var(--ink); min-width: 0; }
 .ds-search input::placeholder { color: var(--ink-muted); }
+/* il campo non ha contorno: l'anello di focus va sul riquadro, come l'anello di shell.css (Cornice 4) */
 .ds-search input:focus { outline: none; }
+.ds-search:focus-within { outline: 2px solid var(--interactive); outline-offset: 2px; }
 
 .ds-hero { display: flex; align-items: center; gap: 16px; width: 100%; text-align: left; border: 0; cursor: pointer; font-family: inherit;
   background: var(--grad-hero); border-radius: 15px; padding: 16px 18px; color: #fff; margin-bottom: 18px; box-shadow: var(--e2); }
