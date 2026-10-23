@@ -109,7 +109,8 @@ h2 { font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--in
 .ds-tbar.cur, .ds-bars .b.cur { background: var(--chart-current); }
 
 /* ---- barra in basso: pillola scura che galleggia; la sezione attiva si allarga e mostra il nome ---- */
-.app { padding-bottom: 104px; }
+/* il fondo segue la barra e "Chiedi ad Amimi'", che salgono della zona sicura dell'iPhone: senza, l'ultima riga ci finiva sotto */
+.app { padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px)); }
 .app::after { content: ""; position: fixed; left: 0; right: 0; bottom: 0; height: calc(104px + env(safe-area-inset-bottom, 0px)); pointer-events: none; z-index: 19;
   background: linear-gradient(180deg, transparent, var(--bg) 58%); }
 .bottomnav { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); height: 62px; max-width: 736px; border-radius: 31px;
@@ -156,7 +157,7 @@ table:not(.ds-dt, .cedt) tbody tr:last-child td { border-bottom: 0; }
 table.sortable thead th:hover { color: var(--ink); }
 
 /* ---- moduli: etichette in minuscolo, campi pieni senza bordo, mai sotto i 16 px (iOS non ingrandisce).
-   Solo sugli elementi: le celle .num/.txt di Tabelle restano fuori ---- */
+   Solo sugli elementi: le celle della tabella aperta di Tabelle restano fuori ---- */
 .fl { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
 :is(input.txt, input.num, input.search, select.txt, select.num, textarea.txt) { border: 0; border-radius: 14px; min-height: 48px; background: var(--surface); font-family: inherit; font-size: 16px; }
 input[type=date]:is(.txt, .num) { min-height: 48px; }
@@ -290,6 +291,9 @@ input.num { font-weight: 600; letter-spacing: -.03em; }
   /* una tabella larga non si taglia nel suo riquadro che scorre: esce intera e Chromium rimpicciolisce il foglio, ma al
      massimo di 1,5 volte (con i margini di default oltre 1077 px taglia a destra) */
   :is(.tablewrap, .cedt-scroll) { overflow: visible; }
+  /* Tabelle: a schermo la tabella aperta scorre in un riquadro alto 72vh; sul foglio esce intera (prima ne uscivano
+     una ventina di righe). !important: anche la regola della schermata fissa altezza e scorrimento */
+  .ds-dtwrap { max-height: none !important; overflow: visible !important; }
   /* CE dettagliato: un mese in piu' ogni mese, a dicembre 12. Sul foglio via la colonna Trend (i numeri ci sono, anche
      la sua cella vuota nelle righe in %) e celle piu' strette */
   table.cedt :is(th.sparkh, td.spark), table.cedt tr.pct td:last-child { display: none; }
