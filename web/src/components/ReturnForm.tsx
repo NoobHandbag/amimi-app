@@ -71,7 +71,7 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
 
   // STEP 1 — product
   if (!prod) return (
-    <div className="form">
+    <div className="form reg-reso">
       <label className="fl">Prodotto reso</label>
       <ProductPicker selected={null} onPick={setProd} />
       <p className="note">Scegli il prodotto: ti mostro le sue vendite recenti (con foto e cliente), poi scegli quale è stata resa.</p>
@@ -80,7 +80,7 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
 
   // STEP 2 — the sale
   if (!sale) return (
-    <div>
+    <div className="reg-reso">
       <button className="back" type="button" onClick={() => setProd(null)}><Icon name="back" size={16} />{nm(prod)}</button>
       <p className="note">Quale vendita di <b>{nm(prod)}</b> è stata resa?</p>
       {salesErr ? (
@@ -90,14 +90,15 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
         : sales == null ? <p className="muted center">Carico vendite…</p>
         : !sales.length ? (
           <div className="card muted center">Nessuna vendita recente trovata.
-            <div style={{ marginTop: 10 }}><button className="chip" onClick={() => setSale({ source: 'qromo', id: '', data: oggi(), qty: 1, price: null, descr: 'Reso senza vendita collegata', ref: '' })}>Reso senza vendita →</button></div>
+            <div className="salenone"><button className="ds-btn secondary sm" onClick={() => setSale({ source: 'qromo', id: '', data: oggi(), qty: 1, price: null, descr: 'Reso senza vendita collegata', ref: '' })}>Reso senza vendita</button></div>
           </div>
         ) : (
-          <div className="list">{sales.map((s) => (
+          <div className="list ds-group reso-sales">{sales.map((s) => (
             <button key={s.source + s.id} className="salerow" onClick={() => { setSale(s); setQty(String(s.qty || 1)); setImporto(s.price != null ? String(s.price) : ''); }}>
               <Thumb p={prod} />
-              <div className="grow"><div className="rt">{s.descr}</div><div className="rs">{s.source === 'qromo' ? '🏬 QROMO' : '🌐 Shopify'} · {s.data ?? ''} · {s.qty}× {s.price != null ? eur(s.price) : ''}</div></div>
-              <span className="chev">›</span>
+              <div className="grow"><div className="rt">{s.descr}</div><div className="rs">{s.source === 'qromo' ? 'QROMO' : 'Shopify'} · {s.data ?? ''} · {s.qty}×</div></div>
+              {s.price != null && <b className="salev">{eur(s.price)}</b>}
+              <span className="chev"><Icon name="chevron" size={18} /></span>
             </button>
           ))}</div>
         )}
@@ -106,7 +107,7 @@ export default function ReturnForm({ pin, chi }: { pin: string; chi: string }) {
 
   // STEP 3 — details
   return (
-    <div className="form">
+    <div className="form reg-reso">
       <button className="back" type="button" onClick={() => setSale(null)}><Icon name="back" size={16} />Vendite di {nm(prod)}</button>
       <div className="picked">
         <Thumb p={prod} />

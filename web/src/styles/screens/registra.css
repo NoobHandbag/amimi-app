@@ -1,8 +1,9 @@
 /* ============================================================================
    Registra (tema A, PR 6, 22-10-2026): regole della sola schermata, tutte sotto .scr-registra (pages/Ingest.tsx).
-   La radice avvolge anche Conta, Reso, B2B, Spese, Prodotti, Pulizia e Tabelle, che hanno le loro PR: qui solo l'hub
-   (.reg-tipi), il feed (components/RecentFeed.tsx), il modulo Regalo / Vendita manuale (.giftform), ProductPicker
-   (.ds-picker, .ds-pcard, .ds-picked) e "Vedi tutti". Etichette, campi, passo e "aggiungi" vengono da shell.css (Cornice 2).
+   La radice avvolge anche Conta, Reso, B2B, Spese, Prodotti, Pulizia e Tabelle. Qui l'hub (.reg-tipi), il feed
+   (components/RecentFeed.tsx), il modulo Regalo / Vendita manuale (.giftform), ProductPicker (.ds-picker, .ds-pcard,
+   .ds-picked) e "Vedi tutti"; Conta, Reso, B2B e Spese hanno la loro sezione "Moduli" in fondo (PR 10); Prodotti,
+   Pulizia e Tabelle hanno le loro PR. Etichette, campi, passo e "aggiungi" vengono da shell.css (Cornice 2).
    ProductPicker vive anche nel Villaggio e nel calcolatore del Cruscotto: fuori da .scr-registra resta com'era.
    ============================================================================ */
 
@@ -58,3 +59,67 @@
    bottone principale alto come .submit ---- */
 .scr-registra .giftform .grid2 { align-items: end; }
 .scr-registra .giftform > .ds-btn.primary.full { min-height: 52px; margin-top: 24px; font-size: 16px; letter-spacing: -.01em; }
+
+/* ============================================================================
+   Moduli (PR 10, 22-10-2026): Conta (.reg-conta), Reso / Cambio (.reg-reso), Movimento B2B (.reg-b2b), Spese (.reg-spese,
+   col modulo della spesa nuova .reg-spesa). Etichette, campi, passo e scelte a pillola vengono gia' da shell.css (Cornice 2):
+   qui solo cio' che resta. CountForm vive anche nel Villaggio (.vil .v-conta): fuori da .scr-registra resta com'era.
+   ============================================================================ */
+
+/* ---- scelte a pillola (Motivo, Tipo movimento, Modello, Negozio, Categoria): piu' larghe al tocco, testo in inchiostro ---- */
+.scr-registra :is(.reg-reso, .reg-b2b, .reg-spesa) .supcard { padding: 10px 16px; font-size: 14px; color: var(--ink); }
+.scr-registra :is(.reg-reso, .reg-b2b, .reg-spesa) .supcard.on { color: var(--surface); }
+/* qui .alt e' "altra opzione" ("+ altro" del negozio): testo bordeaux senza tratteggio, come "aggiungi".
+   In Ordini .supcard.alt e' una scelta (la clicca l'e2e) e resta col tratteggio di shell.css */
+.scr-registra .reg-b2b .supcard.alt { border: 0; color: var(--interactive); font-weight: 600; }
+
+/* ---- Conta: "Il sistema dice" e' la card scura della schermata (.hero, cosi' la guardia dei colori la vede), numero
+   grande e stretto come il KPI scuro; sopra il nero solo bianco e colori on-dark. Il delta resta sotto, riga d'esito tenue ---- */
+.scr-registra .reg-conta .sysrow.hero { flex-direction: column; align-items: flex-start; gap: 4px; background: var(--grad-hero); color: var(--surface); border-radius: 24px; padding: 18px 20px; margin-top: 14px; }
+.scr-registra .reg-conta .sysrow.hero span { font-size: 13px; font-weight: 500; color: var(--surface); opacity: .72; }
+.scr-registra .reg-conta .sysrow.hero b { font-size: 40px; font-weight: 600; letter-spacing: -.045em; line-height: 1.05; color: var(--surface); font-variant-numeric: tabular-nums; }
+.scr-registra .reg-conta .sysrow.hero b.neg { color: var(--negative-on-dark); }
+.scr-registra .reg-conta .deltabadge { border-radius: 14px; padding: 12px 16px; font-weight: 600; text-align: left; }
+/* in stampa la card resta scura anche senza "grafica di sfondo", altrimenti il testo bianco finisce sul foglio bianco */
+@media print { .scr-registra .reg-conta .sysrow.hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+
+/* ---- Reso, passo 2: le vendite in un solo .ds-group (shell.css), importo a destra; separatore dal testo
+   (16 di margine, 34 della foto, 10 di spazio) ---- */
+.scr-registra .reso-sales { --sep-inset: 60px; }
+.scr-registra .reso-sales .salerow { padding: 12px 16px; }
+.scr-registra .reso-sales .salev { font-size: 15px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.scr-registra .reso-sales .chev { display: grid; color: var(--ink-muted); }
+/* in stampa il filo di .ds-group e' un fondo e sul foglio senza grafica sparirebbe: qui e' un bordo, come in
+   magazzino.css; le righe non si spezzano */
+@media print {
+  .scr-registra .reso-sales > * + *::before { height: 0; background: none; border-top: 1px solid var(--border); }
+  .scr-registra .reso-sales > * { break-inside: avoid; }
+}
+/* nessuna vendita: "Reso senza vendita" e' un secondario piccolo (grigio dentro la card, lo fa shell.css) */
+.scr-registra .reg-reso .salenone { margin-top: 12px; }
+
+/* ---- Reso, passo 3: riepilogo bianco sul fondo; Si/No pieno e alto quanto il passo accanto (50 px) ---- */
+.scr-registra .reg-reso .picked { background: var(--surface); border-radius: 18px; padding: 12px 14px; }
+.scr-registra .reg-reso .grid2 .seg { display: flex; min-height: 50px; }
+.scr-registra .reg-reso .grid2 .seg button { flex: 1; }
+
+/* ---- Spese: "Aggiungi spesa" bianco sul fondo (shell.css), alto come i bottoni dei moduli, senza lo style scritto ---- */
+.scr-registra .reg-spese .spese-add { min-height: 50px; margin-bottom: 16px; }
+/* da verificare: card senza bordo, fornitore e importo stretti */
+.scr-registra .reg-spese .ds-expcard { border: 0; box-shadow: none; border-radius: 20px; padding: 16px; }
+.scr-registra .reg-spese .ds-expwho { min-width: 0; }
+.scr-registra .reg-spese .ds-expvendor { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.scr-registra .reg-spese .ds-expamt { font-size: 18px; font-weight: 600; letter-spacing: -.03em; }
+/* ricodifica: etichette in minuscolo come .fl; la categoria resta in maiuscolo, e' il codice che va al server */
+.scr-registra .reg-spese .ds-sublabel { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500; }
+.scr-registra .reg-spese .ds-exprecode .ds-sublabel + * { margin-top: 6px; }
+/* sottocategoria piena e a 16 px come i campi del kit (sotto i 16 px iOS ingrandisce la pagina al tocco) */
+.scr-registra .reg-spese .ds-expsel { border: 0; border-radius: 14px; min-height: 48px; padding: 0 14px; background: var(--surface-alt); font-size: 16px; }
+/* non e' .txt, quindi la regola del kit non lo prende: sul grigio il segnaposto di default del browser scende a 3,9:1 */
+.scr-registra .reg-spese .ds-expsel::placeholder { color: var(--ink-muted); opacity: 1; }
+.scr-registra .reg-spese .ds-exphint { font-size: 12px; color: var(--ink-muted); }
+.scr-registra .reg-spese .ds-exprow { display: flex; gap: 8px; }
+.scr-registra .reg-spese .ds-exprow > :first-child { flex: 1; }
+/* spesa nuova: Imputazione larga quanto la pagina */
+.scr-registra .reg-spesa > .seg { display: flex; }
+.scr-registra .reg-spesa > .seg button { flex: 1; }

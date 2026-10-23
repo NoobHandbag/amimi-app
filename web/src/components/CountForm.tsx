@@ -63,13 +63,13 @@ export default function CountForm({ pin, chi, initialCodice, onDone }: { pin: st
   }
 
   return (
-    <div className="form">
+    <div className="form reg-conta">
       <label className="fl">Prodotto</label>
       <ProductPicker selected={prod} onPick={(p) => setProd(p)} />
 
       {prod && (
         <>
-          <div className="sysrow">
+          <div className="sysrow hero">
             <span>Il sistema dice</span>
             <b className={sys !== null && sys <= 0 ? 'neg' : ''}>{loadingSys || sys === null ? '…' : `${sys} pz`}</b>
           </div>

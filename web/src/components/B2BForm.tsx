@@ -45,7 +45,7 @@ export default function B2BForm({ pin, chi, initialNegozio }: { pin: string; chi
   }
 
   return (
-    <div className="form">
+    <div className="form reg-b2b">
       <label className="fl">Prodotto</label>
       <ProductPicker selected={prod} onPick={(p) => { setProd(p); setPrezzo(p ? String(p.retail_price ?? '') : ''); }} />
       {prod && (
