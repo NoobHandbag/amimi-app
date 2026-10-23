@@ -14,6 +14,8 @@ import { join } from 'node:path';
 // margine e senza "grafica di sfondo" (come la stampa di default di Chrome); poi la pagina torna allo schermo. Una vista di stampa bianca o coperta
 // dalla barra in basso o da "Chiedi ad Amimi'" e' un difetto. Il PNG mostra i fondi e non rimpicciolisce: una tabella piu'
 // larga del foglio (il CE dettagliato) esce intera solo nel PDF, e solo il PDF dice cosa sparisce senza i fondi.
+// Scorrimento di lato: il log dice "la pagina scorre di lato di N px" a 390 px e (cornice 4, 23-10) "a 320 px la pagina
+// scorre di lato di N px", misurato dopo gli scatti col telefono piu' stretto. Non deve comparire nessuna delle due righe.
 // Rete: NESSUNA richiesta esce. Ogni richiesta che non va a localhost e' intercettata: quelle a *.supabase.co ricevono
 // dati finti (rispondi), tutte le altre sono interrotte. La sessione del team e' un oggetto finto in localStorage.
 // Dati: le viste e tabelle elencate in TABELLE hanno righe scritte a mano per una piccola marca milanese di borse fatte a
@@ -872,6 +874,18 @@ async function scatta(page: Page, nome: string, { intera = true, stampa = false 
   if (largo > 0) console.log(`[schermate] ${nome}: la pagina scorre di lato di ${largo} px`);
   await page.screenshot({ path: join(DIR, `${nome}.png`), animations: 'disabled' });
   if (stampa) await stampaDi(page, nome);
+  await stretta(page, nome);
+}
+
+// il telefono piu' stretto (320 px, iPhone SE prima serie): dopo gli scatti la finestra va a 320, si misura e torna com'era.
+// Nessuno screenshot in piu': lo dice solo il log (Cornice 4, 23-10)
+async function stretta(page: Page, nome: string) {
+  const prima = page.viewportSize()!;
+  await page.setViewportSize({ width: 320, height: prima.height });
+  await page.waitForTimeout(300);
+  const largo = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  if (largo > 0) console.log(`[schermate] ${nome}: a 320 px la pagina scorre di lato di ${largo} px`);
+  await page.setViewportSize(prima);
 }
 
 // la vista di stampa: 718 px = A4 (794) meno i margini di default di Chrome (circa 1 cm per lato); il PDF lo impagina

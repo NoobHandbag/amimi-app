@@ -201,9 +201,6 @@ input[type=date].txt { font-size: 16px; min-height: 46px; }
 /* --- inventory filters --- */
 .sech { font-size: 15px; font-weight: 800; margin: 18px 2px 8px; color: var(--dark); }
 .critchip { font-size: 12px; font-weight: 600; color: var(--red); background: var(--negative-tint); border: 1px solid var(--negative); padding: 5px 10px; border-radius: 999px; }
-.filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
-.fchip { padding: 7px 13px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; font-weight: 700; color: var(--muted); cursor: pointer; }
-.fchip.on { background: var(--dark); color: #fff; border-color: var(--dark); }
 .hintline { font-size: 12px; color: var(--accent); margin-top: 6px; font-weight: 600; }
 
 /* --- channel mix bar --- */

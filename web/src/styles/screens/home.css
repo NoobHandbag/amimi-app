@@ -36,6 +36,15 @@
 .scr-home .ds-search input { align-self: stretch; font-size: 16px; }
 .scr-home .ds-manage > .nessuna { grid-column: 1 / -1; padding: 8px 2px; }
 
+/* ---- telefono stretto (Cornice 4, 23-10): le quattro azioni rapide restano su una riga, con le stesse tessere e tinte.
+   Le colonne non scendevano sotto la parola piu' lunga ("dettagliato") e a 320 px la pagina scorreva di lato di 24 px:
+   sotto i 360 px meno spazio fra le tessere e ai lati, e una parola che non ci sta va a capo ---- */
+@media (max-width: 359px) {
+  .scr-home .ds-quick { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .scr-home .ds-qbtn { padding-left: 2px; padding-right: 2px; }
+  .scr-home .ds-qbtn .ql { overflow-wrap: anywhere; }
+}
+
 /* ---- avviso dei controlli contabili (HealthBanner): pieno in tinta rossa, senza bordo; l'intestazione e' .askhead
    (freccia che ruota con aria-expanded), qui solo colore e misura; un controllo per riga, il conteggio a destra ---- */
 .scr-home .hb { margin-top: 20px; padding: 0 16px; border-radius: 20px; background: var(--negative-tint); color: var(--negative-700); }
