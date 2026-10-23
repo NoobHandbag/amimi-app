@@ -8,6 +8,7 @@ import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
 import AppBar from '../components/AppBar';
 import Icon from '../components/Icon';
+import '../styles/screens/ce-dettagliato.css';
 
 const MESI = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 const CUR = nowMonth();
@@ -156,11 +157,11 @@ export default function CeDetail({ onBack }: { onBack?: () => void }) {
     return '';
   }
 
-  if (loading) return <div className="screen"><AppBar title="CE dettagliato" onBack={onBack} /><p className="muted center">Carico i dati…</p></div>;
-  if (err) return <div className="screen"><AppBar title="CE dettagliato" onBack={onBack} /><div className="card err">Errore: {err}</div></div>;
+  if (loading) return <div className="screen scr-ce"><AppBar title="CE dettagliato" onBack={onBack} /><p className="muted center">Carico i dati…</p></div>;
+  if (err) return <div className="screen scr-ce"><AppBar title="CE dettagliato" onBack={onBack} /><div className="card err">Errore: {err}</div></div>;
 
   return (
-    <div className="screen">
+    <div className="screen scr-ce">
       <AppBar title="CE dettagliato" onBack={onBack} backLabel="Home" actions={<>
         <PrintBtn />
         <ExportBtn name={`ce_dettaglio_${scope}`} rows={() => shown.filter((r) => r.k && !r.grp && !r.pctOf).map((r) => {
@@ -184,14 +185,14 @@ export default function CeDetail({ onBack }: { onBack?: () => void }) {
 
       <div className="kpis">
         <div className="ds-kpi"><div className="v">{eur(kNetto)}</div><div className="l">Fatturato netto</div><div className="s">{closed.length} mesi chiusi</div></div>
-        <div className={`ds-kpi ${kMc1 >= 0 ? 'pos' : 'neg'}`}><div className="v">{eur(kMc1)}</div><div className="l">MC1 · margine</div><div className="s">{pct(kMc1p)} su netto {kMc1p >= 0.55 && kMc1p <= 0.8 ? '· in banda' : '· fuori 55–80%'}</div></div>
+        <div className={`ds-kpi ${kMc1 < 0 ? 'neg' : ''}`}><div className="v">{eur(kMc1)}</div><div className="l">MC1 · margine</div><div className="s">{pct(kMc1p)} su netto {kMc1p >= 0.55 && kMc1p <= 0.8 ? '· in banda' : <span className="warn">· fuori 55–80%</span>}</div></div>
         <div className="ds-kpi hero"><div className="v">{eur(kMc2)}</div><div className="l">MC2 · utile</div><div className="s">{pct(kNetto ? kMc2 / kNetto : 0)} su netto</div></div>
         <div className="ds-kpi accent"><div className="v">{eur(breakeven)}</div><div className="l">Pareggio / mese</div><div className="s">costi fissi ÷ MC1%</div></div>
       </div>
 
       <section className="card">
         <h2>Conto Economico mensile</h2>
-        <p className="note" style={{ marginTop: -2 }}>Tocca una cella per vedere le righe che la compongono. {mode === 'pct' ? 'Ogni voce come quota del fatturato netto del mese.' : mode === 'delta' ? 'Variazione rispetto al mese precedente.' : 'I costi sono negativi.'}</p>
+        <p className="note">Tocca una cella per vedere le righe che la compongono. {mode === 'pct' ? 'Ogni voce come quota del fatturato netto del mese.' : mode === 'delta' ? 'Variazione rispetto al mese precedente.' : 'I costi sono negativi.'}</p>
         <div className="tablewrap cedt-scroll">
           <table className="cedt">
             <thead>
@@ -234,10 +235,10 @@ export default function CeDetail({ onBack }: { onBack?: () => void }) {
                       else if (mode === 'delta') disp = deltaTxt(vals, j, true);
                       else disp = raw === 0 ? '—' : eur(raw);
                       if (r.mc && m === CUR) disp = '—';
-                      const cellCls = ['val', raw === 0 && mode === 'eur' ? 'z' : '', r.kind === 'cost' && mode === 'eur' && raw !== 0 ? 'cost' : '', m === CUR ? 'curcol' : '', clickable ? 'clk' : ''].join(' ').trim();
+                      const cellCls = ['val', raw === 0 && mode === 'eur' ? 'z' : '', r.kind === 'cost' && mode === 'eur' && raw !== 0 ? 'cost' : '', r.mc && m !== CUR && mode !== 'delta' && raw < 0 ? 'neg' : '', m === CUR ? 'curcol' : '', clickable ? 'clk' : ''].join(' ').trim();
                       return <td key={m} className={cellCls} onClick={clickable ? () => openCell(r, m) : undefined} dangerouslySetInnerHTML={{ __html: disp }} />;
                     })}
-                    <td className="ytd">{r.unit === 'n' ? num(vals.reduce((s, v) => s + v, 0)) : (r.mc ? eur(sum(r.k!)) : (() => { const t = vals.reduce((s, v) => s + v, 0); return t === 0 ? '—' : eur(t); })())}</td>
+                    <td className={r.mc && sum(r.k!) < 0 ? 'ytd neg' : 'ytd'}>{r.unit === 'n' ? num(vals.reduce((s, v) => s + v, 0)) : (r.mc ? eur(sum(r.k!)) : (() => { const t = vals.reduce((s, v) => s + v, 0); return t === 0 ? '—' : eur(t); })())}</td>
                     <td className="spark">{sparkline(vals, r)}</td>
                   </tr>
                 );
@@ -273,12 +274,13 @@ function sparkline(vals: number[], r: RowDef) {
   const x = (i: number) => pad + i * ((W - 2 * pad) / Math.max(1, n - 1));
   const y = (v: number) => H - pad - ((v - mn) / rng) * (H - 2 * pad);
   const d = vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
-  const color = r.mc ? 'var(--positive-700)' : r.kind === 'cost' ? 'var(--sec-cabaret)' : r.kind === 'rev' ? 'var(--interactive)' : 'var(--chart-4)';
+  // linee neutre, MC in inchiostro; il pallino dell'ultimo mese in bordeaux, come il mese corrente delle barre
+  const color = r.mc ? 'var(--ink)' : 'var(--chart-bar)';
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
       <line x1={pad} y1={y(0).toFixed(1)} x2={W - pad} y2={y(0).toFixed(1)} stroke="var(--border-strong)" strokeWidth="1" />
       <path d={d} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={x(n - 1).toFixed(1)} cy={y(vals[n - 1]).toFixed(1)} r="2.1" fill={color} />
+      <circle cx={x(n - 1).toFixed(1)} cy={y(vals[n - 1]).toFixed(1)} r="2.1" fill="var(--chart-current)" />
     </svg>
   );
 }
@@ -294,10 +296,10 @@ function Drawer({ d, scope, onClose }: { d: DrillState; scope: Scope; onClose: (
       <div className="cedt-scrim" onClick={onClose} />
       <aside className="cedt-drawer" role="dialog" aria-label={`Dettaglio ${d.label}`}>
         <div className="cedt-dwhead">
-          <button className="cedt-x" onClick={onClose} aria-label="Chiudi"><Icon name="close" size={16} /></button>
+          <button className="cedt-x" onClick={onClose} aria-label="Chiudi"><Icon name="close" size={18} /></button>
           <div className="eyk">{MESI[d.month]} · {scope === 'amimi' ? 'Amimì' : 'Totale'}</div>
           <h3>{d.label}</h3>
-          <div className={`amt ${d.amount < 0 ? 'neg' : d.amount > 0 ? 'pos' : ''}`}>{d.key.endsWith('pezzi') ? num(d.amount) + ' pezzi' : money(d.amount)}</div>
+          <div className={`amt ${d.key.startsWith('mc') && d.amount < 0 ? 'neg' : ''}`}>{d.key.endsWith('pezzi') ? num(d.amount) + ' pezzi' : money(d.amount)}</div>
         </div>
         <div className="cedt-dwbody">
           {d.loading && <p className="muted center">Carico il dettaglio…</p>}
