@@ -1,0 +1,66 @@
+/* ============================================================================
+   Margini (tema A, PR 15, 23-10-2026): regole della sola schermata, tutte sotto .scr-margini (pages/Margini.tsx).
+   Vengono gia' da shell.css: KPI scuro in cima e riga dispari pareggiata, intestazioni delle tabelle in minuscolo e
+   senza riga sotto l'ultima, nota sotto il titolo, stampa (la scelta attiva dei selettori, card lunghe che scorrono).
+   Separatori come bordi: in stampa le ombre spariscono.
+   ============================================================================ */
+
+/* ---- Anno / Mesi chiusi e Tutti / Online / Negozio: due selettori pieni, larghi quanto la pagina ---- */
+.scr-margini .cedt-ctrl { flex-direction: column; align-items: stretch; gap: 8px; }
+.scr-margini .ds-seg.full button { min-height: 36px; padding: 8px 6px; font-size: 14px; white-space: nowrap; }
+
+/* ---- margine per modello: una riga per modello (bottone che apre le varianti), fatti a sinistra, margine e % a destra ---- */
+.scr-margini .mg-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 10px 0; background: none; border: 0; border-bottom: 1px solid var(--border); font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.scr-margini .mg-list > .mg-row:last-child { border-bottom: 0; }
+/* al tocco la riga si scurisce senza spostare niente: il grigio si allarga di 6 px oltre il testo */
+.scr-margini .mg-row:active { background: var(--surface-alt); box-shadow: 0 0 0 6px var(--surface-alt); border-radius: 2px; border-bottom-color: transparent; }
+.scr-margini .mg-l { flex: 1; min-width: 0; }
+.scr-margini :is(.mg-l .rt, .mg-l .rs) { display: block; }
+.scr-margini .mg-l .rt { font-size: 15px; font-weight: 500; }
+.scr-margini .mg-row.on .rt { color: var(--interactive); font-weight: 600; }
+.scr-margini .mg-l .rs { margin-top: 2px; font-size: 12.5px; color: var(--ink-muted); }
+.scr-margini .mg-r { flex: none; text-align: right; font-variant-numeric: tabular-nums; }
+.scr-margini .mg-v { display: block; font-size: 15px; font-weight: 600; letter-spacing: -.02em; }
+.scr-margini .mg-p { display: block; margin-top: 2px; font-size: 12.5px; color: var(--ink-muted); }
+.scr-margini :is(.mg-v, .mg-p).neg { color: var(--negative-700); }
+.scr-margini .mg-p.pos { color: var(--positive-700); }
+.scr-margini .mg-chev { flex: none; color: var(--ink-muted); transition: transform .15s; }
+.scr-margini .mg-row[aria-expanded=true] .mg-chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .scr-margini .mg-chev { transition: none; } }
+/* varianti del modello aperto: blocco grigio sotto la riga; a destra 28 px (freccia e spazio) cosi' i numeri stanno in
+   colonna con quelli dei modelli */
+.scr-margini .mg-var { background: var(--surface-alt); border-radius: 14px; padding: 2px 28px 2px 14px; margin: 8px 0 10px; }
+.scr-margini .mg-vrow { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--surface); }
+.scr-margini .mg-vrow:last-child { border-bottom: 0; }
+.scr-margini .mg-vrow .rt { font-size: 14px; font-weight: 500; }
+
+/* ---- ordini in perdita: tutta la riga apre l'ordine su Shopify (link sopra la riga), la freccia in fondo ---- */
+.scr-margini .list .row { position: relative; gap: 12px; padding: 12px 0; }
+.scr-margini .list .row > :first-child { flex: 1; min-width: 0; }
+.scr-margini .list .row .rs { margin-top: 2px; }
+.scr-margini .giac { min-width: 0; font-size: 16px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.scr-margini .mg-link { position: absolute; inset: 0; }
+.scr-margini .mg-link:active { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+
+/* ---- vuoto ("Nessun ordine con margine negativo"): una riga normale, non un testo grande al centro ---- */
+.scr-margini .card > p.muted.center { margin: 0 0 4px; font-size: 14px; text-align: left; }
+
+/* ---- stampa (PDF): i selettori tornano su una riga, le frecce non si stampano, le varianti tengono il loro fondo ---- */
+@media print {
+  .scr-margini .cedt-ctrl { flex-direction: row; gap: 16px; }
+  .scr-margini .ds-seg.full { width: auto; padding: 0; }
+  .scr-margini .ds-seg.full button { flex: none; padding-left: 0; }
+  /* !important: Icon scrive display: inline-block nel suo style */
+  .scr-margini .mg-chev { display: none !important; }
+  .scr-margini .mg-var { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .scr-margini :is(.mg-row, .mg-vrow) { break-inside: avoid; }
+  /* sul foglio righe piu' fitte, come le righe della tabella di prima */
+  .scr-margini .mg-row { min-height: 0; padding: 6px 0; }
+  .scr-margini .mg-vrow { padding: 6px 0; }
+  /* senza freccia i numeri dei modelli vanno al bordo: quelli delle varianti li seguono, il grigio sporge di 14 px */
+  .scr-margini .mg-var { margin: 4px -14px 6px 0; padding-right: 14px; }
+  .scr-margini .list .row { padding: 8px 0; }
+  /* le righe sono piu' alte delle celle di prima: con un modello aperto la card intera saltava al foglio dopo e lasciava
+     il primo quasi vuoto (index.css tiene ogni card intera); qui scorre sui fogli, le righe restano intere */
+  .scr-margini .card:has(> .mg-list) { break-inside: auto; }
+}

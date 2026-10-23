@@ -1,0 +1,56 @@
+/* ============================================================================
+   CE dettagliato (tema A, PR 15, 23-10-2026): regole della sola schermata, tutte sotto .scr-ce (pages/CeDetail.tsx);
+   il cassetto del dettaglio sta dentro la radice. Vengono gia' da shell.css: KPI scuro in cima e riga dispari pareggiata,
+   nota sotto il titolo, velatura e ombra del cassetto, icona close, stampa (via la colonna Trend, celle piu' strette).
+   Sovrascrive il blocco table.cedt / .cedt-* di components.css. Separatori come bordi: in stampa le ombre spariscono
+   (resta un'ombra solo il bordo della colonna ferma, che serve solo a schermo).
+   ============================================================================ */
+
+/* ---- KPI: MC1 neutro (rosso solo se negativo, dal TSX); "fuori 55-80%" in arancio, la card e' chiara ---- */
+.scr-ce .ds-kpi .s .warn { color: var(--warning-700); font-weight: 600; }
+
+/* ---- intestazione e gruppi: in minuscolo, senza fasce grigie ne' righe doppie; il gruppo e' un titolo di sezione ---- */
+.scr-ce table.cedt thead th { background: var(--surface); text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 500; color: var(--ink-muted); border-bottom: 1px solid var(--border); }
+.scr-ce table.cedt thead th.cur { color: var(--interactive); font-weight: 600; }
+.scr-ce table.cedt tr.grp td { background: var(--surface); border: 0; text-transform: none; letter-spacing: -.01em; font-size: 14px; font-weight: 600; color: var(--ink); padding: 20px 12px 6px; }
+
+/* ---- totali in peso; MC1 e MC2 senza fondo: peso e un filo d'inchiostro sopra, la loro riga in % attaccata sotto ---- */
+.scr-ce table.cedt tr.sub > * { font-weight: 600; }
+/* tbody: components.css colora le celle di MC con table.cedt tr.mc.mc2row td.val, serve un selettore piu' forte */
+.scr-ce table.cedt tbody tr.mc > :is(td.lab, td.val, td.ytd, td.spark) { background: var(--surface); font-weight: 600; border-top: 1px solid var(--ink); border-bottom: 0; }
+.scr-ce table.cedt tr:has(+ tr.mc) > * { border-bottom: 0; }
+.scr-ce table.cedt tr.mc2row :is(td.val, td.ytd) { font-size: 14px; letter-spacing: -.01em; }
+.scr-ce table.cedt tr.pct td.flag { font-weight: 600; }
+
+/* ---- importi: i costi in inchiostro (il segno meno dice gia' che sono costi); rosso solo per MC1 o MC2 negativi ---- */
+.scr-ce table.cedt td.val.cost { color: var(--ink); }
+.scr-ce table.cedt td.neg { color: var(--negative-700); }
+
+/* ---- colonne: Anno e Trend senza fasce grigie (Anno in peso, un filo lo stacca dai mesi); il mese in corso appena
+   segnato; la colonna delle voci, ferma mentre la tabella scorre, ha un bordo (ombra: a schermo e basta) ---- */
+.scr-ce table.cedt :is(td.ytd, td.spark) { background: var(--surface); }
+.scr-ce table.cedt td.ytd { font-weight: 600; }
+.scr-ce table.cedt tr:not(.grp) > :nth-last-child(2) { border-left: 1px solid var(--border); }
+.scr-ce table.cedt tbody tr > td.val.curcol { background: var(--interactive-tint-soft); }
+.scr-ce table.cedt :is(tr:not(.grp) > .lab, thead th:first-child) { box-shadow: 1px 0 0 var(--border); }
+
+/* ---- celle che aprono il dettaglio: col mouse si schiariscono, al tocco (dove :hover non c'e') si scuriscono ---- */
+.scr-ce table.cedt td.val.clk:hover { background: var(--interactive-tint-soft); }
+.scr-ce table.cedt td.val.clk:active { background: var(--interactive-tint); }
+
+/* ---- cassetto del dettaglio: bianco, titoli in minuscolo, importo grande e stretto, chiudi tondo e pieno ---- */
+.scr-ce .cedt-drawer { border-left: 0; border-radius: 24px 0 0 24px; }
+/* testata senza fondo: il cassetto e' gia' bianco, un fondo coprirebbe l'angolo tondo in alto */
+.scr-ce .cedt-dwhead { background: none; border-bottom: 0; padding: 22px 68px 6px 20px; }
+.scr-ce .cedt-dwhead .eyk { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+.scr-ce .cedt-dwhead h3 { margin-top: 4px; font-size: 17px; font-weight: 600; letter-spacing: -.015em; }
+.scr-ce .cedt-dwhead .amt { margin-top: 8px; font-size: 32px; font-weight: 600; letter-spacing: -.04em; line-height: 1.1; }
+.scr-ce .cedt-x { top: 16px; right: 16px; width: 40px; height: 40px; background: var(--surface-alt); box-shadow: none; }
+.scr-ce .cedt-dwbody { padding: 6px 20px 24px; }
+.scr-ce .cedt-note { margin: 8px 0 4px; border: 0; border-radius: 14px; padding: 12px 14px; font-size: 13px; }
+.scr-ce .cedt-row { gap: 12px; padding: 12px 0; }
+.scr-ce .cedt-row:last-child { border-bottom: 0; }
+.scr-ce .cedt-row .dt { font-size: 14px; font-weight: 500; }
+.scr-ce .cedt-row .dm { font-size: 12px; margin-top: 3px; }
+/* spese, COGS e rimborsi in inchiostro: nel cassetto ogni riga e' una parte della voce, non un esito */
+.scr-ce .cedt-row .dv { font-size: 14px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); }
