@@ -5,6 +5,7 @@ import { fetchPremiaDashboard } from '../lib/premiaApi';
 import type { PremiaDash, HealthItem, KpiDay } from '../lib/premiaApi';
 import PremiaUgc from './PremiaUgc';
 import AppBar from '../components/AppBar';
+import '../styles/screens/premia.css';
 
 // Pagina "Premia" (sola lettura, migr 0146): salute del programma fedelta', uso dell'Area Membri, premio AMICA12,
 // membri, effetto sulle vendite e (Fase 2) il funnel dei tap. Una sola RPC con il login @amimi.it; nessun dato
@@ -12,10 +13,10 @@ import AppBar from '../components/AppBar';
 
 const num = (n: number) => new Intl.NumberFormat('it-IT').format(n || 0);
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
-const R = { textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums' };
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) + '%' : '—');
 const fmtDay = (d: string | null) => (d ? new Date(d + 'T00:00:00').toLocaleDateString('it-IT', { day: '2-digit', month: 'short' }) : '—');
-const SEV_COLOR: Record<string, string> = { error: 'var(--negative)', bad: 'var(--negative)', warn: 'var(--warning)', ok: 'var(--positive)' };
+// esito di una voce di salute: classe del pallino della riga e della pillola del titolo (premia.css)
+const SEV_CLS: Record<string, string> = { error: 'neg', bad: 'neg', warn: 'warn', ok: 'pos' };
 const sevRank = (s: string) => (s === 'bad' || s === 'error' ? 0 : s === 'warn' ? 1 : 2);
 
 // Cosa fare quando una voce non e' verde (sezioni di amimi-app/docs/LOYALTY_RUNBOOK.md)
@@ -62,13 +63,13 @@ function Barre({ rows }: { rows: KpiDay[] }) {
         {rows.map((r, i) => {
           const h = (r.visite_clienti / max) * 38; const hr = (Math.min(r.riscatti, r.visite_clienti || r.riscatti) / max) * 38;
           return (<g key={r.day}>
-            <rect x={i * W + W * 0.15} y={40 - h} width={W * 0.7} height={h} fill="var(--rose, #8b5e6b)" opacity={0.35}><title>{fmtDay(r.day)}: {r.visite_clienti} clienti in pagina, {r.riscatti} riscatti</title></rect>
-            {r.riscatti > 0 && <rect x={i * W + W * 0.15} y={40 - hr} width={W * 0.7} height={hr} fill="var(--rose, #8b5e6b)" />}
+            <rect className="pre-bar" x={i * W + W * 0.15} y={40 - h} width={W * 0.7} height={h}><title>{fmtDay(r.day)}: {r.visite_clienti} clienti in pagina, {r.riscatti} riscatti</title></rect>
+            {r.riscatti > 0 && <rect className="pre-bar on" x={i * W + W * 0.15} y={40 - hr} width={W * 0.7} height={hr} />}
           </g>);
         })}
       </svg>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--muted)' }}><span>{fmtDay(rows[0].day)}</span><span>max {num(max)} clienti/giorno</span><span>{fmtDay(rows[rows.length - 1].day)}</span></div>
-      <p className="note" style={{ marginTop: 4 }}>Barra chiara = clienti che hanno aperto l&#8217;Area Membri quel giorno; parte piena = riscatti.</p>
+      <div className="pre-axis"><span>{fmtDay(rows[0].day)}</span><span>max {num(max)} clienti/giorno</span><span>{fmtDay(rows[rows.length - 1].day)}</span></div>
+      <p className="note" style={{ marginTop: 4 }}>Barra grigia = clienti che hanno aperto l&#8217;Area Membri quel giorno; parte bordeaux = riscatti.</p>
     </div>
   );
 }
@@ -78,10 +79,10 @@ function Funnel({ steps }: { steps: [string, number][] }) {
   return (
     <div>
       {steps.map(([label, v], i) => (
-        <div key={label} style={{ margin: '6px 0' }}>
+        <div key={label} className="pre-fstep">
           {/* popolazioni diverse (aperture = tutte, passaggi tracciati = solo chi e' tracciato): oltre il 100% la percentuale non ha senso */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{label}</span><strong>{num(v)}{i > 0 && v <= steps[i - 1][1] ? <span style={{ color: 'var(--muted)', fontWeight: 400 }}> · {pct(v, steps[i - 1][1])}</span> : null}</strong></div>
-          <div style={{ height: 8, borderRadius: 4, background: 'var(--border)' }}><div style={{ width: Math.min(100, (v / top) * 100) + '%', height: 8, borderRadius: 4, background: 'var(--chart-1)' }} /></div>
+          <div className="pre-flab"><span>{label}</span><strong>{num(v)}{i > 0 && v <= steps[i - 1][1] ? <span className="pre-fpct"> · {pct(v, steps[i - 1][1])}</span> : null}</strong></div>
+          <div className="pre-ftrack"><div className={'pre-ffill' + (i === steps.length - 1 ? ' last' : '')} style={{ width: Math.min(100, (v / top) * 100) + '%' }} /></div>
         </div>
       ))}
     </div>
@@ -124,23 +125,21 @@ export default function Premia({ onBack }: { onBack: () => void }) {
 
   const header = <AppBar title="Premia" onBack={onBack} backLabel="Home" />;
 
-  if (session === 'loading') return <div className="screen">{header}<p className="muted center">Controllo l&#8217;accesso&#8230;</p></div>;
+  if (session === 'loading') return <div className="screen scr-premia">{header}<p className="muted center">Controllo l&#8217;accesso&#8230;</p></div>;
   if (session === 'out') return (
-    <div className="screen">
+    <div className="screen scr-premia">
       {header}
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; premia</span></div>
         <div className="cs-lt">Come sta andando il programma fedelta&#8217;: accedi con il tuo account Amimi&#8217;</div>
-        <button className="cs-btn" style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--dark)' }} onClick={doGoogle} disabled={busy} type="button">Accedi con Google</button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 4px', color: 'var(--muted)', fontSize: 12 }}>
-          <span style={{ flex: 1, height: 1, background: 'var(--line)' }} /> oppure con email <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
-        </div>
+        <button className="ds-btn secondary full" onClick={doGoogle} disabled={busy} type="button">Accedi con Google</button>
+        <div className="cs-or">oppure con email</div>
         <div className="cs-fld"><label>Email ({EMAIL_TEAM_TESTO})</label>
           <input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="info@amimi.it" /></div>
         <div className="cs-fld"><label>Password</label>
           <input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') doLogin(); }} /></div>
-        {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
-        <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doLogin} disabled={busy} type="button">{busy ? 'Accesso…' : 'Entra'}</button>
+        {err && <div className="err">{err}</div>}
+        <button className="ds-btn primary full" onClick={doLogin} disabled={busy} type="button">{busy ? 'Accesso…' : 'Entra'}</button>
         <div className="cs-note">Stesso login dell&#8217;Assistenza: vale qualsiasi casella {EMAIL_TEAM_TESTO}, si fa una volta per dispositivo.</div>
       </div>
     </div>
@@ -153,8 +152,8 @@ export default function Premia({ onBack }: { onBack: () => void }) {
   );
   // la coda delle recensioni sta SEMPRE al terzo posto, in tutti e tre i rami: cosi' resta montata (e non perde un
   // motivo scritto a meta') quando la dashboard ricarica o da' errore, e si raggiunge anche se la dashboard non risponde
-  if (err) return <div className="screen">{header}{periodo}<PremiaUgc /><div className="card err">{err}</div></div>;
-  if (!d) return <div className="screen">{header}{periodo}<PremiaUgc /><p className="muted center">Carico i numeri di Premia&#8230;</p></div>;
+  if (err) return <div className="screen scr-premia">{header}{periodo}<PremiaUgc /><div className="card err">{err}</div></div>;
+  if (!d) return <div className="screen scr-premia">{header}{periodo}<PremiaUgc /><p className="muted center">Carico i numeri di Premia&#8230;</p></div>;
 
   // ---- salute ----
   const health = [...d.health].sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.k.localeCompare(b.k));
@@ -163,10 +162,10 @@ export default function Premia({ onBack }: { onBack: () => void }) {
   const overallLabel = overall === 'error' ? 'Da sistemare' : overall === 'warn' ? 'Da tenere d’occhio' : 'Tutto in ordine';
   const oggi = d.to;
   const rigaSalute = (h: HealthItem) => (
-    <li key={h.k} style={{ margin: '6px 0' }}>
-      <span style={{ color: SEV_COLOR[h.severity] ?? 'var(--muted)', fontWeight: 700 }}>&bull;</span>{' '}
-      <strong>{NOME[h.k] ?? h.k}</strong>: {h.label}{h.day < oggi ? <span className="muted"> (del {fmtDay(h.day)})</span> : null}
-      {h.severity !== 'ok' && <div className="note" style={{ marginTop: 2 }}>{HINT[h.k] ?? 'Vedi LOYALTY_RUNBOOK in amimi-app/docs.'}</div>}
+    <li key={h.k} className={'pre-hrow sev-' + (SEV_CLS[h.severity] ?? 'nd')}>
+      <div className="rt">{NOME[h.k] ?? h.k}</div>
+      <div className="rs">{h.label}{h.day < oggi ? ` (del ${fmtDay(h.day)})` : null}</div>
+      {h.severity !== 'ok' && <div className="note">{HINT[h.k] ?? 'Vedi LOYALTY_RUNBOOK in amimi-app/docs.'}</div>}
     </li>
   );
 
@@ -188,15 +187,15 @@ export default function Premia({ onBack }: { onBack: () => void }) {
   const f = d.funnel;
 
   return (
-    <div className="screen">
+    <div className="screen scr-premia">
       {header}
       {periodo}
       <PremiaUgc />
       <p className="note" style={{ marginTop: 0 }}>Qui sotto, dal {fmtDay(d.from)} al {fmtDay(d.to)}: numeri aggregati, nessun dato personale.</p>
 
-      <section className="card" style={{ borderLeft: `4px solid ${SEV_COLOR[overall]}` }}>
-        <h2>Salute: {overallLabel}</h2>
-        <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0' }}>{health.map(rigaSalute)}</ul>
+      <section className="card">
+        <h2>Salute <span className={'ds-pill ' + SEV_CLS[overall]}>{overallLabel}</span></h2>
+        <ul className="pre-hlist" role="list">{health.map(rigaSalute)}</ul>
         <div className="pillrow">
           {FLAG_NOME.map(([key, label]) => {
             const v = d.flags[key] ?? 'off';
@@ -209,7 +208,7 @@ export default function Premia({ onBack }: { onBack: () => void }) {
       <section className="card">
         <h2>Uso dell&#8217;Area Membri</h2>
         <div className="kpis">
-          <Kpi v={num(d.visitatori.periodo)} k="Clienti che l'hanno aperta" sub={`${num(d.visitatori.totale)} da quando esiste (${fmtDay(d.visitatori.dal)})`} tone="rose" />
+          <div className="ds-kpi hero"><div className="v">{num(d.visitatori.periodo)}</div><div className="l">{"Clienti che l'hanno aperta"}</div><div className="s">{`${num(d.visitatori.totale)} da quando esiste (${fmtDay(d.visitatori.dal)})`}</div></div>
           <Kpi v={num(visite)} k="Visite (cliente-giorno)" />
           <Kpi v={num(coccole + memory)} k="Coccole e giochi" sub={`${num(coccole)} coccole, ${num(memory)} giochi`} />
           <Kpi v={num(riscatti)} k="Richieste di riscatto" sub={riscattiKo ? `di cui ${num(riscattiKo)} non riuscite` : 'tutte con il codice'} />
@@ -222,7 +221,7 @@ export default function Premia({ onBack }: { onBack: () => void }) {
         <div className="kpis">
           <Kpi v={pool ? num(pool.liberi) : '—'} k="Codici liberi" sub={giorniPool !== null ? `al ritmo attuale durano circa ${num(giorniPool)} giorni` : 'nessun riscatto negli ultimi 14 giorni'} tone={pool && pool.liberi < 50 ? 'red' : undefined} />
           <Kpi v={num(a.riscattati_periodo)} k="Riscattati nel periodo" sub={`${num(a.riscattati_totale)} in tutto`} />
-          <Kpi v={num(a.ordini_periodo)} k="Usati al checkout" sub={`${num(a.ordini_totale)} in tutto, ${pct(a.ordini_totale, a.riscattati_totale)} dei riscattati`} tone="green" />
+          <Kpi v={num(a.ordini_periodo)} k="Usati al checkout" sub={`${num(a.ordini_totale)} in tutto, ${pct(a.ordini_totale, a.riscattati_totale)} dei riscattati`} />
           <Kpi v={eur(a.lordo_totale)} k="Venduto con AMICA12" sub={`sconto dato ${eur(a.sconto_totale)}${a.con_reso ? `, ${num(a.con_reso)} con reso` : ''}`} />
         </div>
         <p className="note">&#8220;Usati al checkout&#8221; conta gli ordini Shopify con un codice AMICA12, letti dagli ordini sincronizzati: arriva con qualche ora di ritardo.</p>
@@ -230,13 +229,13 @@ export default function Premia({ onBack }: { onBack: () => void }) {
 
       <section className="card">
         <h2>Membri</h2>
-        <div className="kpis">
+        <div className="kpis pre-list">
           <Kpi v={num(d.members.totale)} k="Membri" />
-          <Kpi v={num(d.members.ge100)} k="Possono riscattare" sub="saldo di almeno 100 punti" tone="green" />
-          <Kpi v={num(d.members.b50_99)} k="Vicine al premio" sub="saldo fra 50 e 99" tone="accent" />
+          <Kpi v={num(d.members.ge100)} k="Possono riscattare" sub="saldo di almeno 100 punti" />
+          <Kpi v={num(d.members.b50_99)} k="Vicine al premio" sub="saldo fra 50 e 99" />
           <Kpi v={num(d.members.lt50)} k="Sotto 50 punti" />
         </div>
-        <div className="kpis" style={{ marginTop: 12 }}>
+        <div className="kpis pre-list">
           <Kpi v={num(d.second.finestre_aperte)} k="Seconda borsa: finestre aperte" sub={`${num(d.second.in_scadenza_14gg)} scadono entro 14 giorni`} />
           <Kpi v={num(d.second.bonus_dati)} k="Bonus +50 dati" sub={(d.flags.loyalty_bonus_second_enabled ?? 'off') === 'off' ? 'flag spento' : undefined} />
         </div>
@@ -244,9 +243,9 @@ export default function Premia({ onBack }: { onBack: () => void }) {
 
       <section className="card">
         <h2>Effetto sulle vendite</h2>
-        <div className="kpis">
+        <div className="kpis pre-list">
           <Kpi v={num(d.vendite.ordini_periodo)} k="Ordini online nel periodo" sub={eur(d.vendite.lordo_periodo)} />
-          <Kpi v={num(d.vendite.ordini_dopo_visita)} k="Dopo una visita all'area" sub={`${eur(d.vendite.lordo_dopo_visita)} · ${pct(d.vendite.ordini_dopo_visita, d.vendite.ordini_periodo)} degli ordini`} tone="rose" />
+          <Kpi v={num(d.vendite.ordini_dopo_visita)} k="Dopo una visita all'area" sub={`${eur(d.vendite.lordo_dopo_visita)} · ${pct(d.vendite.ordini_dopo_visita, d.vendite.ordini_periodo)} degli ordini`} />
         </div>
         <p className="note">&#8220;Dopo una visita&#8221; = la cliente aveva aperto l&#8217;Area Membri nei 30 giorni prima dell&#8217;ordine. E&#8217; una correlazione, non una prova di causa.
           Il confronto membri/ospiti non serve piu&#8217;: dopo il retroattivo del 21 settembre quasi ogni ordine e&#8217; di un membro
@@ -271,8 +270,8 @@ export default function Premia({ onBack }: { onBack: () => void }) {
         ]} />
         <p className="note">Clienti distinti per ogni passaggio, tranne l&#8217;ultimo che conta ordini. I passaggi 2-4 vengono dal tracciamento{f.dal ? ` (dati dal ${fmtDay(f.dal)})` : ''}; aperture e riscatti ci sono sempre.</p>
         {d.elementi.length > 0 && (
-          <table className="dtable" style={{ marginTop: 10 }}><thead><tr><th>Elemento</th><th style={R}>Volte</th><th style={R}>Clienti</th></tr></thead>
-            <tbody>{d.elementi.map((e) => (<tr key={e.event + (e.element ?? '')}><td>{e.event === 'tap' && e.element === 'mimi' ? 'Tap su Mimi (cambia frase)' : ELEMENTO[e.element ?? ''] ?? `${e.event} ${e.element ?? ''}`}</td><td style={R}>{num(e.n)}</td><td style={R}>{num(e.clienti)}</td></tr>))}</tbody></table>
+          <table className="dtable" style={{ marginTop: 10 }}><thead><tr><th>Elemento</th><th className="pre-n">Volte</th><th className="pre-n">Clienti</th></tr></thead>
+            <tbody>{d.elementi.map((e) => (<tr key={e.event + (e.element ?? '')}><td>{e.event === 'tap' && e.element === 'mimi' ? 'Tap su Mimi (cambia frase)' : ELEMENTO[e.element ?? ''] ?? `${e.event} ${e.element ?? ''}`}</td><td className="pre-n">{num(e.n)}</td><td className="pre-n">{num(e.clienti)}</td></tr>))}</tbody></table>
         )}
       </section>
     </div>

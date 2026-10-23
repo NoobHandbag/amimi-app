@@ -1,0 +1,94 @@
+/* ============================================================================
+   Premia (tema A, PR 20, 23-10-2026): regole della sola schermata, tutte sotto .scr-premia (pages/Premia.tsx, con la
+   coda delle recensioni di pages/PremiaUgc.tsx che sta dentro la stessa radice).
+   Vengono gia' da shell.css: KPI scuro (.ds-kpi.hero, anche in stampa), intestazioni delle tabelle, .cs-logo, .cs-or e i
+   campi dell'ingresso, bottoni, chip dentro le card. Separatori come bordi e non come ombre: in stampa index.css toglie
+   ogni box-shadow.
+   ============================================================================ */
+
+/* ---- ingresso: il divisore e l'errore staccati come in Assistenza ---- */
+.scr-premia .cs-or { margin: 14px 0 4px; }
+.scr-premia .cs-login .err { margin-bottom: 8px; }
+
+/* ---- pillole (flag, acquisto verificato, da guardare): leggibili, non piu' 11 px ---- */
+.scr-premia .pill { font-size: 12px; font-weight: 600; padding: 4px 10px; }
+
+/* ---- salute: titolo con l'esito in pillola, una riga per voce col pallino del suo esito ---- */
+.scr-premia h2 .ds-pill { margin-left: 4px; padding: 3px 10px; vertical-align: 2px; }
+.scr-premia .pre-hlist { list-style: none; padding: 0; margin: 0 0 4px; }
+.scr-premia .pre-hrow { position: relative; padding: 10px 0 10px 18px; border-bottom: 1px solid var(--border); }
+.scr-premia .pre-hrow:last-child { border-bottom: 0; }
+.scr-premia .pre-hrow::before { content: ''; position: absolute; left: 0; top: 16px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-muted); }
+.scr-premia .pre-hrow.sev-pos::before { background: var(--positive); }
+.scr-premia .pre-hrow.sev-warn::before { background: var(--warning); }
+.scr-premia .pre-hrow.sev-neg::before { background: var(--negative); }
+.scr-premia .pre-hrow .rs { margin-top: 1px; font-size: 13px; color: var(--ink-muted); }
+.scr-premia .pre-hrow .note { margin-top: 4px; }
+
+/* ---- uso dell'Area Membri: il KPI scuro con gli angoli delle tessere vicine; sotto restano tre tessere, l'ultima
+   prende la riga intera (sul desktop le colonne sono tre, shell.css) ---- */
+.scr-premia .card .ds-kpi.hero { border-radius: 18px; }
+@media (max-width: 1023px) {
+  .scr-premia .kpis:has(> .ds-kpi.hero) > .kpi:last-child:nth-child(even) { grid-column: 1 / -1; }
+}
+
+/* ---- visite per giorno: barre grigie, i riscatti in bordeaux (fill in CSS: var() negli attributi SVG non e' sicuro) ---- */
+.scr-premia .pre-bar { fill: var(--chart-bar); }
+.scr-premia .pre-bar.on { fill: var(--chart-current); }
+.scr-premia .pre-axis { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11.5px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+
+/* ---- imbuto: traccia grigia, passaggi in grigio, l'ultimo (ordini con AMICA12) in bordeaux come i riscatti sopra ---- */
+.scr-premia .pre-fstep { margin: 10px 0; }
+.scr-premia .pre-flab { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; font-size: 13.5px; }
+.scr-premia .pre-flab strong { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+.scr-premia .pre-fpct { font-weight: 400; color: var(--ink-muted); }
+.scr-premia .pre-ftrack { height: 8px; border-radius: 99px; background: var(--surface-alt); overflow: hidden; }
+.scr-premia .pre-ffill { height: 100%; border-radius: 99px; background: var(--chart-bar); }
+.scr-premia .pre-ffill.last { background: var(--chart-current); }
+
+/* ---- membri ed effetto sulle vendite: conteggi semplici come lista, etichetta a sinistra, numero a destra, il dettaglio
+   sotto l'etichetta; due liste di fila diventano una sola ---- */
+.scr-premia .pre-list { display: block; margin: 0; }
+.scr-premia .pre-list + .pre-list { border-top: 1px solid var(--border); }
+.scr-premia .pre-list .kpi { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "k v" "s s"; column-gap: 12px; align-items: baseline;
+  background: none; border-radius: 0; padding: 11px 0; border-bottom: 1px solid var(--border); }
+.scr-premia .pre-list .kpi:first-child { padding-top: 2px; }
+.scr-premia .pre-list + .pre-list .kpi:first-child { padding-top: 11px; }
+.scr-premia .pre-list .kpi:last-child { border-bottom: 0; }
+.scr-premia .pre-list .kpi .v { grid-area: v; font-size: 17px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.scr-premia .pre-list .kpi .k { grid-area: k; margin: 0; font-size: 14px; color: var(--ink); }
+.scr-premia .pre-list .kpi .ksub { grid-area: s; margin-top: 2px; font-size: 12.5px; color: var(--ink-muted); }
+.scr-premia .pre-list + .note { margin-top: 12px; }
+
+/* ---- elementi toccati: numeri a destra in cifre tabellari (classe sua: .num e' il campo dei moduli di index.css) ---- */
+.scr-premia .dtable .pre-n { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- recensioni e foto: una voce per blocco col filo sopra, foto a 12 px, chip dei motivi, bottoni del kit ---- */
+.scr-premia .pre-ugc { padding: 12px 0; border-top: 1px solid var(--border); }
+.scr-premia .pre-ugc-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.scr-premia .pre-ugc-voto { margin-top: 4px; font-weight: 600; }
+.scr-premia .pre-ugc-testo { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.scr-premia .pre-ugc-foto { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.scr-premia .pre-ugc-foto img { display: block; width: 96px; height: 120px; object-fit: cover; border-radius: 12px; }
+.scr-premia .pre-ugc-foto .note { margin: 0; }
+.scr-premia .pre-ugc-chi { margin-top: 6px; }
+.scr-premia .pre-ugc-esito { margin-top: 4px; }
+.scr-premia .pre-ugc-act { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.scr-premia .pre-ugc-rif { margin-top: 10px; }
+.scr-premia .pre-ugc-rif .pillrow { margin: 0 0 4px; }
+.scr-premia .pre-ugc .chip { font-family: inherit; font-size: 13px; text-align: left; }
+/* il motivo: campo pieno a 16 px come quelli del kit (a 15 px iOS ingrandiva la pagina al tocco) */
+.scr-premia .pre-ugc .cs-fld label { font-size: 13px; font-weight: 500; }
+.scr-premia .pre-ugc .cs-fld input { border: 0; border-radius: 14px; background: var(--surface-alt); min-height: 48px; font-size: 16px; }
+
+/* ---- stampa (Ctrl+P, nessun bottone PDF): pallini e imbuto sono fondi, senza "grafica di sfondo" sparirebbero. Righe
+   piu' fitte: index.css tiene ogni card intera su un foglio e Salute, piu' alta di prima, mandava Uso al foglio dopo ---- */
+@media print {
+  .scr-premia :is(.pre-hrow, .pre-ftrack) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .scr-premia .pre-hrow { padding-top: 5px; padding-bottom: 5px; }
+  .scr-premia .pre-hrow::before { top: 11px; }
+  .scr-premia .pre-list .kpi { padding-top: 6px; padding-bottom: 6px; }
+  /* sul foglio (718 px) le tre tessere sotto il KPI scuro stanno su una riga, come sul desktop */
+  .scr-premia .kpis:has(> .ds-kpi.hero) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .scr-premia .kpis:has(> .ds-kpi.hero) > .kpi:last-child:nth-child(even) { grid-column: auto; }
+}

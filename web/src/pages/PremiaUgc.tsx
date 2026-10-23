@@ -66,48 +66,48 @@ export default function PremiaUgc() {
       {!q ? (!err && <p className="muted">Carico&#8230;</p>) : q.items.length === 0 ? (
         <p className="note" style={{ marginTop: 0 }}>{tab === 'in_revisione' ? 'Niente da guardare: quando una cliente manda una recensione o un look, compare qui.' : 'Nessuna, per ora.'}</p>
       ) : q.items.map((it) => (
-        <div key={it.id} style={{ borderTop: '1px solid var(--line)', padding: '10px 0' }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline' }}>
+        <div key={it.id} className="pre-ugc">
+          <div className="pre-ugc-h">
             <strong>{it.kind === 'look' ? 'Look' : 'Recensione'}</strong>
             <span>{it.titolo ?? it.codice}</span>
             {it.verificata ? <span className="pill ok">acquisto verificato</span> : <span className="pill muted">non comprata online</span>}
           </div>
-          {it.rating ? <div style={{ fontWeight: 700, marginTop: 4 }}>{it.rating} stelle su 5</div> : null}
-          {it.testo ? <p style={{ whiteSpace: 'pre-wrap', margin: '6px 0', overflowWrap: 'anywhere' }}>{it.testo}</p> : null}
+          {it.rating ? <div className="pre-ugc-voto">{it.rating} stelle su 5</div> : null}
+          {it.testo ? <p className="pre-ugc-testo">{it.testo}</p> : null}
           {it.foto.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+            <div className="pre-ugc-foto">
               {it.foto.map((p, i) => urls[p]
-                ? <a key={p} href={urls[p]} target="_blank" rel="noreferrer"><img src={urls[p]} alt={`Foto ${i + 1}`} style={{ width: 96, height: 120, objectFit: 'cover', borderRadius: 8, display: 'block' }} /></a>
-                : <span key={p} className="note" style={{ margin: 0 }}>foto in arrivo&#8230;</span>)}
+                ? <a key={p} href={urls[p]} target="_blank" rel="noreferrer"><img src={urls[p]} alt={`Foto ${i + 1}`} /></a>
+                : <span key={p} className="note">foto in arrivo&#8230;</span>)}
             </div>
           )}
-          <div className="note" style={{ marginTop: 6 }}>{it.firma ? `Firma: ${it.firma} · ` : ''}cliente {it.cliente} · {quando(it.created_at)}</div>
+          <div className="note pre-ugc-chi">{it.firma ? `Firma: ${it.firma} · ` : ''}cliente {it.cliente} · {quando(it.created_at)}</div>
           {tab === 'in_revisione' ? (
             rifiuto?.id === it.id ? (
-              <div style={{ marginTop: 8 }}>
+              <div className="pre-ugc-rif">
                 <div className="cs-fld"><label htmlFor={`mot-${it.id}`}>Motivo (lo legge la cliente)</label>
                   <input id={`mot-${it.id}`} value={rifiuto.motivo} maxLength={200} onChange={(e) => setRifiuto({ id: it.id, motivo: e.target.value })} /></div>
-                <div className="pillrow" style={{ marginBottom: 8 }}>
-                  {MOTIVI.map((m) => <button key={m} type="button" className="pill muted" style={{ border: 0, cursor: 'pointer' }} onClick={() => setRifiuto({ id: it.id, motivo: m })}>{m}</button>)}
+                <div className="pillrow">
+                  {MOTIVI.map((m) => <button key={m} type="button" className="chip" onClick={() => setRifiuto({ id: it.id, motivo: m })}>{m}</button>)}
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" className="cs-btn cs-primary" disabled={!!busy[it.id]} onClick={() => decidi(it, 'rifiuta', rifiuto.motivo)}>Conferma il rifiuto</button>
-                  <button type="button" className="cs-btn" disabled={!!busy[it.id]} onClick={() => setRifiuto(null)}>Annulla</button>
+                <div className="pre-ugc-act">
+                  <button type="button" className="ds-btn primary sm" disabled={!!busy[it.id]} onClick={() => decidi(it, 'rifiuta', rifiuto.motivo)}>Conferma il rifiuto</button>
+                  <button type="button" className="ds-btn secondary sm" disabled={!!busy[it.id]} onClick={() => setRifiuto(null)}>Annulla</button>
                 </div>
               </div>
             ) : conferma === it.id ? (
-              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                <button type="button" className="cs-btn cs-primary" disabled={!!busy[it.id]} onClick={() => decidi(it, 'approva')}>{busy[it.id] ? 'Un attimo…' : `Sì, dai +${it.punti} punti`}</button>
-                <button type="button" className="cs-btn" disabled={!!busy[it.id]} onClick={() => setConferma(null)}>Annulla</button>
+              <div className="pre-ugc-act">
+                <button type="button" className="ds-btn primary sm" disabled={!!busy[it.id]} onClick={() => decidi(it, 'approva')}>{busy[it.id] ? 'Un attimo…' : `Sì, dai +${it.punti} punti`}</button>
+                <button type="button" className="ds-btn secondary sm" disabled={!!busy[it.id]} onClick={() => setConferma(null)}>Annulla</button>
               </div>
             ) : (
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button type="button" className="cs-btn cs-primary" disabled={!!busy[it.id]} onClick={() => { setConferma(it.id); setRifiuto(null); }}>Approva</button>
-                <button type="button" className="cs-btn" disabled={!!busy[it.id]} onClick={() => { setRifiuto({ id: it.id, motivo: '' }); setConferma(null); }}>Rifiuta</button>
+              <div className="pre-ugc-act">
+                <button type="button" className="ds-btn primary sm" disabled={!!busy[it.id]} onClick={() => { setConferma(it.id); setRifiuto(null); }}>Approva</button>
+                <button type="button" className="ds-btn secondary sm" disabled={!!busy[it.id]} onClick={() => { setRifiuto({ id: it.id, motivo: '' }); setConferma(null); }}>Rifiuta</button>
               </div>
             )
           ) : (
-            <div className="note" style={{ marginTop: 4 }}>
+            <div className="note pre-ugc-esito">
               {it.status === 'approvata' ? `Approvata${it.deciso_da ? ' da ' + it.deciso_da : ''} il ${quando(it.deciso_at)}: +${it.punti} punti.` : `Non approvata${it.deciso_da ? ' da ' + it.deciso_da : ''} il ${quando(it.deciso_at)}: ${it.motivo ?? ''}`}
             </div>
           )}
