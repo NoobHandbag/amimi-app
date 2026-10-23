@@ -1,0 +1,116 @@
+/* ============================================================================
+   Assistenza (tema A, PR 12, 23-10-2026): coda, "Chi sei?", ingresso e Rumore. Ogni regola sta sotto .scr-assist, la
+   radice di ogni vista di pages/Assistenza.tsx: le classi cs-* le usano anche il compositore di Outreach (Negozi) e gli
+   ingressi con PIN di Premia, Materiali, Negozi e Notifiche, che qui non cambiano. Il thread ha la sua PR: nessuna
+   regola gli arriva, tranne il menu dell'identita', che e' lo stesso del saluto.
+   Vengono gia' da shell.css: .ds-group, .hscroll, .askhead, l'azione tonda .exp con .busy, .cs-logo, .cs-or, i campi
+   dell'ingresso, l'ombra del toast e del menu. La coda non ha una card scura per scelta (UAT 02-08: via i conteggi).
+   ============================================================================ */
+
+/* ---- i bottoni non ereditano il carattere (erano nel carattere di sistema): Geist anche qui. Filtri e "Ordina per"
+   lo prendono da .ds-fp e .ds-seg ---- */
+.scr-assist :is(.cs-card, .cs-sect, .cs-rumore, .cs-who, .cs-hello, .cs-srow, .cs-toast button) { font-family: inherit; }
+.scr-assist :is(.cs-wait, .cs-empty) { padding: 24px 16px; }
+
+/* ---- saluto: resta (UAT 02-08), senza style; la freccia dice che apre il menu dell'identita' ---- */
+.scr-assist .cs-hellorow { margin: 0 0 12px; }
+.scr-assist .cs-hello { display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 4px 0; font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--ink); text-align: left; cursor: pointer; }
+.scr-assist .cs-hello .chev { color: var(--ink-muted); transform: rotate(90deg); transition: transform .15s; }
+.scr-assist .cs-hello[aria-expanded=true] .chev { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) { .scr-assist .cs-hello .chev { transition: none; } }
+
+/* ---- menu dell'identita' (saluto e thread): superficie piena, la persona attiva in bordeaux ---- */
+.scr-assist .cs-menu { border: 0; border-radius: 20px; }
+.scr-assist .cs-menu-h { margin: 0 0 8px; }
+.scr-assist .cs-srow { min-height: 44px; padding: 7px 8px; border-radius: 12px; font-size: 15px; }
+.scr-assist .cs-srow.on { background: var(--surface-alt); }
+.scr-assist .cs-tag { color: var(--interactive); font-size: 12px; font-weight: 600; }
+.scr-assist .cs-logout { justify-content: center; color: var(--ink-muted); }
+/* "Come deve rispondere l'AI": a 13 px iOS ingrandiva la pagina al tocco nel campo */
+.scr-assist .cs-aiset-ta { font-size: 16px; }
+
+/* ---- filtri: le pillole .ds-fp della cornice (colori, nera la scelta, stampa) su una fila che scorre fino al bordo
+   (.hscroll); qui solo misure e il numero dentro ---- */
+.scr-assist .cs-filterbar { gap: 6px; margin-bottom: 8px; }
+.scr-assist .cs-fpill { font-size: 14px; padding: 9px 14px; }
+.scr-assist .cs-fn { background: var(--surface-alt); color: var(--ink-muted); font-size: 12px; font-weight: 600; }
+.scr-assist .cs-fpill.on .cs-fn { background: color-mix(in srgb, var(--surface) 20%, transparent); color: var(--surface); }
+
+/* ---- Ordina per: il selettore .ds-seg della cornice (colori, scelta, stampa); qui le misure e overflow visibile (index.css
+   lo nasconde e taglierebbe l'anello di focus). L'etichetta in minuscolo ---- */
+.scr-assist .cs-sortrow { gap: 10px; margin: 4px 0 4px; }
+.scr-assist .cs-sortlbl { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+.scr-assist .cs-seg { border: 0; gap: 2px; overflow: visible; }
+.scr-assist .cs-seg-btn { padding: 7px 14px; font-size: 13px; }
+
+/* ---- titoli dei gruppi (Oggi, Ieri... o i temi): come i titoli di sezione, il conteggio in grigio senza pillola ---- */
+.scr-assist .cs-sect { font-size: 17px; font-weight: 600; letter-spacing: -.015em; text-transform: none; color: var(--ink); margin: 20px 2px 8px; }
+.scr-assist .cs-cnt { background: none; border-radius: 0; padding: 0; margin-left: 6px; font-size: 15px; font-weight: 500; letter-spacing: 0; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+/* per tema tutta la riga apre e chiude (.askhead, la freccia ruota con aria-expanded); alta 44 px per il tocco, i margini
+   tengono il testo dove sta il titolo di Oggi */
+.scr-assist .cs-secttoggle { justify-content: flex-start; gap: 6px; min-height: 44px; margin: 11px 2px 0; text-align: left; }
+.scr-assist .cs-secttoggle > span:first-child { min-width: 0; }
+.scr-assist .cs-secttoggle .cs-cnt { margin-left: 0; }
+.scr-assist .cs-secttoggle > svg:last-child { flex: none; }
+.scr-assist .cs-cnt-urg { margin-left: 2px; font-size: 14px; font-weight: 600; letter-spacing: 0; color: var(--negative-700); white-space: nowrap; }
+
+/* ---- righe della coda in un .ds-group per gruppo: separatore rientrato, niente bordo ne' ombra, premute in grigio
+   (.ds-group > :active). Senza will-change (index.css): fa di ogni riga un livello a se', e su Safari un livello puo'
+   sfuggire agli angoli tondi del gruppo; la riga diventa un livello solo mentre si trascina (transform dello swipe) ---- */
+.scr-assist .cs-group > .cs-card { padding: 14px 16px; will-change: auto; }
+.scr-assist .cs-ctop { gap: 10px; }
+.scr-assist .cs-cn { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.scr-assist .cs-cora { font-size: 13px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.scr-assist .cs-snip { font-size: 14px; line-height: 1.4; color: var(--ink-muted); }
+/* urgente: un pallino rosso davanti al nome al posto del bordo rosso. E' un bordo, non un fondo: resta anche in stampa
+   senza "grafica di sfondo" */
+.scr-assist .cs-cardurg .cs-cn::before { content: ''; display: inline-block; width: 0; height: 0; border: 4px solid var(--negative); border-radius: 50%; margin-right: 8px; vertical-align: 2px; }
+
+/* ---- pillole senza emoji: tema, canale, flag e "Altre N" neutri, il colore solo per lo stato (in corso arancio,
+   conclusa verde, urgente rosso con la parola "Urgente", da rivedere arancio). Il canale e' un dato in grigio ---- */
+.scr-assist .cs-card .cs-badges { gap: 6px; margin-top: 8px; }
+.scr-assist .cs-card .cs-badge { font-size: 12px; font-weight: 500; padding: 3px 9px; }
+.scr-assist .cs-card :is(.cs-cat, .cs-state, .cs-chat, .cs-confirm, .cs-altre) { border: 0; background: var(--surface-alt); color: var(--ink); }
+/* sollecito, reclamo, chiusura restano arancio come prima (index.css): per chi lavora la coda sono un segnale, non un dato */
+.scr-assist .cs-card .cs-flag { border: 0; }
+.scr-assist .cs-card .cs-confirm { color: var(--ink-muted); }
+.scr-assist .cs-card .cs-can { background: none; padding-left: 0; color: var(--ink-muted); }
+
+/* ---- Rumore: in coda una riga bianca con la freccia; nella sua vista le righe in un gruppo, il nome in grigio ---- */
+.scr-assist .cs-rumore { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; border-radius: 18px; background: var(--surface); padding: 14px 16px; margin: 20px 0 8px; font-size: 14px; text-align: left; color: var(--ink-muted); }
+.scr-assist :is(.cs-rumore, .cs-who) .chev { flex: none; color: var(--ink-muted); }
+.scr-assist .cs-quiet { opacity: 1; }
+.scr-assist .cs-quiet .cs-cn { color: var(--ink-muted); }
+.scr-assist .cs-rowact { margin-top: 8px; }
+/* l'unica azione della vista, dentro una riga che apre il thread: alta 44 px per il tocco */
+.scr-assist .cs-quiet .cs-ghost { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; border: 0; border-radius: 999px; background: var(--surface-alt); color: var(--ink); padding: 8px 16px; font-size: 13px; font-weight: 600; }
+/* premere "E' un cliente" non scurisce tutta la riga (.ds-group > :active) */
+.scr-assist .cs-quiet:has(.cs-ghost:active) { background: var(--surface); }
+
+/* ---- toast (swipe, Rumore): angoli della cornice; l'ombra e' gia' --e-float in shell.css. Largo quanto il testo: con
+   left 50% la larghezza calcolata si fermava a meta' schermo e "tolta dalla coda" andava su tre righe ---- */
+.scr-assist .cs-toast { width: max-content; border-radius: 16px; font-weight: 500; }
+/* l'anello bordeaux sul nero del toast era 1,95:1: quello chiaro, come nella barra in basso */
+.scr-assist .cs-toast :focus-visible { outline-color: var(--interactive-on-dark); }
+
+/* ---- "Chi sei?": titolo in inchiostro (shell.css), le tre persone in un gruppo, foto senza anello. Senza foto
+   l'iniziale sta sul nero (erano tre hex fuori dai token) ---- */
+.scr-assist .cs-whos { --sep-inset: 72px; margin-top: 4px; }
+.scr-assist .cs-who { width: 100%; gap: 14px; padding: 12px 16px; color: var(--ink); }
+.scr-assist .cs-whn { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; }
+.scr-assist .cs-avimg { border: 0; }
+.scr-assist :is(.cs-b, .cs-g, .cs-a) { background: var(--ink); color: var(--surface); }
+
+/* ---- ingresso: Google bianco e pieno come gli altri secondari, la G monocroma (i colori del marchio erano hex fuori
+   dai token); i due bottoni larghi quanto il modulo e alti 48 px come i campi ---- */
+.scr-assist .cs-login .cs-btn { width: 100%; min-height: 48px; border-radius: 14px; font-size: 15px; font-weight: 600; }
+.scr-assist .cs-google { display: flex; align-items: center; justify-content: center; gap: 10px; border: 0; background: var(--surface); color: var(--ink); }
+.scr-assist .cs-gmark { font-size: 18px; font-weight: 700; line-height: 1; }
+.scr-assist .cs-or { margin: 14px 0 4px; }
+.scr-assist .cs-login .err { margin-bottom: 8px; }
+
+/* ---- stampa (Ctrl+P, nessun bottone): dei filtri resta la scelta in nero (shell.css), il suo numero non resta bianco
+   sul foglio senza "grafica di sfondo" ---- */
+@media print {
+  .scr-assist .cs-fpill.on .cs-fn { background: none; color: var(--ink-muted); }
+}
