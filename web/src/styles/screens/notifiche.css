@@ -1,0 +1,75 @@
+/* ============================================================================
+   Notifiche (tema A, PR 20, 23-10-2026): regole della sola schermata, tutte sotto .scr-notifiche (pages/Notifiche.tsx).
+   Vengono gia' da shell.css: .cs-logo, .cs-or e i campi dell'ingresso, bottoni, selettore della persona, badge.
+   Separatori come bordi e non come ombre: in stampa index.css toglie ogni box-shadow.
+   ============================================================================ */
+
+/* ---- ingresso: divisore ed errore staccati come in Assistenza; la nota per iPhone sta sopra i bottoni ---- */
+.scr-notifiche .cs-or { margin: 14px 0 4px; }
+.scr-notifiche .cs-login .err { margin-bottom: 8px; }
+.scr-notifiche .cs-note.ntf-ios { margin: 0 0 10px; }
+
+/* ---- "Questo telefono": la card scura, con l'esito in pillola. Sopra il nero solo bianco e colori on-dark ---- */
+.scr-notifiche .card.hero { background: var(--grad-hero); color: var(--surface); border-radius: 24px; padding: 18px 20px 20px; }
+.scr-notifiche .ntf-tel-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 26px; }
+.scr-notifiche .card.hero h2 { margin: 0; font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--surface); opacity: .72; }
+.scr-notifiche .card.hero .ds-pill { flex: none; padding: 4px 11px; font-size: 12.5px; color: var(--surface); }
+.scr-notifiche .card.hero .ds-pill.pos { background: var(--positive); }
+.scr-notifiche .card.hero .ds-pill.ntf-spente { background: color-mix(in srgb, var(--surface) 16%, transparent); }
+.scr-notifiche .card.hero .ntf-stato { margin-top: 8px; font-size: 19px; font-weight: 600; letter-spacing: -.02em; line-height: 1.3; color: var(--surface); }
+.scr-notifiche .card.hero .ntf-err { margin-top: 8px; font-size: 13px; color: var(--negative-on-dark); }
+.scr-notifiche .card.hero .ds-btn { margin-top: 12px; background: var(--surface); }
+/* anello del fuoco sul nero: il bordeaux di shell.css li' e' 1,95:1, questo circa 8:1 (come .bottomnav e il toast di Assistenza) */
+.scr-notifiche .card.hero :focus-visible { outline-color: var(--interactive-on-dark); }
+
+/* ---- permesso bloccato: card bianca, lo stato resta in una pillola arancio nel titolo. Basta lo spazio del testo:
+   un margine a sinistra la sposterebbe dal filo quando va a capo (a 390 px ci va) ---- */
+.scr-notifiche h2 .ds-pill { padding: 3px 10px; vertical-align: 2px; }
+
+/* ---- temi: testo a sinistra, interruttore a destra, un filo fra le righe. Nel DOM resta input, .track, testo:
+   .ds-toggle input:checked + .track vuole la traccia subito dopo l'input, quindi la sposta solo l'order ---- */
+.scr-notifiche .ntf-tema { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); font-size: 15px; font-weight: 500; }
+.scr-notifiche .ntf-tema:last-of-type { border-bottom: 0; padding-bottom: 2px; }
+.scr-notifiche .ntf-tema .track { order: 2; margin-left: auto; }
+.scr-notifiche .ntf-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.scr-notifiche .ntf-desc { font-size: 12.5px; font-weight: 400; color: var(--ink-muted); }
+
+/* ---- azioni: in colonna fra le card; "Disattiva" e' testo rosso, non un blocco pesante come "Attiva" ---- */
+.scr-notifiche .ntf-actions { display: flex; flex-direction: column; gap: 8px; margin: 0 0 18px; }
+.scr-notifiche .ntf-actions > .note { margin: 0; }
+.scr-notifiche .ntf-off-btn { color: var(--negative-700); }
+.scr-notifiche .msg { margin: 0; border-radius: 14px; font-weight: 500; }
+
+/* ---- dispositivi: righe con un filo invece delle scatole (.ds-lrow e' anche di Ordini, qui solo sotto la radice),
+   togli come bottone tondo col cestino, tocco da 44 px ---- */
+.scr-notifiche .ds-lrow { border: 0; border-radius: 0; background: none; box-shadow: none; margin: 0; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.scr-notifiche .ds-lrow:last-child { border-bottom: 0; padding-bottom: 0; }
+.scr-notifiche .ntf-devhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.scr-notifiche .ntf-devname { min-width: 0; font-size: 15px; }
+.scr-notifiche .ntf-devname b { font-weight: 600; }
+.scr-notifiche .ntf-devname .badge { margin-left: 6px; }
+.scr-notifiche .ntf-devmeta { margin-top: 3px; font-size: 12.5px; color: var(--ink-muted); }
+.scr-notifiche .ntf-del { position: relative; flex: none; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--surface-alt);
+  color: var(--negative-700); display: grid; place-items: center; cursor: pointer; }
+.scr-notifiche .ntf-del::after { content: ''; position: absolute; inset: -4px; }
+.scr-notifiche .ntf-del:disabled { opacity: .5; cursor: default; }
+
+/* ---- passi (permesso bloccato, aggiungi alla schermata Home): righe col filo; quelli da seguire in ordine numerati
+   in un tondo nero. Il numero e' assoluto: le righe hanno <b> nel testo, un flex le spezzerebbe. Senza list-style
+   Safari toglie la lista a VoiceOver: nel TSX hanno role="list" ---- */
+.scr-notifiche .ntf-steps { list-style: none; padding: 0; margin: 0; }
+.scr-notifiche .ntf-steps li { padding: 10px 0; font-size: 14px; line-height: 1.45; border-bottom: 1px solid var(--border); }
+.scr-notifiche .ntf-steps li:last-child { border-bottom: 0; }
+.scr-notifiche .ntf-num { counter-reset: passo; }
+.scr-notifiche .ntf-num li { position: relative; padding-left: 36px; counter-increment: passo; }
+.scr-notifiche .ntf-num li::before { content: counter(passo); position: absolute; left: 0; top: 9px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--ink); color: var(--surface); font-size: 12px; font-weight: 600; display: grid; place-items: center; }
+
+/* ---- stampa (Ctrl+P, nessun bottone PDF): card scura, interruttori e numeri sono fondi; senza "grafica di sfondo" il
+   bianco della card finirebbe sul foglio bianco. Togli non si stampa (e' un comando); righe dei temi piu' fitte, cosi'
+   i dispositivi restano sul primo foglio ---- */
+@media print {
+  .scr-notifiche :is(.card.hero, .ntf-tema .track, .ntf-num li) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .scr-notifiche .ntf-del { display: none; }
+  .scr-notifiche .ntf-tema { padding-top: 6px; padding-bottom: 6px; }
+}

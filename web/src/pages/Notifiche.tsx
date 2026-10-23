@@ -6,6 +6,8 @@ import {
   pushConfig, dispositivi, iscrivi, salvaTemi, disiscrivi, rimuovi, prova, spento, temiPredefiniti, EVENTO_ISCRIZIONE, type Tema, type Dispositivo,
 } from '../lib/push';
 import AppBar from '../components/AppBar';
+import Icon from '../components/Icon';
+import '../styles/screens/notifiche.css';
 
 // Scheda Notifiche (17-10, brief notifiche native, PR A): ogni telefono si iscrive per conto suo e sceglie i temi.
 // Stati in ordine: push non supportate (iPhone fuori dalla schermata Home) -> login del team (push-api vuole il JWT) ->
@@ -277,13 +279,13 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
   const testata = <AppBar title="Notifiche" onBack={onBack} backLabel="Home" />;
 
   if (supporto !== 'ok') return (
-    <div className="screen">
+    <div className="screen scr-notifiche">
       {testata}
       {supporto === 'ios-safari' && (
         <div className="card">
           <h2>Prima aggiungi Amimì alla schermata Home</h2>
-          <p style={{ margin: '0 0 10px', lineHeight: 1.5 }}>Su iPhone e iPad le notifiche arrivano solo all’app aperta dalla schermata Home, non a Safari.</p>
-          <ol style={{ margin: 0, paddingLeft: 20, lineHeight: 1.6 }}>
+          <p className="note">Su iPhone e iPad le notifiche arrivano solo all’app aperta dalla schermata Home, non a Safari.</p>
+          <ol className="ntf-steps ntf-num" role="list">
             <li>Tocca <b>Condividi</b> (il quadrato con la freccia in su).</li>
             <li>Scegli <b>Aggiungi alla schermata Home</b>, poi <b>Aggiungi</b>.</li>
             <li>Apri Amimì dalla sua icona sulla schermata Home e torna qui: Home, Altro, Notifiche sul telefono.</li>
@@ -306,38 +308,36 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
     </div>
   );
 
-  if (session === '?') return <div className="screen">{testata}<p className="muted center">Controllo l&#8217;accesso…</p></div>;
+  if (session === '?') return <div className="screen scr-notifiche">{testata}<p className="muted center">Controllo l&#8217;accesso…</p></div>;
   if (session === 'out') return (
-    <div className="screen">
+    <div className="screen scr-notifiche">
       {testata}
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; notifiche</span></div>
         <div className="cs-lt">Per iscrivere questo telefono accedi con il tuo account Amimì</div>
-        {ios && <div className="cs-note" style={{ marginTop: 0, marginBottom: 10 }}>Su iPhone usa email e password: Google si apre in Safari e l&#8217;accesso resta lì, non nell&#8217;app.</div>}
-        <button className="cs-btn" style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--dark)' }} onClick={doGoogle} disabled={busyLogin} type="button">Accedi con Google</button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 4px', color: 'var(--muted)', fontSize: 12 }}>
-          <span style={{ flex: 1, height: 1, background: 'var(--line)' }} /> oppure con email <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
-        </div>
+        {ios && <div className="cs-note ntf-ios">Su iPhone usa email e password: Google si apre in Safari e l&#8217;accesso resta lì, non nell&#8217;app.</div>}
+        <button className="ds-btn secondary full" onClick={doGoogle} disabled={busyLogin} type="button">Accedi con Google</button>
+        <div className="cs-or">oppure con email</div>
         <div className="cs-fld"><label>Email ({EMAIL_TEAM_TESTO})</label>
           <input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="info@amimi.it" /></div>
         <div className="cs-fld"><label>Password</label>
           <input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') doLogin(); }} /></div>
-        {errLogin && <div className="err" style={{ marginBottom: 8 }}>{errLogin}</div>}
-        <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doLogin} disabled={busyLogin} type="button">{busyLogin ? 'Accesso…' : 'Entra'}</button>
+        {errLogin && <div className="err">{errLogin}</div>}
+        <button className="ds-btn primary full" onClick={doLogin} disabled={busyLogin} type="button">{busyLogin ? 'Accesso…' : 'Entra'}</button>
         <div className="cs-note">Stesso login dell&#8217;Assistenza: vale qualsiasi casella {EMAIL_TEAM_TESTO}, si fa una volta per dispositivo.</div>
       </div>
     </div>
   );
 
   if (errCfg) return (
-    <div className="screen">
+    <div className="screen scr-notifiche">
       {testata}
       <div className="card err">Errore: {errCfg}</div>
       <button className="ds-btn secondary full" type="button" onClick={() => setGen((g) => g + 1)}>Riprova</button>
     </div>
   );
-  if (!cfg) return <div className="screen">{testata}<p className="muted center">Carico…</p></div>;
-  if (!cfg.enabled) return <div className="screen">{testata}<div className="card muted center">Sezione non attiva ({cfg.motivo || 'flag push_enabled spento'}).</div></div>;
+  if (!cfg) return <div className="screen scr-notifiche">{testata}<p className="muted center">Carico…</p></div>;
+  if (!cfg.enabled) return <div className="screen scr-notifiche">{testata}<div className="card muted center">Sezione non attiva ({cfg.motivo || 'flag push_enabled spento'}).</div></div>;
 
   // "spente" solo con elenco E iscrizione del browser letti: prima, o con la registrazione fallita, non lo si sa
   const stato = errLista ? 'Non riesco a leggere l’elenco dei dispositivi: tocca Riprova.'
@@ -347,22 +347,29 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
     : sub ? 'Iscrizione da completare: tocca "Attiva notifiche su questo telefono".'
     : mio ? 'Le notifiche su questo telefono si sono spente (su iPhone succede dopo un aggiornamento o un cambio di permesso): riattivale qui sotto.'
     : 'Spente su questo telefono.';
+  // la pillola segue la stessa catena: niente pillola finche' lo stato non si sa (elenco non letto, iscrizione del
+  // browser non letta, verifica in corso, telefono non controllabile), mai "Spente" su uno stato sconosciuto (Regola 20a)
+  const sconosciuto = !!errLista || lista === null || !(subLetta || errReg) || busy === 'verifica' || (!(attivo && mio) && !!errReg && !!mio);
   const nessunTema = scelti.length === 0;
 
   return (
-    <div className="screen">
+    <div className="screen scr-notifiche">
       {testata}
-      <div className="card">
-        <h2>Questo telefono</h2>
-        <div style={{ lineHeight: 1.5 }}>{stato}</div>
-        {errLista && <div className="err" style={{ fontSize: 13, marginTop: 6 }}>Elenco dei dispositivi non letto: {errLista}</div>}
-        {errLista && <button className="ds-btn secondary sm" style={{ marginTop: 8 }} type="button" onClick={riprovaLista}>Riprova</button>}
+      <div className="card hero ntf-tel">
+        <div className="ntf-tel-h">
+          <h2>Questo telefono</h2>
+          {!sconosciuto && <span className={'ds-pill ' + (attivo && mio ? 'pos' : 'ntf-spente')}>{attivo && mio ? 'Attive' : 'Spente'}</span>}
+        </div>
+        <div className="ntf-stato">{stato}</div>
+        {errLista && <div className="err ntf-err">Elenco dei dispositivi non letto: {errLista}</div>}
+        {errLista && <button className="ds-btn secondary sm" type="button" onClick={riprovaLista}>Riprova</button>}
       </div>
 
       {permesso === 'denied' && (
-        <div className="card warn">
-          <b>Le notifiche sono bloccate per Amimì.</b> Si riattivano dalle impostazioni, poi torna qui:
-          <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+        <div className="card">
+          <h2>Le notifiche sono bloccate per Amimì <span className="ds-pill warn">permesso negato</span></h2>
+          <p className="note">Si riattivano dalle impostazioni, poi torna qui:</p>
+          <ul className="ntf-steps" role="list">
             <li>iPhone: Impostazioni, Notifiche, Amimì, Consenti notifiche.</li>
             <li>Android: tieni premuta l&#8217;icona di Amimì, Info app, Notifiche, attiva.</li>
             <li>Computer: il lucchetto accanto all&#8217;indirizzo, Notifiche, Consenti.</li>
@@ -385,38 +392,38 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
         <h2>Cosa ricevere</h2>
         {temi.length === 0 && <div className="muted">Nessun tema attivo sul server.</div>}
         {temi.map((t) => (
-          <label key={t.key} className="ds-toggle" style={{ display: 'flex', alignItems: 'flex-start', padding: '8px 0' }}>
+          <label key={t.key} className="ds-toggle ntf-tema">
             <input type="checkbox" checked={scelti.includes(t.key)} onChange={() => { void cambiaTema(t.key); }} disabled={!!busy || lista === null || (!attivo && !chiValido)} />
-            <span className="track" style={{ marginTop: 1 }}><span className="knob" /></span>
-            <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span className="track"><span className="knob" /></span>
+            <span className="ntf-txt">
               <span>{t.etichetta}</span>
-              {t.descrizione && <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>{t.descrizione}</span>}
+              {t.descrizione && <span className="ntf-desc">{t.descrizione}</span>}
             </span>
           </label>
         ))}
         {nessunTema && temi.length > 0 && (chiValido || attivo) && <div className="note">Nessun tema scelto: {attivo ? 'questo telefono non riceve niente.' : 'scegline almeno uno.'}</div>}
       </div>
 
-      {!attivo && (
-        <button className="ds-btn primary full" type="button" onClick={attiva}
-          disabled={!reg || !chiave || !!busy || nessunTema || !chiValido || permesso === 'denied' || lista === null}>
-          {busy === 'attiva' ? 'Attivo…' : 'Attiva notifiche su questo telefono'}
-        </button>
-      )}
-      {!attivo && !reg && !errReg && <div className="note center">Preparo il telefono…</div>}
-      {!chiValido && <div className="note center">Scegli chi usa questo telefono.</div>}
-      {errReg && <div className="msg err">{errReg}</div>}
-      {attivo && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div className="ntf-actions">
+        {!attivo && (
+          <button className="ds-btn primary full" type="button" onClick={attiva}
+            disabled={!reg || !chiave || !!busy || nessunTema || !chiValido || permesso === 'denied' || lista === null}>
+            {busy === 'attiva' ? 'Attivo…' : 'Attiva notifiche su questo telefono'}
+          </button>
+        )}
+        {!attivo && !reg && !errReg && <div className="note center">Preparo il telefono…</div>}
+        {!chiValido && <div className="note center">Scegli chi usa questo telefono.</div>}
+        {errReg && <div className="msg err">{errReg}</div>}
+        {attivo && (
           <button className="ds-btn secondary full" type="button" onClick={inviaProva} disabled={!!busy}>{busy === 'prova' ? 'Invio…' : 'Invia una prova'}</button>
-        </div>
-      )}
-      {(attivo || sub || mio) && (
-        <button className="ds-btn danger soft full" style={{ marginTop: 8 }} type="button" onClick={disattiva} disabled={!!busy || lista === null}>{busy === 'disattiva' ? 'Disattivo…' : 'Disattiva su questo telefono'}</button>
-      )}
-      {msg && <div className={`msg ${msg.ok ? 'ok' : 'err'}`} role="status">{msg.testo}</div>}
+        )}
+        {(attivo || sub || mio) && (
+          <button className="ds-btn ghost full ntf-off-btn" type="button" onClick={disattiva} disabled={!!busy || lista === null}>{busy === 'disattiva' ? 'Disattivo…' : 'Disattiva su questo telefono'}</button>
+        )}
+        {msg && <div className={`msg ${msg.ok ? 'ok' : 'err'}`} role="status">{msg.testo}</div>}
+      </div>
 
-      <div className="card" style={{ marginTop: 18 }}>
+      <div className="card">
         <h2>Dispositivi iscritti</h2>
         {lista === null && !errLista && <div className="muted">Carico…</div>}
         {lista !== null && lista.length === 0 && <div className="muted">Nessun telefono iscritto.</div>}
@@ -425,13 +432,13 @@ export default function Notifiche({ chi, setChi, onBack }: { chi: string; setChi
           const ko = d.last_status != null && (d.last_status < 200 || d.last_status >= 300);
           return (
             <div key={d.id} className="ds-lrow" data-dispositivo={d.id}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                <div style={{ minWidth: 0 }}>
-                  <b>{personaName(d.chi)}</b> · {d.etichetta || 'dispositivo'}{questo && <span className="badge" style={{ marginLeft: 6 }}>questo telefono</span>}
+              <div className="ntf-devhead">
+                <div className="ntf-devname">
+                  <b>{personaName(d.chi)}</b> · {d.etichetta || 'dispositivo'}{questo && <span className="badge">questo telefono</span>}
                 </div>
-                {!questo && <button className="ds-btn danger soft sm" type="button" onClick={() => togli(d)} disabled={!!busy}>Rimuovi</button>}
+                {!questo && <button className="ntf-del" type="button" aria-label="Rimuovi" title="Rimuovi" onClick={() => togli(d)} disabled={!!busy}><Icon name="trash" size={18} /></button>}
               </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              <div className="ntf-devmeta">
                 {d.temi.length ? d.temi.map(nomeTema).join(', ') : 'nessun tema'}
                 {' · '}{d.last_ok_at ? `ultimo invio riuscito ${quando(d.last_ok_at)}` : 'nessun invio ancora'}
                 {ko && ` · ultimo esito ${d.last_status}`}
