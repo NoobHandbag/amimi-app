@@ -5,6 +5,7 @@ import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato, BozzaSalvata } from '../lib/csApi';
 import AppBar from '../components/AppBar';
 import Icon from '../components/Icon';
+import '../styles/screens/assistenza.css';
 
 // email in testo semplice: preserva gli a-capo (CSS pre-wrap) e collassa i vuoti multipli (feedback 24-07)
 const cleanBody = (t: string) => (t || '').replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -40,6 +41,8 @@ function Avatar({ k, size = 30 }: { k: string; size?: number }) {
   return <img className="cs-avimg" src={import.meta.env.BASE_URL + AVATAR_SRC[k]} alt={id.n} style={{ width: size, height: size }} onError={() => setErr(true)} />;
 }
 const CANALI: Record<Canale, string> = { email_diretta: '✉️ email', form_contatto: '📝 form sito', form_evento: '💍 form evento', chat_notifica: '💬 chat sito', rumore: '🔕 rumore' };
+// coda (tema A, 23-10): canali e flag senza emoji. Il thread tiene CANALI e FLAG_LABEL fino alla sua PR.
+const CANALE_CODA: Record<Canale, string> = { email_diretta: 'Email', form_contatto: 'Form sito', form_evento: 'Form evento', chat_notifica: 'Chat sito', rumore: 'Rumore' };
 const BUCKETS: [string, string][] = [['oggi', 'Oggi'], ['ieri', 'Ieri'], ['sett', 'Questa settimana'], ['vecchie', 'Piu’ vecchie']];
 const TONO_LABEL: Record<string, string> = { breve: '⚡ Breve', calda: '💛 Calda', formale: '🎩 Formale', bozza: '✍️ Bozza' };
 // v18: perche' il sistema NON dice entro/fuori pur avendo l'ordine sotto gli occhi.
@@ -105,6 +108,7 @@ const altreAperte = (c: CsConversation, tutte: CsConversation[] | null): CsConve
 };
 
 const FLAG_LABEL: Record<string, string> = { sollecito: '⏱ sollecito', reclamo_assistenza: '⚠️ reclamo', chiusura: '✅ chiusura' };
+const FLAG_CODA: Record<string, string> = { sollecito: 'Sollecito', reclamo_assistenza: 'Reclamo', chiusura: 'Chiusura' };
 const isUrg = (c: CsConversation) => c.urgente === true;
 // La coda mette gli urgenti in cima, poi per anzianita' del messaggio (piu' recente prima) (design 6.4).
 const urgSort = (a: CsConversation, b: CsConversation) => {
@@ -112,16 +116,16 @@ const urgSort = (a: CsConversation, b: CsConversation) => {
   return (b.last_msg_at || '').localeCompare(a.last_msg_at || '');
 };
 
-// Badge riga: categoria (o "da confermare"), urgenza col motivo, flag. Riusati su card e thread.
+// Badge riga: categoria (o "da confermare"), urgenza col motivo, flag. Sulle card della coda.
 function Badges({ c }: { c: CsConversation }) {
   const daConfermare = !c.categoria && c.categoria_source === 'ai_low';
   return (
     <div className="cs-badges">
-      {c.categoria && <span className="cs-badge cs-cat">{catEmoji(c.categoria)} {c.categoria}</span>}
-      {daConfermare && <span className="cs-badge cs-confirm">🏷️ da confermare</span>}
-      {isUrg(c) && <span className="cs-badge cs-urg">🚨 {c.urgenza_motivo || 'urgente'}</span>}
-      {(c.flags ?? []).filter((f) => f !== 'urgente' && FLAG_LABEL[f]).map((f) => (
-        <span key={f} className="cs-badge cs-flag">{FLAG_LABEL[f]}</span>
+      {c.categoria && <span className="cs-badge cs-cat">{c.categoria}</span>}
+      {daConfermare && <span className="cs-badge cs-confirm">Da confermare</span>}
+      {isUrg(c) && <span className="cs-badge cs-urg">{c.urgenza_motivo ? `Urgente · ${c.urgenza_motivo}` : 'Urgente'}</span>}
+      {(c.flags ?? []).filter((f) => f !== 'urgente' && FLAG_CODA[f]).map((f) => (
+        <span key={f} className="cs-badge cs-flag">{FLAG_CODA[f]}</span>
       ))}
     </div>
   );
@@ -437,7 +441,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       setConvs((prevC) => prevC ? prevC.filter((x) => x.id !== c.id) : prevC);
       setRumore(null);   // la vista Rumore si ricarichera'
       goCoda();
-      showToast(`🚫 "${sender}" spostata nel Rumore`);
+      showToast(`"${sender}" spostata nel Rumore`);
     } catch (e) { setErr((e as Error).message); }
     setSavingStato(false);
   };
@@ -446,31 +450,29 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     suppressOpenRef.current = c.id;
     setTimeout(() => { if (suppressOpenRef.current === c.id) suppressOpenRef.current = ''; }, 450);
     void doStato(c, 'fatto');
-    showToast(`✓ "${nmeOf(c).slice(0, 22)}" tolta dalla coda`, () => doStato(c, 'da_fare'));
+    showToast(`"${nmeOf(c).slice(0, 22)}" tolta dalla coda`, () => doStato(c, 'da_fare'));
   };
 
   // ---- login gate ----
-  if (session === 'loading') return <div className="screen"><div className="muted center" style={{ padding: 40 }}>Carico…</div></div>;
+  if (session === 'loading') return <div className="screen scr-assist"><div className="muted center cs-wait">Carico…</div></div>;
 
   if (session === 'out') return (
-    <div className="screen">
+    <div className="screen scr-assist">
       <AppBar title="Assistenza" onBack={onBack} backLabel="Home" />
       <div className="cs-login">
         <div className="cs-logo">amimi<span>&#8217; assistenza</span></div>
         <div className="cs-lt">Accedi con il tuo account Amimi&#8217;</div>
-        <button className="cs-btn" style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }} onClick={doGoogle} disabled={busy} type="button">
-          <span aria-hidden="true" style={{ fontWeight: 800, fontFamily: 'Arial, sans-serif' }}><span style={{ color: '#4285F4' }}>G</span><span style={{ color: '#EA4335' }}>o</span><span style={{ color: '#FBBC05' }}>o</span><span style={{ color: '#4285F4' }}>g</span><span style={{ color: '#34A853' }}>l</span><span style={{ color: '#EA4335' }}>e</span></span>
+        <button className="cs-btn cs-google" onClick={doGoogle} disabled={busy} type="button">
+          <span aria-hidden="true" className="cs-gmark">G</span>
           <span>Accedi con Google</span>
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 4px', color: 'var(--muted)', fontSize: 12 }}>
-          <span style={{ flex: 1, height: 1, background: 'var(--line)' }} /> oppure con email <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
-        </div>
+        <div className="cs-or">oppure con email</div>
         <div className="cs-fld"><label>Email ({EMAIL_TEAM_TESTO})</label>
           <input type="email" autoCapitalize="none" autoCorrect="off" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="info@amimi.it" /></div>
         <div className="cs-fld"><label>Password</label>
           <input type="password" value={pwd} onChange={(e) => setPwd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') doLogin(); }} /></div>
-        {err && <div className="err" style={{ marginBottom: 8 }}>{err}</div>}
-        <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doLogin} disabled={busy} type="button">{busy ? 'Accesso…' : 'Entra'}</button>
+        {err && <div className="err">{err}</div>}
+        <button className="cs-btn cs-primary" onClick={doLogin} disabled={busy} type="button">{busy ? 'Accesso…' : 'Entra'}</button>
         <div className="cs-note">Login vero (Supabase Auth), vale qualsiasi casella {EMAIL_TEAM_TESTO}. Si fa una volta: questo dispositivo resta collegato.</div>
       </div>
     </div>
@@ -478,17 +480,20 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   // ---- "chi sei?" ----
   if (!ident) return (
-    <div className="screen">
+    <div className="screen scr-assist">
       <AppBar title="Assistenza" onBack={onBack} backLabel="Home" actions={<button className="badge" onClick={logout} type="button">Esci</button>} />
       <div className="cs-login">
-        <div className="cs-logo" style={{ fontSize: 24 }}>Chi sei?</div>
+        <div className="cs-logo">Chi sei?</div>
         <div className="cs-lt">L&#8217;identita&#8217; firma le tue risposte, il login no</div>
-        {(['B', 'G', 'A'] as const).map((k) => (
-          <button key={k} className="cs-who" onClick={() => setIdent(k)} type="button">
-            <Avatar k={k} size={42} />
-            <span className="cs-whn">{IDENTS[k].n}{k === 'A' ? ' (admin)' : ''}</span>
-          </button>
-        ))}
+        <div className="ds-group cs-whos">
+          {(['B', 'G', 'A'] as const).map((k) => (
+            <button key={k} className="cs-who" onClick={() => setIdent(k)} type="button">
+              <Avatar k={k} size={42} />
+              <span className="cs-whn">{IDENTS[k].n}{k === 'A' ? ' (admin)' : ''}</span>
+              <Icon name="chevron" size={18} className="chev" />
+            </button>
+          ))}
+        </div>
         <div className="cs-note">Ricordata su questo dispositivo. La cambi quando vuoi toccando l&#8217;avatar in alto.</div>
       </div>
     </div>
@@ -505,7 +510,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       ctx.ordine.righe[0]?.nome ?? null,   // 4.1: niente slice(26): al contenimento pensa il CSS, che ora manda a capo
     ].filter(Boolean).join(' · ') : '';
     return (
-      <div className="screen">
+      <div className="screen scr-assist">
         {/* l'etichetta dice dove si torna davvero: un thread aperto dal Rumore torna al Rumore */}
         <AppBar title="Assistenza" onBack={goCoda} backLabel={daDove === 'rumore' ? 'Rumore' : 'Coda'}
           actions={<button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700, fontSize: 13 }}>{IDENTS[ident]?.n ?? ident} ▾</button>} />
@@ -937,19 +942,21 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   // ---- rumore ----
   if (view === 'rumore') return (
-    <div className="screen">
+    <div className="screen scr-assist">
       <AppBar title="Rumore" onBack={goCoda} backLabel="Coda" />
       {err && <div className="err">{err}</div>}
-      {rumore === null ? <div className="muted center" style={{ padding: 20 }}>Carico…</div> :
-        rumore.length === 0 ? <div className="muted center" style={{ padding: 20 }}>Niente rumore.</div> :
-          rumore.map((c) => (
-            <div key={c.id} className="cs-card cs-quiet" onClick={() => openThread(c)} role="button" tabIndex={0}>
-              <div className="cs-ctop"><span className="cs-emoji">🔕</span><span className="cs-cn">{c.subject || nmeOf(c)}</span><span className="cs-cora">{fmtWhen(c.last_msg_at)}</span></div>
-              <div style={{ marginTop: 6 }}>
-                <button className="cs-btn cs-ghost" type="button" disabled={savingStato} onClick={(e) => { e.stopPropagation(); doUnNoise(c); }}>↩ È un cliente, riporta in coda</button>
+      {rumore === null ? <div className="muted center cs-empty">Carico…</div> :
+        rumore.length === 0 ? <div className="muted center cs-empty">Niente rumore.</div> :
+          <div className="ds-group cs-group">
+            {rumore.map((c) => (
+              <div key={c.id} className="cs-card cs-quiet" onClick={() => openThread(c)} role="button" tabIndex={0}>
+                <div className="cs-ctop"><span className="cs-cn">{c.subject || nmeOf(c)}</span><span className="cs-cora">{fmtWhen(c.last_msg_at)}</span></div>
+                <div className="cs-rowact">
+                  <button className="cs-btn cs-ghost" type="button" disabled={savingStato} onClick={(e) => { e.stopPropagation(); doUnNoise(c); }}><Icon name="return" size={16} /> È un cliente, riporta in coda</button>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>}
       <div className="cs-note">Nascosto di default, mai passato all&#8217;AI. Serve a controllare che il filtro non abbia nascosto un cliente per errore: se succede, &#8220;È un cliente&#8221; lo riporta in coda e sblocca il mittente.</div>
     </div>
   );
@@ -978,37 +985,38 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       <div className="cs-snip">{c.snippet || c.subject || ''}</div>
       <Badges c={c} />
       <div className="cs-badges">
-        <span className="cs-badge cs-can">{CANALI[c.canale]}</span>
-        {c.stato === 'in_corso' && <span className="cs-badge cs-state cs-state-prog">✋ {c.stato_by}</span>}
+        <span className="cs-badge cs-can">{CANALE_CODA[c.canale]}</span>
+        {c.stato === 'in_corso' && <span className="cs-badge cs-state cs-state-prog">In corso{c.stato_by ? ` · ${c.stato_by}` : ''}</span>}
         {/* brief stato_automatico: distinguere a colpo d'occhio chiusa-da-sola da chiusa-da-persona */}
-        {c.stato === 'fatto' && <span className="cs-badge cs-state cs-state-done">{c.stato_by === 'auto' ? '✓ chiusa da sola' : `✓ ${c.stato_by ?? 'conclusa'}`}</span>}
-        {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">risposta in Inbox</span>}
-        {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
+        {c.stato === 'fatto' && <span className="cs-badge cs-state cs-state-done">{c.stato_by === 'auto' ? 'Chiusa da sola' : `Conclusa${c.stato_by ? ` · ${c.stato_by}` : ''}`}</span>}
+        {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">Risposta in Inbox</span>}
+        {c.parse_failed && <span className="cs-badge cs-warn">Da rivedere</span>}
         {/* 5.2: si vede gia' dalla coda che questa persona e' su piu' card */}
-        {altreAperte(c, convs).length > 0 && <span className="cs-badge cs-urg">👥 altre {altreAperte(c, convs).length} di questa cliente</span>}
+        {altreAperte(c, convs).length > 0 && <span className="cs-badge cs-altre">Altre {altreAperte(c, convs).length} di questa cliente</span>}
       </div>
     </button>
   );
 
   // PER TEMA: le 13 categorie nell'ordine del design + "Da confermare" (ai_low/senza categoria)
   const temaGroups = [
-    ...CS_CATEGORIES.map((k) => ({ key: k.label, label: k.label, emoji: k.emoji, items: list.filter((c) => c.categoria === k.label) })),
-    { key: '__daconf__', label: 'Da confermare', emoji: '🏷️', items: list.filter((c) => !c.categoria) },
+    ...CS_CATEGORIES.map((k) => ({ key: k.label, label: k.label, items: list.filter((c) => c.categoria === k.label) })),
+    { key: '__daconf__', label: 'Da confermare', items: list.filter((c) => !c.categoria) },
   ].filter((g) => g.items.length > 0);
   const toggleCat = (key: string) => setCollapsed((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
 
   return (
-    <div className="screen">
+    <div className="screen scr-assist">
       {/* UAT 02-08: "Aggiorna" in alto a destra; dalla cornice 3 (22-10) e' l'azione tonda della barra */}
       <AppBar title="Assistenza" actions={
         <button type="button" className={refreshing ? 'exp busy' : 'exp'} onClick={doRefresh} disabled={refreshing} aria-label="Aggiorna" title="Aggiorna"><Icon name="recycle" size={18} /></button>
       } />
       <p className="note appbar-st" role="status">{refreshing ? 'Aggiorno…' : null}</p>
-      <header>
+      <header className="cs-hellorow">
         {/* UAT 02-08: via "aiutiamo dei clienti", resta il saluto. */}
-        <button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn" style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--dark)', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 9 }}>
+        <button onClick={() => setMenu((m) => !m)} type="button" className="cs-identbtn cs-hello" aria-expanded={menu}>
           <Avatar k={ident} size={30} />
-          <span>Ciao {IDENTS[ident]?.n ?? ident} <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 400 }}>▾</span></span>
+          <span>Ciao {IDENTS[ident]?.n ?? ident}</span>
+          <Icon name="chevron" size={16} className="chev" />
         </button>
       </header>
       {menu && <IdentMenu ident={ident} setIdent={(k) => { setIdent(k); setMenu(false); }} logout={logout} />}
@@ -1016,24 +1024,24 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       {/* UAT 02-08: la riga di conteggi in cima e' sparita. Gli stessi numeri erano gia' sulle tre
           pastiglie di filtro qui sotto: si leggeva due volte la stessa cosa. Gli urgenti non si
           perdono, restano in cima alla coda col loro badge. */}
-      <div className="cs-filterbar">
+      <div className="cs-filterbar hscroll">
         {(([['dafare', 'Da iniziare', daf], ['incorso', 'In corso', inc], ['fatte', 'Concluse', fatte], ['tutte', 'Tutte', null]]) as [typeof filtro, string, number | null][]).map(([k, l, n]) => (
-          <button key={k} className={'cs-fpill' + (filtro === k ? ' on' : '')} onClick={() => setFiltro(k)} type="button">
+          <button key={k} className={'cs-fpill ds-fp' + (filtro === k ? ' on' : '')} onClick={() => setFiltro(k)} type="button">
             {l}{n != null && n > 0 ? <span className="cs-fn">{n}</span> : null}
           </button>
         ))}
       </div>
       <div className="cs-sortrow">
         <span className="cs-sortlbl">Ordina per</span>
-        <div className="cs-seg">
-          {([['tempo', '🕗 Data'], ['tema', '🏷️ Tema']] as const).map(([k, l]) => (
+        <div className="cs-seg ds-seg">
+          {([['tempo', 'Data'], ['tema', 'Tema']] as const).map(([k, l]) => (
             <button key={k} className={'cs-seg-btn' + (codaView === k ? ' on' : '')} onClick={() => setCodaView(k)} type="button">{l}</button>
           ))}
         </div>
       </div>
       {err && <div className="err">{err}</div>}
-      {convs === null ? <div className="muted center" style={{ padding: 24 }}>Carico la coda…</div> :
-        list.length === 0 ? <div className="muted center" style={{ padding: 24 }}>Niente qui: coda pulita ✨</div> :
+      {convs === null ? <div className="muted center cs-empty">Carico la coda…</div> :
+        list.length === 0 ? <div className="muted center cs-empty">Niente qui: coda pulita</div> :
         codaView === 'tempo' ?
           BUCKETS.map(([bk, label]) => {
             const g = list.filter((c) => bucketOf(c.last_msg_at) === bk);
@@ -1041,7 +1049,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             return (
               <div key={bk}>
                 <div className="cs-sect">{label} <span className="cs-cnt">{g.length}</span></div>
-                {g.map(card)}
+                <div className="ds-group cs-group">{g.map(card)}</div>
               </div>
             );
           })
@@ -1051,15 +1059,20 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             const nurg = grp.items.filter(isUrg).length;
             return (
               <div key={grp.key}>
-                <button className="cs-sect cs-secttoggle" type="button" onClick={() => toggleCat(grp.key)}>
-                  <span>{grp.emoji} {grp.label}</span>
-                  <span className="cs-cnt">{nurg > 0 ? `${nurg}🚨 · ` : ''}{grp.items.length} {isColl ? '▸' : '▾'}</span>
+                <button className="cs-sect cs-secttoggle askhead" type="button" onClick={() => toggleCat(grp.key)} aria-expanded={!isColl}>
+                  <span>{grp.label}</span>
+                  <span className="cs-cnt">{grp.items.length}</span>
+                  {nurg > 0 && <span className="cs-cnt-urg">{nurg} {nurg === 1 ? 'urgente' : 'urgenti'}</span>}
+                  <Icon name="chevron" size={16} />
                 </button>
-                {!isColl && grp.items.map(card)}
+                {!isColl && <div className="ds-group cs-group">{grp.items.map(card)}</div>}
               </div>
             );
           })}
-      <button className="cs-rumore" onClick={openRumore} type="button">🔕 Rumore nascosto (notifiche Shopify, spam, DMARC){rumCount != null ? `: ${rumCount}` : ''} ›</button>
+      <button className="cs-rumore" onClick={openRumore} type="button">
+        <span>Rumore nascosto (notifiche Shopify, spam, DMARC){rumCount != null ? `: ${rumCount}` : ''}</span>
+        <Icon name="chevron" size={18} className="chev" />
+      </button>
       {toast && (
         <div className="cs-toast" role="status">
           <span>{toast.msg}</span>
@@ -1073,7 +1086,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 function IdentMenu({ ident, setIdent, logout }: { ident: string; setIdent: (k: string) => void; logout: () => void }) {
   return (
     <div className="cs-menu">
-      <div className="cs-note" style={{ marginTop: 0, marginBottom: 8 }}>Chi sono? Firma ogni azione, resta su questo dispositivo.</div>
+      <div className="cs-note cs-menu-h">Chi sono? Firma ogni azione, resta su questo dispositivo.</div>
       {(['B', 'G', 'A'] as const).map((k) => (
         <button key={k} className={'cs-srow' + (ident === k ? ' on' : '')} onClick={() => setIdent(k)} type="button">
           <Avatar k={k} size={30} />
@@ -1081,7 +1094,7 @@ function IdentMenu({ ident, setIdent, logout }: { ident: string; setIdent: (k: s
         </button>
       ))}
       <AiSettings ident={ident} />
-      <button className="cs-srow" onClick={logout} type="button" style={{ justifyContent: 'center', color: 'var(--muted)' }}>Esci (logout)</button>
+      <button className="cs-srow cs-logout" onClick={logout} type="button">Esci (logout)</button>
     </div>
   );
 }
@@ -1109,7 +1122,7 @@ function AiSettings({ ident }: { ident: string }) {
   };
   return (
     <div className="cs-aiset">
-      <button className="cs-aiset-h" type="button" onClick={expand}>⚙️ Come deve rispondere l&#8217;AI <span>{open ? '▾' : '▸'}</span></button>
+      <button className="cs-aiset-h" type="button" onClick={expand} aria-expanded={open}>⚙️ Come deve rispondere l&#8217;AI <span>{open ? '▾' : '▸'}</span></button>
       {open && (
         <div className="cs-aiset-b">
           {cfg && <div className="cs-note" style={{ marginTop: 0 }}>Motore attivo: <b>{cfg.provider === 'claude' ? 'Claude (' + cfg.model + ')' : 'Gemini (gratis)'}</b></div>}
