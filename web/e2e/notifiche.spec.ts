@@ -484,6 +484,8 @@ test('link diretto #assistenza apre l\'Assistenza', async ({ page }) => {
 test('link diretto #salute apre la Salute', async ({ page }) => {
   const r = await apri(page, '#salute', { flag: 'true' });
   await expect(page.locator('h1')).toContainText('Salute');
+  // la barra in alto c'e' anche mentre carica (tema A, 23-10): gli errori si contano a caricamento finito
+  await expect(page.getByText('Carico salute e movimenti')).toHaveCount(0);
   await expect(page.locator('.hello h1')).toHaveCount(0);
   expect(r.errori).toEqual([]);
 });
@@ -499,6 +501,7 @@ test('messaggio amimi-apri con #assistenza e #salute: cambia scheda senza toccar
   await expect(page.locator('.cs-logo')).toContainText('Chi sei?');
   await manda('#salute');
   await expect(page.locator('h1')).toContainText('Salute');
+  await expect(page.getByText('Carico salute e movimenti')).toHaveCount(0);
   await expect(page.locator('.cs-logo')).toHaveCount(0);
   expect(await page.evaluate(() => location.hash)).toBe('');
   expect(r.errori).toEqual([]);

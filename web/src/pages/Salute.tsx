@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import {
   fetchMovimenti14gg, fetchOpsFlags, fetchHealthLatest, fetchOpsExtra,
   fetchDigestPersone, fetchDigestVersioni, fetchDigestOrdini, fetchDigestPulizia, fetchDigestSpese, fetchDigestLogAttori,
@@ -10,6 +10,7 @@ import { nowMonth, nowYear } from '../lib/helpers';
 import ActivityFeed from '../components/ActivityFeed';
 import Icon from '../components/Icon';
 import AppBar from '../components/AppBar';
+import '../styles/screens/salute.css';
 
 const MESI_B = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 
@@ -27,6 +28,8 @@ const trunc = (s: string | null, n: number) => (!s ? '—' : s.length > n ? s.sl
 const SEV_COLOR: Record<string, string> = { bad: 'var(--negative)', error: 'var(--negative)', warn: 'var(--warning)', ok: 'var(--positive)' };
 const sevColor = (s: string) => SEV_COLOR[s] ?? 'var(--ink-muted)';
 const sevRank = (s: string) => (s === 'bad' || s === 'error' ? 0 : s === 'warn' ? 1 : 2);
+// pallino della gravita' davanti a una riga (salute.css, ::before): il colore passa come variabile
+const sevDot = (s: string) => ({ '--sev': sevColor(s) }) as CSSProperties;
 
 // Edge-function versions: NOT in the database, so kept as a static reference updated at each release.
 // Verified live via Supabase on 2026-07-08. The migrations count (KPI headline) is live from v_digest_versioni.
@@ -56,11 +59,11 @@ function deltaPct(cur: number, prev: number): number | null {
 }
 function Delta({ cur, prev, goodUp = true }: { cur: number; prev: number; goodUp?: boolean }) {
   const d = deltaPct(cur, prev);
-  if (d == null) return <span style={{ color: 'var(--ink-muted)', fontSize: 12 }}>—</span>;
+  if (d == null) return <span className="muted">—</span>;
   const up = d >= 0;
   const good = goodUp ? up : !up;
-  const color = d === 0 ? 'var(--ink-muted)' : good ? 'var(--positive)' : 'var(--negative)';
-  return <span style={{ color, fontSize: 12, fontWeight: 700 }}>{up ? '▲' : '▼'} {Math.abs(d * 100).toLocaleString('it-IT', { maximumFractionDigits: 0 })}%</span>;
+  // pillola col segno al posto di ▲/▼: verde se va nel verso buono, rossa se no, grigia a zero
+  return <span className={`ds-delta ${d === 0 ? 'flat' : good ? 'up' : 'down'}`}>{d === 0 ? '' : up ? '+' : '−'}{Math.abs(d * 100).toLocaleString('it-IT', { maximumFractionDigits: 0 })}%</span>;
 }
 
 function Stat({ label, value, cur, prev, goodUp = true, sub, tone = 'accent' }: { label: string; value: string; cur?: number; prev?: number; goodUp?: boolean; sub?: string; tone?: string }) {
@@ -78,9 +81,9 @@ function DKpi({ id, open, setOpen, value, label, cur, prev, goodUp = true, sub, 
   const on = open === id;
   const toggle = () => setOpen(on ? null : id);
   return (
-    <div className={`kpi ${tone} clickable${on ? ' on' : ''}`} role="button" tabIndex={0}
+    <div className={`kpi ${tone} clickable${on ? ' on' : ''}`} role="button" tabIndex={0} aria-expanded={on}
       onClick={toggle} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}>
-      <span className="tap">{on ? '▴' : '▾'}</span>
+      <span className={`tap tgl${on ? ' open' : ''}`}><Icon name="chevron" size={14} /></span>
       <div className="v">{value}</div>
       <div className="k">{label}</div>
       <div className="ksub">{cur != null && prev != null ? <Delta cur={cur} prev={prev} goodUp={goodUp} /> : null}{sub ? <span style={{ marginLeft: cur != null ? 6 : 0 }}>{sub}</span> : null}</div>
@@ -132,8 +135,8 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
     })();
   }, []);
 
-  if (loading) return <div className="screen"><p className="muted center">Carico salute e movimenti…</p></div>;
-  if (err) return <div className="screen"><div className="card err">Errore: {err}</div></div>;
+  if (loading) return <div className="screen scr-salute"><AppBar title={<>Salute &amp; Movimenti</>} onBack={onBack} /><p className="muted center">Carico salute e movimenti…</p></div>;
+  if (err) return <div className="screen scr-salute"><AppBar title={<>Salute &amp; Movimenti</>} onBack={onBack} /><div className="card err">Errore: {err}</div></div>;
   if (!m || !d) return null;
 
   const bad = health.rows.filter((r) => r.severity === 'bad' || r.severity === 'error');
@@ -223,15 +226,15 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
       );
       case 'd_health': return (
         <><h3>Salute sistema — {num(d.dan_health_ok)} ok · {num(d.dan_health_warn)} avvisi · {num(d.dan_health_bad)} da sistemare</h3>
-          <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.7 }}>
-            {healthSorted.map((r) => (<li key={r.k}><span style={{ color: sevColor(r.severity), fontWeight: 700 }}>&bull;</span> {r.label}{r.n ? <strong> ({num(r.n)})</strong> : null}</li>))}
+          <ul className="sal-dots">
+            {healthSorted.map((r) => (<li key={r.k} style={sevDot(r.severity)}>{r.label}{r.n ? <strong> ({num(r.n)})</strong> : null}</li>))}
           </ul>
           <p className="note">Semaforo dal giro giornaliero di ce-guard (health_log).{healthDay ? ` Ultimo check ${healthDay}.` : ''}</p></>
       );
       case 'd_ce': return (
         <><h3>Riconciliazioni CE — {num(d.dan_ce_bad)} da sistemare</h3>
-          <ul style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.7 }}>
-            {ceRows.map((r) => (<li key={r.k}><span style={{ color: sevColor(r.severity), fontWeight: 700 }}>&bull;</span> {r.label}{r.n ? <strong> ({num(r.n)})</strong> : null}</li>))}
+          <ul className="sal-dots">
+            {ceRows.map((r) => (<li key={r.k} style={sevDot(r.severity)}>{r.label}{r.n ? <strong> ({num(r.n)})</strong> : null}</li>))}
           </ul>
           <p className="note">Voci del guardiano contabile ce-guard (giro giornaliero). Verde = a posto, rosso = da correggere.</p></>
       );
@@ -240,15 +243,16 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
   };
 
   return (
-    <div className="screen">
+    <div className="screen scr-salute">
       <AppBar title={<>Salute &amp; Movimenti</>} onBack={onBack} actions={<span className="badge">14 giorni</span>} />
 
-      {/* Semaforo salute ecosistema (health_log dell'ultimo giro ce-guard) */}
-      <section className="card" style={{ borderLeft: `4px solid ${SEV_COLOR[overall]}` }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ width: 12, height: 12, borderRadius: '50%', background: SEV_COLOR[overall], display: 'inline-block' }} />
-          <h2 style={{ margin: 0 }}>Salute ecosistema: {overallLabel}</h2>
-          {healthDay && <span className="muted" style={{ marginLeft: 'auto', fontSize: 12 }}>check {healthDay}</span>}
+      {/* Semaforo salute ecosistema (health_log dell'ultimo giro ce-guard): la card scura della schermata. Sul nero il testo
+          e' bianco; verde, arancio e rosso solo come pallini e barra (3,4-3,7:1, bastano a un segno, non a un testo) */}
+      <section className="card hero">
+        <div className="sal-head">
+          <span className="sal-dot" style={sevDot(overall)} />
+          <h2>Salute ecosistema: {overallLabel}</h2>
+          {healthDay && <span className="sal-check">check {healthDay}</span>}
         </div>
         <div className="ds-hbar">
           <div className="ok" style={{ flex: ok.length || 0.001 }} />
@@ -261,11 +265,9 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
           <span><i style={{ background: 'var(--negative)' }} />{bad.length} da sistemare</span>
         </div>
         {alerts.length > 0 && (
-          <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.6 }}>
+          <ul className="sal-dots sal-alerts">
             {alerts.map((r) => (
-              <li key={r.k} style={{ color: 'var(--ink)' }}>
-                <span style={{ color: SEV_COLOR[r.severity], fontWeight: 700 }}>&bull;</span> {r.label}{r.n ? <strong> ({num(r.n)})</strong> : null}
-              </li>
+              <li key={r.k} style={sevDot(r.severity)}>{r.label}{r.n ? <strong> ({num(r.n)})</strong> : null}</li>
             ))}
           </ul>
         )}
@@ -291,7 +293,7 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
                 <span className="ic" style={{ background: `var(${t.tint[0]})`, color: `var(${t.tint[1]})` }}><Icon name={t.icon} size={18} /></span>
                 <span className="tt">{t.label}</span>
                 <span className="tn" style={{ color: `var(${t.tint[1]})` }}>{t.n}</span>
-                <span className="chev">›</span>
+                <span className="chev"><Icon name="chevron" size={16} /></span>
               </button>
             ))}
           </>
@@ -312,22 +314,22 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
 
         <div className="kpis">
           {persona === 'Ginevra' && <>
-            <DKpi id="g_ord" open={open} setOpen={setOpen} value={num(d.gin_ordini14)} label="Ordini aggiunti" cur={d.gin_ordini14} prev={d.gin_ordini28} sub="vs 14gg prec." tone="green" />
+            <DKpi id="g_ord" open={open} setOpen={setOpen} value={num(d.gin_ordini14)} label="Ordini aggiunti" cur={d.gin_ordini14} prev={d.gin_ordini28} sub="vs 14gg prec." tone="accent" />
             <DKpi id="g_ev" open={open} setOpen={setOpen} value={num(sped14?.n14 ?? 0)} label="Ordini spediti" cur={sped14?.n14 ?? 0} prev={sped14?.n28 ?? 0} sub="TWS, vs prec." tone="accent" />
-            <DKpi id="g_ap" open={open} setOpen={setOpen} value={num(aperti)} label="Aperti da evadere" sub="recenti (30gg)" tone="rose" />
+            <DKpi id="g_ap" open={open} setOpen={setOpen} value={num(aperti)} label="Aperti da evadere" sub="recenti (30gg)" tone="accent" />
             <DKpi id="g_aov" open={open} setOpen={setOpen} value={d.gin_aov14 != null ? eur(d.gin_aov14) : '—'} label="Scontrino medio" sub="AOV online" tone="accent" />
             <DKpi id="g_ecc" open={open} setOpen={setOpen} value={num(sped.length)} label="Spedizioni in eccezione" sub="da chiamare" tone={sped.length > 0 ? 'red' : 'green'} />
             <DKpi id="g_tempo" open={open} setOpen={setOpen} value={evCur && evCur.giorni_medi != null ? `${evCur.giorni_medi} gg` : '—'} label="Tempo di spedizione" sub="giorni medi, mese in corso" tone="accent" />
           </>}
           {persona === 'Benedetta' && <>
-            <DKpi id="b_pul" open={open} setOpen={setOpen} value={num(d.ben_puliti14)} label="Nomi ripuliti" sub="pulizia catalogo" tone="green" />
+            <DKpi id="b_pul" open={open} setOpen={setOpen} value={num(d.ben_puliti14)} label="Nomi ripuliti" sub="pulizia catalogo" tone="accent" />
             <DKpi id="b_resi" open={open} setOpen={setOpen} value={num(d.ben_resi14)} label="Resi / cambi" sub="ultimi 14gg" tone="accent" />
             <DKpi id="b_spese" open={open} setOpen={setOpen} value={num(d.ben_spese14)} label="Spese confermate" sub="azioni umane" tone="accent" />
             <DKpi id="b_todo" open={open} setOpen={setOpen} value={num(d.ben_todo)} label="Prodotti da completare" sub="coda pulizia" tone={d.ben_todo > 0 ? 'red' : 'green'} />
           </>}
           {persona === 'Dan' && <>
             <DKpi id="d_log" open={open} setOpen={setOpen} value={num(d.dan_log14)} label="Log totali" sub={`${num(d.dan_attori14)} attori`} tone="accent" />
-            <DKpi id="d_ver" open={open} setOpen={setOpen} value={<>{num(migr ?? 0)}<span style={{ fontSize: 14 }}> +{EDGE_FUNCTIONS.length}</span></>} label="Versioni rilasciate" sub="migrazioni + edge fn" tone="green" />
+            <DKpi id="d_ver" open={open} setOpen={setOpen} value={<>{num(migr ?? 0)}<span style={{ fontSize: 14 }}> +{EDGE_FUNCTIONS.length}</span></>} label="Versioni rilasciate" sub="migrazioni + edge fn" tone="accent" />
             <DKpi id="d_health" open={open} setOpen={setOpen} value={`${num(d.dan_health_ok)}/${num(d.dan_health_warn)}/${num(d.dan_health_bad)}`} label="Salute sistema" sub="ok / avvisi / rossi" tone="accent" />
             <DKpi id="d_ce" open={open} setOpen={setOpen} value={num(d.dan_ce_bad)} label="Riconciliazioni CE" sub="da sistemare" tone={d.dan_ce_bad > 0 ? 'red' : 'green'} />
           </>}
@@ -340,8 +342,8 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
         <h2>Polso vendite &middot; 14gg vs 14 precedenti</h2>
         <div className="kpis">
           <Stat label="Fatturato netto" value={eur(m.netto14)} cur={m.netto14} prev={m.netto28} sub="IVA esclusa" tone="accent" />
-          <Stat label="Fatturato lordo" value={eur(m.lordo14)} cur={m.lordo14} prev={m.lordo28} sub="IVA incl." tone="rose" />
-          <Stat label="Pezzi venduti" value={num(m.pezzi14)} cur={m.pezzi14} prev={m.pezzi28} sub={`${num(m.on_pezzi14)} online / ${num(m.off_pezzi14)} negozio`} tone="green" />
+          <Stat label="Fatturato lordo" value={eur(m.lordo14)} cur={m.lordo14} prev={m.lordo28} sub="IVA incl." tone="accent" />
+          <Stat label="Pezzi venduti" value={num(m.pezzi14)} cur={m.pezzi14} prev={m.pezzi28} sub={`${num(m.on_pezzi14)} online / ${num(m.off_pezzi14)} negozio`} tone="accent" />
           {/* AOV = gin_aov14 (lordo online / ordini online). aov_lordo14 mescolava il lordo di TUTTI i canali
               con i soli ordini Shopify: sulla stessa pagina c'erano due scontrini medi diversi (audit 06-09). */}
           <Stat label="Ordini online" value={num(m.ordini14)} cur={m.ordini14} prev={m.ordini28} sub={d.gin_aov14 != null ? `AOV online ${eur(d.gin_aov14)}` : undefined} tone="accent" />
@@ -360,10 +362,11 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
       {/* Movimenti operativi */}
       <section className="card">
         <h2>Movimenti operativi</h2>
-        <div className="kpis">
+        {/* conteggi senza dettaglio: righe col numero a destra invece di tessere */}
+        <div className="kpis sal-list">
           <Stat label="Nuovi ordini fornitori" value={num(m.sup_new14)} sub="ultimi 14gg" tone="accent" />
-          <Stat label="Arrivi registrati" value={num(m.sup_arr14)} sub="ultimi 14gg" tone="green" />
-          <Stat label="Ordini aperti" value={num(m.sup_open)} sub="in attesa di arrivo" tone="rose" />
+          <Stat label="Arrivi registrati" value={num(m.sup_arr14)} sub="ultimi 14gg" tone="accent" />
+          <Stat label="Ordini aperti" value={num(m.sup_open)} sub="in attesa di arrivo" tone="accent" />
           <Stat label="Resi" value={num(m.ret14)} cur={m.ret14} prev={m.ret28} goodUp={false} sub="ultimi 14gg" tone="accent" />
         </div>
       </section>
@@ -371,17 +374,17 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
       {/* Catalogo Shopify + flag operativi */}
       <section className="card">
         <h2>Catalogo Shopify</h2>
-        <div className="kpis">
-          <Stat label="Prodotti live" value={num(m.live)} sub="ACTIVE" tone="green" />
+        <div className="kpis sal-list">
+          <Stat label="Prodotti live" value={num(m.live)} sub="ACTIVE" tone="accent" />
           <Stat label="Bozze" value={num(m.draft)} sub="draft" tone="accent" />
           <Stat label="Esauriti ma pubblicati" value={num(m.soldout)} sub="live a 0" tone={m.soldout > 0 ? 'red' : 'green'} />
         </div>
         {flags && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+          <div className="pillrow">
             <Flag on={flags.write} label="Scrittura Shopify" />
             <Flag on={flags.autopush} label="Autopush stock" />
             <Flag on={flags.hold_raises} label="Blocca rialzi" neutral />
-            <span className="pill" style={{ border: '1px solid var(--border)', borderRadius: 999, padding: '2px 10px', fontSize: 13, color: 'var(--ink-muted)' }}>Buffer esposizione: {flags.expose_buffer}</span>
+            <span className="ds-pill sal-flag">Buffer esposizione: {flags.expose_buffer}</span>
           </div>
         )}
       </section>
@@ -396,7 +399,8 @@ export default function Salute({ onBack, chi, go, pin }: { onBack?: () => void; 
           </div>
           <div className="row">
             <div><div className="rt">Ultima vendita in negozio (Qromo)</div><div className="rs">le vendite offline sono saltuarie: normale qualche giorno a zero</div></div>
-            <div className="giac" style={{ fontSize: 14 }}>{extra?.lastQromo ? `${new Date(extra.lastQromo).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}${qromoDays != null ? ` (${qromoDays}g fa)` : ''}` : '—'}</div>
+            {/* la data su una riga, i giorni sotto in grigio (prima "14 ott (1g fa)" andava a capo) */}
+            <div className="giac sal-val">{extra?.lastQromo ? <>{new Date(extra.lastQromo).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}{qromoDays != null && <div className="rs">{qromoDays}g fa</div>}</> : '—'}</div>
           </div>
         </div>
         <p className="note">Il corriere TWS non ha API: la freschezza delle liste LDV la controlla il digest Cowork via email. Qui sopra sono indicatori informativi, non allarmi.</p>
@@ -444,7 +448,8 @@ function FreschezzaCard({ f }: { f: Freschezza }) {
           return (
             <div className="row" key={r.label}>
               <div><div className="rt">{r.label}</div><div className="rs">{r.iso ? String(r.iso).slice(0, 16).replace('T', ' ') : '—'}{r.nota ? ` · ${r.nota}` : ''}</div></div>
-              <div className="giac" style={{ color: col, fontSize: 13 }}>{a.txt}{a.h > r.warnH ? ' · ferma' : a.h > r.okH ? ' · in ritardo' : ''}</div>
+              {/* l'eta' su una riga, lo stato ("ferma", "in ritardo") sotto, nello stesso colore dell'esito */}
+              <div className="giac sal-val" style={{ color: col }}>{a.txt}{a.h > r.warnH ? <div className="sal-state">ferma</div> : a.h > r.okH ? <div className="sal-state">in ritardo</div> : null}</div>
             </div>
           );
         })}
@@ -453,11 +458,7 @@ function FreschezzaCard({ f }: { f: Freschezza }) {
   );
 }
 
+// lo stato a parole ("acceso", "spento", come in Premia), non solo col colore; "Blocca rialzi" resta neutro
 function Flag({ on, label, neutral = false }: { on: boolean; label: string; neutral?: boolean }) {
-  const color = neutral ? 'var(--ink-muted)' : on ? 'var(--positive)' : 'var(--negative)';
-  return (
-    <span className="pill" style={{ border: `1px solid ${color}`, color, borderRadius: 999, padding: '2px 10px', fontSize: 13, fontWeight: 700 }}>
-      {on ? '●' : '○'} {label}
-    </span>
-  );
+  return <span className={`ds-pill ${neutral ? 'sal-flag' : on ? 'pos' : 'neg'}`}>{label}: {on ? 'acceso' : 'spento'}</span>;
 }
