@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Icon from './Icon';
+import '../styles/screens/assistente.css';
 import { askAssistant, fetchOpsFlags, writeApi, type AsstResult, type AsstMsg, type AsstGrafico, type AsstProdotto, type AsstAzione } from '../lib/api';
 
 type Turn = { user: string; res?: AsstResult };
@@ -27,23 +28,26 @@ function Chart({ g }: { g: AsstGrafico }) {
   const max = Math.max(1, ...vals.map((v) => Math.abs(v)));
   if (g.tipo === 'torta') {
     const tot = vals.reduce((a, b) => a + Math.abs(b), 0) || 1;
-    const cols = ['#9C5F33', '#C4956A', '#8B5E6B', '#B98A5E', '#6E3F4D', '#D2B48C', '#A8764A', '#7C5A45'];
+    // colori dai token, dal piu' scuro al piu' chiaro (il bordeaux resta all'azione); l'ultima fetta non ripete il colore
+    // della prima, che le sta accanto
+    const cols = ['var(--ink)', 'var(--chart-4)', 'var(--chart-bar)', 'var(--border-strong)'];
+    const col = (i: number) => (i > 0 && i === vals.length - 1 && i % cols.length === 0 ? cols[2] : cols[i % cols.length]);
     let acc = 0; const R = 52, C = 60;
     const seg = vals.map((v, i) => {
       const frac = Math.abs(v) / tot; const a0 = acc * 2 * Math.PI - Math.PI / 2; acc += frac; const a1 = acc * 2 * Math.PI - Math.PI / 2;
       const big = frac > 0.5 ? 1 : 0;
-      return { d: `M${C + R * Math.cos(a0)} ${C + R * Math.sin(a0)} A${R} ${R} 0 ${big} 1 ${C + R * Math.cos(a1)} ${C + R * Math.sin(a1)} L${C} ${C} Z`, fill: cols[i % cols.length] };
+      return { d: `M${C + R * Math.cos(a0)} ${C + R * Math.sin(a0)} A${R} ${R} 0 ${big} 1 ${C + R * Math.cos(a1)} ${C + R * Math.sin(a1)} L${C} ${C} Z`, fill: col(i) };
     });
     return (
       <div className="ai-viz">
         {g.titolo && <div className="ai-viz-h">{g.titolo}</div>}
         <div className="ai-pie">
           <svg viewBox="0 0 120 120" width="120" height="120">
-            {seg.map((s, i) => <path key={i} d={s.d} fill={s.fill} />)}
+            {seg.map((s, i) => <path key={i} d={s.d} style={{ fill: s.fill, stroke: 'var(--surface)', strokeWidth: 2, strokeLinejoin: 'round' }} />)}
             <circle cx="60" cy="60" r="26" fill="var(--card)" />
           </svg>
           <div className="ai-legend">{g.etichette.map((l, i) => (
-            <div key={i} className="ai-leg"><span className="ai-sw" style={{ background: cols[i % cols.length] }} />{l} <b>{nfmt(vals[i])}</b></div>
+            <div key={i} className="ai-leg"><span className="ai-sw" style={{ background: col(i) }} />{l} <b>{nfmt(vals[i])}</b></div>
           ))}</div>
         </div>
       </div>
@@ -122,7 +126,7 @@ function Answer({ res }: { res: AsstResult }) {
       ) : null}
       {(res.sql || righe.length) ? (
         <details className="ai-src">
-          <summary>Fonti ({righe.length} righe)</summary>
+          <summary>Fonti ({righe.length} righe)<Icon name="chevron" size={14} /></summary>
           {res.sql && <div className="ai-sql">{res.sql}</div>}
           {righe.length ? (
             <div className="tablewrap"><table><thead><tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
@@ -167,7 +171,7 @@ function ActionCard({ azione, pin, chi }: { azione: AsstAzione; pin: string; chi
           <label>Importo €<input type="number" inputMode="decimal" min="0" value={costo} onChange={(e) => setCosto(e.target.value)} /></label>
           <label>Categoria
             <select value={categoria} onChange={(e) => setCategoria(e.target.value)}>
-              <option value="">— scegli —</option>
+              <option value="">Scegli</option>
               {azione.categoria_valide.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </label>
@@ -256,12 +260,12 @@ export default function AssistantPanel({ pin, chi, nascondiFab = false }: { pin:
   return (
     <>
       {!nascondiFab && (
-        <button className={`ai-fab ${open ? 'hide' : ''}`} onClick={() => setOpen(true)} type="button" aria-label="Apri assistente">
+        <button className={`ai-fab scr-ai ${open ? 'hide' : ''}`} onClick={() => setOpen(true)} type="button" aria-label="Apri assistente">
           <Spark /> Chiedi ad Amimì
         </button>
       )}
       {open && <div className="ai-scrim" onClick={() => setOpen(false)} />}
-      <div className={`ai-panel ${open ? 'open' : ''}`} role="dialog" aria-label="Assistente Amimì" aria-hidden={!open}>
+      <div className={`ai-panel scr-ai ${open ? 'open' : ''}`} role="dialog" aria-label="Assistente Amimì" aria-hidden={!open}>
         <div className="ai-grip" />
         <div className="ai-head">
           <div className="ai-mark"><Spark s={19} /></div>
@@ -270,7 +274,7 @@ export default function AssistantPanel({ pin, chi, nascondiFab = false }: { pin:
             <span className="ai-chip"><span className="ai-dot" />dati live · sola lettura</span>
           </div>
           <span style={{ flex: 1 }} />
-          <button className="ai-x" onClick={() => setOpen(false)} type="button" aria-label="Chiudi"><Icon name="close" size={16} /></button>
+          <button className="ai-x" onClick={() => setOpen(false)} type="button" aria-label="Chiudi"><Icon name="close" size={18} /></button>
         </div>
 
         <div className="ai-thread" ref={threadRef}>
@@ -301,12 +305,12 @@ export default function AssistantPanel({ pin, chi, nascondiFab = false }: { pin:
           <input className="ai-field" placeholder="Chiedi qualcosa sui tuoi dati…" value={q}
             onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && ask()} />
           <button className="ai-send" onClick={() => ask()} type="button" disabled={busy} aria-label="Invia">
-            <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
         </div>
         <div className="ai-foot">Legge i tuoi dati in tempo reale · non modifica nulla</div>
       </div>
-      {printTurn && createPortal(<div className="ai-print-portal"><PrintReport turn={printTurn} /></div>, document.body)}
+      {printTurn && createPortal(<div className="ai-print-portal scr-ai"><PrintReport turn={printTurn} /></div>, document.body)}
     </>
   );
 }
