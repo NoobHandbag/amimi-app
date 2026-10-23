@@ -1,0 +1,104 @@
+/* ============================================================================
+   Ads (tema A, PR 21, 23-10-2026): regole della sola schermata, tutte sotto .scr-ads (pages/Ads.tsx).
+   Vengono gia' da shell.css: il KPI scuro largo quanto la griglia (e l'ultimo dei tre sotto sulla riga intera),
+   "Pull ora" come azione tonda con .busy e la riga di stato (Cornice 3), le intestazioni delle tabelle (Cornice 2).
+   Separatori come bordi e non come ombre: in stampa index.css toglie ogni box-shadow.
+   ============================================================================ */
+
+/* ---- riga dei dati sotto la barra: fonte, data, frequenza; i dati vecchi in una pillola rossa ---- */
+.scr-ads .ads-dati { margin-top: 0; }
+.scr-ads .ads-dati .ds-pill { margin-left: 2px; padding: 2px 9px; font-size: 11.5px; }
+
+/* ---- azioni proposte: card normale, il numero in una pillola arancio accanto al titolo; un'azione per riga ---- */
+.scr-ads .ads-azioni h2 { display: flex; align-items: center; gap: 8px; }
+.scr-ads .ads-azioni h2 .ds-pill { padding: 2px 9px; }
+.scr-ads .ads-azioni > .note { margin: 0; }
+.scr-ads .ads-azione { padding: 11px 0; font-size: 14px; line-height: 1.4; }
+.scr-ads .ads-azioni > h2 + .ads-azione { padding-top: 0; }
+.scr-ads .ads-azione:last-child { padding-bottom: 0; }
+.scr-ads .ads-azione + .ads-azione { border-top: 1px solid var(--border); }
+.scr-ads .ads-azione .rs { margin: 1px 0 4px; }
+
+/* ---- CPA 7g, la card scura: l'esito sulle due soglie (cpaTone) e' una pillola piena col testo bianco, come l'esito della
+   Home: bianco sul verde 5,8:1, sull'arancio 5,3:1, sul rosso 5,7:1; i tre fondi reggono 3,4-3,7:1 sul nero ---- */
+.scr-ads .ds-kpi.hero .ds-pill { margin-top: 12px; padding: 4px 11px; font-size: 12.5px; color: var(--surface); }
+.scr-ads .ds-kpi.hero .ds-pill.pos { background: var(--positive); }
+.scr-ads .ds-kpi.hero .ds-pill.warn { background: var(--warning); }
+.scr-ads .ds-kpi.hero .ds-pill.neg { background: var(--negative); }
+
+/* ---- intestazioni (Architettura, campagna): erano style scritti nel TSX ---- */
+.scr-ads .ads-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.scr-ads .ads-head.ads-sec { justify-content: space-between; align-items: center; }
+.scr-ads .ads-head h2 { margin: 0; }
+.scr-ads .ads-sub { margin-top: 4px; }
+.scr-ads .ads-spesa { font-size: 12.5px; }
+
+/* ---- campagne e ad: niente piu' scatole dentro scatole. La campagna e' un titolo, l'ad set un'etichetta in minuscolo,
+   gli ad righe col filo fra l'una e l'altra ---- */
+.scr-ads .camp { border: 0; border-radius: 0; padding: 0; margin: 26px 0 0; background: none; }
+.scr-ads .camp h3 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.015em; }
+.scr-ads .camp .adset { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 600; color: var(--ink-muted); margin: 14px 0 0; }
+/* ad: foto e nome sulla prima riga, metriche e modelli sotto, larghi quanto la card (adbody non fa scatola) */
+.scr-ads .adcard { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 0 12px; border: 0; border-radius: 0;
+  background: none; margin: 0; padding: 12px 0; }
+.scr-ads .adcard + .adcard { border-top: 1px solid var(--border); }
+.scr-ads .adbody { display: contents; }
+.scr-ads .adbody > :not(.top) { grid-column: 1 / -1; }
+.scr-ads .adthumb { width: 64px; height: 64px; border-radius: 14px; }
+/* la foto e' un blocco: senza lo spazio della riga sotto, "Video" sta davvero 5 px dentro la foto */
+.scr-ads img.adthumb { display: block; }
+.scr-ads .adthumb.ph { padding: 4px; background: var(--thumb-bg); color: var(--ink-muted); font-size: 11px; font-weight: 500; }
+.scr-ads .adthumbwrap .vtag { left: 5px; bottom: 5px; padding: 2px 7px; border-radius: 999px; background: var(--ink); color: var(--surface); font-size: 10.5px; font-weight: 600; }
+.scr-ads .adbody .top { align-items: center; gap: 6px; }
+.scr-ads .adbody .nm { flex: 1 0 100%; font-size: 15px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3; }
+/* stati (attivo, in pausa, fatica) a pillola come .ds-pill; colori di index.css e shell.css */
+.scr-ads .adbody :is(.tag, .pill) { border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; }
+/* ad in pausa ("mostra in pausa"): la card resta a opacita' .62 (index.css), le sue scritte grigie vanno in inchiostro
+   (5,3-5,5:1; in grigio scenderebbero a 2,5-2,6:1), come la % dei mesi esclusi nel Cruscotto */
+.scr-ads .adcard.paused :is(.ads-m > span, .tag.off, .adthumb.ph) { color: var(--ink); }
+
+/* ---- metriche dell'ad: tre colonne, il valore sopra e la sua etichetta sotto, allineati da un ad all'altro ---- */
+.scr-ads .admetrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; margin-top: 12px; }
+.scr-ads .ads-m b { display: block; font-size: 15px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* da tablet in su le cinque metriche stanno su una riga, non allargate su tutta la card */
+@media (min-width: 600px) {
+  .scr-ads .admetrics { grid-template-columns: repeat(5, minmax(0, 1fr)); max-width: 640px; }
+}
+.scr-ads .ads-m b :is(.arr-up, .arr-dn) { font-size: 11px; }
+.scr-ads .ads-m > span { display: block; font-size: 12px; line-height: 1.3; color: var(--ink-muted); }
+.scr-ads .admod { margin-top: 10px; font-size: 13px; line-height: 1.45; color: var(--ink); }
+.scr-ads .admod .lo { font-weight: 600; }
+/* un modello col suo conteggio ("Lea Mini 1/3") non va a capo a meta' */
+.scr-ads .admod > span > span { white-space: nowrap; }
+.scr-ads .adact { margin-top: 8px; font-size: 13px; line-height: 1.4; }
+
+/* ---- modelli in advertising: una riga per modello (era una tabella a sei colonne che a 390 px scorreva). Stesse righe,
+   stesso ordine; a destra le borse live in catalogo, rosse fino a 2 ---- */
+.scr-ads .ads-modelli .row { gap: 12px; padding: 11px 0; }
+.scr-ads .ads-mi { min-width: 0; }
+.scr-ads .ads-modelli .rt { font-size: 15px; font-weight: 500; letter-spacing: -.01em; }
+.scr-ads .ads-live { display: grid; justify-items: end; flex: none; font-size: 20px; font-weight: 600; letter-spacing: -.02em; line-height: 1.1;
+  font-variant-numeric: tabular-nums; }
+.scr-ads .ads-live small { font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--ink-muted); }
+
+/* ---- settimane: resta una tabella (serie nel tempo); la settimana in corso in bordeaux, il colore del "corrente".
+   "(in corso)" va sotto la data e la tabella arriva ai bordi del testo della card: cosi' sta intera da 375 px in su
+   (prima a 390 scorreva di 52 px dentro la card e "Δ spesa" restava fuori) ---- */
+.scr-ads .ads-sett :is(th, td) { padding-left: 5px; padding-right: 5px; }
+.scr-ads .ads-sett :is(th, td):first-child { padding-left: 0; }
+.scr-ads .ads-sett :is(th, td):last-child { padding-right: 0; }
+.scr-ads tr.cur td.l { color: var(--interactive); font-weight: 600; }
+.scr-ads tr.cur td.l .muted { display: block; color: inherit; font-size: 11.5px; font-weight: 500; }
+
+/* ---- stampa (Ctrl+P, la schermata non ha il bottone PDF): "Video" resta bianco sul nero (la card scura e la sua
+   pillola li tiene gia' shell.css); "mostra in pausa" e' un comando e non si stampa.
+   Architettura e' piu' lunga di un foglio: index.css la teneva intera e saltava al foglio dopo, lasciando il primo
+   mezzo vuoto. Ora scorre; un ad non si spezza, titolo e nota di Architettura, campagna e ad set restano col primo ad
+   (la nota intera: se no Chromium la spezza fra le righe e ne lascia l'ultima col primo ad) ---- */
+@media print {
+  .scr-ads .adthumbwrap .vtag { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .scr-ads .ads-sec .chip { display: none; }
+  .scr-ads .card:has(> .camp) { break-inside: auto; }
+  .scr-ads :is(.adcard, .ads-azione, .ads-sub) { break-inside: avoid; }
+  .scr-ads :is(.ads-sec, .ads-sub, .camp > .ads-head, .adset) { break-after: avoid; }
+}
