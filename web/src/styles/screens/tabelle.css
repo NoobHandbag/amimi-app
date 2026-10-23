@@ -1,0 +1,42 @@
+/* ============================================================================
+   Tabelle (tema A, PR 16, 23-10-2026): l'indice e la tabella aperta di pages/Tables.tsx, dentro la radice di Registra
+   (.scr-registra, pages/Ingest.tsx). Ogni regola sta sotto .scr-registra e la classe della vista: .tab-idx (indice),
+   .tab-view (tabella aperta). Righe, colonne, valori, ordine, conteggi e "Carica altre 100" invariati: cambia l'aspetto.
+   Vengono gia' da shell.css: .ds-group (separatori, tocco, anello dentro, filo in stampa) e .addnew pillola senza bordo;
+   da components.css la ricerca a 16 px con l'anello e .ds-count.
+   ============================================================================ */
+
+/* ---- indice: un solo .ds-group al posto delle tessere bordeaux; icona neutra, nome e descrizione, righe a destra.
+   Il separatore parte dal testo: 16 di margine, 36 dell'icona, 12 di spazio ---- */
+.scr-registra .tab-idx .tipi { display: block; --sep-inset: 64px; }
+.scr-registra .tab-idx .tipo { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; grid-template-areas: 'ic tt tv' 'ic td tv';
+  column-gap: 12px; row-gap: 1px; align-items: center; width: 100%; padding: 12px 16px; font-family: inherit; color: var(--ink); }
+.scr-registra .tab-idx .ti { grid-area: ic; width: 36px; height: 36px; margin: 0; border-radius: 10px; background: var(--surface-alt); color: var(--ink); }
+.scr-registra .tab-idx .tt { grid-area: tt; font-size: 15px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3; }
+.scr-registra .tab-idx .td { grid-area: td; font-size: 12.5px; line-height: 1.35; color: var(--ink-muted); }
+/* il numero in alto, "righe" sotto in grigio, come "disponibili" nel Riordino */
+.scr-registra .tab-idx .tv { grid-area: tv; text-align: right; font-size: 12px; line-height: 1.3; color: var(--ink-muted); white-space: nowrap; }
+.scr-registra .tab-idx .tv b { display: block; font-size: 15px; font-weight: 600; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* ---- tabella aperta: riquadro bianco senza bordo ne' ombra, righe divise da un filo invece che a strisce.
+   Le celle hanno classi loro (.c-num, .c-txt): .num e .txt sono i campi dei moduli (index.css) e davano a ogni cella
+   bordo, angoli tondi e i numeri a 24 px in grassetto. Il riquadro scorre ancora dentro di se' (72vh, components.css) ---- */
+.scr-registra .tab-view .ds-dtwrap { border: 0; border-radius: 20px; box-shadow: none; }
+/* intestazioni come le altre tabelle (minuscolo, 12 px, grigie) ma sul bianco, perche' restano ferme sopra le righe;
+   il bordeaux resta solo sulla freccia dell'ordinamento */
+.scr-registra .tab-view .ds-dt th { background: var(--surface); text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 500; color: var(--ink-muted); }
+.scr-registra .tab-view .ds-dt th:hover { color: var(--ink); }
+/* il filo della colonna ferma parte dall'intestazione, come nelle righe (components.css lo da' solo alle td) */
+.scr-registra .tab-view .ds-dt th:first-child { box-shadow: 1px 0 0 var(--border); }
+.scr-registra .tab-view .ds-dt tbody tr:nth-child(even) td { background: var(--surface); }
+.scr-registra .tab-view .ds-dt tbody tr:last-child td { border-bottom: 0; }
+/* agli angoli tondi la prima e l'ultima colonna stanno a 16 px dal bordo, come il testo delle card */
+.scr-registra .tab-view .ds-dt :is(th, td):first-child { padding-left: 16px; }
+.scr-registra .tab-view .ds-dt :is(th, td):last-child { padding-right: 16px; }
+
+/* ---- colonne vuote nascoste: "mostra tutte" e' un link d'azione in bordeaux; il tocco arriva a 44 px ---- */
+.scr-registra .tab-view .ds-dt-hidden { margin: 14px 2px 0; font-size: 12.5px; }
+.scr-registra .tab-view .ds-dt-hidden button { position: relative; color: var(--interactive); font-size: inherit; font-weight: 600; }
+.scr-registra .tab-view .ds-dt-hidden button::after { content: ''; position: absolute; inset: -14px -8px; }
+/* "Carica altre 100": la pillola bianca della cornice, col padding di "Vedi tutti" (45 px) */
+.scr-registra .tab-view .addnew { padding: 14px; margin-top: 16px; }
