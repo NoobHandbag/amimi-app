@@ -120,11 +120,21 @@ console.log('\n== Migrazione 0171 (viste e RPC della tab) ==');
   t('14g viste revocate ad anon e authenticated, solo ask_ro in lettura (D7)', /revoke all on v_beh_ordini_daily, v_beh_attribuzione_mensile, v_beh_ads_funnel_daily from public, anon, authenticated;/.test(M171)
     && /grant select on v_beh_ordini_daily, v_beh_attribuzione_mensile, v_beh_ads_funnel_daily to ask_ro;/.test(M171) && !/grant [^;]* to (anon|authenticated|public)[^;]*v_beh_/.test(noSql(M171)));
   t('14h RPC: security definer, cancello email_del_team con 42501 prima di ogni lettura, off a flag spento', /language plpgsql stable security definer set search_path to 'public'/.test(M171)
-    && M171.indexOf("if not public.email_del_team(v_email) then") > 0 && M171.indexOf("using errcode = '42501'") < M171.indexOf('select max(date) into v_meta_max')
+    && M171.indexOf("if not public.email_del_team(v_email) then") > 0 && M171.indexOf("using errcode = '42501'") < M171.indexOf('into v_run_day')
+    && M171.indexOf('into v_run_day') < M171.indexOf('into v_meta_min, v_meta_max')
     && /return jsonb_build_object\('state', 'off'\);/.test(M171));
   t('14i RPC eseguibile solo da authenticated, mai da anon', /revoke all on function public\.beh_dashboard\(integer\) from public, anon;\ngrant execute on function public\.beh_dashboard\(integer\) to authenticated;/.test(M171));
   t('14j passi letti come la edge e la 0169', /array_agg\(lower\(btrim\(x, E' \\t\\r\\n'\)\)\) filter \(where btrim\(x, E' \\t\\r\\n'\) <> ''\)/.test(M171));
-  t('14k periodo limitato (1-365 giorni) e CPA sui soli giorni coperti dalla spesa', /least\(greatest\(coalesce\(p_days, 30\), 1\), 365\)/.test(M171) && (M171.match(/least\(v_today, coalesce\(v_meta_max, v_from - 1\)\)/g) ?? []).length === 2);
+  t('14k periodo limitato (1-365 giorni)', /least\(greatest\(coalesce\(p_days, 30\), 1\), 365\)/.test(M171));
+  // Gate 2 del passo 3 (25-10): B1 periodo con oggi vuoto, A1 confronti su periodi che cominciano prima dei dati
+  t('14l il periodo finisce all\'ultimo giorno completo (mai oggi, ieri solo dopo il giro ordini) e nessun filtro usa >= v_from senza fine',
+    /v_end   := least\(v_today - 1, coalesce\(v_run_day, v_today\) - 1\);/.test(M171) && /r\.window_to > \(r\.ended_at at time zone 'Europe\/Rome'\)::date;/.test(M171)
+    && !/>= v_from\b/.test(M171) && /generate_series\(v_from, v_end, interval '1 day'\)/.test(M171));
+  t('14m spesa e CPA sui soli giorni coperti, confronto sulla stessa lunghezza', /v_mend  := least\(v_end, v_meta_max\);/.test(M171) && /v_mlen  := greatest\(coalesce\(v_mend - v_from \+ 1, 0\), 0\);/.test(M171)
+    && /where date between v_from - v_mlen and v_from - 1/.test(M171) && /o\.day between v_from - v_mlen and v_from - 1/.test(M171));
+  t('14n periodo prima che comincia prima dei dati = null (spesa, ordini, aperture)', /'prev_spesa_meta', case when v_mlen = 0 or v_meta_min is null or v_from - v_mlen < v_meta_min then null/.test(M171)
+    && (M171.match(/case when v_ord_min is null or v_pfrom < v_ord_min then null/g) ?? []).length === 3 && /'prev_aperture', case when v_vis_min is null or v_pfrom < v_vis_min then null/.test(M171));
+  t('14o salute: ultimo giro del CRON per passo (un backfill non dice se il cron gira)', /where status <> 'running' and action = 'run' order by step, started_at desc/.test(M171));
 }
 
 console.log('\n== Test vivo tests/beh_rls.sql ==');

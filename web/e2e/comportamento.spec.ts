@@ -14,9 +14,9 @@ const SESSIONE = JSON.stringify({
 
 /** Risposta della RPC come la costruisce la 0171 (chiavi e tipi veri, numeri inventati). tracciati/pronti cambia la card scura. */
 function dash(days: number, tracciati = 87, pronti = 120) {
-  const giorni = Array.from({ length: days }, (_, i) => ({ day: new Date(Date.UTC(2026, 9, 25) - (days - 1 - i) * 86400000).toISOString().slice(0, 10), online: 4, tracciati: 3 }));
+  const giorni = Array.from({ length: days }, (_, i) => ({ day: new Date(Date.UTC(2026, 9, 24) - (days - 1 - i) * 86400000).toISOString().slice(0, 10), online: 4, tracciati: 3 }));
   return {
-    state: 'on', generated_at: '2026-10-25T22:00:00Z', days, from: giorni[0].day, to: '2026-10-25', prev_from: '2026-08-27', prev_to: '2026-09-25', steps: ['ordini', 'meta'],
+    state: 'on', generated_at: '2026-10-25T22:00:00Z', days, from: giorni[0].day, to: '2026-10-24', oggi: '2026-10-25', prev_from: '2026-08-26', prev_to: '2026-09-24', steps: ['ordini', 'meta'],
     ordini: {
       fonte: 'Shopify, origine degli ordini (beh_order_origin)', dati_al: '2026-10-25T21:00:00Z', online: pronti + 2, online_pronti: pronti, online_tracciati: tracciati,
       in_attribuzione: 2, prev_online_pronti: 100, prev_online_tracciati: 70, tutti: 130, prev_tutti: 110, lordo: 21500.5,
@@ -25,14 +25,14 @@ function dash(days: number, tracciati = 87, pronti = 120) {
     fonti: {
       fonte: 'Shopify, Meta', ultima_visita: { direct: 40, search: 20, social: 15, paid_social: 8, email: 2, referral: 1, unknown: 1, none: 33 },
       prima_visita: { direct: 30, search: 30, social: 14, paid_social: 10, email: 1, none: 35 }, meta_dati_al: '2026-10-24',
-      spesa_meta: 1234.56, ordini_cpa: 125, prev_spesa_meta: 1000, prev_ordini_cpa: 100,
+      giorni_spesa: days, spesa_meta: 1234.56, ordini_cpa: 125, prev_spesa_meta: 1000 as number | null, prev_ordini_cpa: 100 as number | null,
       ads: { link_clicks: 4613, outbound_clicks: 2940, landing_page_views: 2180, dati_al: '2026-10-24' },
     },
     clienti: {
       fonte: 'Supabase', clienti: 888, con_2_ordini: 61, riacquisto_90: { ricomprato: 12, clienti: 500 },
       coorti: [{ coorte: '2026-05-01', maturita_giorni: 150, clienti: 80, ricomprato_90gg: 3 }, { coorte: '2026-09-01', maturita_giorni: 40, clienti: 120, ricomprato_90gg: 4 }],
     },
-    premia: { fonte: 'Area Membri', aperture: 35, premio_pronto: 12, tap_riscatta: 6, riscatti: 4, ordini_amica12: 2, prev_aperture: 30 },
+    premia: { fonte: 'Area Membri', aperture: 35, premio_pronto: 12, tap_riscatta: 6, riscatti: 4, ordini_amica12: 2, prev_aperture: 30 as number | null },
     salute: {
       giri: [{ step: 'meta', status: 'ok', ended_at: '2026-10-25T06:13:20Z', rows_written: 33, window_to: '2026-10-25' }, { step: 'ordini', status: 'ok', ended_at: '2026-10-25T06:19:30Z', rows_written: 21, window_to: '2026-10-26' }],
       health: [{ k: 'beh_fresh', label: 'passi accesi: ordini, meta, giri recenti', severity: 'ok', day: '2026-10-25' },
@@ -115,7 +115,9 @@ test('flag acceso con sessione: card scura, sorgenti, ads, clienti, Area Membri 
   const r = await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale' });
   await expect(cardScura(page)).toHaveText('72,5%');
   await expect(page.getByText('87 su 120, piu\' 2 ancora in attribuzione', { exact: false })).toBeVisible();
-  await expect(page.getByText('Nessuna visita registrata (cookie non accettati)')).toBeVisible();
+  await expect(page.getByText('Nessuna visita registrata (di solito cookie non accettati)')).toBeVisible();
+  await expect(page.getByText('il periodo finisce all\'ultimo giorno completo, mai oggi', { exact: false })).toBeVisible();
+  await expect(page.locator('.kpi', { hasText: 'Spesa Meta' }).locator('.ds-delta')).toHaveText('+23%');
   await expect(page.getByText('Uscite verso il sito')).toBeVisible();
   // it-IT non raggruppa le 4 cifre (minimumGroupingDigits 2): 2940, come in Premia
   await expect(page.locator('.cmp-flab', { hasText: 'Uscite verso il sito' })).toContainText('2940 · 63,7%');
@@ -151,6 +153,28 @@ test('zero ordini nel periodo: niente divisioni per zero a schermo', async ({ pa
   await expect(cardScura(page)).toHaveText('n.d.');
   const testo = await page.locator('.scr-comportamento').innerText();
   expect(testo).not.toMatch(/NaN|undefined|Infinity/);
+});
+
+test('periodo prima che comincia prima dei dati (prev null): "n.d." al posto delle frecce, mai una percentuale inventata', async ({ page }) => {
+  const senzaPrima = () => {
+    const x = dash(90); x.fonti.prev_spesa_meta = null; x.fonti.prev_ordini_cpa = null; x.premia.prev_aperture = null;
+    (x.ordini as Record<string, unknown>).prev_tutti = null; (x.ordini as Record<string, unknown>).prev_online_pronti = null; (x.ordini as Record<string, unknown>).prev_online_tracciati = null;
+    return x;
+  };
+  const r = await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: senzaPrima() }) });
+  await expect(cardScura(page)).toHaveText('72,5%');
+  await expect(page.locator('.scr-comportamento .ds-kpi.hero .s')).toContainText('Periodo prima n.d.');
+  // la tessera per etichetta esatta: hasText non distingue le maiuscole e "Lordo degli ordini, tutti i canali" la contiene
+  const tessKpi = (k: string) => page.locator('.kpi').filter({ has: page.locator('.k', { hasText: new RegExp(`^${k.replace(/[()]/g, '\\$&')}$`) }) });
+  for (const k of ['Ordini, tutti i canali', 'Spesa Meta', 'Costo per ordine (blended)']) {
+    await expect(tessKpi(k)).toHaveCount(1);
+    await expect(tessKpi(k).locator('.ds-delta')).toHaveCount(0);
+    await expect(tessKpi(k)).toContainText('n.d.');
+  }
+  await expect(page.locator('p.note', { hasText: 'Aperture rispetto al periodo prima' })).toContainText('n.d.');
+  const testo = await page.locator('.scr-comportamento').innerText();
+  expect(testo).not.toMatch(/NaN|undefined|Infinity|null/);
+  expect(r.errori).toEqual([]);
 });
 
 test('RPC che rifiuta (42501) o che risponde off: messaggio chiaro, nessun numero', async ({ page }) => {

@@ -26,6 +26,8 @@ declare
   v_val text;
   v_sev text;
   v_dash jsonb;
+  v_giorno date;
+  v_num numeric;
   v_oggi date := (now() at time zone 'Europe/Rome')::date;
   vietate constant text[] := array[
     'select count(*) from public.beh_order_origin',
@@ -169,9 +171,9 @@ begin
     raise exception 'KO H6: 47 tracciati su 79 ordini non da'' ok con ''pochi ordini''';
   end if;
 
-  -- S (dal catalogo: il ruolo della edge non si assume da qui)
-  -- D (migr 0171): viste solo per ask_ro; la RPC beh_dashboard risponde al team, rifiuta gli altri (42501), a flag spento
-  -- dice 'off' e coi dati sintetici di H6 conta gli stessi ordini della tabella
+  -- D (migr 0171): viste solo per ask_ro (che legge davvero la spesa attraverso la vista); la RPC beh_dashboard risponde
+  -- al team, rifiuta gli altri (42501), a flag spento dice 'off'; coi dati sintetici di H6 conta gli stessi ordini della
+  -- tabella nelle date che dichiara, non arriva mai a oggi, e un confronto su un periodo che comincia prima dei dati e' null
   if to_regprocedure('public.beh_dashboard(integer)') is null then raise exception 'KO: migr 0171 non applicata'; end if;
   foreach v_val in array array['v_beh_ordini_daily', 'v_beh_attribuzione_mensile', 'v_beh_ads_funnel_daily'] loop
     if has_table_privilege('anon', 'public.' || v_val, 'select') or has_table_privilege('authenticated', 'public.' || v_val, 'select') then
@@ -180,8 +182,13 @@ begin
     if not has_table_privilege('ask_ro', 'public.' || v_val, 'select') then raise exception 'KO D: ask_ro non legge %', v_val; end if;
   end loop;
   if has_function_privilege('anon', 'public.beh_dashboard(integer)', 'execute') then raise exception 'KO D: anon esegue beh_dashboard'; end if;
-  select count(*) into v_n from beh_order_origin o
-   where o.canale = 'online_store' and not o.is_test and not o.is_cancelled and o.day >= v_oggi - 29;
+  select max(date) into v_giorno from meta_ads_creative_daily where spend > 0;
+  if v_giorno is not null then
+    perform set_config('role', 'ask_ro', true);
+    select spend into v_num from v_beh_ads_funnel_daily where date = v_giorno;
+    reset role;
+    if coalesce(v_num, 0) <= 0 then raise exception 'KO D: ask_ro legge spesa % il % da v_beh_ads_funnel_daily (attesa > 0: RLS di meta_ads_creative_daily?)', v_num, v_giorno; end if;
+  end if;
   update app_flags set value = 'false' where key = 'beh_enabled';
   perform set_config('role', 'authenticated', true);
   perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
@@ -191,16 +198,33 @@ begin
   update app_flags set value = 'true' where key = 'beh_enabled';
   perform set_config('role', 'authenticated', true);
   v_dash := public.beh_dashboard(30);
-  if v_dash ->> 'state' is distinct from 'on' or (v_dash -> 'ordini' ->> 'online')::int is distinct from v_n
+  reset role;
+  select count(*) into v_n from beh_order_origin o
+   where o.canale = 'online_store' and not o.is_test and not o.is_cancelled and o.day between (v_dash ->> 'from')::date and (v_dash ->> 'to')::date;
+  if v_dash ->> 'state' is distinct from 'on' or (v_dash -> 'ordini' ->> 'online')::int is distinct from v_n or v_n = 0
      or not (v_dash ? 'fonti' and v_dash ? 'clienti' and v_dash ? 'premia' and v_dash ? 'salute') then
     raise exception 'KO D: RPC a flag acceso: stato %, ordini online % contro % in tabella', v_dash ->> 'state', v_dash -> 'ordini' ->> 'online', v_n;
   end if;
+  if (v_dash ->> 'to')::date >= v_oggi then raise exception 'KO D: il periodo arriva a % (oggi %): oggi non e'' mai completo', v_dash ->> 'to', v_oggi; end if;
+  perform set_config('role', 'authenticated', true);
+  v_dash := public.beh_dashboard(90);
+  reset role;
+  if (v_dash -> 'fonti' ->> 'giorni_spesa')::int > 0
+     and ((v_dash ->> 'from')::date - (v_dash -> 'fonti' ->> 'giorni_spesa')::int) < (select min(date) from meta_ads_creative_daily)
+     and jsonb_typeof(v_dash -> 'fonti' -> 'prev_spesa_meta') is distinct from 'null' then
+    raise exception 'KO D: 90 giorni, periodo prima della spesa dal % ma prev_spesa_meta = %', (v_dash ->> 'from')::date - (v_dash -> 'fonti' ->> 'giorni_spesa')::int, v_dash -> 'fonti' -> 'prev_spesa_meta';
+  end if;
+  if (v_dash ->> 'prev_from')::date < (select min(day) from loyalty_visits) and jsonb_typeof(v_dash -> 'premia' -> 'prev_aperture') is distinct from 'null' then
+    raise exception 'KO D: 90 giorni, aperture contate dal % ma prev_aperture = %', (select min(day) from loyalty_visits), v_dash -> 'premia' -> 'prev_aperture';
+  end if;
+  perform set_config('role', 'authenticated', true);
   perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'estraneo@gmail.com')::text, true);
   st := 'ok';
   begin perform public.beh_dashboard(30); exception when others then st := sqlstate; end;
   if st <> '42501' then raise exception 'KO D: un account fuori dal team ha letto beh_dashboard (%)', st; end if;
   reset role;
 
+  -- S (dal catalogo: il ruolo della edge non si assume da qui)
   if not (has_table_privilege('service_role', 'public.beh_order_origin', 'select') and has_table_privilege('service_role', 'public.beh_order_origin', 'insert')
           and has_table_privilege('service_role', 'public.beh_order_origin', 'update') and has_table_privilege('service_role', 'public.beh_sync_runs', 'insert')
           and has_table_privilege('service_role', 'public.beh_sync_runs', 'update')

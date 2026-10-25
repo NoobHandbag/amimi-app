@@ -14,8 +14,8 @@ import '../styles/screens/comportamento.css';
 const num = (n: number) => new Intl.NumberFormat('it-IT').format(n || 0);
 const eur0 = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
 const eur2 = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
-const quota = (a: number, b: number) => (b ? (a / b) * 100 : null);
-const pct1 = (a: number, b: number) => { const q = quota(a, b); return q === null ? 'n.d.' : q.toLocaleString('it-IT', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'; };
+const quota = (a: number | null, b: number | null) => (a != null && b ? (a / b) * 100 : null);
+const pct1 = (a: number | null, b: number | null) => { const q = quota(a, b); return q === null ? 'n.d.' : q.toLocaleString('it-IT', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'; };
 const fmtDay = (d: string | null) => (d ? new Date(String(d).slice(0, 10) + 'T00:00:00').toLocaleDateString('it-IT', { day: '2-digit', month: 'short' }) : 'n.d.');
 const fmtOra = (iso: string | null) => (iso ? new Date(iso).toLocaleString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'mai');
 const SEV_CLS: Record<string, string> = { error: 'neg', warn: 'warn', ok: 'pos' };
@@ -31,9 +31,10 @@ const SORGENTE: [string, string][] = [
   ['paid_search', 'Ricerca a pagamento'],
   ['referral', 'Altri siti'],
   ['unknown', 'Sorgente non riconosciuta'],
-  ['none', 'Nessuna visita registrata (cookie non accettati)'],
+  ['none', 'Nessuna visita registrata (di solito cookie non accettati)'],
 ];
 const CANALE: Record<string, string> = { online_store: 'Sito', bozza: 'Ordini a mano', facebook_instagram: 'Checkout in Instagram e Facebook', shop: 'App Shop', sconosciuto: 'Canale sconosciuto' };
+const canaleNome = (k: string) => CANALE[k] ?? (k.startsWith('app:') ? `Altra app (${k.slice(4)})` : k);
 const PASSO: Record<string, string> = { ordini: 'Ordini (Shopify)', meta: 'Ads Meta (click e pagine caricate)' };
 const NOME: Record<string, string> = {
   beh_fresh: 'Giri del modulo', beh_tracciamento_guasto: 'Tracciamento delle visite (48 ore)', beh_quota_tracciata: 'Quota tracciata (28 giorni)',
@@ -47,12 +48,13 @@ const HINT: Record<string, string> = {
   beh_meta: 'L\'ultimo giro Meta non e\' andato: il messaggio dice perche\'. Il giro di domani rilegge comunque 7 giorni.',
 };
 
-// frecce sul periodo prima: copiate da Salute (deltaPct e Delta), senza toccare Salute
-function deltaPct(cur: number, prev: number): number | null {
-  if (!prev) return null;
+// frecce sul periodo prima: copiate da Salute (deltaPct e Delta), senza toccare Salute. Qui un valore puo' mancare
+// (null): periodo prima che comincia prima dei dati, o un costo per ordine senza ordini. Allora "n.d.", mai una freccia.
+function deltaPct(cur: number | null, prev: number | null): number | null {
+  if (cur == null || !prev) return null;
   return (cur - prev) / prev;
 }
-function Delta({ cur, prev, goodUp = true }: { cur: number; prev: number; goodUp?: boolean }) {
+function Delta({ cur, prev, goodUp = true }: { cur: number | null; prev: number | null; goodUp?: boolean }) {
   const d = deltaPct(cur, prev);
   if (d == null) return <span className="muted">n.d.</span>;
   const up = d >= 0;
@@ -81,7 +83,7 @@ function Barre({ rows }: { rows: BehOn['ordini']['giorni'] }) {
         })}
       </svg>
       <div className="cmp-axis"><span>{fmtDay(rows[0].day)}</span><span>max {num(max)} ordini al giorno</span><span>{fmtDay(rows[rows.length - 1].day)}</span></div>
-      <p className="note" style={{ marginTop: 4 }}>{'Barra grigia = ordini del sito di quel giorno; parte bordeaux = quelli con visite registrate.'}</p>
+      <p className="note" style={{ marginTop: 4 }}>{'Barra grigia = ordini del sito di quel giorno con attribuzione finita; parte bordeaux = quelli con visite registrate.'}</p>
     </div>
   );
 }
@@ -125,11 +127,14 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
   const visite = src === 'ultima' ? f.ultima_visita : f.prima_visita;
   const sorgenti: [string, number][] = SORGENTE.filter(([k]) => (visite[k] ?? 0) > 0).map(([k, label]) => [label, visite[k]]);
   for (const [k, n] of Object.entries(visite)) if (!SORGENTE.some(([s]) => s === k) && n > 0) sorgenti.push([k || 'Sorgente vuota', n]);
-  const cpa = f.ordini_cpa ? f.spesa_meta / f.ordini_cpa : 0, cpaPrev = f.prev_ordini_cpa ? f.prev_spesa_meta / f.prev_ordini_cpa : 0;
+  // costo per ordine: null senza ordini (o senza periodo prima confrontabile), cosi' niente "-100%" su un valore assente
+  const cpa = f.ordini_cpa ? f.spesa_meta / f.ordini_cpa : null;
+  const cpaPrev = f.prev_ordini_cpa && f.prev_spesa_meta != null ? f.prev_spesa_meta / f.prev_ordini_cpa : null;
   const metaAcceso = d.steps.includes('meta');
   const maturi = c.coorti.filter((x) => x.maturita_giorni >= 90);
   const health = [...d.salute.health].sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.k.localeCompare(b.k));
-  const worst = health.length ? health[0].severity : 'ok';
+  // il pallino del titolo guarda anche l'esito dell'ultimo giro del cron di ogni passo
+  const worst = [...health.map((h) => h.severity), ...d.salute.giri.map((g) => g.status)].sort((a, b) => sevRank(a) - sevRank(b))[0] ?? 'ok';
   const overallLabel = worst === 'error' ? 'Da sistemare' : worst === 'warn' ? 'Da tenere d’occhio' : 'Tutto in ordine';
   const rigaSalute = (h: BehHealth) => (
     <li key={h.k} className={'cmp-hrow sev-' + (SEV_CLS[h.severity] ?? 'nd')}>
@@ -147,7 +152,7 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
 
   return (
     <>
-      <p className="note" style={{ marginTop: 0 }}>{`Dal ${fmtDay(d.from)} al ${fmtDay(d.to)}, confronto coi ${d.days} giorni prima: numeri aggregati, nessun dato personale.`}</p>
+      <p className="note" style={{ marginTop: 0 }}>{`Dal ${fmtDay(d.from)} al ${fmtDay(d.to)}, confronto coi ${d.days} giorni prima: numeri aggregati, nessun dato personale. Le fonti si aggiornano una volta al giorno, quindi il periodo finisce all'ultimo giorno completo, mai oggi.`}</p>
 
       <section className="card">
         <h2>Ordini e tracciamento</h2>
@@ -159,10 +164,10 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
           </div>
           <Kpi v={num(o.tutti)} k="Ordini, tutti i canali" sub={<Delta cur={o.tutti} prev={o.prev_tutti} />} />
           <Kpi v={num(o.online)} k="Ordini dal sito" />
-          <Kpi v={eur0(o.lordo)} k="Lordo degli ordini" />
+          <Kpi v={eur0(o.lordo)} k="Lordo degli ordini, tutti i canali" />
         </div>
         <Barre rows={o.giorni} />
-        <div className="pillrow">{Object.entries(o.per_canale).sort((a, b) => b[1] - a[1]).map(([k, n]) => <span key={k} className="pill muted">{CANALE[k] ?? k}: {num(n)}</span>)}</div>
+        <div className="pillrow">{Object.entries(o.per_canale).sort((a, b) => b[1] - a[1]).map(([k, n]) => <span key={k} className="pill muted">{canaleNome(k)}: {num(n)}</span>)}</div>
         <p className="note">{'Le visite si vedono solo per chi accetta i cookie: un ordine senza visite registrate e\' di solito un ordine di chi non li ha accettati, non un ordine senza fonte. Gli ordini "in attribuzione" sono i piu\' recenti: Shopify finisce di attribuirli in qualche ora.'}</p>
         <p className="note">{`Fonte: ${o.fonte}, aggiornata ${fmtOra(o.dati_al)}.`}</p>
       </section>
@@ -181,9 +186,9 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
         <h3 className="cmp-h3">Ads Meta</h3>
         <div className="kpis">
           <Kpi v={eur2(f.spesa_meta)} k="Spesa Meta" sub={<Delta cur={f.spesa_meta} prev={f.prev_spesa_meta} goodUp={false} />} />
-          <Kpi v={f.ordini_cpa ? eur2(cpa) : 'n.d.'} k="Costo per ordine (blended)" sub={<Delta cur={cpa} prev={cpaPrev} goodUp={false} />} />
+          <Kpi v={cpa != null ? eur2(cpa) : 'n.d.'} k="Costo per ordine (blended)" sub={<Delta cur={cpa} prev={cpaPrev} goodUp={false} />} />
         </div>
-        <p className="note">{`Costo per ordine blended = spesa Meta divisa per tutti gli ordini dello stesso periodo (${num(f.ordini_cpa)}), non solo quelli venuti dalle ads. Spesa aggiornata al ${fmtDay(f.meta_dati_al)}.`}</p>
+        <p className="note">{`Costo per ordine blended = spesa Meta divisa per tutti gli ordini degli stessi giorni (${num(f.ordini_cpa)}), non solo quelli venuti dalle ads. Spesa e costo contano i ${num(f.giorni_spesa)} giorni del periodo gia' coperti dalla spesa (aggiornata al ${fmtDay(f.meta_dati_al)}), confrontati con lo stesso numero di giorni prima; n.d. quando quei giorni cominciano prima della spesa per annuncio, letta dal 20 giugno.`}</p>
         {metaAcceso && f.ads.dati_al ? (
           <>
             <Funnel steps={[
@@ -201,7 +206,7 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
         <div className="kpis cmp-list">
           <Kpi v={num(c.clienti)} k="Clienti con almeno un ordine" />
           <Kpi v={num(c.con_2_ordini)} k="Con 2 o piu' ordini" sub={pct1(c.con_2_ordini, c.clienti) + ' dei clienti'} />
-          <Kpi v={pct1(c.riacquisto_90.ricomprato, c.riacquisto_90.clienti)} k="Riacquisto entro 90 giorni" sub={`${num(c.riacquisto_90.ricomprato)} su ${num(c.riacquisto_90.clienti)} clienti con almeno 90 giorni di storia`} />
+          <Kpi v={pct1(c.riacquisto_90.ricomprato, c.riacquisto_90.clienti)} k="Riacquisto entro 90 giorni" sub={`${num(c.riacquisto_90.ricomprato)} su ${num(c.riacquisto_90.clienti)} clienti delle coorti con almeno 90 giorni dal primo del mese`} />
         </div>
         {c.coorti.length > 0 && (
           <table className="dtable" style={{ marginTop: 10 }}>
@@ -216,7 +221,7 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
             })}</tbody>
           </table>
         )}
-        <p className="note">{`Tutta la storia, non segue il periodo scelto. Il riacquisto conta solo le ${num(maturi.length)} coorti che hanno gia' 90 giorni: quelle in grigio sono ancora aperte.`}</p>
+        <p className="note">{`Tutta la storia, non segue il periodo scelto. Una coorte = i clienti col primo ordine nello stesso mese. Il riacquisto conta solo le ${num(maturi.length)} coorti che hanno gia' 90 giorni dal primo del mese: quelle in grigio sono ancora aperte.`}</p>
       </section>
 
       <section className="card">
@@ -228,13 +233,14 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
           ['Hanno riscattato', p.riscatti],
           ['Ordini pagati con AMICA12 (ordini)', p.ordini_amica12],
         ]} />
-        <p className="note">Aperture rispetto al periodo prima: <Delta cur={p.aperture} prev={p.prev_aperture} />. {'Stessi numeri della tab Premia: clienti distinti, tranne l\'ultimo passaggio che conta ordini.'}</p>
+        <p className="note">Aperture rispetto al periodo prima: <Delta cur={p.aperture} prev={p.prev_aperture} />. {'Stessi numeri della tab Premia: clienti distinti, tranne l\'ultimo passaggio che conta ordini. Il confronto e\' n.d. finche\' il periodo prima comincia prima del 21 settembre, quando le aperture hanno cominciato a essere contate.'}</p>
       </section>
 
       <section className="card">
         <h2>Salute delle fonti <span className={'ds-pill ' + (SEV_CLS[worst] ?? 'pos')}>{overallLabel}</span></h2>
         <ul className="cmp-hlist" role="list">{d.salute.giri.map(rigaGiro)}{health.map(rigaSalute)}</ul>
-        <p className="note">{`Passi accesi: ${d.steps.length ? d.steps.map((s) => PASSO[s] ?? s).join(', ') : 'nessuno'}. I giri partono ogni mattina poco dopo le 7 (le 8 con l'ora legale) e rileggono gli ultimi 7 giorni.`}</p>
+        {d.salute.giri.length === 0 && <p className="note">{'Nessun giro del cron ancora: il primo parte la mattina dopo l\'accensione del modulo.'}</p>}
+        <p className="note">{`Passi accesi: ${d.steps.length ? d.steps.map((s) => PASSO[s] ?? s).join(', ') : 'nessuno'}. I giri del cron partono ogni mattina poco dopo le 7 (le 8 con l'ora legale) e rileggono gli ultimi 7 giorni; qui si vede l'ultimo giro del cron di ogni passo, non i recuperi dello storico.`}</p>
       </section>
     </>
   );

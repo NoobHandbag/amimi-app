@@ -215,7 +215,7 @@ t('110 G2-5: ordini filtrati sugli stati pagati come v_loyalty_uplift', (M147.ma
 t('111 G2-7: capped sui soli eventi validi', /'capped', v_valid > v_room/.test(M147));
 t('112 G2-10: vista funnel in security_invoker, ask_ro a colonne senza discount_code', /v_loyalty_funnel_daily with \(security_invoker = on\)/.test(M147) && /grant select \(id, shopify_customer_id, reward_key, cost_points, status, created_at, fulfilled_at\) on loyalty_redemptions to ask_ro/.test(M147));
 t('113 G2-8/9: vista con soglia anche per card alte; tap Gioca solo se disponibile', /x\.intersectionRect\.height>=window\.innerHeight\*0\.4/.test(PAGE) && /S\.memory_disponibile\)\{ toast\('Torna domani per un nuovo gioco[^']*'\); return; \} track\('tap','gioco'\)/.test(PAGE));
-t('114 G2-4/11/12: percentuali del funnel solo fra popolazioni omogenee, risposta vecchia ignorata, tab fra quelle finance', /i > 0 && v <= steps\[i - 1\]\[1\]/.test(PREMIA) && /if \(vivo\) setD\(x\)/.test(PREMIA) && /'ads', 'premia'\]/.test(read('web/src/lib/people.tsx')));
+t('114 G2-4/11/12: percentuali del funnel solo fra popolazioni omogenee, risposta vecchia ignorata, tab fra quelle finance', /i > 0 && v <= steps\[i - 1\]\[1\]/.test(PREMIA) && /if \(vivo\) setD\(x\)/.test(PREMIA) && /export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>\(\[[^\]\n]*'premia'[^\]\n]*\]\)/.test(read('web/src/lib/people.tsx')));
 
 // ---- v14 (2026-10-11, call del 09-10): pagina a soli punti con percorso, QR eventi, codici, memory con foto (migr 0150) ----
 const M147raw = read('supabase/migrations/0147_loyalty_dashboard_gate2.sql');
