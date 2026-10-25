@@ -90,7 +90,8 @@ function summarize(r: Activity): string {
   }
 }
 
-const PERSONE = [['', 'Tutti'], ['Ale', 'Ale'], ['Bene', 'Benny'], ['Ginevra', 'Ginni']] as const;
+// la chiave e' il nome che avatar() mostra (25-10): con "Bene" e "Ginevra" i filtri Benny e Ginni non trovavano mai niente
+const PERSONE = [['', 'Tutti'], ['Ale', 'Ale'], ['Benny', 'Benny'], ['Ginni', 'Ginni']] as const;
 const TIPI = ['vendite', 'spese', 'magazzino', 'ordini'];
 
 type Digest = { text: string; at: string };
@@ -120,8 +121,7 @@ export default function ActivityFeed({ pin = 'x' }: { pin?: string }) {
   const shown = useMemo(() => rows.filter((r) => {
     if (tipo && tagOf(r) !== tipo) return false;
     if (!who) return true;
-    const a = avatar(r.chi);
-    return a.name.toLowerCase().startsWith(who.toLowerCase()) || (who === 'Ale' && a.name === 'Ale');
+    return avatar(r.chi).name === who;
   }), [rows, who, tipo]);
 
   if (!rows.length) return null;

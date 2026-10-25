@@ -1314,3 +1314,35 @@ test.describe('Feed attività: la data di consegna della verifica', () => {
     expect(r.posts).toEqual([]);
   });
 });
+
+// I filtri per persona del feed (25-10): fino a oggi "Benny" e "Ginni" non trovavano mai niente, perche' il filtro
+// confrontava "Bene" e "Ginevra" col nome mostrato. Il change_log scrive chi come Bene, Ginevra, Ale o Dan
+test.describe('Feed attività: i filtri per persona', () => {
+  test('Benny, Ginni e Ale mostrano solo le righe di quella persona; Tutti le mostra tutte', async ({ page }) => {
+    const dati = datiBase();
+    const ts = new Date().toISOString();
+    const r = await apri(page, '', dati, {
+      chi: 'Ale',
+      changeLog: [
+        { id: 911, tbl: 'counts', row_id: null, op: 'count_apply', chi: 'Bene', ts, after: { codice: 'LEA_BAG_COCCO_BLACK', contati: 4 } },
+        { id: 912, tbl: 'purchases', row_id: null, op: 'arrival', chi: 'Ginevra', ts, after: { codice: 'NINA_BAG_STRIPES_RED', qty: 3 } },
+        { id: 913, tbl: 'expenses', row_id: null, op: 'expense_manual', chi: 'Dan', ts, after: { operazione: 'Spedizioni', costo: -12 } },
+        { id: 914, tbl: 'supplier_orders', row_id: ID.sophie, op: 'order_update', chi: 'Ale', ts, after: { codice: 'SOPHIE_BAG_SUEDE_BROWN', qty_ordered: 6 } },
+        { id: 915, tbl: 'shopify_stock', row_id: null, op: 'stock_autopush', chi: 'cron', ts, after: { pushed: 2, held: 0 } },
+      ],
+    });
+    await page.getByRole('button', { name: /Salute & Movimenti/ }).first().click();
+    const righe = page.locator('.ds-act .ds-actverb');
+    const persona = page.getByRole('group', { name: 'Persona' });
+    await expect(righe).toHaveCount(5, ATTESA);
+    await persona.getByRole('button', { name: 'Benny', exact: true }).click();
+    await expect(righe).toHaveText(['Conta · Benny']);
+    await persona.getByRole('button', { name: 'Ginni', exact: true }).click();
+    await expect(righe).toHaveText(['Arrivo merce · Ginni']);
+    await persona.getByRole('button', { name: 'Ale', exact: true }).click();
+    await expect(righe).toHaveText(['Spesa · Ale', 'Riga ordine modificata · Ale']);
+    await persona.getByRole('button', { name: 'Tutti', exact: true }).click();
+    await expect(righe).toHaveCount(5);
+    expect(r.posts).toEqual([]);
+  });
+});
