@@ -1,0 +1,165 @@
+import { test, expect, type Page } from '@playwright/test';
+
+// Tab "Comportamento" (25-10, modulo beh_*, migr 0169-0171, decisioni D4 e D6): tessera solo di Ale e solo a flag
+// beh_enabled acceso (vista v_beh_settings), scheda #comportamento con login del team e una sola RPC, beh_dashboard.
+// Come notifiche.spec.ts NON tocca Supabase: ogni richiesta a *.supabase.co e' intercettata e riceve dati finti, la
+// sessione del team e' un oggetto finto in localStorage. Lanciare dopo la build verso il progetto finto (come la CI):
+//   VITE_SUPABASE_URL=https://e2e-progetto-finto.supabase.co VITE_SUPABASE_ANON_KEY=sb_publishable_e2e_finto npx vite build
+//   E2E_PORT=<porta libera> npx playwright test e2e/comportamento.spec.ts
+
+const SESSIONE = JSON.stringify({
+  access_token: 'finto', refresh_token: 'finto', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600,
+  user: { id: '00000000-0000-0000-0000-0000000000bb', aud: 'authenticated', role: 'authenticated', email: 'prova@amimi.it', app_metadata: {}, user_metadata: {}, created_at: '2026-01-01T00:00:00Z' },
+});
+
+/** Risposta della RPC come la costruisce la 0171 (chiavi e tipi veri, numeri inventati). tracciati/pronti cambia la card scura. */
+function dash(days: number, tracciati = 87, pronti = 120) {
+  const giorni = Array.from({ length: days }, (_, i) => ({ day: new Date(Date.UTC(2026, 9, 25) - (days - 1 - i) * 86400000).toISOString().slice(0, 10), online: 4, tracciati: 3 }));
+  return {
+    state: 'on', generated_at: '2026-10-25T22:00:00Z', days, from: giorni[0].day, to: '2026-10-25', prev_from: '2026-08-27', prev_to: '2026-09-25', steps: ['ordini', 'meta'],
+    ordini: {
+      fonte: 'Shopify, origine degli ordini (beh_order_origin)', dati_al: '2026-10-25T21:00:00Z', online: pronti + 2, online_pronti: pronti, online_tracciati: tracciati,
+      in_attribuzione: 2, prev_online_pronti: 100, prev_online_tracciati: 70, tutti: 130, prev_tutti: 110, lordo: 21500.5,
+      per_canale: { online_store: pronti + 2, bozza: 3, facebook_instagram: 4, shop: 1 }, giorni,
+    },
+    fonti: {
+      fonte: 'Shopify, Meta', ultima_visita: { direct: 40, search: 20, social: 15, paid_social: 8, email: 2, referral: 1, unknown: 1, none: 33 },
+      prima_visita: { direct: 30, search: 30, social: 14, paid_social: 10, email: 1, none: 35 }, meta_dati_al: '2026-10-24',
+      spesa_meta: 1234.56, ordini_cpa: 125, prev_spesa_meta: 1000, prev_ordini_cpa: 100,
+      ads: { link_clicks: 4613, outbound_clicks: 2940, landing_page_views: 2180, dati_al: '2026-10-24' },
+    },
+    clienti: {
+      fonte: 'Supabase', clienti: 888, con_2_ordini: 61, riacquisto_90: { ricomprato: 12, clienti: 500 },
+      coorti: [{ coorte: '2026-05-01', maturita_giorni: 150, clienti: 80, ricomprato_90gg: 3 }, { coorte: '2026-09-01', maturita_giorni: 40, clienti: 120, ricomprato_90gg: 4 }],
+    },
+    premia: { fonte: 'Area Membri', aperture: 35, premio_pronto: 12, tap_riscatta: 6, riscatti: 4, ordini_amica12: 2, prev_aperture: 30 },
+    salute: {
+      giri: [{ step: 'meta', status: 'ok', ended_at: '2026-10-25T06:13:20Z', rows_written: 33, window_to: '2026-10-25' }, { step: 'ordini', status: 'ok', ended_at: '2026-10-25T06:19:30Z', rows_written: 21, window_to: '2026-10-26' }],
+      health: [{ k: 'beh_fresh', label: 'passi accesi: ordini, meta, giri recenti', severity: 'ok', day: '2026-10-25' },
+        { k: 'beh_quota_tracciata', label: 'quota tracciata 28 giorni: 72,4% (670 su 926 ordini online), soglia 60%', severity: 'ok', day: '2026-10-25' }],
+    },
+  };
+}
+
+type Opzioni = {
+  flag: 'true' | 'false'; sessione?: boolean; chi?: string;
+  /** risposta della RPC per p_days: oggetto, { errore } per un errore PostgREST, ritardo in ms */
+  rpc?: (days: number) => { body?: unknown; errore?: { code: string; message: string }; ms?: number };
+};
+
+async function apri(page: Page, hash: string, opts: Opzioni) {
+  const chiamate: number[] = [];
+  const errori: string[] = [];
+  page.on('pageerror', (e) => errori.push(e.message));
+  await page.addInitScript(({ sessione, chi }) => {
+    if (sessione) localStorage.setItem('amimi-cs-auth', sessione);
+    if (chi) localStorage.setItem('amimi_chi', chi);
+  }, { sessione: opts.sessione ? SESSIONE : null, chi: opts.chi ?? null });
+  await page.route(/supabase\.co\//, async (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    if (url.pathname.endsWith('/rest/v1/v_beh_settings')) {
+      const riga = { key: 'beh_enabled', value: opts.flag };
+      return json((req.headers()['accept'] ?? '').includes('application/vnd.pgrst.object+json') ? riga : [riga]);
+    }
+    if (url.pathname.endsWith('/rest/v1/rpc/beh_dashboard') && req.method() === 'POST') {
+      const days = Number((req.postDataJSON() as { p_days: number }).p_days);
+      chiamate.push(days);
+      const r = (opts.rpc ?? ((d: number) => ({ body: dash(d) })))(days);
+      if (r.ms) await new Promise((ok) => setTimeout(ok, r.ms));
+      if (r.errore) return json({ ...r.errore, details: null, hint: null }, 403);
+      return json(r.body);
+    }
+    return json([]);
+  });
+  await page.goto(hash);
+  return { chiamate, errori };
+}
+
+const tessera = (page: Page) => page.locator('.ds-qbtn, .ds-mcard', { hasText: 'Comportamento' });
+const cardScura = (page: Page) => page.locator('.scr-comportamento .ds-kpi.hero .v');
+
+test('flag spento: nessuna tessera per Ale, nemmeno cercando, e #comportamento dice "non attiva" senza chiamare la RPC', async ({ page }) => {
+  const r = await apri(page, '', { flag: 'false', sessione: true, chi: 'Ale' });
+  await expect(page.getByText('Cosa vuoi fare?')).toBeVisible();
+  await expect(tessera(page)).toHaveCount(0);
+  await page.getByLabel('Cerca azione').fill('comportamento');
+  await expect(page.getByText('Nessuna azione trovata.')).toBeVisible();
+  await page.goto('#comportamento');
+  await page.reload();
+  await expect(page.getByText('Sezione non attiva (flag beh_enabled spento).')).toBeVisible();
+  expect(r.chiamate).toEqual([]);
+  expect(r.errori).toEqual([]);
+});
+
+test('flag acceso: la tessera c\'e\' solo per Ale (D4), non per Benny ne\' per Ginni', async ({ page }) => {
+  await apri(page, '', { flag: 'true', sessione: true, chi: 'Ale' });
+  await expect(tessera(page).first()).toBeVisible();
+  for (const nome of ['Benny', 'Ginni']) {
+    await page.locator('.seg button', { hasText: nome }).click();
+    await expect(page.getByRole('heading', { name: new RegExp(`Ciao, ${nome}`) })).toBeVisible();
+    await expect(tessera(page)).toHaveCount(0);
+  }
+});
+
+test('flag acceso senza sessione: la tessera apre la scheda e la scheda chiede il login del team', async ({ page }) => {
+  const r = await apri(page, '', { flag: 'true', chi: 'Ale' });
+  await tessera(page).first().click();
+  await expect(page.getByRole('button', { name: 'Accedi con Google' })).toBeVisible();
+  await expect(page.getByText(/Email \(@amimi\.it/)).toBeVisible();
+  expect(r.chiamate).toEqual([]);
+});
+
+test('flag acceso con sessione: card scura, sorgenti, ads, clienti, Area Membri e salute coi numeri della RPC; 7 giorni rilegge', async ({ page }) => {
+  const r = await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale' });
+  await expect(cardScura(page)).toHaveText('72,5%');
+  await expect(page.getByText('87 su 120, piu\' 2 ancora in attribuzione', { exact: false })).toBeVisible();
+  await expect(page.getByText('Nessuna visita registrata (cookie non accettati)')).toBeVisible();
+  await expect(page.getByText('Uscite verso il sito')).toBeVisible();
+  // it-IT non raggruppa le 4 cifre (minimumGroupingDigits 2): 2940, come in Premia
+  await expect(page.locator('.cmp-flab', { hasText: 'Uscite verso il sito' })).toContainText('2940 · 63,7%');
+  await expect(page.locator('.kpi', { hasText: 'Costo per ordine (blended)' })).toContainText('9,88');
+  await expect(page.locator('.kpi', { hasText: 'Riacquisto entro 90 giorni' })).toContainText('2,4%');
+  await expect(page.getByText('2026-09 (non ancora a 90 giorni)')).toBeVisible();
+  await expect(page.locator('.cmp-flab', { hasText: 'Hanno aperto l\'area' })).toContainText('35');
+  await expect(page.locator('.cmp-hrow .rt', { hasText: 'Ads Meta (click e pagine caricate)' })).toBeVisible();
+  await expect(page.getByText('Passi accesi: Ordini (Shopify), Ads Meta (click e pagine caricate).', { exact: false })).toBeVisible();
+  // niente lineette lunghe nel testo (regola di casa) e nessun NaN o undefined a schermo
+  const testo = await page.locator('.scr-comportamento').innerText();
+  expect(testo).not.toContain(String.fromCharCode(0x2014));
+  expect(testo).not.toMatch(/NaN|undefined|Infinity/);
+  await page.locator('.seg button', { hasText: '7 giorni' }).click();
+  await expect.poll(() => r.chiamate).toEqual([30, 7]);
+  await expect(cardScura(page)).toHaveText('72,5%');
+  expect(r.errori).toEqual([]);
+});
+
+test('cambio di periodo rapido: la risposta lenta dei 30 giorni non copre quella dei 7', async ({ page }) => {
+  const r = await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale',
+    rpc: (d) => (d === 30 ? { body: dash(30, 60, 120), ms: 1500 } : { body: dash(d) }) });
+  await page.locator('.seg button', { hasText: '7 giorni' }).click();
+  await expect(cardScura(page)).toHaveText('72,5%');
+  await page.waitForTimeout(2000);
+  await expect(cardScura(page)).toHaveText('72,5%');
+  expect(r.chiamate).toEqual([30, 7]);
+});
+
+test('zero ordini nel periodo: niente divisioni per zero a schermo', async ({ page }) => {
+  const vuota = () => { const x = dash(7, 0, 0); x.ordini.giorni = []; x.fonti.ultima_visita = {}; x.fonti.ordini_cpa = 0; x.fonti.prev_ordini_cpa = 0; x.clienti.riacquisto_90 = { ricomprato: 0, clienti: 0 }; return x; };
+  await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: vuota() }) });
+  await expect(cardScura(page)).toHaveText('n.d.');
+  const testo = await page.locator('.scr-comportamento').innerText();
+  expect(testo).not.toMatch(/NaN|undefined|Infinity/);
+});
+
+test('RPC che rifiuta (42501) o che risponde off: messaggio chiaro, nessun numero', async ({ page }) => {
+  await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ errore: { code: '42501', message: 'beh_dashboard: riservato agli account del team' } }) });
+  await expect(page.getByText(/Sezione riservata agli account/)).toBeVisible();
+  await expect(cardScura(page)).toHaveCount(0);
+});
+
+test('RPC che risponde off (flag spento dopo l\'apertura dell\'app): "Sezione non attiva"', async ({ page }) => {
+  await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: { state: 'off' } }) });
+  await expect(page.getByText('Sezione non attiva (flag beh_enabled spento).')).toBeVisible();
+});

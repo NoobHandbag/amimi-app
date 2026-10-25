@@ -27,7 +27,7 @@ function sparkPoints(vals: number[], w = 150, h = 26): string {
   return vals.map((v, i) => `${(i / (vals.length - 1) * w).toFixed(1)},${(h - 3 - ((v - min) / span) * (h - 6)).toFixed(1)}`).join(' ');
 }
 
-export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled = false, pushEnabled = false }: { chi: string; setChi: (c: string) => void; go: (t: Tab, p?: string) => void; matEnabled?: boolean; vilEnabled?: boolean; pushEnabled?: boolean }) {
+export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled = false, pushEnabled = false, behEnabled = false }: { chi: string; setChi: (c: string) => void; go: (t: Tab, p?: string) => void; matEnabled?: boolean; vilEnabled?: boolean; pushEnabled?: boolean; behEnabled?: boolean }) {
   const cfg = PERSONA[chi] ?? PERSONA.Ale;
   const [badges, setBadges] = useState({ arrivi: 0, todo: 0 });
   const [fin, setFin] = useState<{ netto: number; deltaPct: number | null; giorno: number | null; mc2: number; spark: number[] } | null>(null);
@@ -72,8 +72,8 @@ export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled =
   const badge = (b?: 'arrivi' | 'todo') => (b === 'arrivi' ? badges.arrivi : b === 'todo' ? badges.todo : 0);
 
   const { quick, gestione, altro } = useMemo(() => {
-    // Materie prime (modulo mat_*) e Villaggio: la tile esiste solo a flag acceso, per ogni persona
-    const acceso = (t: Tile) => (matEnabled || t.tab !== 'materiali') && (vilEnabled || t.tab !== 'villaggio');
+    // Materie prime (modulo mat_*), Villaggio e Comportamento (modulo beh_*): la tile esiste solo a flag acceso
+    const acceso = (t: Tile) => (matEnabled || t.tab !== 'materiali') && (vilEnabled || t.tab !== 'villaggio') && (behEnabled || t.tab !== 'comportamento');
     const tiles = cfg.tiles.filter(acceso);
     const actions = [...ALL_ACTIONS.filter(acceso), ...(pushEnabled ? [NOTIFICHE] : [])];
     const quick = tiles.slice(0, 4);
@@ -88,7 +88,7 @@ export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled =
     }
     const altro = actions.filter((t) => !seen.has(keyOf(t)) && (!FINANCE_TABS.has(t.tab) || cfg.finance));
     return { quick, gestione: gest, altro };
-  }, [cfg, matEnabled, vilEnabled, pushEnabled]);
+  }, [cfg, matEnabled, vilEnabled, pushEnabled, behEnabled]);
 
   const query = q.trim().toLowerCase();
   const matches = useMemo(() => {

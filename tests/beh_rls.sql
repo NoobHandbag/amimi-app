@@ -1,4 +1,4 @@
--- tests/beh_rls.sql: prova VIVA delle migr 0169 e 0170 (modulo beh_*, comportamento utenti), da lanciare DOPO l'apply.
+-- tests/beh_rls.sql: prova VIVA delle migr 0169, 0170 e 0171 (modulo beh_*, comportamento utenti), da lanciare DOPO l'apply.
 -- Test negativo obbligatorio della Regola Ferrea 19. Si incolla in UNA chiamata execute_sql (o psql): e' un unico blocco DO
 -- che alla fine alza SEMPRE un'eccezione, quindi le righe di prova e i cambi di ruolo tornano indietro.
 --   esito buono: ERROR P0001 'TEST_OK: ... (rollback voluto)'; qualunque altro errore = KO, col motivo.
@@ -9,7 +9,9 @@
 --   H  beh_health_check: a flag spento non scrive le sue chiavi (una riga beh_ordini della edge non disturba) e il cron
 --      ha il cancello sul flag; soglia scritta male o enorme = default e beh_fresh in error; passi con maiuscole e a capo
 --      letti come la edge; un backfill non conta come giro del cron; guasto e quota con le loro soglie e i loro filtri
---   S  il service_role (la edge beh-sync) legge e scrive le due tabelle
+--   D  viste della 0171 solo per ask_ro; beh_dashboard: 'off' a flag spento, al team gli stessi ordini della tabella,
+--      42501 a un account fuori dal team e ad anon
+--   S  il service_role (la edge beh-sync) legge e scrive le tabelle
 --   U  authenticated con un JWT del team: select, insert, update, delete sulle tabelle = 42501, niente EXECUTE sulle
 --      funzioni del modulo, v_beh_settings da' la sola riga beh_enabled e non si scrive
 --   N  anon: come U
@@ -23,6 +25,7 @@ declare
   v_chiave text;
   v_val text;
   v_sev text;
+  v_dash jsonb;
   v_oggi date := (now() at time zone 'Europe/Rome')::date;
   vietate constant text[] := array[
     'select count(*) from public.beh_order_origin',
@@ -167,6 +170,37 @@ begin
   end if;
 
   -- S (dal catalogo: il ruolo della edge non si assume da qui)
+  -- D (migr 0171): viste solo per ask_ro; la RPC beh_dashboard risponde al team, rifiuta gli altri (42501), a flag spento
+  -- dice 'off' e coi dati sintetici di H6 conta gli stessi ordini della tabella
+  if to_regprocedure('public.beh_dashboard(integer)') is null then raise exception 'KO: migr 0171 non applicata'; end if;
+  foreach v_val in array array['v_beh_ordini_daily', 'v_beh_attribuzione_mensile', 'v_beh_ads_funnel_daily'] loop
+    if has_table_privilege('anon', 'public.' || v_val, 'select') or has_table_privilege('authenticated', 'public.' || v_val, 'select') then
+      raise exception 'KO D: % leggibile da anon o authenticated', v_val;
+    end if;
+    if not has_table_privilege('ask_ro', 'public.' || v_val, 'select') then raise exception 'KO D: ask_ro non legge %', v_val; end if;
+  end loop;
+  if has_function_privilege('anon', 'public.beh_dashboard(integer)', 'execute') then raise exception 'KO D: anon esegue beh_dashboard'; end if;
+  select count(*) into v_n from beh_order_origin o
+   where o.canale = 'online_store' and not o.is_test and not o.is_cancelled and o.day >= v_oggi - 29;
+  update app_flags set value = 'false' where key = 'beh_enabled';
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
+  v_dash := public.beh_dashboard(30);
+  if v_dash ->> 'state' is distinct from 'off' then raise exception 'KO D: a flag spento la RPC risponde %', v_dash ->> 'state'; end if;
+  reset role;
+  update app_flags set value = 'true' where key = 'beh_enabled';
+  perform set_config('role', 'authenticated', true);
+  v_dash := public.beh_dashboard(30);
+  if v_dash ->> 'state' is distinct from 'on' or (v_dash -> 'ordini' ->> 'online')::int is distinct from v_n
+     or not (v_dash ? 'fonti' and v_dash ? 'clienti' and v_dash ? 'premia' and v_dash ? 'salute') then
+    raise exception 'KO D: RPC a flag acceso: stato %, ordini online % contro % in tabella', v_dash ->> 'state', v_dash -> 'ordini' ->> 'online', v_n;
+  end if;
+  perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'estraneo@gmail.com')::text, true);
+  st := 'ok';
+  begin perform public.beh_dashboard(30); exception when others then st := sqlstate; end;
+  if st <> '42501' then raise exception 'KO D: un account fuori dal team ha letto beh_dashboard (%)', st; end if;
+  reset role;
+
   if not (has_table_privilege('service_role', 'public.beh_order_origin', 'select') and has_table_privilege('service_role', 'public.beh_order_origin', 'insert')
           and has_table_privilege('service_role', 'public.beh_order_origin', 'update') and has_table_privilege('service_role', 'public.beh_sync_runs', 'insert')
           and has_table_privilege('service_role', 'public.beh_sync_runs', 'update')
@@ -190,5 +224,5 @@ begin
     end if;
   end loop;
 
-  raise exception 'TEST_OK: V H S U N verdi, % comandi vietati provati per ruolo (rollback voluto)', array_length(vietate, 1);
+  raise exception 'TEST_OK: V H D S U N verdi, % comandi vietati provati per ruolo (rollback voluto)', array_length(vietate, 1);
 end $t$;

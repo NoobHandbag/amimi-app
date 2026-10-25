@@ -16,6 +16,7 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
 const M = read('supabase/migrations/0169_beh_schema.sql');
 const M170 = read('supabase/migrations/0170_beh_meta.sql');
+const M171 = read('supabase/migrations/0171_beh_dashboard.sql');
 const SRC = read('supabase/functions/beh-sync/index.ts');
 const RLS = read('tests/beh_rls.sql');
 const noSql = (s) => s.replace(/--[^\n]*/g, '');
@@ -110,6 +111,20 @@ console.log('\n== Migrazione 0170 (passo meta) ==');
     && /revoke all on beh_meta_outbound_daily from public, anon, authenticated/.test(M170) && /grant select, insert, update, delete on beh_meta_outbound_daily to service_role/.test(M170));
   t('14d cron beh-sync-meta col cancello sul flag e timeout 60 s', cronGate(M170, 'beh-sync-meta', '13 6') && /timeout_milliseconds := 60000/.test(M170) && /'cron_create'/.test(M170));
   t('14e la prova nella transazione pretende il cancello', /command like '%where exists%beh_enabled%'/.test(M170));
+}
+
+console.log('\n== Migrazione 0171 (viste e RPC della tab) ==');
+{
+  const viol = migViolations(M171);
+  t('14f additiva come la 0169 (stessa guardia 1)', viol.length === 0, viol.join(' | '));
+  t('14g viste revocate ad anon e authenticated, solo ask_ro in lettura (D7)', /revoke all on v_beh_ordini_daily, v_beh_attribuzione_mensile, v_beh_ads_funnel_daily from public, anon, authenticated;/.test(M171)
+    && /grant select on v_beh_ordini_daily, v_beh_attribuzione_mensile, v_beh_ads_funnel_daily to ask_ro;/.test(M171) && !/grant [^;]* to (anon|authenticated|public)[^;]*v_beh_/.test(noSql(M171)));
+  t('14h RPC: security definer, cancello email_del_team con 42501 prima di ogni lettura, off a flag spento', /language plpgsql stable security definer set search_path to 'public'/.test(M171)
+    && M171.indexOf("if not public.email_del_team(v_email) then") > 0 && M171.indexOf("using errcode = '42501'") < M171.indexOf('select max(date) into v_meta_max')
+    && /return jsonb_build_object\('state', 'off'\);/.test(M171));
+  t('14i RPC eseguibile solo da authenticated, mai da anon', /revoke all on function public\.beh_dashboard\(integer\) from public, anon;\ngrant execute on function public\.beh_dashboard\(integer\) to authenticated;/.test(M171));
+  t('14j passi letti come la edge e la 0169', /array_agg\(lower\(btrim\(x, E' \\t\\r\\n'\)\)\) filter \(where btrim\(x, E' \\t\\r\\n'\) <> ''\)/.test(M171));
+  t('14k periodo limitato (1-365 giorni) e CPA sui soli giorni coperti dalla spesa', /least\(greatest\(coalesce\(p_days, 30\), 1\), 365\)/.test(M171) && (M171.match(/least\(v_today, coalesce\(v_meta_max, v_from - 1\)\)/g) ?? []).length === 2);
 }
 
 console.log('\n== Test vivo tests/beh_rls.sql ==');

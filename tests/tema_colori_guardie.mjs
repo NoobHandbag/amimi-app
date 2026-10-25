@@ -206,12 +206,13 @@ check('shell.css: il segnaposto dei campi del kit e\' --ink-muted (non il grigio
 // La sezione 6 dice solo che i token reggono: qui si guarda che i segni usino davvero token che reggono. Un ritorno della
 // barra B2B a --ink-faint (2,50:1 sul bianco, quasi uguale all'offline) passava tutte le altre guardie.
 console.log('\n== 8. grafici del Cruscotto: segni a 3:1 sul bianco ==');
-const SEGNO = /\.ds-ch-(?:on|of|b2)(?![\w-])|\.ds-tbar(?![\w-])|\.ds-bars \.b(?![\w-])/;
+// 25-10: anche i grafici della tab Comportamento (barre SVG col fill, imbuti e sorgenti col background)
+const SEGNO = /\.ds-ch-(?:on|of|b2)(?![\w-])|\.ds-tbar(?![\w-])|\.ds-bars \.b(?![\w-])|\.cmp-(?:bar|ffill)(?![\w-])/;
 function segniGrafici(css, tsx) {
   const out = [];
   for (const m of senzaCommenti(css, true).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     if (!SEGNO.test(m[1])) continue;
-    for (const d of m[2].matchAll(/(?<![\w-])background(?:-color)?\s*:\s*([^;]+)/g)) out.push([m[1].trim(), d[1].trim()]);
+    for (const d of m[2].matchAll(/(?<![\w-])(?:background(?:-color)?|fill)\s*:\s*([^;]+)/g)) out.push([m[1].trim(), d[1].trim()]);
   }
   // l'imbuto passa il colore a funnelRow(...) come stringa 'var(--x)'
   for (const m of senzaCommenti(tsx, false).matchAll(/funnelRow\([^\n]*?'(var\(--[a-z0-9-]+\))'\)/g)) out.push(['funnelRow', m[1]]);
@@ -227,6 +228,8 @@ const segniImbuto = segniGrafici('', src['pages/Report.tsx'] ?? '');
 check('i segni si trovano: barre dei canali (online, offline, B2B) in cruscotto.css e i quattro colori dell\'imbuto in Report.tsx',
   ['on', 'of', 'b2'].every((k) => segniCss.some(([s]) => s.startsWith('styles/screens/cruscotto.css') && s.includes(`.ds-ch-${k}`))) && segniImbuto.length === 4,
   `canali ${segniCss.length}, imbuto ${segniImbuto.length}`);
+check('i segni si trovano anche in comportamento.css: barre (fill) e riempimenti di imbuti e sorgenti, ciascuno con la variante in bordeaux',
+  ['.cmp-bar', '.cmp-bar.on', '.cmp-ffill', '.cmp-ffill.last'].every((k) => segniCss.some(([s]) => s.startsWith('styles/screens/comportamento.css') && s.endsWith(k))));
 for (const [s, v] of [...segniCss, ...segniImbuto]) {
   const c = /^var\(--[a-z0-9-]+\)$/.test(v) ? risolvi(v) : null;
   check(`${s}: ${v} ${c ? contrasto(c, coloreDi('surface')).toFixed(2) + ':1' : 'non risolto'} >= 3 sul bianco`, sottoSoglia([[s, v]]).length === 0);

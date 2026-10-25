@@ -83,12 +83,14 @@ t('20 la 0161 si ferma da sola se resta una policy col dominio o se le policy no
   /ilike '%amimi\.it%'\) then\n\s+raise exception '0161: resta una policy/.test(Mc) && /if n <> 27 then raise exception/.test(Mc) && /has_function_privilege\('anon', 'public\.email_del_team\(text\)', 'execute'\)/.test(Mc));
 
 console.log('\n== Web ==');
-const WEBF = ['pages/Assistenza.tsx', 'pages/Materiali.tsx', 'pages/Negozi.tsx', 'pages/Premia.tsx', 'pages/PremiaUgc.tsx', 'components/FoglioOrdine.tsx', 'components/SupplierOrderForm.tsx', 'lib/premiaApi.ts'];
+const WEBF = ['pages/Assistenza.tsx', 'pages/Materiali.tsx', 'pages/Negozi.tsx', 'pages/Premia.tsx', 'pages/PremiaUgc.tsx', 'components/FoglioOrdine.tsx', 'components/SupplierOrderForm.tsx', 'lib/premiaApi.ts',
+  'pages/Comportamento.tsx', 'lib/behApi.ts'];
 const W = Object.fromEntries(WEBF.map((f) => [f, read('web/src/' + f).replace(/^\s*\/\/[^\n]*$/gm, '')]));
-const oauth = ['pages/Assistenza.tsx', 'pages/Materiali.tsx', 'pages/Negozi.tsx', 'pages/Premia.tsx'];
+const oauth = ['pages/Assistenza.tsx', 'pages/Materiali.tsx', 'pages/Negozi.tsx', 'pages/Premia.tsx', 'pages/Comportamento.tsx'];
 t('21 login Google senza hd (con hd=amimi.it Google nasconde gli account Telaio)', oauth.every((f) => /queryParams: \{ prompt: 'select_account' \}/.test(W[f])) && !Object.values(W).some((s) => /\bhd:/.test(s)));
 t('22 nessuna etichetta o avviso del login dice ancora solo @amimi.it', !Object.values(W).some((s) => /Email \(@amimi\.it\)|qualsiasi casella @amimi\.it|login @amimi\.it|account @amimi\.it|Email @amimi\.it/.test(s)));
-t('23 le etichette usano EMAIL_TEAM_TESTO', oauth.every((f) => W[f].includes('<label>Email ({EMAIL_TEAM_TESTO})</label>')) && (W['lib/premiaApi.ts'].match(/Sezione riservata agli account \$\{EMAIL_TEAM_TESTO\}\./g) ?? []).length === 2);
+t('23 le etichette usano EMAIL_TEAM_TESTO', oauth.every((f) => W[f].includes('<label>Email ({EMAIL_TEAM_TESTO})</label>')) && (W['lib/premiaApi.ts'].match(/Sezione riservata agli account \$\{EMAIL_TEAM_TESTO\}\./g) ?? []).length === 2
+  && (W['lib/behApi.ts'].match(/Sezione riservata agli account \$\{EMAIL_TEAM_TESTO\}\./g) ?? []).length === 1);
 
 console.log('\n== Un indirizzo del team non riceve mai un invio vero (Gate 2 del 16-10) ==');
 const CSSEND = read('supabase/functions/cs-send/index.ts'), LEAD = read('supabase/functions/lead-outreach/index.ts');

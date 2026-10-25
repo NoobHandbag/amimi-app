@@ -108,11 +108,13 @@ jobs:
       # Due chiamate, non una (19-10, Gate 2): playwright mette i filtri in OR, quindi con "negozi e2e/notifiche.spec.ts"
       # una spec rinominata o spostata spariva in silenzio e il passo restava verde con l'altra (provato: 33 test, exit 0).
       # Da sola una chiamata che non trova test esce con errore ("No tests found").
+      # Comportamento (25-10, modulo beh_*, decisione D6 dell'owner): e2e/comportamento.spec.ts, stesse garanzie (intercetta
+      # ogni richiesta a *.supabase.co, la RPC beh_dashboard risponde dati finti), chiamata sua col percorso.
       - name: Browser per gli e2e (Playwright, solo chromium)
         shell: bash
         working-directory: web
         run: npx playwright install --with-deps chromium
-      - name: E2E di Negozi e delle Notifiche su dati finti (build verso un progetto Supabase finto)
+      - name: E2E di Negozi, delle Notifiche e di Comportamento su dati finti (build verso un progetto Supabase finto)
         shell: bash
         working-directory: web
         env:
@@ -123,6 +125,7 @@ jobs:
           npx vite build
           npx playwright test negozi
           npx playwright test e2e/notifiche.spec.ts
+          npx playwright test e2e/comportamento.spec.ts
 
   # E2E del Villaggio e delle Paillettes (18-10, CASI_APERTI n.40 a e n.42 a): job a parte, in parallelo a "offline",
   # perche' la scena 3D senza GPU gira col WebGL software (SwiftShader) e le due spec durano un quarto d'ora. Dati finti
