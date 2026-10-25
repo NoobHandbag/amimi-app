@@ -1,9 +1,11 @@
 /* ============================================================================
    Negozi B2B (tema A, PR 22, 23-10-2026): lista e scheda del negozio (pages/Negozi.tsx), solo CSS.
    Importato da main.tsx dopo shell.css. Negozi.tsx non ha una classe radice: le regole si agganciano con :has()
-   ai figli che solo Negozi disegna. Lista e viste dell'outreach: .screen con .or-nav (Pipeline, Coda e Sequenze
-   prendono solo il selettore, nessun'altra regola tocca le loro classi). Scheda: .screen con .lead-verd.
-   La scheda dell'outreach (OutreachScheda) non ha nessuno dei due e resta alla sua PR.
+   ai figli che solo Negozi disegna. Lista e viste dell'outreach: .screen con .or-nav (alle viste dell'outreach da qui
+   arriva solo il selettore: Pipeline e Coda hanno le loro regole nella sezione Outreach in fondo, Sequenze nessuna).
+   Scheda: .screen con .lead-verd.
+   La scheda dell'outreach (OutreachScheda) non ha nessuno dei due: le sue regole stanno nella sezione Outreach in fondo
+   (PR 23); link, bottoni e campi pieni li prende da qui, coi selettori allargati.
    Colori scritti nel style del TSX (verdetto, tier, score, badge della barra, legenda) non si battono:
    restano al seguito TSX, senza !important. Barra in alto, KPI, chip, tabelle e campi del kit vengono da shell.css.
    ============================================================================ */
@@ -39,29 +41,43 @@
 
 /* ---- scheda del negozio: link come pillole bianche; il telefono e' un dato, resta testo ---- */
 .screen:has(> .lead-verd) > .lead-links { gap: 6px; align-items: center; margin: 10px 0 14px; }
-.screen:has(> .lead-verd) > .lead-links > a { display: inline-flex; align-items: center; max-width: 100%; min-height: 38px; padding: 8px 14px; border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 500; text-decoration: none; overflow-wrap: anywhere; }
-.screen:has(> .lead-verd) > .lead-links > span { padding: 0 4px; color: var(--ink-muted); font-size: 13px; }
+.screen:has(> .lead-verd) > .lead-links > a,
+.screen:has(> .or-comp) > .or-head .lead-links > a { display: inline-flex; align-items: center; max-width: 100%; min-height: 38px; padding: 8px 14px; border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 500; text-decoration: none; overflow-wrap: anywhere; }
+.screen:has(> .lead-verd) > .lead-links > span,
+.screen:has(> .or-comp) > .or-head .lead-links > span { padding: 0 4px; color: var(--ink-muted); font-size: 13px; }
 
 /* ---- verdetto: titolo in inchiostro (index.css lo faceva bordeaux); i tre bottoni su una riga, senza i 120 px minimi
    che mandavano "No" a capo. I loro colori sono nel style e il contorno viene da index.css (.lead-actions .ds-btn) ---- */
 .screen:has(> .lead-verd) .lead-verd h2 { color: var(--ink); }
 .screen:has(> .lead-verd) .lead-verd .lead-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .screen:has(> .lead-verd) .lead-verd .lead-actions .ds-btn { padding-left: 12px; padding-right: 12px; white-space: nowrap; }
-.screen:has(> .lead-verd) .lead-actions .ds-btn { border-radius: 14px; }
+.screen:has(> .lead-verd) .lead-actions .ds-btn,
+.screen:has(> .or-comp) .ds-btn,
+.screen:has(> .card > .or-inbound-head) .ds-btn { border-radius: 14px; }
 
 /* ---- bottoni senza fondo scritto nel style (Ricontrolla, Scarta, Salva nota, chi siamo, evidenze): pieni grigi dentro
-   le card, senza bordo. Prima il grigio del browser col bordo; Scarta tiene il rosso del suo style ---- */
-.screen:has(> .lead-verd) .ds-btn:not([style*="background"]) { border: 0; background: var(--surface-alt); color: var(--ink); }
-.screen:has(> .lead-verd) .ds-btn:not([style*="background"]):active { background: var(--border-strong); }
+   le card, senza bordo. Prima il grigio del browser col bordo; Scarta tiene il rosso del suo style. Anche nella scheda
+   dell'outreach (Sposta, Apri in Gmail, Segna come inviata, Registra, Collega) e nei messaggi da collegare della Coda ---- */
+.screen:has(> .lead-verd) .ds-btn:not([style*="background"]),
+.screen:has(> .or-comp) .ds-btn:not([style*="background"]),
+.screen:has(> .card > .or-inbound-head) .ds-btn:not([style*="background"]) { border: 0; background: var(--surface-alt); color: var(--ink); }
+.screen:has(> .lead-verd) .ds-btn:not([style*="background"]):active,
+.screen:has(> .or-comp) .ds-btn:not([style*="background"]):active,
+.screen:has(> .card > .or-inbound-head) .ds-btn:not([style*="background"]):active { background: var(--border-strong); }
 
-/* ---- campi (perche', motivo dello scarto, nota): pieni, senza bordo, a 16 px; etichette come .fl ---- */
-.screen:has(> .lead-verd) .cs-fld label { margin: 0 0 6px 2px; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
-.screen:has(> .lead-verd) .cs-fld :is(input, textarea) { padding: 12px 14px; border: 0; border-radius: 14px; background: var(--surface-alt); color: var(--ink); font-family: inherit; font-size: 16px; }
-.screen:has(> .lead-verd) .cs-fld input { min-height: 48px; }
+/* ---- campi (perche', motivo dello scarto, nota; destinatario e oggetto del compositore dell'outreach): pieni, senza
+   bordo, a 16 px; etichette come .fl ---- */
+.screen:has(> .lead-verd) .cs-fld label,
+.screen:has(> .or-comp) .cs-fld label { margin: 0 0 6px 2px; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+.screen:has(> .lead-verd) .cs-fld :is(input, textarea),
+.screen:has(> .or-comp) .cs-fld :is(input, textarea) { padding: 12px 14px; border: 0; border-radius: 14px; background: var(--surface-alt); color: var(--ink); font-family: inherit; font-size: 16px; }
+.screen:has(> .lead-verd) .cs-fld input,
+.screen:has(> .or-comp) .cs-fld input { min-height: 48px; }
 /* a 16 px due righe non bastano al segnaposto del perche' (tre righe a 390 px): tre righe di altezza */
 .screen:has(> .lead-verd) .cs-fld textarea { min-height: 92px; }
 /* il segnaposto resta leggibile sul grigio (il grigio del browser scende a 3,9:1) */
-.screen:has(> .lead-verd) .cs-fld :is(input, textarea)::placeholder { color: var(--ink-muted); opacity: 1; }
+.screen:has(> .lead-verd) .cs-fld :is(input, textarea)::placeholder,
+.screen:has(> .or-comp) .cs-fld :is(input, textarea)::placeholder { color: var(--ink-muted); opacity: 1; }
 
 /* ---- foto (feed, vetrina, schermate): senza bordo; la didascalia in inchiostro viene gia' da shell.css ---- */
 .screen:has(> .lead-verd) .lead-post { border: 0; border-radius: 12px; }
@@ -98,4 +114,164 @@
   .screen:has(> .or-nav) .lead-card { border: 1px solid var(--border); }
   /* le barre della fascia prezzi sono fondi: senza "grafica di sfondo" sparirebbero */
   .screen:has(> .lead-verd) .lead-scale { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
+/* ============================================================================
+   Outreach (tema A, PR 23, 25-10-2026): Pipeline, Coda e scheda del negozio (pages/Outreach.tsx), solo CSS.
+   Ogni regola sta sotto una radice che solo l'Outreach disegna: .screen:has(> .or-board) la Pipeline,
+   .screen:has(> .card > .or-list) le righe della Coda, .screen:has(> .card > .or-inbound-head) i messaggi da collegare,
+   .screen:has(> .or-comp) la scheda. Negozi e le altre schermate non cambiano. Selettore delle viste, link, bottoni e
+   campi pieni della scheda vengono dalle regole qui sopra; Sequenze prende solo il selettore.
+   Vincoli (e2e/negozi-*): display, larghezza e griglia di .or-board e delle colonne restano di index.css (lista sotto
+   i 700 px, 9 colonne a 1024); .or-conv tiene i suoi figli; .or-comp e i suoi antenati mai con transform, filter,
+   contain, overflow (la finestra d'invio e' fixed li' dentro) ne' con z-index, opacita' o isolation. Le emoji e i colori
+   scritti nel style restano al seguito TSX, senza !important.
+   ============================================================================ */
+
+/* ---- Pipeline: titoli degli stadi in minuscolo col conteggio in grigio, card senza bordo ---- */
+.screen:has(> .or-board) .or-col { border-radius: 18px; }
+.screen:has(> .or-board) .or-col h3 { justify-content: flex-start; align-items: baseline; gap: 6px; margin: 4px 4px 8px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; text-transform: none; color: var(--ink); }
+.screen:has(> .or-board) .or-col h3 > span:last-child { font-weight: 500; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.screen:has(> .or-board) .or-card { gap: 10px; padding: 10px 12px; border: 0; border-radius: 14px; }
+/* premuta: sulla colonna grigia (700 px e oltre) un grigio piu' scuro, altrimenti la card sparisce nella colonna */
+.screen:has(> .or-board) .or-card:active { background: var(--border-strong); }
+@media (hover: hover) {
+  .screen:has(> .or-board) .or-card:hover { outline: 2px solid var(--interactive); outline-offset: -2px; }
+}
+.screen:has(> .or-board) :is(.or-card img, .or-thumb-empty) { border-radius: 12px; }
+.screen:has(> .or-board) .or-n { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.screen:has(> .or-board) .or-m { margin-top: 2px; font-size: 12.5px; }
+/* prossima azione: un dato, in grigio; rossa solo quando e' in ritardo o tocca a noi (.late: scaduta, risposta da
+   gestire, follow-up pronto). Prima la chip senza stato era in tinta bordeaux */
+.screen:has(> .or-board) .or-due { margin-top: 6px; padding: 2px 8px; border-radius: 10px; background: var(--surface-alt); color: var(--ink-muted); font-size: 12px; font-weight: 500; line-height: 1.4; }
+.screen:has(> .or-board) .or-due.late { background: var(--negative-tint); color: var(--negative-700); }
+/* telefono: ogni stadio e' una lista raggruppata, titolo sopra e righe in una sola superficie con il filo dal testo
+   (16 + 44 + 10 px). Solo fondo, margini e angoli: display e larghezza restano di index.css */
+@media (max-width: 699px) {
+  .screen:has(> .or-board) .or-col { padding: 0; margin-bottom: 18px; border-radius: 0; background: none; }
+  .screen:has(> .or-board) .or-col h3 { margin: 0 2px 8px; font-size: 17px; letter-spacing: -.015em; }
+  .screen:has(> .or-board) .or-col h3 > span:last-child { font-size: 15px; }
+  .screen:has(> .or-board) .or-col .or-card { position: relative; margin: 0; padding: 12px 16px; border-radius: 0; }
+  .screen:has(> .or-board) .or-col .or-card:active { background: var(--surface-alt); }
+  .screen:has(> .or-board) .or-col h3 + .or-card { border-top-left-radius: 20px; border-top-right-radius: 20px; }
+  .screen:has(> .or-board) .or-col .or-card:last-child { border-bottom-left-radius: 20px; border-bottom-right-radius: 20px; }
+  .screen:has(> .or-board) .or-col .or-card + .or-card::before { content: ''; position: absolute; top: 0; left: 70px; right: 0; height: 1px; background: var(--border); }
+  .screen:has(> .or-board) .or-col .or-card:focus-visible { outline-offset: -2px; }
+}
+
+/* ---- Coda: righe in lista dentro la card, icona in un tondo grigio, filo dal testo; "Apri" in grigio ---- */
+.screen:has(> .card > .or-list) .or-list { gap: 0; }
+.screen:has(> .card > .or-list) .or-row { position: relative; gap: 12px; min-height: 60px; padding: 12px 0; border-radius: 0; background: none; }
+.screen:has(> .card > .or-list) .or-row + .or-row::before { content: ''; position: absolute; top: 0; left: 48px; right: 0; height: 1px; background: var(--border); }
+.screen:has(> .card > .or-list) .or-ico { width: 36px; height: 36px; border: 0; border-radius: 50%; background: var(--surface-alt); font-size: 17px; line-height: 1; }
+.screen:has(> .card > .or-list) .or-t b { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.screen:has(> .card > .or-list) .or-t small { display: block; margin-top: 2px; font-size: 13px; line-height: 1.35; }
+.screen:has(> .card > .or-list) .or-go { flex: none; color: var(--ink-muted); font-size: 13px; font-weight: 500; white-space: nowrap; }
+
+/* ---- Messaggi da collegare: righe col filo, modulo in un pannello grigio senza cornice bordeaux, etichette a 12,5 px
+   (il testo sta dentro label.cs-fld ed ereditava 16 px), campi bianchi pieni a 16 px ---- */
+/* "Nuovo negozio" piccolo accanto al titolo; dove non ci sta (sotto i 390 px) scende sotto il titolo invece di spezzarlo */
+.screen:has(> .card > .or-inbound-head) .or-inbound-head { flex-wrap: wrap; align-items: flex-start; row-gap: 0; }
+.screen:has(> .card > .or-inbound-head) .or-inbound-head h2 { margin-top: 8px; }
+.screen:has(> .card > .or-inbound-head) .or-inbound-head .ds-btn { flex: none; min-height: 38px; padding: 8px 12px; font-size: 13px; white-space: nowrap; }
+.screen:has(> .card > .or-inbound-head) .or-inbound { padding: 12px 0; border-top: 1px solid var(--border); }
+.screen:has(> .card > .or-inbound-head) .or-list > .or-inbound:first-child { border-top: 0; padding-top: 6px; }
+.screen:has(> .card > .or-inbound-head) .or-inbound .rt { line-height: 1.4; }
+.screen:has(> .card > .or-inbound-head) .or-inbound .rs { line-height: 1.45; }
+.screen:has(> .card > .or-inbound-head) .or-inbound .lead-actions { align-items: center; margin-top: 10px; }
+.screen:has(> .card > .or-inbound-head) .or-inbound-form { margin: 10px 0; padding: 14px; border: 0; border-radius: 16px; background: var(--surface-alt); }
+.screen:has(> .card > .or-inbound-head) .or-inbound-form h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.screen:has(> .card > .or-inbound-head) .or-inbound-form .cs-fld { margin: 10px 0 0; font-size: 12.5px; font-weight: 500; color: var(--ink-muted); }
+.screen:has(> .card > .or-inbound-head) .or-inbound-form .cs-fld :is(input, select, textarea) { display: block; min-height: 44px; margin-top: 6px; padding: 10px 12px; border: 0; border-radius: 12px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: 16px; font-weight: 400; }
+.screen:has(> .card > .or-inbound-head) .or-inbound-form .lead-actions { margin-top: 12px; }
+/* nel pannello grigio i bottoni tornano bianchi (grigio su grigio spariva) */
+.screen:has(> .card > .or-inbound-head) .or-inbound-form .ds-btn:not([style*="background"]) { background: var(--surface); }
+.screen:has(> .card > .or-inbound-head) .or-inbound-form .ds-btn:not([style*="background"]):active { background: var(--border-strong); }
+
+/* ---- scheda: testata, foto a 16 px, "Apri il dossier" come pillola col testo bordeaux accanto ai link ---- */
+.screen:has(> .or-comp) > .or-head { gap: 14px; margin: 2px 0 12px; }
+.screen:has(> .or-comp) > .or-head :is(img, .or-thumb-empty) { border-radius: 16px; }
+.screen:has(> .or-comp) > .or-head .muted { margin-top: 4px; font-size: 14px; line-height: 1.4; }
+.screen:has(> .or-comp) > .or-head .lead-links { gap: 6px; align-items: center; margin-bottom: 4px; }
+.screen:has(> .or-comp) > .or-head .lead-links > .or-link { min-height: 38px; padding: 8px 14px; border-radius: 999px; background: var(--surface); color: var(--interactive); font-size: 13px; font-weight: 600; }
+
+/* ---- Info utili: titolo di sezione in minuscolo, fatti come tessere bianche senza bordo ---- */
+.screen:has(> .or-comp) > .cs-info > summary { gap: 8px; min-height: 44px; padding: 0; font-size: 17px; font-weight: 600; letter-spacing: -.015em; text-transform: none; color: var(--ink); }
+.screen:has(> .or-comp) > .cs-info > summary .cs-tri { font-size: 10px; color: var(--ink-muted); }
+.screen:has(> .or-comp) .cs-fact { padding: 12px 14px; border: 0; border-radius: 16px; }
+.screen:has(> .or-comp) .cs-fact .fl { font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.screen:has(> .or-comp) .cs-fact .fv { margin-top: 2px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.screen:has(> .or-comp) .cs-fact .fs { margin-top: 3px; font-size: 12px; }
+.screen:has(> .or-comp) .cs-fact.warn { background: var(--warning-tint); }
+.screen:has(> .or-comp) .cs-fact .fv a,
+.screen:has(> .or-comp) .cs-fact.link .fv { color: var(--interactive); text-decoration: none; }
+/* un'email nella tessera (circa 150 px utili) a 15/600 andava a capo gia' a 20 caratteri */
+.screen:has(> .or-comp) .cs-fact .fv a { font-size: 14px; font-weight: 500; }
+.screen:has(> .or-comp) .cs-fact .or-move select { min-height: 44px; padding: 8px 12px; border: 0; border-radius: 12px; background-color: var(--surface-alt); color: var(--ink); font-family: inherit; font-size: 16px; }
+
+/* ---- conversazione: bolle senza bordo ne' ombra; le note (telefonate, visite, spostamenti) sono righe di testo ---- */
+.screen:has(> .or-comp) .or-conv .cs-mb { border: 0; border-radius: 18px; box-shadow: none; }
+.screen:has(> .or-comp) .or-conv .cs-msg.in .cs-mb { border-top-left-radius: 6px; }
+.screen:has(> .or-comp) .or-conv .cs-msg.out .cs-mb { border-top-right-radius: 6px; }
+.screen:has(> .or-comp) .or-conv .cs-mh { font-size: 12px; font-weight: 500; }
+.screen:has(> .or-comp) .or-nota { margin: 8px 0 8px 12px; padding: 4px 6px; background: none; font-size: 12.5px; }
+.screen:has(> .or-comp) .or-nota-h { font-weight: 600; }
+/* scelta dell'email di Posta inviata: pannello bianco, senza la cornice bordeaux */
+.screen:has(> .or-comp) .or-collega { margin-top: 6px; padding: 10px 14px; border: 0; border-radius: 16px; background: var(--surface); }
+
+/* ---- il compositore: una card bianca. Solo fondo, angoli e spazi (vedi i vincoli in cima alla sezione) ---- */
+.screen:has(> .or-comp) > .or-comp { margin-top: 16px; padding: 14px 16px 16px; border-radius: 20px; background: var(--surface); }
+/* Rispondi / Sequenza a freddo: il selettore della cornice (traccia grigia, scelta bianca), largo quanto la card.
+   Solo qui: .cs-seg e' anche Tempo / Tema di Assistenza */
+.screen:has(> .or-comp) .or-comp .cs-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px; border: 0; border-radius: 999px; background: var(--surface-alt); overflow: visible; }
+.screen:has(> .or-comp) .or-comp .cs-seg-btn { min-height: 36px; padding: 8px 12px; border-radius: 999px; color: var(--ink-muted); font-family: inherit; font-size: 13px; font-weight: 600; }
+.screen:has(> .or-comp) .or-comp .cs-seg-btn.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px color-mix(in srgb, var(--ink) 12%, transparent); }
+.screen:has(> .or-comp) .or-comp .cs-note { text-align: left; }
+/* titolo e badge su una riga finche' ci stanno; poi i badge scendono sotto il titolo, in fila da sinistra, e non
+   spingono la pagina di lato (in Sequenza possono essere tre) */
+.screen:has(> .or-comp) .or-comp .cs-draft-h { flex-wrap: wrap; justify-content: flex-start; column-gap: 8px; row-gap: 6px; margin-bottom: 8px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.screen:has(> .or-comp) .or-comp .cs-draft-h .cs-badge { flex: none; font-size: 12px; font-weight: 600; white-space: nowrap; }
+/* campi del compositore e dei moduli (sequenza, registra un tocco): pieni, senza bordo, a 16 px (iOS non ingrandisce) */
+.screen:has(> .or-comp) :is(.or-comp .cs-draft-ta, .or-comp .cs-refine-in, .or-form :is(input, select, textarea)) { border: 0; background: var(--surface-alt); color: var(--ink); font-family: inherit; font-size: 16px; }
+.screen:has(> .or-comp) :is(.or-comp .cs-draft-ta, .or-comp .cs-refine-in, .or-form :is(input, textarea))::placeholder { color: var(--ink-muted); opacity: 1; }
+.screen:has(> .or-comp) .or-comp .cs-draft-ta { padding: 12px 14px; border-radius: 14px; line-height: 1.5; }
+.screen:has(> .or-comp) .or-comp .cs-refine-in { min-height: 44px; padding: 10px 14px; border-radius: 14px; }
+/* index.css toglie il contorno al fuoco e segnava il campo col bordo, che ora non c'e' */
+.screen:has(> .or-comp) .or-comp .cs-refine-in:focus { outline: 2px solid var(--interactive); outline-offset: 2px; }
+.screen:has(> .or-comp) .or-form { gap: 10px; }
+.screen:has(> .or-comp) .or-form label { gap: 6px; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+.screen:has(> .or-comp) .or-form :is(input, select, textarea) { min-height: 48px; padding: 10px 14px; border-radius: 14px; }
+.screen:has(> .or-comp) .or-form textarea { min-height: 92px; padding-top: 12px; line-height: 1.45; }
+/* proposte dell'AI: tessere grigie, la scelta con l'anello bordeaux */
+.screen:has(> .or-comp) .or-comp .cs-opt { padding: 10px 12px; border: 0; border-radius: 14px; background: var(--surface-alt); color: var(--ink); font-family: inherit; }
+.screen:has(> .or-comp) .or-comp .cs-opt.on { background: var(--interactive-tint-soft); box-shadow: inset 0 0 0 2px var(--interactive); }
+.screen:has(> .or-comp) .or-comp .cs-opt-t { font-size: 13px; font-weight: 600; color: var(--ink); }
+.screen:has(> .or-comp) .or-comp .cs-opt-p { font-size: 12.5px; }
+/* bottoni: il primario resta l'unico pieno bordeaux; i secondari grigi senza bordo, bianchi sul rosa degli avvisi */
+.screen:has(> .or-comp) .or-comp .cs-btn { min-height: 44px; border-radius: 14px; font-weight: 600; }
+.screen:has(> .or-comp) .or-comp .cs-ghost { border: 0; background: var(--surface-alt); color: var(--ink); }
+.screen:has(> .or-comp) .or-comp .cs-lint .cs-ghost { background: var(--surface); }
+/* avvisi senza bordo; i dati da controllare come pillole bianche */
+.screen:has(> .or-comp) .or-comp .cs-lint { padding: 10px 12px; border: 0; border-radius: 12px; line-height: 1.55; }
+.screen:has(> .or-comp) .or-comp .cs-lint-t { padding: 1px 8px; border: 0; border-radius: 999px; background: var(--surface); }
+/* finestra d'invio: velatura e ombra vengono da shell.css; qui angoli, titolo, etichette in minuscolo, anteprima piena */
+.screen:has(> .or-comp) .or-comp .cs-sendmodal { padding: 18px; border-radius: 24px; }
+.screen:has(> .or-comp) .or-comp .cs-send-h { margin-bottom: 12px; font-size: 17px; font-weight: 600; letter-spacing: -.015em; }
+.screen:has(> .or-comp) .or-comp .cs-send-row { align-items: baseline; gap: 12px; padding: 4px 0; font-size: 14px; }
+.screen:has(> .or-comp) .or-comp .cs-send-row .k { flex: 0 0 64px; padding-top: 0; font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.screen:has(> .or-comp) .or-comp .cs-send-preview { border: 0; border-radius: 14px; font-size: 14px; }
+
+/* ---- Bozze e "Registra un tocco": pannelli bianchi, cosi' i campi grigi hanno la loro superficie ---- */
+.screen:has(> .or-comp) > details:not(.cs-info) { padding: 2px 16px; border-radius: 20px; background: var(--surface); }
+.screen:has(> .or-comp) > details:not(.cs-info)[open] { padding-bottom: 16px; }
+.screen:has(> .or-comp) > details:not(.cs-info) > summary { padding: 12px 0; font-weight: 600; }
+
+@media print {
+  /* card e pagina sono bianche sulla carta e l'ombra non si stampa: il filo tiene insieme card e righe */
+  .screen:has(> .or-board) .or-card { border: 1px solid var(--border); }
+  .screen:has(> .card > .or-list) .or-row + .or-row::before { height: 0; background: none; border-top: 1px solid var(--border); }
+  /* scheda: bolle, tessere e proposte sono fondi senza bordo; sulla carta tornano col filo, avvisi e scelta in colore */
+  .screen:has(> .or-comp) :is(.or-conv .cs-mb, .cs-fact, .or-comp .cs-opt) { border: 1px solid var(--border); }
+  .screen:has(> .or-comp) .or-comp .cs-opt.on { border: 2px solid var(--interactive); }
+  .screen:has(> .or-comp) .or-comp .cs-lint { border: 1px solid var(--negative); }
 }
