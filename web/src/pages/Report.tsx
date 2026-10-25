@@ -283,14 +283,22 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio, onComport
           <button className="ds-btn secondary sm" type="button" onClick={onVillaggio}>Apri il Villaggio<Icon name="chevron" size={16} /></button>
         </section>
       )}
-      <AdsCard onAds={onAds} onComportamento={onComportamento} />
+      {/* Comportamento (25-10, modulo beh_*): card sua e non dentro AdsCard, che sparisce quando la serie mensile e' vuota */}
+      {onComportamento && (
+        <section className="card">
+          <h2>Comportamento</h2>
+          <p className="muted" style={{ marginTop: 0 }}>Da dove arrivano gli ordini, quanti ne vede il tracciamento e cosa succede dopo un click sulle ads.</p>
+          <button className="ds-btn secondary sm" type="button" onClick={onComportamento}>Apri Comportamento<Icon name="chevron" size={16} /></button>
+        </section>
+      )}
+      <AdsCard onAds={onAds} />
       <ScontiCard />
       <DealCalc />
     </div>
   );
 }
 
-function AdsCard({ onAds, onComportamento }: { onAds?: () => void; onComportamento?: () => void }) {
+function AdsCard({ onAds }: { onAds?: () => void }) {
   const [ads, setAds] = useState<AdsMese[] | null>(null);
   const [fresh, setFresh] = useState<Freschezza | null>(null);
   useEffect(() => { fetchAdsMensile().then(setAds).catch(() => setAds([])); fetchFreschezza().then(setFresh).catch(() => {}); }, []);
@@ -315,8 +323,6 @@ function AdsCard({ onAds, onComportamento }: { onAds?: () => void; onComportamen
         </p>
       )}
       {onAds && <p style={{ marginTop: 0 }}><button className="ds-btn secondary sm" type="button" onClick={onAds}>Apri Ads per creativita'<Icon name="chevron" size={16} /></button></p>}
-      {/* Comportamento (25-10, modulo beh_*): da dove arrivano gli ordini, solo a flag beh_enabled acceso */}
-      {onComportamento && <p style={{ marginTop: 0 }}><button className="ds-btn secondary sm" type="button" onClick={onComportamento}>Apri Comportamento<Icon name="chevron" size={16} /></button></p>}
       <div className="kpis">
         <Kpi label="Spesa ads" value={eur(spend)} tone="accent" />
         <Kpi label="ROAS" value={roas.toFixed(2) + '×'} tone={roas >= 1 ? 'green' : 'red'} />

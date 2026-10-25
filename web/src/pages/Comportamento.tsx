@@ -38,15 +38,19 @@ const canaleNome = (k: string) => CANALE[k] ?? (k.startsWith('app:') ? `Altra ap
 const PASSO: Record<string, string> = { ordini: 'Ordini (Shopify)', meta: 'Ads Meta (click e pagine caricate)' };
 const NOME: Record<string, string> = {
   beh_fresh: 'Giri del modulo', beh_tracciamento_guasto: 'Tracciamento delle visite (48 ore)', beh_quota_tracciata: 'Quota tracciata (28 giorni)',
+  beh_copertura: 'Giorni mancanti (35 giorni)',
   beh_ordini: 'Giro ordini', beh_ordini_backfill: 'Recupero dello storico ordini', beh_meta: 'Giro Meta', beh_meta_backfill: 'Recupero dello storico Meta', beh_sync: 'beh-sync',
 };
 const HINT: Record<string, string> = {
   beh_fresh: 'Un giro giornaliero non arriva da 48 ore, oppure una soglia in app_flags e\' scritta male: avvisa Code.',
   beh_tracciamento_guasto: 'Ordini del sito senza nessuna visita registrata: controllare il banner dei cookie e il tracciamento di Shopify.',
   beh_quota_tracciata: 'Meno ordini del solito hanno visite registrate: banner dei cookie o tracciamento da controllare.',
-  beh_ordini: 'L\'ultimo giro ordini non e\' andato: il messaggio dice perche\'. Il giro di domani rilegge comunque 7 giorni.',
-  beh_meta: 'L\'ultimo giro Meta non e\' andato: il messaggio dice perche\'. Il giro di domani rilegge comunque 7 giorni.',
+  beh_copertura: 'Ci sono giorni mai letti: il giro rilegge solo gli ultimi 7, quindi va lanciato un recupero di quei giorni (avvisa Code).',
+  beh_ordini: 'L\'ultimo giro ordini non e\' andato: il messaggio dice perche\'. Il giro di domani rilegge gli ultimi 7 giorni; un fermo piu\' lungo lo segnala "Giorni mancanti".',
+  beh_meta: 'L\'ultimo giro Meta non e\' andato: il messaggio dice perche\'. Il giro di domani rilegge gli ultimi 7 giorni; un fermo piu\' lungo lo segnala "Giorni mancanti".',
+  backfill: 'Il recupero dello storico non e\' andato e non riparte da solo: va rilanciato a mano (avvisa Code).',
 };
+const ORE_48 = 48 * 3600 * 1000;
 
 // frecce sul periodo prima: copiate da Salute (deltaPct e Delta), senza toccare Salute. Qui un valore puo' mancare
 // (null): periodo prima che comincia prima dei dati, o un costo per ordine senza ordini. Allora "n.d.", mai una freccia.
@@ -127,28 +131,34 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
   const visite = src === 'ultima' ? f.ultima_visita : f.prima_visita;
   const sorgenti: [string, number][] = SORGENTE.filter(([k]) => (visite[k] ?? 0) > 0).map(([k, label]) => [label, visite[k]]);
   for (const [k, n] of Object.entries(visite)) if (!SORGENTE.some(([s]) => s === k) && n > 0) sorgenti.push([k || 'Sorgente vuota', n]);
-  // costo per ordine: null senza ordini (o senza periodo prima confrontabile), cosi' niente "-100%" su un valore assente
-  const cpa = f.ordini_cpa ? f.spesa_meta / f.ordini_cpa : null;
+  // costo per ordine: null senza spesa letta o senza ordini (o senza periodo prima confrontabile), mai "-100%" su un vuoto
+  const cpa = f.spesa_meta != null && f.ordini_cpa ? f.spesa_meta / f.ordini_cpa : null;
   const cpaPrev = f.prev_ordini_cpa && f.prev_spesa_meta != null ? f.prev_spesa_meta / f.prev_ordini_cpa : null;
   const metaAcceso = d.steps.includes('meta');
   const maturi = c.coorti.filter((x) => x.maturita_giorni >= 90);
   const health = [...d.salute.health].sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.k.localeCompare(b.k));
-  // il pallino del titolo guarda anche l'esito dell'ultimo giro del cron di ogni passo
-  const worst = [...health.map((h) => h.severity), ...d.salute.giri.map((g) => g.status)].sort((a, b) => sevRank(a) - sevRank(b))[0] ?? 'ok';
+  // giri del cron dei soli passi accesi (un passo spento non tiene rosso il pallino); un giro fermo da 48 ore conta warn
+  const ora = Date.parse(d.generated_at);
+  const fermo = (g: BehGiro) => !g.ended_at || ora - Date.parse(g.ended_at) > ORE_48;
+  const giri = d.salute.giri.filter((g) => d.steps.includes(g.step));
+  const statoGiro = (g: BehGiro) => (g.status === 'ok' && fermo(g) ? 'warn' : g.status);
+  const worst = [...health.map((h) => h.severity), ...giri.map(statoGiro)].sort((a, b) => sevRank(a) - sevRank(b))[0] ?? 'ok';
   const overallLabel = worst === 'error' ? 'Da sistemare' : worst === 'warn' ? 'Da tenere d’occhio' : 'Tutto in ordine';
   const rigaSalute = (h: BehHealth) => (
     <li key={h.k} className={'cmp-hrow sev-' + (SEV_CLS[h.severity] ?? 'nd')}>
       <div className="rt">{NOME[h.k] ?? h.k}</div>
-      <div className="rs">{h.label}{h.day < d.to ? ` (del ${fmtDay(h.day)})` : null}</div>
-      {h.severity !== 'ok' && <div className="note">{HINT[h.k.replace(/_backfill$/, '')] ?? 'Avvisa Code con il messaggio qui sopra.'}</div>}
+      {/* datata su oggi, non sulla fine del periodo (che e' sempre ieri o prima) */}
+      <div className="rs">{h.label}{h.day < d.oggi ? ` (del ${fmtDay(h.day)})` : null}</div>
+      {h.severity !== 'ok' && <div className="note">{(h.k.endsWith('_backfill') ? HINT.backfill : HINT[h.k]) ?? 'Avvisa Code con il messaggio qui sopra.'}</div>}
     </li>
   );
   const rigaGiro = (g: BehGiro) => (
-    <li key={g.step} className={'cmp-hrow sev-' + (SEV_CLS[g.status] ?? 'nd')}>
+    <li key={g.step} className={'cmp-hrow sev-' + (SEV_CLS[statoGiro(g)] ?? 'nd')}>
       <div className="rt">{PASSO[g.step] ?? g.step}</div>
-      <div className="rs">{`ultimo giro ${fmtOra(g.ended_at)}, esito ${g.status}${g.rows_written != null ? `, ${num(g.rows_written)} righe` : ''}`}</div>
+      <div className="rs">{`ultimo giro del cron ${fmtOra(g.ended_at)}, esito ${g.status}${g.rows_written != null ? `, ${num(g.rows_written)} righe` : ''}${g.status === 'ok' && fermo(g) ? ': fermo da piu\' di 48 ore' : ''}`}</div>
     </li>
   );
+  const fonteDati = (testo: string) => <p className="note">{`Fonte: ${testo}.`}</p>;
 
   return (
     <>
@@ -182,14 +192,22 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
         <p className="note">{src === 'ultima'
           ? 'Ultima visita = da dove e\' arrivata la cliente la volta in cui ha comprato. Solo ordini del sito con attribuzione finita.'
           : 'Prima visita = la prima volta che Shopify ha visto la cliente, anche settimane prima dell\'ordine. Solo ordini del sito con attribuzione finita.'}</p>
+        {fonteDati(`${f.fonte}`)}
 
         <h3 className="cmp-h3">Ads Meta</h3>
         <div className="kpis">
-          <Kpi v={eur2(f.spesa_meta)} k="Spesa Meta" sub={<Delta cur={f.spesa_meta} prev={f.prev_spesa_meta} goodUp={false} />} />
+          <Kpi v={f.spesa_meta != null ? eur2(f.spesa_meta) : 'n.d.'} k="Spesa Meta" sub={<Delta cur={f.spesa_meta} prev={f.prev_spesa_meta} goodUp={false} />} />
           <Kpi v={cpa != null ? eur2(cpa) : 'n.d.'} k="Costo per ordine (blended)" sub={<Delta cur={cpa} prev={cpaPrev} goodUp={false} />} />
         </div>
-        <p className="note">{`Costo per ordine blended = spesa Meta divisa per tutti gli ordini degli stessi giorni (${num(f.ordini_cpa)}), non solo quelli venuti dalle ads. Spesa e costo contano i ${num(f.giorni_spesa)} giorni del periodo gia' coperti dalla spesa (aggiornata al ${fmtDay(f.meta_dati_al)}), confrontati con lo stesso numero di giorni prima; n.d. quando quei giorni cominciano prima della spesa per annuncio, letta dal 20 giugno.`}</p>
-        {metaAcceso && f.ads.dati_al ? (
+        {f.giorni_spesa_mancanti > 0 && (
+          <p className="note warn">{`Spesa n.d.: ${num(f.giorni_spesa_mancanti)} giorni del periodo hanno click Meta ma nessuna riga di spesa (ads-sync non li ha letti). Va lanciato un recupero di ads-sync per quei giorni: lo segnala anche "Giorni mancanti" in Salute.`}</p>
+        )}
+        {f.giorni_spesa > 0 ? (
+          <p className="note">{`Costo per ordine blended = spesa Meta divisa per tutti gli ordini degli stessi giorni (${num(f.ordini_cpa)}), non solo quelli venuti dalle ads. Spesa e costo contano i ${num(f.giorni_spesa)} giorni dal ${fmtDay(f.spesa_dal)} gia' coperti dalla spesa (aggiornata al ${fmtDay(f.meta_dati_al)}), confrontati con lo stesso numero di giorni prima; n.d. quando quei giorni cominciano prima della spesa per annuncio, letta dal 20 giugno.`}</p>
+        ) : <p className="note">{`Nessun giorno del periodo ha ancora la spesa per annuncio (aggiornata al ${fmtDay(f.meta_dati_al)}): spesa e costo per ordine sono n.d., non zero.`}</p>}
+        {!metaAcceso ? <p className="note">{'Il passo Meta del modulo e\' spento: click, uscite e pagine caricate compariranno qui quando si accende.'}</p>
+          : !f.ads.dati_al ? <p className="note">{'Nessun click Meta letto nel periodo: se le ads erano attive, guarda il giro Meta in Salute.'}</p>
+          : (
           <>
             <Funnel steps={[
               ['Click sul link dell\'annuncio', f.ads.link_clicks],
@@ -198,7 +216,7 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
             ]} />
             <p className="note">{`Con le Collection il primo tocco apre la vetrina dentro Instagram: i click sul link contano anche quello, le uscite contano solo chi va sul sito. Le pagine caricate le conta il pixel, quindi solo chi accetta i cookie. Dati al ${fmtDay(f.ads.dati_al)}.`}</p>
           </>
-        ) : <p className="note">{'Il passo Meta del modulo non e\' ancora acceso: click, uscite e pagine caricate compariranno qui.'}</p>}
+        )}
       </section>
 
       <section className="card">
@@ -222,6 +240,7 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
           </table>
         )}
         <p className="note">{`Tutta la storia, non segue il periodo scelto. Una coorte = i clienti col primo ordine nello stesso mese. Il riacquisto conta solo le ${num(maturi.length)} coorti che hanno gia' 90 giorni dal primo del mese: quelle in grigio sono ancora aperte.`}</p>
+        {fonteDati(c.fonte)}
       </section>
 
       <section className="card">
@@ -233,13 +252,14 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
           ['Hanno riscattato', p.riscatti],
           ['Ordini pagati con AMICA12 (ordini)', p.ordini_amica12],
         ]} />
-        <p className="note">Aperture rispetto al periodo prima: <Delta cur={p.aperture} prev={p.prev_aperture} />. {'Stessi numeri della tab Premia: clienti distinti, tranne l\'ultimo passaggio che conta ordini. Il confronto e\' n.d. finche\' il periodo prima comincia prima del 21 settembre, quando le aperture hanno cominciato a essere contate.'}</p>
+        <p className="note">Aperture rispetto al periodo prima: <Delta cur={p.aperture} prev={p.prev_aperture} />. {`Stesse definizioni della tab Premia (clienti distinti, tranne l'ultimo passaggio che conta ordini), ma sul periodo di questa pagina, che finisce all'ultimo giorno completo: i numeri possono differire da Premia di qualche cliente. Le aperture si contano dal 21 settembre (prima il confronto e' n.d.); "punti per un premio" e "Riscatta" vengono dal tracciamento dei tap${p.tap_dal ? `, attivo dal ${fmtDay(p.tap_dal)}` : ''}.`}</p>
+        {fonteDati(p.fonte)}
       </section>
 
       <section className="card">
         <h2>Salute delle fonti <span className={'ds-pill ' + (SEV_CLS[worst] ?? 'pos')}>{overallLabel}</span></h2>
-        <ul className="cmp-hlist" role="list">{d.salute.giri.map(rigaGiro)}{health.map(rigaSalute)}</ul>
-        {d.salute.giri.length === 0 && <p className="note">{'Nessun giro del cron ancora: il primo parte la mattina dopo l\'accensione del modulo.'}</p>}
+        <ul className="cmp-hlist" role="list">{giri.map(rigaGiro)}{health.map(rigaSalute)}</ul>
+        {giri.length === 0 && <p className="note">{'Nessun giro del cron ancora per i passi accesi: il primo parte la mattina dopo l\'accensione del modulo.'}</p>}
         <p className="note">{`Passi accesi: ${d.steps.length ? d.steps.map((s) => PASSO[s] ?? s).join(', ') : 'nessuno'}. I giri del cron partono ogni mattina poco dopo le 7 (le 8 con l'ora legale) e rileggono gli ultimi 7 giorni; qui si vede l'ultimo giro del cron di ogni passo, non i recuperi dello storico.`}</p>
       </section>
     </>

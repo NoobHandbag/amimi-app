@@ -40,6 +40,9 @@ const META_MAX_PAGES = 25;            // pagine da 500 righe: oltre = errore dic
 // una sola lista di campi per diag e giro: un outbound_clicks tolto da una delle due non deve passare in silenzio
 const META_FIELDS = 'ad_id,campaign_id,inline_link_clicks,outbound_clicks,actions';
 const MAX_META_RIGHE = 5000;          // Regola 20c: 62 giorni x 80 annunci
+// tetto di ogni chiamata esterna: una connessione appesa chiude il giro in errore invece di lasciarlo 'running' fino
+// al limite della edge (Gate di verifica del 25-10)
+const FETCH_MS = 30000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Letture Supabase: un solo ritentativo dopo 1,5 s (PostgREST risponde 504 ai secondi :00-:03, CASI_APERTI n.19).
 const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
@@ -95,7 +98,8 @@ const landing_ = (u: unknown): string => {
 };
 const SOCIAL_HOST = /(^|\.)(facebook\.com|fb\.com|fb\.me|instagram\.com|tiktok\.com|pinterest\.[a-z.]+|youtube\.com|youtu\.be|t\.co|twitter\.com|x\.com|threads\.net|linkedin\.com|snapchat\.com)$/;
 const SEARCH_HOST = /(^|\.)(google\.[a-z.]+|bing\.com|yahoo\.[a-z.]+|duckduckgo\.com|ecosia\.org|yandex\.[a-z.]+|baidu\.com)$/;
-const MAIL_HOST = /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|mail\.yahoo\.com|mail\.libero\.it|webmail\.[a-z.]+)$/;
+// le app di posta su Android si presentano come android-app://<pacchetto>: Gmail sarebbe altrimenti 'search' (google.*)
+const MAIL_HOST = /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|mail\.yahoo\.com|mail\.libero\.it|webmail\.[a-z.]+|com\.google\.android\.gm|com\.microsoft\.office\.outlook|com\.yahoo\.mobile\.client\.android\.mail)$/;
 const PAID_MEDIUM = /^(cpc|ppc|cpm|cpv|paid|paid_?social|paidsocial|paid_?search|display|ads?)$/;
 const SOCIAL_WORD = /(facebook|instagram|^ig$|^fb$|tiktok|pinterest|youtube)/;
 const SEARCH_WORD = /(google|bing|yahoo|duckduckgo|ecosia)/;
@@ -235,7 +239,7 @@ Deno.serve(async (req) => {
   let costTot = 0;
   const gql = async (query: string, variables: Record<string, unknown>) => {
     for (let attempt = 0; ; attempt++) {
-      const r = await fetch(GQL, { method: 'POST', headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) });
+      const r = await fetch(GQL, { method: 'POST', headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }), signal: AbortSignal.timeout(FETCH_MS) });
       servedVersion = r.headers.get('x-shopify-api-version') ?? servedVersion;
       const transient = r.status === 429 || r.status >= 500;
       if (!transient && !r.ok) throw new Error(`Shopify HTTP ${r.status} ${redact_((await r.text()).slice(0, 200))}`);
@@ -259,8 +263,8 @@ Deno.serve(async (req) => {
     let pages = 0;
     while (next) {
       if (++pages > META_MAX_PAGES) throw new Error(`Meta: oltre ${META_MAX_PAGES} pagine, dati incompleti`);
-      let r = await fetch(next, { headers: H });
-      if (r.status === 429 || r.status >= 500) { await r.text().catch(() => ''); await sleep(3000); r = await fetch(next, { headers: H }); }
+      let r = await fetch(next, { headers: H, signal: AbortSignal.timeout(FETCH_MS) });
+      if (r.status === 429 || r.status >= 500) { await r.text().catch(() => ''); await sleep(3000); r = await fetch(next, { headers: H, signal: AbortSignal.timeout(FETCH_MS) }); }
       const txt = await r.text();
       if (!r.ok) throw new Error(`Meta HTTP ${r.status} ${redact_(txt).slice(0, 300)}`);
       const j = JSON.parse(txt);
@@ -295,7 +299,7 @@ Deno.serve(async (req) => {
     // scope del token (stampo loyalty-orders): senza read_all_orders Shopify da' 0 ordini oltre i 60 giorni, senza errore
     let scopes: string[] = []; let scopeErr = '';
     try {
-      const r = await fetch(`https://${SHOP}.myshopify.com/admin/oauth/access_scopes.json`, { headers: { 'X-Shopify-Access-Token': token } });
+      const r = await fetch(`https://${SHOP}.myshopify.com/admin/oauth/access_scopes.json`, { headers: { 'X-Shopify-Access-Token': token }, signal: AbortSignal.timeout(FETCH_MS) });
       if (r.ok) scopes = (((await r.json())?.access_scopes ?? []) as Array<{ handle: string }>).map((s) => s.handle); else scopeErr = `HTTP ${r.status}`;
     } catch (e) { scopeErr = redact_(e instanceof Error ? e.message : e); }
     try {

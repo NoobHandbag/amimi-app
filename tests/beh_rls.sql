@@ -26,6 +26,7 @@ declare
   v_val text;
   v_sev text;
   v_dash jsonb;
+  v_reale jsonb;
   v_giorno date;
   v_num numeric;
   v_oggi date := (now() at time zone 'Europe/Rome')::date;
@@ -103,7 +104,7 @@ begin
   update app_flags set value = 'true' where key = 'beh_enabled';
   update app_flags set value = 'ordini' where key = 'beh_steps';
   delete from beh_sync_runs where step = 'ordini';
-  insert into beh_sync_runs (step, action, run_day, status, ended_at) values ('ordini', 'run', current_date, 'ok', now());
+  insert into beh_sync_runs (step, action, source, run_day, status, ended_at) values ('ordini', 'run', 'cron', current_date, 'ok', now());
   foreach v_val in array array['dieci', '99999999999'] loop
     update app_flags set value = v_val where key = 'beh_fresh_ore';
     perform public.beh_health_check();
@@ -123,14 +124,15 @@ begin
     raise exception 'KO H3: mancano beh_tracciamento_guasto o beh_quota_tracciata col passo ordini acceso';
   end if;
 
-  -- H4 un backfill riuscito non e' un giro del cron: da solo lascia beh_fresh in error
+  -- H4 un backfill riuscito o un run lanciato a mano non sono giri del cron: da soli lasciano beh_fresh in error
   delete from beh_sync_runs where step = 'ordini';
   insert into beh_sync_runs (step, action, run_day, status, ended_at) values ('ordini', 'backfill', current_date, 'ok', now());
+  insert into beh_sync_runs (step, action, source, run_day, status, ended_at) values ('ordini', 'run', 'manuale', current_date, 'ok', now());
   perform public.beh_health_check();
   if not exists (select 1 from health_log where day = current_date and k = 'beh_fresh' and severity = 'error' and label like '%ordini (mai)%') then
-    raise exception 'KO H4: col solo backfill beh_fresh non va in error con ''ordini (mai)''';
+    raise exception 'KO H4: col solo backfill e un run a mano beh_fresh non va in error con ''ordini (mai)''';
   end if;
-  insert into beh_sync_runs (step, action, run_day, status, ended_at) values ('ordini', 'run', current_date, 'ok', now());
+  insert into beh_sync_runs (step, action, source, run_day, status, ended_at) values ('ordini', 'run', 'cron', current_date, 'ok', now());
 
   -- H5 guasto del tracciamento (48 ore, soglia 5 ordini): bozza, test, cancellato e non pronto non contano
   delete from beh_order_origin;
@@ -171,9 +173,72 @@ begin
     raise exception 'KO H6: 47 tracciati su 79 ordini non da'' ok con ''pochi ordini''';
   end if;
 
+  -- H7 (migr 0171) copertura a 35 giorni e Meta ferma. Ogni caso in un sottoblocco che torna indietro da solo, cosi' D
+  -- ritrova i dati sintetici di H6. Ordini: beh_order_origin ricostruita dagli ordini veri di shopify_orders = ok, poi un
+  -- giorno tolto = warn con quel giorno. Meta: un giorno con click e senza spesa = warn e, nella RPC, spesa null con
+  -- giorni_spesa_mancanti. Spesa ferma da due giorni = beh_fresh error. I giri finti sono del cron (source 'cron').
+  update app_flags set value = 'ordini,meta' where key = 'beh_steps';
+  insert into beh_sync_runs (step, action, source, run_day, status, ended_at) values ('meta', 'run', 'cron', current_date, 'ok', now());
+  begin
+    delete from beh_order_origin;
+    insert into beh_order_origin (order_gid_num, order_name, created_at_shop, day, canale, is_test, is_cancelled, ready, moments)
+    select -170000 - row_number() over (order by o.created_at_shop), o.order_id, o.created_at_shop, (o.created_at_shop at time zone 'Europe/Rome')::date,
+           'online_store', false, false, true, 1
+      from shopify_orders o where o.created_at_shop >= ((v_oggi - 40)::timestamp at time zone 'Europe/Rome');
+    perform public.beh_health_check();
+    select severity, label into v_sev, v_val from health_log where day = current_date and k = 'beh_copertura';
+    if v_sev is distinct from 'ok' then raise exception 'KO H7: copertura con gli ordini veri = % (%), attesa ok', v_sev, v_val; end if;
+    select max(b.day) into v_giorno from beh_order_origin b where b.day < v_oggi;
+    delete from beh_order_origin where day = v_giorno;
+    perform public.beh_health_check();
+    if not exists (select 1 from health_log where day = current_date and k = 'beh_copertura' and severity = 'warn'
+                    and label like '%ordini mancanti il ' || to_char(v_giorno, 'DD-MM') || ' (0 su %') then
+      raise exception 'KO H7: tolto il % da beh_order_origin, beh_copertura non lo dice', v_giorno;
+    end if;
+    raise exception 'H7_ORDINI_OK';
+  exception when others then
+    if sqlerrm <> 'H7_ORDINI_OK' then raise; end if;
+  end;
+  begin
+    select max(b.date) into v_giorno from beh_meta_outbound_daily b
+     where b.date < v_oggi - 2 and exists (select 1 from meta_ads_creative_daily m where m.date = b.date);
+    if v_giorno is not null then
+      delete from meta_ads_creative_daily where date = v_giorno;
+      perform public.beh_health_check();
+      if not exists (select 1 from health_log where day = current_date and k = 'beh_copertura' and severity = 'warn'
+                      and label like '%spesa Meta mancante (ads-sync) il ' || to_char(v_giorno, 'DD-MM') || '%') then
+        raise exception 'KO H7: tolta la spesa del %, beh_copertura non lo dice', v_giorno;
+      end if;
+      perform set_config('role', 'authenticated', true);
+      perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
+      v_dash := public.beh_dashboard(30);
+      reset role;
+      if v_giorno between (v_dash -> 'fonti' ->> 'spesa_dal')::date and (v_dash -> 'fonti' ->> 'spesa_dal')::date + (v_dash -> 'fonti' ->> 'giorni_spesa')::int - 1
+         and (jsonb_typeof(v_dash -> 'fonti' -> 'spesa_meta') is distinct from 'null' or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti')::int < 1) then
+        raise exception 'KO H7: spesa del % mancante ma la RPC da'' spesa_meta = % e giorni_spesa_mancanti = %', v_giorno,
+          v_dash -> 'fonti' -> 'spesa_meta', v_dash -> 'fonti' -> 'giorni_spesa_mancanti';
+      end if;
+    end if;
+    raise exception 'H7_META_OK';
+  exception when others then
+    if sqlerrm <> 'H7_META_OK' then raise; end if;
+  end;
+  begin
+    delete from meta_ads_creative_daily where date >= v_oggi - 1;
+    perform public.beh_health_check();
+    if not exists (select 1 from health_log where day = current_date and k = 'beh_fresh' and severity = 'error' and label like '%meta_ads_creative_daily ferma al%') then
+      raise exception 'KO H7: spesa Meta ferma da due giorni ma beh_fresh non va in error';
+    end if;
+    raise exception 'H7_FERMA_OK';
+  exception when others then
+    if sqlerrm <> 'H7_FERMA_OK' then raise; end if;
+  end;
+
   -- D (migr 0171): viste solo per ask_ro (che legge davvero la spesa attraverso la vista); la RPC beh_dashboard risponde
-  -- al team, rifiuta gli altri (42501), a flag spento dice 'off'; coi dati sintetici di H6 conta gli stessi ordini della
-  -- tabella nelle date che dichiara, non arriva mai a oggi, e un confronto su un periodo che comincia prima dei dati e' null
+  -- al team, rifiuta gli altri (42501), a flag spento dice 'off'. Sui dati sintetici di H6 piu' quattro ordini che
+  -- distinguono i filtri (bozza, prova, cancellato, in attribuzione) ogni numero della card ordini e il CPA tornano coi
+  -- conteggi fatti qui; il periodo dura quanto chiesto, finisce all'ultimo giorno completo e segue l'ultimo giro ordini
+  -- riuscito; un confronto su un periodo che comincia prima dei dati e' null.
   if to_regprocedure('public.beh_dashboard(integer)') is null then raise exception 'KO: migr 0171 non applicata'; end if;
   foreach v_val in array array['v_beh_ordini_daily', 'v_beh_attribuzione_mensile', 'v_beh_ads_funnel_daily'] loop
     if has_table_privilege('anon', 'public.' || v_val, 'select') or has_table_privilege('authenticated', 'public.' || v_val, 'select') then
@@ -196,26 +261,82 @@ begin
   if v_dash ->> 'state' is distinct from 'off' then raise exception 'KO D: a flag spento la RPC risponde %', v_dash ->> 'state'; end if;
   reset role;
   update app_flags set value = 'true' where key = 'beh_enabled';
+
+  -- periodo: segue l'ultimo giro ordini riuscito del giorno prima (to = oggi - 2), un giro fallito di oggi non lo sposta
+  delete from beh_sync_runs where step = 'ordini';
+  insert into beh_sync_runs (step, action, source, run_day, status, ended_at, window_from, window_to)
+    values ('ordini', 'run', 'cron', v_oggi - 1, 'ok', ((v_oggi - 1) + time '07:20') at time zone 'Europe/Rome', v_oggi - 8, v_oggi);
+  insert into beh_sync_runs (step, action, source, run_day, status, ended_at, window_from, window_to)
+    values ('ordini', 'run', 'cron', v_oggi, 'error', now(), v_oggi - 7, v_oggi + 1);
+  foreach v_n in array array[7, 30, 90] loop
+    perform set_config('role', 'authenticated', true);
+    v_dash := public.beh_dashboard(v_n);
+    reset role;
+    if (v_dash ->> 'to')::date <> v_oggi - 2 or (v_dash ->> 'to')::date - (v_dash ->> 'from')::date + 1 <> v_n
+       or (v_dash ->> 'prev_to')::date <> (v_dash ->> 'from')::date - 1 or (v_dash ->> 'prev_to')::date - (v_dash ->> 'prev_from')::date + 1 <> v_n then
+      raise exception 'KO D: periodo di % giorni = % .. % (prima % .. %), atteso fino a % e la stessa durata', v_n,
+        v_dash ->> 'from', v_dash ->> 'to', v_dash ->> 'prev_from', v_dash ->> 'prev_to', v_oggi - 2;
+    end if;
+  end loop;
+
+  -- ordini che distinguono i filtri, dentro il periodo
+  insert into beh_order_origin (order_gid_num, order_name, created_at_shop, day, canale, is_test, is_cancelled, ready, moments)
+  values (-169301, '#d1', ((v_oggi - 4) + time '12:00') at time zone 'Europe/Rome', v_oggi - 4, 'bozza', false, false, true, 0),
+         (-169302, '#d2', ((v_oggi - 4) + time '12:00') at time zone 'Europe/Rome', v_oggi - 4, 'online_store', true, false, true, 1),
+         (-169303, '#d3', ((v_oggi - 4) + time '12:00') at time zone 'Europe/Rome', v_oggi - 4, 'online_store', false, true, true, 1),
+         (-169304, '#d4', ((v_oggi - 4) + time '12:00') at time zone 'Europe/Rome', v_oggi - 4, 'online_store', false, false, false, null);
   perform set_config('role', 'authenticated', true);
   v_dash := public.beh_dashboard(30);
   reset role;
-  select count(*) into v_n from beh_order_origin o
-   where o.canale = 'online_store' and not o.is_test and not o.is_cancelled and o.day between (v_dash ->> 'from')::date and (v_dash ->> 'to')::date;
-  if v_dash ->> 'state' is distinct from 'on' or (v_dash -> 'ordini' ->> 'online')::int is distinct from v_n or v_n = 0
-     or not (v_dash ? 'fonti' and v_dash ? 'clienti' and v_dash ? 'premia' and v_dash ? 'salute') then
-    raise exception 'KO D: RPC a flag acceso: stato %, ordini online % contro % in tabella', v_dash ->> 'state', v_dash -> 'ordini' ->> 'online', v_n;
+  if v_dash ->> 'state' is distinct from 'on' or not (v_dash ? 'fonti' and v_dash ? 'clienti' and v_dash ? 'premia' and v_dash ? 'salute') then
+    raise exception 'KO D: RPC a flag acceso: stato %', v_dash ->> 'state';
   end if;
   if (v_dash ->> 'to')::date >= v_oggi then raise exception 'KO D: il periodo arriva a % (oggi %): oggi non e'' mai completo', v_dash ->> 'to', v_oggi; end if;
+  select jsonb_build_object(
+           'online',           count(*) filter (where o.canale = 'online_store'),
+           'online_pronti',    count(*) filter (where o.canale = 'online_store' and o.ready),
+           'online_tracciati', count(*) filter (where o.canale = 'online_store' and o.ready and o.moments > 0),
+           'in_attribuzione',  count(*) filter (where o.canale = 'online_store' and not o.ready),
+           'tutti',            count(*))
+    into v_reale
+    from beh_order_origin o
+   where not o.is_test and not o.is_cancelled and o.day between (v_dash ->> 'from')::date and (v_dash ->> 'to')::date;
+  foreach v_val in array array['online', 'online_pronti', 'online_tracciati', 'in_attribuzione', 'tutti'] loop
+    if (v_dash -> 'ordini' ->> v_val)::int is distinct from (v_reale ->> v_val)::int then
+      raise exception 'KO D: ordini.% = % contro % contati qui', v_val, v_dash -> 'ordini' ->> v_val, v_reale ->> v_val;
+    end if;
+  end loop;
+  if (v_reale ->> 'online')::int = 0 or (v_reale ->> 'in_attribuzione')::int = 0 then raise exception 'KO D: dati sintetici fuori dal periodo'; end if;
+  if (v_dash -> 'fonti' ->> 'giorni_spesa')::int > 0 then
+    select count(*) into v_n from beh_order_origin o
+     where not o.is_test and not o.is_cancelled
+       and o.day between (v_dash -> 'fonti' ->> 'spesa_dal')::date and (v_dash -> 'fonti' ->> 'spesa_dal')::date + (v_dash -> 'fonti' ->> 'giorni_spesa')::int - 1;
+    if (v_dash -> 'fonti' ->> 'ordini_cpa')::int is distinct from v_n then
+      raise exception 'KO D: ordini_cpa = % contro % ordini nei giorni coperti dalla spesa', v_dash -> 'fonti' ->> 'ordini_cpa', v_n;
+    end if;
+  end if;
+  if (v_dash -> 'clienti' -> 'riacquisto_90' ->> 'clienti')::int is distinct from (select coalesce(sum(clienti), 0)::int from v_clienti_coorti where maturita_giorni >= 90)
+     or (v_dash -> 'clienti' -> 'riacquisto_90' ->> 'ricomprato')::int is distinct from (select coalesce(sum(ricomprato_90gg), 0)::int from v_clienti_coorti where maturita_giorni >= 90) then
+    raise exception 'KO D: riacquisto_90 = % contro le coorti mature di v_clienti_coorti', v_dash -> 'clienti' -> 'riacquisto_90';
+  end if;
+
   perform set_config('role', 'authenticated', true);
   v_dash := public.beh_dashboard(90);
   reset role;
   if (v_dash -> 'fonti' ->> 'giorni_spesa')::int > 0
-     and ((v_dash ->> 'from')::date - (v_dash -> 'fonti' ->> 'giorni_spesa')::int) < (select min(date) from meta_ads_creative_daily)
+     and ((v_dash -> 'fonti' ->> 'spesa_dal')::date - (v_dash -> 'fonti' ->> 'giorni_spesa')::int) < (select min(date) from meta_ads_creative_daily)
      and jsonb_typeof(v_dash -> 'fonti' -> 'prev_spesa_meta') is distinct from 'null' then
-    raise exception 'KO D: 90 giorni, periodo prima della spesa dal % ma prev_spesa_meta = %', (v_dash ->> 'from')::date - (v_dash -> 'fonti' ->> 'giorni_spesa')::int, v_dash -> 'fonti' -> 'prev_spesa_meta';
+    raise exception 'KO D: 90 giorni, periodo prima della spesa dal % ma prev_spesa_meta = %',
+      (v_dash -> 'fonti' ->> 'spesa_dal')::date - (v_dash -> 'fonti' ->> 'giorni_spesa')::int, v_dash -> 'fonti' -> 'prev_spesa_meta';
   end if;
   if (v_dash ->> 'prev_from')::date < (select min(day) from loyalty_visits) and jsonb_typeof(v_dash -> 'premia' -> 'prev_aperture') is distinct from 'null' then
     raise exception 'KO D: 90 giorni, aperture contate dal % ma prev_aperture = %', (select min(day) from loyalty_visits), v_dash -> 'premia' -> 'prev_aperture';
+  end if;
+  perform set_config('role', 'authenticated', true);
+  v_dash := public.beh_dashboard(365);
+  reset role;
+  if (v_dash -> 'fonti' ->> 'giorni_spesa')::int > (v_dash ->> 'to')::date - (select min(date) from meta_ads_creative_daily) + 1 then
+    raise exception 'KO D: 365 giorni, giorni_spesa % oltre i giorni della spesa per annuncio', v_dash -> 'fonti' ->> 'giorni_spesa';
   end if;
   perform set_config('role', 'authenticated', true);
   perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'estraneo@gmail.com')::text, true);

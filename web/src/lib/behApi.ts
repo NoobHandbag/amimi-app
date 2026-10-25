@@ -19,11 +19,13 @@ export type BehOn = {
   };
   fonti: {
     fonte: string; ultima_visita: Record<string, number>; prima_visita: Record<string, number>; meta_dati_al: string | null;
-    giorni_spesa: number; spesa_meta: number; ordini_cpa: number; prev_spesa_meta: number | null; prev_ordini_cpa: number | null;
+    // spesa_meta null = nessun giorno coperto, o un giorno con click Meta ma senza righe di spesa (giorni_spesa_mancanti)
+    spesa_dal: string | null; giorni_spesa: number; giorni_spesa_mancanti: number;
+    spesa_meta: number | null; ordini_cpa: number; prev_spesa_meta: number | null; prev_ordini_cpa: number | null;
     ads: { link_clicks: number; outbound_clicks: number; landing_page_views: number; dati_al: string | null };
   };
   clienti: { fonte: string; clienti: number; con_2_ordini: number; riacquisto_90: { ricomprato: number; clienti: number }; coorti: BehCoorte[] };
-  premia: { fonte: string; aperture: number; premio_pronto: number; tap_riscatta: number; riscatti: number; ordini_amica12: number; prev_aperture: number | null };
+  premia: { fonte: string; aperture: number; premio_pronto: number; tap_riscatta: number; riscatti: number; ordini_amica12: number; prev_aperture: number | null; tap_dal: string | null };
   salute: { giri: BehGiro[]; health: BehHealth[] };
 };
 export type BehDash = { state: 'off' } | BehOn;

@@ -25,17 +25,18 @@ function dash(days: number, tracciati = 87, pronti = 120) {
     fonti: {
       fonte: 'Shopify, Meta', ultima_visita: { direct: 40, search: 20, social: 15, paid_social: 8, email: 2, referral: 1, unknown: 1, none: 33 },
       prima_visita: { direct: 30, search: 30, social: 14, paid_social: 10, email: 1, none: 35 }, meta_dati_al: '2026-10-24',
-      giorni_spesa: days, spesa_meta: 1234.56, ordini_cpa: 125, prev_spesa_meta: 1000 as number | null, prev_ordini_cpa: 100 as number | null,
-      ads: { link_clicks: 4613, outbound_clicks: 2940, landing_page_views: 2180, dati_al: '2026-10-24' },
+      spesa_dal: giorni[0].day as string | null, giorni_spesa: days, giorni_spesa_mancanti: 0,
+      spesa_meta: 1234.56 as number | null, ordini_cpa: 125, prev_spesa_meta: 1000 as number | null, prev_ordini_cpa: 100 as number | null,
+      ads: { link_clicks: 4613, outbound_clicks: 2940, landing_page_views: 2180, dati_al: '2026-10-24' as string | null },
     },
     clienti: {
       fonte: 'Supabase', clienti: 888, con_2_ordini: 61, riacquisto_90: { ricomprato: 12, clienti: 500 },
       coorti: [{ coorte: '2026-05-01', maturita_giorni: 150, clienti: 80, ricomprato_90gg: 3 }, { coorte: '2026-09-01', maturita_giorni: 40, clienti: 120, ricomprato_90gg: 4 }],
     },
-    premia: { fonte: 'Area Membri', aperture: 35, premio_pronto: 12, tap_riscatta: 6, riscatti: 4, ordini_amica12: 2, prev_aperture: 30 as number | null },
+    premia: { fonte: 'Area Membri', aperture: 35, premio_pronto: 12, tap_riscatta: 6, riscatti: 4, ordini_amica12: 2, prev_aperture: 30 as number | null, tap_dal: '2026-10-05' },
     salute: {
       giri: [{ step: 'meta', status: 'ok', ended_at: '2026-10-25T06:13:20Z', rows_written: 33, window_to: '2026-10-25' }, { step: 'ordini', status: 'ok', ended_at: '2026-10-25T06:19:30Z', rows_written: 21, window_to: '2026-10-26' }],
-      health: [{ k: 'beh_fresh', label: 'passi accesi: ordini, meta, giri recenti', severity: 'ok', day: '2026-10-25' },
+      health: [{ k: 'beh_fresh', label: 'passi accesi: ordini, meta, giri recenti', severity: 'ok', day: '2026-10-25' } as { k: string; label: string; severity: string; day: string },
         { k: 'beh_quota_tracciata', label: 'quota tracciata 28 giorni: 72,4% (670 su 926 ordini online), soglia 60%', severity: 'ok', day: '2026-10-25' }],
     },
   };
@@ -175,6 +176,51 @@ test('periodo prima che comincia prima dei dati (prev null): "n.d." al posto del
   const testo = await page.locator('.scr-comportamento').innerText();
   expect(testo).not.toMatch(/NaN|undefined|Infinity|null/);
   expect(r.errori).toEqual([]);
+});
+
+// verifica avversariale del 25-10 (C1, C3, C4, C9)
+test('spesa con giorni mancanti, Meta acceso senza click nel periodo, nessun giorno di spesa: n.d. e il motivo giusto', async ({ page }) => {
+  const casi = [
+    { nome: 'giorni mancanti', fn: (x: ReturnType<typeof dash>) => { x.fonti.spesa_meta = null; x.fonti.giorni_spesa_mancanti = 2; }, testo: '2 giorni del periodo hanno click Meta ma nessuna riga di spesa' },
+    { nome: 'nessun click', fn: (x: ReturnType<typeof dash>) => { x.fonti.ads.dati_al = null; }, testo: 'Nessun click Meta letto nel periodo' },
+    { nome: 'nessun giorno di spesa', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_spesa = 0; x.fonti.spesa_dal = null; x.fonti.spesa_meta = null; x.fonti.ordini_cpa = 0; }, testo: 'spesa e costo per ordine sono n.d., non zero' },
+  ];
+  for (const c of casi) {
+    const x = dash(30); c.fn(x);
+    // stesso indirizzo con hash = navigazione nello stesso documento, che non ricarica: si passa da una pagina vuota
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await page.goto('about:blank');
+    await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: x }) });
+    await expect(page.getByText(c.testo, { exact: false }), c.nome).toBeVisible();
+    await expect(page.getByText('Il passo Meta del modulo e\' spento'), c.nome).toHaveCount(0);
+    if (x.fonti.spesa_meta == null) {
+      await expect(page.locator('.kpi').filter({ has: page.locator('.k', { hasText: /^Spesa Meta$/ }) }), c.nome).toContainText('n.d.');
+      await expect(page.locator('.kpi').filter({ has: page.locator('.k', { hasText: /^Costo per ordine \(blended\)$/ }) }), c.nome).toContainText('n.d.');
+    }
+    const testo = await page.locator('.scr-comportamento').innerText();
+    expect(testo, c.nome).not.toMatch(/NaN|undefined|Infinity|null|0,00/);
+  }
+});
+
+test('salute: una riga di ieri e\' datata, un giro del cron fermo da 9 giorni non lascia "Tutto in ordine", un passo spento non conta', async ({ page }) => {
+  const x = dash(30);
+  x.salute.health = [{ k: 'beh_fresh', label: 'passi accesi: ordini, meta, giri recenti', severity: 'ok', day: '2026-10-24' }];
+  x.salute.giri = [{ step: 'ordini', status: 'ok', ended_at: '2026-10-16T06:19:30Z', rows_written: 21, window_to: '2026-10-17' },
+    { step: 'crux', status: 'error', ended_at: '2026-10-25T06:30:00Z', rows_written: 0, window_to: '2026-10-25' }];
+  await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: x }) });
+  const salute = page.locator('.card', { has: page.locator('h2', { hasText: 'Salute delle fonti' }) });
+  await expect(salute).toContainText('(del 24 ott)');
+  await expect(salute).toContainText('fermo da piu\' di 48 ore');
+  await expect(salute.locator('h2 .ds-pill')).toHaveText('Da tenere d’occhio');
+  await expect(salute).not.toContainText('crux');
+});
+
+test('Area Membri: stesse definizioni di Premia, non gli stessi numeri; tracciamento dei tap datato', async ({ page }) => {
+  await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale' });
+  const nota = page.locator('p.note', { hasText: 'Aperture rispetto al periodo prima' });
+  await expect(nota).toContainText('Stesse definizioni della tab Premia');
+  await expect(nota).not.toContainText('Stessi numeri della tab Premia');
+  await expect(nota).toContainText('attivo dal 05 ott');
 });
 
 test('RPC che rifiuta (42501) o che risponde off: messaggio chiaro, nessun numero', async ({ page }) => {
