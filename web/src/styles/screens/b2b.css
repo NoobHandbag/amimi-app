@@ -1,0 +1,101 @@
+/* ============================================================================
+   Negozi B2B (tema A, PR 22, 23-10-2026): lista e scheda del negozio (pages/Negozi.tsx), solo CSS.
+   Importato da main.tsx dopo shell.css. Negozi.tsx non ha una classe radice: le regole si agganciano con :has()
+   ai figli che solo Negozi disegna. Lista e viste dell'outreach: .screen con .or-nav (Pipeline, Coda e Sequenze
+   prendono solo il selettore, nessun'altra regola tocca le loro classi). Scheda: .screen con .lead-verd.
+   La scheda dell'outreach (OutreachScheda) non ha nessuno dei due e resta alla sua PR.
+   Colori scritti nel style del TSX (verdetto, tier, score, badge della barra, legenda) non si battono:
+   restano al seguito TSX, senza !important. Barra in alto, KPI, chip, tabelle e campi del kit vengono da shell.css.
+   ============================================================================ */
+
+/* ---- Negozi / Pipeline / Coda / Sequenze: selettore pieno, come Schede / Tabella (era una fila di pillole nere).
+   Su una riga; con conteggi lunghi (Coda a tre cifre a 320 px) scorre dentro la traccia, come .subtabs, non la pagina.
+   L'ombra della scelta sta nei 3 px della traccia, che ora ritaglia ---- */
+.screen:has(> .or-nav) > .or-nav { flex-wrap: nowrap; gap: 2px; padding: 3px; margin: 2px 0 14px; background: var(--surface-alt); border-radius: 999px; overflow-x: auto; scrollbar-width: none; }
+.screen:has(> .or-nav) > .or-nav::-webkit-scrollbar { display: none; }
+.screen:has(> .or-nav) > .or-nav button { flex: 1 0 auto; min-height: 36px; padding: 8px; border: 0; border-radius: 999px; background: transparent; color: var(--ink-muted); font-family: inherit; font-size: 13px; white-space: nowrap; }
+.screen:has(> .or-nav) > .or-nav button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 12%, transparent); }
+@media (max-width: 359px) {
+  .screen:has(> .or-nav) > .or-nav button { padding-left: 5px; padding-right: 5px; font-size: 12.5px; }
+}
+
+/* ---- "Firmi come": select pieno a pillola, a 16 px (sotto, iOS ingrandisce la pagina al tocco) ---- */
+.screen:has(> .or-nav) .lead-who { gap: 8px; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+.screen:has(> .or-nav) .lead-who select { min-height: 40px; padding: 6px 12px; border: 0; border-radius: 999px; background-color: var(--surface); color: var(--ink); font-family: inherit; font-size: 16px; font-weight: 600; }
+
+/* ---- schede dei negozi: card senza bordo, nome a 16/600, marchi affini come etichette grigie ---- */
+.screen:has(> .or-nav) .lead-card { border: 0; border-radius: 20px; box-shadow: none; }
+@media (hover: hover) {
+  .screen:has(> .or-nav) .lead-card:hover { outline: 2px solid var(--interactive); outline-offset: -2px; }
+}
+.screen:has(> .or-nav) .lead-body { padding: 12px 16px 16px; }
+.screen:has(> .or-nav) .lead-name { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+/* score ed esito sulla foto: colore di fondo scritto nel style; qui solo il peso. Senza score il fondo e' il grigio
+   chiaro (--border-strong) e il trattino bianco stava a 1,4:1: in inchiostro */
+.screen:has(> .or-nav) :is(.lead-score, .lead-tier) { font-weight: 600; }
+.screen:has(> .or-nav) .lead-score[style*="--border-strong"] { color: var(--ink); }
+/* marchi affini (lista e scheda): sono etichette, non filtri scelti; erano pillole nere */
+:is(.screen:has(> .or-nav), .screen:has(> .lead-verd)) .chips > span.chip.on { padding: 5px 10px; background: var(--surface-alt); color: var(--ink); font-size: 12px; font-weight: 500; cursor: inherit; }
+
+/* ---- scheda del negozio: link come pillole bianche; il telefono e' un dato, resta testo ---- */
+.screen:has(> .lead-verd) > .lead-links { gap: 6px; align-items: center; margin: 10px 0 14px; }
+.screen:has(> .lead-verd) > .lead-links > a { display: inline-flex; align-items: center; max-width: 100%; min-height: 38px; padding: 8px 14px; border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 500; text-decoration: none; overflow-wrap: anywhere; }
+.screen:has(> .lead-verd) > .lead-links > span { padding: 0 4px; color: var(--ink-muted); font-size: 13px; }
+
+/* ---- verdetto: titolo in inchiostro (index.css lo faceva bordeaux); i tre bottoni su una riga, senza i 120 px minimi
+   che mandavano "No" a capo. I loro colori sono nel style e il contorno viene da index.css (.lead-actions .ds-btn) ---- */
+.screen:has(> .lead-verd) .lead-verd h2 { color: var(--ink); }
+.screen:has(> .lead-verd) .lead-verd .lead-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.screen:has(> .lead-verd) .lead-verd .lead-actions .ds-btn { padding-left: 12px; padding-right: 12px; white-space: nowrap; }
+.screen:has(> .lead-verd) .lead-actions .ds-btn { border-radius: 14px; }
+
+/* ---- bottoni senza fondo scritto nel style (Ricontrolla, Scarta, Salva nota, chi siamo, evidenze): pieni grigi dentro
+   le card, senza bordo. Prima il grigio del browser col bordo; Scarta tiene il rosso del suo style ---- */
+.screen:has(> .lead-verd) .ds-btn:not([style*="background"]) { border: 0; background: var(--surface-alt); color: var(--ink); }
+.screen:has(> .lead-verd) .ds-btn:not([style*="background"]):active { background: var(--border-strong); }
+
+/* ---- campi (perche', motivo dello scarto, nota): pieni, senza bordo, a 16 px; etichette come .fl ---- */
+.screen:has(> .lead-verd) .cs-fld label { margin: 0 0 6px 2px; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
+.screen:has(> .lead-verd) .cs-fld :is(input, textarea) { padding: 12px 14px; border: 0; border-radius: 14px; background: var(--surface-alt); color: var(--ink); font-family: inherit; font-size: 16px; }
+.screen:has(> .lead-verd) .cs-fld input { min-height: 48px; }
+/* a 16 px due righe non bastano al segnaposto del perche' (tre righe a 390 px): tre righe di altezza */
+.screen:has(> .lead-verd) .cs-fld textarea { min-height: 92px; }
+/* il segnaposto resta leggibile sul grigio (il grigio del browser scende a 3,9:1) */
+.screen:has(> .lead-verd) .cs-fld :is(input, textarea)::placeholder { color: var(--ink-muted); opacity: 1; }
+
+/* ---- foto (feed, vetrina, schermate): senza bordo; la didascalia in inchiostro viene gia' da shell.css ---- */
+.screen:has(> .lead-verd) .lead-post { border: 0; border-radius: 12px; }
+.screen:has(> .lead-verd) .lead-post-empty { background: var(--surface-alt); }
+.screen:has(> .lead-verd) .lead-shot { border: 0; border-radius: 16px; }
+/* una schermata che manca e' una riga bianca, non un riquadro grigio alto 190 px; in alto anche accanto a una
+   schermata vera (la griglia la stirerebbe a 190 px, una card bianca vuota) */
+.screen:has(> .lead-verd) .lead-shot-empty { align-self: start; height: auto; min-height: 52px; padding: 12px 14px; justify-content: flex-start; background: var(--surface); text-align: left; }
+
+/* ---- fascia prezzi: barre piene, il negozio in bordeaux, Amimi' in grigio (4,8:1 sulla traccia), la mediana in nero.
+   La legenda ha i fondi tenui scritti nel style: un'ombra interna la riempie come le barre ---- */
+.screen:has(> .lead-verd) .lead-scale-bar { height: 20px; border-radius: 999px; }
+.screen:has(> .lead-verd) :is(.lead-scale-store, .lead-scale-amimi) { height: 6px; border: 0; border-radius: 999px; }
+.screen:has(> .lead-verd) .lead-scale-store { top: 3px; background: var(--interactive); }
+.screen:has(> .lead-verd) .lead-scale-amimi { bottom: 3px; background: var(--chart-4); }
+.screen:has(> .lead-verd) .lead-scale-med { width: 2px; }
+.screen:has(> .lead-verd) .lead-scale-leg i { border-radius: 999px; }
+.screen:has(> .lead-verd) .lead-scale-leg i:nth-of-type(1) { box-shadow: inset 0 0 0 8px var(--interactive); }
+.screen:has(> .lead-verd) .lead-scale-leg i:nth-of-type(2) { box-shadow: inset 0 0 0 8px var(--chart-4); }
+
+/* ---- Numeri: una lista, etichetta a sinistra e valore a destra, al posto di sei tessere grigie ---- */
+.screen:has(> .lead-verd) .lead-facts { display: block; }
+.screen:has(> .lead-verd) .lead-facts > div { display: flex; flex-direction: row-reverse; justify-content: space-between; align-items: baseline; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border); border-radius: 0; background: none; }
+.screen:has(> .lead-verd) .lead-facts > div:last-child { border-bottom: 0; }
+.screen:has(> .lead-verd) .lead-facts b { font-size: 16px; font-weight: 600; letter-spacing: -.01em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.screen:has(> .lead-verd) .lead-facts span { font-size: 14px; color: var(--ink); }
+
+@media print {
+  /* resta la sezione scelta, scritta in nero, come i selettori della Cornice 3 */
+  .screen:has(> .or-nav) > .or-nav { background: none; padding: 0; }
+  .screen:has(> .or-nav) > .or-nav button:not(.on) { display: none; }
+  .screen:has(> .or-nav) > .or-nav button.on { flex: none; padding-left: 0; background: none; color: var(--ink); }
+  /* card e pagina sono bianche sulla carta e l'ombra non si stampa: il filo tiene insieme le card senza foto */
+  .screen:has(> .or-nav) .lead-card { border: 1px solid var(--border); }
+  /* le barre della fascia prezzi sono fondi: senza "grafica di sfondo" sparirebbero */
+  .screen:has(> .lead-verd) .lead-scale { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
