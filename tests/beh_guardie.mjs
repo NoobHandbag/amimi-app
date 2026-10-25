@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
 const M = read('supabase/migrations/0169_beh_schema.sql');
+const M170 = read('supabase/migrations/0170_beh_meta.sql');
 const SRC = read('supabase/functions/beh-sync/index.ts');
 const RLS = read('tests/beh_rls.sql');
 const noSql = (s) => s.replace(/--[^\n]*/g, '');
@@ -60,7 +61,7 @@ const migViolations = (m) => {
   if (/cron\.(unschedule|alter_job)\(/.test(s)) v.push('cron.unschedule o cron.alter_job');
   return v;
 };
-const cronGate = (m) => /select cron\.schedule\('beh-sync-ordini', '19 6 \* \* \*',\s*\$cmd\$ select net\.http_post\([\s\S]*?\) where exists \(select 1 from public\.app_flags where key = 'beh_enabled' and lower\(btrim\(value, E' \\t\\r\\n'\)\) = 'true'\) \$cmd\$\);/.test(m);
+const cronGate = (m, job = 'beh-sync-ordini', sched = '19 6') => new RegExp(`select cron\\.schedule\\('${job}', '${sched} \\* \\* \\*',\\s*\\$cmd\\$ select net\\.http_post\\([\\s\\S]*?\\) where exists \\(select 1 from public\\.app_flags where key = 'beh_enabled' and lower\\(btrim\\(value, E' \\\\t\\\\r\\\\n'\\)\\) = 'true'\\) \\$cmd\\$\\);`).test(m);
 
 console.log('\n== Modulo additivo (Regola 19): migrazione 0169 ==');
 {
@@ -100,6 +101,17 @@ console.log('\n== Modulo additivo (Regola 19): migrazione 0169 ==');
   t('14 PK naturale per l\'idempotenza (Regola 20)', /order_gid_num\s+bigint primary key/.test(M));
 }
 
+console.log('\n== Migrazione 0170 (passo meta) ==');
+{
+  const viol = migViolations(M170);
+  t('14a additiva come la 0169 (stessa guardia 1)', viol.length === 0, viol.join(' | '));
+  t('14b autoprova: un grant su una tabella core nella 0170 fa diventare rossa la guardia', migViolations(M170.replace('\ncommit;', '\ngrant select on meta_ads_creative_daily to anon;\ncommit;')).length > 0);
+  t('14c PK (date, ad_id), RLS, REVOKE e grant al solo service_role', /constraint beh_meta_outbound_daily_pk primary key \(date, ad_id\)/.test(M170) && /alter table beh_meta_outbound_daily enable row level security/.test(M170)
+    && /revoke all on beh_meta_outbound_daily from public, anon, authenticated/.test(M170) && /grant select, insert, update, delete on beh_meta_outbound_daily to service_role/.test(M170));
+  t('14d cron beh-sync-meta col cancello sul flag e timeout 60 s', cronGate(M170, 'beh-sync-meta', '13 6') && /timeout_milliseconds := 60000/.test(M170) && /'cron_create'/.test(M170));
+  t('14e la prova nella transazione pretende il cancello', /command like '%where exists%beh_enabled%'/.test(M170));
+}
+
 console.log('\n== Test vivo tests/beh_rls.sql ==');
 {
   // variable_conflict = 'error' in produzione: una variabile col nome di una colonna fa cadere il blocco con 42702
@@ -124,7 +136,7 @@ const edgeViolations = (src) => {
     if (['insert', 'upsert', 'update', 'delete'].includes(met)) {
       if (!(tab.startsWith('beh_') || tab === 'health_log')) v.push(`scrittura su ${tab}`);
     } else if (met === 'select') {
-      if (!(tab.startsWith('beh_') || tab === 'app_config' || tab === 'app_flags')) v.push(`lettura di ${tab}`);
+      if (!(tab.startsWith('beh_') || ['app_config', 'app_flags', 'meta_ads_creative_daily'].includes(tab))) v.push(`lettura di ${tab}`);
     } else v.push(`.${met}( su ${tab}`);
     const prima = f.slice(Math.max(0, m.index - 140), m.index);
     if (!/const \{[^}]*\berror\b[^}]*\} = await (?:retryOnce\(\(\) => )?$/.test(prima)) v.push(`${tab}.${met} senza error destrutturato`);
@@ -174,7 +186,22 @@ console.log('\n== Edge beh-sync: flag, accessi, scritture solo beh_*, token ==')
   t('25 diag legge gli scope del token (read_all_orders) con il token in header', /access_scopes\.json`, \{ headers: \{ 'X-Shopify-Access-Token': token \} \}\)/.test(SRC) && /read_all_orders: scopes\.includes\('read_all_orders'\)/.test(SRC));
   t('26 upsert sulla PK naturale', /upsert\(chunk, \{ onConflict: 'order_gid_num' \}\)/.test(SRC));
   t('27 tetto per giro e blocchi di backfill limitati (Regola 20c)', /const MAX_ORDINI_RUN = 500;/.test(SRC) && /const MAX_ORDINI_BACKFILL = 1000;/.test(SRC) && /if \(nodes\.length > cap\) throw new Error/.test(SRC) && /span <= MAX_BACKFILL_DAYS/.test(SRC));
-  t('28 token Shopify solo in header, mai in URL', /'X-Shopify-Access-Token': token/.test(SRC) && !/access_token=\$\{|\?access_token|token=\$\{token\}/.test(SRC));
+  t('28 token Shopify e token Meta solo in header, mai in URL', /'X-Shopify-Access-Token': token/.test(SRC) && /authorization: `Bearer \$\{metaToken\}`/.test(SRC) && !/access_token=\$\{|\?access_token|token=\$\{token\}|token=\$\{metaToken\}/.test(SRC));
+  t('28a il redattore copre entrambi i token', /for \(const k of \[token, metaToken\]\) if \(k\) t = t\.split\(k\)\.join\('\*\*\*'\);/.test(SRC));
+  t('28b passo meta: upsert sulla PK, tetto alle pagine e alle righe, warn se ads-sync ha spesa e qui 0 righe', /upsert\(chunk, \{ onConflict: 'date,ad_id' \}\)/.test(SRC) && /if \(\+\+pages > META_MAX_PAGES\) throw new Error/.test(SRC)
+    && /if \(rows\.length > cap\) throw new Error/.test(SRC) && /const vuoto = rows\.length === 0 && !sErr && \(conSpesa \?\? 0\) > 0;/.test(SRC));
+  // Gate 2 del passo 2 (25-10): un outbound_clicks tolto dai campi dava 0 ovunque, salute ok e suite verde (B1)
+  const campiMeta = (s) => { const c = s.match(/const META_FIELDS = '([^']+)';/)?.[1] ?? ''; const usi = (s.match(/fields=\$\{META_FIELDS\}/g) ?? []).length;
+    return c.split(',').includes('outbound_clicks') && c.split(',').includes('actions') && c.split(',').includes('inline_link_clicks') && usi === 2 && !/fields=ad_id/.test(s); };
+  t('28d campi Meta in una sola costante usata da diag e giro, con outbound_clicks, actions e inline_link_clicks', campiMeta(SRC));
+  t('28d. autoprova: togliere outbound_clicks dalla costante fa diventare rossa la guardia 28d', !campiMeta(SRC.replace("inline_link_clicks,outbound_clicks,actions", 'inline_link_clicks,actions')));
+  t('28e outbound assente su tutte le righe con click = warn', /const senzaOutbound = tot\.link > 0 && !ins\.some\(\(r\) => Array\.isArray\(r\.outbound_clicks\)\);/.test(SRC)
+    && /\(vuoto \|\| sErr \|\| senzaOutbound\) \? 'warn' : 'ok'/.test(SRC) && /vuoto \|\| sErr \|\| senzaOutbound \|\| !chiuso \? 'warn' : 'ok'/.test(SRC));
+  t('28f finestra meta: giro fino a ieri, backfill mai oltre oggi escluso', /let to = step === 'meta' \? romeDate_\(0\) : romeDate_\(-1\);/.test(SRC) && /if \(step === 'meta' && to > romeDate_\(0\)\) to = romeDate_\(0\);/.test(SRC));
+  t('28g token controllato per passo (il passo meta non chiede il token Shopify)', /if \(step === 'ordini' && !token\) return fail\('token'/.test(SRC) && /if \(step === 'meta' && !metaToken\) return fail\('token'/.test(SRC));
+  t('28h metaGet: nodo singolo solo alla prima pagina', /if \(!Array\.isArray\(j\?\.data\)\) \{ if \(pages === 1\) return \[j\]; throw new Error/.test(SRC));
+  t('28c stessa Graph e stesso account di ads-sync', /const GRAPH = 'https:\/\/graph\.facebook\.com\/v21\.0';/.test(SRC) && /const AD_ACCOUNT = 'act_686034712784477';/.test(SRC)
+    && read('supabase/functions/ads-sync/index.ts').includes("const GRAPH = 'https://graph.facebook.com/v21.0';") && read('supabase/functions/ads-sync/index.ts').includes("const AD_ACCOUNT = 'act_686034712784477';"));
   t('29 ogni messaggio verso health_log e risposta passa dal redattore', /label: redact_\(label\)\.slice\(0, 500\)/.test(SRC) && /json\(\{ error: `\$\{where\}: \$\{redact_\(msg\)\}` \}/.test(SRC));
   t('30 API GraphQL pinnata come loyalty-orders', /const API_VERSION = '2026-07';/.test(SRC));
 }
@@ -248,6 +275,30 @@ finally { try { unlinkSync(TMP); } catch { /* niente */ } }
   const r6 = toRow_({ id: 'gid://shopify/Order/6900000000006', name: '#x', createdAt: '2026-10-20T22:10:00Z', test: false, cancelledAt: null, app: { id: 'gid://shopify/App/580111' },
     customerJourneySummary: { ready: true, momentsCount: { count: 1 }, firstVisit: { occurredAt: '2026-10-20T21:50:00Z', source: 'direct' }, lastVisit: { occurredAt: '2026-10-20T21:50:00Z', source: 'direct' } } }, 'x');
   t('62 visita alle 23:50 e ordine alle 00:10 di Roma = 1 giorno (non blocchi di 24 ore)', r6.days_to_conv === 1 && r6.day === '2026-10-21', JSON.stringify(r6));
+}
+
+console.log('\n== PURE:beh-meta, ritagliato dal sorgente ==');
+{
+  const B2 = '// ==== PURE:beh-meta BEGIN ====', E2 = '// ==== PURE:beh-meta END ====';
+  const a2 = SRC.indexOf(B2), b2 = SRC.indexOf(E2);
+  if (a2 < 0 || b2 < 0) { console.error('marcatori PURE:beh-meta non trovati in beh-sync'); process.exit(1); }
+  const TMP2 = `${ROOT}tests/_beh_meta.tmp.ts`;
+  writeFileSync(TMP2, `${SRC.slice(a2 + B2.length, b2).trim()}\nexport { metaNum_, metaAction_, metaRow_, metaUntil_ };\n`, 'utf8');
+  let Q;
+  try { Q = await import(pathToFileURL(TMP2).href); }
+  finally { try { unlinkSync(TMP2); } catch { /* niente */ } }
+  const { metaRow_, metaUntil_ } = Q;
+  // forma reale di una riga insights level=ad con time_increment=1 (Graph v21.0)
+  const ins = { ad_id: '120211111111110001', campaign_id: '120211111111110000', date_start: '2026-10-24', date_stop: '2026-10-24', inline_link_clicks: '37',
+    outbound_clicks: [{ action_type: 'outbound_click', value: '21' }],
+    actions: [{ action_type: 'link_click', value: '37' }, { action_type: 'landing_page_view', value: '14' }, { action_type: 'omni_landing_page_view', value: '15' }, { action_type: 'view_content', value: '30' }] };
+  const m1 = metaRow_(ins, 's');
+  t('63 riga meta: link, outbound dalla lista, LPV = massimo fra le due forme (mai la somma)', m1.date === '2026-10-24' && m1.ad_id === '120211111111110001' && m1.link_clicks === 37 && m1.outbound_clicks === 21 && m1.landing_page_views === 15, JSON.stringify(m1));
+  const m2 = metaRow_({ ad_id: '1', date_start: '2026-10-24', inline_link_clicks: 'x' }, 's');
+  t('64 annuncio senza outbound ne\' azioni: zeri, non NaN; campaign_id vuoto', m2.link_clicks === 0 && m2.outbound_clicks === 0 && m2.landing_page_views === 0 && m2.campaign_id === '', JSON.stringify(m2));
+  t('65 valore negativo o decimale: 0 o arrotondato', metaRow_({ ad_id: '1', date_start: '2026-10-24', inline_link_clicks: '-3', outbound_clicks: [{ action_type: 'outbound_click', value: '2.6' }] }, 's').link_clicks === 0
+    && metaRow_({ ad_id: '1', date_start: '2026-10-24', outbound_clicks: [{ action_type: 'outbound_click', value: '2.6' }] }, 's').outbound_clicks === 3);
+  t('66 to escluso -> until incluso di Meta, anche sul cambio ora', metaUntil_('2026-10-26') === '2026-10-25' && metaUntil_('2026-03-30') === '2026-03-29' && metaUntil_('2026-11-01') === '2026-10-31');
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);

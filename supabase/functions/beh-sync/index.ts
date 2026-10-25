@@ -8,9 +8,14 @@
 // sorgenti come classi, referrer come solo host, landing come path senza query string (checkout = 'checkout').
 // Idempotente a DB (Regola 20): upsert sulla PK order_gid_num; ogni lettura ha l'error controllato; tetto per giro.
 //
+// v2 (passo 2 della Fase 3, decisione D3 del 25-10): passo `meta`. Link click, outbound click e LPV per annuncio e
+// giorno dalla STESSA lettura insights (Graph v21.0, account di ads-sync, token Meta di app_config solo in header),
+// in beh_meta_outbound_daily con upsert su (date, ad_id). La sync delle ads non si tocca: la spesa resta sua.
+//
 // Azioni (POST JSON, sempre con `pin`, come le altre edge del cron):
 //   run      (cron 06:19 UTC) `step`: 'ordini' -> ordini CREATI negli ultimi 7 giorni di Roma (finestra mobile: un giro
 //            fallito si recupera il giorno dopo; gli ordini ancora ready=false si rileggono). A flag spento: skipped.
+//            (cron 06:13 UTC) `step`: 'meta' -> gli ultimi 7 giorni di Roma chiusi (fino a ieri).
 //   backfill (a mano) `step`, `from`, `to` (YYYY-MM-DD, `to` escluso, al massimo 62 giorni): funziona anche a flag spento,
 //            di proposito, per riempire lo storico prima di accendere.
 //   diag     (a mano) prova la lettura (5 ordini recenti con app e attribuzione) e risponde versione API servita e flag.
@@ -22,13 +27,19 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const SHOP = 'amimi-10000';
 const API_VERSION = '2026-07';        // come loyalty-orders: ripinnare ogni trimestre
 const GQL = `https://${SHOP}.myshopify.com/admin/api/${API_VERSION}/graphql.json`;
-const STEPS = ['ordini'];             // passi costruiti in questa versione
+const STEPS = ['ordini', 'meta'];     // passi costruiti in questa versione
 const FLAG_KEYS = ['beh_enabled', 'beh_steps'];
 const WINDOW_DAYS = 7;                // finestra mobile del giro normale
 const PAGE = 50;                      // ordini per pagina GraphQL (costo per nodo alto: app + due visite)
 const MAX_ORDINI_RUN = 500;           // Regola 20c: tetto del giro normale (oggi 4-6 ordini al giorno)
 const MAX_ORDINI_BACKFILL = 1000;     // tetto di un blocco di backfill
 const MAX_BACKFILL_DAYS = 62;
+const GRAPH = 'https://graph.facebook.com/v21.0';   // come ads-sync
+const AD_ACCOUNT = 'act_686034712784477';
+const META_MAX_PAGES = 25;            // pagine da 500 righe: oltre = errore dichiarato, mai un giorno parziale
+// una sola lista di campi per diag e giro: un outbound_clicks tolto da una delle due non deve passare in silenzio
+const META_FIELDS = 'ad_id,campaign_id,inline_link_clicks,outbound_clicks,actions';
+const MAX_META_RIGHE = 5000;          // Regola 20c: 62 giorni x 80 annunci
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Letture Supabase: un solo ritentativo dopo 1,5 s (PostgREST risponde 504 ai secondi :00-:03, CASI_APERTI n.19).
 const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
@@ -147,6 +158,32 @@ const toRow_ = (o: any, syncedAt: string) => {
 };
 // ==== PURE:beh-ordini END ====
 
+// ==== PURE:beh-meta BEGIN ====
+// Una riga di insights (level=ad, time_increment=1) diventa una riga di beh_meta_outbound_daily. outbound_clicks e' una
+// lista di azioni (action_type 'outbound_click'); l'LPV sta in actions come landing_page_view o omni_landing_page_view,
+// la stessa conversione vista da due attribuzioni: si prende il massimo, come ads-sync (mai la somma).
+const metaNum_ = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.round(n) : 0; };
+const metaAction_ = (arr: unknown, types: string[]): number => {
+  let best = 0;
+  if (!Array.isArray(arr)) return 0;
+  for (const it of arr as Array<{ action_type?: unknown; value?: unknown }>) {
+    if (types.includes(String(it?.action_type ?? ''))) best = Math.max(best, metaNum_(it?.value));
+  }
+  return best;
+};
+const metaRow_ = (r: Record<string, unknown>, syncedAt: string) => ({
+  date: String(r?.date_start ?? ''),
+  ad_id: String(r?.ad_id ?? ''),
+  campaign_id: String(r?.campaign_id ?? ''),
+  link_clicks: metaNum_(r?.inline_link_clicks),
+  outbound_clicks: metaAction_(r?.outbound_clicks, ['outbound_click']),
+  landing_page_views: metaAction_(r?.actions, ['landing_page_view', 'omni_landing_page_view']),
+  synced_at: syncedAt,
+});
+// `to` escluso (come gli ordini) -> `until` incluso di Meta
+const metaUntil_ = (toExcl: string): string => new Date(Date.parse(toExcl + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+// ==== PURE:beh-meta END ====
+
 const VISIT = 'occurredAt source sourceType referrerUrl landingPage utmParameters { source medium campaign }';
 const ORDER_FIELDS = `id name createdAt test cancelledAt app { id }
   customerJourneySummary { ready momentsCount { count } firstVisit { ${VISIT} } lastVisit { ${VISIT} } }`;
@@ -159,10 +196,11 @@ Deno.serve(async (req) => {
   const step = String(body.step ?? '').toLowerCase();
   const source = String(body.source ?? 'manuale').slice(0, 20);
   let token = '';
-  // niente chiavi nei log: health_log e' leggibile da anon (redazione del valore e dei formati noti)
+  let metaToken = '';
+  // niente chiavi nei log: health_log e' leggibile da anon (redazione dei due valori e dei formati noti)
   const redact_ = (s: unknown) => {
     let t = String(s ?? '');
-    if (token) t = t.split(token).join('***');
+    for (const k of [token, metaToken]) if (k) t = t.split(k).join('***');
     return t.replace(/shpat_[A-Za-z0-9]+/g, 'shpat_***').replace(/access_token=[^&\s)]*/gi, 'access_token=***');
   };
   const todayUtc = () => new Date().toISOString().slice(0, 10);   // chiave health in UTC, come le altre edge
@@ -179,10 +217,11 @@ Deno.serve(async (req) => {
   };
 
   // --- PIN + token (come loyalty-orders) ---
-  const { data: cfg, error: cErr } = await retryOnce(() => sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single());
+  const { data: cfg, error: cErr } = await retryOnce(() => sb.from('app_config').select('pin_hash, shopify_token, meta_token').eq('id', 1).single());
   if (cErr) return fail('app_config', cErr.message, 503);
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
   token = String(cfg?.shopify_token ?? '');
+  metaToken = String(cfg?.meta_token ?? '').trim();
 
   // --- flag (whitelist, lettura controllata: fallita = 503, mai "acceso") ---
   const { data: flags, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', FLAG_KEYS));
@@ -211,6 +250,45 @@ Deno.serve(async (req) => {
       return j?.data;
     }
   };
+
+  // --- Graph API di Meta: token solo in header, paginazione con tetto, un ritentativo su 429/5xx (lettura) ---
+  const metaGet = async (url: string): Promise<Record<string, unknown>[]> => {
+    const rows: Record<string, unknown>[] = [];
+    const H = { accept: 'application/json', authorization: `Bearer ${metaToken}` };
+    let next: string | null = url;
+    let pages = 0;
+    while (next) {
+      if (++pages > META_MAX_PAGES) throw new Error(`Meta: oltre ${META_MAX_PAGES} pagine, dati incompleti`);
+      let r = await fetch(next, { headers: H });
+      if (r.status === 429 || r.status >= 500) { await r.text().catch(() => ''); await sleep(3000); r = await fetch(next, { headers: H }); }
+      const txt = await r.text();
+      if (!r.ok) throw new Error(`Meta HTTP ${r.status} ${redact_(txt).slice(0, 300)}`);
+      const j = JSON.parse(txt);
+      if (j?.error) throw new Error(`Meta API: ${redact_(j.error.message)} (code ${j.error.code})`);
+      // nodo singolo (account) solo alla prima pagina; una pagina successiva senza data e' un errore, non un risultato
+      if (!Array.isArray(j?.data)) { if (pages === 1) return [j]; throw new Error('Meta: pagina senza data, dati incompleti'); }
+      rows.push(...j.data);
+      next = j?.paging?.next ?? null;
+      if (next) await sleep(250);
+    }
+    return rows;
+  };
+
+  if (action === 'diag' && step === 'meta') {
+    if (!metaToken) return json({ ok: false, error: 'meta_token mancante in app_config' });
+    try {
+      const [acct] = await metaGet(`${GRAPH}/${AD_ACCOUNT}?fields=name,currency,account_status`);
+      const ieri = romeDate_(1);
+      const tr = encodeURIComponent(JSON.stringify({ since: ieri, until: ieri }));
+      const ins = await metaGet(`${GRAPH}/${AD_ACCOUNT}/insights?level=ad&time_increment=1&time_range=${tr}&fields=${META_FIELDS}&limit=500`);
+      const righe = ins.map((r) => metaRow_(r, ''));
+      return json({ ok: true, account: { name: acct?.name ?? null, currency: acct?.currency ?? null, status: acct?.account_status ?? null }, giorno: ieri,
+        annunci: righe.length, link_clicks: righe.reduce((a, r) => a + r.link_clicks, 0), outbound: righe.reduce((a, r) => a + r.outbound_clicks, 0),
+        lpv: righe.reduce((a, r) => a + r.landing_page_views, 0), con_outbound: ins.filter((r) => Array.isArray(r.outbound_clicks)).length, flags: { enabled, steps: stepsOn } });
+    } catch (e) {
+      return json({ ok: false, error: redact_(e instanceof Error ? e.message : e) });
+    }
+  }
 
   if (action === 'diag') {
     if (!token) return json({ ok: false, error: 'token Shopify mancante' });
@@ -254,18 +332,22 @@ Deno.serve(async (req) => {
   if (!STEPS.includes(step)) return json({ error: `passo sconosciuto: ${step || '(vuoto)'}` }, 400);
   if (action === 'run' && !enabled) return json({ ok: true, skipped: 'disabled' });           // Regola 19: NO-OP
   if (action === 'run' && !stepsOn.includes(step)) return json({ ok: true, skipped: 'step_spento', step });
-  if (!token) return fail('token', 'token Shopify mancante');
+  if (step === 'ordini' && !token) return fail('token', 'token Shopify mancante');
+  if (step === 'meta' && !metaToken) return fail('token', 'meta_token mancante in app_config');
 
-  // --- finestra: giro normale = ultimi 7 giorni di Roma fino a domani escluso; backfill = [from, to) ---
+  // --- finestra: ordini = ultimi 7 giorni di Roma fino a domani escluso; meta = fino a oggi escluso (il giorno in
+  //     corso non e' chiuso); backfill = [from, to) ---
   let from = romeDate_(WINDOW_DAYS);
-  let to = romeDate_(-1);
-  let cap = MAX_ORDINI_RUN;
+  let to = step === 'meta' ? romeDate_(0) : romeDate_(-1);
+  let cap = step === 'meta' ? MAX_META_RIGHE : MAX_ORDINI_RUN;
   if (action === 'backfill') {
     if (!isDay(body.from) || !isDay(body.to)) return json({ error: 'backfill: from e to obbligatori, YYYY-MM-DD' }, 400);
     from = String(body.from); to = String(body.to);
+    // meta: mai il giorno in corso (non e' chiuso, e a flag spento nessun giro lo rileggerebbe)
+    if (step === 'meta' && to > romeDate_(0)) to = romeDate_(0);
     const span = (Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000;
     if (!(span > 0 && span <= MAX_BACKFILL_DAYS)) return json({ error: `backfill: da 1 a ${MAX_BACKFILL_DAYS} giorni, to escluso` }, 400);
-    cap = MAX_ORDINI_BACKFILL;
+    if (step === 'ordini') cap = MAX_ORDINI_BACKFILL;
   }
 
   // riga del giro con l'id scelto qui: l'upsert su quell'id e' idempotente, quindi puo' ritentare una volta (il cron
@@ -280,6 +362,47 @@ Deno.serve(async (req) => {
     return !error;
   };
   const spanDays = (Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000;
+
+  if (step === 'meta') {
+    try {
+      const until = metaUntil_(to);
+      const tr = encodeURIComponent(JSON.stringify({ since: from, until }));
+      const ins = await metaGet(`${GRAPH}/${AD_ACCOUNT}/insights?level=ad&time_increment=1&time_range=${tr}&fields=${META_FIELDS}&limit=500`);
+      const syncedAt = new Date().toISOString();
+      // dedup sulla PK: Meta pagina su dati vivi e puo' ripetere una riga (stampo ads-sync B6)
+      const byKey = new Map<string, ReturnType<typeof metaRow_>>();
+      for (const r of ins) { const m = metaRow_(r, syncedAt); if (isDay(m.date) && /^\d+$/.test(m.ad_id)) byKey.set(`${m.date}|${m.ad_id}`, m); }
+      const rows = [...byKey.values()];
+      if (rows.length > cap) throw new Error(`oltre ${cap} righe nella finestra ${from}..${until}: restringere il backfill`);
+      let written = 0;
+      const errs: string[] = [];
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = rows.slice(i, i + 500);
+        const { error } = await sb.from('beh_meta_outbound_daily').upsert(chunk, { onConflict: 'date,ad_id' });
+        if (error) errs.push(error.message); else written += chunk.length;
+      }
+      // coerenza con ads-sync (meta_ads_creative_daily, 06:07): annunci con spesa nella finestra ma 0 righe qui = warn
+      const { count: conSpesa, error: sErr } = await retryOnce(() => sb.from('meta_ads_creative_daily')
+        .select('ad_id', { count: 'exact', head: true }).gte('date', from).lt('date', to).gt('spend', 0));
+      const vuoto = rows.length === 0 && !sErr && (conSpesa ?? 0) > 0;
+      const tot = rows.reduce((a, r) => ({ link: a.link + r.link_clicks, out: a.out + r.outbound_clicks, lpv: a.lpv + r.landing_page_views }), { link: 0, out: 0, lpv: 0 });
+      // un outbound_clicks assente vale 0 per riga: se manca su TUTTE le righe con click, il campo e' sparito (Gate 2, B1)
+      const senzaOutbound = tot.link > 0 && !ins.some((r) => Array.isArray(r.outbound_clicks));
+      const status: 'ok' | 'warn' | 'error' = errs.length ? 'error' : (vuoto || sErr || senzaOutbound) ? 'warn' : 'ok';
+      const chiuso = await closeRun(status, { rows_read: ins.length, rows_written: written, error: errs.length ? redact_(errs.join(' | ')).slice(0, 500) : null,
+        meta: { link_clicks: tot.link, outbound: tot.out, lpv: tot.lpv, righe_con_spesa_ads_sync: sErr ? null : conSpesa ?? 0 } });
+      const note = (errs.length ? ` | ERRORI upsert: ${errs.length}` : '') + (vuoto ? ` | NESSUNA riga ma ${conSpesa} righe con spesa in ads-sync` : '')
+        + (senzaOutbound ? ' | outbound_clicks assente su tutte le righe: campo cambiato in Meta?' : '')
+        + (sErr ? ' | controllo con ads-sync non letto' : '') + (chiuso ? '' : ' | riga del giro non chiusa in beh_sync_runs');
+      await health(hkey(), `meta ${from}..${to}: righe ${rows.length}, scritte ${written}; link ${tot.link}, outbound ${tot.out}, LPV ${tot.lpv}` + note,
+        errs.length, errs.length ? 'error' : (vuoto || sErr || senzaOutbound || !chiuso ? 'warn' : 'ok'));
+      return json({ ok: !errs.length, step, action, from, to, righe: rows.length, scritte: written, link_clicks: tot.link, outbound: tot.out, lpv: tot.lpv, avvisi: note || undefined, errori: errs.length ? errs.map(redact_) : undefined });
+    } catch (e) {
+      const msg = redact_(e instanceof Error ? e.message : e);
+      await closeRun('error', { error: msg.slice(0, 500) });
+      return fail('meta', msg, 502);
+    }
+  }
 
   try {
     // --- lettura degli ordini creati nella finestra, a cursore, con tetto ---

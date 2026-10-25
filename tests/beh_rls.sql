@@ -1,4 +1,4 @@
--- tests/beh_rls.sql: prova VIVA della migr 0169 (modulo beh_*, comportamento utenti), da lanciare DOPO l'apply.
+-- tests/beh_rls.sql: prova VIVA delle migr 0169 e 0170 (modulo beh_*, comportamento utenti), da lanciare DOPO l'apply.
 -- Test negativo obbligatorio della Regola Ferrea 19. Si incolla in UNA chiamata execute_sql (o psql): e' un unico blocco DO
 -- che alla fine alza SEMPRE un'eccezione, quindi le righe di prova e i cambi di ruolo tornano indietro.
 --   esito buono: ERROR P0001 'TEST_OK: ... (rollback voluto)'; qualunque altro errore = KO, col motivo.
@@ -33,6 +33,10 @@ declare
     'insert into public.beh_sync_runs (step, action, run_day) values (''ordini'', ''run'', current_date)',
     'update public.beh_sync_runs set status = ''ok''',
     'delete from public.beh_sync_runs',
+    'select count(*) from public.beh_meta_outbound_daily',
+    'insert into public.beh_meta_outbound_daily (date, ad_id) values (current_date, ''prova_0170'')',
+    'update public.beh_meta_outbound_daily set link_clicks = 0',
+    'delete from public.beh_meta_outbound_daily',
     'select public.beh_health_check()',
     'select * from public.beh_flag_num(''beh_fresh_ore'', 48, '''')',
     'insert into public.v_beh_settings (key, value) values (''prova_0169'', ''x'')',
@@ -43,6 +47,7 @@ begin
   if to_regclass('public.beh_order_origin') is null or to_regclass('public.beh_sync_runs') is null or to_regclass('public.v_beh_settings') is null then
     raise exception 'KO: migr 0169 non applicata';
   end if;
+  if to_regclass('public.beh_meta_outbound_daily') is null then raise exception 'KO: migr 0170 non applicata'; end if;
 
   -- V
   insert into beh_order_origin (order_gid_num, order_name, created_at_shop, day, canale, is_test, is_cancelled, ready, moments, first_src, last_src)
@@ -164,7 +169,8 @@ begin
   -- S (dal catalogo: il ruolo della edge non si assume da qui)
   if not (has_table_privilege('service_role', 'public.beh_order_origin', 'select') and has_table_privilege('service_role', 'public.beh_order_origin', 'insert')
           and has_table_privilege('service_role', 'public.beh_order_origin', 'update') and has_table_privilege('service_role', 'public.beh_sync_runs', 'insert')
-          and has_table_privilege('service_role', 'public.beh_sync_runs', 'update')) then
+          and has_table_privilege('service_role', 'public.beh_sync_runs', 'update')
+          and has_table_privilege('service_role', 'public.beh_meta_outbound_daily', 'insert') and has_table_privilege('service_role', 'public.beh_meta_outbound_daily', 'update')) then
     raise exception 'KO S: il service_role non legge o non scrive le tabelle beh_*';
   end if;
 
