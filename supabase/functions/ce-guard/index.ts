@@ -41,6 +41,8 @@
 // giro. Prima contava Shopify fino ad ADESSO (:30) contro un DB fermo al sync delle :07: ogni ordine nato in quei 23
 // minuti accendeva un error per un'ora (34 volte nei primi 17 giorni di ottobre, due avvisi inutili ciascuno). Blocco
 // PURE:ceguard-reconcile, test in tests/shopify_sync_guardie.mjs (gira nella CI).
+// v12 (2026-10-26, migr 0173): check WARN `ce_tasse_iva_da_dividere` (F24 in TASSE non ancora diviso fra IVA, fuori
+// dal CE, e ritenute/diritti, che restano costo). Test `node tests/iva_fuori_ce.mjs`.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { APP_URL, canaleEffettivo, consegnaAvviso, inviaPush } from '../_shared/push.ts';
 import type { Canale, EsitoPush } from '../_shared/push.ts';
@@ -360,8 +362,15 @@ Deno.serve(async (req) => {
   const { data: comp } = read('v_ce_completezza', await sb.from('v_ce_completezza').select('year, month, spese_scoperte'));
   const scoperti = (comp ?? []).filter((r: { spese_scoperte: number }) => Math.abs(N(r.spese_scoperte)) > 0.01);
   add('ce_completezza_spese',
-    'Spese non contate nel CE (ne\' escluse): ' + (scoperti.length ? scoperti.map((r: { year: number; month: number; spese_scoperte: number }) => `${r.year}-${r.month}: ${r.spese_scoperte}`).join(', ') : 'nessuna, ogni euro e\' contato o escluso (COGS/PACKAGING)'),
+    'Spese non contate nel CE (ne\' escluse): ' + (scoperti.length ? scoperti.map((r: { year: number; month: number; spese_scoperte: number }) => `${r.year}-${r.month}: ${r.spese_scoperte}`).join(', ') : 'nessuna, ogni euro e\' contato o escluso (COGS/PACKAGING/IVA versata)'),
     scoperti.length);
+  // 11-ter) IVA VERSATA (v12, 2026-10-26, migr 0173): la quota IVA di un F24 va in TASSE / 'IVA' e resta fuori dal CE
+  // (i ricavi sono gia' netti, contarla vorrebbe dire togliere l'IVA due volte). Un F24 non ancora diviso fra IVA,
+  // ritenute e diritti lascia MC2 sbagliato finche' non lo si divide con l'email di Sergio: WARN, non ERROR.
+  const { data: ivaDiv } = read('v_tasse_iva_da_dividere', await sb.from('v_tasse_iva_da_dividere').select('year, month, costo'));
+  add('ce_tasse_iva_da_dividere',
+    'F24 in TASSE da dividere fra IVA (fuori CE), ritenute e diritti: ' + ((ivaDiv ?? []).length ? (ivaDiv ?? []).map((r: { year: number; month: number; costo: number }) => `${r.year}-${r.month}: ${r.costo}`).join(', ') : 'nessuno'),
+    (ivaDiv ?? []).length, 'warn');
   // righe di VENDITA con periodo NULL/invalido: sarebbero invisibili al CE (che raggruppa per year/month), lo
   // stesso rischio dal lato ricavi. v_vendite_orfane conta le righe scoperte su shopify/qromo/gift/b2b.
   const { data: orf } = read('v_vendite_orfane', await sb.from('v_vendite_orfane').select('*').single());
