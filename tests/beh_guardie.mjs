@@ -150,7 +150,7 @@ console.log('\n== Migrazione 0171 (viste e RPC della tab) ==');
   t('14p giorno di calendario senza righe di spesa = spesa null e giorni_spesa_mancanti (anche senza click), salvo nessuna consegna letta', /'spesa_meta', case when v_mlen = 0 or v_buchi > 0 then null/.test(M171)
     && /from generate_series\(v_mfrom, v_mend, interval '1 day'\) g\(d\)\n\s+where v_mlen > 0 and not exists \(select 1 from meta_ads_creative_daily m where m\.date = g\.d::date\)\n/.test(M171)
     && /from generate_series\(v_mfrom - v_mlen, v_mfrom - 1, interval '1 day'\) g\(d\)\n\s+where v_mlen > 0 and g\.d::date >= v_meta_min and not exists/.test(M171)
-    && M171.split(NO_CONSEGNA).length - 1 === 3
+    && M171.split(NO_CONSEGNA).length - 1 === 4
     && /'giorni_spesa_mancanti', v_buchi,/.test(M171) && /'ultimo_giorno_spesa_mancante', v_buco_ultimo,/.test(M171) && !/from beh_meta_outbound_daily b where v_mlen > 0/.test(M171));
   t('14v beh_fresh: spesa Meta ferma solo se dopo l\'ultimo giorno con righe resta un giorno che non e\' "nessuna consegna" letta (pausa delle ads = nessun errore)',
     /if v_meta_max is null or exists \(select 1 from generate_series\(v_meta_max \+ 1, v_oggi - 1, interval '1 day'\) g\(d\)\n\s+where exists \(select 1 from beh_meta_outbound_daily b where b\.date = g\.d::date\)\n\s+or not public\.beh_giorno_letto\('meta', g\.d::date\)\) then/.test(M171)
@@ -170,12 +170,16 @@ console.log('\n== Migrazione 0171 (viste e RPC della tab) ==');
     /count\(\*\) filter \(where v_today - g\.d::date between 2 and 35\) into v_buchi, v_buco_ultimo, v_bsal/.test(M171)
     // sesto giro: "lo rilegge il cron" solo se un giro futuro lo legge davvero (7 prima del giro di oggi, 6 dopo), e
     // beh_copertura elenca i click fino a 7 giorni fa, quelli che nessun giro rilegge piu'
-    && /v_rilegge := case when exists \(select 1 from beh_sync_runs r where r\.step = 'meta' and r\.action = 'run' and r\.source = 'cron' and r\.run_day = v_today\)\n\s+then 6 else 7 end;/.test(M171)
+    // settimo giro: il giro di oggi e' passato anche senza la sua riga dopo le 06:13 UTC, l'ora del cron della 0170
+    && /v_rilegge := case when now\(\) >= \(\(v_today \+ time '06:13'\) at time zone 'UTC'\)\n\s+or exists \(select 1 from beh_sync_runs r where r\.step = 'meta' and r\.action = 'run' and r\.source = 'cron' and r\.run_day = v_today\)\n\s+then 6 else 7 end;/.test(M171)
+    && /select cron\.schedule\('beh-sync-meta', '13 6 \* \* \*',/.test(M170)
     && /count\(\*\) filter \(where v_today - g\.d::date <= v_rilegge\),\n\s+count\(\*\) filter \(where v_today - g\.d::date > v_rilegge and v_today - g\.d::date <= 35\),\n\s+count\(\*\) filter \(where v_today - g\.d::date > 35\)\n\s+into v_cbuchi, v_cbuco_ultimo, v_crec, v_csal, v_cvec/.test(M171)
     && /generate_series\(greatest\(v_oggi - 35, v_meta_min\), v_oggi - 2, interval '1 day'\)/.test(M171)
     && /generate_series\(greatest\(v_oggi - 35, v_beh_min\), v_oggi - 7, interval '1 day'\)/.test(M171) && !/v_oggi - 8, interval/.test(M171) && /const WINDOW_DAYS = 7;/.test(SRC)
-    // finestra vuota per il primo giorno del periodo non coperto: quel giorno e' mancante
-    && /if v_mlen = 0 and v_meta_max is not null and v_mfrom <= v_end then\n\s+v_buchi := 1;\n\s+v_buco_ultimo := v_mfrom;\n\s+v_bsal := case when v_today - v_mfrom between 2 and 35 then 1 else 0 end;/.test(M171)
+    // finestra vuota per il primo giorno del periodo non coperto: mancanti tutti i giorni del periodo che non sono
+    // "nessuna consegna" letta (settimo giro: non il solo primo)
+    && /if v_mlen = 0 and v_meta_max is not null and v_mfrom <= v_end then\n\s+select count\(\*\), max\(g\.d::date\), count\(\*\) filter \(where v_today - g\.d::date between 2 and 35\) into v_buchi, v_buco_ultimo, v_bsal\n\s+from generate_series\(v_mfrom, v_end, interval '1 day'\) g\(d\)\n\s+where not exists \(select 1 from meta_ads_creative_daily m where m\.date = g\.d::date\)\n/.test(M171)
+    && !/v_buchi := 1;/.test(M171)
     && /'spesa_al', case when v_mlen > 0 then v_mend end,/.test(M171) && /'giorni_spesa_mancanti_salute', v_bsal,/.test(M171)
     && /'click_mancanti_recenti', v_crec, 'click_mancanti_salute', v_csal, 'click_mancanti_vecchi', v_cvec,/.test(M171));
   t('14s soglia del giro fermo decisa dal server, come beh_fresh (settimanali 8 giorni, gli altri beh_fresh_ore)', /'soglia_ore', case when r\.step in \('crux', 'psi'\) then 8 \* 24 else v_fresh_ore end/.test(M171)
@@ -209,7 +213,7 @@ console.log('\n== Test vivo tests/beh_rls.sql ==');
   t('15 nessuna variabile del blocco ha il nome di una colonna letta', vars.length >= 5 && vars.every((x) => !colonne.includes(x)), vars.join(','));
   t('16 a flag spento controlla solo le chiavi di beh_health_check (la riga beh_ordini della edge non conta)', /insert into health_log \(day, k, label, n, severity, created_at\) values \(current_date, 'beh_ordini'/.test(RLS) && /k in \('beh_fresh', 'beh_tracciamento_guasto', 'beh_quota_tracciata'\)\) then\n    raise exception 'KO H1/.test(RLS));
   t('17a casi della verifica del 25-10 nella prova viva: copertura (ordini, spesa, Meta ferma), conteggi indipendenti dei filtri, durata dei periodi, v_run_day, run a mano',
-    /KO H7: tolto il % da beh_order_origin/.test(RLS) && /KO H7: tolta la spesa e i click del %/.test(RLS) && /KO H7: tolti i click del %/.test(RLS) && /KO H7: un giro warn senza letture/.test(RLS) && /KO H7: giorno senza consegna/.test(RLS) && /KO H7: pausa delle ads/.test(RLS) && /KO H7: i click tolti/.test(RLS) && /KO H7: finestra della spesa a 7 giorni/.test(RLS) && /KO H7: fasce: beh_copertura/.test(RLS) && /KO H7: fasce: click/.test(RLS) && /KO H7: finestra vuota per il primo giorno/.test(RLS) && /KO H7: fasce prima del giro di oggi/.test(RLS)
+    /KO H7: tolto il % da beh_order_origin/.test(RLS) && /KO H7: tolta la spesa e i click del %/.test(RLS) && /KO H7: tolti i click del %/.test(RLS) && /KO H7: un giro warn senza letture/.test(RLS) && /KO H7: giorno senza consegna/.test(RLS) && /KO H7: pausa delle ads/.test(RLS) && /KO H7: i click tolti/.test(RLS) && /KO H7: finestra della spesa a 7 giorni/.test(RLS) && /KO H7: fasce: beh_copertura/.test(RLS) && /KO H7: fasce: click/.test(RLS) && /KO H7: finestra vuota per il primo giorno/.test(RLS) && /KO H7: fasce senza la riga del giro di oggi/.test(RLS) && /KO H7: finestra vuota con tutto il periodo scoperto/.test(RLS)
     // sesto giro: nessun confronto con <> sulle chiavi delle fasce (una chiave assente darebbe NULL e passerebbe)
     && !/->> '(click_mancanti_[a-z]+|giorni_spesa_mancanti_salute|spesa_al)'\)::[a-z]+ <>/.test(RLS) && /senza click \(ads ferme\)/.test(RLS) && /giorni_click_mancanti = %/.test(RLS) && /KO H7: giorno % gia'' letto da un giro/.test(RLS) && /KO H7: spesa Meta ferma da piu'' di un giorno/.test(RLS)
     && /KO D: ordini\.% = % contro % contati qui/.test(RLS) && /KO D: ordini_cpa = % contro/.test(RLS) && /KO D: riacquisto_90/.test(RLS)

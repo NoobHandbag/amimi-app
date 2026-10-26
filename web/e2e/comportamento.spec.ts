@@ -195,26 +195,32 @@ test('spesa con giorni mancanti, Meta acceso senza click nel periodo, nessun gio
     { nome: 'solo il periodo prima', fn: (x: ReturnType<typeof dash>) => { x.fonti.prev_spesa_meta = null; x.fonti.prev_ordini_cpa = null; x.fonti.giorni_spesa_mancanti_prima = 2; },
       testo: 'Confronto n.d.: nel periodo prima 2 giorni non hanno righe di spesa' },
     { nome: 'click parziali recenti', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 3; x.fonti.click_mancanti_recenti = 3; x.fonti.ultimo_giorno_click_mancante = '2026-10-23'; },
-      testo: "Click parziali: 3 giorni del periodo non sono stati letti dal giro Meta (l'ultimo il 23 ott)", anche: "Sono nella finestra del cron (ultimi 7 giorni): il prossimo giro del cron li rilegge; se restano mancanti li elenchera'", senza: 'fuori dalla finestra' },
+      testo: "Click parziali: 3 giorni del periodo non sono stati letti dal giro Meta (l'ultimo il 23 ott)", anche: "Sono nella finestra del prossimo giro del cron, che li rilegge; se restano mancanti li elenchera'", senza: 'fuori dalla finestra' },
     { nome: 'click parziali in Salute', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 1; x.fonti.click_mancanti_salute = 1; x.fonti.ultimo_giorno_click_mancante = '2026-10-10'; },
       testo: 'Click parziali: 1 giorno del periodo (il 10 ott) non e\' stato letto dal giro Meta', anche: ['E\' fuori dalla finestra del cron, ma degli ultimi 35 giorni: lo elenca "Giorni mancanti" in Salute.', 'Uscite verso il sito (parziali)'], senza: 'rilegge' },
     { nome: 'click parziali vecchi', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 2; x.fonti.click_mancanti_vecchi = 2; x.fonti.ultimo_giorno_click_mancante = '2026-09-01'; },
-      testo: '2 giorni del periodo non sono stati letti', anche: "Sono di piu' di 35 giorni fa: nessun giro li rilegge piu' e Salute non li elenca: serve un backfill di beh-sync per quei giorni.", senza: 'Giorni mancanti' },
+      testo: '2 giorni del periodo non sono stati letti', anche: "Sono di piu' di 35 giorni fa: nessun giro li rilegge piu' e Salute non li elenca, quindi serve un backfill di beh-sync per quei giorni.", senza: 'Giorni mancanti' },
     { nome: 'click parziali misti', fn: (x: ReturnType<typeof dash>) => { Object.assign(x.fonti, { giorni_click_mancanti: 4, click_mancanti_recenti: 1, click_mancanti_salute: 2, click_mancanti_vecchi: 1, ultimo_giorno_click_mancante: '2026-10-20' }); },
-      testo: '4 giorni del periodo non sono stati letti', anche: ["Uno e' nella finestra del cron (ultimi 7 giorni): il prossimo giro del cron lo rilegge; se resta mancante lo elenchera'",
-        '2 sono fuori dalla finestra del cron, ma degli ultimi 35 giorni: li elenca "Giorni mancanti" in Salute.', "Uno e' di piu' di 35 giorni fa: nessun giro lo rilegge piu' e Salute non lo elenca: serve un backfill di beh-sync per quel giorno."] },
+      testo: '4 giorni del periodo non sono stati letti', anche: ["Uno e' nella finestra del prossimo giro del cron, che lo rilegge; se resta mancante lo elenchera'",
+        '2 sono fuori dalla finestra del cron, ma degli ultimi 35 giorni: li elenca "Giorni mancanti" in Salute.', "Uno e' di piu' di 35 giorni fa: nessun giro lo rilegge piu' e Salute non lo elenca, quindi serve un backfill di beh-sync per quel giorno."] },
     // igiene del quinto giro: oltre l'ultima riga di spesa la finestra conta solo giorni senza consegna letti, e lo dice
     { nome: 'pausa in coda', fn: (x: ReturnType<typeof dash>) => { x.fonti.meta_dati_al = '2026-10-22'; x.fonti.spesa_al = '2026-10-24'; },
       testo: "righe per annuncio fino al 22 ott; dal 23 ott al 24 ott il giro Meta non ha trovato consegne, quindi spesa 0" },
     { nome: 'periodo tutto senza consegne', fn: (x: ReturnType<typeof dash>) => { x.fonti.meta_dati_al = '2026-10-10'; x.fonti.spesa_dal = '2026-10-18'; x.fonti.giorni_spesa = 7; x.fonti.spesa_al = '2026-10-24'; },
       testo: "7 giorni dal 18 ott al 24 ott gia' coperti dalla spesa (righe per annuncio fino al 10 ott; dal 18 ott al 24 ott il giro Meta" },
     { nome: 'nessun click', fn: (x: ReturnType<typeof dash>) => { x.fonti.ads.dati_al = null; }, testo: 'Nessun click Meta letto nel periodo' },
-    { nome: 'nessun giorno di spesa', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_spesa = 0; x.fonti.spesa_dal = null; x.fonti.spesa_al = null; x.fonti.spesa_meta = null; x.fonti.ordini_cpa = 0; },
-      testo: "Nessun giorno del periodo e' coperto dalla spesa per annuncio (righe fino al 24 ott): spesa e costo per ordine sono n.d., non zero" },
+    // settimo giro: senza righe di spesa (unico caso senza avviso che il server puo' dare)
+    { nome: 'nessun giorno di spesa', fn: (x: ReturnType<typeof dash>) => { Object.assign(x.fonti, { giorni_spesa: 0, spesa_dal: null, spesa_al: null, spesa_meta: null, ordini_cpa: 0, meta_dati_al: null }); },
+      testo: "Nessun giorno del periodo e' coperto dalla spesa per annuncio (nessuna riga letta): spesa e costo per ordine sono n.d., non zero" },
     // sesto giro: finestra vuota per il primo giorno del periodo non coperto, contato mancante dal server
     { nome: 'primo giorno non coperto', fn: (x: ReturnType<typeof dash>) => { Object.assign(x.fonti, { giorni_spesa: 0, spesa_dal: null, spesa_al: null, spesa_meta: null, ordini_cpa: 0,
         meta_dati_al: '2026-07-01', giorni_spesa_mancanti: 1, ultimo_giorno_spesa_mancante: '2026-10-18', giorni_spesa_mancanti_salute: 1 }); },
       testo: 'Spesa n.d.: 1 giorno del periodo (il 18 ott) non ha nessuna riga di spesa', anche: ['per quel giorno: lo elenca anche "Giorni mancanti" in Salute', "Nessun giorno del periodo e' coperto dalla spesa per annuncio (righe fino al 01 lug)"] },
+    { nome: 'periodo tutto scoperto', fn: (x: ReturnType<typeof dash>) => { Object.assign(x.fonti, { giorni_spesa: 0, spesa_dal: null, spesa_al: null, spesa_meta: null, ordini_cpa: 0,
+        meta_dati_al: '2026-10-16', giorni_spesa_mancanti: 7, ultimo_giorno_spesa_mancante: '2026-10-24', giorni_spesa_mancanti_salute: 6 }); },
+      testo: "Spesa n.d.: 7 giorni del periodo non hanno nessuna riga di spesa (l'ultimo il 24 ott)", anche: ['per quei giorni: di questi 6 li elenca anche "Giorni mancanti" in Salute', "Nessun giorno del periodo e' coperto dalla spesa per annuncio (righe fino al 16 ott)"] },
+    { nome: 'un solo giorno coperto', fn: (x: ReturnType<typeof dash>) => { Object.assign(x.fonti, { giorni_spesa: 1, spesa_dal: '2026-10-24', spesa_al: '2026-10-24' }); },
+      testo: "Spesa e costo contano il solo giorno del 24 ott, gia' coperto dalla spesa (aggiornata al 24 ott), confrontato col giorno prima" },
   ];
   for (const c of casi) {
     const x = dash(30); c.fn(x);

@@ -141,22 +141,26 @@ begin
     from generate_series(v_mfrom - v_mlen, v_mfrom - 1, interval '1 day') g(d)
    where v_mlen > 0 and g.d::date >= v_meta_min and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date)
      and (exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date));
-  -- finestra vuota perche' il primo giorno del periodo, dopo l'ultima riga di spesa, non e' coperto (sesto giro): quel giorno
-  -- e' mancante, come lo elenca beh_copertura, non "spesa non ancora arrivata"
+  -- finestra vuota perche' il primo giorno del periodo, dopo l'ultima riga di spesa, non e' coperto (sesto giro): nessun
+  -- giorno del periodo ha righe di spesa, e ognuno che non e' "nessuna consegna" letta e' mancante, come li elenca
+  -- beh_copertura (settimo giro: non il solo primo), non "spesa non ancora arrivata"
   if v_mlen = 0 and v_meta_max is not null and v_mfrom <= v_end then
-    v_buchi := 1;
-    v_buco_ultimo := v_mfrom;
-    v_bsal := case when v_today - v_mfrom between 2 and 35 then 1 else 0 end;
+    select count(*), max(g.d::date), count(*) filter (where v_today - g.d::date between 2 and 35) into v_buchi, v_buco_ultimo, v_bsal
+      from generate_series(v_mfrom, v_end, interval '1 day') g(d)
+     where not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date)
+       and (exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date));
   end if;
   -- click Meta mancanti nel periodo (passo meta acceso): giorni senza righe in beh_meta_outbound_daily che nessun giro Meta
   -- riuscito ha letto dopo la chiusura; il funnel delle ads su quei giorni e' parziale
   v_meta_on := exists (select 1 from regexp_split_to_table(coalesce((select value from app_flags where key = 'beh_steps'), ''), ',') as x
                         where lower(btrim(x, E' \t\r\n')) = 'meta');
   select min(date) into v_beh_min from beh_meta_outbound_daily;
-  -- fasce per eta': quelli che il prossimo giro Meta del cron rilegge (finestra [oggi-7, oggi) alle 06:13 UTC: fino a 7
-  -- giorni prima del giro di oggi, fino a 6 dopo, sesto giro), gli altri fino a 35 giorni li elenca beh_copertura in
-  -- Salute, oltre 35 nessuno dei due e serve un backfill
-  v_rilegge := case when exists (select 1 from beh_sync_runs r where r.step = 'meta' and r.action = 'run' and r.source = 'cron' and r.run_day = v_today)
+  -- fasce per eta': quelli che il prossimo giro Meta del cron rilegge (finestra [oggi-7, oggi) alle 06:13 UTC, cron
+  -- beh-sync-meta della 0170: fino a 7 giorni prima del giro di oggi, fino a 6 dopo, sesto giro), gli altri fino a 35
+  -- giorni li elenca beh_copertura in Salute, oltre 35 nessuno dei due e serve un backfill. Il giro di oggi e' passato se
+  -- ha la sua riga o se l'ora e' passata anche senza riga (edge mai partita, settimo giro); 06:13 UTC e' sempre oggi a Roma
+  v_rilegge := case when now() >= ((v_today + time '06:13') at time zone 'UTC')
+                      or exists (select 1 from beh_sync_runs r where r.step = 'meta' and r.action = 'run' and r.source = 'cron' and r.run_day = v_today)
                     then 6 else 7 end;
   select count(*), max(g.d::date),
          count(*) filter (where v_today - g.d::date <= v_rilegge),
@@ -387,7 +391,7 @@ begin
   -- copertura degli ultimi 35 giorni chiusi (vedi l'intestazione)
   -- ogni sezione elenca al massimo i 6 giorni piu' recenti piu' "e altri N": con un'etichetta tagliata, tanti giorni di
   -- ordini mancanti nasconderebbero la spesa mancante (prova del 26-10)
-  -- Lato beh (ordini e click) solo i giorni che il cron non rileggera' piu' ([oggi-35, oggi-7)) e che nessun giro riuscito
+  -- Lato beh (ordini [oggi-35, oggi-7), click [oggi-35, oggi-7]) solo i giorni che il cron non rileggera' piu' e che nessun giro riuscito
   -- ha letto dopo la loro chiusura (beh_giorno_letto): un ordine cancellato in Shopify dopo la lettura non e' un buco e
   -- nessun backfill lo riporterebbe. Lato spesa (ads-sync, che non rilegge mai i giorni passati) ogni giorno di calendario
   -- chiuso senza righe, salvo i giorni che un giro Meta riuscito ha letto senza trovare click (ads ferme, spesa 0).

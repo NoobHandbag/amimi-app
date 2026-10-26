@@ -369,6 +369,21 @@ begin
         v_dash -> 'fonti' -> 'giorni_spesa_mancanti_salute', v_dash -> 'fonti' -> 'giorni_click_mancanti', v_dash -> 'fonti' -> 'click_mancanti_salute',
         v_dash -> 'fonti' -> 'click_mancanti_recenti', v_oggi - 7;
     end if;
+    -- settimo giro: senza la rilettura a mano nessun giorno del periodo e' coperto, e sono mancanti tutti e 7 (non il solo
+    -- primo), come li elenca beh_copertura: 6 in Salute (fino all'altro ieri); click: 6 li rilegge il cron, 1 no
+    delete from beh_sync_runs where step = 'meta' and window_from = v_oggi - 6;
+    perform set_config('role', 'authenticated', true);
+    perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
+    v_dash := public.beh_dashboard(7);
+    reset role;
+    if (v_dash -> 'fonti' ->> 'giorni_spesa')::int is distinct from 0 or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti')::int is distinct from 7 or (v_dash -> 'fonti' ->> 'ultimo_giorno_spesa_mancante')::date is distinct from v_oggi - 1
+       or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti_salute')::int is distinct from 6 or (v_dash -> 'fonti' ->> 'giorni_click_mancanti')::int is distinct from 7 or (v_dash -> 'fonti' ->> 'click_mancanti_recenti')::int is distinct from 6
+       or (v_dash -> 'fonti' ->> 'click_mancanti_salute')::int is distinct from 1 then
+      raise exception 'KO H7: finestra vuota con tutto il periodo scoperto: giorni_spesa %, mancanti % (ultimo %, Salute %), click % (recenti %, Salute %); attesi 0, 7 (%, 6), 7 (6, 1)',
+        v_dash -> 'fonti' -> 'giorni_spesa', v_dash -> 'fonti' -> 'giorni_spesa_mancanti', v_dash -> 'fonti' -> 'ultimo_giorno_spesa_mancante',
+        v_dash -> 'fonti' -> 'giorni_spesa_mancanti_salute', v_dash -> 'fonti' -> 'giorni_click_mancanti', v_dash -> 'fonti' -> 'click_mancanti_recenti',
+        v_dash -> 'fonti' -> 'click_mancanti_salute', v_oggi - 1;
+    end if;
     raise exception 'H7_INIZIO_OK';
   exception when others then
     if sqlerrm <> 'H7_INIZIO_OK' then raise; end if;
@@ -415,9 +430,13 @@ begin
     perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
     v_dash := public.beh_dashboard(90);
     reset role;
-    if (v_dash -> 'fonti' ->> 'click_mancanti_recenti')::int is distinct from 1 or (v_dash -> 'fonti' ->> 'click_mancanti_salute')::int is distinct from 2 or (v_dash -> 'fonti' ->> 'click_mancanti_vecchi')::int is distinct from 1 then
-      raise exception 'KO H7: fasce prima del giro di oggi: recenti %, Salute %, vecchi % (attesi 1, 2, 1)',
-        v_dash -> 'fonti' -> 'click_mancanti_recenti', v_dash -> 'fonti' -> 'click_mancanti_salute', v_dash -> 'fonti' -> 'click_mancanti_vecchi';
+    -- senza la riga del giro di oggi: prima delle 06:13 UTC il giorno di 7 giorni fa lo rilegge ancora il giro di oggi, dopo
+    -- no, anche se il giro non ha scritto la sua riga (edge mai partita, settimo giro)
+    v_n := case when now() < ((v_oggi + time '06:13') at time zone 'UTC') then 1 else 0 end;
+    if (v_dash -> 'fonti' ->> 'click_mancanti_recenti')::int is distinct from v_n or (v_dash -> 'fonti' ->> 'click_mancanti_salute')::int is distinct from 3 - v_n
+       or (v_dash -> 'fonti' ->> 'click_mancanti_vecchi')::int is distinct from 1 then
+      raise exception 'KO H7: fasce senza la riga del giro di oggi: recenti %, Salute %, vecchi % (attesi %, %, 1)',
+        v_dash -> 'fonti' -> 'click_mancanti_recenti', v_dash -> 'fonti' -> 'click_mancanti_salute', v_dash -> 'fonti' -> 'click_mancanti_vecchi', v_n, 3 - v_n;
     end if;
     raise exception 'H7_FASCE_OK';
   exception when others then
