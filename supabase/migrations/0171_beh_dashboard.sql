@@ -44,6 +44,19 @@ select coalesce(b.date, m.date) as date,
 revoke all on v_beh_ordini_daily, v_beh_attribuzione_mensile, v_beh_ads_funnel_daily from public, anon, authenticated;
 grant select on v_beh_ordini_daily, v_beh_attribuzione_mensile, v_beh_ads_funnel_daily to ask_ro;
 
+-- Un giorno e' "letto" da un passo se un giro RIUSCITO (status ok) del passo lo aveva nella finestra e si e' chiuso dopo la
+-- fine del giorno a Roma. Solo allora "nessuna riga" vuol dire davvero zero (nessun ordine, nessuna consegna Meta); un giro
+-- 'warn' (per esempio 0 righe su piu' giorni) non conta, perche' e' la edge che dice di non fidarsi (terzo giro del 26-10).
+create or replace function public.beh_giorno_letto(p_step text, p_day date) returns boolean
+language sql stable set search_path to 'public' as $fn$
+  select exists (select 1 from beh_sync_runs r
+                  where r.step = p_step and r.status = 'ok'
+                    and r.window_from <= p_day and r.window_to > p_day
+                    and r.ended_at >= ((p_day + 1)::timestamp at time zone 'Europe/Rome'))
+$fn$;
+revoke all on function public.beh_giorno_letto(text, date) from public, anon, authenticated;
+grant execute on function public.beh_giorno_letto(text, date) to service_role;
+
 -- RPC della tab. Definizioni della sez. 3 del disegno:
 --   quota tracciata = ordini online pronti con visite / ordini online pronti (gli ordini in attribuzione a parte)
 --   CPA blended = spesa Meta / tutti gli ordini non di prova e non cancellati, sugli stessi giorni coperti dalla spesa
@@ -73,6 +86,9 @@ declare
   v_mlen     int;
   v_buchi    int;
   v_buco_ultimo date;
+  v_cbuchi   int;
+  v_beh_min  date;
+  v_meta_on  boolean;
   v_pbuchi   int;
   v_fresh_ore numeric;
   v_ord_min  date;
@@ -102,13 +118,25 @@ begin
   v_mlen  := case when v_mfrom is null or v_mend is null then 0 else greatest(v_mend - v_mfrom + 1, 0) end;
   -- giorni di calendario senza nessuna riga di spesa: la spesa di quei giorni non e' 0, e' mancante. Il testimone e' il
   -- calendario e non i click di beh, che mancano insieme alla spesa quando il token Meta si ferma (secondo giro del 26-10).
-  -- Dal 20-06 ogni giorno ha righe; ads tutte ferme per un giorno intero darebbero n.d., che e' il lato prudente.
+  -- Eccezione (terzo giro): se un giro Meta riuscito ha letto il giorno dopo la chiusura e non ha trovato click, le ads non
+  -- hanno consegnato e la spesa e' davvero 0. Col passo meta spento quell'eccezione non si vede: n.d., il lato prudente.
   select count(*), max(g.d::date) into v_buchi, v_buco_ultimo
     from generate_series(v_mfrom, v_mend, interval '1 day') g(d)
-   where v_mlen > 0 and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date);
+   where v_mlen > 0 and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date)
+     and (exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date));
   select count(*) into v_pbuchi
     from generate_series(v_mfrom - v_mlen, v_mfrom - 1, interval '1 day') g(d)
-   where v_mlen > 0 and g.d::date >= v_meta_min and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date);
+   where v_mlen > 0 and g.d::date >= v_meta_min and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date)
+     and (exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date));
+  -- click Meta mancanti nel periodo (passo meta acceso): giorni senza righe in beh_meta_outbound_daily che nessun giro Meta
+  -- riuscito ha letto dopo la chiusura; il funnel delle ads su quei giorni e' parziale
+  v_meta_on := exists (select 1 from regexp_split_to_table(coalesce((select value from app_flags where key = 'beh_steps'), ''), ',') as x
+                        where lower(btrim(x, E' \t\r\n')) = 'meta');
+  select min(date) into v_beh_min from beh_meta_outbound_daily;
+  select count(*) into v_cbuchi
+    from generate_series(greatest(v_from, v_beh_min), v_end, interval '1 day') g(d)
+   where v_meta_on and v_beh_min is not null and not exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date)
+     and not public.beh_giorno_letto('meta', g.d::date);
   select p_val into v_fresh_ore from public.beh_flag_num('beh_fresh_ore', 48, '');
   select min(day) into v_ord_min from beh_order_origin;
   select min(day) into v_vis_min from loyalty_visits;
@@ -172,6 +200,7 @@ begin
         'prev_ordini_cpa', case when v_mlen = 0 or v_mfrom - v_mlen < v_meta_min or v_pbuchi > 0 or v_ord_min is null or v_mfrom - v_mlen < v_ord_min then null
                                 else (select count(*) from beh_order_origin o where not o.is_test and not o.is_cancelled
                                         and o.day between v_mfrom - v_mlen and v_mfrom - 1) end,
+        'giorni_click_mancanti', v_cbuchi,
         'ads', (select jsonb_build_object('link_clicks', coalesce(sum(link_clicks), 0), 'outbound_clicks', coalesce(sum(outbound_clicks), 0),
                                           'landing_page_views', coalesce(sum(landing_page_views), 0), 'dati_al', max(date))
                   from beh_meta_outbound_daily where date between v_from and v_end)),
@@ -246,6 +275,7 @@ declare
   v_oggi date := (now() at time zone 'Europe/Rome')::date;
   v_meta_max date;
   v_meta_min date;
+  v_beh_min date;
   v_buchi text;
   v_txt text;
   v_k int;
@@ -321,9 +351,9 @@ begin
   -- ogni sezione elenca al massimo i 6 giorni piu' recenti piu' "e altri N": con un'etichetta tagliata, tanti giorni di
   -- ordini mancanti nasconderebbero la spesa mancante (prova del 26-10)
   -- Lato beh (ordini e click) solo i giorni che il cron non rileggera' piu' ([oggi-35, oggi-7)) e che nessun giro riuscito
-  -- ha letto dopo la loro chiusura: un ordine cancellato in Shopify dopo la lettura non e' un buco e nessun backfill lo
-  -- riporterebbe. Lato spesa (ads-sync, che non rilegge mai i giorni passati) ogni giorno di calendario chiuso senza righe,
-  -- testimone il calendario e non i click di beh, che mancano insieme alla spesa quando il token Meta si ferma.
+  -- ha letto dopo la loro chiusura (beh_giorno_letto): un ordine cancellato in Shopify dopo la lettura non e' un buco e
+  -- nessun backfill lo riporterebbe. Lato spesa (ads-sync, che non rilegge mai i giorni passati) ogni giorno di calendario
+  -- chiuso senza righe, salvo i giorni che un giro Meta riuscito ha letto senza trovare click (ads ferme, spesa 0).
   if 'ordini' = any(v_steps) or 'meta' = any(v_steps) then
     if 'ordini' = any(v_steps) then
       select count(*), string_agg(z.t, ', ' order by z.d) filter (where z.rn <= 6) into v_k, v_txt
@@ -334,10 +364,7 @@ begin
                                  and o.created_at_shop < ((v_oggi - 7)::timestamp at time zone 'Europe/Rome')
                                group by 1) s
                         left join (select b2.day as d, count(*) as n from beh_order_origin b2 where b2.day >= v_oggi - 35 and b2.day < v_oggi - 7 group by 1) b on b.d = s.d
-                       where coalesce(b.n, 0) < s.n
-                         and not exists (select 1 from beh_sync_runs r where r.step = 'ordini' and r.status in ('ok', 'warn')
-                                           and r.window_from <= s.d and r.window_to > s.d
-                                           and r.ended_at >= ((s.d + 1)::timestamp at time zone 'Europe/Rome'))) g) z;
+                       where coalesce(b.n, 0) < s.n and not public.beh_giorno_letto('ordini', s.d)) g) z;
       if v_k > 0 then v_buchi := concat_ws('; ', v_buchi, 'ordini mancanti il ' || v_txt || case when v_k > 6 then ' e altri ' || (v_k - 6) || ' giorni' else '' end); end if;
     end if;
     select min(date) into v_meta_min from meta_ads_creative_daily;
@@ -345,16 +372,17 @@ begin
       from (select g.d::date as d, row_number() over (order by g.d desc) as rn
               -- fino all'altro ieri: ieri lo legge ads-sync alle 06:07 UTC, e se manca lo dice gia' beh_fresh col passo meta
               from generate_series(greatest(v_oggi - 35, v_meta_min), v_oggi - 2, interval '1 day') g(d)
-             where v_meta_min is not null and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date)) z;
+             where v_meta_min is not null and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date)
+               and (exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date))) z;
     if v_k > 0 then v_buchi := concat_ws('; ', v_buchi, 'spesa Meta mancante (ads-sync) il ' || v_txt || case when v_k > 6 then ' e altri ' || (v_k - 6) || ' giorni' else '' end); end if;
     if 'meta' = any(v_steps) then
+      -- testimone il calendario anche per i click: un fermo del token toglie spesa e click insieme
+      select min(date) into v_beh_min from beh_meta_outbound_daily;
       select count(*), string_agg(to_char(z.d, 'DD-MM'), ', ' order by z.d) filter (where z.rn <= 6) into v_k, v_txt
-        from (select x.d, row_number() over (order by x.d desc) as rn
-                from (select distinct m.date as d from meta_ads_creative_daily m where m.date >= v_oggi - 35 and m.date < v_oggi - 7 and m.spend > 0
-                      except select distinct b.date from beh_meta_outbound_daily b where b.date >= v_oggi - 35) x
-               where not exists (select 1 from beh_sync_runs r where r.step = 'meta' and r.status in ('ok', 'warn')
-                                   and r.window_from <= x.d and r.window_to > x.d
-                                   and r.ended_at >= ((x.d + 1)::timestamp at time zone 'Europe/Rome'))) z;
+        from (select g.d::date as d, row_number() over (order by g.d desc) as rn
+                from generate_series(greatest(v_oggi - 35, v_beh_min), v_oggi - 8, interval '1 day') g(d)
+               where v_beh_min is not null and not exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date)
+                 and not public.beh_giorno_letto('meta', g.d::date)) z;
       if v_k > 0 then v_buchi := concat_ws('; ', v_buchi, 'click Meta mancanti il ' || v_txt || case when v_k > 6 then ' e altri ' || (v_k - 6) || ' giorni' else '' end); end if;
     end if;
     insert into health_log (day, k, label, n, severity, created_at)
@@ -393,8 +421,8 @@ begin
     raise exception '0171: authenticated non puo'' eseguire beh_dashboard (la tab non funzionerebbe)';
   end if;
   foreach r in array array['anon', 'authenticated'] loop
-    if has_function_privilege(r, 'public.beh_health_check()', 'execute') then
-      raise exception '0171: % puo'' eseguire beh_health_check', r;
+    if has_function_privilege(r, 'public.beh_health_check()', 'execute') or has_function_privilege(r, 'public.beh_giorno_letto(text, date)', 'execute') then
+      raise exception '0171: % puo'' eseguire beh_health_check o beh_giorno_letto', r;
     end if;
   end loop;
 end $$;

@@ -26,6 +26,7 @@ function dash(days: number, tracciati = 87, pronti = 120) {
       fonte: 'Shopify, Meta', ultima_visita: { direct: 40, search: 20, social: 15, paid_social: 8, email: 2, referral: 1, unknown: 1, none: 33 },
       prima_visita: { direct: 30, search: 30, social: 14, paid_social: 10, email: 1, none: 35 }, meta_dati_al: '2026-10-24',
       spesa_dal: giorni[0].day as string | null, giorni_spesa: days, giorni_spesa_mancanti: 0,
+      ultimo_giorno_spesa_mancante: null as string | null, giorni_spesa_mancanti_prima: 0, giorni_click_mancanti: 0,
       spesa_meta: 1234.56 as number | null, ordini_cpa: 125, prev_spesa_meta: 1000 as number | null, prev_ordini_cpa: 100 as number | null,
       ads: { link_clicks: 4613, outbound_clicks: 2940, landing_page_views: 2180, dati_al: '2026-10-24' as string | null },
     },
@@ -181,7 +182,13 @@ test('periodo prima che comincia prima dei dati (prev null): "n.d." al posto del
 // verifica avversariale del 25-10 (C1, C3, C4, C9)
 test('spesa con giorni mancanti, Meta acceso senza click nel periodo, nessun giorno di spesa: n.d. e il motivo giusto', async ({ page }) => {
   const casi = [
-    { nome: 'giorni mancanti', fn: (x: ReturnType<typeof dash>) => { x.fonti.spesa_meta = null; x.fonti.giorni_spesa_mancanti = 2; }, testo: '2 giorni del periodo non hanno nessuna riga di spesa' },
+    { nome: 'giorni mancanti recenti', fn: (x: ReturnType<typeof dash>) => { x.fonti.spesa_meta = null; x.fonti.giorni_spesa_mancanti = 2; x.fonti.ultimo_giorno_spesa_mancante = '2026-10-20'; },
+      testo: "2 giorni del periodo non hanno nessuna riga di spesa (l'ultimo il 20 ott)", anche: 'lo dice anche "Giorni mancanti" in Salute' },
+    { nome: 'giorno mancante vecchio', fn: (x: ReturnType<typeof dash>) => { x.fonti.spesa_meta = null; x.fonti.giorni_spesa_mancanti = 1; x.fonti.ultimo_giorno_spesa_mancante = '2026-08-01'; },
+      testo: '1 giorno del periodo non ha nessuna riga di spesa', senza: 'Giorni mancanti' },
+    { nome: 'solo il periodo prima', fn: (x: ReturnType<typeof dash>) => { x.fonti.prev_spesa_meta = null; x.fonti.prev_ordini_cpa = null; x.fonti.giorni_spesa_mancanti_prima = 2; },
+      testo: 'Confronto n.d.: nel periodo prima 2 giorni non hanno righe di spesa' },
+    { nome: 'click parziali', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 3; }, testo: 'Click parziali: 3 giorni del periodo non sono stati letti', anche: 'Uscite verso il sito (parziali)' },
     { nome: 'nessun click', fn: (x: ReturnType<typeof dash>) => { x.fonti.ads.dati_al = null; }, testo: 'Nessun click Meta letto nel periodo' },
     { nome: 'nessun giorno di spesa', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_spesa = 0; x.fonti.spesa_dal = null; x.fonti.spesa_meta = null; x.fonti.ordini_cpa = 0; }, testo: 'spesa e costo per ordine sono n.d., non zero' },
   ];
@@ -192,6 +199,9 @@ test('spesa con giorni mancanti, Meta acceso senza click nel periodo, nessun gio
     await page.goto('about:blank');
     await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: x }) });
     await expect(page.getByText(c.testo, { exact: false }), c.nome).toBeVisible();
+    const cc = c as { anche?: string; senza?: string };
+    if (cc.anche) await expect(page.getByText(cc.anche, { exact: false }).first(), c.nome).toBeVisible();
+    if (cc.senza) await expect(page.locator('p.note.warn', { hasText: c.testo }), c.nome).not.toContainText(cc.senza);
     await expect(page.getByText('Il passo Meta del modulo e\' spento'), c.nome).toHaveCount(0);
     if (x.fonti.spesa_meta == null) {
       await expect(page.locator('.kpi').filter({ has: page.locator('.k', { hasText: /^Spesa Meta$/ }) }), c.nome).toContainText('n.d.');
@@ -227,6 +237,17 @@ test('salute: soglia del giro fermo sul confine (30 ore no, 49 ore si) e righe d
   await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: conGiro('2026-10-23T21:00:00Z') }) });
   await expect(salute()).toContainText("fermo da piu' di 48 ore");
   await expect(salute().locator('h2 .ds-pill')).toHaveText('Da tenere d’occhio');
+  // la soglia la decide il server (soglia_ore): 24 ore a 30 ore = fermo, 72 ore a 49 ore = non fermo (terzo giro del 26-10)
+  const conSoglia = (ended: string, soglia: number) => { const x = conGiro(ended); x.salute.giri[0].soglia_ore = soglia; return x; };
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  await page.goto('about:blank');
+  await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: conSoglia('2026-10-24T16:00:00Z', 24) }) });
+  await expect(salute()).toContainText("fermo da piu' di 24 ore");
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  await page.goto('about:blank');
+  await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: conSoglia('2026-10-23T21:00:00Z', 72) }) });
+  await expect(salute()).not.toContainText('fermo da');
+  await expect(salute().locator('h2 .ds-pill')).toHaveText('Tutto in ordine');
   // passo meta spento: la sua riga di errore e il suo giro non contano
   const x = dash(30); x.steps = ['ordini'];
   x.salute.health = [{ k: 'beh_meta', label: 'beh-sync FERMATO (meta): token', severity: 'error', day: '2026-10-25' }];

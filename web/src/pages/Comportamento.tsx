@@ -42,10 +42,10 @@ const NOME: Record<string, string> = {
   beh_ordini: 'Giro ordini', beh_ordini_backfill: 'Recupero dello storico ordini', beh_meta: 'Giro Meta', beh_meta_backfill: 'Recupero dello storico Meta', beh_sync: 'beh-sync',
 };
 const HINT: Record<string, string> = {
-  beh_fresh: 'Un giro giornaliero non arriva da 48 ore, oppure una soglia in app_flags e\' scritta male: avvisa Code.',
+  beh_fresh: 'Un giro del cron non arriva da piu\' della sua soglia, la spesa Meta e\' ferma, oppure una soglia in app_flags e\' scritta male: avvisa Code.',
   beh_tracciamento_guasto: 'Ordini del sito senza nessuna visita registrata: controllare il banner dei cookie e il tracciamento di Shopify.',
   beh_quota_tracciata: 'Meno ordini del solito hanno visite registrate: banner dei cookie o tracciamento da controllare.',
-  beh_copertura: 'Ci sono giorni mai letti. Ordini e click Meta: il giro rilegge solo gli ultimi 7, quindi serve un recupero di beh-sync. Spesa Meta (ads-sync): ads-sync da solo legge solo ieri, quindi serve un recupero di ads-sync. Avvisa Code coi giorni scritti qui sopra.',
+  beh_copertura: 'Ci sono giorni che nessun giro riuscito ha letto. Ordini e click Meta: il giro rilegge solo gli ultimi 7, quindi serve un recupero di beh-sync. Spesa Meta: nessuna riga in quei giorni e nessun giro Meta che li abbia letti senza click, quindi serve un recupero di ads-sync (da solo legge solo ieri). Avvisa Code coi giorni scritti qui sopra.',
   beh_ordini: 'L\'ultimo giro ordini non e\' andato: il messaggio dice perche\'. Il giro di domani rilegge gli ultimi 7 giorni; un fermo piu\' lungo lo segnala "Giorni mancanti".',
   beh_meta: 'L\'ultimo giro Meta non e\' andato: il messaggio dice perche\'. Il giro di domani rilegge gli ultimi 7 giorni; un fermo piu\' lungo lo segnala "Giorni mancanti".',
   backfill: 'Il recupero dello storico non e\' andato e non riparte da solo: va rilanciato a mano (avvisa Code).',
@@ -160,7 +160,7 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
   const rigaGiro = (g: BehGiro) => (
     <li key={g.step} className={'cmp-hrow sev-' + (SEV_CLS[statoGiro(g)] ?? 'nd')}>
       <div className="rt">{PASSO[g.step] ?? g.step}</div>
-      <div className="rs">{`ultimo giro del cron ${fmtOra(g.ended_at)}, esito ${g.status}${g.rows_written != null ? `, ${num(g.rows_written)} righe` : ''}${g.status === 'ok' && fermo(g) ? `: fermo da piu' di ${(g.soglia_ore || 48) >= 72 ? `${Math.round((g.soglia_ore || 48) / 24)} giorni` : `${g.soglia_ore || 48} ore`}` : ''}`}</div>
+      <div className="rs">{`ultimo giro del cron ${fmtOra(g.ended_at)}, esito ${g.status}${g.rows_written != null ? `, ${num(g.rows_written)} righe` : ''}${g.status === 'ok' && fermo(g) ? `: fermo da piu' di ${(g.soglia_ore || 48) >= 72 ? `${Math.floor((g.soglia_ore || 48) / 24)} giorni` : `${g.soglia_ore || 48} ore`}` : ''}`}</div>
     </li>
   );
   const fonteDati = (testo: string) => <p className="note">{`Fonte: ${testo}.`}</p>;
@@ -215,6 +215,16 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
         ) : <p className="note">{`Nessun giorno del periodo ha ancora la spesa per annuncio (aggiornata al ${fmtDay(f.meta_dati_al)}): spesa e costo per ordine sono n.d., non zero.`}</p>}
         {!metaAcceso ? <p className="note">{'Il passo Meta del modulo e\' spento: click, uscite e pagine caricate compariranno qui quando si accende.'}</p>
           : !f.ads.dati_al ? <p className="note">{'Nessun click Meta letto nel periodo: se le ads erano attive, guarda il giro Meta in Salute.'}</p>
+          : f.giorni_click_mancanti > 0 ? (
+          <>
+            <p className="note warn">{`Click parziali: ${giorni(f.giorni_click_mancanti, 'giorno del periodo non e\' stato letto', 'giorni del periodo non sono stati letti')} dal giro Meta, quindi i numeri qui sotto sono piu' bassi del vero. Se il giorno e' fuori dagli ultimi 7 lo dice anche "Giorni mancanti" in Salute.`}</p>
+            <Funnel steps={[
+              ['Click sul link dell\'annuncio (parziali)', f.ads.link_clicks],
+              ['Uscite verso il sito (parziali)', f.ads.outbound_clicks],
+              ['Pagine del sito caricate (parziali)', f.ads.landing_page_views],
+            ]} />
+          </>
+          )
           : (
           <>
             <Funnel steps={[

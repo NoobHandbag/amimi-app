@@ -143,10 +143,19 @@ console.log('\n== Migrazione 0171 (viste e RPC della tab) ==');
     && (M171.match(/case when v_ord_min is null or v_pfrom < v_ord_min then null/g) ?? []).length === 3 && /'prev_aperture', case when v_vis_min is null or v_pfrom < v_vis_min then null/.test(M171));
   t('14o salute: ultimo giro del CRON per passo (un backfill o un run a mano non dicono se il cron gira)', /where status <> 'running' and action = 'run' and source = 'cron' order by step, started_at desc/.test(M171));
   // secondo giro del 26-10: il testimone dei giorni di spesa mancanti e' il calendario, non i click di beh
-  t('14p giorno di calendario senza righe di spesa = spesa null e giorni_spesa_mancanti (anche senza click)', /'spesa_meta', case when v_mlen = 0 or v_buchi > 0 then null/.test(M171)
-    && /from generate_series\(v_mfrom, v_mend, interval '1 day'\) g\(d\)\n\s+where v_mlen > 0 and not exists \(select 1 from meta_ads_creative_daily m where m\.date = g\.d::date\);/.test(M171)
-    && /from generate_series\(v_mfrom - v_mlen, v_mfrom - 1, interval '1 day'\) g\(d\)/.test(M171)
+  // terzo giro: salvo i giorni che un giro Meta riuscito ha letto senza click (ads ferme, spesa davvero 0)
+  const NO_CONSEGNA = "and (exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date))";
+  t('14p giorno di calendario senza righe di spesa = spesa null e giorni_spesa_mancanti (anche senza click), salvo nessuna consegna letta', /'spesa_meta', case when v_mlen = 0 or v_buchi > 0 then null/.test(M171)
+    && /from generate_series\(v_mfrom, v_mend, interval '1 day'\) g\(d\)\n\s+where v_mlen > 0 and not exists \(select 1 from meta_ads_creative_daily m where m\.date = g\.d::date\)\n/.test(M171)
+    && /from generate_series\(v_mfrom - v_mlen, v_mfrom - 1, interval '1 day'\) g\(d\)\n\s+where v_mlen > 0 and g\.d::date >= v_meta_min and not exists/.test(M171)
+    && M171.split(NO_CONSEGNA).length - 1 === 3
     && /'giorni_spesa_mancanti', v_buchi,/.test(M171) && /'ultimo_giorno_spesa_mancante', v_buco_ultimo,/.test(M171) && !/from beh_meta_outbound_daily b where v_mlen > 0/.test(M171));
+  t('14t un giorno e\' "letto" solo da un giro OK che lo aveva in finestra e si e\' chiuso dopo la sua fine (un warn non conta); funzione revocata',
+    /create or replace function public\.beh_giorno_letto\(p_step text, p_day date\) returns boolean/.test(M171)
+    && /where r\.step = p_step and r\.status = 'ok'\n\s+and r\.window_from <= p_day and r\.window_to > p_day\n\s+and r\.ended_at >= \(\(p_day \+ 1\)::timestamp at time zone 'Europe\/Rome'\)\)/.test(M171)
+    && /revoke all on function public\.beh_giorno_letto\(text, date\) from public, anon, authenticated;/.test(M171) && !/r\.status in \('ok', 'warn'\)\n\s+and r\.window_from/.test(M171));
+  t('14u click Meta mancanti nel periodo contati dalla RPC (calendario, passo meta acceso)', /'giorni_click_mancanti', v_cbuchi,/.test(M171)
+    && /from generate_series\(greatest\(v_from, v_beh_min\), v_end, interval '1 day'\) g\(d\)\n\s+where v_meta_on and v_beh_min is not null and not exists \(select 1 from beh_meta_outbound_daily b where b\.date = g\.d::date\)\n\s+and not public\.beh_giorno_letto\('meta', g\.d::date\);/.test(M171));
   t('14s soglia del giro fermo decisa dal server, come beh_fresh (settimanali 8 giorni, gli altri beh_fresh_ore)', /'soglia_ore', case when r\.step in \('crux', 'psi'\) then 8 \* 24 else v_fresh_ore end/.test(M171)
     && /select p_val into v_fresh_ore from public\.beh_flag_num\('beh_fresh_ore', 48, ''\);/.test(M171));
   // beh_health_check ridefinita nella 0171: le stesse regole della 0169 piu' i giri del cron e la copertura
@@ -156,15 +165,17 @@ console.log('\n== Migrazione 0171 (viste e RPC della tab) ==');
     && /where r\.step = v_s and r\.action = 'run' and r\.source = 'cron' and r\.status in \('ok', 'warn'\);/.test(hc)
     && (hc.match(/v_n >= greatest\(v_guasto_min, 1\) and v_trk = 0/g) ?? []).length === 2 && /beh_quota_tracciata/.test(hc) && /array_agg\(lower\(btrim\(x, E' \\t\\r\\n'\)\)\)/.test(hc)
     && /revoke all on function public\.beh_health_check\(\) from public, anon, authenticated;/.test(M171));
-  t('14r beh_copertura: 35 giorni chiusi, ordini di shopify_orders contro beh_order_origin, click senza spesa e spesa senza click, warn',
+  t('14r beh_copertura: 35 giorni chiusi, ordini di shopify_orders contro beh_order_origin, spesa e click col calendario, warn',
     /'beh_copertura'/.test(hc) && /from shopify_orders o\n\s+where o\.created_at_shop >= \(\(v_oggi - 35\)::timestamp at time zone 'Europe\/Rome'\)/.test(hc)
     && /'spesa Meta mancante \(ads-sync\) il '/.test(hc) && /'click Meta mancanti il '/.test(hc) && /case when v_buchi is null then 'ok' else 'warn' end/.test(hc)
     // al massimo 6 giorni per sezione: un'etichetta tagliata non deve nascondere una sezione (prova del 26-10)
     && (hc.match(/filter \(where z\.rn <= 6\)/g) ?? []).length === 3 && (hc.match(/case when v_k > 6 then ' e altri ' \|\| \(v_k - 6\) \|\| ' giorni' else '' end/g) ?? []).length === 3
-    // lato beh solo i giorni che il cron non rilegge piu' e che nessun giro riuscito ha letto dopo la chiusura; lato spesa il calendario
-    && /o\.created_at_shop < \(\(v_oggi - 7\)::timestamp at time zone 'Europe\/Rome'\)/.test(hc) && /m\.date < v_oggi - 7 and m\.spend > 0/.test(hc)
-    && (hc.match(/and r\.ended_at >= \(\((?:s|x)\.d \+ 1\)::timestamp at time zone 'Europe\/Rome'\)\)/g) ?? []).length === 2
-    && /from generate_series\(greatest\(v_oggi - 35, v_meta_min\), v_oggi - 2, interval '1 day'\) g\(d\)/.test(hc));
+    // lato beh solo i giorni che il cron non rilegge piu' e che nessun giro OK ha letto dopo la chiusura; spesa e click col calendario
+    && /o\.created_at_shop < \(\(v_oggi - 7\)::timestamp at time zone 'Europe\/Rome'\)/.test(hc)
+    && /where coalesce\(b\.n, 0\) < s\.n and not public\.beh_giorno_letto\('ordini', s\.d\)\) g\) z;/.test(hc)
+    && /from generate_series\(greatest\(v_oggi - 35, v_meta_min\), v_oggi - 2, interval '1 day'\) g\(d\)/.test(hc)
+    && /from generate_series\(greatest\(v_oggi - 35, v_beh_min\), v_oggi - 8, interval '1 day'\) g\(d\)\n\s+where v_beh_min is not null and not exists \(select 1 from beh_meta_outbound_daily b where b\.date = g\.d::date\)\n\s+and not public\.beh_giorno_letto\('meta', g\.d::date\)\) z;/.test(hc)
+    && !/r\.status in \('ok', 'warn'\)\n\s+and r\.window_from/.test(hc));
 }
 
 console.log('\n== Test vivo tests/beh_rls.sql ==');
@@ -176,7 +187,7 @@ console.log('\n== Test vivo tests/beh_rls.sql ==');
   t('15 nessuna variabile del blocco ha il nome di una colonna letta', vars.length >= 5 && vars.every((x) => !colonne.includes(x)), vars.join(','));
   t('16 a flag spento controlla solo le chiavi di beh_health_check (la riga beh_ordini della edge non conta)', /insert into health_log \(day, k, label, n, severity, created_at\) values \(current_date, 'beh_ordini'/.test(RLS) && /k in \('beh_fresh', 'beh_tracciamento_guasto', 'beh_quota_tracciata'\)\) then\n    raise exception 'KO H1/.test(RLS));
   t('17a casi della verifica del 25-10 nella prova viva: copertura (ordini, spesa, Meta ferma), conteggi indipendenti dei filtri, durata dei periodi, v_run_day, run a mano',
-    /KO H7: tolto il % da beh_order_origin/.test(RLS) && /KO H7: tolta la spesa e i click del %/.test(RLS) && /KO H7: tolti i click del %/.test(RLS) && /KO H7: giorno % gia'' letto da un giro/.test(RLS) && /KO H7: spesa Meta ferma da piu'' di un giorno/.test(RLS)
+    /KO H7: tolto il % da beh_order_origin/.test(RLS) && /KO H7: tolta la spesa e i click del %/.test(RLS) && /KO H7: tolti i click del %/.test(RLS) && /KO H7: un giro warn senza letture/.test(RLS) && /senza click \(ads ferme\)/.test(RLS) && /giorni_click_mancanti = %/.test(RLS) && /KO H7: giorno % gia'' letto da un giro/.test(RLS) && /KO H7: spesa Meta ferma da piu'' di un giorno/.test(RLS)
     && /KO D: ordini\.% = % contro % contati qui/.test(RLS) && /KO D: ordini_cpa = % contro/.test(RLS) && /KO D: riacquisto_90/.test(RLS)
     && /KO D: periodo di % giorni/.test(RLS) && /'ordini', 'run', 'cron', v_oggi, 'error', now\(\)/.test(RLS) && /'ordini', 'run', 'manuale', current_date, 'ok', now\(\)/.test(RLS));
   t('17 severita\' degli allarmi provate (guasto error/ok, quota warn/ok/pochi ordini, backfill non conta)', /KO H4/.test(RLS) && /KO H5: 5 ordini online senza visite in 48 ore/.test(RLS) && /KO H6: 47 tracciati su 80/.test(RLS) && /pochi ordini/.test(RLS) && /'99999999999'/.test(RLS) && /' Ordini' \|\| chr\(10\)/.test(RLS));
