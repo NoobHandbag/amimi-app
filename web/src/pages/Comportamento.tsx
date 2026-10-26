@@ -54,6 +54,10 @@ const HINT: Record<string, string> = {
 const passoDi = (k: string): string | null => (k.startsWith('beh_ordini') || k === 'beh_tracciamento_guasto' || k === 'beh_quota_tracciata' ? 'ordini'
   : k.startsWith('beh_meta') ? 'meta' : null);
 const giorni = (n: number, uno: string, tanti: string) => (n === 1 ? `1 ${uno}` : `${num(n)} ${tanti}`);
+const giornoDopo = (d: string) => new Date(Date.parse(d.slice(0, 10) + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10);
+// le fasce le conta il server con le stesse date di beh_copertura: nessuna frase decisa dal solo giorno piu' recente
+const inSalute = (s: number, tot: number) => (s === tot ? `${tot === 1 ? 'lo' : 'li'} elenca` : `di questi ${s === 1 ? 'uno lo' : `${num(s)} li`} elenca`) + ' anche "Giorni mancanti" in Salute';
+const fasciaClick = (n: number, uno: string, tanti: string) => (n === 1 ? ` Uno e' ${uno}.` : ` ${num(n)} sono ${tanti}.`);
 
 // frecce sul periodo prima: copiate da Salute (deltaPct e Delta), senza toccare Salute. Qui un valore puo' mancare
 // (null): periodo prima che comincia prima dei dati, o un costo per ordine senza ordini. Allora "n.d.", mai una freccia.
@@ -138,6 +142,9 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
   const cpa = f.spesa_meta != null && f.ordini_cpa ? f.spesa_meta / f.ordini_cpa : null;
   const cpaPrev = f.prev_ordini_cpa && f.prev_spesa_meta != null ? f.prev_spesa_meta / f.prev_ordini_cpa : null;
   const metaAcceso = d.steps.includes('meta');
+  // giorni contati oltre l'ultima riga di spesa: solo giorni senza consegna letti dal giro Meta (spesa 0), mai prima del periodo
+  const zeroDal = f.spesa_al && f.meta_dati_al && f.spesa_dal && f.spesa_al > f.meta_dati_al
+    ? (f.meta_dati_al >= f.spesa_dal ? giornoDopo(f.meta_dati_al) : f.spesa_dal) : null;
   const maturi = c.coorti.filter((x) => x.maturita_giorni >= 90);
   // salute e giri dei soli passi accesi (un passo spento non tiene rosso il pallino); un giro del cron piu' vecchio della
   // sua soglia (quella di beh_fresh, decisa dal server) conta warn
@@ -205,19 +212,19 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
           <Kpi v={cpa != null ? eur2(cpa) : 'n.d.'} k="Costo per ordine (blended)" sub={<Delta cur={cpa} prev={cpaPrev} goodUp={false} />} />
         </div>
         {f.giorni_spesa_mancanti > 0 && (
-          <p className="note warn">{`Spesa n.d.: ${giorni(f.giorni_spesa_mancanti, 'giorno del periodo non ha', 'giorni del periodo non hanno')} nessuna riga di spesa (l'ultimo il ${fmtDay(f.ultimo_giorno_spesa_mancante)}): ads-sync non li ha letti, o le ads erano tutte ferme. Se erano attive serve un recupero di ads-sync per quei giorni${f.ultimo_giorno_spesa_mancante && Date.parse(d.oggi) - Date.parse(f.ultimo_giorno_spesa_mancante) <= 35 * 86400000 ? ': lo dice anche "Giorni mancanti" in Salute' : ''}.`}</p>
+          <p className="note warn">{`Spesa n.d.: ${giorni(f.giorni_spesa_mancanti, 'giorno del periodo non ha', 'giorni del periodo non hanno')} nessuna riga di spesa (l'ultimo il ${fmtDay(f.ultimo_giorno_spesa_mancante)}): ads-sync non li ha letti, o le ads erano tutte ferme. Se erano attive serve un recupero di ads-sync per quei giorni${f.giorni_spesa_mancanti_salute > 0 ? `: ${inSalute(f.giorni_spesa_mancanti_salute, f.giorni_spesa_mancanti)}` : ''}.`}</p>
         )}
         {f.giorni_spesa_mancanti === 0 && f.giorni_spesa_mancanti_prima > 0 && (
           <p className="note">{`Confronto n.d.: nel periodo prima ${giorni(f.giorni_spesa_mancanti_prima, 'giorno non ha', 'giorni non hanno')} righe di spesa.`}</p>
         )}
         {f.giorni_spesa > 0 ? (
-          <p className="note">{`Costo per ordine blended = spesa Meta divisa per tutti gli ordini degli stessi giorni (${num(f.ordini_cpa)}), non solo quelli venuti dalle ads. Spesa e costo contano i ${num(f.giorni_spesa)} giorni dal ${fmtDay(f.spesa_dal)} gia' coperti dalla spesa (aggiornata al ${fmtDay(f.meta_dati_al)}), confrontati con lo stesso numero di giorni prima; n.d. quando quei giorni cominciano prima della spesa per annuncio, letta dal 20 giugno.`}</p>
+          <p className="note">{`Costo per ordine blended = spesa Meta divisa per tutti gli ordini degli stessi giorni (${num(f.ordini_cpa)}), non solo quelli venuti dalle ads. Spesa e costo contano i ${num(f.giorni_spesa)} giorni dal ${fmtDay(f.spesa_dal)} al ${fmtDay(f.spesa_al)} gia' coperti dalla spesa (${zeroDal ? `righe per annuncio fino al ${fmtDay(f.meta_dati_al)}; dal ${fmtDay(zeroDal)} al ${fmtDay(f.spesa_al)} il giro Meta non ha trovato consegne, quindi spesa 0` : `aggiornata al ${fmtDay(f.meta_dati_al)}`}), confrontati con lo stesso numero di giorni prima; n.d. quando quei giorni cominciano prima della spesa per annuncio, letta dal 20 giugno.`}</p>
         ) : <p className="note">{`Nessun giorno del periodo ha ancora la spesa per annuncio (aggiornata al ${fmtDay(f.meta_dati_al)}): spesa e costo per ordine sono n.d., non zero.`}</p>}
         {!metaAcceso ? <p className="note">{'Il passo Meta del modulo e\' spento: click, uscite e pagine caricate compariranno qui quando si accende.'}</p>
           : !f.ads.dati_al ? <p className="note">{'Nessun click Meta letto nel periodo: se le ads erano attive, guarda il giro Meta in Salute.'}</p>
           : f.giorni_click_mancanti > 0 ? (
           <>
-            <p className="note warn">{`Click parziali: ${giorni(f.giorni_click_mancanti, 'giorno del periodo non e\' stato letto', 'giorni del periodo non sono stati letti')} dal giro Meta (l'ultimo il ${fmtDay(f.ultimo_giorno_click_mancante)}), quindi i numeri qui sotto possono essere piu' bassi del vero.${f.ultimo_giorno_click_mancante && Date.parse(d.oggi) - Date.parse(f.ultimo_giorno_click_mancante) >= 8 * 86400000 && Date.parse(d.oggi) - Date.parse(f.ultimo_giorno_click_mancante) <= 35 * 86400000 ? ' Lo dice anche "Giorni mancanti" in Salute.' : ' Un giorno degli ultimi 7 lo rilegge il giro di domani.'}`}</p>
+            <p className="note warn">{`Click parziali: ${giorni(f.giorni_click_mancanti, 'giorno del periodo non e\' stato letto', 'giorni del periodo non sono stati letti')} dal giro Meta (l'ultimo il ${fmtDay(f.ultimo_giorno_click_mancante)}), quindi i numeri qui sotto possono essere piu' bassi del vero.${f.click_mancanti_recenti > 0 ? fasciaClick(f.click_mancanti_recenti, 'degli ultimi 7 giorni: il giro del cron lo rilegge finche\' resta nei suoi 7 giorni, poi se manca ancora lo elenca "Giorni mancanti" in Salute', 'degli ultimi 7 giorni: il giro del cron li rilegge finche\' restano nei suoi 7 giorni, poi se mancano ancora li elenca "Giorni mancanti" in Salute') : ''}${f.click_mancanti_salute > 0 ? fasciaClick(f.click_mancanti_salute, 'di 8-35 giorni fa: lo elenca "Giorni mancanti" in Salute', 'di 8-35 giorni fa: li elenca "Giorni mancanti" in Salute') : ''}${f.click_mancanti_vecchi > 0 ? fasciaClick(f.click_mancanti_vecchi, 'di piu\' di 35 giorni fa: nessun giro lo rilegge piu\' e Salute non lo elenca, serve un backfill di beh-sync per quel giorno', 'di piu\' di 35 giorni fa: nessun giro li rilegge piu\' e Salute non li elenca, serve un backfill di beh-sync per quei giorni') : ''}`}</p>
             <Funnel steps={[
               ['Click sul link dell\'annuncio (parziali)', f.ads.link_clicks],
               ['Uscite verso il sito (parziali)', f.ads.outbound_clicks],

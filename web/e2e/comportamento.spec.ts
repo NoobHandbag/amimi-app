@@ -25,8 +25,9 @@ function dash(days: number, tracciati = 87, pronti = 120) {
     fonti: {
       fonte: 'Shopify, Meta', ultima_visita: { direct: 40, search: 20, social: 15, paid_social: 8, email: 2, referral: 1, unknown: 1, none: 33 },
       prima_visita: { direct: 30, search: 30, social: 14, paid_social: 10, email: 1, none: 35 }, meta_dati_al: '2026-10-24',
-      spesa_dal: giorni[0].day as string | null, giorni_spesa: days, giorni_spesa_mancanti: 0,
+      spesa_dal: giorni[0].day as string | null, spesa_al: '2026-10-24' as string | null, giorni_spesa: days, giorni_spesa_mancanti: 0, giorni_spesa_mancanti_salute: 0,
       ultimo_giorno_spesa_mancante: null as string | null, giorni_spesa_mancanti_prima: 0, giorni_click_mancanti: 0, ultimo_giorno_click_mancante: null as string | null,
+      click_mancanti_recenti: 0, click_mancanti_salute: 0, click_mancanti_vecchi: 0,
       spesa_meta: 1234.56 as number | null, ordini_cpa: 125, prev_spesa_meta: 1000 as number | null, prev_ordini_cpa: 100 as number | null,
       ads: { link_clicks: 4613, outbound_clicks: 2940, landing_page_views: 2180, dati_al: '2026-10-24' as string | null },
     },
@@ -182,16 +183,28 @@ test('periodo prima che comincia prima dei dati (prev null): "n.d." al posto del
 // verifica avversariale del 25-10 (C1, C3, C4, C9)
 test('spesa con giorni mancanti, Meta acceso senza click nel periodo, nessun giorno di spesa: n.d. e il motivo giusto', async ({ page }) => {
   const casi = [
-    { nome: 'giorni mancanti recenti', fn: (x: ReturnType<typeof dash>) => { x.fonti.spesa_meta = null; x.fonti.giorni_spesa_mancanti = 2; x.fonti.ultimo_giorno_spesa_mancante = '2026-10-20'; },
-      testo: "2 giorni del periodo non hanno nessuna riga di spesa (l'ultimo il 20 ott)", anche: 'lo dice anche "Giorni mancanti" in Salute' },
+    { nome: 'giorni mancanti recenti', fn: (x: ReturnType<typeof dash>) => { x.fonti.spesa_meta = null; x.fonti.giorni_spesa_mancanti = 2; x.fonti.giorni_spesa_mancanti_salute = 2; x.fonti.ultimo_giorno_spesa_mancante = '2026-10-20'; },
+      testo: "2 giorni del periodo non hanno nessuna riga di spesa (l'ultimo il 20 ott)", anche: 'per quei giorni: li elenca anche "Giorni mancanti" in Salute' },
+    // quinto giro: la frase su Salute viene dal conteggio del server, non dal solo giorno piu' recente
+    { nome: 'giorni mancanti misti', fn: (x: ReturnType<typeof dash>) => { x.fonti.spesa_meta = null; x.fonti.giorni_spesa_mancanti = 3; x.fonti.giorni_spesa_mancanti_salute = 1; x.fonti.ultimo_giorno_spesa_mancante = '2026-10-20'; },
+      testo: '3 giorni del periodo non hanno nessuna riga di spesa', anche: 'per quei giorni: di questi uno lo elenca anche "Giorni mancanti" in Salute' },
     { nome: 'giorno mancante vecchio', fn: (x: ReturnType<typeof dash>) => { x.fonti.spesa_meta = null; x.fonti.giorni_spesa_mancanti = 1; x.fonti.ultimo_giorno_spesa_mancante = '2026-08-01'; },
       testo: '1 giorno del periodo non ha nessuna riga di spesa', senza: 'Giorni mancanti' },
     { nome: 'solo il periodo prima', fn: (x: ReturnType<typeof dash>) => { x.fonti.prev_spesa_meta = null; x.fonti.prev_ordini_cpa = null; x.fonti.giorni_spesa_mancanti_prima = 2; },
       testo: 'Confronto n.d.: nel periodo prima 2 giorni non hanno righe di spesa' },
-    { nome: 'click parziali recenti', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 3; x.fonti.ultimo_giorno_click_mancante = '2026-10-23'; },
-      testo: "Click parziali: 3 giorni del periodo non sono stati letti dal giro Meta (l'ultimo il 23 ott)", anche: 'Un giorno degli ultimi 7 lo rilegge il giro di domani' },
-    { nome: 'click parziali vecchi', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 1; x.fonti.ultimo_giorno_click_mancante = '2026-10-10'; },
-      testo: '1 giorno del periodo non e\' stato letto', anche: 'Uscite verso il sito (parziali)' },
+    { nome: 'click parziali recenti', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 3; x.fonti.click_mancanti_recenti = 3; x.fonti.ultimo_giorno_click_mancante = '2026-10-23'; },
+      testo: "Click parziali: 3 giorni del periodo non sono stati letti dal giro Meta (l'ultimo il 23 ott)", anche: "3 sono degli ultimi 7 giorni: il giro del cron li rilegge finche' restano nei suoi 7 giorni", senza: '8-35 giorni fa' },
+    { nome: 'click parziali in Salute', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 1; x.fonti.click_mancanti_salute = 1; x.fonti.ultimo_giorno_click_mancante = '2026-10-10'; },
+      testo: '1 giorno del periodo non e\' stato letto', anche: ['Uno e\' di 8-35 giorni fa: lo elenca "Giorni mancanti" in Salute', 'Uscite verso il sito (parziali)'], senza: 'rilegge' },
+    { nome: 'click parziali vecchi', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 2; x.fonti.click_mancanti_vecchi = 2; x.fonti.ultimo_giorno_click_mancante = '2026-09-01'; },
+      testo: '2 giorni del periodo non sono stati letti', anche: "2 sono di piu' di 35 giorni fa: nessun giro li rilegge piu' e Salute non li elenca, serve un backfill di beh-sync", senza: 'Giorni mancanti' },
+    { nome: 'click parziali misti', fn: (x: ReturnType<typeof dash>) => { Object.assign(x.fonti, { giorni_click_mancanti: 4, click_mancanti_recenti: 1, click_mancanti_salute: 2, click_mancanti_vecchi: 1, ultimo_giorno_click_mancante: '2026-10-20' }); },
+      testo: '4 giorni del periodo non sono stati letti', anche: ["Uno e' degli ultimi 7 giorni: il giro del cron lo rilegge finche' resta", '2 sono di 8-35 giorni fa: li elenca "Giorni mancanti" in Salute', "Uno e' di piu' di 35 giorni fa: nessun giro lo rilegge piu'"] },
+    // igiene del quinto giro: oltre l'ultima riga di spesa la finestra conta solo giorni senza consegna letti, e lo dice
+    { nome: 'pausa in coda', fn: (x: ReturnType<typeof dash>) => { x.fonti.meta_dati_al = '2026-10-22'; x.fonti.spesa_al = '2026-10-24'; },
+      testo: "righe per annuncio fino al 22 ott; dal 23 ott al 24 ott il giro Meta non ha trovato consegne, quindi spesa 0" },
+    { nome: 'periodo tutto senza consegne', fn: (x: ReturnType<typeof dash>) => { x.fonti.meta_dati_al = '2026-10-10'; x.fonti.spesa_dal = '2026-10-18'; x.fonti.giorni_spesa = 7; x.fonti.spesa_al = '2026-10-24'; },
+      testo: "7 giorni dal 18 ott al 24 ott gia' coperti dalla spesa (righe per annuncio fino al 10 ott; dal 18 ott al 24 ott il giro Meta" },
     { nome: 'nessun click', fn: (x: ReturnType<typeof dash>) => { x.fonti.ads.dati_al = null; }, testo: 'Nessun click Meta letto nel periodo' },
     { nome: 'nessun giorno di spesa', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_spesa = 0; x.fonti.spesa_dal = null; x.fonti.spesa_meta = null; x.fonti.ordini_cpa = 0; }, testo: 'spesa e costo per ordine sono n.d., non zero' },
   ];
@@ -202,8 +215,8 @@ test('spesa con giorni mancanti, Meta acceso senza click nel periodo, nessun gio
     await page.goto('about:blank');
     await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: x }) });
     await expect(page.getByText(c.testo, { exact: false }), c.nome).toBeVisible();
-    const cc = c as { anche?: string; senza?: string };
-    if (cc.anche) await expect(page.getByText(cc.anche, { exact: false }).first(), c.nome).toBeVisible();
+    const cc = c as { anche?: string | string[]; senza?: string };
+    for (const a of ([] as string[]).concat(cc.anche ?? [])) await expect(page.getByText(a, { exact: false }).first(), c.nome).toBeVisible();
     if (cc.senza) await expect(page.locator('p.note.warn', { hasText: c.testo }), c.nome).not.toContainText(cc.senza);
     await expect(page.getByText('Il passo Meta del modulo e\' spento'), c.nome).toHaveCount(0);
     if (x.fonti.spesa_meta == null) {

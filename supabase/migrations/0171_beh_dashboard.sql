@@ -88,6 +88,10 @@ declare
   v_buco_ultimo date;
   v_cbuchi   int;
   v_cbuco_ultimo date;
+  v_bsal     int;
+  v_crec     int;
+  v_csal     int;
+  v_cvec     int;
   v_beh_min  date;
   v_meta_on  boolean;
   v_pbuchi   int;
@@ -116,9 +120,10 @@ begin
   select min(date), max(date) into v_meta_min, v_meta_max from meta_ads_creative_daily;
   v_mfrom := greatest(v_from, v_meta_min);
   -- oltre l'ultimo giorno con righe di spesa, i giorni senza consegna letti da un giro Meta riuscito (nessun click) contano
-  -- come spesa 0 fino al primo giorno davvero mancante: una pausa delle ads non accorcia la finestra (quarto giro del 26-10)
+  -- come spesa 0 fino al primo giorno davvero mancante: una pausa delle ads non accorcia la finestra (quarto giro del 26-10).
+  -- La ricerca parte dal periodo: un giorno mancante prima del periodo non tocca un periodo tutto letto (quinto giro)
   select coalesce(min(g.d::date) - 1, v_end) into v_mend
-    from generate_series(v_meta_max + 1, v_end, interval '1 day') g(d)
+    from generate_series(greatest(v_meta_max + 1, v_mfrom), v_end, interval '1 day') g(d)
    where exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date);
   v_mend  := case when v_meta_max is null then null else least(v_end, greatest(v_meta_max, v_mend)) end;
   v_mlen  := case when v_mfrom is null or v_mend is null then 0 else greatest(v_mend - v_mfrom + 1, 0) end;
@@ -126,7 +131,8 @@ begin
   -- calendario e non i click di beh, che mancano insieme alla spesa quando il token Meta si ferma (secondo giro del 26-10).
   -- Eccezione (terzo giro): se un giro Meta riuscito ha letto il giorno dopo la chiusura e non ha trovato click, le ads non
   -- hanno consegnato e la spesa e' davvero 0. Col passo meta spento quell'eccezione non si vede: n.d., il lato prudente.
-  select count(*), max(g.d::date) into v_buchi, v_buco_ultimo
+  -- v_bsal: quanti ne elenca anche "Giorni mancanti" in Salute (beh_copertura: dall'altro ieri a 35 giorni fa)
+  select count(*), max(g.d::date), count(*) filter (where v_today - g.d::date between 2 and 35) into v_buchi, v_buco_ultimo, v_bsal
     from generate_series(v_mfrom, v_mend, interval '1 day') g(d)
    where v_mlen > 0 and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date)
      and (exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date));
@@ -139,7 +145,13 @@ begin
   v_meta_on := exists (select 1 from regexp_split_to_table(coalesce((select value from app_flags where key = 'beh_steps'), ''), ',') as x
                         where lower(btrim(x, E' \t\r\n')) = 'meta');
   select min(date) into v_beh_min from beh_meta_outbound_daily;
-  select count(*), max(g.d::date) into v_cbuchi, v_cbuco_ultimo
+  -- fasce per eta' (quinto giro): fino a 7 giorni li rilegge il cron (finestra mobile di 7 giorni), da 8 a 35 li elenca
+  -- beh_copertura in Salute, oltre 35 nessuno dei due e serve un backfill
+  select count(*), max(g.d::date),
+         count(*) filter (where v_today - g.d::date <= 7),
+         count(*) filter (where v_today - g.d::date between 8 and 35),
+         count(*) filter (where v_today - g.d::date > 35)
+    into v_cbuchi, v_cbuco_ultimo, v_crec, v_csal, v_cvec
     from generate_series(greatest(v_from, v_beh_min), v_end, interval '1 day') g(d)
    where v_meta_on and v_beh_min is not null and not exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date)
      and not public.beh_giorno_letto('meta', g.d::date);
@@ -193,9 +205,11 @@ begin
                                   group by o.first_src) s),
         'meta_dati_al', v_meta_max,
         'spesa_dal', case when v_mlen > 0 then v_mfrom end,
+        'spesa_al', case when v_mlen > 0 then v_mend end,
         'giorni_spesa', v_mlen,
         'giorni_spesa_mancanti', v_buchi,
         'ultimo_giorno_spesa_mancante', v_buco_ultimo,
+        'giorni_spesa_mancanti_salute', v_bsal,
         'giorni_spesa_mancanti_prima', v_pbuchi,
         'spesa_meta', case when v_mlen = 0 or v_buchi > 0 then null
                            else (select coalesce(round(sum(spend), 2), 0) from meta_ads_creative_daily where date between v_mfrom and v_mend) end,
@@ -208,6 +222,7 @@ begin
                                         and o.day between v_mfrom - v_mlen and v_mfrom - 1) end,
         'giorni_click_mancanti', v_cbuchi,
         'ultimo_giorno_click_mancante', v_cbuco_ultimo,
+        'click_mancanti_recenti', v_crec, 'click_mancanti_salute', v_csal, 'click_mancanti_vecchi', v_cvec,
         'ads', (select jsonb_build_object('link_clicks', coalesce(sum(link_clicks), 0), 'outbound_clicks', coalesce(sum(outbound_clicks), 0),
                                           'landing_page_views', coalesce(sum(landing_page_views), 0), 'dati_al', max(date))
                   from beh_meta_outbound_daily where date between v_from and v_end)),
