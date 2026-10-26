@@ -221,6 +221,9 @@ test('spesa con giorni mancanti, Meta acceso senza click nel periodo, nessun gio
       testo: "Spesa n.d.: 7 giorni del periodo non hanno nessuna riga di spesa (l'ultimo il 24 ott)", anche: ['per quei giorni: di questi 6 li elenca anche "Giorni mancanti" in Salute', "Nessun giorno del periodo e' coperto dalla spesa per annuncio (righe fino al 16 ott)"] },
     { nome: 'un solo giorno coperto', fn: (x: ReturnType<typeof dash>) => { Object.assign(x.fonti, { giorni_spesa: 1, spesa_dal: '2026-10-24', spesa_al: '2026-10-24' }); },
       testo: "Spesa e costo contano il solo giorno del 24 ott, gia' coperto dalla spesa (aggiornata al 24 ott), confrontato col giorno prima" },
+    // ottavo giro: un solo giorno coperto, senza consegne: niente "dal X al X" e niente plurale
+    { nome: 'un solo giorno senza consegne', fn: (x: ReturnType<typeof dash>) => { Object.assign(x.fonti, { giorni_spesa: 1, spesa_dal: '2026-10-18', spesa_al: '2026-10-18', meta_dati_al: '2026-10-16' }); },
+      testo: "il solo giorno del 18 ott, gia' coperto dalla spesa (righe per annuncio fino al 16 ott; il 18 ott il giro Meta non ha trovato consegne, quindi spesa 0)", anche: 'tutti gli ordini dello stesso giorno' },
   ];
   for (const c of casi) {
     const x = dash(30); c.fn(x);
