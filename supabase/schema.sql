@@ -3513,7 +3513,7 @@ CREATE OR REPLACE VIEW "public"."v_ce_amimi" AS
                     COALESCE("sum"("shopify_line_items"."quantita"), (0)::numeric) AS "pezzi",
                     COALESCE("sum"(("shopify_line_items"."price" * "shopify_line_items"."quantita")), (0)::numeric) AS "vendite",
                     COALESCE("sum"(("shopify_line_items"."cogs_snapshot" * "shopify_line_items"."quantita")), (0)::numeric) AS "cogs"
-                   FROM "public"."shopify_line_items"
+                   FROM "public"."shopify_line_items" WHERE ("shopify_line_items"."codice_norm" IS DISTINCT FROM 'GIFT_CARD'::"text")
                   GROUP BY "shopify_line_items"."year", "shopify_line_items"."month"
                 ), "qr" AS (
                  SELECT "qromo_sales"."year",
@@ -3724,7 +3724,7 @@ CREATE OR REPLACE VIEW "public"."v_ce_totale" AS
                             COALESCE("sum"("shopify_line_items"."quantita"), (0)::numeric) AS "pezzi",
                             COALESCE("sum"(("shopify_line_items"."price" * "shopify_line_items"."quantita")), (0)::numeric) AS "vendite",
                             COALESCE("sum"(("shopify_line_items"."cogs_snapshot" * "shopify_line_items"."quantita")), (0)::numeric) AS "cogs"
-                           FROM "public"."shopify_line_items"
+                           FROM "public"."shopify_line_items" WHERE ("shopify_line_items"."codice_norm" IS DISTINCT FROM 'GIFT_CARD'::"text")
                           GROUP BY "shopify_line_items"."year", "shopify_line_items"."month"
                         ), "qr" AS (
                          SELECT "qromo_sales"."year",
@@ -3892,6 +3892,7 @@ CREATE OR REPLACE VIEW "public"."v_ce_drill_cogs" AS
     false AS "is_gift"
    FROM ("public"."shopify_line_items" "li"
      LEFT JOIN "public"."products" "p" ON (("p"."codice" = "li"."codice")))
+  WHERE ("li"."codice_norm" IS DISTINCT FROM 'GIFT_CARD'::"text")
 UNION ALL
  SELECT "q"."year",
     "q"."month",
@@ -3972,7 +3973,7 @@ CREATE OR REPLACE VIEW "public"."v_ce_drill_sales" AS
    FROM ("public"."shopify_orders" "o"
      LEFT JOIN ( SELECT "shopify_line_items"."order_id",
             "sum"(("shopify_line_items"."price" * "shopify_line_items"."quantita")) AS "vendite"
-           FROM "public"."shopify_line_items"
+           FROM "public"."shopify_line_items" WHERE ("shopify_line_items"."codice_norm" IS DISTINCT FROM 'GIFT_CARD'::"text")
           GROUP BY "shopify_line_items"."order_id") "liv" ON (("liv"."order_id" = "o"."order_id")))
 UNION ALL
  SELECT "q"."year",
