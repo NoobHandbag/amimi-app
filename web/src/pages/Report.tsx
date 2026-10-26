@@ -23,7 +23,7 @@ type Row = { month: number; netto: number; lordo: number; mc1: number; mc2: numb
 
 const CURRENT_MONTH = nowMonth(); // mese in corso, derivato dalla data (mai hardcoded)
 
-export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBack?: () => void; onDetail?: () => void; onAds?: () => void; onVillaggio?: () => void }) {
+export default function Report({ onBack, onDetail, onAds, onVillaggio, onComportamento }: { onBack?: () => void; onDetail?: () => void; onAds?: () => void; onVillaggio?: () => void; onComportamento?: () => void }) {
   const [ce, setCe] = useState<CE[]>([]);
   const [cet, setCet] = useState<CeTot[]>([]);
   const [ceTot, setCeTot] = useState<CE[]>([]);
@@ -281,6 +281,14 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio }: { onBac
           <h2>Villaggio</h2>
           <p className="muted" style={{ marginTop: 0 }}>Ordini e magazzino come un'isola 3D: i laboratori con quello che deve arrivare, il magazzino con una pila per variante.</p>
           <button className="ds-btn secondary sm" type="button" onClick={onVillaggio}>Apri il Villaggio<Icon name="chevron" size={16} /></button>
+        </section>
+      )}
+      {/* Comportamento (25-10, modulo beh_*): card sua e non dentro AdsCard, che sparisce quando la serie mensile e' vuota */}
+      {onComportamento && (
+        <section className="card">
+          <h2>Comportamento</h2>
+          <p className="muted" style={{ marginTop: 0 }}>Da dove arrivano gli ordini, quanti ne vede il tracciamento e cosa succede dopo un click sulle ads.</p>
+          <button className="ds-btn secondary sm" type="button" onClick={onComportamento}>Apri Comportamento<Icon name="chevron" size={16} /></button>
         </section>
       )}
       <AdsCard onAds={onAds} />

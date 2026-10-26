@@ -41,8 +41,8 @@ type Disattivo = { enabled: false; reason?: string };
 export function tabDaHash(hash: string): Tab | null {
   // #negozi la sezione B2B (10-09), #ads la reportistica Meta (18-09), #materiali il catalogo materie prime (22-09),
   // #premia la dashboard fedelta' (27-09), #villaggio l'isola 3D (16-10), #notifiche questa scheda (17-10),
-  // #assistenza e #salute dalle notifiche degli eventi di push-eventi (18-10)
-  for (const t of ['negozi', 'ads', 'materiali', 'premia', 'villaggio', 'notifiche', 'assistenza', 'salute'] as const) {
+  // #assistenza e #salute dalle notifiche degli eventi di push-eventi (18-10), #comportamento il modulo beh_* (25-10)
+  for (const t of ['negozi', 'ads', 'materiali', 'premia', 'villaggio', 'notifiche', 'comportamento', 'assistenza', 'salute'] as const) {
     if (hash.startsWith('#' + t)) return t;
   }
   return null;

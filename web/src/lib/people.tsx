@@ -1,9 +1,10 @@
 // Centralized people + persona-driven navigation. Dan removed (= Ale, same person).
 // The Home surfaces only the tiles relevant to each persona; Registra shows the same actions for everyone.
 
-export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads' | 'materiali' | 'premia' | 'villaggio' | 'notifiche';
-/** Tab visibili SOLO alle persona con finance=true (Home le filtra). 'ads' (18-09) si raggiunge dal Cruscotto o da #ads. */
-export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti', 'ads', 'premia']);
+export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads' | 'materiali' | 'premia' | 'villaggio' | 'notifiche' | 'comportamento';
+/** Tab visibili SOLO alle persona con finance=true (Home le filtra). 'ads' (18-09) si raggiunge dal Cruscotto o da #ads.
+ *  'comportamento' (25-10, decisione D4): tessera solo di Ale, ed e' solo interfaccia: la RPC accetta tutto il team. */
+export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti', 'ads', 'premia', 'comportamento']);
 export type Tile = { icon: string; label: string; tab: Tab; param?: string; badge?: 'arrivi' | 'todo' };
 
 export const PEOPLE = ['Ale', 'Bene', 'Ginevra'] as const;
@@ -19,6 +20,7 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
       { icon: 'tag', label: 'Margini', tab: 'margini' },
       { icon: 'handshake', label: 'Clienti', tab: 'clienti' },
       { icon: 'gift', label: 'Premia', tab: 'premia' },
+      { icon: 'search', label: 'Comportamento', tab: 'comportamento' },
       { icon: 'store', label: 'Negozi B2B', tab: 'negozi' },
       { icon: 'recycle', label: 'Cosa riprodurre', tab: 'magazzino', param: 'riordino' },
       { icon: 'sparkles', label: 'Pulizia dati', tab: 'registra', param: 'pulizia', badge: 'todo' },
@@ -57,6 +59,8 @@ export const ALL_ACTIONS: Tile[] = [
   { icon: 'handshake', label: 'Clienti', tab: 'clienti' },
   { icon: 'pulse', label: 'Salute & Movimenti', tab: 'salute' },
   { icon: 'gift', label: 'Premia (programma fedeltà)', tab: 'premia' },
+  // Comportamento (modulo beh_*, 25-10): la Home la mostra solo a flag beh_enabled acceso
+  { icon: 'search', label: 'Comportamento (da dove arrivano gli ordini)', tab: 'comportamento' },
   { icon: 'bag', label: 'Registra vendita', tab: 'registra', param: 'gift' },
   { icon: 'return', label: 'Reso / Cambio', tab: 'registra', param: 'reso' },
   { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },

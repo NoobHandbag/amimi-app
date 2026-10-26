@@ -16,6 +16,8 @@ import Inventory from './pages/Inventory';
 import Negozi from './pages/Negozi';
 import Ads from './pages/Ads';
 import Premia from './pages/Premia';
+import Comportamento from './pages/Comportamento';
+import { fetchBehEnabled } from './lib/behApi';
 import Icon from './components/Icon';
 import AssistantPanel from './components/AssistantPanel';
 import UpdateBanner from './components/UpdateBanner';
@@ -33,10 +35,10 @@ const Villaggio = lazy(() => import('./pages/Villaggio'));
 export default function App() {
   // URL diretto: .../amimi-app/#negozi apre la sezione B2B (richiesta owner 10-09); #ads la reportistica Meta (18-09);
   // #materiali il catalogo materie prime (22-09); #premia la dashboard del programma fedeltà (27-09); #notifiche le
-  // notifiche native (17-10); #assistenza e #salute, dove portano le notifiche degli eventi di push-eventi (18-10). Il
-  // tocco su una notifica ad app aperta passa da tabDaHash di lib/push.ts (PushKeeper): una scheda nuova va aggiunta
-  // anche li': tests/push_sw.mjs controlla che i due elenchi di hash siano uguali
-  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : window.location.hash.startsWith('#materiali') ? 'materiali' : window.location.hash.startsWith('#premia') ? 'premia' : window.location.hash.startsWith('#villaggio') ? 'villaggio' : window.location.hash.startsWith('#notifiche') ? 'notifiche' : window.location.hash.startsWith('#assistenza') ? 'assistenza' : window.location.hash.startsWith('#salute') ? 'salute' : 'home'));
+  // notifiche native (17-10); #assistenza e #salute, dove portano le notifiche degli eventi di push-eventi (18-10);
+  // #comportamento il modulo beh_* (25-10). Il tocco su una notifica ad app aperta passa da tabDaHash di lib/push.ts
+  // (PushKeeper): una scheda nuova va aggiunta anche li': tests/push_sw.mjs controlla che i due elenchi di hash siano uguali
+  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : window.location.hash.startsWith('#materiali') ? 'materiali' : window.location.hash.startsWith('#premia') ? 'premia' : window.location.hash.startsWith('#villaggio') ? 'villaggio' : window.location.hash.startsWith('#notifiche') ? 'notifiche' : window.location.hash.startsWith('#comportamento') ? 'comportamento' : window.location.hash.startsWith('#assistenza') ? 'assistenza' : window.location.hash.startsWith('#salute') ? 'salute' : 'home'));
   const [param, setParam] = useState<string | undefined>();
   // Modulo mat_* (materie prime): a flag spento la tile in Home non compare, Ordini non mostra il segmented e la
   // pagina dice "non attiva". Rollback = spegnere app_flags.mat_enabled (Regola Ferrea 19). Letto una volta all'avvio.
@@ -52,6 +54,10 @@ export default function App() {
   // "non attiva", PushKeeper non fa niente. null = non ancora letto.
   const [pushEnabled, setPushEnabled] = useState<boolean | null>(null);
   useEffect(() => { fetchPushEnabled().then(setPushEnabled).catch(() => setPushEnabled(false)); }, []);
+  // Comportamento (25-10, modulo beh_*, migr 0169): stesso schema, flag beh_enabled da v_beh_settings. Spento: niente
+  // tessera, #comportamento dice "non attiva". null = non ancora letto.
+  const [behEnabled, setBehEnabled] = useState<boolean | null>(null);
+  useEffect(() => { fetchBehEnabled().then(setBehEnabled).catch(() => setBehEnabled(false)); }, []);
   // badge del bottone B2B nella barra: "da fare" dell'outreach (0 senza login). 3 richieste, di cui v_lead_inbound la piu'
   // cara (CASI_APERTI n.38 a): si legge al mount, ogni 5 minuti a scheda visibile, al ritorno in primo piano e quando si
   // ESCE da Negozi o da Assistenza (scrivono: una scrittura, il login o la categoria di una conversazione cambiano il
@@ -105,11 +111,11 @@ export default function App() {
   return (
     <div className="app">
       <main>
-        {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} matEnabled={matEnabled} vilEnabled={vilEnabled === true} pushEnabled={pushEnabled === true} />}
+        {tab === 'home' && <Home chi={chi} setChi={setChi} go={go} matEnabled={matEnabled} vilEnabled={vilEnabled === true} pushEnabled={pushEnabled === true} behEnabled={behEnabled === true} />}
         {tab === 'materiali' && (matEnabled
           ? <Materiali chi={chi} onBack={() => go('home')} onProdotti={() => go('ordini')} />
           : <div className="screen"><AppBar title="Materie prime" onBack={() => go('home')} /><div className="card muted center">Sezione non attiva (flag mat_enabled spento).</div></div>)}
-        {tab === 'cruscotto' && <Report onBack={() => go('home')} onDetail={() => go('ce')} onAds={() => go('ads')} onVillaggio={vilEnabled ? () => go('villaggio') : undefined} />}
+        {tab === 'cruscotto' && <Report onBack={() => go('home')} onDetail={() => go('ce')} onAds={() => go('ads')} onVillaggio={vilEnabled ? () => go('villaggio') : undefined} onComportamento={behEnabled ? () => go('comportamento') : undefined} />}
         {tab === 'ads' && <Ads onBack={() => go('home')} pin={pin} chi={chi} />}
         {tab === 'ce' && <CeDetail onBack={() => go('home')} />}
         {tab === 'margini' && <Margini onBack={() => go('home')} />}
@@ -117,6 +123,9 @@ export default function App() {
         {tab === 'salute' && <Salute onBack={() => go('home')} chi={chi} go={go} pin={pin} />}
         {tab === 'assistenza' && <Assistenza onBack={() => go('home')} />}
         {tab === 'premia' && <Premia onBack={() => go('home')} />}
+        {tab === 'comportamento' && (behEnabled
+          ? <Comportamento onBack={() => go('home')} />
+          : <div className="screen"><AppBar title="Comportamento" onBack={() => go('home')} /><div className="card muted center">{behEnabled === null ? 'Carico…' : 'Sezione non attiva (flag beh_enabled spento).'}</div></div>)}
         {tab === 'negozi' && <Negozi onBack={() => go('home')} chi={chi} setChi={setChi} />}
         {tab === 'registra' && <Ingest pin={pin} chi={chi} initial={param} />}
         {tab === 'ordini' && <Ordini pin={pin} chi={chi} initial={param} onMateriali={matEnabled ? () => go('materiali') : undefined} />}
