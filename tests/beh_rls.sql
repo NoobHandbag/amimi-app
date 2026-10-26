@@ -318,7 +318,8 @@ begin
   begin
     -- quinto giro del 26-10: spesa e click tolti dopo l'ultimo giorno di spesa fino a 11 giorni fa (A), giorni fino ad A letti
     -- da un backfill, un solo giro Meta riuscito sugli ultimi 7. Il periodo di 7 giorni e' tutto letto senza consegna (spesa
-    -- 0): i giorni non letti prima del periodo non lo azzerano. Quello di 30 si ferma ad A, il giorno prima del primo non letto
+    -- 0): i giorni non letti prima del periodo non lo azzerano. Quello di 30 si ferma ad A, il giorno prima del primo non letto.
+    -- Ogni confronto e' "is distinct from": una chiave che manca nella RPC e' un KO, non un NULL che passa (sesto giro)
     select max(m.date) into v_giorno from meta_ads_creative_daily m where m.date <= v_oggi - 11;
     if v_giorno is null or v_giorno < v_oggi - 25 then raise exception 'KO H7: prova della finestra non costruibile, ultima spesa fino a 11 giorni fa: %', v_giorno; end if;
     delete from meta_ads_creative_daily where date > v_giorno;
@@ -333,56 +334,90 @@ begin
     v_dash := public.beh_dashboard(7);
     v_reale := public.beh_dashboard(30);
     reset role;
-    if (v_dash ->> 'to')::date <> v_oggi - 1 or (v_dash -> 'fonti' ->> 'giorni_spesa')::int <> 7 or (v_dash -> 'fonti' ->> 'spesa_meta')::numeric is distinct from 0
-       or (v_dash -> 'fonti' ->> 'spesa_al')::date is distinct from v_oggi - 1 or (v_dash -> 'fonti' ->> 'giorni_click_mancanti')::int <> 0 then
-      raise exception 'KO H7: finestra della spesa a 7 giorni (giorni non letti prima del periodo): to %, giorni_spesa %, spesa_meta %, spesa_al %, click mancanti % (attesi %, 7, 0, %, 0)',
-        v_dash -> 'to', v_dash -> 'fonti' -> 'giorni_spesa', v_dash -> 'fonti' -> 'spesa_meta', v_dash -> 'fonti' -> 'spesa_al', v_dash -> 'fonti' -> 'giorni_click_mancanti', v_oggi - 1, v_oggi - 1;
+    if (v_dash ->> 'to')::date is distinct from v_oggi - 1 or (v_dash -> 'fonti' ->> 'giorni_spesa')::int is distinct from 7 or (v_dash -> 'fonti' ->> 'spesa_meta')::numeric is distinct from 0
+       or (v_dash -> 'fonti' ->> 'spesa_al')::date is distinct from v_oggi - 1 or (v_dash -> 'fonti' ->> 'giorni_click_mancanti')::int is distinct from 0 or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti')::int is distinct from 0 then
+      raise exception 'KO H7: finestra della spesa a 7 giorni (giorni non letti prima del periodo): to %, giorni_spesa %, spesa_meta %, spesa_al %, click mancanti %, spesa mancante % (attesi %, 7, 0, %, 0, 0)',
+        v_dash -> 'to', v_dash -> 'fonti' -> 'giorni_spesa', v_dash -> 'fonti' -> 'spesa_meta', v_dash -> 'fonti' -> 'spesa_al', v_dash -> 'fonti' -> 'giorni_click_mancanti',
+        v_dash -> 'fonti' -> 'giorni_spesa_mancanti', v_oggi - 1, v_oggi - 1;
     end if;
     v_n := (v_oggi - 8) - greatest(v_giorno + 1, v_oggi - 30) + 1;
     if (v_reale -> 'fonti' ->> 'spesa_al')::date is distinct from v_giorno
-       or (v_reale -> 'fonti' ->> 'giorni_spesa')::int <> v_giorno - (v_reale -> 'fonti' ->> 'spesa_dal')::date + 1
-       or (v_reale -> 'fonti' ->> 'giorni_click_mancanti')::int <> v_n or (v_reale -> 'fonti' ->> 'click_mancanti_salute')::int <> v_n
-       or (v_reale -> 'fonti' ->> 'click_mancanti_recenti')::int <> 0 or (v_reale -> 'fonti' ->> 'click_mancanti_vecchi')::int <> 0 then
-      raise exception 'KO H7: finestra della spesa a 30 giorni: spesa_al % (atteso %), giorni_spesa % dal %, click mancanti % (8-35: %, recenti %, vecchi %; attesi % tutti 8-35)',
+       or (v_reale -> 'fonti' ->> 'giorni_spesa')::int is distinct from v_giorno - (v_reale -> 'fonti' ->> 'spesa_dal')::date + 1
+       or (v_reale -> 'fonti' ->> 'giorni_click_mancanti')::int is distinct from v_n or (v_reale -> 'fonti' ->> 'click_mancanti_salute')::int is distinct from v_n
+       or (v_reale -> 'fonti' ->> 'click_mancanti_recenti')::int is distinct from 0 or (v_reale -> 'fonti' ->> 'click_mancanti_vecchi')::int is distinct from 0 then
+      raise exception 'KO H7: finestra della spesa a 30 giorni: spesa_al % (atteso %), giorni_spesa % dal %, click mancanti % (Salute %, recenti %, vecchi %; attesi % tutti in Salute)',
         v_reale -> 'fonti' -> 'spesa_al', v_giorno, v_reale -> 'fonti' -> 'giorni_spesa', v_reale -> 'fonti' -> 'spesa_dal', v_reale -> 'fonti' -> 'giorni_click_mancanti',
         v_reale -> 'fonti' -> 'click_mancanti_salute', v_reale -> 'fonti' -> 'click_mancanti_recenti', v_reale -> 'fonti' -> 'click_mancanti_vecchi', v_n;
+    end if;
+    -- sesto giro: il giro di oggi e' fallito e una rilettura a mano copre solo gli ultimi 6 giorni, quindi il primo giorno
+    -- del periodo di 7, dopo l'ultima riga di spesa, non e' coperto: finestra vuota e quel giorno contato mancante, come lo
+    -- elenca beh_copertura; per i click e' fuori dalla finestra del cron (il giro di oggi e' gia' passato)
+    delete from beh_sync_runs where step = 'meta' and source = 'cron';
+    insert into beh_sync_runs (step, action, source, run_day, status, ended_at, window_from, window_to) values
+      ('meta', 'run', 'cron', v_oggi, 'error', now(), v_oggi - 7, v_oggi),
+      ('meta', 'backfill', 'manuale', v_oggi, 'ok', now(), v_oggi - 6, v_oggi);
+    perform set_config('role', 'authenticated', true);
+    perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
+    v_dash := public.beh_dashboard(7);
+    reset role;
+    if (v_dash -> 'fonti' ->> 'giorni_spesa')::int is distinct from 0 or jsonb_typeof(v_dash -> 'fonti' -> 'spesa_meta') is distinct from 'null'
+       or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti')::int is distinct from 1 or (v_dash -> 'fonti' ->> 'ultimo_giorno_spesa_mancante')::date is distinct from v_oggi - 7
+       or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti_salute')::int is distinct from 1 or (v_dash -> 'fonti' ->> 'giorni_click_mancanti')::int is distinct from 1
+       or (v_dash -> 'fonti' ->> 'click_mancanti_salute')::int is distinct from 1 or (v_dash -> 'fonti' ->> 'click_mancanti_recenti')::int is distinct from 0 then
+      raise exception 'KO H7: finestra vuota per il primo giorno del periodo non coperto: giorni_spesa %, spesa_meta %, mancanti % (ultimo %, Salute %), click % (Salute %, recenti %); attesi 0, null, 1 (%, 1), 1 (1, 0)',
+        v_dash -> 'fonti' -> 'giorni_spesa', v_dash -> 'fonti' -> 'spesa_meta', v_dash -> 'fonti' -> 'giorni_spesa_mancanti', v_dash -> 'fonti' -> 'ultimo_giorno_spesa_mancante',
+        v_dash -> 'fonti' -> 'giorni_spesa_mancanti_salute', v_dash -> 'fonti' -> 'giorni_click_mancanti', v_dash -> 'fonti' -> 'click_mancanti_salute',
+        v_dash -> 'fonti' -> 'click_mancanti_recenti', v_oggi - 7;
     end if;
     raise exception 'H7_INIZIO_OK';
   exception when others then
     if sqlerrm <> 'H7_INIZIO_OK' then raise; end if;
   end;
   begin
-    -- fasce dei giorni mancanti (quinto giro): spesa e click tolti a 36, 35, 8 e 7 giorni fa, giorni non letti da nessun giro
-    -- Meta riuscito, tutti gli altri letti. Click: 7 = lo rilegge ancora il cron, 8 e 35 = li elenca beh_copertura in Salute,
-    -- 36 = nessuno dei due. Spesa: Salute elenca 35, 8 e 7. La RPC deve contare le stesse date che elenca beh_copertura
+    -- fasce dei giorni mancanti (quinto e sesto giro): spesa e click tolti a 36, 35, 8 e 7 giorni fa, giorni che nessun
+    -- giro Meta riuscito ha letto (il giro del cron di oggi, sulla finestra vera [oggi-7, oggi), e' fallito; una rilettura a
+    -- mano copre gli ultimi 6), tutti gli altri letti. beh_copertura elenca spesa e click a 35, 8 e 7 giorni; la RPC conta
+    -- le stesse date in Salute, 36 fra i vecchi e nessuno fra quelli che il cron rilegge. Prima del giro di oggi il giorno
+    -- di 7 giorni fa lo rilegge ancora il cron
     delete from meta_ads_creative_daily where date in (v_oggi - 36, v_oggi - 35, v_oggi - 8, v_oggi - 7);
     delete from beh_meta_outbound_daily where date in (v_oggi - 36, v_oggi - 35, v_oggi - 8, v_oggi - 7);
     delete from beh_sync_runs where step = 'meta';
     insert into beh_sync_runs (step, action, source, run_day, status, ended_at, window_from, window_to) values
       ('meta', 'backfill', 'manuale', v_oggi, 'ok', now(), date '2026-01-01', v_oggi - 36),
       ('meta', 'backfill', 'manuale', v_oggi, 'ok', now(), v_oggi - 34, v_oggi - 8),
-      ('meta', 'run', 'cron', v_oggi, 'ok', now(), v_oggi - 6, v_oggi),
+      ('meta', 'backfill', 'manuale', v_oggi, 'ok', now(), v_oggi - 6, v_oggi),
+      ('meta', 'run', 'cron', v_oggi, 'error', now(), v_oggi - 7, v_oggi),
       ('ordini', 'run', 'cron', v_oggi, 'ok', now(), v_oggi - 7, v_oggi + 1);
     perform public.beh_health_check();
     if not exists (select 1 from health_log where day = current_date and k = 'beh_copertura' and severity = 'warn'
                     and label like '%spesa Meta mancante (ads-sync) il ' || to_char(v_oggi - 35, 'DD-MM') || ', ' || to_char(v_oggi - 8, 'DD-MM') || ', '
-                                   || to_char(v_oggi - 7, 'DD-MM') || '; click Meta mancanti il ' || to_char(v_oggi - 35, 'DD-MM') || ', ' || to_char(v_oggi - 8, 'DD-MM') || ': %') then
-      raise exception 'KO H7: fasce: beh_copertura doveva elencare spesa % % % e click % %, dice %', v_oggi - 35, v_oggi - 8, v_oggi - 7, v_oggi - 35, v_oggi - 8,
+                                   || to_char(v_oggi - 7, 'DD-MM') || '; click Meta mancanti il ' || to_char(v_oggi - 35, 'DD-MM') || ', ' || to_char(v_oggi - 8, 'DD-MM') || ', '
+                                   || to_char(v_oggi - 7, 'DD-MM') || ': %') then
+      raise exception 'KO H7: fasce: beh_copertura doveva elencare spesa e click il % % %, dice %', v_oggi - 35, v_oggi - 8, v_oggi - 7,
         (select label from health_log where day = current_date and k = 'beh_copertura' order by created_at desc limit 1);
     end if;
     perform set_config('role', 'authenticated', true);
     perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
     v_dash := public.beh_dashboard(90);
     reset role;
-    if (v_dash -> 'fonti' ->> 'giorni_click_mancanti')::int <> 4 or (v_dash -> 'fonti' ->> 'click_mancanti_recenti')::int <> 1
-       or (v_dash -> 'fonti' ->> 'click_mancanti_salute')::int <> 2 or (v_dash -> 'fonti' ->> 'click_mancanti_vecchi')::int <> 1
+    if (v_dash -> 'fonti' ->> 'giorni_click_mancanti')::int is distinct from 4 or (v_dash -> 'fonti' ->> 'click_mancanti_recenti')::int is distinct from 0
+       or (v_dash -> 'fonti' ->> 'click_mancanti_salute')::int is distinct from 3 or (v_dash -> 'fonti' ->> 'click_mancanti_vecchi')::int is distinct from 1
        or (v_dash -> 'fonti' ->> 'ultimo_giorno_click_mancante')::date is distinct from v_oggi - 7
-       or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti')::int <> 4 or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti_salute')::int <> 3
-       or jsonb_typeof(v_dash -> 'fonti' -> 'spesa_meta') <> 'null' then
-      raise exception 'KO H7: fasce: click % (recenti %, 8-35 %, vecchi %, ultimo %), spesa mancante % (in Salute %), spesa_meta %; attesi 4 (1, 2, 1, %), 4 (3), null',
+       or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti')::int is distinct from 4 or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti_salute')::int is distinct from 3
+       or jsonb_typeof(v_dash -> 'fonti' -> 'spesa_meta') is distinct from 'null' then
+      raise exception 'KO H7: fasce: click % (recenti %, Salute %, vecchi %, ultimo %), spesa mancante % (in Salute %), spesa_meta %; attesi 4 (0, 3, 1, %), 4 (3), null',
         v_dash -> 'fonti' -> 'giorni_click_mancanti', v_dash -> 'fonti' -> 'click_mancanti_recenti', v_dash -> 'fonti' -> 'click_mancanti_salute',
         v_dash -> 'fonti' -> 'click_mancanti_vecchi', v_dash -> 'fonti' -> 'ultimo_giorno_click_mancante', v_dash -> 'fonti' -> 'giorni_spesa_mancanti',
         v_dash -> 'fonti' -> 'giorni_spesa_mancanti_salute', v_dash -> 'fonti' -> 'spesa_meta', v_oggi - 7;
+    end if;
+    delete from beh_sync_runs where step = 'meta' and source = 'cron';
+    perform set_config('role', 'authenticated', true);
+    perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
+    v_dash := public.beh_dashboard(90);
+    reset role;
+    if (v_dash -> 'fonti' ->> 'click_mancanti_recenti')::int is distinct from 1 or (v_dash -> 'fonti' ->> 'click_mancanti_salute')::int is distinct from 2 or (v_dash -> 'fonti' ->> 'click_mancanti_vecchi')::int is distinct from 1 then
+      raise exception 'KO H7: fasce prima del giro di oggi: recenti %, Salute %, vecchi % (attesi 1, 2, 1)',
+        v_dash -> 'fonti' -> 'click_mancanti_recenti', v_dash -> 'fonti' -> 'click_mancanti_salute', v_dash -> 'fonti' -> 'click_mancanti_vecchi';
     end if;
     raise exception 'H7_FASCE_OK';
   exception when others then

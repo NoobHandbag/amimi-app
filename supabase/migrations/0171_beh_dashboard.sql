@@ -92,6 +92,7 @@ declare
   v_crec     int;
   v_csal     int;
   v_cvec     int;
+  v_rilegge  int;
   v_beh_min  date;
   v_meta_on  boolean;
   v_pbuchi   int;
@@ -140,16 +141,26 @@ begin
     from generate_series(v_mfrom - v_mlen, v_mfrom - 1, interval '1 day') g(d)
    where v_mlen > 0 and g.d::date >= v_meta_min and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date)
      and (exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date));
+  -- finestra vuota perche' il primo giorno del periodo, dopo l'ultima riga di spesa, non e' coperto (sesto giro): quel giorno
+  -- e' mancante, come lo elenca beh_copertura, non "spesa non ancora arrivata"
+  if v_mlen = 0 and v_meta_max is not null and v_mfrom <= v_end then
+    v_buchi := 1;
+    v_buco_ultimo := v_mfrom;
+    v_bsal := case when v_today - v_mfrom between 2 and 35 then 1 else 0 end;
+  end if;
   -- click Meta mancanti nel periodo (passo meta acceso): giorni senza righe in beh_meta_outbound_daily che nessun giro Meta
   -- riuscito ha letto dopo la chiusura; il funnel delle ads su quei giorni e' parziale
   v_meta_on := exists (select 1 from regexp_split_to_table(coalesce((select value from app_flags where key = 'beh_steps'), ''), ',') as x
                         where lower(btrim(x, E' \t\r\n')) = 'meta');
   select min(date) into v_beh_min from beh_meta_outbound_daily;
-  -- fasce per eta' (quinto giro): fino a 7 giorni li rilegge il cron (finestra mobile di 7 giorni), da 8 a 35 li elenca
-  -- beh_copertura in Salute, oltre 35 nessuno dei due e serve un backfill
+  -- fasce per eta': quelli che il prossimo giro Meta del cron rilegge (finestra [oggi-7, oggi) alle 06:13 UTC: fino a 7
+  -- giorni prima del giro di oggi, fino a 6 dopo, sesto giro), gli altri fino a 35 giorni li elenca beh_copertura in
+  -- Salute, oltre 35 nessuno dei due e serve un backfill
+  v_rilegge := case when exists (select 1 from beh_sync_runs r where r.step = 'meta' and r.action = 'run' and r.source = 'cron' and r.run_day = v_today)
+                    then 6 else 7 end;
   select count(*), max(g.d::date),
-         count(*) filter (where v_today - g.d::date <= 7),
-         count(*) filter (where v_today - g.d::date between 8 and 35),
+         count(*) filter (where v_today - g.d::date <= v_rilegge),
+         count(*) filter (where v_today - g.d::date > v_rilegge and v_today - g.d::date <= 35),
          count(*) filter (where v_today - g.d::date > 35)
     into v_cbuchi, v_cbuco_ultimo, v_crec, v_csal, v_cvec
     from generate_series(greatest(v_from, v_beh_min), v_end, interval '1 day') g(d)
@@ -402,11 +413,13 @@ begin
                and (exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date))) z;
     if v_k > 0 then v_buchi := concat_ws('; ', v_buchi, 'spesa Meta mancante (ads-sync) il ' || v_txt || case when v_k > 6 then ' e altri ' || (v_k - 6) || ' giorni' else '' end); end if;
     if 'meta' = any(v_steps) then
-      -- testimone il calendario anche per i click: un fermo del token toglie spesa e click insieme
+      -- testimone il calendario anche per i click: un fermo del token toglie spesa e click insieme. Fino a 7 giorni fa: il
+      -- giro Meta delle 06:13 UTC ha appena letto [oggi-7, oggi), un giorno di 7 giorni fa ancora non letto non lo rilegge
+      -- piu' nessun giro (sesto giro del 26-10; la tab lo dice "fuori dalla finestra del cron")
       select min(date) into v_beh_min from beh_meta_outbound_daily;
       select count(*), string_agg(to_char(z.d, 'DD-MM'), ', ' order by z.d) filter (where z.rn <= 6) into v_k, v_txt
         from (select g.d::date as d, row_number() over (order by g.d desc) as rn
-                from generate_series(greatest(v_oggi - 35, v_beh_min), v_oggi - 8, interval '1 day') g(d)
+                from generate_series(greatest(v_oggi - 35, v_beh_min), v_oggi - 7, interval '1 day') g(d)
                where v_beh_min is not null and not exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date)
                  and not public.beh_giorno_letto('meta', g.d::date)) z;
       if v_k > 0 then v_buchi := concat_ws('; ', v_buchi, 'click Meta mancanti il ' || v_txt || case when v_k > 6 then ' e altri ' || (v_k - 6) || ' giorni' else '' end); end if;
