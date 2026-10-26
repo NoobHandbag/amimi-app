@@ -26,7 +26,7 @@ function dash(days: number, tracciati = 87, pronti = 120) {
       fonte: 'Shopify, Meta', ultima_visita: { direct: 40, search: 20, social: 15, paid_social: 8, email: 2, referral: 1, unknown: 1, none: 33 },
       prima_visita: { direct: 30, search: 30, social: 14, paid_social: 10, email: 1, none: 35 }, meta_dati_al: '2026-10-24',
       spesa_dal: giorni[0].day as string | null, giorni_spesa: days, giorni_spesa_mancanti: 0,
-      ultimo_giorno_spesa_mancante: null as string | null, giorni_spesa_mancanti_prima: 0, giorni_click_mancanti: 0,
+      ultimo_giorno_spesa_mancante: null as string | null, giorni_spesa_mancanti_prima: 0, giorni_click_mancanti: 0, ultimo_giorno_click_mancante: null as string | null,
       spesa_meta: 1234.56 as number | null, ordini_cpa: 125, prev_spesa_meta: 1000 as number | null, prev_ordini_cpa: 100 as number | null,
       ads: { link_clicks: 4613, outbound_clicks: 2940, landing_page_views: 2180, dati_al: '2026-10-24' as string | null },
     },
@@ -188,7 +188,10 @@ test('spesa con giorni mancanti, Meta acceso senza click nel periodo, nessun gio
       testo: '1 giorno del periodo non ha nessuna riga di spesa', senza: 'Giorni mancanti' },
     { nome: 'solo il periodo prima', fn: (x: ReturnType<typeof dash>) => { x.fonti.prev_spesa_meta = null; x.fonti.prev_ordini_cpa = null; x.fonti.giorni_spesa_mancanti_prima = 2; },
       testo: 'Confronto n.d.: nel periodo prima 2 giorni non hanno righe di spesa' },
-    { nome: 'click parziali', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 3; }, testo: 'Click parziali: 3 giorni del periodo non sono stati letti', anche: 'Uscite verso il sito (parziali)' },
+    { nome: 'click parziali recenti', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 3; x.fonti.ultimo_giorno_click_mancante = '2026-10-23'; },
+      testo: "Click parziali: 3 giorni del periodo non sono stati letti dal giro Meta (l'ultimo il 23 ott)", anche: 'Un giorno degli ultimi 7 lo rilegge il giro di domani' },
+    { nome: 'click parziali vecchi', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_click_mancanti = 1; x.fonti.ultimo_giorno_click_mancante = '2026-10-10'; },
+      testo: '1 giorno del periodo non e\' stato letto', anche: 'Uscite verso il sito (parziali)' },
     { nome: 'nessun click', fn: (x: ReturnType<typeof dash>) => { x.fonti.ads.dati_al = null; }, testo: 'Nessun click Meta letto nel periodo' },
     { nome: 'nessun giorno di spesa', fn: (x: ReturnType<typeof dash>) => { x.fonti.giorni_spesa = 0; x.fonti.spesa_dal = null; x.fonti.spesa_meta = null; x.fonti.ordini_cpa = 0; }, testo: 'spesa e costo per ordine sono n.d., non zero' },
   ];
@@ -248,6 +251,15 @@ test('salute: soglia del giro fermo sul confine (30 ore no, 49 ore si) e righe d
   await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: conSoglia('2026-10-23T21:00:00Z', 72) }) });
   await expect(salute()).not.toContainText('fermo da');
   await expect(salute().locator('h2 .ds-pill')).toHaveText('Tutto in ordine');
+  // soglia di 84 ore a 90 ore: "piu' di 3 giorni", per difetto (non 4)
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  await page.goto('about:blank');
+  await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: conSoglia('2026-10-25T04:00:00Z', 84) }) });
+  await expect(salute()).not.toContainText('fermo da');
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+  await page.goto('about:blank');
+  await apri(page, '#comportamento', { flag: 'true', sessione: true, chi: 'Ale', rpc: () => ({ body: conSoglia('2026-10-22T04:00:00Z', 84) }) });
+  await expect(salute()).toContainText("fermo da piu' di 3 giorni");
   // passo meta spento: la sua riga di errore e il suo giro non contano
   const x = dash(30); x.steps = ['ordini'];
   x.salute.health = [{ k: 'beh_meta', label: 'beh-sync FERMATO (meta): token', severity: 'error', day: '2026-10-25' }];

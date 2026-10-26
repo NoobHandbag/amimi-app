@@ -217,7 +217,7 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
           : !f.ads.dati_al ? <p className="note">{'Nessun click Meta letto nel periodo: se le ads erano attive, guarda il giro Meta in Salute.'}</p>
           : f.giorni_click_mancanti > 0 ? (
           <>
-            <p className="note warn">{`Click parziali: ${giorni(f.giorni_click_mancanti, 'giorno del periodo non e\' stato letto', 'giorni del periodo non sono stati letti')} dal giro Meta, quindi i numeri qui sotto sono piu' bassi del vero. Se il giorno e' fuori dagli ultimi 7 lo dice anche "Giorni mancanti" in Salute.`}</p>
+            <p className="note warn">{`Click parziali: ${giorni(f.giorni_click_mancanti, 'giorno del periodo non e\' stato letto', 'giorni del periodo non sono stati letti')} dal giro Meta (l'ultimo il ${fmtDay(f.ultimo_giorno_click_mancante)}), quindi i numeri qui sotto possono essere piu' bassi del vero.${f.ultimo_giorno_click_mancante && Date.parse(d.oggi) - Date.parse(f.ultimo_giorno_click_mancante) >= 8 * 86400000 && Date.parse(d.oggi) - Date.parse(f.ultimo_giorno_click_mancante) <= 35 * 86400000 ? ' Lo dice anche "Giorni mancanti" in Salute.' : ' Un giorno degli ultimi 7 lo rilegge il giro di domani.'}`}</p>
             <Funnel steps={[
               ['Click sul link dell\'annuncio (parziali)', f.ads.link_clicks],
               ['Uscite verso il sito (parziali)', f.ads.outbound_clicks],

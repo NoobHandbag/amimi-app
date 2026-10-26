@@ -87,6 +87,7 @@ declare
   v_buchi    int;
   v_buco_ultimo date;
   v_cbuchi   int;
+  v_cbuco_ultimo date;
   v_beh_min  date;
   v_meta_on  boolean;
   v_pbuchi   int;
@@ -114,7 +115,12 @@ begin
   -- spesa: dal primo giorno della tabella all'ultimo, dentro il periodo; tabella vuota = nessun giorno coperto
   select min(date), max(date) into v_meta_min, v_meta_max from meta_ads_creative_daily;
   v_mfrom := greatest(v_from, v_meta_min);
-  v_mend  := case when v_meta_max is null then null else least(v_end, v_meta_max) end;
+  -- oltre l'ultimo giorno con righe di spesa, i giorni senza consegna letti da un giro Meta riuscito (nessun click) contano
+  -- come spesa 0 fino al primo giorno davvero mancante: una pausa delle ads non accorcia la finestra (quarto giro del 26-10)
+  select coalesce(min(g.d::date) - 1, v_end) into v_mend
+    from generate_series(v_meta_max + 1, v_end, interval '1 day') g(d)
+   where exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date) or not public.beh_giorno_letto('meta', g.d::date);
+  v_mend  := case when v_meta_max is null then null else least(v_end, greatest(v_meta_max, v_mend)) end;
   v_mlen  := case when v_mfrom is null or v_mend is null then 0 else greatest(v_mend - v_mfrom + 1, 0) end;
   -- giorni di calendario senza nessuna riga di spesa: la spesa di quei giorni non e' 0, e' mancante. Il testimone e' il
   -- calendario e non i click di beh, che mancano insieme alla spesa quando il token Meta si ferma (secondo giro del 26-10).
@@ -133,7 +139,7 @@ begin
   v_meta_on := exists (select 1 from regexp_split_to_table(coalesce((select value from app_flags where key = 'beh_steps'), ''), ',') as x
                         where lower(btrim(x, E' \t\r\n')) = 'meta');
   select min(date) into v_beh_min from beh_meta_outbound_daily;
-  select count(*) into v_cbuchi
+  select count(*), max(g.d::date) into v_cbuchi, v_cbuco_ultimo
     from generate_series(greatest(v_from, v_beh_min), v_end, interval '1 day') g(d)
    where v_meta_on and v_beh_min is not null and not exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date)
      and not public.beh_giorno_letto('meta', g.d::date);
@@ -201,6 +207,7 @@ begin
                                 else (select count(*) from beh_order_origin o where not o.is_test and not o.is_cancelled
                                         and o.day between v_mfrom - v_mlen and v_mfrom - 1) end,
         'giorni_click_mancanti', v_cbuchi,
+        'ultimo_giorno_click_mancante', v_cbuco_ultimo,
         'ads', (select jsonb_build_object('link_clicks', coalesce(sum(link_clicks), 0), 'outbound_clicks', coalesce(sum(outbound_clicks), 0),
                                           'landing_page_views', coalesce(sum(landing_page_views), 0), 'dati_al', max(date))
                   from beh_meta_outbound_daily where date between v_from and v_end)),
@@ -299,9 +306,13 @@ begin
       v_stale := concat_ws(', ', v_stale, v_s || coalesce(' (ultimo ' || to_char(v_last at time zone 'Europe/Rome', 'DD-MM HH24:MI') || ')', ' (mai)'));
     end if;
   end loop;
+  -- spesa ferma: dopo l'ultimo giorno con righe resta un giorno (fino a ieri) che non e' "nessuna consegna" letta da un giro
+  -- Meta riuscito. Con le ads in pausa i giorni senza righe ma letti senza click non sono un fermo (quarto giro del 26-10)
   if 'meta' = any(v_steps) then
     select max(date) into v_meta_max from meta_ads_creative_daily;
-    if v_meta_max is null or v_meta_max < v_oggi - 1 then
+    if v_meta_max is null or exists (select 1 from generate_series(v_meta_max + 1, v_oggi - 1, interval '1 day') g(d)
+                                      where exists (select 1 from beh_meta_outbound_daily b where b.date = g.d::date)
+                                         or not public.beh_giorno_letto('meta', g.d::date)) then
       v_stale := concat_ws(', ', v_stale, 'meta_ads_creative_daily ferma al ' || coalesce(to_char(v_meta_max, 'DD-MM'), 'mai'));
     end if;
   end if;
@@ -394,7 +405,9 @@ begin
     on conflict (day, k) do update set label = excluded.label, n = excluded.n, severity = excluded.severity, created_at = excluded.created_at;
   end if;
 
-  delete from beh_sync_runs where started_at < now() - interval '180 days';
+  -- 400 giorni e non 180 come nella 0169: beh_giorno_letto usa i giri come prova di lettura e il periodo della tab arriva
+  -- a 365 giorni (pochi righe al giorno, nessun dato del cliente)
+  delete from beh_sync_runs where started_at < now() - interval '400 days';
 end $fn$;
 revoke all on function public.beh_health_check() from public, anon, authenticated;
 grant execute on function public.beh_health_check() to service_role;

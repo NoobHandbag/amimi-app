@@ -265,6 +265,10 @@ begin
     delete from beh_sync_runs where step = 'meta';
     select max(m.date) into v_giorno from meta_ads_creative_daily m where m.date < v_oggi - 7 and m.spend > 0;
     if v_giorno is not null then
+      perform set_config('role', 'authenticated', true);
+      perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
+      v_n := coalesce((public.beh_dashboard(30) -> 'fonti' ->> 'giorni_click_mancanti')::int, 0);
+      reset role;
       delete from beh_meta_outbound_daily where date = v_giorno;
       perform public.beh_health_check();
       if not exists (select 1 from health_log where day = current_date and k = 'beh_copertura' and severity = 'warn'
@@ -279,10 +283,37 @@ begin
       if coalesce((v_dash -> 'fonti' ->> 'giorni_click_mancanti')::int, 0) < 1 then
         raise exception 'KO H7: click del % mancanti ma la RPC da'' giorni_click_mancanti = %', v_giorno, v_dash -> 'fonti' -> 'giorni_click_mancanti';
       end if;
+      if (v_dash -> 'fonti' ->> 'giorni_click_mancanti')::int <> v_n + 1 then
+        raise exception 'KO H7: i click tolti del % dovevano alzare giorni_click_mancanti da % a %, e'' %', v_giorno, v_n, v_n + 1, v_dash -> 'fonti' -> 'giorni_click_mancanti';
+      end if;
     end if;
     raise exception 'H7_CLICK_OK';
   exception when others then
     if sqlerrm <> 'H7_CLICK_OK' then raise; end if;
+  end;
+  begin
+    -- pausa delle ads negli ultimi due giorni (quarto giro del 26-10): nessuna riga di spesa ne' di click, ma un giro Meta
+    -- riuscito li ha letti. Niente "spesa ferma" in beh_fresh, e la finestra della spesa della RPC non si accorcia
+    delete from meta_ads_creative_daily where date >= v_oggi - 2;
+    delete from beh_meta_outbound_daily where date >= v_oggi - 2;
+    insert into beh_sync_runs (step, action, source, run_day, status, ended_at, window_from, window_to)
+      values ('meta', 'run', 'cron', v_oggi, 'ok', (v_oggi + time '07:13') at time zone 'Europe/Rome', v_oggi - 7, v_oggi);
+    perform public.beh_health_check();
+    if exists (select 1 from health_log where day = current_date and k = 'beh_fresh' and label like '%meta_ads_creative_daily ferma%') then
+      raise exception 'KO H7: pausa delle ads letta da un giro Meta riuscito ma beh_fresh dice spesa ferma';
+    end if;
+    perform set_config('role', 'authenticated', true);
+    perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
+    v_dash := public.beh_dashboard(30);
+    reset role;
+    if (v_dash -> 'fonti' ->> 'giorni_spesa')::int <> (v_dash ->> 'to')::date - (v_dash -> 'fonti' ->> 'spesa_dal')::date + 1
+       or jsonb_typeof(v_dash -> 'fonti' -> 'spesa_meta') = 'null' then
+      raise exception 'KO H7: pausa delle ads: giorni_spesa % su % .. %, spesa_meta % (la finestra non deve accorciarsi)',
+        v_dash -> 'fonti' -> 'giorni_spesa', v_dash -> 'fonti' -> 'spesa_dal', v_dash -> 'to', v_dash -> 'fonti' -> 'spesa_meta';
+    end if;
+    raise exception 'H7_PAUSA_OK';
+  exception when others then
+    if sqlerrm <> 'H7_PAUSA_OK' then raise; end if;
   end;
   begin
     delete from meta_ads_creative_daily where date >= v_oggi - 2;

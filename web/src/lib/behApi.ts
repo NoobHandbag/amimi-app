@@ -23,7 +23,7 @@ export type BehOn = {
     // spesa_meta null = nessun giorno coperto, o un giorno di calendario senza righe di spesa che nessun giro Meta riuscito
     // ha letto senza click (giorni_spesa_mancanti); giorni_click_mancanti = giorni del periodo senza click letti (funnel parziale)
     spesa_dal: string | null; giorni_spesa: number; giorni_spesa_mancanti: number; ultimo_giorno_spesa_mancante: string | null; giorni_spesa_mancanti_prima: number;
-    giorni_click_mancanti: number;
+    giorni_click_mancanti: number; ultimo_giorno_click_mancante: string | null;
     spesa_meta: number | null; ordini_cpa: number; prev_spesa_meta: number | null; prev_ordini_cpa: number | null;
     ads: { link_clicks: number; outbound_clicks: number; landing_page_views: number; dati_al: string | null };
   };
