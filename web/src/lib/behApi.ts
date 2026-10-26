@@ -6,7 +6,8 @@ import { csClient, EMAIL_TEAM_TESTO } from './csClient';
 // Premia e Assistenza), che rifiuta chi non e' del team (42501) e restituisce solo aggregati, nessun dato del cliente.
 
 export type BehHealth = { k: string; label: string; severity: string; day: string };
-export type BehGiro = { step: string; status: string; ended_at: string | null; rows_written: number | null; window_to: string | null };
+// soglia_ore: oltre questa eta' il giro del cron e' fermo (la stessa regola di beh_fresh, decisa dal server)
+export type BehGiro = { step: string; status: string; ended_at: string | null; rows_written: number | null; window_to: string | null; soglia_ore: number };
 export type BehCoorte = { coorte: string; maturita_giorni: number; clienti: number; ricomprato_90gg: number };
 // I prev_* sono null quando il periodo prima comincia prima del primo giorno della fonte (Gate 2 del passo 3): meglio
 // "n.d." che una freccia su un periodo coperto a meta'. `to` e' l'ultimo giorno completo (mai oggi), `oggi` il giorno di Roma.
@@ -20,7 +21,7 @@ export type BehOn = {
   fonti: {
     fonte: string; ultima_visita: Record<string, number>; prima_visita: Record<string, number>; meta_dati_al: string | null;
     // spesa_meta null = nessun giorno coperto, o un giorno con click Meta ma senza righe di spesa (giorni_spesa_mancanti)
-    spesa_dal: string | null; giorni_spesa: number; giorni_spesa_mancanti: number;
+    spesa_dal: string | null; giorni_spesa: number; giorni_spesa_mancanti: number; ultimo_giorno_spesa_mancante: string | null; giorni_spesa_mancanti_prima: number;
     spesa_meta: number | null; ordini_cpa: number; prev_spesa_meta: number | null; prev_ordini_cpa: number | null;
     ads: { link_clicks: number; outbound_clicks: number; landing_page_views: number; dati_al: string | null };
   };

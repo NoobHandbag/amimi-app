@@ -45,12 +45,15 @@ const HINT: Record<string, string> = {
   beh_fresh: 'Un giro giornaliero non arriva da 48 ore, oppure una soglia in app_flags e\' scritta male: avvisa Code.',
   beh_tracciamento_guasto: 'Ordini del sito senza nessuna visita registrata: controllare il banner dei cookie e il tracciamento di Shopify.',
   beh_quota_tracciata: 'Meno ordini del solito hanno visite registrate: banner dei cookie o tracciamento da controllare.',
-  beh_copertura: 'Ci sono giorni mai letti: il giro rilegge solo gli ultimi 7, quindi va lanciato un recupero di quei giorni (avvisa Code).',
+  beh_copertura: 'Ci sono giorni mai letti. Ordini e click Meta: il giro rilegge solo gli ultimi 7, quindi serve un recupero di beh-sync. Spesa Meta (ads-sync): ads-sync da solo legge solo ieri, quindi serve un recupero di ads-sync. Avvisa Code coi giorni scritti qui sopra.',
   beh_ordini: 'L\'ultimo giro ordini non e\' andato: il messaggio dice perche\'. Il giro di domani rilegge gli ultimi 7 giorni; un fermo piu\' lungo lo segnala "Giorni mancanti".',
   beh_meta: 'L\'ultimo giro Meta non e\' andato: il messaggio dice perche\'. Il giro di domani rilegge gli ultimi 7 giorni; un fermo piu\' lungo lo segnala "Giorni mancanti".',
   backfill: 'Il recupero dello storico non e\' andato e non riparte da solo: va rilanciato a mano (avvisa Code).',
 };
-const ORE_48 = 48 * 3600 * 1000;
+// chiavi di salute che appartengono a un passo: con quel passo spento non contano (non tengono rosso il pallino)
+const passoDi = (k: string): string | null => (k.startsWith('beh_ordini') || k === 'beh_tracciamento_guasto' || k === 'beh_quota_tracciata' ? 'ordini'
+  : k.startsWith('beh_meta') ? 'meta' : null);
+const giorni = (n: number, uno: string, tanti: string) => (n === 1 ? `1 ${uno}` : `${num(n)} ${tanti}`);
 
 // frecce sul periodo prima: copiate da Salute (deltaPct e Delta), senza toccare Salute. Qui un valore puo' mancare
 // (null): periodo prima che comincia prima dei dati, o un costo per ordine senza ordini. Allora "n.d.", mai una freccia.
@@ -136,10 +139,12 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
   const cpaPrev = f.prev_ordini_cpa && f.prev_spesa_meta != null ? f.prev_spesa_meta / f.prev_ordini_cpa : null;
   const metaAcceso = d.steps.includes('meta');
   const maturi = c.coorti.filter((x) => x.maturita_giorni >= 90);
-  const health = [...d.salute.health].sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.k.localeCompare(b.k));
-  // giri del cron dei soli passi accesi (un passo spento non tiene rosso il pallino); un giro fermo da 48 ore conta warn
+  // salute e giri dei soli passi accesi (un passo spento non tiene rosso il pallino); un giro del cron piu' vecchio della
+  // sua soglia (quella di beh_fresh, decisa dal server) conta warn
+  const health = d.salute.health.filter((h) => { const s = passoDi(h.k); return !s || d.steps.includes(s); })
+    .sort((a, b) => sevRank(a.severity) - sevRank(b.severity) || a.k.localeCompare(b.k));
   const ora = Date.parse(d.generated_at);
-  const fermo = (g: BehGiro) => !g.ended_at || ora - Date.parse(g.ended_at) > ORE_48;
+  const fermo = (g: BehGiro) => !g.ended_at || ora - Date.parse(g.ended_at) > (g.soglia_ore || 48) * 3600 * 1000;
   const giri = d.salute.giri.filter((g) => d.steps.includes(g.step));
   const statoGiro = (g: BehGiro) => (g.status === 'ok' && fermo(g) ? 'warn' : g.status);
   const worst = [...health.map((h) => h.severity), ...giri.map(statoGiro)].sort((a, b) => sevRank(a) - sevRank(b))[0] ?? 'ok';
@@ -155,7 +160,7 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
   const rigaGiro = (g: BehGiro) => (
     <li key={g.step} className={'cmp-hrow sev-' + (SEV_CLS[statoGiro(g)] ?? 'nd')}>
       <div className="rt">{PASSO[g.step] ?? g.step}</div>
-      <div className="rs">{`ultimo giro del cron ${fmtOra(g.ended_at)}, esito ${g.status}${g.rows_written != null ? `, ${num(g.rows_written)} righe` : ''}${g.status === 'ok' && fermo(g) ? ': fermo da piu\' di 48 ore' : ''}`}</div>
+      <div className="rs">{`ultimo giro del cron ${fmtOra(g.ended_at)}, esito ${g.status}${g.rows_written != null ? `, ${num(g.rows_written)} righe` : ''}${g.status === 'ok' && fermo(g) ? `: fermo da piu' di ${(g.soglia_ore || 48) >= 72 ? `${Math.round((g.soglia_ore || 48) / 24)} giorni` : `${g.soglia_ore || 48} ore`}` : ''}`}</div>
     </li>
   );
   const fonteDati = (testo: string) => <p className="note">{`Fonte: ${testo}.`}</p>;
@@ -200,7 +205,10 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
           <Kpi v={cpa != null ? eur2(cpa) : 'n.d.'} k="Costo per ordine (blended)" sub={<Delta cur={cpa} prev={cpaPrev} goodUp={false} />} />
         </div>
         {f.giorni_spesa_mancanti > 0 && (
-          <p className="note warn">{`Spesa n.d.: ${num(f.giorni_spesa_mancanti)} giorni del periodo hanno click Meta ma nessuna riga di spesa (ads-sync non li ha letti). Va lanciato un recupero di ads-sync per quei giorni: lo segnala anche "Giorni mancanti" in Salute.`}</p>
+          <p className="note warn">{`Spesa n.d.: ${giorni(f.giorni_spesa_mancanti, 'giorno del periodo non ha', 'giorni del periodo non hanno')} nessuna riga di spesa (l'ultimo il ${fmtDay(f.ultimo_giorno_spesa_mancante)}): ads-sync non li ha letti, o le ads erano tutte ferme. Se erano attive serve un recupero di ads-sync per quei giorni${f.ultimo_giorno_spesa_mancante && Date.parse(d.oggi) - Date.parse(f.ultimo_giorno_spesa_mancante) <= 35 * 86400000 ? ': lo dice anche "Giorni mancanti" in Salute' : ''}.`}</p>
+        )}
+        {f.giorni_spesa_mancanti === 0 && f.giorni_spesa_mancanti_prima > 0 && (
+          <p className="note">{`Confronto n.d.: nel periodo prima ${giorni(f.giorni_spesa_mancanti_prima, 'giorno non ha', 'giorni non hanno')} righe di spesa.`}</p>
         )}
         {f.giorni_spesa > 0 ? (
           <p className="note">{`Costo per ordine blended = spesa Meta divisa per tutti gli ordini degli stessi giorni (${num(f.ordini_cpa)}), non solo quelli venuti dalle ads. Spesa e costo contano i ${num(f.giorni_spesa)} giorni dal ${fmtDay(f.spesa_dal)} gia' coperti dalla spesa (aggiornata al ${fmtDay(f.meta_dati_al)}), confrontati con lo stesso numero di giorni prima; n.d. quando quei giorni cominciano prima della spesa per annuncio, letta dal 20 giugno.`}</p>
@@ -252,7 +260,7 @@ function Dashboard({ d, src, setSrc }: { d: BehOn; src: 'ultima' | 'prima'; setS
           ['Hanno riscattato', p.riscatti],
           ['Ordini pagati con AMICA12 (ordini)', p.ordini_amica12],
         ]} />
-        <p className="note">Aperture rispetto al periodo prima: <Delta cur={p.aperture} prev={p.prev_aperture} />. {`Stesse definizioni della tab Premia (clienti distinti, tranne l'ultimo passaggio che conta ordini), ma sul periodo di questa pagina, che finisce all'ultimo giorno completo: i numeri possono differire da Premia di qualche cliente. Le aperture si contano dal 21 settembre (prima il confronto e' n.d.); "punti per un premio" e "Riscatta" vengono dal tracciamento dei tap${p.tap_dal ? `, attivo dal ${fmtDay(p.tap_dal)}` : ''}.`}</p>
+        <p className="note">Aperture rispetto al periodo prima: <Delta cur={p.aperture} prev={p.prev_aperture} />. {`Stesse definizioni della tab Premia (clienti distinti, tranne l'ultimo passaggio che conta ordini), ma sul periodo di questa pagina, che finisce all'ultimo giorno completo: i numeri possono differire da Premia di qualche cliente. Le aperture si contano dal 21 settembre (prima il confronto e' n.d.); "punti per un premio" e "Riscatta" vengono dal tracciamento dei tap${p.tap_dal ? ` (dati dal ${fmtDay(p.tap_dal)})` : ''}.`}</p>
         {fonteDati(p.fonte)}
       </section>
 

@@ -99,7 +99,7 @@ const landing_ = (u: unknown): string => {
 const SOCIAL_HOST = /(^|\.)(facebook\.com|fb\.com|fb\.me|instagram\.com|tiktok\.com|pinterest\.[a-z.]+|youtube\.com|youtu\.be|t\.co|twitter\.com|x\.com|threads\.net|linkedin\.com|snapchat\.com)$/;
 const SEARCH_HOST = /(^|\.)(google\.[a-z.]+|bing\.com|yahoo\.[a-z.]+|duckduckgo\.com|ecosia\.org|yandex\.[a-z.]+|baidu\.com)$/;
 // le app di posta su Android si presentano come android-app://<pacchetto>: Gmail sarebbe altrimenti 'search' (google.*)
-const MAIL_HOST = /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|mail\.yahoo\.com|mail\.libero\.it|webmail\.[a-z.]+|com\.google\.android\.gm|com\.microsoft\.office\.outlook|com\.yahoo\.mobile\.client\.android\.mail)$/;
+const MAIL_HOST = /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|mail\.yahoo\.com|mail\.libero\.it|webmail\.[a-z.]+|com\.google\.android\.gm(\.lite)?|com\.microsoft\.office\.outlook|com\.yahoo\.mobile\.client\.android\.mail)$/;
 const PAID_MEDIUM = /^(cpc|ppc|cpm|cpv|paid|paid_?social|paidsocial|paid_?search|display|ads?)$/;
 const SOCIAL_WORD = /(facebook|instagram|^ig$|^fb$|tiktok|pinterest|youtube)/;
 const SEARCH_WORD = /(google|bing|yahoo|duckduckgo|ecosia)/;

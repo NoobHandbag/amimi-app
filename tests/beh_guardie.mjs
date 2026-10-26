@@ -142,8 +142,13 @@ console.log('\n== Migrazione 0171 (viste e RPC della tab) ==');
     /'prev_spesa_meta', case when v_mlen = 0 or v_mfrom - v_mlen < v_meta_min or v_pbuchi > 0 then null/.test(M171)
     && (M171.match(/case when v_ord_min is null or v_pfrom < v_ord_min then null/g) ?? []).length === 3 && /'prev_aperture', case when v_vis_min is null or v_pfrom < v_vis_min then null/.test(M171));
   t('14o salute: ultimo giro del CRON per passo (un backfill o un run a mano non dicono se il cron gira)', /where status <> 'running' and action = 'run' and source = 'cron' order by step, started_at desc/.test(M171));
-  t('14p giorno con click Meta e senza spesa = spesa null e giorni_spesa_mancanti', /'spesa_meta', case when v_mlen = 0 or v_buchi > 0 then null/.test(M171)
-    && /select distinct b\.date from beh_meta_outbound_daily b where v_mlen > 0 and b\.date between v_mfrom and v_mend\n\s+except select distinct m\.date from meta_ads_creative_daily m/.test(M171) && /'giorni_spesa_mancanti', v_buchi,/.test(M171));
+  // secondo giro del 26-10: il testimone dei giorni di spesa mancanti e' il calendario, non i click di beh
+  t('14p giorno di calendario senza righe di spesa = spesa null e giorni_spesa_mancanti (anche senza click)', /'spesa_meta', case when v_mlen = 0 or v_buchi > 0 then null/.test(M171)
+    && /from generate_series\(v_mfrom, v_mend, interval '1 day'\) g\(d\)\n\s+where v_mlen > 0 and not exists \(select 1 from meta_ads_creative_daily m where m\.date = g\.d::date\);/.test(M171)
+    && /from generate_series\(v_mfrom - v_mlen, v_mfrom - 1, interval '1 day'\) g\(d\)/.test(M171)
+    && /'giorni_spesa_mancanti', v_buchi,/.test(M171) && /'ultimo_giorno_spesa_mancante', v_buco_ultimo,/.test(M171) && !/from beh_meta_outbound_daily b where v_mlen > 0/.test(M171));
+  t('14s soglia del giro fermo decisa dal server, come beh_fresh (settimanali 8 giorni, gli altri beh_fresh_ore)', /'soglia_ore', case when r\.step in \('crux', 'psi'\) then 8 \* 24 else v_fresh_ore end/.test(M171)
+    && /select p_val into v_fresh_ore from public\.beh_flag_num\('beh_fresh_ore', 48, ''\);/.test(M171));
   // beh_health_check ridefinita nella 0171: le stesse regole della 0169 piu' i giri del cron e la copertura
   const hc = M171.slice(M171.indexOf('create or replace function public.beh_health_check()'), M171.indexOf('grant execute on function public.beh_health_check() to service_role;'));
   t('14q beh_health_check della 0171: muta a flag spento, giri del cron (source cron), soglie e allarmi come la 0169', hc.length > 1000
@@ -155,7 +160,11 @@ console.log('\n== Migrazione 0171 (viste e RPC della tab) ==');
     /'beh_copertura'/.test(hc) && /from shopify_orders o\n\s+where o\.created_at_shop >= \(\(v_oggi - 35\)::timestamp at time zone 'Europe\/Rome'\)/.test(hc)
     && /'spesa Meta mancante \(ads-sync\) il '/.test(hc) && /'click Meta mancanti il '/.test(hc) && /case when v_buchi is null then 'ok' else 'warn' end/.test(hc)
     // al massimo 6 giorni per sezione: un'etichetta tagliata non deve nascondere una sezione (prova del 26-10)
-    && (hc.match(/filter \(where z\.rn <= 6\)/g) ?? []).length === 3 && (hc.match(/case when v_k > 6 then ' e altri ' \|\| \(v_k - 6\) \|\| ' giorni' else '' end/g) ?? []).length === 3);
+    && (hc.match(/filter \(where z\.rn <= 6\)/g) ?? []).length === 3 && (hc.match(/case when v_k > 6 then ' e altri ' \|\| \(v_k - 6\) \|\| ' giorni' else '' end/g) ?? []).length === 3
+    // lato beh solo i giorni che il cron non rilegge piu' e che nessun giro riuscito ha letto dopo la chiusura; lato spesa il calendario
+    && /o\.created_at_shop < \(\(v_oggi - 7\)::timestamp at time zone 'Europe\/Rome'\)/.test(hc) && /m\.date < v_oggi - 7 and m\.spend > 0/.test(hc)
+    && (hc.match(/and r\.ended_at >= \(\((?:s|x)\.d \+ 1\)::timestamp at time zone 'Europe\/Rome'\)\)/g) ?? []).length === 2
+    && /from generate_series\(greatest\(v_oggi - 35, v_meta_min\), v_oggi - 2, interval '1 day'\) g\(d\)/.test(hc));
 }
 
 console.log('\n== Test vivo tests/beh_rls.sql ==');
@@ -167,7 +176,7 @@ console.log('\n== Test vivo tests/beh_rls.sql ==');
   t('15 nessuna variabile del blocco ha il nome di una colonna letta', vars.length >= 5 && vars.every((x) => !colonne.includes(x)), vars.join(','));
   t('16 a flag spento controlla solo le chiavi di beh_health_check (la riga beh_ordini della edge non conta)', /insert into health_log \(day, k, label, n, severity, created_at\) values \(current_date, 'beh_ordini'/.test(RLS) && /k in \('beh_fresh', 'beh_tracciamento_guasto', 'beh_quota_tracciata'\)\) then\n    raise exception 'KO H1/.test(RLS));
   t('17a casi della verifica del 25-10 nella prova viva: copertura (ordini, spesa, Meta ferma), conteggi indipendenti dei filtri, durata dei periodi, v_run_day, run a mano',
-    /KO H7: tolto il % da beh_order_origin/.test(RLS) && /KO H7: tolta la spesa del %/.test(RLS) && /KO H7: spesa Meta ferma da due giorni/.test(RLS)
+    /KO H7: tolto il % da beh_order_origin/.test(RLS) && /KO H7: tolta la spesa e i click del %/.test(RLS) && /KO H7: tolti i click del %/.test(RLS) && /KO H7: giorno % gia'' letto da un giro/.test(RLS) && /KO H7: spesa Meta ferma da piu'' di un giorno/.test(RLS)
     && /KO D: ordini\.% = % contro % contati qui/.test(RLS) && /KO D: ordini_cpa = % contro/.test(RLS) && /KO D: riacquisto_90/.test(RLS)
     && /KO D: periodo di % giorni/.test(RLS) && /'ordini', 'run', 'cron', v_oggi, 'error', now\(\)/.test(RLS) && /'ordini', 'run', 'manuale', current_date, 'ok', now\(\)/.test(RLS));
   t('17 severita\' degli allarmi provate (guasto error/ok, quota warn/ok/pochi ordini, backfill non conta)', /KO H4/.test(RLS) && /KO H5: 5 ordini online senza visite in 48 ore/.test(RLS) && /KO H6: 47 tracciati su 80/.test(RLS) && /pochi ordini/.test(RLS) && /'99999999999'/.test(RLS) && /' Ordini' \|\| chr\(10\)/.test(RLS));
@@ -244,7 +253,8 @@ console.log('\n== Edge beh-sync: flag, accessi, scritture solo beh_*, token ==')
   t('24 0 ordini su almeno 2 giorni = warn (scope o filtro)', /const vuoto = nodes\.length === 0 && spanDays >= 2;/.test(SRC) && /errs\.length \? 'error' : vuoto \? 'warn' : 'ok'/.test(SRC));
   t('25 diag legge gli scope del token (read_all_orders) con il token in header', /access_scopes\.json`, \{ headers: \{ 'X-Shopify-Access-Token': token \}, signal: AbortSignal\.timeout\(FETCH_MS\) \}\)/.test(SRC) && /read_all_orders: scopes\.includes\('read_all_orders'\)/.test(SRC));
   t('25a ogni chiamata esterna ha un tetto di tempo (una connessione appesa non lascia il giro running)', /const FETCH_MS = 30000;/.test(SRC)
-    && (SRC.match(/await fetch\(/g) ?? []).length >= 4 && (SRC.match(/await fetch\(/g) ?? []).length === (SRC.match(/signal: AbortSignal\.timeout\(FETCH_MS\)/g) ?? []).length);
+    // ogni fetch( del codice, scritto in qualunque modo, non solo "await fetch(" (secondo giro del 26-10)
+    && (noTs(SRC).match(/\bfetch\(/g) ?? []).length >= 4 && (noTs(SRC).match(/\bfetch\(/g) ?? []).length === (noTs(SRC).match(/signal: AbortSignal\.timeout\(FETCH_MS\)/g) ?? []).length);
   t('26 upsert sulla PK naturale', /upsert\(chunk, \{ onConflict: 'order_gid_num' \}\)/.test(SRC));
   t('27 tetto per giro e blocchi di backfill limitati (Regola 20c)', /const MAX_ORDINI_RUN = 500;/.test(SRC) && /const MAX_ORDINI_BACKFILL = 1000;/.test(SRC) && /if \(nodes\.length > cap\) throw new Error/.test(SRC) && /span <= MAX_BACKFILL_DAYS/.test(SRC));
   t('28 token Shopify e token Meta solo in header, mai in URL', /'X-Shopify-Access-Token': token/.test(SRC) && /authorization: `Bearer \$\{metaToken\}`/.test(SRC) && !/access_token=\$\{|\?access_token|token=\$\{token\}|token=\$\{metaToken\}/.test(SRC));
@@ -291,7 +301,7 @@ finally { try { unlinkSync(TMP); } catch { /* niente */ } }
   t('39 Klaviyo/email = email', srcClass_({ source: 'Klaviyo', utmParameters: { source: 'Klaviyo', medium: 'email' } }) === 'email');
   t('40 webmail senza UTM = email (non search, anche se e\' google.com)', srcClass_({ source: 'https://mail.google.com/', referrerUrl: 'https://mail.google.com/' }) === 'email');
   t('40a app Gmail su Android (android-app://com.google.android.gm) = email, non search', srcClass_({ source: 'android-app://com.google.android.gm/', referrerUrl: 'android-app://com.google.android.gm/' }) === 'email'
-    && srcClass_({ referrerUrl: 'android-app://com.google.android.googlequicksearchbox/' }) === 'search');
+    && srcClass_({ referrerUrl: 'android-app://com.google.android.gm.lite/' }) === 'email' && srcClass_({ referrerUrl: 'android-app://com.google.android.googlequicksearchbox/' }) === 'search');
   t('41 google/cpc = paid_search', srcClass_({ source: 'Google', referrerUrl: 'https://www.google.com/', utmParameters: { source: 'google', medium: 'cpc' } }) === 'paid_search');
   t('42 "an unknown source" = unknown', srcClass_({ source: 'an unknown source' }) === 'unknown');
   t('43 sito esterno = referral', srcClass_({ source: 'https://ami-milano.com/', referrerUrl: 'https://ami-milano.com/x' }) === 'referral');

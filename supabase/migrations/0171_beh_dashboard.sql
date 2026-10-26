@@ -72,7 +72,9 @@ declare
   v_mend     date;
   v_mlen     int;
   v_buchi    int;
+  v_buco_ultimo date;
   v_pbuchi   int;
+  v_fresh_ore numeric;
   v_ord_min  date;
   v_vis_min  date;
   v_out      jsonb;
@@ -98,13 +100,16 @@ begin
   v_mfrom := greatest(v_from, v_meta_min);
   v_mend  := case when v_meta_max is null then null else least(v_end, v_meta_max) end;
   v_mlen  := case when v_mfrom is null or v_mend is null then 0 else greatest(v_mend - v_mfrom + 1, 0) end;
-  -- giorni con click Meta letti ma senza nessuna riga di spesa: la spesa di quei giorni non e' 0, e' mancante
-  select count(*) into v_buchi from (
-    select distinct b.date from beh_meta_outbound_daily b where v_mlen > 0 and b.date between v_mfrom and v_mend
-    except select distinct m.date from meta_ads_creative_daily m where v_mlen > 0 and m.date between v_mfrom and v_mend) x;
-  select count(*) into v_pbuchi from (
-    select distinct b.date from beh_meta_outbound_daily b where v_mlen > 0 and b.date between v_mfrom - v_mlen and v_mfrom - 1
-    except select distinct m.date from meta_ads_creative_daily m where v_mlen > 0 and m.date between v_mfrom - v_mlen and v_mfrom - 1) x;
+  -- giorni di calendario senza nessuna riga di spesa: la spesa di quei giorni non e' 0, e' mancante. Il testimone e' il
+  -- calendario e non i click di beh, che mancano insieme alla spesa quando il token Meta si ferma (secondo giro del 26-10).
+  -- Dal 20-06 ogni giorno ha righe; ads tutte ferme per un giorno intero darebbero n.d., che e' il lato prudente.
+  select count(*), max(g.d::date) into v_buchi, v_buco_ultimo
+    from generate_series(v_mfrom, v_mend, interval '1 day') g(d)
+   where v_mlen > 0 and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date);
+  select count(*) into v_pbuchi
+    from generate_series(v_mfrom - v_mlen, v_mfrom - 1, interval '1 day') g(d)
+   where v_mlen > 0 and g.d::date >= v_meta_min and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date);
+  select p_val into v_fresh_ore from public.beh_flag_num('beh_fresh_ore', 48, '');
   select min(day) into v_ord_min from beh_order_origin;
   select min(day) into v_vis_min from loyalty_visits;
 
@@ -156,6 +161,8 @@ begin
         'spesa_dal', case when v_mlen > 0 then v_mfrom end,
         'giorni_spesa', v_mlen,
         'giorni_spesa_mancanti', v_buchi,
+        'ultimo_giorno_spesa_mancante', v_buco_ultimo,
+        'giorni_spesa_mancanti_prima', v_pbuchi,
         'spesa_meta', case when v_mlen = 0 or v_buchi > 0 then null
                            else (select coalesce(round(sum(spend), 2), 0) from meta_ads_creative_daily where date between v_mfrom and v_mend) end,
         'ordini_cpa', case when v_mlen = 0 then 0
@@ -193,13 +200,16 @@ begin
                              and (o.created_at_shop at time zone 'Europe/Rome')::date between v_from and v_end),
         'prev_aperture', case when v_vis_min is null or v_pfrom < v_vis_min then null
                               else (select count(distinct v.shopify_customer_id) from loyalty_visits v where v.day between v_pfrom and v_pto) end,
-        -- i passaggi "premio pronto" e "tap su Riscatta" vengono dal tracciamento dei tap, che parte piu' tardi delle aperture
+        -- i passaggi "premio pronto" e "tap su Riscatta" vengono dal tracciamento dei tap: primo giorno con dati (la pulizia a
+        -- 180 giorni lo sposta in avanti, quindi la pagina dice "dati dal", non "attivo dal")
         'tap_dal', (select min(u.day) from loyalty_ui_events u)),
 
     -- card 8: salute delle fonti (ultimo giro del CRON per passo: un backfill o un run a mano non dicono se il cron gira)
     'salute', jsonb_build_object(
+        -- soglia_ore = la stessa di beh_fresh in beh_health_check (settimanali 8 giorni, gli altri beh_fresh_ore)
         'giri', (select coalesce(jsonb_agg(jsonb_build_object('step', r.step, 'status', r.status, 'ended_at', r.ended_at, 'rows_written', r.rows_written,
-                                                              'window_to', r.window_to) order by r.step), '[]'::jsonb)
+                                                              'window_to', r.window_to,
+                                                              'soglia_ore', case when r.step in ('crux', 'psi') then 8 * 24 else v_fresh_ore end) order by r.step), '[]'::jsonb)
                    from (select distinct on (step) step, status, ended_at, rows_written, window_to from beh_sync_runs
                           where status <> 'running' and action = 'run' and source = 'cron' order by step, started_at desc) r),
         'health', (select coalesce(jsonb_agg(jsonb_build_object('k', h.k, 'label', h.label, 'severity', h.severity, 'day', h.day) order by h.k), '[]'::jsonb)
@@ -215,9 +225,10 @@ grant execute on function public.beh_dashboard(integer) to authenticated;
 -- Salute del modulo, versione della 0171 (verifica avversariale del 25-10). Uguale alla 0169 piu' due cose:
 --   (1) beh_fresh conta i soli giri del cron (source 'cron'): un run lanciato a mano non dice se il cron gira;
 --   (2) beh_copertura (warn): un giro rilegge solo 7 giorni, quindi un buco piu' lungo (edge ferma, flag spento e poi
---       riacceso) resterebbe per sempre senza allarme. Sugli ultimi 35 giorni chiusi di Roma confronta gli ordini di
---       shopify_orders (aggiornata ogni ora da shopify-sync) con beh_order_origin, e i giorni con click Meta senza righe di
---       spesa (ads-sync legge solo ieri e non recupera) o con spesa senza click. Il rimedio e' un backfill dei giorni detti.
+--       riacceso) resterebbe per sempre senza allarme. Sugli ultimi 35 giorni chiusi di Roma: ordini di shopify_orders
+--       (aggiornata ogni ora da shopify-sync) contro beh_order_origin e giorni con spesa senza click, sui soli giorni mai
+--       riletti da un giro riuscito; giorni di calendario senza righe di spesa (ads-sync legge solo ieri e non recupera).
+--       Il rimedio e' un backfill dei giorni detti: di beh-sync per ordini e click, di ads-sync per la spesa.
 create or replace function public.beh_health_check() returns void
 language plpgsql security definer set search_path to 'public' as $fn$
 declare
@@ -234,6 +245,7 @@ declare
   v_trk int;
   v_oggi date := (now() at time zone 'Europe/Rome')::date;
   v_meta_max date;
+  v_meta_min date;
   v_buchi text;
   v_txt text;
   v_k int;
@@ -308,6 +320,10 @@ begin
   -- copertura degli ultimi 35 giorni chiusi (vedi l'intestazione)
   -- ogni sezione elenca al massimo i 6 giorni piu' recenti piu' "e altri N": con un'etichetta tagliata, tanti giorni di
   -- ordini mancanti nasconderebbero la spesa mancante (prova del 26-10)
+  -- Lato beh (ordini e click) solo i giorni che il cron non rileggera' piu' ([oggi-35, oggi-7)) e che nessun giro riuscito
+  -- ha letto dopo la loro chiusura: un ordine cancellato in Shopify dopo la lettura non e' un buco e nessun backfill lo
+  -- riporterebbe. Lato spesa (ads-sync, che non rilegge mai i giorni passati) ogni giorno di calendario chiuso senza righe,
+  -- testimone il calendario e non i click di beh, che mancano insieme alla spesa quando il token Meta si ferma.
   if 'ordini' = any(v_steps) or 'meta' = any(v_steps) then
     if 'ordini' = any(v_steps) then
       select count(*), string_agg(z.t, ', ' order by z.d) filter (where z.rn <= 6) into v_k, v_txt
@@ -315,22 +331,30 @@ begin
                 from (select s.d, s.n as so, coalesce(b.n, 0) as beh
                         from (select (o.created_at_shop at time zone 'Europe/Rome')::date as d, count(*) as n from shopify_orders o
                                where o.created_at_shop >= ((v_oggi - 35)::timestamp at time zone 'Europe/Rome')
-                                 and o.created_at_shop < (v_oggi::timestamp at time zone 'Europe/Rome')
+                                 and o.created_at_shop < ((v_oggi - 7)::timestamp at time zone 'Europe/Rome')
                                group by 1) s
-                        left join (select b2.day as d, count(*) as n from beh_order_origin b2 where b2.day >= v_oggi - 35 and b2.day < v_oggi group by 1) b on b.d = s.d
-                       where coalesce(b.n, 0) < s.n) g) z;
+                        left join (select b2.day as d, count(*) as n from beh_order_origin b2 where b2.day >= v_oggi - 35 and b2.day < v_oggi - 7 group by 1) b on b.d = s.d
+                       where coalesce(b.n, 0) < s.n
+                         and not exists (select 1 from beh_sync_runs r where r.step = 'ordini' and r.status in ('ok', 'warn')
+                                           and r.window_from <= s.d and r.window_to > s.d
+                                           and r.ended_at >= ((s.d + 1)::timestamp at time zone 'Europe/Rome'))) g) z;
       if v_k > 0 then v_buchi := concat_ws('; ', v_buchi, 'ordini mancanti il ' || v_txt || case when v_k > 6 then ' e altri ' || (v_k - 6) || ' giorni' else '' end); end if;
     end if;
+    select min(date) into v_meta_min from meta_ads_creative_daily;
+    select count(*), string_agg(to_char(z.d, 'DD-MM'), ', ' order by z.d) filter (where z.rn <= 6) into v_k, v_txt
+      from (select g.d::date as d, row_number() over (order by g.d desc) as rn
+              -- fino all'altro ieri: ieri lo legge ads-sync alle 06:07 UTC, e se manca lo dice gia' beh_fresh col passo meta
+              from generate_series(greatest(v_oggi - 35, v_meta_min), v_oggi - 2, interval '1 day') g(d)
+             where v_meta_min is not null and not exists (select 1 from meta_ads_creative_daily m where m.date = g.d::date)) z;
+    if v_k > 0 then v_buchi := concat_ws('; ', v_buchi, 'spesa Meta mancante (ads-sync) il ' || v_txt || case when v_k > 6 then ' e altri ' || (v_k - 6) || ' giorni' else '' end); end if;
     if 'meta' = any(v_steps) then
       select count(*), string_agg(to_char(z.d, 'DD-MM'), ', ' order by z.d) filter (where z.rn <= 6) into v_k, v_txt
         from (select x.d, row_number() over (order by x.d desc) as rn
-                from (select distinct b.date as d from beh_meta_outbound_daily b where b.date >= v_oggi - 35 and b.date < v_oggi
-                      except select distinct m.date from meta_ads_creative_daily m where m.date >= v_oggi - 35) x) z;
-      if v_k > 0 then v_buchi := concat_ws('; ', v_buchi, 'spesa Meta mancante (ads-sync) il ' || v_txt || case when v_k > 6 then ' e altri ' || (v_k - 6) || ' giorni' else '' end); end if;
-      select count(*), string_agg(to_char(z.d, 'DD-MM'), ', ' order by z.d) filter (where z.rn <= 6) into v_k, v_txt
-        from (select x.d, row_number() over (order by x.d desc) as rn
-                from (select distinct m.date as d from meta_ads_creative_daily m where m.date >= v_oggi - 35 and m.date < v_oggi and m.spend > 0
-                      except select distinct b.date from beh_meta_outbound_daily b where b.date >= v_oggi - 35) x) z;
+                from (select distinct m.date as d from meta_ads_creative_daily m where m.date >= v_oggi - 35 and m.date < v_oggi - 7 and m.spend > 0
+                      except select distinct b.date from beh_meta_outbound_daily b where b.date >= v_oggi - 35) x
+               where not exists (select 1 from beh_sync_runs r where r.step = 'meta' and r.status in ('ok', 'warn')
+                                   and r.window_from <= x.d and r.window_to > x.d
+                                   and r.ended_at >= ((x.d + 1)::timestamp at time zone 'Europe/Rome'))) z;
       if v_k > 0 then v_buchi := concat_ws('; ', v_buchi, 'click Meta mancanti il ' || v_txt || case when v_k > 6 then ' e altri ' || (v_k - 6) || ' giorni' else '' end); end if;
     end if;
     insert into health_log (day, k, label, n, severity, created_at)

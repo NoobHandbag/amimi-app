@@ -175,8 +175,9 @@ begin
 
   -- H7 (migr 0171) copertura a 35 giorni e Meta ferma. Ogni caso in un sottoblocco che torna indietro da solo, cosi' D
   -- ritrova i dati sintetici di H6. Ordini: beh_order_origin ricostruita dagli ordini veri di shopify_orders = ok, poi un
-  -- giorno tolto = warn con quel giorno. Meta: un giorno con click e senza spesa = warn e, nella RPC, spesa null con
-  -- giorni_spesa_mancanti. Spesa ferma da due giorni = beh_fresh error. I giri finti sono del cron (source 'cron').
+  -- giorno mai riletto e tolto = warn con quel giorno, lo stesso giorno gia' letto da un giro = ok (ordini cancellati).
+  -- Meta: un giorno tolto da spesa E click = warn e, nella RPC, spesa null; click tolti su un giorno mai letto = warn.
+  -- Spesa ferma = beh_fresh error. I giri finti sono del cron (source 'cron').
   update app_flags set value = 'ordini,meta' where key = 'beh_steps';
   insert into beh_sync_runs (step, action, source, run_day, status, ended_at) values ('meta', 'run', 'cron', current_date, 'ok', now());
   begin
@@ -188,35 +189,46 @@ begin
     perform public.beh_health_check();
     select severity, label into v_sev, v_val from health_log where day = current_date and k = 'beh_copertura';
     if v_sev is distinct from 'ok' then raise exception 'KO H7: copertura con gli ordini veri = % (%), attesa ok', v_sev, v_val; end if;
-    select max(b.day) into v_giorno from beh_order_origin b where b.day < v_oggi;
+    -- un giorno che il cron non rileggera' piu' (prima di oggi - 7) e che nessun giro ha letto: buco
+    select max(b.day) into v_giorno from beh_order_origin b where b.day < v_oggi - 7;
     delete from beh_order_origin where day = v_giorno;
     perform public.beh_health_check();
     if not exists (select 1 from health_log where day = current_date and k = 'beh_copertura' and severity = 'warn'
                     and label like '%ordini mancanti il ' || to_char(v_giorno, 'DD-MM') || ' (0 su %') then
       raise exception 'KO H7: tolto il % da beh_order_origin, beh_copertura non lo dice', v_giorno;
     end if;
+    -- lo stesso giorno letto da un giro riuscito dopo la sua chiusura: gli ordini mancanti sono cancellati in Shopify, non un buco
+    insert into beh_sync_runs (step, action, source, run_day, status, ended_at, window_from, window_to)
+      values ('ordini', 'backfill', 'manuale', v_giorno + 1, 'ok', ((v_giorno + 1) + time '08:00') at time zone 'Europe/Rome', v_giorno, v_giorno + 1);
+    perform public.beh_health_check();
+    select severity, label into v_sev, v_val from health_log where day = current_date and k = 'beh_copertura';
+    if v_sev is distinct from 'ok' then raise exception 'KO H7: giorno % gia'' letto da un giro ma copertura = % (%)', v_giorno, v_sev, v_val; end if;
     raise exception 'H7_ORDINI_OK';
   exception when others then
     if sqlerrm <> 'H7_ORDINI_OK' then raise; end if;
   end;
   begin
+    -- un fermo del token Meta toglie il giorno da TUTTE E DUE le tabelle (secondo giro del 26-10): il testimone e' il
+    -- calendario, quindi il giorno va segnalato lo stesso, e nella RPC la spesa del periodo e' null
     select max(b.date) into v_giorno from beh_meta_outbound_daily b
      where b.date < v_oggi - 2 and exists (select 1 from meta_ads_creative_daily m where m.date = b.date);
     if v_giorno is not null then
       delete from meta_ads_creative_daily where date = v_giorno;
+      delete from beh_meta_outbound_daily where date = v_giorno;
       perform public.beh_health_check();
       if not exists (select 1 from health_log where day = current_date and k = 'beh_copertura' and severity = 'warn'
                       and label like '%spesa Meta mancante (ads-sync) il ' || to_char(v_giorno, 'DD-MM') || '%') then
-        raise exception 'KO H7: tolta la spesa del %, beh_copertura non lo dice', v_giorno;
+        raise exception 'KO H7: tolta la spesa e i click del %, beh_copertura non lo dice', v_giorno;
       end if;
       perform set_config('role', 'authenticated', true);
       perform set_config('request.jwt.claims', json_build_object('sub', gen_random_uuid(), 'role', 'authenticated', 'email', 'prova.0171@telaioconsulting.com')::text, true);
       v_dash := public.beh_dashboard(30);
       reset role;
       if v_giorno between (v_dash -> 'fonti' ->> 'spesa_dal')::date and (v_dash -> 'fonti' ->> 'spesa_dal')::date + (v_dash -> 'fonti' ->> 'giorni_spesa')::int - 1
-         and (jsonb_typeof(v_dash -> 'fonti' -> 'spesa_meta') is distinct from 'null' or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti')::int < 1) then
-        raise exception 'KO H7: spesa del % mancante ma la RPC da'' spesa_meta = % e giorni_spesa_mancanti = %', v_giorno,
-          v_dash -> 'fonti' -> 'spesa_meta', v_dash -> 'fonti' -> 'giorni_spesa_mancanti';
+         and (jsonb_typeof(v_dash -> 'fonti' -> 'spesa_meta') is distinct from 'null' or (v_dash -> 'fonti' ->> 'giorni_spesa_mancanti')::int < 1
+              or (v_dash -> 'fonti' ->> 'ultimo_giorno_spesa_mancante')::date is distinct from v_giorno) then
+        raise exception 'KO H7: spesa del % mancante ma la RPC da'' spesa_meta = %, giorni_spesa_mancanti = %, ultimo %', v_giorno,
+          v_dash -> 'fonti' -> 'spesa_meta', v_dash -> 'fonti' -> 'giorni_spesa_mancanti', v_dash -> 'fonti' -> 'ultimo_giorno_spesa_mancante';
       end if;
     end if;
     raise exception 'H7_META_OK';
@@ -224,10 +236,26 @@ begin
     if sqlerrm <> 'H7_META_OK' then raise; end if;
   end;
   begin
-    delete from meta_ads_creative_daily where date >= v_oggi - 1;
+    -- click mancanti su un giorno con spesa che il cron non rileggera' piu' e che nessun giro Meta ha letto
+    delete from beh_sync_runs where step = 'meta';
+    select max(m.date) into v_giorno from meta_ads_creative_daily m where m.date < v_oggi - 7 and m.spend > 0;
+    if v_giorno is not null then
+      delete from beh_meta_outbound_daily where date = v_giorno;
+      perform public.beh_health_check();
+      if not exists (select 1 from health_log where day = current_date and k = 'beh_copertura' and severity = 'warn'
+                      and label like '%click Meta mancanti il ' || to_char(v_giorno, 'DD-MM') || '%') then
+        raise exception 'KO H7: tolti i click del %, beh_copertura non lo dice', v_giorno;
+      end if;
+    end if;
+    raise exception 'H7_CLICK_OK';
+  exception when others then
+    if sqlerrm <> 'H7_CLICK_OK' then raise; end if;
+  end;
+  begin
+    delete from meta_ads_creative_daily where date >= v_oggi - 2;
     perform public.beh_health_check();
     if not exists (select 1 from health_log where day = current_date and k = 'beh_fresh' and severity = 'error' and label like '%meta_ads_creative_daily ferma al%') then
-      raise exception 'KO H7: spesa Meta ferma da due giorni ma beh_fresh non va in error';
+      raise exception 'KO H7: spesa Meta ferma da piu'' di un giorno ma beh_fresh non va in error';
     end if;
     raise exception 'H7_FERMA_OK';
   exception when others then
