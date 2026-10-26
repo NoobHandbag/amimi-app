@@ -413,5 +413,62 @@ console.log('\n== ce-guard: riconciliazione ordini fino all\'ora piena (v11) =='
   t('118 l\'etichetta dice fino a che ora si e\' contato', /il corrente fino alle \$\{oraPiena\} UTC\)` \+ \(shopDetails/.test(GUARD));
 }
 
+// Gift card fuori dal CE (26-10, migr 0172 + shopify-sync v9, CASI_APERTI n.18). Le due gift card vendute (#1663, #1877)
+// restavano senza codice: orfane per sempre e contate come ricavo all'acquisto E al riscatto (#1682, #1937), cioe' 150,00
+// EUR lordi due volte. Qui: la riga gift card va su GIFT_CARD con COGS 0 (il blocco PURE ritagliato dal sorgente) e la
+// migrazione toglie GIFT_CARD dalle quattro viste CE senza ribatterle a mano.
+console.log('\n== gift card: shopify-sync v9 e migr 0172 ==');
+{
+  const B = '// ==== PURE:sync-resolver BEGIN ====', E = '// ==== PURE:sync-resolver END ====';
+  const a = SYNC.indexOf(B), b = SYNC.indexOf(E);
+  let rigaCodiceCogs = null;
+  if (a >= 0 && b > a) {
+    const dir = mkdtempSync(join(tmpdir(), 'amimi-giftcard-'));
+    const f = join(dir, 'resolver.mjs');
+    writeFileSync(f, stripTypeScriptTypes(SYNC.slice(a + B.length, b)) + '\nexport { rigaCodiceCogs };\n', 'utf8');
+    try { ({ rigaCodiceCogs } = await import(pathToFileURL(f).href)); } finally { try { rmSync(dir, { recursive: true, force: true }); } catch { /* niente */ } }
+  }
+  t('119 rigaCodiceCogs c\'e\' nel blocco PURE:sync-resolver', typeof rigaCodiceCogs === 'function');
+  if (rigaCodiceCogs) {
+    const chiamate = [];
+    const resolve = (nm, sku) => { chiamate.push([nm, sku]); return ({ 'LEA BAG BLACK': 'LEA_BAG_BLACK', 'GIFT CARD Amimì - 50,00 €': 'GIFT_CARD' })[nm] ?? null; };
+    const cogs = new Map([['LEA_BAG_BLACK', 45]]);
+    const r1 = rigaCodiceCogs({ name: 'GIFT CARD Amimì - 50,00 €', sku: null, gift_card: true }, resolve, cogs);
+    t('120 riga con gift_card true -> GIFT_CARD, COGS 0 (non NULL: ce_cogs_mancanti resta muto)', r1.codice === 'GIFT_CARD' && r1.cogs === 0, r1);
+    t('121 il flag gift_card vince sul titolo: il resolver non viene nemmeno chiamato', chiamate.length === 0, chiamate);
+    const r2 = rigaCodiceCogs({ name: 'GIFT CARD Amimì - 50,00 €', sku: null }, resolve, cogs);
+    t('122 senza flag, il titolo risolto su GIFT_CARD (alias della 0172) prende COGS 0 lo stesso', r2.codice === 'GIFT_CARD' && r2.cogs === 0, r2);
+    const r3 = rigaCodiceCogs({ name: 'LEA BAG BLACK', sku: 'X', gift_card: false }, resolve, cogs);
+    t('123 riga normale: codice dal resolver (titolo, SKU passati) e COGS di anagrafica', r3.codice === 'LEA_BAG_BLACK' && r3.cogs === 45 && chiamate.at(-1)?.[1] === 'X', r3);
+    const r4 = rigaCodiceCogs({ title: 'BORSA MISTERIOSA' }, resolve, cogs);
+    t('124 riga non risolta: codice NULL e COGS NULL (resta orfana e visibile, mai uno 0 inventato)', r4.codice === null && r4.cogs === null, r4);
+    const r5 = rigaCodiceCogs({ name: 'LEA BAG BLACK', gift_card: 'true' }, resolve, cogs);
+    t('125 solo il booleano true conta come gift card (una stringa no)', r5.codice === 'LEA_BAG_BLACK', r5);
+  } else t('120-125 comportamento non provato: blocco assente o non caricabile', false);
+  t('126 il giro scrive codice e cogs_snapshot dalla funzione pura', /const \{ codice, cogs \} = rigaCodiceCogs\(it, resolveCodice, cogsByNorm\);/.test(SYNC) && /cogs_snapshot: cogs,/.test(SYNC));
+  t('127 il calcolo vecchio di cogs_snapshot nel giro non c\'e\' piu\' (una sola strada, dalla funzione pura)', !/cogs_snapshot: cn \?/.test(SYNC) && !/const codice = resolveCodice\(nm, it\.sku\)/.test(SYNC));
+
+  const p = 'supabase/migrations/0172_gift_card_fuori_ce.sql';
+  const M = existsSync(ROOT + p) ? read(p) : '';
+  t('128 la migrazione 0172 esiste', M.length > 0);
+  t('129 le quattro viste CE si riscrivono da pg_get_viewdef, non a mano',
+    ['v_ce_amimi', 'v_ce_totale', 'v_ce_drill_sales', 'v_ce_drill_cogs'].every((v) => M.includes(`pg_get_viewdef('public.${v}'::regclass, true)`)));
+  t('130 ogni vista ha la guardia "esattamente un\'occorrenza" prima della sostituzione', (M.match(/if v_n <> 1 then raise exception '0172: v_ce_/g) || []).length === 4);
+  t('131 il filtro esclude solo GIFT_CARD (ORDINE_TEST resta nel CE: vendita e rimborso, netto 0)',
+    (M.match(/IS DISTINCT FROM ''GIFT_CARD''::text/g) || []).length === 2 && !/IS DISTINCT FROM ''ORDINE_TEST''/.test(M));
+  t('132 righe ripuntate con COGS 0 e resolved true, before/after in change_log',
+    /set codice = r\.codice, resolved = true, cogs_snapshot = 0/.test(M) && /'gift_card_fuori_ce'/.test(M));
+  t('133 guardia: nessuna riga gift card fuori dalle due attese (mesi chiusi)', /righe gift card non previste/.test(M));
+  t('134 controllo: nel CE si muove solo cio\' che dipende dalle vendite gift card', /cambiate oltre le sole vendite gift card/.test(M));
+  t('135 controllo: nessun drift nuovo sui mesi chiusi e shopify_orphan = 0', /mesi chiusi in drift prima % dopo %/.test(M) && /shopify_orphan = % dopo il ripuntamento/.test(M));
+  t('136 controllo: righe risolte senza COGS invariate (ce_cogs_mancanti)', /righe risolte senza COGS prima % dopo %/.test(M));
+  t('137 la i accentata dell\'alias e\' in escape U& (file ASCII)', /U&'GIFT CARD Amim\\00EC'/.test(M) && !/[^\x00-\x7F]/.test(M));
+  // Gate 2 del 26-10: lo stack isolato si costruisce da schema.sql, non dalle migrazioni (TEST_INVARIANTS sez. 2)
+  const S = read('supabase/schema.sql');
+  t('138 schema.sql porta lo stesso filtro nelle quattro viste CE (3 sulle righe intere + 1 sul ramo li)',
+    (S.match(/FROM "public"\."shopify_line_items" WHERE \("shopify_line_items"\."codice_norm" IS DISTINCT FROM 'GIFT_CARD'::"text"\)/g) || []).length === 3
+    && /WHERE \("li"\."codice_norm" IS DISTINCT FROM 'GIFT_CARD'::"text"\)\nUNION ALL/.test(S));
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

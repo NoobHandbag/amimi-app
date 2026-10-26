@@ -35,6 +35,12 @@
 // catalogo vinceva sullo SKU: la vendita scalava un codice a -1 mentre shopify-stock (che mappa per SKU) spingeva
 // sul sito un pezzo in piu' del reale. Ora vendite e stock usano la stessa chiave. Blocco PURE:sync-resolver,
 // test `node tests/shopify_sync_resolver.mjs`.
+//
+// 2026-10-26 v9 (migr 0172, CASI_APERTI n.18): una riga gift card (`gift_card: true` nell'ordine REST) va sul codice
+// non-prodotto GIFT_CARD con COGS 0. Prima restava senza codice: orfana per sempre (`shopify_orphan` rosso) e, peggio,
+// contata come ricavo all'acquisto E di nuovo al riscatto (regola owner 13-09: il ricavo si conta solo quando la card
+// viene spesa; le viste CE escludono GIFT_CARD dalla 0172). COGS 0 e non NULL: con NULL la riga accenderebbe
+// `ce_cogs_mancanti` a ogni gift card venduta. Il titolo resta il ripiego (alias 'GIFT CARD Amimì' della 0172).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -58,6 +64,15 @@ function resolveCodiceWith(aliasMap: Map<string, string>, codiceByNorm: Map<stri
     if (codiceByNorm.has(n2)) return codiceByNorm.get(n2)!;
   }
   return null;
+}
+// Codice e COGS di una riga d'ordine (v9). La gift card non passa dal resolver: il flag di Shopify vale piu' del
+// titolo, che puo' cambiare. Una riga che il resolver porta comunque su GIFT_CARD (alias) prende COGS 0 lo stesso.
+const GIFT_CARD = 'GIFT_CARD';
+function rigaCodiceCogs(it: any, resolve: (nm: string, sku?: string) => string | null, cogsByNorm: Map<string, any>): { codice: string | null; cogs: any } {
+  const codice = it?.gift_card === true ? GIFT_CARD : resolve(it?.name ?? it?.title, it?.sku);
+  const cn = codice ? norm(codice) : null;
+  if (cn === GIFT_CARD) return { codice, cogs: 0 };
+  return { codice, cogs: cn ? (cogsByNorm.get(cn) ?? null) : null };
 }
 // ==== PURE:sync-resolver END ====
 async function sha256hex(s: string) {
@@ -257,9 +272,8 @@ Deno.serve(async (req) => {
     };
     const lines = (o.line_items ?? []).map((it: any) => {
       const nm = it.name ?? it.title;
-      const codice = resolveCodice(nm, it.sku);
-      const cn = codice ? norm(codice) : null;
-      return { order_id: o.name, lineitem_name: nm, codice, resolved: !!codice, quantita: Number(it.quantity), price: Number(it.price), cogs_snapshot: cn ? (cogsByNorm.get(cn) ?? null) : null, year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, shopify_line_id: Number(it.id) || null };
+      const { codice, cogs } = rigaCodiceCogs(it, resolveCodice, cogsByNorm);
+      return { order_id: o.name, lineitem_name: nm, codice, resolved: !!codice, quantita: Number(it.quantity), price: Number(it.price), cogs_snapshot: cogs, year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, shopify_line_id: Number(it.id) || null };
     });
     return { order, lines };
   };

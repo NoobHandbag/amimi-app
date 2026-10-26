@@ -45,7 +45,9 @@ t('10 titolo undefined non esplode', r(undefined, undefined) === null);
 
 console.log('\n== il wiring nel sorgente ==');
 t('11 resolveCodice nel giro passa dal blocco puro', /const resolveCodice = \(nm: string, sku\?: string\): string \| null => resolveCodiceWith\(aliasMap, codiceByNorm, nm, sku\);/.test(s));
-t('12 le righe d\'ordine chiamano resolveCodice con lo SKU della riga', /resolveCodice\(nm, it\.sku\)/.test(s));
+// v9 (26-10, gift card): le righe passano da rigaCodiceCogs, che chiama il resolver con titolo e SKU della riga
+// (il comportamento, gift card compresa, e' in tests/shopify_sync_guardie.mjs 119-127)
+t('12 le righe d\'ordine chiamano resolveCodice con lo SKU della riga', /rigaCodiceCogs\(it, resolveCodice, cogsByNorm\)/.test(s) && /resolve\(it\?\.name \?\? it\?\.title, it\?\.sku\)/.test(s));
 const body = s.slice(a, b);
 t('13 nel blocco lo SKU e\' controllato PRIMA dell\'alias', body.indexOf('codiceByNorm.has(ns)') > 0 && body.indexOf('codiceByNorm.has(ns)') < body.indexOf('aliasMap.has(n1)'));
 
