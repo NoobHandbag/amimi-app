@@ -1659,7 +1659,7 @@ Deno.serve(async (req) => {
   let correnteValore: string | null = null;
   const segnaCorrente = async (id: string, threadId: string, dir: 'in' | 'out') => {
     const v = JSON.stringify({ id, thread: threadId, dir, at: new Date().toISOString() });
-    const { error } = await retryOnce(() => sb.from('app_flags').upsert([{ key: 'cs_ingest_corrente', value: v }, { key: 'cs_last_history_id', value: safeHid }], { onConflict: 'key' }));
+    const { error } = await sb.from('app_flags').upsert([{ key: 'cs_ingest_corrente', value: v }, { key: 'cs_last_history_id', value: safeHid }], { onConflict: 'key' });
     if (!error) correnteValore = v;   // a scrittura fallita resta il valore di prima, che chiudiCorrente non deve cercare
   };
   const chiudiCorrente = async () => {
