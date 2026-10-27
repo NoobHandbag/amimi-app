@@ -573,6 +573,33 @@ function stripQuote(t: string): string {
   return t.slice(0, firstMarker(t, QUOTE_MARKERS)).trim().slice(0, 8000);
 }
 
+// v35 (Gate 2 del 27-10): il corpo della notifica Inbox SENZA regex annidate. La forma v7
+// `new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox` aveva tre quantificatori che si contendono gli
+// stessi a capo: "new message from" seguito da qualche centinaio di righe vuote e nessun "Sent via Inbox"
+// costava secondi di CPU (400 a capo = 21,8 s dentro stripQuoted), cioe' lo stesso guasto del 26-10. Qui lo
+// stesso risultato della v7, provato contro la regex vecchia in `tests/cs_redos.mjs`, in tempo lineare:
+// `\n+` goloso, poi il primo "Sent via Inbox" preceduto da soli spazi che contengono almeno un a capo.
+function corpoInbox(s: string): string | null {
+  const a = /new message from[^\n]*\n/i.exec(s);
+  if (!a) return null;
+  const e = a.index + a[0].length - 1;   // l'a capo che chiude la riga della testata
+  let i = e + 1;
+  while (s[i] === '\n') i++;
+  const fine = /sent via inbox/gi;
+  fine.lastIndex = i;
+  let primo = -1;
+  for (let m = fine.exec(s); m; m = fine.exec(s)) {
+    if (primo < 0) primo = m.index;
+    let r = m.index;
+    while (r > i && /\s/.test(s[r - 1])) r--;
+    for (let p = r; p < m.index; p++) if (s[p] === '\n') return s.slice(i, p);
+  }
+  // la v7 tornava indietro sul `\n+` iniziale: con due o piu' a capo dopo la testata e solo spazi fino a
+  // "Sent via Inbox" il risultato era il testo vuoto, non "nessuna notifica"
+  if (primo >= 0 && i - e >= 2 && /^\s*$/.test(s.slice(i, primo))) return '';
+  return null;
+}
+
 // v7: pulizia COMPLETA per body_clean (funzione condivisa in/out, stessa famiglia di stripQuote:
 // stessi QUOTE_MARKERS). In piu' rispetto a stripQuote: marcatore riconosciuto anche a INIZIO
 // corpo (messaggio che e' solo una citazione -> NULL), via le righe quotate '>' residue, via la
@@ -593,8 +620,8 @@ function stripQuoted(t: string, canale?: string): string | null {
   // resta la cosa giusta.
   // Il parametro `canale` resta nella firma per i punti di chiamata, ma non governa piu' questo
   // ramo: una riga non deve cambiare significato perche' qualcuno ha spostato un'etichetta.
-  const inbox = s.match(/new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox/i);
-  if (inbox) s = inbox[1];
+  const inbox = corpoInbox(s);
+  if (inbox !== null) s = inbox;
   // taglio alla prima attribution line (i marcatori agganciano a inizio corpo e a meta' riga: v15)
   s = s.slice(0, firstMarker(s, QUOTE_MARKERS));
   const kept: string[] = [];
@@ -771,10 +798,12 @@ function leggiCorrente(raw: unknown): Corrente | null {
   } catch { return null; }
 }
 // `at` illeggibile conta come morto: il segnaposto c'e' e nessun giro vivo lo sta riscrivendo in modo leggibile.
+// Anche un `at` nel futuro oltre la stessa soglia: un segnaposto "fresco per sempre" fermerebbe ogni giro, perche'
+// davanti a un giro vivo il giro nuovo esce senza fare niente.
 const giroInterrotto = (c: Corrente | null, nowMs: number): boolean => {
   if (!c) return false;
   const t = Date.parse(c.at);
-  return !Number.isFinite(t) || nowMs - t >= CORRENTE_MORTO_DOPO_MS;
+  return !Number.isFinite(t) || Math.abs(nowMs - t) >= CORRENTE_MORTO_DOPO_MS;
 };
 // Due fallimenti sullo stesso messaggio, l'ultimo un giro morto, sono un difetto deterministico (come il 26-10),
 // non un hiccup di rete: severity error subito, senza aspettare l'ora di stalloSeverity.
@@ -1596,11 +1625,18 @@ Deno.serve(async (req) => {
   // una scheda, quindi li' si logga e basta. Se il DB non risponde nemmeno qui, resta transitorio.
   const scavalcaStallo = async (id: string, threadId: string, dir: 'in' | 'out'): Promise<boolean> => {
     const s = (stallo as Stallo | null) ?? contaStallo(null, { id, thread: threadId, dir, err: lastErr }, new Date().toISOString());
+    // v35 (Gate 2): un messaggio gia' entrato non prende il segnaposto, che segnerebbe parse_failed una
+    // conversazione buona. Con la lettura fallita si resta sulla regola anti-perdita della v18.
+    let giaEntrato = false;
     if (dir === 'in') {
-      try { await antiLoss(threadId, id, { motivo: 'stallo', errore: s.err, tentativi: s.n }); }
-      catch (e) { lastErr = 'antiloss: ' + errText(e); stalloCorrente = s; return false; }
+      const { data: gia, error: giaErr } = await retryOnce(() => sb.from('cs_messages').select('id').eq('gmail_message_id', id).limit(1));
+      giaEntrato = !giaErr && (gia ?? []).length > 0;
+      if (!giaEntrato) {
+        try { await antiLoss(threadId, id, { motivo: 'stallo', errore: s.err, tentativi: s.n }); }
+        catch (e) { lastErr = 'antiloss: ' + errText(e); stalloCorrente = { ...s, err: lastErr.slice(0, 300) }; return false; }
+      }
     }
-    await sb.from('cs_events').insert({ conversation_id: await convDi(threadId), azione: 'ingest_failed', chi: 'cs-sync', dettaglio: { message_id: id, thread_id: threadId, direction: dir, errore: s.err, tentativi: s.n, primo_fallimento: s.first_at, scavalcato: true } });
+    await sb.from('cs_events').insert({ conversation_id: await convDi(threadId), azione: 'ingest_failed', chi: 'cs-sync', dettaglio: { message_id: id, thread_id: threadId, direction: dir, errore: s.err, tentativi: s.n, primo_fallimento: s.first_at, scavalcato: true, ...(giaEntrato ? { gia_entrato: true } : {}) } });
     await sb.from('app_flags').delete().eq('key', 'cs_stall_msg');
     stallo = null; stalloCorrente = null; scavalcati++;
     return true;
@@ -1616,36 +1652,47 @@ Deno.serve(async (req) => {
     e === 'done' ? true : e === 'scavalca' ? await scavalcaStallo(id, threadId, dir) : await cinturaStallo(id, threadId, dir);
 
   // v35: il segnaposto del messaggio in lavorazione (vedi PURE:cs-stallo). Una scrittura per messaggio che
-  // arriva al lavoro pesante; si cancella a fine giro su ogni uscita che passa dal ciclo dei messaggi.
-  let correnteScritto = false;
+  // arriva al lavoro pesante, e nella STESSA scrittura il cursore avanza all'ultimo record finito: se il worker
+  // muore, il giro dopo riparte dal messaggio sospetto con tutto il budget di CPU, invece di rifare il pezzo gia'
+  // fatto e morire di nuovo piu' o meno nello stesso punto (Gate 2: la colpa finirebbe sul messaggio sbagliato).
+  // Si cancella a fine giro, solo se e' ancora il proprio (un giro sovrapposto puo' averlo riscritto).
+  let correnteValore: string | null = null;
   const segnaCorrente = async (id: string, threadId: string, dir: 'in' | 'out') => {
-    await sb.from('app_flags').upsert({ key: 'cs_ingest_corrente', value: JSON.stringify({ id, thread: threadId, dir, at: new Date().toISOString() }) }, { onConflict: 'key' });
-    correnteScritto = true;
+    const v = JSON.stringify({ id, thread: threadId, dir, at: new Date().toISOString() });
+    await retryOnce(() => sb.from('app_flags').upsert([{ key: 'cs_ingest_corrente', value: v }, { key: 'cs_last_history_id', value: safeHid }], { onConflict: 'key' }));
+    correnteValore = v;
   };
   const chiudiCorrente = async () => {
-    if (!correnteScritto) return;
-    await sb.from('app_flags').delete().eq('key', 'cs_ingest_corrente');
-    correnteScritto = false;
+    if (correnteValore === null) return;
+    await sb.from('app_flags').delete().eq('key', 'cs_ingest_corrente').eq('value', correnteValore);
+    correnteValore = null;
   };
-  // Il giro precedente e' morto su un messaggio? Conta come un fallimento PRIMA di qualunque lavoro pesante, e la
-  // salute si scrive subito: se muore anche questo giro, resta questa riga e non l'ultimo 'giro ok'. Un segnaposto
-  // fresco (meno di 90 s) e' di un giro ancora vivo, sovrapposto a questo: non si tocca.
+  // Il giro precedente e' morto su un messaggio? Conta come un fallimento PRIMA di qualunque lavoro pesante. Un
+  // segnaposto fresco (meno di 90 s) e' di un giro ancora vivo: questo giro esce senza toccarlo (niente giri
+  // sovrapposti, e un giro morto tardi si giudica al passaggio dopo, non si sovrascrive). Il segnaposto vecchio si
+  // PRENDE con una delete condizionata al suo valore: se due giri lo trovano insieme, lo conta uno solo.
   let interrotto = false;
   const corr = leggiCorrente(flags.cs_ingest_corrente);
-  if (giroInterrotto(corr, Date.now())) {
-    const c = corr as Corrente;
-    const s = contaStallo(stallo, { id: c.id, thread: c.thread, dir: c.dir, err: ERR_INTERROTTO }, new Date().toISOString());
+  if (corr && !giroInterrotto(corr, Date.now())) return json({ ok: true, skipped: 'giro precedente ancora in corso', message_id: corr.id });
+  if (corr) {
+    const { count: preso } = await sb.from('app_flags').delete({ count: 'exact' }).eq('key', 'cs_ingest_corrente').eq('value', flags.cs_ingest_corrente);
+    if (!preso) return json({ ok: true, skipped: 'segnaposto preso da un altro giro' });
+    const s = contaStallo(stallo, { id: corr.id, thread: corr.thread, dir: corr.dir, err: ERR_INTERROTTO }, new Date().toISOString());
     interrotto = true;
-    await segnaStallo(s, c.id, c.thread, c.dir);
-    await sb.from('app_flags').delete().eq('key', 'cs_ingest_corrente');
-    await writeHealth(s.n, `giro precedente interrotto sul messaggio ${s.id} (${s.dir}), tentativo ${s.n} di ${STALL_SKIP_AFTER} (dal ${s.first_at}): ${s.err}`.slice(0, 400), severitaInterruzione(s, Date.now()));
+    await segnaStallo(s, corr.id, corr.thread, corr.dir);
+    // Salute subito solo dal secondo giro morto sullo stesso messaggio (error). Al primo la riga resta com'era:
+    // se i giri continuano a morire su messaggi diversi invecchia, e push-eventi avvisa "posta ferma" a 15 minuti.
+    if (s.n >= 2) await writeHealth(s.n, `giro precedente interrotto sul messaggio ${s.id} (${s.dir}), tentativo ${s.n} di ${STALL_SKIP_AFTER} (dal ${s.first_at}): ${s.err}`.slice(0, 400), severitaInterruzione(s, Date.now()));
   }
 
   let tip = startId, safeHid = startId;
   let pageToken: string | undefined; let pages = 0; let stopped = false;
   do {
     const q = `/history?startHistoryId=${encodeURIComponent(startId)}&historyTypes=messageAdded` + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
-    const h = await gGet(q, token);
+    // v35 (Gate 2): un errore di rete qui lanciava fuori dal giro e lasciava il segnaposto dell'ultimo messaggio
+    // riuscito, contato poi come giro morto. Ora e' un errore di lista come gli altri (ramo !h.ok).
+    let h: { ok: boolean; status: number; j: Record<string, unknown> };
+    try { h = await gGet(q, token); } catch { h = { ok: false, status: 0, j: {} }; }
     if (h.status === 404) {   // historyId scaduto -> re-seed, mai perdere il giro
       await chiudiCorrente();
       const prof = await gGet('/profile', token);

@@ -26,7 +26,7 @@ const blocco = (nome) => {
   return src.slice(a + B.length, b).trim();
 };
 const TMP = `${ROOT}tests/_redos.tmp.ts`;
-writeFileSync(TMP, `${blocco('cs-crop')}\n${blocco('cs-html')}\nexport { extractOrderNumber, stripQuoted, stripQuote, stripHtml, ORDER_PATTERNS };\n`, 'utf8');
+writeFileSync(TMP, `${blocco('cs-crop')}\n${blocco('cs-html')}\nexport { extractOrderNumber, stripQuoted, stripQuote, stripHtml, ORDER_PATTERNS, corpoInbox };\n`, 'utf8');
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra !== '' ? '  <- ' + JSON.stringify(extra).slice(0, 300) : '')); } };
@@ -119,6 +119,36 @@ try {
     'ho ordinato il 23 luglio, pratica n. 2026', 'ordine 2026', 'Re: ordine n.1612 - reso', 'ORDINE NR. 1499', 'order #1605 shipping?'];
   diversi = reali.filter((x) => conVecchie(x) !== M.extractOrderNumber(x));
   t('22 le frasi dei test del crop e altre forme vere: stesso risultato', diversi.length === 0, diversi);
+
+  // Gate 2 del 27-10: la stessa classe di guasto nella notifica di Shopify Inbox. La forma v7 aveva tre
+  // quantificatori sugli stessi a capo: "new message from" + 400 righe vuote = 21,8 s dentro stripQuoted.
+  console.log('\n== la notifica Inbox (corpoInbox, v35) ==');
+  for (const [n, txt] of [
+    ['23', 'New message from Giulia\n' + '\n'.repeat(400) + 'fine'],
+    ['24', 'You received a new message from your online store\n' + '\n'.repeat(20000)],
+    ['25', 'new message from x\n' + '\n \n'.repeat(6000) + 'Sent via Inbox'],
+    ['26', ('new message from x\n\nciao\n').repeat(800)],
+  ]) {
+    m = await misura('stripQuoted', txt, 'chat_notifica');
+    t(`${n} stripQuoted su una notifica Inbox avversaria (${Math.round(m.ms)} ms)`, m.ms < SOGLIA, m);
+  }
+  const INBOX_V7 = /new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox/i;
+  const conV7 = (x) => { const r = x.match(INBOX_V7); return r ? r[1] : null; };
+  // corpus corto (la v7 qui finisce subito): tutte le combinazioni di pezzi che la regex guarda
+  const pezzi = ['new message from A', 'NEW MESSAGE FROM b', 'Sent via Inbox', 'sent VIA inbox', '\n', '\n\n', ' ', '\t', ' \n', 'ciao', 'x y'];
+  diversi = []; let n3 = 0;
+  const giro = (pref, prof) => {
+    if (prof === 0) return;
+    for (const p of pezzi) {
+      const x = pref + p; n3++;
+      const a = conV7(x), b = M.corpoInbox(x);
+      if (a !== b) diversi.push({ x, v7: a, ora: b });
+      giro(x, prof - 1);
+    }
+  };
+  giro('', 5);
+  t(`27 ${n3} combinazioni corte: corpoInbox restituisce esattamente cio' che catturava la v7 (o null)`, diversi.length === 0, diversi.slice(0, 3));
+  t('28 il caso tipico: messaggio della chat estratto', M.corpoInbox('New message from Giulia\n\nCiao, la borsa e\' disponibile?\n\nSent via Inbox') === 'Ciao, la borsa e\' disponibile?');
 } finally {
   try { unlinkSync(TMP); } catch { /* niente */ }
 }

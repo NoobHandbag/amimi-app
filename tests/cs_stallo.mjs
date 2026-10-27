@@ -91,6 +91,8 @@ const lc = leggiCorrente(JSON.stringify({ id: 'X', thread: 'T', dir: 'boh', at: 
 t('29 andata e ritorno, direzione ignota -> in', lc && lc.id === 'X' && lc.thread === 'T' && lc.dir === 'in' && lc.at === T0, lc);
 t('30 ERR_INTERROTTO sta nei 300 caratteri di contaStallo (il confronto esatto di daScavalcarePrimaDiProvare regge)',
   contaStallo(null, { id: 'X', thread: 'X', dir: 'in', err: ERR_INTERROTTO }, T0).err === ERR_INTERROTTO);
+t('30b `at` nel futuro oltre 90 s = morto (un segnaposto fresco per sempre fermerebbe ogni giro); pochi secondi di sfasamento = vivo',
+  giroInterrotto(corr(new Date(T0ms + 3600000).toISOString()), T0ms) === true && giroInterrotto(corr(new Date(T0ms + 5000).toISOString()), T0ms) === false);
 
 console.log('\n== il caso del 26-10 rigiocato: n=1 da un 400 di Gmail, poi solo giri morti ==');
 let inc = { id: 'X', thread: 'X', dir: 'in', n: 1, first_at: T0, err: 'gmail_get 400: {}' };   // cs_stall_msg come in produzione
@@ -121,6 +123,25 @@ const chiusure = (giro.match(/await chiudiCorrente\(\);/g) || []).length;
 t('40 il giro cancella il segnaposto sulle due uscite anticipate e prima della salute finale', chiusure === 3, chiusure);
 t('41 il giro morto si riconosce PRIMA del ciclo dei messaggi', s.indexOf('giroInterrotto(corr') > 0 && s.indexOf('giroInterrotto(corr') < s.indexOf('let tip = startId'));
 t('42 il giro legge il segnaposto insieme agli altri flag', /in\('key', \[[^\]]*'cs_ingest_corrente'/.test(s));
+// Gate 2 del 27-10 (revisore indipendente): i punti che il cablaggio deve tenere, uno per finding.
+t('43 lo scavalco si decide PRIMA di scrivere il segnaposto (in e out)',
+  pm.indexOf('daScavalcarePrimaDiProvare(') > 0 && pm.indexOf('daScavalcarePrimaDiProvare(') < pm.indexOf('segnaCorrente(')
+  && po.indexOf('daScavalcarePrimaDiProvare(') > 0 && po.indexOf('daScavalcarePrimaDiProvare(') < po.indexOf('segnaCorrente('));
+const sc = corpo('const segnaCorrente = async', 'const chiudiCorrente');
+t('44 A1: il segnaposto e il cursore all\'ultimo record finito si scrivono nella STESSA upsert',
+  /upsert\(\[\{ key: 'cs_ingest_corrente', value: v \}, \{ key: 'cs_last_history_id', value: safeHid \}\]/.test(sc), sc.slice(0, 300));
+const rilev = corpo('const corr = leggiCorrente(', 'let tip = startId');
+t('45 B1: segnaposto fresco = il giro esce senza toccarlo (niente sovrascrittura, niente giri sovrapposti)',
+  /if \(corr && !giroInterrotto\(corr, Date\.now\(\)\)\) return json\(/.test(rilev));
+t('46 C2: il segnaposto vecchio si prende con una delete condizionata al valore letto, e conta solo chi lo prende',
+  /delete\(\{ count: 'exact' \}\)\.eq\('key', 'cs_ingest_corrente'\)\.eq\('value', flags\.cs_ingest_corrente\)/.test(rilev)
+  && rilev.indexOf('if (!preso) return') > 0 && rilev.indexOf('if (!preso) return') < rilev.indexOf('contaStallo('));
+t('47 B2: la salute si scrive al rilevamento solo dal secondo giro morto (al primo la riga invecchia e la push "ferma" resta possibile)',
+  /if \(s\.n >= 2\) await writeHealth\(/.test(rilev) && (rilev.match(/writeHealth\(/g) || []).length === 1);
+t('48 C2: chiudiCorrente cancella solo il PROPRIO segnaposto', /delete\(\)\.eq\('key', 'cs_ingest_corrente'\)\.eq\('value', correnteValore\)/.test(corpo('const chiudiCorrente', 'let interrotto')));
+const scav = corpo('const scavalcaStallo = async', 'const cinturaStallo');
+t('49 A1: un messaggio gia\' entrato non prende il segnaposto parse_failed', scav.indexOf("from('cs_messages')") > 0 && scav.indexOf("from('cs_messages')") < scav.indexOf('antiLoss(') && /if \(!giaEntrato\)/.test(scav));
+t('50 C1: il fetch delle pagine di history non lancia fuori dal giro', /try \{ h = await gGet\(q, token\); \} catch \{ h = \{ ok: false/.test(giro));
 
 console.log(`\n${ok}/${ok + ko} verdi`);
 if (ko) process.exit(1);
