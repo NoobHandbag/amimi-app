@@ -213,13 +213,17 @@ non entrava piu' nel tool.
 |---|---|---|
 | **Causa chiusa** | `sanitizeRow` in cs-sync (blocco `PURE:cs-jsonsafe`), su ogni scrittura verso `cs_conversations`/`cs_messages` | un surrogato UTF-16 spaiato (emoji o lettera "matematica" Unicode tagliata a meta' da uno slice) diventa U+FFFD invece di far rifiutare il payload a PostgREST ("Empty or invalid json"); il NUL resta coperto |
 | **Cintura** | `cinturaStallo` in cs-sync (blocco `PURE:cs-stallo`) + `app_flags.cs_stall_msg` | al 5o giro consecutivo fermo sullo STESSO messaggio, placeholder `parse_failed` + evento `ingest_failed` e il record si supera; mai scavalcato in silenzio |
+| **Giro morto (dal 27-10, v35)** | `segnaCorrente` prima del lavoro pesante + `app_flags.cs_ingest_corrente`; riconoscimento a inizio giro (`giroInterrotto`) | un worker ucciso dal limite di CPU/memoria/tempo non arriva alla cintura: il segnaposto si scrive insieme al cursore all'ultimo record finito; il giro dopo trova il segnaposto (piu' vecchio di 90 s; se e' piu' fresco esce senza toccarlo), lo prende con una delete condizionata, lo conta come fallimento sullo stesso contatore, riparte dal messaggio sospetto, scrive SUBITO `health_log` dal secondo giro morto (error) e al 5o scavalca senza riprovare. Il 26-10 ~250 giri sono morti cosi' con il contatore fermo a 1 |
+| **Regex lineari (dal 27-10, v35)** | `ORDER_PATTERNS`, `stripHtml` (blocco `PURE:cs-html`), `stripQuoted`, `corpoInbox` | mai due quantificatori sugli spazi di fila separati solo da parti opzionali: su "ordine" + 2.100 spazi la forma v15 impiegava 7 s di CPU (limite 2 s) |
 | **Diagnosi** | `cs_events` `ingest_error` (prima occorrenza) + label di `health_log` `cs_sync` | l'errore vero e' leggibile a DB, non scartato nel catch |
-| **Sveglia** | `health_log` `cs_sync` severity `error` oltre 1h di stallo | un warn perenne non ha svegliato nessuno per 11 giorni |
-| **Test** | `tests/cs_stallo.mjs` (23 casi), `tests/cs_jsonsafe.mjs` (16 casi) | funzioni pure ritagliate dal sorgente; meta' dei casi sono la guardia opposta (un hiccup vero, con id diversi, non scavalca mai) |
+| **Sveglia** | `health_log` `cs_sync` severity `error` oltre 1h di stallo, o dal secondo giro morto sullo stesso messaggio | un warn perenne non ha svegliato nessuno per 11 giorni |
+| **Test** | `tests/cs_stallo.mjs` (51 casi, dal 27-10 anche giro morto e cablaggio nel sorgente), `tests/cs_jsonsafe.mjs` (16 casi), `tests/cs_redos.mjs` (28 casi, ogni caso in un worker con tempo massimo: una regex che torna cubica fa fallire il test invece di appenderlo) | funzioni pure ritagliate dal sorgente; meta' dei casi sono la guardia opposta (un hiccup vero, con id diversi, non scavalca mai; le regex nuove riconoscono gli stessi numeri d'ordine delle vecchie su 23.760 combinazioni, `corpoInbox` estrae lo stesso testo della regex v7 su 177.155) |
 
 **Come si legge uno stallo in corso:** `app_flags.cs_stall_msg` presente = un messaggio sta fallendo
 da `n` giri (`first_at` dice da quando); `cs_events` con `azione='ingest_error'` porta l'errore e
 `message_id`/`thread_id` per aprirlo in Gmail. Flag assente = nessuno stallo. Non va scritta a mano.
+`app_flags.cs_ingest_corrente` presente fra un giro e l'altro (piu' vecchia di 90 s) = l'ultimo giro e' morto
+su quel messaggio; il giro dopo la consuma da solo. Nemmeno questa va scritta a mano.
 
 ## 13. Un bot "esperto e-commerce" non e' un cliente (dal 2026-09-13)
 
