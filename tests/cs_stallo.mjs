@@ -18,9 +18,10 @@ const s = readFileSync(`${ROOT}supabase/functions/cs-sync/index.ts`, 'utf8').rep
 const a = s.indexOf(BEGIN), b = s.indexOf(END);
 if (a < 0 || b < 0) { console.error('marcatori PURE:cs-stallo non trovati in cs-sync'); process.exit(1); }
 const TMP = `${ROOT}tests/_stallo.tmp.ts`;
-writeFileSync(TMP, `${s.slice(a + BEGIN.length, b).trim()}\nexport { STALL_SKIP_AFTER, STALL_ERROR_AFTER_MS, contaStallo, stalloDaScavalcare, stalloSeverity, leggiStallo };\n`, 'utf8');
+writeFileSync(TMP, `${s.slice(a + BEGIN.length, b).trim()}\nexport { STALL_SKIP_AFTER, STALL_ERROR_AFTER_MS, contaStallo, stalloDaScavalcare, stalloSeverity, leggiStallo, CORRENTE_MORTO_DOPO_MS, ERR_INTERROTTO, leggiCorrente, giroInterrotto, severitaInterruzione, daScavalcarePrimaDiProvare };\n`, 'utf8');
 let STALL_SKIP_AFTER, STALL_ERROR_AFTER_MS, contaStallo, stalloDaScavalcare, stalloSeverity, leggiStallo;
-try { ({ STALL_SKIP_AFTER, STALL_ERROR_AFTER_MS, contaStallo, stalloDaScavalcare, stalloSeverity, leggiStallo } = await import(pathToFileURL(TMP).href)); }
+let CORRENTE_MORTO_DOPO_MS, ERR_INTERROTTO, leggiCorrente, giroInterrotto, severitaInterruzione, daScavalcarePrimaDiProvare;
+try { ({ STALL_SKIP_AFTER, STALL_ERROR_AFTER_MS, contaStallo, stalloDaScavalcare, stalloSeverity, leggiStallo, CORRENTE_MORTO_DOPO_MS, ERR_INTERROTTO, leggiCorrente, giroInterrotto, severitaInterruzione, daScavalcarePrimaDiProvare } = await import(pathToFileURL(TMP).href)); }
 finally { try { unlinkSync(TMP); } catch { /* niente */ } }
 
 let ok = 0, ko = 0;
@@ -75,6 +76,51 @@ t('21 andata e ritorno: cio\' che si scrive si rilegge uguale', letto && letto.i
 const strano = leggiStallo('{"id":"Z","n":"abc","dir":"boh"}');
 t('22 n non numerico -> 1, direzione ignota -> in', strano.n === 1 && strano.dir === 'in', strano);
 t('23 ripartire dal flag riletto conta come continuare lo stesso stallo', contaStallo(letto, msg('A'), dopo(4)).n === 3);
+
+// v35 (incidente del 26-10): il worker ucciso dal limite di CPU non arrivava mai a cinturaStallo. ~250 giri morti
+// sullo stesso messaggio, contatore fermo a n=1, salute ferma all'ultimo warn. Qui la parte pura del rimedio.
+console.log('\n== il giro morto (v35): segnaposto del messaggio in lavorazione ==');
+const T0ms = Date.parse(T0);
+const corr = (at) => ({ id: 'X', thread: 'X', dir: 'in', at });
+t('24 nessun segnaposto -> nessun giro morto', giroInterrotto(null, T0ms) === false);
+t('25 segnaposto fresco (30 s) = giro ancora vivo e sovrapposto: non si conta', giroInterrotto(corr(new Date(T0ms - 30000).toISOString()), T0ms) === false);
+t('26 segnaposto di 90 s = giro morto (il cron passa ogni 2 minuti)', CORRENTE_MORTO_DOPO_MS === 90000 && giroInterrotto(corr(new Date(T0ms - 90000).toISOString()), T0ms) === true);
+t('27 `at` illeggibile = morto (nessun giro vivo lo riscrive cosi\')', giroInterrotto(corr('boh'), T0ms) === true);
+t('28 lettura del segnaposto tollerante: assente, rotto o senza id -> null', leggiCorrente(undefined) === null && leggiCorrente('{x') === null && leggiCorrente('{"at":"x"}') === null);
+const lc = leggiCorrente(JSON.stringify({ id: 'X', thread: 'T', dir: 'boh', at: T0 }));
+t('29 andata e ritorno, direzione ignota -> in', lc && lc.id === 'X' && lc.thread === 'T' && lc.dir === 'in' && lc.at === T0, lc);
+t('30 ERR_INTERROTTO sta nei 300 caratteri di contaStallo (il confronto esatto di daScavalcarePrimaDiProvare regge)',
+  contaStallo(null, { id: 'X', thread: 'X', dir: 'in', err: ERR_INTERROTTO }, T0).err === ERR_INTERROTTO);
+
+console.log('\n== il caso del 26-10 rigiocato: n=1 da un 400 di Gmail, poi solo giri morti ==');
+let inc = { id: 'X', thread: 'X', dir: 'in', n: 1, first_at: T0, err: 'gmail_get 400: {}' };   // cs_stall_msg come in produzione
+const morto = (prev, min) => contaStallo(prev, { id: 'X', thread: 'X', dir: 'in', err: ERR_INTERROTTO }, dopo(min));
+t('31 con n=1 da errore catturato si riprova (v18), non si scavalca prima', daScavalcarePrimaDiProvare(inc, 'X') === false);
+inc = morto(inc, 2);
+t('32 primo giro morto riconosciuto: n=2, first_at fermo, severity error subito', inc.n === 2 && inc.first_at === T0 && severitaInterruzione(inc, Date.parse(dopo(2))) === 'error', inc);
+inc = morto(morto(inc, 4), 6);
+t('33 a n=4 si riprova ancora', inc.n === 4 && daScavalcarePrimaDiProvare(inc, 'X') === false);
+inc = morto(inc, 8);
+t('34 a n=5 giri morti si scavalca PRIMA di riprovare (riprovare = morire ancora)', inc.n === STALL_SKIP_AFTER && daScavalcarePrimaDiProvare(inc, 'X') === true);
+t('35 ma solo per QUEL messaggio', daScavalcarePrimaDiProvare(inc, 'Y') === false && daScavalcarePrimaDiProvare(null, 'X') === false);
+t('36 se l\'ultimo fallimento e\' un errore catturato si riprova come nella v18, anche a soglia',
+  daScavalcarePrimaDiProvare({ ...inc, err: 'db_upsert_in: timeout' }, 'X') === false);
+t('37 un solo giro morto da fresco resta warn (puo\' essere un picco isolato del worker)',
+  severitaInterruzione(contaStallo(null, { id: 'Z', thread: 'Z', dir: 'in', err: ERR_INTERROTTO }, T0), T0ms + 60000) === 'warn');
+
+// Il cablaggio: le funzioni pure non servono se il segnaposto si scrive DOPO il lavoro pesante o resta in giro.
+console.log('\n== cablaggio nel sorgente ==');
+const corpo = (start, stop) => { const i = s.indexOf(start); const j = s.indexOf(stop, i + 1); return i < 0 || j < 0 ? '' : s.slice(i, j); };
+const pm = corpo('const processMessage = async', 'safeParse(mg.j');
+t('38 processMessage: segnaposto prima del fetch Gmail e del parse', pm.indexOf('segnaCorrente(') > 0 && pm.indexOf('segnaCorrente(') < pm.indexOf('gGet('));
+const po = corpo('const processOutbound = async', 'extractBody(msg.payload)');
+t('39 processOutbound: segnaposto dopo lo scarto dei thread non tracciati e prima del fetch Gmail',
+  po.indexOf("conv.canale === 'rumore'") > 0 && po.indexOf('segnaCorrente(') > po.indexOf("conv.canale === 'rumore'") && po.indexOf('segnaCorrente(') < po.indexOf('gGet('));
+const giro = corpo('let tip = startId', 'await writeHealth(\n    stalled');
+const chiusure = (giro.match(/await chiudiCorrente\(\);/g) || []).length;
+t('40 il giro cancella il segnaposto sulle due uscite anticipate e prima della salute finale', chiusure === 3, chiusure);
+t('41 il giro morto si riconosce PRIMA del ciclo dei messaggi', s.indexOf('giroInterrotto(corr') > 0 && s.indexOf('giroInterrotto(corr') < s.indexOf('let tip = startId'));
+t('42 il giro legge il segnaposto insieme agli altri flag', /in\('key', \[[^\]]*'cs_ingest_corrente'/.test(s));
 
 console.log(`\n${ok}/${ok + ko} verdi`);
 if (ko) process.exit(1);
