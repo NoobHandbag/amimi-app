@@ -1,4 +1,13 @@
 // cs-sync v15 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v35 (2026-10-27, incidente del 26-10): dalle 12:20 UTC ~250 giri di fila sono morti con 546
+//   WORKER_RESOURCE_LIMIT ("CPU Time exceeded") e la posta di info@ non e' piu' entrata. Causa: la seconda
+//   regex di ORDER_PATTERNS aveva tre `\s*` di fila separati da parti opzionali; su una risposta di un
+//   fornitore (helpdesk) con "Stato dell'ordine" seguito da ~2.100 caratteri di spazi, tab e a capo il
+//   backtracking era cubico (7 s misurati contro un limite di 2 s di CPU). Riscritte le due regex con un
+//   solo `\s*` per tratto (stesso linguaggio, lineari), e lineare anche `[ \t]+\n` di stripHtml/stripQuoted.
+//   La cintura v18 non scattava perche' contava i fallimenti solo a giro finito: ora il messaggio in
+//   lavorazione si segna PRIMA del lavoro pesante (`app_flags.cs_ingest_corrente`), il giro dopo riconosce
+//   il giro morto e lo conta, e la salute si scrive subito. Test: `tests/cs_redos.mjs`, `tests/cs_stallo.mjs`.
 // v20 (2026-09-14, audit gate B21): setStatoAuto scartava l'errore della lettura di stato e tornava false in
 //   silenzio: su un 504 la conversazione chiusa 'auto' non veniva riaperta e la replica del cliente restava
 //   'fatto' per sempre. Ora retryOnce e, se la lettura fallisce, una riga cs_events 'stato_auto_read_failed'.
@@ -214,14 +223,18 @@ function findPart(part: Part | undefined, mime: string): string | null {
   for (const p of part.parts ?? []) { const r = findPart(p, mime); if (r) return r; }
   return null;
 }
+// ==== PURE:cs-html BEGIN ====
+// v35: `(?<![ \t])` fa partire il match solo all'inizio di una corsa di spazi. Senza, `[ \t]+\n` riprova da
+// ogni spazio della corsa: quadratico, e qui gira sull'HTML INTERO, prima di qualunque taglio a BODY_MAX.
 function stripHtml(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n').replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
     .replace(/&#39;|&apos;/gi, "'").replace(/&quot;/gi, '"')
-    .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim();
+    .replace(/(?<![ \t])[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim();
 }
+// ==== PURE:cs-html END ====
 function extractBody(payload: GMsg['payload']): string {
   if (!payload) return '';
   const plain = findPart(payload as Part, 'text/plain');
@@ -447,10 +460,15 @@ const nomeDalModulo = (ff: Record<string, string> | null): string | null => {
 // c'e' " del 23 luglio...", quindi non agganciava niente e la conversazione restava senza numero.
 // I marcatori sono in ordine di esplicitezza e vince il primo che aggancia, cosi' in "il mio CAP e'
 // n. 20152 e l'ordine #1538" il cancelletto batte il "n.".
+// v35: MAI due quantificatori sugli spazi uno dopo l'altro con solo parti opzionali in mezzo. La forma
+// v15 `ordine\s*(?:n.)?\s*#?\s*(\d...)` su "ordine" + migliaia di spazi senza cifre dopo provava ogni
+// modo di dividere gli spazi fra i tre `\s*` (cubico) e il 26-10 ha fatto morire il worker per CPU a
+// ogni giro. Qui ogni `\s*` e' seguito da un pezzo OBBLIGATORIO del proprio gruppo: stesso linguaggio
+// riconosciuto (provato in `tests/cs_redos.mjs` contro la forma vecchia), tempo lineare.
 const ORDER_PATTERNS: RegExp[] = [
-  /#\s*(\d{3,6})\b/,                                                              // #1538
-  /\b(?:ordine|ordinazione|order)\s*(?:numero|nr\.?|n[°.])?\s*#?\s*(\d{3,6})\b/i, // ordine 1538 / ordine n. 1538
-  /\b(?:numero|nr\.?|n[°.])\s*#?\s*(\d{3,6})\b/i,                                 // n. 1538 (senza la parola ordine)
+  /#\s*(\d{3,6})\b/,                                                                      // #1538
+  /\b(?:ordine|ordinazione|order)(?:\s*(?:numero|nr\.?|n[°.]))?\s*(?:#\s*)?(\d{3,6})\b/i, // ordine 1538 / ordine n. 1538
+  /\b(?:numero|nr\.?|n[°.])\s*(?:#\s*)?(\d{3,6})\b/i,                                     // n. 1538 (senza la parola ordine)
 ];
 function extractOrderNumber(text: string): number | null {
   for (let i = 0; i < ORDER_PATTERNS.length; i++) {
@@ -555,6 +573,33 @@ function stripQuote(t: string): string {
   return t.slice(0, firstMarker(t, QUOTE_MARKERS)).trim().slice(0, 8000);
 }
 
+// v35 (Gate 2 del 27-10): il corpo della notifica Inbox SENZA regex annidate. La forma v7
+// `new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox` aveva tre quantificatori che si contendono gli
+// stessi a capo: "new message from" seguito da qualche centinaio di righe vuote e nessun "Sent via Inbox"
+// costava secondi di CPU (400 a capo = 21,8 s dentro stripQuoted), cioe' lo stesso guasto del 26-10. Qui lo
+// stesso risultato della v7, provato contro la regex vecchia in `tests/cs_redos.mjs`, in tempo lineare:
+// `\n+` goloso, poi il primo "Sent via Inbox" preceduto da soli spazi che contengono almeno un a capo.
+function corpoInbox(s: string): string | null {
+  const a = /new message from[^\n]*\n/i.exec(s);
+  if (!a) return null;
+  const e = a.index + a[0].length - 1;   // l'a capo che chiude la riga della testata
+  let i = e + 1;
+  while (s[i] === '\n') i++;
+  const fine = /sent via inbox/gi;
+  fine.lastIndex = i;
+  let primo = -1;
+  for (let m = fine.exec(s); m; m = fine.exec(s)) {
+    if (primo < 0) primo = m.index;
+    let r = m.index;
+    while (r > i && /\s/.test(s[r - 1])) r--;
+    for (let p = r; p < m.index; p++) if (s[p] === '\n') return s.slice(i, p);
+  }
+  // la v7 tornava indietro sul `\n+` iniziale: con due o piu' a capo dopo la testata e solo spazi fino a
+  // "Sent via Inbox" il risultato era il testo vuoto, non "nessuna notifica"
+  if (primo >= 0 && i - e >= 2 && /^\s*$/.test(s.slice(i, primo))) return '';
+  return null;
+}
+
 // v7: pulizia COMPLETA per body_clean (funzione condivisa in/out, stessa famiglia di stripQuote:
 // stessi QUOTE_MARKERS). In piu' rispetto a stripQuote: marcatore riconosciuto anche a INIZIO
 // corpo (messaggio che e' solo una citazione -> NULL), via le righe quotate '>' residue, via la
@@ -575,8 +620,8 @@ function stripQuoted(t: string, canale?: string): string | null {
   // resta la cosa giusta.
   // Il parametro `canale` resta nella firma per i punti di chiamata, ma non governa piu' questo
   // ramo: una riga non deve cambiare significato perche' qualcuno ha spostato un'etichetta.
-  const inbox = s.match(/new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox/i);
-  if (inbox) s = inbox[1];
+  const inbox = corpoInbox(s);
+  if (inbox !== null) s = inbox;
   // taglio alla prima attribution line (i marcatori agganciano a inizio corpo e a meta' riga: v15)
   s = s.slice(0, firstMarker(s, QUOTE_MARKERS));
   const kept: string[] = [];
@@ -587,7 +632,7 @@ function stripQuoted(t: string, canale?: string): string | null {
   // v15: la firma si taglia DOPO aver tolto le righe quotate, sulla stringa risultante
   s = kept.join('\n');
   s = dropAsteriskTail(s.slice(0, firstMarker(s, SIG_MARKERS)));
-  s = s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 8000);
+  s = s.replace(/(?<![ \t])[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 8000);   // v35: lineare, vedi stripHtml
   // v8: stampo del modulo del sito: via testa (campi) e coda (legalese), restano le parole della
   // cliente. DOPO il taglio citazioni: una NOSTRA risposta che quota il modulo ha gia' perso il
   // quotato qui sopra, quindi il wrapper non c'e' piu' e questo passo non la tocca.
@@ -736,6 +781,37 @@ function leggiStallo(raw: unknown): Stallo | null {
     return { id: o.id, thread: String(o.thread ?? ''), dir: o.dir === 'out' ? 'out' : 'in', n: Math.max(1, Number(o.n) || 1), first_at: String(o.first_at ?? ''), err: String(o.err ?? '') };
   } catch { return null; }
 }
+// v35 (2026-10-27): il giro MORTO. La cintura qui sopra conta un fallimento solo quando il giro arriva a
+// `cinturaStallo`; un worker ucciso dal limite di CPU non ci arriva mai, e nemmeno a `writeHealth`. Il 26-10
+// ~250 giri sono morti sullo stesso messaggio con `cs_stall_msg` fermo a n=1. Ora prima del lavoro pesante su
+// un messaggio si scrive `app_flags.cs_ingest_corrente` ({id, thread, dir, at}), e a fine giro si cancella.
+// Se il giro dopo lo trova ancora li' e piu' vecchio di CORRENTE_MORTO_DOPO_MS, il giro precedente e' morto
+// su quel messaggio: conta come un fallimento sullo STESSO contatore e con la STESSA soglia.
+const CORRENTE_MORTO_DOPO_MS = 90 * 1000;   // un giro vivo riscrive `at` a ogni messaggio; il cron passa ogni 2 minuti
+const ERR_INTERROTTO = 'giro interrotto mentre elaborava questo messaggio (limite di CPU, memoria o tempo del worker), nessun errore catturabile';
+type Corrente = { id: string; thread: string; dir: 'in' | 'out'; at: string };
+function leggiCorrente(raw: unknown): Corrente | null {
+  try {
+    const o = JSON.parse(String(raw ?? '')) as Partial<Corrente> | null;
+    if (!o || typeof o.id !== 'string' || !o.id) return null;
+    return { id: o.id, thread: String(o.thread ?? ''), dir: o.dir === 'out' ? 'out' : 'in', at: String(o.at ?? '') };
+  } catch { return null; }
+}
+// `at` illeggibile conta come morto: il segnaposto c'e' e nessun giro vivo lo sta riscrivendo in modo leggibile.
+// Anche un `at` nel futuro oltre la stessa soglia: un segnaposto "fresco per sempre" fermerebbe ogni giro, perche'
+// davanti a un giro vivo il giro nuovo esce senza fare niente.
+const giroInterrotto = (c: Corrente | null, nowMs: number): boolean => {
+  if (!c) return false;
+  const t = Date.parse(c.at);
+  return !Number.isFinite(t) || Math.abs(nowMs - t) >= CORRENTE_MORTO_DOPO_MS;
+};
+// Due fallimenti sullo stesso messaggio, l'ultimo un giro morto, sono un difetto deterministico (come il 26-10),
+// non un hiccup di rete: severity error subito, senza aspettare l'ora di stalloSeverity.
+const severitaInterruzione = (s: Stallo, nowMs: number): 'warn' | 'error' => (s.n >= 2 ? 'error' : stalloSeverity(s, nowMs));
+// Dopo STALL_SKIP_AFTER giri MORTI sullo stesso messaggio si scavalca senza riprovarlo: riprovare vuol dire morire
+// ancora. Se l'ultimo fallimento e' invece un errore catturato, si riprova come nella v18 (puo' essere passato).
+const daScavalcarePrimaDiProvare = (s: Stallo | null, id: string): boolean =>
+  s !== null && s.id === id && s.err === ERR_INTERROTTO && stalloDaScavalcare(s);
 // ==== PURE:cs-stallo END ====
 
 Deno.serve(async (req) => {
@@ -750,7 +826,7 @@ Deno.serve(async (req) => {
   if (action !== 'poll' && action !== 'backfill_out' && action !== 'backfill_clean' && action !== 'backfill_stato' && action !== 'backfill_replyto' && action !== 'backfill_snippet' && action !== 'backfill_order_number' && action !== 'reapply_noise' && action !== 'reapply_spam' && action !== 'chat_autoclose') return json({ error: 'azione sconosciuta: ' + action }, 422);
 
   const flags: Record<string, string> = {};
-  const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders', 'cs_stall_msg', 'cs_reopen_skip_closure', 'cs_chat_autoclose_days']);
+  const { data: rows } = await sb.from('app_flags').select('key,value').in('key', ['cs_enabled', 'cs_last_history_id', 'cs_gmail_sa_key', 'cs_noise_senders', 'cs_stall_msg', 'cs_ingest_corrente', 'cs_reopen_skip_closure', 'cs_chat_autoclose_days']);
   for (const r of rows ?? []) flags[r.key] = r.value ?? '';
 
   const enabled = flags.cs_enabled === 'true';
@@ -1005,7 +1081,7 @@ Deno.serve(async (req) => {
 
   // v6: ingest di un messaggio INVIATO. SOLO su thread gia' tracciato e non-rumore: un out non
   // crea mai una conversazione (fornitori/banca/commercialista restano fuori, design 8.1).
-  const processOutbound = async (id: string, threadId: string): Promise<'done' | 'transient'> => {
+  const processOutbound = async (id: string, threadId: string): Promise<'done' | 'transient' | 'scavalca'> => {
     let conv: { id: string; canale: string; last_msg_at: string | null; customer_email?: string | null } | null = null;
     try {
       // 2026-09-13 (sweep incidente doppioni): lettura fallita = "thread non tracciato" = 'done', e il
@@ -1016,6 +1092,9 @@ Deno.serve(async (req) => {
       conv = (data as typeof conv) ?? null;
     } catch (e) { lastErr = 'db_conv_out: ' + errText(e); return 'transient'; }
     if (!conv || conv.canale === 'rumore') return 'done';
+    // v35: da qui in poi c'e' il lavoro pesante (fetch, parse, crop): il messaggio si segna prima
+    if (daScavalcarePrimaDiProvare(stallo, id)) return 'scavalca';
+    await segnaCorrente(id, threadId, 'out');
     let mg: { ok: boolean; status: number; j: Record<string, unknown> };
     try { mg = await gGet(`/messages/${id}?format=full`, token); } catch (e) { lastErr = 'gmail_fetch_out: ' + errText(e); return 'transient'; }
     if (mg.status === 404) return 'done';
@@ -1487,7 +1566,10 @@ Deno.serve(async (req) => {
 
   // 'done' = record avanzabile (ingerito / dup benigno / rimosso da Gmail / parse_failed gestito);
   // 'transient' = errore recuperabile (5xx/429/rete/DB) -> NON avanzare il cursore, si riprova.
-  const processMessage = async (id: string, threadId: string): Promise<'done' | 'transient'> => {
+  const processMessage = async (id: string, threadId: string): Promise<'done' | 'transient' | 'scavalca'> => {
+    // v35: il messaggio si segna PRIMA del fetch e del parse: se il worker muore qui dentro, il giro dopo lo sa
+    if (daScavalcarePrimaDiProvare(stallo, id)) return 'scavalca';
+    await segnaCorrente(id, threadId, 'in');
     let mg: { ok: boolean; status: number; j: Record<string, unknown> };
     try { mg = await gGet(`/messages/${id}?format=full`, token); } catch (e) { lastErr = 'gmail_fetch: ' + errText(e); return 'transient'; }
     if (mg.status === 404) return 'done';   // messaggio rimosso da Gmail: niente da ingerire
@@ -1530,34 +1612,89 @@ Deno.serve(async (req) => {
   // due minuti), e alla soglia scavalca con placeholder. Ritorna true se il record puo' avanzare.
   let stallo: Stallo | null = leggiStallo(flags.cs_stall_msg);
   let stalloCorrente: Stallo | null = null;
-  const cinturaStallo = async (id: string, threadId: string, dir: 'in' | 'out'): Promise<boolean> => {
-    const s = contaStallo(stallo, { id, thread: threadId, dir, err: lastErr }, new Date().toISOString());
+  const convDi = async (threadId: string) => (await sb.from('cs_conversations').select('id').eq('gmail_thread_id', threadId).maybeSingle()).data?.id ?? null;
+  const segnaStallo = async (s: Stallo, id: string, threadId: string, dir: 'in' | 'out') => {
     stallo = s; stalloCorrente = s;
     await sb.from('app_flags').upsert({ key: 'cs_stall_msg', value: JSON.stringify(s) }, { onConflict: 'key' });
-    const convDi = async () => (await sb.from('cs_conversations').select('id').eq('gmail_thread_id', threadId).maybeSingle()).data?.id ?? null;
     if (s.n === 1) {
-      await sb.from('cs_events').insert({ conversation_id: await convDi(), azione: 'ingest_error', chi: 'cs-sync', dettaglio: { message_id: id, thread_id: threadId, direction: dir, errore: s.err, tentativo: s.n } });
+      await sb.from('cs_events').insert({ conversation_id: await convDi(threadId), azione: 'ingest_error', chi: 'cs-sync', dettaglio: { message_id: id, thread_id: threadId, direction: dir, errore: s.err, tentativo: s.n } });
     }
-    if (!stalloDaScavalcare(s)) return false;
-    // Soglia superata: non e' un hiccup. Regola anti-perdita: la posta in ingresso compare comunque
-    // come conversazione parse_failed (id Gmail conservato, si apre da Gmail); un out non crea mai
-    // una scheda, quindi li' si logga e basta. Se il DB non risponde nemmeno qui, resta transitorio.
+  };
+  // Soglia superata: non e' un hiccup. Regola anti-perdita: la posta in ingresso compare comunque
+  // come conversazione parse_failed (id Gmail conservato, si apre da Gmail); un out non crea mai
+  // una scheda, quindi li' si logga e basta. Se il DB non risponde nemmeno qui, resta transitorio.
+  const scavalcaStallo = async (id: string, threadId: string, dir: 'in' | 'out'): Promise<boolean> => {
+    const s = (stallo as Stallo | null) ?? contaStallo(null, { id, thread: threadId, dir, err: lastErr }, new Date().toISOString());
+    // v35 (Gate 2): un messaggio gia' entrato non prende il segnaposto, che segnerebbe parse_failed una
+    // conversazione buona. Con la lettura fallita si resta sulla regola anti-perdita della v18.
+    let giaEntrato = false;
     if (dir === 'in') {
-      try { await antiLoss(threadId, id, { motivo: 'stallo', errore: s.err, tentativi: s.n }); }
-      catch (e) { lastErr = 'antiloss: ' + errText(e); return false; }
+      const { data: gia, error: giaErr } = await retryOnce(() => sb.from('cs_messages').select('id').eq('gmail_message_id', id).limit(1));
+      giaEntrato = !giaErr && (gia ?? []).length > 0;
+      if (!giaEntrato) {
+        try { await antiLoss(threadId, id, { motivo: 'stallo', errore: s.err, tentativi: s.n }); }
+        catch (e) { lastErr = 'antiloss: ' + errText(e); stalloCorrente = { ...s, err: lastErr.slice(0, 300) }; return false; }
+      }
     }
-    await sb.from('cs_events').insert({ conversation_id: await convDi(), azione: 'ingest_failed', chi: 'cs-sync', dettaglio: { message_id: id, thread_id: threadId, direction: dir, errore: s.err, tentativi: s.n, primo_fallimento: s.first_at, scavalcato: true } });
+    await sb.from('cs_events').insert({ conversation_id: await convDi(threadId), azione: 'ingest_failed', chi: 'cs-sync', dettaglio: { message_id: id, thread_id: threadId, direction: dir, errore: s.err, tentativi: s.n, primo_fallimento: s.first_at, scavalcato: true, ...(giaEntrato ? { gia_entrato: true } : {}) } });
     await sb.from('app_flags').delete().eq('key', 'cs_stall_msg');
     stallo = null; stalloCorrente = null; scavalcati++;
     return true;
   };
+  const cinturaStallo = async (id: string, threadId: string, dir: 'in' | 'out'): Promise<boolean> => {
+    const s = contaStallo(stallo, { id, thread: threadId, dir, err: lastErr }, new Date().toISOString());
+    await segnaStallo(s, id, threadId, dir);
+    if (!stalloDaScavalcare(s)) return false;
+    return await scavalcaStallo(id, threadId, dir);
+  };
+  // v35: 'done' avanza; 'transient' passa dalla cintura; 'scavalca' = soglia gia' raggiunta da giri morti.
+  const dopoEsito = async (e: 'done' | 'transient' | 'scavalca', id: string, threadId: string, dir: 'in' | 'out'): Promise<boolean> =>
+    e === 'done' ? true : e === 'scavalca' ? await scavalcaStallo(id, threadId, dir) : await cinturaStallo(id, threadId, dir);
+
+  // v35: il segnaposto del messaggio in lavorazione (vedi PURE:cs-stallo). Una scrittura per messaggio che
+  // arriva al lavoro pesante, e nella STESSA scrittura il cursore avanza all'ultimo record finito: se il worker
+  // muore, il giro dopo riparte dal messaggio sospetto con tutto il budget di CPU, invece di rifare il pezzo gia'
+  // fatto e morire di nuovo piu' o meno nello stesso punto (Gate 2: la colpa finirebbe sul messaggio sbagliato).
+  // Si cancella a fine giro, solo se e' ancora il proprio (un giro sovrapposto puo' averlo riscritto).
+  let correnteValore: string | null = null;
+  const segnaCorrente = async (id: string, threadId: string, dir: 'in' | 'out') => {
+    const v = JSON.stringify({ id, thread: threadId, dir, at: new Date().toISOString() });
+    const { error } = await sb.from('app_flags').upsert([{ key: 'cs_ingest_corrente', value: v }, { key: 'cs_last_history_id', value: safeHid }], { onConflict: 'key' });
+    if (!error) correnteValore = v;   // a scrittura fallita resta il valore di prima, che chiudiCorrente non deve cercare
+  };
+  const chiudiCorrente = async () => {
+    if (correnteValore === null) return;
+    await sb.from('app_flags').delete().eq('key', 'cs_ingest_corrente').eq('value', correnteValore);
+    correnteValore = null;
+  };
+  // Il giro precedente e' morto su un messaggio? Conta come un fallimento PRIMA di qualunque lavoro pesante. Un
+  // segnaposto fresco (meno di 90 s) e' di un giro ancora vivo: questo giro esce senza toccarlo (niente giri
+  // sovrapposti, e un giro morto tardi si giudica al passaggio dopo, non si sovrascrive). Il segnaposto vecchio si
+  // PRENDE con una delete condizionata al suo valore: se due giri lo trovano insieme, lo conta uno solo.
+  let interrotto = false;
+  const corr = leggiCorrente(flags.cs_ingest_corrente);
+  if (corr && !giroInterrotto(corr, Date.now())) return json({ ok: true, skipped: 'giro precedente ancora in corso', message_id: corr.id });
+  if (corr) {
+    const { count: preso } = await sb.from('app_flags').delete({ count: 'exact' }).eq('key', 'cs_ingest_corrente').eq('value', flags.cs_ingest_corrente);
+    if (!preso) return json({ ok: true, skipped: 'segnaposto preso da un altro giro' });
+    const s = contaStallo(stallo, { id: corr.id, thread: corr.thread, dir: corr.dir, err: ERR_INTERROTTO }, new Date().toISOString());
+    interrotto = true;
+    await segnaStallo(s, corr.id, corr.thread, corr.dir);
+    // Salute subito solo dal secondo giro morto sullo stesso messaggio (error). Al primo la riga resta com'era:
+    // se i giri continuano a morire su messaggi diversi invecchia, e push-eventi avvisa "posta ferma" a 15 minuti.
+    if (s.n >= 2) await writeHealth(s.n, `giro precedente interrotto sul messaggio ${s.id} (${s.dir}), tentativo ${s.n} di ${STALL_SKIP_AFTER} (dal ${s.first_at}): ${s.err}`.slice(0, 400), severitaInterruzione(s, Date.now()));
+  }
 
   let tip = startId, safeHid = startId;
   let pageToken: string | undefined; let pages = 0; let stopped = false;
   do {
     const q = `/history?startHistoryId=${encodeURIComponent(startId)}&historyTypes=messageAdded` + (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
-    const h = await gGet(q, token);
+    // v35 (Gate 2): un errore di rete qui lanciava fuori dal giro e lasciava il segnaposto dell'ultimo messaggio
+    // riuscito, contato poi come giro morto. Ora e' un errore di lista come gli altri (ramo !h.ok).
+    let h: { ok: boolean; status: number; j: Record<string, unknown> };
+    try { h = await gGet(q, token); } catch { h = { ok: false, status: 0, j: {} }; }
     if (h.status === 404) {   // historyId scaduto -> re-seed, mai perdere il giro
+      await chiudiCorrente();
       const prof = await gGet('/profile', token);
       const hid = String((prof.j as { historyId?: string }).historyId ?? '');
       await sb.from('app_flags').upsert({ key: 'cs_last_history_id', value: hid }, { onConflict: 'key' });
@@ -1565,8 +1702,9 @@ Deno.serve(async (req) => {
       return json({ ok: true, reseeded: true, historyId: hid });
     }
     if (!h.ok) {   // errore lista: NON scavalcare, avanza solo fino all'ultimo record sicuro
+      await chiudiCorrente();
       await sb.from('app_flags').upsert({ key: 'cs_last_history_id', value: safeHid }, { onConflict: 'key' });
-      await writeHealth(1, 'gmail_history ' + h.status, 'error');
+      await writeHealth(1, 'gmail_history ' + h.status, h.status === 0 ? 'warn' : 'error');   // 0 = rete (v35): un hiccup singolo non e' una push
       return json({ ok: false, error: 'gmail_history ' + h.status, advanced: safeHid !== startId });
     }
     tip = String(h.j.historyId ?? tip);
@@ -1577,12 +1715,10 @@ Deno.serve(async (req) => {
         if (lbl.includes('DRAFT') || lbl.includes('TRASH')) continue;
         // v6: la posta INVIATA non si scarta piu': entra come 'out' sui soli thread gia' tracciati
         if (lbl.includes('SENT')) {
-          if (await processOutbound(ma.message.id, ma.message.threadId) === 'transient'
-            && !(await cinturaStallo(ma.message.id, ma.message.threadId, 'out'))) { recOk = false; break; }
+          if (!(await dopoEsito(await processOutbound(ma.message.id, ma.message.threadId), ma.message.id, ma.message.threadId, 'out'))) { recOk = false; break; }
           continue;
         }
-        if (await processMessage(ma.message.id, ma.message.threadId) === 'transient'
-          && !(await cinturaStallo(ma.message.id, ma.message.threadId, 'in'))) { recOk = false; break; }
+        if (!(await dopoEsito(await processMessage(ma.message.id, ma.message.threadId), ma.message.id, ma.message.threadId, 'in'))) { recOk = false; break; }
       }
       if (!recOk) { stopped = true; break; }   // non superare un record con un fallimento transitorio
       if (rec.id) safeHid = String(rec.id);     // record intero processato -> cursore sicuro avanza
@@ -1597,6 +1733,7 @@ Deno.serve(async (req) => {
   const drained = !pageToken && !stopped;
   const newHistoryId = drained ? tip : safeHid;
   await sb.from('app_flags').upsert({ key: 'cs_last_history_id', value: newHistoryId }, { onConflict: 'key' });
+  await chiudiCorrente();   // v35: giro arrivato in fondo, nessun messaggio e' rimasto a meta'
   // un giro fermato da un errore ricorrente su un messaggio SENZA alcun avanzamento = potenziale stallo:
   // NON scriverlo verde (un singolo hiccup transitorio si autorisolve e torna 'ok' al giro dopo).
   const stalled = stopped && processed === 0;
@@ -1613,7 +1750,7 @@ Deno.serve(async (req) => {
   await writeHealth(
     stalled ? (s?.n ?? 1) : parseFailed + scavalcati,
     (stalled ? labelStallo : (parti.length ? `giro ok, ${parti.join(', ')}` : 'giro ok')).slice(0, 400),
-    stalled ? (s ? stalloSeverity(s, Date.now()) : 'warn') : (parseFailed || scavalcati ? 'warn' : 'ok'),
+    stalled ? (s ? (interrotto ? severitaInterruzione(s, Date.now()) : stalloSeverity(s, Date.now())) : 'warn') : (parseFailed || scavalcati ? 'warn' : 'ok'),
   );
   await writeStampoIgnoto(stampoIgnoto, [...lingueIgnote]);
 
