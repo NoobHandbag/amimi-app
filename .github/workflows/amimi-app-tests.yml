@@ -67,12 +67,12 @@ jobs:
       - name: loyalty-page generata dalla sorgente (quest audit Premia 2026-09-21, finding T25)
         shell: bash
         run: node supabase/functions/loyalty-page/build.mjs --check
-      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate, colori del tema, materie prime, domini del team, Paillettes, notifiche, comportamento utenti)
+      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate, colori del tema, materie prime, domini del team, Paillettes, notifiche, comportamento utenti, card Ads e serie mensile Ads)
         shell: bash
         run: |
           set -eo pipefail
           fail=0
-          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/lead_outreach_guardie.mjs tests/arrivo_adesso.mjs tests/snapshot_drive_mensile.mjs tests/ce_compenso_soci.mjs tests/tema_colori_guardie.mjs tests/mat_guardie.mjs tests/dominio_team.mjs tests/villaggio_paillettes.mjs tests/paillettes_guardie.mjs tests/push_core.mjs tests/push_sw.mjs tests/push_eventi_core.mjs tests/beh_guardie.mjs; do
+          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/ads_swap_guardie.mjs tests/ads_mensile_guardie.mjs tests/lead_outreach_guardie.mjs tests/arrivo_adesso.mjs tests/snapshot_drive_mensile.mjs tests/ce_compenso_soci.mjs tests/tema_colori_guardie.mjs tests/mat_guardie.mjs tests/dominio_team.mjs tests/villaggio_paillettes.mjs tests/paillettes_guardie.mjs tests/push_core.mjs tests/push_sw.mjs tests/push_eventi_core.mjs tests/beh_guardie.mjs; do
             echo "== $t"
             node "$t" || { echo "::error::suite KO: $t"; fail=1; }
           done
@@ -110,11 +110,13 @@ jobs:
       # Da sola una chiamata che non trova test esce con errore ("No tests found").
       # Comportamento (25-10, modulo beh_*, decisione D6 dell'owner): e2e/comportamento.spec.ts, stesse garanzie (intercetta
       # ogni richiesta a *.supabase.co, la RPC beh_dashboard risponde dati finti), chiamata sua col percorso.
+      # Card Ads del Cruscotto (28-10, owner in chat): e2e/ads-swap.spec.ts, stesse garanzie (intercetta ogni richiesta a
+      # *.supabase.co, viste v_ads_swap e v_ads_periodo_14g finte, font finti), chiamata sua col percorso.
       - name: Browser per gli e2e (Playwright, solo chromium)
         shell: bash
         working-directory: web
         run: npx playwright install --with-deps chromium
-      - name: E2E di Negozi, delle Notifiche e di Comportamento su dati finti (build verso un progetto Supabase finto)
+      - name: E2E di Negozi, delle Notifiche, di Comportamento e della card Ads su dati finti (build verso un progetto Supabase finto)
         shell: bash
         working-directory: web
         env:
@@ -126,6 +128,7 @@ jobs:
           npx playwright test negozi
           npx playwright test e2e/notifiche.spec.ts
           npx playwright test e2e/comportamento.spec.ts
+          npx playwright test e2e/ads-swap.spec.ts
 
   # E2E del Villaggio e delle Paillettes (18-10, CASI_APERTI n.40 a e n.42 a): job a parte, in parallelo a "offline",
   # perche' la scena 3D senza GPU gira col WebGL software (SwiftShader) e le due spec durano un quarto d'ora. Dati finti
