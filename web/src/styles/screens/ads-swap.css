@@ -1,0 +1,101 @@
+/* ============================================================================
+   Card "Creativita' da cambiare" del Cruscotto (28-10-2026): regole della sola card, tutte sotto .ads-swap
+   (components/AdsSwapCard.tsx). Colori solo dai token: verde, arancio e rosso per gli esiti, il resto inchiostro e grigio.
+   Separatori come bordi e non come ombre: in stampa index.css toglie ogni box-shadow.
+   ============================================================================ */
+
+/* ---- intestazione: titolo e data dei dati sulla stessa riga; i dati vecchi in una fascia arancio tenue ---- */
+.ads-swap .sw-head { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 10px; flex-wrap: wrap; }
+.ads-swap .sw-head h2 { margin: 0; }
+.ads-swap .sw-asof { font-size: 12.5px; color: var(--ink-muted); white-space: nowrap; }
+.ads-swap .sw-stale { margin: 10px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--warning-tint); color: var(--warning-700);
+  font-size: 13px; font-weight: 600; line-height: 1.4; }
+.ads-swap .sw-err { margin: 10px 0 0; font-size: 13px; line-height: 1.4; }
+.ads-swap .sw-counts { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0 0; }
+.ads-swap .ds-pill { padding: 3px 10px; font-size: 12px; font-weight: 600; }
+.ads-swap .ds-pill.sw-off { background: var(--surface-alt); color: var(--ink-muted); }
+
+/* ---- gruppi (da cambiare, da osservare, nuove, ok): titolo col conteggio; "senza consegna" si apre col tocco ---- */
+.ads-swap .sw-gh { margin: 20px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); }
+.ads-swap .sw-gh .c { color: var(--ink-muted); font-weight: 500; }
+.ads-swap .sw-more { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px; margin-top: 12px; padding: 0; border: 0;
+  background: none; font: inherit; font-size: 15px; font-weight: 600; color: var(--ink); text-align: left; cursor: pointer; }
+.ads-swap .sw-more svg { margin-left: auto; color: var(--ink-muted); transition: transform .15s; }
+.ads-swap .sw-more[aria-expanded=true] svg { transform: rotate(90deg); }
+
+/* ---- un ad: foto e nome sulla prima riga, motivo e metriche sotto, larghi quanto la card ---- */
+.ads-swap .sw-ad { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 0 12px; padding: 12px 0; }
+.ads-swap .sw-ad + .sw-ad { border-top: 1px solid var(--border); }
+.ads-swap .sw-ad > :not(.sw-thumb, .sw-info) { grid-column: 1 / -1; }
+.ads-swap .sw-thumb { position: relative; width: 56px; height: 56px; border-radius: 12px; overflow: hidden; background: var(--thumb-bg); }
+.ads-swap .sw-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ads-swap .sw-ph { display: grid; place-items: center; height: 100%; padding: 4px; font-size: 10.5px; font-weight: 500; color: var(--ink-muted); text-align: center; }
+.ads-swap .sw-vtag { position: absolute; left: 4px; bottom: 4px; padding: 1px 6px; border-radius: 999px; background: var(--ink); color: var(--surface);
+  font-size: 10px; font-weight: 600; }
+.ads-swap .sw-info { min-width: 0; }
+.ads-swap .sw-nm { font-size: 15px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3; overflow-wrap: anywhere; }
+.ads-swap .sw-sub { margin-top: 1px; font-size: 12.5px; line-height: 1.35; color: var(--ink-muted); overflow-wrap: anywhere; }
+.ads-swap .sw-tags { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; margin-top: 5px; }
+.ads-swap .sw-live { font-size: 12px; color: var(--ink-muted); }
+.ads-swap .sw-motivo { margin: 10px 0 0; font-size: 13.5px; line-height: 1.4; color: var(--ink); }
+.ads-swap .sw-oos { margin: 4px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--warning-700); }
+
+/* ---- metriche dell'ad: tre colonne a 390 px, quattro da tablet; il valore sopra, l'etichetta e il confronto sotto.
+   Il valore prende il colore dell'esito quando il segnale e' acceso (frequency arancio, CTR e spesa rossi, CPA sulle soglie) ---- */
+.ads-swap .sw-ms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 12px; margin-top: 12px; }
+@media (min-width: 600px) {
+  .ads-swap .sw-ms { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 640px; }
+}
+.ads-swap .sw-m b { display: block; font-size: 15px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ads-swap .sw-m b small { font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--ink-muted); }
+.ads-swap .sw-m > span { display: block; font-size: 12px; line-height: 1.3; color: var(--ink-muted); }
+.ads-swap .sw-m.pos b { color: var(--positive-700); }
+.ads-swap .sw-m.warn b { color: var(--warning-700); }
+.ads-swap .sw-m.neg b { color: var(--negative-700); }
+.ads-swap .sw-d { display: block; font-size: 11.5px; font-weight: 600; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.ads-swap :is(.sw-d, .sw-arr).good { color: var(--positive-700); }
+.ads-swap :is(.sw-d, .sw-arr).bad { color: var(--negative-700); }
+.ads-swap :is(.sw-d, .sw-arr).flat { color: var(--ink-muted); }
+
+/* ---- 14 giorni contro 14: la tabella scorre dentro la card, la prima colonna resta ferma a sinistra.
+   In ogni cella il valore di adesso in grassetto con la freccia, sotto in piccolo quello dei 14 giorni prima ---- */
+.ads-swap .sw-per { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--border); }
+.ads-swap .sw-per h3 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -.015em; }
+.ads-swap .sw-per > .note { margin: 4px 0 10px; }
+.ads-swap .sw-tab { font-size: 13px; }
+.ads-swap .sw-tab :is(th, td) { padding: 8px; vertical-align: top; }
+.ads-swap .sw-tab :is(th, td):first-child { position: sticky; left: 0; z-index: 1; min-width: 128px; max-width: 150px; padding-left: 0;
+  white-space: normal; text-align: left; background: var(--surface); box-shadow: inset -1px 0 0 var(--border); }
+.ads-swap .sw-tab td.sw-c b { font-weight: 600; }
+.ads-swap .sw-tab td.sw-c b.pos { color: var(--positive-700); }
+.ads-swap .sw-tab td.sw-c b.warn { color: var(--warning-700); }
+.ads-swap .sw-tab td.sw-c b.neg { color: var(--negative-700); }
+.ads-swap .sw-tab td.sw-c small { display: block; margin-top: 1px; font-size: 11.5px; color: var(--ink-muted); }
+.ads-swap .sw-arr { margin-left: 3px; font-size: 9.5px; }
+.ads-swap tr.sw-lv-account td, .ads-swap tr.sw-lv-campaign td.sw-name { font-weight: 600; }
+.ads-swap tr.sw-lv-campaign td { border-top: 1px solid var(--border-strong); }
+.ads-swap .sw-tab tr.sw-lv-adset td.sw-name { padding-left: 10px; }
+.ads-swap .sw-tab tr.sw-lv-ad td.sw-name { padding-left: 28px; font-size: 12.5px; }
+.ads-swap .sw-n { display: block; font-size: 11.5px; font-weight: 400; color: var(--ink-muted); }
+.ads-swap .sw-tgl { display: flex; align-items: flex-start; gap: 4px; width: 100%; min-height: 32px; padding: 0; border: 0; background: none;
+  font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.ads-swap .sw-tgl svg { flex: none; margin-top: 2px; color: var(--ink-muted); transition: transform .15s; }
+.ads-swap .sw-tgl[aria-expanded=true] svg { transform: rotate(90deg); }
+
+/* ---- regola e bottone verso la tab Ads ---- */
+.ads-swap .sw-regola { margin-top: 16px; }
+.ads-swap .sw-go { margin: 12px 0 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ads-swap :is(.sw-more, .sw-tgl) svg { transition: none; }
+}
+
+/* ---- stampa: la prima colonna non resta ferma (la tabella esce intera), "Video" resta bianco sul nero, un ad non si spezza;
+   le frecce degli interruttori non si stampano ---- */
+@media print {
+  .ads-swap .sw-tab :is(th, td):first-child { position: static; box-shadow: none; }
+  .ads-swap .sw-vtag { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .ads-swap .sw-ad { break-inside: avoid; }
+  /* !important: Icon scrive display: inline-block nel suo style */
+  .ads-swap :is(.sw-more, .sw-tgl) > svg { display: none !important; }
+}

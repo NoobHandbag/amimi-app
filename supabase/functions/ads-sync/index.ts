@@ -1,10 +1,11 @@
 // ads-sync — pull READ-ONLY di Meta Ads a livello ad/creativita' nel replica Supabase.
-// Additivo e isolato: scrive SOLO meta_ads_creative_daily / meta_ad_creative / meta_product_set_map (migr 0128).
+// Additivo e isolato: scrive SOLO meta_ads_creative_daily / meta_ad_creative / meta_product_set_map (migr 0128),
+// meta_ad_freq7 (migr 0132), meta_ads_window_reach (migr 0175) e la propria riga health_log 'ads_sync'.
 // NON tocca meta_ads_daily (livello campagna, storica) ne' altre tabelle.
 //
 // Token Meta in app_config.meta_token (service-role only), come shopify_token. Se manca: NON pulla,
 // scrive health_log 'ads_sync' warn e ritorna ok (no-op sicuro). PIN-gated come le altre edge.
-// Idempotente: upsert su (date,ad_id), (ad_id) e (product_set_id,retailer_id).
+// Idempotente: upsert su (date,ad_id), (ad_id), (product_set_id,retailer_id) e (level,object_id,window_key).
 //
 // Sorgente: Meta Graph v21.0, account act_686034712784477, catalogo 916048904718661 ("catalogo Amimi Shopify").
 // Il mapping creativita'->prodotto e' via catalogo: creative.product_set_id -> prodotti del set ->
@@ -19,6 +20,10 @@
 //  A2 (Regola Ferrea 20) le letture di products/product_aliases da cui dipende COSA si scrive sono controllate:
 //     un 504 di PostgREST ferma il giro invece di sbiancare codice_norm. Guardie: tests/ads_sync_guardie.mjs e
 //     tests/letture_controllate_guardie.mjs.
+// v1.4 (2026-10-28, card del Cruscotto "quando cambiare una creativita'"): sul daily anche video_3s_views (actions
+//  'video_view', visualizzazioni da 3 secondi) e thruplays (video_thruplay_watched_actions); sul giro corrente 8
+//  chiamate in piu' (finestre cur14/prev14 x livelli account/campaign/adset/ad) con reach e frequency deduplicate
+//  sulla finestra -> meta_ads_window_reach. Secondaria come freq7: warn, mai fail.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -153,7 +158,7 @@ Deno.serve(async (req) => {
   const insightFields = [
     'ad_id', 'ad_name', 'adset_id', 'adset_name', 'campaign_id', 'campaign_name', 'objective',
     'spend', 'impressions', 'reach', 'frequency', 'clicks', 'inline_link_clicks', 'ctr', 'cpc', 'cpm',
-    'actions', 'action_values',
+    'actions', 'action_values', 'video_thruplay_watched_actions',
   ].join(',');
 
   let dailyRows = 0, dailyErr = 0;
@@ -165,6 +170,7 @@ Deno.serve(async (req) => {
       const rows = ins.map((r) => {
         const a = parseActions_(r.actions);
         const av = parseActions_(r.action_values);
+        const thru = parseActions_(r.video_thruplay_watched_actions);
         const spend = num(r.spend);
         const purchases = a['purchases'] || 0;
         const purchaseValue = av['purchases'] || 0; // action_values 'purchase' (e forme omni/offsite) -> 'purchases'
@@ -179,6 +185,8 @@ Deno.serve(async (req) => {
           landing_page_views: a['landing_page_views'] || 0, view_content: a['view_content'] || 0,
           add_to_cart: a['add_to_cart'] || 0, initiate_checkout: a['initiate_checkout'] || 0, add_payment_info: a['add_payment_info'] || 0,
           purchases, purchase_value: purchaseValue,
+          // v1.4: 'video_view' non e' in ACTION_MAP, parseActions_ lo tiene col suo nome. 0 sulle foto, null = riga pre-v1.4
+          video_3s_views: a['video_view'] || 0, thruplays: thru['video_view'] || 0,
           cpa: purchases > 0 ? spend / purchases : null, roas: spend > 0 ? purchaseValue / spend : null,
           pulled_at: new Date().toISOString(), source: 'ads-sync',
         };
@@ -200,7 +208,7 @@ Deno.serve(async (req) => {
   // sovrascritta a ogni giro. Secondaria: se fallisce warn, i daily sono gia' scritti. Errore redatto via health().
   // Solo sul giro corrente o sul PRIMO blocco di backfill (offset 0): e' sempre lo stato 7d CORRENTE, ripullarlo a
   // ogni blocco di un backfill sarebbe spreco (gate efficiency). Errore di upsert -> warn, come l'eccezione.
-  let freqRows = 0;
+  let freqRows = 0, freqErr = 0;
   if (!isBackfill || startOffset === 0) {
     try {
       const since7 = romeDate_(7), until7 = romeDate_(1);
@@ -210,12 +218,51 @@ Deno.serve(async (req) => {
       if (frows.length) {
         const dedup = [...new Map(frows.map((r) => [r.ad_id, r])).values()];
         const { error } = await sb.from('meta_ad_freq7').upsert(dedup, { onConflict: 'ad_id' });
-        if (error) await health(`daily ${dailyRows}, freq7 upsert FALLITO: ${error.message}`, 1, 'warn');
+        if (error) { freqErr++; await health(`daily ${dailyRows}, freq7 upsert FALLITO: ${error.message}`, 1, 'warn'); }
         else freqRows = dedup.length;
       }
     } catch (e) {
+      freqErr++;
       await health(`daily ${dailyRows}, freq7 FALLITA: ${(e as Error).message}`, 1, 'warn');
     }
+  }
+
+  // ---- reach e frequency DEDUPLICATE sulle finestre di 14 giorni (v1.4): la reach di un periodo non e' la somma
+  // delle giornaliere, la si chiede a Meta per la finestra intera. 2 finestre x 4 livelli = 8 chiamate, gate come
+  // freq7 (giro corrente o primo blocco di backfill: e' sempre lo stato CORRENTE). Ogni riga porta since/until e la
+  // vista la usa solo se coincidono con la sua finestra. Per livello si chiede solo il suo id (account: nessuno, e'
+  // l'account). Secondaria: chiamata o upsert falliti = warn, mai fail, e l'errore resta nella label finale.
+  let winRows = 0, winErr = 0, winWarn = '';
+  if (!isBackfill || startOffset === 0) {
+    const finestre = [
+      { key: 'cur14', since: romeDate_(14), until: romeDate_(1) },
+      { key: 'prev14', since: romeDate_(28), until: romeDate_(15) },
+    ];
+    const livelli = ['account', 'campaign', 'adset', 'ad'] as const;
+    const wrows: Array<Record<string, string | number>> = [];
+    for (const w of finestre) {
+      const trw = encodeURIComponent(JSON.stringify({ since: w.since, until: w.until }));
+      for (const level of livelli) {
+        const campi = (level === 'account' ? '' : `${level}_id,`) + 'reach,frequency,impressions,spend';
+        try {
+          const ins = await metaGetAll_(token, `${GRAPH}/${AD_ACCOUNT}/insights?level=${level}&time_range=${trw}&fields=${campi}&limit=200`);
+          for (const r of ins) {
+            const objectId = level === 'account' ? AD_ACCOUNT : String(r[`${level}_id`] ?? '');
+            if (!objectId) continue;
+            wrows.push({ level, object_id: objectId, window_key: w.key, since: w.since, until: w.until, reach: num(r.reach), impressions: num(r.impressions), frequency: num(r.frequency), spend: num(r.spend), updated_at: new Date().toISOString() });
+          }
+        } catch (e) {
+          winErr++; winWarn = `${w.key}/${level}: ${(e as Error).message}`;
+        }
+        await sleep(200);
+      }
+    }
+    if (wrows.length) {
+      const dedup = [...new Map(wrows.map((r) => [`${r.level}|${r.object_id}|${r.window_key}`, r])).values()];
+      const { error } = await sb.from('meta_ads_window_reach').upsert(dedup, { onConflict: 'level,object_id,window_key' });
+      if (error) { winErr++; winWarn = `upsert: ${error.message}`; } else winRows = dedup.length;
+    }
+    if (winErr) await health(`daily ${dailyRows}, finestre 14g FALLITE (${winErr}): ${winWarn}`, 1, 'warn');
   }
 
   // ---- anagrafica creative: ads + creative (product_set_id, destinazione, thumbnail + immagine grande). Errori contati (B3). ----
@@ -326,7 +373,9 @@ Deno.serve(async (req) => {
     return json({ ok: true, dailyRows, dailyErr, creativeRows, creativeErr, mapWarn: redact_((e as Error).message) });
   }
 
-  const sev = dailyErr || mapErr || creativeErr ? 'warn' : 'ok';
-  await health(`pull ${dates.length}g (${dates[0]} -> ${dates[dates.length - 1]}): ${dailyRows} righe ad-day, ${creativeRows} creative (frame ${framesResolved}/${framesTried}), ${freqRows} freq7, ${mapRows} righe set-map, set ${setIds.size}` + (dailyErr || mapErr || creativeErr ? `, errori daily ${dailyErr} creative ${creativeErr} map ${mapErr}` : ''), dailyErr + mapErr + creativeErr, sev as 'ok' | 'warn');
-  return json({ ok: true, dates: dates.length, from: dates[0], to: dates[dates.length - 1], dailyRows, dailyErr, creativeRows, creativeErr, framesResolved, framesTried, freqRows, mapRows, mapErr, sets: setIds.size, next_offset: isBackfill ? startOffset + days : undefined });
+  // v1.4: gli errori di finestre e freq7 pesano sulla label finale (stessa chiave day,k: senza, il warn sopra verrebbe
+  // sovrascritto dall'ok del riepilogo, e una freq7 fallita resterebbe invisibile fino al giorno dopo)
+  const sev = dailyErr || mapErr || creativeErr || winErr || freqErr ? 'warn' : 'ok';
+  await health(`pull ${dates.length}g (${dates[0]} -> ${dates[dates.length - 1]}): ${dailyRows} righe ad-day, ${creativeRows} creative (frame ${framesResolved}/${framesTried}), ${freqRows} freq7, ${winRows} finestre 14g, ${mapRows} righe set-map, set ${setIds.size}` + (dailyErr || mapErr || creativeErr || winErr || freqErr ? `, errori daily ${dailyErr} creative ${creativeErr} map ${mapErr} finestre ${winErr} freq7 ${freqErr}` + (winWarn ? ` (${winWarn.slice(0, 150)})` : '') : ''), dailyErr + mapErr + creativeErr + winErr + freqErr, sev as 'ok' | 'warn');
+  return json({ ok: true, dates: dates.length, from: dates[0], to: dates[dates.length - 1], dailyRows, dailyErr, creativeRows, creativeErr, framesResolved, framesTried, freqRows, freqErr, winRows, winErr, mapRows, mapErr, sets: setIds.size, next_offset: isBackfill ? startOffset + days : undefined });
 });

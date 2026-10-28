@@ -233,6 +233,41 @@ export async function fetchAdsCatalogoModelli(): Promise<AdsCatModello[]> {
   if (error) throw error;
   return (data ?? []) as AdsCatModello[];
 }
+
+// ---------- Cruscotto, card "Creativita' da cambiare" (28-10-2026): viste migr 0175 ----------
+// v_ads_swap: un ad attivo o con spesa nei 14 giorni, coi segnali di fatica e lo stato. v_ads_periodo_14g: account,
+// campagne, adset e ad negli ultimi 14 giorni (cur14) e nei 14 prima (prev14). CTR, hook e quote in percento.
+type AdsNum = number | string | null;
+export type AdsSwap = {
+  as_of: string | null; ad_id: string; ad_name: string | null; campaign_id: string | null; campaign_name: string | null;
+  adset_id: string | null; adset_name: string | null; effective_status: string | null; object_type: string | null;
+  frame_url: string | null; image_url: string | null; thumbnail_url: string | null;
+  pubblico: string | null; first_day: string | null; giorni_live: AdsNum;
+  spend_7: AdsNum; impressions_7: AdsNum; link_ctr_7: AdsNum; link_ctr_base: AdsNum; impressions_base: AdsNum; ctr_var_pct: AdsNum;
+  cpm_7: AdsNum; cpm_base: AdsNum; cpm_var_pct: AdsNum; freq_7g: AdsNum; freq_soglia: AdsNum;
+  spend_14: AdsNum; purchases_14: AdsNum; value_14: AdsNum; cpa_14: AdsNum; roas_14: AdsNum;
+  hook_7: AdsNum; hook_base: AdsNum; quota_adset_7: AdsNum; pct_oos: AdsNum;
+  segnale_freq: boolean | null; segnale_ctr: boolean | null; segnale_spesa: boolean | null;
+  stato: string; motivo: string | null; ordine: AdsNum;
+};
+export type AdsPeriodo = {
+  level: 'account' | 'campaign' | 'adset' | 'ad'; window_key: 'cur14' | 'prev14'; since: string | null; until: string | null; as_of: string | null;
+  object_id: string; object_name: string | null; campaign_id: string | null; campaign_name: string | null; adset_id: string | null; adset_name: string | null;
+  object_type: string | null; effective_status: string | null;
+  spend: AdsNum; impressions: AdsNum; reach: AdsNum; frequency: AdsNum; clicks: AdsNum; link_clicks: AdsNum; link_ctr: AdsNum; cpc_link: AdsNum; cpm: AdsNum;
+  landing_page_views: AdsNum; lpv_rate: AdsNum; add_to_cart: AdsNum; atc_rate: AdsNum; initiate_checkout: AdsNum; purchases: AdsNum; purchase_value: AdsNum;
+  roas: AdsNum; cpa: AdsNum; video_3s_views: AdsNum; hook_rate: AdsNum; thruplays: AdsNum; hold_rate: AdsNum; days_with_spend: AdsNum;
+};
+export async function fetchAdsSwap(): Promise<AdsSwap[]> {
+  const { data, error } = await supabase.from('v_ads_swap').select('*').order('ordine').order('spend_7', { ascending: false, nullsFirst: false });
+  if (error) throw error;
+  return (data ?? []) as AdsSwap[];
+}
+export async function fetchAdsPeriodo(): Promise<AdsPeriodo[]> {
+  const { data, error } = await supabase.from('v_ads_periodo_14g').select('*');
+  if (error) throw error;
+  return (data ?? []) as AdsPeriodo[];
+}
 /** "Pull ora" della tab Ads: invoca l'edge ads-sync (pull di IERI + anagrafica creative + mappa product_set),
  *  la stessa azione del cron delle 06:07 UTC. Senza token in app_config risponde {ok:true, skipped:'no_token'}. */
 export async function pullAds(pin: string, chi: string) {
@@ -511,14 +546,6 @@ export async function fetchSkuAvailability(): Promise<SkuAvail[]> {
   const { data, error } = await supabase.from('v_sku_availability').select('*');
   if (error) throw new Error(error.message);
   return (data ?? []) as SkuAvail[];
-}
-
-// ---------- NEW FEATURE: Meta Ads card ----------
-export type AdsMese = { year: number; month: number; spend: number; impressions: number; clicks: number; purchases: number; purchase_value: number; roas: number };
-export async function fetchAdsMensile(): Promise<AdsMese[]> {
-  const { data, error } = await supabase.from('v_ads_mensile').select('*').eq('year', nowYear()).order('month');
-  if (error) throw new Error(error.message);
-  return (data ?? []) as AdsMese[];
 }
 
 // ---------- PAGE: Salute & Movimenti (read-only pulse of the ecosystem) ----------

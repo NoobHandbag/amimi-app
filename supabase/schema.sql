@@ -2682,7 +2682,9 @@ CREATE TABLE IF NOT EXISTS "public"."meta_ads_creative_daily" (
     "roas" numeric(12,4),
     "pulled_at" timestamp with time zone,
     "source" "text" DEFAULT 'ads-sync'::"text",
-    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "video_3s_views" numeric,
+    "thruplays" numeric
 );
 
 
@@ -2690,6 +2692,14 @@ ALTER TABLE "public"."meta_ads_creative_daily" OWNER TO "postgres";
 
 
 COMMENT ON TABLE "public"."meta_ads_creative_daily" IS 'Amimì Ads: metriche giornaliere per ad/creativita'' (level=ad). Scritta da edge ads-sync. ad_status/creative_id riservati (null in v1: insights level=ad non li espone).';
+
+
+
+COMMENT ON COLUMN "public"."meta_ads_creative_daily"."video_3s_views" IS 'Visualizzazioni da 3 secondi (actions video_view). Null = riga letta prima di ads-sync v1.4.';
+
+
+
+COMMENT ON COLUMN "public"."meta_ads_creative_daily"."thruplays" IS 'ThruPlay (video_thruplay_watched_actions video_view). Null = riga letta prima di ads-sync v1.4.';
 
 
 
@@ -2725,6 +2735,29 @@ CREATE TABLE IF NOT EXISTS "public"."meta_ads_daily" (
 
 
 ALTER TABLE "public"."meta_ads_daily" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."meta_ads_window_reach" (
+    "level" "text" NOT NULL,
+    "object_id" "text" NOT NULL,
+    "window_key" "text" NOT NULL,
+    "since" "date" NOT NULL,
+    "until" "date" NOT NULL,
+    "reach" numeric,
+    "impressions" numeric,
+    "frequency" numeric,
+    "spend" numeric,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "meta_ads_window_reach_level_check" CHECK (("level" = ANY (ARRAY['account'::"text", 'campaign'::"text", 'adset'::"text", 'ad'::"text"]))),
+    CONSTRAINT "meta_ads_window_reach_window_key_check" CHECK (("window_key" = ANY (ARRAY['cur14'::"text", 'prev14'::"text"])))
+);
+
+
+ALTER TABLE "public"."meta_ads_window_reach" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."meta_ads_window_reach" IS 'Amimì Ads: reach deduplicata delle finestre cur14/prev14 per account, campagna, adset e ad (una chiamata insights per finestra). Scritta da ads-sync v1.4; le viste la usano solo se since/until coincidono con la finestra.';
+
 
 
 CREATE TABLE IF NOT EXISTS "public"."meta_product_set_map" (
@@ -3396,6 +3429,190 @@ CREATE OR REPLACE VIEW "public"."v_ads_mensile" AS
 ALTER VIEW "public"."v_ads_mensile" OWNER TO "postgres";
 
 
+CREATE OR REPLACE VIEW "public"."v_ads_periodo_14g" AS
+ WITH "ref" AS (
+         SELECT "max"("meta_ads_creative_daily"."date") AS "d"
+           FROM "public"."meta_ads_creative_daily"
+        ), "fin" AS (
+         SELECT 'cur14'::"text" AS "window_key",
+            ("r"."d" - 13) AS "since",
+            "r"."d" AS "until",
+            "r"."d" AS "as_of"
+           FROM "ref" "r"
+        UNION ALL
+         SELECT 'prev14'::"text" AS "text",
+            ("r"."d" - 27),
+            ("r"."d" - 14),
+            "r"."d"
+           FROM "ref" "r"
+        ), "righe" AS (
+         SELECT "f"."window_key",
+            "l"."level",
+            "l"."object_id",
+            "l"."campaign_id",
+            "l"."adset_id",
+            "d"."date",
+            "d"."spend",
+            "d"."impressions",
+            "d"."clicks",
+            "d"."link_clicks",
+            "d"."landing_page_views",
+            "d"."add_to_cart",
+            "d"."initiate_checkout",
+            "d"."purchases",
+            "d"."purchase_value",
+            "d"."video_3s_views",
+            "d"."thruplays"
+           FROM (("public"."meta_ads_creative_daily" "d"
+             JOIN "fin" "f" ON ((("d"."date" >= "f"."since") AND ("d"."date" <= "f"."until"))))
+             CROSS JOIN LATERAL ( VALUES ('account'::"text","d"."account_id",NULL::"text",NULL::"text"), ('campaign'::"text","d"."campaign_id","d"."campaign_id",NULL::"text"), ('adset'::"text","d"."adset_id","d"."campaign_id","d"."adset_id"), ('ad'::"text","d"."ad_id","d"."campaign_id","d"."adset_id")) "l"("level", "object_id", "campaign_id", "adset_id"))
+          WHERE ("l"."object_id" IS NOT NULL)
+        ), "agg" AS (
+         SELECT "righe"."window_key",
+            "righe"."level",
+            "righe"."object_id",
+            "sum"("righe"."spend") AS "spend",
+            "sum"("righe"."impressions") AS "impressions",
+            "sum"("righe"."clicks") AS "clicks",
+            "sum"("righe"."link_clicks") AS "link_clicks",
+            "sum"("righe"."landing_page_views") AS "landing_page_views",
+            "sum"("righe"."add_to_cart") AS "add_to_cart",
+            "sum"("righe"."initiate_checkout") AS "initiate_checkout",
+            "sum"("righe"."purchases") AS "purchases",
+            "sum"("righe"."purchase_value") AS "purchase_value",
+            "sum"("righe"."video_3s_views") AS "video_3s_views",
+            "sum"("righe"."thruplays") AS "thruplays",
+            "sum"("righe"."impressions") FILTER (WHERE ("righe"."video_3s_views" IS NOT NULL)) AS "impr_video",
+            "sum"("righe"."video_3s_views") FILTER (WHERE ("righe"."thruplays" IS NOT NULL)) AS "v3s_hold",
+            "sum"("righe"."thruplays") FILTER (WHERE ("righe"."video_3s_views" IS NOT NULL)) AS "thru_hold",
+            "count"(DISTINCT "righe"."date") FILTER (WHERE ("righe"."spend" > (0)::numeric)) AS "days_with_spend"
+           FROM "righe"
+          GROUP BY "righe"."window_key", "righe"."level", "righe"."object_id"
+        ), "oggetti" AS (
+         SELECT "righe"."level",
+            "righe"."object_id",
+            "max"("righe"."campaign_id") AS "campaign_id",
+            "max"("righe"."adset_id") AS "adset_id"
+           FROM "righe"
+          GROUP BY "righe"."level", "righe"."object_id"
+         HAVING ("sum"("righe"."impressions") > (0)::numeric)
+        ), "nomi_camp" AS (
+         SELECT DISTINCT ON ("meta_ads_creative_daily"."campaign_id") "meta_ads_creative_daily"."campaign_id",
+            "meta_ads_creative_daily"."campaign_name"
+           FROM "public"."meta_ads_creative_daily"
+          WHERE ("meta_ads_creative_daily"."campaign_id" IS NOT NULL)
+          ORDER BY "meta_ads_creative_daily"."campaign_id", "meta_ads_creative_daily"."date" DESC
+        ), "nomi_adset" AS (
+         SELECT DISTINCT ON ("meta_ads_creative_daily"."adset_id") "meta_ads_creative_daily"."adset_id",
+            "meta_ads_creative_daily"."adset_name"
+           FROM "public"."meta_ads_creative_daily"
+          WHERE ("meta_ads_creative_daily"."adset_id" IS NOT NULL)
+          ORDER BY "meta_ads_creative_daily"."adset_id", "meta_ads_creative_daily"."date" DESC
+        ), "nomi_ad" AS (
+         SELECT DISTINCT ON ("meta_ads_creative_daily"."ad_id") "meta_ads_creative_daily"."ad_id",
+            "meta_ads_creative_daily"."ad_name"
+           FROM "public"."meta_ads_creative_daily"
+          ORDER BY "meta_ads_creative_daily"."ad_id", "meta_ads_creative_daily"."date" DESC
+        ), "x" AS (
+         SELECT "o"."level",
+            "f"."window_key",
+            "f"."since",
+            "f"."until",
+            "f"."as_of",
+            "o"."object_id",
+                CASE "o"."level"
+                    WHEN 'account'::"text" THEN 'Totale account'::"text"
+                    WHEN 'campaign'::"text" THEN "nc"."campaign_name"
+                    WHEN 'adset'::"text" THEN "ns"."adset_name"
+                    ELSE COALESCE("c"."ad_name", "na"."ad_name")
+                END AS "object_name",
+            "o"."campaign_id",
+            "nc"."campaign_name",
+            "o"."adset_id",
+            "ns"."adset_name",
+                CASE
+                    WHEN ("o"."level" = 'ad'::"text") THEN "c"."object_type"
+                    ELSE NULL::"text"
+                END AS "object_type",
+                CASE
+                    WHEN ("o"."level" = 'ad'::"text") THEN "c"."effective_status"
+                    ELSE NULL::"text"
+                END AS "effective_status",
+            COALESCE("a"."spend", (0)::numeric) AS "spend",
+            COALESCE("a"."impressions", (0)::numeric) AS "impressions",
+            "wr"."reach",
+            "round"("wr"."frequency", 2) AS "frequency",
+            COALESCE("a"."clicks", (0)::numeric) AS "clicks",
+            COALESCE("a"."link_clicks", (0)::numeric) AS "link_clicks",
+            COALESCE("a"."landing_page_views", (0)::numeric) AS "landing_page_views",
+            COALESCE("a"."add_to_cart", (0)::numeric) AS "add_to_cart",
+            COALESCE("a"."initiate_checkout", (0)::numeric) AS "initiate_checkout",
+            COALESCE("a"."purchases", (0)::numeric) AS "purchases",
+            COALESCE("a"."purchase_value", (0)::numeric) AS "purchase_value",
+            "a"."video_3s_views",
+            "a"."thruplays",
+            "a"."impr_video",
+            "a"."v3s_hold",
+            "a"."thru_hold",
+            COALESCE("a"."days_with_spend", (0)::bigint) AS "days_with_spend"
+           FROM ((((((("oggetti" "o"
+             CROSS JOIN "fin" "f")
+             LEFT JOIN "agg" "a" ON ((("a"."level" = "o"."level") AND ("a"."object_id" = "o"."object_id") AND ("a"."window_key" = "f"."window_key"))))
+             LEFT JOIN "nomi_camp" "nc" ON (("nc"."campaign_id" = "o"."campaign_id")))
+             LEFT JOIN "nomi_adset" "ns" ON (("ns"."adset_id" = "o"."adset_id")))
+             LEFT JOIN "nomi_ad" "na" ON ((("o"."level" = 'ad'::"text") AND ("na"."ad_id" = "o"."object_id"))))
+             LEFT JOIN "public"."meta_ad_creative" "c" ON ((("o"."level" = 'ad'::"text") AND ("c"."ad_id" = "o"."object_id"))))
+             LEFT JOIN "public"."meta_ads_window_reach" "wr" ON ((("wr"."level" = "o"."level") AND ("wr"."object_id" = "o"."object_id") AND ("wr"."window_key" = "f"."window_key") AND ("wr"."since" = "f"."since") AND ("wr"."until" = "f"."until"))))
+        )
+ SELECT "level",
+    "window_key",
+    "since",
+    "until",
+    "as_of",
+    "object_id",
+    "object_name",
+    "campaign_id",
+    "campaign_name",
+    "adset_id",
+    "adset_name",
+    "object_type",
+    "effective_status",
+    "spend",
+    "impressions",
+    "reach",
+    "frequency",
+    "clicks",
+    "link_clicks",
+    "round"(((100.0 * "link_clicks") / NULLIF("impressions", (0)::numeric)), 2) AS "link_ctr",
+    "round"(("spend" / NULLIF("link_clicks", (0)::numeric)), 2) AS "cpc_link",
+    "round"(((1000.0 * "spend") / NULLIF("impressions", (0)::numeric)), 2) AS "cpm",
+    "landing_page_views",
+    "round"(((100.0 * "landing_page_views") / NULLIF("link_clicks", (0)::numeric)), 1) AS "lpv_rate",
+    "add_to_cart",
+    "round"(((100.0 * "add_to_cart") / NULLIF("landing_page_views", (0)::numeric)), 1) AS "atc_rate",
+    "initiate_checkout",
+    "purchases",
+    "purchase_value",
+    "round"(("purchase_value" / NULLIF("spend", (0)::numeric)), 2) AS "roas",
+    "round"(("spend" / NULLIF("purchases", (0)::numeric)), 2) AS "cpa",
+    "video_3s_views",
+        CASE
+            WHEN (("level" = 'ad'::"text") AND ("object_type" = 'VIDEO'::"text") AND ("impr_video" >= (500)::numeric)) THEN "round"(((100.0 * "video_3s_views") / "impr_video"), 1)
+            ELSE NULL::numeric
+        END AS "hook_rate",
+    "thruplays",
+    "round"(((100.0 * "thru_hold") / NULLIF("v3s_hold", (0)::numeric)), 1) AS "hold_rate",
+    "days_with_spend"
+   FROM "x";
+
+
+ALTER VIEW "public"."v_ads_periodo_14g" OWNER TO "postgres";
+
+
+COMMENT ON VIEW "public"."v_ads_periodo_14g" IS 'Amimì Ads: ultimi 14 giorni (cur14) contro i 14 prima (prev14) per account, campagna, adset e ad. frequency/reach solo da meta_ads_window_reach sulla stessa finestra. Migr 0175.';
+
+
+
 CREATE OR REPLACE VIEW "public"."v_ads_set_modelli" AS
  SELECT "m"."product_set_id",
     COALESCE("i"."categoria", 'ALTRO'::"text") AS "categoria",
@@ -3408,6 +3625,360 @@ CREATE OR REPLACE VIEW "public"."v_ads_set_modelli" AS
 
 
 ALTER VIEW "public"."v_ads_set_modelli" OWNER TO "postgres";
+
+
+CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
+ WITH "ref" AS (
+         SELECT "max"("meta_ads_creative_daily"."date") AS "d"
+           FROM "public"."meta_ads_creative_daily"
+        ), "k" AS (
+         SELECT 4.0 AS "freq_rtg",
+            2.5 AS "freq_cold",
+            76.70 AS "pareggio",
+            0.75 AS "ctr_calo",
+            1000 AS "impr_min",
+            300 AS "impr_consegna",
+            500 AS "impr_hook",
+            10 AS "quota_min",
+            21 AS "giorni_base"
+        ), "elenco" AS (
+         SELECT "meta_ad_creative"."ad_id"
+           FROM "public"."meta_ad_creative"
+          WHERE ("meta_ad_creative"."effective_status" = 'ACTIVE'::"text")
+        UNION
+         SELECT "d"."ad_id"
+           FROM ("public"."meta_ads_creative_daily" "d"
+             CROSS JOIN "ref" "r")
+          WHERE (("d"."date" > ("r"."d" - 14)) AND ("d"."spend" > (0)::numeric))
+        ), "primo" AS (
+         SELECT "meta_ads_creative_daily"."ad_id",
+            "min"("meta_ads_creative_daily"."date") FILTER (WHERE ("meta_ads_creative_daily"."spend" > (0)::numeric)) AS "first_day"
+           FROM "public"."meta_ads_creative_daily"
+          GROUP BY "meta_ads_creative_daily"."ad_id"
+        ), "nomi_ad" AS (
+         SELECT DISTINCT ON ("meta_ads_creative_daily"."ad_id") "meta_ads_creative_daily"."ad_id",
+            "meta_ads_creative_daily"."ad_name",
+            "meta_ads_creative_daily"."campaign_id",
+            "meta_ads_creative_daily"."adset_id"
+           FROM "public"."meta_ads_creative_daily"
+          ORDER BY "meta_ads_creative_daily"."ad_id", "meta_ads_creative_daily"."date" DESC
+        ), "nomi_camp" AS (
+         SELECT DISTINCT ON ("meta_ads_creative_daily"."campaign_id") "meta_ads_creative_daily"."campaign_id",
+            "meta_ads_creative_daily"."campaign_name"
+           FROM "public"."meta_ads_creative_daily"
+          WHERE ("meta_ads_creative_daily"."campaign_id" IS NOT NULL)
+          ORDER BY "meta_ads_creative_daily"."campaign_id", "meta_ads_creative_daily"."date" DESC
+        ), "nomi_adset" AS (
+         SELECT DISTINCT ON ("meta_ads_creative_daily"."adset_id") "meta_ads_creative_daily"."adset_id",
+            "meta_ads_creative_daily"."adset_name"
+           FROM "public"."meta_ads_creative_daily"
+          WHERE ("meta_ads_creative_daily"."adset_id" IS NOT NULL)
+          ORDER BY "meta_ads_creative_daily"."adset_id", "meta_ads_creative_daily"."date" DESC
+        ), "adset_7" AS (
+         SELECT "d"."adset_id",
+            "sum"("d"."spend") AS "spend_7"
+           FROM ("public"."meta_ads_creative_daily" "d"
+             CROSS JOIN "ref" "r")
+          WHERE ("d"."date" > ("r"."d" - 7))
+          GROUP BY "d"."adset_id"
+        ), "m" AS (
+         SELECT "e"."ad_id",
+            "sum"("d"."spend") FILTER (WHERE ("d"."date" > ("r"."d" - 7))) AS "spend_7",
+            "sum"("d"."impressions") FILTER (WHERE ("d"."date" > ("r"."d" - 7))) AS "impressions_7",
+            "sum"("d"."link_clicks") FILTER (WHERE ("d"."date" > ("r"."d" - 7))) AS "link_clicks_7",
+            "sum"("d"."video_3s_views") FILTER (WHERE ("d"."date" > ("r"."d" - 7))) AS "v3s_7",
+            "sum"("d"."impressions") FILTER (WHERE (("d"."date" > ("r"."d" - 7)) AND ("d"."video_3s_views" IS NOT NULL))) AS "impr_video_7",
+            "sum"("d"."spend") FILTER (WHERE ("d"."date" > ("r"."d" - 14))) AS "spend_14",
+            "sum"("d"."purchases") FILTER (WHERE ("d"."date" > ("r"."d" - 14))) AS "purchases_14",
+            "sum"("d"."purchase_value") FILTER (WHERE ("d"."date" > ("r"."d" - 14))) AS "value_14",
+            "sum"("d"."spend") FILTER (WHERE ((("d"."date" >= "p"."first_day") AND ("d"."date" <= ("p"."first_day" + 13))) AND ("d"."date" <= ("r"."d" - 7)))) AS "spend_base",
+            "sum"("d"."impressions") FILTER (WHERE ((("d"."date" >= "p"."first_day") AND ("d"."date" <= ("p"."first_day" + 13))) AND ("d"."date" <= ("r"."d" - 7)))) AS "impressions_base",
+            "sum"("d"."link_clicks") FILTER (WHERE ((("d"."date" >= "p"."first_day") AND ("d"."date" <= ("p"."first_day" + 13))) AND ("d"."date" <= ("r"."d" - 7)))) AS "link_clicks_base",
+            "sum"("d"."video_3s_views") FILTER (WHERE ((("d"."date" >= "p"."first_day") AND ("d"."date" <= ("p"."first_day" + 13))) AND ("d"."date" <= ("r"."d" - 7)))) AS "v3s_base",
+            "sum"("d"."impressions") FILTER (WHERE ((("d"."date" >= "p"."first_day") AND ("d"."date" <= ("p"."first_day" + 13))) AND ("d"."date" <= ("r"."d" - 7)) AND ("d"."video_3s_views" IS NOT NULL))) AS "impr_video_base"
+           FROM ((("elenco" "e"
+             CROSS JOIN "ref" "r")
+             LEFT JOIN "primo" "p" ON (("p"."ad_id" = "e"."ad_id")))
+             LEFT JOIN "public"."meta_ads_creative_daily" "d" ON (("d"."ad_id" = "e"."ad_id")))
+          GROUP BY "e"."ad_id"
+        ), "x" AS (
+         SELECT "r"."d" AS "as_of",
+            "e"."ad_id",
+            COALESCE("c"."ad_name", "na"."ad_name") AS "ad_name",
+            COALESCE("c"."campaign_id", "na"."campaign_id") AS "campaign_id",
+            "nc"."campaign_name",
+            COALESCE("c"."adset_id", "na"."adset_id") AS "adset_id",
+            "ns"."adset_name",
+            "c"."effective_status",
+            "c"."object_type",
+            "c"."frame_url",
+            "c"."image_url",
+            "c"."thumbnail_url",
+            "p"."first_day",
+            (("r"."d" - "p"."first_day") + 1) AS "giorni_live",
+            COALESCE("m"."spend_7", (0)::numeric) AS "spend_7",
+            COALESCE("m"."impressions_7", (0)::numeric) AS "impressions_7",
+            "round"(((100.0 * "m"."link_clicks_7") / NULLIF("m"."impressions_7", (0)::numeric)), 2) AS "link_ctr_7",
+            "round"(((100.0 * "m"."link_clicks_base") / NULLIF("m"."impressions_base", (0)::numeric)), 2) AS "link_ctr_base",
+            COALESCE("m"."impressions_base", (0)::numeric) AS "impressions_base",
+            "round"(((1000.0 * "m"."spend_7") / NULLIF("m"."impressions_7", (0)::numeric)), 2) AS "cpm_7",
+            "round"(((1000.0 * "m"."spend_base") / NULLIF("m"."impressions_base", (0)::numeric)), 2) AS "cpm_base",
+            "round"("fq"."freq_7d", 2) AS "freq_7g",
+            COALESCE("m"."spend_14", (0)::numeric) AS "spend_14",
+            COALESCE("m"."purchases_14", (0)::numeric) AS "purchases_14",
+            COALESCE("m"."value_14", (0)::numeric) AS "value_14",
+            "round"(("m"."spend_14" / NULLIF("m"."purchases_14", (0)::numeric)), 2) AS "cpa_14",
+            "round"(("m"."value_14" / NULLIF("m"."spend_14", (0)::numeric)), 2) AS "roas_14",
+                CASE
+                    WHEN (("c"."object_type" = 'VIDEO'::"text") AND ("m"."impr_video_7" >= ("k_1"."impr_hook")::numeric)) THEN "round"(((100.0 * "m"."v3s_7") / "m"."impr_video_7"), 1)
+                    ELSE NULL::numeric
+                END AS "hook_7",
+                CASE
+                    WHEN (("c"."object_type" = 'VIDEO'::"text") AND ("m"."impr_video_base" >= ("k_1"."impr_hook")::numeric)) THEN "round"(((100.0 * "m"."v3s_base") / "m"."impr_video_base"), 1)
+                    ELSE NULL::numeric
+                END AS "hook_base",
+            "round"(((100.0 * COALESCE("m"."spend_7", (0)::numeric)) / NULLIF("a7"."spend_7", (0)::numeric)), 1) AS "quota_adset_7",
+            "s"."pct_oos",
+                CASE
+                    WHEN ((COALESCE("nc"."campaign_name", ''::"text") ~* '(super hot|rtg|retarget|re-?eng)'::"text") OR (COALESCE("ns"."adset_name", ''::"text") ~* '(super hot|rtg|retarget|re-?eng)'::"text")) THEN 'retargeting'::"text"
+                    ELSE 'cold'::"text"
+                END AS "pubblico"
+           FROM ((((((((((("elenco" "e"
+             CROSS JOIN "ref" "r")
+             CROSS JOIN "k" "k_1")
+             JOIN "m" ON (("m"."ad_id" = "e"."ad_id")))
+             LEFT JOIN "primo" "p" ON (("p"."ad_id" = "e"."ad_id")))
+             LEFT JOIN "public"."meta_ad_creative" "c" ON (("c"."ad_id" = "e"."ad_id")))
+             LEFT JOIN "nomi_ad" "na" ON (("na"."ad_id" = "e"."ad_id")))
+             LEFT JOIN "nomi_camp" "nc" ON (("nc"."campaign_id" = COALESCE("c"."campaign_id", "na"."campaign_id"))))
+             LEFT JOIN "nomi_adset" "ns" ON (("ns"."adset_id" = COALESCE("c"."adset_id", "na"."adset_id"))))
+             LEFT JOIN "adset_7" "a7" ON (("a7"."adset_id" = COALESCE("c"."adset_id", "na"."adset_id"))))
+             LEFT JOIN "public"."meta_ad_freq7" "fq" ON ((("fq"."ad_id" = "e"."ad_id") AND ("fq"."day" = "r"."d"))))
+             LEFT JOIN "public"."v_ads_set_inventory" "s" ON (("s"."product_set_id" = "c"."product_set_id")))
+        ), "y" AS (
+         SELECT "x"."as_of",
+            "x"."ad_id",
+            "x"."ad_name",
+            "x"."campaign_id",
+            "x"."campaign_name",
+            "x"."adset_id",
+            "x"."adset_name",
+            "x"."effective_status",
+            "x"."object_type",
+            "x"."frame_url",
+            "x"."image_url",
+            "x"."thumbnail_url",
+            "x"."first_day",
+            "x"."giorni_live",
+            "x"."spend_7",
+            "x"."impressions_7",
+            "x"."link_ctr_7",
+            "x"."link_ctr_base",
+            "x"."impressions_base",
+            "x"."cpm_7",
+            "x"."cpm_base",
+            "x"."freq_7g",
+            "x"."spend_14",
+            "x"."purchases_14",
+            "x"."value_14",
+            "x"."cpa_14",
+            "x"."roas_14",
+            "x"."hook_7",
+            "x"."hook_base",
+            "x"."quota_adset_7",
+            "x"."pct_oos",
+            "x"."pubblico",
+                CASE
+                    WHEN ("x"."pubblico" = 'retargeting'::"text") THEN "k_1"."freq_rtg"
+                    ELSE "k_1"."freq_cold"
+                END AS "freq_soglia",
+            "round"((100.0 * (("x"."link_ctr_7" / NULLIF("x"."link_ctr_base", (0)::numeric)) - (1)::numeric))) AS "ctr_var_pct",
+            "round"((100.0 * (("x"."cpm_7" / NULLIF("x"."cpm_base", (0)::numeric)) - (1)::numeric))) AS "cpm_var_pct"
+           FROM ("x"
+             CROSS JOIN "k" "k_1")
+        ), "z" AS (
+         SELECT "y"."as_of",
+            "y"."ad_id",
+            "y"."ad_name",
+            "y"."campaign_id",
+            "y"."campaign_name",
+            "y"."adset_id",
+            "y"."adset_name",
+            "y"."effective_status",
+            "y"."object_type",
+            "y"."frame_url",
+            "y"."image_url",
+            "y"."thumbnail_url",
+            "y"."first_day",
+            "y"."giorni_live",
+            "y"."spend_7",
+            "y"."impressions_7",
+            "y"."link_ctr_7",
+            "y"."link_ctr_base",
+            "y"."impressions_base",
+            "y"."cpm_7",
+            "y"."cpm_base",
+            "y"."freq_7g",
+            "y"."spend_14",
+            "y"."purchases_14",
+            "y"."value_14",
+            "y"."cpa_14",
+            "y"."roas_14",
+            "y"."hook_7",
+            "y"."hook_base",
+            "y"."quota_adset_7",
+            "y"."pct_oos",
+            "y"."pubblico",
+            "y"."freq_soglia",
+            "y"."ctr_var_pct",
+            "y"."cpm_var_pct",
+            COALESCE(("y"."freq_7g" >= "y"."freq_soglia"), false) AS "segnale_freq",
+            COALESCE((("y"."impressions_7" >= ("k_1"."impr_min")::numeric) AND ("y"."impressions_base" >= ("k_1"."impr_min")::numeric) AND ("y"."link_ctr_7" <= ("k_1"."ctr_calo" * "y"."link_ctr_base"))), false) AS "segnale_ctr",
+            (("y"."spend_14" >= "k_1"."pareggio") AND ("y"."purchases_14" = (0)::numeric)) AS "segnale_spesa"
+           FROM ("y"
+             CROSS JOIN "k" "k_1")
+        ), "w" AS (
+         SELECT "z"."as_of",
+            "z"."ad_id",
+            "z"."ad_name",
+            "z"."campaign_id",
+            "z"."campaign_name",
+            "z"."adset_id",
+            "z"."adset_name",
+            "z"."effective_status",
+            "z"."object_type",
+            "z"."frame_url",
+            "z"."image_url",
+            "z"."thumbnail_url",
+            "z"."first_day",
+            "z"."giorni_live",
+            "z"."spend_7",
+            "z"."impressions_7",
+            "z"."link_ctr_7",
+            "z"."link_ctr_base",
+            "z"."impressions_base",
+            "z"."cpm_7",
+            "z"."cpm_base",
+            "z"."freq_7g",
+            "z"."spend_14",
+            "z"."purchases_14",
+            "z"."value_14",
+            "z"."cpa_14",
+            "z"."roas_14",
+            "z"."hook_7",
+            "z"."hook_base",
+            "z"."quota_adset_7",
+            "z"."pct_oos",
+            "z"."pubblico",
+            "z"."freq_soglia",
+            "z"."ctr_var_pct",
+            "z"."cpm_var_pct",
+            "z"."segnale_freq",
+            "z"."segnale_ctr",
+            "z"."segnale_spesa",
+                CASE
+                    WHEN (COALESCE("z"."effective_status", ''::"text") <> 'ACTIVE'::"text") THEN 'in_pausa'::"text"
+                    WHEN ("z"."segnale_spesa" OR ("z"."segnale_freq" AND "z"."segnale_ctr")) THEN 'cambia'::"text"
+                    WHEN ("z"."segnale_freq" OR "z"."segnale_ctr") THEN 'osserva'::"text"
+                    WHEN ("z"."impressions_7" < ("k_1"."impr_consegna")::numeric) THEN 'senza_consegna'::"text"
+                    WHEN (("z"."impressions_base" < ("k_1"."impr_min")::numeric) AND (COALESCE("z"."giorni_live", 0) < "k_1"."giorni_base")) THEN 'nuova'::"text"
+                    ELSE 'ok'::"text"
+                END AS "stato"
+           FROM ("z"
+             CROSS JOIN "k" "k_1")
+        )
+ SELECT "w"."as_of",
+    "w"."ad_id",
+    "w"."ad_name",
+    "w"."campaign_id",
+    "w"."campaign_name",
+    "w"."adset_id",
+    "w"."adset_name",
+    "w"."effective_status",
+    "w"."object_type",
+    "w"."frame_url",
+    "w"."image_url",
+    "w"."thumbnail_url",
+    "w"."pubblico",
+    "w"."first_day",
+    "w"."giorni_live",
+    "w"."spend_7",
+    "w"."impressions_7",
+    "w"."link_ctr_7",
+    "w"."link_ctr_base",
+    "w"."impressions_base",
+    "w"."ctr_var_pct",
+    "w"."cpm_7",
+    "w"."cpm_base",
+    "w"."cpm_var_pct",
+    "w"."freq_7g",
+    "w"."freq_soglia",
+    "w"."spend_14",
+    "w"."purchases_14",
+    "w"."value_14",
+    "w"."cpa_14",
+    "w"."roas_14",
+    "w"."hook_7",
+    "w"."hook_base",
+    "w"."quota_adset_7",
+    "w"."pct_oos",
+    "w"."segnale_freq",
+    "w"."segnale_ctr",
+    "w"."segnale_spesa",
+    "w"."stato",
+    (
+        CASE "w"."stato"
+            WHEN 'in_pausa'::"text" THEN (('non attiva su Meta ('::"text" || COALESCE("w"."effective_status", 'stato sconosciuto'::"text")) || ')'::"text")
+            WHEN 'senza_consegna'::"text" THEN (('Meta non la consegna ('::"text" || "w"."impressions_7") || ' impression in 7 giorni)'::"text")
+            WHEN 'nuova'::"text" THEN 'meno di 14 giorni di storia: niente confronto'::"text"
+            WHEN 'ok'::"text" THEN ('nessun segnale di fatica'::"text" ||
+            CASE
+                WHEN (("w"."impressions_7" < ("k"."impr_min")::numeric) OR ("w"."impressions_base" < ("k"."impr_min")::numeric)) THEN (('; CTR non confrontabile ('::"text" || "concat_ws"(', '::"text",
+                CASE
+                    WHEN ("w"."impressions_7" < ("k"."impr_min")::numeric) THEN ("w"."impressions_7" || ' impression in 7 giorni'::"text")
+                    ELSE NULL::"text"
+                END,
+                CASE
+                    WHEN ("w"."impressions_base" < ("k"."impr_min")::numeric) THEN ("w"."impressions_base" || ' impression nei primi 14 giorni'::"text")
+                    ELSE NULL::"text"
+                END)) || ')'::"text")
+                ELSE ''::"text"
+            END)
+            ELSE "concat_ws"('; '::"text",
+            CASE
+                WHEN "w"."segnale_spesa" THEN (('speso '::"text" || "round"("w"."spend_14")) || ' EUR in 14 giorni senza acquisti'::"text")
+                ELSE NULL::"text"
+            END,
+            CASE
+                WHEN "w"."segnale_freq" THEN ((('frequency 7g '::"text" || "replace"(("trim_scale"("w"."freq_7g"))::"text", '.'::"text", ','::"text")) || ' sopra '::"text") || "replace"(("trim_scale"("w"."freq_soglia"))::"text", '.'::"text", ','::"text"))
+                ELSE NULL::"text"
+            END,
+            CASE
+                WHEN "w"."segnale_ctr" THEN (('CTR link '::"text" || "w"."ctr_var_pct") || '% rispetto ai primi 14 giorni'::"text")
+                ELSE NULL::"text"
+            END)
+        END ||
+        CASE
+            WHEN (("w"."quota_adset_7" < ("k"."quota_min")::numeric) AND ("w"."stato" = ANY (ARRAY['nuova'::"text", 'ok'::"text", 'osserva'::"text"]))) THEN (('; riceve il '::"text" || "replace"(("trim_scale"("w"."quota_adset_7"))::"text", '.'::"text", ','::"text")) || '% della spesa del suo adset'::"text")
+            ELSE ''::"text"
+        END) AS "motivo",
+        CASE "w"."stato"
+            WHEN 'cambia'::"text" THEN 1
+            WHEN 'osserva'::"text" THEN 2
+            WHEN 'nuova'::"text" THEN 3
+            WHEN 'ok'::"text" THEN 4
+            WHEN 'senza_consegna'::"text" THEN 5
+            ELSE 6
+        END AS "ordine"
+   FROM ("w"
+     CROSS JOIN "k");
+
+
+ALTER VIEW "public"."v_ads_swap" OWNER TO "postgres";
+
+
+COMMENT ON VIEW "public"."v_ads_swap" IS 'Amimì Ads: una riga per ad ACTIVE o con spesa negli ultimi 14 giorni, con i segnali di fatica (frequency 7g, CTR link contro i primi 14 giorni, spesa senza acquisti) e lo stato cambia/osserva/nuova/ok/senza_consegna/in_pausa. Regola dell''owner del 28-10-2026, migr 0175.';
+
 
 
 CREATE OR REPLACE VIEW "public"."v_ads_weekly_account" AS
@@ -6583,6 +7154,11 @@ ALTER TABLE ONLY "public"."meta_ads_daily"
 
 
 
+ALTER TABLE ONLY "public"."meta_ads_window_reach"
+    ADD CONSTRAINT "meta_ads_window_reach_pkey" PRIMARY KEY ("level", "object_id", "window_key");
+
+
+
 ALTER TABLE ONLY "public"."meta_product_set_map"
     ADD CONSTRAINT "meta_product_set_map_pkey" PRIMARY KEY ("id");
 
@@ -7490,6 +8066,9 @@ ALTER TABLE "public"."meta_ad_freq7" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."meta_ads_creative_daily" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."meta_ads_window_reach" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."meta_product_set_map" ENABLE ROW LEVEL SECURITY;
@@ -8414,6 +8993,12 @@ GRANT SELECT ON TABLE "public"."meta_ads_daily" TO "ask_ro";
 
 
 
+GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."meta_ads_window_reach" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."meta_ads_window_reach" TO "authenticated";
+GRANT ALL ON TABLE "public"."meta_ads_window_reach" TO "service_role";
+
+
+
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."meta_product_set_map" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."meta_product_set_map" TO "authenticated";
 GRANT ALL ON TABLE "public"."meta_product_set_map" TO "service_role";
@@ -8574,9 +9159,21 @@ GRANT SELECT ON TABLE "public"."v_ads_mensile" TO "ask_ro";
 
 
 
+GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_periodo_14g" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_periodo_14g" TO "authenticated";
+GRANT ALL ON TABLE "public"."v_ads_periodo_14g" TO "service_role";
+
+
+
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_set_modelli" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_set_modelli" TO "authenticated";
 GRANT ALL ON TABLE "public"."v_ads_set_modelli" TO "service_role";
+
+
+
+GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_swap" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_swap" TO "authenticated";
+GRANT ALL ON TABLE "public"."v_ads_swap" TO "service_role";
 
 
 

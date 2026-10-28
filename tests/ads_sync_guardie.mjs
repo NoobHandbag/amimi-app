@@ -42,7 +42,10 @@ console.log('\n== A1: il token Meta non passa mai dalla querystring e ogni messa
 
 console.log('\n== B3/B4/B5/B6: guasti dichiarati, mai silenziosi ==');
 {
-  t('6  B3 errore upsert creative contato e pesa sulla severity', /if \(error\) creativeErr\+\+; else creativeRows/.test(SRC) && /const sev = dailyErr \|\| mapErr \|\| creativeErr \? 'warn' : 'ok'/.test(SRC));
+  // v1.4 (28-10): la severity finale pesa anche winErr (finestre 14g); regex aggiornata di proposito, B3 resta dentro
+  t('6  B3 errore upsert creative contato e pesa sulla severity', /if \(error\) creativeErr\+\+; else creativeRows/.test(SRC) && /const sev = dailyErr \|\| mapErr \|\| creativeErr \|\| winErr \|\| freqErr \? 'warn' : 'ok'/.test(SRC));
+  // 28-10 (Gate 2 del giro v1.4): una freq7 fallita scriveva il warn e poi l'ok finale lo sovrascriveva (health su day,k)
+  t('6b freq7 fallita contata (upsert ed eccezione) e pesa sulla severity e sul conteggio finale', (SRC.match(/freqErr\+\+/g) || []).length === 2 && /winErr \+ freqErr, sev as/.test(SRC) && /freq7 \$\{freqErr\}/.test(SRC));
   t('6b B3 zero ad letti = non "tutto ok"', /if \(!anag\.length\) creativeErr\+\+/.test(SRC));
   t('7  B4 health legge il nodo singolo (metaGetOne_) e fallisce se non vede l\'account', /const acct = await metaGetOne_\(/.test(SRC) && /if \(!acct\?\.name\) return fail\('health'/.test(SRC));
   t('8  B5 troncamento a maxPages dichiarato come errore', /throw new Error\(`troncato a \$\{maxPages\} pagine/.test(SRC));
@@ -98,6 +101,49 @@ console.log('\n== frame video lato server (owner 2026-09-20): fotogramma grande 
   t('26 edge: fotogramma opzionale (try/catch, cap 20), non pesa sulla severity', /framesTried >= 20/.test(src) && /fotogramma opzionale/.test(SRC));
   t('27 0134: colonna frame_url + vista che la espone + regrant anon', /alter table meta_ad_creative add column if not exists frame_url text/.test(M134) && /drop view if exists v_ads_creative_status/.test(M134) && /c\.object_type, c\.thumbnail_url, c\.image_url, c\.frame_url,/.test(M134) && /grant select on v_ads_creative_status to anon/.test(M134));
   t('28 frontend: usa frame_url con fallback image_url poi thumbnail 64px', /img=\{r\.frame_url \?\? r\.image_url\}/.test(ADS) && /frame_url: r\.frame_url/.test(ADS));
+}
+
+console.log('\n== v1.4 (2026-10-28): colonne video sul daily e reach deduplicata sulle finestre 14g ==');
+{
+  const src = noComments(SRC);
+  const flat = (s) => s.replace(/\)\s*\n\s*\./g, ').');
+  t('29 insights: chiede video_thruplay_watched_actions', /const insightFields = \[[^\]]*'video_thruplay_watched_actions'[^\]]*\]\.join\(','\)/.test(SRC));
+  t('30 daily: video_3s_views da actions video_view e thruplays da video_thruplay_watched_actions',
+    /const thru = parseActions_\(r\.video_thruplay_watched_actions\)/.test(src) && /video_3s_views: a\['video_view'\] \|\| 0/.test(src) && /thruplays: thru\['video_view'\] \|\| 0/.test(src));
+  // PURE: parseActions_ tiene i tipi non mappati col loro nome (video_view non e' in ACTION_MAP)
+  const mapBlock = (SRC.match(/const ACTION_MAP[\s\S]*?\n\};/) ?? [''])[0];
+  t('30b video_view NON e\' in ACTION_MAP (verrebbe rinominato)', mapBlock.length > 0 && !/video_view/.test(mapBlock));
+  t('30c la riga di parseActions_ che tiene i tipi non mappati e\' identica a quella provata qui', SRC.includes("const mapped = ACTION_MAP[it.action_type ?? ''] ?? it.action_type ?? '';"));
+  const parse = (arr) => { const out = {}; if (!Array.isArray(arr)) return out; for (const it of arr) { const mapped = ({ purchase: 'purchases' })[it.action_type ?? ''] ?? it.action_type ?? ''; if (!mapped) continue; const v = Number(it.value) || 0; if (!(mapped in out) || v > out[mapped]) out[mapped] = v; } return out; };
+  const a = parse([{ action_type: 'video_view', value: '120' }, { action_type: 'purchase', value: '2' }]);
+  t('30d PURE: video_view letto da actions, foto senza campo = 0', a['video_view'] === 120 && a['purchases'] === 2 && ((parse(undefined)['video_view'] || 0) === 0));
+
+  const GATE = 'if (!isBackfill || startOffset === 0) {';
+  const gates = SRC.split(GATE).length - 1;
+  const iGate2 = SRC.indexOf(GATE, SRC.indexOf(GATE) + 1);
+  const iWin = SRC.indexOf("from('meta_ads_window_reach')");
+  const iAnag = SRC.indexOf('// ---- anagrafica creative');
+  t('31 finestre gated come freq7 (giro corrente o primo blocco di backfill, non ogni blocco)', gates === 2 && iGate2 > SRC.indexOf("from('meta_ad_freq7')") && iWin > iGate2 && iWin < iAnag && SRC.split("from('meta_ads_window_reach')").length === 2, `gate ${gates}`);
+  const winBlock = iGate2 > 0 && iAnag > iGate2 ? SRC.slice(iGate2, iAnag) : '';
+  t('32 upsert idempotente su level,object_id,window_key, dedup prima (B6)', /upsert\(dedup, \{ onConflict: 'level,object_id,window_key' \}\)/.test(winBlock) && /new Map\(wrows\.map\(\(r\) => \[`\$\{r\.level\}\|\$\{r\.object_id\}\|\$\{r\.window_key\}`, r\]\)\)/.test(winBlock));
+  t('33 errore di upsert destrutturato e trasformato in warn, mai fail', /const \{ error \} = await sb\.from\('meta_ads_window_reach'\)\.upsert\([^\n]*\n\s*if \(error\) \{ winErr\+\+;/.test(winBlock) && /if \(winErr\) await health\([^\n]*'warn'\)/.test(winBlock) && /catch \(e\) \{\s*winErr\+\+;/.test(winBlock) && !/return fail\(|return json\(/.test(winBlock));
+  t('33b l\'errore delle finestre resta nella label finale (health upsert su day,k: il warn intermedio verrebbe sovrascritto)', /\$\{winRows\} finestre 14g/.test(SRC) && /finestre \$\{winErr\}/.test(SRC) && /dailyErr \+ mapErr \+ creativeErr \+ winErr/.test(SRC));
+  t('34 quattro livelli e due finestre (cur14 = romeDate_(14..1), prev14 = romeDate_(28..15))',
+    winBlock.includes("['account', 'campaign', 'adset', 'ad']") && winBlock.includes("{ key: 'cur14', since: romeDate_(14), until: romeDate_(1) }") && winBlock.includes("{ key: 'prev14', since: romeDate_(28), until: romeDate_(15) }") && /level === 'account' \? AD_ACCOUNT : String\(r\[`\$\{level\}_id`\] \?\? ''\)/.test(winBlock));
+  t('34b per livello si chiede solo il suo id con reach/frequency/impressions/spend', winBlock.includes("const campi = (level === 'account' ? '' : `${level}_id,`) + 'reach,frequency,impressions,spend';") && /insights\?level=\$\{level\}&time_range=\$\{trw\}&fields=\$\{campi\}&limit=200/.test(winBlock));
+  // PURE: finestre contigue di 14 giorni l'una, anche a cavallo del cambio ora (fine ottobre)
+  const todayRome_ = (now) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(now);
+  const romeDate_ = (offsetDays, now) => new Date(Date.parse(todayRome_(now) + 'T00:00:00Z') - offsetDays * 86400000).toISOString().slice(0, 10);
+  const now = new Date('2026-10-28T05:07:00Z');
+  const giorni = (s, u) => Math.round((Date.parse(u) - Date.parse(s)) / 86400000) + 1;
+  const c14 = [romeDate_(14, now), romeDate_(1, now)], p14 = [romeDate_(28, now), romeDate_(15, now)];
+  t('34c PURE: cur14 e prev14 di 14 giorni, contigue, cur14 finisce ieri', giorni(...c14) === 14 && giorni(...p14) === 14 && giorni(p14[1], c14[0]) === 2 && c14[1] === '2026-10-27', `${c14} ${p14}`);
+
+  const lette = [...flat(src).matchAll(/\.from\('([^']+)'\)\.select\(/g)].map((m) => m[1]).sort();
+  t('35 nessuna nuova lettura di tabella: solo app_config, product_aliases, products, shopify_stock', JSON.stringify([...new Set(lette)]) === JSON.stringify(['app_config', 'product_aliases', 'products', 'shopify_stock']), lette.join(','));
+  const scritte = [...new Set([...flat(src).matchAll(/\.from\('([^']+)'\)\.upsert\(/g)].map((m) => m[1]))];
+  const testata = SRC.split('\n').slice(0, 4).join('\n');
+  t('36 la testata del file nomina ogni tabella scritta (niente piu\' "scrive SOLO" falso)', scritte.length >= 6 && scritte.every((tb) => testata.includes(tb)), scritte.filter((tb) => !testata.includes(tb)).join(','));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);
