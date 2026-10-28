@@ -30,12 +30,40 @@ console.log('\n===== v_ads_mensile correctness =====');
 {
   const view = await get('/v_ads_mensile?year=eq.2026&select=month,spend,purchase_value,roas');
   const raw = await get('/meta_ads_daily?select=date,spend,purchase_value');
-  // sum raw spend for month 6 vs view
-  const m6raw = raw.filter((r) => new Date(r.date).getUTCMonth() + 1 === 6).reduce((s, r) => s + Number(r.spend || 0), 0);
-  const m6view = Number(view.find((v) => v.month === 6)?.spend || 0);
-  ok(near(m6raw, m6view, 0.5), `ads june spend: raw ${m6raw.toFixed(2)} ≈ view ${m6view}`);
+  // 28-10 (migr 0176): giugno mescola la serie vecchia (01-19) e ads-sync (20-30), che anon non legge. I mesi senza
+  // giorni ads-sync (aprile, maggio) restano la somma di meta_ads_daily, prima e dopo la 0176.
+  for (const m of [4, 5]) {
+    const mraw = raw.filter((r) => new Date(r.date).getUTCMonth() + 1 === m).reduce((s, r) => s + Number(r.spend || 0), 0);
+    const mview = Number(view.find((v) => v.month === m)?.spend || 0);
+    ok(mraw > 0 && near(mraw, mview, 0.5), `ads month ${m} spend: raw ${mraw.toFixed(2)} ≈ view ${mview}`);
+  }
   const anyRoas = view.find((v) => Number(v.spend) > 0);
   ok(anyRoas && near(Number(anyRoas.roas), Number(anyRoas.purchase_value) / Number(anyRoas.spend), 0.02), 'ROAS = purchase_value / spend');
+}
+
+console.log('\n===== v_ads_mensile sulla serie viva (migr 0176) =====');
+{
+  // Il confronto mese per mese con meta_ads_creative_daily non si fa da anon (base chiusa, RLS senza policy): lo fa
+  // tests/ads_mensile_viste.sql. Dalle viste pubbliche: la fonte di ogni mese (regola per giorno: aprile e maggio 2026
+  // la serie vecchia, giugno misto, da luglio ads-sync) e l'ultimo mese che arriva al giorno di
+  // v_fonti_freschezza.meta_ads_creative_ultimo_giorno (= max(date) della base per ad; una riga sempre, letta da anon).
+  const arr = (x) => (Array.isArray(x) ? x : []);
+  const r0 = await get('/v_ads_mensile?select=year,month,fonte,ultimo_giorno&order=year,month');
+  if (!Array.isArray(r0)) console.log(`  (v_ads_mensile non risponde: ${r0?.message ?? JSON.stringify(r0)})`);
+  const mesi = arr(r0);
+  const fonteDi = (y, m) => mesi.find((r) => r.year === y && r.month === m)?.fonte;
+  ok(fonteDi(2026, 4) === 'meta_ads_daily' && fonteDi(2026, 5) === 'meta_ads_daily',
+    `v_ads_mensile: aprile e maggio 2026 dalla serie vecchia (fonte ${fonteDi(2026, 4)}, ${fonteDi(2026, 5)})`);
+  ok(fonteDi(2026, 6) === 'misto', `v_ads_mensile: giugno 2026 misto, 01-19 serie vecchia e 20-30 ads-sync (fonte ${fonteDi(2026, 6)})`);
+  const vivi = mesi.filter((r) => r.year * 100 + r.month >= 202607);
+  const fuori = vivi.filter((r) => r.fonte !== 'ads-sync');
+  ok(vivi.length >= 4 && fuori.length === 0,
+    `v_ads_mensile: ogni mese da 2026-07 viene da ads-sync (${vivi.length} mesi, KO ${fuori.map((r) => `${r.year}-${r.month}:${r.fonte}`).join(', ')})`);
+  const fresc = arr(await get('/v_fonti_freschezza?select=meta_ads_creative_ultimo_giorno'));
+  const ug = fresc[0]?.meta_ads_creative_ultimo_giorno;
+  const ultimo = mesi[mesi.length - 1]?.ultimo_giorno;
+  ok(fresc.length === 1 && !!ug && ultimo === ug,
+    `v_ads_mensile: l'ultimo mese arriva a v_fonti_freschezza.meta_ads_creative_ultimo_giorno (${ultimo} contro ${ug})`);
 }
 
 console.log('\n===== v_reorder correctness (velocity 60d) =====');

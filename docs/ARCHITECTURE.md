@@ -124,7 +124,7 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
 ## 7. Frontend (7 sezioni)
 - **Cruscotto** (`Report.tsx`) — P&L Amimì/Totale con filtro mesi, trend per canale, "Chiedi ai dati"
   (FLOW 6), card "Creativita' da cambiare" (`AdsSwapCard.tsx`, migr 0175, dal 28-10 al posto della card Meta
-  Ads sulla vecchia serie mensile `v_ads_mensile`, ferma al 01-07). Legge `v_ads_swap` (un ad per riga: stato
+  Ads sulla serie mensile `v_ads_mensile`, allora ferma al 01-07; viva da ads-sync dalla migr 0176). Legge `v_ads_swap` (un ad per riga: stato
   cambia/osserva/nuova/ok, poi "Senza consegna" e "In pausa" chiusi in fondo, motivo scritto dalla vista, frequency 7g,
   CTR link contro i primi 14 giorni, CPA sulle soglie 45 / 76,70; fascia se i dati o la frequency 7g sono fermi) e
   `v_ads_periodo_14g` (ultimi 14 giorni contro i 14 prima per account, campagna, adset e ad); una vista assente si

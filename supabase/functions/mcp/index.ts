@@ -4,6 +4,7 @@
 // v7 (2026-09-14, audit gate B65): letture controllate. Prima `const { data } = await q` e `data ?? []`
 // trasformavano un 504 PostgREST in "magazzino vuoto / niente da riordinare / CE vuoto", letto da Claude
 // come dato vero. Ora ogni lettura ritenta una volta e poi FALLISCE CHIUSA: tool result con isError.
+// v9 (2026-10-28, migr 0176): ads_summary su tutti i mesi della serie viva (ads-sync), con fonte e ultimo_giorno.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const SB_URL = Deno.env.get('SUPABASE_URL')!;
@@ -35,7 +36,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {} } },
   { name: 'pnl_summary', description: 'Conto Economico per mese, anno in corso: netto, MC1, MC2 e compenso soci (costo variabile, incluso in MC1 e MC2). scope "totale" = intera azienda (default, come le schermate della app), "amimi" = solo brand.',
     inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: ['totale', 'amimi'] } } } },
-  { name: 'ads_summary', description: 'Meta Ads per mese: spesa, acquisti, valore, ROAS.',
+  { name: 'ads_summary', description: "Meta Ads per mese, tutti i mesi in ordine (year, month): spesa, acquisti, valore, ROAS, fonte, ultimo_giorno. Dal 20-06-2026 serie viva da ads-sync (livello ad, aggiornata ogni giorno, fonte 'ads-sync'; ultimo_giorno = ultimo giorno letto del mese); prima la vecchia serie ETL a livello campagna (fonte 'meta_ads_daily'; giugno 2026 = 'misto'). Acquisti e valore sono attribuiti da Meta, NON ordini Shopify. Domande per creativita', campagna o adset e 14 giorni contro i 14 prima: usa ask_data (viste v_ads_swap, v_ads_periodo_14g).",
     inputSchema: { type: 'object', properties: {} } },
   { name: 'ask_data', description: 'Domanda in linguaggio naturale sui dati (NL->SQL, sola lettura).',
     inputSchema: { type: 'object', properties: { domanda: { type: 'string' } }, required: ['domanda'] } },
@@ -95,7 +96,9 @@ async function callTool(name: string, args: Record<string, unknown>) {
       return textResult({ scope, year, mesi: data ?? [] });
     }
     case 'ads_summary': {
-      const { data, error } = await retryOnce(() => sb.from('v_ads_mensile').select('month,spend,purchases,purchase_value,roas').eq('year', 2026).order('month'));
+      // v9 (28-10, migr 0176): v_ads_mensile legge ads-sync dal 20-06 (prima la serie ETL ferma al 01-07). Tutti i mesi,
+      // niente anno scritto a mano (era il 2026 fisso), con fonte e ultimo_giorno per dire da dove viene ogni mese.
+      const { data, error } = await retryOnce(() => sb.from('v_ads_mensile').select('year,month,spend,purchases,purchase_value,roas,fonte,ultimo_giorno').order('year').order('month'));
       if (error) return readFailed('v_ads_mensile', error.message);
       return textResult(data ?? []);
     }

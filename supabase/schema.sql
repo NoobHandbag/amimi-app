@@ -3410,6 +3410,28 @@ ALTER VIEW "public"."v_ads_creative_status" OWNER TO "postgres";
 
 
 CREATE OR REPLACE VIEW "public"."v_ads_mensile" AS
+ WITH "giorni" AS (
+         SELECT "l"."date",
+            "l"."spend",
+            "l"."impressions",
+            "l"."clicks",
+            "l"."purchases",
+            "l"."purchase_value",
+            'meta_ads_daily'::"text" AS "fonte"
+           FROM "public"."meta_ads_daily" "l"
+          WHERE (NOT (EXISTS ( SELECT 1
+                   FROM "public"."meta_ads_creative_daily" "c"
+                  WHERE ("c"."date" = "l"."date"))))
+        UNION ALL
+         SELECT "c"."date",
+            "c"."spend",
+            "c"."impressions",
+            "c"."clicks",
+            "c"."purchases",
+            "c"."purchase_value",
+            'ads-sync'::"text" AS "text"
+           FROM "public"."meta_ads_creative_daily" "c"
+        )
  SELECT (EXTRACT(year FROM "date"))::integer AS "year",
     (EXTRACT(month FROM "date"))::integer AS "month",
     "round"("sum"(COALESCE("spend", (0)::numeric)), 2) AS "spend",
@@ -3420,13 +3442,22 @@ CREATE OR REPLACE VIEW "public"."v_ads_mensile" AS
         CASE
             WHEN ("sum"(COALESCE("spend", (0)::numeric)) > (0)::numeric) THEN "round"(("sum"(COALESCE("purchase_value", (0)::numeric)) / "sum"(COALESCE("spend", (0)::numeric))), 2)
             ELSE (0)::numeric
-        END AS "roas"
-   FROM "public"."meta_ads_daily"
+        END AS "roas",
+        CASE
+            WHEN ("min"("fonte") = "max"("fonte")) THEN "min"("fonte")
+            ELSE 'misto'::"text"
+        END AS "fonte",
+    "max"("date") AS "ultimo_giorno"
+   FROM "giorni"
   GROUP BY ((EXTRACT(year FROM "date"))::integer), ((EXTRACT(month FROM "date"))::integer)
   ORDER BY ((EXTRACT(year FROM "date"))::integer), ((EXTRACT(month FROM "date"))::integer);
 
 
 ALTER VIEW "public"."v_ads_mensile" OWNER TO "postgres";
+
+
+COMMENT ON VIEW "public"."v_ads_mensile" IS 'Amimì Ads per mese (spesa, impression, click, acquisti e valore attribuiti da Meta, ROAS). Per ogni giorno legge ads-sync (meta_ads_creative_daily, livello ad, aggiornata ogni giorno, dal 2026-06-20) se ha righe, altrimenti meta_ads_daily (seed ETL a livello campagna, ferma al 01-07). Nessun giorno contato due volte. fonte = ads-sync, meta_ads_daily o misto (mese con giorni delle due serie); ultimo_giorno = ultimo giorno con dati nel mese. Migr 0176.';
+
 
 
 CREATE OR REPLACE VIEW "public"."v_ads_periodo_14g" AS
@@ -9177,6 +9208,7 @@ GRANT ALL ON TABLE "public"."v_ads_set_inventory" TO "service_role";
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_creative_status" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_creative_status" TO "authenticated";
 GRANT ALL ON TABLE "public"."v_ads_creative_status" TO "service_role";
+GRANT SELECT ON TABLE "public"."v_ads_creative_status" TO "ask_ro";
 
 
 
@@ -9190,6 +9222,7 @@ GRANT SELECT ON TABLE "public"."v_ads_mensile" TO "ask_ro";
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_periodo_14g" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_periodo_14g" TO "authenticated";
 GRANT ALL ON TABLE "public"."v_ads_periodo_14g" TO "service_role";
+GRANT SELECT ON TABLE "public"."v_ads_periodo_14g" TO "ask_ro";
 
 
 
@@ -9202,12 +9235,14 @@ GRANT ALL ON TABLE "public"."v_ads_set_modelli" TO "service_role";
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_swap" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_swap" TO "authenticated";
 GRANT ALL ON TABLE "public"."v_ads_swap" TO "service_role";
+GRANT SELECT ON TABLE "public"."v_ads_swap" TO "ask_ro";
 
 
 
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_weekly_account" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLE "public"."v_ads_weekly_account" TO "authenticated";
 GRANT ALL ON TABLE "public"."v_ads_weekly_account" TO "service_role";
+GRANT SELECT ON TABLE "public"."v_ads_weekly_account" TO "ask_ro";
 
 
 

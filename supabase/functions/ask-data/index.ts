@@ -3,6 +3,8 @@
 // v5 (2026-09-14, audit gate B65): letture controllate. Prima un 504 su app_config diventava "PIN errato"
 // e un 504 sulla RPC ask_select tornava 200 "Esecuzione fallita" come se fosse la query sbagliata.
 // Ora ogni lettura (RPC compresa) ritenta una volta e poi risponde 503 esplicito (Regola Ferrea 20).
+// v8 (2026-10-28, migr 0176): lo schema nomina le viste Ads vive (v_ads_mensile su ads-sync, v_ads_periodo_14g, v_ads_swap),
+// con un solo livello per query su v_ads_periodo_14g e i rapporti ricalcolati dalle somme (Gate 2 G2-ADS-1/2).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -46,6 +48,10 @@ Key relations:
 - gifts_offline(year, month, data date, codice, nome, cognome, quantita, prezzo, cogs, kind)  -- offline rows outside Qromo/Shopify; prezzo and cogs are ROW totals (do not multiply by quantita), prezzo VAT-inclusive; kind = 'gift' (price 0), 'vendita_manuale' (manual sale), 'vendita_fuori_fatturato' (historical sale collected outside official revenue), 'rettifica' (stock out, no sale)
 - products(codice, item, variant, categoria, retail_price, cogs, verificato)
 - suppliers(name), negozi(name)
+- v_ads_mensile(year, month, spend, impressions, clicks, purchases, purchase_value, roas, fonte, ultimo_giorno)  -- Meta Ads per month, all months: fonte 'ads-sync' = live series from 2026-06-20 (updated daily), 'meta_ads_daily' = old campaign-level series before, 'misto' = a month with days from both (June 2026); ultimo_giorno = last day with data in the month
+- v_ads_periodo_14g(level, window_key, since, until, object_name, campaign_name, adset_name, spend, impressions, reach, frequency, link_clicks, link_ctr, cpm, lpv_rate, atc_rate, purchases, purchase_value, roas, cpa, hook_rate)  -- Meta Ads last 14 days vs the 14 before; level 'account'/'campaign'/'adset'/'ad', window_key 'cur14' (last 14 days) or 'prev14'; link_ctr, lpv_rate, atc_rate, hook_rate in %; rows of different levels repeat the same spend and value: ALWAYS filter exactly one level (level='account' for the account total, 'campaign' + campaign_name for a campaign, 'adset' + adset_name, 'ad' + object_name for a creative) and select level and window_key; never sum or average across levels
+- v_ads_swap(ad_name, campaign_name, adset_name, stato, motivo, freq_7g, link_ctr_7, ctr_var_pct, cpm_7, spend_14, purchases_14, cpa_14, roas_14, hook_7)  -- one row per active ad (or with spend in the last 14 days); stato 'cambia' (change the creative), 'osserva', 'nuova', 'ok', 'senza_consegna', 'in_pausa'; motivo = why, in Italian
+Meta Ads questions use v_ads_mensile, v_ads_periodo_14g, v_ads_swap; purchases and purchase_value there are Meta-attributed (not Shopify orders); never meta_ads_daily; for more than one row compute ROAS = SUM(purchase_value)/SUM(spend), CPA = SUM(spend)/SUM(purchases), CTR = SUM(link_clicks)/SUM(impressions); never AVG of the ratio columns.
 Rules: prices are VAT-inclusive (netto = lordo/1.22, IVA 22%). expenses.costo is negative. Money is EUR.
 products.categoria values are exactly: BAG, PELLE, TESSUTO, ACCESSORI, ALTRO (BAG = le borse). Do NOT ILIKE '%borsa%'.
 For "quante borse / pezzi in magazzino" use SUM(giacenza_attuale) from v_inventory (optionally where categoria='BAG').

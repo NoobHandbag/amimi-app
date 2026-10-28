@@ -434,7 +434,8 @@ function FreschezzaCard({ f }: { f: Freschezza }) {
     { label: 'Vendite negozio (Qromo)', iso: f.ultima_vendita_qromo, okH: 24 * 10, warnH: 24 * 21, nota: 'saltuarie: qualche giorno a zero e’ normale' },
     // dal 28-10 (migr 0175) il giorno di meta_ads_creative_daily; meta_ads_daily (livello campagna) e' ferma al 01-07
     { label: 'Meta Ads (ultimo giorno di dati)', iso: f.meta_ads_creative_ultimo_giorno, okH: 48, warnH: 24 * 7, nota: "alimenta la card Creativita' da cambiare del Cruscotto (ads-sync, ogni mattina)" },
-    { label: 'Meta Ads, serie mensile storica (ferma, usata solo dal tool ads_summary)', iso: f.meta_ads_ultimo_giorno, okH: 48, warnH: 24 * 7, storica: true },
+    // dal 28-10 (migr 0176) v_ads_mensile legge ads-sync per ogni giorno che ha: di questa serie restano solo i giorni senza
+    { label: "Meta Ads, vecchia serie a livello campagna (ferma al 01-07: in v_ads_mensile solo i giorni che ads-sync non ha)", iso: f.meta_ads_ultimo_giorno, okH: 48, warnH: 24 * 7, storica: true },
     // updated_at cambia solo se uno stato TWS cambia: un giro "232 invariati" non lo muove
     { label: 'Spedizioni TWS (ultimo cambio di stato)', iso: f.ultimo_batch_spedizioni, okH: 48, warnH: 96, nota: 'giro giornaliero: la data avanza solo se uno stato cambia' },
     { label: 'Guardiano contabile (health)', iso: f.ultimo_health, okH: 30, warnH: 72 },
