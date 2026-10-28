@@ -3641,6 +3641,9 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
             500 AS "impr_hook",
             10 AS "quota_min",
             21 AS "giorni_base"
+        ), "freq_ult" AS (
+         SELECT "max"("meta_ad_freq7"."day") AS "d"
+           FROM "public"."meta_ad_freq7"
         ), "elenco" AS (
          SELECT "meta_ad_creative"."ad_id"
            FROM "public"."meta_ad_creative"
@@ -3724,6 +3727,8 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
             "round"(((1000.0 * "m"."spend_7") / NULLIF("m"."impressions_7", (0)::numeric)), 2) AS "cpm_7",
             "round"(((1000.0 * "m"."spend_base") / NULLIF("m"."impressions_base", (0)::numeric)), 2) AS "cpm_base",
             "round"("fq"."freq_7d", 2) AS "freq_7g",
+            ((COALESCE("c"."effective_status", ''::"text") = 'ACTIVE'::"text") AND (COALESCE("m"."impressions_7", (0)::numeric) >= ("k_1"."impr_consegna")::numeric) AND ("fq"."freq_7d" IS NULL)) AS "freq_mancante",
+            "fu"."d" AS "freq_al",
             COALESCE("m"."spend_14", (0)::numeric) AS "spend_14",
             COALESCE("m"."purchases_14", (0)::numeric) AS "purchases_14",
             COALESCE("m"."value_14", (0)::numeric) AS "value_14",
@@ -3740,12 +3745,13 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
             "round"(((100.0 * COALESCE("m"."spend_7", (0)::numeric)) / NULLIF("a7"."spend_7", (0)::numeric)), 1) AS "quota_adset_7",
             "s"."pct_oos",
                 CASE
-                    WHEN ((COALESCE("nc"."campaign_name", ''::"text") ~* '(super hot|rtg|retarget|re-?eng)'::"text") OR (COALESCE("ns"."adset_name", ''::"text") ~* '(super hot|rtg|retarget|re-?eng)'::"text")) THEN 'retargeting'::"text"
+                    WHEN ((COALESCE("nc"."campaign_name", ''::"text") ~* '(super hot|\mhot\M|warm|rtg|retarget|remarketing|re-?eng)'::"text") OR (COALESCE("ns"."adset_name", ''::"text") ~* '(super hot|\mhot\M|warm|rtg|retarget|remarketing|re-?eng)'::"text")) THEN 'retargeting'::"text"
                     ELSE 'cold'::"text"
                 END AS "pubblico"
-           FROM ((((((((((("elenco" "e"
+           FROM (((((((((((("elenco" "e"
              CROSS JOIN "ref" "r")
              CROSS JOIN "k" "k_1")
+             CROSS JOIN "freq_ult" "fu")
              JOIN "m" ON (("m"."ad_id" = "e"."ad_id")))
              LEFT JOIN "primo" "p" ON (("p"."ad_id" = "e"."ad_id")))
              LEFT JOIN "public"."meta_ad_creative" "c" ON (("c"."ad_id" = "e"."ad_id")))
@@ -3778,6 +3784,8 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
             "x"."cpm_7",
             "x"."cpm_base",
             "x"."freq_7g",
+            "x"."freq_mancante",
+            "x"."freq_al",
             "x"."spend_14",
             "x"."purchases_14",
             "x"."value_14",
@@ -3819,6 +3827,8 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
             "y"."cpm_7",
             "y"."cpm_base",
             "y"."freq_7g",
+            "y"."freq_mancante",
+            "y"."freq_al",
             "y"."spend_14",
             "y"."purchases_14",
             "y"."value_14",
@@ -3833,7 +3843,7 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
             "y"."ctr_var_pct",
             "y"."cpm_var_pct",
             COALESCE(("y"."freq_7g" >= "y"."freq_soglia"), false) AS "segnale_freq",
-            COALESCE((("y"."impressions_7" >= ("k_1"."impr_min")::numeric) AND ("y"."impressions_base" >= ("k_1"."impr_min")::numeric) AND ("y"."link_ctr_7" <= ("k_1"."ctr_calo" * "y"."link_ctr_base"))), false) AS "segnale_ctr",
+            COALESCE((("y"."impressions_7" >= ("k_1"."impr_min")::numeric) AND ("y"."impressions_base" >= ("k_1"."impr_min")::numeric) AND ("y"."link_ctr_base" > (0)::numeric) AND ("y"."link_ctr_7" <= ("k_1"."ctr_calo" * "y"."link_ctr_base"))), false) AS "segnale_ctr",
             (("y"."spend_14" >= "k_1"."pareggio") AND ("y"."purchases_14" = (0)::numeric)) AS "segnale_spesa"
            FROM ("y"
              CROSS JOIN "k" "k_1")
@@ -3860,6 +3870,8 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
             "z"."cpm_7",
             "z"."cpm_base",
             "z"."freq_7g",
+            "z"."freq_mancante",
+            "z"."freq_al",
             "z"."spend_14",
             "z"."purchases_14",
             "z"."value_14",
@@ -3926,20 +3938,28 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
     "w"."segnale_ctr",
     "w"."segnale_spesa",
     "w"."stato",
-    (
+    ((
         CASE "w"."stato"
             WHEN 'in_pausa'::"text" THEN (('non attiva su Meta ('::"text" || COALESCE("w"."effective_status", 'stato sconosciuto'::"text")) || ')'::"text")
             WHEN 'senza_consegna'::"text" THEN (('Meta non la consegna ('::"text" || "w"."impressions_7") || ' impression in 7 giorni)'::"text")
-            WHEN 'nuova'::"text" THEN 'meno di 14 giorni di storia: niente confronto'::"text"
-            WHEN 'ok'::"text" THEN ('nessun segnale di fatica'::"text" ||
+            WHEN 'nuova'::"text" THEN (((('base di confronto non ancora completa ('::"text" || "w"."impressions_base") || ' impression nei primi 14 giorni, live da '::"text") || COALESCE("w"."giorni_live", 0)) || ' giorni)'::"text")
+            WHEN 'ok'::"text" THEN (
             CASE
-                WHEN (("w"."impressions_7" < ("k"."impr_min")::numeric) OR ("w"."impressions_base" < ("k"."impr_min")::numeric)) THEN (('; CTR non confrontabile ('::"text" || "concat_ws"(', '::"text",
+                WHEN "w"."freq_mancante" THEN 'nessun segnale di fatica misurato'::"text"
+                ELSE 'nessun segnale di fatica'::"text"
+            END ||
+            CASE
+                WHEN (("w"."impressions_7" < ("k"."impr_min")::numeric) OR ("w"."impressions_base" < ("k"."impr_min")::numeric) OR (COALESCE("w"."link_ctr_base", (0)::numeric) = (0)::numeric)) THEN (('; CTR non confrontabile ('::"text" || "concat_ws"(', '::"text",
                 CASE
                     WHEN ("w"."impressions_7" < ("k"."impr_min")::numeric) THEN ("w"."impressions_7" || ' impression in 7 giorni'::"text")
                     ELSE NULL::"text"
                 END,
                 CASE
                     WHEN ("w"."impressions_base" < ("k"."impr_min")::numeric) THEN ("w"."impressions_base" || ' impression nei primi 14 giorni'::"text")
+                    ELSE NULL::"text"
+                END,
+                CASE
+                    WHEN (("w"."impressions_base" >= ("k"."impr_min")::numeric) AND (COALESCE("w"."link_ctr_base", (0)::numeric) = (0)::numeric)) THEN 'nessun click sul link nei primi 14 giorni'::"text"
                     ELSE NULL::"text"
                 END)) || ')'::"text")
                 ELSE ''::"text"
@@ -3961,6 +3981,10 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
         CASE
             WHEN (("w"."quota_adset_7" < ("k"."quota_min")::numeric) AND ("w"."stato" = ANY (ARRAY['nuova'::"text", 'ok'::"text", 'osserva'::"text"]))) THEN (('; riceve il '::"text" || "replace"(("trim_scale"("w"."quota_adset_7"))::"text", '.'::"text", ','::"text")) || '% della spesa del suo adset'::"text")
             ELSE ''::"text"
+        END) ||
+        CASE
+            WHEN "w"."freq_mancante" THEN (('; frequency 7g non letta per il '::"text" || "to_char"(("w"."as_of")::timestamp with time zone, 'DD-MM'::"text")) || ': segnale non valutato'::"text")
+            ELSE ''::"text"
         END) AS "motivo",
         CASE "w"."stato"
             WHEN 'cambia'::"text" THEN 1
@@ -3969,7 +3993,9 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
             WHEN 'ok'::"text" THEN 4
             WHEN 'senza_consegna'::"text" THEN 5
             ELSE 6
-        END AS "ordine"
+        END AS "ordine",
+    "w"."freq_mancante",
+    "w"."freq_al"
    FROM ("w"
      CROSS JOIN "k");
 
@@ -3977,7 +4003,7 @@ CREATE OR REPLACE VIEW "public"."v_ads_swap" AS
 ALTER VIEW "public"."v_ads_swap" OWNER TO "postgres";
 
 
-COMMENT ON VIEW "public"."v_ads_swap" IS 'Amimì Ads: una riga per ad ACTIVE o con spesa negli ultimi 14 giorni, con i segnali di fatica (frequency 7g, CTR link contro i primi 14 giorni, spesa senza acquisti) e lo stato cambia/osserva/nuova/ok/senza_consegna/in_pausa. Regola dell''owner del 28-10-2026, migr 0175.';
+COMMENT ON VIEW "public"."v_ads_swap" IS 'Amimì Ads: una riga per ad ACTIVE o con spesa negli ultimi 14 giorni, con i segnali di fatica (frequency 7g, CTR link contro i primi 14 giorni, spesa senza acquisti) e lo stato cambia/osserva/nuova/ok/senza_consegna/in_pausa. freq_mancante = frequency 7g non letta per as_of (segnale non valutato), freq_al = ultimo giorno letto. Regola dell''owner del 28-10-2026, migr 0175.';
 
 
 
@@ -5088,7 +5114,9 @@ CREATE OR REPLACE VIEW "public"."v_fonti_freschezza" AS
            FROM "public"."expenses"
           WHERE ("expenses"."status" = 'approved'::"text")) AS "ultima_spesa_pagata",
     ( SELECT "max"("purchases"."data") AS "max"
-           FROM "public"."purchases") AS "ultimo_arrivo";
+           FROM "public"."purchases") AS "ultimo_arrivo",
+    ( SELECT "max"("meta_ads_creative_daily"."date") AS "max"
+           FROM "public"."meta_ads_creative_daily") AS "meta_ads_creative_ultimo_giorno";
 
 
 ALTER VIEW "public"."v_fonti_freschezza" OWNER TO "postgres";

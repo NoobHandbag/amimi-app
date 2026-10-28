@@ -24,6 +24,9 @@
 //  'video_view', visualizzazioni da 3 secondi) e thruplays (video_thruplay_watched_actions); sul giro corrente 8
 //  chiamate in piu' (finestre cur14/prev14 x livelli account/campaign/adset/ad) con reach e frequency deduplicate
 //  sulla finestra -> meta_ads_window_reach. Secondaria come freq7: warn, mai fail.
+//  Gate 2 (28-10): un solo orologio per giro, `now` passato a ogni romeDate_ (C2: un giro a cavallo della mezzanotte
+//  di Roma calcolava i daily su D e freq7/finestre su D+1); le cause degli errori di daily (la prima), finestre e
+//  freq7 restano nella label finale e nei due ritorni anticipati (C3, X7: 'errori daily N' senza causa).
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -107,12 +110,13 @@ async function metaGetOne_(token: string, url: string): Promise<Record<string, a
 // B7: data di Roma con Intl (come write-api lib.todayRome e shipping-status-sync), aritmetica sui giorni ancorata
 // alla mezzanotte UTC (ogni giorno = 86.400.000 ms): il cambio ora non salta ne' duplica un giorno.
 const todayRome_ = (now: Date = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(now);
-const romeDate_ = (offsetDays: number, now: Date = new Date()) =>
+const romeDate_ = (offsetDays: number, now: Date) =>
   new Date(Date.parse(todayRome_(now) + 'T00:00:00Z') - offsetDays * 86400000).toISOString().slice(0, 10);
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const body = await req.json().catch(() => ({} as Record<string, any>));
+  const now = new Date(); // C2: l'unico orologio del giro, per ogni romeDate_ (daily, freq7, finestre)
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const today = () => new Date().toISOString().slice(0, 10); // chiave health in UTC, come shopify-sync (C11)
   const health = async (label: string, n: number, severity: 'ok' | 'warn' | 'error') => {
@@ -153,7 +157,7 @@ Deno.serve(async (req) => {
   const days = isBackfill ? Math.min(30, Math.max(1, Number(body.days) || 14)) : 1;
   const startOffset = isBackfill ? Math.max(0, Number(body.offset) || 0) : 0;
   const dates: string[] = [];
-  for (let i = startOffset + days; i >= startOffset + 1; i--) dates.push(romeDate_(i));
+  for (let i = startOffset + days; i >= startOffset + 1; i--) dates.push(romeDate_(i, now));
 
   const insightFields = [
     'ad_id', 'ad_name', 'adset_id', 'adset_name', 'campaign_id', 'campaign_name', 'objective',
@@ -161,7 +165,7 @@ Deno.serve(async (req) => {
     'actions', 'action_values', 'video_thruplay_watched_actions',
   ].join(',');
 
-  let dailyRows = 0, dailyErr = 0;
+  let dailyRows = 0, dailyErr = 0, dailyWarn = '';
   try {
     for (const date of dates) {
       const tr = encodeURIComponent(JSON.stringify({ since: date, until: date }));
@@ -195,7 +199,8 @@ Deno.serve(async (req) => {
         // B6: un ad ripetuto nella stessa risposta (Meta pagina su dati vivi) manderebbe in 21000 l'intero upsert
         const dedup = [...new Map(rows.map((r) => [r.ad_id, r])).values()];
         const { error } = await sb.from('meta_ads_creative_daily').upsert(dedup, { onConflict: 'date,ad_id' });
-        if (error) { dailyErr++; } else dailyRows += dedup.length;
+        // X7: la prima causa resta per la label (edge prima della migr 0175 = PGRST204 su video_3s_views)
+        if (error) { dailyErr++; if (!dailyWarn) dailyWarn = redact_(error.message); } else dailyRows += dedup.length;
       }
       await sleep(200);
     }
@@ -208,21 +213,21 @@ Deno.serve(async (req) => {
   // sovrascritta a ogni giro. Secondaria: se fallisce warn, i daily sono gia' scritti. Errore redatto via health().
   // Solo sul giro corrente o sul PRIMO blocco di backfill (offset 0): e' sempre lo stato 7d CORRENTE, ripullarlo a
   // ogni blocco di un backfill sarebbe spreco (gate efficiency). Errore di upsert -> warn, come l'eccezione.
-  let freqRows = 0, freqErr = 0;
+  let freqRows = 0, freqErr = 0, freqWarn = '';
   if (!isBackfill || startOffset === 0) {
     try {
-      const since7 = romeDate_(7), until7 = romeDate_(1);
+      const since7 = romeDate_(7, now), until7 = romeDate_(1, now);
       const tr7 = encodeURIComponent(JSON.stringify({ since: since7, until: until7 }));
       const f = await metaGetAll_(token, `${GRAPH}/${AD_ACCOUNT}/insights?level=ad&time_range=${tr7}&fields=ad_id,frequency,reach,impressions&limit=200`);
       const frows = f.map((r) => ({ ad_id: String(r.ad_id ?? ''), day: until7, freq_7d: num(r.frequency), reach_7d: num(r.reach), impressions_7d: num(r.impressions), updated_at: new Date().toISOString() })).filter((r) => r.ad_id);
       if (frows.length) {
         const dedup = [...new Map(frows.map((r) => [r.ad_id, r])).values()];
         const { error } = await sb.from('meta_ad_freq7').upsert(dedup, { onConflict: 'ad_id' });
-        if (error) { freqErr++; await health(`daily ${dailyRows}, freq7 upsert FALLITO: ${error.message}`, 1, 'warn'); }
+        if (error) { freqErr++; freqWarn = `upsert: ${error.message}`; await health(`daily ${dailyRows}, freq7 upsert FALLITO: ${error.message}`, 1, 'warn'); }
         else freqRows = dedup.length;
       }
     } catch (e) {
-      freqErr++;
+      freqErr++; freqWarn = `insights: ${(e as Error).message}`;
       await health(`daily ${dailyRows}, freq7 FALLITA: ${(e as Error).message}`, 1, 'warn');
     }
   }
@@ -235,8 +240,8 @@ Deno.serve(async (req) => {
   let winRows = 0, winErr = 0, winWarn = '';
   if (!isBackfill || startOffset === 0) {
     const finestre = [
-      { key: 'cur14', since: romeDate_(14), until: romeDate_(1) },
-      { key: 'prev14', since: romeDate_(28), until: romeDate_(15) },
+      { key: 'cur14', since: romeDate_(14, now), until: romeDate_(1, now) },
+      { key: 'prev14', since: romeDate_(28, now), until: romeDate_(15, now) },
     ];
     const livelli = ['account', 'campaign', 'adset', 'ad'] as const;
     const wrows: Array<Record<string, string | number>> = [];
@@ -264,6 +269,9 @@ Deno.serve(async (req) => {
     }
     if (winErr) await health(`daily ${dailyRows}, finestre 14g FALLITE (${winErr}): ${winWarn}`, 1, 'warn');
   }
+  // C3/X7: le cause di daily, finestre e freq7 vanno in ogni label scritta dopo (finale e ritorni anticipati):
+  // health_log e' un upsert su (day,k) e resta solo l'ultima. 150 caratteri l'una, health redige e taglia a 500.
+  const cause_ = () => (dailyWarn ? ` (daily: ${dailyWarn.slice(0, 150)})` : '') + (winWarn ? ` (finestre ${winWarn.slice(0, 150)})` : '') + (freqWarn ? ` (freq7 ${freqWarn.slice(0, 150)})` : '');
 
   // ---- anagrafica creative: ads + creative (product_set_id, destinazione, thumbnail + immagine grande). Errori contati (B3). ----
   let creativeRows = 0, creativeErr = 0, framesResolved = 0, framesTried = 0; const setIds = new Set<string>();
@@ -319,8 +327,8 @@ Deno.serve(async (req) => {
     }
   } catch (e) {
     // l'anagrafica e' secondaria: se Meta fallisce qui, i daily sono gia' scritti. Warn, non fermare tutto.
-    await health(`daily ${dailyRows}, anagrafica creative FALLITA: ${(e as Error).message}`, 1, 'warn');
-    return json({ ok: true, dailyRows, dailyErr, creativeWarn: redact_((e as Error).message) });
+    await health(`daily ${dailyRows}, errori daily ${dailyErr} finestre ${winErr} freq7 ${freqErr}, anagrafica creative FALLITA: ${String((e as Error).message).slice(0, 150)}` + cause_(), 1 + dailyErr + winErr + freqErr, 'warn');
+    return json({ ok: true, dailyRows, dailyErr, winErr, freqErr, creativeWarn: redact_((e as Error).message) });
   }
 
   // ---- mappa product_set -> retailer_id -> codice_norm (best-effort v1). A2: le letture da cui dipende COSA si
@@ -369,13 +377,13 @@ Deno.serve(async (req) => {
       await sleep(200);
     }
   } catch (e) {
-    await health(`daily ${dailyRows}, creative ${creativeRows}, product_set map FALLITA: ${(e as Error).message}`, 1, 'warn');
-    return json({ ok: true, dailyRows, dailyErr, creativeRows, creativeErr, mapWarn: redact_((e as Error).message) });
+    await health(`daily ${dailyRows}, creative ${creativeRows}, errori daily ${dailyErr} creative ${creativeErr} finestre ${winErr} freq7 ${freqErr}, product_set map FALLITA: ${String((e as Error).message).slice(0, 150)}` + cause_(), 1 + dailyErr + creativeErr + winErr + freqErr, 'warn');
+    return json({ ok: true, dailyRows, dailyErr, creativeRows, creativeErr, winErr, freqErr, mapWarn: redact_((e as Error).message) });
   }
 
   // v1.4: gli errori di finestre e freq7 pesano sulla label finale (stessa chiave day,k: senza, il warn sopra verrebbe
   // sovrascritto dall'ok del riepilogo, e una freq7 fallita resterebbe invisibile fino al giorno dopo)
   const sev = dailyErr || mapErr || creativeErr || winErr || freqErr ? 'warn' : 'ok';
-  await health(`pull ${dates.length}g (${dates[0]} -> ${dates[dates.length - 1]}): ${dailyRows} righe ad-day, ${creativeRows} creative (frame ${framesResolved}/${framesTried}), ${freqRows} freq7, ${winRows} finestre 14g, ${mapRows} righe set-map, set ${setIds.size}` + (dailyErr || mapErr || creativeErr || winErr || freqErr ? `, errori daily ${dailyErr} creative ${creativeErr} map ${mapErr} finestre ${winErr} freq7 ${freqErr}` + (winWarn ? ` (${winWarn.slice(0, 150)})` : '') : ''), dailyErr + mapErr + creativeErr + winErr + freqErr, sev as 'ok' | 'warn');
+  await health(`pull ${dates.length}g (${dates[0]} -> ${dates[dates.length - 1]}): ${dailyRows} righe ad-day, ${creativeRows} creative (frame ${framesResolved}/${framesTried}), ${freqRows} freq7, ${winRows} finestre 14g, ${mapRows} righe set-map, set ${setIds.size}` + (dailyErr || mapErr || creativeErr || winErr || freqErr ? `, errori daily ${dailyErr} creative ${creativeErr} map ${mapErr} finestre ${winErr} freq7 ${freqErr}` + cause_() : ''), dailyErr + mapErr + creativeErr + winErr + freqErr, sev as 'ok' | 'warn');
   return json({ ok: true, dates: dates.length, from: dates[0], to: dates[dates.length - 1], dailyRows, dailyErr, creativeRows, creativeErr, framesResolved, framesTried, freqRows, freqErr, winRows, winErr, mapRows, mapErr, sets: setIds.size, next_offset: isBackfill ? startOffset + days : undefined });
 });

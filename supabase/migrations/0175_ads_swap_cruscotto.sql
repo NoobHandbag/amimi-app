@@ -8,11 +8,14 @@
 --      La scrive ads-sync v1.4 (upsert sulla PK); RLS on senza policy, come le altre meta_ad*.
 --  (c) v_ads_periodo_14g: ultimi 14 giorni contro i 14 prima, per account, campagna, adset e ad.
 --  (d) v_ads_swap: una riga per ad attivo o con spesa negli ultimi 14 giorni, con la regola di cambio creativita'.
+--  (e) v_fonti_freschezza: una colonna IN CODA, meta_ads_creative_ultimo_giorno (Gate 2 X1).
 -- Finestre ancorate ad as_of = max(date) di meta_ads_creative_daily (ieri, Roma, se il cron gira): cur14 = as_of-13..as_of,
 -- prev14 = as_of-27..as_of-14, _7 = date > as_of-7, _14 = date > as_of-14.
--- Nessuna tabella o vista esistente cambia definizione (v_ads_creative_status resta per la tab Ads). Le due viste sono di
--- postgres come le altre v_ads_*: leggono le basi chiuse e danno ad anon solo righe aggregate per oggetto.
--- Rollback: drop view v_ads_swap, v_ads_periodo_14g; drop table meta_ads_window_reach. Le due colonne possono restare.
+-- Nessun'altra tabella o vista esistente cambia definizione (v_ads_creative_status resta per la tab Ads). Le due viste
+-- nuove sono di postgres come le altre v_ads_*: leggono le basi chiuse e danno ad anon solo righe aggregate per oggetto.
+-- Rollback: drop view v_ads_swap, v_ads_periodo_14g; drop table meta_ads_window_reach. Le due colonne video e la colonna
+-- in coda a v_fonti_freschezza possono restare (create or replace non toglie colonne: per toglierla drop e create del
+-- corpo della 0109, poi grant select ad anon, authenticated e ask_ro).
 begin;
 
 -- (a) video: null = riga letta prima di ads-sync v1.4 (le viste contano solo i giorni misurati)
@@ -151,11 +154,17 @@ grant select on v_ads_periodo_14g to anon, authenticated;
 comment on view v_ads_periodo_14g is 'Amimì Ads: ultimi 14 giorni (cur14) contro i 14 prima (prev14) per account, campagna, adset e ad. frequency/reach solo da meta_ads_window_reach sulla stessa finestra. Migr 0175.';
 
 -- (d) quando cambiare una creativita'. Regola (owner 28-10-2026):
---   pubblico = retargeting se campagna o adset ~* '(super hot|rtg|retarget|re-?eng)', altrimenti cold; soglia frequency
---   4,0 retargeting e 2,5 cold. segnale_freq = freq_7g (vera, meta_ad_freq7 del giorno as_of) >= soglia.
+--   pubblico = retargeting se campagna o adset ~* '(super hot|\mhot\M|warm|rtg|retarget|remarketing|re-?eng)',
+--   altrimenti cold (C3: anche hot come parola intera, warm e remarketing; i nomi vivi del 28-10 restano classificati
+--   come prima); soglia frequency 4,0 retargeting e 2,5 cold. segnale_freq = freq_7g (vera, meta_ad_freq7 del giorno
+--   as_of) >= soglia.
+--   freq_mancante (B1): ad ACTIVE con almeno 300 impression in 7g senza frequency letta per as_of (freq7 fallita o in
+--   ritardo, join stretto su day = as_of): il segnale non e' valutato e il motivo lo dice, mai "sotto soglia".
+--   freq_al = ultimo giorno letto in meta_ad_freq7, uguale su ogni riga.
 --   base = giorni dell'ad in [first_day, first_day + 13] e <= as_of - 7 (first_day = primo giorno con spesa NEI DATI,
---   lo storico parte dal 20-06-2026). segnale_ctr = impression 7g >= 1.000, impression base >= 1.000 e CTR link 7g <=
---   0,75 x CTR link base. segnale_spesa = spesa 14g >= 76,70 (pareggio) senza acquisti in 14g.
+--   lo storico parte dal 20-06-2026). segnale_ctr = impression 7g >= 1.000, impression base >= 1.000, CTR link base > 0
+--   (B2: una base senza click non si confronta) e CTR link 7g <= 0,75 x CTR link base. segnale_spesa = spesa 14g >=
+--   76,70 (pareggio) senza acquisti in 14g.
 --   stato: non ACTIVE = in_pausa; spesa, oppure frequency E CTR = cambia; frequency O CTR = osserva; < 300 impression
 --   in 7g = senza_consegna; base < 1.000 impression in un ad con meno di 21 giorni (la base non e' ancora completa
 --   fuori dagli ultimi 7) = nuova; altrimenti ok.
@@ -168,6 +177,7 @@ create or replace view v_ads_swap as
    select 4.0 as freq_rtg, 2.5 as freq_cold, 76.70 as pareggio, 0.75 as ctr_calo,
      1000 as impr_min, 300 as impr_consegna, 500 as impr_hook, 10 as quota_min, 21 as giorni_base
  ),
+ freq_ult as (select max(day) as d from meta_ad_freq7),
  elenco as (
    select ad_id from meta_ad_creative where effective_status = 'ACTIVE'
    union
@@ -227,6 +237,9 @@ create or replace view v_ads_swap as
      round(1000.0 * m.spend_7 / nullif(m.impressions_7, 0), 2) as cpm_7,
      round(1000.0 * m.spend_base / nullif(m.impressions_base, 0), 2) as cpm_base,
      round(fq.freq_7d, 2) as freq_7g,
+     (coalesce(c.effective_status, '') = 'ACTIVE' and coalesce(m.impressions_7, 0) >= k.impr_consegna
+      and fq.freq_7d is null) as freq_mancante,
+     fu.d as freq_al,
      coalesce(m.spend_14, 0) as spend_14, coalesce(m.purchases_14, 0) as purchases_14, coalesce(m.value_14, 0) as value_14,
      round(m.spend_14 / nullif(m.purchases_14, 0), 2) as cpa_14,
      round(m.value_14 / nullif(m.spend_14, 0), 2) as roas_14,
@@ -234,11 +247,13 @@ create or replace view v_ads_swap as
      case when c.object_type = 'VIDEO' and m.impr_video_base >= k.impr_hook then round(100.0 * m.v3s_base / m.impr_video_base, 1) end as hook_base,
      round(100.0 * coalesce(m.spend_7, 0) / nullif(a7.spend_7, 0), 1) as quota_adset_7,
      s.pct_oos,
-     case when coalesce(nc.campaign_name, '') ~* '(super hot|rtg|retarget|re-?eng)'
-            or coalesce(ns.adset_name, '') ~* '(super hot|rtg|retarget|re-?eng)' then 'retargeting' else 'cold' end as pubblico
+     case when coalesce(nc.campaign_name, '') ~* '(super hot|\mhot\M|warm|rtg|retarget|remarketing|re-?eng)'
+            or coalesce(ns.adset_name, '') ~* '(super hot|\mhot\M|warm|rtg|retarget|remarketing|re-?eng)'
+          then 'retargeting' else 'cold' end as pubblico
    from elenco e
    cross join ref r
    cross join k
+   cross join freq_ult fu
    join m on m.ad_id = e.ad_id
    left join primo p on p.ad_id = e.ad_id
    left join meta_ad_creative c on c.ad_id = e.ad_id
@@ -260,7 +275,7 @@ create or replace view v_ads_swap as
  z as (
    select y.*,
      coalesce(y.freq_7g >= y.freq_soglia, false) as segnale_freq,
-     coalesce(y.impressions_7 >= k.impr_min and y.impressions_base >= k.impr_min
+     coalesce(y.impressions_7 >= k.impr_min and y.impressions_base >= k.impr_min and y.link_ctr_base > 0
               and y.link_ctr_7 <= k.ctr_calo * y.link_ctr_base, false) as segnale_ctr,
      (y.spend_14 >= k.pareggio and y.purchases_14 = 0) as segnale_spesa
    from y cross join k
@@ -286,12 +301,16 @@ create or replace view v_ads_swap as
    case w.stato
      when 'in_pausa' then 'non attiva su Meta (' || coalesce(w.effective_status, 'stato sconosciuto') || ')'
      when 'senza_consegna' then 'Meta non la consegna (' || w.impressions_7 || ' impression in 7 giorni)'
-     when 'nuova' then 'meno di 14 giorni di storia: niente confronto'
-     when 'ok' then 'nessun segnale di fatica'
-       || case when w.impressions_7 < k.impr_min or w.impressions_base < k.impr_min
+     -- C1: "nuova" e' la base incompleta (Raccolta 1 e 2 hanno mesi di storia e sono ok)
+     when 'nuova' then 'base di confronto non ancora completa (' || w.impressions_base || ' impression nei primi 14 giorni, live da '
+                       || coalesce(w.giorni_live, 0) || ' giorni)'
+     when 'ok' then case when w.freq_mancante then 'nessun segnale di fatica misurato' else 'nessun segnale di fatica' end
+       || case when w.impressions_7 < k.impr_min or w.impressions_base < k.impr_min or coalesce(w.link_ctr_base, 0) = 0
                then '; CTR non confrontabile (' || concat_ws(', ',
                       case when w.impressions_7 < k.impr_min then w.impressions_7 || ' impression in 7 giorni' end,
-                      case when w.impressions_base < k.impr_min then w.impressions_base || ' impression nei primi 14 giorni' end) || ')'
+                      case when w.impressions_base < k.impr_min then w.impressions_base || ' impression nei primi 14 giorni' end,
+                      case when w.impressions_base >= k.impr_min and coalesce(w.link_ctr_base, 0) = 0
+                           then 'nessun click sul link nei primi 14 giorni' end) || ')'
                else '' end
      else concat_ws('; ',
        case when w.segnale_spesa then 'speso ' || round(w.spend_14) || ' EUR in 14 giorni senza acquisti' end,
@@ -301,11 +320,44 @@ create or replace view v_ads_swap as
    end
    || case when w.quota_adset_7 < k.quota_min and w.stato in ('nuova', 'ok', 'osserva')
            then '; riceve il ' || replace(trim_scale(w.quota_adset_7)::text, '.', ',') || '% della spesa del suo adset'
+           else '' end
+   || case when w.freq_mancante then '; frequency 7g non letta per il ' || to_char(w.as_of, 'DD-MM') || ': segnale non valutato'
            else '' end as motivo,
    case w.stato when 'cambia' then 1 when 'osserva' then 2 when 'nuova' then 3 when 'ok' then 4
-                when 'senza_consegna' then 5 else 6 end as ordine
+                when 'senza_consegna' then 5 else 6 end as ordine,
+   w.freq_mancante, w.freq_al
  from w cross join k;
 grant select on v_ads_swap to anon, authenticated;
-comment on view v_ads_swap is 'Amimì Ads: una riga per ad ACTIVE o con spesa negli ultimi 14 giorni, con i segnali di fatica (frequency 7g, CTR link contro i primi 14 giorni, spesa senza acquisti) e lo stato cambia/osserva/nuova/ok/senza_consegna/in_pausa. Regola dell''owner del 28-10-2026, migr 0175.';
+comment on view v_ads_swap is 'Amimì Ads: una riga per ad ACTIVE o con spesa negli ultimi 14 giorni, con i segnali di fatica (frequency 7g, CTR link contro i primi 14 giorni, spesa senza acquisti) e lo stato cambia/osserva/nuova/ok/senza_consegna/in_pausa. freq_mancante = frequency 7g non letta per as_of (segnale non valutato), freq_al = ultimo giorno letto. Regola dell''owner del 28-10-2026, migr 0175.';
+
+-- (e) X1 (Gate 2): la card "Freschezza delle fonti" legge v_fonti_freschezza, dove meta_ads_ultimo_giorno viene da
+--     meta_ads_daily (ferma al 01-07). Colonna IN CODA meta_ads_creative_ultimo_giorno = max(date) del daily per ad.
+--     Corpo = pg_get_viewdef vivo del 28-10 (definito dalla 0109) piu' la colonna: create or replace tiene owner e grant
+--     (anon, authenticated, ask_ro) e fallisce se nome, tipo od ordine di una colonna esistente cambiasse. Nessuna vista
+--     o funzione dipende da lei (pg_depend e prosrc, 28-10).
+create or replace view v_fonti_freschezza as
+ SELECT ( SELECT max(shopify_orders.created_at_shop) AS max
+           FROM shopify_orders) AS ultimo_ordine_shopify,
+    ( SELECT max(shopify_orders.synced_at) AS max
+           FROM shopify_orders) AS ultimo_sync_ordini,
+    ( SELECT max(qromo_sales.data) AS max
+           FROM qromo_sales) AS ultima_vendita_qromo,
+    ( SELECT max(meta_ads_daily.date) AS max
+           FROM meta_ads_daily) AS meta_ads_ultimo_giorno,
+    ( SELECT max(meta_ads_daily.pulled_at) AS max
+           FROM meta_ads_daily) AS meta_ads_ultimo_pull,
+    ( SELECT max(shipping_status.updated_at) AS max
+           FROM shipping_status) AS ultimo_batch_spedizioni,
+    ( SELECT max(shopify_stock.synced_at) AS max
+           FROM shopify_stock) AS ultimo_sync_stock,
+    ( SELECT max(health_log.day) AS max
+           FROM health_log) AS ultimo_health,
+    ( SELECT max(expenses.date_paid) AS max
+           FROM expenses
+          WHERE expenses.status = 'approved'::text) AS ultima_spesa_pagata,
+    ( SELECT max(purchases.data) AS max
+           FROM purchases) AS ultimo_arrivo,
+    ( SELECT max(meta_ads_creative_daily.date) AS max
+           FROM meta_ads_creative_daily) AS meta_ads_creative_ultimo_giorno;
 
 commit;

@@ -12,6 +12,7 @@ import '../styles/screens/ads-swap.css';
 // per account, campagna, adset e ad). Una lettura fallita si vede nella card, mai una card sparita.
 
 const CPA_TARGET = 45, CPA_BREAKEVEN = 76.7;
+const IMPR_MIN = 1000;     // impression per lato sotto cui il CTR non si confronta (k.impr_min della vista)
 const GIORNI_VECCHI = 2;   // as_of e' ieri: oltre 2 giorni il pull del mattino non e' arrivato (Regola Ferrea 18)
 
 const num = (v: unknown): number | null => { if (v == null || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -39,15 +40,26 @@ const STATI: Record<string, { label: string; pill: string; gruppo: string }> = {
   nuova: { label: 'nuova', pill: 'info', gruppo: 'Nuove' },
   ok: { label: 'ok', pill: 'pos', gruppo: 'Ok' },
   senza_consegna: { label: 'senza consegna', pill: 'sw-off', gruppo: 'Senza consegna' },
+  in_pausa: { label: 'in pausa', pill: 'sw-off', gruppo: 'In pausa' },
 };
-// uno stato che la card non conosce non sparisce: finisce fra quelli da osservare
-const statoDi = (s: string | null) => (s === 'in_pausa' ? 'in_pausa' : s && STATI[s] ? s : 'osserva');
+// i sei stati della vista hanno un gruppo (senza consegna e in pausa chiusi in fondo); uno stato che la card non
+// conosce non sparisce: finisce fra quelli da osservare
+const statoDi = (s: string | null) => (s && STATI[s] ? s : 'osserva');
 
-// variazione in percento, colorata secondo il verso buono della metrica (meglio = 'su' o 'giu'); sotto il 5% e' neutra
-function Delta({ v, meglio, dopo }: { v: number | null; meglio: 'su' | 'giu'; dopo: string }) {
+// il verdetto del colore detto anche a voce (lettore di schermo): verde = meglio, rosso = peggio
+const VERDETTO: Record<string, string> = { good: 'meglio', bad: 'peggio', flat: 'quasi invariato' };
+
+// variazione in percento, colorata secondo il verso buono della metrica (meglio = 'su' o 'giu'); sotto il 5% e' neutra.
+// piccola: un lato del confronto sotto le 1.000 impression (o CTR di base a zero), la variazione resta grigia
+function Delta({ v, meglio, dopo, piccola = false }: { v: number | null; meglio: 'su' | 'giu'; dopo: string; piccola?: boolean }) {
   if (v == null) return null;
-  const tono = Math.abs(v) < 5 ? 'flat' : (v > 0) === (meglio === 'su') ? 'good' : 'bad';
-  return <small className={`sw-d ${tono}`}>{v > 0 ? '+' : v < 0 ? '-' : ''}{Math.round(Math.abs(v))}% {dopo}</small>;
+  const tono = piccola || Math.abs(v) < 5 ? 'flat' : (v > 0) === (meglio === 'su') ? 'good' : 'bad';
+  return (
+    <small className={`sw-d ${tono}`}>
+      {v > 0 ? '+' : v < 0 ? '-' : ''}{Math.round(Math.abs(v))}% {dopo}{piccola && ' (base piccola)'}
+      <span className="sw-sr">{piccola ? ', non valutato' : `, ${VERDETTO[tono]}`}</span>
+    </small>
+  );
 }
 
 function M({ v, extra, l, d, tono = '' }: { v: string; extra?: string; l: string; d?: ReactNode; tono?: string }) {
@@ -73,8 +85,10 @@ function AdRow({ r }: { r: AdsSwap }) {
   const st = STATI[statoDi(r.stato)] ?? STATI.osserva;
   const video = r.object_type === 'VIDEO';
   const freq = num(r.freq_7g), soglia = num(r.freq_soglia);
-  const ctr7 = num(r.link_ctr_7), cpm7 = num(r.cpm_7);
-  const ctrVar = num(r.ctr_var_pct) ?? varPct(ctr7, num(r.link_ctr_base));
+  const ctr7 = num(r.link_ctr_7), cpm7 = num(r.cpm_7), ctrBase = num(r.link_ctr_base);
+  const ctrVar = num(r.ctr_var_pct) ?? varPct(ctr7, ctrBase);
+  // CTR confrontabile solo con 1.000 impression per lato e un CTR di base sopra zero, come segnale_ctr nella vista
+  const basePiccola = (num(r.impressions_7) ?? 0) < IMPR_MIN || (num(r.impressions_base) ?? 0) < IMPR_MIN || ctrBase === 0;
   const cpmVar = num(r.cpm_var_pct) ?? varPct(cpm7, num(r.cpm_base));
   const spesa14 = num(r.spend_14) ?? 0, acq14 = num(r.purchases_14) ?? 0, cpa = num(r.cpa_14), roas = num(r.roas_14);
   const hook7 = num(r.hook_7), hookBase = num(r.hook_base);
@@ -93,8 +107,8 @@ function AdRow({ r }: { r: AdsSwap }) {
       {r.motivo && <p className="sw-motivo">{r.motivo}</p>}
       {oos != null && oos >= 30 && <p className="sw-oos">Nel suo product set il {Math.round(oos)}% dei prodotti e' esaurito.</p>}
       <div className="sw-ms">
-        <M v={freq == null ? 'n/d' : it(freq, 2)} extra={soglia == null ? undefined : ` / ${it(soglia, 1)}`} l="freq 7g / soglia" tono={r.segnale_freq ? 'warn' : ''} />
-        <M v={ctr7 == null ? 'n/d' : pct(ctr7)} l="CTR link 7g" d={<Delta v={ctrVar} meglio="su" dopo="vs inizio" />} tono={r.segnale_ctr ? 'neg' : ''} />
+        <M v={freq == null ? 'n/d' : it(freq, 2)} extra={soglia == null ? undefined : ` / ${it(soglia, 1)}`} l="freq 7g / soglia" tono={r.segnale_freq || r.freq_mancante ? 'warn' : ''} />
+        <M v={ctr7 == null ? 'n/d' : pct(ctr7)} l="CTR link 7g" d={<Delta v={ctrVar} meglio="su" dopo="vs inizio" piccola={basePiccola} />} tono={r.segnale_ctr ? 'neg' : ''} />
         <M v={cpm7 == null ? 'n/d' : eur2(cpm7)} l="CPM 7g" d={<Delta v={cpmVar} meglio="giu" dopo="vs inizio" />} />
         <M v={eur0(spesa14)} l="spesa 14g" tono={r.segnale_spesa ? 'neg' : ''} />
         <M v={intero(acq14)} l="acquisti 14g" />
@@ -124,18 +138,32 @@ const COLS: Col[] = [
   { k: 'hook_rate', h: 'Hook', fmt: (n) => pct(n, 0), meglio: 'su' },
 ];
 
-function Cella({ c, col }: { c: Coppia; col: Col }) {
-  const cur = num(c.cur?.[col.k]), prev = num(c.prev?.[col.k]);
-  if (cur == null && prev == null) return <td className="sw-c" />;
-  let freccia: ReactNode = null;
-  if (cur != null && prev != null && cur !== prev) {
-    const su = cur > prev;
-    const rel = prev !== 0 ? Math.abs(cur - prev) / Math.abs(prev) : 1;
-    const tono = col.meglio == null || rel < 0.03 ? 'flat' : su === (col.meglio === 'su') ? 'good' : 'bad';
-    freccia = <span className={`sw-arr ${tono}`} aria-label={su ? 'in aumento' : 'in calo'}>{su ? '▲' : '▼'}</span>;
+// il valore di una finestra. Il CPA si colora anche qui sulle soglie (target 45, break-even 76,70), come sulle creativita'.
+// Senza acquisti la vista lo lascia vuoto, ma con della spesa il CPA vale almeno quella spesa: '0 acq.', colorato sul
+// limite inferiore (dal break-even rosso, oltre il target arancio)
+function valore(r: AdsPeriodo | null, col: Col): { n: number | null; txt: string; tono: string } {
+  const n = num(r?.[col.k]);
+  if (n != null) return { n, txt: col.fmt(n), tono: col.k === 'cpa' ? cpaTono(n) : '' };
+  const spesa = num(r?.spend) ?? 0;
+  if (col.k === 'cpa' && spesa > 0 && num(r?.purchases) === 0) {
+    return { n: null, txt: '0 acq.', tono: spesa >= CPA_BREAKEVEN ? 'neg' : spesa > CPA_TARGET ? 'warn' : '' };
   }
-  // il CPA si colora anche qui sulle soglie (target 45, break-even 76,70), come sulle creativita'
-  return <td className="sw-c"><b className={col.k === 'cpa' && cur != null ? cpaTono(cur) || undefined : undefined}>{cur == null ? '–' : col.fmt(cur)}</b>{freccia}<small>{prev == null ? '–' : col.fmt(prev)}</small></td>;
+  return { n: null, txt: '–', tono: '' };
+}
+
+function Cella({ c, col }: { c: Coppia; col: Col }) {
+  const cur = valore(c.cur, col), prev = valore(c.prev, col);
+  if (cur.txt === '–' && prev.txt === '–') return <td className="sw-c" />;
+  let freccia: ReactNode = null;
+  if (cur.n != null && prev.n != null && cur.n !== prev.n) {
+    const su = cur.n > prev.n;
+    const rel = prev.n !== 0 ? Math.abs(cur.n - prev.n) / Math.abs(prev.n) : 1;
+    const tono = col.meglio == null || rel < 0.03 ? 'flat' : su === (col.meglio === 'su') ? 'good' : 'bad';
+    // a voce anche il verdetto del colore; la spesa non ha un verso
+    const detto = (su ? 'in aumento' : 'in calo') + (col.meglio == null ? '' : `, ${VERDETTO[tono]}`);
+    freccia = <span className={`sw-arr ${tono}`} role="img" aria-label={detto}>{su ? '▲' : '▼'}</span>;
+  }
+  return <td className="sw-c"><b className={cur.tono || undefined}>{cur.txt}</b>{freccia}<small>{prev.txt}</small></td>;
 }
 
 function Periodo({ righe }: { righe: AdsPeriodo[] }) {
@@ -208,12 +236,25 @@ function Periodo({ righe }: { righe: AdsPeriodo[] }) {
   );
 }
 
+// un gruppo chiuso in fondo alla lista (senza consegna, in pausa): si apre col tocco
+function Chiuso({ titolo, righe }: { titolo: string; righe: AdsSwap[] }) {
+  const [aperto, setAperto] = useState(false);
+  if (!righe.length) return null;
+  return (
+    <div className="sw-grp">
+      <button type="button" className="sw-more" aria-expanded={aperto} onClick={() => setAperto((v) => !v)}>
+        {titolo} ({righe.length})<Icon name="chevron" size={16} />
+      </button>
+      {aperto && righe.map((r) => <AdRow key={r.ad_id} r={r} />)}
+    </div>
+  );
+}
+
 export default function AdsSwapCard({ onAds }: { onAds?: () => void }) {
   const [swap, setSwap] = useState<AdsSwap[] | null>(null);
   const [per, setPer] = useState<AdsPeriodo[] | null>(null);
   const [errSwap, setErrSwap] = useState<string | null>(null);
   const [errPer, setErrPer] = useState<string | null>(null);
-  const [senzaAperto, setSenzaAperto] = useState(false);
   useEffect(() => {
     fetchAdsSwap().then(setSwap).catch((e) => setErrSwap(errMsg(e, 'v_ads_swap')));
     fetchAdsPeriodo().then(setPer).catch((e) => setErrPer(errMsg(e, 'v_ads_periodo_14g')));
@@ -230,8 +271,11 @@ export default function AdsSwapCard({ onAds }: { onAds?: () => void }) {
   const asOf = swap?.find((r) => r.as_of)?.as_of ?? per?.find((r) => r.as_of)?.as_of ?? null;
   const vecchi = asOf ? giorniFa(asOf) : null;
   const nCambia = gruppi.cambia?.length ?? 0, nOsserva = gruppi.osserva?.length ?? 0;
-  const senza = gruppi.senza_consegna ?? [];
+  const senza = gruppi.senza_consegna ?? [], pausa = gruppi.in_pausa ?? [];
   const visibili = (['cambia', 'osserva', 'nuova', 'ok'] as const).filter((s) => gruppi[s]?.length);
+  // frequency 7g non letta per il giorno dei dati (meta_ad_freq7 ferma, B1 28-10): il segnale di frequency non e' valutato
+  const freqAl = swap?.find((r) => r.freq_al)?.freq_al ?? null;
+  const freqFerma = !!swap?.some((r) => r.freq_mancante) && (freqAl == null || freqAl.slice(0, 10) !== asOf?.slice(0, 10));
 
   return (
     <section className="card ads-swap">
@@ -244,6 +288,12 @@ export default function AdsSwapCard({ onAds }: { onAds?: () => void }) {
           Dati Meta fermi al {ddmm(asOf!)} ({vecchi} giorni fa): l'aggiornamento del mattino (ads-sync) non e' arrivato, questi numeri non sono di oggi.
         </p>
       )}
+      {freqFerma && (
+        <p className="sw-stale sw-freq" role="alert">
+          {/* freq_al dopo as_of = il daily di ieri e' mancato ma la freq7 no: la frequency non e' "ferma", sono i dati di spesa a non combaciare */}
+          Frequency 7g {!freqAl ? 'non letta' : asOf && freqAl.slice(0, 10) > asOf.slice(0, 10) ? `letta al ${ddmm(freqAl)}, i dati di spesa al ${ddmm(asOf)}` : `ferma al ${ddmm(freqAl)}`}: le creativita' non sono valutate sulla frequency.
+        </p>
+      )}
 
       {errSwap && <p className="err sw-err">Creativita' non lette: {errSwap}</p>}
       {!errSwap && !swap && <p className="note">Carico le creativita'…</p>}
@@ -253,7 +303,7 @@ export default function AdsSwapCard({ onAds }: { onAds?: () => void }) {
             <span className={`ds-pill ${nCambia ? 'neg' : 'sw-off'}`}>{nCambia} da cambiare</span>
             <span className={`ds-pill ${nOsserva ? 'warn' : 'sw-off'}`}>{nOsserva} da osservare</span>
           </div>
-          {visibili.length === 0 && senza.length === 0 && <p className="note">Nessun ad attivo o con spesa negli ultimi 14 giorni.</p>}
+          {visibili.length === 0 && senza.length === 0 && pausa.length === 0 && <p className="note">Nessun ad attivo o con spesa negli ultimi 14 giorni.</p>}
           <div className="sw-list">
             {visibili.map((s) => (
               <div className="sw-grp" key={s}>
@@ -261,14 +311,8 @@ export default function AdsSwapCard({ onAds }: { onAds?: () => void }) {
                 {gruppi[s].map((r) => <AdRow key={r.ad_id} r={r} />)}
               </div>
             ))}
-            {senza.length > 0 && (
-              <div className="sw-grp">
-                <button type="button" className="sw-more" aria-expanded={senzaAperto} onClick={() => setSenzaAperto((v) => !v)}>
-                  Senza consegna ({senza.length})<Icon name="chevron" size={16} />
-                </button>
-                {senzaAperto && senza.map((r) => <AdRow key={r.ad_id} r={r} />)}
-              </div>
-            )}
+            <Chiuso titolo={STATI.senza_consegna.gruppo} righe={senza} />
+            <Chiuso titolo={STATI.in_pausa.gruppo} righe={pausa} />
           </div>
         </>
       )}

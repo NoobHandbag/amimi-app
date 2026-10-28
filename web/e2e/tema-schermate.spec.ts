@@ -353,8 +353,10 @@ const ADS_SETTIMANE: Riga[] = SETTIMANE.map((s, i) => ({
 }));
 // Card "Creativita' da cambiare" del Cruscotto (v_ads_swap e v_ads_periodo_14g, migr 0175, 28-10): gli ad di ADS piu' tre,
 // almeno uno per stato. Stato e motivo escono qui dalla stessa regola della vista: soglia di frequency 2,5 cold e 4
-// retargeting, CTR link a -25% dai primi 14 giorni (1.000 impression per lato), 76,70 EUR in 14 giorni senza acquisti,
-// sotto 300 impression in 7 giorni senza consegna, sotto 1.000 impression di base nuova. `prima` = i 14 giorni prima.
+// retargeting, CTR link a -25% dai primi 14 giorni (1.000 impression per lato, CTR di base sopra zero), 76,70 EUR in 14
+// giorni senza acquisti, sotto 300 impression in 7 giorni senza consegna, sotto 1.000 impression di base nuova; i testi del
+// motivo sono quelli della vista (numeri come trim_scale, virgola decimale). Frequency letta per as_of (freq_al = as_of):
+// un ad attivo e consegnato con freq null e' freq_mancante. `prima` = i 14 giorni prima.
 type SwapMock = {
   nome: string; colore: string; campagna: string; adset: string; video?: boolean; attivo?: boolean; ps: string; giorni: number;
   spesa7: number; impr7: number; ctr7: number; ctrBase: number; imprBase: number; cpm7: number; cpmBase: number; freq: number | null;
@@ -374,8 +376,11 @@ const SWAP_MOCK: SwapMock[] = [
   { nome: 'Lea Mini · flat lay', colore: '#232120', campagna: COLD, adset: BROAD, ps: 'ps_lea', giorni: 12, spesa7: 1.6, impr7: 180, ctr7: 0.56, ctrBase: 0.9, imprBase: 410, cpm7: 8.89, cpmBase: 8.3, freq: 1.1, spesa14: 4.1, acq14: 0, valore14: 0, prima: VUOTA },
   { nome: 'Mimi Pochette · reel', colore: '#24396f', campagna: HOT, adset: VISITATORI, video: true, attivo: false, ps: 'ps_tutte', giorni: 40, spesa7: 0, impr7: 0, ctr7: 1.2, ctrBase: 1.3, imprBase: 7800, cpm7: 15.4, cpmBase: 15.1, freq: null, spesa14: 22, acq14: 1, valore14: 149, hook7: 26, hookBase: 27, prima: { spesa: 120, acq: 3, valore: 447, ctr: 1.3, cpm: 15.1, freq: 2, hook: 27 } },
 ];
-const RTG = /(super hot|rtg|retarget|re-?eng)/i;
-const virgola = (n: number, d = 1) => n.toFixed(d).replace('.', ',');
+// \b al posto di \m e \M di Postgres (parola intera)
+const RTG = /(super hot|\bhot\b|warm|rtg|retarget|remarketing|re-?eng)/i;
+// come replace(trim_scale(x)::text, '.', ','): 4.0 -> 4, 3.80 -> 3,8
+const virgola = (n: number) => String(n).replace('.', ',');
+const ddmmTrattino = (iso: string) => `${iso.slice(8, 10)}-${iso.slice(5, 7)}`;
 const ORDINE_STATO: Record<string, number> = { cambia: 1, osserva: 2, nuova: 3, ok: 4, senza_consegna: 5, in_pausa: 6 };
 const idAdset = (nome: string) => 'as' + nome.length;
 const idCampagna = (nome: string) => (nome.startsWith('COLD') ? 'c1' : 'c2');
@@ -385,19 +390,29 @@ const ADS_SWAP: Riga[] = SWAP_MOCK.map((m, i) => {
   const pubblico = RTG.test(m.campagna) || RTG.test(m.adset) ? 'retargeting' : 'cold';
   const soglia = pubblico === 'retargeting' ? 4 : 2.5;
   const sF = m.freq != null && m.freq >= soglia;
-  const sC = m.impr7 >= 1000 && m.imprBase >= 1000 && m.ctr7 <= 0.75 * m.ctrBase;
+  const sC = m.impr7 >= 1000 && m.imprBase >= 1000 && m.ctrBase > 0 && m.ctr7 <= 0.75 * m.ctrBase;
+  const freqMancante = m.attivo !== false && m.impr7 >= 300 && m.freq == null;
   const sS = m.spesa14 >= 76.7 && m.acq14 === 0;
   const stato = m.attivo === false ? 'in_pausa' : sS || (sF && sC) ? 'cambia' : sF || sC ? 'osserva' : m.impr7 < 300 ? 'senza_consegna' : m.imprBase < 1000 && m.giorni < 21 ? 'nuova' : 'ok';
   const spesaAdset = SWAP_MOCK.filter((x) => x.adset === m.adset).reduce((s, x) => s + x.spesa7, 0);
-  const quota = spesaAdset > 0 ? (100 * m.spesa7) / spesaAdset : 0;
+  const quota = spesaAdset > 0 ? Math.round((1000 * m.spesa7) / spesaAdset) / 10 : 0;
   const parti = [
     ...(sS ? [`speso ${Math.round(m.spesa14)} EUR in 14 giorni senza acquisti`] : []),
     ...(sF ? [`frequency 7g ${virgola(m.freq!)} sopra ${virgola(soglia)}`] : []),
     ...(sC ? [`CTR link ${Math.round((m.ctr7 / m.ctrBase - 1) * 100)}% rispetto ai primi 14 giorni`] : []),
   ];
-  let motivo = parti.length ? parti.join('; ') : stato === 'in_pausa' ? 'non attiva su Meta (PAUSED)' : stato === 'senza_consegna' ? `Meta non la consegna (${m.impr7} impression in 7 giorni)`
-    : stato === 'nuova' ? 'meno di 14 giorni di storia: niente confronto' : 'nessun segnale di fatica';
-  if (quota < 10 && ['nuova', 'ok', 'osserva'].includes(stato)) motivo += `; riceve il ${Math.round(quota)}% della spesa del suo adset`;
+  // ok: il CTR non confrontabile si dice (un lato sotto 1.000 impression, o la base senza click)
+  const nonConfr = [
+    ...(m.impr7 < 1000 ? [`${m.impr7} impression in 7 giorni`] : []),
+    ...(m.imprBase < 1000 ? [`${m.imprBase} impression nei primi 14 giorni`] : []),
+    ...(m.imprBase >= 1000 && m.ctrBase === 0 ? ['nessun click sul link nei primi 14 giorni'] : []),
+  ];
+  let motivo = stato === 'in_pausa' ? 'non attiva su Meta (PAUSED)' : stato === 'senza_consegna' ? `Meta non la consegna (${m.impr7} impression in 7 giorni)`
+    : stato === 'nuova' ? `base di confronto non ancora completa (${m.imprBase} impression nei primi 14 giorni, live da ${m.giorni} giorni)`
+    : stato === 'ok' ? (freqMancante ? 'nessun segnale di fatica misurato' : 'nessun segnale di fatica') + (nonConfr.length ? `; CTR non confrontabile (${nonConfr.join(', ')})` : '')
+    : parti.join('; ');
+  if (quota < 10 && ['nuova', 'ok', 'osserva'].includes(stato)) motivo += `; riceve il ${virgola(quota)}% della spesa del suo adset`;
+  if (freqMancante) motivo += `; frequency 7g non letta per il ${ddmmTrattino(giornoFa(1))}: segnale non valutato`;
   const prodotti = PRODOTTI.filter((p) => SET_DI[m.ps].includes(p.item));
   const con = m.impr7 > 0;
   return {
@@ -405,12 +420,13 @@ const ADS_SWAP: Riga[] = SWAP_MOCK.map((m, i) => {
     adset_id: idAdset(m.adset), adset_name: m.adset, effective_status: m.attivo === false ? 'PAUSED' : 'ACTIVE', object_type: m.video ? 'VIDEO' : 'SHARE',
     frame_url: m.video ? img : null, image_url: m.video ? null : img, thumbnail_url: img, pubblico, first_day: giornoFa(m.giorni), giorni_live: m.giorni,
     spend_7: String(m.spesa7), impressions_7: String(m.impr7), link_ctr_7: con ? String(m.ctr7) : null, link_ctr_base: String(m.ctrBase), impressions_base: String(m.imprBase),
-    ctr_var_pct: con ? String(tondo((m.ctr7 / m.ctrBase - 1) * 100)) : null, cpm_7: con ? String(m.cpm7) : null, cpm_base: String(m.cpmBase),
-    cpm_var_pct: con ? String(tondo((m.cpm7 / m.cpmBase - 1) * 100)) : null, freq_7g: m.freq == null ? null : String(m.freq), freq_soglia: String(soglia),
+    ctr_var_pct: con && m.ctrBase > 0 ? String(Math.round((m.ctr7 / m.ctrBase - 1) * 100)) : null, cpm_7: con ? String(m.cpm7) : null, cpm_base: String(m.cpmBase),
+    cpm_var_pct: con ? String(Math.round((m.cpm7 / m.cpmBase - 1) * 100)) : null, freq_7g: m.freq == null ? null : String(m.freq), freq_soglia: String(soglia),
     spend_14: String(m.spesa14), purchases_14: String(m.acq14), value_14: String(m.valore14), cpa_14: m.acq14 ? String(tondo(m.spesa14 / m.acq14)) : null,
     roas_14: m.spesa14 ? String(tondo(m.valore14 / m.spesa14)) : null, hook_7: m.video && con && m.hook7 != null ? String(m.hook7) : null, hook_base: m.video && m.hookBase != null ? String(m.hookBase) : null,
-    quota_adset_7: String(tondo(quota)), pct_oos: String(tondo((100 * prodotti.filter((p) => !vivoSuShopify(p)).length) / prodotti.length)),
+    quota_adset_7: String(quota), pct_oos: String(tondo((100 * prodotti.filter((p) => !vivoSuShopify(p)).length) / prodotti.length)),
     segnale_freq: sF, segnale_ctr: sC, segnale_spesa: sS, stato, motivo, ordine: ORDINE_STATO[stato],
+    freq_mancante: freqMancante, freq_al: giornoFa(1),
   };
 });
 // 14 giorni contro 14: ogni ad ha le sue due finestre, adset, campagne e account sono le somme (la reach deduplicata un po' sotto la somma)
@@ -690,6 +706,7 @@ const TABELLE: Record<string, Riga[]> = {
   v_fonti_freschezza: [{
     ultimo_ordine_shopify: SHOPIFY_ORDERS[SHOPIFY_ORDERS.length - 1].created_at_shop, ultimo_sync_ordini: isoFa(0, 9, 40), ultima_vendita_qromo: isoFa(1, 17, 5), meta_ads_ultimo_giorno: '2026-07-01',
     meta_ads_ultimo_pull: isoFa(0, 6, 7), ultimo_batch_spedizioni: isoFa(1, 19), ultimo_sync_stock: isoFa(0, 9, 27), ultimo_health: isoFa(0, 7), ultima_spesa_pagata: '2026-09-30', ultimo_arrivo: '2026-10-13',
+    meta_ads_creative_ultimo_giorno: giornoFa(1),
   }],
   v_movimenti_14gg: [{
     off_pezzi14: 11, off_lordo14: 1840, off_pezzi28: 9, off_lordo28: 1510, on_pezzi14: 46, on_lordo14: 7120, on_pezzi28: 41, on_lordo28: 6480, pezzi14: 57, pezzi28: 50, lordo14: 8960, lordo28: 7990,

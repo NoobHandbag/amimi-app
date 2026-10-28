@@ -4,7 +4,8 @@
    Separatori come bordi e non come ombre: in stampa index.css toglie ogni box-shadow.
    ============================================================================ */
 
-/* ---- intestazione: titolo e data dei dati sulla stessa riga; i dati vecchi in una fascia arancio tenue ---- */
+/* ---- intestazione: titolo e data dei dati sulla stessa riga; i dati vecchi (e la frequency 7g non letta) in una fascia
+   arancio tenue ---- */
 .ads-swap .sw-head { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 10px; flex-wrap: wrap; }
 .ads-swap .sw-head h2 { margin: 0; }
 .ads-swap .sw-asof { font-size: 12.5px; color: var(--ink-muted); white-space: nowrap; }
@@ -56,6 +57,9 @@
 .ads-swap :is(.sw-d, .sw-arr).good { color: var(--positive-700); }
 .ads-swap :is(.sw-d, .sw-arr).bad { color: var(--negative-700); }
 .ads-swap :is(.sw-d, .sw-arr).flat { color: var(--ink-muted); }
+/* il verdetto del colore (meglio, peggio) detto solo al lettore di schermo: a schermo resta il colore */
+.ads-swap .sw-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; }
 
 /* ---- 14 giorni contro 14: la tabella scorre dentro la card, la prima colonna resta ferma a sinistra.
    In ogni cella il valore di adesso in grassetto con la freccia, sotto in piccolo quello dei 14 giorni prima ---- */

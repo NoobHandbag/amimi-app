@@ -237,6 +237,8 @@ export async function fetchAdsCatalogoModelli(): Promise<AdsCatModello[]> {
 // ---------- Cruscotto, card "Creativita' da cambiare" (28-10-2026): viste migr 0175 ----------
 // v_ads_swap: un ad attivo o con spesa nei 14 giorni, coi segnali di fatica e lo stato. v_ads_periodo_14g: account,
 // campagne, adset e ad negli ultimi 14 giorni (cur14) e nei 14 prima (prev14). CTR, hook e quote in percento.
+// freq_mancante: ad attivo e consegnato senza la frequency 7g del giorno as_of (segnale non valutato); freq_al: ultimo
+// giorno di meta_ad_freq7, uguale su ogni riga.
 type AdsNum = number | string | null;
 export type AdsSwap = {
   as_of: string | null; ad_id: string; ad_name: string | null; campaign_id: string | null; campaign_name: string | null;
@@ -249,6 +251,7 @@ export type AdsSwap = {
   hook_7: AdsNum; hook_base: AdsNum; quota_adset_7: AdsNum; pct_oos: AdsNum;
   segnale_freq: boolean | null; segnale_ctr: boolean | null; segnale_spesa: boolean | null;
   stato: string; motivo: string | null; ordine: AdsNum;
+  freq_mancante: boolean | null; freq_al: string | null;
 };
 export type AdsPeriodo = {
   level: 'account' | 'campaign' | 'adset' | 'ad'; window_key: 'cur14' | 'prev14'; since: string | null; until: string | null; as_of: string | null;
@@ -800,6 +803,8 @@ export type Freschezza = {
   ultimo_ordine_shopify: string | null; ultimo_sync_ordini: string | null; ultima_vendita_qromo: string | null;
   meta_ads_ultimo_giorno: string | null; meta_ads_ultimo_pull: string | null; ultimo_batch_spedizioni: string | null;
   ultimo_sync_stock: string | null; ultimo_health: string | null; ultima_spesa_pagata: string | null; ultimo_arrivo: string | null;
+  // migr 0175: ultimo giorno di meta_ads_creative_daily (ads-sync); assente finche' la migrazione non e' applicata
+  meta_ads_creative_ultimo_giorno?: string | null;
 };
 export async function fetchFreschezza(): Promise<Freschezza | null> {
   const { data, error } = await supabase.from('v_fonti_freschezza').select('*').maybeSingle();

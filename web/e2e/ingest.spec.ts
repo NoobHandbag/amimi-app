@@ -96,7 +96,13 @@ test('new product: pricing helper suggests and fills a price', async ({ page }) 
 
 test('cruscotto: ads card + deal calculator', async ({ page }) => {
   await page.goto('');
-  await expect(page.getByText('Meta Ads 2026')).toBeVisible();
+  // card "Creativita' da cambiare" (28-10, viste migr 0175): le creativita' si leggono. Prima del deploy della 0175 l'unico
+  // errore ammesso e' la vista che non c'e' ancora ("migrazione 0175 non applicata"), stato noto
+  const card = page.locator('section.ads-swap');
+  await expect(card.getByRole('heading', { name: "Creativita' da cambiare" })).toBeVisible();
+  await expect(card.getByText("Carico le creativita'")).toHaveCount(0);
+  const errore = card.locator('.sw-err', { hasText: "Creativita' non lette" });
+  if (await errore.count()) await expect(errore).toContainText('migrazione 0175 non applicata');
   await page.getByRole('button', { name: /Calcolatore offerte B2B/ }).click();
   await expect(page.getByRole('button', { name: /Aggiungi prodotto/ })).toBeVisible();
 });
