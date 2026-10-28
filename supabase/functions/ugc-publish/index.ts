@@ -1,4 +1,4 @@
-// ugc-publish v1 — recensioni dell'area membri pubblicate da sole sul sito (brief 2026-10-28, richiesta di Benedetta).
+// ugc-publish v1: recensioni dell'area membri pubblicate da sole sul sito (brief 2026-10-28, richiesta di Benedetta).
 // Modulo ISOLATO (Regola 19), flag app_flags.ugc_publish_enabled default OFF: spento = {state:'off'} e nessuna
 // scrittura; `dryRun:true` legge e mostra il piano anche a flag spento.
 // Riconciliazione COMPLETA e idempotente a ogni giro (non a eventi), cron ogni 10 minuti (migr 0179):
@@ -14,7 +14,7 @@
 // Scrive solo su Shopify, change_log (site_publish / site_unpublish) e health_log (k = ugc_publish). Non tocca loyalty_*.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import {
-  TYPE, chunk, deleteGuard, missingScopes, ownedId, planModello, planReviews, titleCase,
+  TYPE, chunk, deleteGuard, mergeHealth, missingScopes, ownedId, planModello, planReviews, titleCase,
   type Existing, type ShopProduct, type UgcRow,
 } from './lib.ts';
 
@@ -41,7 +41,9 @@ Deno.serve(async (req) => {
   const dryRun = body.dryRun === true;
   const today = () => new Date().toISOString().slice(0, 10);
   const health = async (label: string, n: number, sev: 'ok' | 'warn' | 'error') => {
-    const { error } = await retryOnce(() => sb.from('health_log').upsert({ day: today(), k: 'ugc_publish', label: label.slice(0, 500), n, severity: sev, created_at: new Date().toISOString() }, { onConflict: 'day,k' }));
+    const { data: prev } = await sb.from('health_log').select('label, n, severity').eq('day', today()).eq('k', 'ugc_publish').maybeSingle();
+    const row = mergeHealth(prev ?? null, { label: label.slice(0, 500), n, severity: sev });
+    const { error } = await retryOnce(() => sb.from('health_log').upsert({ day: today(), k: 'ugc_publish', ...row, created_at: new Date().toISOString() }, { onConflict: 'day,k' }));
     return !error;
   };
   const fail = async (step: string, m: string, status = 500) => {
@@ -100,14 +102,19 @@ Deno.serve(async (req) => {
   const missing = missingScopes(scopes);
   if (missing.length) return fail('scope', `al token Shopify mancano ${missing.join(', ')}: vanno aggiunti nella custom app (owner)`, 412);
 
-  // --- 2. gestionale: recensioni, catalogo, modelli. Qualunque errore ferma il giro PRIMA di scrivere ---
+  // --- 2. gestionale: recensioni, catalogo, modelli. Qualunque errore ferma il giro PRIMA di scrivere. Il conteggio
+  //     esatto contro le righe lette: PostgREST taglia a max_rows senza errore, e una recensione tagliata fuori
+  //     sembrerebbe "non piu' pubblicabile" e verrebbe tolta dal sito ---
   const [ugc, cat, prods] = await Promise.all([
-    retryOnce(() => sb.from('loyalty_ugc').select('id, kind, status, codice, rating, testo, firma, consenso_testo, created_at').eq('kind', 'recensione')),
-    retryOnce(() => sb.from('shopify_catalog').select('codice, handle')),
-    retryOnce(() => sb.from('products').select('codice, model')),
+    retryOnce(() => sb.from('loyalty_ugc').select('id, kind, status, codice, rating, testo, firma, consenso_testo, created_at', { count: 'exact' }).eq('kind', 'recensione').eq('status', 'approvata').order('id')),
+    retryOnce(() => sb.from('shopify_catalog').select('codice, handle', { count: 'exact' }).order('codice')),
+    retryOnce(() => sb.from('products').select('codice, model', { count: 'exact' }).order('codice')),
   ]);
   const dbErr = ugc.error ?? cat.error ?? prods.error;
   if (dbErr) return fail('gestionale', dbErr.message, 503);
+  for (const [name, r] of [['loyalty_ugc', ugc], ['shopify_catalog', cat], ['products', prods]] as const) {
+    if (r.count == null || (r.data ?? []).length < r.count) return fail('gestionale', `${name}: lette ${(r.data ?? []).length} righe su ${r.count ?? '?'} (lettura tagliata)`, 503);
+  }
   const rows = (ugc.data ?? []) as UgcRow[];
   const modelByCodice = new Map<string, string>();
   for (const p of prods.data ?? []) if (p.codice && p.model) modelByCodice.set(String(p.codice), titleCase(p.model));
@@ -138,7 +145,7 @@ Deno.serve(async (req) => {
   const productByHandle = new Map(products.filter((p) => p.status !== 'ARCHIVED').map((p) => [p.handle, p]));
   const plan = planReviews(rows, existing, { handleByCodice, productByHandle, modelloByHandle: mod.modelloByHandle, modelByCodice });
   const owned = existing.filter((e) => ownedId(e) !== null).length;
-  const stop = deleteGuard(plan.publishable, owned, plan.deletes.length);
+  const stop = deleteGuard(plan.publishable, owned, plan.deletes.length, body.forceDeletes === true);
 
   if (dryRun) {
     return json({ ok: true, dryRun: true, enabled, api_version: servedVersion || API_VERSION, scopes_ok: true,

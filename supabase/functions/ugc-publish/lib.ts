@@ -1,4 +1,4 @@
-// ugc-publish/lib.ts — logica PURA del giro (nessuna rete, nessun DB): cosa pubblicare, aggiornare o togliere su Shopify
+// ugc-publish/lib.ts: logica PURA del giro (nessuna rete, nessun DB): cosa pubblicare, aggiornare o togliere su Shopify
 // e quali schede prodotto ricevono custom.modello. La edge (index.ts) legge, chiama questi piani e scrive.
 // Provata offline da tests/ugc_publish_core.mjs (Node 24 importa il .ts togliendo i tipi).
 
@@ -42,12 +42,12 @@ export const ownedId = (e: Existing): number | null => {
 // borsa, data, id. Mai cliente, email, ordine o foto: questa funzione non li riceve nemmeno.
 export const desiredFields = (r: UgcRow, productGid: string | null, modello: string): Field[] => {
   const f: Field[] = [
-    { key: 'testo', value: String(r.testo ?? '').trim() },
+    { key: 'testo', value: String(r.testo ?? '').replace(/\r\n?/g, '\n').trim() },   // a capo come li rende Shopify: niente riscrittura a ogni giro
     { key: 'stelle', value: String(r.rating) },
     { key: 'data', value: dayRome(r.created_at) },
     { key: 'id_sorgente', value: String(r.id) },
   ];
-  const firma = String(r.firma ?? '').trim();
+  const firma = String(r.firma ?? '').replace(/\s+/g, ' ').trim();   // campo a riga singola: un a capo darebbe userError a ogni giro
   if (firma) f.push({ key: 'firma', value: firma });          // vuota = campo omesso, il tema mostra "Cliente verificata"
   if (modello) f.push({ key: 'modello', value: modello });
   if (productGid) f.push({ key: 'borsa', value: productGid });  // borsa non trovata = campo omesso, si pubblica lo stesso
@@ -80,8 +80,10 @@ export function planReviews(rows: UgcRow[], existing: Existing[], ctx: Ctx) {
     const e = byHandle.get(handleOf(r.id));
     if (e && ownedId(e) === null) { blocked.push(e.handle); continue; }    // handle giusto ma id_sorgente assente o diverso: mai toccata
     if (!e) { upserts.push({ handle: handleOf(r.id), ugcId: r.id, create: true, fields, changed: fields.map((x) => x.key) }); continue; }
-    const changed = fields.filter((x) => (e.fields[x.key] ?? null) !== x.value).map((x) => x.key);
-    if (changed.length) upserts.push({ handle: e.handle, ugcId: r.id, create: false, fields, changed });
+    // firma tolta nel gestionale (es. richiesta della cliente) ma ancora sul sito: si svuota, non resta pubblica
+    const upd = !fields.some((x) => x.key === 'firma') && String(e.fields.firma ?? '') !== '' ? [...fields, { key: 'firma', value: '' }] : fields;
+    const changed = upd.filter((x) => (e.fields[x.key] ?? '') !== x.value).map((x) => x.key);
+    if (changed.length) upserts.push({ handle: e.handle, ugcId: r.id, create: false, fields: upd, changed });
     else unchanged++;
   }
   const deletes: Delete[] = [];
@@ -126,11 +128,21 @@ export const chunk = <T>(a: T[], n: number): T[][] => {
 export const REQUIRED_SCOPES = ['write_metaobjects', 'write_products'];
 export const missingScopes = (have: string[]) => REQUIRED_SCOPES.filter((s) => !have.includes(s));
 
-// Freno sulle rimozioni: una lettura del gestionale che torna vuota o monca non deve svuotare il sito.
+// Freno sulle rimozioni, dietro al controllo dei conteggi delle letture (index.ts): un gestionale che torna vuoto con
+// piu' voci sul sito, o troppe rimozioni insieme, si fermano finche' una persona non lancia il giro con force.
+// Rifiutare l'ULTIMA recensione pubblicata (0 pubblicabili, 1 voce) passa: e' il caso normale, non un guasto.
 export const MAX_DELETE_RUN = 5;
-export const deleteGuard = (publishable: number, existingOwned: number, deletes: number) => {
-  if (deletes === 0) return null;
-  if (publishable === 0 && existingOwned > 0) return 'nessuna recensione pubblicabile letta dal gestionale ma voci sul sito: rimozioni sospese';
-  if (deletes > MAX_DELETE_RUN) return `${deletes} rimozioni in un giro (tetto ${MAX_DELETE_RUN}): sospese, controllare a mano`;
+export const deleteGuard = (publishable: number, existingOwned: number, deletes: number, force = false) => {
+  if (deletes === 0 || force) return null;
+  if (publishable === 0 && existingOwned > 1) return 'nessuna recensione pubblicabile letta dal gestionale ma piu\' voci sul sito: rimozioni sospese (giro a mano con forceDeletes)';
+  if (deletes > MAX_DELETE_RUN) return `${deletes} rimozioni in un giro (tetto ${MAX_DELETE_RUN}): sospese, controllare a mano e rilanciare con forceDeletes`;
   return null;
+};
+
+// health_log ha una riga per giorno e chiave: un giro pulito non deve cancellare l'errore di un giro di poco prima
+// (il cron gira ogni 10 minuti, ce-guard legge la riga del giorno). Si tiene la gravita' piu' alta del giorno.
+export const SEV_RANK: Record<string, number> = { ok: 0, warn: 1, error: 2 };
+export const mergeHealth = (prev: { label: string; n: number; severity: string } | null, next: { label: string; n: number; severity: string }) => {
+  if (!prev || (SEV_RANK[next.severity] ?? 0) >= (SEV_RANK[prev.severity] ?? 0)) return next;
+  return { label: `${prev.label.slice(0, 280)} || ultimo giro: ${next.label}`.slice(0, 500), n: prev.n, severity: prev.severity };
 };

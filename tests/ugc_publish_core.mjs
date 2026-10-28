@@ -1,10 +1,10 @@
-// tests/ugc_publish_core.mjs — ugc-publish (recensioni sul sito, brief 2026-10-28): logica pura di lib.ts e guardie sul
+// tests/ugc_publish_core.mjs: ugc-publish (recensioni sul sito, brief 2026-10-28): logica pura di lib.ts e guardie sul
 // sorgente della edge e della migr 0179.
 //   node tests/ugc_publish_core.mjs   (Node 24 strippa i tipi TS all'import)
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  titleCase, dayRome, isPublishable, ownedId, desiredFields, planReviews, planModello, deleteGuard, missingScopes, chunk, MAX_DELETE_RUN,
+  titleCase, dayRome, isPublishable, ownedId, desiredFields, planReviews, planModello, deleteGuard, missingScopes, chunk, MAX_DELETE_RUN, mergeHealth,
 } from '../supabase/functions/ugc-publish/lib.ts';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -60,7 +60,12 @@ console.log('\n== campi pubblici (privacy) ==');
   t('borsa non trovata = campo omesso', !g.some((x) => x.key === 'borsa'));
 }
 t('lib: desiredFields non legge cliente, email, ordine o foto', !/shopify_customer_id|email|order|foto/.test(LIB.slice(LIB.indexOf('export const desiredFields'), LIB.indexOf('export type Ctx'))));
-t('edge: la select di loyalty_ugc non chiede cliente, foto o idemp', /select\('id, kind, status, codice, rating, testo, firma, consenso_testo, created_at'\)/.test(code));
+t('edge: la select di loyalty_ugc non chiede cliente, foto o idemp', /select\('id, kind, status, codice, rating, testo, firma, consenso_testo, created_at', \{ count: 'exact' \}\)/.test(code));
+{
+  const f = desiredFields(row({ firma: 'Anna\nB.', testo: 'riga uno\r\nriga due' }), null, '');
+  eq('firma su una riga sola', f.find((x) => x.key === 'firma').value, 'Anna B.');
+  eq('testo con a capo LF', f.find((x) => x.key === 'testo').value, 'riga uno\nriga due');
+}
 
 console.log('\n== voci nostre e voci altrui ==');
 eq('recensione-14 con id_sorgente 14: nostra', ownedId(asExisting('recensione-14', [{ key: 'id_sorgente', value: '14' }])), 14);
@@ -85,6 +90,11 @@ console.log('\n== piano delle recensioni ==');
   eq('cancellata dal gestionale -> togli', p5.deletes.map((d) => d.ugcId), [99]);
   const p6 = planReviews([row()], [asExisting('recensione-14', [])], ctx());
   eq('handle occupato da una voce senza id_sorgente -> ne' + "'" + ' crea ne' + "'" + ' aggiorna', [p6.upserts.length, p6.blocked, p6.deletes.length], [0, ['recensione-14'], 0]);
+  const withFirma = asExisting('recensione-14', desiredFields(row(), GID, 'Lea Bag'));
+  const p9 = planReviews([row({ firma: null })], [withFirma], ctx());
+  eq('firma tolta nel gestionale -> svuotata sul sito', p9.upserts.map((u) => [u.changed, u.fields.find((f) => f.key === 'firma')?.value]), [[['firma'], '']]);
+  const noFirma = asExisting('recensione-14', desiredFields(row({ firma: null }), GID, 'Lea Bag'));
+  eq('firma assente su entrambi -> identica', planReviews([row({ firma: null })], [noFirma], ctx()).unchanged, 1);
   const p7 = planReviews([row({ id: 17, codice: 'VALENTINA_BAG_RED', firma: null })], [], ctx());
   const f7 = Object.fromEntries(p7.upserts[0].fields.map((f) => [f.key, f.value]));
   eq('scheda non letta: modello dal gestionale, niente borsa, niente firma', [f7.modello, f7.borsa, f7.firma], ['Valentina Bag', undefined, undefined]);
@@ -115,6 +125,14 @@ console.log('\n== freni ==');
 eq('scope: mancano entrambi', missingScopes(['read_products']), ['write_metaobjects', 'write_products']);
 eq('scope: presenti', missingScopes(['write_metaobjects', 'write_products', 'read_products']), []);
 t('gestionale vuoto con voci sul sito -> rimozioni sospese', deleteGuard(0, 5, 5) !== null);
+t('rifiutata l\'ultima pubblicata (0 pubblicabili, 1 voce) -> passa', deleteGuard(0, 1, 1) === null);
+t('forceDeletes sblocca il freno', deleteGuard(0, 5, 5, true) === null && deleteGuard(10, 10, 9, true) === null);
+eq('health: un ok non cancella un errore dello stesso giorno', mergeHealth({ label: 'E', n: 1, severity: 'error' }, { label: 'O', n: 0, severity: 'ok' }), { label: 'E || ultimo giro: O', n: 1, severity: 'error' });
+eq('health: un errore sostituisce un ok', mergeHealth({ label: 'O', n: 0, severity: 'ok' }, { label: 'E', n: 2, severity: 'error' }), { label: 'E', n: 2, severity: 'error' });
+eq('health: prima riga del giorno', mergeHealth(null, { label: 'O', n: 0, severity: 'ok' }).severity, 'ok');
+t('edge: letture del gestionale con conteggio esatto e stop se tagliate', (code.match(/\{ count: 'exact' \}/g) ?? []).length === 3 && /lettura tagliata/.test(code));
+t('edge: la riga di salute passa da mergeHealth', /mergeHealth\(prev \?\? null/.test(code));
+t('edge: forceDeletes solo come booleano esplicito', /body\.forceDeletes === true/.test(code));
 t('oltre il tetto -> rimozioni sospese', deleteGuard(10, 10, MAX_DELETE_RUN + 1) !== null);
 t('una rifiutata -> passa', deleteGuard(5, 6, 1) === null);
 

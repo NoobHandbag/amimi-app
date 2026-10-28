@@ -3,8 +3,10 @@
 -- ADDITIVA (Regola Ferrea 19): flag nuovo ugc_publish_enabled default OFF e cron nuovo della edge ugc-publish. Nessuna
 -- tabella o funzione toccata: la edge legge loyalty_ugc, shopify_catalog e products e scrive solo su Shopify (metaobject
 -- recensione_cliente, metafield custom.modello), change_log e health_log.
--- Rollback = flag OFF (il giro risponde {state:'off'} senza scritture). Le voci gia' sul sito restano: si tolgono
--- dall'admin Shopify (Contenuti > Metaobject > Recensione cliente) o riaccendendo dopo aver rifiutato le recensioni.
+-- Rollback = flag OFF (il giro risponde {state:'off'} senza scritture). Le voci gia' sul sito restano: a flag spento si
+-- tolgono dall'admin Shopify (Contenuti > Metaobject > Recensione cliente). A flag ACCESO la riconciliazione e' completa:
+-- per togliere una recensione dal sito si rifiuta nell'app; per nasconderla senza rifiutarla la si mette in Bozza in
+-- admin (il giro non la ripubblica). Una voce CANCELLATA in admin a flag acceso torna al giro dopo, se e' ancora approvata.
 
 -- 1. Flag (default OFF)
 insert into app_flags (key, value) values ('ugc_publish_enabled', 'false') on conflict (key) do nothing;
