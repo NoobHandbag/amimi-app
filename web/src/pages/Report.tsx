@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { syncShopify, fetchCeTotale, fetchAdsMensile, fetchFreschezza, fetchSconti, fetchMargineOrdini } from '../lib/api';
-import type { CeTot, AdsMese, Product, Freschezza, Sconto, MargOrdine } from '../lib/api';
+import { syncShopify, fetchCeTotale, fetchSconti, fetchMargineOrdini } from '../lib/api';
+import type { CeTot, Product, Sconto, MargOrdine } from '../lib/api';
 import ProductPicker from '../components/ProductPicker';
+import AdsSwapCard from '../components/AdsSwapCard';
 import { useSort } from '../lib/sortable';
 import ExportBtn from '../components/ExportBtn';
 import PrintBtn from '../components/PrintBtn';
@@ -283,7 +284,7 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio, onComport
           <button className="ds-btn secondary sm" type="button" onClick={onVillaggio}>Apri il Villaggio<Icon name="chevron" size={16} /></button>
         </section>
       )}
-      {/* Comportamento (25-10, modulo beh_*): card sua e non dentro AdsCard, che sparisce quando la serie mensile e' vuota */}
+      {/* Comportamento (25-10, modulo beh_*): card sua e non dentro la vecchia card Ads, che spariva quando la serie mensile era vuota */}
       {onComportamento && (
         <section className="card">
           <h2>Comportamento</h2>
@@ -291,57 +292,10 @@ export default function Report({ onBack, onDetail, onAds, onVillaggio, onComport
           <button className="ds-btn secondary sm" type="button" onClick={onComportamento}>Apri Comportamento<Icon name="chevron" size={16} /></button>
         </section>
       )}
-      <AdsCard onAds={onAds} />
+      <AdsSwapCard onAds={onAds} />
       <ScontiCard />
       <DealCalc />
     </div>
-  );
-}
-
-function AdsCard({ onAds }: { onAds?: () => void }) {
-  const [ads, setAds] = useState<AdsMese[] | null>(null);
-  const [fresh, setFresh] = useState<Freschezza | null>(null);
-  useEffect(() => { fetchAdsMensile().then(setAds).catch(() => setAds([])); fetchFreschezza().then(setFresh).catch(() => {}); }, []);
-  const aSort = useSort((ads ?? []) as unknown as Record<string, unknown>[], 'month');
-  if (!ads || !ads.length) return null;
-  const spend = ads.reduce((s, r) => s + Number(r.spend), 0);
-  const val = ads.reduce((s, r) => s + Number(r.purchase_value), 0);
-  const purch = ads.reduce((s, r) => s + Number(r.purchases), 0);
-  const roas = spend > 0 ? val / spend : 0;
-  // audit 06-09: meta_ads_daily non ha un ingest continuo (caso aperto n.12). Senza questo avviso
-  // la card mostrava giugno come se fosse oggi.
-  const lastDay = fresh?.meta_ads_ultimo_giorno ? String(fresh.meta_ads_ultimo_giorno).slice(0, 10) : null;
-  const staleDays = lastDay ? Math.floor((Date.now() - new Date(lastDay + 'T12:00:00').getTime()) / 86400000) : null;
-  return (
-    <section className="card">
-      <h2>Meta Ads 2026</h2>
-      {/* 18-09: l'ingest continuo esiste (edge ads-sync, tab Ads); questa tabella resta la vecchia serie mensile a livello
-          campagna (meta_ads_daily), ferma al 01-07, finche' non viene ripuntata a una vista mensile delle tabelle nuove. */}
-      {staleDays != null && staleDays > 7 && (
-        <p className="note warn">
-          Questa tabella mensile e' la vecchia serie a livello campagna, ferma al {lastDay} ({staleDays} giorni fa). I dati vivi, per creativita' e aggiornati ogni mattina, sono nella tab Ads.
-        </p>
-      )}
-      {onAds && <p style={{ marginTop: 0 }}><button className="ds-btn secondary sm" type="button" onClick={onAds}>Apri Ads per creativita'<Icon name="chevron" size={16} /></button></p>}
-      <div className="kpis">
-        <Kpi label="Spesa ads" value={eur(spend)} tone="accent" />
-        <Kpi label="ROAS" value={roas.toFixed(2) + '×'} tone={roas >= 1 ? 'green' : 'red'} />
-      </div>
-      <div className="tablewrap"><table className="sortable">
-        <thead><tr>
-          <th onClick={() => aSort.toggle('month')}>Mese{aSort.arrow('month')}</th>
-          <th onClick={() => aSort.toggle('spend')}>Spesa{aSort.arrow('spend')}</th>
-          <th onClick={() => aSort.toggle('purchases')}>Acquisti{aSort.arrow('purchases')}</th>
-          <th onClick={() => aSort.toggle('purchase_value')}>Valore{aSort.arrow('purchase_value')}</th>
-          <th onClick={() => aSort.toggle('roas')}>ROAS{aSort.arrow('roas')}</th>
-        </tr></thead>
-        <tbody>{(aSort.sorted as unknown as AdsMese[]).map((r) => (
-          <tr key={r.month}><td className="l">{MESI[r.month]}</td><td>{eur(Number(r.spend))}</td><td>{r.purchases}</td>
-            <td>{eur(Number(r.purchase_value))}</td><td className={Number(r.roas) < 1 ? 'neg' : ''}>{Number(r.roas).toFixed(2)}×</td></tr>
-        ))}</tbody>
-      </table></div>
-      <p className="note">Totale {purch} acquisti attribuiti agli ads. ROAS = valore acquisti ÷ spesa.</p>
-    </section>
   );
 }
 
@@ -442,9 +396,6 @@ function DealCalc() {
   );
 }
 
-function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone: string }) {
-  return <div className={`kpi ${tone}`}><div className="v">{value}</div><div className="k">{label}</div>{sub && <div className="ksub">{sub}</div>}</div>;
-}
 function DetRow({ label, v, bold }: { label: string; v: number; bold?: boolean }) {
   return <div className={`detrow ${bold ? 'b' : ''}`}><span>{label}</span><span className={v < 0 ? 'neg' : ''}>{eur(v)}</span></div>;
 }

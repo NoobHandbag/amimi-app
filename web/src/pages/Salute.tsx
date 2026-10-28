@@ -424,13 +424,17 @@ function ageOf(iso: string | null): { txt: string; h: number } {
 /* Freschezza delle fonti: ultimo timestamp di ogni fonte con soglia. Rosso = ferma oltre l'atteso.
    Nata dall'audit 06-09: la card Meta mostrava giugno come "oggi" e nessuno lo vedeva. */
 function FreschezzaCard({ f }: { f: Freschezza }) {
-  const rows: { label: string; iso: string | null; okH: number; warnH: number; nota?: string }[] = [
+  // iso undefined = colonna non ancora nella vista (migrazione non applicata): 'n/d', grigio. storica = serie ferma per
+  // scelta: l'eta' si vede, grigia e senza stato, perche' non c'e' un aggiornamento atteso
+  const rows: { label: string; iso: string | null | undefined; okH: number; warnH: number; nota?: string; storica?: boolean }[] = [
     { label: 'Ordini Shopify (ultimo ordine)', iso: f.ultimo_ordine_shopify, okH: 48, warnH: 96 },
     // synced_at avanza solo quando un ordine arriva o cambia: e' "ultimo aggiornamento", non "ultimo giro"
     { label: 'Ordini Shopify (ultimo aggiornamento ricevuto)', iso: f.ultimo_sync_ordini, okH: 24, warnH: 72, nota: 'avanza quando arriva o cambia un ordine' },
     { label: 'Stock Shopify (sync)', iso: f.ultimo_sync_stock, okH: 2, warnH: 6 },
     { label: 'Vendite negozio (Qromo)', iso: f.ultima_vendita_qromo, okH: 24 * 10, warnH: 24 * 21, nota: 'saltuarie: qualche giorno a zero e’ normale' },
-    { label: 'Meta Ads (ultimo giorno di dati)', iso: f.meta_ads_ultimo_giorno, okH: 48, warnH: 24 * 7, nota: 'alimenta la card Ads del Cruscotto' },
+    // dal 28-10 (migr 0175) il giorno di meta_ads_creative_daily; meta_ads_daily (livello campagna) e' ferma al 01-07
+    { label: 'Meta Ads (ultimo giorno di dati)', iso: f.meta_ads_creative_ultimo_giorno, okH: 48, warnH: 24 * 7, nota: "alimenta la card Creativita' da cambiare del Cruscotto (ads-sync, ogni mattina)" },
+    { label: 'Meta Ads, serie mensile storica (ferma, usata solo dal tool ads_summary)', iso: f.meta_ads_ultimo_giorno, okH: 48, warnH: 24 * 7, storica: true },
     // updated_at cambia solo se uno stato TWS cambia: un giro "232 invariati" non lo muove
     { label: 'Spedizioni TWS (ultimo cambio di stato)', iso: f.ultimo_batch_spedizioni, okH: 48, warnH: 96, nota: 'giro giornaliero: la data avanza solo se uno stato cambia' },
     { label: 'Guardiano contabile (health)', iso: f.ultimo_health, okH: 30, warnH: 72 },
@@ -443,13 +447,14 @@ function FreschezzaCard({ f }: { f: Freschezza }) {
       <p className="note" style={{ marginTop: 0 }}>Prima di fidarti di un numero guarda quando la sua fonte si e' aggiornata. Rosso = ferma oltre l'atteso, ocra = in ritardo (lo dice anche il testo).</p>
       <div className="list">
         {rows.map((r) => {
-          const a = ageOf(r.iso);
-          const col = a.h <= r.okH ? 'var(--positive-700)' : a.h <= r.warnH ? 'var(--warning-700)' : 'var(--negative-700)';
+          const nd = r.iso === undefined, neutra = nd || !!r.storica;
+          const a = nd ? { txt: 'n/d', h: 0 } : ageOf(r.iso ?? null);
+          const col = neutra ? 'var(--ink-muted)' : a.h <= r.okH ? 'var(--positive-700)' : a.h <= r.warnH ? 'var(--warning-700)' : 'var(--negative-700)';
           return (
             <div className="row" key={r.label}>
               <div><div className="rt">{r.label}</div><div className="rs">{r.iso ? String(r.iso).slice(0, 16).replace('T', ' ') : '—'}{r.nota ? ` · ${r.nota}` : ''}</div></div>
               {/* l'eta' su una riga, lo stato ("ferma", "in ritardo") sotto, nello stesso colore dell'esito */}
-              <div className="giac sal-val" style={{ color: col }}>{a.txt}{a.h > r.warnH ? <div className="sal-state">ferma</div> : a.h > r.okH ? <div className="sal-state">in ritardo</div> : null}</div>
+              <div className="giac sal-val" style={{ color: col }}>{a.txt}{neutra ? null : a.h > r.warnH ? <div className="sal-state">ferma</div> : a.h > r.okH ? <div className="sal-state">in ritardo</div> : null}</div>
             </div>
           );
         })}

@@ -46,8 +46,7 @@
 .scr-crusc .list .row { padding: 11px 0; }
 .scr-crusc .giac { font-size: 18px; font-weight: 600; letter-spacing: -.03em; color: var(--ink); font-variant-numeric: tabular-nums; }
 
-/* ---- Meta Ads e sconti: l'avviso della serie vecchia in una fascia arancio tenue; le fasce staccate dalla tabella ---- */
-.scr-crusc .note.warn { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: var(--warning-tint); color: var(--warning-700); font-weight: 600; }
+/* ---- sconti: le fasce staccate dalla tabella. La card Ads (creativita' da cambiare) ha le sue regole in ads-swap.css ---- */
 .scr-crusc .fasce { margin-top: 10px; }
 
 /* ---- calcolatore B2B: l'intestazione e' .askhead di shell.css; qui i controlli interni, pieni e senza bordo ---- */

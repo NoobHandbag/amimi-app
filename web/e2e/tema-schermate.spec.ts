@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 // Schermate di riferimento per il restyling (tema Amimi', 15-10; dati finti verosimili dal 21-10): le schermate principali
 // e le sotto-viste che i revisori non vedevano (scheda prodotto, Riordino, hub Registra, Conta, Reso, tabella aperta,
-// fornitore, carrello del nuovo ordine, thread Assistenza, Notifiche, Materie prime), a 390 px, su dati FINTI.
+// fornitore, carrello del nuovo ordine, thread Assistenza, Notifiche, Materie prime, la card Ads del Cruscotto da sola), a 390 px, su dati FINTI.
 // Non e' un test: non asserisce niente, salva un PNG per schermata, cosi' prima e dopo un cambio di stile si confrontano
 // sugli stessi dati. Fuori dalla CI, che nomina solo `negozi`, `e2e/notifiche.spec.ts`, `e2e/villaggio.spec.ts` ed
 // `e2e/paillettes.spec.ts`.
@@ -311,7 +311,7 @@ const MARGINE_SKU: Riga[] = PRODOTTI.slice(0, 15).flatMap((p, idx) => MESI_CE.fl
   };
 }))).filter((r) => r.pezzi > 0);
 
-// Ads: le campagne attive (COLD e SUPER HOT) con le loro creativita', e la vecchia serie mensile ferma al 01-07
+// Ads: le campagne attive (COLD e SUPER HOT) con le loro creativita'
 const SET_DI: Record<string, string[]> = { ps_lea: ['LEA BAG', 'LEA MINI'], ps_agata: ['AGATA BAG'], ps_sveva: ['SVEVA BAG'], ps_charm: ['CHARM TIGER'], ps_tutte: ['LEA BAG', 'LEA MINI', 'SVEVA BAG', 'AGATA BAG', 'MIMI POCHETTE', 'CHARM TIGER'] };
 const vivoSuShopify = (p: Prodotto) => p.shop && p.giac > 0;
 const ADS: Riga[] = [
@@ -351,9 +351,131 @@ const ADS_SETTIMANE: Riga[] = SETTIMANE.map((s, i) => ({
   settimana: s, spend: String(SPESA_SETT[i]), purchases: String(ACQ_SETT[i]), value: String(ACQ_SETT[i] * 176), cpa: String(tondo(SPESA_SETT[i] / ACQ_SETT[i])),
   roas: String(tondo((ACQ_SETT[i] * 176) / SPESA_SETT[i])), spend_wow: i < 9 ? String(SPESA_SETT[i] - SPESA_SETT[i + 1]) : null, purchases_wow: i < 9 ? String(ACQ_SETT[i] - ACQ_SETT[i + 1]) : null,
 }));
-const ADS_MENSILE: Riga[] = [820, 910, 1240, 1180, 1430, 1290].map((spend, i) => {
-  const purchases = [14, 17, 24, 21, 27, 22][i];
-  return { year: 2026, month: i + 1, spend, impressions: spend * 104, clicks: Math.round(spend * 1.6), purchases, purchase_value: purchases * 172, roas: tondo((purchases * 172) / spend) };
+// Card "Creativita' da cambiare" del Cruscotto (v_ads_swap e v_ads_periodo_14g, migr 0175, 28-10): gli ad di ADS piu' tre,
+// almeno uno per stato. Stato e motivo escono qui dalla stessa regola della vista: soglia di frequency 2,5 cold e 4
+// retargeting, CTR link a -25% dai primi 14 giorni (1.000 impression per lato, CTR di base sopra zero), 76,70 EUR in 14
+// giorni senza acquisti, sotto 300 impression in 7 giorni senza consegna, sotto 1.000 impression di base nuova; i testi del
+// motivo sono quelli della vista (numeri come trim_scale, virgola decimale). Frequency letta per as_of (freq_al = as_of):
+// un ad attivo e consegnato con freq null e' freq_mancante. `prima` = i 14 giorni prima.
+type SwapMock = {
+  nome: string; colore: string; campagna: string; adset: string; video?: boolean; attivo?: boolean; ps: string; giorni: number;
+  spesa7: number; impr7: number; ctr7: number; ctrBase: number; imprBase: number; cpm7: number; cpmBase: number; freq: number | null;
+  spesa14: number; acq14: number; valore14: number; hook7?: number; hookBase?: number;
+  prima: { spesa: number; acq: number; valore: number; ctr: number; cpm: number; freq: number; hook?: number };
+};
+const COLD = 'COLD · Prospecting borse', HOT = 'SUPER HOT · Retargeting 30g', BROAD = 'Broad IT donne 25-54', INTERESSI = 'Interessi moda artigianale', VISITATORI = 'Visitatori e carrelli 30g';
+const VUOTA = { spesa: 0, acq: 0, valore: 0, ctr: 0, cpm: 0, freq: 0 };
+const SWAP_MOCK: SwapMock[] = [
+  { nome: 'Sveva Bordeaux · foto studio', colore: '#6b1d2b', campagna: COLD, adset: BROAD, ps: 'ps_sveva', giorni: 34, spesa7: 196, impr7: 21900, ctr7: 0.71, ctrBase: 1.18, imprBase: 38400, cpm7: 8.95, cpmBase: 7.1, freq: 3.8, spesa14: 402, acq14: 4, valore14: 916, prima: { spesa: 371, acq: 9, valore: 1980, ctr: 1.02, cpm: 7.6, freq: 2.4 } },
+  { nome: 'Agata Rosso · statica', colore: '#9b2c22', campagna: COLD, adset: INTERESSI, ps: 'ps_agata', giorni: 19, spesa7: 41, impr7: 4800, ctr7: 0.98, ctrBase: 1.05, imprBase: 9100, cpm7: 8.54, cpmBase: 8.2, freq: 1.6, spesa14: 92.4, acq14: 0, valore14: 0, prima: { spesa: 64, acq: 1, valore: 189, ctr: 1.04, cpm: 8.1, freq: 1.4 } },
+  { nome: 'Lea Leopardo · video UGC', colore: '#c4925a', campagna: COLD, adset: BROAD, video: true, ps: 'ps_lea', giorni: 27, spesa7: 412, impr7: 43800, ctr7: 1.42, ctrBase: 1.55, imprBase: 61200, cpm7: 9.41, cpmBase: 8.8, freq: 2.9, spesa14: 790, acq14: 17, valore14: 3230, hook7: 24, hookBase: 31, prima: { spesa: 702, acq: 18, valore: 3402, ctr: 1.51, cpm: 8.9, freq: 2.2, hook: 30 } },
+  { nome: 'Catalogo dinamico · tutte le borse', colore: '#8b5a32', campagna: HOT, adset: VISITATORI, ps: 'ps_tutte', giorni: 61, spesa7: 233, impr7: 12900, ctr7: 2.31, ctrBase: 2.2, imprBase: 25400, cpm7: 18.06, cpmBase: 15.9, freq: 4.2, spesa14: 451, acq14: 21, valore14: 4290, prima: { spesa: 418, acq: 23, valore: 4520, ctr: 2.25, cpm: 16.4, freq: 3.6 } },
+  { nome: 'Charm Tiger · reel', colore: '#caa64a', campagna: HOT, adset: VISITATORI, video: true, ps: 'ps_charm', giorni: 9, spesa7: 88, impr7: 5400, ctr7: 1.87, ctrBase: 1.9, imprBase: 640, cpm7: 16.3, cpmBase: 15.2, freq: 2.1, spesa14: 101, acq14: 4, valore14: 236, hook7: 29, hookBase: 33, prima: VUOTA },
+  { nome: 'Carosello Agata · tre colori', colore: '#2e4a33', campagna: COLD, adset: INTERESSI, ps: 'ps_agata', giorni: 44, spesa7: 268, impr7: 30100, ctr7: 1.12, ctrBase: 1.08, imprBase: 52800, cpm7: 8.9, cpmBase: 8.4, freq: 2.1, spesa14: 530, acq14: 11, valore14: 2310, prima: { spesa: 488, acq: 8, valore: 1610, ctr: 1.09, cpm: 8.5, freq: 1.9 } },
+  { nome: 'Sveva Muccata · foto', colore: '#d9cfc4', campagna: COLD, adset: BROAD, ps: 'ps_sveva', giorni: 30, spesa7: 6.2, impr7: 700, ctr7: 1.31, ctrBase: 1.22, imprBase: 4100, cpm7: 8.86, cpmBase: 8.1, freq: 1.2, spesa14: 14.5, acq14: 1, valore14: 219, prima: { spesa: 38, acq: 0, valore: 0, ctr: 1.2, cpm: 8, freq: 1.3 } },
+  { nome: 'Lea Mini · flat lay', colore: '#232120', campagna: COLD, adset: BROAD, ps: 'ps_lea', giorni: 12, spesa7: 1.6, impr7: 180, ctr7: 0.56, ctrBase: 0.9, imprBase: 410, cpm7: 8.89, cpmBase: 8.3, freq: 1.1, spesa14: 4.1, acq14: 0, valore14: 0, prima: VUOTA },
+  { nome: 'Mimi Pochette · reel', colore: '#24396f', campagna: HOT, adset: VISITATORI, video: true, attivo: false, ps: 'ps_tutte', giorni: 40, spesa7: 0, impr7: 0, ctr7: 1.2, ctrBase: 1.3, imprBase: 7800, cpm7: 15.4, cpmBase: 15.1, freq: null, spesa14: 22, acq14: 1, valore14: 149, hook7: 26, hookBase: 27, prima: { spesa: 120, acq: 3, valore: 447, ctr: 1.3, cpm: 15.1, freq: 2, hook: 27 } },
+];
+// \b al posto di \m e \M di Postgres (parola intera)
+const RTG = /(super hot|\bhot\b|warm|rtg|retarget|remarketing|re-?eng)/i;
+// come replace(trim_scale(x)::text, '.', ','): 4.0 -> 4, 3.80 -> 3,8
+const virgola = (n: number) => String(n).replace('.', ',');
+const ddmmTrattino = (iso: string) => `${iso.slice(8, 10)}-${iso.slice(5, 7)}`;
+const ORDINE_STATO: Record<string, number> = { cambia: 1, osserva: 2, nuova: 3, ok: 4, senza_consegna: 5, in_pausa: 6 };
+const idAdset = (nome: string) => 'as' + nome.length;
+const idCampagna = (nome: string) => (nome.startsWith('COLD') ? 'c1' : 'c2');
+const ADS_SWAP: Riga[] = SWAP_MOCK.map((m, i) => {
+  const daAds = ADS.find((a) => a.ad_name === m.nome);
+  const img = daAds ? String(daAds.thumbnail_url) : svgUri(disegno(m.colore, 'borsa', null, '#d9cfc4'));
+  const pubblico = RTG.test(m.campagna) || RTG.test(m.adset) ? 'retargeting' : 'cold';
+  const soglia = pubblico === 'retargeting' ? 4 : 2.5;
+  const sF = m.freq != null && m.freq >= soglia;
+  const sC = m.impr7 >= 1000 && m.imprBase >= 1000 && m.ctrBase > 0 && m.ctr7 <= 0.75 * m.ctrBase;
+  const freqMancante = m.attivo !== false && m.impr7 >= 300 && m.freq == null;
+  const sS = m.spesa14 >= 76.7 && m.acq14 === 0;
+  const stato = m.attivo === false ? 'in_pausa' : sS || (sF && sC) ? 'cambia' : sF || sC ? 'osserva' : m.impr7 < 300 ? 'senza_consegna' : m.imprBase < 1000 && m.giorni < 21 ? 'nuova' : 'ok';
+  const spesaAdset = SWAP_MOCK.filter((x) => x.adset === m.adset).reduce((s, x) => s + x.spesa7, 0);
+  const quota = spesaAdset > 0 ? Math.round((1000 * m.spesa7) / spesaAdset) / 10 : 0;
+  const parti = [
+    ...(sS ? [`speso ${Math.round(m.spesa14)} EUR in 14 giorni senza acquisti`] : []),
+    ...(sF ? [`frequency 7g ${virgola(m.freq!)} sopra ${virgola(soglia)}`] : []),
+    ...(sC ? [`CTR link ${Math.round((m.ctr7 / m.ctrBase - 1) * 100)}% rispetto ai primi 14 giorni`] : []),
+  ];
+  // ok: il CTR non confrontabile si dice (un lato sotto 1.000 impression, o la base senza click)
+  const nonConfr = [
+    ...(m.impr7 < 1000 ? [`${m.impr7} impression in 7 giorni`] : []),
+    ...(m.imprBase < 1000 ? [`${m.imprBase} impression nei primi 14 giorni`] : []),
+    ...(m.imprBase >= 1000 && m.ctrBase === 0 ? ['nessun click sul link nei primi 14 giorni'] : []),
+  ];
+  let motivo = stato === 'in_pausa' ? 'non attiva su Meta (PAUSED)' : stato === 'senza_consegna' ? `Meta non la consegna (${m.impr7} impression in 7 giorni)`
+    : stato === 'nuova' ? `base di confronto non ancora completa (${m.imprBase} impression nei primi 14 giorni, live da ${m.giorni} giorni)`
+    : stato === 'ok' ? (freqMancante ? 'nessun segnale di fatica misurato' : 'nessun segnale di fatica') + (nonConfr.length ? `; CTR non confrontabile (${nonConfr.join(', ')})` : '')
+    : parti.join('; ');
+  if (quota < 10 && ['nuova', 'ok', 'osserva'].includes(stato)) motivo += `; riceve il ${virgola(quota)}% della spesa del suo adset`;
+  if (freqMancante) motivo += `; frequency 7g non letta per il ${ddmmTrattino(giornoFa(1))}: segnale non valutato`;
+  const prodotti = PRODOTTI.filter((p) => SET_DI[m.ps].includes(p.item));
+  const con = m.impr7 > 0;
+  return {
+    as_of: giornoFa(1), ad_id: daAds?.ad_id ?? `1203${pad(i)}55501`, ad_name: m.nome, campaign_id: idCampagna(m.campagna), campaign_name: m.campagna,
+    adset_id: idAdset(m.adset), adset_name: m.adset, effective_status: m.attivo === false ? 'PAUSED' : 'ACTIVE', object_type: m.video ? 'VIDEO' : 'SHARE',
+    frame_url: m.video ? img : null, image_url: m.video ? null : img, thumbnail_url: img, pubblico, first_day: giornoFa(m.giorni), giorni_live: m.giorni,
+    spend_7: String(m.spesa7), impressions_7: String(m.impr7), link_ctr_7: con ? String(m.ctr7) : null, link_ctr_base: String(m.ctrBase), impressions_base: String(m.imprBase),
+    ctr_var_pct: con && m.ctrBase > 0 ? String(Math.round((m.ctr7 / m.ctrBase - 1) * 100)) : null, cpm_7: con ? String(m.cpm7) : null, cpm_base: String(m.cpmBase),
+    cpm_var_pct: con ? String(Math.round((m.cpm7 / m.cpmBase - 1) * 100)) : null, freq_7g: m.freq == null ? null : String(m.freq), freq_soglia: String(soglia),
+    spend_14: String(m.spesa14), purchases_14: String(m.acq14), value_14: String(m.valore14), cpa_14: m.acq14 ? String(tondo(m.spesa14 / m.acq14)) : null,
+    roas_14: m.spesa14 ? String(tondo(m.valore14 / m.spesa14)) : null, hook_7: m.video && con && m.hook7 != null ? String(m.hook7) : null, hook_base: m.video && m.hookBase != null ? String(m.hookBase) : null,
+    quota_adset_7: String(quota), pct_oos: String(tondo((100 * prodotti.filter((p) => !vivoSuShopify(p)).length) / prodotti.length)),
+    segnale_freq: sF, segnale_ctr: sC, segnale_spesa: sS, stato, motivo, ordine: ORDINE_STATO[stato],
+    freq_mancante: freqMancante, freq_al: giornoFa(1),
+  };
+});
+// 14 giorni contro 14: ogni ad ha le sue due finestre, adset, campagne e account sono le somme (la reach deduplicata un po' sotto la somma)
+type Finestra = { spend: number; impressions: number; reach: number; clicks: number; link_clicks: number; lpv: number; atc: number; ic: number; purchases: number; value: number; v3s: number; thru: number; days: number };
+function finestra(spesa: number, cpm: number, ctr: number, freq: number, acq: number, valore: number, hook: number | undefined, giorni: number): Finestra {
+  const impressions = cpm > 0 ? Math.round((spesa / cpm) * 1000) : 0;
+  const link_clicks = Math.round((impressions * ctr) / 100), lpv = Math.round(link_clicks * 0.78), atc = Math.round(lpv * 0.11), v3s = hook ? Math.round((impressions * hook) / 100) : 0;
+  return { spend: spesa, impressions, reach: freq > 0 ? Math.round(impressions / freq) : 0, clicks: Math.round(link_clicks * 1.7), link_clicks, lpv, atc, ic: Math.max(acq, Math.round(atc * 0.55)),
+    purchases: acq, value: valore, v3s, thru: Math.round(v3s * 0.28), days: spesa > 0 ? giorni : 0 };
+}
+const sommaFinestre = (fs: Finestra[]): Finestra => {
+  const t = fs.reduce((a, f) => Object.fromEntries(Object.keys(a).map((k) => [k, a[k as keyof Finestra] + f[k as keyof Finestra]])) as Finestra);
+  return { ...t, reach: Math.round(t.reach * 0.86), days: Math.max(...fs.map((f) => f.days)) };
+};
+const FINESTRE = { cur14: [giornoFa(14), giornoFa(1)], prev14: [giornoFa(28), giornoFa(15)] } as const;
+function rigaPeriodo(level: string, wk: 'cur14' | 'prev14', f: Finestra, o: Riga): Riga {
+  const s2 = (n: number | null) => (n == null || !Number.isFinite(n) ? null : String(tondo(n)));
+  const div = (a: number, b: number) => (b > 0 ? a / b : null);
+  const video = level === 'ad' && o.object_type === 'VIDEO';
+  return {
+    level, window_key: wk, since: FINESTRE[wk][0], until: FINESTRE[wk][1], as_of: giornoFa(1), object_type: null, effective_status: null, ...o,
+    spend: s2(f.spend), impressions: String(f.impressions), reach: String(f.reach), frequency: s2(div(f.impressions, f.reach)), clicks: String(f.clicks), link_clicks: String(f.link_clicks),
+    link_ctr: s2(div(100 * f.link_clicks, f.impressions)), cpc_link: s2(div(f.spend, f.link_clicks)), cpm: s2(div(1000 * f.spend, f.impressions)),
+    landing_page_views: String(f.lpv), lpv_rate: s2(div(100 * f.lpv, f.link_clicks)), add_to_cart: String(f.atc), atc_rate: s2(div(100 * f.atc, f.lpv)), initiate_checkout: String(f.ic),
+    purchases: String(f.purchases), purchase_value: s2(f.value), roas: s2(div(f.value, f.spend)), cpa: s2(div(f.spend, f.purchases)), video_3s_views: String(f.v3s),
+    hook_rate: video && f.impressions >= 500 ? s2(div(100 * f.v3s, f.impressions)) : null, thruplays: String(f.thru), hold_rate: s2(div(100 * f.thru, f.v3s)), days_with_spend: String(f.days),
+  };
+}
+const FIN_AD = SWAP_MOCK.map((m) => ({
+  m, cur14: finestra(m.spesa14, m.cpm7, m.ctr7, (m.freq ?? 1.5) * 1.4, m.acq14, m.valore14, m.hook7, Math.min(14, m.giorni)),
+  prev14: finestra(m.prima.spesa, m.prima.cpm, m.prima.ctr, m.prima.freq * 1.4, m.prima.acq, m.prima.valore, m.prima.hook, 14),
+}));
+const ADS_PERIODO: Riga[] = (['cur14', 'prev14'] as const).flatMap((wk) => {
+  const conto = { object_id: 'act_000000000000001', object_name: 'Amimi Milano', campaign_id: null, campaign_name: null, adset_id: null, adset_name: null };
+  const righe = [rigaPeriodo('account', wk, sommaFinestre(FIN_AD.map((x) => x[wk])), conto)];
+  for (const camp of [COLD, HOT]) {
+    const dc = FIN_AD.filter((x) => x.m.campagna === camp);
+    righe.push(rigaPeriodo('campaign', wk, sommaFinestre(dc.map((x) => x[wk])), { object_id: idCampagna(camp), object_name: camp, campaign_id: idCampagna(camp), campaign_name: camp, adset_id: null, adset_name: null }));
+    for (const adset of [...new Set(dc.map((x) => x.m.adset))]) {
+      const da = dc.filter((x) => x.m.adset === adset);
+      const base = { campaign_id: idCampagna(camp), campaign_name: camp, adset_id: idAdset(adset), adset_name: adset };
+      righe.push(rigaPeriodo('adset', wk, sommaFinestre(da.map((x) => x[wk])), { object_id: idAdset(adset), object_name: adset, ...base }));
+      for (const x of da) {
+        const sw = ADS_SWAP.find((r) => r.ad_name === x.m.nome)!;
+        righe.push(rigaPeriodo('ad', wk, x[wk], { object_id: sw.ad_id, object_name: x.m.nome, ...base, object_type: sw.object_type, effective_status: sw.effective_status }));
+      }
+    }
+  }
+  return righe;
 });
 
 // Assistenza clienti: la coda e un thread di reso
@@ -575,7 +697,8 @@ const TABELLE: Record<string, Riga[]> = {
   v_sconti_codici: MARGINE_ORDINE.filter((o) => ORDINI[Number(o._i)].codice).map((o) => ({ year: 2026, month: o.month, codice: ORDINI[Number(o._i)].codice, ordini: 1, netto: o.ricavo_netto, sconto: o.sconto, margine: o.margine_contribuzione ?? 0, margine_pct_medio: o.margine_pct ?? 0 })),
   v_clienti_rfm: RFM,
   v_clienti_coorti: COORTI,
-  v_ads_mensile: ADS_MENSILE,
+  v_ads_swap: ADS_SWAP,
+  v_ads_periodo_14g: ADS_PERIODO,
   v_ads_creative_status: ADS,
   v_ads_weekly_account: ADS_SETTIMANE,
   v_ads_set_modelli: ADS_SET,
@@ -583,6 +706,7 @@ const TABELLE: Record<string, Riga[]> = {
   v_fonti_freschezza: [{
     ultimo_ordine_shopify: SHOPIFY_ORDERS[SHOPIFY_ORDERS.length - 1].created_at_shop, ultimo_sync_ordini: isoFa(0, 9, 40), ultima_vendita_qromo: isoFa(1, 17, 5), meta_ads_ultimo_giorno: '2026-07-01',
     meta_ads_ultimo_pull: isoFa(0, 6, 7), ultimo_batch_spedizioni: isoFa(1, 19), ultimo_sync_stock: isoFa(0, 9, 27), ultimo_health: isoFa(0, 7), ultima_spesa_pagata: '2026-09-30', ultimo_arrivo: '2026-10-13',
+    meta_ads_creative_ultimo_giorno: giornoFa(1),
   }],
   v_movimenti_14gg: [{
     off_pezzi14: 11, off_lordo14: 1840, off_pezzi28: 9, off_lordo28: 1510, on_pezzi14: 46, on_lordo14: 7120, on_pezzi28: 41, on_lordo28: 6480, pezzi14: 57, pezzi28: 50, lordo14: 8960, lordo28: 7990,
@@ -1052,5 +1176,18 @@ test.describe('schermate tema', () => {
     await apri(page, '#materiali');
     await page.locator('.mat-card').first().waitFor();
     await scatta(page, '29-materie-prime');
+  });
+
+  // la sola card "Creativita' da cambiare" del Cruscotto (28-10), con l'adset Broad aperto sui suoi ad
+  test('30-cruscotto-ads', async ({ page }) => {
+    await apri(page);
+    await cerca(page, 'Cruscotto finanze');
+    const card = page.locator('section.ads-swap');
+    await card.locator('.sw-ad').first().waitFor();
+    await card.locator('button.sw-tgl', { hasText: BROAD }).click();
+    await card.locator('tr.sw-lv-ad').first().waitFor();
+    await allunga(page, 390, 844);
+    await card.screenshot({ path: join(DIR, '30-cruscotto-ads.png'), animations: 'disabled' });
+    await stretta(page, '30-cruscotto-ads');
   });
 });

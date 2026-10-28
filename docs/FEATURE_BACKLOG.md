@@ -60,10 +60,12 @@ Evidence: #128/#218/#246/#91; analysis: Ads/Finance under-invested.
 ad/creativita', viste `v_ads_creative_status` (fatica, azione suggerita, inventario del product_set),
 `v_ads_creative_windows`, `v_ads_set_inventory`, `v_ads_weekly_account`; 90 giorni di storico. Tab "Ads" LIVE la sera
 stessa (`web/src/pages/Ads.tsx`: `#ads` + bottone nella card Meta Ads del Cruscotto). Restano, come miglioramenti:
-(a) la card mensile del Cruscotto legge ancora `v_ads_mensile` (livello campagna, ferma al 01-07, lo dichiara): da
-ripuntare a una vista mensile delle tabelle nuove quando Supabase e' libero; (b) frequency VERA a 7 giorni (oggi media
-della giornaliera, soglie tarate); (c) refresh di `schema.sql`. Vedi docs/EDGE_FUNCTIONS.md (ads-sync),
-docs/SCHEMA.md sez. 15, docs/ARCHITECTURE.md sez. 7.
+(a) ~~la card mensile del Cruscotto legge ancora `v_ads_mensile`~~ CHIUSO 28-10: la card "Meta Ads 2026" e' sostituita
+da "Creativita' da cambiare" (`web/src/components/AdsSwapCard.tsx`, migr 0175: `v_ads_swap` con stato e motivo per ad,
+`v_ads_periodo_14g` con gli ultimi 14 giorni contro i 14 prima per account, campagna, adset e ad); nessuna schermata
+della PWA legge piu' `v_ads_mensile` (la legge ancora il tool `ads_summary` dell'edge `mcp`); (b) ~~frequency VERA a 7 giorni~~ CHIUSO 19-09 (`meta_ad_freq7`, ads-sync v1.2); (c) ~~refresh di `schema.sql`~~
+CHIUSO: il modulo e' nel dump dalla rigenerazione della 0156, la 0175 aggiunta a mano il 28-10 col md5 dei corpi
+delle viste confrontato col vivo. Vedi docs/EDGE_FUNCTIONS.md (ads-sync), docs/SCHEMA.md sez. 15, docs/ARCHITECTURE.md sez. 7.
 
 ## 10. Inventory valuation report  [DESIGNED — cheap]
 On-demand stock value at COGS and at retail, by line. Finance/dashboard report. Evidence: #297.

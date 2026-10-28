@@ -233,6 +233,44 @@ export async function fetchAdsCatalogoModelli(): Promise<AdsCatModello[]> {
   if (error) throw error;
   return (data ?? []) as AdsCatModello[];
 }
+
+// ---------- Cruscotto, card "Creativita' da cambiare" (28-10-2026): viste migr 0175 ----------
+// v_ads_swap: un ad attivo o con spesa nei 14 giorni, coi segnali di fatica e lo stato. v_ads_periodo_14g: account,
+// campagne, adset e ad negli ultimi 14 giorni (cur14) e nei 14 prima (prev14). CTR, hook e quote in percento.
+// freq_mancante: ad attivo e consegnato senza la frequency 7g del giorno as_of (segnale non valutato); freq_al: ultimo
+// giorno di meta_ad_freq7, uguale su ogni riga.
+type AdsNum = number | string | null;
+export type AdsSwap = {
+  as_of: string | null; ad_id: string; ad_name: string | null; campaign_id: string | null; campaign_name: string | null;
+  adset_id: string | null; adset_name: string | null; effective_status: string | null; object_type: string | null;
+  frame_url: string | null; image_url: string | null; thumbnail_url: string | null;
+  pubblico: string | null; first_day: string | null; giorni_live: AdsNum;
+  spend_7: AdsNum; impressions_7: AdsNum; link_ctr_7: AdsNum; link_ctr_base: AdsNum; impressions_base: AdsNum; ctr_var_pct: AdsNum;
+  cpm_7: AdsNum; cpm_base: AdsNum; cpm_var_pct: AdsNum; freq_7g: AdsNum; freq_soglia: AdsNum;
+  spend_14: AdsNum; purchases_14: AdsNum; value_14: AdsNum; cpa_14: AdsNum; roas_14: AdsNum;
+  hook_7: AdsNum; hook_base: AdsNum; quota_adset_7: AdsNum; pct_oos: AdsNum;
+  segnale_freq: boolean | null; segnale_ctr: boolean | null; segnale_spesa: boolean | null;
+  stato: string; motivo: string | null; ordine: AdsNum;
+  freq_mancante: boolean | null; freq_al: string | null;
+};
+export type AdsPeriodo = {
+  level: 'account' | 'campaign' | 'adset' | 'ad'; window_key: 'cur14' | 'prev14'; since: string | null; until: string | null; as_of: string | null;
+  object_id: string; object_name: string | null; campaign_id: string | null; campaign_name: string | null; adset_id: string | null; adset_name: string | null;
+  object_type: string | null; effective_status: string | null;
+  spend: AdsNum; impressions: AdsNum; reach: AdsNum; frequency: AdsNum; clicks: AdsNum; link_clicks: AdsNum; link_ctr: AdsNum; cpc_link: AdsNum; cpm: AdsNum;
+  landing_page_views: AdsNum; lpv_rate: AdsNum; add_to_cart: AdsNum; atc_rate: AdsNum; initiate_checkout: AdsNum; purchases: AdsNum; purchase_value: AdsNum;
+  roas: AdsNum; cpa: AdsNum; video_3s_views: AdsNum; hook_rate: AdsNum; thruplays: AdsNum; hold_rate: AdsNum; days_with_spend: AdsNum;
+};
+export async function fetchAdsSwap(): Promise<AdsSwap[]> {
+  const { data, error } = await supabase.from('v_ads_swap').select('*').order('ordine').order('spend_7', { ascending: false, nullsFirst: false });
+  if (error) throw error;
+  return (data ?? []) as AdsSwap[];
+}
+export async function fetchAdsPeriodo(): Promise<AdsPeriodo[]> {
+  const { data, error } = await supabase.from('v_ads_periodo_14g').select('*');
+  if (error) throw error;
+  return (data ?? []) as AdsPeriodo[];
+}
 /** "Pull ora" della tab Ads: invoca l'edge ads-sync (pull di IERI + anagrafica creative + mappa product_set),
  *  la stessa azione del cron delle 06:07 UTC. Senza token in app_config risponde {ok:true, skipped:'no_token'}. */
 export async function pullAds(pin: string, chi: string) {
@@ -513,14 +551,6 @@ export async function fetchSkuAvailability(): Promise<SkuAvail[]> {
   return (data ?? []) as SkuAvail[];
 }
 
-// ---------- NEW FEATURE: Meta Ads card ----------
-export type AdsMese = { year: number; month: number; spend: number; impressions: number; clicks: number; purchases: number; purchase_value: number; roas: number };
-export async function fetchAdsMensile(): Promise<AdsMese[]> {
-  const { data, error } = await supabase.from('v_ads_mensile').select('*').eq('year', nowYear()).order('month');
-  if (error) throw new Error(error.message);
-  return (data ?? []) as AdsMese[];
-}
-
 // ---------- PAGE: Salute & Movimenti (read-only pulse of the ecosystem) ----------
 // Numbers come from v_movimenti_14gg (same window logic as the Cowork digest task) so the
 // in-app page and the digest agree to the cent. Everything here is read-only.
@@ -773,6 +803,8 @@ export type Freschezza = {
   ultimo_ordine_shopify: string | null; ultimo_sync_ordini: string | null; ultima_vendita_qromo: string | null;
   meta_ads_ultimo_giorno: string | null; meta_ads_ultimo_pull: string | null; ultimo_batch_spedizioni: string | null;
   ultimo_sync_stock: string | null; ultimo_health: string | null; ultima_spesa_pagata: string | null; ultimo_arrivo: string | null;
+  // migr 0175: ultimo giorno di meta_ads_creative_daily (ads-sync); assente finche' la migrazione non e' applicata
+  meta_ads_creative_ultimo_giorno?: string | null;
 };
 export async function fetchFreschezza(): Promise<Freschezza | null> {
   const { data, error } = await supabase.from('v_fonti_freschezza').select('*').maybeSingle();
