@@ -103,3 +103,7 @@ verify_jwt = false
 # Eventi delle notifiche (18-10): la chiama il cron senza JWT; la edge controlla il PIN (e la chiave di servizio per anteprima).
 [functions.push-eventi]
 verify_jwt = false
+
+# Recensioni sul sito (28-10, migr 0179): il cron chiama la edge senza JWT; la edge controlla il PIN.
+[functions.ugc-publish]
+verify_jwt = false
