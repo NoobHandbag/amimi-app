@@ -116,8 +116,8 @@ const POSTGREST_CAP = 1000;
 // Resync dei 45 giorni (v10): tetto di pagine da 250 (2.000 ordini aggiornati; al 31-10 erano 238, una pagina) e di tempo
 // dall'inizio del giro. Un giro normale dura 1,6-4,6 s (24 giri del 29-30 ottobre nei log delle edge), il primo dopo il
 // blocco del 31-10 8,3 s; il muro della edge e' 150 s, quindi dopo 60 s non si chiede un'altra pagina, e una pagina che
-// non risponde in 20 s conta come fallita. Il cron chiama col timeout di pg_net di 5 s, ma la edge finisce lo stesso
-// (31-10 13:07: pg_net in timeout a 5 s, edge a 200 dopo 8,3 s).
+// non risponde in 20 s conta come fallita. Il cron chiama col timeout di pg_net di 5 s: il 31-10 13:07 pg_net e' andato
+// in timeout e la edge e' arrivata in fondo lo stesso (200 dopo 8,3 s), ma e' un solo giro, mai visto oltre quei secondi.
 const RESYNC_MAX_PAGES = 8;
 const RESYNC_BUDGET_MS = 60000;
 const RESYNC_PAGE_TIMEOUT_MS = 20000;
