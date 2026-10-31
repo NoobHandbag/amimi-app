@@ -477,6 +477,7 @@ console.log('\n== gift card: shopify-sync v9 e migr 0172 ==');
 // 10592c7) sono rossi 139-140b (blocco assente), 142-151, 149b, 149c e 152b (una pagina sola, nessun warn, nessun
 // resyncStop) e 153 (nessun tetto nel sorgente); 141, 152 e 154 restano verdi per costruzione (etichetta a una pagina,
 // token e pull dei nuovi non cambiano). Sulla v10 tutti verdi.
+// 155-161 (ripasso di 48 ore): rossi 155-160 sul commit fbd741a (senza ripasso), 161 verde per costruzione (cintura).
 console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
 {
   const B = '// ==== PURE:sync-paging BEGIN ====', E = '// ==== PURE:sync-paging END ====';
@@ -530,9 +531,11 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
     if (q.tabella === 'shopify_orders') {
       if (q.op === 'update') { S.update.push(f('eq')?.[1]); return { data: null, error: null }; }
       if (q.op === 'select' && f('limit')) return { data: [{ created_at_shop: '2026-10-31T08:00:00Z' }], error: null };
-      if (q.op === 'select' && f('in')) { const nomi = f('in')[1]; S.inLen.push(nomi.length); return { data: nomi.map(rigaDb), error: null }; }
+      if (q.op === 'select' && f('in')) { const nomi = f('in')[1].filter((nm) => !(S.sc.assenti ?? []).includes(nm)); S.inLen.push(f('in')[1].length); return { data: nomi.map(rigaDb), error: null }; }
+      if (q.op === 'upsert') { S.upsert.push(q.args[0].order_id); return { data: [{ id: 1 }], error: null }; }
       S.altro.push(`shopify_orders ${q.op}`);
     }
+    if (q.tabella === 'shopify_line_items' && q.op === 'insert') { S.righe += q.args[0].length; return { data: null, error: null }; }
     return { data: [], error: null };
   };
   // ordine n della finestra: nel DB pagato ed evaso, rimborso 0; su Shopify uguale, salvo quelli `cambiato` (rimborso 10)
@@ -551,7 +554,13 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
     if (S.urls.length > 60) throw new Error('troppe chiamate: paginazione senza fine');
     S.urls.push(url);
     if (init?.headers?.['X-Shopify-Access-Token'] !== 'token-finto') S.senzaToken++;
-    if (/created_at_min=/.test(url)) return risposta(200, { orders: [] });
+    if (/created_at_min=/.test(url)) {
+      S.pull.push(decodeURIComponent(url.match(/created_at_min=([^&]+)/)[1]));
+      if (S.sc.pullRotto === S.pull.length) return risposta(500, { errors: 'Internal Server Error' });
+      // come Shopify: created_at_min taglia davvero, un ordine prima del cursore non torna
+      const min = Date.parse(S.pull.at(-1));
+      return risposta(200, { orders: (S.sc.pull ?? (() => []))(S.pull.length).filter((o) => Date.parse(o.created_at) >= min) });
+    }
     const i = Number(url.match(/page_info=pg(\d+)/)?.[1] ?? 0);
     S.resync.push(url);
     S.sc.avanza?.();
@@ -564,7 +573,7 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
   let handler = null;
   const fetchVero = globalThis.fetch, nowVero = Date.now, denoPrima = globalThis.Deno;
   const giro = async (sc) => {
-    S = { sc, urls: [], resync: [], inLen: [], update: [], health: [], altro: [], senzaToken: 0 };
+    S = { sc, urls: [], pull: [], upsert: [], righe: 0, resync: [], inLen: [], update: [], health: [], altro: [], senzaToken: 0 };
     globalThis.fetch = shopifyFinto;
     try {
       const res = await handler(new Request('http://edge/shopify-sync', { method: 'POST', body: JSON.stringify({ pin: PIN }) }));
@@ -637,6 +646,27 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
     r = await giro({ pagine: 2, perPagina: (i) => (i ? 5 : 250), cambiati: (i) => (i ? [4] : []), link: (i) => (i === 0 ? linkDi(0, 2, 'https://amimi-10000.myshopify.com/admin/api/2025-10/orders.json') : '') });
     tt('152b Link sullo stesso negozio con versione 2025-10: seguito, il rimborso della seconda pagina arriva, severity ok',
       r.resync.length === 2 && /\/admin\/api\/2025-10\/orders\.json\?/.test(r.resync[1] ?? '') && JSON.stringify(r.update) === JSON.stringify([nome(254)]) && r.h.severity === 'ok', { resync: r.resync, update: r.update, h: r.h });
+    // 9) ripasso di 48 ore (decisione owner 31-10). L'ultimo ordine noto del finto e' 2026-10-31T08:00:00Z.
+    const nuovoOrdine = (n, quando) => ({ id: 8000000 + n, name: nome(n), order_number: 5000 + n, created_at: quando, total_price: '100.00', total_discounts: '0', currency: 'EUR', email: 'x@example.com', financial_status: 'paid', fulfillment_status: null,
+      line_items: [{ id: 9000000 + n, name: 'Lea Bag', quantity: 1, price: '100.00', sku: 'LEA_BAG_BLACK' }], refunds: [], fulfillments: [] });
+    const PIENA = (n) => Array.from({ length: n }, (_, k) => nuovoOrdine(1000 + k, '2026-10-31T09:00:00Z'));
+    r = await giro({ pagine: 1, perPagina: () => 0, assenti: [] });
+    tt('155 il pull parte da 48 ore prima dell\'ultimo ordine noto, una chiamata sola', JSON.stringify(r.pull) === JSON.stringify(['2026-10-29T08:00:00.000Z']) && r.body.since === '2026-10-29T08:00:00.000Z', { pull: r.pull, since: r.body.since });
+    // il caso che la v9 perdeva: A piu' nuovo e' entrato, B piu' vecchio no; il cursore e' gia' passato oltre B
+    r = await giro({ pagine: 1, perPagina: () => 0, assenti: [nome(2)], pull: () => [nuovoOrdine(1, '2026-10-31T08:00:00Z'), nuovoOrdine(2, '2026-10-31T06:00:00Z')] });
+    tt('156 l\'ordine rimasto indietro rientra: inserito solo lui, con le sue righe, giro ok', JSON.stringify(r.upsert) === JSON.stringify([nome(2)]) && r.righe === 1 && r.body.inserted === 1 && r.h.severity === 'ok', { upsert: r.upsert, righe: r.righe, h: r.h, body: r.body });
+    r = await giro({ pagine: 1, perPagina: () => 0, pull: () => [nuovoOrdine(1, '2026-10-31T08:00:00Z'), nuovoOrdine(2, '2026-10-30T09:00:00Z')] });
+    tt('157 ordini gia\' presenti nella finestra: nessuna riscrittura, contati fra i gia\' presenti', r.upsert.length === 0 && r.righe === 0 && r.body.inserted === 0 && /letti 2, nuovi 0 \(0 righe\), gia' presenti 2/.test(r.h.label ?? ''), { upsert: r.upsert, h: r.h });
+    // finestra piena: il ripasso non ferma il pull dei nuovi; si torna al cursore e lo si dice
+    r = await giro({ pagine: 1, perPagina: () => 0, assenti: [nome(1)], pull: (n) => (n === 1 ? PIENA(250) : [nuovoOrdine(1, '2026-10-31T09:00:00Z')]) });
+    tt('158 ripasso con 250 ordini: seconda lettura dal solo cursore, il nuovo entra, l\'etichetta lo dice, giro ok',
+      r.status === 200 && JSON.stringify(r.pull) === JSON.stringify(['2026-10-29T08:00:00.000Z', '2026-10-31T08:00:00Z']) && JSON.stringify(r.upsert) === JSON.stringify([nome(1)]) && r.h.severity === 'ok' && /ripasso di 48 ore saltato/.test(r.h.label ?? '') && r.body.since === '2026-10-31T08:00:00Z', { status: r.status, pull: r.pull, upsert: r.upsert, h: r.h });
+    r = await giro({ pagine: 1, perPagina: () => 0, pull: () => PIENA(250) });
+    tt('159 250 ordini anche dal solo cursore: giro fermato "pagina piena" come la v7, nessun insert', r.status === 409 && r.pull.length === 2 && r.upsert.length === 0 && r.body.since === undefined && /pagina piena/.test(JSON.stringify(r.body)) && r.h.severity === 'error', { status: r.status, pull: r.pull, body: r.body, h: r.h });
+    r = await giro({ pagine: 1, perPagina: () => 0, pull: () => PIENA(250), pullRotto: 2 });
+    tt('160 seconda lettura fallita: errore Shopify, nessun insert, nessun giro muto', r.status === 502 && r.upsert.length === 0 && r.h.severity === 'error', { status: r.status, h: r.h, body: r.body });
+    r = await giro({ pagine: 1, perPagina: () => 0, assenti: PIENA(60).map((o) => o.name), pull: () => PIENA(60) });
+    tt('161 cintura invariata: 60 ordini mancanti in finestra = giro fermato, nessun insert', r.status === 409 && r.upsert.length === 0 && /cintura/.test(JSON.stringify(r.body)), { status: r.status, body: r.body });
   } else t('141-152 la edge non e\' caricabile coi finti (import del client cambiato?)', false);
   if (denoPrima === undefined) delete globalThis.Deno; else globalThis.Deno = denoPrima;
   delete globalThis.__amimiSyncFinto;

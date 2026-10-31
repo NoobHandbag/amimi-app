@@ -51,6 +51,12 @@
 // letto (update idempotenti, il giro dopo riprende). Il pull dei nuovi (created_at_min) resta a UNA pagina, per scelta: la cintura (50) sta sotto la
 // pagina (250), quindi una seconda pagina non cambierebbe l'esito (giro fermato con health_log error, recupero con
 // action 'backfill', che pagina con since_id). Blocco PURE:sync-paging, test in tests/shopify_sync_guardie.mjs.
+// Stessa v10, ripasso di 48 ore (decisione owner 31-10): il cursore created_at_min era l'ultimo ordine noto, quindi un
+// ordine fallito in un giro in cui un ordine piu' nuovo entrava restava indietro per sempre (nessun "giro dopo", solo un
+// backfill a mano). Ora il pull rilegge RIPASSO_MS prima dell'ultimo ordine: i gia' presenti si scartano con la lettura di
+// esistenza e l'upsert ignoreDuplicates. Effetto accettato: un ordine cancellato apposta da shopify_orders entro 48 ore
+// torna (0 in change_log al 31-10). Finestra piena (mai vista: massimo storico 36 ordini in 48 ore) = si rilegge dal solo
+// cursore, come prima, e la guardia "pagina piena" decide: il ripasso non puo' fermare il pull dei nuovi.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -111,6 +117,8 @@ const API = `https://${SHOP}.myshopify.com/admin/api/2024-01`;
 // Tetto di ordini NUOVI inseribili in un giro di cron. 250 secchi sono la firma dell'incidente del 12-09
 // ("nessun ordine esistente" -> tutto nuovo); un'ora vera di questo negozio ne porta 0-5.
 const MAX_INSERTS_CRON = 50;
+// Ripasso del pull dei nuovi (v10): si rilegge da 48 ore prima dell'ultimo ordine noto, vedi la nota in testa.
+const RIPASSO_MS = 48 * 3600000;
 // Cap di PostgREST sulle select senza range: una risposta con esattamente questo numero di righe e' TRONCATA.
 const POSTGREST_CAP = 1000;
 // Resync dei 45 giorni (v10): tetto di pagine da 250 (2.000 ordini aggiornati; al 31-10 erano 238, una pagina) e di tempo
@@ -244,7 +252,7 @@ Deno.serve(async (req) => {
   const { data: lastRow, error: lastErr } = await retryOnce(() => sb.from('shopify_orders').select('created_at_shop').not('created_at_shop', 'is', null).order('created_at_shop', { ascending: false }).limit(1));
   if (lastErr) return fail('ultimo ordine', lastErr.message);
   const maxDate = String(lastRow?.[0]?.created_at_shop ?? '2026-02-01T00:00:00Z');
-  const sinceDate = body.dryRun ? new Date(Date.now() - 60 * 86400000).toISOString() : (isBackfill && body.since ? String(body.since) : maxDate);
+  let sinceDate = body.dryRun ? new Date(Date.now() - 60 * 86400000).toISOString() : (isBackfill && body.since ? String(body.since) : new Date(Date.parse(maxDate) - RIPASSO_MS).toISOString());
 
   // anagrafica per il resolver: letta per intero (196 prodotti / 407 alias al 13-09), ma con guardia sul cap:
   // a 1.000 righe la risposta e' troncata in silenzio e le righe uscirebbero "non risolte" e senza COGS
@@ -272,6 +280,7 @@ Deno.serve(async (req) => {
   // vecchio): con una sola pagina "recenti" gli ordini fra `since` e il 250esimo piu' recente non verrebbero
   // mai piu' richiesti, perche' il giro dopo riparte dall'ultimo ordine noto.
   const orders: Record<string, any>[] = [];
+  let ripassoSaltato = false;
   if (isBackfill && !body.dryRun) {
     let sinceId = 0;
     for (let page = 0; page < 8; page++) {
@@ -289,9 +298,16 @@ Deno.serve(async (req) => {
     const resp = await fetch(url, { headers: SH });
     if (!resp.ok) return fail('Shopify', resp.status + ' ' + (await resp.text()).slice(0, 200), 502);
     orders.push(...(((await resp.json()).orders ?? []) as Record<string, any>[]));
+    // finestra del ripasso piena: gli ordini letti potrebbero non essere i piu' nuovi, si torna al solo cursore
+    if (!body.dryRun && orders.length >= 250) {
+      sinceDate = maxDate; ripassoSaltato = true; orders.length = 0;
+      const r2 = await fetch(`${API}/orders.json?status=any&created_at_min=${encodeURIComponent(sinceDate)}&limit=250`, { headers: SH });
+      if (!r2.ok) return fail('Shopify', r2.status + ' ' + (await r2.text()).slice(0, 200), 502);
+      orders.push(...(((await r2.json()).orders ?? []) as Record<string, any>[]));
+    }
   }
 
-  const parse = (o: Record<string, any>) => {
+  const parse =(o: Record<string, any>) => {
     const d = new Date(o.created_at);
     const gross = Number(o.total_price);
     const shipping = Number(o.total_shipping_price_set?.shop_money?.amount ?? 0);
@@ -403,7 +419,7 @@ Deno.serve(async (req) => {
   }
 
   const label = `sync: letti ${orders.length}, nuovi ${inserted} (${lineCount} righe${insertedNames.length ? ': ' + insertedNames.slice(0, 8).join(' ') : ''}), gia' presenti ${existing.size + skipped}, resync ${resynced}`
-    + (resyncPages > 1 ? ` (${resyncPages} pagine)` : '')
+    + (resyncPages > 1 ? ` (${resyncPages} pagine)` : '') + (ripassoSaltato ? ', ripasso di 48 ore saltato (finestra piena)' : '')
     + (errors.length ? `, ERRORI ${errors.length}: ${errors.slice(0, 3).join(' | ')}` : '') + (resyncErr ? `, resync falliti ${resyncErr}` : '') + (resyncStop ? `, ${resyncStop}` : '');
   const resyncWarn = resyncErr + (resyncStop && !paginaFallita ? 1 : 0);
   await health(label, errors.length + resyncWarn, errors.length ? 'error' : (resyncWarn ? 'warn' : 'ok'));
