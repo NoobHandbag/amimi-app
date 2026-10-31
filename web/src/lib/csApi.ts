@@ -192,13 +192,16 @@ export async function ultimaBozza(conversationId: string): Promise<BozzaSalvata 
 }
 
 /** "Non e' un cliente": aggiunge il mittente alla denylist rumore (le prossime mail non entrano in coda)
- *  e sposta QUESTA conversazione nel Rumore. Reversibile a mano (denylist in app_flags, vista Rumore). */
+ *  e sposta QUESTA conversazione nel Rumore. Reversibile a mano (denylist in app_flags, vista Rumore).
+ *  cs-api v12 (31-10): un mittente CONDIVISO di Shopify (chat del sito, modulo contatti) non si blocca mai:
+ *  si sposta solo la conversazione. */
 export async function addNoise(conversationId: string, sender: string, chi: string): Promise<void> {
   await callCsApi({ action: 'add_noise', conversation_id: conversationId, sender, chi });
 }
 
 /** Gesto INVERSO (brief rumore vendor, 01-08): riporta la conversazione dal Rumore alla coda
- *  (canale email_diretta) e toglie il mittente esatto dalla denylist. Se a bloccare e' una voce
+ *  (dal 31-10, cs-api v12: nel canale con cui era entrata, una chat torna chat; prima sempre
+ *  email_diretta) e toglie il mittente esatto dalla denylist. Se a bloccare e' una voce
  *  di DOMINIO, la voce resta (coprirebbe altri mittenti) e viene ritornata per mostrarla. */
 export async function removeNoise(conversationId: string, chi: string): Promise<{ dominio_che_blocca: string | null }> {
   const j = await callCsApi({ action: 'remove_noise', conversation_id: conversationId, chi });
