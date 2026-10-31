@@ -17,6 +17,8 @@
 // Gate 2 dello stesso giorno: elenco dei problemi allargato (SP1), settimana troncata (Q9), anteprima prima
 // dell'accensione (AG12, AG13), GR13 e AG7 che contano invece di `every` su elenchi forse vuoti, 0168 confrontata intera
 // e con la prova finale che puo' davvero fallire (M2-M4, AM1).
+// 31-10 (v4, CASI_APERTI 53, blocco di Supabase di 14 ore): a una ripartenza dopo uno stallo si salta solo il pregresso
+// vecchio e il fresco parte (57h-57j, G2, G2b, G7, E5-E5c, A14b); G2 ed E5 dicevano la regola di prima (tutto saltato).
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripTypeScriptTypes } from 'node:module';
@@ -561,6 +563,19 @@ const reg = (k, stato, tentativi = 1, minFa = 0) => ({ id: 'id-' + k, chiave: k,
   const stallo = pianifica([c('a', ORA - H)], new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'stallo' });
   const altro = pianifica([c('a', ORA - H)], new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'boh' });
   t('57d ripartenza: il pregresso si salta col motivo "stallo" (push perse), un motivo diverso vale "baseline"', az(stallo).join() === 'a:salta:stallo' && az(altro).join() === 'a:salta:baseline');
+  // v4 (31-10, CASI_APERTI 53, blocco di Supabase di 14 ore): alla ripartenza si salta solo il pregresso vecchio. Un
+  // candidato senza riga di registro con l'evento entro frescoMs (2 ore, estremo compreso) parte come in un giro normale
+  const fr = (cs, o) => az(pianifica(cs, new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, ...o })).sort();
+  const cinque = [c('f1', ORA - 60000), c('f2', ORA - 2 * H), c('v', ORA - 2 * H - 1), c('x', NaN), c('d', ORA - 7 * H)];
+  t('57h v4 ripartenza: evento di 1 minuto o di 2 ore esatte -> nuovo (parte); di 2 ore e 1 ms, senza istante o oltre le 6 ore -> saltato stallo',
+    isDeepStrictEqual(fr(cinque, { motivoBaseline: 'stallo', frescoMs: 2 * H }), ['d:salta:stallo', 'f1:nuovo', 'f2:nuovo', 'v:salta:stallo', 'x:salta:stallo']), fr(cinque, { motivoBaseline: 'stallo', frescoMs: 2 * H }));
+  t('57i v4: la freschezza vale SOLO alla ripartenza (prima accensione: tutto baseline) e mai oltre l\'eta\' massima (finestra infinita del riepilogo: 5 ore si\', 7 no); senza frescoMs, o NaN, si salta tutto come nella v3',
+    fr(cinque, { motivoBaseline: 'baseline', frescoMs: 2 * H }).every((x) => x.endsWith(':salta:baseline'))
+    && isDeepStrictEqual(fr([c('r5', ORA - 5 * H), c('r7', ORA - 7 * H)], { motivoBaseline: 'stallo', frescoMs: Infinity }), ['r5:nuovo', 'r7:salta:stallo'])
+    && fr(cinque, { motivoBaseline: 'stallo' }).every((x) => x.endsWith(':salta:stallo')) && fr(cinque, { motivoBaseline: 'stallo', frescoMs: NaN }).every((x) => x.endsWith(':salta:stallo')),
+    fr([c('r5', ORA - 5 * H), c('r7', ORA - 7 * H)], { motivoBaseline: 'stallo', frescoMs: Infinity }));
+  t('57j v4: una riga di registro da riprendere resta ferma (baseline) alla ripartenza anche se fresca, e si riprende al giro dopo',
+    az(pianifica([c('f', ORA - 60000)], new Map([['f', reg('f', 'fallito', 1)]]), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'stallo', frescoMs: 2 * H })).join() === 'f:fermo:baseline');
   const okE = { ok: true, inviati: 1, falliti: 0, destinatari: 1, status: 200 };
   const ch = (e, m = {}) => { const x = chiusura(e, m); return `${x.stato}:${x.definitivo}:${Object.keys(x.esito).filter((k) => ['chi_ignorato', 'timeout'].includes(k)).join(',')}`; };
   t('57e RF-7: un riepilogo per Bene consegnato da una push-api che non rimanda chi (v1: a tutti) o lo rimanda diverso -> fallito definitivo (chi_ignorato), mai ritentato',
@@ -1004,9 +1019,30 @@ console.log('\n== giro di un evento col client finto (F3, RF-4, RF-6, RF-3) ==')
   t('G1 F3: prima accensione (baseline_at vuoto) con due risposte giovani -> una scrittura di saltati (baseline), nessun invio, baseline_at scritto',
     isDeepStrictEqual(salti(prima.w), [`${U1}:saltato:baseline`, `${U3}:saltato:baseline`]) && prima.inviate.length === 0 && isDeepStrictEqual(pe(prima.w), ['baseline_at,ultimo_giro_at'])
     && prima.r.baseline === true && prima.r.persi_stallo === 0, { s: salti(prima.w), i: prima.inviate, pe: pe(prima.w) });
-  const ripresa = await gira(evRiga('b2b_risposta_negozio', { baseline_at: min(3000), ultimo_giro_at: min(180) }));
-  t('G2 ripartenza dopo una pausa di 3 ore -> saltati col motivo "stallo" (push perse, contate in persi_stallo), nessun invio',
-    isDeepStrictEqual(salti(ripresa.w), [`${U1}:saltato:stallo`, `${U3}:saltato:stallo`]) && ripresa.inviate.length === 0 && ripresa.r.persi_stallo === 2, salti(ripresa.w));
+  // v4 (31-10, CASI_APERTI 53): alla ripartenza partono le risposte delle ultime 2 ore (19, 29 e 115 minuti); quella di 150
+  // minuti fa, nata nella pausa, resta saltata col motivo "stallo" (push persa, contata in persi_stallo). Fino alla v3
+  // saltavano tutte, anche quelle nate dopo la fine del blocco.
+  const U4 = '44444444-4444-4444-8444-444444444444', U5 = '55555555-5555-4555-8555-555555555555';
+  const vecchia = { id: U4, account_id: U1, direzione: 'in', esito: null, chi: 'auto', at: min(151), created_at: min(150) };
+  const quasi = { id: U5, account_id: U5, direzione: 'in', esito: null, chi: 'auto', at: min(116), created_at: min(115) };
+  const conVecchia = (extra) => (q, f) => (q.table === 'lead_touches' ? { data: [...b2bRighe, vecchia, ...extra], error: null } : risposteB2b(q, f));
+  const ripresa = await gira(evRiga('b2b_risposta_negozio', { baseline_at: min(3000), ultimo_giro_at: min(180) }), { risposte: conVecchia([quasi]) });
+  t('G2 v4 ripartenza dopo una pausa di 3 ore -> le risposte delle ultime 2 ore partono (dalla piu\' vecchia), quella di 150 minuti fa resta saltata come stallo; baseline_at riscritto',
+    isDeepStrictEqual(ripresa.inviate, ['Un negozio ha risposto', 'Glitter ha risposto', 'Bijou ha risposto']) && isDeepStrictEqual(salti(ripresa.w), [`${U4}:saltato:stallo`])
+    && ripresa.r.persi_stallo === 1 && ripresa.r.inviati === 3 && ripresa.r.baseline === true && isDeepStrictEqual(pe(ripresa.w), ['baseline_at,ultimo_giro_at']), { i: ripresa.inviate, s: salti(ripresa.w), r: ripresa.r });
+  // il tetto vale anche alla ripartenza: una fresca non presa resta senza riga di registro e parte al giro dopo, che non e'
+  // piu' una ripartenza; la vecchia, saltata, non parte mai
+  inviate.length = 0;
+  const wT = mondo({ risposte: conVecchia([]) });
+  const rT = await MI.giroEvento(wT.sb, evRiga('b2b_risposta_negozio', { baseline_at: min(3000), ultimo_giro_at: min(180) }), ctx, { invii: 1, scade: Infinity }, () => 0);
+  const primoGiro = inviate.map((m) => m.titolo);
+  inviate.length = 0;
+  const wT2 = mondo({ risposte: conVecchia([]), registro: [...wT.reg.values()] });
+  const rT2 = await MI.giroEvento(wT2.sb, evRiga('b2b_risposta_negozio', { baseline_at: min(0), ultimo_giro_at: min(0) }), ctxDi(ORA_G + 300000), { invii: 20, scade: Infinity }, () => 0);
+  t('G2b v4 tetto alla ripartenza: con un invio disponibile parte la fresca piu\' vecchia, l\'altra resta rimandata senza riga e parte al giro dopo; la vecchia mai',
+    isDeepStrictEqual(primoGiro, ['Glitter ha risposto']) && rT.rimandati === 1 && rT.persi_stallo === 1 && !wT.reg.has(U3)
+    && isDeepStrictEqual(inviate.map((m) => m.titolo), ['Bijou ha risposto']) && rT2.inviati === 1 && rT2.baseline === false && rT2.persi_stallo === 0 && wT2.reg.get(U4)?.stato === 'saltato',
+    { primoGiro, r1: rT, secondo: inviate.map((m) => m.titolo), r2: rT2 });
   const normale = await gira(evRiga('b2b_risposta_negozio', { baseline_at: min(3000), ultimo_giro_at: min(5) }));
   t('G3 giro normale -> due invii (prenota, invia, chiudi inviato), solo ultimo_giro_at', isDeepStrictEqual(normale.inviate, ['Glitter ha risposto', 'Bijou ha risposto'])
     && [...normale.w.reg.values()].every((x) => x.stato === 'inviato' && x.tentativi === 1) && isDeepStrictEqual(pe(normale.w), ['ultimo_giro_at']) && normale.r.inviati === 2, normale.inviate);
@@ -1026,6 +1062,17 @@ console.log('\n== giro di un evento col client finto (F3, RF-4, RF-6, RF-3) ==')
   t('G6 RF-3: timeout -> la riga si chiude fallito coi tentativi al massimo (esito timeout, chiusa con .select(id)); il giro dopo non la rimanda',
     chiusure(scad.w).length === 2 && chiusure(scad.w).every((s) => s.payload.stato === 'fallito' && s.payload.tentativi === MAX_TENTATIVI && s.payload.esito.timeout === true && s.ritorna === 'id')
     && dopo.every((p) => p.azione === 'fermo' && p.motivo === 'tentativi_esauriti') && scad.r.esauriti === 2, { c: chiusure(scad.w).map((s) => s.payload), dopo: dopo.map((p) => p.motivo) });
+  // v4 (31-10): il riepilogo ha un istante sintetico (le 18:30 di Roma, quando diventa dovuto) e i numeri si calcolano
+  // all'invio: a una ripartenza resta fresco finche' la finestra e' aperta, anche oltre le 2 ore. Lunedi' 19-10 alle 21:00
+  // di Roma, ultimo giro alle 18:00: 2 ore e mezza dalle 18:30, quindi un fatto vero della stessa eta' sarebbe stallo (G2)
+  const ORA_RP = T('2026-10-19T19:00:00Z'), minRp = (m) => new Date(ORA_RP - m * 60000).toISOString();
+  const LETTURE_RP = ['shopify_orders', 'qromo_sales', 'change_log', 'loyalty_ugc', 'cs_conversations', 'v_lead_outreach', 'v_products_todo', 'v_lead_inbound', 'shipping_status'];
+  const wRp = mondo({ risposte: (q) => (q.op === 'select' && LETTURE_RP.includes(q.table) ? (q.head ? { count: 1, error: null } : { data: [], error: null }) : undefined) });
+  inviate.length = 0;
+  const rRp = await MI.giroEvento(wRp.sb, evRiga('riepilogo', { baseline_at: minRp(3000), ultimo_giro_at: minRp(180) }), ctxDi(ORA_RP), { invii: 20, scade: Infinity }, () => 0);
+  t('G7 v4 riepilogo a una ripartenza alle 21:00 (2 ore e mezza dalle 18:30) -> parte a tutti e tre, niente stallo',
+    isDeepStrictEqual(inviate.map((m) => `${m.titolo}:${m.chi}`), ['Riepilogo di oggi:Ale', 'Riepilogo di oggi:Bene', 'Riepilogo di oggi:Ginevra']) && rRp.baseline === true && rRp.persi_stallo === 0
+    && salti(wRp).length === 0 && rRp.inviati === 3, { i: inviate.map((m) => m.chi), r: rRp, s: salti(wRp) });
 }
 
 // 21-10 (v3): attivita_team dalla lettura al registro, col client finto e il registro simulato (UNIQUE evento + chiave,
@@ -1194,10 +1241,27 @@ const runs = [], logRun = [], scritteRun = [], inviateRun = [];
     && perse.w.log.some((q) => firma(q) === `push_eventi_inviati select id head eq:stato|fallito gte:tentativi|3 gte:updated_at|${min(1440)}`)
     && perse.w.log.some((q) => firma(q) === `push_eventi_inviati select id head eq:stato|saltato eq:esito->>motivo|stallo gte:updated_at|${min(1440)}`), perse.h);
   // B6 e RF-2: un guasto che dura oltre le 2 ore si trasforma in `saltato` alla ripartenza: deve restare visibile
-  const stallo = await run({ eventi: [evCs({ ultimo_giro_at: min(180) })], risposte: (q, f) => (f === CS ? urgente : f === CONV ? { data: null, error: { message: 'colonna rinominata' } } : undefined) });
-  t('E5 B6: ripartenza dopo un guasto di 3 ore (componi ancora rotto) -> pregresso saltato come stallo, warn, risposta non ok',
+  // dalla v4 (31-10) salta solo il pregresso vecchio: qui l'urgente e' nata nella pausa, 170 minuti fa
+  const urgenteVecchia = { data: [{ ...urgente.data[0], at: min(170) }], error: null };
+  const convRotta = { data: null, error: { message: 'colonna rinominata' } };
+  const stallo = await run({ eventi: [evCs({ ultimo_giro_at: min(180) })], risposte: (q, f) => (f === CS ? urgenteVecchia : f === CONV ? convRotta : undefined) });
+  t('E5 B6: ripartenza dopo un guasto di 3 ore (componi ancora rotto), urgente di 170 minuti fa -> saltata come stallo senza comporla, warn, risposta non ok',
     stallo.h?.severity === 'warn' && stallo.h?.label.includes('ripartiti dopo una pausa di oltre 2 ore: cs_urgente (1 push non inviata)') && stallo.corpo.ok === false && inviate.length === 0
     && stallo.w.scritte.some((s) => s.table === 'push_eventi_inviati' && Array.isArray(s.payload) && s.payload[0].esito.motivo === 'stallo'), stallo.h);
+  // v4: un'urgente fresca a una ripartenza con componi ancora rotto non diventa uno stallo silenzioso: l'evento si ferma
+  // (error), niente registro e niente ultimo_giro_at, e il giro dopo decide di nuovo
+  const frescaRotta = await run({ eventi: [evCs({ ultimo_giro_at: min(180) })], risposte: (q, f) => (f === CS ? urgente : f === CONV ? convRotta : undefined) });
+  t('E5b v4 ripartenza con un\'urgente di 20 minuti fa e componi rotto -> error (lettura cs_conversations), nessuno stallo scritto, ultimo_giro_at non toccato',
+    frescaRotta.h?.severity === 'error' && frescaRotta.h?.label.includes('in errore: cs_urgente (lettura cs_conversations)') && inviate.length === 0
+    && !frescaRotta.w.scritte.some((s) => s.table === 'push_eventi_inviati') && !frescaRotta.w.scritte.some((s) => s.table === 'push_eventi'), frescaRotta.h);
+  // v4, il caso del 31-10 (CASI_APERTI 53): Supabase bloccato dalle 22:49 alle 12:58 UTC, cs-classify alle 13:00,
+  // push-eventi alle 13:01. Ultimo giro 14 ore fa, classify urgente di un minuto fa: la push parte e la salute resta ok
+  const blocco = await run({ eventi: [evCs({ ultimo_giro_at: min(14 * 60) })], risposte: (q, f) => (f === CS ? { data: [{ ...urgente.data[0], at: min(1) }], error: null } : undefined) });
+  t('E5c v4 31-10: ripartenza dopo un blocco di 14 ore, urgente classificata un minuto prima -> la push parte, nessuno stallo, salute ok, baseline_at riscritto',
+    isDeepStrictEqual(inviate.map((m) => m.titolo), ['Richiesta urgente da Carla Bianchi']) && blocco.h?.severity === 'ok' && blocco.corpo.ok === true
+    && blocco.corpo.eventi.cs_urgente?.inviati === 1 && blocco.corpo.eventi.cs_urgente?.persi_stallo === 0 && blocco.corpo.eventi.cs_urgente?.baseline === true
+    && !blocco.w.scritte.some((s) => s.table === 'push_eventi_inviati' && Array.isArray(s.payload))
+    && blocco.w.scritte.some((s) => s.table === 'push_eventi' && s.op === 'update' && 'baseline_at' in s.payload), { h: blocco.h, e: blocco.corpo.eventi });
   const acceso = await run({ eventi: [evCs({ baseline_at: null, ultimo_giro_at: null })], risposte: (q, f) => (f === CS ? urgente : undefined) });
   t('E6 RF-2: prima accensione con pregresso -> saltato baseline, salute ok', acceso.h?.severity === 'ok' && acceso.corpo.ok === true
     && acceso.w.scritte.some((s) => s.table === 'push_eventi_inviati' && Array.isArray(s.payload) && s.payload[0].esito.motivo === 'baseline'), acceso.h);
@@ -1355,7 +1419,7 @@ const anteprimaSoloLettura = (s) => {
   const f = codice(corpoFunzione(s, 'async function anteprima('));
   return f.length > 200 && !SCRITTURA.test(f) && !/depGiro|eseguiPiano|eseguiGruppi|inviaPush|giroEvento|eseguiRun|scriviSalute|health_log/.test(f)
     && f.includes(".from('push_eventi').select('evento, tema, attivo, soglie, baseline_at, ultimo_giro_at').limit(50)") && f.includes('const { baseline, ripartenza } = baselineDi(ev, c.ora);')
-    && f.includes("motivoBaseline: ripartenza ? 'stallo' : 'baseline' });");
+    && f.includes("motivoBaseline: ripartenza ? 'stallo' : 'baseline', frescoMs: frescoRipartenzaMs(ev.evento) });");
 };
 const CHIUDI = ".update({ stato, esito, updated_at: ora(), ...(definitivo ? { tentativi: MAX_TENTATIVI } : {}) }).eq('id', id).eq('tentativi', tentativi).select('id');\n      if (error) console.error('push-eventi: esito non registrato', evento, String(id), errTesto(error));\n      return !error && (data ?? []).length > 0;";
 const registroScritture = (s) => {
@@ -1366,7 +1430,8 @@ const registroScritture = (s) => {
 };
 // F3 (18-10): da dove viene `baseline` (baselineDi, una sola assegnazione) e che arrivi davvero a pianifica
 const BASELINE_DI = 'const { seme, baseline, ripartenza } = baselineDi(ev, ctx.ora);';
-const PIANIFICA_GIRO = "const piano = pianifica(cands, registro, { ora: ctx.ora, baseline, etaMaxMs: soglia(ev.soglie, 'eta_max_ore', 6, 1, 48) * 3600000, motivoBaseline: ripartenza ? 'stallo' : 'baseline' });";
+// v4 (31-10): con la finestra fresca della ripartenza dell'evento (frescoRipartenzaMs)
+const PIANIFICA_GIRO = "const piano = pianifica(cands, registro, { ora: ctx.ora, baseline, etaMaxMs: soglia(ev.soglie, 'eta_max_ore', 6, 1, 48) * 3600000, motivoBaseline: ripartenza ? 'stallo' : 'baseline', frescoMs: frescoRipartenzaMs(ev.evento) });";
 const giroComposto = (s) => {
   const f = codice(corpoFunzione(s, 'async function giroEvento('));
   const bl = f.indexOf(BASELINE_DI), pl = f.indexOf(PIANIFICA_GIRO), co = f.indexOf("const daComporre = piano.filter((p) => p.azione === 'nuovo' || p.azione === 'ritenta').map((p) => p.cand);");
@@ -1725,8 +1790,13 @@ console.log('\n== autocontrollo dei rilevatori ==');
     pianta(BASELINE_DI, 'const { seme, ripartenza } = baselineDi(ev, ctx.ora); const baseline = false;'),
     pianta('const piano = pianifica(cands, registro, { ora: ctx.ora, baseline, etaMaxMs:', 'const piano = pianifica(cands, registro, { ora: ctx.ora, baseline: false, etaMaxMs:'),
     pianta(BASELINE_DI, BASELINE_DI.replace('const', 'let') + '\n  baseline = false;'),
-    pianta("motivoBaseline: ripartenza ? 'stallo' : 'baseline' });\n  const daComporre", "motivoBaseline: 'baseline' });\n  const daComporre"),
+    pianta("motivoBaseline: ripartenza ? 'stallo' : 'baseline', frescoMs: frescoRipartenzaMs(ev.evento) });\n  const daComporre", "motivoBaseline: 'baseline', frescoMs: frescoRipartenzaMs(ev.evento) });\n  const daComporre"),
+    // v4 (31-10): la finestra fresca tolta dal giro (si torna a saltare tutto) o uguale per tutti gli eventi
+    pianta(", frescoMs: frescoRipartenzaMs(ev.evento) });\n  const daComporre", " });\n  const daComporre"),
+    pianta(", frescoMs: frescoRipartenzaMs(ev.evento) });\n  const daComporre", ", frescoMs: STALLO_MS });\n  const daComporre"),
   ].every((s) => !giroComposto(s)));
+  t('A14b v4 anteprima senza la finestra fresca della ripartenza -> vista (direbbe stallo per una push che il run manda)',
+    !anteprimaSoloLettura(pianta("motivoBaseline: ripartenza ? 'stallo' : 'baseline', frescoMs: frescoRipartenzaMs(ev.evento) });\n      // a gruppi", "motivoBaseline: ripartenza ? 'stallo' : 'baseline' });\n      // a gruppi")));
   t('A15 flag consumato e non elencato -> visto', flagsOrfani(pianta('flagVero(ctx.flags.lead_outreach_ai_enabled)', 'flagVero(ctx.flags.lead_outreach_nuovo)')).length === 1);
   t('A16 risposta del run con i messaggi -> vista', !rispostaRunSoloConteggi(pianta('salute: salute.severity, ...(salute.errore ? { errore_salute: salute.errore } : {}), durata_ms });', 'salute: salute.severity, durata_ms, msgs: [] });')));
   const UPS = SALUTE_UPSERT;
