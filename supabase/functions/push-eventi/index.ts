@@ -4,6 +4,8 @@
 // (statoProblema: la classe della vista prendeva anche il transito normale); evento nuovo attivita_team (migr 0168, tema
 // attivita): ordini, arrivi e conte di Benny e Ginni da change_log, UNA push per persona e tipo per giro (eseguiGruppi),
 // con supplier_orders letto per i codici degli ordini. Anche change_log e supplier_orders si LEGGONO soltanto.
+// v4 (2026-10-31, CASI_APERTI 53, blocco di Supabase del 30-31 ottobre): alla ripartenza dopo uno stallo si salta solo il
+// pregresso vecchio, un evento delle ultime 2 ore parte (frescoRipartenzaMs, in pe-registro).
 // Brief: Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
 // (Regola 19, migr 0166): scrive SOLO push_eventi_inviati (il registro), push_eventi (ultimo_giro_at, baseline_at) e la sua
 // riga di telemetria in health_log (k = 'push_eventi', una per giorno UTC: Gate 3 del 18-10, un giro che fallisce deve
@@ -26,8 +28,9 @@
 // piano PURE (pianifica), poi per ogni invio: prenotazione su UNIQUE (evento, chiave) (chi non prenota salta), inviaPush,
 // esito sulla riga. "Nessun iscritto" e' un esito finale, non un errore da ritentare. Prima accensione e ripartenza dopo
 // uno stallo (ultimo giro oltre 2 ore fa): il pregresso si segna `saltato` senza inviare (motivo 'baseline' alla prima
-// accensione, 'stallo' alla ripartenza: quelle sono push perse e la salute lo dice per 24 ore). Un candidato con l'evento
-// piu' vecchio di 6 ore non diventa una push. Tetto: 20 invii per giro, un invio parte solo nei primi 15 secondi del giro e
+// accensione, 'stallo' alla ripartenza: quelle sono push perse e la salute lo dice per 24 ore); dalla v4 alla ripartenza un
+// evento delle ultime 2 ore non e' pregresso e parte come in un giro normale. Un candidato con l'evento piu' vecchio di 6
+// ore non diventa una push. Tetto: 20 invii per giro, un invio parte solo nei primi 15 secondi del giro e
 // un evento si comincia solo nei primi 30. Alla fine del giro UNA riga health_log (ok, warn, error) con soli nomi di eventi,
 // conteggi e la causa scritta nel codice (mai il messaggio di PostgREST, che puo' citare valori di una riga); nello stesso
 // giorno UTC la gravita' non scende mai, e la label tiene il primo problema del giorno. La freschezza del giro (edge ferma,
@@ -613,7 +616,8 @@ const EVENTI_DI_STATO = ['sistema_cs_sync_fermo'];
 type Reg = { id: number | string; chiave: string; stato: string; tentativi: number; updated_at: string };
 type Decisione = { cand: Cand; azione: 'nuovo' | 'ritenta' | 'salta' | 'fermo'; motivo: string; reg?: Reg };
 // prima accensione (baseline_at vuoto) o ripartenza: ultimo giro assente o di oltre 2 ore fa (evento spento e riacceso,
-// flag spento, edge ferma). Allora quello che esiste gia' si segna `saltato` e non parte niente.
+// flag spento, edge ferma). Allora quello che esiste gia' si segna `saltato` e non parte niente (alla ripartenza solo cio'
+// che non e' fresco: frescoRipartenzaMs, sotto).
 function serveBaseline(ev: { baseline_at?: unknown; ultimo_giro_at?: unknown }, ora: number): boolean {
   const b = msDi(ev?.baseline_at), u = msDi(ev?.ultimo_giro_at);
   return !Number.isFinite(b) || !Number.isFinite(u) || ora - u > STALLO_MS;
@@ -626,18 +630,40 @@ function baselineDi(ev: { evento?: unknown; baseline_at?: unknown; ultimo_giro_a
   const baseline = seme && !EVENTI_DI_STATO.includes(String(ev?.evento));
   return { seme, baseline, ripartenza: baseline && Number.isFinite(msDi(ev?.baseline_at)) };
 }
-function pianifica(cands: Cand[], registro: Map<string, Reg>, o: { ora: number; baseline: boolean; etaMaxMs: number; motivoBaseline?: string }): Decisione[] {
+// v4 (31-10, CASI_APERTI 53: Supabase bloccato 14 ore per la quota Free). Fino alla v3 la ripartenza saltava TUTTO, anche
+// cio' che era nato dopo la fine del blocco: cs-sync ha recuperato la posta alle 12:58, cs-classify l'ha classificata alle
+// 13:00 e push-eventi e' ripartito alle 13:01, quindi un'urgente arrivata durante il blocco avrebbe perso la sua push (un
+// classify di un minuto prima, segnato `saltato` stallo). Ora alla ripartenza un candidato senza riga di registro con
+// l'evento entro FRESCO_RIPARTENZA_MS (e comunque entro eta_max_ore) parte come in un giro normale; il resto (piu' vecchio, o
+// senza istante) resta `saltato` 'stallo' e la salute lo conta come prima. 2 ore come lo stallo: una pausa di poco meno di
+// 2 ore non e' una ripartenza e manda gia' tutto quello che e' nato nel frattempo, quindi una ripartenza non manda mai piu'
+// di una pausa normale (nessuna valanga nuova; resta il tetto di 20 invii per giro, il resto parte al giro dopo).
+// L'istante di ogni evento e' quello in cui il fatto e' entrato nei dati: cs_events.at (default now() all'insert, per
+// cs_urgente e cs_cliente_ha_riscritto), lead_touches.created_at (o at, oltre 72 ore di ritardo), shipping_status.updated_at
+// (riscritto da shipping-status-sync solo a un cambio di stato), change_log.ts (default now()); un fatto recuperato dopo un
+// blocco ha l'istante del recupero ed e' fresco. Un istante illeggibile non e' mai fresco. Fa eccezione il riepilogo: il suo
+// istante (le 18:30 di Roma) e' quello in cui diventa dovuto, non un fatto, e i numeri si calcolano all'invio; resta fresco
+// per tutta l'eta' massima, cioe' finche' la sua finestra e' aperta (una push a testa al giorno). sistema_cs_sync_fermo non
+// salta mai il pregresso (EVENTI_DI_STATO) e qui non entra.
+const FRESCO_RIPARTENZA_MS = STALLO_MS;
+function frescoRipartenzaMs(evento: unknown): number {
+  return evento === 'riepilogo' ? Infinity : FRESCO_RIPARTENZA_MS;
+}
+// frescoMs vale solo alla ripartenza (motivoBaseline 'stallo'), mai oltre etaMaxMs; senza, si salta tutto come nella v3
+function pianifica(cands: Cand[], registro: Map<string, Reg>, o: { ora: number; baseline: boolean; etaMaxMs: number; motivoBaseline?: string; frescoMs?: number }): Decisione[] {
   const visti = new Set<string>();
   const out: Decisione[] = [];
   const motivoBaseline = o.motivoBaseline === 'stallo' ? 'stallo' : 'baseline';
+  const finestraFresca = motivoBaseline === 'stallo' && typeof o.frescoMs === 'number' && o.frescoMs > 0 ? Math.min(o.frescoMs, o.etaMaxMs) : null;
   for (const cand of cands) {
     if (!cand || typeof cand.chiave !== 'string' || !cand.chiave || visti.has(cand.chiave)) continue;
     visti.add(cand.chiave);
     const eta = o.ora - cand.ts;
     const giovane = Number.isFinite(eta) && eta <= o.etaMaxMs;
+    const fresco = finestraFresca !== null && Number.isFinite(eta) && eta <= finestraFresca;
     const r = registro.get(cand.chiave);
     if (!r) {
-      if (o.baseline) out.push({ cand, azione: 'salta', motivo: motivoBaseline });
+      if (o.baseline && !fresco) out.push({ cand, azione: 'salta', motivo: motivoBaseline });
       else if (!giovane) out.push({ cand, azione: 'salta', motivo: 'vecchio' });
       else out.push({ cand, azione: 'nuovo', motivo: '' });
       continue;
@@ -1136,7 +1162,7 @@ async function giroEvento(sb: Sb, ev: RigaEvento, ctx: Ctx, budget: Budget, ades
   const { seme, baseline, ripartenza } = baselineDi(ev, ctx.ora);
   const cands = await def.candidati(sb, ctx, ev);
   const registro = await leggiRegistro(sb, ev.evento, cands.map((c) => c.chiave));
-  const piano = pianifica(cands, registro, { ora: ctx.ora, baseline, etaMaxMs: soglia(ev.soglie, 'eta_max_ore', 6, 1, 48) * 3600000, motivoBaseline: ripartenza ? 'stallo' : 'baseline' });
+  const piano = pianifica(cands, registro, { ora: ctx.ora, baseline, etaMaxMs: soglia(ev.soglie, 'eta_max_ore', 6, 1, 48) * 3600000, motivoBaseline: ripartenza ? 'stallo' : 'baseline', frescoMs: frescoRipartenzaMs(ev.evento) });
   const daComporre = piano.filter((p) => p.azione === 'nuovo' || p.azione === 'ritenta').map((p) => p.cand);
   const dep = depGiro(sb, ev.evento, tema, adesso);
   let r: Resoconto;
@@ -1256,7 +1282,8 @@ Deno.serve(async (req) => {
   if (action === 'anteprima') return await anteprima(sb, ctx, body.forza_riepilogo === true);
 
   // 3) run: rollback = spegnere il flag. A modulo spento (o con push_enabled spento) nessuna lettura degli eventi, nessuna
-  //    scrittura (neanche health_log): alla riaccensione oltre le 2 ore ogni evento riparte dalla baseline.
+  //    scrittura (neanche health_log): alla riaccensione oltre le 2 ore ogni evento riparte dalla baseline (dalla v4
+  //    partono solo gli eventi freschi, frescoRipartenzaMs; il resto e' `saltato` stallo).
   if (!flagVero(flags.push_eventi_enabled) || !flagVero(flags.push_enabled)) return json({ ok: true, skipped: 'disabled' });
   return await eseguiRun(sb, ctx);
 });
@@ -1276,7 +1303,7 @@ async function anteprima(sb: Sb, ctx: Ctx, forzaRiepilogo: boolean): Promise<Res
     try {
       const cands = await EVENTI[nome].candidati(sb, c, ev);
       const registro = await leggiRegistro(sb, nome, cands.map((x) => x.chiave));
-      const piano = pianifica(cands, registro, { ora: c.ora, baseline, etaMaxMs: soglia(ev.soglie, 'eta_max_ore', 6, 1, 48) * 3600000, motivoBaseline: ripartenza ? 'stallo' : 'baseline' });
+      const piano = pianifica(cands, registro, { ora: c.ora, baseline, etaMaxMs: soglia(ev.soglie, 'eta_max_ore', 6, 1, 48) * 3600000, motivoBaseline: ripartenza ? 'stallo' : 'baseline', frescoMs: frescoRipartenzaMs(ev.evento) });
       // a gruppi (attivita_team, 21-10): il testo di un gruppo si compone dalle sole righe che partirebbero, e ogni riga
       // mostra quello del suo gruppo; partirebbe conta le push, non le righe
       const g = EVENTI[nome].gruppi;
