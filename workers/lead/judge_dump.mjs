@@ -25,7 +25,9 @@ for (const a of accounts) {
     if (!e.asset_path) continue;
     const { data, error: de } = await sb.storage.from(BUCKET).download(e.asset_path);
     if (de) { console.log('  download err', e.asset_path, de.message); continue; }
-    const f = `${dir}/${e.tipo}.png`; writeFileSync(f, Buffer.from(await data.arrayBuffer())); shots.push(f);
+    // estensione dal tipo vero: dal 31-10 gli screenshot sono JPEG e quelli vecchi WebP compressi (nome .png invariato)
+    const ext = { 'image/jpeg': 'jpg', 'image/webp': 'webp' }[data.type] || 'png';
+    const f = `${dir}/${e.tipo}.${ext}`; writeFileSync(f, Buffer.from(await data.arrayBuffer())); shots.push(f);
   }
   writeFileSync(`${dir}/evidence.json`, JSON.stringify({ account: a, ultime: last, tutte: ev }, null, 1));
   index.push({ id: a.id, nome: a.nome, citta: a.citta, tipo: a.tipo, dir, shots, evidenze: ev.length, tipi: Object.keys(last) });
