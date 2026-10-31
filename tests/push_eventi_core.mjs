@@ -19,6 +19,7 @@
 // e con la prova finale che puo' davvero fallire (M2-M4, AM1).
 // 31-10 (v4, CASI_APERTI 53, blocco di Supabase di 14 ore): a una ripartenza dopo uno stallo si salta solo il pregresso
 // vecchio e il fresco parte (57h-57j, G2, G2b, G7, E5-E5c, A14b); G2 ed E5 dicevano la regola di prima (tutto saltato).
+// Gate 2 dello stesso giorno: riaccensione a foglio pulito (G1b) e doc del rollback e dei conteggi (D1, D2).
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripTypeScriptTypes } from 'node:module';
@@ -1019,6 +1020,12 @@ console.log('\n== giro di un evento col client finto (F3, RF-4, RF-6, RF-3) ==')
   t('G1 F3: prima accensione (baseline_at vuoto) con due risposte giovani -> una scrittura di saltati (baseline), nessun invio, baseline_at scritto',
     isDeepStrictEqual(salti(prima.w), [`${U1}:saltato:baseline`, `${U3}:saltato:baseline`]) && prima.inviate.length === 0 && isDeepStrictEqual(pe(prima.w), ['baseline_at,ultimo_giro_at'])
     && prima.r.baseline === true && prima.r.persi_stallo === 0, { s: salti(prima.w), i: prima.inviate, pe: pe(prima.w) });
+  // Gate 2 della v4 (31-10, N2): riaccendere a foglio pulito = baseline_at a null prima del flag (EDGE_FUNCTIONS, push-eventi,
+  // Rollback). Il giro e' una prima accensione: anche il fresco si segna baseline, niente push e niente stallo
+  const pulita = await gira(evRiga('b2b_risposta_negozio', { baseline_at: null, ultimo_giro_at: min(180) }));
+  t('G1b v4 riaccensione a foglio pulito (baseline_at azzerato, ultimo giro 3 ore fa) -> le risposte di 19 e 29 minuti fa si segnano baseline, nessun invio, nessuno stallo',
+    isDeepStrictEqual(salti(pulita.w), [`${U1}:saltato:baseline`, `${U3}:saltato:baseline`]) && pulita.inviate.length === 0 && isDeepStrictEqual(pe(pulita.w), ['baseline_at,ultimo_giro_at'])
+    && pulita.r.baseline === true && pulita.r.persi_stallo === 0, { s: salti(pulita.w), i: pulita.inviate, r: pulita.r });
   // v4 (31-10, CASI_APERTI 53): alla ripartenza partono le risposte delle ultime 2 ore (19, 29 e 115 minuti); quella di 150
   // minuti fa, nata nella pausa, resta saltata col motivo "stallo" (push persa, contata in persi_stallo). Fino alla v3
   // saltavano tutte, anche quelle nate dopo la fine del blocco.
@@ -1747,6 +1754,32 @@ const temiCoerenti = (m) => {
       // il conteggio dei telefoni attesi preso dagli aggiornati
       pianta(MIGR_0168, "    select (select count(*) from push_subscriptions s\n             where exists (select 1 from push_temi t where t.key = 'attivita' and t.predefinito_per @> array[s.chi])\n               and not (s.temi @> array['attivita'])),", '    select (select count(*) from agg),'),
     ].every((m) => m !== MIGR_0168 && !passi(m)) && passi(MIGR_0168) && scambiati !== MIGR_0168);
+}
+
+// Gate 2 della v4 (31-10): i doc che si leggono prima di un rollback o di un audit. N2: dove si documenta il rollback, che
+// riaccendere oltre le 2 ore manda il fresco e come riaccendere a foglio pulito (la prova del foglio pulito e' G1b); N3: i
+// conteggi di TEST_INVARIANTS sono quelli di questa suite.
+console.log('\n== documentazione (Gate 2 della v4) ==');
+{
+  const riga = (doc, inizio) => doc.split('\n').find((l) => l.startsWith(inizio)) ?? '';
+  const RIGA_EDGE = riga(read('docs/EDGE_FUNCTIONS.md'), 'Brief: `Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md`');
+  const RIGA_SCHEMA = riga(read('docs/SCHEMA.md'), '- **`app_flags.push_eventi_enabled`**');
+  const avvisa = (l) => /Rollback = /.test(l) && l.includes('dopo oltre 2 ore') && l.includes('ultime 2 ore') && l.includes('`baseline_at` a null');
+  t('D1 N2: il rollback di EDGE_FUNCTIONS e di SCHEMA dice che riaccendere oltre le 2 ore manda le ultime 2 ore, e che a foglio pulito si azzera baseline_at',
+    avvisa(RIGA_EDGE) && avvisa(RIGA_SCHEMA) && !avvisa(RIGA_EDGE.replace('ultime 2 ore', 'ultime ore')) && !avvisa(RIGA_SCHEMA.replace('`baseline_at` a null', '`x`')), { edge: RIGA_EDGE.slice(-700), schema: RIGA_SCHEMA.slice(-400) });
+  const RIGA_TEST = riga(read('docs/TEST_INVARIANTS.md'), '| **Test** | `tests/push_eventi_core.mjs` |');
+  const ETICHETTE = [...new Set([...read('tests/push_eventi_core.mjs').matchAll(/\bt\('(A\d+[a-z]?) /g)].map((x) => x[1]))].sort();
+  const espandi = (l) => l.split(', ').flatMap((p) => {
+    const r = p.match(/^A(\d+)-A(\d+)$/);
+    return r ? Array.from({ length: Number(r[2]) - Number(r[1]) + 1 }, (_, i) => 'A' + (Number(r[1]) + i)) : [p];
+  }).sort();
+  const contaGiusta = (l) => {
+    const m = l.match(/guardie esatte sul sorgente con (\d+) autocontrolli \(([^)]*)\)/);
+    return !!m && Number(m[1]) === ETICHETTE.length && isDeepStrictEqual(espandi(m[2]), ETICHETTE);
+  };
+  t('D2 N3: TEST_INVARIANTS dice quanti autocontrolli ha questa suite e quali; un numero o un elenco diversi -> visti', ETICHETTE.length >= 26 && contaGiusta(RIGA_TEST)
+    && !contaGiusta(RIGA_TEST.replace(/con (\d+) autocontrolli/, (_, n) => `con ${Number(n) - 1} autocontrolli`))
+    && !contaGiusta(RIGA_TEST.replace(/autocontrolli \(([^)]*)\)/, (_, l) => `autocontrolli (${l.split(', ').slice(0, -1).join(', ')})`)), { ETICHETTE, riga: RIGA_TEST.slice(-260) });
 }
 
 console.log('\n== autocontrollo dei rilevatori ==');
