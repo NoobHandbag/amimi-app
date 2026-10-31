@@ -107,7 +107,8 @@ parziali/completi + validazioni; product verification; expenses manual/propose/a
 correction (revert-safe); returns & exchanges; smoke third-flow e ask-data; integrita' Cruscotto.
 `tests/features.mjs`: pricing/SEO helpers puri; correttezza `v_ads_mensile` (dalla 0176 anche la fonte per mese e l'ultimo giorno), `v_reorder`,
 `v_sku_availability` contro ground truth; dalla 0182 `v_evasione_mensile` contro gli ordini veri dei mesi passati (un ordine con piu' LDV conta una
-volta) e `v_clienti_coorti.netto_medio_cliente` contro la spesa media di `v_clienti_rfm` senza IVA. Viste rosse sulla produzione prima dell'apply.
+volta, ordine e `fulfilled_at` in ora di Roma in `schema.sql`) e `v_clienti_coorti.netto_medio_cliente` contro la spesa media di `v_clienti_rfm`
+senza IVA. Viste rosse sulla produzione prima dell'apply.
 
 Non coprono: replay/idempotenza (D3/D5), mesi chiusi (C1), concorrenza (G1), resolver orfani
 (S2/S3), cascata rinomina (R4), sicurezza (SEC1/SEC2). Sono i primi test da scrivere.

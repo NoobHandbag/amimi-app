@@ -5064,8 +5064,8 @@ CREATE OR REPLACE VIEW "public"."v_evasione_mensile" AS
         ), "o" AS (
          SELECT "o_1"."year",
             "o_1"."month",
-            ("o_1"."created_at_shop")::"date" AS "d0",
-            COALESCE("s"."shipped_date", ("o_1"."fulfilled_at")::"date") AS "d1"
+            (("o_1"."created_at_shop" AT TIME ZONE 'Europe/Rome'::"text"))::"date" AS "d0",
+            COALESCE("s"."shipped_date", (("o_1"."fulfilled_at" AT TIME ZONE 'Europe/Rome'::"text"))::"date") AS "d1"
            FROM ("public"."shopify_orders" "o_1"
              LEFT JOIN "sped" "s" ON (("regexp_replace"(COALESCE("o_1"."order_number", "o_1"."order_id"), '^#'::"text", ''::"text") = "s"."ordine")))
           WHERE ("o_1"."created_at_shop" IS NOT NULL)

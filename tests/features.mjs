@@ -1,5 +1,6 @@
 // Feature regression — pure-logic helpers + view correctness against ground truth.
 // Run: node tests/features.mjs   (Node 24 strips TS types on import)
+import { readFileSync } from 'node:fs';
 import { suggestPrice, marginOf, genSeoTitle } from '../web/src/lib/helpers.ts';
 
 const REST = 'https://imszbjeyplaiovylhkgl.supabase.co/rest/v1';
@@ -182,6 +183,10 @@ console.log('\n===== v_evasione_mensile e v_clienti_coorti (migr 0182) =====');
     if (n !== Number(r.ordini)) diversi.push(`${r.year}-${r.month}: ${r.ordini} contro ${n}`);
   }
   ok(passati.length > 0 && diversi.length === 0, `v_evasione_mensile: ogni ordine conta una volta (${passati.length} mesi, KO: ${diversi.join('; ')})`);
+  // shipped_date e' una data italiana: anche ordine e fulfilled_at vanno letti in ora di Roma, ::date da solo e' UTC.
+  const schema = readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
+  const vista = schema.slice(schema.indexOf('VIEW "public"."v_evasione_mensile"'), schema.indexOf('ALTER VIEW "public"."v_evasione_mensile"'));
+  ok((vista.match(/AT TIME ZONE 'Europe\/Rome'/g) ?? []).length === 2, 'v_evasione_mensile: ordine e fulfilled_at in ora di Roma in schema.sql');
 
   // netto_medio_cliente = spesa media dei clienti della coorte senza IVA. aov vuoto = solo ordini rimborsati, fuori anche dalla vista.
   const clienti = [];
@@ -193,12 +198,13 @@ console.log('\n===== v_evasione_mensile e v_clienti_coorti (migr 0182) =====');
   const spese = new Map();
   for (const c of clienti) {
     const mese = c.primo_ordine.slice(0, 7);
-    spese.set(mese, [...(spese.get(mese) ?? []), Number(c.monetary)]);
+    const s = spese.get(mese) ?? { tot: 0, n: 0 };
+    spese.set(mese, { tot: s.tot + Number(c.monetary), n: s.n + 1 });
   }
   const coorti = arr(await get('/v_clienti_coorti?select=coorte,netto_medio_cliente'));
   const storte = coorti.filter((c) => {
-    const s = spese.get(c.coorte.slice(0, 7)) ?? [];
-    return !s.length || !near(s.reduce((a, b) => a + b, 0) / s.length / 1.22, Number(c.netto_medio_cliente));
+    const s = spese.get(c.coorte.slice(0, 7));
+    return !s || !near(s.tot / s.n / 1.22, Number(c.netto_medio_cliente));
   });
   ok(coorti.length > 0 && storte.length === 0, `v_clienti_coorti: netto_medio_cliente senza IVA (${coorti.length} coorti, KO ${storte.length})`);
 }

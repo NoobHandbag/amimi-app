@@ -1,7 +1,8 @@
 -- 0182: due viste di lettura che dicevano un numero sbagliato (31-10, trovate preparando un export). Nessun dato toccato.
 -- v_evasione_mensile: shipping_status ha una riga per lettera di vettura (541 righe su 525 ordini al 31-10), quindi la
 -- join moltiplicava gli ordini spediti con piu' LDV: 990 ordini contro 974 veri, e lo stesso eccesso su spediti e oltre_3gg.
--- Ora l'ordine resta una riga sola e la data di spedizione e' la prima LDV.
+-- Ora l'ordine resta una riga sola e la data di spedizione e' la prima LDV. Ordine e spedizione sono giorni di Roma:
+-- shipped_date e' una data italiana e ::date da solo e' UTC, quindi gli ordini della notte risultavano un giorno piu' lenti.
 -- v_clienti_coorti.netto_medio_cliente, "Netto medio" nella tabella coorti di Clienti, era il totale pagato con l'IVA.
 -- Ora e' / 1,22, come online_netto nel CE. Spedizione dentro e rimborsi parziali dentro, come v_clienti_rfm.monetary.
 create or replace view public.v_evasione_mensile as
@@ -11,8 +12,8 @@ with sped as (
    group by 1
 ), o as (
   select o.year, o.month,
-         o.created_at_shop::date as d0,
-         coalesce(s.shipped_date, o.fulfilled_at::date) as d1
+         (o.created_at_shop at time zone 'Europe/Rome')::date as d0,
+         coalesce(s.shipped_date, (o.fulfilled_at at time zone 'Europe/Rome')::date) as d1
     from shopify_orders o
     left join sped s on regexp_replace(coalesce(o.order_number, o.order_id), '^#', '') = s.ordine
    where o.created_at_shop is not null
