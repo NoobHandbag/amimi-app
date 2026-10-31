@@ -13,21 +13,28 @@ const cleanBody = (t: string) => (t || '').replace(/\r\n?/g, '\n').replace(/[ \t
 // passa la chat al team, la notifica dice solo "Agent transferred this conversation to your team for
 // further support": la domanda della cliente NON c'e', resta in Inbox. Lo si dice in italiano e si
 // manda in Inbox, invece di mostrare una frase inglese che sembra un messaggio della cliente.
-// Stessa regex di `isPassaggioAgente` in cs-classify (tests/cs_passaggio.mjs le confronta).
-const RE_PASSAGGIO_AGENTE = /agent\s+transferred\s+this\s+conversation\s+to\s+your\s+team/i;
+// Stessa regex di `isPassaggioAgente` in cs-classify (tests/cs_passaggio.mjs le confronta). ANCORATA:
+// e' un passaggio solo un testo che e' SOLO la frase del chatbot; parole della cliente nello stesso
+// messaggio non verrebbero mai nascoste (Gate 2 del 31-10, B2).
+const RE_PASSAGGIO_AGENTE = /^\s*agent\s+transferred\s+this\s+conversation\s+to\s+your\s+team(?:\s+for\s+further\s+support)?\.?\s*$/i;
 const TESTO_PASSAGGIO = '🤖 Il chatbot di Shopify ha passato questa chat al team. La domanda della cliente non arriva per email: leggila in Inbox.';
 const isPassaggio = (t: string | null | undefined) => RE_PASSAGGIO_AGENTE.test(t || '');
-// anteprima di una card: il passaggio del chatbot detto in chiaro
-const snipOf = (c: { snippet?: string | null; subject?: string | null }) =>
-  isPassaggio(c.snippet) ? '🤖 Passata dal chatbot di Shopify: la domanda è in Inbox' : (c.snippet || c.subject || '');
+// anteprima di una card di CHAT: il passaggio del chatbot detto in chiaro
+const snipOf = (c: { canale?: string | null; snippet?: string | null; subject?: string | null }) =>
+  c.canale === 'chat_notifica' && isPassaggio(c.snippet) ? '🤖 Passata dal chatbot di Shopify: la domanda è in Inbox' : (c.snippet || c.subject || '');
 // mittenti CONDIVISI di Shopify (chat del sito, modulo contatti): non si bloccano mai (cs-api v12)
 const isMittenteShopify = (s: string) => /@(?:shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/.test((s || '').trim().toLowerCase());
-// notifica chat Shopify Inbox: mostra solo il messaggio del cliente, non il boilerplate della notifica
-const cleanChatBody = (t: string) => {
+// notifica chat Shopify Inbox: le sole parole del mittente, senza il boilerplate della notifica
+const estraiChat = (t: string) => {
   const s = cleanBody(t);
-  if (isPassaggio(s)) return TESTO_PASSAGGIO;
   const m = s.match(/new message from[^\n]*\n+([\s\S]*?)\n+\s*Sent via Inbox/i);
   return m ? m[1].trim() : s;
+};
+// le parole di un messaggio di chat: body_clean (cs-sync) o, se manca, estratte dal grezzo
+const testoChat = (m: CsMessage) => m.body_clean ?? estraiChat(m.body_text || '');
+const cleanChatBody = (t: string) => {
+  const corpo = estraiChat(t);
+  return isPassaggio(corpo) ? TESTO_PASSAGGIO : corpo;
 };
 // deep-link alla conversazione esatta in Shopify Inbox: e' nel corpo di ogni notifica ("Reply in Inbox")
 const inboxUrlOf = (ms: CsMessage[] | null): string | null => {
@@ -701,7 +708,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         {c.canale === 'chat_notifica' && !draftMode && (
           <div className="cs-banner">
             {/* 31-10 (CASI_APERTI n.54): se la notifica e' solo il passaggio del chatbot, qui non c'e' la domanda */}
-            {(msgs ?? []).some((m) => m.direction === 'in') && (msgs ?? []).filter((m) => m.direction === 'in').every((m) => isPassaggio(m.body_text))
+            {(msgs ?? []).some((m) => m.direction === 'in') && (msgs ?? []).filter((m) => m.direction === 'in').every((m) => isPassaggio(testoChat(m)))
               ? <><b>🤖 Il chatbot di Shopify ha passato questa chat al team.</b> La domanda della cliente non arriva per email: aprila in Inbox per leggerla e rispondere lì. Qui sotto non c'è niente da cui scrivere una bozza.</>
               : <>💬 Chat del sito (Shopify Inbox): si risponde DENTRO Inbox, non da qui (una nostra email a parte creerebbe due tracce). Genera la bozza qui sotto, poi &#8220;Copia risposta e apri in Inbox&#8221;.</>}
             <div style={{ marginTop: 8 }}><a className="cs-btn cs-inbox" href={inboxUrlOf(msgs) ?? SHOPIFY_INBOX} target="_blank" rel="noreferrer">{inboxUrlOf(msgs) ? 'Rispondi in Inbox ↗' : 'Apri Shopify Inbox ↗'}</a></div>
@@ -716,13 +723,13 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
               // bolla = body_clean (solo le parole del mittente); NULL -> grezzo come prima, senza expander
               const fallback = m.body_text ? (c.canale === 'chat_notifica' ? cleanChatBody(m.body_text) : cleanBody(m.body_text)) : '';
               // 31-10: il passaggio del chatbot ha un body_clean (la frase inglese): in chat va detto in chiaro
-              const passaggio = c.canale === 'chat_notifica' && !out && isPassaggio(m.body_clean ?? m.body_text);
+              const passaggio = c.canale === 'chat_notifica' && !out && isPassaggio(testoChat(m));
               const testo = passaggio ? TESTO_PASSAGGIO : (m.body_clean ?? fallback);
               // 3.4: l'expander si mostra solo se dietro c'e' DAVVERO qualcosa in piu'. Il confronto
               // ora usa lo stesso normalizzatore del fallback: sulle chat del sito confrontavamo il
               // testo pulito col boilerplate della notifica, quindi differivano sempre e il bottone
               // compariva anche sotto tre messaggi di due righe gia' puliti (thread Lavezzola).
-              const showOrig = !passaggio && !!m.body_clean && !!m.body_text && m.body_clean.trim() !== fallback.trim();
+              const showOrig = !!m.body_clean && !!m.body_text && m.body_clean.trim() !== fallback.trim();
               return (
                 <div key={m.id} className={'cs-msg ' + (out ? 'out' : 'in')}>
                   <div className="cs-mh">{out ? `${fmtWhen(m.sent_at)} · ${m.sent_by || 'Amimi’'}` : `${primoNome} · ${fmtWhen(m.sent_at)}`}</div>

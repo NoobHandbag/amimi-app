@@ -1,4 +1,4 @@
-// tests/cs_passaggio.mjs — il PASSAGGIO del chatbot di Shopify Inbox e i mittenti condivisi di Shopify.
+// tests/cs_passaggio.mjs: il PASSAGGIO del chatbot di Shopify Inbox e i mittenti condivisi di Shopify.
 //   node tests/cs_passaggio.mjs
 // Ritaglia DAL SORGENTE che va in produzione i blocchi PURE:cs-passaggio (cs-classify v9) e
 // PURE:cs-api-mittente (cs-api v12): se il codice cambia, il test rompe. Nessuna rete, nessun DB.
@@ -31,7 +31,7 @@ const API = src('supabase/functions/cs-api/index.ts');
 const UI = src('web/src/pages/Assistenza.tsx');
 const bClassify = blocco(CLASSIFY, 'cs-passaggio', 'cs-classify');
 const bApi = blocco(API, 'cs-api-mittente', 'cs-api');
-const { isPassaggioAgente, b2bVaNelRumore } = await carica(bClassify, ['isPassaggioAgente', 'b2bVaNelRumore'], 'classify');
+const { isPassaggioAgente, messaggioEPassaggio, b2bVaNelRumore, MOTIVO_PASSAGGIO } = await carica(bClassify, ['isPassaggioAgente', 'messaggioEPassaggio', 'b2bVaNelRumore', 'MOTIVO_PASSAGGIO'], 'classify');
 const api = await carica(bApi, ['isMittenteShopify', 'canaleDiRitorno', 'b2bVaNelRumore', 'voceDiDominioCheBlocca'], 'api');
 
 let ok = 0, ko = 0;
@@ -42,18 +42,31 @@ const NOTIFICA = (riga) => 'amimì\r\n\r\nYou have a new message from Cliente Pr
   '\r\n\r\nSent via Inbox\r\n\r\nReply in Inbox \r\n( https://inbox.shopify.com/store/wb9gmn-0h/conversations/open/01a1882c-bb69-77ca-ba62-33e30104685c?context=email_new_message )\r\n';
 const PASSAGGIO = 'Agent transferred this conversation to your team for\r\nfurther support';
 
-console.log('== passaggio del chatbot riconosciuto (cs-classify) ==');
-t('notifica completa del passaggio -> true', isPassaggioAgente(NOTIFICA(PASSAGGIO)) === true);
-t('body_clean del passaggio (a capo dopo "for") -> true', isPassaggioAgente('Agent transferred this conversation to your team for\nfurther support') === true);
-t('maiuscole/spazi diversi -> true', isPassaggioAgente('AGENT  transferred this\nconversation to your TEAM') === true);
+console.log('== passaggio del chatbot riconosciuto (cs-classify, regex ANCORATA sul testo pulito) ==');
+t('body_clean reale del passaggio (a capo dopo "for") -> true', isPassaggioAgente('Agent transferred this conversation to your team for\nfurther support') === true);
+t('snippet reale (una riga) -> true', isPassaggioAgente('Agent transferred this conversation to your team for further support') === true);
+t('maiuscole/spazi diversi, punto finale -> true', isPassaggioAgente('  AGENT  transferred this\nconversation to your TEAM.  ') === true);
+t('messaggio con body_clean = passaggio -> passaggio', messaggioEPassaggio({ body_clean: PASSAGGIO }) === true);
+t('notifica GREZZA intera (boilerplate) -> false: si decide sul testo pulito', isPassaggioAgente(NOTIFICA(PASSAGGIO)) === false);
+t('body_clean assente -> NON passaggio (resta della cliente, come prima)', messaggioEPassaggio({ body_clean: null }) === false && messaggioEPassaggio({}) === false);
+
+console.log('\n== Gate 2 B2: parole della cliente nello stesso messaggio -> MAI passaggio ==');
+for (const txt of [
+  'Agent transferred this conversation to your team for further support\n\nho un problema col mio ordine #1931',
+  'Ciao! Agent transferred this conversation to your team',
+  'Agent transferred this conversation to your team for further support. Quando posso ritirare?',
+]) t(`"${txt.slice(0, 50).replace(/\n/g, ' ')}..." -> false`, isPassaggioAgente(txt) === false && messaggioEPassaggio({ body_clean: txt }) === false, txt);
 
 console.log('\n== messaggi veri delle clienti in chat -> false ==');
 for (const txt of ['Vorrei sapere a Roma dove la trovo', 'numero ordine Lea Bag Cocco Purple #1917', 'Non ho ancora ricevuto risposta',
   'Ordine 1880 borsa LEA BAG brown and white pony', 'Grazie per la risposta!', 'This customer sent a media message.',
   'can you transfer me to your team?', 'the agent was useless']) {
-  t(`"${txt.slice(0, 40)}" -> false`, isPassaggioAgente(NOTIFICA(txt)) === false, txt);
+  t(`"${txt.slice(0, 40)}" -> false`, isPassaggioAgente(txt) === false && isPassaggioAgente(NOTIFICA(txt)) === false, txt);
 }
 t('vuoto / null -> false', isPassaggioAgente('') === false && isPassaggioAgente(null) === false && isPassaggioAgente(undefined) === false);
+const lungo = ' '.repeat(50000) + 'x';
+const t0 = Date.now(); isPassaggioAgente(lungo); isPassaggioAgente('agent ' + ' '.repeat(50000) + 'y');
+t('regex lineare: 50.000 spazi in meno di 50 ms', Date.now() - t0 < 50, Date.now() - t0);
 
 console.log('\n== regola B2B -> rumore: mai per una chat ==');
 t('B2B in chat -> resta in coda', b2bVaNelRumore('Collaborazioni e B2B', 'chat_notifica') === false);
@@ -95,7 +108,13 @@ t('cs-classify: la vecchia regola B2B senza canale non c\'e\' piu\'', !/if \(cat
 t('cs-classify: rumore solo via b2bVaNelRumore(categoria, c.canale)', /if \(b2bVaNelRumore\(categoria, c\.canale\)\) upd\.canale = 'rumore';/.test(CLASSIFY));
 t('cs-classify: un passaggio da solo NON va a Gemini', /if \(passaggi > 0 && inbound\.length === 0\) \{[\s\S]{0,400}?ai = \{ categoria: ''/.test(CLASSIFY));
 t('cs-classify: flag passaggio_agente', /flags: \[\.\.\.ai\.flags, 'passaggio_agente'\]/.test(CLASSIFY));
-t('cs-classify: il sollecito conta solo i messaggi veri (inbound filtrato)', /inboundCount: inbound\.length/.test(CLASSIFY) && /const inbound = isChat \? inboundTutti\.filter\(\(m\) => !isPassaggioAgente\(m\.body_text\)\) : inboundTutti;/.test(CLASSIFY));
+t('cs-classify: il sollecito conta solo i messaggi veri (inbound filtrato)', /inboundCount: inbound\.length/.test(CLASSIFY) && /const inbound = isChat \? inboundTutti\.filter\(\(m\) => !messaggioEPassaggio\(m\)\) : inboundTutti;/.test(CLASSIFY));
+t('cs-classify: body_clean letto dai messaggi', /select\('direction,body_text,body_clean,sent_at,form_fields,from_email'\)/.test(CLASSIFY));
+t('cs-classify (Gate 2 C4): senza messaggi in chat decide lo snippet', /const passaggioDaSnippet = isChat && inboundTutti\.length === 0 && isPassaggioAgente\(c\.snippet\);/.test(CLASSIFY));
+t('cs-classify (Gate 2 B1): il passaggio e\' URGENTE col suo motivo', /const urgente = ai\.urgente \|\| rule\.urgente \|\| urgPassaggio;/.test(CLASSIFY) && /\(urgPassaggio \? MOTIVO_PASSAGGIO : ''\)/.test(CLASSIFY) && MOTIVO_PASSAGGIO === 'chat passata dal chatbot');
+const SYNC = src('supabase/functions/cs-sync/index.ts');
+const ruleMotivi = (SYNC.match(/const RULE_MOTIVI = \[([^\]]*)\]/) || [])[1] || '';
+t('cs-sync recomputeUrgency non spegne mai l\'urgenza del passaggio (motivo fuori da RULE_MOTIVI)', ruleMotivi.length > 0 && !ruleMotivi.includes(MOTIVO_PASSAGGIO), ruleMotivi);
 t('cs-api add_noise: la denylist si scrive solo se bloccabile', /const bloccabile = !isMittenteShopify\(sender\);/.test(API) && /if \(bloccabile\) \{[\s\S]{0,900}?upsert\(\{ key: 'cs_noise_senders'/.test(API));
 t('cs-api remove_noise: torna nel canale d\'origine', /update\(\{ canale: canaleDest \}\)/.test(API) && !/update\(\{ canale: 'email_diretta' \}\)/.test(API));
 t('cs-api set_categoria: rumore solo via b2bVaNelRumore', /if \(b2bVaNelRumore\(categoria, ex\.canale\) && ex\.canale !== 'rumore'\) updCat\.canale = 'rumore';/.test(API));

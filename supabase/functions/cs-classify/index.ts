@@ -5,10 +5,14 @@
 //   domanda della cliente. Gemini su quella frase rispondeva a volte "Collaborazioni e B2B" (0,90-0,95)
 //   e la regola v7 spostava la chat nel rumore: 4 chat su 15 nascoste fra il 30-09 e il 28-10, una
 //   cliente ha riscritto "Non ho ancora ricevuto risposta". Ora: (1) il passaggio si riconosce senza
-//   AI (`isPassaggioAgente`, blocco PURE:cs-passaggio) e non conta come messaggio della cliente: non va
-//   a Gemini, non accende il sollecito, mette il flag 'passaggio_agente'; se nella chat c'e' anche testo
-//   vero, si classifica quello; (2) una chat (`chat_notifica`) non va MAI nel rumore per la regola B2B:
-//   il B2B "si risponde su Gmail", una chat si risponde solo in Inbox. Test: tests/cs_passaggio.mjs.
+//   AI (`messaggioEPassaggio`: il `body_clean` del messaggio e' SOLO la frase del chatbot; blocco
+//   PURE:cs-passaggio) e non conta come messaggio della cliente: non va a Gemini, non entra nel
+//   sollecito "2+ messaggi", mette il flag 'passaggio_agente'; se nella chat c'e' anche testo vero, si
+//   classifica quello; (2) la chat passata dal chatbot e' URGENTE (motivo 'chat passata dal chatbot'):
+//   la cliente ha chiesto una persona e aspetta, e il push cs_urgente parte come per ogni urgente;
+//   (3) una chat (`chat_notifica`) non va MAI nel rumore per la regola B2B: il B2B "si risponde su
+//   Gmail", una chat si risponde solo in Inbox. Gate 2 del 31-10 (B1, B2, C4) chiusi qui. Test:
+//   tests/cs_passaggio.mjs.
 // v8 (2026-08-01 notte, brief cs_form_thread_merge): una RAFFICA dal modulo non e' un sollecito.
 //   La regola "2+ messaggi del cliente e nessuna nostra risposta" e' giusta per la posta normale,
 //   ma due invii dal modulo a 43 secondi (che finiscono nello stesso thread Gmail) accendevano
@@ -184,12 +188,24 @@ const RE_INLOCO = /sono (qui|qua) (fuori|davanti|sotto)|sono al portone|sono dav
 // v9 (31-10): la notifica di Shopify Inbox quando il CHATBOT passa la chat al team. Il corpo e'
 // "You have a new message from <nome>" + "Agent transferred this conversation to your team for
 // further support" + "Sent via Inbox": la domanda della cliente NON c'e' (resta nella chat col bot,
-// in Inbox). Testo osservato su 15 notifiche dal 29-09 al 29-10, sempre identico. Regex lineare
-// (parole fisse separate da \s+), nessun rischio di backtracking.
-const RE_PASSAGGIO_AGENTE = /agent\s+transferred\s+this\s+conversation\s+to\s+your\s+team/i;
-function isPassaggioAgente(body: unknown): boolean {
-  return RE_PASSAGGIO_AGENTE.test(String(body ?? ''));
+// in Inbox). Testo osservato su 15 notifiche dal 29-09 al 29-10, sempre identico, e il suo
+// `body_clean` (le sole parole del mittente, cs-sync) e' esattamente quella frase.
+// ANCORATA (Gate 2, B2): e' un passaggio solo un testo che e' SOLO la frase del chatbot. Se un giorno
+// Shopify mettesse nella stessa notifica anche le parole della cliente, quel messaggio resta della
+// cliente (va a Gemini, si vede in app). Regex lineare: parole fisse separate da \s+, nessun
+// quantificatore annidato.
+const RE_PASSAGGIO_AGENTE = /^\s*agent\s+transferred\s+this\s+conversation\s+to\s+your\s+team(?:\s+for\s+further\s+support)?\.?\s*$/i;
+function isPassaggioAgente(testo: unknown): boolean {
+  return RE_PASSAGGIO_AGENTE.test(String(testo ?? ''));
 }
+// Un messaggio di chat e' un passaggio se le sue parole PULITE sono solo la frase del chatbot. Senza
+// body_clean (raro) non si decide: il messaggio resta della cliente, come prima della v9.
+function messaggioEPassaggio(m: { body_clean?: unknown }): boolean {
+  return m.body_clean != null && isPassaggioAgente(m.body_clean);
+}
+// Gate 2 (B1): il passaggio significa che la cliente ha CHIESTO una persona e aspetta in chat: e'
+// urgente. Motivo fisso (non tocca recomputeUrgency di cs-sync, che spegne solo i suoi due motivi).
+const MOTIVO_PASSAGGIO = 'chat passata dal chatbot';
 // Il B2B esce dalla coda (v7, owner 01-08: "si risponde su Gmail"), ma una CHAT si risponde solo in
 // Inbox: nascosta nel rumore non la vede piu' nessuno. Quindi la regola vale per tutti i canali
 // tranne la chat.
@@ -287,15 +303,18 @@ Deno.serve(async (req) => {
     // OGGETTO e il verdetto veniva scritto per sempre (source valorizzato, mai ripescata; B2B -> canale rumore).
     // Ora la conversazione si salta (failed++) e resta in coda per il giro successivo.
     const { data: msgs, error: me } = await retryOnce(() => sb.from('cs_messages')
-      .select('direction,body_text,sent_at,form_fields,from_email').eq('conversation_id', c.id as string)
+      .select('direction,body_text,body_clean,sent_at,form_fields,from_email').eq('conversation_id', c.id as string)
       .order('sent_at', { ascending: true, nullsFirst: true }));
     if (me) { failed++; continue; }
     const inboundTutti = (msgs ?? []).filter((m) => m.direction === 'in');
     // v9: in chat il passaggio del chatbot NON e' un messaggio della cliente (non va a Gemini, non
     // conta per il sollecito). Fuori dalla chat non si filtra niente: comportamento identico a v8.
     const isChat = c.canale === 'chat_notifica';
-    const passaggi = isChat ? inboundTutti.filter((m) => isPassaggioAgente(m.body_text)).length : 0;
-    const inbound = isChat ? inboundTutti.filter((m) => !isPassaggioAgente(m.body_text)) : inboundTutti;
+    // Gate 2 (C4): la riga della conversazione nasce PRIMA del suo messaggio (cs-sync). Se il giro arriva
+    // in mezzo, in chat non ci sono ancora messaggi: decide lo snippet, che e' gia' il testo pulito.
+    const passaggioDaSnippet = isChat && inboundTutti.length === 0 && isPassaggioAgente(c.snippet);
+    const passaggi = isChat ? inboundTutti.filter(messaggioEPassaggio).length + (passaggioDaSnippet ? 1 : 0) : 0;
+    const inbound = isChat ? inboundTutti.filter((m) => !messaggioEPassaggio(m)) : inboundTutti;
     const outboundCount = (msgs ?? []).filter((m) => m.direction === 'out').length;
     const lastIn = inbound.length ? inbound[inbound.length - 1] : null;
     const formTxt = lastIn?.form_fields ? Object.entries(lastIn.form_fields as Record<string, string>).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
@@ -324,8 +343,10 @@ Deno.serve(async (req) => {
       lastDir: (c.last_direction as string) ?? null, lastAt: (c.last_msg_at as string) ?? null, statoAt: (c.stato_at as string) ?? null, canale: c.canale,
     });
 
-    const urgente = ai.urgente || rule.urgente;
-    const urgenza_motivo = rule.motivo || (ai.urgente ? ai.urgenza_motivo : '');
+    // v9 (Gate 2, B1): la chat passata dal chatbot e' urgente (la cliente ha chiesto una persona).
+    const urgPassaggio = passaggi > 0;
+    const urgente = ai.urgente || rule.urgente || urgPassaggio;
+    const urgenza_motivo = rule.motivo || (urgPassaggio ? MOTIVO_PASSAGGIO : '') || (ai.urgente ? ai.urgenza_motivo : '');
     const flags = [...new Set([...ai.flags, ...rule.flags])];
     const hasCat = ai.categoria !== '' && ai.categoria_confidence >= CONF_THRESHOLD;
     const categoria = hasCat ? ai.categoria : null;

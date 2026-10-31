@@ -1,10 +1,14 @@
 // cs-api v12: tool assistenza clienti, scritture dalla UI, gated dal JWT dell'utente loggato.
 // v12 (2026-10-31, OK di Dan in chat, CASI_APERTI n.54): CHAT e MODULI hanno un mittente CONDIVISO di
 //   Shopify (`no-reply@mailer.shopify.com` per la chat, `mailer@shopify.com` per il modulo contatti).
-//   Prima `add_noise` lo metteva in denylist come qualunque mittente: un solo "non e' un cliente" su una
-//   chat di spam avrebbe mandato nel rumore TUTTE le chat future (sul modulo, tutti i moduli), in
-//   silenzio. Mai successo (0 su 14 al 31-10), ma con cs-classify v9 le chat B2B restano in coda e il
-//   gesto diventa probabile. Ora: (1) `add_noise` sposta la conversazione nel rumore ma NON blocca un
+//   Prima `add_noise` lo metteva in denylist come qualunque mittente. All'ingest non avrebbe avuto
+//   effetto (cs-sync `classify` riconosce chat e moduli PRIMA di guardare la denylist), ma l'azione di
+//   manutenzione `reapply_noise` con apply usa il primo mittente in ingresso e salta solo le conversazioni
+//   con un nostro `out`: avrebbe spostato nel rumore TUTTE le chat aperte (che un `out` non lo hanno mai)
+//   e i moduli senza risposta (Gate 2 del 31-10, C1). Mai successo (0 su 14 al 31-10), ma con cs-classify
+//   v9 le chat B2B restano in coda e il gesto diventa probabile. Effetto collaterale noto: "non e' un
+//   cliente" non blocca mai lo spammer di un modulo (non lo bloccava nemmeno prima, per lo stesso ordine
+//   di `classify`). Ora: (1) `add_noise` sposta la conversazione nel rumore ma NON blocca un
 //   mittente Shopify (risposta `bloccato:false`); (2) `remove_noise` la riporta nel suo canale d'origine
 //   (dall'evento `ingest`), non sempre in `email_diretta`: una chat tornava "email" e perdeva il
 //   bottone di Inbox; (3) `set_categoria` a "Collaborazioni e B2B" non sposta nel rumore una chat
