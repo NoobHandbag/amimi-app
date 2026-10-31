@@ -473,8 +473,10 @@ console.log('\n== gift card: shopify-sync v9 e migr 0172 ==');
 // Resync dei 45 giorni a pagine (31-10, shopify-sync v10, CASI_APERTI n.53 (e)). Fino alla v9 il resync era UNA chiamata
 // da 250 senza paginazione: al 31-10 la finestra teneva 238 ordini e oltre 250 rimborsi ed evasioni degli ordini fuori
 // pagina avrebbero smesso di arrivare senza errore. Qui la edge gira INTERA (tipi tolti): Deno.serve, il client Supabase,
-// fetch verso Shopify e l'orologio sono finti, tutto il resto e' il codice che va in produzione. Sulla v9 i casi 141-150
-// sono rossi (una pagina sola, nessun warn), sulla v10 verdi.
+// fetch verso Shopify e l'orologio sono finti, tutto il resto e' il codice che va in produzione. Sulla v9 (origin/main
+// 10592c7) sono rossi 139-140b (blocco assente), 142-151, 149b, 149c e 152b (una pagina sola, nessun warn, nessun
+// resyncStop) e 153 (nessun tetto nel sorgente); 141, 152 e 154 restano verdi per costruzione (etichetta a una pagina,
+// token e pull dei nuovi non cambiano). Sulla v10 tutti verdi.
 console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
 {
   const B = '// ==== PURE:sync-paging BEGIN ====', E = '// ==== PURE:sync-paging END ====';
@@ -554,6 +556,7 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
     S.resync.push(url);
     S.sc.avanza?.();
     if (S.sc.rotta === i) { if (S.sc.lancia) throw new TypeError('fetch failed'); return risposta(500, { errors: 'Internal Server Error' }); }
+    if (S.sc.illeggibile === i) return new Response('<html>Bad gateway</html>', { status: 200 });
     const quanti = S.sc.perPagina(i), cambiati = new Set(S.sc.cambiati?.(i) ?? []);
     const ordini = Array.from({ length: quanti }, (_, k) => ordine(i * 250 + k, cambiati.has(k)));
     return risposta(200, { orders: ordini }, S.sc.link ? S.sc.link(i) : linkDi(i, S.sc.pagine));
@@ -602,12 +605,23 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
     tt(`147 tetto: dopo ${TETTO} pagine si smette di chiedere, gli update letti restano, warn col motivo (mai un taglio muto)`,
       r.status === 200 && r.resync.length === TETTO && r.update.length === TETTO && r.h.severity === 'warn' && r.h.n >= 1
       && r.h.label?.includes(`resync TRONCATO: oltre ${TETTO} pagine`) && !!r.body.resyncStop, { status: r.status, resync: r.resync.length, update: r.update.length, h: r.h });
-    // 5) seconda pagina rotta (500) e rete giu' (eccezione): la prima resta, warn, il giro non muore
+    // 5) seconda pagina rotta (500), rete giu' (eccezione) o corpo illeggibile: la prima resta, warn, il giro non muore,
+    // e lo stop si dice (resyncStop nella risposta e nell'etichetta) senza contarlo due volte in n (Gate 2, finding F2)
+    const stopA = (p, causa) => `resync fermato alla pagina ${p} (${causa}), il resto non e' stato letto`;
+    const fermato = (r, p, causa) => r.body.resyncStop === stopA(p, causa) && (r.h.label ?? '').endsWith(`, resync falliti 1, ${stopA(p, causa)}`) && r.h.n === 1 && r.body.resyncErr === 1;
     r = await giro({ pagine: 3, perPagina: () => 250, cambiati: (i) => (i === 0 ? [1] : [2]), rotta: 1 });
-    tt('148 seconda pagina in 500: la prima e\' aggiornata, la terza non si chiede, warn "resync falliti 1"',
-      r.status === 200 && r.resync.length === 2 && JSON.stringify(r.update) === JSON.stringify([nome(1)]) && r.h.severity === 'warn' && /resync falliti 1/.test(r.h.label ?? ''), { resync: r.resync.length, update: r.update, h: r.h });
+    tt('148 seconda pagina in 500: la prima e\' aggiornata, la terza non si chiede, warn "resync falliti 1" e "fermato alla pagina 2 (HTTP 500)", n 1',
+      r.status === 200 && r.resync.length === 2 && JSON.stringify(r.update) === JSON.stringify([nome(1)]) && r.h.severity === 'warn' && r.body.resyncPages === 1 && fermato(r, 2, 'HTTP 500'), { resync: r.resync.length, update: r.update, h: r.h, body: r.body });
     r = await giro({ pagine: 3, perPagina: () => 250, rotta: 1, lancia: true });
-    tt('149 seconda pagina con la rete giu\' (fetch lancia): risposta 200 e telemetria scritta, warn', r.status === 200 && r.h.severity === 'warn' && /resync falliti 1/.test(r.h.label ?? ''), { status: r.status, body: r.body, h: r.h });
+    tt('149 seconda pagina con la rete giu\' (fetch lancia): risposta 200 e telemetria scritta, warn, "fermato alla pagina 2 (rete o timeout)"',
+      r.status === 200 && r.h.severity === 'warn' && fermato(r, 2, 'rete o timeout'), { status: r.status, body: r.body, h: r.h });
+    r = await giro({ pagine: 3, perPagina: () => 250, cambiati: (i) => (i === 0 ? [4] : []), illeggibile: 1 });
+    tt('149b seconda pagina a 200 ma corpo non JSON: la prima e\' aggiornata, warn, "fermato alla pagina 2 (corpo illeggibile)"',
+      r.status === 200 && r.resync.length === 2 && JSON.stringify(r.update) === JSON.stringify([nome(4)]) && r.h.severity === 'warn' && fermato(r, 2, 'corpo illeggibile'), { status: r.status, update: r.update, body: r.body, h: r.h });
+    r = await giro({ pagine: 3, perPagina: () => 250, rotta: 0 });
+    tt('149c PRIMA pagina in 500 (il caso della v9): niente letto, resyncPages 0, warn con "resync falliti 1" e "fermato alla pagina 1"',
+      r.status === 200 && r.resync.length === 1 && r.update.length === 0 && r.h.severity === 'warn' && r.body.resyncPages === 0 && fermato(r, 1, 'HTTP 500')
+      && (r.h.label ?? '').startsWith("sync: letti 0, nuovi 0 (0 righe), gia' presenti 0, resync 0, resync falliti 1"), { status: r.status, body: r.body, h: r.h });
     // 6) tempo: ogni pagina "costa" 25 s; dopo 60 s dall'inizio del giro non se ne chiede un'altra
     let ora = nowVero();
     Date.now = () => ora;

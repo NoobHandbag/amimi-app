@@ -47,8 +47,8 @@
 // finestra teneva 238 ordini: oltre 250, rimborsi, evasioni e cambi di stato degli ordini fuori pagina avrebbero smesso
 // di arrivare in shopify_orders senza un errore. Ogni pagina si lavora da sola (esistenza con .in su <= 250 nomi). Tetti:
 // RESYNC_MAX_PAGES pagine e RESYNC_BUDGET_MS dall'inizio del giro; oltre, warn in health_log col motivo, mai un taglio
-// muto. Una pagina fallita = resync fallito (warn) e si tiene cio' che e' gia' stato letto (update idempotenti, il giro
-// dopo riprende). Il pull dei nuovi (created_at_min) resta a UNA pagina, per scelta: la cintura (50) sta sotto la
+// muto. Una pagina fallita = resync fallito (warn, la pagina e la causa in resyncStop) e si tiene cio' che e' gia' stato
+// letto (update idempotenti, il giro dopo riprende). Il pull dei nuovi (created_at_min) resta a UNA pagina, per scelta: la cintura (50) sta sotto la
 // pagina (250), quindi una seconda pagina non cambierebbe l'esito (giro fermato con health_log error, recupero con
 // action 'backfill', che pagina con since_id). Blocco PURE:sync-paging, test in tests/shopify_sync_guardie.mjs.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -114,8 +114,10 @@ const MAX_INSERTS_CRON = 50;
 // Cap di PostgREST sulle select senza range: una risposta con esattamente questo numero di righe e' TRONCATA.
 const POSTGREST_CAP = 1000;
 // Resync dei 45 giorni (v10): tetto di pagine da 250 (2.000 ordini aggiornati; al 31-10 erano 238, una pagina) e di tempo
-// dall'inizio del giro. Un giro normale dura 2-4 s (log delle edge, 30-31 ottobre); il muro della edge e' 150 s, quindi
-// dopo 60 s non si chiede un'altra pagina, e una pagina che non risponde in 20 s conta come fallita.
+// dall'inizio del giro. Un giro normale dura 1,6-4,6 s (24 giri del 29-30 ottobre nei log delle edge), il primo dopo il
+// blocco del 31-10 8,3 s; il muro della edge e' 150 s, quindi dopo 60 s non si chiede un'altra pagina, e una pagina che
+// non risponde in 20 s conta come fallita. Il cron chiama col timeout di pg_net di 5 s, ma la edge finisce lo stesso
+// (31-10 13:07: pg_net in timeout a 5 s, edge a 200 dopo 8,3 s).
 const RESYNC_MAX_PAGES = 8;
 const RESYNC_BUDGET_MS = 60000;
 const RESYNC_PAGE_TIMEOUT_MS = 20000;
@@ -357,8 +359,9 @@ Deno.serve(async (req) => {
   // il pull normale (created_at_min) non lo ripesca. Ripassa gli ordini AGGIORNATI negli ultimi 45 giorni e
   // aggiorna SOLO refund/financial/fulfillment/fulfilled_at (mai importi/righe), e SOLO se qualcosa cambia.
   // Un rimborso su un mese chiuso accendera' ce_drift -> l'owner ri-chiude: e' il comportamento contabile corretto.
-  // v10: a pagine (blocco PURE:sync-paging), una pagina alla volta; tetti e motivo dello stop in `resyncStop` (warn).
-  let resynced = 0, resyncErr = 0, resyncPages = 0, resyncStop = '';
+  // v10: a pagine (blocco PURE:sync-paging), una pagina alla volta; tetti, pagina fallita e motivo dello stop in
+  // `resyncStop` (warn).
+  let resynced = 0, resyncErr = 0, resyncPages = 0, resyncStop = '', paginaFallita = false;
   const updSince = new Date(Date.now() - 45 * 86400000).toISOString();
   let ru: string | null = `${API}/orders.json?status=any&updated_at_min=${encodeURIComponent(updSince)}&limit=250&fields=id,name,financial_status,fulfillment_status,fulfillments,refunds`;
   while (ru) {
@@ -366,10 +369,15 @@ Deno.serve(async (req) => {
     if (Date.now() - t0 > RESYNC_BUDGET_MS) { resyncStop = `resync TRONCATO per tempo dopo ${resyncPages} pagine (${Math.round((Date.now() - t0) / 1000)} s dall'inizio del giro)`; break; }
     // il token va solo all'API del negozio: un Link che punta altrove non si segue
     if (!paginaDelNegozio(ru, SHOP)) { resyncStop = "resync: pagina dopo fuori dall'API del negozio, non seguita"; break; }
-    // rete giu', timeout o corpo illeggibile = pagina fallita (warn), non un giro morto senza telemetria
+    // rete giu', timeout o corpo illeggibile = pagina fallita (warn), non un giro morto senza telemetria. Conta in
+    // resyncErr (come la v9) e dice in resyncStop da che pagina in poi non si e' letto, senza contare due volte in n.
     const rr = await fetch(ru, { headers: SH, signal: AbortSignal.timeout(RESYNC_PAGE_TIMEOUT_MS) }).catch(() => null);
     const pj = rr?.ok ? await rr.json().catch(() => null) : null;
-    if (!rr?.ok || !pj) { resyncErr++; break; }
+    if (!rr?.ok || !pj) {
+      resyncErr++; paginaFallita = true;
+      resyncStop = `resync fermato alla pagina ${resyncPages + 1} (${rr ? (rr.ok ? 'corpo illeggibile' : `HTTP ${rr.status}`) : 'rete o timeout'}), il resto non e' stato letto`;
+      break;
+    }
     resyncPages++;
     ru = nextPageUrl(rr.headers.get('link'));
     const upd: Record<string, any>[] = pj.orders ?? [];
@@ -397,7 +405,7 @@ Deno.serve(async (req) => {
   const label = `sync: letti ${orders.length}, nuovi ${inserted} (${lineCount} righe${insertedNames.length ? ': ' + insertedNames.slice(0, 8).join(' ') : ''}), gia' presenti ${existing.size + skipped}, resync ${resynced}`
     + (resyncPages > 1 ? ` (${resyncPages} pagine)` : '')
     + (errors.length ? `, ERRORI ${errors.length}: ${errors.slice(0, 3).join(' | ')}` : '') + (resyncErr ? `, resync falliti ${resyncErr}` : '') + (resyncStop ? `, ${resyncStop}` : '');
-  const resyncWarn = resyncErr + (resyncStop ? 1 : 0);
+  const resyncWarn = resyncErr + (resyncStop && !paginaFallita ? 1 : 0);
   await health(label, errors.length + resyncWarn, errors.length ? 'error' : (resyncWarn ? 'warn' : 'ok'));
   return json({ ok: true, fetched: orders.length, since: sinceDate, inserted, lineCount, skipped, resynced, resyncErr, resyncPages, resyncStop: resyncStop || undefined, errors: errors.length ? errors : undefined });
 });
