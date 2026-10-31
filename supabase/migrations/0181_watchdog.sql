@@ -1,7 +1,9 @@
 -- 0181 (2026-10-31, CASI_APERTI n.53 (a) e (b), decisioni dell'owner del 31-10): allarme di fermo che non dipende dal
 -- gateway di Supabase e avviso di spazio prima del ritorno al piano Free (ciclo del 07-11: Storage 1 GB, database 500 MB).
--- Dal 30-10 22:49 al 31-10 12:58 UTC ogni API dell'org ha risposto 402 per 14 ore e nessun allarme e' partito: ce-guard,
--- sales-guard, push-eventi e push-api stanno dietro lo stesso gateway, pg_cron segna `succeeded` anche sui 402.
+-- Dal 30-10 22:49 al 31-10 12:58 UTC ogni API dell'org ha risposto 402 per 14 ore e nessun avviso dell'app e' arrivato:
+-- ce-guard, sales-guard, push-eventi e push-api stanno dietro lo stesso gateway, pg_cron segna `succeeded` anche sui 402.
+-- L'unico controllo esterno, uptime-monitor (.github/workflows/uptime.yml), e' fallito tre volte nel blocco (30-10 23:24,
+-- 31-10 02:36 e 08:51 UTC), ma le sue mail "Run failed" il filtro 2 di gmail-filters le archivia in Piattaforme.
 --  (a) app_config.watchdog_pin_hash: colonna NUOVA, vuota. La riempie l'orchestratore/owner con lo sha256 esadecimale di un
 --      PIN lungo e casuale (mai il PIN delle edge, mai nel repo): update app_config set watchdog_pin_hash = '<hex>' where
 --      id = 1. Il PIN in chiaro sta solo nella Script Property WATCHDOG_PIN dell'Apps Script app-watchdog (hub,
@@ -28,8 +30,8 @@
 --      refresh_health_log delle 06:00 UTC cancella le righe di oggi delle chiavi non ce_*: fino al giro dopo (06:02 cs-sync,
 --      06:07 shopify-sync, 06:10 loyalty-orders) 'log' torna alla riga di ieri; il watchdog chiede tre giri di fila prima
 --      di dire FERMO. Niente innesti in refresh_health_log ne' nelle edge (Regola 19): la funzione legge soltanto.
---      cron.job_run_details ha solo la chiave primaria su runid: si leggono gli ultimi 5.000 avvii (circa 70 ore ai ritmi
---      del 31-10, piu' delle 26 ore della soglia di ads-sync), non la tabella intera.
+--      cron.job_run_details ha solo la chiave primaria su runid: si leggono gli ultimi 5.000 avvii (circa 60 ore ai ritmi
+--      del 31-10, 1.954 avvii in 24 ore, piu' delle 26 ore della soglia di ads-sync), non la tabella intera.
 -- Nessun dato scritto, nessun cron, nessuna edge. Prova viva dopo l'apply: tests/watchdog_rls.sql. Prima dell'apply lo
 -- stesso corpo gira in un blocco DO annullato (CONOSCENZA, 17-10): TEST_OK il 31-10 alle 15:03 UTC, nulla rimasto.
 -- Numero 0181: la 0180 e' cs_denylist_chiusure_chat_ripristinate (altra sessione, in produzione dal 31-10 14:53 UTC).
