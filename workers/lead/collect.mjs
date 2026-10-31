@@ -46,9 +46,13 @@ async function clickAny(page, labels) {
   for (const l of labels) { const b = page.getByRole('button', { name: l }).first(); if (await b.count()) { try { await b.click({ timeout: 2000 }); return l; } catch { /* next */ } } }
   return null;
 }
+// screenshot in JPEG qualita' 60, e la home desktop tagliata a 4 schermate: in PNG pieno il bucket era arrivato a 5 GB
+// e il 30-10 Supabase ha bloccato l'org (quota Free 1 GB). SHOT va passato a ogni page.screenshot del collector.
+const SHOT = { type: 'jpeg', quality: 60 };
+const SHOT_PAGE = { ...SHOT, fullPage: true, clip: { x: 0, y: 0, width: 1280, height: 3600 } };
 async function saveShot(acc, tipo, buffer, payload, note) {
   if (DRY) { console.log(`   [dry] ${tipo} ${buffer ? buffer.length + 'B' : ''}`); return; }
-  const path = buffer ? await upload(sb, `${acc.id}/${tipo}_${Date.now()}.png`, buffer) : null;
+  const path = buffer ? await upload(sb, `${acc.id}/${tipo}_${Date.now()}.jpg`, buffer, 'image/jpeg') : null;
   await evidence(sb, { account_id: acc.id, run_id: runId, tipo, payload: payload ?? null, asset_path: path, raccolto_da: 'script', note: note ?? null });
 }
 async function saveEv(acc, tipo, payload, note) {
@@ -97,7 +101,7 @@ async function stageSite(acc) {
     const fb = links.find((l) => /facebook\.com\//i.test(l.h))?.h || null;
     const ecommerce = /\/cart|\/checkout|add[-_ ]to[-_ ]cart|aggiungi al carrello|\/products?\//i.test(html);
     const platform = /cdn\.shopify\.com|Shopify\.theme/i.test(html) ? 'shopify' : /wp-content/i.test(html) ? (/woocommerce/i.test(html) ? 'woocommerce' : 'wordpress') : /squarespace/i.test(html) ? 'squarespace' : /wixstatic|wix\.com/i.test(html) ? 'wix' : null;
-    const shotDesk = await page.screenshot({ fullPage: true }).catch(() => null);
+    const shotDesk = await page.screenshot(SHOT_PAGE).catch(() => null);
     await saveShot(acc, 'screenshot_home', shotDesk, { url, title });
     await saveEv(acc, 'site_meta', { url, title, meta, lang, platform, ecommerce, emails, phones, piva, ig_from_site: ig, facebook: fb, n_links: links.length });
 
@@ -152,7 +156,7 @@ async function stageSite(acc) {
     // mobile above the fold
     const mctx = await ctxNew(true); const mp = await mctx.newPage();
     try { await mp.goto(url, { waitUntil: 'load', timeout: 45000 }); await mp.waitForTimeout(2000); await clickAny(mp, ['Accetta', 'Accetto', 'Accept', 'Accept all', 'OK', 'Rifiuta']);
-      const shotMob = await mp.screenshot({ fullPage: false }); await saveShot(acc, 'screenshot_home_mobile', shotMob, { url }); } catch (e) { await saveEv(acc, 'errore', { stage: 'site_mobile', msg: e.message }); }
+      const shotMob = await mp.screenshot(SHOT); await saveShot(acc, 'screenshot_home_mobile', shotMob, { url }); } catch (e) { await saveEv(acc, 'errore', { stage: 'site_mobile', msg: e.message }); }
     await mctx.close();
     return 'ok';
   } catch (e) {
@@ -181,7 +185,7 @@ async function stageIg(acc, siteIg) {
     const loginWall = /Accedi|Log in/i.test(await page.locator('body').innerText().catch(() => '')) && !m;
     const bio = header.split('\n').slice(2).join(' | ').slice(0, 600);
     const posts = await page.locator('main img').evaluateAll((els) => els.map((e) => ({ alt: (e.getAttribute('alt') || '').slice(0, 200), src: e.getAttribute('src') || '' })).filter((x) => x.src && !/profilo|profile/i.test(x.alt) && !/storia in evidenza|highlight/i.test(x.alt)).slice(0, 12));
-    const shot = await page.screenshot({ fullPage: false }).catch(() => null);
+    const shot = await page.screenshot(SHOT).catch(() => null);
     // feed: i primi 12 post (oltre serve il login), scaricati e caricati nel bucket
     const postLinks = await page.locator('main a[href*="/p/"], main a[href*="/reel/"]').evaluateAll((els) => els.map((a) => { const img = a.querySelector('img'); return { href: a.getAttribute('href'), src: img?.getAttribute('src') || '', alt: (img?.getAttribute('alt') || '').slice(0, 300) }; }).filter((p) => p.src)).catch(() => []);
     const igPosts = [];
@@ -236,7 +240,7 @@ async function stageMaps(acc) {
     const url = page.url();
     const placeId = (url.match(/!1s(0x[0-9a-f]+:0x[0-9a-f]+)/i) || [])[1] || null;
     const coords = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
-    const shot = await page.screenshot({ fullPage: false }).catch(() => null);
+    const shot = await page.screenshot(SHOT).catch(() => null);
     // recensioni (tab) e foto (tab), best effort
     try {
       const tab = page.getByRole('tab', { name: /Recensioni|Reviews/ }).first();
@@ -250,7 +254,7 @@ async function stageMaps(acc) {
       await page.getByRole('tab', { name: /Panoramica|Overview/ }).first().click({ timeout: 2000 }).catch(() => {});
       await page.waitForTimeout(800);
       const fbtn = page.getByRole('button', { name: /Visualizza foto|Tutte le foto|Foto e video|See photos|All photos/ }).first();
-      if (await fbtn.count()) { await fbtn.click({ timeout: 3000 }); await page.waitForTimeout(3500); const fshot = await page.screenshot({ fullPage: false }).catch(() => null); if (fshot) await saveShot(acc, 'screenshot_maps_photos', fshot, { query }); }
+      if (await fbtn.count()) { await fbtn.click({ timeout: 3000 }); await page.waitForTimeout(3500); const fshot = await page.screenshot(SHOT).catch(() => null); if (fshot) await saveShot(acc, 'screenshot_maps_photos', fshot, { query }); }
     } catch { /* best effort */ }
     // sito web elencato da Google per la scheda: e' l'aggancio che accende stageSite (e via sito, Instagram)
     // per gli account nati da Maps, che in anagrafica non hanno ne' website ne' ig_handle.
