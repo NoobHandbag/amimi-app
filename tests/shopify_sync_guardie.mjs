@@ -477,7 +477,7 @@ console.log('\n== gift card: shopify-sync v9 e migr 0172 ==');
 // 10592c7) sono rossi 139-140b (blocco assente), 142-151, 149b, 149c e 152b (una pagina sola, nessun warn, nessun
 // resyncStop) e 153 (nessun tetto nel sorgente); 141, 152 e 154 restano verdi per costruzione (etichetta a una pagina,
 // token e pull dei nuovi non cambiano). Sulla v10 tutti verdi.
-// 155-161 (ripasso di 48 ore): rossi 155-160 sul commit fbd741a (senza ripasso), 161 verde per costruzione (cintura).
+// 155-165 (ripasso di 48 ore): rossi 155-160, 162 e 165 sul commit fbd741a (senza ripasso), 161, 163 e 164 verdi per costruzione.
 console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
 {
   const B = '// ==== PURE:sync-paging BEGIN ====', E = '// ==== PURE:sync-paging END ====';
@@ -572,11 +572,11 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
   };
   let handler = null;
   const fetchVero = globalThis.fetch, nowVero = Date.now, denoPrima = globalThis.Deno;
-  const giro = async (sc) => {
+  const giro = async (sc, corpo = {}) => {
     S = { sc, urls: [], pull: [], upsert: [], righe: 0, resync: [], inLen: [], update: [], health: [], altro: [], senzaToken: 0 };
     globalThis.fetch = shopifyFinto;
     try {
-      const res = await handler(new Request('http://edge/shopify-sync', { method: 'POST', body: JSON.stringify({ pin: PIN }) }));
+      const res = await handler(new Request('http://edge/shopify-sync', { method: 'POST', body: JSON.stringify({ pin: PIN, ...corpo }) }));
       return { ...S, status: res.status, body: await res.json(), h: S.health.at(-1) ?? {} };
     } catch (e) { return { ...S, status: 0, body: { eccezione: String(e) }, h: S.health.at(-1) ?? {} }; }
     finally { globalThis.fetch = fetchVero; Date.now = nowVero; }
@@ -667,6 +667,18 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
     tt('160 seconda lettura fallita: errore Shopify, nessun insert, nessun giro muto', r.status === 502 && r.upsert.length === 0 && r.h.severity === 'error', { status: r.status, h: r.h, body: r.body });
     r = await giro({ pagine: 1, perPagina: () => 0, assenti: PIENA(60).map((o) => o.name), pull: () => PIENA(60) });
     tt('161 cintura invariata: 60 ordini mancanti in finestra = giro fermato, nessun insert', r.status === 409 && r.upsert.length === 0 && /cintura/.test(JSON.stringify(r.body)), { status: r.status, body: r.body });
+    // la cintura conta tutti i mancanti della finestra, anche quelli prima del cursore: si ferma forte, non zitta
+    const vecchi = Array.from({ length: 60 }, (_, k) => nuovoOrdine(2000 + k, '2026-10-30T09:00:00Z'));
+    r = await giro({ pagine: 1, perPagina: () => 0, assenti: [...vecchi.map((o) => o.name), nome(1)], pull: () => [...vecchi, nuovoOrdine(1, '2026-10-31T09:00:00Z')] });
+    tt('162 60 mancanti PRIMA del cursore piu\' un nuovo: cintura, 61 contati, nessun insert, errore in health_log', r.status === 409 && r.upsert.length === 0 && /61 ordini/.test(JSON.stringify(r.body)) && r.h.severity === 'error', { status: r.status, body: r.body, h: r.h });
+    // gli altri percorsi della stessa riga di sinceDate
+    const minSoli = (u) => decodeURIComponent(u.match(/created_at_min=([^&]+)/)[1]);
+    r = await giro({ pagine: 1, perPagina: () => 0 }, { dryRun: true });
+    tt('163 dryRun: resta a 60 giorni fa, limit 5, nessuna scrittura e nessun resync', r.status === 200 && r.pull.length === 1 && Math.abs(Date.parse(r.pull[0]) - (Date.now() - 60 * 86400000)) < 60000 && /limit=5(&|$)/.test(r.urls[0]) && r.resync.length === 0 && r.upsert.length === 0, { pull: r.pull, urls: r.urls });
+    r = await giro({ pagine: 1, perPagina: () => 0 }, { action: 'backfill', since: '2026-09-01T00:00:00Z' });
+    tt('164 backfill con since: parte da since, il ripasso non lo sposta, pagina con since_id', r.status === 200 && minSoli(r.urls[0]) === '2026-09-01T00:00:00Z' && /since_id=0/.test(r.urls[0]) && r.body.since === '2026-09-01T00:00:00Z', { urls: r.urls.slice(0, 1), since: r.body.since });
+    r = await giro({ pagine: 1, perPagina: () => 0 }, { action: 'backfill' });
+    tt('165 backfill senza since: 48 ore prima dell\'ultimo ordine, come il giro di cron', r.status === 200 && minSoli(r.urls[0]) === '2026-10-29T08:00:00.000Z' && /since_id=0/.test(r.urls[0]), { urls: r.urls.slice(0, 1) });
   } else t('141-152 la edge non e\' caricabile coi finti (import del client cambiato?)', false);
   if (denoPrima === undefined) delete globalThis.Deno; else globalThis.Deno = denoPrima;
   delete globalThis.__amimiSyncFinto;

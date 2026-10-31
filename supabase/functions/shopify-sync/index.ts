@@ -55,8 +55,9 @@
 // ordine fallito in un giro in cui un ordine piu' nuovo entrava restava indietro per sempre (nessun "giro dopo", solo un
 // backfill a mano). Ora il pull rilegge RIPASSO_MS prima dell'ultimo ordine: i gia' presenti si scartano con la lettura di
 // esistenza e l'upsert ignoreDuplicates. Effetto accettato: un ordine cancellato apposta da shopify_orders entro 48 ore
-// torna (0 in change_log al 31-10). Finestra piena (mai vista: massimo storico 36 ordini in 48 ore) = si rilegge dal solo
-// cursore, come prima, e la guardia "pagina piena" decide: il ripasso non puo' fermare il pull dei nuovi.
+// torna (nessuno al 31-10: order_number 1001-1974 senza buchi). Finestra piena (mai vista: massimo storico 38 ordini in 48
+// ore) = si rilegge dal solo cursore, come prima, e la guardia "pagina piena" decide, cosi' una finestra piena non ferma il
+// pull dei nuovi. La cintura invece conta TUTTI i mancanti della finestra: oltre 50, anche vecchi, il giro si ferma forte.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -275,10 +276,11 @@ Deno.serve(async (req) => {
   const resolveCodice = (nm: string, sku?: string): string | null => resolveCodiceWith(aliasMap, codiceByNorm, nm, sku);
 
   // niente `order=`: orders.json non lo onora e restituisce i piu' RECENTI. Nel giro di cron, con created_at_min =
-  // ultimo ordine noto, arrivano TUTTI i nuovi finche' sono meno di 250; a 250 la pagina puo' essere incompleta e
-  // il giro si ferma (vedi sotto). Nel backfill invece si pagina con since_id (ordinamento per id, dal piu'
-  // vecchio): con una sola pagina "recenti" gli ordini fra `since` e il 250esimo piu' recente non verrebbero
-  // mai piu' richiesti, perche' il giro dopo riparte dall'ultimo ordine noto.
+  // 48 ore prima dell'ultimo ordine noto (ripasso, v10), arrivano TUTTI i nuovi finche' la finestra tiene meno di 250
+  // ordini; a 250 si rilegge dal solo cursore (l'ultimo ordine noto) e, se anche quella pagina e' piena, puo' essere
+  // incompleta e il giro si ferma (vedi sotto). Nel backfill invece si pagina con since_id (ordinamento per id, dal
+  // piu' vecchio): con una sola pagina "recenti" gli ordini fra `since` e il 250esimo piu' recente non verrebbero
+  // mai piu' richiesti, perche' il giro dopo riparte da 48 ore prima dell'ultimo ordine noto.
   const orders: Record<string, any>[] = [];
   let ripassoSaltato = false;
   if (isBackfill && !body.dryRun) {
@@ -307,7 +309,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  const parse =(o: Record<string, any>) => {
+  const parse = (o: Record<string, any>) => {
     const d = new Date(o.created_at);
     const gross = Number(o.total_price);
     const shipping = Number(o.total_shipping_price_set?.shop_money?.amount ?? 0);
