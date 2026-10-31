@@ -1,4 +1,14 @@
 // cs-classify — tool assistenza clienti, FASE 2: auto-categorizzazione + urgenza.
+// v9 (2026-10-31, OK di Dan in chat, CASI_APERTI n.54): il PASSAGGIO del chatbot di Shopify Inbox.
+//   Dal 29-09 il chatbot AI di Inbox risponde per primo; quando passa la chat al team la notifica
+//   dice solo "Agent transferred this conversation to your team for further support", senza la
+//   domanda della cliente. Gemini su quella frase rispondeva a volte "Collaborazioni e B2B" (0,90-0,95)
+//   e la regola v7 spostava la chat nel rumore: 4 chat su 15 nascoste fra il 30-09 e il 28-10, una
+//   cliente ha riscritto "Non ho ancora ricevuto risposta". Ora: (1) il passaggio si riconosce senza
+//   AI (`isPassaggioAgente`, blocco PURE:cs-passaggio) e non conta come messaggio della cliente: non va
+//   a Gemini, non accende il sollecito, mette il flag 'passaggio_agente'; se nella chat c'e' anche testo
+//   vero, si classifica quello; (2) una chat (`chat_notifica`) non va MAI nel rumore per la regola B2B:
+//   il B2B "si risponde su Gmail", una chat si risponde solo in Inbox. Test: tests/cs_passaggio.mjs.
 // v8 (2026-08-01 notte, brief cs_form_thread_merge): una RAFFICA dal modulo non e' un sollecito.
 //   La regola "2+ messaggi del cliente e nessuna nostra risposta" e' giusta per la posta normale,
 //   ma due invii dal modulo a 43 secondi (che finiscono nello stesso thread Gmail) accendevano
@@ -170,6 +180,24 @@ async function classifyText(text: string, key: string): Promise<AiOut> {
 const RE_DISPUTA = /chargeback|contestazion|\bdisputa\b|rimborso non (ancora )?ricevut|non ho (mai |ancora |piu' )?ricevuto (il |alcun )?rimbors|mi rivolg[oò] alla banca|segnal(o|er[oò]) alla banca|contest(o|azione) (il )?pagament|apert[oa] una (contestazione|disputa)|pratica paypal/i;
 const RE_INLOCO = /sono (qui|qua) (fuori|davanti|sotto)|sono al portone|sono davanti (al|allo) (negozio|showroom)|sono in negozio|vi aspetto (qui|fuori|sotto)|sono sotto (il |al )?(negozio|showroom|casa)/i;
 
+// ==== PURE:cs-passaggio BEGIN ====
+// v9 (31-10): la notifica di Shopify Inbox quando il CHATBOT passa la chat al team. Il corpo e'
+// "You have a new message from <nome>" + "Agent transferred this conversation to your team for
+// further support" + "Sent via Inbox": la domanda della cliente NON c'e' (resta nella chat col bot,
+// in Inbox). Testo osservato su 15 notifiche dal 29-09 al 29-10, sempre identico. Regex lineare
+// (parole fisse separate da \s+), nessun rischio di backtracking.
+const RE_PASSAGGIO_AGENTE = /agent\s+transferred\s+this\s+conversation\s+to\s+your\s+team/i;
+function isPassaggioAgente(body: unknown): boolean {
+  return RE_PASSAGGIO_AGENTE.test(String(body ?? ''));
+}
+// Il B2B esce dalla coda (v7, owner 01-08: "si risponde su Gmail"), ma una CHAT si risponde solo in
+// Inbox: nascosta nel rumore non la vede piu' nessuno. Quindi la regola vale per tutti i canali
+// tranne la chat.
+function b2bVaNelRumore(categoria: unknown, canale: unknown): boolean {
+  return categoria === 'Collaborazioni e B2B' && canale !== 'chat_notifica';
+}
+// ==== PURE:cs-passaggio END ====
+
 type RuleUrg = { urgente: boolean; motivo: string; flags: string[] };
 // ==== PURE:cs-sollecito BEGIN ====
 // La regola "2+ messaggi del cliente e nessuna nostra risposta = sollecito" e' giusta per la posta
@@ -262,7 +290,12 @@ Deno.serve(async (req) => {
       .select('direction,body_text,sent_at,form_fields,from_email').eq('conversation_id', c.id as string)
       .order('sent_at', { ascending: true, nullsFirst: true }));
     if (me) { failed++; continue; }
-    const inbound = (msgs ?? []).filter((m) => m.direction === 'in');
+    const inboundTutti = (msgs ?? []).filter((m) => m.direction === 'in');
+    // v9: in chat il passaggio del chatbot NON e' un messaggio della cliente (non va a Gemini, non
+    // conta per il sollecito). Fuori dalla chat non si filtra niente: comportamento identico a v8.
+    const isChat = c.canale === 'chat_notifica';
+    const passaggi = isChat ? inboundTutti.filter((m) => isPassaggioAgente(m.body_text)).length : 0;
+    const inbound = isChat ? inboundTutti.filter((m) => !isPassaggioAgente(m.body_text)) : inboundTutti;
     const outboundCount = (msgs ?? []).filter((m) => m.direction === 'out').length;
     const lastIn = inbound.length ? inbound[inbound.length - 1] : null;
     const formTxt = lastIn?.form_fields ? Object.entries(lastIn.form_fields as Record<string, string>).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
@@ -270,8 +303,15 @@ Deno.serve(async (req) => {
     const text = [c.subject ?? '', lastIn?.body_text ?? c.snippet ?? '', formTxt].filter(Boolean).join('\n').trim();
 
     let ai: AiOut;
-    try { ai = await classifyText(text || String(c.subject ?? ''), key); }
-    catch { failed++; continue; }   // Gemini giu' su questa: la salta, resta da classificare
+    if (passaggi > 0 && inbound.length === 0) {
+      // solo il passaggio del chatbot: niente da classificare, la domanda e' in Inbox. "Da confermare"
+      // (ai_low, non piu' ripescata), in coda, con il flag che la UI mostra come "passata dal chatbot".
+      ai = { categoria: '', categoria_confidence: 0, lingua: 'it', urgente: false, urgenza_motivo: '', flags: [] };
+    } else {
+      try { ai = await classifyText(text || String(c.subject ?? ''), key); }
+      catch { failed++; continue; }   // Gemini giu' su questa: la salta, resta da classificare
+    }
+    if (passaggi > 0) ai = { ...ai, flags: [...ai.flags, 'passaggio_agente'] };
 
     // Prior di canale (solo produzione, non nel benchmark): un form EVENTO e' per definizione una
     // richiesta di cerimonia; se l'AI non l'ha capito (vuoto o "Altro") lo instradiamo la' con confidence media.
@@ -304,7 +344,8 @@ Deno.serve(async (req) => {
     // la CATEGORIA resta scritta: nella vista Rumore e' identificabile e il gesto inverso
     // (cs-api remove_noise) esiste. Sotto soglia resta "da confermare" in coda: mai nascondere
     // in silenzio una classificazione incerta.
-    if (categoria === 'Collaborazioni e B2B') upd.canale = 'rumore';
+    // v9 (31-10): MAI per una chat (b2bVaNelRumore): la chat si risponde solo in Inbox.
+    if (b2bVaNelRumore(categoria, c.canale)) upd.canale = 'rumore';
     // guard anti-race: scrive SOLO se ancora non categorizzata. Una correzione manuale via cs-api
     // (categoria!=null, source='manuale') arrivata mentre Gemini girava NON deve essere sovrascritta.
     const { data: upRows, error: ue } = await sb.from('cs_conversations').update(upd).eq('id', c.id as string).is('categoria', null).select('id');

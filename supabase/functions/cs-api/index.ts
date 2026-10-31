@@ -1,4 +1,14 @@
-// cs-api v11: tool assistenza clienti, scritture dalla UI, gated dal JWT dell'utente loggato.
+// cs-api v12: tool assistenza clienti, scritture dalla UI, gated dal JWT dell'utente loggato.
+// v12 (2026-10-31, OK di Dan in chat, CASI_APERTI n.54): CHAT e MODULI hanno un mittente CONDIVISO di
+//   Shopify (`no-reply@mailer.shopify.com` per la chat, `mailer@shopify.com` per il modulo contatti).
+//   Prima `add_noise` lo metteva in denylist come qualunque mittente: un solo "non e' un cliente" su una
+//   chat di spam avrebbe mandato nel rumore TUTTE le chat future (sul modulo, tutti i moduli), in
+//   silenzio. Mai successo (0 su 14 al 31-10), ma con cs-classify v9 le chat B2B restano in coda e il
+//   gesto diventa probabile. Ora: (1) `add_noise` sposta la conversazione nel rumore ma NON blocca un
+//   mittente Shopify (risposta `bloccato:false`); (2) `remove_noise` la riporta nel suo canale d'origine
+//   (dall'evento `ingest`), non sempre in `email_diretta`: una chat tornava "email" e perdeva il
+//   bottone di Inbox; (3) `set_categoria` a "Collaborazioni e B2B" non sposta nel rumore una chat
+//   (stessa regola di cs-classify v9). Blocco PURE:cs-api-mittente, test tests/cs_passaggio.mjs.
 // v11 (2026-09-14, audit gate B35): `loadConv` distingue "non trovata" (404) da "lettura fallita" (503, riprova):
 //   prima scartava `error` e un 504 transitorio di PostgREST usciva come "conversazione inesistente" su
 //   set_categoria, set_stato, add_noise e remove_noise. Su errore, dopo retryOnce, lancia ConvReadError, che il
@@ -58,6 +68,47 @@ const CANON = [
   'Pagamento', 'Collaborazioni e B2B',
 ];
 const STATI = new Set(['da_fare', 'in_corso', 'fatto']);
+
+// ==== PURE:cs-api-mittente BEGIN ====
+// v12 (31-10): i mittenti CONDIVISI di Shopify portano le chat del sito e i moduli contatti di TUTTE le
+// clienti. Bloccarli in denylist spegnerebbe un intero canale: si sposta la conversazione, non il mittente.
+// Stessi domini di `isWrapperSender` (blocco PURE:cs-sollecito di cs-sync, cs-classify e cs-send).
+function isMittenteShopify(sender: unknown): boolean {
+  return /@(?:shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/.test(String(sender ?? '').trim().toLowerCase());
+}
+// Dove torna una conversazione tolta dal rumore: nel canale con cui era ENTRATA (evento `ingest`),
+// se e' un canale di coda; altrimenti `email_diretta`, come prima della v12.
+const CANALI_CODA = new Set(['email_diretta', 'form_contatto', 'form_evento', 'chat_notifica']);
+function canaleDiRitorno(canaleIngest: unknown): string {
+  const c = String(canaleIngest ?? '');
+  return CANALI_CODA.has(c) ? c : 'email_diretta';
+}
+// La regola B2B -> rumore (v7, owner 01-08: "il B2B si risponde su Gmail") non vale per la chat, che si
+// risponde solo in Inbox. Identica a `b2bVaNelRumore` di cs-classify v9 (tests/cs_passaggio.mjs le confronta).
+function b2bVaNelRumore(categoria: unknown, canale: unknown): boolean {
+  return categoria === 'Collaborazioni e B2B' && canale !== 'chat_notifica';
+}
+// La voce di DOMINIO della denylist che copre ancora questo mittente (da segnalare, non da togliere da
+// sola). Stesse forme di `denyMatch` in cs-sync: '@dominio' oppure 'dominio.tld' nudo (la 0180 ne ha
+// aggiunti sei in questa forma); prima si riconosceva solo '@dominio'.
+function voceDiDominioCheBlocca(items: string[], sender: string): string | null {
+  const s = String(sender ?? '').trim().toLowerCase();
+  const i = s.lastIndexOf('@');
+  if (i < 0) return null;
+  const fd = s.slice(i + 1);
+  for (const x of items) {
+    const t = String(x ?? '').trim().toLowerCase();
+    if (!t || /[\s:,;]/.test(t)) continue;
+    const chiocciole = (t.match(/@/g) || []).length;
+    let dom = '';
+    if (t.startsWith('@') && chiocciole === 1) dom = t.slice(1);
+    else if (chiocciole === 0) dom = t;
+    if (!dom || !dom.includes('.')) continue;
+    if (fd === dom || fd.endsWith('.' + dom)) return x;
+  }
+  return null;
+}
+// ==== PURE:cs-api-mittente END ====
 const IDENT: Record<string, string> = { B: 'Benedetta', G: 'Ginevra', A: 'Ale' };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -114,8 +165,15 @@ async function handle(req: Request): Promise<Response> {
     // dalla coda (rumore, categoria conservata); correggere VIA dal B2B una riga finita nel rumore
     // per questo motivo la riporta in coda. Simmetrico e reversibile.
     const updCat: Record<string, unknown> = { categoria, categoria_source: categoria ? 'manuale' : 'ai_low' };
-    if (categoria === 'Collaborazioni e B2B' && ex.canale !== 'rumore') updCat.canale = 'rumore';
-    if (ex.categoria === 'Collaborazioni e B2B' && categoria && categoria !== 'Collaborazioni e B2B' && ex.canale === 'rumore') updCat.canale = 'email_diretta';
+    // v12 (31-10): mai una chat (b2bVaNelRumore), che si risponde solo in Inbox.
+    if (b2bVaNelRumore(categoria, ex.canale) && ex.canale !== 'rumore') updCat.canale = 'rumore';
+    if (ex.categoria === 'Collaborazioni e B2B' && categoria && categoria !== 'Collaborazioni e B2B' && ex.canale === 'rumore') {
+      // v12 (31-10): torna nel canale con cui era entrata (una chat resta chat), come remove_noise.
+      const { data: ing, error: ingErr } = await retryOnce(() => sb.from('cs_events').select('dettaglio')
+        .eq('conversation_id', convId).eq('azione', 'ingest').order('at', { ascending: true }).limit(1));
+      if (ingErr) return json({ error: 'storico della conversazione non leggibile, riprova: ' + ingErr.message }, 503);
+      updCat.canale = canaleDiRitorno((ing?.[0]?.dettaglio as Record<string, unknown> | undefined)?.canale);
+    }
     const { error: ue } = await sb.from('cs_conversations')
       .update(updCat)
       .eq('id', convId);
@@ -199,18 +257,24 @@ async function handle(req: Request): Promise<Response> {
     const sender = String(body.sender || ex.customer_email || '').trim().toLowerCase();
     if (!sender || sender.length < 4 || !sender.includes('@')) return json({ error: 'mittente non valido' }, 422);
     if (sender.endsWith('@amimi.it')) return json({ error: 'non puoi bloccare @amimi.it' }, 422);
+    // v12 (31-10): un mittente Shopify (chat, modulo) e' di tutte le clienti: la conversazione va nel
+    // rumore, il mittente NON si blocca.
+    const bloccabile = !isMittenteShopify(sender);
 
     // append con dedup alla denylist (match substring su From+Subject in cs-sync, riletta a runtime)
     // 2026-09-13 (sweep incidente doppioni): lettura fallita = denylist vuota -> l'upsert la riscriveva con
     // il solo mittente nuovo (98 voci perse). Ora: un ritentativo, poi 503 senza scrivere nulla.
-    const { data: flag, error: flagErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'cs_noise_senders').maybeSingle());
-    if (flagErr) return json({ error: 'denylist non leggibile, riprova: ' + flagErr.message }, 503);
-    const items = String(flag?.value ?? '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
-    const already = items.some((x) => x.toLowerCase() === sender);
-    if (!already) {
-      items.push(sender);
-      const { error: fe } = await sb.from('app_flags').upsert({ key: 'cs_noise_senders', value: items.join('\n') }, { onConflict: 'key' });
-      if (fe) return json({ error: 'denylist non aggiornata: ' + fe.message }, 500);
+    let already = false;
+    if (bloccabile) {
+      const { data: flag, error: flagErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'cs_noise_senders').maybeSingle());
+      if (flagErr) return json({ error: 'denylist non leggibile, riprova: ' + flagErr.message }, 503);
+      const items = String(flag?.value ?? '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+      already = items.some((x) => x.toLowerCase() === sender);
+      if (!already) {
+        items.push(sender);
+        const { error: fe } = await sb.from('app_flags').upsert({ key: 'cs_noise_senders', value: items.join('\n') }, { onConflict: 'key' });
+        if (fe) return json({ error: 'denylist non aggiornata: ' + fe.message }, 500);
+      }
     }
     // la conversazione esce dalla coda: canale='rumore' (resta consultabile nella vista Rumore)
     const { error: ue } = await sb.from('cs_conversations').update({ canale: 'rumore' }).eq('id', convId);
@@ -218,9 +282,9 @@ async function handle(req: Request): Promise<Response> {
 
     await sb.from('cs_events').insert({
       conversation_id: convId, azione: 'noise_add', chi,
-      dettaglio: { sender, gia_presente: already, canale_da: ex.canale, by_email: email },
+      dettaglio: { sender, gia_presente: already, bloccato: bloccabile, canale_da: ex.canale, by_email: email },
     });
-    return json({ ok: true, sender, gia_presente: already, chi });
+    return json({ ok: true, sender, gia_presente: already, bloccato: bloccabile, chi });
   }
 
   if (action === 'remove_noise') {
@@ -239,22 +303,28 @@ async function handle(req: Request): Promise<Response> {
     const { data: flag, error: flagErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'cs_noise_senders').maybeSingle());
     if (flagErr) return json({ error: 'denylist non leggibile, riprova: ' + flagErr.message }, 503);
     const items = String(flag?.value ?? '').split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
-    if (sender) {
+    // v12 (31-10): il canale in cui torna e' quello con cui la conversazione era entrata (evento ingest).
+    // Lettura controllata (Regola Ferrea 20): su errore si esce prima di scrivere qualunque cosa.
+    const { data: ing, error: ingErr } = await retryOnce(() => sb.from('cs_events').select('dettaglio')
+      .eq('conversation_id', convId).eq('azione', 'ingest').order('at', { ascending: true }).limit(1));
+    if (ingErr) return json({ error: 'storico della conversazione non leggibile, riprova: ' + ingErr.message }, 503);
+    const canaleDest = canaleDiRitorno((ing?.[0]?.dettaglio as Record<string, unknown> | undefined)?.canale);
+    if (sender && !isMittenteShopify(sender)) {
       const kept = items.filter((x) => x.toLowerCase() !== sender);
       if (kept.length !== items.length) {
         const { error: fe } = await sb.from('app_flags').upsert({ key: 'cs_noise_senders', value: kept.join('\n') }, { onConflict: 'key' });
         if (fe) return json({ error: 'denylist non aggiornata: ' + fe.message }, 500);
         rimossoDaDenylist = true;
       }
-      dominioCheBlocca = items.find((x) => x.startsWith('@') && sender.endsWith(x.toLowerCase())) ?? null;
+      dominioCheBlocca = voceDiDominioCheBlocca(items, sender);
     }
-    const { error: ue } = await sb.from('cs_conversations').update({ canale: 'email_diretta' }).eq('id', convId);
+    const { error: ue } = await sb.from('cs_conversations').update({ canale: canaleDest }).eq('id', convId);
     if (ue) return json({ error: 'scrittura fallita: ' + ue.message }, 500);
     await sb.from('cs_events').insert({
       conversation_id: convId, azione: 'noise_remove', chi,
-      dettaglio: { sender: sender || null, rimosso_da_denylist: rimossoDaDenylist, dominio_che_blocca: dominioCheBlocca, by_email: email },
+      dettaglio: { sender: sender || null, canale: canaleDest, rimosso_da_denylist: rimossoDaDenylist, dominio_che_blocca: dominioCheBlocca, by_email: email },
     });
-    return json({ ok: true, canale: 'email_diretta', rimosso_da_denylist: rimossoDaDenylist, dominio_che_blocca: dominioCheBlocca, chi });
+    return json({ ok: true, canale: canaleDest, rimosso_da_denylist: rimossoDaDenylist, dominio_che_blocca: dominioCheBlocca, chi });
   }
 
   // Configurazione AI (come rispondere): leggi/scrivi le istruzioni del team + stato del motore.
