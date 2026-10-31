@@ -164,5 +164,44 @@ console.log('\n===== GIFTS_OFFLINE pulita (migr 0156) =====');
   ok(Array.isArray(await get('/gifts_offline?select=id&limit=1')) && fuori.length === 0, `gifts_offline: nessuna vendita_fuori_fatturato nuova dopo la 0156 (KO ${fuori.length})`);
 }
 
+console.log('\n===== v_evasione_mensile e v_clienti_coorti (migr 0182) =====');
+{
+  // shipping_status ha una riga per lettera di vettura: un ordine con due LDV non deve contare due volte.
+  // Solo i mesi passati: in quello corrente un ordine nuovo puo' cadere fra le due letture.
+  const arr = (x) => (Array.isArray(x) ? x : []);
+  const conta = async (q) => {
+    const r = await fetch(REST + q, { method: 'HEAD', headers: { ...H, Prefer: 'count=exact' } });
+    return Number((r.headers.get('content-range') || '').split('/')[1]);
+  };
+  const adesso = new Date();
+  const passati = arr(await get('/v_evasione_mensile?select=year,month,ordini'))
+    .filter((r) => r.year < adesso.getUTCFullYear() || r.month < adesso.getUTCMonth() + 1);
+  const diversi = [];
+  for (const r of passati) {
+    const n = await conta(`/shopify_orders?year=eq.${r.year}&month=eq.${r.month}&created_at_shop=not.is.null&select=order_id`);
+    if (n !== Number(r.ordini)) diversi.push(`${r.year}-${r.month}: ${r.ordini} contro ${n}`);
+  }
+  ok(passati.length > 0 && diversi.length === 0, `v_evasione_mensile: ogni ordine conta una volta (${passati.length} mesi, KO: ${diversi.join('; ')})`);
+
+  // netto_medio_cliente = spesa media dei clienti della coorte senza IVA. aov vuoto = solo ordini rimborsati, fuori anche dalla vista.
+  const clienti = [];
+  for (let da = 0; ; da += 1000) {
+    const pagina = arr(await get(`/v_clienti_rfm?aov=not.is.null&select=primo_ordine,monetary&order=email&limit=1000&offset=${da}`));
+    clienti.push(...pagina);
+    if (pagina.length < 1000) break;
+  }
+  const spese = new Map();
+  for (const c of clienti) {
+    const mese = c.primo_ordine.slice(0, 7);
+    spese.set(mese, [...(spese.get(mese) ?? []), Number(c.monetary)]);
+  }
+  const coorti = arr(await get('/v_clienti_coorti?select=coorte,netto_medio_cliente'));
+  const storte = coorti.filter((c) => {
+    const s = spese.get(c.coorte.slice(0, 7)) ?? [];
+    return !s.length || !near(s.reduce((a, b) => a + b, 0) / s.length / 1.22, Number(c.netto_medio_cliente));
+  });
+  ok(coorti.length > 0 && storte.length === 0, `v_clienti_coorti: netto_medio_cliente senza IVA (${coorti.length} coorti, KO ${storte.length})`);
+}
+
 console.log(`\n===== ${pass} passed, ${fail} failed =====`);
 if (fail) { console.log('FAILURES:\n- ' + fails.join('\n- ')); process.exit(1); }
