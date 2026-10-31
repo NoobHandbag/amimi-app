@@ -470,5 +470,167 @@ console.log('\n== gift card: shopify-sync v9 e migr 0172 ==');
     && /WHERE \("li"\."codice_norm" IS DISTINCT FROM 'GIFT_CARD'::"text"\)\nUNION ALL/.test(S));
 }
 
+// Resync dei 45 giorni a pagine (31-10, shopify-sync v10, CASI_APERTI n.53 (e)). Fino alla v9 il resync era UNA chiamata
+// da 250 senza paginazione: al 31-10 la finestra teneva 238 ordini e oltre 250 rimborsi ed evasioni degli ordini fuori
+// pagina avrebbero smesso di arrivare senza errore. Qui la edge gira INTERA (tipi tolti): Deno.serve, il client Supabase,
+// fetch verso Shopify e l'orologio sono finti, tutto il resto e' il codice che va in produzione. Sulla v9 i casi 141-150
+// sono rossi (una pagina sola, nessun warn), sulla v10 verdi.
+console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
+{
+  const B = '// ==== PURE:sync-paging BEGIN ====', E = '// ==== PURE:sync-paging END ====';
+  const a = SYNC.indexOf(B), b = SYNC.indexOf(E);
+  let nextPageUrl = null, paginaDelNegozio = null;
+  if (a >= 0 && b > a) {
+    const dir = mkdtempSync(join(tmpdir(), 'amimi-paging-'));
+    const f = join(dir, 'paging.mjs');
+    writeFileSync(f, stripTypeScriptTypes(SYNC.slice(a + B.length, b)) + '\nexport { nextPageUrl, paginaDelNegozio };\n', 'utf8');
+    try { ({ nextPageUrl, paginaDelNegozio } = await import(pathToFileURL(f).href)); } finally { try { rmSync(dir, { recursive: true, force: true }); } catch { /* niente */ } }
+  }
+  const BASE = 'https://amimi-10000.myshopify.com/admin/api/2024-01/orders.json';
+  if (nextPageUrl) {
+    const u1 = `${BASE}?limit=250&fields=id,name,refunds&page_info=AAA`, u2 = `${BASE}?limit=250&fields=id,name,refunds&page_info=BBB`;
+    t('139 nextPageUrl: previous e next insieme -> next; solo previous, header vuoto o assente -> null',
+      nextPageUrl(`<${u1}>; rel="previous", <${u2}>; rel="next"`) === u2 && nextPageUrl(`<${u1}>; rel="previous"`) === null
+      && nextPageUrl('') === null && nextPageUrl(null) === null && nextPageUrl(undefined) === null);
+    t('140 nextPageUrl: le virgole dentro l\'URL (fields=id,name,...) non lo spezzano; next prima di previous va bene lo stesso',
+      nextPageUrl(`<${u2}>; rel="next", <${u1}>; rel="previous"`) === u2 && nextPageUrl(`<${u2}>;rel=next`) === u2);
+    const P = (u) => paginaDelNegozio(u, 'amimi-10000');
+    t('140b paginaDelNegozio: stesso negozio anche con un\'altra versione API (2024-01 e\' fuori supporto); altro host, host che lo imita, http, altro endpoint o URL rotto -> no',
+      P(u2) && P('https://amimi-10000.myshopify.com/admin/api/2025-10/orders.json?limit=250&page_info=x')
+      && !P('https://altro.example/admin/api/2024-01/orders.json?page_info=x') && !P('https://amimi-10000.myshopify.com.altro.example/admin/api/2024-01/orders.json')
+      && !P('http://amimi-10000.myshopify.com/admin/api/2024-01/orders.json') && !P('https://amimi-10000.myshopify.com/admin/api/2024-01/customers.json')
+      && !P('non un url') && !P(''));
+  } else t('139-140b paging non provato: blocco PURE:sync-paging assente o non caricabile', false);
+
+  // ---- la edge intera, coi finti ----
+  const tt = (n, c, extra) => t(n, c, extra === undefined ? '' : JSON.stringify(extra));
+  const IMPORT = "import { createClient } from 'jsr:@supabase/supabase-js@2';";
+  const PIN = '1234';
+  const PIN_HASH = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(PIN)))].map((x) => x.toString(16).padStart(2, '0')).join('');
+  const TETTO = Number(SYNC.match(/const RESYNC_MAX_PAGES = (\d+)/)?.[1] ?? 8);
+  let S = null;  // stato del giro in corso
+  const sbFinto = () => ({
+    from(tabella) {
+      const q = { tabella, op: null, args: null, filtri: [] };
+      const bld = new Proxy({}, { get(_, k) {
+        if (k === 'then') return (res, rej) => Promise.resolve().then(() => eseguiDb(q)).then(res, rej);
+        return (...args) => { if (!q.op && ['select', 'insert', 'upsert', 'update', 'delete'].includes(k)) { q.op = k; q.args = args; } else q.filtri.push([k, args]); return bld; };
+      } });
+      return bld;
+    },
+  });
+  const eseguiDb = (q) => {
+    const f = (k) => q.filtri.find(([n]) => n === k)?.[1];
+    if (q.tabella === 'app_config') return { data: { pin_hash: PIN_HASH, shopify_token: 'token-finto' }, error: null };
+    if (q.tabella === 'products') return { data: [{ codice: 'LEA_BAG_BLACK', codice_norm: 'LEA_BAG_BLACK', cogs: 45 }], error: null };
+    if (q.tabella === 'ce_snapshots') return { data: [{ year: 2026, month: 9 }], error: null };
+    if (q.tabella === 'health_log') { S.health.push(q.args[0]); return { data: null, error: null }; }
+    if (q.tabella === 'shopify_orders') {
+      if (q.op === 'update') { S.update.push(f('eq')?.[1]); return { data: null, error: null }; }
+      if (q.op === 'select' && f('limit')) return { data: [{ created_at_shop: '2026-10-31T08:00:00Z' }], error: null };
+      if (q.op === 'select' && f('in')) { const nomi = f('in')[1]; S.inLen.push(nomi.length); return { data: nomi.map(rigaDb), error: null }; }
+      S.altro.push(`shopify_orders ${q.op}`);
+    }
+    return { data: [], error: null };
+  };
+  // ordine n della finestra: nel DB pagato ed evaso, rimborso 0; su Shopify uguale, salvo quelli `cambiato` (rimborso 10)
+  const nome = (n) => `#${5000 + n}`;
+  const rigaDb = (nm) => ({ order_id: nm, refund_amount: 0, financial_status: 'paid', fulfillment_status: 'fulfilled', fulfilled_at: '2026-10-20T10:00:00Z', year: 2026, month: 10 });
+  const ordine = (n, cambiato) => ({ id: 7000000 + n, name: nome(n), financial_status: cambiato ? 'partially_refunded' : 'paid', fulfillment_status: 'fulfilled',
+    fulfillments: [{ created_at: '2026-10-20T10:00:00Z' }], refunds: cambiato ? [{ transactions: [{ amount: '10.00' }] }] : [] });
+  const linkDi = (i, n, base = BASE) => {
+    const u = (j) => `<${base}?limit=250&fields=id,name,financial_status,fulfillment_status,fulfillments,refunds&page_info=pg${j}>`;
+    return [i > 0 ? `${u(i - 1)}; rel="previous"` : null, i + 1 < n ? `${u(i + 1)}; rel="next"` : null].filter(Boolean).join(', ');
+  };
+  const risposta = (status, corpo, link) => new Response(JSON.stringify(corpo), { status, headers: link ? { link } : {} });
+  // scenario: `pagine` = quante (anche Infinity), `perPagina(i)` = quanti ordini, `cambiati(i)` = indici cambiati nella pagina
+  const shopifyFinto = async (url, init) => {
+    url = String(url);
+    if (S.urls.length > 60) throw new Error('troppe chiamate: paginazione senza fine');
+    S.urls.push(url);
+    if (init?.headers?.['X-Shopify-Access-Token'] !== 'token-finto') S.senzaToken++;
+    if (/created_at_min=/.test(url)) return risposta(200, { orders: [] });
+    const i = Number(url.match(/page_info=pg(\d+)/)?.[1] ?? 0);
+    S.resync.push(url);
+    S.sc.avanza?.();
+    if (S.sc.rotta === i) { if (S.sc.lancia) throw new TypeError('fetch failed'); return risposta(500, { errors: 'Internal Server Error' }); }
+    const quanti = S.sc.perPagina(i), cambiati = new Set(S.sc.cambiati?.(i) ?? []);
+    const ordini = Array.from({ length: quanti }, (_, k) => ordine(i * 250 + k, cambiati.has(k)));
+    return risposta(200, { orders: ordini }, S.sc.link ? S.sc.link(i) : linkDi(i, S.sc.pagine));
+  };
+  let handler = null;
+  const fetchVero = globalThis.fetch, nowVero = Date.now, denoPrima = globalThis.Deno;
+  const giro = async (sc) => {
+    S = { sc, urls: [], resync: [], inLen: [], update: [], health: [], altro: [], senzaToken: 0 };
+    globalThis.fetch = shopifyFinto;
+    try {
+      const res = await handler(new Request('http://edge/shopify-sync', { method: 'POST', body: JSON.stringify({ pin: PIN }) }));
+      return { ...S, status: res.status, body: await res.json(), h: S.health.at(-1) ?? {} };
+    } catch (e) { return { ...S, status: 0, body: { eccezione: String(e) }, h: S.health.at(-1) ?? {} }; }
+    finally { globalThis.fetch = fetchVero; Date.now = nowVero; }
+  };
+  if (SYNC.includes(IMPORT)) {
+    const dir = mkdtempSync(join(tmpdir(), 'amimi-sync-edge-'));
+    const f = join(dir, 'shopify-sync.mjs');
+    writeFileSync(f, stripTypeScriptTypes(SYNC.replace(IMPORT, 'const { createClient } = globalThis.__amimiSyncFinto;')), 'utf8');
+    globalThis.__amimiSyncFinto = { createClient: sbFinto };
+    globalThis.Deno = { serve: (h) => { handler = h; }, env: { get: (k) => ({ SUPABASE_URL: 'http://supabase.finto', SUPABASE_SERVICE_ROLE_KEY: 'chiave-finta' })[k] } };
+    try { await import(pathToFileURL(f).href); } finally { try { rmSync(dir, { recursive: true, force: true }); } catch { /* niente */ } }
+  }
+  if (handler) {
+    const cambiatiDi = (r) => r.update.slice().sort();
+    // 1) il giro di oggi: 238 ordini, una pagina, 3 cambiati. Etichetta identica a quella della v9.
+    let r = await giro({ pagine: 1, perPagina: () => 238, cambiati: () => [0, 100, 237] });
+    tt('141 una pagina sola (238, come il 31-10): una chiamata, 3 update, etichetta e severity di prima',
+      r.status === 200 && r.resync.length === 1 && r.update.length === 3 && r.h.severity === 'ok'
+      && r.h.label === "sync: letti 0, nuovi 0 (0 righe), gia' presenti 0, resync 3" && r.h.n === 0, { status: r.status, resync: r.resync.length, update: r.update.length, h: r.h, body: r.body });
+    // 2) 290 ordini: 250 + 40, i cambiati stanno nella seconda pagina (il caso che la v9 perdeva)
+    r = await giro({ pagine: 2, perPagina: (i) => (i ? 40 : 250), cambiati: (i) => (i ? [0, 7, 39] : []) });
+    const attesi = [250, 257, 289].map(nome).sort();
+    tt('142 290 ordini in finestra: i rimborsi della SECONDA pagina arrivano (3 update, proprio quelli)',
+      JSON.stringify(cambiatiDi(r)) === JSON.stringify(attesi) && r.body.resynced === 3, { update: r.update, body: r.body });
+    tt('143 la seconda chiamata e\' l\'URL del Link cosi\' com\'e\' (solo limit, fields, page_info: niente status ne\' updated_at_min)',
+      r.resync.length === 2 && r.resync[1] === `${BASE}?limit=250&fields=id,name,financial_status,fulfillment_status,fulfillments,refunds&page_info=pg1`, r.resync);
+    tt('144 esistenza letta per pagina: ogni .in ha <= 250 nomi (250 poi 40), mai una lettura sola da 290',
+      JSON.stringify(r.inLen) === JSON.stringify([250, 40]), r.inLen);
+    tt('145 piu\' pagine: severity ok, l\'etichetta dice quante pagine', r.h.severity === 'ok' && / resync 3 \(2 pagine\)$/.test(r.h.label ?? '') && r.body.resyncPages === 2, r.h);
+    // 3) idempotenza: tre pagine senza cambi -> nessun update
+    r = await giro({ pagine: 3, perPagina: (i) => (i < 2 ? 250 : 10) });
+    tt('146 tre pagine senza cambi: lette tutte e tre, zero update (solo cio\' che cambia)', r.resync.length === 3 && r.update.length === 0 && r.h.severity === 'ok' && r.altro.length === 0, { resync: r.resync.length, update: r.update, altro: r.altro });
+    // 4) Shopify che non finisce mai: tetto di pagine, warn, giro che arriva in fondo
+    r = await giro({ pagine: Infinity, perPagina: () => 250, cambiati: () => [3] });
+    tt(`147 tetto: dopo ${TETTO} pagine si smette di chiedere, gli update letti restano, warn col motivo (mai un taglio muto)`,
+      r.status === 200 && r.resync.length === TETTO && r.update.length === TETTO && r.h.severity === 'warn' && r.h.n >= 1
+      && r.h.label?.includes(`resync TRONCATO: oltre ${TETTO} pagine`) && !!r.body.resyncStop, { status: r.status, resync: r.resync.length, update: r.update.length, h: r.h });
+    // 5) seconda pagina rotta (500) e rete giu' (eccezione): la prima resta, warn, il giro non muore
+    r = await giro({ pagine: 3, perPagina: () => 250, cambiati: (i) => (i === 0 ? [1] : [2]), rotta: 1 });
+    tt('148 seconda pagina in 500: la prima e\' aggiornata, la terza non si chiede, warn "resync falliti 1"',
+      r.status === 200 && r.resync.length === 2 && JSON.stringify(r.update) === JSON.stringify([nome(1)]) && r.h.severity === 'warn' && /resync falliti 1/.test(r.h.label ?? ''), { resync: r.resync.length, update: r.update, h: r.h });
+    r = await giro({ pagine: 3, perPagina: () => 250, rotta: 1, lancia: true });
+    tt('149 seconda pagina con la rete giu\' (fetch lancia): risposta 200 e telemetria scritta, warn', r.status === 200 && r.h.severity === 'warn' && /resync falliti 1/.test(r.h.label ?? ''), { status: r.status, body: r.body, h: r.h });
+    // 6) tempo: ogni pagina "costa" 25 s; dopo 60 s dall'inizio del giro non se ne chiede un'altra
+    let ora = nowVero();
+    Date.now = () => ora;
+    r = await giro({ pagine: Infinity, perPagina: () => 250, avanza: () => { ora += 25000; } });
+    tt('150 tempo: a 25 s a pagina si leggono 3 pagine (75 s), poi warn "per tempo" invece del muro della edge',
+      r.status === 200 && r.resync.length === 3 && r.h.severity === 'warn' && /resync TRONCATO per tempo dopo 3 pagine/.test(r.h.label ?? ''), { resync: r.resync.length, h: r.h });
+    // 7) un Link verso un altro host non si segue: il token resta al negozio
+    r = await giro({ pagine: 2, perPagina: () => 250, link: (i) => (i === 0 ? linkDi(0, 2, 'https://altro.example/admin/api/2024-01/orders.json') : '') });
+    tt('151 Link verso un altro host: non seguito (una chiamata), warn col motivo, token mai mandato fuori',
+      r.resync.length === 1 && r.urls.every((u) => u.startsWith('https://amimi-10000.myshopify.com/')) && r.h.severity === 'warn' && /fuori dall'API del negozio/.test(r.h.label ?? ''), { urls: r.urls, h: r.h });
+    t('152 ogni chiamata a Shopify porta il token del negozio', r.senzaToken === 0);
+    // 8) Link con una versione API piu' nuova sullo stesso negozio (fall forward di Shopify): si segue
+    r = await giro({ pagine: 2, perPagina: (i) => (i ? 5 : 250), cambiati: (i) => (i ? [4] : []), link: (i) => (i === 0 ? linkDi(0, 2, 'https://amimi-10000.myshopify.com/admin/api/2025-10/orders.json') : '') });
+    tt('152b Link sullo stesso negozio con versione 2025-10: seguito, il rimborso della seconda pagina arriva, severity ok',
+      r.resync.length === 2 && /\/admin\/api\/2025-10\/orders\.json\?/.test(r.resync[1] ?? '') && JSON.stringify(r.update) === JSON.stringify([nome(254)]) && r.h.severity === 'ok', { resync: r.resync, update: r.update, h: r.h });
+  } else t('141-152 la edge non e\' caricabile coi finti (import del client cambiato?)', false);
+  if (denoPrima === undefined) delete globalThis.Deno; else globalThis.Deno = denoPrima;
+  delete globalThis.__amimiSyncFinto;
+  t('153 guardie sul sorgente: tetto di pagine fra 2 e 20, budget di tempo sotto il muro della edge (150 s), timeout per pagina',
+    TETTO >= 2 && TETTO <= 20 && Number(SYNC.match(/const RESYNC_BUDGET_MS = (\d+)/)?.[1] ?? 1e9) <= 90000 && /AbortSignal\.timeout\(RESYNC_PAGE_TIMEOUT_MS\)/.test(SYNC));
+  t('154 il pull dei nuovi resta a una pagina (cintura 50 < pagina 250): pagina piena = giro fermato, come la v7',
+    /orders\.length >= 250 && !isBackfill\) return fail/.test(SYNC) && Number(SYNC.match(/const MAX_INSERTS_CRON = (\d+)/)?.[1]) < 250);
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
