@@ -67,12 +67,12 @@ jobs:
       - name: loyalty-page generata dalla sorgente (quest audit Premia 2026-09-21, finding T25)
         shell: bash
         run: node supabase/functions/loyalty-page/build.mjs --check
-      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate, colori del tema, materie prime, domini del team, Paillettes, notifiche, comportamento utenti, card Ads e serie mensile Ads, recensioni sul sito)
+      - name: Suite sul sorgente (cs_*, guardie shopify-sync, letture controllate, colori del tema, materie prime, domini del team, Paillettes, notifiche, comportamento utenti, card Ads e serie mensile Ads, recensioni sul sito, watchdog esterno)
         shell: bash
         run: |
           set -eo pipefail
           fail=0
-          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/ads_swap_guardie.mjs tests/ads_mensile_guardie.mjs tests/lead_outreach_guardie.mjs tests/arrivo_adesso.mjs tests/snapshot_drive_mensile.mjs tests/ce_compenso_soci.mjs tests/tema_colori_guardie.mjs tests/mat_guardie.mjs tests/dominio_team.mjs tests/villaggio_paillettes.mjs tests/paillettes_guardie.mjs tests/push_core.mjs tests/push_sw.mjs tests/push_eventi_core.mjs tests/beh_guardie.mjs tests/ugc_publish_core.mjs; do
+          for t in tests/cs_*.mjs tests/shopify_sync_guardie.mjs tests/letture_controllate_guardie.mjs tests/write_api_num.mjs tests/date_roma.mjs tests/write_api_guardie.mjs tests/autopush_decision.mjs tests/loyalty_guardie.mjs tests/ads_sync_guardie.mjs tests/ads_swap_guardie.mjs tests/ads_mensile_guardie.mjs tests/lead_outreach_guardie.mjs tests/arrivo_adesso.mjs tests/snapshot_drive_mensile.mjs tests/ce_compenso_soci.mjs tests/tema_colori_guardie.mjs tests/mat_guardie.mjs tests/dominio_team.mjs tests/villaggio_paillettes.mjs tests/paillettes_guardie.mjs tests/push_core.mjs tests/push_sw.mjs tests/push_eventi_core.mjs tests/beh_guardie.mjs tests/ugc_publish_core.mjs tests/watchdog_guardie.mjs; do
             echo "== $t"
             node "$t" || { echo "::error::suite KO: $t"; fail=1; }
           done
