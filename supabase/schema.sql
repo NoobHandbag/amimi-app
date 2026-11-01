@@ -4722,7 +4722,7 @@ CREATE OR REPLACE VIEW "public"."v_clienti_coorti" AS
     "count"(*) FILTER (WHERE (("r"."secondo" IS NOT NULL) AND ("r"."secondo" <= (( SELECT "min"("o2"."created_at_shop") AS "min"
            FROM "ord" "o2"
           WHERE ("o2"."email" = "r"."email")) + '90 days'::interval)))) AS "ricomprato_90gg",
-    "round"("avg"("m"."spesa"), 2) AS "netto_medio_cliente"
+    "round"(("avg"("m"."spesa") / 1.22), 2) AS "netto_medio_cliente"
    FROM ("riacquisti" "r"
      JOIN "mon" "m" ON (("m"."email" = "r"."email")))
   GROUP BY "r"."coorte"
@@ -5056,13 +5056,18 @@ ALTER VIEW "public"."v_digest_versioni" OWNER TO "postgres";
 
 
 CREATE OR REPLACE VIEW "public"."v_evasione_mensile" AS
- WITH "o" AS (
+ WITH "sped" AS (
+         SELECT "regexp_replace"(COALESCE("shipping_status"."order_name", ''::"text"), '^#'::"text", ''::"text") AS "ordine",
+            "min"("shipping_status"."shipped_date") AS "shipped_date"
+           FROM "public"."shipping_status"
+          GROUP BY ("regexp_replace"(COALESCE("shipping_status"."order_name", ''::"text"), '^#'::"text", ''::"text"))
+        ), "o" AS (
          SELECT "o_1"."year",
             "o_1"."month",
-            ("o_1"."created_at_shop")::"date" AS "d0",
-            COALESCE("s"."shipped_date", ("o_1"."fulfilled_at")::"date") AS "d1"
+            (("o_1"."created_at_shop" AT TIME ZONE 'Europe/Rome'::"text"))::"date" AS "d0",
+            COALESCE("s"."shipped_date", (("o_1"."fulfilled_at" AT TIME ZONE 'Europe/Rome'::"text"))::"date") AS "d1"
            FROM ("public"."shopify_orders" "o_1"
-             LEFT JOIN "public"."shipping_status" "s" ON (("regexp_replace"(COALESCE("o_1"."order_number", "o_1"."order_id"), '^#'::"text", ''::"text") = "regexp_replace"(COALESCE("s"."order_name", ''::"text"), '^#'::"text", ''::"text"))))
+             LEFT JOIN "sped" "s" ON (("regexp_replace"(COALESCE("o_1"."order_number", "o_1"."order_id"), '^#'::"text", ''::"text") = "s"."ordine")))
           WHERE ("o_1"."created_at_shop" IS NOT NULL)
         )
  SELECT "year",

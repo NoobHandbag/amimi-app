@@ -1,5 +1,6 @@
 // Feature regression — pure-logic helpers + view correctness against ground truth.
 // Run: node tests/features.mjs   (Node 24 strips TS types on import)
+import { readFileSync } from 'node:fs';
 import { suggestPrice, marginOf, genSeoTitle } from '../web/src/lib/helpers.ts';
 
 const REST = 'https://imszbjeyplaiovylhkgl.supabase.co/rest/v1';
@@ -162,6 +163,50 @@ console.log('\n===== GIFTS_OFFLINE pulita (migr 0156) =====');
   // vendita_fuori_fatturato esce dalla base del compenso: e' solo storico (61 righe gen-set), nessuno ne scrive di nuove
   const fuori = arr(await get('/gifts_offline?kind=eq.vendita_fuori_fatturato&created_at=gte.2026-10-14&select=id'));
   ok(Array.isArray(await get('/gifts_offline?select=id&limit=1')) && fuori.length === 0, `gifts_offline: nessuna vendita_fuori_fatturato nuova dopo la 0156 (KO ${fuori.length})`);
+}
+
+console.log('\n===== v_evasione_mensile e v_clienti_coorti (migr 0182) =====');
+{
+  // shipping_status ha una riga per lettera di vettura: un ordine con due LDV non deve contare due volte.
+  // Solo i mesi passati: in quello corrente un ordine nuovo puo' cadere fra le due letture.
+  const arr = (x) => (Array.isArray(x) ? x : []);
+  const conta = async (q) => {
+    const r = await fetch(REST + q, { method: 'HEAD', headers: { ...H, Prefer: 'count=exact' } });
+    return Number((r.headers.get('content-range') || '').split('/')[1]);
+  };
+  const adesso = new Date();
+  const passati = arr(await get('/v_evasione_mensile?select=year,month,ordini'))
+    .filter((r) => r.year < adesso.getUTCFullYear() || r.month < adesso.getUTCMonth() + 1);
+  const diversi = [];
+  for (const r of passati) {
+    const n = await conta(`/shopify_orders?year=eq.${r.year}&month=eq.${r.month}&created_at_shop=not.is.null&select=order_id`);
+    if (n !== Number(r.ordini)) diversi.push(`${r.year}-${r.month}: ${r.ordini} contro ${n}`);
+  }
+  ok(passati.length > 0 && diversi.length === 0, `v_evasione_mensile: ogni ordine conta una volta (${passati.length} mesi, KO: ${diversi.join('; ')})`);
+  // shipped_date e' una data italiana: anche ordine e fulfilled_at vanno letti in ora di Roma, ::date da solo e' UTC.
+  const schema = readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
+  const vista = schema.slice(schema.indexOf('VIEW "public"."v_evasione_mensile"'), schema.indexOf('ALTER VIEW "public"."v_evasione_mensile"'));
+  ok((vista.match(/AT TIME ZONE 'Europe\/Rome'/g) ?? []).length === 2, 'v_evasione_mensile: ordine e fulfilled_at in ora di Roma in schema.sql');
+
+  // netto_medio_cliente = spesa media dei clienti della coorte senza IVA. aov vuoto = solo ordini rimborsati, fuori anche dalla vista.
+  const clienti = [];
+  for (let da = 0; ; da += 1000) {
+    const pagina = arr(await get(`/v_clienti_rfm?aov=not.is.null&select=primo_ordine,monetary&order=email&limit=1000&offset=${da}`));
+    clienti.push(...pagina);
+    if (pagina.length < 1000) break;
+  }
+  const spese = new Map();
+  for (const c of clienti) {
+    const mese = c.primo_ordine.slice(0, 7);
+    const s = spese.get(mese) ?? { tot: 0, n: 0 };
+    spese.set(mese, { tot: s.tot + Number(c.monetary), n: s.n + 1 });
+  }
+  const coorti = arr(await get('/v_clienti_coorti?select=coorte,netto_medio_cliente'));
+  const storte = coorti.filter((c) => {
+    const s = spese.get(c.coorte.slice(0, 7));
+    return !s || !near(s.tot / s.n / 1.22, Number(c.netto_medio_cliente));
+  });
+  ok(coorti.length > 0 && storte.length === 0, `v_clienti_coorti: netto_medio_cliente senza IVA (${coorti.length} coorti, KO ${storte.length})`);
 }
 
 console.log(`\n===== ${pass} passed, ${fail} failed =====`);
