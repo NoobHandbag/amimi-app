@@ -41,6 +41,23 @@
 // contata come ricavo all'acquisto E di nuovo al riscatto (regola owner 13-09: il ricavo si conta solo quando la card
 // viene spesa; le viste CE escludono GIFT_CARD dalla 0172). COGS 0 e non NULL: con NULL la riga accenderebbe
 // `ce_cogs_mancanti` a ogni gift card venduta. Il titolo resta il ripiego (alias 'GIFT CARD Amimì' della 0172).
+//
+// 2026-10-31 v10 (audit del blocco Supabase del 30-31 ottobre, CASI_APERTI n.53 (e)): il resync dei 45 giorni legge
+// TUTTE le pagine col cursore di Shopify (header Link, page_info), non piu' una sola chiamata da 250. Al 31-10 la
+// finestra teneva 238 ordini: oltre 250, rimborsi, evasioni e cambi di stato degli ordini fuori pagina avrebbero smesso
+// di arrivare in shopify_orders senza un errore. Ogni pagina si lavora da sola (esistenza con .in su <= 250 nomi). Tetti:
+// RESYNC_MAX_PAGES pagine e RESYNC_BUDGET_MS dall'inizio del giro; oltre, warn in health_log col motivo, mai un taglio
+// muto. Una pagina fallita = resync fallito (warn, la pagina e la causa in resyncStop) e si tiene cio' che e' gia' stato
+// letto (update idempotenti, il giro dopo riprende). Il pull dei nuovi (created_at_min) resta a UNA pagina, per scelta: la cintura (50) sta sotto la
+// pagina (250), quindi una seconda pagina non cambierebbe l'esito (giro fermato con health_log error, recupero con
+// action 'backfill', che pagina con since_id). Blocco PURE:sync-paging, test in tests/shopify_sync_guardie.mjs.
+// Stessa v10, ripasso di 48 ore (decisione owner 31-10): il cursore created_at_min era l'ultimo ordine noto, quindi un
+// ordine fallito in un giro in cui un ordine piu' nuovo entrava restava indietro per sempre (nessun "giro dopo", solo un
+// backfill a mano). Ora il pull rilegge RIPASSO_MS prima dell'ultimo ordine: i gia' presenti si scartano con la lettura di
+// esistenza e l'upsert ignoreDuplicates. Effetto accettato: un ordine cancellato apposta da shopify_orders entro 48 ore
+// torna (nessuno al 31-10: order_number 1001-1974 senza buchi). Finestra piena (mai vista: massimo storico 38 ordini in 48
+// ore) = si rilegge dal solo cursore, come prima, e la guardia "pagina piena" decide, cosi' una finestra piena non ferma il
+// pull dei nuovi. La cintura invece conta TUTTI i mancanti della finestra: oltre 50, anche vecchi, il giro si ferma forte.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -75,6 +92,23 @@ function rigaCodiceCogs(it: any, resolve: (nm: string, sku?: string) => string |
   return { codice, cogs: cn ? (cogsByNorm.get(cn) ?? null) : null };
 }
 // ==== PURE:sync-resolver END ====
+// ==== PURE:sync-paging BEGIN ====
+// URL della pagina dopo, dall'header Link di Shopify: `<url>; rel="previous", <url>; rel="next"`. Nessun header o
+// nessun rel="next" = ultima pagina. Niente split sulle virgole: stanno anche dentro l'URL (fields=id,name,...).
+// L'URL si usa cosi' com'e': con page_info Shopify accetta solo limit e fields, i filtri restano quelli della prima.
+function nextPageUrl(link: string | null | undefined): string | null {
+  const m = String(link ?? '').match(/<([^>]+)>\s*;\s*rel="?next"?/);
+  return m ? m[1] : null;
+}
+// Il token va solo al negozio: si segue una pagina dopo solo se e' https://<shop>.myshopify.com/admin/api/<versione>/orders.json.
+// La versione NON e' fissata: la 2024-01 e' fuori supporto e Shopify puo' servire (e scrivere nel Link) una versione piu' nuova.
+function paginaDelNegozio(url: string, shop: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.origin === `https://${shop}.myshopify.com` && /^\/admin\/api\/[\w-]+\/orders\.json$/.test(u.pathname);
+  } catch { return false; }
+}
+// ==== PURE:sync-paging END ====
 async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -84,8 +118,18 @@ const API = `https://${SHOP}.myshopify.com/admin/api/2024-01`;
 // Tetto di ordini NUOVI inseribili in un giro di cron. 250 secchi sono la firma dell'incidente del 12-09
 // ("nessun ordine esistente" -> tutto nuovo); un'ora vera di questo negozio ne porta 0-5.
 const MAX_INSERTS_CRON = 50;
+// Ripasso del pull dei nuovi (v10): si rilegge da 48 ore prima dell'ultimo ordine noto, vedi la nota in testa.
+const RIPASSO_MS = 48 * 3600000;
 // Cap di PostgREST sulle select senza range: una risposta con esattamente questo numero di righe e' TRONCATA.
 const POSTGREST_CAP = 1000;
+// Resync dei 45 giorni (v10): tetto di pagine da 250 (2.000 ordini aggiornati; al 31-10 erano 238, una pagina) e di tempo
+// dall'inizio del giro. Un giro normale dura 1,6-4,6 s (24 giri del 29-30 ottobre nei log delle edge), il primo dopo il
+// blocco del 31-10 8,3 s; il muro della edge e' 150 s, quindi dopo 60 s non si chiede un'altra pagina, e una pagina che
+// non risponde in 20 s conta come fallita. Il cron chiama col timeout di pg_net di 5 s: il 31-10 13:07 pg_net e' andato
+// in timeout e la edge e' arrivata in fondo lo stesso (200 dopo 8,3 s), ma e' un solo giro, mai visto oltre quei secondi.
+const RESYNC_MAX_PAGES = 8;
+const RESYNC_BUDGET_MS = 60000;
+const RESYNC_PAGE_TIMEOUT_MS = 20000;
 const refundOf = (o: Record<string, any>) => (o.refunds ?? []).reduce((s: number, rf: any) => s + (rf.transactions ?? []).reduce((t: number, tx: any) => t + Number(tx.amount || 0), 0), 0);
 // PostgREST risponde 504 anche su letture banali: 4% delle chiamate REST delle edge (439 su 10.462 nelle 24 ore
 // al 13-09), il 90% nei secondi :00-:03 di ogni minuto, cioe' proprio quando partono i cron (postgrest_logs
@@ -102,6 +146,7 @@ const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>)
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  const t0 = Date.now();
   const body = await req.json().catch(() => ({}));
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const today = () => new Date().toISOString().slice(0, 10);
@@ -208,7 +253,7 @@ Deno.serve(async (req) => {
   const { data: lastRow, error: lastErr } = await retryOnce(() => sb.from('shopify_orders').select('created_at_shop').not('created_at_shop', 'is', null).order('created_at_shop', { ascending: false }).limit(1));
   if (lastErr) return fail('ultimo ordine', lastErr.message);
   const maxDate = String(lastRow?.[0]?.created_at_shop ?? '2026-02-01T00:00:00Z');
-  const sinceDate = body.dryRun ? new Date(Date.now() - 60 * 86400000).toISOString() : (isBackfill && body.since ? String(body.since) : maxDate);
+  let sinceDate = body.dryRun ? new Date(Date.now() - 60 * 86400000).toISOString() : (isBackfill && body.since ? String(body.since) : new Date(Date.parse(maxDate) - RIPASSO_MS).toISOString());
 
   // anagrafica per il resolver: letta per intero (196 prodotti / 407 alias al 13-09), ma con guardia sul cap:
   // a 1.000 righe la risposta e' troncata in silenzio e le righe uscirebbero "non risolte" e senza COGS
@@ -231,11 +276,13 @@ Deno.serve(async (req) => {
   const resolveCodice = (nm: string, sku?: string): string | null => resolveCodiceWith(aliasMap, codiceByNorm, nm, sku);
 
   // niente `order=`: orders.json non lo onora e restituisce i piu' RECENTI. Nel giro di cron, con created_at_min =
-  // ultimo ordine noto, arrivano TUTTI i nuovi finche' sono meno di 250; a 250 la pagina puo' essere incompleta e
-  // il giro si ferma (vedi sotto). Nel backfill invece si pagina con since_id (ordinamento per id, dal piu'
-  // vecchio): con una sola pagina "recenti" gli ordini fra `since` e il 250esimo piu' recente non verrebbero
-  // mai piu' richiesti, perche' il giro dopo riparte dall'ultimo ordine noto.
+  // 48 ore prima dell'ultimo ordine noto (ripasso, v10), arrivano TUTTI i nuovi finche' la finestra tiene meno di 250
+  // ordini; a 250 si rilegge dal solo cursore (l'ultimo ordine noto) e, se anche quella pagina e' piena, puo' essere
+  // incompleta e il giro si ferma (vedi sotto). Nel backfill invece si pagina con since_id (ordinamento per id, dal
+  // piu' vecchio): con una sola pagina "recenti" gli ordini fra `since` e il 250esimo piu' recente non verrebbero
+  // mai piu' richiesti, perche' il giro dopo riparte da 48 ore prima dell'ultimo ordine noto.
   const orders: Record<string, any>[] = [];
+  let ripassoSaltato = false;
   if (isBackfill && !body.dryRun) {
     let sinceId = 0;
     for (let page = 0; page < 8; page++) {
@@ -253,6 +300,13 @@ Deno.serve(async (req) => {
     const resp = await fetch(url, { headers: SH });
     if (!resp.ok) return fail('Shopify', resp.status + ' ' + (await resp.text()).slice(0, 200), 502);
     orders.push(...(((await resp.json()).orders ?? []) as Record<string, any>[]));
+    // finestra del ripasso piena: gli ordini letti potrebbero non essere i piu' nuovi, si torna al solo cursore
+    if (!body.dryRun && orders.length >= 250) {
+      sinceDate = maxDate; ripassoSaltato = true; orders.length = 0;
+      const r2 = await fetch(`${API}/orders.json?status=any&created_at_min=${encodeURIComponent(sinceDate)}&limit=250`, { headers: SH });
+      if (!r2.ok) return fail('Shopify', r2.status + ' ' + (await r2.text()).slice(0, 200), 502);
+      orders.push(...(((await r2.json()).orders ?? []) as Record<string, any>[]));
+    }
   }
 
   const parse = (o: Record<string, any>) => {
@@ -323,12 +377,28 @@ Deno.serve(async (req) => {
   // il pull normale (created_at_min) non lo ripesca. Ripassa gli ordini AGGIORNATI negli ultimi 45 giorni e
   // aggiorna SOLO refund/financial/fulfillment/fulfilled_at (mai importi/righe), e SOLO se qualcosa cambia.
   // Un rimborso su un mese chiuso accendera' ce_drift -> l'owner ri-chiude: e' il comportamento contabile corretto.
-  let resynced = 0, resyncErr = 0;
+  // v10: a pagine (blocco PURE:sync-paging), una pagina alla volta; tetti, pagina fallita e motivo dello stop in
+  // `resyncStop` (warn).
+  let resynced = 0, resyncErr = 0, resyncPages = 0, resyncStop = '', paginaFallita = false;
   const updSince = new Date(Date.now() - 45 * 86400000).toISOString();
-  const ru = `${API}/orders.json?status=any&updated_at_min=${encodeURIComponent(updSince)}&limit=250&fields=id,name,financial_status,fulfillment_status,fulfillments,refunds`;
-  const rr = await fetch(ru, { headers: SH });
-  if (rr.ok) {
-    const upd: Record<string, any>[] = (await rr.json()).orders ?? [];
+  let ru: string | null = `${API}/orders.json?status=any&updated_at_min=${encodeURIComponent(updSince)}&limit=250&fields=id,name,financial_status,fulfillment_status,fulfillments,refunds`;
+  while (ru) {
+    if (resyncPages >= RESYNC_MAX_PAGES) { resyncStop = `resync TRONCATO: oltre ${RESYNC_MAX_PAGES} pagine (${RESYNC_MAX_PAGES * 250} ordini aggiornati in 45 giorni), il resto non e' stato letto`; break; }
+    if (Date.now() - t0 > RESYNC_BUDGET_MS) { resyncStop = `resync TRONCATO per tempo dopo ${resyncPages} pagine (${Math.round((Date.now() - t0) / 1000)} s dall'inizio del giro)`; break; }
+    // il token va solo all'API del negozio: un Link che punta altrove non si segue
+    if (!paginaDelNegozio(ru, SHOP)) { resyncStop = "resync: pagina dopo fuori dall'API del negozio, non seguita"; break; }
+    // rete giu', timeout o corpo illeggibile = pagina fallita (warn), non un giro morto senza telemetria. Conta in
+    // resyncErr (come la v9) e dice in resyncStop da che pagina in poi non si e' letto, senza contare due volte in n.
+    const rr = await fetch(ru, { headers: SH, signal: AbortSignal.timeout(RESYNC_PAGE_TIMEOUT_MS) }).catch(() => null);
+    const pj = rr?.ok ? await rr.json().catch(() => null) : null;
+    if (!rr?.ok || !pj) {
+      resyncErr++; paginaFallita = true;
+      resyncStop = `resync fermato alla pagina ${resyncPages + 1} (${rr ? (rr.ok ? 'corpo illeggibile' : `HTTP ${rr.status}`) : 'rete o timeout'}), il resto non e' stato letto`;
+      break;
+    }
+    resyncPages++;
+    ru = nextPageUrl(rr.headers.get('link'));
+    const upd: Record<string, any>[] = pj.orders ?? [];
     const uNames = upd.map((o) => String(o.name));
     const known = new Map<string, Record<string, any>>();
     if (uNames.length) {
@@ -348,10 +418,12 @@ Deno.serve(async (req) => {
       const { error: ue } = await sb.from('shopify_orders').update({ refund_amount: refund, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status, fulfilled_at }).eq('order_id', o.name);
       if (ue) resyncErr++; else resynced++;
     }
-  } else resyncErr++;
+  }
 
   const label = `sync: letti ${orders.length}, nuovi ${inserted} (${lineCount} righe${insertedNames.length ? ': ' + insertedNames.slice(0, 8).join(' ') : ''}), gia' presenti ${existing.size + skipped}, resync ${resynced}`
-    + (errors.length ? `, ERRORI ${errors.length}: ${errors.slice(0, 3).join(' | ')}` : '') + (resyncErr ? `, resync falliti ${resyncErr}` : '');
-  await health(label, errors.length + resyncErr, errors.length ? 'error' : (resyncErr ? 'warn' : 'ok'));
-  return json({ ok: true, fetched: orders.length, since: sinceDate, inserted, lineCount, skipped, resynced, resyncErr, errors: errors.length ? errors : undefined });
+    + (resyncPages > 1 ? ` (${resyncPages} pagine)` : '') + (ripassoSaltato ? ', ripasso di 48 ore saltato (finestra piena)' : '')
+    + (errors.length ? `, ERRORI ${errors.length}: ${errors.slice(0, 3).join(' | ')}` : '') + (resyncErr ? `, resync falliti ${resyncErr}` : '') + (resyncStop ? `, ${resyncStop}` : '');
+  const resyncWarn = resyncErr + (resyncStop && !paginaFallita ? 1 : 0);
+  await health(label, errors.length + resyncWarn, errors.length ? 'error' : (resyncWarn ? 'warn' : 'ok'));
+  return json({ ok: true, fetched: orders.length, since: sinceDate, inserted, lineCount, skipped, resynced, resyncErr, resyncPages, resyncStop: resyncStop || undefined, errors: errors.length ? errors : undefined });
 });
