@@ -451,8 +451,9 @@ function msgPremia(cands: Cand[], inRevisione: number): Msg[] {
 // premia_salute (03-11, tema sistema): tre guasti del modulo Premia, ognuno una push sua.
 //  - loyalty_orders in errore: la riga piu' recente di health_log k loyalty_orders (riscritta dal giro ogni 15 minuti) ha
 //    severity error. Come cs_sync in errore: una push al giorno di Roma finche' dura, istante = quella riga.
-//  - riscatto pending oltre `minuti` minuti (15): una push per riscatto, chiave riscatto:<id>, istante = quando ha superato
-//    la soglia. La cliente ha speso i punti e aspetta il codice.
+//  - riscatto pending oltre `minuti` minuti (15): una push per riscatto, chiave riscatto:<id>, istante = adesso (Gate 2 del
+//    03-11: con l'istante del superamento della soglia un riscatto fermo da oltre 6 ore all'accensione, o dopo una pausa
+//    del giro, finiva `saltato` vecchio e non avvisava mai). La cliente ha speso i punti e aspetta il codice.
 //  - pool sotto soglia: un premio attivo con meno codici liberi di loyalty_pool_min. Una push al giorno di Roma per premio,
 //    istante = adesso (e' uno stato, non un fatto con una data).
 // Evento di stato (EVENTI_DI_STATO): un guasto gia' in corso all'accensione e' una notizia di adesso, non pregresso.
@@ -464,7 +465,7 @@ function candPremiaSalute(o: { orders: Riga | null; pending: Riga[]; pool: Riga[
   for (const r of o.pending ?? []) {
     const id = intero(r?.id), c = msDi(r?.created_at);
     if (!id || r?.status !== 'pending' || !Number.isFinite(c) || o.ora - c < o.minuti * 60000) continue;
-    out.push({ chiave: 'riscatto:' + id, ts: c + o.minuti * 60000, rif: { tipo: 'pending', minuti: String(Math.floor((o.ora - c) / 60000)) } });
+    out.push({ chiave: 'riscatto:' + id, ts: o.ora, rif: { tipo: 'pending', minuti: String(Math.floor((o.ora - c) / 60000)) } });
   }
   for (const r of o.pool ?? []) {
     const k = typeof r?.reward === 'string' && REWARD_RE.test(r.reward) ? r.reward : '';
@@ -1142,8 +1143,9 @@ const EVENTI: Record<string, DefEvento> = {
   premia_da_approvare: {
     candidati: async (sb, ctx) => {
       // solo id, tipo, codice, stato e istante: mai titolo, testo, firma, foto o cliente
-      const { data, error } = await retryOnce(() => sb.from('loyalty_ugc').select('id, kind, codice, status, created_at').eq('status', 'in_revisione').gte('created_at', dalle(ctx, FINESTRA_MS)).order('created_at', { ascending: false }).limit(LIMITE));
-      if (error) throw new LetturaFallita('loyalty_ugc', error);
+      const { data, error } = await retryOnce(() => sb.from('loyalty_ugc').select('id, kind, codice, status, created_at').eq('status', 'in_revisione').gte('created_at', dalle(ctx, FINESTRA_MS)).order('created_at', { ascending: false }).limit(LIMITE + 1));
+      // Gate 2 del 03-11: una lettura piena oltre il limite e' troncata e ferma l'evento (Regola 20b), mai un contenuto perso
+      if (error || (data ?? []).length > LIMITE) throw new LetturaFallita('loyalty_ugc', error ?? `oltre ${LIMITE} righe`);
       return candPremia((data ?? []) as Riga[]);
     },
     componi: async (sb, _ctx, _ev, cands) => {
@@ -1159,10 +1161,10 @@ const EVENTI: Record<string, DefEvento> = {
       // severity e istante, mai la label; i riscatti pending degli ultimi 7 giorni senza codice ne' cliente
       const { data: ord, error: oErr } = await retryOnce(() => sb.from('health_log').select('severity, created_at').eq('k', 'loyalty_orders').gte('created_at', dalle(ctx, FINESTRA_MS)).order('created_at', { ascending: false }).limit(1));
       if (oErr) throw new LetturaFallita('health_log loyalty_orders', oErr);
-      const { data: pend, error: pErr } = await retryOnce(() => sb.from('loyalty_redemptions').select('id, status, created_at').eq('status', 'pending').gte('created_at', dalle(ctx, 7 * 86400000)).lt('created_at', dalle(ctx, minuti * 60000)).order('created_at', { ascending: true }).limit(LIMITE));
-      if (pErr) throw new LetturaFallita('riscatti in attesa', pErr);
-      const { data: pool, error: qErr } = await retryOnce(() => sb.from('v_loyalty_pool').select('reward, label, active, codici_liberi').eq('active', true).limit(LIMITE));
-      if (qErr) throw new LetturaFallita('v_loyalty_pool', qErr);
+      const { data: pend, error: pErr } = await retryOnce(() => sb.from('loyalty_redemptions').select('id, status, created_at').eq('status', 'pending').gte('created_at', dalle(ctx, 7 * 86400000)).lt('created_at', dalle(ctx, minuti * 60000)).order('created_at', { ascending: true }).limit(LIMITE + 1));
+      if (pErr || (pend ?? []).length > LIMITE) throw new LetturaFallita('riscatti in attesa', pErr ?? `oltre ${LIMITE} righe`);
+      const { data: pool, error: qErr } = await retryOnce(() => sb.from('v_loyalty_pool').select('reward, label, active, codici_liberi').eq('active', true).limit(LIMITE + 1));
+      if (qErr || (pool ?? []).length > LIMITE) throw new LetturaFallita('v_loyalty_pool', qErr ?? `oltre ${LIMITE} righe`);
       return candPremiaSalute({ orders: ((ord ?? []) as Riga[])[0] ?? null, pending: (pend ?? []) as Riga[], pool: (pool ?? []) as Riga[], poolMin, ora: ctx.ora, minuti });
     },
     componi: async (_sb, _ctx, _ev, cands) => msgPremiaSalute(cands),

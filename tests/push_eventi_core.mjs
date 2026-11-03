@@ -909,7 +909,11 @@ try {
     pool: [{ reward: 'amica12', label: 'Amica', active: true, codici_liberi: 19 }, { reward: 'b', label: 'B', active: true, codici_liberi: 20 }, { reward: 'c', label: 'C', active: false, codici_liberi: 0 }, { reward: 'Bad Key', active: true, codici_liberi: 0 }] });
   t('PR4 candPremiaSalute: orders in errore una chiave al giorno di Roma; riscatto pending da 30 minuti si\', da 10 no, evaso no; pool sotto soglia (19 < 20) si\', alla soglia, spento o con chiave strana no',
     isDeepStrictEqual(sal.map((c) => c.chiave).sort(), ['orders:errore:2026-11-03', 'pool:amica12:2026-11-03', 'riscatto:5'])
-    && sal.find((c) => c.chiave === 'riscatto:5').ts === T('2026-11-03T16:45:00Z'), sal.map((c) => c.chiave));
+    && sal.find((c) => c.chiave === 'riscatto:5').ts === ORA_P, sal.map((c) => c.chiave));
+  // Gate 2 del 03-11 (C1): un riscatto fermo da 8 ore all'accensione parte (istante = adesso), una volta sola per riscatto
+  const vecchio = candPremiaSalute({ ...base, pending: [{ id: 9, status: 'pending', created_at: '2026-11-03T09:00:00Z' }] });
+  t('PR4b riscatto fermo da 8 ore: candidato fresco (non vecchio) con la sua chiave riscatto:<id>', vecchio.length === 1 && vecchio[0].chiave === 'riscatto:9'
+    && pianifica(vecchio, new Map(), { ora: ORA_P, baseline: false, etaMaxMs: 6 * 3600000 })[0].azione === 'nuovo', vecchio);
   const ms = msgPremiaSalute(sal);
   t('PR5 msgPremiaSalute: tema sistema, link #premia; errore e riscatto fermo urgenti, pool no', ms.every((m) => m.tema === 'sistema' && m.url === LINK_PREMIA && LINK_PREMIA === APP_URL + '#premia')
     && ms.filter((m) => m.urgente).length === 2 && ms.find((m) => m.chiave.startsWith('pool:')).testo === 'Amica: 19 codici liberi, sotto la soglia di 20.'
@@ -1001,13 +1005,13 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
     'loyalty_visits select shopify_customer_id gte:first_at|2026-10-18T22:00:00.000Z limit:1001': { data: [{ shopify_customer_id: 'c1' }, { shopify_customer_id: 'c2' }, { shopify_customer_id: 'c3' }, { shopify_customer_id: 'c2' }] },
     'loyalty_visits select shopify_customer_id in:shopify_customer_id|["c1","c2","c3"] lt:first_at|2026-10-18T22:00:00.000Z limit:10000': { data: [{ shopify_customer_id: 'c1' }, { shopify_customer_id: 'c1' }] },
     // premia_da_approvare (03-11): solo id, tipo, codice, stato e istante; il conteggio e' quello del riepilogo
-    [`loyalty_ugc select id, kind, codice, status, created_at eq:status|in_revisione gte:created_at|${G} created_at:desc limit:50`]:
+    [`loyalty_ugc select id, kind, codice, status, created_at eq:status|in_revisione gte:created_at|${G} created_at:desc limit:51`]:
       { data: [{ id: 31, kind: 'look', codice: 'LEA_BAG_LEOPARDO_SAVANA', status: 'in_revisione', created_at: '2026-10-19T16:40:00Z' }, { id: 32, kind: 'recensione', codice: null, status: 'in_revisione', created_at: '2026-10-19T16:50:00Z' }] },
     // premia_salute (03-11): riga loyalty_orders delle 24 ore, riscatti pending fra 7 giorni e 15 minuti fa, premi attivi
     [`health_log select severity, created_at eq:k|loyalty_orders gte:created_at|${G} created_at:desc limit:1`]: { data: [{ severity: 'error', created_at: '2026-10-19T16:55:00Z' }] },
-    'loyalty_redemptions select id, status, created_at eq:status|pending gte:created_at|2026-10-12T17:00:00.000Z lt:created_at|2026-10-19T16:45:00.000Z created_at:asc limit:50':
+    'loyalty_redemptions select id, status, created_at eq:status|pending gte:created_at|2026-10-12T17:00:00.000Z lt:created_at|2026-10-19T16:45:00.000Z created_at:asc limit:51':
       { data: [{ id: 7, status: 'pending', created_at: '2026-10-19T16:20:00Z' }] },
-    'v_loyalty_pool select reward, label, active, codici_liberi eq:active|true limit:50':
+    'v_loyalty_pool select reward, label, active, codici_liberi eq:active|true limit:51':
       { data: [{ reward: 'amica12', label: 'Amica Amimi: 12% sul tuo prossimo ordine', active: true, codici_liberi: 12 }, { reward: 'tessera', label: 'Tessera piena', active: true, codici_liberi: 500 }] },
   };
   const vista = new Set();
@@ -1040,9 +1044,16 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
     isDeepStrictEqual(msgs.premia_da_approvare, [['Nuova recensione da approvare', 'In Recensioni: 11 contenuti da approvare.', ''],
       ['Nuovo look da approvare', 'Borsa LEA_BAG_LEOPARDO_SAVANA. In Recensioni: 11 contenuti da approvare.', '']]), msgs.premia_da_approvare);
   t('Q6c premia_salute (03-11): loyalty_orders in errore e riscatto fermo, pool sotto la soglia di 20 (il premio sopra soglia no)',
-    isDeepStrictEqual(msgs.premia_salute, [['Premia: codici quasi finiti', 'Amica Amimi: 12% sul tuo prossimo ordine: 12 codici liberi, sotto la soglia di 20.', ''],
-      ['Premia: accredito acquisti in errore', 'Il giro loyalty-orders e\' in errore: i punti degli acquisti potrebbero non arrivare.', ''],
-      ['Premia: riscatto fermo', 'Una cliente aspetta il codice da 40 minuti: il riscatto e\' ancora in attesa.', '']]), msgs.premia_salute);
+    isDeepStrictEqual(msgs.premia_salute, [['Premia: riscatto fermo', 'Una cliente aspetta il codice da 40 minuti: il riscatto e\' ancora in attesa.', ''],
+      ['Premia: codici quasi finiti', 'Amica Amimi: 12% sul tuo prossimo ordine: 12 codici liberi, sotto la soglia di 20.', ''],
+      ['Premia: accredito acquisti in errore', 'Il giro loyalty-orders e\' in errore: i punti degli acquisti potrebbero non arrivare.', '']]), msgs.premia_salute);
+  // Gate 2 del 03-11 (C2): le letture di Premia piene oltre il limite sono troncate e fermano l'evento (Regola 20b)
+  const piene = mondo({ risposte: (q) => (q.op === 'select' && ['loyalty_ugc', 'loyalty_redemptions'].includes(q.table) && !q.head ? { data: Array.from({ length: 51 }, (_, i) => ({ id: i + 1, status: 'pending' })), error: null }
+    : q.op === 'select' ? { data: [], count: 0, error: null } : undefined) });
+  const errDi = async (nome) => { try { await MI.EVENTI[nome].candidati(piene.sb, ctx, evRiga(nome)); return null; } catch (e) { return e; } };
+  const [eu, er] = [await errDi('premia_da_approvare'), await errDi('premia_salute')];
+  t('Q6d C2: 51 contenuti da approvare o 51 riscatti fermi = lettura troncata, l\'evento si ferma', eu instanceof MI.LetturaFallita && eu.cosa === 'loyalty_ugc'
+    && er instanceof MI.LetturaFallita && er.cosa === 'riscatti in attesa', [eu?.message, er?.message]);
   t('Q7 B4: il riepilogo non legge piu\' lead_drafts (le bozze in proposta non scadono mai: 4 nel riepilogo, 0 nell\'app)', !/\.from\('lead_drafts'\)/.test(SRC.replace(/^\s*\/\/[^\n]*$/gm, '')));
   const tante = mondo({ risposte: (q, f) => (f.startsWith('change_log select row_id') ? { data: Array.from({ length: 501 }, (_, i) => ({ row_id: String(i), delta: '1' })), error: null }
     : f in LETTURE ? { data: null, count: null, error: null, ...LETTURE[f] } : undefined) });
@@ -1733,9 +1744,9 @@ const temiCoerenti = (m) => {
       && !/\b(insert into|update|delete from) app_flags\b/i.test(m) && !/create table|cron\.schedule|alter table/i.test(m) && returnNeiDo(m).length === 0
       && m.startsWith('-- 0183_push_premia.sql') && /\nbegin;\n/.test(m) && m.trimEnd().endsWith('commit;');
   };
-  t('M4 0183: tema premia "Area Membri da approvare" ordine 90 per la sola Ginni; i due eventi spenti sui temi giusti; nessun flag, tabella o cron; nessun return nei DO',
+  t('M5 0183: tema premia "Area Membri da approvare" ordine 90 per la sola Ginni; i due eventi spenti sui temi giusti; nessun flag, tabella o cron; nessun return nei DO',
     contrattoPremia(MIGR_0183));
-  t('A-M4 la stessa 0183 col tema per Ale, o con un evento acceso -> visto', [pianta(MIGR_0183, "90, array['Ginevra'])", "90, array['Ale'])"),
+  t('A-M5 la stessa 0183 col tema per Ale, o con un evento acceso -> visto', [pianta(MIGR_0183, "90, array['Ginevra'])", "90, array['Ale'])"),
     pianta(MIGR_0183, "('premia_salute', 'sistema', false,", "('premia_salute', 'sistema', true,")].every((m) => !contrattoPremia(m)));
   // 21-10: la 0168 (tema attivita, evento attivita_team, il tema sul telefono di Ale), contratto con la edge e push-api
   const temaAtt = (m) => (m.match(/insert into push_temi \(key, etichetta, descrizione, ordine, predefinito_per\) values\n {4}\('attivita', '((?:[^']|'')*)', '((?:[^']|'')*)', (\d+), array\[([^\]]*)\]\)\n {2}on conflict \(key\) do nothing;/) ?? []).slice(1);

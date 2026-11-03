@@ -1,3 +1,4 @@
+// push-api v4 (2026-11-03, Gate 2 di push-eventi v5): anche il tema premia senza Topic (TEMI_SENZA_TOPIC). Il resto come la v3.
 // push-api v3 (2026-10-21, OK di Dan in chat): niente header Topic verso Apple (topicPer: APNs rispondeva 400
 // BadWebPushTopic a ogni invio visto e l'iPhone di Benny non riceveva niente dal 20-10) e un 400 BadWebPushTopic e' un
 // errore nostro ('config': la riga resta e fail_count non cresce), non un transitorio. Nessun Topic nemmeno per il tema
@@ -365,7 +366,9 @@ function riassuntoErrore(nome: unknown, status: unknown, corpo: unknown): string
 // telefono di Ale in riposo (FCM trattiene le push a urgenza normale) un ordine e il suo arrivo di pochi secondi dopo
 // diventavano la sola push dell'arrivo, e il registro diceva `inviato` per tutte e due. Senza Topic arrivano tutte (circa
 // una al giorno nei 30 giorni misurati, nessuna valanga al risveglio).
-const TEMI_SENZA_TOPIC = ['attivita'];
+// 03-11 (Gate 2 di push-eventi v5): anche `premia`, una push per ogni look o recensione da approvare (decisione di Dan):
+// col Topic, a telefono di Ginni spento, la seconda sostituiva la prima e il registro diceva `inviato` per tutte e due.
+const TEMI_SENZA_TOPIC = ['attivita', 'premia'];
 function topicDi(tema: unknown): string | undefined {
   const t = String(tema ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32);
   return t && !TEMI_SENZA_TOPIC.includes(t) ? t : undefined;
