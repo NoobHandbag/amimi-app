@@ -49,7 +49,9 @@ const ESPORTA = ['APP_URL', 'LINK_ASSISTENZA', 'LINK_SALUTE', 'CHI_PERSONE', 'TE
   'ordiniInRitardo', 'STALLO_MS', 'PRENOTATO_SCADUTO_MS', 'MAX_TENTATIVI', 'TETTO_INVII', 'serveBaseline', 'pianifica', 'statoDaEsito', 'esitoDaSalvare', 'eseguiPiano',
   'contaArrivi', 'RITARDO_LETTURA_MAX_MS', 'FINESTRA_RISCRITTO_MS', 'EVENTI_DI_STATO', 'baselineDi', 'chiusura', 'saluteGiro', 'conPrecedente', 'causaSicura', 'SEP_PRIMO',
   // 21-10 (v3): stati del corriere che sono un problema vero, evento attivita_team e giro a gruppi
-  'statoProblema', 'contaProblemi', 'PROBLEMI_CORRIERE', 'candAttivita', 'msgGruppoAttivita', 'msgAttivita', 'PERSONA_TEAM', 'OP_ATTIVITA', 'eseguiGruppi'];
+  'statoProblema', 'contaProblemi', 'PROBLEMI_CORRIERE', 'candAttivita', 'msgGruppoAttivita', 'msgAttivita', 'PERSONA_TEAM', 'OP_ATTIVITA', 'eseguiGruppi',
+  // 03-11 (v5): notifiche dell'Area Membri
+  'LINK_RECENSIONI', 'LINK_PREMIA', 'candPremia', 'msgPremia', 'candPremiaSalute', 'msgPremiaSalute', 'contaIscritte'];
 // Gate 3 (18-10): il resto della edge (letture degli eventi, giro, run, salute, anteprima) ritagliato DAL SORGENTE e
 // guidato con un client finto che registra ogni chiamata. Tolti solo gli import e Deno.serve; inviaPush e sleep arrivano
 // dal test (sleep registra la pausa e non aspetta: la rilettura di cs_sync e il ritentativo restano veri, solo istantanei).
@@ -79,7 +81,8 @@ const { APP_URL, LINK_ASSISTENZA, LINK_SALUTE, CHI_PERSONE, TEMA_EVENTO, temaDi,
   MOTIVI_FISSI, candCsRiscritto, msgCsRiscritto, candSpedizione, msgSpedizione, candCsSync, msgCsSync, durata, candRiepilogo, righeRiepilogo, msgRiepilogo, sommaOrdini,
   sommaCassa, ordiniInRitardo, STALLO_MS, PRENOTATO_SCADUTO_MS, MAX_TENTATIVI, TETTO_INVII, serveBaseline, pianifica, statoDaEsito, esitoDaSalvare, eseguiPiano,
   contaArrivi, RITARDO_LETTURA_MAX_MS, FINESTRA_RISCRITTO_MS, EVENTI_DI_STATO, baselineDi, chiusura, saluteGiro, conPrecedente, causaSicura, SEP_PRIMO,
-  statoProblema, contaProblemi, PROBLEMI_CORRIERE, candAttivita, msgGruppoAttivita, msgAttivita, PERSONA_TEAM, OP_ATTIVITA, eseguiGruppi } = M;
+  statoProblema, contaProblemi, PROBLEMI_CORRIERE, candAttivita, msgGruppoAttivita, msgAttivita, PERSONA_TEAM, OP_ATTIVITA, eseguiGruppi,
+  LINK_RECENSIONI, LINK_PREMIA, candPremia, msgPremia, candPremiaSalute, msgPremiaSalute, contaIscritte } = M;
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra !== '' ? '  <- ' + JSON.stringify(extra).slice(0, 260) : '')); } };
@@ -107,8 +110,9 @@ console.log('== base ==');
     && APP_URL === (SHARED.match(/export const APP_URL = '([^']+)'/) ?? [])[1] && LINK_ASSISTENZA === APP_URL + '#assistenza' && LINK_SALUTE === APP_URL + '#salute');
   const chiApi = (PUSH_API.match(/const CHI_AMMESSI = (\[[^\]]+\])/) ?? [])[1];
   t('2  CHI_PERSONE = CHI_AMMESSI di push-api (Ale, Bene, Ginevra)', JSON.stringify(CHI_PERSONE) === '["Ale","Bene","Ginevra"]' && chiApi === "['Ale', 'Bene', 'Ginevra']", chiApi);
-  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo e, dalla 0168 del 21-10, attivita', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
-    cs_cliente_ha_riscritto: 'assistenza', spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita' }));
+  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo, dalla 0168 del 21-10 attivita, dalla 0183 del 03-11 premia e sistema', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
+    cs_cliente_ha_riscritto: 'assistenza', spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
+    premia_da_approvare: 'premia', premia_salute: 'sistema' }));
   t('4  temaDi: la riga a DB vince se e\' una chiave valida, altrimenti il tema del codice; evento sconosciuto -> vuoto', temaDi('negozi_vip', 'b2b_risposta_negozio') === 'negozi_vip'
     && temaDi(null, 'cs_urgente') === 'assistenza' && temaDi('Assistenza!', 'cs_urgente') === 'assistenza' && temaDi(42, 'riepilogo') === 'riepilogo' && temaDi(null, 'boh') === '');
   t('5  linkNegozio: uuid -> #negozi/outreach/<id> minuscolo; altro (anche iniezioni) -> la pipeline', linkNegozio(U1.toUpperCase()) === APP_URL + '#negozi/outreach/' + U1
@@ -476,26 +480,28 @@ console.log('\n== riepilogo ==');
   t('38 riepilogo: finestra chiusa -> niente; aperta -> una chiave per persona riepilogo:<chi>:<data>', candRiepilogo({ ...aperta, aperta: false }).length === 0
     && cr.map((x) => x.chiave).join() === 'riepilogo:Ale:2026-10-19,riepilogo:Bene:2026-10-19,riepilogo:Ginevra:2026-10-19' && cr.every((x) => x.ts === aperta.ts));
   const C = { ordini: 8, incasso: 1012.5, scontrini: 2, incassoCassa: 240, arrivi: 3, ordiniFornitore: 1, premia: 1, csFerme: 21, b2bScadute: 2, daCompletare: 7, daPulire: 44,
-    daCollegare: 4, followUpPronti: 4, daSpedire: ['1890', '#1893', 'Maria Rossi', '1901', '1902', '1903'], affido: 10, csNuove: 1 };
+    daCollegare: 4, followUpPronti: 4, daSpedire: ['1890', '#1893', 'Maria Rossi', '1901', '1902', '1903'], affido: 10, csNuove: 1, iscritte: 3 };
   const ale = righeRiepilogo('Ale', C, 4, 48), bene = righeRiepilogo('Bene', C, 4, 48), gin = righeRiepilogo('Ginevra', C, 4, 48);
   t('39 Ale: vendite (ordini, incasso, cassa), fornitori, Premia, team', isDeepStrictEqual(ale, ['Vendite: 8 ordini sul sito (1.013 EUR), 2 scontrini in cassa (240 EUR)',
-    'Fornitori: 3 arrivi registrati, 1 ordine registrato', 'Premia: 1 contenuto da approvare', 'Team: 21 richieste ferme da oltre 24 ore, 2 azioni B2B scadute']), ale);
+    'Fornitori: 3 arrivi registrati, 1 ordine registrato', 'Premia: 3 nuove iscritte, 1 contenuto da approvare', 'Team: 21 richieste ferme da oltre 24 ore, 2 azioni B2B scadute']), ale);
   t('40 Benny: prodotti da completare e da pulire, B2B con le sezioni della Coda (da collegare, azioni scadute, follow-up pronti da rivedere: B4 e C4 del 18-10)',
     isDeepStrictEqual(bene, ['Prodotti: 7 da completare, 44 da pulire', 'B2B: 4 messaggi da collegare, 2 azioni scadute, 4 follow-up pronti da rivedere'])
     && isDeepStrictEqual(righeRiepilogo('Bene', { ...C, daCompletare: 0, daPulire: 0, daCollegare: 0, b2bScadute: 1, followUpPronti: 1 }, 4, 48), ['B2B: 1 azione scaduta, 1 follow-up pronto da rivedere']), bene);
-  t('41 Ginni: da spedire coi numeri d\'ordine (al massimo 3, poi "e altri N"; un nome non passa), affido, Assistenza', isDeepStrictEqual(gin, [
+  t('41 Ginni: da spedire coi numeri d\'ordine (al massimo 3, poi "e altri N"; un nome non passa), affido, Assistenza e, dal 03-11, i contenuti di Premia da approvare (mai le iscritte)', isDeepStrictEqual(gin, [
     'Da spedire da oltre 4 giorni lavorativi: 5 ordini (#1890, #1893, #1901 e altri 2)', 'In attesa di affido da oltre 48 ore: 10 spedizioni',
-    'Assistenza: 1 richiesta nuova oggi, 21 ferme da oltre 24 ore']), gin);
-  const ZERO = { ordini: 0, incasso: 0, scontrini: 0, incassoCassa: 0, arrivi: 0, ordiniFornitore: 0, premia: 0, csFerme: 0, b2bScadute: 0, daCompletare: 0, daPulire: 0, daCollegare: 0, followUpPronti: 0, daSpedire: [], affido: 0, csNuove: 0 };
+    'Assistenza: 1 richiesta nuova oggi, 21 ferme da oltre 24 ore', 'Premia: 1 contenuto da approvare']), gin);
+  const ZERO = { ordini: 0, incasso: 0, scontrini: 0, incassoCassa: 0, arrivi: 0, ordiniFornitore: 0, premia: 0, csFerme: 0, b2bScadute: 0, daCompletare: 0, daPulire: 0, daCollegare: 0, followUpPronti: 0, daSpedire: [], affido: 0, csNuove: 0, iscritte: 0 };
   t('42 tutto a zero -> nessuna riga per nessuno; una sola voce diversa da zero -> una riga sola', CHI_PERSONE.every((p) => righeRiepilogo(p, ZERO, 4, 48).length === 0)
     && isDeepStrictEqual(righeRiepilogo('Ale', { ...ZERO, premia: 2 }, 4, 48), ['Premia: 2 contenuti da approvare'])
+    && isDeepStrictEqual(righeRiepilogo('Ale', { ...ZERO, iscritte: 1 }, 4, 48), ['Premia: 1 nuova iscritta']) && righeRiepilogo('Bene', { ...ZERO, iscritte: 5, premia: 2 }, 4, 48).length === 0
+    && isDeepStrictEqual(righeRiepilogo('Ginevra', { ...ZERO, iscritte: 5, premia: 2 }, 4, 48), ['Premia: 2 contenuti da approvare'])
     && isDeepStrictEqual(righeRiepilogo('Ginevra', { ...ZERO, daSpedire: ['1890'] }, 5, 48), ['Da spedire da oltre 5 giorni lavorativi: 1 ordine (#1890)']));
   t('43 al massimo 4 righe per tutti, valori strani (negativi, NaN, stringhe) contano zero', CHI_PERSONE.every((p) => righeRiepilogo(p, C, 4, 48).length <= 4)
     && righeRiepilogo('Ale', { ...ZERO, ordini: -3, premia: NaN, arrivi: '5' }, 4, 48).length === 0 && righeRiepilogo('Dan', C, 4, 48).length === 0);
   const mr = msgRiepilogo(cr, { ...ZERO, premia: 1, csNuove: 2 }, 4, 48);
   t('44 msgRiepilogo: uno a testa col proprio chi, tema riepilogo, radice dell\'app; chi senza righe -> nessun messaggio', mr.length === 2 && mr[0].chi === 'Ale' && mr[1].chi === 'Ginevra'
     && mr.every((x) => x.tema === 'riepilogo' && x.url === APP_URL && x.titolo === 'Riepilogo di oggi') && mr[0].testo === 'Premia: 1 contenuto da approvare'
-    && mr[1].testo === 'Assistenza: 2 richieste nuove oggi', mr);
+    && mr[1].testo === 'Assistenza: 2 richieste nuove oggi\nPremia: 1 contenuto da approvare', mr);
   t('45 chi fuori dalle tre chiavi (Benny, Ginni, minuscolo) -> nessun messaggio, mai un riepilogo a tutti', msgRiepilogo([{ chiave: 'r', ts: 0, rif: { chi: 'Benny' } },
     { chiave: 'r2', ts: 0, rif: { chi: 'ginevra' } }, { chiave: 'r3', ts: 0, rif: {} }], C, 4, 48).length === 0);
   t('46 testo su piu\' righe (a capo fra le voci), niente em dash', msgRiepilogo(cr, C, 4, 48)[0].testo.split('\n').length === 4 && testoValido(msgRiepilogo(cr, C, 4, 48)));
@@ -559,7 +565,7 @@ const reg = (k, stato, tentativi = 1, minFa = 0) => ({ id: 'id-' + k, chiave: k,
     && bd({ evento: 'cs_urgente', baseline_at: iso2(600), ultimo_giro_at: iso2(180) }) === '{"seme":true,"baseline":true,"ripartenza":true}'
     && bd({ evento: 'cs_urgente', baseline_at: iso2(600), ultimo_giro_at: iso2(5) }) === '{"seme":false,"baseline":false,"ripartenza":false}');
   t('57c RF-4: l\'evento di STATO (cs-sync fermo) semina baseline_at ma non salta il pregresso, ne\' alla prima accensione ne\' alla ripartenza',
-    isDeepStrictEqual(EVENTI_DI_STATO, ['sistema_cs_sync_fermo']) && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: null, ultimo_giro_at: null }) === '{"seme":true,"baseline":false,"ripartenza":false}'
+    isDeepStrictEqual(EVENTI_DI_STATO, ['sistema_cs_sync_fermo', 'premia_salute']) && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: null, ultimo_giro_at: null }) === '{"seme":true,"baseline":false,"ripartenza":false}'
     && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: iso2(600), ultimo_giro_at: iso2(180) }) === '{"seme":true,"baseline":false,"ripartenza":false}');
   const stallo = pianifica([c('a', ORA - H)], new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'stallo' });
   const altro = pianifica([c('a', ORA - H)], new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'boh' });
@@ -877,6 +883,44 @@ globalThis.__sonni = [];
 const evRiga = (evento, o = {}) => ({ evento, tema: null, attivo: true, soglie: {}, baseline_at: null, ultimo_giro_at: null, ...o });
 const ctxDi = (ora, flags = {}) => ({ ora, flags, finestra: finestraRiepilogo(ora) });
 
+console.log('\n== Premia (03-11, v5) ==');
+try {
+  const ORA_P = T('2026-11-03T17:00:00Z');
+  const righe = [
+    { id: 41, kind: 'look', codice: 'LEA_BAG_LEOPARDO_SAVANA', status: 'in_revisione', created_at: '2026-11-03T16:00:00Z', testo: 'Bellissima, Maria Rossi', firma: 'Maria' },
+    { id: '42', kind: 'recensione', codice: 'X Y', status: 'in_revisione', created_at: '2026-11-03T16:30:00Z' },
+    { id: 43, kind: 'look', codice: 'A', status: 'approvata', created_at: '2026-11-03T16:10:00Z' },
+    { id: 44, kind: 'foto', codice: 'A', status: 'in_revisione', created_at: '2026-11-03T16:10:00Z' },
+    { id: 'x', kind: 'look', codice: 'A', status: 'in_revisione', created_at: '2026-11-03T16:10:00Z' }, { id: 0, kind: 'look', status: 'in_revisione' }, null,
+  ];
+  const cp = candPremia(righe);
+  t('PR1 candPremia: una chiave ugc:<id> per contenuto in_revisione, dal piu\' recente; deciso, tipo sconosciuto o id non intero positivo -> fuori; codice non valido -> vuoto',
+    isDeepStrictEqual(cp.map((c) => [c.chiave, c.rif.kind, c.rif.codice]), [['ugc:42', 'recensione', ''], ['ugc:41', 'look', 'LEA_BAG_LEOPARDO_SAVANA']]) && cp[1].ts === T('2026-11-03T16:00:00Z'), cp);
+  const mp = msgPremia(cp, 1);
+  t('PR2 msgPremia: tema premia, link #recensioni, testo senza testi o firme della cliente; un solo contenuto -> invito ad aprire Recensioni',
+    mp.every((m) => m.tema === 'premia' && m.url === LINK_RECENSIONI && LINK_RECENSIONI === APP_URL + '#recensioni' && !m.chi && !m.urgente)
+    && mp[1].testo === 'Borsa LEA_BAG_LEOPARDO_SAVANA. Apri Recensioni per approvarlo.' && mp[0].testo === 'Apri Recensioni per approvarlo.'
+    && !JSON.stringify(mp).includes('Maria') && testoValido(mp), mp);
+  const base = { orders: null, pending: [], pool: [], poolMin: 20, ora: ORA_P, minuti: 15 };
+  t('PR3 candPremiaSalute: tutto a posto -> niente; loyalty_orders ok o warn -> niente', candPremiaSalute(base).length === 0
+    && candPremiaSalute({ ...base, orders: { severity: 'warn', created_at: '2026-11-03T16:55:00Z' } }).length === 0);
+  const sal = candPremiaSalute({ ...base, orders: { severity: 'error', created_at: '2026-11-03T16:55:00Z' },
+    pending: [{ id: 5, status: 'pending', created_at: '2026-11-03T16:30:00Z' }, { id: 6, status: 'pending', created_at: '2026-11-03T16:50:00Z' }, { id: 7, status: 'fulfilled', created_at: '2026-11-03T10:00:00Z' }],
+    pool: [{ reward: 'amica12', label: 'Amica', active: true, codici_liberi: 19 }, { reward: 'b', label: 'B', active: true, codici_liberi: 20 }, { reward: 'c', label: 'C', active: false, codici_liberi: 0 }, { reward: 'Bad Key', active: true, codici_liberi: 0 }] });
+  t('PR4 candPremiaSalute: orders in errore una chiave al giorno di Roma; riscatto pending da 30 minuti si\', da 10 no, evaso no; pool sotto soglia (19 < 20) si\', alla soglia, spento o con chiave strana no',
+    isDeepStrictEqual(sal.map((c) => c.chiave).sort(), ['orders:errore:2026-11-03', 'pool:amica12:2026-11-03', 'riscatto:5'])
+    && sal.find((c) => c.chiave === 'riscatto:5').ts === T('2026-11-03T16:45:00Z'), sal.map((c) => c.chiave));
+  const ms = msgPremiaSalute(sal);
+  t('PR5 msgPremiaSalute: tema sistema, link #premia; errore e riscatto fermo urgenti, pool no', ms.every((m) => m.tema === 'sistema' && m.url === LINK_PREMIA && LINK_PREMIA === APP_URL + '#premia')
+    && ms.filter((m) => m.urgente).length === 2 && ms.find((m) => m.chiave.startsWith('pool:')).testo === 'Amica: 19 codici liberi, sotto la soglia di 20.'
+    && ms.find((m) => m.chiave.startsWith('riscatto:')).testo === 'Una cliente aspetta il codice da 30 minuti: il riscatto e\' ancora in attesa.' && testoValido(ms), ms);
+  t('PR6 contaIscritte: clienti con la prima visita oggi (distinte), escluse quelle con una visita prima; id vuoti ignorati',
+    contaIscritte([{ shopify_customer_id: 'a' }, { shopify_customer_id: 'b' }, { shopify_customer_id: 'b' }, { shopify_customer_id: 'c' }, { shopify_customer_id: '' }, null], [{ shopify_customer_id: 'a' }]) === 2
+    && contaIscritte([], []) === 0 && contaIscritte(null, null) === 0);
+  t('PR7 premia_salute e\' un evento di stato (un guasto in corso all\'accensione si vede), premia_da_approvare no', baselineDi({ evento: 'premia_salute', baseline_at: null, ultimo_giro_at: null }, ORA_P).baseline === false
+    && baselineDi({ evento: 'premia_da_approvare', baseline_at: null, ultimo_giro_at: null }, ORA_P).baseline === true);
+} catch (e) { t('PR! eccezione nella sezione', false, String(e?.message ?? e)); }
+
 console.log('\n== RF-1: la riga cs_sync letta nel buco del delete+insert di cs-sync ==');
 {
   const ORA_R = T('2026-10-18T03:06:00.900Z'), ctx = ctxDi(ORA_R);
@@ -953,11 +997,23 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
     'v_lead_outreach select id head not:bozza_auto_tocco|is|null eq:da_gestire|false': { count: 31 },
     'shipping_status select ldv head eq:stato_tws|IN ATTESA DI AFFIDO lt:updated_at|2026-10-17T17:00:00.000Z gte:shipped_date|2026-09-19': { count: 37 },
     'cs_conversations select id head gte:created_at|2026-10-18T22:00:00.000Z neq:canale|rumore': { count: 41 },
+    // 03-11: nuove iscritte = prima visita dell'Area Membri oggi; c1 aveva gia' una visita (due righe), c2 e c3 no
+    'loyalty_visits select shopify_customer_id gte:first_at|2026-10-18T22:00:00.000Z limit:1001': { data: [{ shopify_customer_id: 'c1' }, { shopify_customer_id: 'c2' }, { shopify_customer_id: 'c3' }, { shopify_customer_id: 'c2' }] },
+    'loyalty_visits select shopify_customer_id in:shopify_customer_id|["c1","c2","c3"] lt:first_at|2026-10-18T22:00:00.000Z limit:10000': { data: [{ shopify_customer_id: 'c1' }, { shopify_customer_id: 'c1' }] },
+    // premia_da_approvare (03-11): solo id, tipo, codice, stato e istante; il conteggio e' quello del riepilogo
+    [`loyalty_ugc select id, kind, codice, status, created_at eq:status|in_revisione gte:created_at|${G} created_at:desc limit:50`]:
+      { data: [{ id: 31, kind: 'look', codice: 'LEA_BAG_LEOPARDO_SAVANA', status: 'in_revisione', created_at: '2026-10-19T16:40:00Z' }, { id: 32, kind: 'recensione', codice: null, status: 'in_revisione', created_at: '2026-10-19T16:50:00Z' }] },
+    // premia_salute (03-11): riga loyalty_orders delle 24 ore, riscatti pending fra 7 giorni e 15 minuti fa, premi attivi
+    [`health_log select severity, created_at eq:k|loyalty_orders gte:created_at|${G} created_at:desc limit:1`]: { data: [{ severity: 'error', created_at: '2026-10-19T16:55:00Z' }] },
+    'loyalty_redemptions select id, status, created_at eq:status|pending gte:created_at|2026-10-12T17:00:00.000Z lt:created_at|2026-10-19T16:45:00.000Z created_at:asc limit:50':
+      { data: [{ id: 7, status: 'pending', created_at: '2026-10-19T16:20:00Z' }] },
+    'v_loyalty_pool select reward, label, active, codici_liberi eq:active|true limit:50':
+      { data: [{ reward: 'amica12', label: 'Amica Amimi: 12% sul tuo prossimo ordine', active: true, codici_liberi: 12 }, { reward: 'tessera', label: 'Tessera piena', active: true, codici_liberi: 500 }] },
   };
   const vista = new Set();
   const w = mondo({ risposte: (q, f) => { if (!(f in LETTURE)) return undefined; vista.add(f); return { data: null, count: null, error: null, ...LETTURE[f] }; } });
   const msgs = {};
-  for (const nome of ['cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'riepilogo']) {
+  for (const nome of ['cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'premia_salute', 'riepilogo']) {
     try {
       const ev = evRiga(nome);
       const cands = await MI.EVENTI[nome].candidati(w.sb, ctx, ev);
@@ -976,10 +1032,17 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
     [['lucia.verdi@example.com ha riscritto', 'Spedizione. 59 richieste aspettano una risposta.', '']]), msgs.cs_cliente_ha_riscritto);
   t('Q6 riepilogo: ogni numero sotto la sua voce (arrivi al netto B3, azioni scadute e follow-up pronti della Coda B4, affido dei soli 30 giorni B5, da spedire con fulfillment_status C5)',
     isDeepStrictEqual(msgs.riepilogo, [
-      ['Riepilogo di oggi', 'Vendite: 2 ordini sul sito (150 EUR), 2 scontrini in cassa (150 EUR)\nFornitori: 2 arrivi registrati, 7 ordini registrati\nPremia: 11 contenuti da approvare\nTeam: 13 richieste ferme da oltre 24 ore, 17 azioni B2B scadute', 'Ale'],
+      ['Riepilogo di oggi', 'Vendite: 2 ordini sul sito (150 EUR), 2 scontrini in cassa (150 EUR)\nFornitori: 2 arrivi registrati, 7 ordini registrati\nPremia: 2 nuove iscritte, 11 contenuti da approvare\nTeam: 13 richieste ferme da oltre 24 ore, 17 azioni B2B scadute', 'Ale'],
       ['Riepilogo di oggi', 'Prodotti: 19 da completare, 23 da pulire\nB2B: 29 messaggi da collegare, 17 azioni scadute, 31 follow-up pronti da rivedere', 'Bene'],
-      ['Riepilogo di oggi', 'Da spedire da oltre 4 giorni lavorativi: 1 ordine (#1890)\nIn attesa di affido da oltre 48 ore: 37 spedizioni\nAssistenza: 41 richieste nuove oggi, 13 ferme da oltre 24 ore', 'Ginevra'],
+      ['Riepilogo di oggi', 'Da spedire da oltre 4 giorni lavorativi: 1 ordine (#1890)\nIn attesa di affido da oltre 48 ore: 37 spedizioni\nAssistenza: 41 richieste nuove oggi, 13 ferme da oltre 24 ore\nPremia: 11 contenuti da approvare', 'Ginevra'],
     ]), msgs.riepilogo);
+  t('Q6b premia_da_approvare (03-11): una push per contenuto, dal piu\' recente; tipo nel titolo, codice della borsa e totale da approvare nel testo, mai testi della cliente',
+    isDeepStrictEqual(msgs.premia_da_approvare, [['Nuova recensione da approvare', 'In Recensioni: 11 contenuti da approvare.', ''],
+      ['Nuovo look da approvare', 'Borsa LEA_BAG_LEOPARDO_SAVANA. In Recensioni: 11 contenuti da approvare.', '']]), msgs.premia_da_approvare);
+  t('Q6c premia_salute (03-11): loyalty_orders in errore e riscatto fermo, pool sotto la soglia di 20 (il premio sopra soglia no)',
+    isDeepStrictEqual(msgs.premia_salute, [['Premia: codici quasi finiti', 'Amica Amimi: 12% sul tuo prossimo ordine: 12 codici liberi, sotto la soglia di 20.', ''],
+      ['Premia: accredito acquisti in errore', 'Il giro loyalty-orders e\' in errore: i punti degli acquisti potrebbero non arrivare.', ''],
+      ['Premia: riscatto fermo', 'Una cliente aspetta il codice da 40 minuti: il riscatto e\' ancora in attesa.', '']]), msgs.premia_salute);
   t('Q7 B4: il riepilogo non legge piu\' lead_drafts (le bozze in proposta non scadono mai: 4 nel riepilogo, 0 nell\'app)', !/\.from\('lead_drafts'\)/.test(SRC.replace(/^\s*\/\/[^\n]*$/gm, '')));
   const tante = mondo({ risposte: (q, f) => (f.startsWith('change_log select row_id') ? { data: Array.from({ length: 501 }, (_, i) => ({ row_id: String(i), delta: '1' })), error: null }
     : f in LETTURE ? { data: null, count: null, error: null, ...LETTURE[f] } : undefined) });
@@ -1073,7 +1136,7 @@ console.log('\n== giro di un evento col client finto (F3, RF-4, RF-6, RF-3) ==')
   // all'invio: a una ripartenza resta fresco finche' la finestra e' aperta, anche oltre le 2 ore. Lunedi' 19-10 alle 21:00
   // di Roma, ultimo giro alle 18:00: 2 ore e mezza dalle 18:30, quindi un fatto vero della stessa eta' sarebbe stallo (G2)
   const ORA_RP = T('2026-10-19T19:00:00Z'), minRp = (m) => new Date(ORA_RP - m * 60000).toISOString();
-  const LETTURE_RP = ['shopify_orders', 'qromo_sales', 'change_log', 'loyalty_ugc', 'cs_conversations', 'v_lead_outreach', 'v_products_todo', 'v_lead_inbound', 'shipping_status'];
+  const LETTURE_RP = ['shopify_orders', 'qromo_sales', 'change_log', 'loyalty_ugc', 'cs_conversations', 'v_lead_outreach', 'v_products_todo', 'v_lead_inbound', 'shipping_status', 'loyalty_visits'];
   const wRp = mondo({ risposte: (q) => (q.op === 'select' && LETTURE_RP.includes(q.table) ? (q.head ? { count: 1, error: null } : { data: [], error: null }) : undefined) });
   inviate.length = 0;
   const rRp = await MI.giroEvento(wRp.sb, evRiga('riepilogo', { baseline_at: minRp(3000), ultimo_giro_at: minRp(180) }), ctxDi(ORA_RP), { invii: 20, scade: Infinity }, () => 0);
@@ -1311,8 +1374,8 @@ console.log('\n== anteprima col client finto ==');
   const w = mondo({ eventi: [], risposte: (q) => (q.op === 'select' && q.head ? { count: 0, error: null } : q.op === 'select' && q.table !== 'push_eventi' && q.table !== 'push_eventi_inviati' ? { data: [], error: null } : undefined) });
   const res = await MI.anteprima(w.sb, ctxDi(ORA_A), true);
   const corpo = await res.json();
-  t('V1 anteprima: nessuna scrittura (registro, push_eventi, health_log) e nessun invio, tutti e sette gli eventi', w.scritte.length === 0 && inviate.length === 0
-    && corpo.eventi.length === 7 && corpo.eventi.every((e) => !e.errore), corpo.eventi.map((e) => e.errore ?? e.evento));
+  t('V1 anteprima: nessuna scrittura (registro, push_eventi, health_log) e nessun invio, tutti e nove gli eventi', w.scritte.length === 0 && inviate.length === 0
+    && corpo.eventi.length === 9 && corpo.eventi.every((e) => !e.errore), corpo.eventi.map((e) => e.errore ?? e.evento));
 }
 
 console.log('\n== guardie sul sorgente ==');
@@ -1351,7 +1414,7 @@ const noopAFlagSpento = (s) => {
   const n = f.indexOf(NOOP), r = f.indexOf(RUN_DOPO_NOOP);
   return n > f.indexOf("if (action === 'anteprima') return await anteprima(") && r > n && (codice(s).match(/eseguiRun\(sb, ctx/g) ?? []).length === 1
     && !/\.from\('push_eventi'\)/.test(f) && corpoRun(s).includes(SOLO_ATTIVI)
-    && f.includes("const { data: frows, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['push_eventi_enabled', 'push_enabled', 'lead_outreach_ai_enabled']).limit(10));")
+    && f.includes("const { data: frows, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['push_eventi_enabled', 'push_enabled', 'lead_outreach_ai_enabled', 'loyalty_pool_min']).limit(10));")
     && f.includes("if (fErr) return json({ ok: false, error: 'flag non leggibili, riprova' }, 503);");
 };
 const soloAttivi = (s) => {
@@ -1366,7 +1429,7 @@ const soloInviaPush = (s) => {
 };
 const lettureSenzaLimite = (s) => righeSb(s).filter((l) => l.includes('.select(') && !SCRITTURA.test(l) && !l.includes('.limit(') && !l.includes("{ count: 'exact', head: true }"));
 const lettureSenzaError = (s) => righeSb(s).filter((l) => !/const \{[^}]*\berror\b[^}]*\} = await (?:retryOnce\(\(\) => )?sb\.from\(/.test(l) && !/^\s*conta\(retryOnce\(\(\) => sb\.from\(/.test(l)
-  && !/const aperte = await conta\(retryOnce|const settimana = await conta\(retryOnce|const daGestire = await conta\(retryOnce|const inAttesa = await conta\(retryOnce|collegare \? conta\(retryOnce/.test(l));
+  && !/const aperte = await conta\(retryOnce|const settimana = await conta\(retryOnce|const daGestire = await conta\(retryOnce|const inAttesa = await conta\(retryOnce|const inRevisione = await conta\(retryOnce|collegare \? conta\(retryOnce/.test(l));
 const lettureNonRitentate = (s) => righeSb(s).filter((l) => l.includes('.select(') && !SCRITTURA.test(l) && !l.includes('retryOnce(() => sb.from('));
 const scrittureRitentate = (s) => righeSb(s).filter((l) => RETRY_SU_SCRITTURA.test(l));
 // K1 (18-10): fuori dal modulo push_* la edge scrive SOLO la sua riga di salute, con questa riga esatta
@@ -1385,6 +1448,10 @@ const AMMESSE = {
   v_spedizioni_eccezioni: ['ldv', 'order_name', 'stato_tws', 'updated_at', 'classe', 'customer_name'],
   lead_touches: ['id', 'account_id', 'direzione', 'esito', 'chi', 'at', 'created_at'], lead_accounts: ['id', 'nome'],
   v_lead_outreach: ['id'], v_lead_inbound: ['conv_id'], v_products_todo: ['codice'], loyalty_ugc: ['id'], shipping_status: ['ldv'],
+  // 03-11 (Premia): di loyalty_ugc mai titolo, testo, firma o foto; di loyalty_orders mai la label; dei riscatti mai codice
+  // o cliente; di loyalty_visits solo l'id Shopify della cliente (per contare le nuove iscritte, non entra nei testi)
+  'loyalty_ugc:premia': ['id', 'kind', 'codice', 'status', 'created_at'], 'health_log:loyalty_orders': ['severity', 'created_at'],
+  loyalty_redemptions: ['id', 'status', 'created_at'], v_loyalty_pool: ['reward', 'label', 'active', 'codici_liberi'], loyalty_visits: ['shopify_customer_id'],
   shopify_orders: ['gross_total', 'order_number', 'created_at_shop'], qromo_sales: ['order_id', 'prezzo'],
   // 21-10 (attivita_team): istante, azione, chi e i soli campi di after che finiscono nel testo; mai ctx, purchase_id, costo
   change_log: ['id', 'row_id', 'after->>delta', 'after->>qty', 'ts', 'op', 'chi', 'after->>codice', 'after->>contati', 'after->>giac_prima', 'after->>fornitore', 'after->>righe', 'after->>gruppo'],
@@ -1395,7 +1462,7 @@ const selectFuoriElenco = (s) => {
   let viste = 0;
   for (const l of righeSb(s)) {
     const tab = (l.match(/sb\.from\('([^']+)'\)/) ?? [])[1];
-    const k = tab === 'health_log' ? `health_log:${(l.match(/\.eq\('k', '([^']+)'\)/) ?? [])[1]}` : tab;
+    const k = tab === 'health_log' ? `health_log:${(l.match(/\.eq\('k', '([^']+)'\)/) ?? [])[1]}` : tab === 'loyalty_ugc' && !l.includes("head: true") ? 'loyalty_ugc:premia' : tab;
     for (const m of l.matchAll(/\.select\('([^']*)'/g)) {
       viste++;
       for (const col of m[1].split(',').map((x) => x.trim()).map((x) => (x.includes(':') ? x.slice(x.indexOf(':') + 1) : x))) if (!(AMMESSE[k] ?? []).includes(col)) out.push(`${k}: ${col}`);
@@ -1413,13 +1480,14 @@ const LETTURE_CLIENTE = [
 ];
 const USI_CLIENTE = [['nomeCliente(v.customer_name, v.customer_email)', 2], ['nomeCliente(r.customer_name, null)', 1]];
 const lettureCliente = (s) => {
-  const righe = righeSb(s).filter((l) => /customer_/.test(l));
+  // \b: shopify_customer_id (03-11, nuove iscritte) e' l'id opaco di Shopify, non il nome ne' l'email
+  const righe = righeSb(s).filter((l) => /\bcustomer_/.test(l));
   const out = righe.filter((l) => !LETTURE_CLIENTE.some((x) => l.includes(x))).map((l) => 'lettura fuori elenco: ' + l.trim().slice(0, 120));
   for (const x of LETTURE_CLIENTE) if (righe.filter((l) => l.includes(x)).length !== 1) out.push('lettura mancante o doppia: ' + x.slice(0, 60));
   let resto = flat(codice(s));
   for (const x of LETTURE_CLIENTE) resto = resto.split(x).join('');
   for (const [uso, n] of USI_CLIENTE) { const k = resto.split(uso).length - 1; if (k !== n) out.push(`${uso}: ${k} invece di ${n}`); resto = resto.split(uso).join(''); }
-  if (/customer_/.test(resto)) out.push('customer_ fuori da nomeCliente: ' + (resto.match(/[^\n]*customer_[^\n]*/) ?? [''])[0].trim().slice(0, 120));
+  if (/\bcustomer_/.test(resto)) out.push('customer_ fuori da nomeCliente: ' + (resto.match(/[^\n]*customer_[^\n]*/) ?? [''])[0].trim().slice(0, 120));
   return out;
 };
 const anteprimaSoloLettura = (s) => {
@@ -1513,7 +1581,7 @@ t('89c RF-1: cs_sync riletta dopo 3 s solo se la prima lettura dice ferma, e dec
   t('90 blocchi PURE senza Deno, import, client, rete, log o invio', impuri.length === 0, impuri);
   const ordine = (SRC.match(/const ORDINE = (\[[^\]]+\])/) ?? [])[1] ?? '';
   const eventi = [...(SRC.slice(SRC.indexOf('const EVENTI: Record<string, DefEvento> = {'), SRC.indexOf('const ORDINE = ')).matchAll(/^ {2}(\w+): \{$/gm))].map((m) => m[1]);
-  t('91 i sette eventi del contratto (attivita_team dal 21-10, prima del riepilogo), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'attivita_team', 'riepilogo']"
+  t('91 i nove eventi del contratto (attivita_team dal 21-10, premia_salute col sistema e premia_da_approvare dal 03-11), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'riepilogo']"
     && eventi.slice().sort().join() === Object.keys(TEMA_EVENTO).sort().join(), { ordine, eventi });
   const run92 = corpoRun(SRC);
   t('92 tetto e tempo: budget di TETTO_INVII per giro, nessun invio nuovo dopo 15 s e nessun evento cominciato dopo 30 s (RF-5, timeout del cron 60 s); finestra 24 ore, limite 50',
@@ -1535,6 +1603,7 @@ t('89c RF-1: cs_sync riletta dopo 3 s solo se la prima lettura dice ferma, e dec
 console.log('\n== contratto con la migrazione 0166, push-api e il web ==');
 const MIGR = read('supabase/migrations/0166_push_eventi.sql');
 const MIGR_0168 = read('supabase/migrations/0168_push_attivita.sql');
+const MIGR_0183 = read('supabase/migrations/0183_push_premia.sql');
 const MIGR_0138 = read('supabase/migrations/0138_loyalty_orders_cron.sql');
 const RLS = read('tests/push_eventi_rls.sql');
 const WEB_PUSH = read('web/src/lib/push.ts');
@@ -1575,7 +1644,7 @@ const cronCoerente = (m) => {
 const temiCoerenti = (m) => {
   const temi = temiMigr(m);
   // 21-10: il tema attivita nasce nella 0168; i temi delle due migrazioni insieme coprono quelli degli eventi
-  const tutti = { ...temi, ...temiMigr(MIGR_0168) };
+  const tutti = { ...temi, ...temiMigr(MIGR_0168), ...temiMigr(MIGR_0183) };
   const chiCheck = listaSql((m.match(/check \(predefinito_per <@ array\[([^\]]*)\]::text\[\]\)/) ?? [])[1]);
   const people = listaSql((WEB_PEOPLE.match(/export const PEOPLE = \[([^\]]*)\]/) ?? [])[1]);
   const temaApi = new RegExp((PUSH_API.match(/const TEMA_RE = \/(.+)\/;/) ?? [])[1] ?? '^$');
@@ -1587,11 +1656,12 @@ const temiCoerenti = (m) => {
   const fuori = eventiFuoriCheck(MIGR);
   t('96 ogni evento della edge passa il CHECK push_eventi_evento_ck della 0166 (b2b_risposta_negozio ha una cifra)', fuori.length === 0, fuori);
   // 21-10: il settimo (attivita_team) nasce nella 0168; le due migrazioni insieme sono il contratto con la edge
-  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168) };
+  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168), ...eventiMigr(MIGR_0183) };
   const rls = Object.fromEntries([...tra(RLS, 'join (values', ') x(ev, tema)').matchAll(/\('([^']+)', '([^']+)'\)/g)].map((x) => [x[1], x[2]]));
-  t('97 i sei eventi della 0166 piu\' attivita_team della 0168 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
-    Object.keys(eventiMigr(MIGR)).length === 6 && isDeepStrictEqual(eventiMigr(MIGR_0168), { attivita_team: 'attivita' }) && isDeepStrictEqual(em, TEMA_EVENTO) && isDeepStrictEqual(rls, TEMA_EVENTO)
-    && RLS.includes("if n <> 7 then raise exception 'KO D:"), { em, rls });
+  t('97 i sei eventi della 0166, attivita_team della 0168 e i due di Premia della 0183 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
+    Object.keys(eventiMigr(MIGR)).length === 6 && isDeepStrictEqual(eventiMigr(MIGR_0168), { attivita_team: 'attivita' })
+    && isDeepStrictEqual(eventiMigr(MIGR_0183), { premia_da_approvare: 'premia', premia_salute: 'sistema' }) && isDeepStrictEqual(em, TEMA_EVENTO) && isDeepStrictEqual(rls, TEMA_EVENTO)
+    && RLS.includes("if n <> 9 then raise exception 'KO D:"), { em, rls });
   t('98 temi nuovi e predefinito_per come il contratto; le tre chiavi = CHECK della 0166 = PEOPLE del web = CHI_PERSONE; chiavi valide per push-api; conti e vendite ad Ale',
     temiCoerenti(MIGR), temiMigr(MIGR));
   const stati = listaSql((MIGR.match(/push_eventi_inviati_stato_ck check \(stato in \(([^)]*)\)\)/) ?? [])[1]);
@@ -1653,6 +1723,20 @@ const temiCoerenti = (m) => {
     pianta(MIGR, "select cron.schedule('push-eventi-salute', '3,33 * * * *',", "select cron.schedule('push-eventi-salute', '1,31 * * * *',"),
   ].every((m) => !saluteSql(m)));
 
+
+  // 03-11: la 0183 (tema premia di Ginni, premia_da_approvare e premia_salute spenti), contratto con la edge e push-api
+  const contrattoPremia = (m) => {
+    const tema = (m.match(/insert into push_temi \(key, etichetta, descrizione, ordine, predefinito_per\) values\n {4}\('premia', '((?:[^']|'')*)', '((?:[^']|'')*)', (\d+), array\[([^\]]*)\]\)\n {2}on conflict \(key\) do nothing;/) ?? []).slice(1);
+    const temaApi = new RegExp((PUSH_API.match(/const TEMA_RE = \/(.+)\/;/) ?? [])[1] ?? '^$');
+    return tema[0] === 'Area Membri da approvare' && tema[2] === '90' && isDeepStrictEqual(listaSql(tema[3]), ['Ginevra']) && temaApi.test('premia')
+      && isDeepStrictEqual(eventiMigr(m), { premia_da_approvare: 'premia', premia_salute: 'sistema' }) && Object.keys(temiMigr(m)).join() === 'premia'
+      && !/\b(insert into|update|delete from) app_flags\b/i.test(m) && !/create table|cron\.schedule|alter table/i.test(m) && returnNeiDo(m).length === 0
+      && m.startsWith('-- 0183_push_premia.sql') && /\nbegin;\n/.test(m) && m.trimEnd().endsWith('commit;');
+  };
+  t('M4 0183: tema premia "Area Membri da approvare" ordine 90 per la sola Ginni; i due eventi spenti sui temi giusti; nessun flag, tabella o cron; nessun return nei DO',
+    contrattoPremia(MIGR_0183));
+  t('A-M4 la stessa 0183 col tema per Ale, o con un evento acceso -> visto', [pianta(MIGR_0183, "90, array['Ginevra'])", "90, array['Ale'])"),
+    pianta(MIGR_0183, "('premia_salute', 'sistema', false,", "('premia_salute', 'sistema', true,")].every((m) => !contrattoPremia(m)));
   // 21-10: la 0168 (tema attivita, evento attivita_team, il tema sul telefono di Ale), contratto con la edge e push-api
   const temaAtt = (m) => (m.match(/insert into push_temi \(key, etichetta, descrizione, ordine, predefinito_per\) values\n {4}\('attivita', '((?:[^']|'')*)', '((?:[^']|'')*)', (\d+), array\[([^\]]*)\]\)\n {2}on conflict \(key\) do nothing;/) ?? []).slice(1);
   const contrattoAtt = (m) => {

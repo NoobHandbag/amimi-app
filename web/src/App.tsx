@@ -36,9 +36,10 @@ export default function App() {
   // URL diretto: .../amimi-app/#negozi apre la sezione B2B (richiesta owner 10-09); #ads la reportistica Meta (18-09);
   // #materiali il catalogo materie prime (22-09); #premia la dashboard del programma fedeltà (27-09); #notifiche le
   // notifiche native (17-10); #assistenza e #salute, dove portano le notifiche degli eventi di push-eventi (18-10);
-  // #comportamento il modulo beh_* (25-10). Il tocco su una notifica ad app aperta passa da tabDaHash di lib/push.ts
+  // #comportamento il modulo beh_* (25-10); #recensioni la moderazione dell'Area Membri, dove porta premia_da_approvare
+  // (03-11). Il tocco su una notifica ad app aperta passa da tabDaHash di lib/push.ts
   // (PushKeeper): una scheda nuova va aggiunta anche li': tests/push_sw.mjs controlla che i due elenchi di hash siano uguali
-  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : window.location.hash.startsWith('#materiali') ? 'materiali' : window.location.hash.startsWith('#premia') ? 'premia' : window.location.hash.startsWith('#villaggio') ? 'villaggio' : window.location.hash.startsWith('#notifiche') ? 'notifiche' : window.location.hash.startsWith('#comportamento') ? 'comportamento' : window.location.hash.startsWith('#assistenza') ? 'assistenza' : window.location.hash.startsWith('#salute') ? 'salute' : 'home'));
+  const [tab, setTab] = useState<Tab>(() => (window.location.hash.startsWith('#negozi') ? 'negozi' : window.location.hash.startsWith('#ads') ? 'ads' : window.location.hash.startsWith('#materiali') ? 'materiali' : window.location.hash.startsWith('#premia') ? 'premia' : window.location.hash.startsWith('#villaggio') ? 'villaggio' : window.location.hash.startsWith('#notifiche') ? 'notifiche' : window.location.hash.startsWith('#comportamento') ? 'comportamento' : window.location.hash.startsWith('#assistenza') ? 'assistenza' : window.location.hash.startsWith('#salute') ? 'salute' : window.location.hash.startsWith('#recensioni') ? 'recensioni' : 'home'));
   const [param, setParam] = useState<string | undefined>();
   // Modulo mat_* (materie prime): a flag spento la tile in Home non compare, Ordini non mostra il segmented e la
   // pagina dice "non attiva". Rollback = spegnere app_flags.mat_enabled (Regola Ferrea 19). Letto una volta all'avvio.
@@ -123,6 +124,8 @@ export default function App() {
         {tab === 'salute' && <Salute onBack={() => go('home')} chi={chi} go={go} pin={pin} />}
         {tab === 'assistenza' && <Assistenza onBack={() => go('home')} />}
         {tab === 'premia' && <Premia onBack={() => go('home')} />}
+        {/* 03-11: la sola coda di moderazione dell'Area Membri, fuori dalle tab finanza (la vede anche Ginni, che modera) */}
+        {tab === 'recensioni' && <Premia onBack={() => go('home')} soloModerazione />}
         {tab === 'comportamento' && (behEnabled
           ? <Comportamento onBack={() => go('home')} />
           : <div className="screen"><AppBar title="Comportamento" onBack={() => go('home')} /><div className="card muted center">{behEnabled === null ? 'Carico…' : 'Sezione non attiva (flag beh_enabled spento).'}</div></div>)}

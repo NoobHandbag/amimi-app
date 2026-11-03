@@ -6,6 +6,11 @@
 // con supplier_orders letto per i codici degli ordini. Anche change_log e supplier_orders si LEGGONO soltanto.
 // v4 (2026-10-31, CASI_APERTI 53, blocco di Supabase del 30-31 ottobre): alla ripartenza dopo uno stallo si salta solo il
 // pregresso vecchio, un evento delle ultime 2 ore parte (frescoRipartenzaMs, in pe-registro).
+// v5 (2026-11-03, decisione di Dan del 03-11, CONOSCENZA sez. 1 "Notifiche dell'Area Membri", migr 0183): premia_da_approvare
+// (tema premia, di Ginni che modera) una push per ogni look o recensione che entra in moderazione; premia_salute (tema
+// sistema) loyalty_orders in errore, riscatto pending oltre 15 minuti, pool di codici sotto loyalty_pool_min; nel riepilogo
+// di Ale le nuove iscritte del giorno, in quello di Ginni i contenuti da approvare. loyalty_ugc, loyalty_redemptions,
+// loyalty_visits e v_loyalty_pool si LEGGONO soltanto.
 // Brief: Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
 // (Regola 19, migr 0166): scrive SOLO push_eventi_inviati (il registro), push_eventi (ultimo_giro_at, baseline_at) e la sua
 // riga di telemetria in health_log (k = 'push_eventi', una per giorno UTC: Gate 3 del 18-10, un giro che fallisce deve
@@ -54,15 +59,19 @@ import type { EsitoPush } from '../_shared/push.ts';
 const APP_URL = 'https://noobhandbag.github.io/amimi-app/';
 const LINK_ASSISTENZA = APP_URL + '#assistenza';
 const LINK_SALUTE = APP_URL + '#salute';
+// v5 (03-11): la moderazione dell'Area Membri (scheda Recensioni, visibile anche a Ginni) e la dashboard Premia (di Ale)
+const LINK_RECENSIONI = APP_URL + '#recensioni';
+const LINK_PREMIA = APP_URL + '#premia';
 // chiavi di PEOPLE del web, come il check di push_subscriptions (migr 0163) e CHI_AMMESSI di push-api
 const CHI_PERSONE = ['Ale', 'Bene', 'Ginevra'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TEMA_RE = /^[a-z_]{2,32}$/;
 // tema di ogni evento (righe di push_eventi della 0166); la riga a DB vince se e' una chiave valida
-// (attivita_team dalla 0168 del 21-10)
+// (attivita_team dalla 0168 del 21-10, premia_da_approvare e premia_salute dalla 0183 del 03-11)
 const TEMA_EVENTO: Record<string, string> = {
   b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza', cs_cliente_ha_riscritto: 'assistenza',
   spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
+  premia_da_approvare: 'premia', premia_salute: 'sistema',
 };
 function temaDi(daDb: unknown, evento: string): string {
   return typeof daDb === 'string' && TEMA_RE.test(daDb) ? daDb : (TEMA_EVENTO[evento] ?? '');
@@ -416,6 +425,70 @@ function msgCsSync(cands: Cand[]): Msg[] {
       testo: 'La lettura della posta clienti e\' in errore: i messaggi nuovi potrebbero non entrare in Assistenza.' });
 }
 
+// premia_da_approvare (03-11, decisione di Dan): ogni look o recensione che entra in moderazione (loyalty_ugc in_revisione)
+// e' una push a se', a Ginni che modera. Chiave = ugc:<id>, istante = created_at. Un contenuto deciso prima del giro non e'
+// piu' fra i candidati (la lettura chiede solo in_revisione) e non parte. Nel testo solo il tipo e il codice della borsa:
+// mai titolo, testo, firma o foto della cliente (le select non li chiedono nemmeno).
+const KIND_UGC = ['look', 'recensione'];
+function candPremia(righe: Riga[]): Cand[] {
+  const out: Cand[] = [];
+  for (const r of righe ?? []) {
+    const id = intero(r?.id);
+    if (!id || Number(id) <= 0 || r?.status !== 'in_revisione' || typeof r.kind !== 'string' || !KIND_UGC.includes(r.kind)) continue;
+    out.push({ chiave: 'ugc:' + id, ts: msDi(r.created_at), rif: { kind: r.kind, codice: codiceProdotto(r.codice) } });
+  }
+  return ordinaRecenti(out);
+}
+function msgPremia(cands: Cand[], inRevisione: number): Msg[] {
+  return cands.map((c) => ({
+    chiave: c.chiave, tema: TEMA_EVENTO.premia_da_approvare, url: LINK_RECENSIONI,
+    titolo: c.rif.kind === 'look' ? 'Nuovo look da approvare' : 'Nuova recensione da approvare',
+    testo: [c.rif.codice ? `Borsa ${c.rif.codice}` : '', inRevisione > 1 ? `In Recensioni: ${plurale(inRevisione, 'contenuto da approvare', 'contenuti da approvare')}` : 'Apri Recensioni per approvarlo']
+      .filter(Boolean).join('. ') + '.',
+  }));
+}
+
+// premia_salute (03-11, tema sistema): tre guasti del modulo Premia, ognuno una push sua.
+//  - loyalty_orders in errore: la riga piu' recente di health_log k loyalty_orders (riscritta dal giro ogni 15 minuti) ha
+//    severity error. Come cs_sync in errore: una push al giorno di Roma finche' dura, istante = quella riga.
+//  - riscatto pending oltre `minuti` minuti (15): una push per riscatto, chiave riscatto:<id>, istante = quando ha superato
+//    la soglia. La cliente ha speso i punti e aspetta il codice.
+//  - pool sotto soglia: un premio attivo con meno codici liberi di loyalty_pool_min. Una push al giorno di Roma per premio,
+//    istante = adesso (e' uno stato, non un fatto con una data).
+// Evento di stato (EVENTI_DI_STATO): un guasto gia' in corso all'accensione e' una notizia di adesso, non pregresso.
+const REWARD_RE = /^[a-z0-9_]{1,40}$/;
+function candPremiaSalute(o: { orders: Riga | null; pending: Riga[]; pool: Riga[]; poolMin: number; ora: number; minuti: number }): Cand[] {
+  const out: Cand[] = [];
+  const t = msDi(o.orders?.created_at);
+  if (o.orders?.severity === 'error' && Number.isFinite(t)) out.push({ chiave: `orders:errore:${dataRoma(o.ora)}`, ts: t, rif: { tipo: 'orders' } });
+  for (const r of o.pending ?? []) {
+    const id = intero(r?.id), c = msDi(r?.created_at);
+    if (!id || r?.status !== 'pending' || !Number.isFinite(c) || o.ora - c < o.minuti * 60000) continue;
+    out.push({ chiave: 'riscatto:' + id, ts: c + o.minuti * 60000, rif: { tipo: 'pending', minuti: String(Math.floor((o.ora - c) / 60000)) } });
+  }
+  for (const r of o.pool ?? []) {
+    const k = typeof r?.reward === 'string' && REWARD_RE.test(r.reward) ? r.reward : '';
+    const liberi = Number(r?.codici_liberi);
+    if (!k || r?.active !== true || !Number.isFinite(liberi) || liberi >= o.poolMin) continue;
+    out.push({ chiave: `pool:${k}:${dataRoma(o.ora)}`, ts: o.ora, rif: { tipo: 'pool', label: pulisci(r.label, 60) || k, liberi: String(Math.max(0, Math.floor(liberi))), soglia: String(o.poolMin) } });
+  }
+  return ordinaRecenti(out);
+}
+function msgPremiaSalute(cands: Cand[]): Msg[] {
+  return cands.map((c) => {
+    const base = { chiave: c.chiave, tema: TEMA_EVENTO.premia_salute, url: LINK_PREMIA };
+    if (c.rif.tipo === 'orders') return { ...base, urgente: true, titolo: 'Premia: accredito acquisti in errore', testo: 'Il giro loyalty-orders e\' in errore: i punti degli acquisti potrebbero non arrivare.' };
+    if (c.rif.tipo === 'pending') return { ...base, urgente: true, titolo: 'Premia: riscatto fermo', testo: `Una cliente aspetta il codice da ${durata(Number(c.rif.minuti) || 0)}: il riscatto e' ancora in attesa.` };
+    return { ...base, titolo: 'Premia: codici quasi finiti', testo: `${c.rif.label}: ${plurale(Number(c.rif.liberi) || 0, 'codice libero', 'codici liberi')}, sotto la soglia di ${c.rif.soglia}.` };
+  });
+}
+// nuove iscritte del giorno (riepilogo di Ale, 03-11): clienti la cui PRIMA apertura dell'Area Membri (loyalty_visits,
+// first_at) e' di oggi, cioe' con una visita da oggi e nessuna prima. Stessa definizione delle 28 iscritte dal 26-10.
+function contaIscritte(oggi: Riga[], conVisitePrima: Riga[]): number {
+  const prima = new Set((conVisitePrima ?? []).map((r) => String(r?.shopify_customer_id ?? '')).filter(Boolean));
+  return new Set((oggi ?? []).map((r) => String(r?.shopify_customer_id ?? '')).filter((x) => x && !prima.has(x))).size;
+}
+
 // riepilogo: uno a testa, chiave riepilogo:<chi>:<data di Roma>, solo a finestra aperta
 function candRiepilogo(f: { aperta: boolean; data: string; ts: number }): Cand[] {
   if (!f.aperta) return [];
@@ -426,13 +499,16 @@ function candRiepilogo(f: { aperta: boolean; data: string; ts: number }): Cand[]
 type ContiRiepilogo = {
   ordini: number; incasso: number; scontrini: number; incassoCassa: number; arrivi: number; ordiniFornitore: number; premia: number;
   csFerme: number; b2bScadute: number; daCompletare: number; daPulire: number; daCollegare: number; followUpPronti: number;
-  daSpedire: string[]; affido: number; csNuove: number;
+  daSpedire: string[]; affido: number; csNuove: number; iscritte: number;
 };
 const pos = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
 const unisci = (testa: string, parti: string[]) => { const p = parti.filter(Boolean); return p.length ? `${testa}: ${p.join(', ')}` : ''; };
 // al massimo 4 righe di soli numeri, codici e numeri d'ordine; una riga c'e' solo se ha qualcosa diverso da zero.
 // Ale: vendite del giorno, fornitori, Premia, team. Benny: prodotti, B2B. Ginni: spedizioni, affido, Assistenza (decisione
 // 1 di Dan: l'Assistenza e' sua). I rimborsi del giorno non ci sono: shopify_orders non ha la data del rimborso.
+// 03-11 (decisione di Dan): nella riga Premia di Ale anche le nuove iscritte del giorno (solo qui, mai una push); Ginni,
+// che modera, ha la sua riga Premia coi contenuti ancora da approvare.
+const rigaDaApprovare = (c: ContiRiepilogo) => (pos(c.premia) ? plurale(pos(c.premia), 'contenuto da approvare', 'contenuti da approvare') : '');
 function righeRiepilogo(chi: string, c: ContiRiepilogo, giorni: number, oreAffido: number): string[] {
   const r: string[] = [];
   if (chi === 'Ale') {
@@ -440,7 +516,7 @@ function righeRiepilogo(chi: string, c: ContiRiepilogo, giorni: number, oreAffid
       pos(c.scontrini) ? `${plurale(pos(c.scontrini), 'scontrino', 'scontrini')} in cassa (${euro(c.incassoCassa)} EUR)` : '']));
     r.push(unisci('Fornitori', [pos(c.arrivi) ? plurale(pos(c.arrivi), 'arrivo registrato', 'arrivi registrati') : '',
       pos(c.ordiniFornitore) ? plurale(pos(c.ordiniFornitore), 'ordine registrato', 'ordini registrati') : '']));
-    r.push(unisci('Premia', [pos(c.premia) ? plurale(pos(c.premia), 'contenuto da approvare', 'contenuti da approvare') : '']));
+    r.push(unisci('Premia', [pos(c.iscritte) ? plurale(pos(c.iscritte), 'nuova iscritta', 'nuove iscritte') : '', rigaDaApprovare(c)]));
     r.push(unisci('Team', [pos(c.csFerme) ? `${plurale(pos(c.csFerme), 'richiesta ferma', 'richieste ferme')} da oltre 24 ore` : '',
       pos(c.b2bScadute) ? plurale(pos(c.b2bScadute), 'azione B2B scaduta', 'azioni B2B scadute') : '']));
   } else if (chi === 'Bene') {
@@ -454,6 +530,7 @@ function righeRiepilogo(chi: string, c: ContiRiepilogo, giorni: number, oreAffid
     if (pos(c.affido)) r.push(`In attesa di affido da oltre ${oreAffido} ore: ${plurale(pos(c.affido), 'spedizione', 'spedizioni')}`);
     r.push(unisci('Assistenza', [pos(c.csNuove) ? plurale(pos(c.csNuove), 'richiesta nuova oggi', 'richieste nuove oggi') : '',
       pos(c.csFerme) ? `${plurale(pos(c.csFerme), 'ferma', 'ferme')} da oltre 24 ore` : '']));
+    r.push(unisci('Premia', [rigaDaApprovare(c)]));
   }
   return r.filter(Boolean).slice(0, 4);
 }
@@ -612,7 +689,8 @@ const FINALI = ['inviato', 'saltato', 'nessun_iscritto'];
 // stallo di cs-sync gia' in corso quando l'evento si accende, o quando push-eventi riparte dopo una pausa, e' una notizia
 // di adesso: con la baseline la sua chiave (l'istante dell'ultima riga, che non cambia finche' lo stallo dura) restava
 // `saltato` e lo stallo non arrivava mai.
-const EVENTI_DI_STATO = ['sistema_cs_sync_fermo'];
+// premia_salute (03-11) e' dello stesso tipo: un guasto di Premia gia' in corso all'accensione si deve vedere.
+const EVENTI_DI_STATO = ['sistema_cs_sync_fermo', 'premia_salute'];
 type Reg = { id: number | string; chiave: string; stato: string; tentativi: number; updated_at: string };
 type Decisione = { cand: Cand; azione: 'nuovo' | 'ritenta' | 'salta' | 'fermo'; motivo: string; reg?: Reg };
 // prima accensione (baseline_at vuoto) o ripartenza: ultimo giro assente o di oltre 2 ore fa (evento spento e riacceso,
@@ -644,7 +722,8 @@ function baselineDi(ev: { evento?: unknown; baseline_at?: unknown; ultimo_giro_a
 // blocco ha l'istante del recupero ed e' fresco. Un istante illeggibile non e' mai fresco. Fa eccezione il riepilogo: il suo
 // istante (le 18:30 di Roma) e' quello in cui diventa dovuto, non un fatto, e i numeri si calcolano all'invio; resta fresco
 // per tutta l'eta' massima, cioe' finche' la sua finestra e' aperta (una push a testa al giorno). sistema_cs_sync_fermo non
-// salta mai il pregresso (EVENTI_DI_STATO) e qui non entra.
+// salta mai il pregresso (EVENTI_DI_STATO) e qui non entra, come premia_salute dal 03-11. premia_da_approvare ha l'istante
+// in cui la cliente ha mandato il contenuto (loyalty_ugc.created_at, default now()).
 const FRESCO_RIPARTENZA_MS = STALLO_MS;
 function frescoRipartenzaMs(evento: unknown): number {
   return evento === 'riepilogo' ? Infinity : FRESCO_RIPARTENZA_MS;
@@ -1060,6 +1139,34 @@ const EVENTI: Record<string, DefEvento> = {
     componi: async (sb, _ctx, _ev, cands) => msgAttivita(cands, await leggiRigheOrdini(sb, cands)),
     gruppi: { dettagli: (sb, _ctx, _ev, cands) => leggiRigheOrdini(sb, cands), gruppoDi: (c) => c.rif.gruppo ?? '', messaggio: (cs, d) => msgGruppoAttivita(cs, d) },
   },
+  premia_da_approvare: {
+    candidati: async (sb, ctx) => {
+      // solo id, tipo, codice, stato e istante: mai titolo, testo, firma, foto o cliente
+      const { data, error } = await retryOnce(() => sb.from('loyalty_ugc').select('id, kind, codice, status, created_at').eq('status', 'in_revisione').gte('created_at', dalle(ctx, FINESTRA_MS)).order('created_at', { ascending: false }).limit(LIMITE));
+      if (error) throw new LetturaFallita('loyalty_ugc', error);
+      return candPremia((data ?? []) as Riga[]);
+    },
+    componi: async (sb, _ctx, _ev, cands) => {
+      const inRevisione = await conta(retryOnce(() => sb.from('loyalty_ugc').select('id', { count: 'exact', head: true }).eq('status', 'in_revisione')), 'contenuti da approvare');
+      return msgPremia(cands, inRevisione);
+    },
+  },
+  premia_salute: {
+    candidati: async (sb, ctx, ev) => {
+      const minuti = soglia(ev.soglie, 'minuti_pending', 15, 5, 1440);
+      // loyalty_pool_min come loyalty_health_check (0137): un valore illeggibile vale 20
+      const poolMin = Number.isInteger(Number(ctx.flags.loyalty_pool_min)) && Number(ctx.flags.loyalty_pool_min) >= 0 ? Number(ctx.flags.loyalty_pool_min) : 20;
+      // severity e istante, mai la label; i riscatti pending degli ultimi 7 giorni senza codice ne' cliente
+      const { data: ord, error: oErr } = await retryOnce(() => sb.from('health_log').select('severity, created_at').eq('k', 'loyalty_orders').gte('created_at', dalle(ctx, FINESTRA_MS)).order('created_at', { ascending: false }).limit(1));
+      if (oErr) throw new LetturaFallita('health_log loyalty_orders', oErr);
+      const { data: pend, error: pErr } = await retryOnce(() => sb.from('loyalty_redemptions').select('id, status, created_at').eq('status', 'pending').gte('created_at', dalle(ctx, 7 * 86400000)).lt('created_at', dalle(ctx, minuti * 60000)).order('created_at', { ascending: true }).limit(LIMITE));
+      if (pErr) throw new LetturaFallita('riscatti in attesa', pErr);
+      const { data: pool, error: qErr } = await retryOnce(() => sb.from('v_loyalty_pool').select('reward, label, active, codici_liberi').eq('active', true).limit(LIMITE));
+      if (qErr) throw new LetturaFallita('v_loyalty_pool', qErr);
+      return candPremiaSalute({ orders: ((ord ?? []) as Riga[])[0] ?? null, pending: (pend ?? []) as Riga[], pool: (pool ?? []) as Riga[], poolMin, ora: ctx.ora, minuti });
+    },
+    componi: async (_sb, _ctx, _ev, cands) => msgPremiaSalute(cands),
+  },
   riepilogo: {
     candidati: async (_sb, ctx) => candRiepilogo(ctx.finestra),
     componi: async (sb, ctx, ev, cands) => {
@@ -1100,16 +1207,29 @@ const EVENTI: Record<string, DefEvento> = {
         conta(retryOnce(() => sb.from('shipping_status').select('ldv', { count: 'exact', head: true }).eq('stato_tws', 'IN ATTESA DI AFFIDO').lt('updated_at', dalle(ctx, oreAffido * 3600000)).gte('shipped_date', dataRoma(ctx.ora - giorniAffido * 86400000))), 'in attesa di affido'),
         conta(retryOnce(() => sb.from('cs_conversations').select('id', { count: 'exact', head: true }).gte('created_at', t0).neq('canale', 'rumore')), 'richieste nuove'),
       ]);
+      // 03-11: nuove iscritte = prima apertura dell'Area Membri oggi (contaIscritte). Le clienti viste oggi, poi quali di
+      // loro avevano gia' una visita prima: solo l'id della cliente, a blocchi di 100 (Regola 20b)
+      const { data: vis, error: vErr } = await retryOnce(() => sb.from('loyalty_visits').select('shopify_customer_id').gte('first_at', t0).limit(1001));
+      if (vErr || (vis ?? []).length > 1000) throw new LetturaFallita('visite del giorno', vErr ?? 'oltre 1000 righe');
+      const idsOggi = [...new Set(((vis ?? []) as Riga[]).map((r) => String(r.shopify_customer_id ?? '')).filter(Boolean))];
+      const giaViste: Riga[] = [];
+      for (let i = 0; i < idsOggi.length; i += 100) {
+        const blocco = idsOggi.slice(i, i + 100);
+        const { data: pv, error: pErr } = await retryOnce(() => sb.from('loyalty_visits').select('shopify_customer_id').in('shopify_customer_id', blocco).lt('first_at', t0).limit(10000));
+        if (pErr || (pv ?? []).length >= 10000) throw new LetturaFallita('visite precedenti', pErr ?? 'troppe righe');
+        giaViste.push(...((pv ?? []) as Riga[]));
+      }
       const o = sommaOrdini((ord ?? []) as Riga[]), k = sommaCassa((cassa ?? []) as Riga[]);
       const c: ContiRiepilogo = { ordini: o.n, incasso: o.incasso, scontrini: k.scontrini, incassoCassa: k.incasso, arrivi: contaArrivi((arr ?? []) as Riga[]), ordiniFornitore,
-        premia, csFerme, b2bScadute, daCompletare, daPulire, daCollegare, followUpPronti, daSpedire: ordiniInRitardo((ritardo ?? []) as Riga[], oggi, giorni), affido, csNuove };
+        premia, csFerme, b2bScadute, daCompletare, daPulire, daCollegare, followUpPronti, daSpedire: ordiniInRitardo((ritardo ?? []) as Riga[], oggi, giorni), affido, csNuove,
+        iscritte: contaIscritte((vis ?? []) as Riga[], giaViste) };
       return msgRiepilogo(cands, c, giorni, oreAffido);
     },
   },
 };
 // priorita' nel tetto di 20 invii: prima il sistema e l'urgente, l'attivita' del team (informazione per Ale, 21-10)
-// prima del riepilogo, il riepilogo per ultimo
-const ORDINE = ['sistema_cs_sync_fermo', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'attivita_team', 'riepilogo'];
+// prima del riepilogo, il riepilogo per ultimo. 03-11: premia_salute col sistema, premia_da_approvare dopo l'Assistenza
+const ORDINE = ['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'riepilogo'];
 
 // registro: .in() sulle sole chiavi dei candidati, a blocchi di 100 (Regola 20b), mai la tabella intera
 async function leggiRegistro(sb: Sb, evento: string, chiavi: string[]): Promise<Map<string, Reg>> {
@@ -1272,7 +1392,7 @@ Deno.serve(async (req) => {
   }
 
   // 2) flag: whitelist esplicita (CONOSCENZA 02-08), lettura controllata
-  const { data: frows, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['push_eventi_enabled', 'push_enabled', 'lead_outreach_ai_enabled']).limit(10));
+  const { data: frows, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['push_eventi_enabled', 'push_enabled', 'lead_outreach_ai_enabled', 'loyalty_pool_min']).limit(10));
   if (fErr) return json({ ok: false, error: 'flag non leggibili, riprova' }, 503);
   const flags: Record<string, string> = {};
   for (const r of (frows ?? []) as { key: string; value: unknown }[]) flags[r.key] = typeof r.value === 'string' ? r.value : '';

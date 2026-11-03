@@ -10,6 +10,8 @@ import '../styles/screens/premia.css';
 // Pagina "Premia" (sola lettura, migr 0146): salute del programma fedelta', uso dell'Area Membri, premio AMICA12,
 // membri, effetto sulle vendite e (Fase 2) il funnel dei tap. Una sola RPC con il login @amimi.it; nessun dato
 // personale: la RPC restituisce solo conteggi e somme.
+// soloModerazione (03-11, #recensioni): lo stesso login e la sola coda "Recensioni e foto", senza la dashboard. E' la
+// scheda di Ginni, che modera (decisione di Dan del 03-11): la tab Premia resta fra quelle finanza.
 
 const num = (n: number) => new Intl.NumberFormat('it-IT').format(n || 0);
 const eur = (n: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
@@ -89,7 +91,7 @@ function Funnel({ steps }: { steps: [string, number][] }) {
   );
 }
 
-export default function Premia({ onBack }: { onBack: () => void }) {
+export default function Premia({ onBack, soloModerazione = false }: { onBack: () => void; soloModerazione?: boolean }) {
   const [session, setSession] = useState<'loading' | 'in' | 'out'>('loading');
   const [email, setEmail] = useState(''); const [pwd, setPwd] = useState(''); const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -102,13 +104,13 @@ export default function Premia({ onBack }: { onBack: () => void }) {
     return () => sub.subscription.unsubscribe();
   }, []);
   useEffect(() => {
-    if (session !== 'in') return;
+    if (session !== 'in' || soloModerazione) return;
     // cambio periodo rapido: una risposta vecchia non sovrascrive quella nuova
     let vivo = true;
     setErr(''); setD(null);
     fetchPremiaDashboard(days).then((x) => { if (vivo) setD(x); }).catch((e: Error) => { if (vivo) setErr(e.message); });
     return () => { vivo = false; };
-  }, [session, days]);
+  }, [session, days, soloModerazione]);
 
   const doLogin = async () => {
     setBusy(true); setErr('');
@@ -123,7 +125,7 @@ export default function Premia({ onBack }: { onBack: () => void }) {
     if (error) { setBusy(false); setErr('Google non attivo: accedi con email e password.'); }
   };
 
-  const header = <AppBar title="Premia" onBack={onBack} backLabel="Home" />;
+  const header = <AppBar title={soloModerazione ? 'Recensioni e foto' : 'Premia'} onBack={onBack} backLabel="Home" />;
 
   if (session === 'loading') return <div className="screen scr-premia">{header}<p className="muted center">Controllo l&#8217;accesso&#8230;</p></div>;
   if (session === 'out') return (
@@ -144,6 +146,8 @@ export default function Premia({ onBack }: { onBack: () => void }) {
       </div>
     </div>
   );
+
+  if (soloModerazione) return <div className="screen scr-premia">{header}<PremiaUgc /></div>;
 
   const periodo = (
     <div className="seg" style={{ marginBottom: 12 }}>
