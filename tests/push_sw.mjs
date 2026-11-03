@@ -353,7 +353,7 @@ function tabGiuste(m) {
   if (typeof m?.tabDaHash !== 'function') return false;
   const casi = [
     ['#assistenza', 'assistenza'], ['#salute', 'salute'], ['#notifiche', 'notifiche'], ['#negozi', 'negozi'],
-    ['#negozi/outreach/7f1c', 'negozi'], ['#villaggio', 'villaggio'], ['', null], ['#', null], ['#boh', null], ['assistenza', null],
+    ['#negozi/outreach/7f1c', 'negozi'], ['#villaggio', 'villaggio'], ['#recensioni', 'recensioni'], ['', null], ['#', null], ['#boh', null], ['assistenza', null],
   ];
   return casi.every(([h, t]) => m.tabDaHash(h) === t);
 }
@@ -421,7 +421,7 @@ const piantaWeb = (nome, da, a) => {
   check('autocontrollo: tutti i temi spuntati per chiunque e\' visto', !!m && !predefinitiGiusti(m));
 }
 {
-  const m = await caricaBlocco(piantaWeb('hash di salute', ", 'assistenza', 'salute'] as const", ", 'assistenza'] as const"));
+  const m = await caricaBlocco(piantaWeb('hash di salute', ", 'assistenza', 'salute', 'recensioni'] as const", ", 'assistenza', 'recensioni'] as const"));
   check('autocontrollo: #salute tolto da tabDaHash e\' visto', !!m && !tabGiuste(m));
 }
 {

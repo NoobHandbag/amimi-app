@@ -1,7 +1,7 @@
 // Centralized people + persona-driven navigation. Dan removed (= Ale, same person).
 // The Home surfaces only the tiles relevant to each persona; Registra shows the same actions for everyone.
 
-export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads' | 'materiali' | 'premia' | 'villaggio' | 'notifiche' | 'comportamento';
+export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | 'ce' | 'margini' | 'clienti' | 'salute' | 'assistenza' | 'negozi' | 'ads' | 'materiali' | 'premia' | 'villaggio' | 'notifiche' | 'comportamento' | 'recensioni';
 /** Tab visibili SOLO alle persona con finance=true (Home le filtra). 'ads' (18-09) si raggiunge dal Cruscotto o da #ads.
  *  'comportamento' (25-10, decisione D4): tessera solo di Ale, ed e' solo interfaccia: la RPC accetta tutto il team. */
 export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti', 'ads', 'premia', 'comportamento']);
@@ -45,6 +45,8 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
       { icon: 'inbox', label: 'Registra arrivi', tab: 'ordini' },
       { icon: 'swatch', label: 'Materie prime', tab: 'materiali' },
       { icon: 'count', label: 'Registra conta', tab: 'registra', param: 'count' },
+      // 03-11 (decisione di Dan): Ginni modera i look e le recensioni dell'Area Membri; la tab Premia resta fra le finanza
+      { icon: 'gift', label: 'Recensioni da approvare', tab: 'recensioni' },
       { icon: 'globe', label: 'Villaggio', tab: 'villaggio' },
     ],
   },
@@ -59,6 +61,7 @@ export const ALL_ACTIONS: Tile[] = [
   { icon: 'handshake', label: 'Clienti', tab: 'clienti' },
   { icon: 'pulse', label: 'Salute & Movimenti', tab: 'salute' },
   { icon: 'gift', label: 'Premia (programma fedeltà)', tab: 'premia' },
+  { icon: 'gift', label: 'Recensioni e foto da approvare (Area Membri)', tab: 'recensioni' },
   // Comportamento (modulo beh_*, 25-10): la Home la mostra solo a flag beh_enabled acceso
   { icon: 'search', label: 'Comportamento (da dove arrivano gli ordini)', tab: 'comportamento' },
   { icon: 'bag', label: 'Registra vendita', tab: 'registra', param: 'gift' },
