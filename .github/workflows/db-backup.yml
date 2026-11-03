@@ -54,8 +54,9 @@ jobs:
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: |
           set -e
-          npx --yes supabase@latest link --project-ref imszbjeyplaiovylhkgl -p "$SUPABASE_DB_PASSWORD"
-          npx --yes supabase@latest db dump --linked -f db-backup/schema.sql
+          # CLI pinnata: con @latest la 3.0.0 (02-11-2026) rifiuta [inbucket] in config.toml e il run del 03-11 e' fallito.
+          npx --yes supabase@2.122.1 link --project-ref imszbjeyplaiovylhkgl -p "$SUPABASE_DB_PASSWORD"
+          npx --yes supabase@2.122.1 db dump --linked -f db-backup/schema.sql
           echo "schema.sql: $(wc -c < db-backup/schema.sql) byte"
 
       - name: La struttura e cambiata rispetto al repo?
@@ -87,13 +88,13 @@ jobs:
             exit 1
           fi
           mkdir -p full
-          npx --yes supabase@latest db dump --linked --data-only --use-copy --exclude public.app_config -f full/data.sql
+          npx --yes supabase@2.122.1 db dump --linked --data-only --use-copy --exclude public.app_config -f full/data.sql
           cp db-backup/schema.sql full/schema.sql
           # Prova di restore dell'11-10-2026: senza i ruoli (ask_ro) e senza supabase_migrations (lo legge
           # la vista v_digest_versioni) schema.sql da solo non si applica per intero a un database vuoto.
-          npx --yes supabase@latest db dump --linked --role-only -f full/roles.sql
-          npx --yes supabase@latest db dump --linked --schema supabase_migrations -f full/migrations_schema.sql
-          npx --yes supabase@latest db dump --linked --data-only --use-copy --schema supabase_migrations -f full/migrations_data.sql
+          npx --yes supabase@2.122.1 db dump --linked --role-only -f full/roles.sql
+          npx --yes supabase@2.122.1 db dump --linked --schema supabase_migrations -f full/migrations_schema.sql
+          npx --yes supabase@2.122.1 db dump --linked --data-only --use-copy --schema supabase_migrations -f full/migrations_data.sql
           for f in roles.sql migrations_schema.sql migrations_data.sql; do
             [ -s "full/$f" ] || { echo "::error::$f e' vuoto"; exit 1; }
           done
