@@ -1,4 +1,12 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// sorgente v31 (2026-11-04, decisione di Dan del 03-11, CASI_APERTI n.54 e D-6 di amimi-app#154): la
+//   finestra di reso torna a contare 14 giorni dalla CONSEGNA, come l'Informativa sui rimborsi e le
+//   regole di reso di Shopify allineate il 03-11. Il verdetto entro/fuori si calcola sulla data di
+//   consegna (collega > TWS > Shopify approssimata, come la v16) e, se nessuna e' nota, resta
+//   'sconosciuto' con [DA VERIFICARE: data di consegna] nel blocco CASO: mai piu' un conto sulla data
+//   dell'ordine, che resta solo un'informazione. Annulla la regola della v14 (owner 31-07).
+//   `computeCaso` entra nel blocco `PURE:cs-verdetto`, provato da `tests/cs_rami.mjs`; la migr 0184
+//   allinea le righe di `cs_knowledge` e `cs_faq` che dicevano "dalla data dell'ordine".
 // sorgente v30 (2026-09-14, audit gate, finding B28): le letture supabase-js da cui dipende il BLOCCO
 //   DATI della bozza o il verdetto del reso ora destrutturano `error`, ritentano una volta (retryOnce)
 //   e FALLISCONO CHIUSE, invece di scartarlo. Un 504 transitorio di PostgREST faceva uscire bozze
@@ -171,7 +179,8 @@
 //     gli indirizzi ecc. sono fatti consentiti, non "numeri inventati").
 //   - CONVERSAZIONI PRECEDENTI dello stesso cliente (riassunti, max 5) nel prompt della bozza:
 //     l'AI sa se ha gia' chiesto resi/cambi/solleciti.
-//   - RESO: finestra 14 giorni dalla DATA DELL'ORDINE (decisione owner 31-07, allineata al sito;
+//   - RESO (SUPERATO dalla v31: dal 03-11 si conta di nuovo dalla consegna):
+//     finestra 14 giorni dalla DATA DELL'ORDINE (decisione owner 31-07, allineata al sito;
 //     prima 15 dalla consegna): il verdetto entro/fuori si calcola da created_at_shop dell'ordine,
 //     quindi e' SEMPRE disponibile quando l'ordine e' verificato (niente piu' data di consegna da
 //     confermare a mano per il reso; delivered_at resta per il caso indirizzo).
@@ -629,7 +638,7 @@ async function shippingStatus(sb: ReturnType<typeof createClient>, orderNumber: 
     .eq('order_name', '#' + orderNumber).order('updated_at', { ascending: false }).limit(1));
   const r = (data ?? [])[0] as Row | undefined;
   if (!r) return null;
-  const oggi = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date());
+  const oggi = dataRoma(Date.now()) ?? '';
   const consegnata = plausibileConsegna((r.seen_delivered_at as string) ?? null, (r.shipped_date as string) ?? null, oggi);
   return { ldv: String(r.ldv), stato_tws: String(r.stato_tws), consegnata_il: consegnata, updated_at: String(r.updated_at) };
 }
@@ -644,7 +653,17 @@ type NonApplicabile = 'rimborsato' | 'rimborsato_parziale' | 'annullato' | 'pre_
 type CasoReso = { ordine_del: string | null; delivered_at: string | null; fonte: string | null; giorni: number | null; finestra: number; verdetto: 'entro' | 'fuori' | 'non_applicabile' | 'sconosciuto'; non_applicabile: NonApplicabile | null; stato_pagamento: string | null; difetto_sospetto: boolean };
 type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 'verificare_tracking' | 'consegnato' | 'sconosciuto' };
 
-function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: string, finestra: number, confirmedDate: string | null, ship: Ship = null): { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo } {
+// v31: `computeCaso` sta in un blocco PURE perche' `tests/cs_rami.mjs` lo fa girare davvero (prima
+// nessun test toccava il verdetto: il conto sulla data dell'ordine non era fissato da niente).
+// `adesso` esiste solo per i test; in produzione vale Date.now().
+// ==== PURE:cs-verdetto BEGIN ====
+// La data (aaaa-mm-gg) di un istante sul calendario di Roma, lo stesso di `seen_delivered_at`.
+// null se l'istante non si legge: Intl lancerebbe RangeError su una Date invalida.
+function dataRoma(t: number | string): string | null {
+  const ms = typeof t === 'number' ? t : Date.parse(t);
+  return Number.isFinite(ms) ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date(ms)) : null;
+}
+function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: string, finestra: number, confirmedDate: string | null, ship: Ship = null, adesso: number = Date.now()): { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo } {
   // Guard (review 24-07): il numero ordine viene dal TESTO del cliente. L'ordine e' "verificato" solo se
   // abbiamo potuto agganciarlo all'email del cliente (lookupOrder gia' scarta i mismatch). Senza email,
   // nessun verdetto: SCONOSCIUTO, mai un caso calcolato sull'ordine di un terzo.
@@ -654,22 +673,37 @@ function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: stri
   const shipStato = verificato && ship ? ship.stato_tws : null;
   const PRE_RITIRO = new Set(['NUOVA', 'IN ATTESA DI AFFIDO']);
 
-  // v14 (owner 31-07, allineato al sito): la finestra reso decorre dalla DATA DELL'ORDINE
-  // (created_at_shop), non piu' dalla consegna. Verdetto quindi SEMPRE calcolabile a ordine
-  // verificato. La data di consegna resta in uso per il caso INDIRIZZO ('consegnato') e come info.
+  // v31 (decisione di Dan del 03-11-2026, CASI_APERTI n.54): la finestra reso decorre di nuovo dalla
+  // CONSEGNA, come dicono da quel giorno l'Informativa sui rimborsi e le regole di reso di Shopify
+  // (che "dalla data dell'ordine" non lo prevedono). La v14 (owner 31-07) la contava dalla DATA
+  // DELL'ORDINE: con quella regola una cliente che riceve il pacco al decimo giorno aveva quattro
+  // giorni, e la bozza le avrebbe negato un reso che l'informativa le concede.
+  // Senza una data di consegna NOTA il verdetto e' 'sconosciuto' e la bozza usa [DA VERIFICARE: data
+  // di consegna]: mai un verdetto dedotto dalla data dell'ordine, che restera' solo un'informazione.
   // Priorita' fonte (v16): conferma della collega > TWS (stato corriere) > shopify approssimata.
+  // Le due fonti automatiche registrano quando la consegna e' stata VISTA, mai prima che avvenga
+  // (TWS: sync orario, esatto al giorno salvo una consegna vista dopo mezzanotte): l'errore possibile
+  // e' un giorno in piu' a favore della cliente, mai uno contro.
+  // v31 (Gate 2): TWS "CONSEGNATA" senza data (prima osservazione) non ferma piu' la catena, si passa
+  // a Shopify; la data di Shopify si legge sul calendario di Roma come quella di TWS, non in UTC.
   let delivered: string | null = null, fonte: string | null = null;
   if (confirmedDate && /^\d{4}-\d{2}-\d{2}$/.test(confirmedDate)) { delivered = confirmedDate; fonte = 'confermata dalla collega'; }
-  else if (shipStato && shipStato.startsWith('CONSEGNATA')) { delivered = ship?.consegnata_il ?? null; fonte = 'TWS (stato corriere)'; }
-  else if (verificato && meta?.shipment_status === 'delivered' && meta.f_updated_at) { delivered = String(meta.f_updated_at).slice(0, 10); fonte = 'shopify (approssimata)'; }
+  else if (shipStato && shipStato.startsWith('CONSEGNATA') && ship?.consegnata_il) { delivered = ship.consegnata_il; fonte = 'TWS (stato corriere)'; }
+  else if (verificato && meta?.shipment_status === 'delivered' && meta.f_updated_at && dataRoma(String(meta.f_updated_at))) { delivered = dataRoma(String(meta.f_updated_at)); fonte = 'shopify (approssimata)'; }
   const ordineDel = verificato && ordine?.created_at_shop ? String(ordine.created_at_shop).slice(0, 10) : null;
-  let giorni: number | null = null;
+  // Il verdetto si calcola solo a ordine verificato e su una consegna PLAUSIBILE: non prima
+  // dell'ordine e non nel futuro (una data della collega digitata male non diventa un verdetto).
+  // I giorni sono di CALENDARIO, sulla data di oggi a Roma (come `seen_delivered_at`): il conto della
+  // v14 ancorato alle 12:00 UTC dava -1 a una bozza scritta la mattina del giorno della consegna, cioe'
+  // nessun verdetto proprio su chi scrive appena ricevuto il pacco. Consegna = giorno 0, giorno 14 dentro.
+  const oggi = dataRoma(adesso) ?? '';
+  let consegna: string | null = null, giorni: number | null = null;
   let verdetto: CasoReso['verdetto'] = 'sconosciuto';
-  if (ordineDel) {
-    giorni = Math.floor((Date.now() - new Date(ordineDel + 'T12:00:00Z').getTime()) / 86400000);
-    if (giorni >= 0) verdetto = giorni <= finestra ? 'entro' : 'fuori';
+  if (verificato && delivered && !(ordineDel && delivered < ordineDel) && delivered <= oggi) {
+    const g = Math.round((Date.parse(oggi + 'T00:00:00Z') - Date.parse(delivered + 'T00:00:00Z')) / 86400000);
+    if (Number.isFinite(g) && g >= 0) { consegna = delivered; giorni = g; verdetto = g <= finestra ? 'entro' : 'fuori'; }
   }
-  // v18 (brief punto 8): la finestra si conta sulla data dell'ordine, ma ci sono ordini su cui la
+  // v18 (brief punto 8): ci sono ordini su cui la
   // finestra non e' proprio la domanda giusta. Rimborsato/annullato = il caso e' gia' chiuso a
   // favore della cliente; pre-ritiro = la merce e' ancora da noi, non c'e' niente da rendere.
   // In tutti e tre il verdetto entro/fuori si SPEGNE: meglio nessun verdetto che un rifiuto a
@@ -683,7 +717,9 @@ function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: stri
     else if (shipStato && PRE_RITIRO.has(shipStato)) nonApp = 'pre_ritiro';
   }
   if (nonApp) verdetto = 'non_applicabile';
-  const reso: CasoReso = { ordine_del: ordineDel, delivered_at: delivered, fonte: ordineDel ? 'data ordine (Shopify)' : fonte, giorni, finestra, verdetto, non_applicabile: nonApp, stato_pagamento: verificato && finStat ? finStat : null, difetto_sospetto: difetto };
+  // v31: `delivered_at`, `fonte` e `giorni` parlano della CONSEGNA su cui si e' contato; senza una
+  // consegna plausibile restano null (la UI chiede la data, la bozza usa [DA VERIFICARE]).
+  const reso: CasoReso = { ordine_del: ordineDel, delivered_at: consegna, fonte: consegna ? fonte : null, giorni, finestra, verdetto, non_applicabile: nonApp, stato_pagamento: verificato && finStat ? finStat : null, difetto_sospetto: difetto };
 
   // INDIRIZZO: fulfillment ASSENTE = non ritirato (affidabile: ship-sync evade solo al ritiro) -> correggibile.
   // Fulfillment PRESENTE senza fonte delivered -> "verificare dal tracking" (MAI "in transito" secco, review 24-07).
@@ -701,6 +737,7 @@ function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: stri
   }
   return { verificato, reso, indirizzo: { fulfillment_presente: fulfPresente, caso: casoInd } };
 }
+// ==== PURE:cs-verdetto END ====
 
 // v18: le righe di caso per gli ordini su cui la finestra di reso non e' la domanda giusta.
 // Sono istruzioni NEGATIVE (cosa non affermare) piu' che verdetti: il fatto lo dice il BLOCCO DATI,
@@ -767,8 +804,9 @@ function casoRami(categoria: string | null, cd: { verificato: boolean; reso: Cas
     R.push({ titolo: T[cd.reso.non_applicabile], istruzione: NON_APPLICABILE_LINE[cd.reso.non_applicabile].replace(/^- /, '') });
     return R;   // il dato e' certo: ramo unico, la preselezione l'ha fatta il codice
   }
+  // v31 (Dan 03-11): i giorni si contano dalla CONSEGNA; senza consegna nota nessun verdetto.
   if (cd.reso.verdetto === 'entro') {
-    R.push({ titolo: 'Reso ammesso: istruzioni', istruzione: `Reso AMMESSO: ordine del ${dmy(cd.reso.ordine_del)} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla data dell'ordine). Istruzioni + link resi; spedizione di rientro a carico della cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` });
+    R.push({ titolo: 'Reso ammesso: istruzioni', istruzione: `Reso AMMESSO: consegnato il ${dmy(cd.reso.delivered_at)} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla consegna). Istruzioni + link resi; spedizione di rientro a carico della cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` });
     // Solo sul CAMBIO esiste un secondo esito che i dati non possono decidere: se la cliente e' a
     // Milano, il cambio in showroom evita del tutto la spedizione. Lo sa il team, non la tabella.
     if (categoria === 'Cambio e prodotto errato') {
@@ -777,10 +815,14 @@ function casoRami(categoria: string | null, cd: { verificato: boolean; reso: Cas
     return R;
   }
   if (cd.reso.verdetto === 'fuori') {
-    R.push({ titolo: 'Fuori finestra: alternativa', istruzione: `Reso NON ammesso: ordine del ${dmy(cd.reso.ordine_del)}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra} dalla data dell'ordine). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto cambia tutto, e allora proponi il contatto.` });
+    R.push({ titolo: 'Fuori finestra: alternativa', istruzione: `Reso NON ammesso: consegnato il ${dmy(cd.reso.delivered_at)}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra} dalla consegna). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto cambia tutto, e allora proponi il contatto.` });
     return R;
   }
-  R.push({ titolo: 'Sto verificando l\'ordine', istruzione: `Ordine NON identificato con certezza: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla data dell'ordine in generale, dichiara che stai controllando e usa [DA VERIFICARE: numero ordine]. Mai dire che l'ordine "non risulta".` });
+  if (cd.verificato) {
+    R.push({ titolo: 'Verifico la data di consegna', istruzione: `Ordine agganciato ma data di CONSEGNA non nota: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla consegna in generale, dichiara che stai controllando e usa [DA VERIFICARE: data di consegna]. MAI contare i giorni dalla data dell'ordine.` });
+    return R;
+  }
+  R.push({ titolo: 'Sto verificando l\'ordine', istruzione: `Ordine NON identificato con certezza: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla consegna in generale, dichiara che stai controllando e usa [DA VERIFICARE: numero ordine]. Mai dire che l'ordine "non risulta".` });
   return R;
 }
 
@@ -815,9 +857,12 @@ function casoBlock(categoria: string | null, cd: { verificato: boolean; reso: Ca
     // convive col difetto (sono due fatti, non due verdetti in concorrenza).
     if (cd.reso.non_applicabile) L.push(NON_APPLICABILE_LINE[cd.reso.non_applicabile]);
     else if (cd.reso.difetto_sospetto) { /* la riga del difetto basta: nessun verdetto sulla finestra */ }
-    else if (cd.reso.verdetto === 'entro') L.push(`- Reso AMMESSO: ordine del ${dmy(cd.reso.ordine_del)} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla data dell'ordine). Istruzioni + link resi; spedizione di rientro a carico del cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` + (categoria === 'Cambio e prodotto errato' ? ' Per il CAMBIO: stessa finestra, spese a carico del cliente (salvo errore nostro: allora scuse e spese nostre).' : ''));
-    else if (cd.reso.verdetto === 'fuori') L.push(`- Reso NON ammesso: ordine del ${dmy(cd.reso.ordine_del)}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra} dalla data dell'ordine). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto, cambia tutto: proponi il contatto.`);
-    else L.push(`- Ordine NON identificato con certezza: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla data dell'ordine in generale e usa [DA VERIFICARE: numero ordine].`);
+    // v31 (Dan 03-11): i giorni si contano dalla CONSEGNA; ordine agganciato senza consegna nota =
+    // nessun verdetto e [DA VERIFICARE: data di consegna], mai un conto sulla data dell'ordine.
+    else if (cd.reso.verdetto === 'entro') L.push(`- Reso AMMESSO: consegnato il ${dmy(cd.reso.delivered_at)} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla consegna). Istruzioni + link resi; spedizione di rientro a carico del cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` + (categoria === 'Cambio e prodotto errato' ? ' Per il CAMBIO: stessa finestra, spese a carico del cliente (salvo errore nostro: allora scuse e spese nostre).' : ''));
+    else if (cd.reso.verdetto === 'fuori') L.push(`- Reso NON ammesso: consegnato il ${dmy(cd.reso.delivered_at)}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra} dalla consegna). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto, cambia tutto: proponi il contatto.`);
+    else if (cd.verificato) L.push(`- Ordine agganciato ma data di CONSEGNA non nota: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla consegna in generale e usa [DA VERIFICARE: data di consegna]. MAI contare i giorni dalla data dell'ordine.`);
+    else L.push(`- Ordine NON identificato con certezza: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla consegna in generale e usa [DA VERIFICARE: numero ordine].`);
   }
   return L.join('\n') + '\n';
 }
@@ -1315,7 +1360,7 @@ Deno.serve(async (req) => {
   }
 
   const key = flags.gemini_api_key;
-  // Motore AI: Claude se c'e' anthropic_api_key (owner lo mette a mano, mai in repo/chat), altrimenti Gemini free.
+  // Motore AI: Claude se c'e' anthropic_api_key (owner lo mette a mano, mai in repo/chat), altrimenti Gemini (piano a pagamento, Livello 1 dal 31-07, verificato in AI Studio il 04-11).
   const claudeKey = (flags.anthropic_api_key || '').trim();
   // migr 0084: `cs_ai_model` -> `cs_ai_model_claude` (e' SOLO il nome del modello Claude, non il selettore di motore)
   const claudeModel = (flags.cs_ai_model_claude || 'claude-sonnet-5').trim();

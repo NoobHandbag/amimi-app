@@ -289,7 +289,15 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const loadCaso = (tid: string, deliveredAt?: string) => {
     setCasoBusy(true);
     fetchCaseData(tid, deliveredAt)
-      .then((cd) => { if (threadRef.current === tid) setCaso(cd); })
+      .then((cd) => {
+        if (threadRef.current !== tid) return;
+        setCaso(cd);
+        // v31: una data di consegna rifiutata dal motore (prima dell'ordine, nel futuro, inesistente)
+        // lascia il reso 'sconosciuto': lo si dice, altrimenti il clic sembra non aver fatto niente.
+        if (deliveredAt && cd.categoria !== 'Modifica / correzione indirizzo' && cd.verificato && cd.reso.verdetto === 'sconosciuto') {
+          setErr(`Data di consegna ${fmtData(deliveredAt)} non accettata: e’ prima dell’ordine o nel futuro. Controlla dal tracking.`);
+        } else if (deliveredAt) setErr('');
+      })
       .catch(() => { if (threadRef.current === tid) setCaso(null); })
       .finally(() => { if (threadRef.current === tid) setCasoBusy(false); });
   };
@@ -793,13 +801,24 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                     <span>{NON_APP_UI[caso.reso.non_applicabile ?? 'rimborsato']}</span>
                   </div>
                 ) : caso.reso.verdetto === 'entro' ? (
-                  <div className="cs-verdict cs-v-ok"><b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
+                  <div className="cs-verdict cs-v-ok"><b>🧾 Consegnato il {fmtData(caso.reso.delivered_at)} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra} (dalla consegna)</b><span>Data di consegna: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
                 ) : caso.reso.verdetto === 'fuori' ? (
-                  <div className="cs-verdict cs-v-no"><b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
+                  <div className="cs-verdict cs-v-no"><b>🧾 Consegnato il {fmtData(caso.reso.delivered_at)} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra} (dalla consegna)</b><span>Data di consegna: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
+                ) : caso.verificato ? (
+                  // v31 (Dan 03-11): ordine agganciato ma consegna non nota. La data si conferma dal
+                  // tracking, come nel caso indirizzo, e vale anche per la bozza (generateOptions la passa).
+                  <div className="cs-verdict cs-v-warn">
+                    <b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · data di consegna da verificare</b>
+                    <span>La finestra dei {caso.reso.finestra} giorni decorre dalla consegna. {caso.tracking_url ? <>Controlla dal <a href={caso.tracking_url} target="_blank" rel="noreferrer">tracking ↗</a> e conferma qui la data;</> : 'Conferma qui la data;'} senza, la bozza usa [DA VERIFICARE: data di consegna].</span>
+                    <div className="cs-case-row">
+                      <input type="date" value={confirmDate} onChange={(e) => setConfirmDate(e.target.value)} aria-label="Data di consegna" />
+                      <button className="cs-btn cs-ghost" type="button" disabled={!confirmDate || casoBusy} onClick={() => loadCaso(c.id, confirmDate)}>{casoBusy ? '…' : '✓ Consegnata in questa data'}</button>
+                    </div>
+                  </div>
                 ) : (
                   <div className="cs-verdict cs-v-info">
                     <b>Ordine non identificato con certezza</b>
-                    <span>La finestra dei {caso.reso.finestra} giorni decorre dalla data dell&#8217;ordine: senza l&#8217;ordine agganciato niente verdetto, la bozza usa [DA VERIFICARE: numero ordine].</span>
+                    <span>La finestra dei {caso.reso.finestra} giorni decorre dalla consegna: senza l&#8217;ordine agganciato niente verdetto, la bozza usa [DA VERIFICARE: numero ordine].</span>
                   </div>
                 )}
               </>
@@ -1158,7 +1177,7 @@ function AiSettings({ ident }: { ident: string }) {
       <button className="cs-aiset-h" type="button" onClick={expand} aria-expanded={open}>⚙️ Come deve rispondere l&#8217;AI <span>{open ? '▾' : '▸'}</span></button>
       {open && (
         <div className="cs-aiset-b">
-          {cfg && <div className="cs-note" style={{ marginTop: 0 }}>Motore attivo: <b>{cfg.provider === 'claude' ? 'Claude (' + cfg.model + ')' : 'Gemini (gratis)'}</b></div>}
+          {cfg && <div className="cs-note" style={{ marginTop: 0 }}>Motore attivo: <b>{cfg.provider === 'claude' ? 'Claude (' + cfg.model + ')' : 'Gemini (a pagamento)'}</b></div>}
           {!loaded ? <div className="muted" style={{ fontSize: 12 }}>Carico…</div> : (
             <>
               <textarea className="cs-aiset-ta" value={txt} onChange={(e) => setTxt(e.target.value)} rows={7} placeholder="Es. Rispondi sempre calde e gentili, ringrazia, firma Team Amimì…" />

@@ -266,8 +266,9 @@ export async function fetchContext(conversationId: string): Promise<CsContext> {
 
 // --- Motore dei verdetti (design Parte B): il codice decide il caso, l'AI scrive la frase ---
 export const CASE_CATS = new Set(['Reso e rimborso', 'Cambio e prodotto errato', 'Modifica / correzione indirizzo']);
-// v14: la finestra reso decorre dalla DATA DELL'ORDINE (ordine_del); delivered_at resta come info
-// e per il caso indirizzo ('consegnato', confermabile dalla collega dal tracking).
+// v31 (Dan 03-11-2026): la finestra reso decorre dalla CONSEGNA. `delivered_at`, `fonte` e `giorni`
+// parlano della consegna su cui si e' contato (null se non nota: verdetto 'sconosciuto' anche a ordine
+// verificato, e la collega puo' confermare la data dal tracking); `ordine_del` resta un'informazione.
 // v18: 'non_applicabile' = l'ordine e' agganciato ma la finestra non c'entra (rimborsato, annullato,
 // oppure merce ancora non ritirata dal corriere). Diverso da 'sconosciuto', che vuol dire "non so
 // di che ordine parliamo". Il campo puo' mancare se l'edge live e' ancora a una versione precedente.

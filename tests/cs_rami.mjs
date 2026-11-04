@@ -115,26 +115,38 @@ function ritagliaRiga(primaRiga) {
   return SRC.slice(i, SRC.indexOf('\n', i));
 }
 
+// v31: `casoBlock` e' il blocco CASO che va davvero nel prompt; si ritaglia intero dalla firma alla
+// graffa che chiude la funzione (prima nessun test lo faceva girare).
+function ritagliaFunzione(firma) {
+  const i = SRC.indexOf(firma);
+  if (i < 0) throw new Error(`funzione non trovata: ${firma}`);
+  const j = SRC.indexOf('\n}\n', i);
+  return SRC.slice(i, j + 2);
+}
+
 const TMP = `${ROOT}tests/_casorami.tmp.ts`;
 writeFileSync(TMP, [
+  ritagliaRiga("const DIFETTO_RE = "),
   ritagliaRiga("const CASE_CATS = new Set(["),
   ritagliaRiga("type NonApplicabile ="),
   ritagliaRiga("type CasoReso ="),
   ritagliaRiga("type CasoIndirizzo ="),
   ritagliaBlocco("const NON_APPLICABILE_LINE"),
   ritagliaBlocco("const dmy = "),
+  ritagliaMarcato('cs-verdetto'),
   ritagliaMarcato('cs-casorami'),
+  ritagliaFunzione('function casoBlock('),
   ritagliaMarcato('cs-pertinenza'),
   ritagliaMarcato('cs-impegno'),
-  'export { casoRami, casoBlockRami, pertinenzaBlock, citazioneVerificata, impegnoBlock };',
+  'export { computeCaso, casoBlock, casoRami, casoBlockRami, pertinenzaBlock, citazioneVerificata, impegnoBlock };',
 ].join('\n'), 'utf8');
-let casoRami, casoBlockRami, pertinenzaBlock, citazioneVerificata, impegnoBlock;
-try { ({ casoRami, casoBlockRami, pertinenzaBlock, citazioneVerificata, impegnoBlock } = await import(pathToFileURL(TMP).href)); }
+let computeCaso, casoBlock, casoRami, casoBlockRami, pertinenzaBlock, citazioneVerificata, impegnoBlock;
+try { ({ computeCaso, casoBlock, casoRami, casoBlockRami, pertinenzaBlock, citazioneVerificata, impegnoBlock } = await import(pathToFileURL(TMP).href)); }
 finally { try { unlinkSync(TMP); } catch { /* niente */ } }
 
-const reso = (o = {}) => ({ ordine_del: '2026-07-24', delivered_at: null, fonte: null, giorni: 8, finestra: 14, verdetto: 'entro', non_applicabile: null, stato_pagamento: 'paid', difetto_sospetto: false, ...o });
+const reso = (o = {}) => ({ ordine_del: '2026-07-24', delivered_at: '2026-07-27', fonte: 'TWS (stato corriere)', giorni: 8, finestra: 14, verdetto: 'entro', non_applicabile: null, stato_pagamento: 'paid', difetto_sospetto: false, ...o });
 const ind = (caso) => ({ fulfillment_presente: true, caso });
-const cd = (r = {}, i = 'sconosciuto') => ({ verificato: true, reso: reso(r), indirizzo: ind(i) });
+const cd = (r = {}, i = 'sconosciuto', verificato = true) => ({ verificato, reso: reso(r), indirizzo: ind(i) });
 const tit = (cat, c) => casoRami(cat, c).map((r) => r.titolo);
 const RESO = 'Reso e rimborso', CAMBIO = 'Cambio e prodotto errato', IND = 'Modifica / correzione indirizzo';
 
@@ -153,8 +165,8 @@ t('26 il DIFETTO vince su tutto e NON emette verdetti sulla finestra (garanzia 2
   JSON.stringify(tit(RESO, cd({ verdetto: 'fuori', difetto_sospetto: true }))) === JSON.stringify(['Difetto: chiedo una foto', 'Difetto: passo a una persona'])
   && !casoRami(RESO, cd({ verdetto: 'fuori', difetto_sospetto: true })).some((r) => /Reso NON ammesso/.test(r.istruzione)));
 t('27 ordine non identificato: un ramo che verifica, e mai la frase "non risulta"',
-  tit(RESO, cd({ verdetto: 'sconosciuto' })).length === 1
-  && /non risulta/.test(casoRami(RESO, cd({ verdetto: 'sconosciuto' }))[0].istruzione));
+  tit(RESO, cd({ verdetto: 'sconosciuto' }, 'sconosciuto', false)).length === 1
+  && /non risulta/.test(casoRami(RESO, cd({ verdetto: 'sconosciuto' }, 'sconosciuto', false))[0].istruzione));
 t('28 sul CAMBIO entro finestra si aggiunge lo showroom, che i dati non possono decidere',
   JSON.stringify(tit(CAMBIO, cd({ verdetto: 'entro' }))) === JSON.stringify(['Reso ammesso: istruzioni', 'Cambio in showroom']));
 t('29 ma sul RESO lo showroom NON compare', !tit(RESO, cd({ verdetto: 'entro' })).includes('Cambio in showroom'));
@@ -341,6 +353,107 @@ t('85 arriva a tutte e tre le sedi che generano testo (draft rami, draft toni, r
 t('86 e in chat e\' SPENTO in tutte e tre (mai una email finta dentro Shopify Inbox)',
   (SRC.match(/\$\{inChat \? '' : FORMATO_EMAIL\}/g) ?? []).length === 2
   && /\$\{conv\.canale === 'chat_notifica' \? '' : FORMATO_EMAIL\}/.test(SRC));
+
+// v31 (decisione di Dan del 03-11-2026, CASI_APERTI n.54): la finestra di reso conta 14 giorni dalla
+// CONSEGNA, come l'Informativa sui rimborsi e le regole di reso di Shopify. Qui `computeCaso` gira
+// davvero, con l'orologio fermo. Il caso che giustifica tutto e' l'88: ordine di 25 giorni fa,
+// consegnato 10 giorni fa. Con la regola della v14 era 'fuori' e la bozza rifiutava un reso che
+// l'informativa concede.
+// I giorni sono di calendario sulla data di Roma: consegna = giorno 0, il quattordicesimo e' dentro.
+console.log('\n== v31: la finestra si conta dalla CONSEGNA, mai dalla data dell\'ordine ==');
+const ADESSO = Date.parse('2026-11-04T15:00:00Z');
+const CONV = { customer_email: 'cliente@example.invalid' };
+const ORD = (o = {}) => ({ order_number: 9001, financial_status: 'paid', fulfillment_status: 'fulfilled', fulfilled_at: null, gross_total: 100, email: 'cliente@example.invalid', order_id: '#9001', created_at_shop: '2026-10-10T09:00:00Z', righe: [], ...o });
+const TWS = (consegnata_il, stato_tws = 'CONSEGNATA') => ({ ldv: 'LDV0001', stato_tws, consegnata_il, updated_at: '2026-11-01T10:00:00Z' });
+const caso = ({ conv = CONV, ordine = ORD(), meta = null, testo = 'vorrei fare il reso', conferma = null, ship = null } = {}) =>
+  computeCaso(conv, ordine, meta, testo, 14, conferma, ship, ADESSO);
+
+const c88 = caso({ ship: TWS('2026-10-25') });
+t('87 il blocco cs-verdetto esiste e computeCaso gira dal sorgente', typeof computeCaso === 'function' && typeof casoBlock === 'function');
+t('88 ordine di 25 giorni fa consegnato 10 giorni fa: ENTRO (con la v14 era fuori)',
+  c88.reso.verdetto === 'entro' && c88.reso.giorni === 10 && c88.reso.delivered_at === '2026-10-25' && c88.reso.fonte === 'TWS (stato corriere)', c88.reso);
+t('89 consegnato 20 giorni fa: FUORI', caso({ ship: TWS('2026-10-15') }).reso.verdetto === 'fuori');
+t('90 bordo: il quattordicesimo giorno dalla consegna e\' ancora dentro, il quindicesimo no',
+  caso({ ship: TWS('2026-10-21') }).reso.giorni === 14 && caso({ ship: TWS('2026-10-21') }).reso.verdetto === 'entro'
+  && caso({ ship: TWS('2026-10-20') }).reso.verdetto === 'fuori');
+const c91 = caso();
+t('91 ordine agganciato ma NESSUNA consegna nota: sconosciuto, mai un conto sulla data dell\'ordine',
+  c91.verificato === true && c91.reso.verdetto === 'sconosciuto' && c91.reso.giorni === null && c91.reso.delivered_at === null && c91.reso.fonte === null
+  && c91.reso.ordine_del === '2026-10-10', c91.reso);
+t('92 TWS dice CONSEGNATA ma la data non e\' nota (prima osservazione): sconosciuto',
+  caso({ ship: TWS(null) }).reso.verdetto === 'sconosciuto');
+t('93 spedizione in viaggio: sconosciuto, la finestra non e\' ancora partita',
+  caso({ ship: TWS(null, 'IN TRANSITO') }).reso.verdetto === 'sconosciuto');
+const c94 = caso({ conferma: '2026-10-30', ship: TWS('2026-10-15') });
+t('94 la data confermata dalla collega vince sul TWS (priorita\' della v16)',
+  c94.reso.verdetto === 'entro' && c94.reso.delivered_at === '2026-10-30' && c94.reso.fonte === 'confermata dalla collega', c94.reso);
+t('95 una data della collega PRIMA dell\'ordine non diventa un verdetto',
+  caso({ conferma: '2026-10-01' }).reso.verdetto === 'sconosciuto' && caso({ conferma: '2026-10-01' }).reso.delivered_at === null);
+t('96 una data della collega nel FUTURO non diventa un verdetto', caso({ conferma: '2026-11-10' }).reso.verdetto === 'sconosciuto');
+t('97 ordine NON verificato (manca l\'email): nessun verdetto nemmeno con la data della collega',
+  caso({ conv: {}, conferma: '2026-10-30' }).verificato === false && caso({ conv: {}, conferma: '2026-10-30' }).reso.verdetto === 'sconosciuto');
+const c98 = caso({ meta: { adminId: 1, tracking: null, shipment_status: 'delivered', f_updated_at: '2026-10-28T08:00:00Z' } });
+t('98 data approssimata di Shopify: vale come consegna, e lo dice la fonte',
+  c98.reso.verdetto === 'entro' && c98.reso.delivered_at === '2026-10-28' && c98.reso.fonte === 'shopify (approssimata)', c98.reso);
+t('99 la data dell\'ordine non sposta il verdetto: ordine di 60 giorni fa, consegna di 3 giorni fa = entro',
+  caso({ ordine: ORD({ created_at_shop: '2026-09-05T09:00:00Z' }), ship: TWS('2026-11-01') }).reso.verdetto === 'entro');
+t('100 rimborsato resta non_applicabile anche con la consegna nota (v18 invariata)',
+  caso({ ordine: ORD({ financial_status: 'refunded' }), ship: TWS('2026-10-15') }).reso.verdetto === 'non_applicabile');
+t('101 pre-ritiro resta non_applicabile (v18 invariata)',
+  caso({ ship: TWS(null, 'NUOVA') }).reso.verdetto === 'non_applicabile');
+t('102 il caso INDIRIZZO non cambia: TWS consegnata = consegnato, fulfillment senza consegna = verificare',
+  caso({ ship: TWS('2026-10-25') }).indirizzo.caso === 'consegnato' && caso().indirizzo.caso === 'verificare_tracking'
+  && caso({ ordine: ORD({ fulfillment_status: null }) }).indirizzo.caso === 'correggibile');
+t('103 nel sorgente i giorni non si contano piu\' da ordineDel',
+  !/new Date\(ordineDel \+ 'T12:00:00Z'\)/.test(SRC) && /Date\.parse\(delivered \+ 'T00:00:00Z'\)/.test(SRC));
+// Trovato dal confronto deterministico sui casi reali del 04-11 (Gate 2): col conto ancorato alle 12:00
+// UTC una bozza scritta la mattina del giorno della consegna dava giorni = -1, quindi nessun verdetto,
+// proprio a chi scrive appena ricevuto il pacco (conversazione reale, consegna e richiesta lo stesso giorno).
+const alle = (iso, c = {}) => computeCaso(CONV, ORD(), null, 'vorrei fare il reso', 14, c.conferma ?? null, c.ship ?? null, Date.parse(iso));
+t('112 consegnato oggi, bozza alle 8 di mattina a Roma: giorno 0, ENTRO (prima era -1 e nessun verdetto)',
+  alle('2026-11-04T07:00:00Z', { ship: TWS('2026-11-04') }).reso.giorni === 0 && alle('2026-11-04T07:00:00Z', { ship: TWS('2026-11-04') }).reso.verdetto === 'entro');
+t('113 l\'ora del giorno non conta: il quindicesimo giorno e\' FUORI anche alle 8 di mattina',
+  alle('2026-11-04T07:00:00Z', { ship: TWS('2026-10-20') }).reso.verdetto === 'fuori' && alle('2026-11-04T07:00:00Z', { ship: TWS('2026-10-21') }).reso.verdetto === 'entro');
+t('114 il giorno e\' quello di Roma: alle 00:30 di Roma del 5 (23:30 UTC del 4) il 21 ottobre e\' gia\' il quindicesimo',
+  alle('2026-11-04T23:30:00Z', { ship: TWS('2026-10-21') }).reso.giorni === 15 && alle('2026-11-04T23:30:00Z', { ship: TWS('2026-10-22') }).reso.verdetto === 'entro');
+t('115 una data inesistente della collega (32 ottobre, dopo l\'ordine) non diventa un verdetto',
+  alle('2026-11-04T15:00:00Z', { conferma: '2026-10-32' }).reso.verdetto === 'sconosciuto');
+// Gate 2 del 04-11: due difetti della catena delle fonti, chiusi e fissati qui.
+const META = (f_updated_at) => ({ adminId: 1, tracking: null, shipment_status: 'delivered', f_updated_at });
+const c116 = caso({ ship: TWS(null), meta: META('2026-10-28T08:00:00Z') });
+t('116 TWS CONSEGNATA senza data non ferma la catena: si usa la data di Shopify',
+  c116.reso.verdetto === 'entro' && c116.reso.delivered_at === '2026-10-28' && c116.reso.fonte === 'shopify (approssimata)'
+  && c116.indirizzo.caso === 'consegnato', c116.reso);
+t('117 la data di Shopify si legge sul calendario di Roma (23:30 UTC del 21 = 22 a Roma)',
+  caso({ meta: META('2026-10-21T23:30:00Z') }).reso.delivered_at === '2026-10-22' && caso({ meta: META('2026-10-21T23:30:00Z') }).reso.verdetto === 'entro');
+t('118 un updated_at di Shopify illeggibile non fa crollare il verdetto (niente RangeError)',
+  caso({ meta: META('non-una-data') }).reso.verdetto === 'sconosciuto');
+t('119 la data di oggi a Roma ha un helper solo, usato anche da shippingStatus',
+  (SRC.match(/timeZone: 'Europe\/Rome'/g) ?? []).length === 1 && /const oggi = dataRoma\(Date\.now\(\)\)/.test(SRC));
+
+console.log('\n== v31: il blocco CASO del prompt e i rami parlano di consegna ==');
+const B88 = casoBlock(RESO, c88);
+t('104 entro: il blocco CASO cita la consegna e i giorni dalla consegna',
+  /Reso AMMESSO: consegnato il 25\/10\/2026 \(10 giorni fa, entro i 14 dalla consegna\)/.test(B88), B88);
+t('105 fuori: il blocco CASO cita la consegna', /Reso NON ammesso: consegnato il 15\/10\/2026, 20 giorni fa \(finestra 14 dalla consegna\)/.test(casoBlock(RESO, caso({ ship: TWS('2026-10-15') }))));
+const B91 = casoBlock(RESO, c91);
+t('106 consegna non nota: niente verdetto e [DA VERIFICARE: data di consegna] nel blocco CASO',
+  /data di CONSEGNA non nota: nessun verdetto/.test(B91) && /\[DA VERIFICARE: data di consegna\]/.test(B91) && !/Reso AMMESSO|Reso NON ammesso/.test(B91), B91);
+t('107 ordine non identificato: resta il [DA VERIFICARE: numero ordine], ora con la regola dalla consegna',
+  /\[DA VERIFICARE: numero ordine\]/.test(casoBlock(RESO, caso({ conv: {} }))) && /giorni dalla consegna/.test(casoBlock(RESO, caso({ conv: {} }))));
+t('108 nessuna riga di verdetto conta piu\' "dalla data dell\'ordine" (solo il divieto MAI)',
+  [c88, caso({ ship: TWS('2026-10-15') }), c91, caso({ conv: {} })].every((x) => {
+    const b = casoBlock(RESO, x) + casoRami(RESO, x).map((r) => r.istruzione).join('\n');
+    return !/(entro i|finestra) 14 dalla data dell'ordine/.test(b) && !/giorni dalla data dell'ordine in generale/.test(b);
+  }));
+t('109 ramo per la consegna non nota: titolo fisso e [DA VERIFICARE: data di consegna]',
+  JSON.stringify(tit(RESO, c91)) === JSON.stringify(['Verifico la data di consegna'])
+  && /\[DA VERIFICARE: data di consegna\]/.test(casoRami(RESO, c91)[0].istruzione));
+t('110 sul CAMBIO entro finestra restano i due rami, e il blocco tiene la riga del cambio',
+  JSON.stringify(tit(CAMBIO, c88)) === JSON.stringify(['Reso ammesso: istruzioni', 'Cambio in showroom'])
+  && /Per il CAMBIO: stessa finestra/.test(casoBlock(CAMBIO, c88)));
+t('111 il DIFETTO continua a vincere: nessun verdetto anche se la consegna e\' di 20 giorni fa',
+  !/Reso NON ammesso/.test(casoBlock(RESO, caso({ testo: 'la borsa e\' arrivata scucita', ship: TWS('2026-10-15') }))));
 
 console.log(`\n${ok}/${ok + ko} verdi` + (ko ? ` — ${ko} ROSSI` : ''));
 process.exitCode = ko ? 1 : 0;
