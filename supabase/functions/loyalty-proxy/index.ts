@@ -1,4 +1,9 @@
-// loyalty-proxy v15 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// loyalty-proxy v16 — punti fedelta' + stato di Mimi con identita' Shopify via App Proxy (niente secondo login).
+// v16 (2026-11-04): i parametri che Shopify aggiunge e firma (`logged_in_customer_id`, `path_prefix`, `shop`,
+//    `timestamp`) devono comparire una volta sola. Una richiesta firmata con uno di questi ripetuto risponde 401
+//    `repeated_param` prima di leggerne il valore, e conta nella riga del giorno `health_log` k `loyalty_proxy_param`
+//    (solo i nomi delle chiavi, mai valori). Blocco PURE:proxy-param-unici, test in tests/loyalty_guardie.mjs. Le azioni
+//    non cambiano una riga.
 // v15 (2026-10-12, decisione owner: recensioni +20 e foto del look +30, migr 0153). Tre azioni NUOVE e additive, le altre
 //    non cambiano una riga. ORDINE DI DEPLOY: migr 0153, poi loyalty-page, poi questa edge (prima della 0153 le RPC non
 //    esistono, ma senza la riga del flag `ugc` risponde off e la pagina non mostra la sezione).
@@ -148,6 +153,16 @@ function timingSafeEqualHex(a: string, b: string): boolean {
   return diff === 0;
 }
 
+// ==== PURE:proxy-param-unici BEGIN ====
+// v16: i parametri che Shopify aggiunge a ogni richiesta del proxy, una volta ciascuno. Si rifiuta la RIPETIZIONE, non
+// l'assenza: per chi non ha fatto l'accesso Shopify manda `logged_in_customer_id` vuoto, e un parametro mancante ha gia'
+// la sua risposta piu' sotto (login_required, stale_signature). I parametri del client (es. `extra=1&extra=2`) restano liberi.
+const PARAM_SHOPIFY_UNICI = ['logged_in_customer_id', 'path_prefix', 'shop', 'timestamp'];
+function paramRipetuti(params: URLSearchParams): string[] {
+  return PARAM_SHOPIFY_UNICI.filter((k) => params.getAll(k).length > 1);
+}
+// ==== PURE:proxy-param-unici END ====
+
 // Giorno civile italiano in formato YYYY-MM-DD. 'en-CA' rende gia' ISO; il timeZone fa il lavoro
 // vero (l'ora legale la gestisce Intl, non noi). Confronto tra date = confronto tra stringhe ISO.
 function romeToday(now = new Date()): string {
@@ -212,6 +227,29 @@ Deno.serve(async (req) => {
   //     firma, quindi qui e' affidabile. Una richiesta firmata catturata vale al massimo MAX_SKEW_SEC.
   const ts = Number(params.get('timestamp'));
   if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > MAX_SKEW_SEC) return json({ error: 'stale_signature' }, 401);
+
+  // --- v16: un parametro di Shopify ripetuto = 401, prima di leggere l'identita'. Dopo firma e freschezza, cosi' a
+  //     health_log arrivano solo richieste passate da Shopify negli ultimi MAX_SKEW_SEC (un URL firmato rigiocato dopo
+  //     non conta piu'; un `timestamp` ripetuto si ferma comunque qui o allo stale_signature). Conteggio del giorno con i
+  //     soli NOMI delle chiavi (health_log e' leggibile da anon). La telemetria non blocca mai il rifiuto: lettura fallita
+  //     = niente scrittura, si logga. Conteggio letto e riscritto (non atomico) e cancellato dal refresh_health_log delle
+  //     06:00 UTC come le altre chiavi non ce_*: rinuncia della Gate 3 del 04-11, e' telemetria, il 401 non ne dipende.
+  const ripetuti = paramRipetuti(params);
+  if (ripetuti.length) {
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const { data: hl, error: hlErr } = await retryOnce(() => sb.from('health_log').select('n').eq('day', day).eq('k', 'loyalty_proxy_param').maybeSingle());
+      if (hlErr) console.error('loyalty-proxy: lettura health_log fallita', hlErr.message);
+      else {
+        const { error: upErr } = await sb.from('health_log').upsert({
+          day, k: 'loyalty_proxy_param', n: (Number(hl?.n) || 0) + 1, severity: 'warn', created_at: new Date().toISOString(),
+          label: `loyalty-proxy: richieste firmate con un parametro di Shopify ripetuto, rifiutate con 401 (ultima: ${ripetuti.join(', ')})`,
+        }, { onConflict: 'day,k' });
+        if (upErr) console.error('loyalty-proxy: scrittura health_log fallita', upErr.message);
+      }
+    } catch (e) { console.error('loyalty-proxy: health_log', String(e)); }
+    return json({ error: 'repeated_param' }, 401);
+  }
 
   // --- identita': SOLO da params firmati, mai dal body ---
   const customerId = (params.get('logged_in_customer_id') ?? '').trim();

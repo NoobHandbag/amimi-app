@@ -7,9 +7,9 @@
 // il finding dell'audit (Cowork12/projects/Premia_Area_Membri_2026-09/07_AUDIT_1_logico.md e 07_AUDIT_2_tecnico.md)
 // che lo ha generato. Le prove vive (RPC sull'account di test, smoke di produzione) stanno in tests/loyalty_smoke.mjs
 // e nel report di Fase 6.
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
@@ -396,5 +396,36 @@ t('191 vetrina: le righe sono quelle dell\'area (una sola lista, regoleBase, tre
   && REGBASE.split('],[').length === 3 && !/%|€/.test(REGBASE));
 t('192 vetrina (Gate 2 del 22-10, B): i punti stanno sull\'id cliente dell\'ordine, non sulla mail; se la vetrina promette che i punti aspettano, dice anche cosa fa chi ha lasciato solo il telefono',
   !/ti aspettano/.test(VETR) || (/solo il telefono/.test(VETR) && VETR.includes('<a href="/pages/contact-us">scrivici</a>')));
+
+console.log('\n== v16 (04-11): parametri di Shopify ripetuti, blocco PURE:proxy-param-unici ==');
+const PPB = '// ==== PURE:proxy-param-unici BEGIN ====', PPE = '// ==== PURE:proxy-param-unici END ====';
+const ppA = PROXY.indexOf(PPB), ppZ = PROXY.indexOf(PPE);
+t('193 loyalty-proxy: blocco PURE:proxy-param-unici presente', ppA > 0 && ppZ > ppA);
+let paramRipetuti = () => ['blocco non caricato'];
+if (ppA > 0 && ppZ > ppA) {
+  const TMP = ROOT + 'tests/_proxy_param.tmp.ts';
+  writeFileSync(TMP, PROXY.slice(ppA + PPB.length, ppZ) + '\nexport { paramRipetuti };\n', 'utf8');
+  try { ({ paramRipetuti } = await import(pathToFileURL(TMP).href)); } finally { try { unlinkSync(TMP); } catch { /* niente */ } }
+}
+const qp = (s) => paramRipetuti(new URLSearchParams(s));
+const QBASE = 'shop=amimi-10000.myshopify.com&path_prefix=%2Fapps%2Fpremia&timestamp=1762250000&signature=ab';
+t('194 richiesta normale, con accesso e senza (id vuoto, come la manda Shopify) = nessun rifiuto',
+  qp(QBASE + '&logged_in_customer_id=1').length === 0 && qp(QBASE + '&logged_in_customer_id=').length === 0, qp(QBASE + '&logged_in_customer_id=1'));
+t('195 ognuno dei quattro parametri di Shopify ripetuto = rifiutato, con il suo nome',
+  ['logged_in_customer_id', 'path_prefix', 'shop', 'timestamp'].every((k) => qp(QBASE + '&logged_in_customer_id=1&' + k + '=2').join() === k));
+t('196 un valore vuoto conta come presenza (due logged_in_customer_id, uno vuoto = rifiutato)',
+  qp(QBASE + '&logged_in_customer_id=&logged_in_customer_id=1').join() === 'logged_in_customer_id');
+t('197 parametri del client ripetuti (extra=1&extra=2, esempio della doc Shopify) e parametro assente: nessun rifiuto qui (l\'assenza ha gia\' login_required / stale_signature)',
+  qp(QBASE + '&extra=1&extra=2&logged_in_customer_id=1').length === 0 && qp(QBASE).length === 0);
+const iPR = P.indexOf('paramRipetuti(params)');
+t('198 handler: il controllo sta DOPO firma e freschezza (Gate 2 del 04-11: un URL firmato rigiocato oltre MAX_SKEW_SEC non arriva a health_log) e PRIMA dell\'identita\'',
+  iPR > 0 && P.indexOf("'bad_signature'") < iPR && P.indexOf("'stale_signature'") < iPR && iPR < P.indexOf("params.get('logged_in_customer_id')"));
+const LBL = (P.match(/label: `loyalty-proxy: richieste firmate[^`]*`/) || [''])[0];
+t('199 handler: 401 repeated_param e conteggio in health_log k loyalty_proxy_param con i soli NOMI delle chiavi (nessun valore, health_log e\' leggibile da anon)',
+  /return json\(\{ error: 'repeated_param' \}, 401\)/.test(P) && /k: 'loyalty_proxy_param', n: \(Number\(hl\?\.n\) \|\| 0\) \+ 1/.test(P)
+  && LBL.length > 40 && (LBL.match(/\$\{/g) || []).length === 1 && LBL.includes("${ripetuti.join(', ')}"));
+t('200 handler: lettura del conteggio fallita = nessuna scrittura (Regola 20a), e la telemetria non blocca il 401',
+  /if \(hlErr\) console\.error\('loyalty-proxy: lettura health_log fallita', hlErr\.message\);\s*\n\s*else \{/.test(P)
+  && /catch \(e\) \{ console\.error\('loyalty-proxy: health_log', String\(e\)\); \}\s*\n\s*return json\(\{ error: 'repeated_param' \}, 401\)/.test(P));
 console.log(`\nloyalty_guardie: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
