@@ -418,8 +418,8 @@ t('196 un valore vuoto conta come presenza (due logged_in_customer_id, uno vuoto
 t('197 parametri del client ripetuti (extra=1&extra=2, esempio della doc Shopify) e parametro assente: nessun rifiuto qui (l\'assenza ha gia\' login_required / stale_signature)',
   qp(QBASE + '&extra=1&extra=2&logged_in_customer_id=1').length === 0 && qp(QBASE).length === 0);
 const iPR = P.indexOf('paramRipetuti(params)');
-t('198 handler: il controllo sta DOPO la firma e PRIMA di freschezza e identita\'',
-  iPR > 0 && P.indexOf("'bad_signature'") < iPR && iPR < P.indexOf("'stale_signature'") && iPR < P.indexOf("params.get('logged_in_customer_id')"));
+t('198 handler: il controllo sta DOPO firma e freschezza (Gate 2 del 04-11: un URL firmato rigiocato oltre MAX_SKEW_SEC non arriva a health_log) e PRIMA dell\'identita\'',
+  iPR > 0 && P.indexOf("'bad_signature'") < iPR && P.indexOf("'stale_signature'") < iPR && iPR < P.indexOf("params.get('logged_in_customer_id')"));
 const LBL = (P.match(/label: `loyalty-proxy: richieste firmate[^`]*`/) || [''])[0];
 t('199 handler: 401 repeated_param e conteggio in health_log k loyalty_proxy_param con i soli NOMI delle chiavi (nessun valore, health_log e\' leggibile da anon)',
   /return json\(\{ error: 'repeated_param' \}, 401\)/.test(P) && /k: 'loyalty_proxy_param', n: \(Number\(hl\?\.n\) \|\| 0\) \+ 1/.test(P)

@@ -223,9 +223,17 @@ Deno.serve(async (req) => {
   const expected = await appProxyHmacHex(params, secret);
   if (!timingSafeEqualHex(signature.toLowerCase(), expected)) return json({ error: 'bad_signature' }, 401);
 
-  // --- v16: un parametro di Shopify ripetuto = 401, prima di leggerne qualunque valore. Dopo la firma, cosi' solo le
-  //     richieste passate da Shopify arrivano a health_log. Conteggio del giorno con i soli NOMI delle chiavi (health_log
-  //     e' leggibile da anon). La telemetria non blocca mai il rifiuto: lettura fallita = niente scrittura, si logga.
+  // --- v11 (T1): freschezza della firma. `timestamp` (secondi Unix) e' fra i param firmati: manometterlo rompe la
+  //     firma, quindi qui e' affidabile. Una richiesta firmata catturata vale al massimo MAX_SKEW_SEC.
+  const ts = Number(params.get('timestamp'));
+  if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > MAX_SKEW_SEC) return json({ error: 'stale_signature' }, 401);
+
+  // --- v16: un parametro di Shopify ripetuto = 401, prima di leggere l'identita'. Dopo firma e freschezza, cosi' a
+  //     health_log arrivano solo richieste passate da Shopify negli ultimi MAX_SKEW_SEC (un URL firmato rigiocato dopo
+  //     non conta piu'; un `timestamp` ripetuto si ferma comunque qui o allo stale_signature). Conteggio del giorno con i
+  //     soli NOMI delle chiavi (health_log e' leggibile da anon). La telemetria non blocca mai il rifiuto: lettura fallita
+  //     = niente scrittura, si logga. Conteggio letto e riscritto (non atomico) e cancellato dal refresh_health_log delle
+  //     06:00 UTC come le altre chiavi non ce_*: rinuncia della Gate 3 del 04-11, e' telemetria, il 401 non ne dipende.
   const ripetuti = paramRipetuti(params);
   if (ripetuti.length) {
     try {
@@ -242,11 +250,6 @@ Deno.serve(async (req) => {
     } catch (e) { console.error('loyalty-proxy: health_log', String(e)); }
     return json({ error: 'repeated_param' }, 401);
   }
-
-  // --- v11 (T1): freschezza della firma. `timestamp` (secondi Unix) e' fra i param firmati: manometterlo rompe la
-  //     firma, quindi qui e' affidabile. Una richiesta firmata catturata vale al massimo MAX_SKEW_SEC.
-  const ts = Number(params.get('timestamp'));
-  if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > MAX_SKEW_SEC) return json({ error: 'stale_signature' }, 401);
 
   // --- identita': SOLO da params firmati, mai dal body ---
   const customerId = (params.get('logged_in_customer_id') ?? '').trim();
