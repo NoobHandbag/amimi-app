@@ -1177,7 +1177,7 @@ function AiSettings({ ident }: { ident: string }) {
       <button className="cs-aiset-h" type="button" onClick={expand} aria-expanded={open}>⚙️ Come deve rispondere l&#8217;AI <span>{open ? '▾' : '▸'}</span></button>
       {open && (
         <div className="cs-aiset-b">
-          {cfg && <div className="cs-note" style={{ marginTop: 0 }}>Motore attivo: <b>{cfg.provider === 'claude' ? 'Claude (' + cfg.model + ')' : 'Gemini (gratis)'}</b></div>}
+          {cfg && <div className="cs-note" style={{ marginTop: 0 }}>Motore attivo: <b>{cfg.provider === 'claude' ? 'Claude (' + cfg.model + ')' : 'Gemini (a pagamento)'}</b></div>}
           {!loaded ? <div className="muted" style={{ fontSize: 12 }}>Carico…</div> : (
             <>
               <textarea className="cs-aiset-ta" value={txt} onChange={(e) => setTxt(e.target.value)} rows={7} placeholder="Es. Rispondi sempre calde e gentili, ringrazia, firma Team Amimì…" />

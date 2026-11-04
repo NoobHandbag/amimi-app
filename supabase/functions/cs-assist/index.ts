@@ -1360,7 +1360,7 @@ Deno.serve(async (req) => {
   }
 
   const key = flags.gemini_api_key;
-  // Motore AI: Claude se c'e' anthropic_api_key (owner lo mette a mano, mai in repo/chat), altrimenti Gemini free.
+  // Motore AI: Claude se c'e' anthropic_api_key (owner lo mette a mano, mai in repo/chat), altrimenti Gemini (piano a pagamento, Livello 1 dal 31-07, verificato in AI Studio il 04-11).
   const claudeKey = (flags.anthropic_api_key || '').trim();
   // migr 0084: `cs_ai_model` -> `cs_ai_model_claude` (e' SOLO il nome del modello Claude, non il selettore di motore)
   const claudeModel = (flags.cs_ai_model_claude || 'claude-sonnet-5').trim();
