@@ -289,7 +289,15 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const loadCaso = (tid: string, deliveredAt?: string) => {
     setCasoBusy(true);
     fetchCaseData(tid, deliveredAt)
-      .then((cd) => { if (threadRef.current === tid) setCaso(cd); })
+      .then((cd) => {
+        if (threadRef.current !== tid) return;
+        setCaso(cd);
+        // v31: una data di consegna rifiutata dal motore (prima dell'ordine, nel futuro, inesistente)
+        // lascia il reso 'sconosciuto': lo si dice, altrimenti il clic sembra non aver fatto niente.
+        if (deliveredAt && cd.categoria !== 'Modifica / correzione indirizzo' && cd.verificato && cd.reso.verdetto === 'sconosciuto') {
+          setErr(`Data di consegna ${fmtData(deliveredAt)} non accettata: e’ prima dell’ordine o nel futuro. Controlla dal tracking.`);
+        } else if (deliveredAt) setErr('');
+      })
       .catch(() => { if (threadRef.current === tid) setCaso(null); })
       .finally(() => { if (threadRef.current === tid) setCasoBusy(false); });
   };

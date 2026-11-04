@@ -638,7 +638,7 @@ async function shippingStatus(sb: ReturnType<typeof createClient>, orderNumber: 
     .eq('order_name', '#' + orderNumber).order('updated_at', { ascending: false }).limit(1));
   const r = (data ?? [])[0] as Row | undefined;
   if (!r) return null;
-  const oggi = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date());
+  const oggi = dataRoma(Date.now()) ?? '';
   const consegnata = plausibileConsegna((r.seen_delivered_at as string) ?? null, (r.shipped_date as string) ?? null, oggi);
   return { ldv: String(r.ldv), stato_tws: String(r.stato_tws), consegnata_il: consegnata, updated_at: String(r.updated_at) };
 }
@@ -657,6 +657,12 @@ type CasoIndirizzo = { fulfillment_presente: boolean; caso: 'correggibile' | 've
 // nessun test toccava il verdetto: il conto sulla data dell'ordine non era fissato da niente).
 // `adesso` esiste solo per i test; in produzione vale Date.now().
 // ==== PURE:cs-verdetto BEGIN ====
+// La data (aaaa-mm-gg) di un istante sul calendario di Roma, lo stesso di `seen_delivered_at`.
+// null se l'istante non si legge: Intl lancerebbe RangeError su una Date invalida.
+function dataRoma(t: number | string): string | null {
+  const ms = typeof t === 'number' ? t : Date.parse(t);
+  return Number.isFinite(ms) ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date(ms)) : null;
+}
 function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: string, finestra: number, confirmedDate: string | null, ship: Ship = null, adesso: number = Date.now()): { verificato: boolean; reso: CasoReso; indirizzo: CasoIndirizzo } {
   // Guard (review 24-07): il numero ordine viene dal TESTO del cliente. L'ordine e' "verificato" solo se
   // abbiamo potuto agganciarlo all'email del cliente (lookupOrder gia' scarta i mismatch). Senza email,
@@ -678,17 +684,19 @@ function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: stri
   // Le due fonti automatiche registrano quando la consegna e' stata VISTA, mai prima che avvenga
   // (TWS: sync orario, esatto al giorno salvo una consegna vista dopo mezzanotte): l'errore possibile
   // e' un giorno in piu' a favore della cliente, mai uno contro.
+  // v31 (Gate 2): TWS "CONSEGNATA" senza data (prima osservazione) non ferma piu' la catena, si passa
+  // a Shopify; la data di Shopify si legge sul calendario di Roma come quella di TWS, non in UTC.
   let delivered: string | null = null, fonte: string | null = null;
   if (confirmedDate && /^\d{4}-\d{2}-\d{2}$/.test(confirmedDate)) { delivered = confirmedDate; fonte = 'confermata dalla collega'; }
-  else if (shipStato && shipStato.startsWith('CONSEGNATA')) { delivered = ship?.consegnata_il ?? null; fonte = 'TWS (stato corriere)'; }
-  else if (verificato && meta?.shipment_status === 'delivered' && meta.f_updated_at) { delivered = String(meta.f_updated_at).slice(0, 10); fonte = 'shopify (approssimata)'; }
+  else if (shipStato && shipStato.startsWith('CONSEGNATA') && ship?.consegnata_il) { delivered = ship.consegnata_il; fonte = 'TWS (stato corriere)'; }
+  else if (verificato && meta?.shipment_status === 'delivered' && meta.f_updated_at && dataRoma(String(meta.f_updated_at))) { delivered = dataRoma(String(meta.f_updated_at)); fonte = 'shopify (approssimata)'; }
   const ordineDel = verificato && ordine?.created_at_shop ? String(ordine.created_at_shop).slice(0, 10) : null;
   // Il verdetto si calcola solo a ordine verificato e su una consegna PLAUSIBILE: non prima
   // dell'ordine e non nel futuro (una data della collega digitata male non diventa un verdetto).
   // I giorni sono di CALENDARIO, sulla data di oggi a Roma (come `seen_delivered_at`): il conto della
   // v14 ancorato alle 12:00 UTC dava -1 a una bozza scritta la mattina del giorno della consegna, cioe'
   // nessun verdetto proprio su chi scrive appena ricevuto il pacco. Consegna = giorno 0, giorno 14 dentro.
-  const oggi = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date(adesso));
+  const oggi = dataRoma(adesso) ?? '';
   let consegna: string | null = null, giorni: number | null = null;
   let verdetto: CasoReso['verdetto'] = 'sconosciuto';
   if (verificato && delivered && !(ordineDel && delivered < ordineDel) && delivered <= oggi) {

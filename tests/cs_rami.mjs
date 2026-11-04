@@ -418,6 +418,18 @@ t('114 il giorno e\' quello di Roma: alle 00:30 di Roma del 5 (23:30 UTC del 4) 
   alle('2026-11-04T23:30:00Z', { ship: TWS('2026-10-21') }).reso.giorni === 15 && alle('2026-11-04T23:30:00Z', { ship: TWS('2026-10-22') }).reso.verdetto === 'entro');
 t('115 una data inesistente della collega (32 ottobre, dopo l\'ordine) non diventa un verdetto',
   alle('2026-11-04T15:00:00Z', { conferma: '2026-10-32' }).reso.verdetto === 'sconosciuto');
+// Gate 2 del 04-11: due difetti della catena delle fonti, chiusi e fissati qui.
+const META = (f_updated_at) => ({ adminId: 1, tracking: null, shipment_status: 'delivered', f_updated_at });
+const c116 = caso({ ship: TWS(null), meta: META('2026-10-28T08:00:00Z') });
+t('116 TWS CONSEGNATA senza data non ferma la catena: si usa la data di Shopify',
+  c116.reso.verdetto === 'entro' && c116.reso.delivered_at === '2026-10-28' && c116.reso.fonte === 'shopify (approssimata)'
+  && c116.indirizzo.caso === 'consegnato', c116.reso);
+t('117 la data di Shopify si legge sul calendario di Roma (23:30 UTC del 21 = 22 a Roma)',
+  caso({ meta: META('2026-10-21T23:30:00Z') }).reso.delivered_at === '2026-10-22' && caso({ meta: META('2026-10-21T23:30:00Z') }).reso.verdetto === 'entro');
+t('118 un updated_at di Shopify illeggibile non fa crollare il verdetto (niente RangeError)',
+  caso({ meta: META('non-una-data') }).reso.verdetto === 'sconosciuto');
+t('119 la data di oggi a Roma ha un helper solo, usato anche da shippingStatus',
+  (SRC.match(/timeZone: 'Europe\/Rome'/g) ?? []).length === 1 && /const oggi = dataRoma\(Date\.now\(\)\)/.test(SRC));
 
 console.log('\n== v31: il blocco CASO del prompt e i rami parlano di consegna ==');
 const B88 = casoBlock(RESO, c88);
