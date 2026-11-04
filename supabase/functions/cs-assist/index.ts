@@ -685,11 +685,15 @@ function computeCaso(conv: Row, ordine: Ord, meta: OrdMeta | null, inbound: stri
   const ordineDel = verificato && ordine?.created_at_shop ? String(ordine.created_at_shop).slice(0, 10) : null;
   // Il verdetto si calcola solo a ordine verificato e su una consegna PLAUSIBILE: non prima
   // dell'ordine e non nel futuro (una data della collega digitata male non diventa un verdetto).
+  // I giorni sono di CALENDARIO, sulla data di oggi a Roma (come `seen_delivered_at`): il conto della
+  // v14 ancorato alle 12:00 UTC dava -1 a una bozza scritta la mattina del giorno della consegna, cioe'
+  // nessun verdetto proprio su chi scrive appena ricevuto il pacco. Consegna = giorno 0, giorno 14 dentro.
+  const oggi = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date(adesso));
   let consegna: string | null = null, giorni: number | null = null;
   let verdetto: CasoReso['verdetto'] = 'sconosciuto';
-  if (verificato && delivered && !(ordineDel && delivered < ordineDel)) {
-    const g = Math.floor((adesso - new Date(delivered + 'T12:00:00Z').getTime()) / 86400000);
-    if (g >= 0) { consegna = delivered; giorni = g; verdetto = g <= finestra ? 'entro' : 'fuori'; }
+  if (verificato && delivered && !(ordineDel && delivered < ordineDel) && delivered <= oggi) {
+    const g = Math.round((Date.parse(oggi + 'T00:00:00Z') - Date.parse(delivered + 'T00:00:00Z')) / 86400000);
+    if (Number.isFinite(g) && g >= 0) { consegna = delivered; giorni = g; verdetto = g <= finestra ? 'entro' : 'fuori'; }
   }
   // v18 (brief punto 8): ci sono ordini su cui la
   // finestra non e' proprio la domanda giusta. Rimborsato/annullato = il caso e' gia' chiuso a

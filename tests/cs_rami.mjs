@@ -359,8 +359,7 @@ t('86 e in chat e\' SPENTO in tutte e tre (mai una email finta dentro Shopify In
 // davvero, con l'orologio fermo. Il caso che giustifica tutto e' l'88: ordine di 25 giorni fa,
 // consegnato 10 giorni fa. Con la regola della v14 era 'fuori' e la bozza rifiutava un reso che
 // l'informativa concede.
-// Orologio alle 15:00 UTC: `giorni` ancora la data alle 12:00 UTC, quindi di pomeriggio e' il numero
-// di giorni di calendario; di mattina vale un giorno in meno, cioe' a favore della cliente.
+// I giorni sono di calendario sulla data di Roma: consegna = giorno 0, il quattordicesimo e' dentro.
 console.log('\n== v31: la finestra si conta dalla CONSEGNA, mai dalla data dell\'ordine ==');
 const ADESSO = Date.parse('2026-11-04T15:00:00Z');
 const CONV = { customer_email: 'cliente@example.invalid' };
@@ -406,7 +405,19 @@ t('102 il caso INDIRIZZO non cambia: TWS consegnata = consegnato, fulfillment se
   caso({ ship: TWS('2026-10-25') }).indirizzo.caso === 'consegnato' && caso().indirizzo.caso === 'verificare_tracking'
   && caso({ ordine: ORD({ fulfillment_status: null }) }).indirizzo.caso === 'correggibile');
 t('103 nel sorgente i giorni non si contano piu\' da ordineDel',
-  !/new Date\(ordineDel \+ 'T12:00:00Z'\)/.test(SRC) && /new Date\(delivered \+ 'T12:00:00Z'\)/.test(SRC));
+  !/new Date\(ordineDel \+ 'T12:00:00Z'\)/.test(SRC) && /Date\.parse\(delivered \+ 'T00:00:00Z'\)/.test(SRC));
+// Trovato dal confronto deterministico sui casi reali del 04-11 (Gate 2): col conto ancorato alle 12:00
+// UTC una bozza scritta la mattina del giorno della consegna dava giorni = -1, quindi nessun verdetto,
+// proprio a chi scrive appena ricevuto il pacco (conversazione reale, consegna e richiesta lo stesso giorno).
+const alle = (iso, c = {}) => computeCaso(CONV, ORD(), null, 'vorrei fare il reso', 14, c.conferma ?? null, c.ship ?? null, Date.parse(iso));
+t('112 consegnato oggi, bozza alle 8 di mattina a Roma: giorno 0, ENTRO (prima era -1 e nessun verdetto)',
+  alle('2026-11-04T07:00:00Z', { ship: TWS('2026-11-04') }).reso.giorni === 0 && alle('2026-11-04T07:00:00Z', { ship: TWS('2026-11-04') }).reso.verdetto === 'entro');
+t('113 l\'ora del giorno non conta: il quindicesimo giorno e\' FUORI anche alle 8 di mattina',
+  alle('2026-11-04T07:00:00Z', { ship: TWS('2026-10-20') }).reso.verdetto === 'fuori' && alle('2026-11-04T07:00:00Z', { ship: TWS('2026-10-21') }).reso.verdetto === 'entro');
+t('114 il giorno e\' quello di Roma: alle 00:30 di Roma del 5 (23:30 UTC del 4) il 21 ottobre e\' gia\' il quindicesimo',
+  alle('2026-11-04T23:30:00Z', { ship: TWS('2026-10-21') }).reso.giorni === 15 && alle('2026-11-04T23:30:00Z', { ship: TWS('2026-10-22') }).reso.verdetto === 'entro');
+t('115 una data inesistente della collega (32 ottobre, dopo l\'ordine) non diventa un verdetto',
+  alle('2026-11-04T15:00:00Z', { conferma: '2026-10-32' }).reso.verdetto === 'sconosciuto');
 
 console.log('\n== v31: il blocco CASO del prompt e i rami parlano di consegna ==');
 const B88 = casoBlock(RESO, c88);
