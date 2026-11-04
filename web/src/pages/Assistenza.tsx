@@ -793,13 +793,24 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                     <span>{NON_APP_UI[caso.reso.non_applicabile ?? 'rimborsato']}</span>
                   </div>
                 ) : caso.reso.verdetto === 'entro' ? (
-                  <div className="cs-verdict cs-v-ok"><b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
+                  <div className="cs-verdict cs-v-ok"><b>🧾 Consegnato il {fmtData(caso.reso.delivered_at)} · {caso.reso.giorni} giorni fa · ✅ ENTRO i {caso.reso.finestra} (dalla consegna)</b><span>Data di consegna: {caso.reso.fonte}. Reso ammesso: istruzioni + rientro a carico cliente + rimborso in 14 giorni.</span></div>
                 ) : caso.reso.verdetto === 'fuori' ? (
-                  <div className="cs-verdict cs-v-no"><b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra} (dalla data dell&#8217;ordine)</b><span>Fonte: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
+                  <div className="cs-verdict cs-v-no"><b>🧾 Consegnato il {fmtData(caso.reso.delivered_at)} · {caso.reso.giorni} giorni fa · ⛔ FUORI dai {caso.reso.finestra} (dalla consegna)</b><span>Data di consegna: {caso.reso.fonte}. Rifiuto garbato con un&#8217;alternativa (salvo difetto).</span></div>
+                ) : caso.verificato ? (
+                  // v31 (Dan 03-11): ordine agganciato ma consegna non nota. La data si conferma dal
+                  // tracking, come nel caso indirizzo, e vale anche per la bozza (generateOptions la passa).
+                  <div className="cs-verdict cs-v-warn">
+                    <b>🧾 Ordine del {fmtData(caso.reso.ordine_del)} · data di consegna da verificare</b>
+                    <span>La finestra dei {caso.reso.finestra} giorni decorre dalla consegna. {caso.tracking_url ? <>Controlla dal <a href={caso.tracking_url} target="_blank" rel="noreferrer">tracking ↗</a> e conferma qui la data;</> : 'Conferma qui la data;'} senza, la bozza usa [DA VERIFICARE: data di consegna].</span>
+                    <div className="cs-case-row">
+                      <input type="date" value={confirmDate} onChange={(e) => setConfirmDate(e.target.value)} aria-label="Data di consegna" />
+                      <button className="cs-btn cs-ghost" type="button" disabled={!confirmDate || casoBusy} onClick={() => loadCaso(c.id, confirmDate)}>{casoBusy ? '…' : '✓ Consegnata in questa data'}</button>
+                    </div>
+                  </div>
                 ) : (
                   <div className="cs-verdict cs-v-info">
                     <b>Ordine non identificato con certezza</b>
-                    <span>La finestra dei {caso.reso.finestra} giorni decorre dalla data dell&#8217;ordine: senza l&#8217;ordine agganciato niente verdetto, la bozza usa [DA VERIFICARE: numero ordine].</span>
+                    <span>La finestra dei {caso.reso.finestra} giorni decorre dalla consegna: senza l&#8217;ordine agganciato niente verdetto, la bozza usa [DA VERIFICARE: numero ordine].</span>
                   </div>
                 )}
               </>

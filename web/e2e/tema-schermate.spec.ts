@@ -770,7 +770,7 @@ const EDGE: Record<string, (b: Riga) => unknown> = {
     },
   } : b.action === 'case_data' ? {
     ok: true, categoria: 'Reso e rimborso', verificato: true, tracking_url: null, order_admin_url: null, stato_tws: 'Consegnata', stato_tws_aggiornato: '2026-10-14T15:20:00Z',
-    reso: { ordine_del: '2026-10-06', delivered_at: '2026-10-14', fonte: 'ordine Shopify #1478', giorni: 9, finestra: 14, verdetto: 'entro', non_applicabile: null, stato_pagamento: 'paid', difetto_sospetto: false },
+    reso: { ordine_del: '2026-10-06', delivered_at: '2026-10-14', fonte: 'TWS (stato corriere)', giorni: 9, finestra: 14, verdetto: 'entro', non_applicabile: null, stato_pagamento: 'paid', difetto_sospetto: false },
     indirizzo: { fulfillment_presente: true, caso: 'consegnato' },
   } : { ok: false, error: 'azione non prevista nelle schermate' }),
   'push-api': (b) => (b.action === 'config' ? { enabled: true, vapidPublicKey: VAPID, temi: TEMI }
