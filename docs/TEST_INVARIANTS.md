@@ -134,9 +134,11 @@ produzione, con pulizia a mano. Ora ha un bersaglio usa-e-getta.
 **Come si lancia:**
 
 ```
-npx supabase start
+npx -y supabase@2.122.1 start
 AMIMI_TEST_URL=http://127.0.0.1:54321 AMIMI_TEST_KEY=<PUBLISHABLE_KEY di start> node tests/flows.mjs
 ```
+
+CLI fissata a 2.122.1 (06-11): `npx supabase` prende la 3.0.0, che rifiuta `[inbucket]` di `config.toml`; `flows.mjs` lancia anche il suo `db reset` con la stessa versione. Su questo PC Docker Desktop c'e' ma va avviato a mano (non parte col sistema).
 
 **Le tre scelte, dichiarate:**
 
@@ -156,6 +158,10 @@ AMIMI_TEST_URL=http://127.0.0.1:54321 AMIMI_TEST_KEY=<PUBLISHABLE_KEY di start> 
 **Le due guardie** (test negativo eseguito, entrambe `exit 1`): senza `AMIMI_TEST_URL`/`AMIMI_TEST_KEY`
 la suite non parte; con l'URL della produzione si rifiuta di partire, e il controllo e' sul project
 ref, non sul nome. Il rifiuto viene PRIMA del reset: puntarla alla produzione non tocca niente.
+
+**Riparazione del 06-11 (chat del sito, Fase 0, parte 4):** lo stack non partiva: `schema.sql` (rigenerato il 01-11) da' al ruolo `ask_ro` (migr 0121) 138 grant e policy e la proprieta' di `ask_select`, ma in locale le migrazioni sono spente e il ruolo non esisteva (`role "ask_ro" does not exist`). `local_bootstrap.sql` ora lo crea come la 0121 (nologin, membro di postgres, timeout 5 s) e gli da' CREATE sullo schema solo per caricare `schema.sql` (il cambio di proprietario lo pretende quando chi carica non e' superuser); `seed.sql` lo toglie in testa. Dopo la riparazione `node tests/flows.mjs` sullo stack locale: **34 passati, 0 falliti** (06-11), primo verde dal 01-08.
+
+**Push in locale (06-11):** `schema.sql` non ha le tabelle `push_*` (0163, 0166, 0168, 0183, 0185), quindi push-api e push-eventi non girano sullo stack. Le loro prove restano quelle di oggi: blocchi PURE e client finto in `tests/push_eventi_core.mjs` e `tests/push_core.mjs`, e la prova viva `tests/push_eventi_rls.sql` nel blocco annullato in produzione (TEST_OK, rollback). Per un flusso che deve vedere una push vera in locale: rigenerare `schema.sql` dalla produzione (le tabelle `push_*` entrano col dump) e far rispondere `push-api` a un server finto con `dryRun` (nessun telefono vero), mai i telefoni del team.
 
 **Residuo dichiarato:** `app_config.shopify_token` nel seed e' un segnaposto finto e ci vuole, perche'
 in `shopify-stock` il controllo "token presente" precede il cancello di scrittura e senza token il

@@ -13,7 +13,7 @@
 // partire (guardia sul project ref, non una convenzione sui nomi).
 //
 // BERSAGLIO SCELTO (01-08 sera): lo STACK LOCALE in Docker, non un branch Supabase (a pagamento).
-//   npx supabase start
+//   npx -y supabase@2.122.1 start      (CLI fissata: la 3.0.0 rifiuta config.toml, DEPLOY.md sez. 2 del repo hub)
 //   AMIMI_TEST_URL=http://127.0.0.1:54321  AMIMI_TEST_KEY=<PUBLISHABLE_KEY stampata da start>
 // Il database si costruisce da `supabase/schema.sql` + `supabase/seed.sql`, NON dalle migrazioni
 // (vedi il commento in supabase/config.toml: `supabase/migrations` non sa ricreare il DB da zero).
@@ -69,11 +69,13 @@ if (isLocal && process.env.AMIMI_TEST_NO_RESET !== '1') {
   }
 
   console.log('Reset del bersaglio locale (supabase db reset)...');
-  const r = spawnSync('npx', ['supabase', 'db', 'reset'], { cwd: repo, env, stdio: 'inherit', shell: true });
+  // CLI fissata (06-11): `npx supabase` prende la 3.0.0, che rifiuta [inbucket] di config.toml e non resetta niente
+  // (DEPLOY.md sez. 2 del repo hub). Si passa alla 3.x con la migrazione di config.toml.
+  const r = spawnSync('npx', ['-y', 'supabase@2.122.1', 'db', 'reset'], { cwd: repo, env, stdio: 'inherit', shell: true });
   if (r.status !== 0) {
     if (r.error) console.error('\n' + r.error.message);
     console.error('\nSTOP: `supabase db reset` non e\' andato a buon fine (exit ' + r.status + ').');
-    console.error('Serve lo stack locale acceso: `npx supabase start` (e Docker Desktop avviato).');
+    console.error('Serve lo stack locale acceso: `npx -y supabase@2.122.1 start` (e Docker Desktop avviato).');
     console.error('Se il bersaglio e\' gia\' pulito e vuoi saltare questo passo: AMIMI_TEST_NO_RESET=1.\n');
     process.exit(1);
   }
