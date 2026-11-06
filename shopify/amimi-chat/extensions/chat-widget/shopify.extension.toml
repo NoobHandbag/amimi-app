@@ -1,0 +1,4 @@
+# Theme app extension della chat del sito: un solo blocco app embed (blocks/chat-embed.liquid). Scritta a mano, senza
+# `shopify app generate extension` (vuole il login). Il primo `shopify app deploy` puo' aggiungere qui un `uid`: si committa.
+name = "Amimi Chat"
+type = "theme"
