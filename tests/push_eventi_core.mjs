@@ -51,7 +51,9 @@ const ESPORTA = ['APP_URL', 'LINK_ASSISTENZA', 'LINK_SALUTE', 'CHI_PERSONE', 'TE
   // 21-10 (v3): stati del corriere che sono un problema vero, evento attivita_team e giro a gruppi
   'statoProblema', 'contaProblemi', 'PROBLEMI_CORRIERE', 'candAttivita', 'msgGruppoAttivita', 'msgAttivita', 'PERSONA_TEAM', 'OP_ATTIVITA', 'eseguiGruppi',
   // 03-11 (v5): notifiche dell'Area Membri
-  'LINK_RECENSIONI', 'LINK_PREMIA', 'candPremia', 'msgPremia', 'candPremiaSalute', 'msgPremiaSalute', 'contaIscritte'];
+  'LINK_RECENSIONI', 'LINK_PREMIA', 'candPremia', 'msgPremia', 'candPremiaSalute', 'msgPremiaSalute', 'contaIscritte',
+  // 06-11 (v6): temi degli eventi accesi senza telefoni
+  'candSenzaIscritti', 'msgSenzaIscritti'];
 // Gate 3 (18-10): il resto della edge (letture degli eventi, giro, run, salute, anteprima) ritagliato DAL SORGENTE e
 // guidato con un client finto che registra ogni chiamata. Tolti solo gli import e Deno.serve; inviaPush e sleep arrivano
 // dal test (sleep registra la pausa e non aspetta: la rilettura di cs_sync e il ritentativo restano veri, solo istantanei).
@@ -82,7 +84,7 @@ const { APP_URL, LINK_ASSISTENZA, LINK_SALUTE, CHI_PERSONE, TEMA_EVENTO, temaDi,
   sommaCassa, ordiniInRitardo, STALLO_MS, PRENOTATO_SCADUTO_MS, MAX_TENTATIVI, TETTO_INVII, serveBaseline, pianifica, statoDaEsito, esitoDaSalvare, eseguiPiano,
   contaArrivi, RITARDO_LETTURA_MAX_MS, FINESTRA_RISCRITTO_MS, EVENTI_DI_STATO, baselineDi, chiusura, saluteGiro, conPrecedente, causaSicura, SEP_PRIMO,
   statoProblema, contaProblemi, PROBLEMI_CORRIERE, candAttivita, msgGruppoAttivita, msgAttivita, PERSONA_TEAM, OP_ATTIVITA, eseguiGruppi,
-  LINK_RECENSIONI, LINK_PREMIA, candPremia, msgPremia, candPremiaSalute, msgPremiaSalute, contaIscritte } = M;
+  LINK_RECENSIONI, LINK_PREMIA, candPremia, msgPremia, candPremiaSalute, msgPremiaSalute, contaIscritte, candSenzaIscritti, msgSenzaIscritti } = M;
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra !== '' ? '  <- ' + JSON.stringify(extra).slice(0, 260) : '')); } };
@@ -110,9 +112,9 @@ console.log('== base ==');
     && APP_URL === (SHARED.match(/export const APP_URL = '([^']+)'/) ?? [])[1] && LINK_ASSISTENZA === APP_URL + '#assistenza' && LINK_SALUTE === APP_URL + '#salute');
   const chiApi = (PUSH_API.match(/const CHI_AMMESSI = (\[[^\]]+\])/) ?? [])[1];
   t('2  CHI_PERSONE = CHI_AMMESSI di push-api (Ale, Bene, Ginevra)', JSON.stringify(CHI_PERSONE) === '["Ale","Bene","Ginevra"]' && chiApi === "['Ale', 'Bene', 'Ginevra']", chiApi);
-  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo, dalla 0168 del 21-10 attivita, dalla 0183 del 03-11 premia e sistema', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
+  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo, dalla 0168 del 21-10 attivita, dalla 0183 del 03-11 premia e sistema, dalla 0185 del 06-11 sistema', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
     cs_cliente_ha_riscritto: 'assistenza', spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
-    premia_da_approvare: 'premia', premia_salute: 'sistema' }));
+    premia_da_approvare: 'premia', premia_salute: 'sistema', sistema_senza_iscritti: 'sistema' }));
   t('4  temaDi: la riga a DB vince se e\' una chiave valida, altrimenti il tema del codice; evento sconosciuto -> vuoto', temaDi('negozi_vip', 'b2b_risposta_negozio') === 'negozi_vip'
     && temaDi(null, 'cs_urgente') === 'assistenza' && temaDi('Assistenza!', 'cs_urgente') === 'assistenza' && temaDi(42, 'riepilogo') === 'riepilogo' && temaDi(null, 'boh') === '');
   t('5  linkNegozio: uuid -> #negozi/outreach/<id> minuscolo; altro (anche iniezioni) -> la pipeline', linkNegozio(U1.toUpperCase()) === APP_URL + '#negozi/outreach/' + U1
@@ -565,7 +567,7 @@ const reg = (k, stato, tentativi = 1, minFa = 0) => ({ id: 'id-' + k, chiave: k,
     && bd({ evento: 'cs_urgente', baseline_at: iso2(600), ultimo_giro_at: iso2(180) }) === '{"seme":true,"baseline":true,"ripartenza":true}'
     && bd({ evento: 'cs_urgente', baseline_at: iso2(600), ultimo_giro_at: iso2(5) }) === '{"seme":false,"baseline":false,"ripartenza":false}');
   t('57c RF-4: l\'evento di STATO (cs-sync fermo) semina baseline_at ma non salta il pregresso, ne\' alla prima accensione ne\' alla ripartenza',
-    isDeepStrictEqual(EVENTI_DI_STATO, ['sistema_cs_sync_fermo', 'premia_salute']) && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: null, ultimo_giro_at: null }) === '{"seme":true,"baseline":false,"ripartenza":false}'
+    isDeepStrictEqual(EVENTI_DI_STATO, ['sistema_cs_sync_fermo', 'premia_salute', 'sistema_senza_iscritti']) && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: null, ultimo_giro_at: null }) === '{"seme":true,"baseline":false,"ripartenza":false}'
     && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: iso2(600), ultimo_giro_at: iso2(180) }) === '{"seme":true,"baseline":false,"ripartenza":false}');
   const stallo = pianifica([c('a', ORA - H)], new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'stallo' });
   const altro = pianifica([c('a', ORA - H)], new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'boh' });
@@ -924,6 +926,94 @@ try {
   t('PR7 premia_salute e\' un evento di stato (un guasto in corso all\'accensione si vede), premia_da_approvare no', baselineDi({ evento: 'premia_salute', baseline_at: null, ultimo_giro_at: null }, ORA_P).baseline === false
     && baselineDi({ evento: 'premia_da_approvare', baseline_at: null, ultimo_giro_at: null }, ORA_P).baseline === true);
 } catch (e) { t('PR! eccezione nella sezione', false, String(e?.message ?? e)); }
+console.log('\n== temi senza telefoni (06-11, v6, sistema_senza_iscritti) ==');
+try {
+  // 06-11 alle 18:30 di Roma (CET, UTC+1)
+  const ORA_I = T('2026-11-06T17:30:00Z'), DATA_I = '2026-11-06';
+  const EV_I = [
+    { evento: 'cs_urgente', tema: 'assistenza', attivo: true }, { evento: 'cs_cliente_ha_riscritto', tema: 'assistenza', attivo: true },
+    { evento: 'spedizione_eccezione', tema: 'spedizioni', attivo: true }, { evento: 'riepilogo', tema: 'riepilogo', attivo: true },
+    { evento: 'premia_da_approvare', tema: 'premia', attivo: true }, { evento: 'b2b_risposta_negozio', tema: 'negozi', attivo: true },
+    { evento: 'attivita_team', tema: 'attivita', attivo: false }, { evento: 'sistema_senza_iscritti', tema: 'sistema', attivo: true },
+  ];
+  const TEMI_I = [{ key: 'assistenza', etichetta: 'Assistenza', attivo: true }, { key: 'spedizioni', etichetta: 'Spedizioni', attivo: true },
+    { key: 'riepilogo', etichetta: 'Riepilogo', attivo: true }, { key: 'premia', etichetta: 'Area Membri da approvare', attivo: true },
+    { key: 'negozi', etichetta: null, attivo: false }, { key: 'sistema', etichetta: 'Sistema', attivo: true }];
+  const ISC_I = { assistenza: 0, spedizioni: 0, riepilogo: 2, premia: 0, negozi: 2, sistema: 1 };
+  const PERSE_I = [{ evento: 'cs_urgente' }, { evento: 'cs_urgente' }, { evento: 'cs_cliente_ha_riscritto' }, { evento: 'riepilogo' }, { evento: 'riepilogo' },
+    { evento: 'attivita_team' }, { evento: 'spedizione_eccezione' }, { evento: 'boh' }, null];
+  const base = { eventi: EV_I, temi: TEMI_I, iscritti: ISC_I, perse: PERSE_I, ora: ORA_I, oraDa: 9 };
+  const ci = candSenzaIscritti(base);
+  t('SI1 candSenzaIscritti: un candidato per tema di un evento acceso senza telefoni (assistenza, premia, spedizioni) o spento (negozi); con telefoni (riepilogo, sistema) o di un evento spento (attivita) no; chiave iscritti:<tema>:<data di Roma>, istante adesso',
+    isDeepStrictEqual(ci.map((c) => [c.chiave, c.rif.motivo, c.rif.perse]).sort(), [['iscritti:assistenza:' + DATA_I, 'senza_telefoni', '3'], ['iscritti:negozi:' + DATA_I, 'spento', '0'],
+      ['iscritti:premia:' + DATA_I, 'senza_telefoni', '0'], ['iscritti:spedizioni:' + DATA_I, 'senza_telefoni', '1']]) && ci.every((c) => c.ts === ORA_I), ci);
+  t('SI2 prima delle 9 di Roma niente (un promemoria di stato non suona di notte); alle 9 in punto si\'; ora_da diversa rispettata',
+    candSenzaIscritti({ ...base, ora: T('2026-11-06T07:59:00Z') }).length === 0 && candSenzaIscritti({ ...base, ora: T('2026-11-06T08:00:00Z') }).length === 4
+    && candSenzaIscritti({ ...base, oraDa: 19 }).length === 0 && candSenzaIscritti({ ...base, oraDa: 0, ora: T('2026-11-06T23:30:00Z') }).every((c) => c.chiave.endsWith(':2026-11-07')));
+  t('SI3 conteggio assente o illeggibile per un tema attivo -> nessun candidato (mai un allarme da un numero che non c\'e\'); tema assente da push_temi = spento',
+    candSenzaIscritti({ ...base, iscritti: { ...ISC_I, assistenza: undefined } }).every((c) => !c.chiave.startsWith('iscritti:assistenza:'))
+    && candSenzaIscritti({ ...base, temi: TEMI_I.filter((x) => x.key !== 'riepilogo') }).some((c) => c.chiave === 'iscritti:riepilogo:' + DATA_I && c.rif.motivo === 'spento')
+    && candSenzaIscritti({ ...base, eventi: [] }).length === 0 && candSenzaIscritti({ ...base, eventi: null, temi: null, perse: null }).length === 0);
+  const mi = msgSenzaIscritti(ci);
+  const per = Object.fromEntries(mi.map((m) => [m.chiave.split(':')[1], [m.titolo, m.testo]]));
+  t('SI4 msgSenzaIscritti: tema sistema, link #salute, non urgente, a tutti gli iscritti al tema; etichetta del tema nel testo (la chiave se manca), push perse delle 24 ore solo se ci sono',
+    mi.every((m) => m.tema === 'sistema' && m.url === LINK_SALUTE && !m.urgente && !m.chi) && testoValido(mi) && perdeTutto(mi).length === 0
+    && isDeepStrictEqual(per, {
+      assistenza: ['Notifiche senza telefono: Assistenza', 'Nessun telefono e\' iscritto al tema Assistenza, quindi le sue notifiche non arrivano a nessuno: 3 push perse nelle ultime 24 ore. Si iscrive dalla scheda Notifiche.'],
+      negozi: ['Notifiche senza telefono: negozi', 'Il tema negozi e\' spento, quindi le sue notifiche non arrivano a nessuno.'],
+      premia: ['Notifiche senza telefono: Area Membri da approvare', 'Nessun telefono e\' iscritto al tema Area Membri da approvare, quindi le sue notifiche non arrivano a nessuno. Si iscrive dalla scheda Notifiche.'],
+      spedizioni: ['Notifiche senza telefono: Spedizioni', 'Nessun telefono e\' iscritto al tema Spedizioni, quindi le sue notifiche non arrivano a nessuno: 1 push persa nelle ultime 24 ore. Si iscrive dalla scheda Notifiche.'],
+    }), per);
+  t('SI5 evento di stato: alla prima accensione i temi gia\' senza telefoni partono (nessuna baseline), una push al giorno per tema',
+    baselineDi({ evento: 'sistema_senza_iscritti', baseline_at: null, ultimo_giro_at: null }, ORA_I).baseline === false
+    && pianifica(ci, new Map(), { ora: ORA_I, baseline: false, etaMaxMs: 6 * 3600000 }).every((p) => p.azione === 'nuovo')
+    && pianifica(ci, new Map(ci.map((c) => [c.chiave, { id: 1, chiave: c.chiave, stato: 'nessun_iscritto', tentativi: 1, updated_at: '2026-11-06T09:00:00Z' }])), { ora: ORA_I, baseline: false, etaMaxMs: 6 * 3600000 }).every((p) => p.azione === 'fermo'));
+
+  // le letture, per firma: eventi accesi, temi, un conteggio di telefoni per tema, righe nessun_iscritto delle 24 ore
+  const G_I = new Date(ORA_I - 24 * 3600000).toISOString();
+  const attiviI = EV_I.filter((e) => e.attivo);
+  const temiOrd = [...new Set(attiviI.map((e) => e.tema))];
+  const LETTURE_I = {
+    'push_eventi select evento, tema, attivo eq:attivo|true limit:51': { data: attiviI },
+    [`push_temi select key, etichetta, attivo in:key|${JSON.stringify(temiOrd)} limit:${temiOrd.length + 1}`]: { data: TEMI_I },
+    ...Object.fromEntries(temiOrd.map((k) => [`push_subscriptions select id head contains:temi|${JSON.stringify([k])}`, { count: ISC_I[k] }])),
+    [`push_eventi_inviati select evento eq:stato|nessun_iscritto gte:updated_at|${G_I} limit:501`]: { data: PERSE_I.filter(Boolean) },
+  };
+  const vistaI = new Set();
+  const wi = mondo({ risposte: (q, f) => { if (!(f in LETTURE_I)) return undefined; vistaI.add(f); return { data: null, count: null, error: null, ...LETTURE_I[f] }; } });
+  const ctxI = ctxDi(ORA_I);
+  const candI = await MI.EVENTI.sistema_senza_iscritti.candidati(wi.sb, ctxI, evRiga('sistema_senza_iscritti'));
+  const msgI = await MI.EVENTI.sistema_senza_iscritti.componi(wi.sb, ctxI, evRiga('sistema_senza_iscritti'), candI);
+  const nonVisteI = Object.keys(LETTURE_I).filter((f) => !vistaI.has(f)), inatteseI = wi.log.map(firma).filter((f) => !(f in LETTURE_I));
+  t('SI6 letture con la firma attesa (eventi accesi, temi coi soli campi ammessi, un conteggio head per tema, registro nessun_iscritto delle 24 ore col solo evento), nessuna scrittura, gli stessi messaggi dei blocchi PURE',
+    nonVisteI.length === 0 && inatteseI.length === 0 && wi.scritte.length === 0 && isDeepStrictEqual(msgI, mi), { nonVisteI, inatteseI });
+  const notte = mondo({ risposte: () => ({ data: [], count: 0, error: null }) });
+  const candNotte = await MI.EVENTI.sistema_senza_iscritti.candidati(notte.sb, ctxDi(T('2026-11-06T06:00:00Z')), evRiga('sistema_senza_iscritti'));
+  t('SI7 prima delle 9 di Roma nessuna lettura (la soglia ora_da arriva da push_eventi.soglie)', candNotte.length === 0 && notte.log.length === 0
+    && (await MI.EVENTI.sistema_senza_iscritti.candidati(notte.sb, ctxDi(T('2026-11-06T06:00:00Z')), evRiga('sistema_senza_iscritti', { soglie: { ora_da: 7 } }))).length === 0 && notte.log.length > 0);
+  const errI = async (guasta) => {
+    const w = mondo({ risposte: (q, f) => (guasta(q, f) ?? (f in LETTURE_I ? { data: null, count: null, error: null, ...LETTURE_I[f] } : undefined)) });
+    try { await MI.EVENTI.sistema_senza_iscritti.candidati(w.sb, ctxI, evRiga('sistema_senza_iscritti')); return null; } catch (e) { return e instanceof MI.LetturaFallita ? e.cosa : 'altro: ' + e.message; }
+  };
+  const cause = [
+    await errI((q) => (q.table === 'push_eventi' ? { data: null, error: { message: 'giu' } } : undefined)),
+    await errI((q) => (q.table === 'push_eventi' ? { data: Array.from({ length: 51 }, (_, i) => ({ evento: 'e' + i, tema: 'assistenza', attivo: true })), error: null } : undefined)),
+    await errI((q) => (q.table === 'push_temi' ? { data: null, error: { message: 'giu' } } : undefined)),
+    await errI((q, f) => (q.table === 'push_subscriptions' && f.includes('"premia"') ? { count: null, error: { message: 'giu' } } : undefined)),
+    await errI((q) => (q.table === 'push_eventi_inviati' ? { data: Array.from({ length: 501 }, () => ({ evento: 'cs_urgente' })), error: null } : undefined)),
+  ];
+  t('SI8 Regola 20: ogni lettura fallita o troncata ferma l\'evento con la sua causa (eventi accesi, push_temi, telefoni del tema, push senza destinatari), mai un default vuoto',
+    isDeepStrictEqual(cause, ['eventi accesi', 'eventi accesi', 'push_temi', 'telefoni del tema', 'push senza destinatari']), cause);
+  // il giro vero col client finto: quattro push sul tema sistema, una a tema; il giro dopo nello stesso giorno nessuna
+  inviate.length = 0;
+  const wr = mondo({ eventi: [evRiga('sistema_senza_iscritti', { tema: 'sistema' })], risposte: (q, f) => (f in LETTURE_I ? { data: null, count: null, error: null, ...LETTURE_I[f] } : undefined) });
+  const r1 = await (await MI.eseguiRun(wr.sb, ctxI)).json();
+  const primo = inviate.splice(0);
+  const r2 = await (await MI.eseguiRun(wr.sb, ctxDi(ORA_I + 5 * 60000))).json();
+  t('SI9 giro: alla prima accensione 4 push sul tema sistema (una per tema), registro iscritti:<tema>:<data>; il giro dopo nessuna (una al giorno)',
+    r1.inviati === 4 && primo.length === 4 && primo.every((m) => m.tema === 'sistema' && m.url === LINK_SALUTE && m.urgente === false && !('chi' in m))
+    && isDeepStrictEqual([...wr.reg.keys()].sort(), ['assistenza', 'negozi', 'premia', 'spedizioni'].map((k) => `iscritti:${k}:${DATA_I}`)) && r2.inviati === 0 && inviate.length === 0, { r1: r1.eventi, r2: r2.eventi });
+} catch (e) { t('SI! eccezione nella sezione', false, String(e?.stack ?? e)); }
 
 console.log('\n== RF-1: la riga cs_sync letta nel buco del delete+insert di cs-sync ==');
 {
@@ -1385,8 +1475,8 @@ console.log('\n== anteprima col client finto ==');
   const w = mondo({ eventi: [], risposte: (q) => (q.op === 'select' && q.head ? { count: 0, error: null } : q.op === 'select' && q.table !== 'push_eventi' && q.table !== 'push_eventi_inviati' ? { data: [], error: null } : undefined) });
   const res = await MI.anteprima(w.sb, ctxDi(ORA_A), true);
   const corpo = await res.json();
-  t('V1 anteprima: nessuna scrittura (registro, push_eventi, health_log) e nessun invio, tutti e nove gli eventi', w.scritte.length === 0 && inviate.length === 0
-    && corpo.eventi.length === 9 && corpo.eventi.every((e) => !e.errore), corpo.eventi.map((e) => e.errore ?? e.evento));
+  t('V1 anteprima: nessuna scrittura (registro, push_eventi, health_log) e nessun invio, tutti e dieci gli eventi', w.scritte.length === 0 && inviate.length === 0
+    && corpo.eventi.length === 10 && corpo.eventi.every((e) => !e.errore), corpo.eventi.map((e) => e.errore ?? e.evento));
 }
 
 console.log('\n== guardie sul sorgente ==');
@@ -1451,7 +1541,10 @@ const scrittureFuoriModulo = (s) => righeSb(s).filter((l) => SCRITTURA.test(l) &
 // (e' la riga che la edge stessa scrive, soli nomi e numeri). Le espressioni json sono ammesse una per una.
 const AMMESSE = {
   app_config: ['pin_hash'], app_flags: ['key', 'value'],
-  push_eventi: ['evento', 'tema', 'attivo', 'soglie', 'baseline_at', 'ultimo_giro_at'], push_eventi_inviati: ['id', 'chiave', 'stato', 'tentativi', 'updated_at'],
+  push_eventi: ['evento', 'tema', 'attivo', 'soglie', 'baseline_at', 'ultimo_giro_at'], push_eventi_inviati: ['id', 'evento', 'chiave', 'stato', 'tentativi', 'updated_at'],
+  // 06-11 (sistema_senza_iscritti): dei temi chiave, etichetta e interruttore; dei telefoni SOLO il conteggio (mai endpoint,
+  // chiavi, persone o etichette dei dispositivi)
+  push_temi: ['key', 'etichetta', 'attivo'], push_subscriptions: ['id'],
   'health_log:cs_sync': ['severity', 'created_at'], 'health_log:push_eventi': ['severity', 'label'],
   cs_events: ['id', 'conversation_id', 'azione', 'at', 'dettaglio->>urgente', 'dettaglio->>a'],
   // customer_name e customer_email dal 19-10 (decisione di Dan), e SOLO nelle due letture di LETTURE_CLIENTE (caso N13)
@@ -1592,7 +1685,7 @@ t('89c RF-1: cs_sync riletta dopo 3 s solo se la prima lettura dice ferma, e dec
   t('90 blocchi PURE senza Deno, import, client, rete, log o invio', impuri.length === 0, impuri);
   const ordine = (SRC.match(/const ORDINE = (\[[^\]]+\])/) ?? [])[1] ?? '';
   const eventi = [...(SRC.slice(SRC.indexOf('const EVENTI: Record<string, DefEvento> = {'), SRC.indexOf('const ORDINE = ')).matchAll(/^ {2}(\w+): \{$/gm))].map((m) => m[1]);
-  t('91 i nove eventi del contratto (attivita_team dal 21-10, premia_salute col sistema e premia_da_approvare dal 03-11), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'riepilogo']"
+  t('91 i dieci eventi del contratto (attivita_team dal 21-10, premia_salute col sistema e premia_da_approvare dal 03-11, sistema_senza_iscritti prima del riepilogo dal 06-11), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo']"
     && eventi.slice().sort().join() === Object.keys(TEMA_EVENTO).sort().join(), { ordine, eventi });
   const run92 = corpoRun(SRC);
   t('92 tetto e tempo: budget di TETTO_INVII per giro, nessun invio nuovo dopo 15 s e nessun evento cominciato dopo 30 s (RF-5, timeout del cron 60 s); finestra 24 ore, limite 50',
@@ -1615,6 +1708,8 @@ console.log('\n== contratto con la migrazione 0166, push-api e il web ==');
 const MIGR = read('supabase/migrations/0166_push_eventi.sql');
 const MIGR_0168 = read('supabase/migrations/0168_push_attivita.sql');
 const MIGR_0183 = read('supabase/migrations/0183_push_premia.sql');
+const MIGR_0185 = read('supabase/migrations/0185_push_iscritti.sql');
+const ROLLBACK_0185 = read('supabase/snippets/0185_rollback_push_eventi_salute.sql');
 const MIGR_0138 = read('supabase/migrations/0138_loyalty_orders_cron.sql');
 const RLS = read('tests/push_eventi_rls.sql');
 const WEB_PUSH = read('web/src/lib/push.ts');
@@ -1667,12 +1762,13 @@ const temiCoerenti = (m) => {
   const fuori = eventiFuoriCheck(MIGR);
   t('96 ogni evento della edge passa il CHECK push_eventi_evento_ck della 0166 (b2b_risposta_negozio ha una cifra)', fuori.length === 0, fuori);
   // 21-10: il settimo (attivita_team) nasce nella 0168; le due migrazioni insieme sono il contratto con la edge
-  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168), ...eventiMigr(MIGR_0183) };
+  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168), ...eventiMigr(MIGR_0183), ...eventiMigr(MIGR_0185) };
   const rls = Object.fromEntries([...tra(RLS, 'join (values', ') x(ev, tema)').matchAll(/\('([^']+)', '([^']+)'\)/g)].map((x) => [x[1], x[2]]));
-  t('97 i sei eventi della 0166, attivita_team della 0168 e i due di Premia della 0183 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
+  t('97 i sei eventi della 0166, attivita_team della 0168, i due di Premia della 0183 e sistema_senza_iscritti della 0185 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
     Object.keys(eventiMigr(MIGR)).length === 6 && isDeepStrictEqual(eventiMigr(MIGR_0168), { attivita_team: 'attivita' })
-    && isDeepStrictEqual(eventiMigr(MIGR_0183), { premia_da_approvare: 'premia', premia_salute: 'sistema' }) && isDeepStrictEqual(em, TEMA_EVENTO) && isDeepStrictEqual(rls, TEMA_EVENTO)
-    && RLS.includes("if n <> 9 then raise exception 'KO D:"), { em, rls });
+    && isDeepStrictEqual(eventiMigr(MIGR_0183), { premia_da_approvare: 'premia', premia_salute: 'sistema' }) && isDeepStrictEqual(eventiMigr(MIGR_0185), { sistema_senza_iscritti: 'sistema' })
+    && isDeepStrictEqual(em, TEMA_EVENTO) && isDeepStrictEqual(rls, TEMA_EVENTO)
+    && RLS.includes("if n <> 10 then raise exception 'KO D:"), { em, rls });
   t('98 temi nuovi e predefinito_per come il contratto; le tre chiavi = CHECK della 0166 = PEOPLE del web = CHI_PERSONE; chiavi valide per push-api; conti e vendite ad Ale',
     temiCoerenti(MIGR), temiMigr(MIGR));
   const stati = listaSql((MIGR.match(/push_eventi_inviati_stato_ck check \(stato in \(([^)]*)\)\)/) ?? [])[1]);
@@ -1748,6 +1844,35 @@ const temiCoerenti = (m) => {
     contrattoPremia(MIGR_0183));
   t('A-M5 la stessa 0183 col tema per Ale, o con un evento acceso -> visto', [pianta(MIGR_0183, "90, array['Ginevra'])", "90, array['Ale'])"),
     pianta(MIGR_0183, "('premia_salute', 'sistema', false,", "('premia_salute', 'sistema', true,")].every((m) => !contrattoPremia(m)));
+  // 06-11: la 0185 (sistema_senza_iscritti spento sul tema sistema; push_eventi_salute() con la riga push_iscritti in piu' e
+  // la parte push_eventi_fresh della 0166 identica, riga per riga) e il suo rollback (la funzione della 0166, identica)
+  const FRESH_0166 = (() => { const a = MIGR.indexOf("  if exists (select 1 from app_flags where key = 'push_eventi_enabled'"); const b = MIGR.indexOf('  end if;\nend $fn$;', a); return a > 0 && b > a ? MIGR.slice(a, b) : null; })();
+  const FN_0166 = tra(MIGR, 'create or replace function public.push_eventi_salute() returns void', '$fn$;');
+  const contratto0185 = (m) => {
+    const fn = tra(m, 'create or replace function public.push_eventi_salute() returns void', '$fn$;');
+    const variabili = [...(tra(fn, '\ndeclare\n', '\nbegin\n') + '\n').matchAll(/^\s+([a-z_][a-z0-9_]*)\s+[a-z]/gm)].map((x) => x[1]);
+    return FRESH_0166 !== null && fn.includes(FRESH_0166) && fn.includes("language plpgsql security definer set search_path to 'public' as $fn$")
+      && fn.includes("values (current_date, 'push_iscritti',") && (fn.match(/on conflict \(day, k\) do update set label = excluded\.label, n = excluded\.n, severity = excluded\.severity, created_at = excluded\.created_at;/g) ?? []).length === 2
+      && fn.includes("where not exists (select 1 from push_temi t where t.key = x.tema and t.attivo)") && fn.includes('or not exists (select 1 from push_subscriptions s where x.tema = any(s.temi))')
+      && fn.includes("where i.stato = 'nessun_iscritto' and i.updated_at >= now() - interval '24 hours'") && fn.includes("case when v_temi_ko > 0 then 'error' else 'ok' end")
+      && variabili.length === 8 && variabili.every((v) => v.startsWith('v_')) && !/\bdelete\b|\bupdate\s+(?!set)/i.test(fn.replace(/do update set/g, ''))
+      && m.includes('revoke all on function public.push_eventi_salute() from public, anon, authenticated;') && m.includes('grant execute on function public.push_eventi_salute() to service_role;')
+      && isDeepStrictEqual(eventiMigr(m), { sistema_senza_iscritti: 'sistema' }) && Object.keys(temiMigr(m)).length === 0
+      && !/\b(insert into|update|delete from) app_flags\b/i.test(m) && !/create table|cron\.schedule|cron\.alter_job|alter table/i.test(m) && returnNeiDo(m).length === 0
+      && m.startsWith('-- 0185_push_iscritti.sql') && /\nbegin;\n/.test(m) && m.trimEnd().endsWith('commit;');
+  };
+  t('M6 0185: sistema_senza_iscritti spento sul tema sistema; push_eventi_salute() security definer col blocco push_eventi_fresh della 0166 identico piu\' push_iscritti (temi senza telefoni come push-api, nessun_iscritto delle 24 ore), variabili v_*, solo service_role; nessun flag, tabella o cron',
+    contratto0185(MIGR_0185));
+  t('A-M6 la stessa 0185 con l\'evento acceso, una variabile col nome di una colonna, la parte fresh cambiata o la funzione eseguibile da anon -> visto', [
+    pianta(MIGR_0185, "('sistema_senza_iscritti', 'sistema', false,", "('sistema_senza_iscritti', 'sistema', true,"),
+    pianta(MIGR_0185, '  v_temi_ko int;\n', '  n int;\n'),
+    pianta(MIGR_0185, "e.ultimo_giro_at < now() - interval '30 minutes')),", "e.ultimo_giro_at < now() - interval '60 minutes')),"),
+    pianta(MIGR_0185, 'revoke all on function public.push_eventi_salute() from public, anon, authenticated;', 'revoke all on function public.push_eventi_salute() from public;'),
+  ].every((m) => !contratto0185(m)));
+  t('M7 rollback della 0185: la funzione dello snippet e\' quella della 0166, con lo stesso revoke e grant, in una transazione',
+    FN_0166 !== '' && tra(ROLLBACK_0185, 'create or replace function public.push_eventi_salute() returns void', '$fn$;') === FN_0166
+    && ROLLBACK_0185.includes('revoke all on function public.push_eventi_salute() from public, anon, authenticated;') && ROLLBACK_0185.includes('grant execute on function public.push_eventi_salute() to service_role;')
+    && /\nbegin;\n/.test(ROLLBACK_0185) && ROLLBACK_0185.trimEnd().endsWith('commit;') && !/push_iscritti'/.test(tra(ROLLBACK_0185, 'create or replace function', '$fn$;')));
   // 21-10: la 0168 (tema attivita, evento attivita_team, il tema sul telefono di Ale), contratto con la edge e push-api
   const temaAtt = (m) => (m.match(/insert into push_temi \(key, etichetta, descrizione, ordine, predefinito_per\) values\n {4}\('attivita', '((?:[^']|'')*)', '((?:[^']|'')*)', (\d+), array\[([^\]]*)\]\)\n {2}on conflict \(key\) do nothing;/) ?? []).slice(1);
   const contrattoAtt = (m) => {

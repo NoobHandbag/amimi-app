@@ -9,8 +9,9 @@
 --      prenota salta); stessa chiave su un altro evento ammessa; evento e tema inesistenti = 23503; chiave vuota,
 --      tentativi negativi, soglie non oggetto, nome evento maiuscolo, predefinito_per con un nome mostrato ('Benny') =
 --      23514; predefinito_per null = 23502; un tema usato da un evento e un evento con invii non si cancellano
---   D  i sette eventi del contratto con push-eventi esistono, ognuno sul suo tema (il settimo, attivita_team sul tema
---      attivita, nasce nella migr 0168 del 21-10: da lanciare dopo l'apply anche di quella)
+--   D  i dieci eventi del contratto con push-eventi esistono, ognuno sul suo tema (attivita_team nasce nella migr 0168 del
+--      21-10, i due di Premia nella 0183 del 03-11, sistema_senza_iscritti nella 0185 del 06-11: da lanciare dopo l'apply
+--      di tutte)
 --   S  il service_role (la edge push-eventi) legge e scrive le due tabelle e usa la sequenza dell'id
 --   U  authenticated con un JWT del team: select, insert, update e delete su push_eventi e push_eventi_inviati,
 --      nextval della sequenza, lettura e scrittura di predefinito_per = 42501 (nessuna policy: neanche il team accende
@@ -18,7 +19,10 @@
 --   N  anon: come U
 --   F  (Gate 3 del 18-10, MIG-B1) push_eventi_salute(), da proprietario: a modulo spento non scrive health_log; acceso,
 --      un evento acceso fermo da 31 minuti = error col suo nome, uno mai girato = almeno warn col suo nome. anon e
---      authenticated non la eseguono (sta in U e N), il service_role si' (sta in S)
+--      authenticated non la eseguono (sta in U e N), il service_role si' (sta in S). Dalla 0185 (06-11) anche la riga
+--      push_iscritti: a modulo spento non scritta; acceso, l'evento di prova sul suo tema senza telefoni = error col nome
+--      del tema; il tema spento in push_temi con un telefono di prova = ancora error; una push `nessun_iscritto` di prova
+--      = error col nome dell'evento
 --   P  (solo informazione, non fa fallire: MIG-C1) quanti telefoni iscritti DOPO l'apply hanno un tema fuori dal
 --      predefinito_per del loro profilo. Puo' essere una scelta voluta, ma anche una scheda Notifiche ancora del bundle
 --      vecchio che spuntava tutto: da guardare con la persona prima di accendere gli eventi
@@ -36,6 +40,8 @@ declare
   v_fresh_prima timestamptz;
   v_lab text;
   v_fuori int;
+  v_isc_n int;
+  v_isc_prima timestamptz;
 begin
   if to_regclass('public.push_eventi') is null or to_regclass('public.push_eventi_inviati') is null or v_seq is null
      or not exists (select 1 from pg_attribute a where a.attrelid = 'public.push_temi'::regclass and a.attname = 'predefinito_per' and not a.attisdropped) then
@@ -164,13 +170,14 @@ begin
   end;
   if st <> '23503' or cn is distinct from 'push_eventi_inviati_evento_fk' then raise exception 'KO V: evento con invii cancellato = % %', st, cn; end if;
 
-  -- D (dal 21-10 anche attivita_team della migr 0168, dal 03-11 i due di Premia della 0183: va lanciata dopo l'apply di tutte)
+  -- D (dal 21-10 anche attivita_team della migr 0168, dal 03-11 i due di Premia della 0183, dal 06-11 sistema_senza_iscritti
+  -- della 0185: va lanciata dopo l'apply di tutte)
   select count(*) into n from push_eventi e
     join (values ('b2b_risposta_negozio', 'negozi'), ('cs_urgente', 'assistenza'), ('cs_cliente_ha_riscritto', 'assistenza'),
                  ('spedizione_eccezione', 'spedizioni'), ('sistema_cs_sync_fermo', 'sistema'), ('riepilogo', 'riepilogo'), ('attivita_team', 'attivita'),
-                 ('premia_da_approvare', 'premia'), ('premia_salute', 'sistema')) x(ev, tema)
+                 ('premia_da_approvare', 'premia'), ('premia_salute', 'sistema'), ('sistema_senza_iscritti', 'sistema')) x(ev, tema)
       on x.ev = e.evento and x.tema = e.tema;
-  if n <> 9 then raise exception 'KO D: dei nove eventi del contratto (0166, 0168 e 0183) ne tornano % sul tema giusto', n; end if;
+  if n <> 10 then raise exception 'KO D: dei dieci eventi del contratto (0166, 0168, 0183 e 0185) ne tornano % sul tema giusto', n; end if;
 
   -- S (dal catalogo: il ruolo della edge non si assume da qui)
   if not (has_table_privilege('service_role', 'public.push_eventi', 'select') and has_table_privilege('service_role', 'public.push_eventi', 'update')
@@ -183,10 +190,13 @@ begin
 
   -- F (prima di U e N: qui si e' ancora proprietari; flag ed evento di prova tornano indietro con l'eccezione finale)
   select count(*), max(h.created_at) into v_fresh_n, v_fresh_prima from health_log h where h.day = current_date and h.k = 'push_eventi_fresh';
+  select count(*), max(h.created_at) into v_isc_n, v_isc_prima from health_log h where h.day = current_date and h.k = 'push_iscritti';
   insert into app_flags (key, value) values ('push_eventi_enabled', 'false') on conflict (key) do update set value = 'false';
   perform public.push_eventi_salute();
   if (select count(*) from health_log h where h.day = current_date and h.k = 'push_eventi_fresh') <> v_fresh_n
-     or (select max(h.created_at) from health_log h where h.day = current_date and h.k = 'push_eventi_fresh') is distinct from v_fresh_prima then
+     or (select max(h.created_at) from health_log h where h.day = current_date and h.k = 'push_eventi_fresh') is distinct from v_fresh_prima
+     or (select count(*) from health_log h where h.day = current_date and h.k = 'push_iscritti') <> v_isc_n
+     or (select max(h.created_at) from health_log h where h.day = current_date and h.k = 'push_iscritti') is distinct from v_isc_prima then
     raise exception 'KO F: a modulo spento push_eventi_salute() ha scritto health_log';
   end if;
   insert into app_flags (key, value) values ('push_eventi_enabled', 'true') on conflict (key) do update set value = 'true';
@@ -202,6 +212,35 @@ begin
   select h.severity, h.label into st, v_lab from health_log h where h.day = current_date and h.k = 'push_eventi_fresh';
   if st not in ('warn', 'error') or position('mai girati: ' in coalesce(v_lab, '')) = 0 or position('prova_test_rls' in v_lab) = 0 then
     raise exception 'KO F: evento acceso e mai girato = % (%)', st, v_lab;
+  end if;
+  -- push_iscritti (0185): l'evento di prova e' acceso sul tema prova_test_rls, che nessun telefono ha
+  select h.severity, h.label into st, v_lab from health_log h where h.day = current_date and h.k = 'push_iscritti';
+  if st is distinct from 'error' or position('temi senza telefoni: ' in coalesce(v_lab, '')) = 0 or position('prova_test_rls' in v_lab) = 0 then
+    raise exception 'KO F: tema di un evento acceso senza telefoni = % (%)', st, v_lab;
+  end if;
+  -- un telefono di prova col tema, ma il tema spento: push-api risponde tema_spento, quindi resta senza telefoni
+  insert into push_subscriptions (endpoint, p256dh, auth, device_id, chi, temi, user_email)
+    values ('https://prova.invalid/push-0185', 'p', 'a', gen_random_uuid(), 'Ale', array['prova_test_rls'], 'prova.0185@amimi.it');
+  update push_temi set attivo = false where key = 'prova_test_rls';
+  perform public.push_eventi_salute();
+  select h.severity, h.label into st, v_lab from health_log h where h.day = current_date and h.k = 'push_iscritti';
+  if st is distinct from 'error' or position('prova_test_rls' in coalesce(v_lab, '')) = 0 then
+    raise exception 'KO F: tema spento con un telefono = % (%)', st, v_lab;
+  end if;
+  -- tema riacceso col telefono di prova e la riga nessun_iscritto di V portata a 25 ore fa: il tema esce dalla label; la
+  -- stessa riga riportata ad adesso ce lo rimette col nome dell'evento
+  update push_temi set attivo = true where key = 'prova_test_rls';
+  update push_eventi_inviati set updated_at = now() - interval '25 hours' where evento = 'prova_test_rls' and chiave = 'stato:nessun_iscritto';
+  perform public.push_eventi_salute();
+  select h.label into v_lab from health_log h where h.day = current_date and h.k = 'push_iscritti';
+  if position('prova_test_rls' in coalesce(v_lab, '')) > 0 then
+    raise exception 'KO F: tema con un telefono ancora segnalato (%)', v_lab;
+  end if;
+  update push_eventi_inviati set updated_at = now() where evento = 'prova_test_rls' and chiave = 'stato:nessun_iscritto';
+  perform public.push_eventi_salute();
+  select h.severity, h.label into st, v_lab from health_log h where h.day = current_date and h.k = 'push_iscritti';
+  if st is distinct from 'error' or position('prova_test_rls 1' in coalesce(v_lab, '')) = 0 then
+    raise exception 'KO F: push nessun_iscritto delle 24 ore = % (%)', st, v_lab;
   end if;
   update push_eventi set attivo = false where evento = 'prova_test_rls';
 
