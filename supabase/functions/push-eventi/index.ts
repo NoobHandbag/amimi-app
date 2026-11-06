@@ -11,6 +11,10 @@
 // sistema) loyalty_orders in errore, riscatto pending oltre 15 minuti, pool di codici sotto loyalty_pool_min; nel riepilogo
 // di Ale le nuove iscritte del giorno, in quello di Ginni i contenuti da approvare. loyalty_ugc, loyalty_redemptions,
 // loyalty_visits e v_loyalty_pool si LEGGONO soltanto.
+// v6 (2026-11-06, decisione D-1 di Dan sulla chat del sito, PROPOSTA_chat_sito 8.1, migr 0185): sistema_senza_iscritti (tema
+// sistema, evento di stato) una push al giorno per ogni tema di un evento acceso che non arriva a nessun telefono (nessun
+// telefono lo ha, o e' spento in push_temi). Il 06-11 cs_urgente aveva 13 push `nessun_iscritto` e nessuna consegnata.
+// push_subscriptions (solo conteggi) e push_temi si LEGGONO soltanto.
 // Brief: Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
 // (Regola 19, migr 0166): scrive SOLO push_eventi_inviati (il registro), push_eventi (ultimo_giro_at, baseline_at) e la sua
 // riga di telemetria in health_log (k = 'push_eventi', una per giorno UTC: Gate 3 del 18-10, un giro che fallisce deve
@@ -67,11 +71,12 @@ const CHI_PERSONE = ['Ale', 'Bene', 'Ginevra'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TEMA_RE = /^[a-z_]{2,32}$/;
 // tema di ogni evento (righe di push_eventi della 0166); la riga a DB vince se e' una chiave valida
-// (attivita_team dalla 0168 del 21-10, premia_da_approvare e premia_salute dalla 0183 del 03-11)
+// (attivita_team dalla 0168 del 21-10, premia_da_approvare e premia_salute dalla 0183 del 03-11, sistema_senza_iscritti
+// dalla 0185 del 06-11)
 const TEMA_EVENTO: Record<string, string> = {
   b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza', cs_cliente_ha_riscritto: 'assistenza',
   spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
-  premia_da_approvare: 'premia', premia_salute: 'sistema',
+  premia_da_approvare: 'premia', premia_salute: 'sistema', sistema_senza_iscritti: 'sistema',
 };
 function temaDi(daDb: unknown, evento: string): string {
   return typeof daDb === 'string' && TEMA_RE.test(daDb) ? daDb : (TEMA_EVENTO[evento] ?? '');
@@ -483,6 +488,47 @@ function msgPremiaSalute(cands: Cand[]): Msg[] {
     return { ...base, titolo: 'Premia: codici quasi finiti', testo: `${c.rif.label}: ${plurale(Number(c.rif.liberi) || 0, 'codice libero', 'codici liberi')}, sotto la soglia di ${c.rif.soglia}.` };
   });
 }
+// sistema_senza_iscritti (06-11, D-1 di Dan, tema sistema): un tema di un evento acceso che non arriva a nessun telefono,
+// perche' nessun telefono lo ha fra i suoi temi (`iscritti` = 0, conteggio di push_subscriptions) o perche' e' spento in
+// push_temi (push-api risponde tema_spento). Le sue push finiscono `nessun_iscritto` e nessuno lo vede: il 06-11
+// cs_urgente aveva 13 push cosi' e nessuna consegnata. Una push al giorno di Roma per tema, chiave iscritti:<tema>:<data>,
+// istante = adesso (e' uno stato), solo dalle `oraDa` di Roma (9): un promemoria di stato non suona a mezzanotte. Evento di
+// stato (EVENTI_DI_STATO). `perse` = righe `nessun_iscritto` delle ultime 24 ore degli eventi accesi di quel tema. Le push
+// per UNA persona (il riepilogo) non fanno candidati qui: un tema con telefoni ma senza quello di chi riceve lo dice la
+// riga push_iscritti di Salute (push_eventi_salute, migr 0185). Nel testo solo il nome del tema e i conteggi.
+function candSenzaIscritti(o: { eventi: Riga[]; temi: Riga[]; iscritti: Record<string, number>; perse: Riga[]; ora: number; oraDa: number }): Cand[] {
+  if (partiRoma(o.ora).h < o.oraDa) return [];
+  const temaDiEvento = new Map<string, string>();
+  for (const e of o.eventi ?? []) {
+    const ev = typeof e?.evento === 'string' ? e.evento : '';
+    const tema = ev ? temaDi(e.tema, ev) : '';
+    if (e?.attivo === true && tema) temaDiEvento.set(ev, tema);
+  }
+  const righeTemi = new Map<string, Riga>();
+  for (const t of o.temi ?? []) if (typeof t?.key === 'string') righeTemi.set(t.key, t);
+  const perse = new Map<string, number>();
+  for (const r of o.perse ?? []) { const t = temaDiEvento.get(String(r?.evento ?? '')); if (t) perse.set(t, (perse.get(t) ?? 0) + 1); }
+  const data = dataRoma(o.ora);
+  const out: Cand[] = [];
+  for (const tema of [...new Set(temaDiEvento.values())]) {
+    const riga = righeTemi.get(tema);
+    const spento = riga?.attivo !== true;
+    if (!spento && o.iscritti?.[tema] !== 0) continue;
+    out.push({ chiave: `iscritti:${tema}:${data}`, ts: o.ora, rif: { tema, etichetta: pulisci(riga?.etichetta, 40) || tema, motivo: spento ? 'spento' : 'senza_telefoni', perse: String(perse.get(tema) ?? 0) } });
+  }
+  return ordinaRecenti(out);
+}
+function msgSenzaIscritti(cands: Cand[]): Msg[] {
+  return cands.map((c) => {
+    const nome = c.rif.etichetta || c.rif.tema;
+    const n = Number(c.rif.perse) || 0;
+    const coda = n > 0 ? `: ${plurale(n, 'push persa', 'push perse')} nelle ultime 24 ore` : '';
+    return { chiave: c.chiave, tema: TEMA_EVENTO.sistema_senza_iscritti, url: LINK_SALUTE, titolo: `Notifiche senza telefono: ${nome}`,
+      testo: c.rif.motivo === 'spento'
+        ? `Il tema ${nome} e' spento, quindi le sue notifiche non arrivano a nessuno${coda}.`
+        : `Nessun telefono e' iscritto al tema ${nome}, quindi le sue notifiche non arrivano a nessuno${coda}. Si iscrive dalla scheda Notifiche.` };
+  });
+}
 // nuove iscritte del giorno (riepilogo di Ale, 03-11): clienti la cui PRIMA apertura dell'Area Membri (loyalty_visits,
 // first_at) e' di oggi, cioe' con una visita da oggi e nessuna prima. Stessa definizione delle 28 iscritte dal 26-10.
 function contaIscritte(oggi: Riga[], conVisitePrima: Riga[]): number {
@@ -690,8 +736,9 @@ const FINALI = ['inviato', 'saltato', 'nessun_iscritto'];
 // stallo di cs-sync gia' in corso quando l'evento si accende, o quando push-eventi riparte dopo una pausa, e' una notizia
 // di adesso: con la baseline la sua chiave (l'istante dell'ultima riga, che non cambia finche' lo stallo dura) restava
 // `saltato` e lo stallo non arrivava mai.
-// premia_salute (03-11) e' dello stesso tipo: un guasto di Premia gia' in corso all'accensione si deve vedere.
-const EVENTI_DI_STATO = ['sistema_cs_sync_fermo', 'premia_salute'];
+// premia_salute (03-11) e' dello stesso tipo: un guasto di Premia gia' in corso all'accensione si deve vedere. Cosi' anche
+// sistema_senza_iscritti (06-11): un tema gia' senza telefoni all'accensione e' proprio il guasto da vedere.
+const EVENTI_DI_STATO = ['sistema_cs_sync_fermo', 'premia_salute', 'sistema_senza_iscritti'];
 type Reg = { id: number | string; chiave: string; stato: string; tentativi: number; updated_at: string };
 type Decisione = { cand: Cand; azione: 'nuovo' | 'ritenta' | 'salta' | 'fermo'; motivo: string; reg?: Reg };
 // prima accensione (baseline_at vuoto) o ripartenza: ultimo giro assente o di oltre 2 ore fa (evento spento e riacceso,
@@ -1169,6 +1216,31 @@ const EVENTI: Record<string, DefEvento> = {
     },
     componi: async (_sb, _ctx, _ev, cands) => msgPremiaSalute(cands),
   },
+  sistema_senza_iscritti: {
+    candidati: async (sb, ctx, ev) => {
+      const oraDa = soglia(ev.soglie, 'ora_da', 9, 0, 23);
+      // prima di oraDa candSenzaIscritti non darebbe niente: qui si evitano anche le letture dei giri di notte
+      if (partiRoma(ctx.ora).h < oraDa) return [];
+      // gli eventi accesi (evento e tema) e i loro temi in push_temi (chiave, etichetta, attivo); dei telefoni SOLO il
+      // conteggio per tema, mai endpoint, chiavi, persone o etichette; del registro solo il nome dell'evento
+      const { data: evs, error: eErr } = await retryOnce(() => sb.from('push_eventi').select('evento, tema, attivo').eq('attivo', true).limit(LIMITE + 1));
+      if (eErr || (evs ?? []).length > LIMITE) throw new LetturaFallita('eventi accesi', eErr ?? `oltre ${LIMITE} righe`);
+      const eventi = (evs ?? []) as Riga[];
+      const temi = [...new Set(eventi.map((e) => (typeof e.evento === 'string' ? temaDi(e.tema, e.evento) : '')).filter(Boolean))];
+      if (!temi.length) return [];
+      const { data: tr, error: tErr } = await retryOnce(() => sb.from('push_temi').select('key, etichetta, attivo').in('key', temi).limit(temi.length + 1));
+      if (tErr) throw new LetturaFallita('push_temi', tErr);
+      const conti = await Promise.all(temi.map((t) =>
+        conta(retryOnce(() => sb.from('push_subscriptions').select('id', { count: 'exact', head: true }).contains('temi', [t])), 'telefoni del tema')));
+      const iscritti = Object.fromEntries(temi.map((t, i) => [t, conti[i]]));
+      // registro: righe nessun_iscritto delle 24 ore (al 06-11 erano 21 in tutto); una lettura piena oltre il limite e'
+      // troncata e ferma l'evento (Regola 20b)
+      const { data: pr, error: pErr } = await retryOnce(() => sb.from('push_eventi_inviati').select('evento').eq('stato', 'nessun_iscritto').gte('updated_at', dalle(ctx, FINESTRA_MS)).limit(501));
+      if (pErr || (pr ?? []).length > 500) throw new LetturaFallita('push senza destinatari', pErr ?? 'oltre 500 righe');
+      return candSenzaIscritti({ eventi, temi: (tr ?? []) as Riga[], iscritti, perse: (pr ?? []) as Riga[], ora: ctx.ora, oraDa });
+    },
+    componi: async (_sb, _ctx, _ev, cands) => msgSenzaIscritti(cands),
+  },
   riepilogo: {
     candidati: async (_sb, ctx) => candRiepilogo(ctx.finestra),
     componi: async (sb, ctx, ev, cands) => {
@@ -1230,8 +1302,10 @@ const EVENTI: Record<string, DefEvento> = {
   },
 };
 // priorita' nel tetto di 20 invii: prima il sistema e l'urgente, l'attivita' del team (informazione per Ale, 21-10)
-// prima del riepilogo, il riepilogo per ultimo. 03-11: premia_salute col sistema, premia_da_approvare dopo l'Assistenza
-const ORDINE = ['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'riepilogo'];
+// prima del riepilogo, il riepilogo per ultimo. 03-11: premia_salute col sistema, premia_da_approvare dopo l'Assistenza.
+// 06-11: sistema_senza_iscritti prima del riepilogo, dopo gli eventi che portano una notizia (e' un promemoria di stato
+// al giorno, e le sue letture, tre piu' un conteggio per tema, non devono ritardare cs_urgente)
+const ORDINE = ['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo'];
 
 // registro: .in() sulle sole chiavi dei candidati, a blocchi di 100 (Regola 20b), mai la tabella intera
 async function leggiRegistro(sb: Sb, evento: string, chiavi: string[]): Promise<Map<string, Reg>> {
