@@ -1,0 +1,38 @@
+# App "Amimi Chat" (chat del sito, docs/PROPOSTA_chat_sito.md 4.2 e 4.8; decisione D-4 di Dan del 6 novembre 2026).
+# Si rilascia SOLO con la procedura di DEPLOY.md del repo hub (sezione Shopify CLI): login della CLI fatto da Dan, versione
+# della CLI fissata, Gate 1-3 e backup git prima di ogni `shopify app deploy`. Guardie: tests/chat_widget_guardie.mjs.
+#
+# client_id vuoto finche' Dan non crea l'app nella Dev Dashboard: lo scrive `shopify app config link --client-id <id>`.
+# Il client_id non e' un segreto; il client secret NON entra mai in questo repo (e' pubblico): Dan lo mette fra i segreti
+# di Supabase. Un rilascio porta TUTTO questo file sull'app: scope e [app_proxy] vanno sempre scritti qui, perche' un toml
+# che non li riporta li sovrascrive. prefix e subpath del proxy si fissano prima che Dan installi e non si cambiano mai
+# dall'admin (il widget chiama /apps/chat).
+client_id = ""
+name = "Amimi Chat"
+# l'app non ha pagine nell'admin: il valore che la doc di Shopify indica per le app di sole estensioni
+application_url = "https://shopify.dev/apps/default-app-home"
+embedded = false
+
+[access_scopes]
+# il minimo per lo spike della Fase 0: la rotta App Proxy. Gli scope di lettura arrivano con le fasi che li usano, ognuno
+# approvato da Dan nell'admin.
+scopes = "write_app_proxy"
+
+[auth]
+redirect_urls = ["https://shopify.dev/apps/default-app-home/api/auth"]
+
+[webhooks]
+api_version = "2025-10"
+
+[app_proxy]
+# amimi.it/apps/chat/<azione> arriva a chat-api/<azione>, con i parametri firmati da Shopify (verifica in chat-api, come
+# loyalty-proxy). Una sola rotta per app: /apps/premia resta di "Amimi Premia".
+url = "https://imszbjeyplaiovylhkgl.supabase.co/functions/v1/chat-api"
+prefix = "apps"
+subpath = "chat"
+
+[network_access]
+# ogni server esterno contattato dalle estensioni (proposta 4.9): solo lo script di Turnstile. Supabase entra qui solo nella
+# versione che accende il ripiego CORS. Nessun host di navigazione: il widget linka solo pagine di amimi.it.
+allowed_sources = ["https://challenges.cloudflare.com"]
+allowed_navigation_hosts = []

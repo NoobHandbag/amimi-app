@@ -1,0 +1,46 @@
+{% comment %}
+  Amimi Chat, blocco app embed (proposta 4.3). Solo un segnaposto con le impostazioni: la bolla la disegna
+  chat-loader.js, caricato da Shopify in async. Nessun dato della cliente letto qui (l'oggetto customer non e' firmato:
+  chi e' loggata lo dice solo il proxy). L'id del contenitore e' fisso: e' il marcatore che il controllo giornaliero
+  cerca nell'HTML di amimi.it (proposta 4.6).
+{% endcomment %}
+<div
+  id="amimi-chat-embed"
+  data-posizione="{{ block.settings.posizione | escape }}"
+  data-colore="{{ block.settings.colore | escape }}"
+  data-prova="{{ block.settings.modalita_prova }}"
+  hidden
+></div>
+
+{% schema %}
+{
+  "name": "Amimi Chat",
+  "target": "body",
+  "javascript": "chat-loader.js",
+  "settings": [
+    {
+      "type": "select",
+      "id": "posizione",
+      "label": "Posizione",
+      "options": [
+        { "value": "bottom_right", "label": "In basso a destra" },
+        { "value": "bottom_left", "label": "In basso a sinistra" }
+      ],
+      "default": "bottom_right"
+    },
+    {
+      "type": "color",
+      "id": "colore",
+      "label": "Colore della bolla",
+      "default": "#1f1f1f"
+    },
+    {
+      "type": "checkbox",
+      "id": "modalita_prova",
+      "label": "Modalità prova",
+      "info": "Accesa: la chat è solo per le prove del team e mostra la scritta PROVA.",
+      "default": true
+    }
+  ]
+}
+{% endschema %}
