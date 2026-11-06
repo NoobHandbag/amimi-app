@@ -242,6 +242,15 @@ begin
   if st is distinct from 'error' or position('prova_test_rls 1' in coalesce(v_lab, '')) = 0 then
     raise exception 'KO F: push nessun_iscritto delle 24 ore = % (%)', st, v_lab;
   end if;
+  -- il ramo ok (Gate 2 del 06-11): acceso il solo evento di prova, che ha un telefono, e nessuna push nessun_iscritto
+  -- nelle 24 ore (tutto torna indietro con l'eccezione finale)
+  update push_eventi set attivo = (evento = 'prova_test_rls');
+  update push_eventi_inviati set updated_at = now() - interval '25 hours' where stato = 'nessun_iscritto' and updated_at >= now() - interval '24 hours';
+  perform public.push_eventi_salute();
+  select h.severity, h.label, h.n into st, v_lab, n from health_log h where h.day = current_date and h.k = 'push_iscritti';
+  if st is distinct from 'ok' or n <> 0 or position('ogni tema degli eventi accesi arriva a un telefono' in coalesce(v_lab, '')) = 0 then
+    raise exception 'KO F: tutti i temi coperti e nessuna push persa = % % (%)', st, n, v_lab;
+  end if;
   update push_eventi set attivo = false where evento = 'prova_test_rls';
 
   -- P (informazione)

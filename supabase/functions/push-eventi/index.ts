@@ -1219,6 +1219,7 @@ const EVENTI: Record<string, DefEvento> = {
   sistema_senza_iscritti: {
     candidati: async (sb, ctx, ev) => {
       const oraDa = soglia(ev.soglie, 'ora_da', 9, 0, 23);
+      // prima di oraDa candSenzaIscritti non darebbe niente: qui si evitano anche le letture dei giri di notte
       if (partiRoma(ctx.ora).h < oraDa) return [];
       // gli eventi accesi (evento e tema) e i loro temi in push_temi (chiave, etichetta, attivo); dei telefoni SOLO il
       // conteggio per tema, mai endpoint, chiavi, persone o etichette; del registro solo il nome dell'evento
@@ -1303,7 +1304,7 @@ const EVENTI: Record<string, DefEvento> = {
 // priorita' nel tetto di 20 invii: prima il sistema e l'urgente, l'attivita' del team (informazione per Ale, 21-10)
 // prima del riepilogo, il riepilogo per ultimo. 03-11: premia_salute col sistema, premia_da_approvare dopo l'Assistenza.
 // 06-11: sistema_senza_iscritti prima del riepilogo, dopo gli eventi che portano una notizia (e' un promemoria di stato
-// al giorno, e le sue sei letture non devono ritardare cs_urgente)
+// al giorno, e le sue letture, tre piu' un conteggio per tema, non devono ritardare cs_urgente)
 const ORDINE = ['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo'];
 
 // registro: .in() sulle sole chiavi dei candidati, a blocchi di 100 (Regola 20b), mai la tabella intera
