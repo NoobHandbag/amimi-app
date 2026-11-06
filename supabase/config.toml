@@ -2,9 +2,10 @@
 # flows_test_non_tocchi_produzione. Serve SOLO a far girare i test contro un database usa-e-getta:
 # la produzione non si tocca e non si configura da qui.
 #
-# Avvio:  npx supabase start      (crea il DB da schema.sql + seed.sql, NON dalle migrazioni)
-# Stop:   npx supabase stop
-# Reset:  npx supabase db reset   (ricrea il DB da zero, stessa catena schema.sql -> seed.sql)
+# Avvio:  npx -y supabase@2.122.1 start      (crea il DB da schema.sql + seed.sql, NON dalle migrazioni)
+# Stop:   npx -y supabase@2.122.1 stop
+# Reset:  npx -y supabase@2.122.1 db reset   (ricrea il DB da zero, stessa catena schema.sql -> seed.sql)
+# CLI fissata a 2.122.1 (06-11): la 3.0.0 rifiuta [inbucket] qui sotto finche' questo file non passa a [local_smtp].
 #
 # major_version allineata alla produzione (Postgres 17).
 

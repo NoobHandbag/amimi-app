@@ -16,3 +16,17 @@ create table if not exists supabase_migrations.schema_migrations (
   statements text[],
   name text
 );
+
+-- Il ruolo ask_ro (lettura di ask_data, migr 0121): in produzione lo crea la 0121, qui le migrazioni sono spente e
+-- schema.sql gli da' policy, grant e la proprieta' di ask_select. Senza, il caricamento dello schema si ferma su
+-- "role ask_ro does not exist" (misurato il 2026-11-06, schema.sql del 01-11). Stessa forma della 0121: nologin, membro di postgres, timeout di 5 s.
+do $$ begin
+  if not exists (select 1 from pg_roles where rolname = 'ask_ro') then create role ask_ro nologin; end if;
+end $$;
+-- postgres deve poter fare SET ROLE ask_ro (schema.sql gli passa la proprieta' di ask_select), come nella 0121
+grant ask_ro to postgres;
+alter role ask_ro set statement_timeout = '5000';
+-- ALTER FUNCTION ... OWNER TO ask_ro vuole CREATE sullo schema per il nuovo proprietario quando chi lo esegue non e'
+-- superuser (qui postgres; in produzione la 0121 e' girata da superuser): CREATE solo per caricare schema.sql, lo
+-- toglie seed.sql in testa.
+grant create on schema public to ask_ro;

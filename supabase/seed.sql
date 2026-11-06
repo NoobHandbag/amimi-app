@@ -9,6 +9,9 @@
 --
 -- Volutamente NON seminato: `gemini_api_key` (il test si aspetta che ask-data risponda needs_key).
 
+-- ask_ro torna come in produzione: solo USAGE sullo schema (local_bootstrap.sql gli da' CREATE per caricare schema.sql).
+revoke create on schema public from ask_ro;
+
 -- PIN dell'app: il test chiama la write-api con pin 'x'.
 --
 -- `shopify_token` e' un SEGNAPOSTO FINTO, e ci vuole. In `shopify-stock` il controllo "token
