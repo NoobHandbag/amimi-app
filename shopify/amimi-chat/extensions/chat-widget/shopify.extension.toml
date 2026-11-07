@@ -2,3 +2,4 @@
 # `shopify app generate extension` (vuole il login). Il primo `shopify app deploy` puo' aggiungere qui un `uid`: si committa.
 name = "Amimi Chat"
 type = "theme"
+uid = "84f20a10-9434-ab4c-8fe2-da290a48b52870a4f0b5"

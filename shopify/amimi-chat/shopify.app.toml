@@ -2,12 +2,12 @@
 # Si rilascia SOLO con la procedura di DEPLOY.md del repo hub (sezione Shopify CLI): login della CLI fatto da Dan, versione
 # della CLI fissata, Gate 1-3 e backup git prima di ogni `shopify app deploy`. Guardie: tests/chat_widget_guardie.mjs.
 #
-# client_id vuoto finche' Dan non crea l'app nella Dev Dashboard: lo scrive `shopify app config link --client-id <id>`.
-# Il client_id non e' un segreto; il client secret NON entra mai in questo repo (e' pubblico): Dan lo mette fra i segreti
-# di Supabase. Un rilascio porta TUTTO questo file sull'app: scope e [app_proxy] vanno sempre scritti qui, perche' un toml
+# client_id dell'app creata nella Dev Dashboard il 7 novembre 2026 (organizzazione amimi, app 444917088257, versione
+# amimi-chat-1 rilasciata alla creazione, nessuna installazione). Il client_id non e' un segreto; il client secret NON
+# entra mai in questo repo (e' pubblico): Dan lo mette fra i segreti di Supabase. Un rilascio porta TUTTO questo file sull'app: scope e [app_proxy] vanno sempre scritti qui, perche' un toml
 # che non li riporta li sovrascrive. prefix e subpath del proxy si fissano prima che Dan installi e non si cambiano mai
 # dall'admin (il widget chiama /apps/chat).
-client_id = ""
+client_id = "df701ddc2254e2776d6e961abbb7dff8"
 name = "Amimi Chat"
 # l'app non ha pagine nell'admin: il valore che la doc di Shopify indica per le app di sole estensioni
 application_url = "https://shopify.dev/apps/default-app-home"
@@ -22,7 +22,7 @@ scopes = "write_app_proxy"
 redirect_urls = ["https://shopify.dev/apps/default-app-home/api/auth"]
 
 [webhooks]
-api_version = "2025-10"
+api_version = "2026-10"
 
 [app_proxy]
 # amimi.it/apps/chat/<azione> arriva a chat-api/<azione>, con i parametri firmati da Shopify (verifica in chat-api, come
