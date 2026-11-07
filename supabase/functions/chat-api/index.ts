@@ -130,15 +130,17 @@ const hostPulito = (h: string | null): string | null => (h === null ? null : /^[
 
 // eco-2: soli NOMI degli header (mai i valori), e quali contengono l'IP che il client dichiara (S1)
 const nomeHeader = (k: string) => (/^[a-z0-9-]{1,60}$/.test(k) ? k : '(altro)');
+// prima si ordinano tutti, poi si taglia, e si dice quanti restano fuori (Gate 2 del 07-11)
 function nomiHeader(h: Headers): string[] {
-  const out: string[] = [];
-  for (const [k] of h) { if (out.length >= 60) break; out.push(nomeHeader(k)); }
-  return out.sort();
+  const tutti = [...h.keys()].map(nomeHeader).sort();
+  return tutti.length > 60 ? [...tutti.slice(0, 60), `(altri ${tutti.length - 60})`] : tutti;
 }
+// confronto esatto voce per voce (virgole e spazi separano), mai per sottostringa: 1.2.3.4 non e' dentro 21.2.3.45
 function headerConIp(h: Headers, ip: string | null): string[] {
   if (!ip || !/^[0-9a-f.:]{7,45}$/i.test(ip)) return [];
+  const cerca = ip.toLowerCase();
   const out: string[] = [];
-  for (const [k, v] of h) if (v.includes(ip)) out.push(nomeHeader(k));
+  for (const [k, v] of h) if (v.toLowerCase().split(/[\s,;]+/).includes(cerca)) out.push(nomeHeader(k));
   return out.sort();
 }
 // esito di siteverify ridotto a cio' che serve a S6: niente token, niente altri campi
@@ -380,6 +382,7 @@ Tieni lo schermo acceso finche' una misura non dice FINITO.</p>
   document.getElementById('b-s1').addEventListener('click', function () { esegui('S1', s1); });
   document.getElementById('b-s2').addEventListener('click', function () { esegui('S2', s2); });
   document.getElementById('b-s3').addEventListener('click', function () { esegui('S3', s3); });
+  var widgetId = null;
   function caricaTurnstile() {
     return new Promise(function (ok, ko) {
       if (window.turnstile) { ok(window.turnstile); return; }
@@ -396,8 +399,15 @@ Tieni lo schermo acceso finche' una misura non dice FINITO.</p>
     if (!/^[0-9A-Za-z_-]{10,64}$/.test(chiave)) { scrivi('S6: serve la sitekey nella barra degli indirizzi (?sitekey=...).'); return; }
     scrivi('S6: carico Turnstile...');
     var tsApi = await caricaTurnstile();
+    if (widgetId !== null) { tsApi.remove(widgetId); widgetId = null; }
     var token = await new Promise(function (ok, ko) {
-      tsApi.render('#ts', { sitekey: chiave, callback: function (t) { ok(t); }, 'error-callback': function (c) { ko(new Error('errore di Turnstile ' + c)); } });
+      var timer = setTimeout(function () { ko(new Error('nessun token entro 60 s')); }, 60000);
+      function fine(f, v) { clearTimeout(timer); f(v); }
+      widgetId = tsApi.render('#ts', { sitekey: chiave,
+        callback: function (t) { fine(ok, t); },
+        'error-callback': function (c) { fine(ko, new Error('errore di Turnstile ' + c)); },
+        'expired-callback': function () { fine(ko, new Error('token di Turnstile scaduto')); },
+        'timeout-callback': function () { fine(ko, new Error('sfida di Turnstile scaduta')); } });
     });
     aggiungi('  token ricevuto, verifico...');
     var t = adesso();
@@ -424,6 +434,7 @@ Tieni lo schermo acceso finche' una misura non dice FINITO.</p>
 // L'unica chiamata fuori della edge: siteverify di Turnstile (S6), con 10 s di tetto. Il secret va nel corpo, mai nell'URL.
 const siteverify = async (secret: string, token: string): Promise<unknown> => {
   const r = await fetch(SITEVERIFY_URL, { method: 'POST', body: new URLSearchParams({ secret, response: token }), signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error('siteverify HTTP ' + r.status);   // un 5xx di Cloudflare e' "irraggiungibile" (502), non "token rifiutato"
   return await r.json();
 };
 

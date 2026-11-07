@@ -171,7 +171,10 @@ console.log('\n== eco-2: nomi degli header e IP dichiarato (S1) ==');
   t('H1 nomi degli header elencati, ordinati', Array.isArray(r.d?.header?.nomi) && r.d.header.nomi.includes('x-client-ip') && r.d.header.nomi.includes('x-altro') && r.d.header.nomi.join() === [...r.d.header.nomi].sort().join(), r.d?.header?.nomi);
   t('H2 ip_atteso trovato per nome di header, mai il valore', r.d?.header?.ip_atteso_in?.join() === 'x-client-ip' && !r.testo.includes('93.41.5.6') && !r.testo.includes('niente'), r.d?.header?.ip_atteso_in);
   const h = new Headers(); for (let i = 0; i < 80; i++) h.append('x-h' + i, 'v');
-  t('H3 al massimo 60 nomi', M.nomiHeader(h).length === 60);
+  const n80 = M.nomiHeader(h);
+  t('H3 al massimo 60 nomi, ordinati prima del taglio, e quanti restano fuori', n80.length === 61 && n80[60] === '(altri 20)' && n80[0] === 'x-h0' && n80.slice(0, 60).join() === [...n80.slice(0, 60)].sort().join(), n80.slice(-3));
+  t('H5 confronto esatto: 1.2.3.4 non e\' dentro 21.2.3.45 ne\' 1.2.3.45', M.headerConIp(new Headers({ 'x-forwarded-for': '21.2.3.45, 1.2.3.45' }), '1.2.3.4').length === 0
+    && M.headerConIp(new Headers({ 'x-forwarded-for': '9.9.9.9,1.2.3.4' }), '1.2.3.4').join() === 'x-forwarded-for');
   t('H4 ip_atteso non plausibile: nessuna ricerca', M.headerConIp(new Headers({ a: 'xyz' }), 'x').length === 0 && M.headerConIp(new Headers({ a: '1.1.1.1' }), null).length === 0 && M.headerConIp(new Headers({ a: 'abc' }), 'abc').length === 0);
 }
 
@@ -229,6 +232,7 @@ console.log('\n== pagina delle misure ==');
     && (js.match(/caricaTurnstile\(\)/g) ?? []).length === 2 && (js.match(/await caricaTurnstile\(\)/g) ?? []).length === 1 && /esegui\('S6', s6\)/.test(js) && /\[0-9A-Za-z_-\]\{10,64\}/.test(s6));
   t('M11 S6 manda il token solo a /apps/chat/turnstile della stessa origine e mostra solo esito e hostname', /fetch\(BASE \+ '\/turnstile'/.test(s6) && !/token:\s*token[^}]*\}\s*\)\s*;\s*aggiungi/.test(s6) && !/ris\.s6 = \{[^}]*token/.test(s6));
   t('M12 il contenitore del widget c\'e\'', /<div id="ts"><\/div>/.test(html));
+  t('M13 S6 non resta appesa: scadenza, timeout, tetto di 60 s e widget tolto prima di rifarlo', /'expired-callback'/.test(s6) && /'timeout-callback'/.test(s6) && /setTimeout\(function \(\) \{ ko\(/.test(s6) && /tsApi\.remove\(widgetId\)/.test(s6));
   t('M8 id finto di S1 non e\' di una cliente (1) e XFF finto in TEST-NET-3', /logged_in_customer_id=1'/.test(html) && /203\.0\.113\.7/.test(html));
   t('M9 soglia di S2 = 1 secondo (D-7 di Dan)', /soglia_ms: 1000/.test(html) && /diff <= 1000/.test(html));
 }
@@ -241,7 +245,8 @@ console.log('\n== guardie sul sorgente ==');
   t('G1 nessun import ne\' client Supabase; nessuna fetch nel blocco puro', !/\bimport\b|createClient|\bfetch\(/.test(codice + fuoriCodice.replace(/fetch\(SITEVERIFY_URL/, '')));
   t('G1b fuori dal blocco una sola fetch, verso SITEVERIFY_URL, POST col secret nel corpo e tetto di 10 s', (fuoriCodice.match(/\bfetch\(/g) ?? []).length === 1
     && /fetch\(SITEVERIFY_URL, \{ method: 'POST', body: new URLSearchParams\(\{ secret, response: token \}\), signal: AbortSignal\.timeout\(10000\) \}\)/.test(fuoriCodice)
-    && M.SITEVERIFY_URL === 'https://challenges.cloudflare.com/turnstile/v0/siteverify');
+    && M.SITEVERIFY_URL === 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
+    && /if \(!r\.ok\) throw/.test(fuoriCodice));
   t('G1c secret di Turnstile solo da CHAT_TURNSTILE_PROVA_SECRET', /Deno\.env\.get\('CHAT_TURNSTILE_PROVA_SECRET'\)/.test(fuoriCodice));
   t('G2 nessun log (corpi, header, parametri)', !/console\./.test(SRC));
   t('G3 segreto solo da CHAT_APP_PROXY_SECRET (mai quello di Premia, mai app_flags)', /Deno\.env\.get\('CHAT_APP_PROXY_SECRET'\)/.test(fuori) && !/SHOPIFY_APP_PROXY_SECRET|app_flags|shopify_app_proxy_secret/.test(SRC.replace(/^\/\/.*$/gm, '')));
