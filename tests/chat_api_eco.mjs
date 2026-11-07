@@ -106,6 +106,10 @@ console.log('\n== la edge intera, richieste vere ==');
   t('E8 parametri: solo i nomi, ognuno una volta', loggata.d?.parametri?.logged_in_customer_id === 1 && loggata.d?.parametri?.signature === 1 && loggata.d?.parametri?.ip_finto === 1);
   const get = await chiama(new Request(url('eco', SHOPIFY(''))));
   t('E9 GET firmato: 200, corpo vuoto', get.r.status === 200 && get.d?.corpo?.byte === 0 && get.d?.metodo === 'GET');
+  const valoriAnon = ['amimi-10000.myshopify.com', '/apps/chat', TS, firma(SHOPIFY('')), '203.0.113.7', '93.41.5.6'];
+  t('E7b nemmeno nella risposta anonima e in quella GET', ![anon.testo, get.testo].some((x) => valoriAnon.some((v) => x.includes(v))));
+  const proto = await chiama(new Request(url('eco', [...SHOPIFY(''), ['constructor', '1'], ['__proto__', '1'], ['toString', '1']])));
+  t('E7c nomi come constructor, __proto__ e toString contati come gli altri', proto.d?.parametri?.constructor === 1 && proto.d?.parametri?.__proto__ === 1 && proto.d?.parametri?.toString === 1, proto.d?.parametri);
   const nonJson = await chiama(post(url('eco', SHOPIFY('')), 'non json'));
   t('E10 corpo non JSON: detto, non rifiutato', nonJson.r.status === 200 && nonJson.d?.corpo?.json === false);
 }
@@ -133,6 +137,14 @@ console.log('\n== rifiuti, prima di guardare corpo e attesa ==');
   const grande = await chiama(post(url('eco', SHOPIFY('')), 'x'.repeat(65537)));
   t('R14 corpo oltre 64 KB: 413', grande.r.status === 413 && grande.d?.error === 'body_too_large');
   const opt = await chiama(new Request(`${EDGE}/eco`, { method: 'OPTIONS' }));
+  // Gate 2 del 07-11: un corpo a pezzi senza content-length si ferma al tetto, non viene letto tutto
+  let letti = 0;
+  const flusso = new ReadableStream({ pull(c) { if (letti >= 1048576) { c.close(); return; } letti += 16384; c.enqueue(new Uint8Array(16384)); } });
+  const chunk = await chiama(new Request(url('eco', SHOPIFY('')), { method: 'POST', body: flusso, duplex: 'half' }));
+  t('R14b corpo a pezzi senza content-length oltre 64 KB: 413 e lettura fermata', chunk.r.status === 413 && letti < 1048576, { status: chunk.r.status, letti });
+  const piccolo = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{"a":')); c.enqueue(new TextEncoder().encode('1}')); c.close(); } });
+  const pz = await chiama(new Request(url('eco', SHOPIFY('')), { method: 'POST', body: piccolo, duplex: 'half' }));
+  t('R14c corpo a pezzi piccolo: ricomposto intero', pz.r.status === 200 && pz.d?.corpo?.byte === 7 && pz.d?.corpo?.sha256 === createHash('sha256').update('{"a":1}').digest('hex') && pz.d?.corpo?.json === true, pz.d?.corpo);
   t('R15 OPTIONS: 204 senza CORS', opt.r.status === 204 && !opt.r.headers.has('access-control-allow-origin'));
   t('R16 SPIKE_FINO fissato al 7 dicembre 2026', M.SPIKE_FINO_MS === Date.parse('2026-12-07T00:00:00Z'));
 }
@@ -175,7 +187,7 @@ console.log('\n== guardie sul sorgente ==');
   t('G3 segreto solo da CHAT_APP_PROXY_SECRET (mai quello di Premia, mai app_flags)', /Deno\.env\.get\('CHAT_APP_PROXY_SECRET'\)/.test(fuori) && !/SHOPIFY_APP_PROXY_SECRET|app_flags|shopify_app_proxy_secret/.test(SRC.replace(/^\/\/.*$/gm, '')));
   const pos = (s) => codice.indexOf(s);
   t('G4 ordine: segreto, firma, ripetuti, eta, id; poi corpo e attesa', pos("if (!secret)") < pos('missing_signature') && pos('missing_signature') < pos('bad_signature') && pos('bad_signature') < pos('repeated_param')
-    && pos('repeated_param') < pos('stale_signature') && pos('stale_signature') < pos('bad_customer_id') && pos('bad_customer_id') < pos('req.arrayBuffer()') && pos('bad_customer_id') < pos('await dorme('));
+    && pos('repeated_param') < pos('stale_signature') && pos('stale_signature') < pos('bad_customer_id') && pos('bad_customer_id') < pos('await leggiCorpo(req') && pos('bad_customer_id') < pos('await dorme('));
   t('G5 ogni Response porta HEADER_BASE (no-store)', (codice.match(/new Response\(/g) ?? []).length === (codice.match(/new Response\([^\n]*HEADER_BASE/g) ?? []).length);
   t('G6 nessun header CORS', !/Access-Control-Allow/i.test(SRC));
   t('G7 nella risposta nessun params.get messo cosi\' com\'e\' (solo confronti e conteggi)', !/:\s*params\.get\('[a-z_]+'\)\s*[,}\n]/.test(codice) && !/\.\.\.\s*params/.test(codice));

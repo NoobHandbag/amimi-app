@@ -79,7 +79,8 @@ function posDaDestra(voci: string[], ip: string | null): number | null {
 }
 // solo i NOMI dei parametri, con quante volte compaiono; mai i valori
 function contaParametri(params: URLSearchParams): Record<string, number> {
-  const out: Record<string, number> = {};
+  // senza prototipo: un parametro chiamato `constructor` o `__proto__` si conta come gli altri (Gate 2 del 07-11)
+  const out: Record<string, number> = Object.create(null);
   for (const k of params.keys()) {
     const nome = /^[a-z0-9_]{1,40}$/i.test(k) ? k : '(altro)';
     if (!(nome in out) && Object.keys(out).length >= 30) { out['(oltre 30)'] = (out['(oltre 30)'] ?? 0) + 1; continue; }
@@ -97,7 +98,25 @@ function attesaDi(v: string | null): number {
   const n = Math.floor(Number(v));
   return Number.isFinite(n) && n > 0 ? Math.min(n, ATTESA_MAX_S) : 0;
 }
-const hostPulito = (h: string | null): string | null => (h === null ? null : /^[a-z0-9.-]{1,120}$/i.test(h) ? h.toLowerCase() : '?');
+// corpo letto a pezzi e fermato appena supera il tetto, anche senza content-length (Gate 2 del 07-11); null = troppo grande
+async function leggiCorpo(req: Request, max: number): Promise<Uint8Array | null> {
+  if (!req.body) return new Uint8Array(0);
+  const reader = req.body.getReader();
+  const pezzi: Uint8Array[] = [];
+  let tot = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    tot += value.byteLength;
+    if (tot > max) { await reader.cancel(); return null; }
+    pezzi.push(value);
+  }
+  const out = new Uint8Array(tot);
+  let at = 0;
+  for (const p of pezzi) { out.set(p, at); at += p.byteLength; }
+  return out;
+}
+const hostPulito =(h: string | null): string | null => (h === null ? null : /^[a-z0-9.-]{1,120}$/i.test(h) ? h.toLowerCase() : '?');
 
 async function gestisci(req: Request, oraMs: number, secret: string, dorme: (ms: number) => Promise<unknown>): Promise<Response> {
   const t0 = performance.now();
@@ -128,8 +147,8 @@ async function gestisci(req: Request, oraMs: number, secret: string, dorme: (ms:
   let corpo = { byte: 0, sha256: '', json: false };
   if (req.method === 'POST') {
     if (Number(req.headers.get('content-length') ?? 0) > CORPO_MAX_BYTE) return json({ error: 'body_too_large' }, 413);
-    const buf = new Uint8Array(await req.arrayBuffer());
-    if (buf.byteLength > CORPO_MAX_BYTE) return json({ error: 'body_too_large' }, 413);
+    const buf = await leggiCorpo(req, CORPO_MAX_BYTE);
+    if (buf === null) return json({ error: 'body_too_large' }, 413);
     let isJson = false;
     try { JSON.parse(new TextDecoder().decode(buf)); isJson = true; } catch { isJson = false; }
     corpo = { byte: buf.byteLength, sha256: esadecimale(new Uint8Array(await crypto.subtle.digest('SHA-256', buf))), json: isJson };
@@ -147,7 +166,7 @@ async function gestisci(req: Request, oraMs: number, secret: string, dorme: (ms:
     metodo: req.method,
     firma: 'ok',
     eta_firma_s: eta,
-    negozio: NEGOZI_NOTI[params.get('shop') ?? ''] ?? 'altro',
+    negozio: Object.hasOwn(NEGOZI_NOTI, params.get('shop') ?? '') ? NEGOZI_NOTI[params.get('shop') ?? ''] : 'altro',
     path_prefix_atteso: params.get('path_prefix') === PREFIX_ATTESO,
     cliente: cliente ? 'loggata' : 'anonima',
     parametri: contaParametri(params),
