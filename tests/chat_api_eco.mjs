@@ -25,7 +25,8 @@ const a = SRC.indexOf(B), b = SRC.indexOf(E);
 if (a < 0 || b < a) { console.error('marcatori PURE:chat-eco non trovati'); process.exit(1); }
 const BLOCCO = SRC.slice(a + B.length, b);
 const ESPORTA = ['gestisci', 'appProxyHmacHex', 'timingSafeEqualHex', 'paramRipetuti', 'idClienteValido', 'etaFirma', 'mascheraIp', 'vociXff',
-  'posDaDestra', 'contaParametri', 'azioneDi', 'attesaDi', 'SPIKE_FINO_MS', 'MAX_SKEW_SEC', 'PAGINA_MISURA'];
+  'posDaDestra', 'contaParametri', 'azioneDi', 'attesaDi', 'SPIKE_FINO_MS', 'MAX_SKEW_SEC', 'PAGINA_MISURA', 'nomiHeader', 'headerConIp',
+  'esitoSiteverify', 'SITEVERIFY_URL', 'TOKEN_MAX'];
 const M = new Function(stripTypeScriptTypes(BLOCCO) + `\nreturn { ${ESPORTA.join(', ')} };`)();
 
 const SECRET = 'segreto-di-prova-non-reale';
@@ -48,8 +49,13 @@ function url(azione, coppie, { firmaGiusta = true, senzaFirma = false } = {}) {
 }
 const attese = [];
 const dorme = async (ms) => { attese.push(ms); };
-const chiama = async (req, { ora = ORA, secret = SECRET } = {}) => {
-  const r = await M.gestisci(req, ora, secret, dorme);
+// siteverify finto (eco-2): registra le chiamate; `rispostaSv` decide cosa risponde Cloudflare
+const verifiche = [];
+let rispostaSv = { success: true, hostname: 'amimi.it', challenge_ts: '2026-11-10T09:59:50.000Z', 'error-codes': [], action: '', cdata: '' };
+const siteverify = async (secret, token) => { verifiche.push({ secret, token }); if (rispostaSv instanceof Error) throw rispostaSv; return rispostaSv; };
+const TS_SECRET = 'segreto-turnstile-di-prova';
+const chiama = async (req, { ora = ORA, secret = SECRET, tsSecret = TS_SECRET } = {}) => {
+  const r = await M.gestisci(req, ora, secret, dorme, { secret: tsSecret, siteverify });
   const testo = r.status === 204 ? '' : await r.text();
   let d = null; try { d = JSON.parse(testo); } catch { d = null; }
   return { r, testo, d };
@@ -159,10 +165,62 @@ console.log('\n== attesa (S3) ==');
   t('A2 attesa oltre 120 s: tagliata a 120', r2.d?.attesa_s === 120 && attese.join() === '120000');
 }
 
+console.log('\n== eco-2: nomi degli header e IP dichiarato (S1) ==');
+{
+  const r = await chiama(post(url('eco', [...SHOPIFY(''), ['ip_atteso', '93.41.5.6']]), '{}', { 'x-forwarded-for': '203.0.113.7', 'x-client-ip': '93.41.5.6', 'x-altro': 'niente' }));
+  t('H1 nomi degli header elencati, ordinati', Array.isArray(r.d?.header?.nomi) && r.d.header.nomi.includes('x-client-ip') && r.d.header.nomi.includes('x-altro') && r.d.header.nomi.join() === [...r.d.header.nomi].sort().join(), r.d?.header?.nomi);
+  t('H2 ip_atteso trovato per nome di header, mai il valore', r.d?.header?.ip_atteso_in?.join() === 'x-client-ip' && !r.testo.includes('93.41.5.6') && !r.testo.includes('niente'), r.d?.header?.ip_atteso_in);
+  const h = new Headers(); for (let i = 0; i < 80; i++) h.append('x-h' + i, 'v');
+  const n80 = M.nomiHeader(h);
+  t('H3 al massimo 60 nomi, ordinati prima del taglio, e quanti restano fuori', n80.length === 61 && n80[60] === '(altri 20)' && n80[0] === 'x-h0' && n80.slice(0, 60).join() === [...n80.slice(0, 60)].sort().join(), n80.slice(-3));
+  t('H5 confronto esatto: 1.2.3.4 non e\' dentro 21.2.3.45 ne\' 1.2.3.45', M.headerConIp(new Headers({ 'x-forwarded-for': '21.2.3.45, 1.2.3.45' }), '1.2.3.4').length === 0
+    && M.headerConIp(new Headers({ 'x-forwarded-for': '9.9.9.9,1.2.3.4' }), '1.2.3.4').join() === 'x-forwarded-for');
+  t('H6 formati Forwarded e con porta: for=, virgolette, [ipv6], ipv4:porta', M.headerConIp(new Headers({ forwarded: 'for=1.2.3.4;proto=https' }), '1.2.3.4').join() === 'forwarded'
+    && M.headerConIp(new Headers({ forwarded: 'for="[2a01:4f8::3]:443"' }), '2a01:4f8::3').join() === 'forwarded'
+    && M.headerConIp(new Headers({ 'x-a': '1.2.3.4:5678' }), '1.2.3.4').join() === 'x-a'
+    && M.headerConIp(new Headers({ 'x-a': '1.2.3.45:80' }), '1.2.3.4').length === 0);
+  t('H4 ip_atteso non plausibile: nessuna ricerca', M.headerConIp(new Headers({ a: 'xyz' }), 'x').length === 0 && M.headerConIp(new Headers({ a: '1.1.1.1' }), null).length === 0 && M.headerConIp(new Headers({ a: 'abc' }), 'abc').length === 0);
+}
+
+console.log('\n== eco-2: rotta /turnstile (S6) ==');
+{
+  const tok = 'tok-' + 'a'.repeat(40);
+  verifiche.length = 0;
+  rispostaSv = { success: true, hostname: 'amimi.it', challenge_ts: '2026-11-10T09:59:50.000Z', 'error-codes': [], action: 'x', cdata: 'segreto-del-cliente' };
+  const ok = await chiama(post(url('turnstile', SHOPIFY('')), JSON.stringify({ token: tok })));
+  t('T1 token valido: 200 con success, hostname, codici ed eta della sfida', ok.r.status === 200 && ok.d?.success === true && ok.d?.hostname === 'amimi.it' && Array.isArray(ok.d?.error_codes) && ok.d?.eta_sfida_s === 10, ok.d);
+  t('T2 siteverify chiamato una volta col secret di prova e il token', verifiche.length === 1 && verifiche[0].secret === TS_SECRET && verifiche[0].token === tok);
+  t('T3 nella risposta mai token, secret, action o cdata', ![tok, TS_SECRET, 'segreto-del-cliente', SECRET].some((v) => ok.testo.includes(v)) && !('action' in (ok.d ?? {})) && !('cdata' in (ok.d ?? {})), ok.testo);
+  rispostaSv = { success: false, 'error-codes': ['invalid-input-response', 'Bad Code!', 7], hostname: 'evil host' };
+  const no = await chiama(post(url('turnstile', SHOPIFY('')), JSON.stringify({ token: tok })));
+  t('T4 token rifiutato: success false, solo codici puliti, hostname sporco reso ?', no.r.status === 200 && no.d?.success === false && no.d?.error_codes?.join() === 'invalid-input-response' && no.d?.hostname === '?', no.d);
+  rispostaSv = new Error('rete');
+  const giu = await chiama(post(url('turnstile', SHOPIFY('')), JSON.stringify({ token: tok })));
+  t('T5 siteverify irraggiungibile: 502, mai "passa"', giu.r.status === 502 && giu.d?.error === 'siteverify_unreachable' && giu.d?.success === undefined);
+  rispostaSv = { success: true, hostname: 'amimi.it' };
+  verifiche.length = 0;
+  const casi = [
+    ['T6 senza secret di Turnstile: 503', await chiama(post(url('turnstile', SHOPIFY('')), JSON.stringify({ token: tok })), { tsSecret: '' }), 503],
+    ['T7 GET: 405', await chiama(new Request(url('turnstile', SHOPIFY('')))), 405],
+    ['T8 senza firma: 401', await chiama(post(url('turnstile', [], { senzaFirma: true }), JSON.stringify({ token: tok }))), 401],
+    ['T9 token assente: 400', await chiama(post(url('turnstile', SHOPIFY('')), '{}')), 400],
+    ['T10 token non stringa: 400', await chiama(post(url('turnstile', SHOPIFY('')), JSON.stringify({ token: 12345678 }))), 400],
+    ['T11 token oltre 2048: 400', await chiama(post(url('turnstile', SHOPIFY('')), JSON.stringify({ token: 'a'.repeat(M.TOKEN_MAX + 1) }))), 400],
+    ['T12 corpo non JSON: 400', await chiama(post(url('turnstile', SHOPIFY('')), 'token=abc')), 400],
+    ['T13 corpo oltre 4 KB: 413', await chiama(post(url('turnstile', SHOPIFY('')), JSON.stringify({ token: 'a'.repeat(5000) }))), 413],
+    ['T14 JSON null: 400', await chiama(post(url('turnstile', SHOPIFY('')), 'null')), 400],
+  ];
+  for (const [nome, res, st] of casi) t(nome, res.r.status === st && res.r.headers.get('cache-control') === 'no-store', { status: res.r.status, d: res.d });
+  t('T15 nessun siteverify per le richieste rifiutate', verifiche.length === 0, verifiche.length);
+  t('T16 esitoSiteverify su risposta non oggetto', JSON.stringify(M.esitoSiteverify(null, ORA)) === JSON.stringify({ success: false, hostname: null, error_codes: [], eta_sfida_s: null }));
+}
+
 console.log('\n== pagina delle misure ==');
 {
   const g = await chiama(new Request(url('misura', SHOPIFY(''))));
-  t('M1 GET /misura firmata: 200 HTML con no-store', g.r.status === 200 && /text\/html/.test(g.r.headers.get('content-type')) && g.r.headers.get('cache-control') === 'no-store');
+  t('M1 GET /misura firmata: 200 Liquid (il proxy riscrive text/html in text/plain) con no-store', g.r.status === 200 && /^application\/liquid/.test(g.r.headers.get('content-type')) && g.r.headers.get('cache-control') === 'no-store');
+  t('M1b pagina senza layout del tema e tutta in {% raw %}, nessun altro tag Liquid dentro', g.testo.startsWith('{% layout none %}{% raw %}<!doctype html>') && g.testo.endsWith('</html>\n{% endraw %}')
+    && !/\{%|\{\{/.test(M.PAGINA_MISURA), g.testo.slice(0, 50));
   const senza = await chiama(new Request(url('misura', [], { senzaFirma: true })));
   t('M2 /misura senza firma: 401', senza.r.status === 401);
   const p = await chiama(post(url('misura', SHOPIFY('')), '{}'));
@@ -173,7 +231,14 @@ console.log('\n== pagina delle misure ==');
   t('M4 lo script della pagina e\' JavaScript valido', sintassi === null, sintassi);
   t('M5 niente innerHTML, storage, cookie, eval', !/innerHTML|outerHTML|insertAdjacentHTML|localStorage|sessionStorage|indexedDB|document\.cookie|eval\(|new Function/.test(html));
   t('M6 nessuna risorsa esterna caricata dalla pagina', !/<script[^>]+src=|<link[^>]+href=|<img|<iframe/.test(html));
-  t('M7 fuori dalla vetrina chiama solo la edge stessa, in no-cors e senza credenziali', (html.match(/https:\/\/[a-z0-9.-]+/g) ?? []).every((h) => h === 'https://imszbjeyplaiovylhkgl.supabase.co') && /mode: 'no-cors', cache: 'no-store', credentials: 'omit'/.test(html));
+  t('M7 fuori dalla vetrina solo la edge (no-cors, senza credenziali) e lo script di Turnstile', (html.match(/https:\/\/[a-z0-9.-]+/g) ?? []).every((h) => h === 'https://imszbjeyplaiovylhkgl.supabase.co' || h === 'https://challenges.cloudflare.com') && /mode: 'no-cors', cache: 'no-store', credentials: 'omit'/.test(html));
+  // eco-2: lo script di Turnstile si carica solo dentro s6 (al clic), con la sitekey dall'indirizzo controllata
+  const s6 = js.slice(js.indexOf('function caricaTurnstile'), js.indexOf("document.getElementById('b-s4')"));
+  t('M10 Turnstile caricato solo da caricaTurnstile, chiamata solo da s6 e dal suo pulsante', (js.match(/challenges\.cloudflare\.com/g) ?? []).length === 1 && s6.includes('challenges.cloudflare.com')
+    && (js.match(/caricaTurnstile\(\)/g) ?? []).length === 2 && (js.match(/await caricaTurnstile\(\)/g) ?? []).length === 1 && /esegui\('S6', s6\)/.test(js) && /\[0-9A-Za-z_-\]\{10,64\}/.test(s6));
+  t('M11 S6 manda il token solo a /apps/chat/turnstile della stessa origine e mostra solo esito e hostname', /fetch\(BASE \+ '\/turnstile'/.test(s6) && !/token:\s*token[^}]*\}\s*\)\s*;\s*aggiungi/.test(s6) && !/ris\.s6 = \{[^}]*token/.test(s6));
+  t('M12 il contenitore del widget c\'e\'', /<div id="ts"><\/div>/.test(html));
+  t('M13 S6 non resta appesa: scadenza, timeout, tetto di 60 s e widget tolto prima di rifarlo', /'expired-callback'/.test(s6) && /'timeout-callback'/.test(s6) && /setTimeout\(function \(\) \{ ko\(/.test(s6) && /tsApi\.remove\(widgetId\)/.test(s6));
   t('M8 id finto di S1 non e\' di una cliente (1) e XFF finto in TEST-NET-3', /logged_in_customer_id=1'/.test(html) && /203\.0\.113\.7/.test(html));
   t('M9 soglia di S2 = 1 secondo (D-7 di Dan)', /soglia_ms: 1000/.test(html) && /diff <= 1000/.test(html));
 }
@@ -182,7 +247,13 @@ console.log('\n== guardie sul sorgente ==');
 {
   const fuori = SRC.slice(0, a) + SRC.slice(b);
   const codice = BLOCCO.slice(0, BLOCCO.indexOf('const PAGINA_MISURA'));
-  t('G1 nessun import, nessun client Supabase, nessuna fetch nella edge', !/\bimport\b|createClient|\bfetch\(/.test(codice + fuori.replace(/^\/\/.*$/gm, '')));
+  const fuoriCodice = fuori.replace(/^\/\/.*$/gm, '');
+  t('G1 nessun import ne\' client Supabase; nessuna fetch nel blocco puro', !/\bimport\b|createClient|\bfetch\(/.test(codice + fuoriCodice.replace(/fetch\(SITEVERIFY_URL/, '')));
+  t('G1b fuori dal blocco una sola fetch, verso SITEVERIFY_URL, POST col secret nel corpo e tetto di 10 s', (fuoriCodice.match(/\bfetch\(/g) ?? []).length === 1
+    && /fetch\(SITEVERIFY_URL, \{ method: 'POST', body: new URLSearchParams\(\{ secret, response: token \}\), signal: AbortSignal\.timeout\(10000\) \}\)/.test(fuoriCodice)
+    && M.SITEVERIFY_URL === 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
+    && /if \(!r\.ok\) throw/.test(fuoriCodice));
+  t('G1c secret di Turnstile solo da CHAT_TURNSTILE_PROVA_SECRET', /Deno\.env\.get\('CHAT_TURNSTILE_PROVA_SECRET'\)/.test(fuoriCodice));
   t('G2 nessun log (corpi, header, parametri)', !/console\./.test(SRC));
   t('G3 segreto solo da CHAT_APP_PROXY_SECRET (mai quello di Premia, mai app_flags)', /Deno\.env\.get\('CHAT_APP_PROXY_SECRET'\)/.test(fuori) && !/SHOPIFY_APP_PROXY_SECRET|app_flags|shopify_app_proxy_secret/.test(SRC.replace(/^\/\/.*$/gm, '')));
   const pos = (s) => codice.indexOf(s);
