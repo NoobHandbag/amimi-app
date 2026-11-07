@@ -1,8 +1,12 @@
-// chat-api eco-1 (2026-11-07): ECO DELLO SPIKE di Fase 0 della chat del sito (docs/PROPOSTA_chat_sito.md 13.3, decisione
-// D-4 di Dan del 6 novembre 2026). NON e' la chat: nessuna tabella, nessuna lettura o scrittura del DB, nessuna chiamata
-// fuori. Risponde con conteggi e tempi per misurare l'App Proxy dell'app Shopify "Amimi Chat" (amimi.it/apps/chat/<azione>
-// arriva qui come /chat-api/<azione>, shopify/amimi-chat/shopify.app.toml). Si spegne da sola a SPIKE_FINO (503); la Fase 1
-// la riscrive da capo.
+// chat-api eco-2 (2026-11-07): ECO DELLO SPIKE di Fase 0 della chat del sito (docs/PROPOSTA_chat_sito.md 13.3, decisione
+// D-4 di Dan del 6 novembre 2026). NON e' la chat: nessuna tabella, nessuna lettura o scrittura del DB; l'unica chiamata
+// fuori e' il siteverify di Turnstile (S6). Risponde con conteggi e tempi per misurare l'App Proxy dell'app Shopify "Amimi
+// Chat" (amimi.it/apps/chat/<azione> arriva qui come /chat-api/<azione>, shopify/amimi-chat/shopify.app.toml). Si spegne da
+// sola a SPIKE_FINO (503); la Fase 1 la riscrive da capo.
+// eco-2 (stesso giorno, dopo S1): `eco` dice anche i NOMI degli header che arrivano e quali contengono l'IP dichiarato in
+// `ip_atteso` (S1 ha visto che l'IP del client non e' in X-Forwarded-For); rotta `POST /turnstile` per S6 (token del widget
+// di prova -> siteverify col secret di prova; risponde solo esito, hostname, codici d'errore ed eta' della sfida); pulsante
+// S6 nella pagina /misura, che carica lo script di Turnstile solo al clic, con la sitekey presa da `?sitekey=`.
 //
 // Rotte, tutte con la firma del proxy (verify_jwt = false in supabase/config.toml: il proxy non manda JWT):
 //   GET|POST /eco     JSON: firma ok, eta' della firma, anonima o loggata (mai l'id), quante volte compare ogni nome di
@@ -11,17 +15,23 @@
 //                     (al massimo 120) ritarda la risposta per misurare il timeout del proxy (S3).
 //   GET /misura       pagina HTML per il team con i pulsanti delle misure S1-S4: gira sul telefono e sul PC, stessa origine
 //                     della vetrina, non salva nulla sul dispositivo.
+//   POST /turnstile   (eco-2, S6) {token} -> siteverify col secret di prova: success, hostname, codici, eta' della sfida.
 //   altro             404, prima di ogni altro controllo.
 // Firma come loyalty-proxy (HMAC-SHA256 esadecimale dei parametri ordinati, confronto a tempo costante, timestamp entro
 // 300 s), piu' i controlli di sez. 5.2: 401 se `shop`, `logged_in_customer_id`, `path_prefix`, `timestamp` o `signature`
 // compaiono piu' di una volta, o se `logged_in_customer_id` non e' vuoto e non e' di sole cifre.
 // Segreto: env CHAT_APP_PROXY_SECRET, il client secret di "Amimi Chat" (lo mette Dan fra i segreti delle edge; separato da
 // quello di Premia). Assente: 503 needs_secret. Nella risposta mai il valore dei parametri firmati; nessun log.
+// Secret del widget Turnstile di PROVA: env CHAT_TURNSTILE_PROVA_SECRET (Dan). Assente: /turnstile risponde 503
+// needs_turnstile_secret. Il token non torna mai indietro e non si logga.
 // Ogni risposta ha Cache-Control: no-store. Nessun header CORS: il widget chiama dalla stessa origine (sez. 4.8).
 
 // ==== PURE:chat-eco BEGIN ====
-const VERSIONE = 'eco-1';
+const VERSIONE = 'eco-2';
 const SPIKE_FINO_MS = Date.parse('2026-12-07T00:00:00Z');
+const SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+const TOKEN_MAX = 2048;                // lunghezza massima di un token Turnstile (doc Cloudflare, validazione lato server)
+const CORPO_TURNSTILE_MAX = 4096;
 const MAX_SKEW_SEC = 300;
 const ATTESA_MAX_S = 120;
 const CORPO_MAX_BYTE = 65536;
@@ -116,9 +126,38 @@ async function leggiCorpo(req: Request, max: number): Promise<Uint8Array | null>
   for (const p of pezzi) { out.set(p, at); at += p.byteLength; }
   return out;
 }
-const hostPulito =(h: string | null): string | null => (h === null ? null : /^[a-z0-9.-]{1,120}$/i.test(h) ? h.toLowerCase() : '?');
+const hostPulito = (h: string | null): string | null => (h === null ? null : /^[a-z0-9.-]{1,120}$/i.test(h) ? h.toLowerCase() : '?');
 
-async function gestisci(req: Request, oraMs: number, secret: string, dorme: (ms: number) => Promise<unknown>): Promise<Response> {
+// eco-2: soli NOMI degli header (mai i valori), e quali contengono l'IP che il client dichiara (S1)
+const nomeHeader = (k: string) => (/^[a-z0-9-]{1,60}$/.test(k) ? k : '(altro)');
+function nomiHeader(h: Headers): string[] {
+  const out: string[] = [];
+  for (const [k] of h) { if (out.length >= 60) break; out.push(nomeHeader(k)); }
+  return out.sort();
+}
+function headerConIp(h: Headers, ip: string | null): string[] {
+  if (!ip || !/^[0-9a-f.:]{7,45}$/i.test(ip)) return [];
+  const out: string[] = [];
+  for (const [k, v] of h) if (v.includes(ip)) out.push(nomeHeader(k));
+  return out.sort();
+}
+// esito di siteverify ridotto a cio' che serve a S6: niente token, niente altri campi
+function esitoSiteverify(r: unknown, oraMs: number) {
+  const o = r !== null && typeof r === 'object' ? (r as Record<string, unknown>) : {};
+  const codici = Array.isArray(o['error-codes'])
+    ? (o['error-codes'] as unknown[]).filter((c): c is string => typeof c === 'string' && /^[a-z0-9-]{1,40}$/.test(c)).slice(0, 5)
+    : [];
+  const sfida = typeof o.challenge_ts === 'string' ? Date.parse(o.challenge_ts) : NaN;
+  return {
+    success: o.success === true,
+    hostname: typeof o.hostname === 'string' ? hostPulito(o.hostname) : null,
+    error_codes: codici,
+    eta_sfida_s: Number.isFinite(sfida) ? Math.round((oraMs - sfida) / 1000) : null,
+  };
+}
+type Turnstile = { secret: string; siteverify: (secret: string, token: string) => Promise<unknown> };
+
+async function gestisci(req: Request, oraMs: number, secret: string, dorme: (ms: number) => Promise<unknown>, ts: Turnstile): Promise<Response> {
   const t0 = performance.now();
   if (oraMs >= SPIKE_FINO_MS) return json({ error: 'spike_finito' }, 503);
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: HEADER_BASE });
@@ -126,7 +165,7 @@ async function gestisci(req: Request, oraMs: number, secret: string, dorme: (ms:
   const url = new URL(req.url);
   const params = url.searchParams;
   const azione = azioneDi(url.pathname);
-  if (azione !== 'eco' && azione !== 'misura') return json({ error: 'not_found' }, 404);
+  if (azione !== 'eco' && azione !== 'misura' && azione !== 'turnstile') return json({ error: 'not_found' }, 404);
 
   if (!secret) return json({ state: 'needs_secret' }, 503);
   const signature = params.get('signature') ?? '';
@@ -142,6 +181,22 @@ async function gestisci(req: Request, oraMs: number, secret: string, dorme: (ms:
   if (azione === 'misura') {
     if (req.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
     return new Response(PAGINA_MISURA, { status: 200, headers: { ...HEADER_BASE, 'Content-Type': 'text/html; charset=utf-8' } });
+  }
+
+  if (azione === 'turnstile') {
+    if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+    if (!ts.secret) return json({ state: 'needs_turnstile_secret' }, 503);
+    const buf = await leggiCorpo(req, CORPO_TURNSTILE_MAX);
+    if (buf === null) return json({ error: 'body_too_large' }, 413);
+    let token = '';
+    try {
+      const d = JSON.parse(new TextDecoder().decode(buf));
+      token = d !== null && typeof d === 'object' && typeof d.token === 'string' ? d.token : '';
+    } catch { token = ''; }
+    if (!token || token.length > TOKEN_MAX) return json({ error: 'bad_token' }, 400);
+    let esito: unknown;
+    try { esito = await ts.siteverify(ts.secret, token); } catch { return json({ error: 'siteverify_unreachable' }, 502); }
+    return json({ ok: true, versione: VERSIONE, azione, ...esitoSiteverify(esito, oraMs), edge_ms: Math.round(performance.now() - t0) });
   }
 
   let corpo = { byte: 0, sha256: '', json: false };
@@ -181,6 +236,8 @@ async function gestisci(req: Request, oraMs: number, secret: string, dorme: (ms:
       cookie: h.has('cookie'),
       x_amimi_prova: h.has('x-amimi-prova'),
       content_type: (h.get('content-type') ?? '').split(';')[0].trim().slice(0, 60),
+      nomi: nomiHeader(h),
+      ip_atteso_in: headerConIp(h, params.get('ip_atteso')),
     },
     corpo,
     attesa_s: attesa,
@@ -208,8 +265,10 @@ Tieni lo schermo acceso finche' una misura non dice FINITO.</p>
 <button id="b-s2">S2: velocita'</button>
 <button id="b-s3">S3: cache e attese (4 min)</button>
 <button id="b-s4">S4: 10 minuti ogni 3 s</button>
+<button id="b-s6">S6: Turnstile</button>
 <button id="b-copia">Copia i risultati</button>
 </div>
+<div id="ts"></div>
 <pre id="out">Pronta.</pre>
 <script>
 (function () {
@@ -321,7 +380,36 @@ Tieni lo schermo acceso finche' una misura non dice FINITO.</p>
   document.getElementById('b-s1').addEventListener('click', function () { esegui('S1', s1); });
   document.getElementById('b-s2').addEventListener('click', function () { esegui('S2', s2); });
   document.getElementById('b-s3').addEventListener('click', function () { esegui('S3', s3); });
+  function caricaTurnstile() {
+    return new Promise(function (ok, ko) {
+      if (window.turnstile) { ok(window.turnstile); return; }
+      var s = document.createElement('script');
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      s.async = true;
+      s.onload = function () { ok(window.turnstile); };
+      s.onerror = function () { ko(new Error('script di Turnstile non caricato')); };
+      document.head.appendChild(s);
+    });
+  }
+  async function s6() {
+    var chiave = new URLSearchParams(location.search).get('sitekey') || '';
+    if (!/^[0-9A-Za-z_-]{10,64}$/.test(chiave)) { scrivi('S6: serve la sitekey nella barra degli indirizzi (?sitekey=...).'); return; }
+    scrivi('S6: carico Turnstile...');
+    var tsApi = await caricaTurnstile();
+    var token = await new Promise(function (ok, ko) {
+      tsApi.render('#ts', { sitekey: chiave, callback: function (t) { ok(t); }, 'error-callback': function (c) { ko(new Error('errore di Turnstile ' + c)); } });
+    });
+    aggiungi('  token ricevuto, verifico...');
+    var t = adesso();
+    var r = await fetch(BASE + '/turnstile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: token }), cache: 'no-store', credentials: 'same-origin' })
+      .then(function (x) { return x.json().then(function (d) { return { status: x.status, d: d }; }, function () { return { status: x.status, d: null }; }); },
+        function () { return { status: 0, d: null }; });
+    ris.s6 = { host_pagina: location.host, status: r.status, success: r.d && r.d.success, hostname: r.d && r.d.hostname,
+      hostname_uguale: !!(r.d && r.d.hostname === location.host), errori: r.d && (r.d.error_codes || r.d.error || r.d.state), eta_sfida_s: r.d && r.d.eta_sfida_s, ms: Math.round(adesso() - t) };
+    aggiungi(JSON.stringify(ris.s6, null, 1));
+  }
   document.getElementById('b-s4').addEventListener('click', function () { esegui('S4', s4); });
+  document.getElementById('b-s6').addEventListener('click', function () { esegui('S6', s6); });
   document.getElementById('b-copia').addEventListener('click', function () {
     var t = JSON.stringify(ris, null, 1);
     if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { aggiungi('\\nCopiati negli appunti.'); }, function () { scrivi(t); });
@@ -333,5 +421,12 @@ Tieni lo schermo acceso finche' una misura non dice FINITO.</p>
 `;
 // ==== PURE:chat-eco END ====
 
+// L'unica chiamata fuori della edge: siteverify di Turnstile (S6), con 10 s di tetto. Il secret va nel corpo, mai nell'URL.
+const siteverify = async (secret: string, token: string): Promise<unknown> => {
+  const r = await fetch(SITEVERIFY_URL, { method: 'POST', body: new URLSearchParams({ secret, response: token }), signal: AbortSignal.timeout(10000) });
+  return await r.json();
+};
+
 Deno.serve((req) =>
-  gestisci(req, Date.now(), (Deno.env.get('CHAT_APP_PROXY_SECRET') ?? '').trim(), (ms) => new Promise((r) => setTimeout(r, ms))));
+  gestisci(req, Date.now(), (Deno.env.get('CHAT_APP_PROXY_SECRET') ?? '').trim(), (ms) => new Promise((r) => setTimeout(r, ms)),
+    { secret: (Deno.env.get('CHAT_TURNSTILE_PROVA_SECRET') ?? '').trim(), siteverify }));
