@@ -218,7 +218,9 @@ console.log('\n== eco-2: rotta /turnstile (S6) ==');
 console.log('\n== pagina delle misure ==');
 {
   const g = await chiama(new Request(url('misura', SHOPIFY(''))));
-  t('M1 GET /misura firmata: 200 HTML con no-store', g.r.status === 200 && /text\/html/.test(g.r.headers.get('content-type')) && g.r.headers.get('cache-control') === 'no-store');
+  t('M1 GET /misura firmata: 200 Liquid (il proxy riscrive text/html in text/plain) con no-store', g.r.status === 200 && /^application\/liquid/.test(g.r.headers.get('content-type')) && g.r.headers.get('cache-control') === 'no-store');
+  t('M1b pagina senza layout del tema e tutta in {% raw %}, nessun altro tag Liquid dentro', g.testo.startsWith('{% layout none %}{% raw %}<!doctype html>') && g.testo.endsWith('</html>\n{% endraw %}')
+    && !/\{%|\{\{/.test(M.PAGINA_MISURA), g.testo.slice(0, 50));
   const senza = await chiama(new Request(url('misura', [], { senzaFirma: true })));
   t('M2 /misura senza firma: 401', senza.r.status === 401);
   const p = await chiama(post(url('misura', SHOPIFY('')), '{}'));

@@ -32,6 +32,8 @@ const SPIKE_FINO_MS = Date.parse('2026-12-07T00:00:00Z');
 const SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 const TOKEN_MAX = 2048;                // lunghezza massima di un token Turnstile (doc Cloudflare, validazione lato server)
 const CORPO_TURNSTILE_MAX = 4096;
+const LIQUID_APRI = '{% layout none %}{% raw %}';
+const LIQUID_CHIUDI = '{% endraw %}';
 const MAX_SKEW_SEC = 300;
 const ATTESA_MAX_S = 120;
 const CORPO_MAX_BYTE = 65536;
@@ -186,7 +188,9 @@ async function gestisci(req: Request, oraMs: number, secret: string, dorme: (ms:
 
   if (azione === 'misura') {
     if (req.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
-    return new Response(PAGINA_MISURA, { status: 200, headers: { ...HEADER_BASE, 'Content-Type': 'text/html; charset=utf-8' } });
+    // Il proxy di Shopify riscrive text/html in text/plain (misurato il 07-11): la pagina va come Liquid, senza il layout del
+    // tema e in {% raw %} perche' Liquid non la tocchi, come loyalty-page.
+    return new Response(LIQUID_APRI + PAGINA_MISURA + LIQUID_CHIUDI, { status: 200, headers: { ...HEADER_BASE, 'Content-Type': 'application/liquid; charset=utf-8' } });
   }
 
   if (azione === 'turnstile') {
