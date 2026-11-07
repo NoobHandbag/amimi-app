@@ -42,11 +42,13 @@ function leggiToml(s) {
   }
   return out;
 }
+// client_id dell'app "Amimi Chat" della Dev Dashboard (07-11): non e' un segreto, cambia solo se l'app si ricrea
+const CLIENT_ID = 'df701ddc2254e2776d6e961abbb7dff8';
 const SEGRETI = /client_secret|api_secret|secret_key|shpss_|shpat_|shpca_|sb_secret_|eyJhbGciOi|access_token|password/i;
 function tomlApp(s) {
   const c = leggiToml(s);
   const chiaviCima = Object.keys(c['']).sort();
-  return c.__illeggibili === undefined && c[''].client_id === '' && c[''].name === 'Amimi Chat' && c[''].embedded === false
+  return c.__illeggibili === undefined && c[''].client_id === CLIENT_ID && c[''].name === 'Amimi Chat' && c[''].embedded === false
     && typeof c[''].application_url === 'string' && c[''].application_url.startsWith('https://')
     && isDeepStrictEqual(chiaviCima, ['application_url', 'client_id', 'embedded', 'name'])
     && isDeepStrictEqual(c.access_scopes, { scopes: 'write_app_proxy' })
@@ -92,7 +94,7 @@ const tuttiIFile = (d) => readdirSync(d).flatMap((n) => { const p = join(d, n); 
 const FILE_SHOPIFY = tuttiIFile(join(ROOT, 'shopify'));
 
 console.log('== shopify.app.toml ==');
-t('T1 client_id vuoto (lo scrive `shopify app config link`), nome, embedded false, un application_url https e nient\'altro in cima', tomlApp(TOML), leggiToml(TOML)['']);
+t('T1 client_id dell\'app creata il 07-11, nome, embedded false, un application_url https e nient\'altro in cima', tomlApp(TOML), leggiToml(TOML)['']);
 t('T2 scope solo write_app_proxy; proxy apps/chat verso chat-api; network access solo Turnstile; nessuna chiave di segreto', tomlApp(TOML));
 console.log('\n== estensione ==');
 t('E1 shopify.extension.toml: tema, "Amimi Chat"', estensione(EXT_TOML), leggiToml(EXT_TOML));
@@ -105,12 +107,12 @@ t('F1 nessun file sotto shopify/ con un segreto o un .env', conSegreti.length ==
 
 console.log('\n== autocontrollo ==');
 const pianta = (s, da, a) => { const x = s.replace(da, () => a); if (x === s) { console.log('  KO  autocontrollo: frammento non trovato: ' + da.slice(0, 80)); ko++; } return x; };
-t('A1 toml con client secret, uno scope in piu\', il proxy su un altro subpath, Supabase fra le fonti o un client_id scritto -> visto', [
-  pianta(TOML, 'client_id = ""', 'client_id = ""\nclient_secret = "x"'),
+t('A1 toml con client secret, uno scope in piu\', il proxy su un altro subpath, Supabase fra le fonti o un altro client_id -> visto', [
+  pianta(TOML, `client_id = "${CLIENT_ID}"`, `client_id = "${CLIENT_ID}"\nclient_secret = "x"`),
   pianta(TOML, 'scopes = "write_app_proxy"', 'scopes = "write_app_proxy,read_customers"'),
   pianta(TOML, 'subpath = "chat"', 'subpath = "chat2"'),
   pianta(TOML, 'allowed_sources = ["https://challenges.cloudflare.com"]', 'allowed_sources = ["https://challenges.cloudflare.com", "https://imszbjeyplaiovylhkgl.supabase.co"]'),
-  pianta(TOML, 'client_id = ""', 'client_id = "abc"'),
+  pianta(TOML, `client_id = "${CLIENT_ID}"`, 'client_id = ""'),
   pianta(TOML, '\n[network_access]', '\n[build]\ninclude_config_on_deploy = true\n\n[network_access]'),
 ].every((s) => !tomlApp(s)));
 t('A2 blocco con un secondo file, prova spenta di default, customer letto o target head -> visto', [
