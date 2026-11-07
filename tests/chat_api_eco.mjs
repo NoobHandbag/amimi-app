@@ -175,6 +175,10 @@ console.log('\n== eco-2: nomi degli header e IP dichiarato (S1) ==');
   t('H3 al massimo 60 nomi, ordinati prima del taglio, e quanti restano fuori', n80.length === 61 && n80[60] === '(altri 20)' && n80[0] === 'x-h0' && n80.slice(0, 60).join() === [...n80.slice(0, 60)].sort().join(), n80.slice(-3));
   t('H5 confronto esatto: 1.2.3.4 non e\' dentro 21.2.3.45 ne\' 1.2.3.45', M.headerConIp(new Headers({ 'x-forwarded-for': '21.2.3.45, 1.2.3.45' }), '1.2.3.4').length === 0
     && M.headerConIp(new Headers({ 'x-forwarded-for': '9.9.9.9,1.2.3.4' }), '1.2.3.4').join() === 'x-forwarded-for');
+  t('H6 formati Forwarded e con porta: for=, virgolette, [ipv6], ipv4:porta', M.headerConIp(new Headers({ forwarded: 'for=1.2.3.4;proto=https' }), '1.2.3.4').join() === 'forwarded'
+    && M.headerConIp(new Headers({ forwarded: 'for="[2a01:4f8::3]:443"' }), '2a01:4f8::3').join() === 'forwarded'
+    && M.headerConIp(new Headers({ 'x-a': '1.2.3.4:5678' }), '1.2.3.4').join() === 'x-a'
+    && M.headerConIp(new Headers({ 'x-a': '1.2.3.45:80' }), '1.2.3.4').length === 0);
   t('H4 ip_atteso non plausibile: nessuna ricerca', M.headerConIp(new Headers({ a: 'xyz' }), 'x').length === 0 && M.headerConIp(new Headers({ a: '1.1.1.1' }), null).length === 0 && M.headerConIp(new Headers({ a: 'abc' }), 'abc').length === 0);
 }
 

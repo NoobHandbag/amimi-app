@@ -135,12 +135,16 @@ function nomiHeader(h: Headers): string[] {
   const tutti = [...h.keys()].map(nomeHeader).sort();
   return tutti.length > 60 ? [...tutti.slice(0, 60), `(altri ${tutti.length - 60})`] : tutti;
 }
-// confronto esatto voce per voce (virgole e spazi separano), mai per sottostringa: 1.2.3.4 non e' dentro 21.2.3.45
+// confronto esatto voce per voce, mai per sottostringa: 1.2.3.4 non e' dentro 21.2.3.45. Le voci si separano su virgole,
+// spazi, punto e virgola, `=`, virgolette e parentesi quadre (formato `for="[ip]:porta"` di Forwarded), e a un IPv4 si toglie
+// la porta (`1.2.3.4:5678`).
+const vociDiHeader = (v: string): string[] =>
+  v.toLowerCase().split(/[\s,;="\[\]]+/).filter(Boolean).map((x) => x.replace(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/, '$1'));
 function headerConIp(h: Headers, ip: string | null): string[] {
   if (!ip || !/^[0-9a-f.:]{7,45}$/i.test(ip)) return [];
   const cerca = ip.toLowerCase();
   const out: string[] = [];
-  for (const [k, v] of h) if (v.toLowerCase().split(/[\s,;]+/).includes(cerca)) out.push(nomeHeader(k));
+  for (const [k, v] of h) if (vociDiHeader(v).includes(cerca)) out.push(nomeHeader(k));
   return out.sort();
 }
 // esito di siteverify ridotto a cio' che serve a S6: niente token, niente altri campi
