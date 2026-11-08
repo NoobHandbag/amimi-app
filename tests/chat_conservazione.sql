@@ -4,7 +4,8 @@
 -- Prova: una chat ferma da 13 mesi (con messaggi, token, contatori, eventi con la sua chiave e una proiezione in cs_)
 -- viene cancellata; una chat ferma da 11 mesi e le chat vere restano; contatori fermi da 8 giorni e token scaduti da 2
 -- giorni se ne vanno; il valore dei mesi viene da app_flags (con un valore illeggibile vale 12); un evento di conteggi
--- senza email; nessuna riga in change_log.
+-- senza email; nessuna riga in change_log. Dalla 0189 (pezzo 4): le righe del registro push_eventi_inviati dei tre eventi
+-- della chat (0188) con la chiave della chat vecchia se ne vanno, quelle della chat recente, per giorno o di altri eventi restano.
 do $$
 declare
   v_vecchia uuid;
@@ -29,6 +30,14 @@ begin
   insert into chat_eventi (sessione_id, tipo, chiave, esito) values (v_vecchia, 'thread_email', v_vecchia || ':thread:primo', 'prenotato'),
     (v_vecchia, 'avvia', null, null);
   insert into cs_conversations (gmail_thread_id, canale) values ('chat:' || v_vecchia, 'chat_sito') returning id into v_cs;
+  insert into push_eventi_inviati (evento, chiave, stato, tentativi) values
+    ('chat_sollecito', v_vecchia || ':1:sollecito:1', 'saltato', 0), ('chat_sollecito_scala', v_vecchia || ':1:sollecito:2', 'saltato', 0),
+    ('chat_salute', v_vecchia || ':1:passaggio', 'saltato', 0), ('chat_sollecito', v_recente || ':1:sollecito:1', 'saltato', 0),
+    ('chat_salute', 'api:prova-conservazione', 'saltato', 0), ('cs_urgente', v_vecchia || ':urgente', 'saltato', 0);
+  -- Gate 2, C1: righe orfane (chiave di una sessione che non esiste): quella ferma da 2 ore va via, quella fresca resta
+  insert into push_eventi_inviati (evento, chiave, stato, tentativi, updated_at) values
+    ('chat_sollecito', '00000000-0000-4000-8000-0000000000ff:1:sollecito:1', 'saltato', 0, now() - interval '2 hours'),
+    ('chat_salute', '00000000-0000-4000-8000-0000000000fe:1:passaggio', 'prenotato', 1, now());
 
   v_r := public.chat_conservazione();
 
@@ -43,11 +52,17 @@ begin
     raise exception 'KO: l''evento senza chiave doveva restare senza sessione';
   end if;
   if not exists (select 1 from chat_sessioni where id = v_recente) then raise exception 'KO: la chat di 11 mesi e'' stata cancellata'; end if;
+  if exists (select 1 from push_eventi_inviati where chiave like v_vecchia || ':%' and evento like 'chat\_%') then raise exception 'KO: registro delle push della chat cancellata rimasto'; end if;
+  if (select count(*) from push_eventi_inviati where chiave in (v_recente || ':1:sollecito:1', 'api:prova-conservazione', v_vecchia || ':urgente')) <> 3 then
+    raise exception 'KO: cancellate righe del registro di un''altra chat, per giorno o di un altro evento';
+  end if;
+  if exists (select 1 from push_eventi_inviati where chiave = '00000000-0000-4000-8000-0000000000ff:1:sollecito:1') then raise exception 'KO: riga orfana ferma da 2 ore rimasta'; end if;
+  if not exists (select 1 from push_eventi_inviati where chiave = '00000000-0000-4000-8000-0000000000fe:1:passaggio') then raise exception 'KO: riga orfana fresca (invio forse in corso) cancellata'; end if;
   if (select count(*) from chat_sessioni) <> v_altre + 1 then raise exception 'KO: toccate altre chat'; end if;
   if exists (select 1 from chat_contatori where chiave = 'glob:prova_conservazione') then raise exception 'KO: contatore fermo da 8 giorni rimasto'; end if;
   if not exists (select 1 from chat_contatori where chiave = 'glob:prova_fresca') then raise exception 'KO: contatore fresco cancellato'; end if;
   if exists (select 1 from chat_token where hash = repeat('b', 64)) then raise exception 'KO: token scaduto da 2 giorni rimasto'; end if;
-  if (v_r ->> 'sessioni')::int <> 1 or (v_r ->> 'proiezioni')::int <> 1 or (v_r ->> 'mesi')::int <> coalesce(nullif(trim(v_mesi), '')::int, 12) then
+  if (v_r ->> 'sessioni')::int <> 1 or (v_r ->> 'proiezioni')::int <> 1 or (v_r ->> 'push')::int < 4 or (v_r ->> 'mesi')::int <> coalesce(nullif(trim(v_mesi), '')::int, 12) then
     raise exception 'KO: conteggi % (mesi del flag %)', v_r, v_mesi;
   end if;
   if not exists (select 1 from chat_eventi where tipo = 'conservazione' and chi = 'cron' and (dettaglio ->> 'sessioni')::int = 1 and position('@' in dettaglio::text) = 0) then
