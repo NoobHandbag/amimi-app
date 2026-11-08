@@ -112,3 +112,11 @@ verify_jwt = false
 # Chat del sito (07-11, Fase 0): l'App Proxy di "Amimi Chat" non manda JWT; la edge controlla la firma del proxy.
 [functions.chat-api]
 verify_jwt = false
+
+# Chat del sito, azioni del team (08-11, Fase 1 pezzo 3): la edge controlla da sola il JWT (getUser + dominio del team).
+[functions.chat-staff]
+verify_jwt = false
+
+# Chat del sito, email da info@ (08-11, Fase 1 pezzo 3): chiave di servizio (da chat-staff) o PIN neutro del cron.
+[functions.chat-send]
+verify_jwt = false
