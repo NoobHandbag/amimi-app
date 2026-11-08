@@ -15,8 +15,8 @@
 --     change_log e' vietato, R7 di tests/chat_guardie.mjs) sta nella 0189.
 -- Rollback: attivo a false sui tre eventi (senza deploy). Il tema puo' restare: senza eventi accesi non manda.
 -- Nessun flag, nessun cron cambiano. Rieseguibile: tema ed eventi con on conflict do nothing, il tema si aggiunge ai
--- telefoni solo se e' nato in questa esecuzione e la prova pretende i valori di nascita solo da cio' che e' nato qui. Nessun `return` nei blocchi DO (MIG-C2 della 0166); variabili v_* (in produzione
--- plpgsql.variable_conflict = error).
+-- telefoni solo se e' nato in questa esecuzione e la prova pretende i valori di nascita solo da cio' che e' nato qui.
+-- Nessun `return` nei blocchi DO (MIG-C2 della 0166); variabili v_* (in produzione plpgsql.variable_conflict = error).
 begin;
 
 -- 0) cio' che la migrazione NON deve cambiare, letto prima di tutto
@@ -136,7 +136,6 @@ begin
   if exists (select 1 from push_subscriptions s where cardinality(s.temi) <> (select count(distinct x) from unnest(s.temi) x)) then
     raise exception '0188: un telefono iscritto ha un tema doppio';
   end if;
-
 
   if coalesce((select value from app_flags where key = 'push_enabled'), '<assente>') is distinct from current_setting('amimi.chat_push_push_enabled_prima', true)
      or coalesce((select value from app_flags where key = 'push_eventi_enabled'), '<assente>') is distinct from current_setting('amimi.chat_push_eventi_enabled_prima', true)
