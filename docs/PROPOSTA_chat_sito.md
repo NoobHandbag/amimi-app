@@ -571,6 +571,8 @@ Due fatti per il disegno. Una tabella nuova in `public` riceve per default la le
 
 ### 7.2 Le tabelle nuove chat_, fonte di verita'
 
+> **Costruito l'8 novembre 2026 (migr 0186, `docs/SCHEMA.md` sez. 20).** Diverge dalla tabella qui sotto in quattro punti: i token stanno in una tabella `chat_token` (hash, tipo `chat` o `ripresa`, scadenza, revoca), non in `chat_sessioni.token_hash`, perche' 5.4 vuole fino a 3 token di chat per sessione piu' i token di ripresa; niente `last_seen_at` e `visibile` (presenza non costruita, D-8), e `delivered_at` resta solo come "vista in chat"; i contatori non hanno chiavi per IP (S1, D-12); la RPC dei contatori e' security invoker con execute al solo service_role (5.9 punto 4: definer solo se serve). In piu', dalla Gate 2: `seq` dei messaggi non e' un'identity ma lo assegna un trigger dopo il lock della sessione, perche' con un'identity un messaggio committato in ritardo sarebbe saltato da chi legge `seq > cursore` (proiezione e polling). `chat_ai_log` nasce con la Fase 2.
+
 Il modulo `chat_` e' la fonte di verita' per sessioni, messaggi, informativa mostrata, log AI e contatori. Colonne indicative.
 
 | Tabella | Colonne principali | Chiavi e vincoli |

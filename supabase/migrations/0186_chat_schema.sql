@@ -24,9 +24,16 @@
 --   - niente chiavi per IP nei contatori: l'IP non arriva alla edge via App Proxy (spike S1, D-12);
 --   - la RPC dei contatori e' SECURITY INVOKER: la chiama solo il service_role, che ha gia' i privilegi (5.9 punto 4,
 --     definer solo se serve).
--- Rieseguibile: tabelle con if not exists, funzione e policy ricreate, flag con on conflict do nothing; la prova finale
--- controlla il contratto (colonne, vincoli, privilegi) e pretende i valori di nascita solo dai flag nati in questa
--- esecuzione, cosi' un testo cambiato dopo dalla scheda Chat non viene sovrascritto ne' fa fallire un re-run.
+-- Rieseguibile finche' nessuna migrazione dopo cambia queste tabelle: tabelle con if not exists, funzioni, trigger e policy
+-- ricreati, flag con on conflict do nothing; la prova finale controlla il contratto (colonne, vincoli, privilegi) e pretende
+-- i valori di nascita solo dai flag nati in questa esecuzione, cosi' un testo cambiato dopo dalla scheda Chat non viene
+-- sovrascritto ne' fa fallire un re-run. Dopo una migrazione che aggiunge colonne o policy la 0186 non si rilancia piu'
+-- (la prova pretende il contratto esatto): e' voluto. Nessuna versione precedente di queste tabelle esiste da nessuna
+-- parte (produzione letta l'8-11, stack locale ricostruito da schema.sql), quindi una tabella vecchia con lo stesso nome
+-- non puo' passare di qui (Gate 2 dell'8-11, C1).
+-- Gate 2 dell'8-11 (revisore indipendente): B3 chiuso con l'ordine di seq per sessione (trigger chat_messaggi_ordina),
+-- C3 con chat_sessioni_passaggio_ck, C4 coi vincoli contro le email in chat_eventi, C6 col contatore che al tetto si
+-- aggiorna lo stesso; le sequenze hanno un nome fisso e si revocano con istruzioni statiche (B2).
 -- Nessun `return` nei blocchi DO (MIG-C2 della 0166): la prova annullata prima dell'apply li annida in un solo DO.
 begin;
 
@@ -62,6 +69,7 @@ create table if not exists chat_sessioni (
   constraint chat_sessioni_stato_ck check (stato in ('bot', 'attesa_persona', 'aperta', 'chiusa')),
   constraint chat_sessioni_preso_da_ck check (preso_da is null or preso_da in ('Benedetta', 'Ginevra', 'Ale')),
   constraint chat_sessioni_aperta_ck check (stato <> 'aperta' or preso_da is not null),
+  constraint chat_sessioni_passaggio_ck check (stato <> 'attesa_persona' or (passaggi >= 1 and passaggio_at is not null)),
   constraint chat_sessioni_chiusa_ck check ((stato = 'chiusa') = (chiusa_at is not null)),
   constraint chat_sessioni_email_ck check (char_length(customer_email) <= 254
     and customer_email ~ '^[^[:space:][:cntrl:]<>,;"@]+@[^[:space:][:cntrl:]<>,;"@]+\.[^[:space:][:cntrl:]<>,;"@]+$'),
@@ -88,9 +96,15 @@ create index if not exists chat_sessioni_attivita_ix on chat_sessioni (ultima_at
 --    chat-send, solo per i messaggi dello staff (D-8: ognuno parte per email); la prenotazione passa da null a
 --    'prenotata' con un update condizionato prima di chiamare Gmail (7.9), email_at = ora dell'ultimo cambio di stato
 --    (una 'prenotata' ferma da oltre 15 minuti diventa 'errore', mai rimandata).
+--    seq NON e' un'identity (Gate 2 dell'8-11, B3): un'identity prende il numero all'insert e la riga si vede al commit,
+--    quindi due scritture sulla stessa chat (la cliente da chat-api, lo staff da chat-staff) potevano rendere visibile 42
+--    prima di 41, e chi legge `seq > cursore` (proiezione in cs_, polling del widget) avrebbe saltato 41 per sempre. Lo
+--    assegna il trigger chat_messaggi_ordina DOPO il lock della riga della sessione: dentro una chat i numeri seguono
+--    l'ordine dei commit. Un seq passato dal chiamante viene sovrascritto.
+create sequence if not exists chat_messaggi_seq_sq;
 create table if not exists chat_messaggi (
   id              uuid primary key default gen_random_uuid(),
-  seq             bigint generated always as identity,
+  seq             bigint not null,
   sessione_id     uuid not null,
   autore          text not null,
   staff_nome      text,
@@ -126,6 +140,20 @@ create index if not exists chat_messaggi_sessione_seq_ix on chat_messaggi (sessi
 create index if not exists chat_messaggi_email_coda_ix on chat_messaggi (created_at)
   where autore = 'staff' and (email_stato is null or email_stato = 'prenotata');
 
+-- lock della sessione, poi il numero: una seconda scrittura sulla stessa chat aspetta il commit della prima e prende un
+-- numero piu' alto. Una sessione inesistente non si blocca e l'insert cade sulla FK (23503).
+create or replace function public.chat_messaggi_ordina() returns trigger
+language plpgsql
+set search_path to 'public'
+as $fn$
+begin
+  perform 1 from chat_sessioni where id = new.sessione_id for update;
+  new.seq := nextval('public.chat_messaggi_seq_sq');
+  return new;
+end $fn$;
+drop trigger if exists chat_messaggi_ordina on chat_messaggi;
+create trigger chat_messaggi_ordina before insert on chat_messaggi for each row execute function public.chat_messaggi_ordina();
+
 -- 3) token (5.4): chat = nel localStorage del dispositivo (al massimo 3 attivi per sessione, scade alla chiusura o dopo 4
 --    ore senza attivita' della sessione); ripresa = nel link "Continua la chat" delle email (30 giorni, D-10). Nel DB solo
 --    lo SHA-256 in esadecimale del valore casuale (almeno 128 bit), mai il token. usato_at = ultimo scambio di un token di
@@ -149,9 +177,10 @@ create index if not exists chat_token_sessione_ix on chat_token (sessione_id, ti
 
 -- 4) eventi: audit della chat e prenotazioni delle push di passaggio (chiave `<sessione>:passaggio:<n>`, 8.3-8.4: chi
 --    inserisce la chiave manda, gli altri saltano). dettaglio senza testi ne' email (lo fissa un test sul sorgente delle
---    edge). Alla cancellazione di una sessione la traccia resta, con sessione_id nullo (11.6).
+--    edge). Alla cancellazione di una sessione la traccia resta, con sessione_id nullo (11.6): per questo chiave, chi, esito
+--    e dettaglio non possono contenere una @ (nessuna email sopravvive a cancella_dati, Gate 2 dell'8-11, C4).
 create table if not exists chat_eventi (
-  id           bigint generated always as identity primary key,
+  id           bigint generated always as identity (sequence name chat_eventi_id_sq) primary key,
   sessione_id  uuid,
   tipo         text not null,
   chiave       text,
@@ -162,10 +191,13 @@ create table if not exists chat_eventi (
   constraint chat_eventi_sessione_fk foreign key (sessione_id) references chat_sessioni (id) on delete set null,
   constraint chat_eventi_chiave_uk unique (chiave),
   constraint chat_eventi_tipo_ck check (tipo ~ '^[a-z][a-z0-9_]{1,47}$'),
-  constraint chat_eventi_chiave_ck check (chiave is null or char_length(chiave) between 1 and 300),
-  constraint chat_eventi_chi_ck check (chi is null or char_length(chi) between 1 and 40),
-  constraint chat_eventi_esito_ck check (esito is null or char_length(esito) between 1 and 60),
-  constraint chat_eventi_dettaglio_ck check (jsonb_typeof(dettaglio) = 'object' and octet_length(dettaglio::text) <= 4000)
+  -- lunghezza a parte: in Postgres una ripetizione {m,n} oltre 255 rende l'espressione invalida, e l'errore esce solo al
+  -- primo insert, non alla creazione del vincolo (visto dal test l'8-11)
+  constraint chat_eventi_chiave_ck check (chiave is null or (char_length(chiave) <= 300 and chiave ~ '^[a-z0-9][a-z0-9_:.-]*$')),
+  constraint chat_eventi_chi_ck check (chi is null or (char_length(chi) between 1 and 40 and chi !~ '[@[:cntrl:]]')),
+  constraint chat_eventi_esito_ck check (esito is null or (char_length(esito) between 1 and 60 and esito !~ '[@[:cntrl:]]')),
+  constraint chat_eventi_dettaglio_ck check (jsonb_typeof(dettaglio) = 'object' and octet_length(dettaglio::text) <= 4000
+    and position('@' in dettaglio::text) = 0)
 );
 create index if not exists chat_eventi_sessione_ix on chat_eventi (sessione_id);
 create index if not exists chat_eventi_tipo_at_ix on chat_eventi (tipo, at);
@@ -188,7 +220,10 @@ create index if not exists chat_contatori_aggiornato_ix on chat_contatori (aggio
 -- 6) incremento atomico sotto il tetto, in un solo statement: restituisce il nuovo valore, o null se il tetto e' gia'
 --    raggiunto (la chiamata NON passa). Mai "leggo e poi scrivo". p_finestra_secondi: 0 = senza finestra, altrimenti
 --    finestre allineate all'epoca (86400 = giorno UTC). Input fuori dai limiti = errore 22023, che la edge tratta come
---    rifiuto (fallire chiusi, 5.8).
+--    rifiuto (fallire chiusi, 5.8). Al tetto la riga si aggiorna lo stesso (n resta a tetto + 1, aggiornato_at = adesso):
+--    una chiave che continua a sbattere sul tetto non diventa "ferma da 7 giorni" e la pulizia non la azzera mentre e'
+--    ancora usata (Gate 2 dell'8-11, C6). Sotto concorrenza l'update ricontrolla la riga bloccata: passano esattamente
+--    `tetto` chiamate.
 create or replace function public.chat_contatore_incrementa(p_chiave text, p_finestra_secondi int, p_tetto int)
 returns int
 language plpgsql
@@ -211,9 +246,9 @@ begin
                      else to_timestamp(floor(extract(epoch from now()) / p_finestra_secondi) * p_finestra_secondi) end;
   insert into chat_contatori as c (chiave, finestra, n, aggiornato_at)
   values (p_chiave, v_finestra, 1, now())
-  on conflict (chiave, finestra) do update set n = c.n + 1, aggiornato_at = now() where c.n < p_tetto
+  on conflict (chiave, finestra) do update set n = least(c.n + 1, p_tetto + 1), aggiornato_at = now()
   returning c.n into v_n;
-  return v_n;
+  return case when v_n <= p_tetto then v_n end;
 end $fn$;
 
 comment on table chat_sessioni is 'Chat del sito: una riga per chat (fonte di verita'', proiettata in cs_conversations). Scrive solo il service_role; il team legge.';
@@ -231,19 +266,12 @@ alter table chat_contatori enable row level security;
 revoke all on chat_sessioni, chat_messaggi, chat_token, chat_eventi, chat_contatori from public, anon, authenticated;
 grant select, insert, update, delete on chat_sessioni, chat_messaggi, chat_token, chat_eventi, chat_contatori to service_role;
 
-do $$
-declare
-  v_seq text;
-begin
-  foreach v_seq in array array[pg_get_serial_sequence('public.chat_messaggi', 'seq'), pg_get_serial_sequence('public.chat_eventi', 'id')] loop
-    if v_seq is null then raise exception '0186: sequenza di un''identity della chat non trovata'; end if;
-    execute format('revoke all on sequence %s from public, anon, authenticated', v_seq);
-    execute format('grant usage, select on sequence %s to service_role', v_seq);
-  end loop;
-end $$;
+revoke all on sequence chat_messaggi_seq_sq, chat_eventi_id_sq from public, anon, authenticated;
+grant usage, select on sequence chat_messaggi_seq_sq, chat_eventi_id_sq to service_role;
 
 revoke all on function public.chat_contatore_incrementa(text, int, int) from public, anon, authenticated;
 grant execute on function public.chat_contatore_incrementa(text, int, int) to service_role;
+revoke all on function public.chat_messaggi_ordina() from public, anon, authenticated;
 
 -- lettura del team (7.2): solo le due tabelle che la UI usa, colonna per colonna, policy di sola lettura con
 -- email_del_team (0161). Nessuna policy di scrittura: le azioni del team passano da chat-staff.
@@ -357,6 +385,7 @@ begin
 
   -- vincoli: tutti presenti; quelli su cui la edge fa `on conflict` esattamente sulle colonne attese
   foreach c in array array['chat_sessioni_stato_ck', 'chat_sessioni_preso_da_ck', 'chat_sessioni_aperta_ck', 'chat_sessioni_chiusa_ck',
+                           'chat_sessioni_passaggio_ck',
                            'chat_sessioni_email_ck', 'chat_sessioni_nome_ck', 'chat_sessioni_shopify_ck', 'chat_sessioni_lingua_ck',
                            'chat_sessioni_informativa_ck', 'chat_sessioni_passaggi_ck', 'chat_sessioni_proiettato_ck',
                            'chat_sessioni_thread_ck', 'chat_sessioni_thread_uk', 'chat_sessioni_cs_uk', 'chat_sessioni_cs_fk',
@@ -438,8 +467,8 @@ begin
     cross join lateral aclexplode(cl.relacl) a
     left join pg_roles g on g.oid = a.grantee
    where cl.oid in (select ('public.' || x)::regclass from unnest(c_tabelle) x
-                    union all select pg_get_serial_sequence('public.chat_messaggi', 'seq')::regclass
-                    union all select pg_get_serial_sequence('public.chat_eventi', 'id')::regclass)
+                    union all select 'public.chat_messaggi_seq_sq'::regclass
+                    union all select 'public.chat_eventi_id_sq'::regclass)
      and (a.grantee = 0 or g.rolname in ('anon', 'authenticated'));
   if v_grant is not null then raise exception '0186: privilegi di troppo: %', v_grant; end if;
   select string_agg(format('%s a %s su %s.%s', a.privilege_type, coalesce(g.rolname, 'PUBLIC'), cl.relname, att.attname), ', ')
@@ -452,9 +481,27 @@ begin
      and (a.grantee = 0 or g.rolname = 'anon' or (g.rolname = 'authenticated' and (a.privilege_type <> 'SELECT' or not cl.relname = any(c_lette))));
   if v_grant is not null then raise exception '0186: privilegi di colonna di troppo: %', v_grant; end if;
 
-  -- sequenze delle identity
-  foreach v_seq in array array[pg_get_serial_sequence('public.chat_messaggi', 'seq')::regclass, pg_get_serial_sequence('public.chat_eventi', 'id')::regclass] loop
-    if v_seq is null then raise exception '0186: sequenza di un''identity mancante'; end if;
+  -- sequenze: quella di seq (nessun default sulla colonna: la usa solo il trigger) e quella dell'identity di chat_eventi
+  if to_regclass('public.chat_messaggi_seq_sq') is null or to_regclass('public.chat_eventi_id_sq') is null
+     or pg_get_serial_sequence('public.chat_eventi', 'id') is distinct from 'public.chat_eventi_id_sq' then
+    raise exception '0186: sequenze della chat diverse dal contratto';
+  end if;
+  if not exists (select 1 from pg_attribute a where a.attrelid = 'public.chat_messaggi'::regclass and a.attname = 'seq'
+                   and format_type(a.atttypid, a.atttypmod) = 'bigint' and a.attnotnull and a.attidentity = '' and not a.atthasdef) then
+    raise exception '0186: chat_messaggi.seq deve essere bigint not null senza default ne'' identity (lo assegna il trigger)';
+  end if;
+  if not exists (select 1 from pg_trigger tg where tg.tgrelid = 'public.chat_messaggi'::regclass and tg.tgname = 'chat_messaggi_ordina'
+                   and not tg.tgisinternal and tg.tgenabled = 'O' and tg.tgfoid = 'public.chat_messaggi_ordina()'::regprocedure
+                   and pg_get_triggerdef(tg.oid) like 'CREATE TRIGGER chat_messaggi_ordina BEFORE INSERT ON public.chat_messaggi FOR EACH ROW %') then
+    raise exception '0186: manca il trigger chat_messaggi_ordina (before insert, per riga, acceso)';
+  end if;
+  if (select p.prosecdef from pg_proc p where p.oid = 'public.chat_messaggi_ordina()'::regprocedure)
+     or not exists (select 1 from pg_proc p where p.oid = 'public.chat_messaggi_ordina()'::regprocedure and p.proconfig @> array['search_path=public'])
+     or has_function_privilege('anon', 'public.chat_messaggi_ordina()', 'execute')
+     or has_function_privilege('authenticated', 'public.chat_messaggi_ordina()', 'execute') then
+    raise exception '0186: chat_messaggi_ordina deve essere invoker, con search_path=public, non eseguibile da anon e authenticated';
+  end if;
+  foreach v_seq in array array['public.chat_messaggi_seq_sq'::regclass, 'public.chat_eventi_id_sq'::regclass] loop
     foreach r in array array['anon', 'authenticated'] loop
       if has_sequence_privilege(r, v_seq, 'usage, select, update') then
         raise exception '0186: % ha privilegi sulla sequenza %', r, v_seq;
