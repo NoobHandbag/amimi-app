@@ -25,7 +25,7 @@ const B = '// ==== PURE:chat-api BEGIN ====', E = '// ==== PURE:chat-api END ===
 const a = SRC.indexOf(B), b = SRC.indexOf(E);
 if (a < 0 || b < a) { console.error('marcatori PURE:chat-api non trovati'); process.exit(1); }
 const BLOCCO = SRC.slice(a + B.length, b);
-const ESPORTA = ['gestisci', 'azzeraCache', 'ErroreDb', 'nomeCliente', 'statoDaEsito', 'inOrario', 'testoAttesa', 'interpretaFlag', 'mascheraEmail',
+const ESPORTA = ['gestisci', 'azzeraCache', 'azzeraSalute', 'ErroreDb', 'nomeCliente', 'statoDaEsito', 'inOrario', 'testoAttesa', 'interpretaFlag', 'mascheraEmail',
   'emailValida', 'nomePulito', 'testoPulito', 'uuidDa', 'FLAG_LETTI', 'HOST_ANTEPRIMA_RE', 'METODO', 'VERSIONE', 'ROTTE_ECO', 'messaggioPush'];
 const M = new Function(stripTypeScriptTypes(BLOCCO) + `\nreturn { ${ESPORTA.join(', ')} };`)();
 
@@ -52,6 +52,7 @@ function url(azione, coppie, { firmaGiusta = true, senzaFirma = false, extra = [
 // ---------- DB finto (vincoli della 0186 che contano per la edge) ----------
 const EMAIL_DB = /^[^\s\p{Cc}<>,;"@]+@[^\s\p{Cc}<>,;"@]+\.[^\s\p{Cc}<>,;"@]+$/u;
 const iso = (ms) => new Date(ms).toISOString();
+const malformato = (v) => typeof v === 'string' && !v.isWellFormed();
 function nuovoDb() {
   const st = { flag: new Map(), cont: new Map(), sess: new Map(), tok: [], msg: [], ev: [], faq: new Map(), salute: [], seq: 0, tseq: 0,
     guasti: new Map(), flagChiesti: [], chiamate: [] };
@@ -78,6 +79,7 @@ function nuovoDb() {
     },
     async creaSessione(r) {
       guasto('creaSessione');
+      if (Object.values(r).some(malformato)) throw new M.ErroreDb('22P02');
       if (!EMAIL_DB.test(r.customer_email) || r.customer_email.length > 254) throw new M.ErroreDb('23514 email');
       if (r.customer_name !== null && (/[\p{Cc}]/u.test(r.customer_name) || [...r.customer_name].length > 80)) throw new M.ErroreDb('23514 nome');
       const s = { id: randomUUID(), passaggi: 0, passaggio_at: null, chiusa_at: null, ultimo_cliente_at: null, ...r };
@@ -104,6 +106,7 @@ function nuovoDb() {
     async sessione(id) { const s = st.sess.get(id); return s ? proj(s) : null; },
     async inserisciMessaggi(righe) {
       st.chiamate.push('inserisciMessaggi'); guasto('inserisciMessaggi');
+      if (righe.some((r) => Object.values(r).some(malformato))) throw new M.ErroreDb('22P02');
       for (const r of righe) {
         if (!st.sess.has(r.sessione_id)) throw new M.ErroreDb('23503');
         if (typeof r.testo !== 'string' || [...r.testo].length < 1 || [...r.testo].length > 4000) throw new M.ErroreDb('23514 testo');
@@ -200,7 +203,8 @@ console.log('== firma, rotte, metodi ==');
   t('R3 POST su config: 405', r405b.r.status === 405);
   const eco0 = echi.length;
   for (const az of ['eco', 'misura', 'turnstile']) await chiama(x, az, {});
-  t('R4 /eco, /misura e /turnstile vanno all\'eco dello spike (eco.ts), senza contatori', echi.length === eco0 + 3 && !x.st.chiamate.some((c) => c.startsWith('contatore')));
+  t('R4 /eco, /misura e /turnstile vanno all\'eco dello spike (eco.ts) e contano fra le richieste (Gate 2, C9); 404 e 405 non contano',
+    echi.length === eco0 + 3 && x.st.chiamate.filter((c) => c === 'contatore:glob:richieste').length === 3 && x.st.chiamate.every((c) => c === 'contatore:glob:richieste'));
   const ns = await chiama(x, 'config', null, { metodo: 'GET', segreti: { proxy: '' } });
   t('F1 secret del proxy assente: 200 needs_secret (mai 5xx)', ns.r.status === 200 && ns.d.state === 'needs_secret');
   const senza = await chiama(x, 'config', null, { metodo: 'GET', opz: { senzaFirma: true } });
@@ -285,6 +289,10 @@ console.log('\n== corpo e schema (5.7) ==');
   t('S12 testo senza client_id: 422', (await avvia(x, { testo: 'ciao' })).d?.campo === 'client_id');
   t('S13 client_id senza testo: 422', (await avvia(x, { client_id: randomUUID() })).d?.campo === 'client_id');
   t('S14 turnstile oltre 2048: 422', (await avvia(x, { turnstile: 'A'.repeat(2049) })).d?.campo === 'turnstile');
+  const mezza = String.fromCharCode(0xD83D);
+  t('S14b nome con mezza emoji: 422 prima del DB (Gate 2, B1)', (await avvia(x, { nome: 'Giulia ' + mezza })).d?.campo === 'nome');
+  t('S14c testo con mezza emoji: 422 prima del DB (Gate 2, B1)', (await avvia(x, { testo: 'ciao ' + mezza, client_id: randomUUID() })).d?.campo === 'testo');
+  t('S14d emoji intera (coppia valida): accettata dai pulitori', M.testoPulito('ciao ' + String.fromCodePoint(0x1F600)) !== false && M.nomePulito('Giu' + String.fromCodePoint(0x1F600)) !== false);
   t('S15 nessuna sessione creata dai rifiuti di schema', x.st.sess.size === 0 && svChiamate.length === 0);
   t('S16 pulizia: nome senza a capo ne\' caratteri di formato; testo senza controlli, a capo tenuti, HTML come testo',
     M.nomePulito(' Giu\nlia\u202E ') === 'Giu lia' && M.testoPulito('<b>ciao</b>\u0007\r\nriga\u202E') === '<b>ciao</b>\nriga' && M.testoPulito('   ') === false);
@@ -432,12 +440,17 @@ console.log('\n== passaggio a una persona e push (8.4, 9.13, test 5) ==');
   const mk = () => ({ ora: clock.ora, segreti: { proxy: SECRET, turnstile: TS_PROD, turnstileProva: TS_PROVA }, db: x.db, siteverify: sv,
     push: async (m) => { pushInviati.push(m); return rispostaPush; }, sfondo: (p) => sfondi.push(p), casuale: (n) => new Uint8Array(randomBytes(n)), eco: null });
   const req = () => new Request(url('passaggio', shopify()), { method: 'POST', body: JSON.stringify(corpo) });
-  // i due chiamanti superano il limite di 2 s perche' il contatore e' finto per finestra: si azzera tra i due
-  const [u1, u2] = await Promise.all([M.gestisci(req(), mk()), (async () => { x.st.cont.clear(); return M.gestisci(req(), mk()); })()]);
+  // il limite di velocita' non deve fermare il secondo: qui si prova la corsa persa di aPersona (Gate 2, C1)
+  const origC = x.db.contatore;
+  x.db.contatore = async (...q) => (String(q[0]).endsWith(':msg10s') ? 1 : origC(...q));
+  const agg0 = x.st.chiamate.filter((c) => c === 'aggiornaSessione').length;
+  const [u1, u2] = await Promise.all([M.gestisci(req(), mk()), M.gestisci(req(), mk())]);
   await Promise.all(sfondi.splice(0));
+  x.db.contatore = origC;
   const d1 = await u1.json(), d2 = await u2.json();
-  t('G4 due passaggi insieme: una push, un avviso, passaggi 1', pushInviati.length === p0 + 1 && x.st.msg.filter((m) => m.autore === 'sistema').length === 1
-    && sessioneDi(x, r.d.token).passaggi === 1 && [d1, d2].every((d) => d.ok === true || d.state === 'troppo_veloce'));
+  t('G4 due passaggi insieme: entrambi ok, due update condizionati (uno perso), una push, un avviso, passaggi 1',
+    x.st.chiamate.filter((c) => c === 'aggiornaSessione').length - agg0 === 2 && pushInviati.length === p0 + 1 && x.st.msg.filter((m) => m.autore === 'sistema').length === 1
+    && sessioneDi(x, r.d.token).passaggi === 1 && [d1, d2].every((d) => d.ok === true && d.stato === 'attesa_persona'), [d1, d2]);
 }
 {
   const x = nuovo();
@@ -463,7 +476,10 @@ console.log('\n== invia, bottoni, limiti (test 12, 13) ==');
   t('I1 bottone con risposta: cliente + risposta automatica in inglese, stato resta bot', b1.d.ok && b1.d.stato === 'bot' && b1.d.messaggi.map((m) => m.autore + ':' + m.testo).join('|') === 'cliente:Shipping|automatica:We ship in 2 days.');
   t('I2 fonte della risposta = faq:7, nessuna push', x.st.msg.some((m) => m.fonte === 'faq:7') && !x.st.ev.some((e) => e.tipo === 'push_passaggio'));
   clock.ora += 3000;
-  t('I3 bottone senza risposta (faq null): bottone_non_disponibile', (await chiama(x, 'invia', { token: tok, client_id: randomUUID(), bottone: 'resi' })).d.state === 'bottone_non_disponibile');
+  const contaMsg = () => x.st.cont.get(`sess:${s.id}:msg|0`) ?? 0;
+  const m0 = contaMsg();
+  t('I3 bottone senza risposta (faq null): bottone_non_disponibile, tetto dei messaggi non consumato (Gate 2, C2)',
+    (await chiama(x, 'invia', { token: tok, client_id: randomUUID(), bottone: 'resi' })).d.state === 'bottone_non_disponibile' && contaMsg() === m0);
   clock.ora += 3000;
   t('I4 bottone sconosciuto: bottone_non_disponibile', (await chiama(x, 'invia', { token: tok, client_id: randomUUID(), bottone: 'nessuno' })).d.state === 'bottone_non_disponibile');
   x.st.faq.set(7, { testo_it: 'Spediamo.', testo_en: null, attiva: false });
@@ -479,10 +495,12 @@ console.log('\n== invia, bottoni, limiti (test 12, 13) ==');
   t('I7 testo e bottone insieme: 422', (await chiama(x, 'invia', { token: tok, client_id: randomUUID(), testo: 'a', bottone: 'spedizioni' })).r.status === 422);
   t('I8 ne\' testo ne\' bottone: 422', (await chiama(x, 'invia', { token: tok, client_id: randomUUID() })).r.status === 422);
   t('I9 client_id non uuid: 422', (await chiama(x, 'invia', { token: tok, client_id: 'abc', testo: 'a' })).d.campo === 'client_id');
-  clock.ora += 3000;
-  await chiama(x, 'invia', { token: tok, client_id: randomUUID(), testo: 'uno' });
-  const veloce = await chiama(x, 'invia', { token: tok, client_id: randomUUID(), testo: 'due' });
-  t('I10 due messaggi nella stessa finestra di 2 s: 429 con retry_after', veloce.r.status === 429 && veloce.d.state === 'troppo_veloce' && veloce.d.retry_after_s === 2);
+  clock.ora = Math.ceil(clock.ora / 10000) * 10000 + 1000;
+  const cinque = [];
+  for (let i = 0; i < 5; i++) cinque.push((await chiama(x, 'invia', { token: tok, client_id: randomUUID(), testo: 'n' + i })).d.ok);
+  const veloce = await chiama(x, 'invia', { token: tok, client_id: randomUUID(), testo: 'sei' });
+  t('I10 5 messaggi in 10 s passano, il sesto 429 con retry_after fino alla finestra dopo (Gate 2, C3)', cinque.every(Boolean) && veloce.r.status === 429 && veloce.d.state === 'troppo_veloce' && veloce.d.retry_after_s === 9);
+  clock.ora += 10000;
   x.st.flag.set('chat_sito_enabled', 'false');
   clock.ora += 3000;
   const spenta = await chiama(x, 'invia', { token: tok, client_id: randomUUID(), testo: 'tre' });
@@ -561,8 +579,12 @@ console.log('\n== aggiorna (6.2) ==');
   clock.ora += 1500;
   const a2 = await chiama(x, 'aggiorna', { token: r.d.token, dopo: a1.d.messaggi[1].seq, vista: true });
   t('A22 cursore: solo i messaggi dopo; con vista: delivered_at scritto sullo staff', a2.d.messaggi.length === 1 && x.st.msg.at(-1).delivered_at !== null);
+  clock.ora = Math.ceil(clock.ora / 10000) * 10000 + 2000;
+  const dieci = [];
+  for (let i = 0; i < 10; i++) dieci.push((await chiama(x, 'aggiorna', { token: r.d.token, dopo: 0 })).d.ok);
   const veloce = await chiama(x, 'aggiorna', { token: r.d.token, dopo: 0 });
-  t('A23 due aggiorna nello stesso secondo: 429 silenzioso', veloce.r.status === 429 && veloce.d.retry_after_s === 1);
+  t('A23 10 aggiorna in 10 s passano, l\'undicesimo 429 (in media uno al secondo, Gate 2 C3)', dieci.every(Boolean) && veloce.r.status === 429 && veloce.d.retry_after_s === 8);
+  clock.ora += 10000;
   for (let i = 0; i < 60; i++) x.st.msg.push({ id: randomUUID(), seq: ++x.st.seq, sessione_id: s.id, autore: 'sistema', testo: 'n' + i, client_msg_id: randomUUID(), delivered_at: null, email_stato: null, created_at: iso(clock.ora) });
   clock.ora += 1500;
   const a3 = await chiama(x, 'aggiorna', { token: r.d.token, dopo: 0 });
@@ -629,6 +651,7 @@ console.log('\n== errore del widget (8.10 riga 13) ==');
 
 console.log('\n== salute (5.8, D-12) ==');
 {
+  M.azzeraSalute();
   const x = nuovo();
   await chiama(x, 'config', null, { metodo: 'GET' });
   t('H1 prima richiesta del giorno: una riga ok con n = 1', x.st.salute.length === 1 && x.st.salute[0].n === 1 && x.st.salute[0].severity === 'ok' && x.st.salute[0].giorno === '2026-11-09');
@@ -644,6 +667,23 @@ console.log('\n== salute (5.8, D-12) ==');
   y.db.contatore = async (...q) => { if (q[0] === 'glob:richieste') throw new M.ErroreDb('x'); return orig(...q); };
   const r = await chiama(y, 'config', null, { metodo: 'GET' });
   t('H5 contatore delle richieste in errore: la risposta non cambia, warn in salute', r.d.attiva === true && y.st.salute.at(-1)?.severity === 'warn');
+  // B2: la gravita' del giorno vive nei contatori glob:sev_*, che il refresh delle 06:00 UTC non cancella
+  const z = nuovo();
+  z.st.guasti.set('flag', 1);
+  await chiama(z, 'avvia', { email: 'a@b.it', informativa: 'x', turnstile: tsA() });
+  const giornoZ = Math.floor(clock.ora / 1000 / 86400) * 86400;
+  t('H6 un problema conta in glob:sev_error del giorno e scrive la riga in error', z.st.cont.get('glob:sev_error|' + giornoZ) === 1 && z.st.salute.at(-1)?.severity === 'error');
+  const w0 = z.st.salute.length;
+  await chiama(z, 'config', null, { metodo: 'GET' });
+  const w1 = z.st.salute.length;
+  clock.ora += 3600 * 1000;
+  await chiama(z, 'config', null, { metodo: 'GET' });
+  t('H7 nell\'ora nessuna riscrittura; dopo un\'ora una richiesta normale riscrive la riga (dopo il refresh delle 06:00)', w1 === w0 && z.st.salute.length === w0 + 1 && z.st.salute.at(-1).severity === 'ok');
+  clock.ora = Date.parse('2026-11-09T09:30:00Z');
+  const q = nuovo();
+  q.st.cont.set('glob:richieste|' + Math.floor(clock.ora / 1000 / 86400) * 86400, 5099);
+  await chiama(q, 'config', null, { metodo: 'GET' });
+  t('H8 oltre la soglia l\'evento quota si ritenta ogni 100 richieste, una riga sola (Gate 2, C8)', q.st.ev.filter((e) => e.chiave === 'quota:2026-11-09').length === 1 && q.st.salute.at(-1)?.severity === 'warn');
 }
 
 console.log('\n== orari (D-8) e funzioni pure ==');
@@ -656,6 +696,9 @@ console.log('\n== orari (D-8) e funzioni pure ==');
   t('O5 giorno di chiusura: fuori', !M.inOrario(o, Date.parse('2026-12-25T10:00:00Z')));
   t('O6 ora legale: 1 luglio 07:30 UTC = 09:30 a Roma, in orario', M.inOrario({ ...o, chiusure: [] }, Date.parse('2026-07-01T07:30:00Z')));
   t('O7 fuso illeggibile o orari nulli: fuori orario (testo senza tempi promessi)', !M.inOrario({ ...o, tz: 'Marte/Base' }, Date.parse('2026-11-09T09:30:00Z')) && !M.inOrario(null, 0));
+  const lunga = { ...M.interpretaFlag({}), testi: { attesa: { it: (String.fromCodePoint(0x1F600) + '{email}').repeat(140), en: 'x' }, fuori_orario: null } };
+  const att = M.testoAttesa(lunga, { lingua: 'it', customer_email: 'n'.repeat(240) + '@esempio.it' }, Date.parse('2026-11-09T09:30:00Z'));
+  t('O7b avviso di attesa tagliato a 4000 punti di codice, senza mezze emoji (Gate 2, B1)', [...att].length <= 4000 && att.isWellFormed());
   t('O8 email mascherata', M.mascheraEmail('nome@esempio.it') === 'n***@esempio.it' && M.mascheraEmail('\u00e8@x.it') === '\u00e8***@x.it');
   const u1 = await M.uuidDa('a'), u2 = await M.uuidDa('a'), u3 = await M.uuidDa('b');
   t('O9 uuid derivati: stabili, distinti, formato uuid valido per Postgres', u1 === u2 && u1 !== u3 && /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(u1));
@@ -671,6 +714,10 @@ console.log('\n== impronte: copie di push-eventi (8.7) e regole comuni ==');
   }
   const re = (src) => (src.match(/const EMAIL_CLIENTE_RE = [^\n]+/) ?? [''])[0];
   t('I EMAIL_CLIENTE_RE identica a push-eventi', re(BLOCCO) !== '' && re(BLOCCO) === re(PE));
+  const ECO = read('supabase/functions/chat-api/eco.ts');
+  for (const nome of ['async function appProxyHmacHex(', 'function timingSafeEqualHex(', 'async function leggiCorpo(', 'function etaFirma(']) {
+    t('I ' + nome.replace(/^(async )?function /, '').slice(0, -1) + ' identica a eco.ts (provata contro node:crypto da tests/chat_api_eco.mjs)', corpo(BLOCCO, nome) !== null && corpo(BLOCCO, nome) === corpo(ECO, nome));
+  }
   t('I statoDaEsito: mappa di push-eventi', M.statoDaEsito({ ok: true }) === 'inviato' && M.statoDaEsito({ ok: false, status: 200, destinatari: 0 }) === 'nessun_iscritto' && M.statoDaEsito({ ok: false, status: 500 }) === 'fallito');
 }
 
@@ -690,16 +737,20 @@ console.log('\n== guardie sul sorgente ==');
   t('G2 nessuno status 5xx nel blocco puro', !/,\s*5\d\d\)/.test(senzaCommenti(BLOCCO)) && !/status:\s*5\d\d/.test(senzaCommenti(BLOCCO)));
   t('G3 ogni Response porta HEADER_BASE', (BLOCCO.match(/new Response\(/g) ?? []).length === (BLOCCO.match(/new Response\([^\n]*HEADER_BASE/g) ?? []).length);
   t('G4 nessun header CORS', !/Access-Control-Allow/i.test(SRC));
-  t('G5 log: solo console.error con causa fissa e codice, mai altro', !/console\.(log|info|warn|debug|trace)/.test(codice)
-    && (codice.match(/console\.error\(/g) ?? []).length === 1 && /console\.error\('chat-api: ' \+ causa, codice\(e\)\);/.test(codice));
+  const logs = codice.match(/console\.error\([^\n]*/g) ?? [];
+  t('G5 log: solo console.error con causa fissa e codice del DB, mai altro', !/console\.(log|info|warn|debug|trace)/.test(codice) && logs.length === 2
+    && logs.every((l) => /^console\.error\(('chat-api: ' \+ causa|'chat-api: [a-z ]+'), codice\((e|error)\)\);$/.test(l)), logs);
   const envs = [...codice.matchAll(/env\('([A-Z_]+)'\)/g)].map((m) => m[1]).sort();
-  t('G6 segreti e ambiente: solo i cinque nomi attesi, letti fuori dal blocco puro', JSON.stringify([...new Set(envs)]) === JSON.stringify(['CHAT_APP_PROXY_SECRET', 'CHAT_TURNSTILE_PROVA_SECRET', 'CHAT_TURNSTILE_SECRET', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_URL'])
+  t('G6 segreti e ambiente: solo i cinque nomi attesi, letti fuori dal blocco puro', JSON.stringify([...new Set(envs)]) === JSON.stringify(['CHAT_APP_PROXY_SECRET', 'CHAT_TURNSTILE_PRODUZIONE_SECRET', 'CHAT_TURNSTILE_PROVA_SECRET', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_URL'])
     && !/Deno\.env/.test(BLOCCO) && (codice.match(/Deno\.env\.get\(/g) ?? []).length === 1);
   const tabelle = [...new Set([...fuori.matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]))].sort();
-  t('G7 tabelle toccate: solo chat_*, app_flags, cs_faq e health_log', JSON.stringify(tabelle) === JSON.stringify(['app_flags', 'chat_eventi', 'chat_messaggi', 'chat_sessioni', 'chat_token', 'cs_faq', 'health_log']), tabelle);
+  t('G7 tabelle toccate: solo chat_*, app_flags, cs_faq e health_log', JSON.stringify(tabelle) === JSON.stringify(['app_flags', 'chat_contatori', 'chat_eventi', 'chat_messaggi', 'chat_sessioni', 'chat_token', 'cs_faq', 'health_log']), tabelle);
+  t('G7b chat_contatori solo letta (si scrive solo con la RPC atomica)', !/from\('chat_contatori'\)\.(insert|update|upsert|delete)/.test(fuori));
+  t('G7c un bottone legge da cs_faq solo righe pubblicabili, mai gli esempi di tono (Gate 2, C5)', /from\('cs_faq'\)\.select\('testo_it, testo_en, attiva'\)\.eq\('id', id\)\.in\('tipo', \['faq', 'risposta_standard'\]\)/.test(fuori));
   t('G8 app_flags letta solo con .in() sull\'elenco chiuso, mai select *', /from\('app_flags'\)\.select\('key, value'\)\.in\('key', chiavi\)/.test(fuori) && !/select\('\*'\)/.test(codice));
   t('G9 cs_faq e app_flags in sola lettura', !/from\('(cs_faq|app_flags)'\)\.(insert|update|upsert|delete)/.test(fuori));
-  t('G10 health_log solo con k chat_api', (fuori.match(/from\('health_log'\)/g) ?? []).length === 2 && !/k: '(?!chat_api)/.test(fuori) && /eq\('k', 'chat_api'\)/.test(fuori));
+  t('G10 health_log: una sola scrittura, k chat_api, e la gravita\' del giorno dai contatori', (fuori.match(/from\('health_log'\)/g) ?? []).length === 1 && !/k: '(?!chat_api)/.test(fuori) && /k: 'chat_api'/.test(fuori)
+    && /in\('chiave', \['glob:sev_error', 'glob:sev_warn'\]\)/.test(fuori));
   t('G11 niente write-api, PIN, change_log, cs_conversations o cs_messages (proiezione nel pezzo dei 25 punti)', !/write-api|\bpin\b|pin_hash|change_log|cs_conversations|cs_messages|cs_events/.test(codice));
   t('G12 una sola RPC, quella dei contatori', [...codice.matchAll(/\.rpc\('([a-z_]+)'/g)].map((m) => m[1]).join() === 'chat_contatore_incrementa');
   t('G13 fetch: solo siteverify (push via _shared/push.ts)', (fuori.match(/\bfetch\(/g) ?? []).length === 1 && /fetch\(SITEVERIFY_URL, \{ method: 'POST', body: new URLSearchParams\(\{ secret, response: token \}\), signal: AbortSignal\.timeout\(10000\) \}\)/.test(fuori) && !/\bfetch\(/.test(senzaCommenti(BLOCCO)));

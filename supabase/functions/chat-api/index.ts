@@ -15,7 +15,11 @@
 //   passaggio  {token} -> "Parla con una persona": `attesa_persona`, avviso fisso con l'email mascherata (chat_testo_attesa,
 //              o chat_testo_fuori_orario fuori da chat_orari), push subito al tema `assistenza` (8.4).
 //   aggiorna   {token, dopo, vista?} -> stato e messaggi con seq > dopo (al massimo 50); vista = pannello aperto e scheda
-//              visibile, scrive delivered_at ("vista in chat") sui messaggi dello staff restituiti.
+//              visibile, scrive delivered_at ("vista in chat") sui messaggi dello staff restituiti. Contratto col widget
+//              (Gate 2 dell'8-11, C4): il cursore `dopo` avanza SOLO con le risposte di aggiorna; il `seq` nelle
+//              risposte di avvia, invia e passaggio serve a non mostrare due volte lo stesso messaggio, mai a saltare.
+//              Su una chat chiusa aggiorna risponde ancora, in sola lettura, finche' il token vale (4 ore senza
+//              attivita'): cosi' la cliente legge l'ultima risposta mandata prima della chiusura (scostamento da 5.4).
 //   riprendi   {token_ripresa, turnstile, prova?} -> Turnstile (azione `chat_riprendi`), chat token nuovo per la sessione
 //              del link "Continua la chat" (al massimo 3 attivi: il piu' vecchio si revoca). La pagina che lo chiama arriva
 //              col pezzo che manda le email.
@@ -61,6 +65,7 @@ const TOKEN_CHAT_ATTIVI = 3;
 const RIPRESE_ORA = 10;
 const AGGIORNA_LIMITE = 50;
 const FLAG_CACHE_MS = 60000;
+const SALUTE_OGNI_MS = 3600000;                // riga health_log riscritta almeno ogni ora da ogni istanza attiva
 const LINK_ASSISTENZA = 'https://noobhandbag.github.io/amimi-app/#assistenza';
 // Le sole chiavi di app_flags che la edge legge (sez. 10, test 18): nessun segreto, nessuna chiave fuori dalla chat.
 const FLAG_LETTI = ['chat_sito_enabled', 'chat_limite_chat_giorno', 'chat_orari', 'chat_testo_saluto', 'chat_testo_orari',
@@ -77,6 +82,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 // 5.7: una sola email, senza spazi, caratteri di controllo o di formato e senza <>,;" (chat-send la rimette in `To:`);
 // il DB ha un secondo cancello (chat_sessioni_email_ck)
+// meta' di una emoji (surrogato senza la sua coppia): Postgres la rifiuta (22P02) e il messaggio resterebbe in `riprova`
+// per sempre, consumando il tetto (Gate 2 dell'8-11, B1). In modalita' u una coppia valida e' un solo punto di codice.
+const SURROGATO_SOLO_RE = /\p{Cs}/u;
 const EMAIL_RE = /^[^\s\p{C}<>,;"@]+@[^\s\p{C}<>,;"@]+\.[^\s\p{C}<>,;"@]+$/u;
 
 type Sessione = {
@@ -227,14 +235,14 @@ function emailValida(v: unknown): string | null {
 // nome: facoltativo; a capo, controlli e caratteri di formato diventano spazi; oltre NOME_MAX = rifiutato (mai tagliato)
 function nomePulito(v: unknown): string | null | false {
   if (v === undefined || v === null) return null;
-  if (typeof v !== 'string') return false;
+  if (typeof v !== 'string' || SURROGATO_SOLO_RE.test(v)) return false;
   const s = v.normalize('NFC').replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, ' ').replace(/\s+/g, ' ').trim();
   if (!s) return null;
   return cp(s) <= NOME_MAX ? s : false;
 }
 // messaggio: NFC, a capo normalizzati, via i controlli (a capo escluso) e i caratteri che rovesciano il testo; 1-1000
 function testoPulito(v: unknown): string | false {
-  if (typeof v !== 'string') return false;
+  if (typeof v !== 'string' || SURROGATO_SOLO_RE.test(v)) return false;
   const s = v.normalize('NFC').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g, '').trim();
   const n = cp(s);
   return n >= 1 && n <= TESTO_MAX ? s : false;
@@ -270,6 +278,8 @@ async function uuidDa(s: string): Promise<string> {
 // ---- flag (sez. 10): elenco chiuso, 60 s in memoria, valori illeggibili = default prudenti ----
 let CACHE_FLAG: { at: number; v: Record<string, string> } | null = null;
 const azzeraCache = () => { CACHE_FLAG = null; };
+let ULTIMA_SALUTE = 0;
+const azzeraSalute = () => { ULTIMA_SALUTE = 0; };
 function testoFlag(v: string | undefined): Testo | null {
   try {
     const o = oggetto(JSON.parse(v ?? ''));
@@ -345,7 +355,7 @@ const ATTESA_RISERVA: Testo = {
 function testoAttesa(f: Flag, s: Sessione, oraMs: number): string {
   const t = (inOrario(f.orari, oraMs) ? f.testi.attesa : f.testi.fuori_orario) ?? f.testi.fuori_orario ?? ATTESA_RISERVA;
   const base = s.lingua === 'en' ? t.en : t.it;
-  return base.split('{email}').join(mascheraEmail(s.customer_email)).slice(0, TESTO_DB_MAX);
+  return [...base.split('{email}').join(mascheraEmail(s.customer_email))].slice(0, TESTO_DB_MAX).join('');
 }
 
 // ---- push (8.4, 8.7): copie di push-eventi, con test d'impronta (tests/chat_api.mjs) ----
@@ -391,20 +401,28 @@ async function eventoUnaVolta(amb: Ambiente, tipo: string, chiave: string, sessi
   try { await amb.db.evento({ sessione_id: sessioneId, tipo, chiave, esito: null, dettaglio: {} }); }
   catch { problemi.push({ sev: 'warn', causa: 'evento non registrato' }); }
 }
-// una riga health_log `chat_api` al giorno UTC (5.8): scritta solo a un problema, alla prima richiesta del giorno, ogni 500
-// e alla soglia di D-12; n = richieste del giorno (anche rifiutate) dal contatore atomico. Mai bloccante.
+// una riga health_log `chat_api` al giorno UTC (5.8), solo conteggi. refresh_health_log() delle 06:00 UTC cancella le
+// righe del giorno che non sono ce_*, sales_* o shipping_status (migr 0087), quindi la gravita' del giorno vive nei
+// contatori glob:sev_warn e glob:sev_error, che quel giro non tocca, e la riga si riscrive al primo problema, alla prima
+// richiesta del giorno, ogni 500 e almeno ogni ora da ogni istanza (Gate 2 dell'8-11, B2). Dalla soglia di D-12 in poi
+// l'evento quota:<giorno> si ritenta ogni 100 richieste (C8). Mai bloccante.
 async function chiudiSalute(amb: Ambiente, giorno: string, conto: Promise<number | null>, problemi: Problema[]): Promise<void> {
   let n: number | null = null;
   try { n = await conto; } catch { problemi.push({ sev: 'warn', causa: 'contatore delle richieste non scritto' }); }
-  if (n === RICHIESTE_SOGLIA) {
+  if (n !== null && n >= RICHIESTE_SOGLIA && (n === RICHIESTE_SOGLIA || n % 100 === 0)) {
     problemi.push({ sev: 'warn', causa: `oltre ${RICHIESTE_SOGLIA} richieste nel giorno` });
     await eventoUnaVolta(amb, 'quota', `quota:${giorno}`, null, problemi);
   }
   let sev = 'ok';
   let causa: string | null = null;
   for (const p of problemi) if (GRAVITA[p.sev] > GRAVITA[sev]) { sev = p.sev; causa = p.causa; }
+  if (sev !== 'ok') {
+    try { await amb.db.contatore(`glob:sev_${sev}`, 86400, RICHIESTE_TETTO); } catch { /* la riga sotto dice comunque la gravita' */ }
+  }
   const pietra = n === 1 || (n !== null && n % 500 === 0);
-  if (sev === 'ok' && !pietra) return;
+  const scaduta = amb.ora - ULTIMA_SALUTE >= SALUTE_OGNI_MS;
+  if (sev === 'ok' && !pietra && !scaduta) return;
+  ULTIMA_SALUTE = amb.ora;
   try { await amb.db.salute(giorno, n ?? 0, sev, causa); } catch { /* telemetria: mai bloccante */ }
 }
 
@@ -448,8 +466,10 @@ const pubblico = (m: Messaggio) => ({ seq: m.seq, autore: m.autore, testo: m.tes
 const ordinati = (ms: Messaggio[]) => [...ms].sort((a, b) => a.seq - b.seq);
 
 // ---- messaggi della cliente ----
+const attesaFinestra = (amb: Ambiente, finestraS: number) => Math.max(1, Math.ceil(finestraS - (amb.ora / 1000) % finestraS));
+// 5 azioni in 10 s per chat (in media una ogni 2 s, 5.6): una riga di contatore ogni 10 s, non ogni 2 (Gate 2, C3)
 async function limiteVeloce(amb: Ambiente, s: Sessione): Promise<Response | null> {
-  return (await amb.db.contatore(`sess:${s.id}:msg2s`, 2, 1)) === null ? rifiuto('troppo_veloce', { retry_after_s: 2 }, 429) : null;
+  return (await amb.db.contatore(`sess:${s.id}:msg10s`, 10, 5)) === null ? rifiuto('troppo_veloce', { retry_after_s: attesaFinestra(amb, 10) }, 429) : null;
 }
 async function limiteMessaggi(amb: Ambiente, s: Sessione, problemi: Problema[]): Promise<Response | null> {
   if ((await amb.db.contatore(`sess:${s.id}:msg`, 0, MESSAGGI_PER_CHAT)) !== null) return null;
@@ -597,10 +617,10 @@ async function azioneInvia(d: Record<string, unknown>, amb: Ambiente, problemi: 
   if (s.stato === 'chiusa') return rifiuto('chiusa', {}, 409);
   const veloce = await limiteVeloce(amb, s);
   if (veloce) return veloce;
-  const tetto = await limiteMessaggi(amb, s, problemi);
-  if (tetto) return tetto;
 
   if (testo !== null) {
+    const tetto = await limiteMessaggi(amb, s, problemi);
+    if (tetto) return tetto;
     const r = await testoLibero(amb, f, s, clientId, testo);
     return json({ ok: true, stato: r.sessione.stato, messaggi: r.messaggi.map(pubblico) });
   }
@@ -610,6 +630,8 @@ async function azioneInvia(d: Record<string, unknown>, amb: Ambiente, problemi: 
   const faq = await amb.db.faq(b.faq);
   const risposta = faq && faq.attiva ? ((s.lingua === 'en' ? faq.testo_en : null) || faq.testo_it) : null;
   if (typeof risposta !== 'string' || !risposta.trim()) return rifiuto('bottone_non_disponibile');
+  const tetto = await limiteMessaggi(amb, s, problemi);
+  if (tetto) return tetto;
   const ins = await amb.db.inserisciMessaggi([
     { sessione_id: s.id, autore: 'cliente', testo: s.lingua === 'en' ? b.en : b.it, client_msg_id: clientId, fonte: `bottone:${b.id}` },
     { sessione_id: s.id, autore: 'automatica', testo: [...risposta.trim()].slice(0, TESTO_DB_MAX).join(''), client_msg_id: await uuidDa(`${clientId}:risposta`), fonte: `faq:${b.faq}` },
@@ -651,7 +673,7 @@ async function azioneAggiorna(d: Record<string, unknown>, amb: Ambiente, problem
   // a chat spenta aggiorna continua sulle chat aperte (5.8): nessun flag qui
   const s = await tokenChat(amb, token);
   if (s instanceof Response) return s;
-  if ((await amb.db.contatore(`sess:${s.id}:agg`, 1, 1)) === null) return rifiuto('troppo_veloce', { retry_after_s: 1 }, 429);
+  if ((await amb.db.contatore(`sess:${s.id}:agg10s`, 10, 10)) === null) return rifiuto('troppo_veloce', { retry_after_s: attesaFinestra(amb, 10) }, 429);
   const righe = await amb.db.messaggiDopo(s.id, d.dopo as number, AGGIORNA_LIMITE + 1);
   const messaggi = ordinati(righe).slice(0, AGGIORNA_LIMITE);
   if (d.vista === true) {
@@ -711,16 +733,21 @@ async function gestisci(req: Request, amb: Ambiente): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: HEADER_BASE });
   const url = new URL(req.url);
   const azione = azioneDi(url.pathname);
-  if (amb.eco && ROTTE_ECO.includes(azione)) return amb.eco(req);
-  if (!Object.hasOwn(METODO, azione)) return json({ ok: false, error: 'not_found' }, 404);
-  if (req.method !== METODO[azione]) return json({ ok: false, error: 'method_not_allowed' }, 405);
+  const eco = amb.eco !== null && ROTTE_ECO.includes(azione);
+  if (!eco && !Object.hasOwn(METODO, azione)) return json({ ok: false, error: 'not_found' }, 404);
+  if (!eco && req.method !== METODO[azione]) return json({ ok: false, error: 'method_not_allowed' }, 405);
   const giorno = giornoUtc(amb.ora);
-  // ogni richiesta instradata conta, anche rifiutata (5.8, D-12): in parallelo, mai bloccante
+  // ogni richiesta instradata conta, anche rifiutata, eco compresa (5.8, D-12): in parallelo, mai bloccante
   const conto = amb.db.contatore('glob:richieste', 86400, RICHIESTE_TETTO);
   conto.catch(() => null);
   const problemi: Problema[] = [];
   let r: Response;
   try {
+    if (eco && amb.eco) {
+      r = await amb.eco(req);
+      amb.sfondo(chiudiSalute(amb, giorno, conto, problemi).catch(() => undefined));
+      return r;
+    }
     const firma = await controllaFirma(url.searchParams, amb.segreti.proxy, amb.ora);
     if (firma instanceof Response) r = firma;
     else if (azione === 'config') r = await azioneConfig(amb, problemi);
@@ -848,23 +875,26 @@ function dbSupabase(sb: SupabaseClient): Db {
       if (error) throw fallito('esito della push non scritto', error);
     },
     async faq(id) {
-      const { data, error } = await retryOnce(() => sb.from('cs_faq').select('testo_it, testo_en, attiva').eq('id', id).limit(1));
+      const { data, error } = await retryOnce(() => sb.from('cs_faq').select('testo_it, testo_en, attiva').eq('id', id).in('tipo', ['faq', 'risposta_standard']).limit(1));
       if (error) throw fallito('risposta fissa non letta', error);
       return ((data ?? [])[0] as { testo_it: string | null; testo_en: string | null; attiva: boolean } | undefined) ?? null;
     },
-    // la gravita' del giorno non scende e il primo problema resta nella label; n non torna indietro. Lettura fallita =
-    // niente scrittura (non si rischia di abbassare un errore gia' scritto).
+    // la gravita' del giorno dai contatori glob:sev_* (sopravvivono al refresh delle 06:00); lettura fallita = si scrive
+    // comunque con la gravita' di questa richiesta, mai si salta un errore
     async salute(giorno, n, severity, causa) {
-      const { data, error } = await retryOnce(() => sb.from('health_log').select('severity, label, n').eq('day', giorno).eq('k', 'chat_api').limit(1));
-      if (error) throw fallito('health_log non letto', error);
-      const prima = ((data ?? [])[0] ?? null) as { severity: string | null; label: string | null; n: number | null } | null;
-      const gPrima = GRAVITA[prima?.severity ?? 'ok'] ?? 0;
-      const problemaPrima = (prima?.label ?? '').split(' | ')[1] ?? '';
-      const sev = gPrima >= GRAVITA[severity] ? (prima?.severity ?? 'ok') : severity;
-      const problema = gPrima > 0 && problemaPrima ? problemaPrima : causa;
-      const conto = Math.max(n, typeof prima?.n === 'number' ? prima.n : 0);
-      const label = `chat-api ${VERSIONE}: ${conto} richieste oggi` + (problema ? ` | ${problema}` : '');
-      const { error: e2 } = await sb.from('health_log').upsert({ day: giorno, k: 'chat_api', label, n: conto, severity: sev, created_at: new Date().toISOString() }, { onConflict: 'day,k' });
+      const finestra = `${giorno}T00:00:00Z`;
+      const { data, error } = await retryOnce(() => sb.from('chat_contatori').select('chiave, n').in('chiave', ['glob:sev_error', 'glob:sev_warn']).eq('finestra', finestra).limit(2));
+      if (error) console.error('chat-api: gravita del giorno non letta', codice(error));
+      let errori = 0;
+      let avvisi = 0;
+      for (const r of (data ?? []) as { chiave: string; n: number }[]) {
+        if (r.chiave === 'glob:sev_error') errori = r.n;
+        if (r.chiave === 'glob:sev_warn') avvisi = r.n;
+      }
+      const delGiorno = errori > 0 ? 'error' : avvisi > 0 ? 'warn' : 'ok';
+      const sev = GRAVITA[delGiorno] >= GRAVITA[severity] ? delGiorno : severity;
+      const label = `chat-api ${VERSIONE}: ${n} richieste oggi, ${errori} con errore, ${avvisi} con avviso` + (causa ? ` | ${causa}` : '') + (error ? ' | gravita del giorno non letta' : '');
+      const { error: e2 } = await sb.from('health_log').upsert({ day: giorno, k: 'chat_api', label, n, severity: sev, created_at: new Date().toISOString() }, { onConflict: 'day,k' });
       if (e2) throw fallito('health_log non scritto', e2);
     },
   };
@@ -887,7 +917,7 @@ const sfondo = (p: Promise<unknown>) => {
 
 Deno.serve((req) => gestisci(req, {
   ora: Date.now(),
-  segreti: { proxy: env('CHAT_APP_PROXY_SECRET'), turnstile: env('CHAT_TURNSTILE_SECRET'), turnstileProva: env('CHAT_TURNSTILE_PROVA_SECRET') },
+  segreti: { proxy: env('CHAT_APP_PROXY_SECRET'), turnstile: env('CHAT_TURNSTILE_PRODUZIONE_SECRET'), turnstileProva: env('CHAT_TURNSTILE_PROVA_SECRET') },
   db: DB,
   siteverify,
   push: (m) => inviaPush(m),
