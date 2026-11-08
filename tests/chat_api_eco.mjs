@@ -14,7 +14,8 @@ import { Script } from 'node:vm';
 process.removeAllListeners('warning');
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = (p) => readFileSync(ROOT + p, 'utf8').replace(/\r\n/g, '\n');
-const SRC = read('supabase/functions/chat-api/index.ts');
+// dal 2026-11-08 (chat-api api-1) l'eco vive in eco.ts, raggiunta da index.ts solo per /eco, /misura e /turnstile
+const SRC = read('supabase/functions/chat-api/eco.ts');
 const CONFIG = read('supabase/config.toml');
 
 let ok = 0, ko = 0;

@@ -336,7 +336,8 @@ console.log('\n== push: guardie sul sorgente di ce-guard e sales-guard ==');
   // 18-10: push-eventi e' il terzo (usa solo inviaPush; caso 103 e tests/push_eventi_core.mjs).
   const importatori = readdirSync(FN, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync(`${FN}/${d.name}/index.ts`))
     .filter((d) => /from '\.\.\/_shared\/push\.ts'/.test(readFileSync(`${FN}/${d.name}/index.ts`, 'utf8'))).map((d) => d.name).sort();
-  t('102 _shared/push.ts e\' importato solo da ce-guard, push-eventi e sales-guard (una modifica = deploy di tutte e tre)', importatori.join() === 'ce-guard,push-eventi,sales-guard', importatori);
+  // 08-11: chat-api (api-1, push immediata del passaggio della chat del sito, PROPOSTA_chat_sito.md 8.4) e' la quarta.
+  t('102 _shared/push.ts e\' importato solo da ce-guard, chat-api, push-eventi e sales-guard (una modifica = deploy di tutte e quattro)', importatori.join() === 'ce-guard,chat-api,push-eventi,sales-guard', importatori);
   const PE = existsSync(`${FN}/push-eventi/index.ts`) ? readFileSync(`${FN}/push-eventi/index.ts`, 'utf8').replace(/^\s*\/\/[^\n]*$/gm, '') : '';
   t('103 push-eventi importa SOLO inviaPush (piu\' il tipo dell\'esito): mai consegnaAvviso, quindi mai il ripiego su ntfy',
     /import \{ inviaPush \} from '\.\.\/_shared\/push\.ts';/.test(PE) && !/consegnaAvviso|canaleEffettivo|ntfy/i.test(PE));

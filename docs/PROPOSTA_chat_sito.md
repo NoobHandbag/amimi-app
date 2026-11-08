@@ -323,6 +323,8 @@ Ripiego se lo spike boccia il proxy: chiamate dirette a `chat-api`, con `Access-
 
 ### 5.3 Le azioni di `chat-api`
 
+> **Costruito l'8 novembre 2026 (chat-api api-1, `docs/EDGE_FUNCTIONS.md`).** Diverge dalla tabella qui sotto in questi punti: `persona` si chiama `passaggio`; `chiudi` della cliente non c'e' (una chat nuova si apre con `avvia`); `config` non porta la sitekey di Turnstile (la porta il widget) ne' gli orari; i rifiuti sono 200 con `state` o 4xx, mai 503 (spike 13.3); nessun limite per IP (S1, D-12); `aggiorna` non scrive presenza ne' visibilita' (D-8) e `vista: true` scrive solo "vista in chat"; su una chat chiusa `aggiorna` rilegge finche' il token vale (5.4 diceva che il token scade alla chiusura); tetti di velocita' su finestre di 10 s con la stessa media. La pagina GET `riprendi` e i token di ripresa arrivano con chat-send, la proiezione in `cs_` (7.4) col pezzo dei 25 punti di 7.6.
+
 | Azione | Metodo | Input (oltre alla firma del proxy) | Cosa fa | Cancelli principali |
 |---|---|---|---|---|
 | `config` | GET | nessuno | Chat accesa o spenta, orari, testi, risposte rapide di Fase 1, sitekey Turnstile (pubblica). All'apertura della bolla (6.2) e una volta al giorno dal controllo di 4.6 (rotta e firma); a chat spenta 5.8. | Whitelist esplicita dei flag (sez. 10), nessun segreto. |

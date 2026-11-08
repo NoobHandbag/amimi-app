@@ -1,54 +1,154 @@
-// chat-api eco-2 (2026-11-07): ECO DELLO SPIKE di Fase 0 della chat del sito (docs/PROPOSTA_chat_sito.md 13.3, decisione
-// D-4 di Dan del 6 novembre 2026). NON e' la chat: nessuna tabella, nessuna lettura o scrittura del DB; l'unica chiamata
-// fuori e' il siteverify di Turnstile (S6). Risponde con conteggi e tempi per misurare l'App Proxy dell'app Shopify "Amimi
-// Chat" (amimi.it/apps/chat/<azione> arriva qui come /chat-api/<azione>, shopify/amimi-chat/shopify.app.toml). Si spegne da
-// sola a SPIKE_FINO (503); la Fase 1 la riscrive da capo.
-// eco-2 (stesso giorno, dopo S1): `eco` dice anche i NOMI degli header che arrivano e quali contengono l'IP dichiarato in
-// `ip_atteso` (S1 ha visto che l'IP del client non e' in X-Forwarded-For); rotta `POST /turnstile` per S6 (token del widget
-// di prova -> siteverify col secret di prova; risponde solo esito, hostname, codici d'errore ed eta' della sfida); pulsante
-// S6 nella pagina /misura, che carica lo script di Turnstile solo al clic, con la sitekey presa da `?sitekey=`.
+// chat-api api-1 (2026-11-08): la chat del sito, Fase 1 pezzo 2 (docs/PROPOSTA_chat_sito.md 5.2-5.8, 6, 8.4, con le
+// decisioni di Dan dell'8 novembre 2026: modello ticket D-8, tetti D-12). Al posto dell'eco dello spike, che resta in
+// eco.ts solo per le rotte /eco, /misura e /turnstile (misure dal telefono di Dan, si spegne da sola il 7 dicembre 2026).
+// Il widget chiama amimi.it/apps/chat/<azione>; il proxy di "Amimi Chat" firma la query e inoltra qui. verify_jwt = false
+// (supabase/config.toml): la credenziale della cliente e' il chat token nel corpo, mai nell'URL.
 //
-// Rotte, tutte con la firma del proxy (verify_jwt = false in supabase/config.toml: il proxy non manda JWT):
-//   GET|POST /eco     JSON: firma ok, eta' della firma, anonima o loggata (mai l'id), quante volte compare ogni nome di
-//                     parametro, X-Forwarded-For (quante voci, IP mascherati, posizione da destra degli IP che il client
-//                     dichiara in `ip_atteso` e `ip_finto`), corpo (byte, sha256, JSON si' o no), tempi. `?attesa=<s>`
-//                     (al massimo 120) ritarda la risposta per misurare il timeout del proxy (S3).
-//   GET /misura       pagina HTML per il team con i pulsanti delle misure S1-S4: gira sul telefono e sul PC, stessa origine
-//                     della vetrina, non salva nulla sul dispositivo.
-//   POST /turnstile   (eco-2, S6) {token} -> siteverify col secret di prova: success, hostname, codici, eta' della sfida.
-//   altro             404, prima di ogni altro controllo.
-// Firma come loyalty-proxy (HMAC-SHA256 esadecimale dei parametri ordinati, confronto a tempo costante, timestamp entro
-// 300 s), piu' i controlli di sez. 5.2: 401 se `shop`, `logged_in_customer_id`, `path_prefix`, `timestamp` o `signature`
-// compaiono piu' di una volta, o se `logged_in_customer_id` non e' vuoto e non e' di sole cifre.
-// Segreto: env CHAT_APP_PROXY_SECRET, il client secret di "Amimi Chat" (lo mette Dan fra i segreti delle edge; separato da
-// quello di Premia). Assente: 503 needs_secret. Nella risposta mai il valore dei parametri firmati; nessun log.
-// Secret del widget Turnstile di PROVA: env CHAT_TURNSTILE_PROVA_SECRET (Dan). Assente: /turnstile risponde 503
-// needs_turnstile_secret. Il token non torna mai indietro e non si logga.
-// Ogni risposta ha Cache-Control: no-store. Nessun header CORS: il widget chiama dalla stessa origine (sez. 4.8).
+// Azioni (tutte con la firma del proxy; GET solo `config`, il resto POST con corpo JSON di al massimo 8 KB e schema rigido):
+//   config     stato della chat e configurazione pubblica gia' composta (testi, bottoni con risposta, versione
+//              dell'informativa). Mai valori grezzi di app_flags: si leggono solo le chiavi di FLAG_LETTI.
+//   avvia      {email, nome?, lingua?, informativa, turnstile, prova?, testo?, client_id?} -> Turnstile (azione
+//              `chat_avvia`, hostname controllato), tetto globale del giorno, sessione `bot`, chat token (solo l'hash nel
+//              DB). Un primo testo libero va subito a una persona come in `invia`.
+//   invia      {token, client_id, testo | bottone} -> testo libero: messaggio della cliente e, se la chat e' `bot`,
+//              passaggio a una persona (Fase 1, 9.1); bottone: risposta fissa dalla riga di cs_faq di `chat_bottoni`.
+//   passaggio  {token} -> "Parla con una persona": `attesa_persona`, avviso fisso con l'email mascherata (chat_testo_attesa,
+//              o chat_testo_fuori_orario fuori da chat_orari), push subito al tema `assistenza` (8.4).
+//   aggiorna   {token, dopo, vista?} -> stato e messaggi con seq > dopo (al massimo 50); vista = pannello aperto e scheda
+//              visibile, scrive delivered_at ("vista in chat") sui messaggi dello staff restituiti. Contratto col widget
+//              (Gate 2 dell'8-11, C4): il cursore `dopo` avanza SOLO con le risposte di aggiorna; il `seq` nelle
+//              risposte di avvia, invia e passaggio serve a non mostrare due volte lo stesso messaggio, mai a saltare.
+//              Su una chat chiusa aggiorna risponde ancora, in sola lettura, finche' il token vale (4 ore senza
+//              attivita'): cosi' la cliente legge l'ultima risposta mandata prima della chiusura (scostamento da 5.4).
+//   riprendi   {token_ripresa, turnstile, prova?} -> Turnstile (azione `chat_riprendi`), chat token nuovo per la sessione
+//              del link "Continua la chat" (al massimo 3 attivi: il piu' vecchio si revoca). La pagina che lo chiama arriva
+//              col pezzo che manda le email.
+//   errore     {codice, versione, pagina} -> beacon d'errore del widget, al massimo 100 al giorno, senza testo libero.
+// Rifiuti visti dal widget: 200 con `state` o 4xx, MAI 5xx (il proxy li trasforma in una pagina 500 HTML del tema, spike
+// 13.3). Fallire chiusi (5.8): flag, segreti, contatori o DB illeggibili = nessuna chat, nessun messaggio, mai "passa".
+// Regola 20: messaggi idempotenti su (sessione_id, client_msg_id), push prenotata su chat_eventi.chiave, passaggio con
+// update condizionato su (stato, passaggi), letture con limit e errore controllato, una lettura ritenta una volta, una
+// scrittura mai. Regola 19: scrive solo tabelle chat_* e la propria riga health_log `chat_api` (conteggi), legge app_flags
+// (elenco chiuso) e cs_faq; nessuna scrittura in change_log, nessuna chiamata a write-api, nessun PIN. La proiezione in
+// cs_ (7.4) NON e' qui: arriva col pezzo dei 25 punti di Assistenza (7.6), perche' prima di quelli una chat proiettata
+// andrebbe a cs-classify e nella coda del team.
+// Log: solo cause scritte nel codice e codici d'errore del DB, mai corpi, token, email, nomi o testi.
+import { createClient } from 'jsr:@supabase/supabase-js@2';
+import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
+import { inviaPush } from '../_shared/push.ts';
+import type { EsitoPush, MsgPush } from '../_shared/push.ts';
+import { rispondiEco } from './eco.ts';
 
-// ==== PURE:chat-eco BEGIN ====
-const VERSIONE = 'eco-2';
-const SPIKE_FINO_MS = Date.parse('2026-12-07T00:00:00Z');
-const SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
-const TOKEN_MAX = 2048;                // lunghezza massima di un token Turnstile (doc Cloudflare, validazione lato server)
-const CORPO_TURNSTILE_MAX = 4096;
-const LIQUID_APRI = '{% layout none %}{% raw %}';
-const LIQUID_CHIUDI = '{% endraw %}';
-const MAX_SKEW_SEC = 300;
-const ATTESA_MAX_S = 120;
-const CORPO_MAX_BYTE = 65536;
-const NEGOZI_NOTI: Record<string, string> = { 'amimi-10000.myshopify.com': 'amimi-10000', 'wb9gmn-0h.myshopify.com': 'wb9gmn-0h' };
-const PREFIX_ATTESO = '/apps/chat';
-const PARAM_SHOPIFY_UNICI = ['logged_in_customer_id', 'path_prefix', 'shop', 'timestamp', 'signature'];
+// ==== PURE:chat-api BEGIN ====
+const VERSIONE = 'api-1';
 const HEADER_BASE: Record<string, string> = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' };
+const ROTTE_ECO = ['eco', 'misura', 'turnstile'];
+const METODO: Record<string, string> = { config: 'GET', avvia: 'POST', invia: 'POST', passaggio: 'POST', aggiorna: 'POST', riprendi: 'POST', errore: 'POST' };
+const NEGOZI_NOTI = ['amimi-10000.myshopify.com', 'wb9gmn-0h.myshopify.com'];
+const PARAM_SHOPIFY_UNICI = ['logged_in_customer_id', 'path_prefix', 'shop', 'timestamp', 'signature'];
+const MAX_SKEW_SEC = 300;
+const CORPO_MAX_BYTE = 8192;
+const TESTO_MAX = 1000;
+const NOME_MAX = 80;
+const EMAIL_MAX = 254;
+const TESTO_DB_MAX = 4000;
+const TURNSTILE_TOKEN_MAX = 2048;
+const MESSAGGI_PER_CHAT = 100;                 // D-12
+const LIMITE_CHAT_GIORNO_DEFAULT = 50;         // D-12, se il flag e' illeggibile o fuori dai limiti
+const LIMITE_CHAT_GIORNO_MAX = 10000;
+const ERRORI_GIORNO = 100;
+const RICHIESTE_SOGLIA = 5000;                 // D-12: sopra, chat_salute (pezzo 4) dalla riga health_log e da chat_eventi
+const RICHIESTE_TETTO = 1000000;               // il massimo che la RPC accetta: il contatore conta, non ferma
+const INATTIVITA_MS = 4 * 3600 * 1000;         // chat token: 4 ore senza attivita' della sessione (5.4)
+const TOKEN_CHAT_MS = 30 * 86400 * 1000;       // scadenza assoluta di un chat token
+const TOKEN_CHAT_ATTIVI = 3;
+const RIPRESE_ORA = 10;
+const AGGIORNA_LIMITE = 50;
+const FLAG_CACHE_MS = 60000;
+const SALUTE_OGNI_MS = 3600000;                // riga health_log riscritta almeno ogni ora da ogni istanza attiva
+const LINK_ASSISTENZA = 'https://noobhandbag.github.io/amimi-app/#assistenza';
+// Le sole chiavi di app_flags che la edge legge (sez. 10, test 18): nessun segreto, nessuna chiave fuori dalla chat.
+const FLAG_LETTI = ['chat_sito_enabled', 'chat_limite_chat_giorno', 'chat_orari', 'chat_testo_saluto', 'chat_testo_orari',
+  'chat_testo_attesa', 'chat_testo_fuori_orario', 'chat_testo_informativa', 'chat_bottoni'];
+// Turnstile (5.5, S6): il widget di produzione vale solo su amimi.it; quello di prova anche sulle anteprime di QUESTO
+// negozio (`<token>-<id del negozio>.shopifypreview.com`), mai di un altro. Le chiavi di prova di Cloudflare passano sempre:
+// un secret di quel tipo vale come assente e il token finto e' rifiutato prima di chiamare Cloudflare.
+const HOST_PRODUZIONE = ['amimi.it', 'www.amimi.it'];
+const HOST_ANTEPRIMA_RE = /^[a-z0-9]{1,64}-95215747399\.shopifypreview\.com$/;
+const SEGRETO_DI_PROVA_CF_RE = /^[0-9]x0+AA$/;
+const TOKEN_FINTO_CF = 'XXXX.DUMMY.TOKEN.XXXX';
+const PAGINE = ['home', 'prodotto', 'collezione', 'carrello', 'ricerca', 'pagina', 'blog', 'altro'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+// 5.7: una sola email, senza spazi, caratteri di controllo o di formato e senza <>,;" (chat-send la rimette in `To:`);
+// il DB ha un secondo cancello (chat_sessioni_email_ck)
+// meta' di una emoji (surrogato senza la sua coppia): Postgres la rifiuta (22P02) e il messaggio resterebbe in `riprova`
+// per sempre, consumando il tetto (Gate 2 dell'8-11, B1). In modalita' u una coppia valida e' un solo punto di codice.
+const SURROGATO_SOLO_RE = /\p{Cs}/u;
+const EMAIL_RE = /^[^\s\p{C}<>,;"@]+@[^\s\p{C}<>,;"@]+\.[^\s\p{C}<>,;"@]+$/u;
+
+type Sessione = {
+  id: string; stato: string; passaggi: number; passaggio_at: string | null; customer_email: string; customer_name: string | null;
+  lingua: string; prova: boolean; ultima_attivita_at: string; chiusa_at: string | null;
+};
+type TokenRiga = { id: string; tipo: string; scade_at: string; revocato_at: string | null; sessione: Sessione | null };
+type Messaggio = { id: string; seq: number; autore: string; testo: string; created_at: string; email_stato: string | null; delivered_at: string | null };
+type NuovoMessaggio = { sessione_id: string; autore: string; testo: string; client_msg_id: string; fonte: string | null };
+type Evento = { sessione_id: string | null; tipo: string; chiave: string | null; esito: string | null; dettaglio: Record<string, unknown> };
+interface Db {
+  flag(chiavi: string[]): Promise<Record<string, string>>;
+  contatore(chiave: string, finestraS: number, tetto: number): Promise<number | null>;
+  token(hash: string, tipo: string): Promise<TokenRiga | null>;
+  creaSessione(r: Record<string, unknown>): Promise<Sessione>;
+  creaToken(r: { sessione_id: string; tipo: string; hash: string; scade_at: string }): Promise<void>;
+  tokenAttivi(sessioneId: string, oraIso: string): Promise<{ id: string }[]>;
+  revocaToken(ids: string[], oraIso: string): Promise<void>;
+  usaToken(id: string, oraIso: string): Promise<void>;
+  aggiornaSessione(id: string, patch: Record<string, unknown>, se: { stato?: string; passaggi?: number }): Promise<Sessione | null>;
+  sessione(id: string): Promise<Sessione | null>;
+  inserisciMessaggi(righe: NuovoMessaggio[]): Promise<Messaggio[]>;
+  messaggiDopo(sessioneId: string, dopo: number, limite: number): Promise<Messaggio[]>;
+  segnaViste(ids: string[], oraIso: string): Promise<void>;
+  evento(r: Evento): Promise<boolean>;
+  esitoEvento(chiave: string, esito: string, dettaglio: Record<string, unknown>): Promise<void>;
+  faq(id: number): Promise<{ testo_it: string | null; testo_en: string | null; attiva: boolean } | null>;
+  salute(giorno: string, n: number, severity: string, causa: string | null): Promise<void>;
+}
+type Ambiente = {
+  ora: number;
+  segreti: { proxy: string; turnstile: string; turnstileProva: string };
+  db: Db;
+  siteverify: (secret: string, token: string) => Promise<unknown>;
+  push: (m: MsgPush) => Promise<EsitoPush>;
+  sfondo: (p: Promise<unknown>) => void;
+  casuale: (n: number) => Uint8Array;
+  eco: ((req: Request) => Promise<Response>) | null;
+};
+type Testo = { it: string; en: string };
+type Bottone = { id: string; it: string; en: string; faq: number | null };
+type Orari = { tz: string; giorni: number[]; dalle: string; alle: string; chiusure: string[] };
+type Flag = {
+  attiva: boolean; limiteGiorno: number; orari: Orari | null; bottoni: Bottone[]; informativaGrezza: string | null;
+  testi: { saluto: Testo | null; orari: Testo | null; attesa: Testo | null; fuori_orario: Testo | null; informativa: Testo | null };
+};
+type Problema = { sev: string; causa: string };
+
+class ErroreDb extends Error {
+  causa: string;
+  constructor(causa: string) { super(causa); this.causa = causa; }
+}
 
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...HEADER_BASE, 'Content-Type': 'application/json; charset=utf-8' } });
-
+const rifiuto = (state: string, extra: Record<string, unknown> = {}, s = 200) => json({ ok: false, state, ...extra }, s);
+const campo = (nome: string) => json({ ok: false, error: 'campo_non_valido', campo: nome }, 422);
+const iso = (ms: number) => new Date(ms).toISOString();
+const giornoUtc = (ms: number) => iso(ms).slice(0, 10);
 const esadecimale = (b: Uint8Array) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+const oggetto = (v: unknown): Record<string, unknown> => (v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const GRAVITA: Record<string, number> = { ok: 0, warn: 1, error: 2 };
 
-// HMAC App Proxy: hex(HMAC-SHA256(secret, join ordinato dei parametri esclusa `signature`)); valori ripetuti uniti con ','
-// e coppie key=value concatenate senza separatore. Copia di loyalty-proxy (appProxyHmacHex).
+// ---- firma del proxy: copia di eco-2 (e di loyalty-proxy v16) ----
 async function appProxyHmacHex(params: URLSearchParams, secret: string): Promise<string> {
   const grouped = new Map<string, string[]>();
   for (const [k, v] of params) {
@@ -67,50 +167,17 @@ function timingSafeEqualHex(a: string, b: string): boolean {
 }
 const paramRipetuti = (params: URLSearchParams): string[] => PARAM_SHOPIFY_UNICI.filter((k) => params.getAll(k).length > 1);
 const idClienteValido = (v: string): boolean => v === '' || /^[0-9]{1,20}$/.test(v);
-// eta' della firma in secondi, o null se manca, non e' un numero o sta fuori da MAX_SKEW_SEC (anche nel futuro)
 function etaFirma(ts: string | null, oraMs: number): number | null {
   if (ts === null || !/^[0-9]{1,12}$/.test(ts)) return null;
   const eta = Math.round(oraMs / 1000 - Number(ts));
   return Math.abs(eta) > MAX_SKEW_SEC ? null : eta;
 }
-
-// IP mascherati: il chiamante riconosce il suo prefisso, nessun indirizzo intero esce dalla edge
-function mascheraIp(ip: string): string {
-  const s = ip.trim();
-  const v4 = s.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
-  if (v4) return `${v4[1]}.${v4[2]}.x.x`;
-  if (s.includes(':') && /^[0-9a-f:]+$/i.test(s)) return s.split(':').slice(0, 2).join(':') + ':x';
-  return '?';
-}
-const vociXff = (h: string | null): string[] => (h ?? '').split(',').map((v) => v.trim()).filter(Boolean).slice(0, 20);
-// posizione contata da destra (0 = ultima voce, quella aggiunta dall'ultimo passaggio), null se assente
-function posDaDestra(voci: string[], ip: string | null): number | null {
-  if (!ip) return null;
-  const i = voci.lastIndexOf(ip.trim());
-  return i < 0 ? null : voci.length - 1 - i;
-}
-// solo i NOMI dei parametri, con quante volte compaiono; mai i valori
-function contaParametri(params: URLSearchParams): Record<string, number> {
-  // senza prototipo: un parametro chiamato `constructor` o `__proto__` si conta come gli altri (Gate 2 del 07-11)
-  const out: Record<string, number> = Object.create(null);
-  for (const k of params.keys()) {
-    const nome = /^[a-z0-9_]{1,40}$/i.test(k) ? k : '(altro)';
-    if (!(nome in out) && Object.keys(out).length >= 30) { out['(oltre 30)'] = (out['(oltre 30)'] ?? 0) + 1; continue; }
-    out[nome] = (out[nome] ?? 0) + 1;
-  }
-  return out;
-}
 function azioneDi(pathname: string): string {
   const segs = pathname.split('/').filter(Boolean);
   const last = segs[segs.length - 1] ?? '';
-  if (last === 'chat-api') return '';
   return /^[a-z0-9_-]{1,30}$/.test(last) ? last : '?';
 }
-function attesaDi(v: string | null): number {
-  const n = Math.floor(Number(v));
-  return Number.isFinite(n) && n > 0 ? Math.min(n, ATTESA_MAX_S) : 0;
-}
-// corpo letto a pezzi e fermato appena supera il tetto, anche senza content-length (Gate 2 del 07-11); null = troppo grande
+// corpo letto a pezzi e fermato appena supera il tetto, anche senza content-length; null = troppo grande
 async function leggiCorpo(req: Request, max: number): Promise<Uint8Array | null> {
   if (!req.body) return new Uint8Array(0);
   const reader = req.body.getReader();
@@ -128,324 +195,733 @@ async function leggiCorpo(req: Request, max: number): Promise<Uint8Array | null>
   for (const p of pezzi) { out.set(p, at); at += p.byteLength; }
   return out;
 }
-const hostPulito = (h: string | null): string | null => (h === null ? null : /^[a-z0-9.-]{1,120}$/i.test(h) ? h.toLowerCase() : '?');
+// firma, parametri ripetuti, eta', id cliente, negozio. Restituisce l'id della cliente loggata ('' se anonima).
+async function controllaFirma(params: URLSearchParams, secret: string, oraMs: number): Promise<string | Response> {
+  if (!secret) return rifiuto('needs_secret');
+  const signature = params.get('signature') ?? '';
+  if (!signature) return json({ ok: false, error: 'missing_signature' }, 401);
+  if (!timingSafeEqualHex(signature.toLowerCase(), await appProxyHmacHex(params, secret))) return json({ ok: false, error: 'bad_signature' }, 401);
+  if (paramRipetuti(params).length) return json({ ok: false, error: 'repeated_param' }, 401);
+  if (etaFirma(params.get('timestamp'), oraMs) === null) return json({ ok: false, error: 'stale_signature' }, 401);
+  const cliente = params.get('logged_in_customer_id') ?? '';
+  if (!idClienteValido(cliente)) return json({ ok: false, error: 'bad_customer_id' }, 401);
+  if (!NEGOZI_NOTI.includes(params.get('shop') ?? '')) return json({ ok: false, error: 'bad_shop' }, 401);
+  return cliente;
+}
 
-// eco-2: soli NOMI degli header (mai i valori), e quali contengono l'IP che il client dichiara (S1)
-const nomeHeader = (k: string) => (/^[a-z0-9-]{1,60}$/.test(k) ? k : '(altro)');
-// prima si ordinano tutti, poi si taglia, e si dice quanti restano fuori (Gate 2 del 07-11)
-function nomiHeader(h: Headers): string[] {
-  const tutti = [...h.keys()].map(nomeHeader).sort();
-  return tutti.length > 60 ? [...tutti.slice(0, 60), `(altri ${tutti.length - 60})`] : tutti;
+// ---- input (5.7) ----
+async function leggiJson(req: Request): Promise<Record<string, unknown> | Response> {
+  if (Number(req.headers.get('content-length') ?? 0) > CORPO_MAX_BYTE) return json({ ok: false, error: 'body_too_large' }, 413);
+  const buf = await leggiCorpo(req, CORPO_MAX_BYTE);
+  if (buf === null) return json({ ok: false, error: 'body_too_large' }, 413);
+  let d: unknown;
+  try { d = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(buf)); } catch { return json({ ok: false, error: 'json_non_valido' }, 400); }
+  if (d === null || typeof d !== 'object' || Array.isArray(d)) return json({ ok: false, error: 'json_non_valido' }, 400);
+  return d as Record<string, unknown>;
 }
-// confronto esatto voce per voce, mai per sottostringa: 1.2.3.4 non e' dentro 21.2.3.45. Le voci si separano su virgole,
-// spazi, punto e virgola, `=`, virgolette e parentesi quadre (formato `for="[ip]:porta"` di Forwarded), e a un IPv4 si toglie
-// la porta (`1.2.3.4:5678`).
-const vociDiHeader = (v: string): string[] =>
-  v.toLowerCase().split(/[\s,;="\[\]]+/).filter(Boolean).map((x) => x.replace(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/, '$1'));
-function headerConIp(h: Headers, ip: string | null): string[] {
-  if (!ip || !/^[0-9a-f.:]{7,45}$/i.test(ip)) return [];
-  const cerca = ip.toLowerCase();
-  const out: string[] = [];
-  for (const [k, v] of h) if (vociDiHeader(v).includes(cerca)) out.push(nomeHeader(k));
-  return out.sort();
+// schema rigido: un campo sconosciuto e' un 422; un obbligatorio assente (o null) pure. I nomi nella risposta vengono
+// dall'elenco del codice, mai dall'input.
+function schema(d: Record<string, unknown>, ammessi: string[], obbligatori: string[]): Response | null {
+  for (const k of Object.keys(d)) if (!ammessi.includes(k)) return json({ ok: false, error: 'campo_sconosciuto' }, 422);
+  for (const k of obbligatori) if (d[k] === undefined || d[k] === null) return json({ ok: false, error: 'campo_mancante', campo: k }, 422);
+  return null;
 }
-// esito di siteverify ridotto a cio' che serve a S6: niente token, niente altri campi
-function esitoSiteverify(r: unknown, oraMs: number) {
-  const o = r !== null && typeof r === 'object' ? (r as Record<string, unknown>) : {};
-  const codici = Array.isArray(o['error-codes'])
-    ? (o['error-codes'] as unknown[]).filter((c): c is string => typeof c === 'string' && /^[a-z0-9-]{1,40}$/.test(c)).slice(0, 5)
-    : [];
-  const sfida = typeof o.challenge_ts === 'string' ? Date.parse(o.challenge_ts) : NaN;
+const cp = (s: string) => [...s].length;
+function emailValida(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const e = v.trim().toLowerCase();
+  return e.length <= EMAIL_MAX && EMAIL_RE.test(e) ? e : null;
+}
+// nome: facoltativo; a capo, controlli e caratteri di formato diventano spazi; oltre NOME_MAX = rifiutato (mai tagliato)
+function nomePulito(v: unknown): string | null | false {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'string' || SURROGATO_SOLO_RE.test(v)) return false;
+  const s = v.normalize('NFC').replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  return cp(s) <= NOME_MAX ? s : false;
+}
+// messaggio: NFC, a capo normalizzati, via i controlli (a capo escluso) e i caratteri che rovesciano il testo; 1-1000
+function testoPulito(v: unknown): string | false {
+  if (typeof v !== 'string' || SURROGATO_SOLO_RE.test(v)) return false;
+  const s = v.normalize('NFC').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g, '').trim();
+  const n = cp(s);
+  return n >= 1 && n <= TESTO_MAX ? s : false;
+}
+const uuidValido = (v: unknown): string | null => (typeof v === 'string' && UUID_RE.test(v) ? v.toLowerCase() : null);
+const tokenValido = (v: unknown): string | null => (typeof v === 'string' && TOKEN_RE.test(v) ? v : null);
+const turnstileValido = (v: unknown): string | null => (typeof v === 'string' && v.length >= 1 && v.length <= TURNSTILE_TOKEN_MAX && /^[\x21-\x7E]+$/.test(v) ? v : null);
+function mascheraEmail(e: string): string {
+  const i = e.lastIndexOf('@');
+  return i < 1 ? '***' : `${[...e.slice(0, i)][0]}***${e.slice(i)}`;
+}
+
+// ---- token, hash, id derivati ----
+async function sha256hex(s: string): Promise<string> {
+  return esadecimale(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))));
+}
+function base64url(b: Uint8Array): string {
+  let s = '';
+  for (const x of b) s += String.fromCharCode(x);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+const nuovoToken = (amb: Ambiente) => base64url(amb.casuale(32));   // 256 bit; nel DB solo lo SHA-256
+// uuid stabile da una stringa (formato v8): client_msg_id dei messaggi che la edge scrive da se' (risposta fissa, avviso
+// di attesa), cosi' un nuovo invio con lo stesso client_id non li duplica (Regola 20)
+async function uuidDa(s: string): Promise<string> {
+  const b = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))).slice(0, 16);
+  b[6] = (b[6] & 0x0f) | 0x80;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = esadecimale(b);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+// ---- flag (sez. 10): elenco chiuso, 60 s in memoria, valori illeggibili = default prudenti ----
+let CACHE_FLAG: { at: number; v: Record<string, string> } | null = null;
+const azzeraCache = () => { CACHE_FLAG = null; };
+let ULTIMA_SALUTE = 0;
+const azzeraSalute = () => { ULTIMA_SALUTE = 0; };
+function testoFlag(v: string | undefined): Testo | null {
+  try {
+    const o = oggetto(JSON.parse(v ?? ''));
+    const ok = (x: unknown) => typeof x === 'string' && cp(x) >= 1 && cp(x) <= TESTO_MAX;
+    return ok(o.it) && ok(o.en) ? { it: o.it as string, en: o.en as string } : null;
+  } catch { return null; }
+}
+function orariFlag(v: string | undefined): Orari | null {
+  try {
+    const o = oggetto(JSON.parse(v ?? ''));
+    const ora = (x: unknown) => typeof x === 'string' && /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(x);
+    const giorni = Array.isArray(o.giorni) ? o.giorni.filter((g: unknown): g is number => typeof g === 'number' && Number.isInteger(g) && g >= 1 && g <= 7) : [];
+    const chiusure = Array.isArray(o.chiusure) ? o.chiusure.filter((c: unknown): c is string => typeof c === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(c)).slice(0, 400) : [];
+    if (typeof o.tz !== 'string' || !/^[A-Za-z_]+\/[A-Za-z_]+$/.test(o.tz) || !ora(o.dalle) || !ora(o.alle)) return null;
+    return { tz: o.tz, giorni, dalle: o.dalle as string, alle: o.alle as string, chiusure };
+  } catch { return null; }
+}
+function bottoniFlag(v: string | undefined): Bottone[] {
+  try {
+    const a = JSON.parse(v ?? '');
+    if (!Array.isArray(a)) return [];
+    const etichetta = (x: unknown) => typeof x === 'string' && cp(x) >= 1 && cp(x) <= 40;
+    const out: Bottone[] = [];
+    for (const r of a.slice(0, 8)) {
+      const o = oggetto(r);
+      if (typeof o.id !== 'string' || !/^[a-z0-9_]{1,30}$/.test(o.id) || !etichetta(o.it) || !etichetta(o.en)) continue;
+      if (out.some((b) => b.id === o.id)) continue;
+      const faq = Number.isSafeInteger(o.faq) && (o.faq as number) > 0 ? (o.faq as number) : null;
+      out.push({ id: o.id, it: o.it as string, en: o.en as string, faq });
+    }
+    return out;
+  } catch { return []; }
+}
+function interpretaFlag(v: Record<string, string>): Flag {
+  const lim = Number((v.chat_limite_chat_giorno ?? '').trim());
   return {
-    success: o.success === true,
-    hostname: typeof o.hostname === 'string' ? hostPulito(o.hostname) : null,
-    error_codes: codici,
-    eta_sfida_s: Number.isFinite(sfida) ? Math.round((oraMs - sfida) / 1000) : null,
+    attiva: (v.chat_sito_enabled ?? '').trim().toLowerCase() === 'true',
+    limiteGiorno: Number.isInteger(lim) && lim >= 1 && lim <= LIMITE_CHAT_GIORNO_MAX ? lim : LIMITE_CHAT_GIORNO_DEFAULT,
+    orari: orariFlag(v.chat_orari),
+    bottoni: bottoniFlag(v.chat_bottoni),
+    informativaGrezza: typeof v.chat_testo_informativa === 'string' ? v.chat_testo_informativa : null,
+    testi: {
+      saluto: testoFlag(v.chat_testo_saluto), orari: testoFlag(v.chat_testo_orari), attesa: testoFlag(v.chat_testo_attesa),
+      fuori_orario: testoFlag(v.chat_testo_fuori_orario), informativa: testoFlag(v.chat_testo_informativa),
+    },
   };
 }
-type Turnstile = { secret: string; siteverify: (secret: string, token: string) => Promise<unknown> };
+async function leggiFlag(amb: Ambiente): Promise<Flag> {
+  if (CACHE_FLAG && amb.ora >= CACHE_FLAG.at && amb.ora - CACHE_FLAG.at < FLAG_CACHE_MS) return interpretaFlag(CACHE_FLAG.v);
+  const v = await amb.db.flag(FLAG_LETTI);
+  const solo: Record<string, string> = {};
+  for (const k of FLAG_LETTI) if (typeof v[k] === 'string') solo[k] = v[k];
+  CACHE_FLAG = { at: amb.ora, v: solo };
+  return interpretaFlag(solo);
+}
 
-async function gestisci(req: Request, oraMs: number, secret: string, dorme: (ms: number) => Promise<unknown>, ts: Turnstile): Promise<Response> {
-  const t0 = performance.now();
-  if (oraMs >= SPIKE_FINO_MS) return json({ error: 'spike_finito' }, 503);
-  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: HEADER_BASE });
-  if (req.method !== 'GET' && req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-  const url = new URL(req.url);
-  const params = url.searchParams;
-  const azione = azioneDi(url.pathname);
-  if (azione !== 'eco' && azione !== 'misura' && azione !== 'turnstile') return json({ error: 'not_found' }, 404);
+// ---- orari e testi d'attesa (D-8, 9.13) ----
+const GIORNI_ISO: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+function inOrario(o: Orari | null, oraMs: number): boolean {
+  if (!o) return false;
+  try {
+    const parti = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: o.tz, weekday: 'short', year: 'numeric', month: '2-digit',
+      day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(oraMs)).map((p) => [p.type, p.value]));
+    const data = `${parti.year}-${parti.month}-${parti.day}`;
+    const hhmm = `${parti.hour}:${parti.minute}`;
+    return o.giorni.includes(GIORNI_ISO[parti.weekday] ?? 0) && !o.chiusure.includes(data) && hhmm >= o.dalle && hhmm < o.alle;
+  } catch { return false; }
+}
+const ATTESA_RISERVA: Testo = {
+  it: 'Abbiamo ricevuto la tua richiesta: il team ti risponder\u00e0 appena possibile e riceverai la risposta via email all\'indirizzo {email}.',
+  en: 'We have received your request: our team will reply as soon as possible and you will receive the reply by email at {email}.',
+};
+function testoAttesa(f: Flag, s: Sessione, oraMs: number): string {
+  const t = (inOrario(f.orari, oraMs) ? f.testi.attesa : f.testi.fuori_orario) ?? f.testi.fuori_orario ?? ATTESA_RISERVA;
+  const base = s.lingua === 'en' ? t.en : t.it;
+  return [...base.split('{email}').join(mascheraEmail(s.customer_email))].slice(0, TESTO_DB_MAX).join('');
+}
 
-  if (!secret) return json({ state: 'needs_secret' }, 503);
-  const signature = params.get('signature') ?? '';
-  if (!signature) return json({ error: 'missing_signature' }, 401);
-  if (!timingSafeEqualHex(signature.toLowerCase(), await appProxyHmacHex(params, secret))) return json({ error: 'bad_signature' }, 401);
-  const ripetuti = paramRipetuti(params);
-  if (ripetuti.length) return json({ error: 'repeated_param', nomi: ripetuti }, 401);
-  const eta = etaFirma(params.get('timestamp'), oraMs);
-  if (eta === null) return json({ error: 'stale_signature' }, 401);
-  const cliente = params.get('logged_in_customer_id') ?? '';
-  if (!idClienteValido(cliente)) return json({ error: 'bad_customer_id' }, 401);
+// ---- push (8.4, 8.7): copie di push-eventi, con test d'impronta (tests/chat_api.mjs) ----
+function pulisci(v: unknown, max: number): string {
+  if (typeof v !== 'string') return '';
+  const s = Array.from(v, (c) => { const k = c.codePointAt(0) ?? 0; return k < 32 || (k >= 127 && k <= 159) || k === 8232 || k === 8233 ? ' ' : c; }).join('').replace(/\s+/g, ' ').trim();
+  const cp = Array.from(s);
+  return cp.length > max ? cp.slice(0, max).join('').trimEnd() : s;
+}
+const EMAIL_CLIENTE_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+function emailCliente(v: unknown): string {
+  const e = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return e.length <= 80 && EMAIL_CLIENTE_RE.test(e) && !/\p{C}/u.test(e) ? e : '';
+}
+function nomeCliente(nome: unknown, email: unknown): string {
+  const grezzo = typeof nome === 'string' ? nome.replace(/\p{Cf}/gu, '') : nome;
+  if (typeof grezzo === 'string' && EMAIL_CLIENTE_RE.test(grezzo.trim())) return emailCliente(grezzo) || emailCliente(email);
+  return pulisci(grezzo, 60) || emailCliente(email);
+}
+function statoDaEsito(e: EsitoPush): 'inviato' | 'nessun_iscritto' | 'fallito' {
+  if (e?.ok === true) return 'inviato';
+  const ok2xx = typeof e?.status === 'number' && e.status >= 200 && e.status < 300;
+  if (ok2xx && !e.errore && e.dryRun !== true && (e.skipped === 'tema_spento' || (!e.skipped && e.destinatari === 0))) return 'nessun_iscritto';
+  return 'fallito';
+}
+function esitoDaSalvare(e: EsitoPush): Record<string, unknown> {
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return { inviati: n(e?.inviati), falliti: n(e?.falliti), destinatari: n(e?.destinatari), status: n(e?.status),
+    ...(typeof e?.skipped === 'string' ? { skipped: e.skipped.slice(0, 40) } : {}), ...(e?.errore ? { errore: true } : {}) };
+}
+function messaggioPush(s: Sessione, urgente: boolean): MsgPush {
+  const chi = nomeCliente(s.customer_name, s.customer_email) || 'Una cliente';
+  return { tema: 'assistenza', titolo: `${s.prova ? 'PROVA ' : ''}Chat del sito: ${chi} chiede una persona`, testo: 'Apri Assistenza.', url: LINK_ASSISTENZA, urgente };
+}
+async function mandaPushPassaggio(amb: Ambiente, s: Sessione, chiave: string, urgente: boolean): Promise<void> {
+  let esito: EsitoPush;
+  try { esito = await amb.push(messaggioPush(s, urgente)); } catch { esito = { ok: false, inviati: 0, falliti: 0, destinatari: null, status: null, errore: 'eccezione' }; }
+  try { await amb.db.esitoEvento(chiave, statoDaEsito(esito), esitoDaSalvare(esito)); } catch { /* resta `prenotato`: lo ritenta il sollecito (8.4) */ }
+}
 
-  if (azione === 'misura') {
-    if (req.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
-    // Il proxy di Shopify riscrive text/html in text/plain (misurato il 07-11): la pagina va come Liquid, senza il layout del
-    // tema e in {% raw %} perche' Liquid non la tocchi, come loyalty-page.
-    return new Response(LIQUID_APRI + PAGINA_MISURA + LIQUID_CHIUDI, { status: 200, headers: { ...HEADER_BASE, 'Content-Type': 'application/liquid; charset=utf-8' } });
+// ---- eventi e salute ----
+async function eventoUnaVolta(amb: Ambiente, tipo: string, chiave: string, sessioneId: string | null, problemi: Problema[]): Promise<void> {
+  try { await amb.db.evento({ sessione_id: sessioneId, tipo, chiave, esito: null, dettaglio: {} }); }
+  catch { problemi.push({ sev: 'warn', causa: 'evento non registrato' }); }
+}
+// una riga health_log `chat_api` al giorno UTC (5.8), solo conteggi. refresh_health_log() delle 06:00 UTC cancella le
+// righe del giorno che non sono ce_*, sales_* o shipping_status (migr 0087), quindi la gravita' del giorno vive nei
+// contatori glob:sev_warn e glob:sev_error, che quel giro non tocca, e la riga si riscrive al primo problema, alla prima
+// richiesta del giorno, ogni 500 e almeno ogni ora da ogni istanza (Gate 2 dell'8-11, B2). Dalla soglia di D-12 in poi
+// l'evento quota:<giorno> si ritenta ogni 100 richieste (C8). Mai bloccante.
+async function chiudiSalute(amb: Ambiente, giorno: string, conto: Promise<number | null>, problemi: Problema[]): Promise<void> {
+  let n: number | null = null;
+  try { n = await conto; } catch { problemi.push({ sev: 'warn', causa: 'contatore delle richieste non scritto' }); }
+  if (n !== null && n >= RICHIESTE_SOGLIA && (n === RICHIESTE_SOGLIA || n % 100 === 0)) {
+    problemi.push({ sev: 'warn', causa: `oltre ${RICHIESTE_SOGLIA} richieste nel giorno` });
+    await eventoUnaVolta(amb, 'quota', `quota:${giorno}`, null, problemi);
   }
-
-  if (azione === 'turnstile') {
-    if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-    if (!ts.secret) return json({ state: 'needs_turnstile_secret' }, 503);
-    const buf = await leggiCorpo(req, CORPO_TURNSTILE_MAX);
-    if (buf === null) return json({ error: 'body_too_large' }, 413);
-    let token = '';
-    try {
-      const d = JSON.parse(new TextDecoder().decode(buf));
-      token = d !== null && typeof d === 'object' && typeof d.token === 'string' ? d.token : '';
-    } catch { token = ''; }
-    if (!token || token.length > TOKEN_MAX) return json({ error: 'bad_token' }, 400);
-    let esito: unknown;
-    try { esito = await ts.siteverify(ts.secret, token); } catch { return json({ error: 'siteverify_unreachable' }, 502); }
-    return json({ ok: true, versione: VERSIONE, azione, ...esitoSiteverify(esito, oraMs), edge_ms: Math.round(performance.now() - t0) });
+  let sev = 'ok';
+  let causa: string | null = null;
+  for (const p of problemi) if (GRAVITA[p.sev] > GRAVITA[sev]) { sev = p.sev; causa = p.causa; }
+  if (sev !== 'ok') {
+    try { await amb.db.contatore(`glob:sev_${sev}`, 86400, RICHIESTE_TETTO); } catch { /* la riga sotto dice comunque la gravita' */ }
   }
+  const pietra = n === 1 || (n !== null && n % 500 === 0);
+  const scaduta = amb.ora - ULTIMA_SALUTE >= SALUTE_OGNI_MS;
+  if (sev === 'ok' && !pietra && !scaduta) return;
+  ULTIMA_SALUTE = amb.ora;
+  try { await amb.db.salute(giorno, n ?? 0, sev, causa); } catch { /* telemetria: mai bloccante */ }
+}
 
-  let corpo = { byte: 0, sha256: '', json: false };
-  if (req.method === 'POST') {
-    if (Number(req.headers.get('content-length') ?? 0) > CORPO_MAX_BYTE) return json({ error: 'body_too_large' }, 413);
-    const buf = await leggiCorpo(req, CORPO_MAX_BYTE);
-    if (buf === null) return json({ error: 'body_too_large' }, 413);
-    let isJson = false;
-    try { JSON.parse(new TextDecoder().decode(buf)); isJson = true; } catch { isJson = false; }
-    corpo = { byte: buf.byteLength, sha256: esadecimale(new Uint8Array(await crypto.subtle.digest('SHA-256', buf))), json: isJson };
+// ---- Turnstile (5.5) ----
+async function verificaTurnstile(amb: Ambiente, token: string, prova: boolean, azione: string, problemi: Problema[]): Promise<'ok' | 'ko' | 'non_disponibile'> {
+  const secret = prova ? amb.segreti.turnstileProva : amb.segreti.turnstile;
+  if (!secret || SEGRETO_DI_PROVA_CF_RE.test(secret)) {
+    problemi.push({ sev: 'warn', causa: prova ? 'secret di Turnstile di prova assente' : 'secret di Turnstile assente' });
+    return 'non_disponibile';
   }
-  const attesa = attesaDi(params.get('attesa'));
-  if (attesa) await dorme(attesa * 1000);
+  let esito = 'ko';
+  if (token !== TOKEN_FINTO_CF) {
+    let r: unknown;
+    try { r = await amb.siteverify(secret, token); } catch {
+      problemi.push({ sev: 'warn', causa: 'siteverify non raggiungibile' });
+      return 'non_disponibile';
+    }
+    const o = oggetto(r);
+    const host = typeof o.hostname === 'string' ? o.hostname.toLowerCase() : '';
+    const hostOk = HOST_PRODUZIONE.includes(host) || (prova && HOST_ANTEPRIMA_RE.test(host));
+    if (o.success === true && hostOk && o.action === azione) esito = 'ok';
+  }
+  if (esito === 'ko') await amb.db.contatore('glob:turnstile_ko', 86400, RICHIESTE_TETTO).catch(() => null);
+  return esito as 'ok' | 'ko';
+}
 
-  const h = req.headers;
-  const xff = vociXff(h.get('x-forwarded-for'));
-  const ipSolo = (v: string | null) => (v ? mascheraIp(v) : null);
+// ---- token di chat: la credenziale della cliente (5.4) ----
+async function tokenChat(amb: Ambiente, token: string): Promise<Sessione | Response> {
+  const r = await amb.db.token(await sha256hex(token), 'chat');
+  // rifiuto neutro: sconosciuto, revocato, scaduto o sessione ferma da oltre 4 ore danno la stessa risposta
+  if (!r || !r.sessione || r.revocato_at !== null || !(Date.parse(r.scade_at) > amb.ora)
+      || !(Date.parse(r.sessione.ultima_attivita_at) > amb.ora - INATTIVITA_MS)) return rifiuto('token_non_valido');
+  return r.sessione;
+}
+async function emettiToken(amb: Ambiente, s: Sessione): Promise<string> {
+  const token = nuovoToken(amb);
+  await amb.db.creaToken({ sessione_id: s.id, tipo: 'chat', hash: await sha256hex(token), scade_at: iso(amb.ora + TOKEN_CHAT_MS) });
+  return token;
+}
+const pubblico = (m: Messaggio) => ({ seq: m.seq, autore: m.autore, testo: m.testo, at: m.created_at, via_email: m.email_stato === 'inviata' });
+const ordinati = (ms: Messaggio[]) => [...ms].sort((a, b) => a.seq - b.seq);
+
+// ---- messaggi della cliente ----
+const attesaFinestra = (amb: Ambiente, finestraS: number) => Math.max(1, Math.ceil(finestraS - (amb.ora / 1000) % finestraS));
+// 5 azioni in 10 s per chat (in media una ogni 2 s, 5.6): una riga di contatore ogni 10 s, non ogni 2 (Gate 2, C3)
+async function limiteVeloce(amb: Ambiente, s: Sessione): Promise<Response | null> {
+  return (await amb.db.contatore(`sess:${s.id}:msg10s`, 10, 5)) === null ? rifiuto('troppo_veloce', { retry_after_s: attesaFinestra(amb, 10) }, 429) : null;
+}
+async function limiteMessaggi(amb: Ambiente, s: Sessione, problemi: Problema[]): Promise<Response | null> {
+  if ((await amb.db.contatore(`sess:${s.id}:msg`, 0, MESSAGGI_PER_CHAT)) !== null) return null;
+  await eventoUnaVolta(amb, 'limite_messaggi', `${s.id}:limite_messaggi`, s.id, problemi);
+  return rifiuto('limite_messaggi');
+}
+// passaggio a una persona: update condizionato (stato bot e passaggi letti), chi lo vince e' il passaggio nuovo
+async function aPersona(amb: Ambiente, s: Sessione, cliente: boolean): Promise<Sessione> {
+  const ora = iso(amb.ora);
+  const patch: Record<string, unknown> = { stato: 'attesa_persona', passaggi: s.passaggi + 1, passaggio_at: ora, ultima_attivita_at: ora, updated_at: ora };
+  if (cliente) patch.ultimo_cliente_at = ora;
+  const vinto = await amb.db.aggiornaSessione(s.id, patch, { stato: 'bot', passaggi: s.passaggi });
+  if (vinto) return vinto;
+  const letta = await amb.db.sessione(s.id);
+  if (!letta) throw new ErroreDb('sessione non riletta');
+  return letta;
+}
+// effetti del passaggio n, idempotenti: avviso di attesa (uuid derivato) e prenotazione della push (chiave UNIQUE); la push
+// parte solo per chi ha inserito la chiave, dopo la risposta (EdgeRuntime.waitUntil)
+async function effettiPassaggio(amb: Ambiente, f: Flag, s: Sessione): Promise<Messaggio[]> {
+  const n = s.passaggi;
+  const avviso = await amb.db.inserisciMessaggi([{ sessione_id: s.id, autore: 'sistema', testo: testoAttesa(f, s, amb.ora),
+    client_msg_id: await uuidDa(`${s.id}:passaggio:${n}:attesa`), fonte: 'attesa' }]);
+  const chiave = `${s.id}:passaggio:${n}`;
+  const mia = await amb.db.evento({ sessione_id: s.id, tipo: 'push_passaggio', chiave, esito: 'prenotato', dettaglio: { n, prova: s.prova } });
+  if (mia) amb.sfondo(mandaPushPassaggio(amb, s, chiave, inOrario(f.orari, amb.ora)));
+  return avviso;
+}
+async function toccaSessione(amb: Ambiente, s: Sessione, cliente: boolean): Promise<Sessione> {
+  const ora = iso(amb.ora);
+  const patch: Record<string, unknown> = { ultima_attivita_at: ora, updated_at: ora };
+  if (cliente) patch.ultimo_cliente_at = ora;
+  return (await amb.db.aggiornaSessione(s.id, patch, {})) ?? s;
+}
+// testo libero: messaggio della cliente, poi (Fase 1) passaggio se la chat e' del bot. Gli effetti del passaggio si
+// rifanno anche quando il messaggio e' un doppione (nuovo invio dopo un errore a meta'): sono idempotenti.
+async function testoLibero(amb: Ambiente, f: Flag, s: Sessione, clientId: string, testo: string): Promise<{ sessione: Sessione; messaggi: Messaggio[] }> {
+  const ins = await amb.db.inserisciMessaggi([{ sessione_id: s.id, autore: 'cliente', testo, client_msg_id: clientId, fonte: null }]);
+  const doppione = ins.length === 0;
+  let sess: Sessione;
+  let nuovo = false;
+  if (s.stato === 'bot') {
+    sess = await aPersona(amb, s, true);
+    nuovo = sess.passaggi > s.passaggi;
+  } else sess = await toccaSessione(amb, s, true);
+  const extra = sess.stato === 'attesa_persona' && (nuovo || doppione) ? await effettiPassaggio(amb, f, sess) : [];
+  return { sessione: sess, messaggi: ordinati([...ins, ...extra]) };
+}
+
+// ---- azioni ----
+async function azioneConfig(amb: Ambiente, problemi: Problema[]): Promise<Response> {
+  let f: Flag;
+  try { f = await leggiFlag(amb); } catch {
+    problemi.push({ sev: 'error', causa: 'flag non letti' });
+    return json({ ok: true, versione: VERSIONE, attiva: false });     // 5.8: config illeggibile = spenta
+  }
+  if (!f.attiva) return json({ ok: true, versione: VERSIONE, attiva: false });
   return json({
-    ok: true,
-    versione: VERSIONE,
-    azione,
-    metodo: req.method,
-    firma: 'ok',
-    eta_firma_s: eta,
-    negozio: Object.hasOwn(NEGOZI_NOTI, params.get('shop') ?? '') ? NEGOZI_NOTI[params.get('shop') ?? ''] : 'altro',
-    path_prefix_atteso: params.get('path_prefix') === PREFIX_ATTESO,
-    cliente: cliente ? 'loggata' : 'anonima',
-    parametri: contaParametri(params),
-    header: {
-      xff_voci: xff.length,
-      xff_mascherati: xff.map(mascheraIp),
-      pos_ip_atteso: posDaDestra(xff, params.get('ip_atteso')),
-      pos_ip_finto: posDaDestra(xff, params.get('ip_finto')),
-      x_real_ip: ipSolo(h.get('x-real-ip')),
-      cf_connecting_ip: ipSolo(h.get('cf-connecting-ip')),
-      x_forwarded_host: hostPulito(h.get('x-forwarded-host')),
-      cookie: h.has('cookie'),
-      x_amimi_prova: h.has('x-amimi-prova'),
-      content_type: (h.get('content-type') ?? '').split(';')[0].trim().slice(0, 60),
-      nomi: nomiHeader(h),
-      ip_atteso_in: headerConIp(h, params.get('ip_atteso')),
-    },
-    corpo,
-    attesa_s: attesa,
-    ora_server_ms: oraMs,
-    edge_ms: Math.round(performance.now() - t0),
+    ok: true, versione: VERSIONE, attiva: true,
+    testi: { saluto: f.testi.saluto, orari: f.testi.orari, informativa: f.testi.informativa },
+    bottoni: f.bottoni.filter((b) => b.faq !== null).map((b) => ({ id: b.id, it: b.it, en: b.en })),
+    informativa_versione: f.informativaGrezza === null ? null : 'i-' + (await sha256hex(f.informativaGrezza)).slice(0, 12),
+    limiti: { testo: TESTO_MAX, nome: NOME_MAX },
   });
 }
 
-// Pagina delle misure. Niente innerHTML, niente storage, niente cookie scritti: risultati a video e, a richiesta, negli
-// appunti. La chiamata diretta (S2) va all'indirizzo della edge senza firma e riceve 401: serve solo il tempo di andata e
-// ritorno, in modalita' no-cors, senza leggere la risposta.
-const PAGINA_MISURA = `<!doctype html>
-<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow"><title>Amimi Chat, misure</title>
-<style>body{font:15px/1.45 system-ui,-apple-system,sans-serif;margin:16px;max-width:760px;color:#222;background:#fff}
-button{font:inherit;padding:10px 14px;margin:4px 6px 4px 0;border:1px solid #999;border-radius:8px;background:#f3f3f3}
-button:disabled{opacity:.5}pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:10px;border-radius:8px;font-size:13px}</style>
-</head><body>
-<h1>Amimi Chat: misure della Fase 0</h1>
-<p>Pagina di prova del team. Misura solo tempi e risposte del collegamento; non salva nulla sul telefono.
-Tieni lo schermo acceso finche' una misura non dice FINITO.</p>
-<p>Rete: <b id="rete"></b></p>
-<div>
-<button id="b-s1">S1: 100 invii</button>
-<button id="b-s2">S2: velocita'</button>
-<button id="b-s3">S3: cache e attese (4 min)</button>
-<button id="b-s4">S4: 10 minuti ogni 3 s</button>
-<button id="b-s6">S6: Turnstile</button>
-<button id="b-copia">Copia i risultati</button>
-</div>
-<div id="ts"></div>
-<pre id="out">Pronta.</pre>
-<script>
-(function () {
-  var p = location.pathname, i = p.lastIndexOf('/misura');
-  var BASE = i >= 0 ? p.slice(0, i) : '/apps/chat';
-  var DIRETTA = 'https://imszbjeyplaiovylhkgl.supabase.co/functions/v1/chat-api/eco';
-  var out = document.getElementById('out');
-  var ris = { pagina: 'eco-1', host: location.host, inizio: new Date().toISOString() };
-  function rete() { var c = navigator.connection; return c ? String(c.effectiveType || '?') + (c.type ? ' / ' + c.type : '') : 'non nota'; }
-  document.getElementById('rete').textContent = rete();
-  function scrivi(s) { out.textContent = s; }
-  function aggiungi(s) { out.textContent += '\\n' + s; }
-  function adesso() { return performance.now(); }
-  function perc(a, q) { if (!a.length) return null; var b = a.slice().sort(function (x, y) { return x - y; }); return Math.round(b[Math.max(0, Math.ceil(q * b.length) - 1)]); }
-  function riassunto(a) { return { n: a.length, p50: perc(a, 0.5), p95: perc(a, 0.95), min: perc(a, 0), max: perc(a, 1) }; }
-  function pausa(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
-  function eco(metodo, query, corpo, extra) {
-    var h = {};
-    if (corpo !== undefined) h['Content-Type'] = 'application/json';
-    if (extra) for (var k in extra) h[k] = extra[k];
-    var t = adesso();
-    return fetch(BASE + '/eco' + (query || ''), { method: metodo, headers: h, body: corpo, cache: 'no-store', credentials: 'same-origin' })
-      .then(function (r) {
-        return r.text().then(function (txt) {
-          var d = null; try { d = JSON.parse(txt); } catch (e) { d = null; }
-          return { status: r.status, ms: adesso() - t, d: d, cc: r.headers.get('cache-control'), age: r.headers.get('age') };
-        });
-      })
-      .catch(function () { return { status: 0, ms: adesso() - t, d: null }; });
-  }
-  function diretta() {
-    var t = adesso();
-    return fetch(DIRETTA, { method: 'POST', mode: 'no-cors', cache: 'no-store', credentials: 'omit', body: 'x' })
-      .then(function () { return adesso() - t; }).catch(function () { return null; });
-  }
-  function sha(txt) {
-    return crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt)).then(function (b) {
-      return Array.prototype.map.call(new Uint8Array(b), function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join('');
-    });
-  }
-  function bottoni(on) { var bs = document.querySelectorAll('button'); for (var j = 0; j < bs.length; j++) if (bs[j].id !== 'b-copia') bs[j].disabled = !on; }
-  function esegui(nome, fn) { bottoni(false); fn().then(function () { aggiungi('\\nFINITO ' + nome); }, function (e) { aggiungi('\\nERRORE ' + nome + ': ' + String(e)); }).then(function () { bottoni(true); }); }
+async function azioneAvvia(d: Record<string, unknown>, amb: Ambiente, cliente: string, giorno: string, problemi: Problema[]): Promise<Response> {
+  const e = schema(d, ['email', 'nome', 'lingua', 'informativa', 'turnstile', 'prova', 'testo', 'client_id'], ['email', 'informativa', 'turnstile']);
+  if (e) return e;
+  const email = emailValida(d.email);
+  if (!email) return campo('email');
+  const nome = nomePulito(d.nome);
+  if (nome === false) return campo('nome');
+  const lingua = d.lingua === undefined || d.lingua === null ? 'it' : d.lingua;
+  if (lingua !== 'it' && lingua !== 'en') return campo('lingua');
+  if (typeof d.informativa !== 'string' || !/^[a-z0-9._-]{1,64}$/i.test(d.informativa)) return campo('informativa');
+  const prova = d.prova === undefined || d.prova === null ? false : d.prova;
+  if (typeof prova !== 'boolean') return campo('prova');
+  const ts = turnstileValido(d.turnstile);
+  if (!ts) return campo('turnstile');
+  let testo: string | null = null;
+  let clientId: string | null = null;
+  if (d.testo !== undefined && d.testo !== null) {
+    const t = testoPulito(d.testo);
+    if (t === false) return campo('testo');
+    testo = t;
+    clientId = uuidValido(d.client_id);
+    if (!clientId) return campo('client_id');
+  } else if (d.client_id !== undefined && d.client_id !== null) return campo('client_id');
 
-  async function s1() {
-    scrivi('S1: 100 invii...');
-    var ok = 0, ko = [], cli = {}, tempi = [], ultimo = null;
-    for (var n = 0; n < 100; n++) {
-      var corpo = JSON.stringify({ n: n, testo: 'prova ' + n + ' ' + String.fromCharCode(224, 232, 8364) });
-      var atteso = await sha(corpo);
-      var r = await eco('POST', '?s1=' + n, corpo);
-      tempi.push(r.ms);
-      if (r.d && r.d.cliente) cli[r.d.cliente] = (cli[r.d.cliente] || 0) + 1;
-      if (r.status === 200 && r.d && r.d.firma === 'ok' && r.d.corpo && r.d.corpo.sha256 === atteso && r.d.corpo.json) { ok++; ultimo = r.d; }
-      else if (ko.length < 5) ko.push({ n: n, status: r.status, errore: r.d && (r.d.error || r.d.state) });
-      if (n % 10 === 9) aggiungi('  ' + (n + 1) + '/100');
-    }
-    var finto = await eco('POST', '?logged_in_customer_id=1', '{}');
-    var xff = await eco('POST', '?ip_finto=203.0.113.7', '{}', { 'X-Forwarded-For': '203.0.113.7', 'X-Amimi-Prova': '1' });
-    ris.s1 = {
-      ok: ok, su: 100, ko: ko, cliente: cli, tempi: riassunto(tempi),
-      negozio: ultimo && ultimo.negozio, path_prefix_atteso: ultimo && ultimo.path_prefix_atteso, eta_firma_s: ultimo && ultimo.eta_firma_s,
-      parametri: ultimo && ultimo.parametri, header: ultimo && ultimo.header,
-      id_aggiunto: { status: finto.status, errore: finto.d && finto.d.error, cliente: finto.d && finto.d.cliente, parametri: finto.d && finto.d.parametri },
-      xff_finto: { status: xff.status, header: xff.d && xff.d.header }
-    };
-    aggiungi(JSON.stringify(ris.s1, null, 1));
+  let f: Flag;
+  try { f = await leggiFlag(amb); } catch { problemi.push({ sev: 'error', causa: 'flag non letti' }); return rifiuto('non_disponibile'); }
+  if (!f.attiva) return rifiuto('spenta');
+  const v = await verificaTurnstile(amb, ts, prova, 'chat_avvia', problemi);
+  if (v !== 'ok') return rifiuto(v === 'ko' ? 'verifica_fallita' : 'non_disponibile');
+  if ((await amb.db.contatore('glob:chat_giorno', 86400, f.limiteGiorno)) === null) {
+    problemi.push({ sev: 'warn', causa: 'tetto delle chat nuove del giorno' });
+    await eventoUnaVolta(amb, 'limite_globale', `limite:${giorno}`, null, problemi);
+    return rifiuto('limite');
   }
-  async function s2() {
-    scrivi('S2: velocita\\' (30 invii via amimi.it e 30 diretti, alternati)...');
-    await eco('POST', '?s2=caldo', '{}'); await diretta();
-    var px = [], dx = [];
-    for (var n = 0; n < 30; n++) {
-      var r = await eco('POST', '?s2=' + n, '{}'); if (r.status === 200) px.push(r.ms);
-      var d = await diretta(); if (d !== null) dx.push(d);
-      if (n % 10 === 9) aggiungi('  ' + (n + 1) + '/30');
-    }
-    var a = riassunto(px), b = riassunto(dx);
-    var diff = a.p95 !== null && b.p95 !== null ? a.p95 - b.p95 : null;
-    ris.s2 = { rete: rete(), proxy: a, diretta: b, differenza_p95_ms: diff, soglia_ms: 1000, verdetto: diff === null ? 'NON MISURATO' : diff <= 1000 ? 'PASSA' : 'NON PASSA' };
-    aggiungi(JSON.stringify(ris.s2, null, 1));
-  }
-  async function s3() {
-    scrivi('S3: cache...');
-    var a = await eco('GET', '?s3=cache'), b = await eco('GET', '?s3=cache');
-    ris.s3 = { cache: { stessa_risposta: !!(a.d && b.d && a.d.ora_server_ms === b.d.ora_server_ms), status: [a.status, b.status], cache_control: [a.cc, b.cc], age: [a.age, b.age] }, attese: [] };
-    aggiungi(JSON.stringify(ris.s3.cache));
-    var lista = [10, 30, 60, 120];
-    for (var j = 0; j < lista.length; j++) {
-      aggiungi('  attesa ' + lista[j] + ' s...');
-      var r = await eco('GET', '?attesa=' + lista[j]);
-      var e = { attesa_s: lista[j], status: r.status, ms: Math.round(r.ms), risposta_della_edge: !!(r.d && r.d.attesa_s === lista[j]) };
-      ris.s3.attese.push(e); aggiungi('  ' + JSON.stringify(e));
+  const ora = iso(amb.ora);
+  let s = await amb.db.creaSessione({ stato: 'bot', customer_email: email, customer_name: nome, lingua, informativa_versione: d.informativa,
+    informativa_at: ora, shopify_customer_id: cliente || null, prova, ultima_attivita_at: ora, created_at: ora, updated_at: ora });
+  const token = await emettiToken(amb, s);
+  try { await amb.db.evento({ sessione_id: s.id, tipo: 'avvia', chiave: null, esito: null, dettaglio: { prova, lingua, loggata: cliente !== '' } }); }
+  catch { problemi.push({ sev: 'warn', causa: 'evento non registrato' }); }
+  let messaggi: Messaggio[] = [];
+  let testoSalvato: boolean | null = null;
+  if (testo !== null && clientId !== null) {
+    // la sessione c'e' gia': se il primo messaggio non passa la cliente ha comunque il suo token e lo rimanda con `invia`
+    try {
+      if ((await amb.db.contatore(`sess:${s.id}:msg`, 0, MESSAGGI_PER_CHAT)) === null) throw new ErroreDb('tetto dei messaggi al primo messaggio');
+      const r = await testoLibero(amb, f, s, clientId, testo);
+      s = r.sessione;
+      messaggi = r.messaggi;
+      testoSalvato = true;
+    } catch (x) {
+      problemi.push({ sev: 'error', causa: x instanceof ErroreDb ? x.causa : 'primo messaggio non salvato' });
+      testoSalvato = false;
     }
   }
-  async function s4() {
-    scrivi('S4: un invio ogni 3 secondi per 10 minuti...');
-    var fine = Date.now() + 600000, c = { invii: 0, ok: 0, s429: 0, rete_assente: 0, altri: {} }, tempi = [];
-    while (Date.now() < fine) {
-      var t = Date.now();
-      var r = await eco('POST', '?s4=1', '{}');
-      c.invii++; tempi.push(r.ms);
-      if (r.status === 200) c.ok++; else if (r.status === 429) c.s429++; else if (r.status === 0) c.rete_assente++; else c.altri[r.status] = (c.altri[r.status] || 0) + 1;
-      if (c.invii % 20 === 0) aggiungi('  ' + c.invii + ' invii, ok ' + c.ok + ', 429 ' + c.s429 + ', minuti rimasti ' + Math.ceil((fine - Date.now()) / 60000));
-      var resto = 3000 - (Date.now() - t); if (resto > 0) await pausa(resto);
-    }
-    c.tempi = riassunto(tempi); c.rete = rete(); ris.s4 = c;
-    aggiungi(JSON.stringify(ris.s4, null, 1));
-  }
-  document.getElementById('b-s1').addEventListener('click', function () { esegui('S1', s1); });
-  document.getElementById('b-s2').addEventListener('click', function () { esegui('S2', s2); });
-  document.getElementById('b-s3').addEventListener('click', function () { esegui('S3', s3); });
-  var widgetId = null;
-  function caricaTurnstile() {
-    return new Promise(function (ok, ko) {
-      if (window.turnstile) { ok(window.turnstile); return; }
-      var s = document.createElement('script');
-      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-      s.async = true;
-      s.onload = function () { ok(window.turnstile); };
-      s.onerror = function () { ko(new Error('script di Turnstile non caricato')); };
-      document.head.appendChild(s);
-    });
-  }
-  async function s6() {
-    var chiave = new URLSearchParams(location.search).get('sitekey') || '';
-    if (!/^[0-9A-Za-z_-]{10,64}$/.test(chiave)) { scrivi('S6: serve la sitekey nella barra degli indirizzi (?sitekey=...).'); return; }
-    scrivi('S6: carico Turnstile...');
-    var tsApi = await caricaTurnstile();
-    if (widgetId !== null) { tsApi.remove(widgetId); widgetId = null; }
-    var token = await new Promise(function (ok, ko) {
-      var timer = setTimeout(function () { ko(new Error('nessun token entro 60 s')); }, 60000);
-      function fine(f, v) { clearTimeout(timer); f(v); }
-      widgetId = tsApi.render('#ts', { sitekey: chiave,
-        callback: function (t) { fine(ok, t); },
-        'error-callback': function (c) { fine(ko, new Error('errore di Turnstile ' + c)); },
-        'expired-callback': function () { fine(ko, new Error('token di Turnstile scaduto')); },
-        'timeout-callback': function () { fine(ko, new Error('sfida di Turnstile scaduta')); } });
-    });
-    aggiungi('  token ricevuto, verifico...');
-    var t = adesso();
-    var r = await fetch(BASE + '/turnstile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: token }), cache: 'no-store', credentials: 'same-origin' })
-      .then(function (x) { return x.json().then(function (d) { return { status: x.status, d: d }; }, function () { return { status: x.status, d: null }; }); },
-        function () { return { status: 0, d: null }; });
-    ris.s6 = { host_pagina: location.host, status: r.status, success: r.d && r.d.success, hostname: r.d && r.d.hostname,
-      hostname_uguale: !!(r.d && r.d.hostname === location.host), errori: r.d && (r.d.error_codes || r.d.error || r.d.state), eta_sfida_s: r.d && r.d.eta_sfida_s, ms: Math.round(adesso() - t) };
-    aggiungi(JSON.stringify(ris.s6, null, 1));
-  }
-  document.getElementById('b-s4').addEventListener('click', function () { esegui('S4', s4); });
-  document.getElementById('b-s6').addEventListener('click', function () { esegui('S6', s6); });
-  document.getElementById('b-copia').addEventListener('click', function () {
-    var t = JSON.stringify(ris, null, 1);
-    if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { aggiungi('\\nCopiati negli appunti.'); }, function () { scrivi(t); });
-    else scrivi(t);
-  });
-})();
-</script>
-</body></html>
-`;
-// ==== PURE:chat-eco END ====
+  return json({ ok: true, token, stato: s.stato, email: mascheraEmail(email), messaggi: messaggi.map(pubblico),
+    ...(testoSalvato === null ? {} : { testo_salvato: testoSalvato }) });
+}
 
-// L'unica chiamata fuori della edge: siteverify di Turnstile (S6), con 10 s di tetto. Il secret va nel corpo, mai nell'URL.
+async function azioneInvia(d: Record<string, unknown>, amb: Ambiente, problemi: Problema[]): Promise<Response> {
+  const e = schema(d, ['token', 'client_id', 'testo', 'bottone'], ['token', 'client_id']);
+  if (e) return e;
+  const token = tokenValido(d.token);
+  if (!token) return campo('token');
+  const clientId = uuidValido(d.client_id);
+  if (!clientId) return campo('client_id');
+  const haTesto = d.testo !== undefined && d.testo !== null;
+  const haBottone = d.bottone !== undefined && d.bottone !== null;
+  if (haTesto === haBottone) return campo(haTesto ? 'bottone' : 'testo');
+  const testo = haTesto ? testoPulito(d.testo) : null;
+  if (testo === false) return campo('testo');
+  if (haBottone && (typeof d.bottone !== 'string' || !/^[a-z0-9_]{1,30}$/.test(d.bottone))) return campo('bottone');
+
+  let f: Flag;
+  try { f = await leggiFlag(amb); } catch { problemi.push({ sev: 'error', causa: 'flag non letti' }); return rifiuto('non_disponibile'); }
+  if (!f.attiva) return rifiuto('spenta');
+  const s = await tokenChat(amb, token);
+  if (s instanceof Response) return s;
+  if (s.stato === 'chiusa') return rifiuto('chiusa', {}, 409);
+  const veloce = await limiteVeloce(amb, s);
+  if (veloce) return veloce;
+
+  if (testo !== null) {
+    const tetto = await limiteMessaggi(amb, s, problemi);
+    if (tetto) return tetto;
+    const r = await testoLibero(amb, f, s, clientId, testo);
+    return json({ ok: true, stato: r.sessione.stato, messaggi: r.messaggi.map(pubblico) });
+  }
+  // bottone: risposta fissa dalla riga di cs_faq che il bottone indica; lo stato non cambia (7.5)
+  const b = f.bottoni.find((x) => x.id === d.bottone);
+  if (!b || b.faq === null) return rifiuto('bottone_non_disponibile');
+  const faq = await amb.db.faq(b.faq);
+  const risposta = faq && faq.attiva ? ((s.lingua === 'en' ? faq.testo_en : null) || faq.testo_it) : null;
+  if (typeof risposta !== 'string' || !risposta.trim()) return rifiuto('bottone_non_disponibile');
+  const tetto = await limiteMessaggi(amb, s, problemi);
+  if (tetto) return tetto;
+  const ins = await amb.db.inserisciMessaggi([
+    { sessione_id: s.id, autore: 'cliente', testo: s.lingua === 'en' ? b.en : b.it, client_msg_id: clientId, fonte: `bottone:${b.id}` },
+    { sessione_id: s.id, autore: 'automatica', testo: [...risposta.trim()].slice(0, TESTO_DB_MAX).join(''), client_msg_id: await uuidDa(`${clientId}:risposta`), fonte: `faq:${b.faq}` },
+  ]);
+  const sess = await toccaSessione(amb, s, true);
+  return json({ ok: true, stato: sess.stato, messaggi: ordinati(ins).map(pubblico) });
+}
+
+async function azionePassaggio(d: Record<string, unknown>, amb: Ambiente, problemi: Problema[]): Promise<Response> {
+  const e = schema(d, ['token'], ['token']);
+  if (e) return e;
+  const token = tokenValido(d.token);
+  if (!token) return campo('token');
+  let f: Flag;
+  try { f = await leggiFlag(amb); } catch { problemi.push({ sev: 'error', causa: 'flag non letti' }); return rifiuto('non_disponibile'); }
+  if (!f.attiva) return rifiuto('spenta');
+  const s = await tokenChat(amb, token);
+  if (s instanceof Response) return s;
+  if (s.stato === 'chiusa') return rifiuto('chiusa', {}, 409);
+  const veloce = await limiteVeloce(amb, s);
+  if (veloce) return veloce;
+  if (s.stato === 'aperta') {
+    const sess = await toccaSessione(amb, s, false);
+    return json({ ok: true, stato: sess.stato, email: mascheraEmail(s.customer_email), messaggi: [] });
+  }
+  // bot: passaggio nuovo; attesa_persona: ripetizione, gli effetti sono idempotenti (nessuna push in piu')
+  const sess = s.stato === 'bot' ? await aPersona(amb, s, false) : await toccaSessione(amb, s, false);
+  const messaggi = sess.stato === 'attesa_persona' ? await effettiPassaggio(amb, f, sess) : [];
+  return json({ ok: true, stato: sess.stato, email: mascheraEmail(sess.customer_email), messaggi: ordinati(messaggi).map(pubblico) });
+}
+
+async function azioneAggiorna(d: Record<string, unknown>, amb: Ambiente, problemi: Problema[]): Promise<Response> {
+  const e = schema(d, ['token', 'dopo', 'vista'], ['token', 'dopo']);
+  if (e) return e;
+  const token = tokenValido(d.token);
+  if (!token) return campo('token');
+  if (!Number.isSafeInteger(d.dopo) || (d.dopo as number) < 0) return campo('dopo');
+  if (d.vista !== undefined && d.vista !== null && typeof d.vista !== 'boolean') return campo('vista');
+  // a chat spenta aggiorna continua sulle chat aperte (5.8): nessun flag qui
+  const s = await tokenChat(amb, token);
+  if (s instanceof Response) return s;
+  if ((await amb.db.contatore(`sess:${s.id}:agg10s`, 10, 10)) === null) return rifiuto('troppo_veloce', { retry_after_s: attesaFinestra(amb, 10) }, 429);
+  const righe = await amb.db.messaggiDopo(s.id, d.dopo as number, AGGIORNA_LIMITE + 1);
+  const messaggi = ordinati(righe).slice(0, AGGIORNA_LIMITE);
+  if (d.vista === true) {
+    const viste = messaggi.filter((m) => m.autore === 'staff' && m.delivered_at === null).map((m) => m.id);
+    if (viste.length) {
+      try { await amb.db.segnaViste(viste, iso(amb.ora)); } catch { problemi.push({ sev: 'warn', causa: 'vista in chat non scritta' }); }
+    }
+  }
+  return json({ ok: true, stato: s.stato, messaggi: messaggi.map(pubblico), altri: righe.length > AGGIORNA_LIMITE });
+}
+
+async function azioneRiprendi(d: Record<string, unknown>, amb: Ambiente, problemi: Problema[]): Promise<Response> {
+  const e = schema(d, ['token_ripresa', 'turnstile', 'prova'], ['token_ripresa', 'turnstile']);
+  if (e) return e;
+  const tr = tokenValido(d.token_ripresa);
+  if (!tr) return campo('token_ripresa');
+  const ts = turnstileValido(d.turnstile);
+  if (!ts) return campo('turnstile');
+  const prova = d.prova === undefined || d.prova === null ? false : d.prova;
+  if (typeof prova !== 'boolean') return campo('prova');
+  let f: Flag;
+  try { f = await leggiFlag(amb); } catch { problemi.push({ sev: 'error', causa: 'flag non letti' }); return rifiuto('non_disponibile'); }
+  if (!f.attiva) return rifiuto('spenta');
+  // Turnstile prima del token: senza una sfida risolta nessuno puo' provare token di ripresa
+  const v = await verificaTurnstile(amb, ts, prova, 'chat_riprendi', problemi);
+  if (v !== 'ok') return rifiuto(v === 'ko' ? 'verifica_fallita' : 'non_disponibile');
+  const r = await amb.db.token(await sha256hex(tr), 'ripresa');
+  if (!r || !r.sessione || r.revocato_at !== null || !(Date.parse(r.scade_at) > amb.ora) || r.sessione.prova !== prova) return rifiuto('token_non_valido');
+  const s0 = r.sessione;
+  if ((await amb.db.contatore(`sess:${s0.id}:riprendi`, 3600, RIPRESE_ORA)) === null) return rifiuto('troppo_veloce', { retry_after_s: 3600 }, 429);
+  const ora = iso(amb.ora);
+  const token = await emettiToken(amb, s0);
+  try {
+    const attivi = await amb.db.tokenAttivi(s0.id, ora);
+    if (attivi.length > TOKEN_CHAT_ATTIVI) await amb.db.revocaToken(attivi.slice(TOKEN_CHAT_ATTIVI).map((x) => x.id), ora);
+    await amb.db.usaToken(r.id, ora);
+  } catch { problemi.push({ sev: 'warn', causa: 'token vecchi non revocati' }); }
+  const s = await toccaSessione(amb, s0, false);
+  return json({ ok: true, token, stato: s.stato, email: mascheraEmail(s.customer_email) });
+}
+
+async function azioneErrore(d: Record<string, unknown>, amb: Ambiente, giorno: string, problemi: Problema[]): Promise<Response> {
+  const e = schema(d, ['codice', 'versione', 'pagina'], ['codice', 'versione', 'pagina']);
+  if (e) return e;
+  if (typeof d.codice !== 'string' || !/^[a-z0-9_]{1,40}$/.test(d.codice)) return campo('codice');
+  if (typeof d.versione !== 'string' || !/^[0-9a-z._-]{1,20}$/.test(d.versione)) return campo('versione');
+  if (typeof d.pagina !== 'string' || !PAGINE.includes(d.pagina)) return campo('pagina');
+  if ((await amb.db.contatore('glob:errore', 86400, ERRORI_GIORNO)) === null) {
+    await eventoUnaVolta(amb, 'tetto_beacon', `beacon:${giorno}`, null, problemi);
+    return json({ ok: true, contato: false });
+  }
+  await amb.db.evento({ sessione_id: null, tipo: 'errore_widget', chiave: null, esito: null, dettaglio: { codice: d.codice, versione: d.versione, pagina: d.pagina } });
+  return json({ ok: true, contato: true });
+}
+
+async function gestisci(req: Request, amb: Ambiente): Promise<Response> {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: HEADER_BASE });
+  const url = new URL(req.url);
+  const azione = azioneDi(url.pathname);
+  const eco = amb.eco !== null && ROTTE_ECO.includes(azione);
+  if (!eco && !Object.hasOwn(METODO, azione)) return json({ ok: false, error: 'not_found' }, 404);
+  if (!eco && req.method !== METODO[azione]) return json({ ok: false, error: 'method_not_allowed' }, 405);
+  const giorno = giornoUtc(amb.ora);
+  // ogni richiesta instradata conta, anche rifiutata, eco compresa (5.8, D-12): in parallelo, mai bloccante
+  const conto = amb.db.contatore('glob:richieste', 86400, RICHIESTE_TETTO);
+  conto.catch(() => null);
+  const problemi: Problema[] = [];
+  let r: Response;
+  try {
+    if (eco && amb.eco) {
+      r = await amb.eco(req);
+      amb.sfondo(chiudiSalute(amb, giorno, conto, problemi).catch(() => undefined));
+      return r;
+    }
+    const firma = await controllaFirma(url.searchParams, amb.segreti.proxy, amb.ora);
+    if (firma instanceof Response) r = firma;
+    else if (azione === 'config') r = await azioneConfig(amb, problemi);
+    else {
+      const d = await leggiJson(req);
+      if (d instanceof Response) r = d;
+      else if (azione === 'avvia') r = await azioneAvvia(d, amb, firma, giorno, problemi);
+      else if (azione === 'invia') r = await azioneInvia(d, amb, problemi);
+      else if (azione === 'passaggio') r = await azionePassaggio(d, amb, problemi);
+      else if (azione === 'aggiorna') r = await azioneAggiorna(d, amb, problemi);
+      else if (azione === 'riprendi') r = await azioneRiprendi(d, amb, problemi);
+      else r = await azioneErrore(d, amb, giorno, problemi);
+    }
+  } catch (x) {
+    // DB, contatori o eccezioni: fallire chiusi con un 200 che il widget sa ripetere (mai 5xx, che il proxy fa HTML)
+    problemi.push({ sev: 'error', causa: x instanceof ErroreDb ? x.causa : 'eccezione' });
+    r = rifiuto('riprova');
+  }
+  amb.sfondo(chiudiSalute(amb, giorno, conto, problemi).catch(() => undefined));
+  return r;
+}
+// ==== PURE:chat-api END ====
+
+// ---- adattatore Supabase (service role). Letture con un ritentativo, scritture mai (Regola 20d). Log: causa e codice. ----
+const retryOnce = async <T extends { error: unknown }>(fn: () => PromiseLike<T>): Promise<T> => {
+  const r = await fn();
+  if (!r.error) return r;
+  await new Promise((ok) => setTimeout(ok, 300));
+  return await fn();
+};
+const codice = (e: unknown): string => {
+  const c = (e as { code?: unknown } | null)?.code;
+  return typeof c === 'string' && /^[A-Z0-9]{1,10}$/.test(c) ? c : '?';
+};
+const fallito = (causa: string, e: unknown): ErroreDb => {
+  console.error('chat-api: ' + causa, codice(e));
+  return new ErroreDb(causa);
+};
+const COL_SESSIONE = 'id, stato, passaggi, passaggio_at, customer_email, customer_name, lingua, prova, ultima_attivita_at, chiusa_at';
+const COL_MESSAGGIO = 'id, seq, autore, testo, created_at, email_stato, delivered_at';
+
+function dbSupabase(sb: SupabaseClient): Db {
+  return {
+    async flag(chiavi) {
+      const { data, error } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', chiavi).limit(chiavi.length));
+      if (error) throw fallito('flag non letti', error);
+      const out: Record<string, string> = {};
+      for (const r of (data ?? []) as { key: string; value: unknown }[]) if (chiavi.includes(r.key) && typeof r.value === 'string') out[r.key] = r.value;
+      return out;
+    },
+    async contatore(chiave, finestraS, tetto) {
+      const { data, error } = await sb.rpc('chat_contatore_incrementa', { p_chiave: chiave, p_finestra_secondi: finestraS, p_tetto: tetto });
+      if (error) throw fallito('contatore non scritto', error);
+      return typeof data === 'number' ? data : null;
+    },
+    async token(hash, tipo) {
+      const { data, error } = await retryOnce(() => sb.from('chat_token').select(`id, tipo, scade_at, revocato_at, sessione:chat_sessioni(${COL_SESSIONE})`)
+        .eq('hash', hash).eq('tipo', tipo).limit(1));
+      if (error) throw fallito('token non letto', error);
+      return ((data ?? [])[0] as unknown as TokenRiga | undefined) ?? null;
+    },
+    async creaSessione(r) {
+      const { data, error } = await sb.from('chat_sessioni').insert(r).select(COL_SESSIONE).single();
+      if (error || !data) throw fallito('sessione non creata', error);
+      return data as Sessione;
+    },
+    async creaToken(r) {
+      const { error } = await sb.from('chat_token').insert(r);
+      if (error) throw fallito('token non salvato', error);
+    },
+    async tokenAttivi(sessioneId, oraIso) {
+      const { data, error } = await retryOnce(() => sb.from('chat_token').select('id').eq('sessione_id', sessioneId).eq('tipo', 'chat')
+        .is('revocato_at', null).gt('scade_at', oraIso).order('created_at', { ascending: false }).limit(50));
+      if (error) throw fallito('token attivi non letti', error);
+      return (data ?? []) as { id: string }[];
+    },
+    async revocaToken(ids, oraIso) {
+      const { error } = await sb.from('chat_token').update({ revocato_at: oraIso }).in('id', ids).is('revocato_at', null);
+      if (error) throw fallito('token non revocati', error);
+    },
+    async usaToken(id, oraIso) {
+      const { error } = await sb.from('chat_token').update({ usato_at: oraIso }).eq('id', id);
+      if (error) throw fallito('uso del token non scritto', error);
+    },
+    async aggiornaSessione(id, patch, se) {
+      let q = sb.from('chat_sessioni').update(patch).eq('id', id);
+      if (se.stato !== undefined) q = q.eq('stato', se.stato);
+      if (se.passaggi !== undefined) q = q.eq('passaggi', se.passaggi);
+      const { data, error } = await q.select(COL_SESSIONE);
+      if (error) throw fallito('sessione non aggiornata', error);
+      return ((data ?? [])[0] as Sessione | undefined) ?? null;
+    },
+    async sessione(id) {
+      const { data, error } = await retryOnce(() => sb.from('chat_sessioni').select(COL_SESSIONE).eq('id', id).limit(1));
+      if (error) throw fallito('sessione non letta', error);
+      return ((data ?? [])[0] as Sessione | undefined) ?? null;
+    },
+    async inserisciMessaggi(righe) {
+      const { data, error } = await sb.from('chat_messaggi').upsert(righe, { onConflict: 'sessione_id,client_msg_id', ignoreDuplicates: true }).select(COL_MESSAGGIO);
+      if (error) throw fallito('messaggio non salvato', error);
+      return (data ?? []) as Messaggio[];
+    },
+    async messaggiDopo(sessioneId, dopo, limite) {
+      const { data, error } = await retryOnce(() => sb.from('chat_messaggi').select(COL_MESSAGGIO).eq('sessione_id', sessioneId).gt('seq', dopo)
+        .order('seq', { ascending: true }).limit(limite));
+      if (error) throw fallito('messaggi non letti', error);
+      return (data ?? []) as Messaggio[];
+    },
+    async segnaViste(ids, oraIso) {
+      const { error } = await sb.from('chat_messaggi').update({ delivered_at: oraIso }).in('id', ids).eq('autore', 'staff').is('delivered_at', null);
+      if (error) throw fallito('vista in chat non scritta', error);
+    },
+    async evento(r) {
+      if (r.chiave === null) {
+        const { error } = await sb.from('chat_eventi').insert(r);
+        if (error) throw fallito('evento non scritto', error);
+        return true;
+      }
+      const { data, error } = await sb.from('chat_eventi').upsert(r, { onConflict: 'chiave', ignoreDuplicates: true }).select('id');
+      if (error) throw fallito('evento non scritto', error);
+      return (data ?? []).length > 0;
+    },
+    async esitoEvento(chiave, esito, dettaglio) {
+      const { error } = await sb.from('chat_eventi').update({ esito, dettaglio }).eq('chiave', chiave);
+      if (error) throw fallito('esito della push non scritto', error);
+    },
+    async faq(id) {
+      const { data, error } = await retryOnce(() => sb.from('cs_faq').select('testo_it, testo_en, attiva').eq('id', id).in('tipo', ['faq', 'risposta_standard']).limit(1));
+      if (error) throw fallito('risposta fissa non letta', error);
+      return ((data ?? [])[0] as { testo_it: string | null; testo_en: string | null; attiva: boolean } | undefined) ?? null;
+    },
+    // la gravita' del giorno dai contatori glob:sev_* (sopravvivono al refresh delle 06:00); lettura fallita = si scrive
+    // comunque con la gravita' di questa richiesta, mai si salta un errore
+    async salute(giorno, n, severity, causa) {
+      const finestra = `${giorno}T00:00:00Z`;
+      const { data, error } = await retryOnce(() => sb.from('chat_contatori').select('chiave, n').in('chiave', ['glob:sev_error', 'glob:sev_warn']).eq('finestra', finestra).limit(2));
+      if (error) console.error('chat-api: gravita del giorno non letta', codice(error));
+      let errori = 0;
+      let avvisi = 0;
+      for (const r of (data ?? []) as { chiave: string; n: number }[]) {
+        if (r.chiave === 'glob:sev_error') errori = r.n;
+        if (r.chiave === 'glob:sev_warn') avvisi = r.n;
+      }
+      const delGiorno = errori > 0 ? 'error' : avvisi > 0 ? 'warn' : 'ok';
+      const sev = GRAVITA[delGiorno] >= GRAVITA[severity] ? delGiorno : severity;
+      const label = `chat-api ${VERSIONE}: ${n} richieste oggi, ${errori} con errore, ${avvisi} con avviso` + (causa ? ` | ${causa}` : '') + (error ? ' | gravita del giorno non letta' : '');
+      const { error: e2 } = await sb.from('health_log').upsert({ day: giorno, k: 'chat_api', label, n, severity: sev, created_at: new Date().toISOString() }, { onConflict: 'day,k' });
+      if (e2) throw fallito('health_log non scritto', e2);
+    },
+  };
+}
+
+// L'unica chiamata fuori della edge oltre a push-api: siteverify di Turnstile, 10 s di tetto, secret nel corpo.
+const SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 const siteverify = async (secret: string, token: string): Promise<unknown> => {
   const r = await fetch(SITEVERIFY_URL, { method: 'POST', body: new URLSearchParams({ secret, response: token }), signal: AbortSignal.timeout(10000) });
-  if (!r.ok) throw new Error('siteverify HTTP ' + r.status);   // un 5xx di Cloudflare e' "irraggiungibile" (502), non "token rifiutato"
+  if (!r.ok) throw new Error('siteverify HTTP ' + r.status);
   return await r.json();
 };
+const env = (k: string) => (Deno.env.get(k) ?? '').trim();
+const DB = dbSupabase(createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'), { auth: { persistSession: false } }));
+// EdgeRuntime.waitUntil tiene viva l'istanza fino alla fine della push e della riga di salute (Background Tasks di Supabase)
+const sfondo = (p: Promise<unknown>) => {
+  const er = (globalThis as unknown as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+  if (er?.waitUntil) er.waitUntil(p);
+};
 
-Deno.serve((req) =>
-  gestisci(req, Date.now(), (Deno.env.get('CHAT_APP_PROXY_SECRET') ?? '').trim(), (ms) => new Promise((r) => setTimeout(r, ms)),
-    { secret: (Deno.env.get('CHAT_TURNSTILE_PROVA_SECRET') ?? '').trim(), siteverify }));
+Deno.serve((req) => gestisci(req, {
+  ora: Date.now(),
+  segreti: { proxy: env('CHAT_APP_PROXY_SECRET'), turnstile: env('CHAT_TURNSTILE_PRODUZIONE_SECRET'), turnstileProva: env('CHAT_TURNSTILE_PROVA_SECRET') },
+  db: DB,
+  siteverify,
+  push: (m) => inviaPush(m),
+  sfondo,
+  casuale: (n) => crypto.getRandomValues(new Uint8Array(n)),
+  eco: rispondiEco,
+}));
