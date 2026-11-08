@@ -762,6 +762,8 @@ P0, senza codice della chat:
 
 ### 8.3 Eventi nuovi
 
+> **Costruito l'8 novembre 2026 (pezzo 4, push-eventi v7, migr 0188 e 0189; dettaglio in `docs/EDGE_FUNCTIONS.md`, push-eventi).** Scostamenti dal testo: (1) le ore di `chat_sollecito_ore` contano a giorno intero nei soli giorni lavorativi di `chat_orari` (24 = un giorno lavorativo), e un passo dovuto fuori orario parte all'apertura dopo; (2) il nuovo tentativo della push di passaggio salta un `fallito` senza risposta di push-api (timeout: potrebbe essere arrivata) e lo dice `chat_salute`; (3) le chiavi che riguardano una chat cominciano tutte con l'id della sessione (`<s>:<n>:sollecito:1`, `<s>:<n>:passaggio`, `<s>:email:<m>`, `<s>:destinatario`), cosi' `cancella_dati` (chat-staff staff-2) e la pulizia a 12 mesi (0189) le tolgono con lei; quelle per giorno sono per giorno UTC (contatori ed eventi di chat-api lo sono), non di Roma; (4) `chat_salute` copre in Fase 1 le righe 4, 6, 7, 8, 11, 13 e 16 di 8.10, con le cause di destinatario di chat-send come guasto a parte, non urgente, una volta per chat e mai su una chat di prova; (5) in `ORDINE` `chat_salute` sta dopo i solleciti; (6) il sollecito segue il passaggio, come qui sopra: una cliente che riscrive dal widget dopo una risposta del team non ha un sollecito (Gate 2, B4: `CASI_APERTI` n.54 (k) del repo hub, col pezzo 6).
+
 | Evento | Tema | Chiave | Candidato | Destinatari | All'inizio |
 |---|---|---|---|---|---|
 | push immediata di passaggio (fuori da push-eventi, 8.4) | `assistenza` | `<sessione>:passaggio:<n>` in `chat_eventi.chiave`, n = `chat_sessioni.passaggi` | a ogni passaggio ad `attesa_persona` | chi ha `assistenza` | dietro `chat_sito_enabled` |
