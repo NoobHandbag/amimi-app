@@ -9,9 +9,9 @@
 --      prenota salta); stessa chiave su un altro evento ammessa; evento e tema inesistenti = 23503; chiave vuota,
 --      tentativi negativi, soglie non oggetto, nome evento maiuscolo, predefinito_per con un nome mostrato ('Benny') =
 --      23514; predefinito_per null = 23502; un tema usato da un evento e un evento con invii non si cancellano
---   D  i dieci eventi del contratto con push-eventi esistono, ognuno sul suo tema (attivita_team nasce nella migr 0168 del
---      21-10, i due di Premia nella 0183 del 03-11, sistema_senza_iscritti nella 0185 del 06-11: da lanciare dopo l'apply
---      di tutte)
+--   D  i tredici eventi del contratto con push-eventi esistono, ognuno sul suo tema (attivita_team nasce nella migr 0168
+--      del 21-10, i due di Premia nella 0183 del 03-11, sistema_senza_iscritti nella 0185 del 06-11, i tre della chat del
+--      sito nella 0188 dell'08-11: da lanciare dopo l'apply di tutte)
 --   S  il service_role (la edge push-eventi) legge e scrive le due tabelle e usa la sequenza dell'id
 --   U  authenticated con un JWT del team: select, insert, update e delete su push_eventi e push_eventi_inviati,
 --      nextval della sequenza, lettura e scrittura di predefinito_per = 42501 (nessuna policy: neanche il team accende
@@ -175,9 +175,10 @@ begin
   select count(*) into n from push_eventi e
     join (values ('b2b_risposta_negozio', 'negozi'), ('cs_urgente', 'assistenza'), ('cs_cliente_ha_riscritto', 'assistenza'),
                  ('spedizione_eccezione', 'spedizioni'), ('sistema_cs_sync_fermo', 'sistema'), ('riepilogo', 'riepilogo'), ('attivita_team', 'attivita'),
-                 ('premia_da_approvare', 'premia'), ('premia_salute', 'sistema'), ('sistema_senza_iscritti', 'sistema')) x(ev, tema)
+                 ('premia_da_approvare', 'premia'), ('premia_salute', 'sistema'), ('sistema_senza_iscritti', 'sistema'),
+                 ('chat_sollecito', 'assistenza'), ('chat_sollecito_scala', 'assistenza_scala'), ('chat_salute', 'sistema')) x(ev, tema)
       on x.ev = e.evento and x.tema = e.tema;
-  if n <> 10 then raise exception 'KO D: dei dieci eventi del contratto (0166, 0168, 0183 e 0185) ne tornano % sul tema giusto', n; end if;
+  if n <> 13 then raise exception 'KO D: dei tredici eventi del contratto (0166, 0168, 0183, 0185 e 0188) ne tornano % sul tema giusto', n; end if;
 
   -- S (dal catalogo: il ruolo della edge non si assume da qui)
   if not (has_table_privilege('service_role', 'public.push_eventi', 'select') and has_table_privilege('service_role', 'public.push_eventi', 'update')

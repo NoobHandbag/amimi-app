@@ -1,4 +1,4 @@
-// tests/chat_staff_send.mjs: le edge chat-staff staff-1 e chat-send send-1 (chat del sito, Fase 1 pezzo 3,
+// tests/chat_staff_send.mjs: le edge chat-staff staff-2 e chat-send send-1 (chat del sito, Fase 1 pezzo 3,
 // docs/PROPOSTA_chat_sito.md 6.5, 7.8, 7.9, 11.5 e 11.6 con D-8) ritagliate DAL SORGENTE che va in produzione (blocchi
 // PURE) e guidate in Node con Request veri, un DB finto in memoria che riproduce i vincoli della migr 0186 che contano
 // qui e un Gmail finto. chat-staff chiama il vero gestisci di chat-send con la chiave di servizio. Piu' le guardie sul
@@ -21,6 +21,7 @@ const CSSEND = read('supabase/functions/cs-send/index.ts');
 const CHATAPI = read('supabase/functions/chat-api/index.ts');
 const CONFIG = read('supabase/config.toml');
 const M0187 = read('supabase/migrations/0187_chat_invio.sql');
+const M0189 = read('supabase/migrations/0189_chat_conservazione_push.sql');
 const WF = read('.github/workflows/amimi-app-tests.yml');
 
 let ok = 0, ko = 0;
@@ -42,7 +43,7 @@ const sha = (s) => createHash('sha256').update(s).digest('hex');
 const T0 = Date.parse('2026-11-09T10:00:00Z');
 const isoT = (ms) => new Date(ms).toISOString();
 function nuovoStore() {
-  return { ora: T0, flag: 'true', pinHash: sha('x'), sess: new Map(), msg: new Map(), token: [], eventi: [], cont: new Map(), cs: new Map(), seq: 0, salute: null,
+  return { ora: T0, flag: 'true', pinHash: sha('x'), sess: new Map(), msg: new Map(), token: [], eventi: [], cont: new Map(), cs: new Map(), push: [], seq: 0, salute: null,
     utenti: { 'jwt-team': 'ginni@amimi.it', 'jwt-fuori': 'qualcuno@gmail.com' }, rotto: {} };
 }
 function sessione(st, extra = {}) {
@@ -313,6 +314,8 @@ function dbStaff(st) {
     async cancellaCs(ids) { rotto('cs'); let n = 0; for (const id of ids) if (st.cs.delete(id)) n++; for (const s of st.sess.values()) if (ids.includes(s.cs_conversation_id)) s.cs_conversation_id = null; return n; },
     async cancellaContatori(sid) { let n = 0; for (const k of [...st.cont.keys()]) if (k.startsWith(`sess:${sid}:`)) { st.cont.delete(k); n++; } return n; },
     async cancellaEventiChiave(sid) { const n = st.eventi.length; st.eventi = st.eventi.filter((e) => !(e.chiave && e.chiave.startsWith(sid + ':'))); return n - st.eventi.length; },
+    // staff-2: registro push_eventi_inviati, solo i tre eventi della chat e le chiavi della sessione
+    async cancellaPush(sid) { rotto('push'); const n = st.push.length; st.push = st.push.filter((r) => !(['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'].includes(r.evento) && r.chiave.startsWith(sid + ':'))); return n - st.push.length; },
     async cancellaSessione(id) {
       if (!st.sess.delete(id)) return 0;
       for (const [k, m] of st.msg) if (m.sessione_id === id) st.msg.delete(k);
@@ -388,6 +391,10 @@ const callStaff = async (st, g, body, bearer) => { const r = await F.gestisci(re
   evento(st, { sessione_id: sid, tipo: 'push_passaggio', chiave: `${sid}:passaggio:1`, esito: 'nessun_iscritto', dettaglio: { n: 1 } });
   st.cs.set('cs-proiezione', { id: 'cs-proiezione', gmail_thread_id: `chat:${sid}` });
   st.cs.set('cs-card', { id: 'cs-card', gmail_thread_id: 'abc123' });
+  // staff-2 (pezzo 4): registro delle push della chat con la chiave della sessione, piu' righe che devono restare
+  st.push.push({ evento: 'chat_sollecito', chiave: `${sid}:1:sollecito:1` }, { evento: 'chat_sollecito', chiave: `${sid}:passaggio:1` },
+    { evento: 'chat_sollecito_scala', chiave: `${sid}:1:sollecito:2` }, { evento: 'chat_salute', chiave: `${sid}:1:passaggio` },
+    { evento: 'chat_salute', chiave: `api:2026-11-09` }, { evento: 'chat_sollecito', chiave: `${altra}:1:sollecito:1` }, { evento: 'cs_urgente', chiave: `${sid}:urgente` });
   const a = await callStaff(st, g, { action: 'cancella_dati', sessione_id: sid, chi: 'A' });
   t('F24 senza conferma: anteprima (messaggi, proiezione, card) e nessuna cancellazione', a.j.anteprima === true && a.j.sessioni[0].messaggi === 5 && a.j.sessioni[0].proiezioni === 1 && a.j.sessioni[0].card_email === true && st.sess.has(sid) && st.cs.size === 2, a.j);
   t('F25 l\'anteprima non ripete email ne\' testi', !JSON.stringify(a.j).includes('example.com') && !JSON.stringify(a.j).includes('messaggio 0'));
@@ -399,7 +406,9 @@ const callStaff = async (st, g, body, bearer) => { const r = await F.gestisci(re
   t('F28 senza con_card_email la card email del thread resta; il resto (altra chat, contatori globali) intatto', st.cs.has('cs-card') && st.sess.has(altra) && st.cont.has(`sess:${altra}:msg`) && st.cont.has('glob:chat_giorno'));
   t('F29 nessuna riga resta con quella email in chat_; gli eventi con la chiave della sessione cancellati, gli altri senza sessione e senza @ (Gate 2, C2)', ![...st.sess.values()].some((s) => s.customer_email === 'prova-chat@example.com')
     && !st.eventi.some((e) => String(e.chiave ?? '').startsWith(sid)) && !st.eventi.some((e) => e.sessione_id === sid) && !JSON.stringify(st.eventi).includes('@') && c.j.cancellate.eventi === 1);
-  t('F30 audit cancella_dati con i soli conteggi', st.eventi.some((e) => e.tipo === 'cancella_dati' && e.esito === 'fatto' && e.sessione_id === null && e.dettaglio.sessioni === 1 && e.dettaglio.messaggi === 5 && e.dettaglio.proiezioni === 1));
+  t('F30 audit cancella_dati con i soli conteggi', st.eventi.some((e) => e.tipo === 'cancella_dati' && e.esito === 'fatto' && e.sessione_id === null && e.dettaglio.sessioni === 1 && e.dettaglio.messaggi === 5 && e.dettaglio.proiezioni === 1 && e.dettaglio.push === 4));
+  t('F30b staff-2 (11.6 punto 4): via le 4 righe del registro delle push della chat con la chiave della sessione; restano quelle di altre chat, quelle per giorno e quelle di altri eventi',
+    c.j.cancellate.push === 4 && JSON.stringify(st.push.map((r) => r.chiave).sort()) === JSON.stringify([`${altra}:1:sollecito:1`, `${sid}:urgente`, 'api:2026-11-09'].sort()), st.push);
   // per email, con la card
   const s2 = sessione(st, { customer_email: 'altra@gmail.com', gmail_thread_id: 'def456' });
   st.cs.set('cs-card2', { id: 'cs-card2', gmail_thread_id: 'def456' });
@@ -410,6 +419,9 @@ const callStaff = async (st, g, body, bearer) => { const r = await F.gestisci(re
   st.rotto.cs = true;
   const rotta = await callStaff(st, g, { action: 'cancella_dati', sessione_id: s3, conferma: true, chi: 'A' });
   t('F32 cs_ non cancellabile: 503 e la sessione resta (si puo\' ripetere)', rotta.status === 503 && st.sess.has(s3) && st.eventi.some((e) => e.tipo === 'cancella_dati' && e.esito === 'parziale'));
+  st.rotto.cs = false; st.rotto.push = true;
+  const rottaP = await callStaff(st, g, { action: 'cancella_dati', sessione_id: s3, conferma: true, chi: 'A' });
+  t('F32b staff-2: registro delle push non cancellabile: 503 e la sessione resta (si puo\' ripetere)', rottaP.status === 503 && st.sess.has(s3) && rottaP.j.causa === 'push' && rottaP.j.fatte.push === 0, rottaP.j);
 }
 
 // ---- Gate 2: B1, C5, B2 (usano anche chat-staff) ----
@@ -488,6 +500,24 @@ t('G14 0187: cron chat-send col PIN neutro e azione giro, cron della pulizia gio
 t('G15 0187: nessuna scrittura in change_log', !/insert\s+into\s+change_log/i.test(M));
 t('G16 0187: la pulizia cancella anche gli eventi con la chiave della sessione (Gate 2, C2)', /delete from chat_eventi e\s+using unnest\(v_ids\) u\(id\)\s+where e\.chiave like u\.id::text \|\| ':%'/.test(M));
 t('G17 chat-staff cancella gli eventi con la chiave della sessione', /from\('chat_eventi'\)\.delete\(\)\.like\('chiave', `\$\{sessioneId\}:%`\)/.test(STAFF));
+// staff-2 e migr 0189 (pezzo 4, 11.6 punto 4): il registro delle push della chat se ne va con la sessione, solo i tre
+// eventi della chat e solo le chiavi che cominciano con l'id della sessione
+t('G18 chat-staff staff-2 cancella il registro delle push dei soli tre eventi della chat, chiave della sessione', STAFF.includes("const EVENTI_PUSH_CHAT = ['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'];")
+  && /from\('push_eventi_inviati'\)\.delete\(\)\.in\('evento', EVENTI_PUSH_CHAT\)\.like\('chiave', `\$\{sessioneId\}:%`\)\.select\('id'\)/.test(STAFF)
+  && (STAFF.match(/from\('push_eventi_inviati'\)/g) ?? []).length === 1 && F.VERSIONE === 'staff-2');
+const M9 = M0189.replace(/--.*$/gm, '');
+const fn0187 = (M.match(/create or replace function public\.chat_conservazione\(\)[\s\S]*?\$fn\$;/) ?? [''])[0];
+const fn0189 = (M9.match(/create or replace function public\.chat_conservazione\(\)[\s\S]*?\$fn\$;/) ?? [''])[0];
+const PUSH_0189 = "    delete from push_eventi_inviati p\n     using unnest(v_ids) u(id)\n     where p.evento in ('chat_sollecito', 'chat_sollecito_scala', 'chat_salute')\n       and p.chiave like u.id::text || ':%';\n    get diagnostics v_push = row_count;\n";
+// la 0189 e' la funzione della 0187 piu' il delete del registro e il conteggio push, e nient'altro
+const tolto = fn0189.replace(PUSH_0189, '').replace('  v_push int := 0;\n', '').replace(' + v_push > 0', ' > 0')
+  .replace(", 'token', v_tok, 'push', v_push));", ", 'token', v_tok));").replace(", 'token', v_tok, 'push', v_push);", ", 'token', v_tok);");
+t('G19 0189: chat_conservazione = la 0187 piu\' il delete del registro delle push della chat (prima di cancellare la sessione) e il conteggio push', fn0187 !== '' && fn0189.includes(PUSH_0189)
+  && fn0189.indexOf(PUSH_0189) < fn0189.indexOf('delete from chat_sessioni where id = any(v_ids);') && tolto.replace(/\s+/g, ' ') === fn0187.replace(/\s+/g, ' '),
+  tolto.replace(/\s+/g, ' ').slice(0, 200));
+t('G20 0189: invoker, execute revocato, nessun cron o flag toccato, in una transazione', !/security definer/i.test(M9)
+  && /revoke all on function public\.chat_conservazione\(\) from public, anon, authenticated;/.test(M9) && !/cron\.(schedule|alter_job|unschedule)/.test(M9)
+  && !/\b(insert into|update|delete from) app_flags\b/i.test(M9) && !/insert\s+into\s+change_log/i.test(M9) && /\nbegin;\n/.test(M0189) && M0189.trimEnd().endsWith('commit;'));
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

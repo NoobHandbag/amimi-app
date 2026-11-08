@@ -20,6 +20,9 @@
 // 31-10 (v4, CASI_APERTI 53, blocco di Supabase di 14 ore): a una ripartenza dopo uno stallo si salta solo il pregresso
 // vecchio e il fresco parte (57h-57j, G2, G2b, G7, E5-E5c, A14b); G2 ed E5 dicevano la regola di prima (tutto saltato).
 // Gate 2 dello stesso giorno: riaccensione a foglio pulito (G1b) e doc del rollback e dei conteggi (D1, D2).
+// 08-11 (v7, chat del sito Fase 1 pezzo 4, migr 0188): chat_sollecito, chat_sollecito_scala e chat_salute (CH1-CH26,
+// M8): ore contate nei giorni lavorativi di chat_orari, solleciti solo in orario, nuovo tentativo della push di passaggio,
+// guasti della chat al tema sistema senza dati della cliente; letture per firma e giro col client finto.
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripTypeScriptTypes } from 'node:module';
@@ -53,7 +56,10 @@ const ESPORTA = ['APP_URL', 'LINK_ASSISTENZA', 'LINK_SALUTE', 'CHI_PERSONE', 'TE
   // 03-11 (v5): notifiche dell'Area Membri
   'LINK_RECENSIONI', 'LINK_PREMIA', 'candPremia', 'msgPremia', 'candPremiaSalute', 'msgPremiaSalute', 'contaIscritte',
   // 06-11 (v6): temi degli eventi accesi senza telefoni
-  'candSenzaIscritti', 'msgSenzaIscritti'];
+  'candSenzaIscritti', 'msgSenzaIscritti',
+  // 08-11 (v7): chat del sito
+  'orariChat', 'oreSollecito', 'ORARI_CHAT_DEFAULT', 'dovutoDopo', 'inOrarioChat', 'giornoUtc', 'PRESO_DA', 'chiaviPassaggio', 'candChatPassaggio', 'candChatSollecito',
+  'oreTesto', 'msgChatSollecito', 'candChatSalute', 'msgChatSalute'];
 // Gate 3 (18-10): il resto della edge (letture degli eventi, giro, run, salute, anteprima) ritagliato DAL SORGENTE e
 // guidato con un client finto che registra ogni chiamata. Tolti solo gli import e Deno.serve; inviaPush e sleep arrivano
 // dal test (sleep registra la pausa e non aspetta: la rilettura di cs_sync e il ritentativo restano veri, solo istantanei).
@@ -84,7 +90,9 @@ const { APP_URL, LINK_ASSISTENZA, LINK_SALUTE, CHI_PERSONE, TEMA_EVENTO, temaDi,
   sommaCassa, ordiniInRitardo, STALLO_MS, PRENOTATO_SCADUTO_MS, MAX_TENTATIVI, TETTO_INVII, serveBaseline, pianifica, statoDaEsito, esitoDaSalvare, eseguiPiano,
   contaArrivi, RITARDO_LETTURA_MAX_MS, FINESTRA_RISCRITTO_MS, EVENTI_DI_STATO, baselineDi, chiusura, saluteGiro, conPrecedente, causaSicura, SEP_PRIMO,
   statoProblema, contaProblemi, PROBLEMI_CORRIERE, candAttivita, msgGruppoAttivita, msgAttivita, PERSONA_TEAM, OP_ATTIVITA, eseguiGruppi,
-  LINK_RECENSIONI, LINK_PREMIA, candPremia, msgPremia, candPremiaSalute, msgPremiaSalute, contaIscritte, candSenzaIscritti, msgSenzaIscritti } = M;
+  LINK_RECENSIONI, LINK_PREMIA, candPremia, msgPremia, candPremiaSalute, msgPremiaSalute, contaIscritte, candSenzaIscritti, msgSenzaIscritti,
+  orariChat, oreSollecito, ORARI_CHAT_DEFAULT, dovutoDopo, inOrarioChat, giornoUtc, PRESO_DA, chiaviPassaggio, candChatPassaggio, candChatSollecito,
+  oreTesto, msgChatSollecito, candChatSalute, msgChatSalute } = M;
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra !== '' ? '  <- ' + JSON.stringify(extra).slice(0, 260) : '')); } };
@@ -112,9 +120,10 @@ console.log('== base ==');
     && APP_URL === (SHARED.match(/export const APP_URL = '([^']+)'/) ?? [])[1] && LINK_ASSISTENZA === APP_URL + '#assistenza' && LINK_SALUTE === APP_URL + '#salute');
   const chiApi = (PUSH_API.match(/const CHI_AMMESSI = (\[[^\]]+\])/) ?? [])[1];
   t('2  CHI_PERSONE = CHI_AMMESSI di push-api (Ale, Bene, Ginevra)', JSON.stringify(CHI_PERSONE) === '["Ale","Bene","Ginevra"]' && chiApi === "['Ale', 'Bene', 'Ginevra']", chiApi);
-  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo, dalla 0168 del 21-10 attivita, dalla 0183 del 03-11 premia e sistema, dalla 0185 del 06-11 sistema', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
+  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo, dalla 0168 del 21-10 attivita, dalla 0183 del 03-11 premia e sistema, dalla 0185 del 06-11 sistema, dalla 0188 dell\'08-11 assistenza, assistenza_scala e sistema', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
     cs_cliente_ha_riscritto: 'assistenza', spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
-    premia_da_approvare: 'premia', premia_salute: 'sistema', sistema_senza_iscritti: 'sistema' }));
+    premia_da_approvare: 'premia', premia_salute: 'sistema', sistema_senza_iscritti: 'sistema',
+    chat_sollecito: 'assistenza', chat_sollecito_scala: 'assistenza_scala', chat_salute: 'sistema' }));
   t('4  temaDi: la riga a DB vince se e\' una chiave valida, altrimenti il tema del codice; evento sconosciuto -> vuoto', temaDi('negozi_vip', 'b2b_risposta_negozio') === 'negozi_vip'
     && temaDi(null, 'cs_urgente') === 'assistenza' && temaDi('Assistenza!', 'cs_urgente') === 'assistenza' && temaDi(42, 'riepilogo') === 'riepilogo' && temaDi(null, 'boh') === '');
   t('5  linkNegozio: uuid -> #negozi/outreach/<id> minuscolo; altro (anche iniezioni) -> la pipeline', linkNegozio(U1.toUpperCase()) === APP_URL + '#negozi/outreach/' + U1
@@ -567,7 +576,7 @@ const reg = (k, stato, tentativi = 1, minFa = 0) => ({ id: 'id-' + k, chiave: k,
     && bd({ evento: 'cs_urgente', baseline_at: iso2(600), ultimo_giro_at: iso2(180) }) === '{"seme":true,"baseline":true,"ripartenza":true}'
     && bd({ evento: 'cs_urgente', baseline_at: iso2(600), ultimo_giro_at: iso2(5) }) === '{"seme":false,"baseline":false,"ripartenza":false}');
   t('57c RF-4: l\'evento di STATO (cs-sync fermo) semina baseline_at ma non salta il pregresso, ne\' alla prima accensione ne\' alla ripartenza',
-    isDeepStrictEqual(EVENTI_DI_STATO, ['sistema_cs_sync_fermo', 'premia_salute', 'sistema_senza_iscritti']) && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: null, ultimo_giro_at: null }) === '{"seme":true,"baseline":false,"ripartenza":false}'
+    isDeepStrictEqual(EVENTI_DI_STATO, ['sistema_cs_sync_fermo', 'premia_salute', 'sistema_senza_iscritti', 'chat_salute']) && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: null, ultimo_giro_at: null }) === '{"seme":true,"baseline":false,"ripartenza":false}'
     && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: iso2(600), ultimo_giro_at: iso2(180) }) === '{"seme":true,"baseline":false,"ripartenza":false}');
   const stallo = pianifica([c('a', ORA - H)], new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'stallo' });
   const altro = pianifica([c('a', ORA - H)], new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'boh' });
@@ -1014,6 +1023,234 @@ try {
     r1.inviati === 4 && primo.length === 4 && primo.every((m) => m.tema === 'sistema' && m.url === LINK_SALUTE && m.urgente === false && !('chi' in m))
     && isDeepStrictEqual([...wr.reg.keys()].sort(), ['assistenza', 'negozi', 'premia', 'spedizioni'].map((k) => `iscritti:${k}:${DATA_I}`)) && r2.inviati === 0 && inviate.length === 0, { r1: r1.eventi, r2: r2.eventi });
 } catch (e) { t('SI! eccezione nella sezione', false, String(e?.stack ?? e)); }
+
+console.log('\n== chat del sito (08-11, v7: chat_sollecito, chat_sollecito_scala, chat_salute) ==');
+try {
+  // lunedi' 9 novembre 2026, 10:00 di Roma (CET, UTC+1)
+  const ORA_C = T('2026-11-09T09:00:00Z'), MIN = 60000;
+  const isoC = (ms) => new Date(ms).toISOString();
+  const ID = (c) => `c0000000-0000-4000-8000-00000000000${c}`;
+  const OR = ORARI_CHAT_DEFAULT;
+  // orari e ore dai flag
+  t('CH1 orariChat: il JSON della 0186 letto; illeggibile, senza giorni, dalle >= alle, ora o fuso storti -> il default (lun-ven 9-18 di Roma)',
+    isDeepStrictEqual(orariChat('{"tz": "Europe/Rome", "alle": "18:00", "dalle": "09:00", "giorni": [1, 2, 3, 4, 5], "chiusure": []}'), OR)
+    && isDeepStrictEqual(orariChat('{"tz":"Europe/Rome","giorni":[1,1,6,9,"2"],"dalle":"10:30","alle":"12:00","chiusure":["2026-12-25","x"]}'), { tz: 'Europe/Rome', giorni: [1, 6], dalle: '10:30', alle: '12:00', chiusure: ['2026-12-25'] })
+    && [null, '', 'x', '[]', '{"tz":"Europe/Rome","giorni":[],"dalle":"09:00","alle":"18:00"}', '{"tz":"Europe/Rome","giorni":[1],"dalle":"18:00","alle":"09:00"}',
+      '{"tz":"Europe/Rome","giorni":[1],"dalle":"9:00","alle":"18:00"}', '{"tz":"Europe/Romaa","giorni":[1],"dalle":"09:00","alle":"18:00"}', '{"tz":"Roma","giorni":[1],"dalle":"09:00","alle":"18:00"}']
+      .every((v) => orariChat(v) === OR));
+  t('CH2 oreSollecito: "24,48" e un valore di prova basso letti; ordine sbagliato, un numero solo, tre, zero, oltre 240 o testo -> 24,48',
+    isDeepStrictEqual(oreSollecito('24,48'), [24, 48]) && isDeepStrictEqual(oreSollecito(' 0.05 , 0.1 '), [0.05, 0.1]) && isDeepStrictEqual(oreSollecito('1,2'), [1, 2])
+    && ['48,24', '24', '24,48,72', '0,48', '0.04,1', '24,241', 'a,b', '', null, 24, '24,24', '-1,2', '1e1,20'].every((v) => isDeepStrictEqual(oreSollecito(v), [24, 48])));
+  // ore contate nei giorni lavorativi, a giorno intero (D-8)
+  const dov = (da, ore, o = OR) => { const x = dovutoDopo(T(da), ore, o); return x === null ? null : isoC(x); };
+  t('CH3 dovutoDopo: lunedi\' 10:00 di Roma + 24 ore = martedi\' 10:00, + 48 = mercoledi\' 10:00; venerdi\' 17:00 + 24 = lunedi\' 17:00 (sabato e domenica non contano)',
+    dov('2026-11-09T09:00:00Z', 24) === '2026-11-10T09:00:00.000Z' && dov('2026-11-09T09:00:00Z', 48) === '2026-11-11T09:00:00.000Z'
+    && dov('2026-11-13T16:00:00Z', 24) === '2026-11-16T16:00:00.000Z' && dov('2026-11-13T16:00:00Z', 48) === '2026-11-17T16:00:00.000Z',
+    [dov('2026-11-09T09:00:00Z', 24), dov('2026-11-13T16:00:00Z', 24)]);
+  t('CH4 dovutoDopo: un passaggio di sabato comincia lunedi\' a mezzanotte di Roma; una chiusura salta il giorno; 3 minuti di prova in un giorno lavorativo',
+    dov('2026-11-14T09:00:00Z', 24) === '2026-11-16T23:00:00.000Z' && dov('2026-11-13T16:00:00Z', 24, { ...OR, chiusure: ['2026-11-16'] }) === '2026-11-17T16:00:00.000Z'
+    && dov('2026-11-09T09:00:00Z', 0.05) === '2026-11-09T09:03:00.000Z' && dovutoDopo(NaN, 24, OR) === null && dovutoDopo(T('2026-11-09T09:00:00Z'), 0, OR) === null,
+    [dov('2026-11-14T09:00:00Z', 24)]);
+  t('CH5 dovutoDopo al cambio d\'ora: venerdi\' 23-10 12:00 (CEST) + 24 = lunedi\' 26-10 12:00 (CET), cioe\' 11:00 UTC; un giorno lavorativo di 25 ore conta 25 ore',
+    dov('2026-10-23T10:00:00Z', 24) === '2026-10-26T11:00:00.000Z' && dov('2026-10-24T22:00:00Z', 25, { ...OR, giorni: [7] }) === '2026-10-25T23:00:00.000Z',
+    [dov('2026-10-23T10:00:00Z', 24), dov('2026-10-24T22:00:00Z', 25, { ...OR, giorni: [7] })]);
+  t('CH6 inOrarioChat: lunedi\' 08:59 no, 09:00 si\', 17:59 si\', 18:00 no; sabato no; giorno di chiusura no; giornoUtc',
+    !inOrarioChat(T('2026-11-09T07:59:00Z'), OR) && inOrarioChat(T('2026-11-09T08:00:00Z'), OR) && inOrarioChat(T('2026-11-09T16:59:00Z'), OR) && !inOrarioChat(T('2026-11-09T17:00:00Z'), OR)
+    && !inOrarioChat(T('2026-11-14T10:00:00Z'), OR) && !inOrarioChat(T('2026-11-09T10:00:00Z'), { ...OR, chiusure: ['2026-11-09'] }) && giornoUtc(T('2026-11-09T23:30:00Z')) === '2026-11-09');
+
+  // le chat lette (con dati di troppo: solo nome o email devono arrivare nel titolo)
+  const SESS = [
+    { id: ID('a'), stato: 'attesa_persona', passaggi: 1, passaggio_at: '2026-11-06T09:00:00Z', ultima_risposta_staff_at: null, preso_da: null, prova: false, ...conPII() },
+    { id: ID('b').toUpperCase(), stato: 'aperta', passaggi: 2, passaggio_at: '2026-11-05T09:00:00Z', ultima_risposta_staff_at: '2026-11-04T10:00:00Z', preso_da: 'Benedetta', prova: false, ...conPII({ customer_name: null, customer_email: 'Cliente.B@Example.com' }) },
+    { id: ID('c'), stato: 'aperta', passaggi: 1, passaggio_at: '2026-11-05T09:00:00Z', ultima_risposta_staff_at: '2026-11-05T12:00:00Z', preso_da: 'Ginevra', prova: false, ...conPII() },
+    { id: ID('d'), stato: 'chiusa', passaggi: 1, passaggio_at: '2026-11-02T09:00:00Z', ultima_risposta_staff_at: null, preso_da: null, prova: false, ...conPII() },
+    { id: ID('e'), stato: 'attesa_persona', passaggi: 1, passaggio_at: isoC(ORA_C - 60 * MIN), ultima_risposta_staff_at: null, preso_da: null, prova: false, ...conPII({ customer_name: 'Elena Verdi' }) },
+    { id: ID('f'), stato: 'attesa_persona', passaggi: 3, passaggio_at: '2026-11-06T09:00:00Z', ultima_risposta_staff_at: null, preso_da: null, prova: true, ...conPII({ customer_name: 'PROVA Code', customer_email: 'prova@example.com' }) },
+    { id: ID('1'), stato: 'attesa_persona', passaggi: 1, passaggio_at: isoC(ORA_C - 5 * MIN), ultima_risposta_staff_at: null, preso_da: null, prova: false, ...conPII() },
+    { id: ID('2'), stato: 'attesa_persona', passaggi: 1, passaggio_at: isoC(ORA_C - 20 * MIN), ultima_risposta_staff_at: null, preso_da: null, prova: false, ...conPII() },
+    { id: ID('3'), stato: 'attesa_persona', passaggi: 1, passaggio_at: isoC(ORA_C - 2 * MIN), ultima_risposta_staff_at: null, preso_da: null, prova: false, ...conPII() },
+    { id: 'non-un-uuid', stato: 'attesa_persona', passaggi: 1, passaggio_at: '2026-11-02T09:00:00Z', ...conPII() },
+    { id: ID('4'), stato: 'attesa_persona', passaggi: 0, passaggio_at: '2026-11-02T09:00:00Z', ...conPII() },
+    { id: ID('5'), stato: 'bot', passaggi: 1, passaggio_at: '2026-11-02T09:00:00Z', ...conPII() }, null,
+  ];
+  const s1 = candChatSollecito({ sessioni: SESS, ore: [24, 48], orari: OR, ora: ORA_C, passo: 1 });
+  const s2 = candChatSollecito({ sessioni: SESS, ore: [24, 48], orari: OR, ora: ORA_C, passo: 2 });
+  t('CH7 passo 1 a 24 ore lavorative: la chat del venerdi\' alle 10 (dovuta adesso), quella presa da Benny e mai risposta, quella di prova; risposta dopo il passaggio, chiusa, bot, fresca o storta no; chiave <sessione>:<passaggio>:sollecito:1, istante adesso',
+    isDeepStrictEqual(s1.map((c) => c.chiave).sort(), [`${ID('a')}:1:sollecito:1`, `${ID('b')}:2:sollecito:1`, `${ID('f')}:3:sollecito:1`]) && s1.every((c) => c.ts === ORA_C), s1.map((c) => c.chiave));
+  t('CH8 passo 2 a 48 ore lavorative: solo la chat di giovedi\' (presa da Benny), chiave :sollecito:2', isDeepStrictEqual(s2.map((c) => [c.chiave, c.rif.preso, c.rif.cliente]),
+    [[`${ID('b')}:2:sollecito:2`, 'Benny', 'cliente.b@example.com']]), s2.map((c) => c.rif));
+  t('CH9 fuori orario (08:59 di lunedi\', sabato) nessun sollecito: un passo dovuto di notte parte alle 9 del giorno lavorativo dopo',
+    candChatSollecito({ sessioni: SESS, ore: [24, 48], orari: OR, ora: T('2026-11-09T07:59:00Z'), passo: 2 }).length === 0
+    && candChatSollecito({ sessioni: SESS, ore: [24, 48], orari: OR, ora: T('2026-11-14T10:00:00Z'), passo: 1 }).length === 0
+    && candChatSollecito({ sessioni: SESS, ore: [24, 48], orari: OR, ora: T('2026-11-10T08:00:00Z'), passo: 1 }).length === 4);
+  const m1 = msgChatSollecito(s1), m2 = msgChatSollecito(s2);
+  const per1 = Object.fromEntries(m1.map((m) => [m.chiave.slice(0, 36), [m.titolo, m.testo]]));
+  t('CH10 testi del passo 1 (D-9): nome o email, presa in carico col nome di casa, mai il resto della riga; PROVA in testa; tema assistenza, #assistenza, urgente, a tutti gli iscritti',
+    isDeepStrictEqual(per1, {
+      [ID('a')]: ['Chat in attesa da 1 giorno lavorativo: Maria Rossi', 'Ancora senza risposta del team. Apri Assistenza.'],
+      [ID('b')]: ['Chat in attesa da 1 giorno lavorativo: cliente.b@example.com', 'Presa da Benny, ancora senza risposta del team. Apri Assistenza.'],
+      [ID('f')]: ['PROVA Chat in attesa da 1 giorno lavorativo: PROVA Code', 'Ancora senza risposta del team. Apri Assistenza.'],
+    }) && m1.every((m) => m.tema === 'assistenza' && m.url === LINK_ASSISTENZA && m.urgente === true && !('chi' in m)) && perde(m1).length === 0 && testoValido(m1), per1);
+  t('CH11 testo del passo 2: tema assistenza_scala (Ale, D-1), le ore del primo promemoria',
+    m2.length === 1 && m2[0].tema === 'assistenza_scala' && m2[0].titolo === 'Chat senza risposta da 2 giorni lavorativi: cliente.b@example.com'
+    && m2[0].testo === 'Presa da Benny, ancora senza risposta: il primo promemoria e\' partito dopo 1 giorno lavorativo. Apri Assistenza.' && perde(m2).length === 0 && testoValido(m2), m2);
+  const lungo = msgChatSollecito(candChatSollecito({ sessioni: [{ ...SESS[0], customer_name: 'N'.repeat(80), prova: true }], ore: [24, 48], orari: OR, ora: ORA_C, passo: 1 }));
+  t('CH12 titolo nei 120 punti di codice di push-api (il nome si accorcia, la notizia resta); ore in parole', Array.from(lungo[0].titolo).length <= 120 && lungo[0].titolo.startsWith('PROVA Chat in attesa da 1 giorno lavorativo: NNN')
+    && oreTesto(24) === '1 giorno lavorativo' && oreTesto(48) === '2 giorni lavorativi' && oreTesto(6) === '6 ore lavorative' && oreTesto(1) === '1 ora lavorativa' && oreTesto(0.05) === '3 minuti' && oreTesto(1.5) === '90 minuti' && oreTesto(NaN) === 'qualche ora');
+  t('CH13 PRESO_DA: i nomi del selettore diventano quelli di casa; altro -> vuoto', isDeepStrictEqual(PRESO_DA, { Benedetta: 'Benny', Ginevra: 'Ginni', Ale: 'Ale' }));
+
+  // nuovo tentativo della push di passaggio (8.4, C7 del pezzo 2)
+  const PAS = [
+    { chiave: `${ID('a')}:passaggio:1`, esito: 'inviato', at: '2026-11-06T09:00:01Z' },
+    { chiave: `${ID('e')}:passaggio:1`, esito: 'fallito', at: isoC(ORA_C - 60 * MIN) },
+    { chiave: `${ID('1')}:passaggio:1`, esito: 'prenotato', at: isoC(ORA_C - 5 * MIN) },
+    { chiave: `${ID('2')}:passaggio:1`, esito: 'prenotato', at: isoC(ORA_C - 20 * MIN) },
+    { chiave: `${ID('3')}:passaggio:1`, esito: 'nessun_iscritto', at: isoC(ORA_C - 2 * MIN) },
+  ];
+  t('CH14 chiaviPassaggio: una per chat in attesa_persona senza risposta, il passaggio corrente', isDeepStrictEqual(chiaviPassaggio(SESS),
+    [`${ID('a')}:passaggio:1`, `${ID('e')}:passaggio:1`, `${ID('f')}:passaggio:3`, `${ID('1')}:passaggio:1`, `${ID('2')}:passaggio:1`, `${ID('3')}:passaggio:1`]), chiaviPassaggio(SESS));
+  const rp = candChatPassaggio({ sessioni: SESS, eventi: PAS, orari: OR, ora: ORA_C });
+  t('CH15 si ritenta: `fallito`, `prenotato` fermo da 10 minuti (istanza morta), nessuna riga da 10 minuti; `inviato`, `nessun_iscritto` (finale), prenotato da 5 minuti, passaggio di 2 minuti fa e chat `aperta` no. Chiave di chat_eventi, istante adesso, urgente in orario',
+    isDeepStrictEqual(rp.map((c) => [c.chiave, c.rif.motivo]).sort(), [[`${ID('2')}:passaggio:1`, 'fermo'], [`${ID('e')}:passaggio:1`, 'fallito'], [`${ID('f')}:passaggio:3`, 'mancante']])
+    && rp.every((c) => c.ts === ORA_C && c.rif.urgente === '1') && candChatPassaggio({ sessioni: SESS, eventi: PAS, orari: OR, ora: T('2026-11-09T20:00:00Z') }).every((c) => c.rif.urgente === ''),
+    rp.map((c) => [c.chiave, c.rif.motivo]));
+  const mp = msgChatSollecito(rp);
+  const SRC_API = read('supabase/functions/chat-api/index.ts');
+  t('CH16 il nuovo tentativo e\' la stessa notifica di chat-api (titolo, testo, link, "Una cliente" senza nome), PROVA in testa per la chat di prova',
+    mp.find((m) => m.chiave.startsWith(ID('e'))).titolo === 'Chat del sito: Elena Verdi chiede una persona' && mp.find((m) => m.chiave.startsWith(ID('f'))).titolo === 'PROVA Chat del sito: PROVA Code chiede una persona'
+    && mp.every((m) => m.testo === 'Apri Assistenza.' && m.tema === 'assistenza' && m.url === LINK_ASSISTENZA && !('chi' in m)) && perde(mp).length === 0
+    && SRC_API.includes("const chi = nomeCliente(s.customer_name, s.customer_email) || 'Una cliente';") && SRC_API.includes("titolo: `${s.prova ? 'PROVA ' : ''}Chat del sito: ${chi} chiede una persona`, testo: 'Apri Assistenza.', url: LINK_ASSISTENZA")
+    && SRC.includes("const chi = c.rif.cliente || 'Una cliente';") && SRC.includes("titolo: `${p}Chat del sito: ${chi} chiede una persona`, testo: 'Apri Assistenza.' }")
+    && msgChatSollecito([{ chiave: 'k', ts: 0, rif: { tipo: 'passaggio', cliente: '', prova: '', urgente: '' } }])[0].titolo === 'Chat del sito: Una cliente chiede una persona', mp);
+  t('CH17 i solleciti non sono eventi di stato (alla prima accensione il pregresso si salta: si accendono prima della chat, 8.3); chat_salute si\'',
+    baselineDi({ evento: 'chat_sollecito', baseline_at: null, ultimo_giro_at: null }, ORA_C).baseline === true && baselineDi({ evento: 'chat_sollecito_scala', baseline_at: null, ultimo_giro_at: null }, ORA_C).baseline === true
+    && baselineDi({ evento: 'chat_salute', baseline_at: null, ultimo_giro_at: null }, ORA_C).baseline === false);
+
+  // chat_salute
+  const M1 = 'd0000000-0000-4000-8000-000000000001', M2 = 'd0000000-0000-4000-8000-000000000002';
+  const SAL_PAS = [
+    { chiave: `${ID('e')}:passaggio:1`, esito: 'fallito', at: isoC(ORA_C - 60 * MIN), prova: 'false' },
+    { chiave: `${ID('f')}:passaggio:2`, esito: 'nessun_iscritto', at: isoC(ORA_C - 180 * MIN), prova: 'true' },
+    { chiave: `${ID('1')}:passaggio:1`, esito: 'prenotato', at: isoC(ORA_C - 5 * MIN), prova: 'false' },
+    { chiave: `${ID('2')}:passaggio:1`, esito: 'prenotato', at: isoC(ORA_C - 20 * MIN), prova: 'false' },
+    { chiave: 'boh', esito: 'fallito', at: isoC(ORA_C) }, { chiave: `${ID('a').toUpperCase()}:passaggio:1`, esito: 'inviato', at: isoC(ORA_C) }, null,
+  ];
+  const SAL_EM = [{ id: M1, sessione_id: ID('b'), email_errore: 'non partita: gmail 400', email_at: isoC(ORA_C - 30 * MIN) },
+    { id: M2.toUpperCase(), sessione_id: ID('f'), email_errore: 'esito ignoto: Gmail non ha risposto', email_at: isoC(ORA_C - 40 * MIN) },
+    { id: 'x', sessione_id: ID('b'), email_errore: 'non partita: gmail 500' }];
+  const SAL_CONT = [{ chiave: 'glob:sev_error', finestra: '2026-11-09T00:00:00+00:00', n: 3 }, { chiave: 'glob:sev_error', finestra: '2026-11-08T00:00:00+00:00', n: 1 },
+    { chiave: 'glob:richieste', finestra: '2026-11-09T00:00:00+00:00', n: 4999 }, { chiave: 'glob:richieste', finestra: '2026-11-08T00:00:00+00:00', n: 5000 },
+    { chiave: 'glob:errore', finestra: '2026-11-09T00:00:00+00:00', n: 19 }, { chiave: 'glob:errore', finestra: '2026-11-08T00:00:00+00:00', n: 101 },
+    { chiave: 'glob:sev_error', finestra: '2026-11-09T05:00:00Z', n: 2 }, { chiave: 'glob:sev_warn', finestra: '2026-11-09T00:00:00+00:00', n: 9 }, { chiave: 'glob:sev_error', finestra: '2026-11-09T00:00:00+00:00', n: 0 }];
+  const SAL_LIM = [{ chiave: 'limite:2026-11-09' }, { chiave: 'limite:boh' }];
+  const baseSal = { passaggi: SAL_PAS, email: SAL_EM, prova: { [ID('f')]: true, [ID('b')]: false }, coda: 2, contatori: SAL_CONT, limiti: SAL_LIM, ora: ORA_C, sogliaRichieste: 5000, sogliaWidget: 20 };
+  const cs = candChatSalute(baseSal);
+  t('CH18 candChatSalute: un candidato per guasto (8.10 righe 4, 6, 7, 8, 11, 13, 16), chiavi della chat in testa con l\'id della sessione, le altre per giorno UTC; sotto soglia, prenotato fresco, inviato, finestra non a mezzanotte o righe storte no',
+    isDeepStrictEqual(cs.map((c) => c.chiave).sort(), [`${ID('2')}:1:passaggio`, `${ID('b')}:email:${M1}`, `${ID('e')}:1:passaggio`, `${ID('f')}:2:passaggio`, `${ID('f')}:email:${M2}`,
+      'api:2026-11-08', 'api:2026-11-09', 'invio:2026-11-09', 'limite:2026-11-09', 'quota:2026-11-08', 'widget:2026-11-08'].sort()) && cs.every((c) => c.ts === ORA_C), cs.map((c) => c.chiave));
+  const ms = msgChatSalute(cs);
+  const perS = Object.fromEntries(ms.map((m) => [m.chiave.includes(':email:') ? 'email:' + m.chiave.slice(0, 36) : m.chiave.includes(':passaggio') ? 'pass:' + m.chiave.slice(0, 36) : m.chiave.split(':')[0] + ':' + m.chiave.split(':')[1], [m.titolo, m.testo, m.urgente === true]]));
+  t('CH19 testi di chat_salute: solo cause e conteggi, PROVA per la chat di prova, oggi o ieri; urgenti tranne quota e widget',
+    isDeepStrictEqual(perS, {
+      ['pass:' + ID('e')]: ['Chat del sito: notifica di richiesta non partita', 'La notifica "chiede una persona" non e\' partita: si ritenta a ogni giro finche\' la chat aspetta. Guarda Salute.', true],
+      ['pass:' + ID('2')]: ['Chat del sito: notifica di richiesta non partita', 'La notifica "chiede una persona" non e\' partita: si ritenta a ogni giro finche\' la chat aspetta. Guarda Salute.', true],
+      ['pass:' + ID('f')]: ['PROVA Chat del sito: richiesta senza notifica', 'Una cliente ha chiesto una persona, ma la notifica non e\' arrivata a nessuno: nessun telefono iscritto al tema Assistenza. La chat aspetta una risposta.', true],
+      ['email:' + ID('b')]: ['Chat del sito: email di risposta non partita', 'Gmail ha rifiutato l\'email con una risposta del team: si puo\' rimandare dalla chat.', true],
+      ['email:' + ID('f')]: ['PROVA Chat del sito: email di risposta con esito ignoto', 'Gmail non ha confermato l\'invio di una risposta del team: controlla in info@ se e\' partita, non si rimanda da sola.', true],
+      'invio:2026-11-09': ['Chat del sito: email in coda', '2 risposte del team aspettano l\'email da oltre 10 minuti: chat-send fermo o Gmail non disponibile.', true],
+      'api:2026-11-09': ['Chat del sito in errore', 'chat-api: 3 richieste in errore oggi. Dettagli in Salute.', true],
+      'api:2026-11-08': ['Chat del sito in errore', 'chat-api: 1 richiesta in errore ieri. Dettagli in Salute.', true],
+      'limite:2026-11-09': ['Chat del sito: tetto delle chat nuove raggiunto', 'Raggiunto oggi il tetto delle chat nuove del giorno: fino a mezzanotte UTC nessun\'altra cliente puo\' aprirne una. Se e\' un abuso, spegni l\'embed della chat.', true],
+      'quota:2026-11-08': ['Chat del sito: troppe richieste', '5.000 richieste a chat-api ieri (soglia 5.000): possibile abuso. Se lo e\', spegni l\'embed della chat.', false],
+      'widget:2026-11-08': ['Chat del sito: errori del widget', 'Tetto del beacon raggiunto ieri: possibile abuso, gli errori veri del giorno non si vedono.', false],
+    }) && ms.every((m) => m.tema === 'sistema' && m.url === LINK_SALUTE && !('chi' in m)) && perdeTutto(ms).length === 0 && testoValido(ms), perS);
+  const sotto = candChatSalute({ ...baseSal, passaggi: [], email: [], coda: 0, limiti: [], contatori: [{ chiave: 'glob:errore', finestra: '2026-11-09T00:00:00+00:00', n: 20 }], sogliaWidget: 20 });
+  t('CH20 widget alla soglia (20) senza tetto: il conteggio nel testo; soglie da push_eventi.soglie; niente coda, niente candidato', sotto.length === 1
+    && msgChatSalute(sotto)[0].testo === '20 errori del widget oggi (soglia 20).' && candChatSalute({ ...baseSal, passaggi: [], email: [], coda: 0, limiti: [], contatori: SAL_CONT, sogliaRichieste: 6000, sogliaWidget: 200 }).every((c) => !/^(quota|widget):/.test(c.chiave))
+    && candChatSalute({ ...baseSal, passaggi: null, email: null, coda: NaN, contatori: null, limiti: null, prova: null }).length === 0);
+
+  // letture per firma, col client finto
+  const SESS_DB = SESS.filter(Boolean);
+  const fSess = (ora) => `chat_sessioni select id, stato, passaggi, passaggio_at, ultima_risposta_staff_at, preso_da, prova, customer_name, customer_email in:stato|${JSON.stringify(['attesa_persona', 'aperta'])} gte:passaggio_at|${isoC(ora - 30 * 86400000)} passaggio_at:asc limit:501`;
+  const F_SESS = fSess(ORA_C);
+  const CHIAVI_P = chiaviPassaggio(SESS_DB);
+  const F_PAS = `chat_eventi select chiave, esito, at eq:tipo|push_passaggio in:chiave|${JSON.stringify(CHIAVI_P)} limit:${CHIAVI_P.length + 1}`;
+  const lettureC = (ora) => ({
+    [fSess(ora)]: { data: SESS_DB }, [F_PAS]: { data: PAS },
+    [`chat_eventi select chiave, esito, at, prova:dettaglio->>prova eq:tipo|push_passaggio in:esito|${JSON.stringify(['nessun_iscritto', 'fallito', 'prenotato'])} gte:at|${isoC(ora - 24 * 3600000)} at:desc limit:201`]: { data: SAL_PAS.filter(Boolean) },
+    [`chat_messaggi select id, sessione_id, email_errore, email_at eq:autore|staff eq:email_stato|errore gte:email_at|${isoC(ora - 24 * 3600000)} email_at:desc limit:201`]: { data: SAL_EM },
+    [`chat_sessioni select id, prova in:id|${JSON.stringify([ID('b'), ID('f')])} limit:3`]: { data: [{ id: ID('f'), prova: true }, { id: ID('b'), prova: false }] },
+    [`chat_messaggi select id head eq:autore|staff is:email_stato|null lt:created_at|${isoC(ora - 10 * MIN)}`]: { count: 1 },
+    [`chat_messaggi select id head eq:autore|staff eq:email_stato|prenotata lt:email_at|${isoC(ora - 20 * MIN)}`]: { count: 1 },
+    [`chat_contatori select chiave, finestra, n in:chiave|${JSON.stringify(['glob:sev_error', 'glob:richieste', 'glob:errore'])} in:finestra|${JSON.stringify(['2026-11-08T00:00:00Z', '2026-11-09T00:00:00Z'])} limit:7`]: { data: SAL_CONT },
+    [`chat_eventi select chiave in:chiave|${JSON.stringify(['limite:2026-11-08', 'limite:2026-11-09'])} limit:3`]: { data: SAL_LIM },
+  });
+  const LETTURE_C = lettureC(ORA_C);
+  const FLAGS_C = { chat_orari: '{"tz": "Europe/Rome", "alle": "18:00", "dalle": "09:00", "giorni": [1, 2, 3, 4, 5], "chiusure": []}', chat_sollecito_ore: '24,48' };
+  const ctxC = ctxDi(ORA_C, FLAGS_C);
+  const visteC = new Set();
+  const rispDi = (L) => (q, f) => { if (!(f in L)) return undefined; visteC.add(f); return { data: null, count: null, error: null, ...L[f] }; };
+  const rispC = rispDi(LETTURE_C);
+  const wc = mondo({ risposte: rispC });
+  const cSol = await MI.EVENTI.chat_sollecito.candidati(wc.sb, ctxC, evRiga('chat_sollecito'));
+  const cSca = await MI.EVENTI.chat_sollecito_scala.candidati(wc.sb, ctxC, evRiga('chat_sollecito_scala'));
+  const cSal = await MI.EVENTI.chat_salute.candidati(wc.sb, ctxC, evRiga('chat_salute'));
+  const mSol = await MI.EVENTI.chat_sollecito.componi(wc.sb, ctxC, evRiga('chat_sollecito'), cSol);
+  const nonVisteC = Object.keys(LETTURE_C).filter((f) => !visteC.has(f)), inatteseC = wc.log.map(firma).filter((f) => !(f in LETTURE_C));
+  t('CH21 letture con la firma attesa (chat in attesa coi soli campi ammessi, prenotazioni delle sole chiavi da guardare, guasti delle 24 ore, conteggi head, contatori di oggi e ieri, eventi limite esatti), nessuna scrittura; gli stessi candidati dei blocchi PURE, componi senza letture',
+    nonVisteC.length === 0 && inatteseC.length === 0 && wc.scritte.length === 0
+    && isDeepStrictEqual(cSol.map((c) => c.chiave).sort(), [...candChatPassaggio({ sessioni: SESS_DB, eventi: PAS, orari: OR, ora: ORA_C }), ...s1].map((c) => c.chiave).sort())
+    && isDeepStrictEqual(cSca.map((c) => c.chiave), s2.map((c) => c.chiave)) && isDeepStrictEqual(cSal.map((c) => c.chiave).sort(), cs.map((c) => c.chiave).sort())
+    && mSol.length === 6 && wc.log.filter((q) => firma(q) === F_SESS).length === 2, { nonVisteC, inatteseC });
+  const notteC = mondo({ risposte: rispC });
+  const cNotte = await MI.EVENTI.chat_sollecito_scala.candidati(notteC.sb, ctxDi(T('2026-11-09T02:00:00Z'), FLAGS_C), evRiga('chat_sollecito_scala'));
+  t('CH22 la scala fuori orario non legge nemmeno le chat; orari e ore dai flag (illeggibili = default)', cNotte.length === 0 && notteC.log.length === 0
+    && (await MI.EVENTI.chat_sollecito_scala.candidati(mondo({ risposte: rispC }).sb, ctxDi(ORA_C, { chat_orari: 'x', chat_sollecito_ore: 'y' }), evRiga('chat_sollecito_scala'))).length === 1);
+  const errC = async (ev, guasta) => {
+    const w = mondo({ risposte: (q, f) => (guasta(q, f) ?? rispC(q, f)) });
+    try { await MI.EVENTI[ev].candidati(w.sb, ctxC, evRiga(ev)); return null; } catch (e) { return e instanceof MI.LetturaFallita ? e.cosa : 'altro: ' + e.message; }
+  };
+  const giu = { data: null, count: null, error: { message: 'giu' } };
+  const causeC = [
+    await errC('chat_sollecito', (q) => (q.table === 'chat_sessioni' ? giu : undefined)),
+    await errC('chat_sollecito', (q) => (q.table === 'chat_sessioni' ? { data: Array.from({ length: 501 }, () => SESS[0]), error: null } : undefined)),
+    await errC('chat_sollecito', (q) => (q.table === 'chat_eventi' ? giu : undefined)),
+    await errC('chat_sollecito_scala', (q) => (q.table === 'chat_sessioni' ? giu : undefined)),
+    await errC('chat_salute', (q, f) => (f.includes('prova:dettaglio') ? giu : undefined)),
+    await errC('chat_salute', (q, f) => (f.includes('prova:dettaglio') ? { data: Array.from({ length: 201 }, () => SAL_PAS[0]), error: null } : undefined)),
+    await errC('chat_salute', (q, f) => (f.includes('eq:email_stato|errore') ? giu : undefined)),
+    await errC('chat_salute', (q) => (q.table === 'chat_sessioni' ? giu : undefined)),
+    await errC('chat_salute', (q, f) => (f.includes('is:email_stato|null') ? giu : undefined)),
+    await errC('chat_salute', (q, f) => (f.includes('eq:email_stato|prenotata') ? giu : undefined)),
+    await errC('chat_salute', (q) => (q.table === 'chat_contatori' ? giu : undefined)),
+    await errC('chat_salute', (q, f) => (f.startsWith('chat_eventi select chiave in:') ? giu : undefined)),
+  ];
+  t('CH23 Regola 20: ogni lettura fallita o troncata ferma l\'evento con la sua causa, mai un default vuoto', isDeepStrictEqual(causeC, ['chat in attesa', 'chat in attesa', 'push di passaggio', 'chat in attesa',
+    'push di passaggio non arrivate', 'push di passaggio non arrivate', 'email non partite', 'chat delle email', 'email in coda', 'email prenotate ferme', 'contatori della chat', 'tetto delle chat']), causeC);
+
+  // il giro vero: solleciti accesi da un po' (nessuna baseline), salute alla prima accensione (evento di stato)
+  inviate.length = 0;
+  globalThis.__esitoInvio = (m) => (m.titolo.includes('Elena Verdi') ? { ok: false, inviati: 0, falliti: 1, destinatari: 1, status: 500, errore: 'push-api ha risposto 500' } : { ok: true, inviati: 1, falliti: 0, destinatari: 1, status: 200, chi: null });
+  const recente = isoC(ORA_C - 5 * MIN), prima = isoC(ORA_C - 86400000);
+  const evAcc = (e) => evRiga(e, { baseline_at: prima, ultimo_giro_at: recente });
+  const wg = mondo({ eventi: [evAcc('chat_sollecito'), evAcc('chat_sollecito_scala'), evRiga('chat_salute')], risposte: rispC });
+  const g1 = await (await MI.eseguiRun(wg.sb, ctxC)).json();
+  const inviate1 = inviate.splice(0);
+  const perTema = (l) => l.reduce((o, m) => ({ ...o, [m.tema]: (o[m.tema] ?? 0) + 1 }), {});
+  t('CH24 giro: 11 push di salute al tema sistema, 3 solleciti e 3 nuovi tentativi al tema assistenza, 1 sollecito al tema assistenza_scala; registro con le chiavi della chat',
+    isDeepStrictEqual(perTema(inviate1), { sistema: 11, assistenza: 6, assistenza_scala: 1 }) && g1.inviati === 17 && wg.reg.get(`${ID('e')}:passaggio:1`)?.stato === 'fallito'
+    && wg.reg.get(`${ID('b')}:2:sollecito:2`)?.stato === 'inviato' && wg.reg.get(`${ID('f')}:2:passaggio`)?.stato === 'inviato' && inviate1.every((m) => !('chi' in m)), { temi: perTema(inviate1), g1: g1.eventi });
+  globalThis.__esitoInvio = null;
+  const wg2 = mondo({ eventi: [evAcc('chat_sollecito'), evAcc('chat_sollecito_scala'), evRiga('chat_salute')], risposte: rispDi(lettureC(ORA_C + 2 * MIN)), registro: [...wg.reg.values()] });
+  const g2 = await (await MI.eseguiRun(wg2.sb, ctxDi(ORA_C + 2 * MIN, FLAGS_C))).json();
+  const inviate2 = inviate.splice(0);
+  t('CH25 il giro dopo: solo il nuovo tentativo fallito (tentativo 2), nessun sollecito o guasto ripetuto', inviate2.length === 1 && inviate2[0].titolo === 'Chat del sito: Elena Verdi chiede una persona'
+    && wg2.reg.get(`${ID('e')}:passaggio:1`)?.stato === 'inviato' && wg2.reg.get(`${ID('e')}:passaggio:1`)?.tentativi === 2 && g2.inviati === 1, { titoli: inviate2.map((m) => m.titolo), g2: g2.eventi });
+  const wb = mondo({ eventi: [evRiga('chat_sollecito'), evRiga('chat_sollecito_scala')], risposte: rispC });
+  const g3 = await (await MI.eseguiRun(wb.sb, ctxC)).json();
+  t('CH26 prima accensione dei solleciti: il pregresso si segna `saltato` baseline, nessuna push (si accendono prima della chat)', inviate.splice(0).length === 0 && g3.inviati === 0
+    && [...wb.reg.values()].length === 7 && [...wb.reg.values()].every((r) => r.stato === 'saltato' && r.esito?.motivo === 'baseline'), [...wb.reg.values()]);
+} catch (e) { t('CH! eccezione nella sezione', false, String(e?.stack ?? e)); }
 
 console.log('\n== RF-1: la riga cs_sync letta nel buco del delete+insert di cs-sync ==');
 {
@@ -1475,8 +1712,8 @@ console.log('\n== anteprima col client finto ==');
   const w = mondo({ eventi: [], risposte: (q) => (q.op === 'select' && q.head ? { count: 0, error: null } : q.op === 'select' && q.table !== 'push_eventi' && q.table !== 'push_eventi_inviati' ? { data: [], error: null } : undefined) });
   const res = await MI.anteprima(w.sb, ctxDi(ORA_A), true);
   const corpo = await res.json();
-  t('V1 anteprima: nessuna scrittura (registro, push_eventi, health_log) e nessun invio, tutti e dieci gli eventi', w.scritte.length === 0 && inviate.length === 0
-    && corpo.eventi.length === 10 && corpo.eventi.every((e) => !e.errore), corpo.eventi.map((e) => e.errore ?? e.evento));
+  t('V1 anteprima: nessuna scrittura (registro, push_eventi, health_log) e nessun invio, tutti e tredici gli eventi', w.scritte.length === 0 && inviate.length === 0
+    && corpo.eventi.length === 13 && corpo.eventi.every((e) => !e.errore), corpo.eventi.map((e) => e.errore ?? e.evento));
 }
 
 console.log('\n== guardie sul sorgente ==');
@@ -1515,7 +1752,7 @@ const noopAFlagSpento = (s) => {
   const n = f.indexOf(NOOP), r = f.indexOf(RUN_DOPO_NOOP);
   return n > f.indexOf("if (action === 'anteprima') return await anteprima(") && r > n && (codice(s).match(/eseguiRun\(sb, ctx/g) ?? []).length === 1
     && !/\.from\('push_eventi'\)/.test(f) && corpoRun(s).includes(SOLO_ATTIVI)
-    && f.includes("const { data: frows, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['push_eventi_enabled', 'push_enabled', 'lead_outreach_ai_enabled', 'loyalty_pool_min']).limit(10));")
+    && f.includes("const { data: frows, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['push_eventi_enabled', 'push_enabled', 'lead_outreach_ai_enabled', 'loyalty_pool_min', 'chat_sollecito_ore', 'chat_orari']).limit(10));")
     && f.includes("if (fErr) return json({ ok: false, error: 'flag non leggibili, riprova' }, 503);");
 };
 const soloAttivi = (s) => {
@@ -1560,6 +1797,11 @@ const AMMESSE = {
   // 21-10 (attivita_team): istante, azione, chi e i soli campi di after che finiscono nel testo; mai ctx, purchase_id, costo
   change_log: ['id', 'row_id', 'after->>delta', 'after->>qty', 'ts', 'op', 'chi', 'after->>codice', 'after->>contati', 'after->>giac_prima', 'after->>fornitore', 'after->>righe', 'after->>gruppo'],
   supplier_orders: ['gruppo', 'codice', 'qty_ordered', 'wip'],
+  // 08-11 (v7, chat del sito): delle chat stato, passaggio, risposta, presa in carico, prova e (solo per nomeCliente, N13)
+  // nome ed email; delle prenotazioni e degli eventi chiave, esito, istante e il solo flag prova del dettaglio; dei
+  // messaggi dello staff id, sessione, istante e la causa dell'errore (testo fisso di chat-send): mai testi
+  chat_sessioni: ['id', 'stato', 'passaggi', 'passaggio_at', 'ultima_risposta_staff_at', 'preso_da', 'prova', 'customer_name', 'customer_email'],
+  chat_eventi: ['chiave', 'esito', 'at', 'dettaglio->>prova'], chat_messaggi: ['id', 'sessione_id', 'email_errore', 'email_at'], chat_contatori: ['chiave', 'finestra', 'n'],
 };
 const selectFuoriElenco = (s) => {
   const out = [];
@@ -1581,8 +1823,10 @@ const selectFuoriElenco = (s) => {
 const LETTURE_CLIENTE = [
   "sb.from('cs_conversations').select('id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email').in('id', ids).limit(ids.length + 1)",
   "sb.from('v_spedizioni_eccezioni').select('ldv, order_name, stato_tws, updated_at, classe, customer_name').eq('classe', 'eccezione')",
+  // 08-11 (v7, D-9): le chat che aspettano il team
+  "sb.from('chat_sessioni').select('id, stato, passaggi, passaggio_at, ultima_risposta_staff_at, preso_da, prova, customer_name, customer_email').in('stato', ['attesa_persona', 'aperta'])",
 ];
-const USI_CLIENTE = [['nomeCliente(v.customer_name, v.customer_email)', 2], ['nomeCliente(r.customer_name, null)', 1]];
+const USI_CLIENTE = [['nomeCliente(v.customer_name, v.customer_email)', 2], ['nomeCliente(r.customer_name, null)', 1], ['nomeCliente(r.customer_name, r.customer_email)', 1]];
 const lettureCliente = (s) => {
   // \b: shopify_customer_id (03-11, nuove iscritte) e' l'id opaco di Shopify, non il nome ne' l'email
   const righe = righeSb(s).filter((l) => /\bcustomer_/.test(l));
@@ -1671,7 +1915,7 @@ t('83 scrive SOLO push_eventi_inviati, push_eventi e la SUA riga di salute in he
 const sp = selectFuoriElenco(SRC);
 t('84 F5: ogni colonna letta sta nell\'elenco ammesso della sua tabella (mai oggetto, snippet, riassunto, corpo, raw, label di cs_sync, *; nome ed email della cliente solo dove dice N13)', sp.length === 0, sp);
 const lc = lettureCliente(SRC);
-t('N13 (19-10) nome ed email della cliente: letti SOLO nella select delle conversazioni (customer_name, customer_email) e in quella delle spedizioni (customer_name), usati SOLO da nomeCliente',
+t('N13 (19-10) nome ed email della cliente: letti SOLO nella select delle conversazioni (customer_name, customer_email), in quella delle spedizioni (customer_name) e, dall\'08-11, in quella delle chat in attesa; usati SOLO da nomeCliente',
   lc.length === 0, lc);
 t('85 anteprima: solo letture (nessuna scrittura, nessun giro, nessun inviaPush), tutti gli eventi accesi o no', anteprimaSoloLettura(SRC));
 t('86 registro: prenotazione su UNIQUE (evento, chiave) con ignoreDuplicates, ripresa con confronto su stato e tentativi, esito sul proprio tentativo; nessun insert nudo', registroScritture(SRC));
@@ -1685,7 +1929,7 @@ t('89c RF-1: cs_sync riletta dopo 3 s solo se la prima lettura dice ferma, e dec
   t('90 blocchi PURE senza Deno, import, client, rete, log o invio', impuri.length === 0, impuri);
   const ordine = (SRC.match(/const ORDINE = (\[[^\]]+\])/) ?? [])[1] ?? '';
   const eventi = [...(SRC.slice(SRC.indexOf('const EVENTI: Record<string, DefEvento> = {'), SRC.indexOf('const ORDINE = ')).matchAll(/^ {2}(\w+): \{$/gm))].map((m) => m[1]);
-  t('91 i dieci eventi del contratto (attivita_team dal 21-10, premia_salute col sistema e premia_da_approvare dal 03-11, sistema_senza_iscritti prima del riepilogo dal 06-11), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo']"
+  t('91 i tredici eventi del contratto (attivita_team dal 21-10, premia_salute col sistema e premia_da_approvare dal 03-11, sistema_senza_iscritti prima del riepilogo dal 06-11, chat_salute col sistema e i due solleciti dopo cs_urgente dall\'08-11), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'premia_salute', 'chat_salute', 'cs_urgente', 'chat_sollecito', 'chat_sollecito_scala', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo']"
     && eventi.slice().sort().join() === Object.keys(TEMA_EVENTO).sort().join(), { ordine, eventi });
   const run92 = corpoRun(SRC);
   t('92 tetto e tempo: budget di TETTO_INVII per giro, nessun invio nuovo dopo 15 s e nessun evento cominciato dopo 30 s (RF-5, timeout del cron 60 s); finestra 24 ore, limite 50',
@@ -1709,6 +1953,7 @@ const MIGR = read('supabase/migrations/0166_push_eventi.sql');
 const MIGR_0168 = read('supabase/migrations/0168_push_attivita.sql');
 const MIGR_0183 = read('supabase/migrations/0183_push_premia.sql');
 const MIGR_0185 = read('supabase/migrations/0185_push_iscritti.sql');
+const MIGR_0188 = read('supabase/migrations/0188_chat_push.sql');
 const ROLLBACK_0185 = read('supabase/snippets/0185_rollback_push_eventi_salute.sql');
 const MIGR_0138 = read('supabase/migrations/0138_loyalty_orders_cron.sql');
 const RLS = read('tests/push_eventi_rls.sql');
@@ -1750,7 +1995,7 @@ const cronCoerente = (m) => {
 const temiCoerenti = (m) => {
   const temi = temiMigr(m);
   // 21-10: il tema attivita nasce nella 0168; i temi delle due migrazioni insieme coprono quelli degli eventi
-  const tutti = { ...temi, ...temiMigr(MIGR_0168), ...temiMigr(MIGR_0183) };
+  const tutti = { ...temi, ...temiMigr(MIGR_0168), ...temiMigr(MIGR_0183), ...temiMigr(MIGR_0188) };
   const chiCheck = listaSql((m.match(/check \(predefinito_per <@ array\[([^\]]*)\]::text\[\]\)/) ?? [])[1]);
   const people = listaSql((WEB_PEOPLE.match(/export const PEOPLE = \[([^\]]*)\]/) ?? [])[1]);
   const temaApi = new RegExp((PUSH_API.match(/const TEMA_RE = \/(.+)\/;/) ?? [])[1] ?? '^$');
@@ -1762,13 +2007,14 @@ const temiCoerenti = (m) => {
   const fuori = eventiFuoriCheck(MIGR);
   t('96 ogni evento della edge passa il CHECK push_eventi_evento_ck della 0166 (b2b_risposta_negozio ha una cifra)', fuori.length === 0, fuori);
   // 21-10: il settimo (attivita_team) nasce nella 0168; le due migrazioni insieme sono il contratto con la edge
-  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168), ...eventiMigr(MIGR_0183), ...eventiMigr(MIGR_0185) };
+  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168), ...eventiMigr(MIGR_0183), ...eventiMigr(MIGR_0185), ...eventiMigr(MIGR_0188) };
   const rls = Object.fromEntries([...tra(RLS, 'join (values', ') x(ev, tema)').matchAll(/\('([^']+)', '([^']+)'\)/g)].map((x) => [x[1], x[2]]));
-  t('97 i sei eventi della 0166, attivita_team della 0168, i due di Premia della 0183 e sistema_senza_iscritti della 0185 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
+  t('97 i sei eventi della 0166, attivita_team della 0168, i due di Premia della 0183, sistema_senza_iscritti della 0185 e i tre della chat della 0188 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
     Object.keys(eventiMigr(MIGR)).length === 6 && isDeepStrictEqual(eventiMigr(MIGR_0168), { attivita_team: 'attivita' })
     && isDeepStrictEqual(eventiMigr(MIGR_0183), { premia_da_approvare: 'premia', premia_salute: 'sistema' }) && isDeepStrictEqual(eventiMigr(MIGR_0185), { sistema_senza_iscritti: 'sistema' })
     && isDeepStrictEqual(em, TEMA_EVENTO) && isDeepStrictEqual(rls, TEMA_EVENTO)
-    && RLS.includes("if n <> 10 then raise exception 'KO D:"), { em, rls });
+    && isDeepStrictEqual(eventiMigr(MIGR_0188), { chat_sollecito: 'assistenza', chat_sollecito_scala: 'assistenza_scala', chat_salute: 'sistema' })
+    && RLS.includes("if n <> 13 then raise exception 'KO D:"), { em, rls });
   t('98 temi nuovi e predefinito_per come il contratto; le tre chiavi = CHECK della 0166 = PEOPLE del web = CHI_PERSONE; chiavi valide per push-api; conti e vendite ad Ale',
     temiCoerenti(MIGR), temiMigr(MIGR));
   const stati = listaSql((MIGR.match(/push_eventi_inviati_stato_ck check \(stato in \(([^)]*)\)\)/) ?? [])[1]);
@@ -1926,6 +2172,25 @@ const temiCoerenti = (m) => {
   };
   t('M2 0168: il tema si aggiunge ai telefoni del profilo (Ale) SOLO se e\' nato qui, in fondo e senza doppioni, con una riga di change_log per telefono (prima e dopo dei soli temi); passo 3 confrontato intero (Gate 2, R3)',
     telefoni(MIGR_0168), tra(MIGR_0168, '-- 3)', '-- 4)').slice(-900));
+  // 08-11: la 0188 (tema assistenza_scala della sola Ale, i tre eventi della chat spenti, il tema sui telefoni del profilo
+  // con una riga di change_log ciascuno; la pulizia della chat e' nella 0189, provata da tests/chat_staff_send.mjs G19)
+  const PASSO3_0188 = PASSO3.replace("'0168_push_attivita'", "'0188_chat_push'").replace(/amimi\.push_attivita_/g, 'amimi.chat_push_').replace(/attivita/g, 'assistenza_scala');
+  const passo3_0188 = (m) => { const p3 = tra(m, '-- 3)', '-- 4)'); return p3.slice(p3.indexOf('\nbegin\n') + 7, p3.lastIndexOf('end $$;') + 7) === PASSO3_0188; };
+  const contratto0188 = (m) => {
+    const tema = (m.match(/insert into push_temi \(key, etichetta, descrizione, ordine, predefinito_per\) values\n {4}\('assistenza_scala', '((?:[^']|'')*)', '((?:[^']|'')*)', (\d+), array\[([^\]]*)\]\)\n {2}on conflict \(key\) do nothing;/) ?? []).slice(1);
+    const temaApi = new RegExp((PUSH_API.match(/const TEMA_RE = \/(.+)\/;/) ?? [])[1] ?? '^$');
+    return tema[0] === 'Assistenza, chat senza risposta' && tema[2] === '45' && isDeepStrictEqual(listaSql(tema[3]), ['Ale']) && temaApi.test('assistenza_scala') && temaDi('assistenza_scala', 'x') === 'assistenza_scala'
+      && isDeepStrictEqual(eventiMigr(m), { chat_sollecito: 'assistenza', chat_sollecito_scala: 'assistenza_scala', chat_salute: 'sistema' }) && Object.keys(temiMigr(m)).join() === 'assistenza_scala'
+      && passo3_0188(m)
+      && !/chat_conservazione/.test(m.replace(/--[^\n]*/g, '')) && (m.match(/insert into change_log/g) ?? []).length === 1
+      && !/\b(insert into|update|delete from) app_flags\b/i.test(m) && !/create table|cron\.schedule|cron\.alter_job|alter table/i.test(m) && returnNeiDo(m).length === 0
+      && m.startsWith('-- 0188_chat_push.sql') && /\nbegin;\n/.test(m) && m.trimEnd().endsWith('commit;');
+  };
+  t('M8 0188: tema assistenza_scala "Assistenza, chat senza risposta" ordine 45 per la sola Ale e sui suoi telefoni (passo 3 della 0168 col tema nuovo); i tre eventi della chat spenti sui temi giusti; una sola insert in change_log (i telefoni) e la chat non si tocca (la pulizia sta nella 0189); nessun flag, tabella o cron; nessun return nei DO',
+    contratto0188(MIGR_0188));
+  t('A-M8 la stessa 0188 col tema per Benny, con un evento acceso o con il tema aggiunto a tutti i telefoni -> visto', [pianta(MIGR_0188, "45, array['Ale'])", "45, array['Ale', 'Bene'])"),
+    pianta(MIGR_0188, "('chat_salute', 'sistema', false,", "('chat_salute', 'sistema', true,"),
+    pianta(MIGR_0188, "       where exists (select 1 from push_temi t where t.key = 'assistenza_scala' and s.chi = any(t.predefinito_per))\n", "       where true\n")].every((m) => !contratto0188(m)));
   const nascita = (m) => {
     const p1 = tra(m, '-- 1)', '-- 2)'), p2 = tra(m, '-- 2)', '-- 3)');
     return p1.includes("\n  perform set_config('amimi.push_attivita_tema_nato_qui', found::text, true);\nend $$;")

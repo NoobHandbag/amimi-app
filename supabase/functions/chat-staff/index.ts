@@ -1,4 +1,4 @@
-// chat-staff staff-1 (2026-11-08): le azioni del team sulla chat del sito, Fase 1 pezzo 3 (docs/PROPOSTA_chat_sito.md 7.8
+// chat-staff staff-2 (2026-11-08): le azioni del team sulla chat del sito, Fase 1 pezzo 3 (docs/PROPOSTA_chat_sito.md 7.8
 // e 11.6, con D-8 modello ticket: ogni risposta parte subito anche per email, niente "Invia solo via email"). Edge nuova
 // (Regola 19: cs-api non riceve azioni nuove). La chiama la PWA col JWT di una persona del team.
 //
@@ -22,7 +22,10 @@
 //                   conferma cancella la proiezione in cs_ (e, se chiesto, la card email del thread di risposta), i
 //                   contatori della sessione e la sessione (in cascata messaggi e token; gli eventi restano senza
 //                   sessione e senza dati personali). Audit in chat_eventi senza email ne' testi.
-// Regola 19: scrive tabelle chat_* e, solo in cancella_dati, cancella righe cs_conversations della chat (cascata cs_);
+//                   staff-2 (pezzo 4, 11.6 punto 4): cancella anche le righe del registro push_eventi_inviati dei tre
+//                   eventi della chat con la chiave della sessione (solleciti, nuovi tentativi, guasti di quella chat).
+// Regola 19: scrive tabelle chat_* e, solo in cancella_dati, cancella righe cs_conversations della chat (cascata cs_) e
+// le righe di push_eventi_inviati degli eventi della chat con la chiave della sessione (modulo push_*, dalla staff-2);
 // nessuna scrittura in change_log, nessuna chiamata a write-api, nessun PIN. Regola 20: letture con errore controllato e
 // un ritentativo, scritture mai ritentate, idempotenza da send_key e update condizionati.
 // Log: solo cause scritte nel codice e codici d'errore, mai testi, token o email.
@@ -30,7 +33,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 
 // ==== PURE:chat-staff BEGIN ====
-const VERSIONE = 'staff-1';
+const VERSIONE = 'staff-2';
 const CORS: Record<string, string> = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 const IDENT: Record<string, string> = { B: 'Benedetta', G: 'Ginevra', A: 'Ale' };
@@ -75,6 +78,7 @@ interface Db {
   cancellaCs(ids: string[]): Promise<number>;
   cancellaContatori(sessioneId: string): Promise<number>;
   cancellaEventiChiave(sessioneId: string): Promise<number>;
+  cancellaPush(sessioneId: string): Promise<number>;
   cancellaSessione(id: string): Promise<number>;
   evento(r: { sessione_id: string | null; tipo: string; chi: string; esito: string | null; dettaglio: Record<string, unknown> }): Promise<void>;
 }
@@ -214,7 +218,7 @@ async function cancellaDati(d: Record<string, unknown>, amb: Ambiente, chi: stri
   const anteprima = voci.map((v) => ({ id: v.s.id, stato: v.s.stato, prova: v.s.prova, creata: v.s.created_at, ultima_attivita: v.s.ultima_attivita_at,
     messaggi: v.messaggi, proiezioni: v.proiezioni.length, card_email: v.card !== null }));
   if (d.conferma !== true) return json({ ok: true, anteprima: true, trovate: voci.length, sessioni: anteprima, promemoria: PROMEMORIA_CANCELLA });
-  const conti = { sessioni: 0, messaggi: 0, proiezioni: 0, card_email: 0, contatori: 0, eventi: 0 };
+  const conti = { sessioni: 0, messaggi: 0, proiezioni: 0, card_email: 0, contatori: 0, eventi: 0, push: 0 };
   const per = perSessione ? 'sessione' : 'email';
   try {
     for (const v of voci) {
@@ -230,6 +234,8 @@ async function cancellaDati(d: Record<string, unknown>, amb: Ambiente, chi: stri
       // le chiavi `<sessione>:...` (prenotazioni di push e thread, tetti) portano l'id della sessione e del thread Gmail:
       // si cancellano con lei (11.6 punto 4, Gate 2 C2); gli eventi senza chiave restano senza sessione
       conti.eventi += await amb.db.cancellaEventiChiave(v.s.id);
+      // staff-2 (11.6 punto 4): il registro delle push della chat con la chiave della sessione (push-eventi v7)
+      conti.push += await amb.db.cancellaPush(v.s.id);
       if ((await amb.db.cancellaSessione(v.s.id)) === 1) { conti.sessioni++; conti.messaggi += v.messaggi; }
     }
   } catch (x) {
@@ -284,6 +290,8 @@ const fallito = (causa: string, e: unknown): ErroreDb => {
   return new ErroreDb(causa);
 };
 const COL_SESS = 'id, stato, preso_da, customer_email, shopify_customer_id, prova, gmail_thread_id, cs_conversation_id, created_at, ultima_attivita_at';
+// gli eventi di push-eventi v7 (migr 0188) le cui chiavi cominciano con l'id della sessione
+const EVENTI_PUSH_CHAT = ['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'];
 const COL_MSG = 'id, sessione_id, seq, autore, email_stato, email_errore';
 const env = (k: string) => (Deno.env.get(k) ?? '').trim();
 
@@ -366,6 +374,11 @@ function dbSupabase(sb: SupabaseClient, anon: SupabaseClient): Db {
     async cancellaEventiChiave(sessioneId) {
       const { data, error } = await sb.from('chat_eventi').delete().like('chiave', `${sessioneId}:%`).select('id');
       if (error) throw fallito('eventi della sessione non cancellati', error);
+      return (data ?? []).length;
+    },
+    async cancellaPush(sessioneId) {
+      const { data, error } = await sb.from('push_eventi_inviati').delete().in('evento', EVENTI_PUSH_CHAT).like('chiave', `${sessioneId}:%`).select('id');
+      if (error) throw fallito('registro delle push non cancellato', error);
       return (data ?? []).length;
     },
     async cancellaSessione(id) {
