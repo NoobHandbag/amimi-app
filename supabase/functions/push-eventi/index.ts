@@ -210,7 +210,9 @@ function giorniLavorativiDopo(da: string, a: string): number {
 // Chat del sito (v7, 08-11). chat_orari di app_flags (scheda Chat): fuso, giorni ISO (1 = lunedi'), dalle-alle, chiusure
 // 'YYYY-MM-DD'; stesso schema di orariFlag di chat-api. Illeggibile, senza giorni, con dalle >= alle o un fuso che Intl
 // non conosce = il default (lunedi'-venerdi' 9-18 di Roma), come soglia(): un valore storto non deve spegnere i solleciti
-// in silenzio.
+// in silenzio. Divergenza dichiarata (Gate 2, C7): con lo stesso flag storto chat-api vale "sempre fuori orario" (testo
+// fuori orario alla cliente, push di passaggio non urgente), qui valgono gli orari di default; la scheda Chat (pezzo 6)
+// deve rifiutare un valore storto.
 type OrariChat = { tz: string; giorni: number[]; dalle: string; alle: string; chiusure: string[] };
 const ORARI_CHAT_DEFAULT: OrariChat = { tz: FUSO, giorni: [1, 2, 3, 4, 5], dalle: '09:00', alle: '18:00', chiusure: [] };
 const ORA_HHMM_RE = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
@@ -809,6 +811,9 @@ function msgAttivita(cands: Cand[], ordini: Record<string, Riga[]>): Msg[] {
 // Una chat aspetta il team quando e' `attesa_persona` (la cliente ha chiesto una persona) o `aperta` (presa da qualcuno)
 // e il team non ha risposto DOPO l'ultimo passaggio (ultima_risposta_staff_at vuota o prima di passaggio_at). Il sollecito
 // si ferma da solo quando lo staff risponde, la chat si chiude o torna al bot (8.5): sono tutti stati letti a ogni giro.
+// Come nella proposta (8.3: una chiave per passaggio e per passo) il sollecito segue il PASSAGGIO: una cliente che riscrive
+// dal widget dopo una risposta del team non apre un passaggio nuovo e non ha un sollecito (Gate 2, B4: decisione rimandata
+// al pezzo 6, CASI_APERTI n.54).
 // preso_da usa i nomi del selettore (Benedetta, Ginevra, Ale): nel testo i nomi di casa. Le push vanno al tema
 // dell'evento, mai con `chi`, quindi la mappa Benedetta -> Bene di push-api qui non serve (8.5).
 const PRESO_DA: Record<string, string> = { Benedetta: 'Benny', Ginevra: 'Ginni', Ale: 'Ale' };
@@ -832,11 +837,24 @@ function chiaviPassaggio(sessioni: Riga[]): string[] {
   for (const r of sessioni ?? []) { const a = r?.stato === 'attesa_persona' ? attesaChat(r) : null; if (a?.aspetta) out.push(`${a.id}:passaggio:${a.n}`); }
   return [...new Set(out)];
 }
+// Esito della push di passaggio scritto da chat-api in chat_eventi (esitoDaSalvare: `status` e `errore`, niente `prova`,
+// Gate 2 B1). Gate 2, B2: un `fallito` SENZA status (nessuna risposta di push-api: timeout di inviaPush a 40 s o rete) e'
+// un esito ignoto, perche' push-api va avanti fino a 100 s e puo' aver consegnato: non si ritenta (un doppione e' peggio
+// di una push persa e visibile, come chiusura() per gli eventi di push-eventi, RF-3) e chat_salute lo dice. Un `fallito`
+// con lo status (push-api ha risposto con un errore, o push_enabled spento) si ritenta; un `prenotato` fermo da 10
+// minuti (istanza morta prima di scrivere l'esito) si ritenta come un `fallito` (C7 del pezzo 2).
+function esitoPassaggio(e: Riga | undefined, ora: number): '' | 'nessun_iscritto' | 'fallito' | 'ignoto' | 'fermo' {
+  if (!e) return '';
+  if (e.esito === 'nessun_iscritto') return 'nessun_iscritto';
+  if (e.esito === 'fallito') return typeof e.status === 'string' && /^\d{3}$/.test(e.status) ? 'fallito' : 'ignoto';
+  const at = msDi(e.at);
+  return e.esito === 'prenotato' && Number.isFinite(at) && ora - at >= PASSAGGIO_FERMO_MS ? 'fermo' : '';
+}
 // chat_sollecito, parte 1: il nuovo tentativo della push di passaggio (8.4, C7 del pezzo 2) finche' la chat e'
 // `attesa_persona`. Chiave = quella di chat_eventi (`<sessione>:passaggio:<n>`), nel registro di push-eventi: dopo
 // l'invio e' finale, un `fallito` si ritenta fino a 3 volte. `nessun_iscritto` resta finale (non si ritenta: lo dice
-// chat_salute). Senza riga in chat_eventi da 10 minuti (chat-api caduta fra il passaggio e la prenotazione) = come fermo.
-// Istante = adesso (e' uno stato). urgente come chat-api: solo dentro l'orario.
+// chat_salute), e cosi' l'esito ignoto (B2). Senza riga in chat_eventi da 10 minuti (chat-api caduta fra il passaggio e la
+// prenotazione) = come fermo. Istante = adesso (e' uno stato). urgente come chat-api: solo dentro l'orario.
 function candChatPassaggio(o: { sessioni: Riga[]; eventi: Riga[]; orari: OrariChat; ora: number }): Cand[] {
   const ev = new Map<string, Riga>();
   for (const e of o.eventi ?? []) if (typeof e?.chiave === 'string') ev.set(e.chiave.toLowerCase(), e);
@@ -845,9 +863,8 @@ function candChatPassaggio(o: { sessioni: Riga[]; eventi: Riga[]; orari: OrariCh
     const a = r?.stato === 'attesa_persona' ? attesaChat(r) : null;
     if (!a?.aspetta) continue;
     const chiave = `${a.id}:passaggio:${a.n}`;
-    const e = ev.get(chiave), at = msDi(e?.at);
-    const motivo = !e ? (o.ora - a.da >= PASSAGGIO_FERMO_MS ? 'mancante' : '')
-      : e.esito === 'fallito' ? 'fallito' : e.esito === 'prenotato' && Number.isFinite(at) && o.ora - at >= PASSAGGIO_FERMO_MS ? 'fermo' : '';
+    const e = ev.get(chiave), esito = esitoPassaggio(e, o.ora);
+    const motivo = !e ? (o.ora - a.da >= PASSAGGIO_FERMO_MS ? 'mancante' : '') : esito === 'fallito' || esito === 'fermo' ? esito : '';
     if (!motivo) continue;
     out.push({ chiave, ts: o.ora, rif: { tipo: 'passaggio', motivo, prova: r.prova === true ? '1' : '', cliente: clienteChat(r), urgente: inOrarioChat(o.ora, o.orari) ? '1' : '' } });
   }
@@ -882,7 +899,8 @@ function oreTesto(h: number): string {
 }
 // Testi (D-9, 8.7): chi e' la cliente (nome o email, da nomeCliente), mai il testo della chat; "PROVA " in testa per una
 // sessione di prova (13.1). Il nuovo tentativo del passaggio ha il titolo e il testo di chat-api (messaggioPush), cosi' sul
-// telefono e' la stessa notifica. Il nome si accorcia per stare nei 120 punti di codice del titolo di push-api.
+// telefono e' la stessa notifica. Un nome si accorcia per stare nei 120 punti di codice del titolo di push-api; un'email
+// no (Gate 2, C5: un'email tagliata non e' piu' un'email, come in nomeCliente): se non ci sta, "Una cliente".
 function msgChatSollecito(cands: Cand[]): Msg[] {
   return cands.map((c) => {
     const p = c.rif.prova ? 'PROVA ' : '';
@@ -892,86 +910,110 @@ function msgChatSollecito(cands: Cand[]): Msg[] {
     }
     const scala = c.rif.passo === '2';
     const testa = `${p}${scala ? 'Chat senza risposta' : 'Chat in attesa'} da ${oreTesto(Number(c.rif.ore))}: `;
-    const nome = pulisci(chi, TITOLO_MAX_PUSH - Array.from(testa).length);
+    const posto = TITOLO_MAX_PUSH - Array.from(testa).length;
+    const nome = Array.from(chi).length <= posto ? chi : chi.includes('@') ? 'Una cliente' : pulisci(chi, posto);
     const presa = c.rif.preso ? `Presa da ${c.rif.preso}, ancora` : 'Ancora';
+    // Gate 2, C2: il passo 1 puo' non essere partito (evento spento, nessun telefono): il testo dice quando era previsto
     return { chiave: c.chiave, tema: scala ? TEMA_EVENTO.chat_sollecito_scala : TEMA_EVENTO.chat_sollecito, url: LINK_ASSISTENZA, urgente: true, titolo: testa + nome,
-      testo: scala ? `${presa} senza risposta: il primo promemoria e' partito dopo ${oreTesto(Number(c.rif.ore1))}. Apri Assistenza.` : `${presa} senza risposta del team. Apri Assistenza.` };
+      testo: scala ? `${presa} senza risposta: il primo promemoria era previsto dopo ${oreTesto(Number(c.rif.ore1))}. Apri Assistenza.` : `${presa} senza risposta del team. Apri Assistenza.` };
   });
 }
 // chat_salute (tema sistema, evento di stato, 8.6 e 8.10): un candidato per guasto, solo conteggi e cause scritte nel
 // codice, MAI dati della cliente (`sistema` non va per forza a chi segue le clienti). Chiavi che riguardano una chat in
 // testa con l'id della sessione (`<sessione>:...`), cosi' cancella_dati e la pulizia a 12 mesi le tolgono con lei (11.6
-// punto 4); le altre per giorno UTC, come i contatori e gli eventi di chat-api. Righe di 8.10:
-//   4  push di passaggio a nessuno (`nessun_iscritto`) o non partita (`fallito`, `prenotato` fermo): `<s>:<n>:passaggio`
-//   6  email di risposta in `errore` nelle 24 ore ("non partita" = si puo' rimandare, "esito ignoto" = no): `<s>:email:<m>`
+// punto 4); le altre per giorno UTC, come i contatori e gli eventi di chat-api (scostamento dichiarato da 8.6, che dice
+// il giorno di Roma: una chiave per giorno di Roma su un contatore per giorno UTC darebbe due push per lo stesso guasto).
+// "PROVA" in testa per una sessione di prova, letto da chat_sessioni (Gate 2, B1: chat-api, scrivendo l'esito, sostituisce
+// il dettaglio della riga e il flag prova si perde). Righe di 8.10:
+//   4  push di passaggio a nessuno (`nessun_iscritto`), non partita (`fallito` con risposta di push-api), con esito
+//      ignoto (`fallito` senza risposta, B2) o ferma (`prenotato` da 10 minuti): `<s>:<n>:passaggio`
+//   6  email di risposta in `errore` nelle 24 ore: "non partita: ..." (si puo' rimandare) e "esito ignoto: ..." (no), una
+//      push per messaggio, `<s>:email:<m>`; le cause di destinatario (indirizzo non valido, riservato, del team su una
+//      chat vera; Gate 2, B3) una per chat, non urgente, `<s>:destinatario`, e mai per una chat di prova (che per regola
+//      scrive solo al team: un rifiuto e' atteso)
 //   8  risposte dello staff senza email da oltre 10 minuti, o prenotate da oltre 20 (chat-send fermo, Gmail giu'): `invio:<g>`
 //   7  chat-api con richieste in errore nel giorno (contatore glob:sev_error, che sopravvive al refresh di health_log): `api:<g>`
 //   11 tetto delle chat nuove del giorno raggiunto (evento `limite:<g>` di chat-api): `limite:<g>`
 //   16 richieste a chat-api oltre la soglia (5.000, D-12; contatore glob:richieste): `quota:<g>`
 //   13 errori del widget oltre la soglia (20; contatore glob:errore, al tetto di 100 il beacon tace): `widget:<g>`
 // I contatori si leggono per oggi e ieri (UTC): un guasto delle 23:58 non si perde al cambio di giorno, e quello di ieri
-// gia' mandato e' `inviato` nel registro.
+// gia' mandato e' `inviato` nel registro. Nel testo la data, non "oggi" (Gate 2, C4: fra mezzanotte e le 2 di Roma il
+// giorno UTC e' ancora quello prima).
 const ERRORI_BEACON_TETTO = 100;
+function sessioniDaChiavi(passaggi: Riga[]): string[] {
+  const out: string[] = [];
+  for (const e of passaggi ?? []) { const m = typeof e?.chiave === 'string' ? PASSAGGIO_CHIAVE_RE.exec(e.chiave.toLowerCase()) : null; if (m) out.push(m[1]); }
+  return out;
+}
 function candChatSalute(o: { passaggi: Riga[]; email: Riga[]; prova: Record<string, boolean>; coda: number; contatori: Riga[]; limiti: Riga[]; ora: number; sogliaRichieste: number; sogliaWidget: number }): Cand[] {
   const out: Cand[] = [];
   const oggi = giornoUtc(o.ora);
-  const quando = (g: string) => (g === oggi ? 'oggi' : 'ieri');
+  const prova = (sid: string) => (o.prova?.[sid] === true ? '1' : '');
   for (const e of o.passaggi ?? []) {
     const m = typeof e?.chiave === 'string' ? PASSAGGIO_CHIAVE_RE.exec(e.chiave.toLowerCase()) : null;
     if (!m) continue;
-    const at = msDi(e.at);
-    const motivo = e.esito === 'nessun_iscritto' ? 'nessun_iscritto' : e.esito === 'fallito' ? 'fallito'
-      : e.esito === 'prenotato' && Number.isFinite(at) && o.ora - at >= PASSAGGIO_FERMO_MS ? 'fermo' : '';
-    if (motivo) out.push({ chiave: `${m[1]}:${m[2]}:passaggio`, ts: o.ora, rif: { tipo: 'passaggio', motivo, prova: e.prova === 'true' ? '1' : '' } });
+    const motivo = esitoPassaggio(e, o.ora);
+    if (motivo) out.push({ chiave: `${m[1]}:${m[2]}:passaggio`, ts: o.ora, rif: { tipo: 'passaggio', motivo, prova: prova(m[1]) } });
   }
+  const destinatario = new Set<string>();
   for (const r of o.email ?? []) {
     const id = typeof r?.id === 'string' && UUID_RE.test(r.id) ? r.id.toLowerCase() : '';
     const sid = typeof r?.sessione_id === 'string' && UUID_RE.test(r.sessione_id) ? r.sessione_id.toLowerCase() : '';
     if (!id || !sid) continue;
-    const motivo = typeof r.email_errore === 'string' && r.email_errore.startsWith('non partita') ? 'non_partita' : 'ignoto';
-    out.push({ chiave: `${sid}:email:${id}`, ts: o.ora, rif: { tipo: 'email', motivo, prova: o.prova?.[sid] === true ? '1' : '' } });
+    const causa = typeof r.email_errore === 'string' ? r.email_errore : '';
+    const motivo = /^esito ignoto\b/.test(causa) ? 'ignoto' : /^non partita: /.test(causa) ? 'non_partita' : 'destinatario';
+    if (motivo !== 'destinatario') out.push({ chiave: `${sid}:email:${id}`, ts: o.ora, rif: { tipo: 'email', motivo, prova: prova(sid) } });
+    else if (!prova(sid) && !destinatario.has(sid)) { destinatario.add(sid); out.push({ chiave: `${sid}:destinatario`, ts: o.ora, rif: { tipo: 'email', motivo } }); }
   }
   if (Number.isSafeInteger(o.coda) && o.coda > 0) out.push({ chiave: `invio:${oggi}`, ts: o.ora, rif: { tipo: 'invio', n: String(o.coda) } });
   for (const r of o.contatori ?? []) {
     const f = msDi(r?.finestra), n = Number(r?.n);
     if (!Number.isFinite(f) || f % 86400000 !== 0 || !Number.isSafeInteger(n) || n <= 0) continue;
     const g = giornoUtc(f);
-    if (r.chiave === 'glob:sev_error') out.push({ chiave: `api:${g}`, ts: o.ora, rif: { tipo: 'api', n: String(n), quando: quando(g) } });
-    else if (r.chiave === 'glob:richieste' && n >= o.sogliaRichieste) out.push({ chiave: `quota:${g}`, ts: o.ora, rif: { tipo: 'quota', n: String(n), soglia: String(o.sogliaRichieste), quando: quando(g) } });
-    else if (r.chiave === 'glob:errore' && n >= o.sogliaWidget) out.push({ chiave: `widget:${g}`, ts: o.ora, rif: { tipo: 'widget', n: String(n), soglia: String(o.sogliaWidget), tetto: n > ERRORI_BEACON_TETTO ? '1' : '', quando: quando(g) } });
+    if (r.chiave === 'glob:sev_error') out.push({ chiave: `api:${g}`, ts: o.ora, rif: { tipo: 'api', n: String(n), giorno: g } });
+    else if (r.chiave === 'glob:richieste' && n >= o.sogliaRichieste) out.push({ chiave: `quota:${g}`, ts: o.ora, rif: { tipo: 'quota', n: String(n), soglia: String(o.sogliaRichieste), giorno: g } });
+    else if (r.chiave === 'glob:errore' && n >= o.sogliaWidget) out.push({ chiave: `widget:${g}`, ts: o.ora, rif: { tipo: 'widget', n: String(n), soglia: String(o.sogliaWidget), tetto: n > ERRORI_BEACON_TETTO ? '1' : '', giorno: g } });
   }
   for (const r of o.limiti ?? []) {
     const m = typeof r?.chiave === 'string' ? /^limite:(\d{4}-\d{2}-\d{2})$/.exec(r.chiave) : null;
-    if (m) out.push({ chiave: `limite:${m[1]}`, ts: o.ora, rif: { tipo: 'limite', quando: quando(m[1]) } });
+    if (m) out.push({ chiave: `limite:${m[1]}`, ts: o.ora, rif: { tipo: 'limite', giorno: m[1], oggi: m[1] === oggi ? '1' : '' } });
   }
   return ordinaRecenti(out);
 }
+// la data di un giorno UTC nei testi: "9 novembre (UTC)"
+const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+const giornoTesto = (g: unknown): string => { const m = typeof g === 'string' ? /^\d{4}-(\d{2})-(\d{2})$/.exec(g) : null; return m && MESI[Number(m[1]) - 1] ? `${Number(m[2])} ${MESI[Number(m[1]) - 1]} (UTC)` : 'giorno non leggibile'; };
+const TESTI_PASSAGGIO: Record<string, [string, string]> = {
+  nessun_iscritto: ['richiesta senza notifica', 'Una cliente ha chiesto una persona, ma la notifica non e\' arrivata a nessuno: nessun telefono riceve il tema Assistenza (nessuno iscritto o tema spento). La chat aspetta una risposta.'],
+  fallito: ['notifica di richiesta non partita', 'La notifica "chiede una persona" non e\' partita (push-api in errore): chat_sollecito la ritenta, al massimo tre volte, finche\' la chat aspetta.'],
+  ignoto: ['notifica di richiesta senza esito', 'La notifica "chiede una persona" non ha avuto risposta da push-api: forse e\' arrivata, forse no, e non si ritenta. Controlla la chat in Assistenza.'],
+  fermo: ['notifica di richiesta senza esito', 'La notifica "chiede una persona" e\' rimasta a meta\' (chat-api interrotta): chat_sollecito la ritenta finche\' la chat aspetta.'],
+};
 function msgChatSalute(cands: Cand[]): Msg[] {
   const out: Msg[] = [];
   for (const c of cands) {
     const p = c.rif.prova ? 'PROVA ' : '';
     const base = { chiave: c.chiave, tema: TEMA_EVENTO.chat_salute, url: LINK_SALUTE };
-    const n = Number(c.rif.n) || 0;
+    const n = Number(c.rif.n) || 0, quando = giornoTesto(c.rif.giorno);
     if (c.rif.tipo === 'passaggio') {
-      out.push(c.rif.motivo === 'nessun_iscritto'
-        ? { ...base, urgente: true, titolo: `${p}Chat del sito: richiesta senza notifica`, testo: 'Una cliente ha chiesto una persona, ma la notifica non e\' arrivata a nessuno: nessun telefono iscritto al tema Assistenza. La chat aspetta una risposta.' }
-        : { ...base, urgente: true, titolo: `${p}Chat del sito: notifica di richiesta non partita`, testo: 'La notifica "chiede una persona" non e\' partita: si ritenta a ogni giro finche\' la chat aspetta. Guarda Salute.' });
+      const tp = TESTI_PASSAGGIO[c.rif.motivo];
+      if (tp) out.push({ ...base, urgente: true, titolo: `${p}Chat del sito: ${tp[0]}`, testo: tp[1] });
     } else if (c.rif.tipo === 'email') {
-      out.push(c.rif.motivo === 'non_partita'
-        ? { ...base, urgente: true, titolo: `${p}Chat del sito: email di risposta non partita`, testo: 'Gmail ha rifiutato l\'email con una risposta del team: si puo\' rimandare dalla chat.' }
-        : { ...base, urgente: true, titolo: `${p}Chat del sito: email di risposta con esito ignoto`, testo: 'Gmail non ha confermato l\'invio di una risposta del team: controlla in info@ se e\' partita, non si rimanda da sola.' });
+      if (c.rif.motivo === 'non_partita') out.push({ ...base, urgente: true, titolo: `${p}Chat del sito: email di risposta non partita`, testo: 'Gmail ha rifiutato l\'email con una risposta del team: si puo\' rimandare dalla chat.' });
+      else if (c.rif.motivo === 'ignoto') out.push({ ...base, urgente: true, titolo: `${p}Chat del sito: email di risposta con esito ignoto`, testo: 'Gmail non ha confermato l\'invio di una risposta del team: controlla in info@ se e\' partita, non si rimanda da sola.' });
+      else out.push({ ...base, titolo: 'Chat del sito: email della cliente non utilizzabile', testo: 'Le risposte del team a una chat restano nella chat ma non partono per email: l\'indirizzo lasciato dalla cliente non e\' utilizzabile (non valido, riservato o del team).' });
     } else if (c.rif.tipo === 'invio') {
       out.push({ ...base, urgente: true, titolo: 'Chat del sito: email in coda', testo: `${plurale(n, 'risposta del team aspetta', 'risposte del team aspettano')} l'email da oltre 10 minuti: chat-send fermo o Gmail non disponibile.` });
     } else if (c.rif.tipo === 'api') {
-      out.push({ ...base, urgente: true, titolo: 'Chat del sito in errore', testo: `chat-api: ${plurale(n, 'richiesta', 'richieste')} in errore ${c.rif.quando}. Dettagli in Salute.` });
+      out.push({ ...base, urgente: true, titolo: 'Chat del sito in errore', testo: `chat-api: ${plurale(n, 'richiesta', 'richieste')} in errore nel giorno ${quando}. Dettagli in Salute.` });
     } else if (c.rif.tipo === 'limite') {
-      out.push({ ...base, urgente: true, titolo: 'Chat del sito: tetto delle chat nuove raggiunto', testo: `Raggiunto ${c.rif.quando} il tetto delle chat nuove del giorno: fino a mezzanotte UTC nessun'altra cliente puo' aprirne una. Se e' un abuso, spegni l'embed della chat.` });
+      out.push({ ...base, urgente: true, titolo: 'Chat del sito: tetto delle chat nuove raggiunto', testo: `Raggiunto il tetto delle chat nuove del giorno ${quando}${c.rif.oggi ? ': fino a mezzanotte UTC nessun\'altra cliente puo\' aprirne una' : ''}. Se e' un abuso, spegni l'embed della chat.` });
     } else if (c.rif.tipo === 'quota') {
-      out.push({ ...base, titolo: 'Chat del sito: troppe richieste', testo: `${euro(n)} richieste a chat-api ${c.rif.quando} (soglia ${euro(Number(c.rif.soglia))}): possibile abuso. Se lo e', spegni l'embed della chat.` });
+      out.push({ ...base, titolo: 'Chat del sito: troppe richieste', testo: `${euro(n)} richieste a chat-api nel giorno ${quando}, soglia ${euro(Number(c.rif.soglia))}: possibile abuso. Se lo e', spegni l'embed della chat.` });
     } else if (c.rif.tipo === 'widget') {
       out.push({ ...base, titolo: 'Chat del sito: errori del widget', testo: c.rif.tetto
-        ? `Tetto del beacon raggiunto ${c.rif.quando}: possibile abuso, gli errori veri del giorno non si vedono.`
-        : `${plurale(n, 'errore', 'errori')} del widget ${c.rif.quando} (soglia ${Number(c.rif.soglia) || 0}).` });
+        ? `Tetto del beacon raggiunto nel giorno ${quando}: possibile abuso, gli errori veri del giorno non si vedono.`
+        : `${plurale(n, 'errore', 'errori')} del widget nel giorno ${quando}, soglia ${Number(c.rif.soglia) || 0}.` });
     }
   }
   return out;
@@ -1369,7 +1411,7 @@ async function leggiPassaggi(sb: Sb, chiavi: string[]): Promise<Riga[]> {
   const out: Riga[] = [];
   for (let i = 0; i < chiavi.length; i += 100) {
     const blocco = chiavi.slice(i, i + 100);
-    const { data, error } = await retryOnce(() => sb.from('chat_eventi').select('chiave, esito, at').eq('tipo', 'push_passaggio').in('chiave', blocco).limit(blocco.length + 1));
+    const { data, error } = await retryOnce(() => sb.from('chat_eventi').select('chiave, esito, at, status:dettaglio->>status').eq('tipo', 'push_passaggio').in('chiave', blocco).limit(blocco.length + 1));
     if (error) throw new LetturaFallita('push di passaggio', error);
     out.push(...((data ?? []) as Riga[]));
   }
@@ -1549,17 +1591,18 @@ const EVENTI: Record<string, DefEvento> = {
   chat_salute: {
     candidati: async (sb, ctx, ev) => {
       const t24 = dalle(ctx, FINESTRA_MS);
-      // delle push di passaggio solo chiave, esito, istante e il flag prova del dettaglio; dei messaggi dello staff solo
-      // id, sessione, istante e la causa dell'errore (testo fisso di chat-send, senza @): mai testi, email o nomi
-      const { data: pas, error: aErr } = await retryOnce(() => sb.from('chat_eventi').select('chiave, esito, at, prova:dettaglio->>prova').eq('tipo', 'push_passaggio').in('esito', ['nessun_iscritto', 'fallito', 'prenotato']).gte('at', t24).order('at', { ascending: false }).limit(LIMITE_SALUTE_CHAT + 1));
+      // delle push di passaggio solo chiave, esito, istante e lo status della risposta di push-api (B2); dei messaggi dello
+      // staff solo id, sessione, istante e la causa dell'errore (testo fisso di chat-send, senza @): mai testi, email o nomi
+      const { data: pas, error: aErr } = await retryOnce(() => sb.from('chat_eventi').select('chiave, esito, at, status:dettaglio->>status').eq('tipo', 'push_passaggio').in('esito', ['nessun_iscritto', 'fallito', 'prenotato']).gte('at', t24).order('at', { ascending: false }).limit(LIMITE_SALUTE_CHAT + 1));
       if (aErr || (pas ?? []).length > LIMITE_SALUTE_CHAT) throw new LetturaFallita('push di passaggio non arrivate', aErr ?? `oltre ${LIMITE_SALUTE_CHAT} righe`);
       const { data: em, error: mErr } = await retryOnce(() => sb.from('chat_messaggi').select('id, sessione_id, email_errore, email_at').eq('autore', 'staff').eq('email_stato', 'errore').gte('email_at', t24).order('email_at', { ascending: false }).limit(LIMITE_SALUTE_CHAT + 1));
       if (mErr || (em ?? []).length > LIMITE_SALUTE_CHAT) throw new LetturaFallita('email non partite', mErr ?? `oltre ${LIMITE_SALUTE_CHAT} righe`);
-      const ids = [...new Set(((em ?? []) as Riga[]).map((r) => String(r.sessione_id ?? '').toLowerCase()).filter((x) => UUID_RE.test(x)))];
+      // il flag prova delle chat dei guasti (B1: dal dettaglio di chat_eventi si perde quando chat-api scrive l'esito)
+      const ids = [...new Set([...sessioniDaChiavi((pas ?? []) as Riga[]), ...((em ?? []) as Riga[]).map((r) => String(r.sessione_id ?? '').toLowerCase())].filter((x) => UUID_RE.test(x)))];
       const prova: Record<string, boolean> = {};
       if (ids.length) {
         const { data: ss, error: sErr } = await retryOnce(() => sb.from('chat_sessioni').select('id, prova').in('id', ids).limit(ids.length + 1));
-        if (sErr) throw new LetturaFallita('chat delle email', sErr);
+        if (sErr) throw new LetturaFallita('chat dei guasti', sErr);
         for (const r of (ss ?? []) as Riga[]) prova[String(r.id).toLowerCase()] = r.prova === true;
       }
       const [coda, ferme] = await Promise.all([
@@ -1640,9 +1683,10 @@ const EVENTI: Record<string, DefEvento> = {
 // prima del riepilogo, il riepilogo per ultimo. 03-11: premia_salute col sistema, premia_da_approvare dopo l'Assistenza.
 // 06-11: sistema_senza_iscritti prima del riepilogo, dopo gli eventi che portano una notizia (e' un promemoria di stato
 // al giorno, e le sue letture, tre piu' un conteggio per tema, non devono ritardare cs_urgente)
-// 08-11 (chat del sito): chat_salute col sistema; chat_sollecito (che porta anche il nuovo tentativo della push "chiede una
-// persona") subito dopo cs_urgente, la scala dopo
-const ORDINE = ['sistema_cs_sync_fermo', 'premia_salute', 'chat_salute', 'cs_urgente', 'chat_sollecito', 'chat_sollecito_scala', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo'];
+// 08-11 (chat del sito): chat_sollecito (che porta anche il nuovo tentativo della push "chiede una persona") subito dopo
+// cs_urgente, la scala dopo, chat_salute dopo i solleciti (Gate 2, C6: con molti guasti in fila consumerebbe il tetto dei
+// 20 invii prima delle notizie per le clienti)
+const ORDINE = ['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'chat_sollecito', 'chat_sollecito_scala', 'chat_salute', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo'];
 
 // registro: .in() sulle sole chiavi dei candidati, a blocchi di 100 (Regola 20b), mai la tabella intera
 async function leggiRegistro(sb: Sb, evento: string, chiavi: string[]): Promise<Map<string, Reg>> {

@@ -4,7 +4,8 @@
 --
 -- chat_conservazione() (0187) toglie anche le righe del registro push_eventi_inviati dei tre eventi della chat della 0188
 -- (chat_sollecito, chat_sollecito_scala, chat_salute) con la chiave della sessione (`<sessione>:...`): la stessa funzione
--- della 0187 con un delete e un conteggio `push` in piu' (tests/chat_staff_send.mjs G19 la confronta con la 0187).
+-- della 0187 con un delete e un conteggio `push` in piu' (tests/chat_staff_send.mjs G19 la confronta con la 0187), piu'
+-- (Gate 2, C1) le righe di quei tre eventi rimaste orfane, con una chiave di sessione che non c'e' piu' e ferme da un'ora.
 -- cancella_dati di chat-staff (staff-2) fa lo stesso. Va applicata DOPO la 0188 (gli eventi). Nessuna tabella, flag o
 -- cron; nessuna scrittura in change_log (5.1).
 -- Rollback: la funzione della 0187, rimessa con la sua definizione (il delete in piu' tocca solo righe di sessioni gia'
@@ -69,6 +70,17 @@ begin
   delete from chat_token
    where id in (select id from chat_token where scade_at < now() - interval '1 day' limit 5000);
   get diagnostics v_tok = row_count;
+  -- 0189 (Gate 2, C1): righe del registro rimaste senza la loro chat (un giro di push-eventi che ha prenotato una chiave
+  -- mentre cancella_dati toglieva la sessione); ferme da oltre un'ora, cosi' un invio in corso non perde la sua riga
+  delete from push_eventi_inviati
+   where id in (select p.id from push_eventi_inviati p
+                 where p.evento in ('chat_sollecito', 'chat_sollecito_scala', 'chat_salute')
+                   and p.chiave ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:'
+                   and p.updated_at < now() - interval '1 hour'
+                   and not exists (select 1 from chat_sessioni s where s.id::text = left(p.chiave, 36))
+                 limit 5000);
+  get diagnostics v_n = row_count;
+  v_push := v_push + v_n;
 
   if v_sess + v_cs + v_cont + v_tok + v_push > 0 then
     insert into chat_eventi (tipo, chi, esito, dettaglio)

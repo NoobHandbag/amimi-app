@@ -34,6 +34,10 @@ begin
     ('chat_sollecito', v_vecchia || ':1:sollecito:1', 'saltato', 0), ('chat_sollecito_scala', v_vecchia || ':1:sollecito:2', 'saltato', 0),
     ('chat_salute', v_vecchia || ':1:passaggio', 'saltato', 0), ('chat_sollecito', v_recente || ':1:sollecito:1', 'saltato', 0),
     ('chat_salute', 'api:prova-conservazione', 'saltato', 0), ('cs_urgente', v_vecchia || ':urgente', 'saltato', 0);
+  -- Gate 2, C1: righe orfane (chiave di una sessione che non esiste): quella ferma da 2 ore va via, quella fresca resta
+  insert into push_eventi_inviati (evento, chiave, stato, tentativi, updated_at) values
+    ('chat_sollecito', '00000000-0000-4000-8000-0000000000ff:1:sollecito:1', 'saltato', 0, now() - interval '2 hours'),
+    ('chat_salute', '00000000-0000-4000-8000-0000000000fe:1:passaggio', 'prenotato', 1, now());
 
   v_r := public.chat_conservazione();
 
@@ -52,11 +56,13 @@ begin
   if (select count(*) from push_eventi_inviati where chiave in (v_recente || ':1:sollecito:1', 'api:prova-conservazione', v_vecchia || ':urgente')) <> 3 then
     raise exception 'KO: cancellate righe del registro di un''altra chat, per giorno o di un altro evento';
   end if;
+  if exists (select 1 from push_eventi_inviati where chiave = '00000000-0000-4000-8000-0000000000ff:1:sollecito:1') then raise exception 'KO: riga orfana ferma da 2 ore rimasta'; end if;
+  if not exists (select 1 from push_eventi_inviati where chiave = '00000000-0000-4000-8000-0000000000fe:1:passaggio') then raise exception 'KO: riga orfana fresca (invio forse in corso) cancellata'; end if;
   if (select count(*) from chat_sessioni) <> v_altre + 1 then raise exception 'KO: toccate altre chat'; end if;
   if exists (select 1 from chat_contatori where chiave = 'glob:prova_conservazione') then raise exception 'KO: contatore fermo da 8 giorni rimasto'; end if;
   if not exists (select 1 from chat_contatori where chiave = 'glob:prova_fresca') then raise exception 'KO: contatore fresco cancellato'; end if;
   if exists (select 1 from chat_token where hash = repeat('b', 64)) then raise exception 'KO: token scaduto da 2 giorni rimasto'; end if;
-  if (v_r ->> 'sessioni')::int <> 1 or (v_r ->> 'proiezioni')::int <> 1 or (v_r ->> 'push')::int <> 3 or (v_r ->> 'mesi')::int <> coalesce(nullif(trim(v_mesi), '')::int, 12) then
+  if (v_r ->> 'sessioni')::int <> 1 or (v_r ->> 'proiezioni')::int <> 1 or (v_r ->> 'push')::int < 4 or (v_r ->> 'mesi')::int <> coalesce(nullif(trim(v_mesi), '')::int, 12) then
     raise exception 'KO: conteggi % (mesi del flag %)', v_r, v_mesi;
   end if;
   if not exists (select 1 from chat_eventi where tipo = 'conservazione' and chi = 'cron' and (dettaglio ->> 'sessioni')::int = 1 and position('@' in dettaglio::text) = 0) then

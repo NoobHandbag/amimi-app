@@ -509,12 +509,15 @@ const M9 = M0189.replace(/--.*$/gm, '');
 const fn0187 = (M.match(/create or replace function public\.chat_conservazione\(\)[\s\S]*?\$fn\$;/) ?? [''])[0];
 const fn0189 = (M9.match(/create or replace function public\.chat_conservazione\(\)[\s\S]*?\$fn\$;/) ?? [''])[0];
 const PUSH_0189 = "    delete from push_eventi_inviati p\n     using unnest(v_ids) u(id)\n     where p.evento in ('chat_sollecito', 'chat_sollecito_scala', 'chat_salute')\n       and p.chiave like u.id::text || ':%';\n    get diagnostics v_push = row_count;\n";
-// la 0189 e' la funzione della 0187 piu' il delete del registro e il conteggio push, e nient'altro
-const tolto = fn0189.replace(PUSH_0189, '').replace('  v_push int := 0;\n', '').replace(' + v_push > 0', ' > 0')
-  .replace(", 'token', v_tok, 'push', v_push));", ", 'token', v_tok));").replace(", 'token', v_tok, 'push', v_push);", ", 'token', v_tok);");
-t('G19 0189: chat_conservazione = la 0187 piu\' il delete del registro delle push della chat (prima di cancellare la sessione) e il conteggio push', fn0187 !== '' && fn0189.includes(PUSH_0189)
-  && fn0189.indexOf(PUSH_0189) < fn0189.indexOf('delete from chat_sessioni where id = any(v_ids);') && tolto.replace(/\s+/g, ' ') === fn0187.replace(/\s+/g, ' '),
-  tolto.replace(/\s+/g, ' ').slice(0, 200));
+// la 0189 e' la funzione della 0187 piu' il delete del registro, quello delle righe orfane (Gate 2, C1) e il conteggio
+// push, e nient'altro
+const norm = (x) => x.replace(/\s+/g, ' ');
+const ORFANE_0189 = "delete from push_eventi_inviati where id in (select p.id from push_eventi_inviati p where p.evento in ('chat_sollecito', 'chat_sollecito_scala', 'chat_salute') and p.chiave ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:' and p.updated_at < now() - interval '1 hour' and not exists (select 1 from chat_sessioni s where s.id::text = left(p.chiave, 36)) limit 5000); get diagnostics v_n = row_count; v_push := v_push + v_n; ";
+const tolto = norm(fn0189.replace(PUSH_0189, '').replace('  v_push int := 0;\n', '').replace(' + v_push > 0', ' > 0')
+  .replace(", 'token', v_tok, 'push', v_push));", ", 'token', v_tok));").replace(", 'token', v_tok, 'push', v_push);", ", 'token', v_tok);")).replace(ORFANE_0189, '');
+t('G19 0189: chat_conservazione = la 0187 piu\' il delete del registro delle push della chat (prima di cancellare la sessione), le righe orfane ferme da un\'ora (C1) e il conteggio push', fn0187 !== '' && fn0189.includes(PUSH_0189)
+  && norm(fn0189).includes(ORFANE_0189) && fn0189.indexOf(PUSH_0189) < fn0189.indexOf('delete from chat_sessioni where id = any(v_ids);') && tolto === norm(fn0187),
+  tolto.slice(0, 200));
 t('G20 0189: invoker, execute revocato, nessun cron o flag toccato, in una transazione', !/security definer/i.test(M9)
   && /revoke all on function public\.chat_conservazione\(\) from public, anon, authenticated;/.test(M9) && !/cron\.(schedule|alter_job|unschedule)/.test(M9)
   && !/\b(insert into|update|delete from) app_flags\b/i.test(M9) && !/insert\s+into\s+change_log/i.test(M9) && /\nbegin;\n/.test(M0189) && M0189.trimEnd().endsWith('commit;'));

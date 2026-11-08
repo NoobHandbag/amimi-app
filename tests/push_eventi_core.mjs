@@ -1069,6 +1069,7 @@ try {
     { id: ID('1'), stato: 'attesa_persona', passaggi: 1, passaggio_at: isoC(ORA_C - 5 * MIN), ultima_risposta_staff_at: null, preso_da: null, prova: false, ...conPII() },
     { id: ID('2'), stato: 'attesa_persona', passaggi: 1, passaggio_at: isoC(ORA_C - 20 * MIN), ultima_risposta_staff_at: null, preso_da: null, prova: false, ...conPII() },
     { id: ID('3'), stato: 'attesa_persona', passaggi: 1, passaggio_at: isoC(ORA_C - 2 * MIN), ultima_risposta_staff_at: null, preso_da: null, prova: false, ...conPII() },
+    { id: ID('6'), stato: 'attesa_persona', passaggi: 1, passaggio_at: isoC(ORA_C - 30 * MIN), ultima_risposta_staff_at: null, preso_da: null, prova: false, ...conPII() },
     { id: 'non-un-uuid', stato: 'attesa_persona', passaggi: 1, passaggio_at: '2026-11-02T09:00:00Z', ...conPII() },
     { id: ID('4'), stato: 'attesa_persona', passaggi: 0, passaggio_at: '2026-11-02T09:00:00Z', ...conPII() },
     { id: ID('5'), stato: 'bot', passaggi: 1, passaggio_at: '2026-11-02T09:00:00Z', ...conPII() }, null,
@@ -1091,26 +1092,31 @@ try {
       [ID('b')]: ['Chat in attesa da 1 giorno lavorativo: cliente.b@example.com', 'Presa da Benny, ancora senza risposta del team. Apri Assistenza.'],
       [ID('f')]: ['PROVA Chat in attesa da 1 giorno lavorativo: PROVA Code', 'Ancora senza risposta del team. Apri Assistenza.'],
     }) && m1.every((m) => m.tema === 'assistenza' && m.url === LINK_ASSISTENZA && m.urgente === true && !('chi' in m)) && perde(m1).length === 0 && testoValido(m1), per1);
-  t('CH11 testo del passo 2: tema assistenza_scala (Ale, D-1), le ore del primo promemoria',
+  t('CH11 testo del passo 2: tema assistenza_scala (Ale, D-1), quando era previsto il primo promemoria (Gate 2, C2: puo\' non essere partito)',
     m2.length === 1 && m2[0].tema === 'assistenza_scala' && m2[0].titolo === 'Chat senza risposta da 2 giorni lavorativi: cliente.b@example.com'
-    && m2[0].testo === 'Presa da Benny, ancora senza risposta: il primo promemoria e\' partito dopo 1 giorno lavorativo. Apri Assistenza.' && perde(m2).length === 0 && testoValido(m2), m2);
+    && m2[0].testo === 'Presa da Benny, ancora senza risposta: il primo promemoria era previsto dopo 1 giorno lavorativo. Apri Assistenza.' && perde(m2).length === 0 && testoValido(m2), m2);
   const lungo = msgChatSollecito(candChatSollecito({ sessioni: [{ ...SESS[0], customer_name: 'N'.repeat(80), prova: true }], ore: [24, 48], orari: OR, ora: ORA_C, passo: 1 }));
-  t('CH12 titolo nei 120 punti di codice di push-api (il nome si accorcia, la notizia resta); ore in parole', Array.from(lungo[0].titolo).length <= 120 && lungo[0].titolo.startsWith('PROVA Chat in attesa da 1 giorno lavorativo: NNN')
+  const em80 = 'a'.repeat(68) + '@example.com';
+  const lungaEmail = msgChatSollecito(candChatSollecito({ sessioni: [{ ...SESS[1], customer_email: em80, prova: true }], ore: [24, 48], orari: OR, ora: ORA_C, passo: 2 }));
+  const corta = msgChatSollecito(candChatSollecito({ sessioni: [{ ...SESS[1], customer_email: 'c@example.com', prova: true }], ore: [24, 48], orari: OR, ora: ORA_C, passo: 2 }));
+  t('CH12 titolo nei 120 punti di codice di push-api (il nome si accorcia, la notizia resta; un\'email troppo lunga diventa "Una cliente", mai tagliata: Gate 2, C5); ore in parole', Array.from(lungo[0].titolo).length <= 120 && lungo[0].titolo.startsWith('PROVA Chat in attesa da 1 giorno lavorativo: NNN')
+    && em80.length === 80 && lungaEmail[0].titolo === 'PROVA Chat senza risposta da 2 giorni lavorativi: Una cliente' && corta[0].titolo === 'PROVA Chat senza risposta da 2 giorni lavorativi: c@example.com'
     && oreTesto(24) === '1 giorno lavorativo' && oreTesto(48) === '2 giorni lavorativi' && oreTesto(6) === '6 ore lavorative' && oreTesto(1) === '1 ora lavorativa' && oreTesto(0.05) === '3 minuti' && oreTesto(1.5) === '90 minuti' && oreTesto(NaN) === 'qualche ora');
   t('CH13 PRESO_DA: i nomi del selettore diventano quelli di casa; altro -> vuoto', isDeepStrictEqual(PRESO_DA, { Benedetta: 'Benny', Ginevra: 'Ginni', Ale: 'Ale' }));
 
   // nuovo tentativo della push di passaggio (8.4, C7 del pezzo 2)
   const PAS = [
     { chiave: `${ID('a')}:passaggio:1`, esito: 'inviato', at: '2026-11-06T09:00:01Z' },
-    { chiave: `${ID('e')}:passaggio:1`, esito: 'fallito', at: isoC(ORA_C - 60 * MIN) },
+    { chiave: `${ID('e')}:passaggio:1`, esito: 'fallito', at: isoC(ORA_C - 60 * MIN), status: '500' },
+    { chiave: `${ID('6')}:passaggio:1`, esito: 'fallito', at: isoC(ORA_C - 30 * MIN), status: null },
     { chiave: `${ID('1')}:passaggio:1`, esito: 'prenotato', at: isoC(ORA_C - 5 * MIN) },
     { chiave: `${ID('2')}:passaggio:1`, esito: 'prenotato', at: isoC(ORA_C - 20 * MIN) },
     { chiave: `${ID('3')}:passaggio:1`, esito: 'nessun_iscritto', at: isoC(ORA_C - 2 * MIN) },
   ];
   t('CH14 chiaviPassaggio: una per chat in attesa_persona senza risposta, il passaggio corrente', isDeepStrictEqual(chiaviPassaggio(SESS),
-    [`${ID('a')}:passaggio:1`, `${ID('e')}:passaggio:1`, `${ID('f')}:passaggio:3`, `${ID('1')}:passaggio:1`, `${ID('2')}:passaggio:1`, `${ID('3')}:passaggio:1`]), chiaviPassaggio(SESS));
+    [`${ID('a')}:passaggio:1`, `${ID('e')}:passaggio:1`, `${ID('f')}:passaggio:3`, `${ID('1')}:passaggio:1`, `${ID('2')}:passaggio:1`, `${ID('3')}:passaggio:1`, `${ID('6')}:passaggio:1`]), chiaviPassaggio(SESS));
   const rp = candChatPassaggio({ sessioni: SESS, eventi: PAS, orari: OR, ora: ORA_C });
-  t('CH15 si ritenta: `fallito`, `prenotato` fermo da 10 minuti (istanza morta), nessuna riga da 10 minuti; `inviato`, `nessun_iscritto` (finale), prenotato da 5 minuti, passaggio di 2 minuti fa e chat `aperta` no. Chiave di chat_eventi, istante adesso, urgente in orario',
+  t('CH15 si ritenta: `fallito` con la risposta di push-api, `prenotato` fermo da 10 minuti (istanza morta), nessuna riga da 10 minuti; `fallito` SENZA risposta (timeout, Gate 2 B2: forse consegnata), `inviato`, `nessun_iscritto` (finale), prenotato da 5 minuti, passaggio di 2 minuti fa e chat `aperta` no. Chiave di chat_eventi, istante adesso, urgente in orario',
     isDeepStrictEqual(rp.map((c) => [c.chiave, c.rif.motivo]).sort(), [[`${ID('2')}:passaggio:1`, 'fermo'], [`${ID('e')}:passaggio:1`, 'fallito'], [`${ID('f')}:passaggio:3`, 'mancante']])
     && rp.every((c) => c.ts === ORA_C && c.rif.urgente === '1') && candChatPassaggio({ sessioni: SESS, eventi: PAS, orari: OR, ora: T('2026-11-09T20:00:00Z') }).every((c) => c.rif.urgente === ''),
     rp.map((c) => [c.chiave, c.rif.motivo]));
@@ -1122,51 +1128,69 @@ try {
     && SRC_API.includes("const chi = nomeCliente(s.customer_name, s.customer_email) || 'Una cliente';") && SRC_API.includes("titolo: `${s.prova ? 'PROVA ' : ''}Chat del sito: ${chi} chiede una persona`, testo: 'Apri Assistenza.', url: LINK_ASSISTENZA")
     && SRC.includes("const chi = c.rif.cliente || 'Una cliente';") && SRC.includes("titolo: `${p}Chat del sito: ${chi} chiede una persona`, testo: 'Apri Assistenza.' }")
     && msgChatSollecito([{ chiave: 'k', ts: 0, rif: { tipo: 'passaggio', cliente: '', prova: '', urgente: '' } }])[0].titolo === 'Chat del sito: Una cliente chiede una persona', mp);
+  t('CH16b contratto con chat-api (Gate 2, B1 e B2): l\'esito sostituisce il dettaglio con i soli conteggi e lo status della risposta di push-api (null senza risposta); il flag prova non c\'e\' piu\' e si legge da chat_sessioni',
+    SRC_API.includes(".from('chat_eventi').update({ esito, dettaglio }).eq('chiave', chiave)") && SRC_API.includes('return { inviati: n(e?.inviati), falliti: n(e?.falliti), destinatari: n(e?.destinatari), status: n(e?.status),')
+    && SRC_API.includes("const mia = await amb.db.evento({ sessione_id: s.id, tipo: 'push_passaggio', chiave, esito: 'prenotato', dettaglio: { n, prova: s.prova } });")
+    && !/prova:dettaglio/.test(SRC) && SRC.includes("status:dettaglio->>status"));
   t('CH17 i solleciti non sono eventi di stato (alla prima accensione il pregresso si salta: si accendono prima della chat, 8.3); chat_salute si\'',
     baselineDi({ evento: 'chat_sollecito', baseline_at: null, ultimo_giro_at: null }, ORA_C).baseline === true && baselineDi({ evento: 'chat_sollecito_scala', baseline_at: null, ultimo_giro_at: null }, ORA_C).baseline === true
     && baselineDi({ evento: 'chat_salute', baseline_at: null, ultimo_giro_at: null }, ORA_C).baseline === false);
 
   // chat_salute
   const M1 = 'd0000000-0000-4000-8000-000000000001', M2 = 'd0000000-0000-4000-8000-000000000002';
+  const M3 = 'd0000000-0000-4000-8000-000000000003', M4 = 'd0000000-0000-4000-8000-000000000004', M5 = 'd0000000-0000-4000-8000-000000000005';
+  // le righe come le lascia chat-api dopo l'esito (Gate 2, B1): il dettaglio ha solo i conteggi e lo status, niente prova
   const SAL_PAS = [
-    { chiave: `${ID('e')}:passaggio:1`, esito: 'fallito', at: isoC(ORA_C - 60 * MIN), prova: 'false' },
-    { chiave: `${ID('f')}:passaggio:2`, esito: 'nessun_iscritto', at: isoC(ORA_C - 180 * MIN), prova: 'true' },
-    { chiave: `${ID('1')}:passaggio:1`, esito: 'prenotato', at: isoC(ORA_C - 5 * MIN), prova: 'false' },
-    { chiave: `${ID('2')}:passaggio:1`, esito: 'prenotato', at: isoC(ORA_C - 20 * MIN), prova: 'false' },
+    { chiave: `${ID('e')}:passaggio:1`, esito: 'fallito', at: isoC(ORA_C - 60 * MIN), status: '500' },
+    { chiave: `${ID('f')}:passaggio:2`, esito: 'nessun_iscritto', at: isoC(ORA_C - 180 * MIN), status: '200' },
+    { chiave: `${ID('1')}:passaggio:1`, esito: 'prenotato', at: isoC(ORA_C - 5 * MIN), status: null },
+    { chiave: `${ID('2')}:passaggio:1`, esito: 'prenotato', at: isoC(ORA_C - 20 * MIN), status: null },
+    { chiave: `${ID('6')}:passaggio:1`, esito: 'fallito', at: isoC(ORA_C - 30 * MIN), status: null },
     { chiave: 'boh', esito: 'fallito', at: isoC(ORA_C) }, { chiave: `${ID('a').toUpperCase()}:passaggio:1`, esito: 'inviato', at: isoC(ORA_C) }, null,
   ];
+  // le cause di chat-send: due di Gmail e quattro di destinatario (Gate 2, B3), queste ultime una push per chat e mai su
+  // una chat di prova
   const SAL_EM = [{ id: M1, sessione_id: ID('b'), email_errore: 'non partita: gmail 400', email_at: isoC(ORA_C - 30 * MIN) },
     { id: M2.toUpperCase(), sessione_id: ID('f'), email_errore: 'esito ignoto: Gmail non ha risposto', email_at: isoC(ORA_C - 40 * MIN) },
+    { id: M3, sessione_id: ID('c'), email_errore: 'destinatario non valido', email_at: isoC(ORA_C - 50 * MIN) },
+    { id: M4, sessione_id: ID('c'), email_errore: 'destinatario su un dominio riservato', email_at: isoC(ORA_C - 55 * MIN) },
+    { id: M5, sessione_id: ID('f'), email_errore: 'chat di prova: solo indirizzi del team', email_at: isoC(ORA_C - 56 * MIN) },
     { id: 'x', sessione_id: ID('b'), email_errore: 'non partita: gmail 500' }];
   const SAL_CONT = [{ chiave: 'glob:sev_error', finestra: '2026-11-09T00:00:00+00:00', n: 3 }, { chiave: 'glob:sev_error', finestra: '2026-11-08T00:00:00+00:00', n: 1 },
     { chiave: 'glob:richieste', finestra: '2026-11-09T00:00:00+00:00', n: 4999 }, { chiave: 'glob:richieste', finestra: '2026-11-08T00:00:00+00:00', n: 5000 },
     { chiave: 'glob:errore', finestra: '2026-11-09T00:00:00+00:00', n: 19 }, { chiave: 'glob:errore', finestra: '2026-11-08T00:00:00+00:00', n: 101 },
     { chiave: 'glob:sev_error', finestra: '2026-11-09T05:00:00Z', n: 2 }, { chiave: 'glob:sev_warn', finestra: '2026-11-09T00:00:00+00:00', n: 9 }, { chiave: 'glob:sev_error', finestra: '2026-11-09T00:00:00+00:00', n: 0 }];
   const SAL_LIM = [{ chiave: 'limite:2026-11-09' }, { chiave: 'limite:boh' }];
-  const baseSal = { passaggi: SAL_PAS, email: SAL_EM, prova: { [ID('f')]: true, [ID('b')]: false }, coda: 2, contatori: SAL_CONT, limiti: SAL_LIM, ora: ORA_C, sogliaRichieste: 5000, sogliaWidget: 20 };
+  const baseSal = { passaggi: SAL_PAS, email: SAL_EM, prova: { [ID('f')]: true, [ID('b')]: false, [ID('c')]: false }, coda: 2, contatori: SAL_CONT, limiti: SAL_LIM, ora: ORA_C, sogliaRichieste: 5000, sogliaWidget: 20 };
   const cs = candChatSalute(baseSal);
-  t('CH18 candChatSalute: un candidato per guasto (8.10 righe 4, 6, 7, 8, 11, 13, 16), chiavi della chat in testa con l\'id della sessione, le altre per giorno UTC; sotto soglia, prenotato fresco, inviato, finestra non a mezzanotte o righe storte no',
-    isDeepStrictEqual(cs.map((c) => c.chiave).sort(), [`${ID('2')}:1:passaggio`, `${ID('b')}:email:${M1}`, `${ID('e')}:1:passaggio`, `${ID('f')}:2:passaggio`, `${ID('f')}:email:${M2}`,
+  t('CH18 candChatSalute: un candidato per guasto (8.10 righe 4, 6, 7, 8, 11, 13, 16), chiavi della chat in testa con l\'id della sessione, le altre per giorno UTC; destinatario una volta per chat e mai per una chat di prova; sotto soglia, prenotato fresco, inviato, finestra non a mezzanotte o righe storte no',
+    isDeepStrictEqual(cs.map((c) => c.chiave).sort(), [`${ID('2')}:1:passaggio`, `${ID('6')}:1:passaggio`, `${ID('b')}:email:${M1}`, `${ID('c')}:destinatario`, `${ID('e')}:1:passaggio`, `${ID('f')}:2:passaggio`, `${ID('f')}:email:${M2}`,
       'api:2026-11-08', 'api:2026-11-09', 'invio:2026-11-09', 'limite:2026-11-09', 'quota:2026-11-08', 'widget:2026-11-08'].sort()) && cs.every((c) => c.ts === ORA_C), cs.map((c) => c.chiave));
   const ms = msgChatSalute(cs);
-  const perS = Object.fromEntries(ms.map((m) => [m.chiave.includes(':email:') ? 'email:' + m.chiave.slice(0, 36) : m.chiave.includes(':passaggio') ? 'pass:' + m.chiave.slice(0, 36) : m.chiave.split(':')[0] + ':' + m.chiave.split(':')[1], [m.titolo, m.testo, m.urgente === true]]));
-  t('CH19 testi di chat_salute: solo cause e conteggi, PROVA per la chat di prova, oggi o ieri; urgenti tranne quota e widget',
+  const perS = Object.fromEntries(ms.map((m) => [m.chiave.includes(':email:') ? 'email:' + m.chiave.slice(0, 36) : m.chiave.includes(':destinatario') ? 'dest:' + m.chiave.slice(0, 36) : m.chiave.includes(':passaggio') ? 'pass:' + m.chiave.slice(0, 36) : m.chiave.split(':')[0] + ':' + m.chiave.split(':')[1], [m.titolo, m.testo, m.urgente === true]]));
+  const T_FALLITO = 'La notifica "chiede una persona" non e\' partita (push-api in errore): chat_sollecito la ritenta, al massimo tre volte, finche\' la chat aspetta.';
+  const T_IGNOTO = 'La notifica "chiede una persona" non ha avuto risposta da push-api: forse e\' arrivata, forse no, e non si ritenta. Controlla la chat in Assistenza.';
+  const T_FERMO = 'La notifica "chiede una persona" e\' rimasta a meta\' (chat-api interrotta): chat_sollecito la ritenta finche\' la chat aspetta.';
+  t('CH19 testi di chat_salute: solo cause e conteggi, PROVA per la chat di prova letto da chat_sessioni (B1), un testo per esito (C3), la data UTC (C4); urgenti tranne quota, widget e destinatario',
     isDeepStrictEqual(perS, {
-      ['pass:' + ID('e')]: ['Chat del sito: notifica di richiesta non partita', 'La notifica "chiede una persona" non e\' partita: si ritenta a ogni giro finche\' la chat aspetta. Guarda Salute.', true],
-      ['pass:' + ID('2')]: ['Chat del sito: notifica di richiesta non partita', 'La notifica "chiede una persona" non e\' partita: si ritenta a ogni giro finche\' la chat aspetta. Guarda Salute.', true],
-      ['pass:' + ID('f')]: ['PROVA Chat del sito: richiesta senza notifica', 'Una cliente ha chiesto una persona, ma la notifica non e\' arrivata a nessuno: nessun telefono iscritto al tema Assistenza. La chat aspetta una risposta.', true],
+      ['pass:' + ID('e')]: ['Chat del sito: notifica di richiesta non partita', T_FALLITO, true],
+      ['pass:' + ID('2')]: ['Chat del sito: notifica di richiesta senza esito', T_FERMO, true],
+      ['pass:' + ID('6')]: ['Chat del sito: notifica di richiesta senza esito', T_IGNOTO, true],
+      ['pass:' + ID('f')]: ['PROVA Chat del sito: richiesta senza notifica', 'Una cliente ha chiesto una persona, ma la notifica non e\' arrivata a nessuno: nessun telefono riceve il tema Assistenza (nessuno iscritto o tema spento). La chat aspetta una risposta.', true],
+      ['dest:' + ID('c')]: ['Chat del sito: email della cliente non utilizzabile', 'Le risposte del team a una chat restano nella chat ma non partono per email: l\'indirizzo lasciato dalla cliente non e\' utilizzabile (non valido, riservato o del team).', false],
       ['email:' + ID('b')]: ['Chat del sito: email di risposta non partita', 'Gmail ha rifiutato l\'email con una risposta del team: si puo\' rimandare dalla chat.', true],
       ['email:' + ID('f')]: ['PROVA Chat del sito: email di risposta con esito ignoto', 'Gmail non ha confermato l\'invio di una risposta del team: controlla in info@ se e\' partita, non si rimanda da sola.', true],
       'invio:2026-11-09': ['Chat del sito: email in coda', '2 risposte del team aspettano l\'email da oltre 10 minuti: chat-send fermo o Gmail non disponibile.', true],
-      'api:2026-11-09': ['Chat del sito in errore', 'chat-api: 3 richieste in errore oggi. Dettagli in Salute.', true],
-      'api:2026-11-08': ['Chat del sito in errore', 'chat-api: 1 richiesta in errore ieri. Dettagli in Salute.', true],
-      'limite:2026-11-09': ['Chat del sito: tetto delle chat nuove raggiunto', 'Raggiunto oggi il tetto delle chat nuove del giorno: fino a mezzanotte UTC nessun\'altra cliente puo\' aprirne una. Se e\' un abuso, spegni l\'embed della chat.', true],
-      'quota:2026-11-08': ['Chat del sito: troppe richieste', '5.000 richieste a chat-api ieri (soglia 5.000): possibile abuso. Se lo e\', spegni l\'embed della chat.', false],
-      'widget:2026-11-08': ['Chat del sito: errori del widget', 'Tetto del beacon raggiunto ieri: possibile abuso, gli errori veri del giorno non si vedono.', false],
+      'api:2026-11-09': ['Chat del sito in errore', 'chat-api: 3 richieste in errore nel giorno 9 novembre (UTC). Dettagli in Salute.', true],
+      'api:2026-11-08': ['Chat del sito in errore', 'chat-api: 1 richiesta in errore nel giorno 8 novembre (UTC). Dettagli in Salute.', true],
+      'limite:2026-11-09': ['Chat del sito: tetto delle chat nuove raggiunto', 'Raggiunto il tetto delle chat nuove del giorno 9 novembre (UTC): fino a mezzanotte UTC nessun\'altra cliente puo\' aprirne una. Se e\' un abuso, spegni l\'embed della chat.', true],
+      'quota:2026-11-08': ['Chat del sito: troppe richieste', '5.000 richieste a chat-api nel giorno 8 novembre (UTC), soglia 5.000: possibile abuso. Se lo e\', spegni l\'embed della chat.', false],
+      'widget:2026-11-08': ['Chat del sito: errori del widget', 'Tetto del beacon raggiunto nel giorno 8 novembre (UTC): possibile abuso, gli errori veri del giorno non si vedono.', false],
     }) && ms.every((m) => m.tema === 'sistema' && m.url === LINK_SALUTE && !('chi' in m)) && perdeTutto(ms).length === 0 && testoValido(ms), perS);
   const sotto = candChatSalute({ ...baseSal, passaggi: [], email: [], coda: 0, limiti: [], contatori: [{ chiave: 'glob:errore', finestra: '2026-11-09T00:00:00+00:00', n: 20 }], sogliaWidget: 20 });
   t('CH20 widget alla soglia (20) senza tetto: il conteggio nel testo; soglie da push_eventi.soglie; niente coda, niente candidato', sotto.length === 1
-    && msgChatSalute(sotto)[0].testo === '20 errori del widget oggi (soglia 20).' && candChatSalute({ ...baseSal, passaggi: [], email: [], coda: 0, limiti: [], contatori: SAL_CONT, sogliaRichieste: 6000, sogliaWidget: 200 }).every((c) => !/^(quota|widget):/.test(c.chiave))
+    && msgChatSalute(sotto)[0].testo === '20 errori del widget nel giorno 9 novembre (UTC), soglia 20.'
+    && msgChatSalute(candChatSalute({ ...baseSal, passaggi: [], email: [], coda: 0, contatori: [], limiti: [{ chiave: 'limite:2026-11-08' }] }))[0].testo === 'Raggiunto il tetto delle chat nuove del giorno 8 novembre (UTC). Se e\' un abuso, spegni l\'embed della chat.' && candChatSalute({ ...baseSal, passaggi: [], email: [], coda: 0, limiti: [], contatori: SAL_CONT, sogliaRichieste: 6000, sogliaWidget: 200 }).every((c) => !/^(quota|widget):/.test(c.chiave))
     && candChatSalute({ ...baseSal, passaggi: null, email: null, coda: NaN, contatori: null, limiti: null, prova: null }).length === 0);
 
   // letture per firma, col client finto
@@ -1174,12 +1198,12 @@ try {
   const fSess = (ora) => `chat_sessioni select id, stato, passaggi, passaggio_at, ultima_risposta_staff_at, preso_da, prova, customer_name, customer_email in:stato|${JSON.stringify(['attesa_persona', 'aperta'])} gte:passaggio_at|${isoC(ora - 30 * 86400000)} passaggio_at:asc limit:501`;
   const F_SESS = fSess(ORA_C);
   const CHIAVI_P = chiaviPassaggio(SESS_DB);
-  const F_PAS = `chat_eventi select chiave, esito, at eq:tipo|push_passaggio in:chiave|${JSON.stringify(CHIAVI_P)} limit:${CHIAVI_P.length + 1}`;
+  const F_PAS = `chat_eventi select chiave, esito, at, status:dettaglio->>status eq:tipo|push_passaggio in:chiave|${JSON.stringify(CHIAVI_P)} limit:${CHIAVI_P.length + 1}`;
   const lettureC = (ora) => ({
     [fSess(ora)]: { data: SESS_DB }, [F_PAS]: { data: PAS },
-    [`chat_eventi select chiave, esito, at, prova:dettaglio->>prova eq:tipo|push_passaggio in:esito|${JSON.stringify(['nessun_iscritto', 'fallito', 'prenotato'])} gte:at|${isoC(ora - 24 * 3600000)} at:desc limit:201`]: { data: SAL_PAS.filter(Boolean) },
+    [`chat_eventi select chiave, esito, at, status:dettaglio->>status eq:tipo|push_passaggio in:esito|${JSON.stringify(['nessun_iscritto', 'fallito', 'prenotato'])} gte:at|${isoC(ora - 24 * 3600000)} at:desc limit:201`]: { data: SAL_PAS.filter(Boolean) },
     [`chat_messaggi select id, sessione_id, email_errore, email_at eq:autore|staff eq:email_stato|errore gte:email_at|${isoC(ora - 24 * 3600000)} email_at:desc limit:201`]: { data: SAL_EM },
-    [`chat_sessioni select id, prova in:id|${JSON.stringify([ID('b'), ID('f')])} limit:3`]: { data: [{ id: ID('f'), prova: true }, { id: ID('b'), prova: false }] },
+    [`chat_sessioni select id, prova in:id|${JSON.stringify([ID('e'), ID('f'), ID('1'), ID('2'), ID('6'), ID('a'), ID('b'), ID('c')])} limit:9`]: { data: [{ id: ID('f'), prova: true }, { id: ID('b'), prova: false }, { id: ID('c'), prova: false }, { id: ID('e'), prova: false }] },
     [`chat_messaggi select id head eq:autore|staff is:email_stato|null lt:created_at|${isoC(ora - 10 * MIN)}`]: { count: 1 },
     [`chat_messaggi select id head eq:autore|staff eq:email_stato|prenotata lt:email_at|${isoC(ora - 20 * MIN)}`]: { count: 1 },
     [`chat_contatori select chiave, finestra, n in:chiave|${JSON.stringify(['glob:sev_error', 'glob:richieste', 'glob:errore'])} in:finestra|${JSON.stringify(['2026-11-08T00:00:00Z', '2026-11-09T00:00:00Z'])} limit:7`]: { data: SAL_CONT },
@@ -1216,8 +1240,8 @@ try {
     await errC('chat_sollecito', (q) => (q.table === 'chat_sessioni' ? { data: Array.from({ length: 501 }, () => SESS[0]), error: null } : undefined)),
     await errC('chat_sollecito', (q) => (q.table === 'chat_eventi' ? giu : undefined)),
     await errC('chat_sollecito_scala', (q) => (q.table === 'chat_sessioni' ? giu : undefined)),
-    await errC('chat_salute', (q, f) => (f.includes('prova:dettaglio') ? giu : undefined)),
-    await errC('chat_salute', (q, f) => (f.includes('prova:dettaglio') ? { data: Array.from({ length: 201 }, () => SAL_PAS[0]), error: null } : undefined)),
+    await errC('chat_salute', (q, f) => (f.includes('in:esito|') ? giu : undefined)),
+    await errC('chat_salute', (q, f) => (f.includes('in:esito|') ? { data: Array.from({ length: 201 }, () => SAL_PAS[0]), error: null } : undefined)),
     await errC('chat_salute', (q, f) => (f.includes('eq:email_stato|errore') ? giu : undefined)),
     await errC('chat_salute', (q) => (q.table === 'chat_sessioni' ? giu : undefined)),
     await errC('chat_salute', (q, f) => (f.includes('is:email_stato|null') ? giu : undefined)),
@@ -1226,7 +1250,7 @@ try {
     await errC('chat_salute', (q, f) => (f.startsWith('chat_eventi select chiave in:') ? giu : undefined)),
   ];
   t('CH23 Regola 20: ogni lettura fallita o troncata ferma l\'evento con la sua causa, mai un default vuoto', isDeepStrictEqual(causeC, ['chat in attesa', 'chat in attesa', 'push di passaggio', 'chat in attesa',
-    'push di passaggio non arrivate', 'push di passaggio non arrivate', 'email non partite', 'chat delle email', 'email in coda', 'email prenotate ferme', 'contatori della chat', 'tetto delle chat']), causeC);
+    'push di passaggio non arrivate', 'push di passaggio non arrivate', 'email non partite', 'chat dei guasti', 'email in coda', 'email prenotate ferme', 'contatori della chat', 'tetto delle chat']), causeC);
 
   // il giro vero: solleciti accesi da un po' (nessuna baseline), salute alla prima accensione (evento di stato)
   inviate.length = 0;
@@ -1237,8 +1261,9 @@ try {
   const g1 = await (await MI.eseguiRun(wg.sb, ctxC)).json();
   const inviate1 = inviate.splice(0);
   const perTema = (l) => l.reduce((o, m) => ({ ...o, [m.tema]: (o[m.tema] ?? 0) + 1 }), {});
-  t('CH24 giro: 11 push di salute al tema sistema, 3 solleciti e 3 nuovi tentativi al tema assistenza, 1 sollecito al tema assistenza_scala; registro con le chiavi della chat',
-    isDeepStrictEqual(perTema(inviate1), { sistema: 11, assistenza: 6, assistenza_scala: 1 }) && g1.inviati === 17 && wg.reg.get(`${ID('e')}:passaggio:1`)?.stato === 'fallito'
+  t('CH24 giro: 3 solleciti e 3 nuovi tentativi al tema assistenza, 1 sollecito al tema assistenza_scala, poi 13 push di salute al tema sistema (20, il tetto del giro); registro con le chiavi della chat',
+    isDeepStrictEqual(perTema(inviate1), { sistema: 13, assistenza: 6, assistenza_scala: 1 }) && g1.inviati === 19
+    && inviate1.findIndex((m) => m.tema === 'sistema') === 7 && wg.reg.get(`${ID('e')}:passaggio:1`)?.stato === 'fallito'
     && wg.reg.get(`${ID('b')}:2:sollecito:2`)?.stato === 'inviato' && wg.reg.get(`${ID('f')}:2:passaggio`)?.stato === 'inviato' && inviate1.every((m) => !('chi' in m)), { temi: perTema(inviate1), g1: g1.eventi });
   globalThis.__esitoInvio = null;
   const wg2 = mondo({ eventi: [evAcc('chat_sollecito'), evAcc('chat_sollecito_scala'), evRiga('chat_salute')], risposte: rispDi(lettureC(ORA_C + 2 * MIN)), registro: [...wg.reg.values()] });
@@ -1801,7 +1826,7 @@ const AMMESSE = {
   // nome ed email; delle prenotazioni e degli eventi chiave, esito, istante e il solo flag prova del dettaglio; dei
   // messaggi dello staff id, sessione, istante e la causa dell'errore (testo fisso di chat-send): mai testi
   chat_sessioni: ['id', 'stato', 'passaggi', 'passaggio_at', 'ultima_risposta_staff_at', 'preso_da', 'prova', 'customer_name', 'customer_email'],
-  chat_eventi: ['chiave', 'esito', 'at', 'dettaglio->>prova'], chat_messaggi: ['id', 'sessione_id', 'email_errore', 'email_at'], chat_contatori: ['chiave', 'finestra', 'n'],
+  chat_eventi: ['chiave', 'esito', 'at', 'dettaglio->>status'], chat_messaggi: ['id', 'sessione_id', 'email_errore', 'email_at'], chat_contatori: ['chiave', 'finestra', 'n'],
 };
 const selectFuoriElenco = (s) => {
   const out = [];
@@ -1929,7 +1954,7 @@ t('89c RF-1: cs_sync riletta dopo 3 s solo se la prima lettura dice ferma, e dec
   t('90 blocchi PURE senza Deno, import, client, rete, log o invio', impuri.length === 0, impuri);
   const ordine = (SRC.match(/const ORDINE = (\[[^\]]+\])/) ?? [])[1] ?? '';
   const eventi = [...(SRC.slice(SRC.indexOf('const EVENTI: Record<string, DefEvento> = {'), SRC.indexOf('const ORDINE = ')).matchAll(/^ {2}(\w+): \{$/gm))].map((m) => m[1]);
-  t('91 i tredici eventi del contratto (attivita_team dal 21-10, premia_salute col sistema e premia_da_approvare dal 03-11, sistema_senza_iscritti prima del riepilogo dal 06-11, chat_salute col sistema e i due solleciti dopo cs_urgente dall\'08-11), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'premia_salute', 'chat_salute', 'cs_urgente', 'chat_sollecito', 'chat_sollecito_scala', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo']"
+  t('91 i tredici eventi del contratto (attivita_team dal 21-10, premia_salute col sistema e premia_da_approvare dal 03-11, sistema_senza_iscritti prima del riepilogo dal 06-11, i due solleciti dopo cs_urgente e chat_salute dopo di loro dall\'08-11, Gate 2 C6), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'chat_sollecito', 'chat_sollecito_scala', 'chat_salute', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo']"
     && eventi.slice().sort().join() === Object.keys(TEMA_EVENTO).sort().join(), { ordine, eventi });
   const run92 = corpoRun(SRC);
   t('92 tetto e tempo: budget di TETTO_INVII per giro, nessun invio nuovo dopo 15 s e nessun evento cominciato dopo 30 s (RF-5, timeout del cron 60 s); finestra 24 ore, limite 50',
