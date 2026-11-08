@@ -11,7 +11,11 @@
 //                         sicurezza: manda i messaggi dello staff rimasti senza email da oltre 2 minuti (chiamata da
 //                         chat-staff caduta) e chiude come `errore` "esito ignoto" le prenotazioni ferme da oltre 15
 //                         minuti, mai rimandate (Gmail potrebbe averle spedite). Nessun input: chiamarlo in piu' non
-//                         cambia cosa parte ne' a chi. NO-OP a chat spenta (Regola 19).
+//                         cambia cosa parte ne' a chi. Gira anche a chat spenta (scostamento dalla Regola 19, Gate 2
+//                         B3): chiude solo consegne che una persona ha avviato.
+// Esiti di Gmail: 2xx con id = `inviata`; 4xx/5xx = `errore` "non partita" (chat-staff `reinvia` puo' ritentarla);
+// nessuna risposta o 2xx senza id leggibile = `errore` "esito ignoto", mai rimandata (Gate 2, B1). Dopo `revoca_accessi`
+// (evento `staff_revoca`) le email partono senza il link "Continua la chat" (Gate 2, B2).
 // Destinatario: SOLO l'email della sessione (mai dal client), ricontrollata qui (5.7: niente a capo, virgole, <>), mai
 // un dominio riservato (example.com, .test, .invalid: non riceve nessuno); una sessione `prova` scrive solo a indirizzi
 // del team, una vera mai al team. Il nome della cliente non entra mai negli header.
@@ -22,8 +26,8 @@
 // `inviata` con l'id Gmail o `errore`; al massimo un'email per messaggio. Ogni email porta un token di ripresa nuovo
 // (chat_token tipo `ripresa`, 256 bit, nel DB solo lo SHA-256, 30 giorni, D-10) nel link "Continua la chat", dopo il `#`.
 // Regola 19: scrive solo chat_messaggi (colonne email_*), chat_sessioni.gmail_thread_id, chat_token, chat_eventi e la
-// propria riga health_log `chat_send`; legge app_flags chiave per chiave (chat_sito_enabled, cs_gmail_sa_key: mai
-// stampata). Nessuna scrittura in change_log, nessuna chiamata a write-api.
+// propria riga health_log `chat_send`; legge app_flags per la sola chiave cs_gmail_sa_key (mai stampata) e app_config
+// per il PIN del cron. Nessuna scrittura in change_log, nessuna chiamata a write-api.
 // Log: solo cause scritte nel codice e codici d'errore, mai testi, token, email o risposte di Gmail.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
@@ -87,11 +91,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // 5.7, uguale a chat-api: una sola email, senza spazi, controlli, caratteri di formato e <>,;"
 const EMAIL_RE = /^[^\s\p{C}<>,;"@]+@[^\s\p{C}<>,;"@]+\.[^\s\p{C}<>,;"@]+$/u;
 const SQUADRA_RE = /@(?:amimi\.it|telaioconsulting\.com)$/;
+// in piu' di EMAIL_RE: solo caratteri ASCII ammessi senza virgolette, niente commenti `()` ne' `[]\:` (Gate 2, C3: con
+// `info@amimi.it(x)` il controllo del team si aggirava e Gmail avrebbe consegnato lo stesso)
+const EMAIL_ASCII_RE = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+$/;
 // RFC 2606 e 6761: domini che non ricevono posta (la sessione di prova del pezzo 2 usa example.com)
 const RISERVATI_RE = /(?:^|\.)(?:example\.(?:com|net|org)|example|test|invalid|localhost)$/;
 // Message-ID e References arrivano dal thread, quindi anche dalla cliente: entrano negli header solo se hanno forma di id
 const MSGID_RE = /^<[\x21-\x3b\x3d\x3f-\x7e]{1,250}>$/;
 const OGGETTO: Record<string, string> = { it: 'La tua richiesta in chat - Amimì', en: 'Your chat request - Amimì' };
+const PIEDE_SENZA_LINK: Record<string, string> = { it: 'Per rispondere scrivi a questa email.', en: 'To reply, just answer this email.' };
 const PIEDE: Record<string, string> = {
   it: 'Puoi rispondere a questa email oppure continuare la chat sul sito (il link vale 30 giorni):',
   en: 'You can reply to this email or continue the chat on our website (the link is valid for 30 days):',
@@ -105,7 +113,6 @@ type Gmail = {
   invia(raw: string, threadId: string | null): Promise<{ status: number; id: string; threadId: string }>;
 };
 interface Db {
-  flagAcceso(): Promise<boolean>;
   pinOk(pin: string): Promise<boolean>;
   messaggio(id: string): Promise<Msg | null>;
   inCoda(primaDiIso: string, limite: number): Promise<Msg[]>;
@@ -116,6 +123,7 @@ interface Db {
   esito(id: string, patch: Record<string, unknown>, daStato: 'prenotata' | null, emailAt?: string | null): Promise<boolean>;
   riservaThread(sessioneId: string, chiave: string): Promise<boolean>;
   riservaAt(chiave: string): Promise<string | null>;
+  revocata(sessioneId: string): Promise<boolean>;
   liberaThread(chiave: string): Promise<void>;
   salvaThread(sessioneId: string, threadId: string, vecchio: string | null): Promise<boolean>;
   creaRipresa(sessioneId: string, hash: string, scadeIso: string): Promise<void>;
@@ -156,7 +164,7 @@ function ugualeCostante(a: string, b: string): boolean {
 // destinatario o causa del rifiuto (testo fisso, finisce in email_errore: niente @)
 function destinatario(s: Sess): { email: string } | { causa: string } {
   const e = String(s.customer_email ?? '').trim().toLowerCase();
-  if (e.length > 254 || !EMAIL_RE.test(e)) return { causa: 'destinatario non valido' };
+  if (e.length > 254 || !EMAIL_RE.test(e) || !EMAIL_ASCII_RE.test(e)) return { causa: 'destinatario non valido' };
   if (RISERVATI_RE.test(e.slice(e.lastIndexOf('@') + 1))) return { causa: 'destinatario su un dominio riservato' };
   const squadra = SQUADRA_RE.test(e);
   if (s.prova && !squadra) return { causa: 'chat di prova: solo indirizzi del team' };
@@ -178,9 +186,11 @@ function ultimoDelThread(j: unknown): Intestazioni | null {
   const h = (n: string) => (last.payload?.headers ?? []).find((x) => x.name?.toLowerCase() === n)?.value ?? '';
   return { messageId: h('message-id'), references: h('references') };
 }
-function componiMime(to: string, lingua: string, nuovo: boolean, testo: string, link: string, h: { inReplyTo: string; references: string }): string {
+// link null = accessi revocati dallo staff (5.4): l'email parte senza "Continua la chat"
+function componiMime(to: string, lingua: string, nuovo: boolean, testo: string, link: string | null, h: { inReplyTo: string; references: string }): string {
   const l = lingua === 'en' ? 'en' : 'it';
-  const corpo = `${testo.replace(/\r\n?/g, '\n')}\n\n--\n${PIEDE[l]}\n${link}\n\nAmimì Milano\n`.replace(/\n/g, '\r\n');
+  const piede = link ? `${PIEDE[l]}\n${link}` : PIEDE_SENZA_LINK[l];
+  const corpo = `${testo.replace(/\r\n?/g, '\n')}\n\n--\n${piede}\n\nAmimì Milano\n`.replace(/\n/g, '\r\n');
   return [
     `From: ${encHdr('Amimì')} <${GMAIL_USER}>`,
     `To: <${to}>`,
@@ -217,7 +227,8 @@ async function processa(amb: Ambiente, m: Msg, gm: () => Promise<Gmail>): Promis
     let t: { status: number; ultimo: Intestazioni | null } | null;
     try { t = await g.thread(threadVecchio); } catch { return 'thread_non_leggibile'; }
     if (t && t.status === 404) threadVecchio = null;                // thread cancellato in Gmail: se ne apre uno nuovo
-    else if (t && t.status !== 200) return 'thread_non_leggibile';  // resta in coda per il giro dopo
+    else if (t && t.status >= 400 && t.status < 500) return await chiudiSenzaInvio(amb, m, `non partita: thread gmail ${t.status}`);   // Gate 2, C5
+    else if (t && t.status !== 200) return 'thread_non_leggibile';  // 5xx: resta in coda per il giro dopo
     else ultimo = t?.ultimo ?? null;
   }
   const nuovo = threadVecchio === null;
@@ -226,27 +237,34 @@ async function processa(amb: Ambiente, m: Msg, gm: () => Promise<Gmail>): Promis
   // da qui il messaggio e' nostro; finche' Gmail non e' chiamato si rilascia (e si libera il thread prenotato)
   let chiave: string | null = null;
   let raw = '';
-  const libera = async () => { if (chiave) await amb.db.liberaThread(chiave).catch(() => undefined); };
+  let esitoSenzaInvio: Esito | null = null;
   try {
     if (nuovo) {
       const k = `${s.id}:thread:${(s.gmail_thread_id ?? 'primo').toLowerCase()}`;
       if (await amb.db.riservaThread(s.id, k)) chiave = k;
       else {
         const at = await amb.db.riservaAt(k);
-        if (at === null || amb.ora - Date.parse(at) < RISERVA_THREAD_MAX_MS) {
-          await amb.db.rilascia(m.id);
-          return 'in_attesa_thread';
-        }
+        if (at === null || amb.ora - Date.parse(at) < RISERVA_THREAD_MAX_MS) esitoSenzaInvio = 'in_attesa_thread';
       }
     }
-    const token = b64url(amb.casuale(32));
-    await amb.db.creaRipresa(s.id, await sha256hex(token), iso(amb.ora + RIPRESA_MS));
-    const link = LINK_RIPRESA + token + (s.prova ? '&prova=1' : '');
-    raw = b64url(new TextEncoder().encode(componiMime(dest.email, s.lingua, nuovo, m.testo, link, intestazioniPulite(ultimo))));
+    if (!esitoSenzaInvio) {
+      let link: string | null = null;
+      if (!(await amb.db.revocata(s.id))) {
+        const token = b64url(amb.casuale(32));
+        await amb.db.creaRipresa(s.id, await sha256hex(token), iso(amb.ora + RIPRESA_MS));
+        link = LINK_RIPRESA + token + (s.prova ? '&prova=1' : '');
+      }
+      raw = b64url(new TextEncoder().encode(componiMime(dest.email, s.lingua, nuovo, m.testo, link, intestazioniPulite(ultimo))));
+    }
   } catch {
+    esitoSenzaInvio = 'riprova';
+  }
+  const libera = async () => { if (chiave) await amb.db.liberaThread(chiave).catch(() => undefined); };
+  if (esitoSenzaInvio) {
+    // Gmail non e' stato chiamato: il messaggio torna in coda, con una scrittura sola (Gate 2, C6)
     await amb.db.rilascia(m.id).catch(() => undefined);
     await libera();
-    return 'riprova';
+    return esitoSenzaInvio;
   }
 
   let r: { status: number; id: string; threadId: string };
@@ -255,7 +273,14 @@ async function processa(amb: Ambiente, m: Msg, gm: () => Promise<Gmail>): Promis
     await amb.db.evento({ sessione_id: s.id, tipo: 'email', esito: 'errore', dettaglio: { seq: m.seq, causa: 'esito ignoto' } }).catch(() => undefined);
     return 'errore';
   }
-  if (r.status < 200 || r.status >= 300 || !r.id) {
+  if (r.status >= 200 && r.status < 300 && !r.id) {
+    // Gmail ha accettato ma la risposta non si legge (corpo troncato dal timeout, non JSON): l'email puo' essere partita.
+    // Mai rimandabile e thread prenotato tenuto, come un esito ignoto (Gate 2, B1).
+    await amb.db.esito(m.id, { email_stato: 'errore', email_errore: 'esito ignoto: risposta di Gmail illeggibile', email_at: iso(amb.ora) }, 'prenotata', ora).catch(() => undefined);
+    await amb.db.evento({ sessione_id: s.id, tipo: 'email', esito: 'errore', dettaglio: { seq: m.seq, causa: 'esito ignoto' } }).catch(() => undefined);
+    return 'errore';
+  }
+  if (r.status < 200 || r.status >= 300) {
     const causa = `non partita: gmail ${Number.isInteger(r.status) ? r.status : 0}`;
     await libera();
     await amb.db.esito(m.id, { email_stato: 'errore', email_errore: causa, email_at: iso(amb.ora) }, 'prenotata', ora).catch(() => undefined);
@@ -291,8 +316,10 @@ async function leggiCorpo(req: Request): Promise<Record<string, unknown> | null>
   } catch { return null; }
 }
 
+// Gira anche a chat spenta, scostamento dichiarato dalla Regola 19 (Gate 2, B3): a chat_sito_enabled false lo staff
+// risponde ancora alle chat aperte e `invia` manda; il giro chiude soltanto consegne che una persona ha gia' avviato
+// (rimandate, prenotazioni scadute) e scrive la salute. Senza risposte dello staff non fa niente.
 async function giro(amb: Ambiente): Promise<Response> {
-  if (!(await amb.db.flagAcceso())) return json({ ok: true, spenta: true });
   const ora = iso(amb.ora);
   const conti: Record<string, number> = {};
   const conta = (k: string) => { conti[k] = (conti[k] ?? 0) + 1; };
@@ -367,11 +394,6 @@ const COL_MSG = 'id, sessione_id, seq, autore, testo, email_stato, email_at, cre
 
 function dbSupabase(sb: SupabaseClient): Db {
   return {
-    async flagAcceso() {
-      const { data, error } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'chat_sito_enabled').limit(1));
-      if (error) throw fallito('flag non letto', error);
-      return String(((data ?? [])[0] as { value?: unknown } | undefined)?.value ?? '').trim().toLowerCase() === 'true';
-    },
     async pinOk(pin) {
       const { data, error } = await retryOnce(() => sb.from('app_config').select('pin_hash').eq('id', 1).limit(1));
       if (error) throw fallito('PIN non letto', error);
@@ -427,6 +449,11 @@ function dbSupabase(sb: SupabaseClient): Db {
       const { data, error } = await retryOnce(() => sb.from('chat_eventi').select('at').eq('chiave', chiave).limit(1));
       if (error) throw fallito('prenotazione del thread non letta', error);
       return ((data ?? [])[0] as { at?: string } | undefined)?.at ?? null;
+    },
+    async revocata(sessioneId) {
+      const { data, error } = await retryOnce(() => sb.from('chat_eventi').select('id').eq('sessione_id', sessioneId).eq('tipo', 'staff_revoca').limit(1));
+      if (error) throw fallito('revoca non letta', error);
+      return (data ?? []).length > 0;
     },
     async liberaThread(chiave) {
       const { error } = await sb.from('chat_eventi').delete().eq('chiave', chiave).eq('tipo', 'thread_email').eq('esito', 'prenotato');

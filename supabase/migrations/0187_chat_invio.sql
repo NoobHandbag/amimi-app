@@ -6,14 +6,14 @@
 --   1) chat_conservazione(): la pulizia giornaliera di 11.5. Cancella le chat ferme da piu' di `chat_conservazione_mesi`
 --      mesi (app_flags, 12 alla nascita; D-25 aperta: il valore si cambia dalla scheda Chat senza migrazione; un valore
 --      illeggibile o fuori da 1-120 vale 12), con la loro proiezione in cs_ (chiave chat:<id>, 7.4) e i contatori della
---      sessione; poi i contatori fermi da oltre 7 giorni (5.6) e i token scaduti da oltre un giorno (solo hash). Al
+--      sessione e gli eventi con la chiave della sessione; poi i contatori fermi da oltre 7 giorni (5.6) e i token scaduti da oltre un giorno (solo hash). Al
 --      massimo 500 chat per giro (7.3 c). Registra solo conteggi in chat_eventi. Gira anche a chat spenta, scostamento
 --      dichiarato dalla Regola 19 (cron NO-OP a flag spento): la durata dichiarata ai sensi del GDPR (art. 5(1)(e)) vale
 --      per i dati gia' raccolti, accesa o spenta che sia la chat. La card email della risposta della cliente (thread di
 --      chat-send) e' posta normale di Assistenza e resta fuori, come le altre email.
 --   2) i cron: `chat-send` ogni 5 minuti (rete di sicurezza: l'email parte subito da chat-staff; il giro manda quelle
 --      rimaste indietro da oltre 2 minuti, chiude come esito ignoto le prenotazioni ferme da 15, scrive health_log
---      `chat_send`; NO-OP a chat spenta) col PIN neutro di tutti i cron, e `chat-conservazione` ogni giorno alle 03:47 UTC.
+--      `chat_send`; gira anche a chat spenta, perche' finisce solo consegne avviate da una persona) col PIN neutro di tutti i cron, e `chat-conservazione` ogni giorno alle 03:47 UTC.
 --      Minuti 3, 8, 13...: fuori da push-eventi (1, 6, 11...), da cs-classify (multipli di 5) e dai giri orari; cs-sync
 --      ogni 2 minuti non si puo' evitare. timeout 60 s: un giro manda fino a 20 email una dopo l'altra.
 -- Fermo d'emergenza: select cron.alter_job((select jobid from cron.job where jobname = 'chat-send'), active := false);
@@ -57,6 +57,10 @@ begin
      using unnest(v_ids) u(id)
      where k.chiave like 'sess:' || u.id::text || ':%';
     get diagnostics v_cont = row_count;
+    -- le chiavi `<sessione>:...` (prenotazioni di push e del thread Gmail, tetti) se ne vanno con la sessione (11.6)
+    delete from chat_eventi e
+     using unnest(v_ids) u(id)
+     where e.chiave like u.id::text || ':%';
     delete from chat_sessioni where id = any(v_ids);
     get diagnostics v_sess = row_count;
   end if;

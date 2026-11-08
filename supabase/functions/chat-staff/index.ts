@@ -13,7 +13,8 @@
 //   prendo_io       {sessione_id, chi} -> `aperta`, preso_da = chi.
 //   chiudi          {sessione_id, chi} -> `chiusa` (chiusa_at). Il widget rilegge una chat chiusa finche' il token vale.
 //   revoca_accessi  {sessione_id, chi} -> revoca chat token e token di ripresa della sessione (5.4: email sbagliata, link
-//                   inoltrato).
+//                   inoltrato); da li' le email di chat-send partono senza link "Continua la chat" (Gate 2, B2). Con
+//                   un indirizzo sbagliato la risposta stessa andrebbe a quell'indirizzo: si chiude la chat, non si risponde.
 //   reinvia         {messaggio_id, chi} -> ritenta l'email di un messaggio che Gmail ha rifiutato ("non partita") o che e'
 //                   ancora in coda; mai uno con esito ignoto (potrebbe essere partito) ne' uno gia' inviato.
 //   cancella_dati   {sessione_id | email, conferma?, con_card_email?, chi} -> 11.6 e test 21. Senza `conferma: true` e'
@@ -73,6 +74,7 @@ interface Db {
   cardEmail(threadId: string): Promise<string | null>;
   cancellaCs(ids: string[]): Promise<number>;
   cancellaContatori(sessioneId: string): Promise<number>;
+  cancellaEventiChiave(sessioneId: string): Promise<number>;
   cancellaSessione(id: string): Promise<number>;
   evento(r: { sessione_id: string | null; tipo: string; chi: string; esito: string | null; dettaglio: Record<string, unknown> }): Promise<void>;
 }
@@ -212,7 +214,7 @@ async function cancellaDati(d: Record<string, unknown>, amb: Ambiente, chi: stri
   const anteprima = voci.map((v) => ({ id: v.s.id, stato: v.s.stato, prova: v.s.prova, creata: v.s.created_at, ultima_attivita: v.s.ultima_attivita_at,
     messaggi: v.messaggi, proiezioni: v.proiezioni.length, card_email: v.card !== null }));
   if (d.conferma !== true) return json({ ok: true, anteprima: true, trovate: voci.length, sessioni: anteprima, promemoria: PROMEMORIA_CANCELLA });
-  const conti = { sessioni: 0, messaggi: 0, proiezioni: 0, card_email: 0, contatori: 0 };
+  const conti = { sessioni: 0, messaggi: 0, proiezioni: 0, card_email: 0, contatori: 0, eventi: 0 };
   const per = perSessione ? 'sessione' : 'email';
   try {
     for (const v of voci) {
@@ -225,6 +227,9 @@ async function cancellaDati(d: Record<string, unknown>, amb: Ambiente, chi: stri
         conti.proiezioni += Math.max(0, n - card);
       }
       conti.contatori += await amb.db.cancellaContatori(v.s.id);
+      // le chiavi `<sessione>:...` (prenotazioni di push e thread, tetti) portano l'id della sessione e del thread Gmail:
+      // si cancellano con lei (11.6 punto 4, Gate 2 C2); gli eventi senza chiave restano senza sessione
+      conti.eventi += await amb.db.cancellaEventiChiave(v.s.id);
       if ((await amb.db.cancellaSessione(v.s.id)) === 1) { conti.sessioni++; conti.messaggi += v.messaggi; }
     }
   } catch (x) {
@@ -356,6 +361,11 @@ function dbSupabase(sb: SupabaseClient, anon: SupabaseClient): Db {
     async cancellaContatori(sessioneId) {
       const { data, error } = await sb.from('chat_contatori').delete().like('chiave', `sess:${sessioneId}:%`).select('chiave');
       if (error) throw fallito('contatori non cancellati', error);
+      return (data ?? []).length;
+    },
+    async cancellaEventiChiave(sessioneId) {
+      const { data, error } = await sb.from('chat_eventi').delete().like('chiave', `${sessioneId}:%`).select('id');
+      if (error) throw fallito('eventi della sessione non cancellati', error);
       return (data ?? []).length;
     },
     async cancellaSessione(id) {

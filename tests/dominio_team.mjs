@@ -41,8 +41,20 @@ for (const e of EDGE) {
   t(`5  ${e}: un solo cancello e passa da EMAIL_TEAM; nessun cancello @amimi.it rimasto`, gates.length === 1 && !/endsWith\('@amimi\.it'\)\) return json\(\{ error: 'dominio non ammesso'/.test(s), gates.length);
   t(`6  ${e}: l'email del cancello e' quella di getUser, in minuscolo (la regex non ha il flag i)`, /(?:email|userEmail) = \((?:user|ures\??\.user\??)\.email \|\| ''\)\.toLowerCase\(\);/.test(s));
 }
-const altre = readdirSync(ROOT + 'supabase/functions', { withFileTypes: true }).filter((d) => d.isDirectory() && !EDGE.includes(d.name)).map((d) => d.name)
-  .filter((n) => { try { return /dominio non ammesso/.test(read(`supabase/functions/${n}/index.ts`)); } catch { return false; } });
+// chat-staff (08-11, chat del sito pezzo 3; Gate 2 C4): stesso controllo con la sua forma (errore con il codice
+// `dominio_non_ammesso`, email di getUser gia' in minuscolo nell'adattatore)
+{
+  const s = read('supabase/functions/chat-staff/index.ts');
+  const m = s.match(/\nconst EMAIL_TEAM = \/@\(\?:([^)]+)\)\$\/;\n/);
+  const d = m ? domini(m[1]) : [];
+  if (m) edgeRe['chat-staff'] = new RegExp(`@(?:${m[1]})$`);
+  t('4  chat-staff: EMAIL_TEAM = lista SQL', same(d, SQL), d);
+  const gates = s.match(/if \(!EMAIL_TEAM\.test\(email\.toLowerCase\(\)\)\) return errore\('dominio_non_ammesso', 403\);/g) ?? [];
+  t('5  chat-staff: un solo cancello e passa da EMAIL_TEAM', gates.length === 1 && !/endsWith\('@amimi\.it'\)/.test(s), gates.length);
+  t('6  chat-staff: l\'email del cancello e\' quella di getUser', /anon\.auth\.getUser\(token\)/.test(s) && /return \(data\.user\.email \?\? ''\)\.toLowerCase\(\) \|\| null;/.test(s));
+}
+const altre = readdirSync(ROOT + 'supabase/functions', { withFileTypes: true }).filter((d) => d.isDirectory() && !EDGE.includes(d.name) && d.name !== 'chat-staff').map((d) => d.name)
+  .filter((n) => { try { return /dominio[ _]non[ _]ammesso/.test(read(`supabase/functions/${n}/index.ts`)); } catch { return false; } });
 t('7  nessun\'altra edge ha un cancello di dominio fuori dall\'elenco', altre.length === 0, altre.join(','));
 
 console.log('\n== Stessi casi in SQL e nelle edge ==');
@@ -53,7 +65,7 @@ const CASI = [
 ];
 const sqlJs = new RegExp(`@(${SQL.map((d) => d.replace(/\./g, '\\.')).join('|')})$`);
 t('8  la regex SQL (tradotta) da\' i risultati attesi', CASI.every(([e, v]) => sqlJs.test(e) === v), CASI.filter(([e, v]) => sqlJs.test(e) !== v).map((c) => c[0]));
-for (const e of EDGE) t(`9  ${e}: la regex da\' i risultati attesi`, !!edgeRe[e] && CASI.every(([x, v]) => edgeRe[e].test(x) === v));
+for (const e of [...EDGE, 'chat-staff']) t(`9  ${e}: la regex da\' i risultati attesi`, !!edgeRe[e] && CASI.every(([x, v]) => edgeRe[e].test(x) === v));
 t('10 la prova dentro la 0161 controlla gli stessi indirizzi (piu\' maiuscole e null)',
   ['Info@Amimi.it', 'chiunque@telaioconsulting.com', 'X@TelaioConsulting.COM', 'x@amimi.it.evil.com', 'x@sub.amimi.it', 'x@telaioconsulting.com.it', 'x@evil-telaioconsulting.com', "email_del_team('amimi.it')", 'x@gmail.com', "email_del_team('')", 'email_del_team(null)'].every((c) => Mc.includes(c)));
 

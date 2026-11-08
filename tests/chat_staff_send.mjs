@@ -78,7 +78,7 @@ const copia = (x) => (x ? structuredClone(x) : null);
 function dbSend(st) {
   const rotto = (k) => { if (st.rotto[k]) throw new S.ErroreDb(k); };
   return {
-    async flagAcceso() { rotto('flag'); return st.flag === 'true'; },
+    async revocata(sid) { rotto('revoca'); return st.eventi.some((e) => e.sessione_id === sid && e.tipo === 'staff_revoca'); },
     async pinOk(pin) { return sha(pin) === st.pinHash; },
     async messaggio(id) { return copia(st.msg.get(id)); },
     async inCoda(prima, lim) { rotto('coda'); return [...st.msg.values()].filter((m) => m.autore === 'staff' && m.email_stato === null && m.created_at < prima).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.seq - b.seq).slice(0, lim).map(copia); },
@@ -122,6 +122,7 @@ function gmailFinto() {
       g.chiamate.push({ raw, threadId });
       if (g.lancia) throw new Error('rete');
       if (g.status !== 200) return { status: g.status, id: '', threadId: '' };
+      if (g.senzaId) return { status: 200, id: '', threadId: '' };
       g.n++;
       const tid = threadId ?? 'a1b2c3d4e5f6' + g.n.toString(16).padStart(4, '0');
       g.threads.set(tid, { messageId: `<msg${g.n}@mail.gmail.com>`, references: '' });
@@ -211,6 +212,8 @@ console.log('chat-send');
     ['info@amimi.it', false, 'destinatario del team su una chat vera'],
     ['a@b.it,c@d.it', false, 'destinatario non valido'],
     ['a@b.it\nBcc: c@d.it', false, 'destinatario non valido'],
+    ['info@amimi.it(x)', false, 'destinatario non valido'],
+    ['cliente@gmail.com(info@amimi.it)', true, 'destinatario non valido'],
   ];
   for (const [email, prova, causa] of casi) {
     const sid = sessione(st, { customer_email: email, prova });
@@ -254,17 +257,15 @@ console.log('chat-send');
   const m6 = staffMsg(st, sid);
   const r6 = await callSend(st, g, { action: 'invia', messaggio_id: m6.id });
   t('S31 token di ripresa non salvato: riprova, messaggio rilasciato, nessuna email', r6.j.esito === 'riprova' && st.msg.get(m6.id).email_stato === null && g.chiamate.length === 3);
+  st.rotto.ripresa = false;
 }
 {
   // giro
   const st = nuovoStore(), g = gmailFinto();
   const sid = sessione(st);
-  st.flag = 'false';
   const m = staffMsg(st, sid);
   st.ora += 3 * 60000;
-  const r0 = await callSend(st, g, { action: 'giro', pin: 'x' }, null);
-  t('S32 giro a chat spenta: NO-OP (Regola 19)', r0.j.spenta === true && g.chiamate.length === 0 && st.salute === null);
-  st.flag = 'true';
+  t('S32 il giro non legge chat_sito_enabled: gira anche a chat spenta (finisce consegne avviate da una persona, Gate 2 B3)', !/chat_sito_enabled'/.test(SEND.replace(/^\s*\/\/.*$/gm, '')));
   const giovane = staffMsg(st, sid, 'appena scritto');
   const vecchia = staffMsg(st, sid, 'prenotata e persa');
   st.msg.get(vecchia.id).email_stato = 'prenotata'; st.msg.get(vecchia.id).email_at = isoT(st.ora - 16 * 60000);
@@ -276,9 +277,9 @@ console.log('chat-send');
   st.ora += 3 * 60000;
   const r2 = await callSend(st, g, { action: 'giro' });
   t(`S36 giro: al massimo ${S.GIRO_MAX} email, oltre = avviso (anche con la chiave di servizio)`, r2.j.inviata === S.GIRO_MAX && /coda oltre 20/.test(st.salute.label), r2.j);
-  st.rotto.flag = true;
-  t('S37 flag illeggibile: 503, nessuna email', (await callSend(st, g, { action: 'giro', pin: 'x' }, null)).status === 503);
-  t('S38 invia funziona anche a chat spenta (risposta di una persona su una chat aperta, 5.8)', await (async () => { st.rotto.flag = false; st.flag = 'false'; return (await callSend(st, g, { action: 'invia', messaggio_id: giovane.id })).j.esito; })() !== undefined && st.msg.get(giovane.id).email_stato === 'inviata');
+  st.rotto.coda = true;
+  const prima = g.chiamate.length;
+  t('S37 coda illeggibile: 503, nessuna email', (await callSend(st, g, { action: 'giro', pin: 'x' }, null)).status === 503 && g.chiamate.length === prima);
 }
 
 // ================= chat-staff =================
@@ -311,6 +312,7 @@ function dbStaff(st) {
     async cardEmail(tid) { return [...st.cs.values()].find((c) => c.gmail_thread_id === tid)?.id ?? null; },
     async cancellaCs(ids) { rotto('cs'); let n = 0; for (const id of ids) if (st.cs.delete(id)) n++; for (const s of st.sess.values()) if (ids.includes(s.cs_conversation_id)) s.cs_conversation_id = null; return n; },
     async cancellaContatori(sid) { let n = 0; for (const k of [...st.cont.keys()]) if (k.startsWith(`sess:${sid}:`)) { st.cont.delete(k); n++; } return n; },
+    async cancellaEventiChiave(sid) { const n = st.eventi.length; st.eventi = st.eventi.filter((e) => !(e.chiave && e.chiave.startsWith(sid + ':'))); return n - st.eventi.length; },
     async cancellaSessione(id) {
       if (!st.sess.delete(id)) return 0;
       for (const [k, m] of st.msg) if (m.sessione_id === id) st.msg.delete(k);
@@ -395,8 +397,8 @@ const callStaff = async (st, g, body, bearer) => { const r = await F.gestisci(re
   t('F27 con conferma: sessione, messaggi, token, contatori della sessione e proiezione cancellati', c.j.ok && !st.sess.has(sid) && ![...st.msg.values()].some((m) => m.sessione_id === sid)
     && !st.token.some((x) => x.sessione_id === sid) && !st.cont.has(`sess:${sid}:msg`) && !st.cs.has('cs-proiezione'), c.j);
   t('F28 senza con_card_email la card email del thread resta; il resto (altra chat, contatori globali) intatto', st.cs.has('cs-card') && st.sess.has(altra) && st.cont.has(`sess:${altra}:msg`) && st.cont.has('glob:chat_giorno'));
-  t('F29 nessuna riga resta con quella email in chat_; gli eventi restano senza sessione e senza @', ![...st.sess.values()].some((s) => s.customer_email === 'prova-chat@example.com')
-    && st.eventi.filter((e) => e.chiave === `${sid}:passaggio:1`).every((e) => e.sessione_id === null) && !JSON.stringify(st.eventi).includes('@'));
+  t('F29 nessuna riga resta con quella email in chat_; gli eventi con la chiave della sessione cancellati, gli altri senza sessione e senza @ (Gate 2, C2)', ![...st.sess.values()].some((s) => s.customer_email === 'prova-chat@example.com')
+    && !st.eventi.some((e) => String(e.chiave ?? '').startsWith(sid)) && !st.eventi.some((e) => e.sessione_id === sid) && !JSON.stringify(st.eventi).includes('@') && c.j.cancellate.eventi === 1);
   t('F30 audit cancella_dati con i soli conteggi', st.eventi.some((e) => e.tipo === 'cancella_dati' && e.esito === 'fatto' && e.sessione_id === null && e.dettaglio.sessioni === 1 && e.dettaglio.messaggi === 5 && e.dettaglio.proiezioni === 1));
   // per email, con la card
   const s2 = sessione(st, { customer_email: 'altra@gmail.com', gmail_thread_id: 'def456' });
@@ -408,6 +410,39 @@ const callStaff = async (st, g, body, bearer) => { const r = await F.gestisci(re
   st.rotto.cs = true;
   const rotta = await callStaff(st, g, { action: 'cancella_dati', sessione_id: s3, conferma: true, chi: 'A' });
   t('F32 cs_ non cancellabile: 503 e la sessione resta (si puo\' ripetere)', rotta.status === 503 && st.sess.has(s3) && st.eventi.some((e) => e.tipo === 'cancella_dati' && e.esito === 'parziale'));
+}
+
+// ---- Gate 2: B1, C5, B2 (usano anche chat-staff) ----
+{
+  // Gate 2, B1: Gmail risponde 2xx ma senza id leggibile = esito ignoto, mai rimandabile, thread prenotato tenuto
+  const st = nuovoStore(), g = gmailFinto();
+  const sid = sessione(st);
+  const m = staffMsg(st, sid);
+  g.senzaId = true;
+  const r = await callSend(st, g, { action: 'invia', messaggio_id: m.id });
+  t('S39 2xx senza id: errore "esito ignoto", prenotazione del thread tenuta', r.j.esito === 'errore' && st.msg.get(m.id).email_errore === 'esito ignoto: risposta di Gmail illeggibile'
+    && st.eventi.some((e) => e.chiave === `${sid}:thread:primo`), st.msg.get(m.id));
+  g.senzaId = false;
+  const ri = await callStaff(st, g, { action: 'reinvia', messaggio_id: m.id, chi: 'G' });
+  t('S40 2xx senza id: reinvia = 409, nessuna seconda email', ri.status === 409 && g.chiamate.length === 1);
+  // Gate 2, C5: thread illeggibile per un 4xx diverso da 404 = errore reinviabile, non coda infinita
+  const sid2 = sessione(st, { gmail_thread_id: 'ffff0001' });
+  const m2 = staffMsg(st, sid2);
+  g.statoThread = 403;
+  const r2 = await callSend(st, g, { action: 'invia', messaggio_id: m2.id });
+  t('S41 thread 403: errore "non partita: thread gmail 403" senza Gmail', r2.j.esito === 'errore' && st.msg.get(m2.id).email_errore === 'non partita: thread gmail 403' && g.chiamate.length === 1);
+  g.statoThread = null;
+  // Gate 2, B2: dopo revoca_accessi l'email parte senza link e senza token nuovo
+  const sid3 = sessione(st);
+  await callStaff(st, g, { action: 'revoca_accessi', sessione_id: sid3, chi: 'A' });
+  const tokenPrima = st.token.length;
+  const rr = await callStaff(st, g, { action: 'rispondi', sessione_id: sid3, testo: 'Dopo la revoca', chi: 'A', send_key: randomUUID() });
+  const d = decodifica(g.chiamate[g.chiamate.length - 1].raw);
+  t('S42 dopo revoca_accessi: email senza "Continua la chat" e nessun token di ripresa nuovo', rr.j.email === 'inviata' && !/riprendi/.test(d.corpo) && d.corpo.includes('Per rispondere scrivi a questa email.') && st.token.length === tokenPrima, d.corpo);
+  st.rotto.revoca = true;
+  const m4 = staffMsg(st, sid3);
+  const r4 = await callSend(st, g, { action: 'invia', messaggio_id: m4.id });
+  t('S43 revoca non leggibile: riprova, nessuna email, messaggio in coda', r4.j.esito === 'riprova' && st.msg.get(m4.id).email_stato === null);
 }
 
 // ================= guardie sul sorgente =================
@@ -451,6 +486,8 @@ t('G13 0187: mesi da app_flags.chat_conservazione_mesi, 12 se illeggibile, 500 c
 t('G14 0187: cron chat-send col PIN neutro e azione giro, cron della pulizia giornaliero', /cron\.schedule\('chat-send', '3,8,13,18,23,28,33,38,43,48,53,58 \* \* \* \*'/.test(M) && /"action":"giro","pin":"x"/.test(M)
   && /cron\.schedule\('chat-conservazione', '47 3 \* \* \*'/.test(M));
 t('G15 0187: nessuna scrittura in change_log', !/insert\s+into\s+change_log/i.test(M));
+t('G16 0187: la pulizia cancella anche gli eventi con la chiave della sessione (Gate 2, C2)', /delete from chat_eventi e\s+using unnest\(v_ids\) u\(id\)\s+where e\.chiave like u\.id::text \|\| ':%'/.test(M));
+t('G17 chat-staff cancella gli eventi con la chiave della sessione', /from\('chat_eventi'\)\.delete\(\)\.like\('chiave', `\$\{sessioneId\}:%`\)/.test(STAFF));
 
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
