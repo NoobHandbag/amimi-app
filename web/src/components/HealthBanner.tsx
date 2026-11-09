@@ -20,7 +20,8 @@ export default function HealthBanner() {
         supabase.from('v_health').select('k,label,n,severity'),
         supabase.from('health_log').select('k,label,n,severity,day').like('k', 'ce_%').order('day', { ascending: false }).limit(30),
       ]);
-      const bad = ((vh.data ?? []) as Chk[]).filter((r) => r.severity === 'bad');
+      // stock_fermo (migr 0190) ha la sua scheda in Home per tutto il team, con l'elenco dei codici: qui sarebbe un doppione
+      const bad = ((vh.data ?? []) as Chk[]).filter((r) => r.severity === 'bad' && r.k !== 'stock_fermo');
       const logs = (hl.data ?? []) as (Chk & { day: string })[];
       const lastDay = logs.length ? logs[0].day : null;
       const ceErr = logs.filter((r) => r.day === lastDay && r.severity === 'error');

@@ -54,3 +54,7 @@
 .scr-home .hb-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 11px 0;
   border-top: 1px solid color-mix(in srgb, var(--negative) 18%, transparent); }
 .scr-home .hb-list b { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* pezzi fermi non in vendita (migr 0190): stessa tinta del banner, ma in cima alle azioni; il codice sotto il nome, in piccolo */
+.scr-home .hb.sf { margin: 0 0 18px; }
+.scr-home .hb.sf > .askhead:not(button) { display: flex; align-items: center; }
+.scr-home .sf-sub { display: block; margin-top: 2px; font-size: 12px; color: var(--ink-muted); overflow-wrap: anywhere; }

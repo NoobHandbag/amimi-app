@@ -47,7 +47,8 @@ begin
 
   -- V
   select count(*) into v_n from v_health;
-  if v_n <> 14 then raise exception 'KO V: v_health ha % righe', v_n; end if;
+  -- 15 dalla migr 0190 (09-11): stock_fermo in coda; le 14 della 0181 restano quelle controllate qui sotto
+  if v_n <> 15 then raise exception 'KO V: v_health ha % righe', v_n; end if;
   if (select count(*) from v_health where k in ('img_missing', 'stock_neg', 'cogs_missing', 'price_missing', 'orders_orphan', 'todo_products',
         'lost_sales', 'shopify_orphan', 'qromo_orphan', 'dup_codice', 'period_mismatch', 'ce_drift_live')) <> 12 then
     raise exception 'KO V: una delle 12 righe di prima manca';
