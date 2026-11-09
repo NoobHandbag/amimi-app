@@ -185,7 +185,7 @@ Fuori pg_cron: backup GitHub Actions daily 03:17 UTC e snapshot Drive 05-06 Roma
   sono pile e carrelli, che si ricostruiscono), le ombre si ricalcolano solo quando si muove
   un oggetto, e dopo 20 s senza tocchi ne' dati nuovi l'isola va a riposo e non ridisegna piu'. Il modello dai dati
   (`costruisci`, `arriviFra`) e' in `catalogo.ts`, provato da `tests/villaggio_catalogo.mjs`; e2e in
-  `web/e2e/villaggio.spec.ts` (progetto finto, sempre con il percorso della spec). Dal 18-10 li esegue anche la CI
+  `web/e2e/villaggio.spec.ts` (progetto finto, sempre con il percorso della spec). Dal 18-10 al 09-11 li eseguiva anche la CI (dal 09-11 solo `villaggio_catalogo`, gli e2e si lanciano a mano)
   (`amimi-app-tests.yml`, Gate 1 automatica, amimi-app #83).
   **Paillettes** (fase 2, dal 16-10, migr 0164, SCHEMA.md sez. 17): la gamification del Villaggio. Gioca solo la
   giocatrice (`app_flags.villaggio_paillettes_chi`, oggi Ginevra); interruttore `villaggio_paillettes_enabled`, nato
