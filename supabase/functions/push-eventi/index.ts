@@ -27,7 +27,10 @@
 // v8 (2026-11-09, chiesta da Dan in chat, migr 0191): stock_fermo (tema magazzino, di Benny e Ginni) quando un prodotto
 // entra fra i pezzi a magazzino non in vendita sul sito (v_stock_fermo, migr 0190: pezzi disponibili, nessuna pagina
 // Shopify attiva, fermi da almeno 3 giorni). Una push per giro con i prodotti nuovi (eseguiGruppi, un gruppo solo), dalle
-// 9 di Roma; ogni lotto fermo (codice e data del pezzo piu' vecchio) avvisa una volta, poi resta la scheda della Home.
+// 9 di Roma, lunedi'-sabato; ogni lotto fermo (codice e data del pezzo piu' vecchio) avvisa una volta, poi resta la scheda
+// della Home. Tema magazzino senza Topic (push-api v5): una push non ne sostituisce un'altra non ancora letta.
+// Limiti accettati (Gate 2): se escono i pezzi piu' vecchi la data avanza e lo stesso prodotto avvisa di nuovo; un prodotto
+// rimesso offline con la stessa data non avvisa piu' (resta la scheda della Home).
 // Evento di stato: all'accensione i prodotti gia' fermi partono nella prima push. v_stock_fermo si LEGGE soltanto.
 // Brief:Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
 // (Regola 19, migr 0166): scrive SOLO push_eventi_inviati (il registro), push_eventi (ultimo_giro_at, baseline_at) e la sua
@@ -1038,8 +1041,10 @@ function statoPagina(v: unknown): string {
   const s = typeof v === 'string' ? v : '';
   return s === 'assente' ? 'senza pagina' : /(^|,)draft(,|$)/.test(s) ? 'in bozza' : /(^|,)archived(,|$)/.test(s) ? 'archiviata' : 'non attiva';
 }
+// Gate 2 del 09-11: mai di domenica (come il riepilogo, lunedi'-sabato): un lotto fermo dal sabato avvisa il lunedi'.
 function candStockFermo(righe: Riga[], ora: number, oraDa: number): Cand[] {
-  if (partiRoma(ora).h < oraDa) return [];
+  const r0 = partiRoma(ora);
+  if (r0.wd === 'Sun' || r0.h < oraDa) return [];
   const out: Cand[] = [];
   for (const r of righe ?? []) {
     const codice = codiceProdotto(r?.codice), pezzi = intero(r?.pezzi);
@@ -1622,8 +1627,9 @@ const EVENTI: Record<string, DefEvento> = {
   stock_fermo: {
     candidati: async (sb, ctx, ev) => {
       const oraDa = soglia(ev.soglie, 'ora_da', 9, 0, 23);
-      // prima di oraDa candStockFermo non darebbe niente: qui si evita anche la lettura dei giri di notte
-      if (partiRoma(ctx.ora).h < oraDa) return [];
+      // prima di oraDa e di domenica candStockFermo non darebbe niente: qui si evita anche la lettura
+      const pr = partiRoma(ctx.ora);
+      if (pr.wd === 'Sun' || pr.h < oraDa) return [];
       // la vista fa tutto il calcolo (migr 0190); solo codice, nomi del prodotto, pezzi, data e stato della pagina, mai
       // prezzo o valore. Una lettura piena oltre il limite e' troncata e ferma l'evento (Regola 20b), mai un prodotto perso
       const { data, error } = await retryOnce(() => sb.from('v_stock_fermo').select('codice, item, variant, pezzi, fermo_dal, giorni, stato_shopify').order('pezzi', { ascending: false }).limit(LIMITE_FERMI + 1));

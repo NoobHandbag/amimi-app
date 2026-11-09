@@ -1054,9 +1054,11 @@ try {
     && rifDi('SOPHIE_BAG_VERDE').stato === 'non attiva' && rifDi('AGATA_BAG_PERSONALIZZAZIONE_SPOSA').nome === 'AGATA_BAG_PERSONALIZZAZIONE_SPOSA'
     && rifDi('LEA_BAG_SUEDE_BURGUNDY').nome === 'LEA BAG SUEDE BURGUNDY' && rifDi('LEA_BAG_SUEDE_BURGUNDY').pezzi === '10' && rifDi('AGATA_BAG_PERSONALIZZAZIONE_SPOSA').giorni === ''
     && !JSON.stringify(cf).includes('4590') && !JSON.stringify(cf).includes('170'), cf.map((c) => c.rif));
-  t('SF3 prima delle 9 di Roma niente (un prodotto fermo a mezzanotte avvisa al mattino); alle 9 in punto si\'; ora_da diversa rispettata',
+  t('SF3 prima delle 9 di Roma niente (un prodotto fermo a mezzanotte avvisa al mattino); alle 9 in punto si\'; ora_da diversa rispettata; mai di domenica',
     candStockFermo(RIGHE_F, T('2026-11-09T07:59:00Z'), 9).length === 0 && candStockFermo(RIGHE_F, T('2026-11-09T08:00:00Z'), 9).length === 5
-    && candStockFermo(RIGHE_F, ORA_F, 11).length === 0 && candStockFermo(null, ORA_F, 9).length === 0);
+    && candStockFermo(RIGHE_F, ORA_F, 11).length === 0 && candStockFermo(null, ORA_F, 9).length === 0
+    // Gate 2 del 09-11: mai di domenica (8 novembre 2026), il sabato si' (7 novembre)
+    && candStockFermo(RIGHE_F, T('2026-11-08T11:00:00Z'), 9).length === 0 && candStockFermo(RIGHE_F, T('2026-11-07T11:00:00Z'), 9).length === 5);
   const uno = msgGruppoStockFermo(cf.filter((c) => c.chiave.startsWith('fermo:LEA_BAG_MAXI_SUEDE_BLACK_CHARM:')));
   const tutti = msgGruppoStockFermo(cf);
   t('SF4 un prodotto: titolo col nome, testo con pezzi, giorni, stato e codice; tema magazzino, link alla Home, non urgente, a tutti gli iscritti al tema',
@@ -1081,7 +1083,8 @@ try {
   const notteF = mondo({ risposte: () => ({ data: RIGHE_F, error: null }) });
   t('SF8 prima delle 9 di Roma nessuna lettura (la soglia ora_da arriva da push_eventi.soglie)',
     (await MI.EVENTI.stock_fermo.candidati(notteF.sb, ctxDi(T('2026-11-09T06:00:00Z')), evRiga('stock_fermo'))).length === 0 && notteF.log.length === 0
-    && (await MI.EVENTI.stock_fermo.candidati(notteF.sb, ctxDi(T('2026-11-09T06:00:00Z')), evRiga('stock_fermo', { soglie: { ora_da: 7 } }))).length === 5 && notteF.log.length === 1);
+    && (await MI.EVENTI.stock_fermo.candidati(notteF.sb, ctxDi(T('2026-11-09T06:00:00Z')), evRiga('stock_fermo', { soglie: { ora_da: 7 } }))).length === 5 && notteF.log.length === 1
+    && (await MI.EVENTI.stock_fermo.candidati(notteF.sb, ctxDi(T('2026-11-08T11:00:00Z')), evRiga('stock_fermo'))).length === 0 && notteF.log.length === 1);
   const errF = async (risposta) => {
     const w = mondo({ risposte: (q) => (q.table === 'v_stock_fermo' ? risposta : undefined) });
     try { await MI.EVENTI.stock_fermo.candidati(w.sb, ctxDi(ORA_F), evRiga('stock_fermo')); return null; } catch (e) { return e instanceof MI.LetturaFallita ? e.cosa : 'altro: ' + e.message; }
