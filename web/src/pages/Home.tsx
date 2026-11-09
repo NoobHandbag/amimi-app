@@ -6,6 +6,7 @@ import { nowMonth, nowYear, meseNome } from '../lib/helpers';
 import { fetchNettoMtd } from '../lib/api';
 import Icon from '../components/Icon';
 import HealthBanner from '../components/HealthBanner';
+import StockFermo from '../components/StockFermo';
 import { VERSIONE_MIA } from '../lib/version';
 import '../styles/screens/home.css';
 
@@ -156,6 +157,9 @@ export default function Home({ chi, setChi, go, matEnabled = false, vilEnabled =
               <span className="go">Cruscotto<Icon name="chevron" size={16} /></span>
             </button>
           )}
+
+          {/* migr 0190 (09-11): per TUTTO il team, non solo per chi ha le finanze; sparisce quando non c'e' niente di fermo */}
+          <StockFermo />
 
           <div className="ds-seclb">Azioni rapide <span className="c">{quick.length}</span></div>
           <div className="ds-quick">{quick.map((t, i) => tile(t, i, 'q'))}</div>

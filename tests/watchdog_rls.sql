@@ -13,7 +13,8 @@
 --   A  da anon (il ruolo della chiave pubblica): la RPC risponde come al proprietario (security definer), ma app_config
 --      resta chiusa (42501) e la sua colonna nuova pure; v_health si legge e ha le due righe nuove
 --   U  da authenticated: execute = 42501 (non serve all'app), v_health si legge
---   V  v_health: 14 righe, le 12 di prima ci sono ancora, storage_mb e db_mb con gravita' coerente con le soglie 700 e 400
+--   V  v_health: 15 righe dalla migr 0190 (14 con la 0181, piu' stock_fermo), le 12 di prima ci sono ancora, storage_mb e
+--      db_mb con gravita' coerente con le soglie 700 e 400
 do $t$
 declare
   r name;
@@ -47,7 +48,8 @@ begin
 
   -- V
   select count(*) into v_n from v_health;
-  if v_n <> 14 then raise exception 'KO V: v_health ha % righe', v_n; end if;
+  -- 15 dalla migr 0190 (09-11): stock_fermo in coda; le 14 della 0181 restano quelle controllate qui sotto
+  if v_n <> 15 then raise exception 'KO V: v_health ha % righe', v_n; end if;
   if (select count(*) from v_health where k in ('img_missing', 'stock_neg', 'cogs_missing', 'price_missing', 'orders_orphan', 'todo_products',
         'lost_sales', 'shopify_orphan', 'qromo_orphan', 'dup_codice', 'period_mismatch', 'ce_drift_live')) <> 12 then
     raise exception 'KO V: una delle 12 righe di prima manca';
