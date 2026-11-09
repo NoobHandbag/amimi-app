@@ -1,11 +1,7 @@
-// Amimi Chat, loader della bolla (Fase 1 pezzo 5, docs/PROPOSTA_chat_sito.md 4.3, 5.4, 6.2 e 11.10).
-// Disegna la bolla in uno shadow DOM e basta. Senza una chat in corso su questo dispositivo: nessuna chiamata di rete e
-// nessuna scrittura sul dispositivo finche' la visitatrice non tocca la bolla (S8, test 16). Unica eccezione: con un chat
-// token valido (chiave CHIAVE di localStorage, scritta da chat-panel.js o dalla pagina /apps/chat/riprendi) una sola
-// chiamata `aggiorna` al caricamento, per il pallino di una risposta del team arrivata nel frattempo; un token scaduto
-// (4 ore senza attivita') si cancella senza chiamate. Al tocco carica il pannello (chat-panel.js, URL dal blocco Liquid,
-// accettato solo se e' un asset di un'estensione servito da Shopify). Mai HTML da stringhe: solo textContent.
-// Guardie e prove di comportamento in tests/chat_widget_guardie.mjs (anche il peso: sotto 10 KB compressi).
+// Amimi Chat, loader della bolla (pezzo 5; proposta 4.3, 5.4, 6.2, 11.10). Bolla in shadow DOM; senza chat in corso
+// nessuna rete e nessuna scrittura prima del tocco (test 16); con un chat token valido un solo `aggiorna` per il pallino.
+// Al tocco carica chat-panel.js dalla cartella di questo script. Solo textContent. Prove: tests/chat_widget_guardie.mjs;
+// Shopify misura questo file NON compresso: sotto 10.000 byte (theme check AssetSizeAppBlockJavaScript).
 (function () {
   'use strict';
   if (window.__amimiChat) return;
@@ -17,12 +13,12 @@
   var COLORE_RE = /^#[0-9a-fA-F]{6}$/;
   var SVG = 'http://www.w3.org/2000/svg';
   var PAGINE = { index: 'home', product: 'prodotto', collection: 'collezione', cart: 'carrello', search: 'ricerca', page: 'pagina', blog: 'blog', article: 'blog' };
-  // l'indirizzo di questo script: il pannello deve stare nella stessa cartella dell'estensione (Gate 2, C3)
+  // il pannello sta nella cartella di questo script (Gate 2, C3)
   var MIO = (document.currentScript && document.currentScript.src) || '';
   var api = { versione: VERSIONE, chiave: CHIAVE, base: BASE, pannello: null };
   window.__amimiChat = api;
 
-  // ---- stato della chat sul dispositivo (lo stesso formato in chat-panel.js e nella pagina riprendi di chat-api) ----
+  // stato sul dispositivo: stesso formato in chat-panel.js e nella pagina riprendi di chat-api
   function leggi() {
     var o;
     try { o = JSON.parse(window.localStorage.getItem(CHIAVE) || 'null'); } catch (e) { return null; }
@@ -48,8 +44,7 @@
   }
   api.beacon = function (codice) { chiama('errore', { codice: codice, versione: VERSIONE, pagina: pagina() }); };
 
-  // l'URL del pannello viene dal blocco ({{ 'chat-panel.js' | asset_url }}): solo https, stesso host o la CDN di Shopify,
-  // e solo il chat-panel.js della STESSA cartella di questo loader (stessa estensione e stessa versione)
+  // URL del blocco (asset_url): https, stesso host o CDN di Shopify, solo il chat-panel.js della cartella del loader
   function urlPannello(s) {
     try {
       var u = new URL(s, window.location.href);
@@ -152,7 +147,7 @@
       var s = document.createElement('script');
       s.src = src;
       s.async = true;
-      // un pannello che non si registra (versione diversa) non deve lasciare una bolla morta e muta (Gate 2, C5)
+      // pannello che non si registra: niente bolla muta (Gate 2, C5)
       s.onload = function () { bolla.classList.remove('carica'); if (!api.pannello) { caricamento = false; api.beacon('pannello_non_avviato'); } };
       s.onerror = function () { caricamento = false; bolla.classList.remove('carica'); api.beacon('pannello_non_caricato'); };
       document.head.appendChild(s);
@@ -160,8 +155,7 @@
     api.daAprire = false;
     bolla.addEventListener('click', function () { api.daAprire = true; apri(); });
 
-    // una chat in corso su questo dispositivo: scaduta = via senza chiamate; altrimenti un solo aggiorna per il pallino,
-    // oppure, se arriva dalla pagina riprendi (o: true), il pannello si apre da solo
+    // chat in corso: scaduta = via senza chiamate; o: true (pagina riprendi) = pannello aperto; altrimenti un aggiorna
     var st = leggi();
     if (!st || st.p !== prova) return;
     if (Date.now() - st.a > INATTIVITA_MS) { togli(); return; }

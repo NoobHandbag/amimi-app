@@ -95,7 +95,8 @@ const VIETATI = [/\.innerHTML\b/, /\.outerHTML\b/, /insertAdjacentHTML/, /docume
   /XMLHttpRequest/, /sendBeacon/, /WebSocket/, /EventSource/, /\bimport\s*\(/, /sessionStorage/, /document\.cookie/, /indexedDB/, /console\./, /postMessage/, /\.srcdoc\b/];
 function loaderStatico(s) {
   const c = senzaCommenti(s);
-  return sintassiOk(s) && VIETATI.every((re) => !re.test(c)) && pesoGz(s) < 10240 && c.includes("getElementById('amimi-chat-embed')")
+  // Shopify (theme check AssetSizeAppBlockJavaScript) misura il file NON compresso, soglia 10.000 byte (09-11)
+  return sintassiOk(s) && VIETATI.every((re) => !re.test(c)) && Buffer.byteLength(s, 'utf8') < 10000 && pesoGz(s) < 10240 && c.includes("getElementById('amimi-chat-embed')")
     && (c.match(/\bfetch\(/g) ?? []).length === 1 && /fetch\(BASE \+ '\/' \+ azione, \{ method: 'POST'/.test(c)
     && (c.match(/createElement\('script'\)/g) ?? []).length === 1 && /s\.src = src;/.test(c)
     && (c.match(/localStorage/g) ?? []).length === 3 && (c.match(/localStorage\.(getItem|setItem|removeItem)\(CHIAVE/g) ?? []).length === 3
@@ -120,7 +121,7 @@ t('E1 shopify.extension.toml: tema, "Amimi Chat"', estensione(EXT_TOML), leggiTo
 t('E2 un solo blocco (chat-embed.liquid) app embed in body col loader, URL del pannello con asset_url, impostazioni posizione, colore e Modalità prova (accesa di default); marcatore amimi-chat-embed; nessun dato della cliente', blocco(LIQUID, BLOCCHI), schemaDi(LIQUID));
 t('E3 due soli asset: loader e pannello', isDeepStrictEqual(readdirSync(join(EXT, 'assets')).sort(), ['chat-loader.js', 'chat-panel.js']));
 console.log('\n== loader e pannello, sul sorgente ==');
-t('L1 loader: sintassi, nessun HTML da stringhe, una sola fetch (verso /apps/chat), un solo script (il pannello), localStorage solo sulla sua chiave, shadow DOM, sotto 10 KB compressi', loaderStatico(LOADER), { gz: pesoGz(LOADER), vietati: VIETATI.filter((re) => re.test(senzaCommenti(LOADER))).map(String) });
+t('L1 loader: sintassi, nessun HTML da stringhe, una sola fetch (verso /apps/chat), un solo script (il pannello), localStorage solo sulla sua chiave, shadow DOM, sotto 10.000 byte NON compressi (misura di Shopify)', loaderStatico(LOADER), { byte: Buffer.byteLength(LOADER, 'utf8'), gz: pesoGz(LOADER), vietati: VIETATI.filter((re) => re.test(senzaCommenti(LOADER))).map(String) });
 t('L2 pannello: sintassi, nessun HTML da stringhe, nessun localStorage diretto, una sola fetch (verso /apps/chat), un solo script (Turnstile), nessun altro host, stato salvato nel formato del loader', pannelloStatico(PANNELLO), { gz: pesoGz(PANNELLO), vietati: VIETATI.filter((re) => re.test(senzaCommenti(PANNELLO))).map(String) });
 const chiaveDi = (s) => (s.match(/var CHIAVE = '([a-z0-9_]+)';/) ?? [])[1];
 const sitekeyDi = (s) => (s.match(/var SITEKEY = (\{ produzione: '[^']+', prova: '[^']+' \});/) ?? [])[1];
@@ -281,6 +282,7 @@ t('A3 loader con innerHTML, una fetch o uno script in piu\', sessionStorage, sin
   pianta(LOADER, "var api = { versione", "localStorage.setItem('altro', '1'); var api = { versione"),
   pianta(LOADER, "'use strict';", "'use strict'; var x = ;"),
   LOADER + '\n// ' + Array.from({ length: 30000 }, (_, i) => ((i * 7919) % 65536).toString(36)).join(''),
+  LOADER + '\n// ' + 'x'.repeat(10000 - Buffer.byteLength(LOADER, 'utf8')),
 ].every((s) => !loaderStatico(s)));
 t('A4 pannello con innerHTML, localStorage diretto, un altro host, un altro script o una fetch in piu\' -> visto', [
   pianta(PANNELLO, "if (testo) x.textContent = testo;", 'if (testo) x.innerHTML = testo;'),
