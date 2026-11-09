@@ -28,6 +28,10 @@ const BLOCCO = SRC.slice(a + B.length, b);
 const ESPORTA = ['gestisci', 'azzeraCache', 'azzeraSalute', 'ErroreDb', 'nomeCliente', 'statoDaEsito', 'inOrario', 'testoAttesa', 'interpretaFlag', 'mascheraEmail',
   'emailValida', 'nomePulito', 'testoPulito', 'uuidDa', 'FLAG_LETTI', 'HOST_ANTEPRIMA_RE', 'METODO', 'VERSIONE', 'ROTTE_ECO', 'messaggioPush'];
 const M = new Function(stripTypeScriptTypes(BLOCCO) + `\nreturn { ${ESPORTA.join(', ')} };`)();
+// pagina GET /apps/chat/riprendi (pezzo 5): il modulo riprendi.ts valutato cosi' com'e' (solo stringhe)
+const RIP_SRC = read('supabase/functions/chat-api/riprendi.ts');
+const RIP = new Function(stripTypeScriptTypes(RIP_SRC).replace(/^export const /gm, 'const ') + '\nreturn { LIQUID_APRI, LIQUID_CHIUDI, PAGINA_RIPRESA };')();
+const PAGINA_LIQUID = RIP.LIQUID_APRI + RIP.PAGINA_RIPRESA + RIP.LIQUID_CHIUDI;
 
 // ---------- firma come Shopify ----------
 const SECRET = 'segreto-di-prova-non-reale';
@@ -176,11 +180,12 @@ async function chiama(x, azione, corpo, { metodo = 'POST', cliente = '', segreti
   const req = new Request(url(azione, coppie ?? shopify(cliente), opz), init);
   const amb = { ora: clock.ora, segreti: { proxy: SECRET, turnstile: TS_PROD, turnstileProva: TS_PROVA, ...segreti }, db: x.db, siteverify: sv,
     push: async (m) => { pushInviati.push(m); if (rispostaPush instanceof Error) throw rispostaPush; return rispostaPush; },
-    sfondo: (p) => sfondi.push(p), casuale: (n) => new Uint8Array(randomBytes(n)), eco: async (r) => { echi.push(r.url); return new Response('eco'); } };
+    sfondo: (p) => sfondi.push(p), casuale: (n) => new Uint8Array(randomBytes(n)), eco: async (r) => { echi.push(r.url); return new Response('eco'); },
+    pagine: { riprendi: PAGINA_LIQUID } };
   const r = await M.gestisci(req, amb);
   const attese = sfondi; sfondi = [];
   await Promise.all(attese);
-  STATI.push({ azione, status: r.status, cc: r.headers.get('cache-control'), ct: r.headers.get('content-type') });
+  STATI.push({ azione, metodo, status: r.status, cc: r.headers.get('cache-control'), ct: r.headers.get('content-type') });
   const testo = r.status === 204 ? '' : await r.text();
   let d = null; try { d = JSON.parse(testo); } catch { d = null; }
   return { r, d, testo };
@@ -636,6 +641,73 @@ console.log('\n== riprendi (5.4, test 10) ==');
   t('R21 chat spenta: riprendi risponde spenta', (await chiama(y, 'riprendi', { token_ripresa: ripresa, turnstile: tsR() })).d.state === 'spenta');
 }
 
+console.log('\n== pagina GET riprendi (pezzo 5, 5.4 e 6.6) ==');
+{
+  const x = nuovo();
+  const g = await chiama(x, 'riprendi', null, { metodo: 'GET', opz: { extra: [['t', 'abc'], ['x', '<script>x']] } });
+  t('P1 GET riprendi firmata: 200 application/liquid, no-store, la pagina statica in layout none e raw', g.r.status === 200 && g.r.headers.get('content-type') === 'application/liquid; charset=utf-8'
+    && g.r.headers.get('cache-control') === 'no-store' && g.testo === PAGINA_LIQUID && g.testo.startsWith('{% layout none %}{% raw %}<!doctype html>') && g.testo.endsWith('</html>\n{% endraw %}'));
+  t('P2 nessun dato della richiesta nella pagina (parametri in piu\' ignorati), nessuna lettura del DB', !g.testo.includes('abc') && !g.testo.includes('<script>x') && x.st.chiamate.every((c) => c === 'contatore:glob:richieste'), x.st.chiamate);
+  t('P3 nella pagina un solo {% endraw %} (in fondo) e nessun altro tag Liquid', (PAGINA_LIQUID.match(/\{%/g) ?? []).length === 3 && (RIP.PAGINA_RIPRESA.match(/\{\{|\{%|%\}|\}\}/g) ?? []).length === 0);
+  t('P4 GET riprendi senza firma: 401; senza secret del proxy: 200 needs_secret', (await chiama(x, 'riprendi', null, { metodo: 'GET', opz: { senzaFirma: true } })).r.status === 401
+    && (await chiama(x, 'riprendi', null, { metodo: 'GET', segreti: { proxy: '' } })).d.state === 'needs_secret');
+  t('P5 GET solo per riprendi: le altre azioni POST restano 405', (await chiama(x, 'invia', null, { metodo: 'GET' })).r.status === 405 && (await chiama(x, 'passaggio', null, { metodo: 'GET' })).r.status === 405);
+  const y = nuovo({ chat_sito_enabled: 'false' });
+  t('P6 a chat spenta la pagina c\'e\' lo stesso (lo scambio dira\' spenta)', (await chiama(y, 'riprendi', null, { metodo: 'GET' })).testo === PAGINA_LIQUID);
+}
+// lo script della pagina guidato con un DOM finto: niente rete prima del tocco, token via dall'indirizzo, scambio al tocco
+const SCRIPT_RIP = (RIP.PAGINA_RIPRESA.match(/<script>([\s\S]*)<\/script>/) ?? [])[1] ?? '';
+const TS_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+async function provaPagina({ hash, lingua = 'it-IT', risposta = { ok: true, token: 'N'.repeat(43), stato: 'aperta', email: 'c***@esempio.it' }, storageGuasto = false, rete = true } = {}) {
+  const el = {};
+  const log = { fetch: [], replaceState: [], set: [], replace: [], script: [], render: [] };
+  const mk = (id) => (el[id] ??= { id, textContent: '', hidden: false, disabled: false, on: {}, addEventListener(tp, f) { this.on[tp] = f; } });
+  const win = {};
+  const doc = { getElementById: mk, documentElement: { lang: 'it' }, createElement: () => ({}),
+    head: { appendChild: (s) => { log.script.push(s.src); win.turnstile = { render: (sel, o) => { log.render.push({ sel, ...o }); queueMicrotask(() => o.callback('R-ts')); return 'w1'; }, reset() {} }; queueMicrotask(() => s.onload()); } } };
+  const loc = { hash, pathname: '/apps/chat/riprendi', replace: (u) => log.replace.push(u) };
+  const hist = { replaceState: (a, b, u) => { log.replaceState.push(u); loc.hash = ''; } };
+  const ls = { setItem: (k, v) => { if (storageGuasto) throw new Error('quota'); log.set.push([k, v]); }, getItem: () => null };
+  const testo = typeof risposta === 'string' ? risposta : JSON.stringify(risposta);
+  const ft = (u, o) => { log.fetch.push({ u, o }); return rete ? Promise.resolve({ text: () => Promise.resolve(testo) }) : Promise.reject(new Error('rete')); };
+  new Function('location', 'history', 'navigator', 'document', 'localStorage', 'fetch', 'window', SCRIPT_RIP)(loc, hist, { language: lingua }, doc, ls, ft, win);
+  const prima = { fetch: log.fetch.length, script: log.script.length, set: log.set.length, replaceState: [...log.replaceState] };
+  if (el.vai.on.click) el.vai.on.click();
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  return { el, log, prima };
+}
+{
+  const TOK = 'r'.repeat(43);
+  const a1 = await provaPagina({ hash: '#t=' + TOK });
+  t('P7 al caricamento: token tolto dall\'indirizzo, nessuna chiamata, nessuno script di terzi, niente scritto', a1.prima.fetch === 0 && a1.prima.script === 0 && a1.prima.set === 0 && JSON.stringify(a1.prima.replaceState) === '["/apps/chat/riprendi"]', a1.prima);
+  const corpo1 = JSON.parse(a1.log.fetch[0]?.o.body ?? '{}');
+  t('P8 al tocco: Turnstile di produzione (azione chat_riprendi), poi POST alla stessa pagina col token di ripresa', JSON.stringify(a1.log.script) === JSON.stringify([TS_URL]) && a1.log.render[0]?.sitekey === '0x4AAAAAAF2QTzI4g31RhjIS'
+    && a1.log.render[0]?.action === 'chat_riprendi' && a1.log.fetch.length === 1 && a1.log.fetch[0].u === '/apps/chat/riprendi' && a1.log.fetch[0].o.method === 'POST'
+    && JSON.stringify(corpo1) === JSON.stringify({ token_ripresa: TOK, turnstile: 'R-ts', prova: false }), { s: a1.log.script, r: a1.log.render, f: a1.log.fetch });
+  const salvato = JSON.parse(a1.log.set[0]?.[1] ?? '{}');
+  t('P9 chat token salvato nella chiave del widget, formato di chat-loader.js con o: true; poi la home', a1.log.set[0]?.[0] === 'amimi_chat_v1' && salvato.v === 1 && salvato.t === 'N'.repeat(43)
+    && salvato.p === false && typeof salvato.a === 'number' && salvato.s === 0 && salvato.o === true && JSON.stringify(Object.keys(salvato)) === '["v","t","p","a","s","o"]' && JSON.stringify(a1.log.replace) === '["/"]', { set: a1.log.set, rep: a1.log.replace });
+  const a2 = await provaPagina({ hash: '#t=' + TOK + '&prova=1', lingua: 'en-GB' });
+  t('P10 prova=1: widget di prova e prova true; in inglese la home inglese', a2.log.render[0]?.sitekey === '0x4AAAAAAF33Q02jrHXJLHjr' && JSON.parse(a2.log.fetch[0].o.body).prova === true
+    && JSON.parse(a2.log.set[0][1]).p === true && JSON.stringify(a2.log.replace) === '["/en"]' && a2.el.titolo.textContent === 'Continue the chat');
+  const a3 = await provaPagina({ hash: '#t=corto' });
+  t('P11 link senza un token valido: niente pulsante, niente rete', a3.el.vai.hidden === true && a3.log.fetch.length === 0 && a3.log.script.length === 0 && /non \u00e8 completo/.test(a3.el.esito.textContent));
+  const a4 = await provaPagina({ hash: '#t=' + TOK, risposta: { ok: false, state: 'token_non_valido' } });
+  t('P12 token scaduto o alterato: messaggio neutro, niente salvato, nessun redirect', a4.log.set.length === 0 && a4.log.replace.length === 0 && a4.el.vai.hidden === true && /30 giorni/.test(a4.el.esito.textContent));
+  const a5 = await provaPagina({ hash: '#t=' + TOK, risposta: { ok: false, state: 'verifica_fallita' } });
+  t('P13 Turnstile respinto: si puo\' riprovare', a5.el.vai.disabled === false && a5.el.vai.hidden === false && a5.log.set.length === 0);
+  const a6 = await provaPagina({ hash: '#t=' + TOK, storageGuasto: true });
+  t('P14 storage non scrivibile: lo dice e non porta alla home', a6.log.replace.length === 0 && /navigazione privata/.test(a6.el.esito.textContent));
+  const a7 = await provaPagina({ hash: '#t=' + TOK, rete: false });
+  t('P15 rete giu\': si puo\' riprovare, niente salvato', a7.el.vai.disabled === false && a7.log.set.length === 0 && a7.log.replace.length === 0);
+  const a8 = await provaPagina({ hash: '#t=' + TOK, risposta: '<html>500</html>' });
+  t('P16 pagina 500 del proxy (non JSON): si puo\' riprovare', a8.el.vai.disabled === false && a8.log.set.length === 0);
+  const sc = SCRIPT_RIP.replace(/^\s*\/\/.*$/gm, '');
+  t('P17 guardie della pagina: nessun innerHTML/eval/log, un solo script e un solo host esterno (Turnstile), token mai in query',
+    !/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|console\./.test(sc) && (RIP.PAGINA_RIPRESA.match(/https:\/\/[a-z0-9.-]+/g) ?? []).every((h) => h === 'https://challenges.cloudflare.com')
+    && (RIP.PAGINA_RIPRESA.match(/<script/g) ?? []).length === 1 && !/[?&]t=|searchParams/.test(sc));
+}
+
 console.log('\n== errore del widget (8.10 riga 13) ==');
 {
   const x = nuovo();
@@ -725,7 +797,9 @@ console.log('\n== tutte le risposte ==');
 {
   t('X1 nessuna risposta 5xx in tutto il giro (il proxy li fa diventare HTML)', STATI.every((s) => s.status < 500), STATI.filter((s) => s.status >= 500));
   t('X2 ogni risposta della chat porta Cache-Control: no-store', STATI.filter((s) => s.status !== 204 && !['eco', 'misura', 'turnstile'].includes(s.azione)).every((s) => s.cc === 'no-store'));
-  t('X3 ogni risposta della chat e\' JSON', STATI.filter((s) => s.status !== 204 && !['eco', 'misura', 'turnstile'].includes(s.azione)).every((s) => s.ct === 'application/json; charset=utf-8'));
+  const pagina = (s) => s.azione === 'riprendi' && s.metodo === 'GET' && s.status === 200 && s.ct === 'application/liquid; charset=utf-8';
+  t('X3 ogni risposta della chat e\' JSON, salvo la pagina GET riprendi, che e\' Liquid', STATI.filter((s) => s.status !== 204 && !['eco', 'misura', 'turnstile'].includes(s.azione) && !pagina(s)).every((s) => s.ct === 'application/json; charset=utf-8')
+    && STATI.filter(pagina).length >= 2);
 }
 
 console.log('\n== guardie sul sorgente ==');
