@@ -730,8 +730,8 @@ const TABELLE: Record<string, Riga[]> = {
   v_health: [{ k: 'ce_drift_live', label: 'Settembre (chiuso) differisce dal CE congelato di 12,40 €', n: 1, severity: 'bad' }, { k: 'giacenze_negative', label: 'Giacenze negative', n: 0, severity: 'ok' }],
   // migr 0190 (09-11): la scheda dei pezzi fermi in cima alla Home, per tutto il team
   v_stock_fermo: [
-    { codice: 'LEA_BAG_MAXI_SUEDE_BLACK_CHARM', item: 'LEA BAG MAXI', variant: 'SUEDE BLACK CHARM', pezzi: 27, giorni: 3, stato_shopify: 'assente', ultimo_arrivo: '2026-11-06', valore: 4590 },
-    { codice: 'LEA_BAG_SUEDE_BURGUNDY', item: 'LEA BAG', variant: 'SUEDE BURGUNDY', pezzi: 10, giorni: 3, stato_shopify: 'draft', ultimo_arrivo: '2026-11-06', valore: 1350 },
+    { codice: 'LEA_BAG_MAXI_SUEDE_BLACK_CHARM', item: 'LEA BAG MAXI', variant: 'SUEDE BLACK CHARM', pezzi: 27, giorni: 3, stato_shopify: 'assente', fermo_dal: '2026-11-06', valore: 4590 },
+    { codice: 'LEA_BAG_SUEDE_BURGUNDY', item: 'LEA BAG', variant: 'SUEDE BURGUNDY', pezzi: 10, giorni: 3, stato_shopify: 'draft', fermo_dal: '2026-11-06', valore: 1350 },
   ],
   v_spedizioni_eccezioni: SPEDIZIONI,
   v_evasione_mensile: [6, 7, 8, 9, 10].map((m, i) => ({ year: 2026, month: m, ordini: [41, 47, 33, 58, 29][i], spediti: [41, 46, 33, 57, 24][i], giorni_medi: [1.8, 2.1, 2.6, 1.7, 1.5][i], giorni_mediani: [1, 2, 2, 1, 1][i], oltre_3gg: [3, 5, 6, 2, 1][i] })),

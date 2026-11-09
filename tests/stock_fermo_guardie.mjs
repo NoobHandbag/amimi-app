@@ -44,16 +44,25 @@ const criteri = (v) => {
   return f.includes("s.synced_at >= (select coalesce(max(s1.synced_at), now()) from shopify_stock s1) - interval '2 hours'")
     && f.includes("bool_or(coalesce(s.shopify_status, 'active'::text) = 'active'::text) as attivo")
     && f.includes('where i.disponibili_da_vendere > 0::numeric')
-    && f.includes('and not coalesce(sh.attivo, false)')
-    && f.includes("and not exists (select 1 from non_product_codici n where upper(regexp_replace(n.codice, '\\s+'::text, '_'::text, 'g'::text)) = i.codice_norm)")
-    && f.includes('and (a.ultimo_arrivo is null or a.ultimo_arrivo <= current_date - 3)')
-    && f.includes('where p.quantita > 0::numeric')
+    && f.includes('where not coalesce(sh.attivo, false)')
+    && f.includes("and not exists (select 1 from non_product_codici n where upper(regexp_replace(n.codice, '\\s+'::text, '_'::text, 'g'::text)) = f.codice_norm)")
+    && f.includes('and (f.fermo_dal is null or f.fermo_dal <= f.oggi - 3)')
+    && f.includes('where p.quantita > 0::numeric and p.data is not null')
     && f.includes('from v_inventory i')
-    && !/\bon_shopify\b/.test(v);
+    && fifo(v) && romaOk(v)
+    && !/\bon_shopify\b/.test(v) && !/current_date/.test(v);
 };
+// FIFO (Gate 2 del 09-11): il pezzo piu' vecchio ancora a magazzino, non l'ultimo arrivo
+const fifo = (v) => {
+  const f = flat(v);
+  return f.includes('sum(p.quantita) over (partition by p.codice_norm order by p.data desc, p.id rows unbounded preceding) as cum')
+    && f.includes('coalesce((select max(a.data) from arr a where a.codice_norm = i.codice_norm and a.cum >= i.disponibili_da_vendere), (select min(a.data) from arr a where a.codice_norm = i.codice_norm)) as fermo_dal')
+    && !/max\(p\.data\)/.test(v);
+};
+const romaOk = (v) => flat(v).includes("(now() at time zone 'Europe/Rome')::date as oggi") && flat(v).includes('f.oggi - f.fermo_dal as giorni');
 // lista del select spezzata sulle virgole di primo livello: il nome e' l'alias dopo `as`, o la colonna se non c'e' alias
 const colonne = (v) => {
-  const lista = (v.match(/\nselect ([\s\S]*?)\n  from v_inventory i/) ?? ['', ''])[1];
+  const lista = (v.match(/\nselect ([\s\S]*?)\n  from fermi f/) ?? ['', ''])[1];
   const pezzi = []; let prof = 0, cur = '';
   for (const ch of lista) {
     if (ch === '(') prof++;
@@ -63,7 +72,7 @@ const colonne = (v) => {
   if (cur.trim()) pezzi.push(cur);
   return pezzi.map((p) => { const s = p.trim(); return (s.match(/\bas ([a-z_]+)$/) ?? s.match(/\.([a-z_]+)$/) ?? ['', s])[1]; });
 };
-const COLONNE = ['codice', 'item', 'variant', 'pezzi', 'ultimo_arrivo', 'giorni', 'stato_shopify', 'valore'];
+const COLONNE = ['codice', 'item', 'variant', 'pezzi', 'fermo_dal', 'giorni', 'stato_shopify', 'valore'];
 const privilegi = (src) => [...noComments(src).matchAll(/\b(grant|revoke)\b[^;]*;/gi)].map((m) => flat(m[0]));
 const PRIVILEGI = ['revoke all on public.v_stock_fermo from public, anon, authenticated, ask_ro;', 'grant select on public.v_stock_fermo to anon, authenticated, ask_ro;'];
 const scrive = (src) => [...noComments(src).matchAll(/\b(insert\s+into|update\s+[a-z_.]+\s+set|delete\s+from|truncate\s+[a-z_.]+)\b[^;]*/gi)].map((m) => m[0].slice(0, 60));
@@ -91,7 +100,7 @@ t('8 nessun trigger, funzione, cron, pg_net, drop o refresh_health_log', !innest
 {
   const pre = noComments(M190).split('\ndo $$')[1] ?? '';
   t('9 la migrazione si controlla da sola: colonne, 15 righe, conteggio uguale, criterio, privilegi',
-    pre.includes("'codice:text,item:text,variant:text,pezzi:numeric,ultimo_arrivo:date,giorni:integer,stato_shopify:text,valore:numeric'")
+    pre.includes("'codice:text,item:text,variant:text,pezzi:numeric,fermo_dal:date,giorni:integer,stato_shopify:text,valore:numeric'")
     && pre.includes('if v_n <> 15') && pre.includes("k = 'stock_fermo' and n = v_fermi") && pre.includes('pezzi <= 0 or giorni < 3')
     && pre.includes("has_table_privilege(r, 'public.v_stock_fermo', 'insert')") && pre.includes("array['anon', 'authenticated', 'ask_ro']"));
   t('10 la prova viva della 0181 conta 15 righe', /if v_n <> 15 then raise exception 'KO V: v_health ha % righe'/.test(RLS181));
@@ -106,10 +115,10 @@ t('14 il banner di Ale non ripete stock_fermo', BANNER.includes("r.severity === 
 console.log('\n== autocontrollo: i controlli vedono un sorgente rotto ==');
 {
   const rotto = (src, da, a) => { const s = src.replace(da, a); if (s === src) throw new Error('mutazione a vuoto: ' + da); return s; };
-  t('15 on_shopify al posto delle righe fresche -> KO', !criteri(vistaFermo(rotto(M190, 'and not coalesce(sh.attivo, false)', 'and not i.on_shopify'))));
+  t('15 on_shopify al posto delle righe fresche -> KO', !criteri(vistaFermo(rotto(M190, 'where not coalesce(sh.attivo, false)', 'where not f.on_shopify'))));
   t('16 senza finestra delle 2 ore -> KO', !criteri(vistaFermo(rotto(M190, "\n     and s.synced_at >= (select coalesce(max(s1.synced_at), now()) from shopify_stock s1) - interval '2 hours'", ''))));
   t('17 bozza contata come in vendita -> KO', !criteri(vistaFermo(rotto(M190, "bool_or(coalesce(s.shopify_status, 'active'::text) = 'active'::text)", "bool_or(coalesce(s.shopify_status, 'active'::text) in ('active', 'draft'))"))));
-  t('18 non_product_codici dimenticato -> KO', !criteri(vistaFermo(rotto(M190, "\n   and not exists (select 1 from non_product_codici n where upper(regexp_replace(n.codice, '\\s+'::text, '_'::text, 'g'::text)) = i.codice_norm)", ''))));
+  t('18 non_product_codici dimenticato -> KO', !criteri(vistaFermo(rotto(M190, "\n   and not exists (select 1 from non_product_codici n where upper(regexp_replace(n.codice, '\\s+'::text, '_'::text, 'g'::text)) = f.codice_norm)", ''))));
   t('19 grant anche insert -> KO', JSON.stringify(privilegi(rotto(M190, 'grant select on public.v_stock_fermo', 'grant select, insert on public.v_stock_fermo'))) !== JSON.stringify(PRIVILEGI));
   t('20 una riga vecchia di v_health cambiata -> KO', !vecchieUguali(rotto(M190, "'Prodotti con giacenza negativa'", "'Prodotti con giacenza sotto zero'")));
   t('21 stock_fermo solo warn -> KO', !gravitaOk(rotto(M190, ",'stock_fermo'::text])", '])')));
@@ -118,6 +127,8 @@ console.log('\n== autocontrollo: i controlli vedono un sorgente rotto ==');
   t('24 scheda dietro le finanze -> KO', !fuoriFinanze(rotto(HOME, '\n          <StockFermo />\n', '\n          {cfg.finance && <StockFermo />}\n')));
   t('25 errore di lettura ingoiato -> KO', !erroreDetto(rotto(CARD, 'if (error) { setErrore(true); return; }', 'if (error) return;')));
   t('26 colonna che la vista non ha -> KO', !selectScheda(rotto(CARD, "select('codice,item,variant,pezzi,giorni,stato_shopify')", "select('codice,item,variant,pezzi,giorni,stato')")).every((c) => COLONNE.includes(c)));
+  t('27 giorni dall\'ULTIMO arrivo (un riordino nasconde i fermi) -> KO', !criteri(vistaFermo(rotto(M190, "coalesce((select max(a.data) from arr a where a.codice_norm = i.codice_norm and a.cum >= i.disponibili_da_vendere),", "coalesce((select max(a.data) from arr a where a.codice_norm = i.codice_norm),"))));
+  t('28 giorni sul calendario del server (UTC) -> KO', !criteri(vistaFermo(rotto(M190, "(now() at time zone 'Europe/Rome')::date as oggi", 'current_date as oggi'))));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);

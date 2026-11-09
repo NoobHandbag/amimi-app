@@ -13,7 +13,8 @@
 --   A  da anon (il ruolo della chiave pubblica): la RPC risponde come al proprietario (security definer), ma app_config
 --      resta chiusa (42501) e la sua colonna nuova pure; v_health si legge e ha le due righe nuove
 --   U  da authenticated: execute = 42501 (non serve all'app), v_health si legge
---   V  v_health: 14 righe, le 12 di prima ci sono ancora, storage_mb e db_mb con gravita' coerente con le soglie 700 e 400
+--   V  v_health: 15 righe dalla migr 0190 (14 con la 0181, piu' stock_fermo), le 12 di prima ci sono ancora, storage_mb e
+--      db_mb con gravita' coerente con le soglie 700 e 400
 do $t$
 declare
   r name;

@@ -44,7 +44,7 @@ export default function StockFermo() {
             <li key={r.codice}>
               <span>
                 {[r.item, r.variant].filter(Boolean).join(' ') || r.codice}
-                <small className="sf-sub">{r.codice} · {statoTesto(r.stato_shopify)}{r.giorni != null ? ` · arrivati ${r.giorni} gg fa` : ''}</small>
+                <small className="sf-sub">{r.codice} · {statoTesto(r.stato_shopify)}{r.giorni != null ? ` · ferm${Number(r.pezzi) === 1 ? 'o' : 'i'} da ${r.giorni} gg` : ''}</small>
               </span>
               <b>{Number(r.pezzi)} pz</b>
             </li>

@@ -7,10 +7,15 @@
 --  (a) v_stock_fermo: un codice per riga con pezzi disponibili da vendere (v_inventory.disponibili_da_vendere > 0, quindi
 --      conto vendita escluso) e NESSUNA riga Shopify attiva fra quelle viste dall'ultimo giro di sync (finestra di 2 ore
 --      sul max synced_at, come la 0074: il mirror non pota le righe di un prodotto tolto da Shopify, e v_inventory.on_shopify
---      le conta ancora), fermo da almeno 3 giorni dall'ultimo arrivo (purchases.quantita > 0; senza arrivi conta come
---      fermo). Fuori i codici di non_product_codici (GIFT_CARD e simili). stato_shopify = 'assente' se il codice non ha
---      righe fresche, altrimenti gli stati visti (draft, archived). Colonne: codice, item, variant, pezzi, ultimo_arrivo,
---      giorni, stato_shopify, valore (pezzi per prezzo).
+--      le conta ancora), fermo da almeno 3 giorni. fermo_dal = la data d'arrivo del pezzo PIU' VECCHIO ancora a magazzino
+--      (FIFO: gli arrivi con quantita > 0, dal piu' recente indietro, finche' la loro somma copre i pezzi; se non la copre,
+--      il primo arrivo; senza arrivi conta come fermo). Non l'ultimo arrivo: un riordino arrivato ieri non deve nascondere
+--      per altri 3 giorni i pezzi fermi da settimane (Gate 2 del 09-11). Giorni contati sul calendario di Roma, come le date
+--      degli arrivi, non su current_date del server (UTC). Fuori i codici di non_product_codici (GIFT_CARD e simili).
+--      stato_shopify = 'assente' se il codice non ha righe fresche, altrimenti gli stati visti (draft, archived).
+--      Colonne: codice, item, variant, pezzi, fermo_dal, giorni, stato_shopify, valore (pezzi per prezzo).
+--      Limite noto (Gate 2, rinuncia consapevole): un codice tenuto fuori dal sito apposta (pezzi su misura da sposa, per
+--      esempio) resta nell'elenco finche' ha pezzi; un'esclusione voluta richiede un'azione write-api nuova, CASI_APERTI.
 --  (b) v_health: riga nuova stock_fermo in coda (n = righe di v_stock_fermo), gravita' 'bad': entra nel giro delle 06:00
 --      (refresh_health_log copia v_health in health_log, pagina Salute) e nel banner della Home di Ale. Le 14 righe di
 --      prima sono identiche alla 0181 (pin in tests/stock_fermo_guardie.mjs), stesse colonne e tipi.
@@ -30,26 +35,31 @@ with shop as (
      and s.synced_at >= (select coalesce(max(s1.synced_at), now()) from shopify_stock s1) - interval '2 hours'
    group by 1
 ), arr as (
-  select p.codice_norm, max(p.data) as ultimo_arrivo
+  select p.codice_norm, p.data,
+         sum(p.quantita) over (partition by p.codice_norm order by p.data desc, p.id rows unbounded preceding) as cum
     from purchases p
-   where p.quantita > 0::numeric
-   group by p.codice_norm
+   where p.quantita > 0::numeric and p.data is not null
+), fermi as (
+  select i.*,
+         coalesce((select max(a.data) from arr a where a.codice_norm = i.codice_norm and a.cum >= i.disponibili_da_vendere),
+                  (select min(a.data) from arr a where a.codice_norm = i.codice_norm)) as fermo_dal,
+         (now() at time zone 'Europe/Rome')::date as oggi
+    from v_inventory i
+   where i.disponibili_da_vendere > 0::numeric
 )
-select i.codice,
-       i.item,
-       i.variant,
-       i.disponibili_da_vendere as pezzi,
-       a.ultimo_arrivo,
-       current_date - a.ultimo_arrivo as giorni,
+select f.codice,
+       f.item,
+       f.variant,
+       f.disponibili_da_vendere as pezzi,
+       f.fermo_dal,
+       f.oggi - f.fermo_dal as giorni,
        case when sh.codice_norm is null then 'assente'::text else sh.stati end as stato_shopify,
-       round(i.disponibili_da_vendere * coalesce(i.retail_price, 0::numeric), 2) as valore
-  from v_inventory i
-  left join shop sh on sh.codice_norm = i.codice_norm
-  left join arr a on a.codice_norm = i.codice_norm
- where i.disponibili_da_vendere > 0::numeric
-   and not coalesce(sh.attivo, false)
-   and not exists (select 1 from non_product_codici n where upper(regexp_replace(n.codice, '\s+'::text, '_'::text, 'g'::text)) = i.codice_norm)
-   and (a.ultimo_arrivo is null or a.ultimo_arrivo <= current_date - 3);
+       round(f.disponibili_da_vendere * coalesce(f.retail_price, 0::numeric), 2) as valore
+  from fermi f
+  left join shop sh on sh.codice_norm = f.codice_norm
+ where not coalesce(sh.attivo, false)
+   and not exists (select 1 from non_product_codici n where upper(regexp_replace(n.codice, '\s+'::text, '_'::text, 'g'::text)) = f.codice_norm)
+   and (f.fermo_dal is null or f.fermo_dal <= f.oggi - 3);
 
 -- come le altre viste dopo la bonifica dei privilegi: sola lettura per i ruoli dell'app (i default di Supabase darebbero tutto)
 revoke all on public.v_stock_fermo from public, anon, authenticated, ask_ro;
@@ -134,7 +144,7 @@ declare
 begin
   select string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' order by a.attnum) into v_cols
     from pg_attribute a where a.attrelid = 'public.v_stock_fermo'::regclass and a.attnum > 0 and not a.attisdropped;
-  if v_cols is distinct from 'codice:text,item:text,variant:text,pezzi:numeric,ultimo_arrivo:date,giorni:integer,stato_shopify:text,valore:numeric' then
+  if v_cols is distinct from 'codice:text,item:text,variant:text,pezzi:numeric,fermo_dal:date,giorni:integer,stato_shopify:text,valore:numeric' then
     raise exception '0190: colonne di v_stock_fermo inattese: %', v_cols;
   end if;
 
