@@ -53,7 +53,8 @@ a{color:inherit}
     scaduto: 'This link is no longer valid (links last 30 days). Reply to the email or write to info@amimi.it.',
     verificaKo: 'We could not complete the anti-spam check. Please try again.', spenta: 'The chat is not available right now. Reply to the email or write to info@amimi.it.',
     troppo: 'Too many attempts: please try again later.', riprova: 'Something went wrong. Please try again.',
-    storage: 'This browser does not let us keep the chat open (private browsing?). Reply to the email instead.'
+    storage: 'This browser does not let us keep the chat open (private browsing?). Reply to the email instead.',
+    sostituisci: 'Another chat is already open on this device. This link opens the chat of ', siSostituisci: 'Yes, open this chat'
   } : {
     titolo: 'Continua la chat', testo: 'Tocca il pulsante per riaprire su questo dispositivo la tua chat con il team Amimi.', vai: 'Continua la chat',
     nota: 'Puoi anche rispondere direttamente all\\'email: il team la riceve come le altre.', verifica: 'Verifica anti-spam in corso...',
@@ -61,7 +62,8 @@ a{color:inherit}
     scaduto: 'Questo link non vale pi\\u00f9 (dura 30 giorni). Rispondi all\\'email o scrivici a info@amimi.it.',
     verificaKo: 'Non siamo riusciti a completare la verifica anti-spam. Riprova.', spenta: 'La chat non \\u00e8 disponibile in questo momento. Rispondi all\\'email o scrivici a info@amimi.it.',
     troppo: 'Troppi tentativi: riprova pi\\u00f9 tardi.', riprova: 'Qualcosa non ha funzionato. Riprova.',
-    storage: 'Questo browser non ci lascia tenere aperta la chat (navigazione privata?). Rispondi all\\'email.'
+    storage: 'Questo browser non ci lascia tenere aperta la chat (navigazione privata?). Rispondi all\\'email.',
+    sostituisci: 'Su questo dispositivo c\\'\\u00e8 gi\\u00e0 un\\'altra chat aperta. Questo link apre la chat di ', siSostituisci: 'S\\u00ec, apri questa chat'
   };
   var $ = function (id) { return document.getElementById(id); };
   var vai = $('vai');
@@ -84,6 +86,18 @@ a{color:inherit}
   var finito = false;
   function libera(testo) { esito.textContent = testo; vai.disabled = false; }
   function chiudi(testo) { esito.textContent = testo; vai.hidden = true; finito = true; }
+  var inAttesa = null;
+  function altraChatAttiva(nuovoToken) {
+    var o = null;
+    try { o = JSON.parse(localStorage.getItem(CHIAVE) || 'null'); } catch (e) { return false; }
+    return !!o && typeof o.t === 'string' && o.t !== nuovoToken && typeof o.a === 'number' && Date.now() - o.a < 4 * 3600 * 1000;
+  }
+  function salvaEVai(nuovo) {
+    try { localStorage.setItem(CHIAVE, JSON.stringify(nuovo)); }
+    catch (e) { chiudi(T.storage); return; }
+    chiudi(T.fatto);
+    location.replace(en ? '/en' : '/');
+  }
   function scambia(ts) {
     fetch(dove, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token_ripresa: tok, turnstile: ts, prova: prova }),
       credentials: 'same-origin', cache: 'no-store' })
@@ -92,10 +106,12 @@ a{color:inherit}
         var d = null;
         try { d = JSON.parse(t); } catch (e) { d = null; }
         if (d && d.ok === true && typeof d.token === 'string' && TOKEN_RE.test(d.token)) {
-          try { localStorage.setItem(CHIAVE, JSON.stringify({ v: 1, t: d.token, p: prova, a: Date.now(), s: 0, o: true })); }
-          catch (e) { chiudi(T.storage); return; }
-          chiudi(T.fatto);
-          location.replace(en ? '/en' : '/');
+          var em = typeof d.email === 'string' && d.email.length <= 260 ? d.email : '';
+          var nuovo = { v: 1, t: d.token, p: prova, a: Date.now(), s: 0, o: true, e: em };
+          // un'altra chat ancora attiva su questo dispositivo: prima di sostituirla si chiede, mostrando di chi e' quella del
+          // link (Gate 2 del pezzo 5, B3: un link "Continua la chat" mandato da qualcun altro)
+          if (altraChatAttiva(d.token)) { inAttesa = nuovo; esito.textContent = T.sostituisci + (em || '***') + '?'; vai.textContent = T.siSostituisci; vai.disabled = false; return; }
+          salvaEVai(nuovo);
           return;
         }
         var st = d && d.state;
@@ -116,6 +132,7 @@ a{color:inherit}
   }
   vai.addEventListener('click', function () {
     if (finito) return;
+    if (inAttesa) { var n = inAttesa; inAttesa = null; salvaEVai(n); return; }
     vai.disabled = true;
     esito.textContent = T.verifica;
     if (window.turnstile) { verifica(); return; }

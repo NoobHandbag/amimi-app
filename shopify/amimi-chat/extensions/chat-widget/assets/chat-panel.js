@@ -17,6 +17,8 @@
   var TS_VALIDO_MS = 280000;
   var TS_ATTESA_MS = 60000;
   var PAGINE_STORIA = 6;
+  var ATTESA_RETE_MS = 20000;
+  var ERRORI_DI_FILA = 6;
   var TURNSTILE_JS = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
   var SITEKEY = { produzione: '0x4AAAAAAF2QTzI4g31RhjIS', prova: '0x4AAAAAAF33Q02jrHXJLHjr' };
   var HOST_LINK = ['amimi.it', 'www.amimi.it'];
@@ -36,7 +38,7 @@
       limiteMessaggi: 'Hai raggiunto il numero massimo di messaggi per questa chat: ti rispondiamo via email.', troppoVeloce: 'Un attimo: riprova tra qualche secondo.',
       chiusa: 'Questa chat \u00e8 stata chiusa. Se ti serve ancora aiuto, apri una nuova chat.', scaduta: 'La chat non \u00e8 pi\u00f9 attiva su questo dispositivo. Le risposte del team ti arrivano via email, con il link "Continua la chat".',
       nuova: 'Nuova chat', fermo: 'Quando il team risponde ti arriva un\'email; la risposta compare anche qui.', controlla: 'Controlla adesso',
-      errore: 'La chat non si \u00e8 caricata. ', riprovaCarica: 'Riprova', inviaA: 'La risposta arriver\u00e0 a ', bottoneKo: 'Questa risposta non \u00e8 disponibile ora.'
+      errore: 'La chat non si \u00e8 caricata. ', riprovaCarica: 'Riprova', inviaA: 'Le risposte del team arrivano via email a ', bottoneKo: 'Questa risposta non \u00e8 disponibile ora.'
     },
     en: {
       titolo: 'Amimi chat: automatic answers and team', chiudi: 'Close the chat', prova: 'TEST', carica: 'One moment...',
@@ -51,7 +53,7 @@
       limiteMessaggi: 'You have reached the maximum number of messages for this chat: we will reply by email.', troppoVeloce: 'One moment: please try again in a few seconds.',
       chiusa: 'This chat has been closed. If you still need help, start a new chat.', scaduta: 'The chat is no longer active on this device. Our replies reach you by email, with the "Continue the chat" link.',
       nuova: 'New chat', fermo: 'When our team replies you will get an email; the reply also appears here.', controlla: 'Check now',
-      errore: 'The chat did not load. ', riprovaCarica: 'Retry', inviaA: 'The reply will be sent to ', bottoneKo: 'This answer is not available right now.'
+      errore: 'The chat did not load. ', riprovaCarica: 'Retry', inviaA: 'Our replies are sent by email to ', bottoneKo: 'This answer is not available right now.'
     }
   };
   // un link e' cliccabile solo se e' https su amimi.it o www.amimi.it, senza credenziali ne' porta nell'URL (5.7): l'URL
@@ -119,9 +121,9 @@
   var lingua = /^en\b/i.test(document.documentElement.lang || '') ? 'en' : 'it';
   var T = TESTI[lingua];
   var S = {
-    aperto: false, iniziato: false, config: null, token: null, stato: null, email: null, cursore: 0, visti: {}, maxVisto: 0,
+    aperto: false, iniziato: false, config: null, token: null, stato: null, email: null, cursore: 0, visti: {},
     attivita: 0, movimento: 0, timer: null, fermo: false, inVolo: false,
-    tsId: null, tsToken: null, tsAt: 0, tsInCorso: false, tsAttese: [], tsCaricato: false, tsCarica: []
+    tsId: null, tsToken: null, tsAt: 0, tsInCorso: false, tsAttese: [], tsCarica: [], errori: 0
   };
 
   function el(tag, cls, testo) {
@@ -139,12 +141,18 @@
     dove.appendChild(document.createTextNode('.'));
     return dove;
   }
+  // ogni esito diventa {http, d}: rete giu', corpo interrotto o chiamata ferma oltre ATTESA_RETE_MS = {http: 0, d: null},
+  // mai una promessa rifiutata (che lascerebbe il pannello fermo a meta', Gate 2 B2)
   function chiama(azione, corpo) {
     var opz = { method: corpo ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store' };
     if (corpo) { opz.headers = { 'Content-Type': 'application/json' }; opz.body = JSON.stringify(corpo); }
-    return fetch(A.base + '/' + azione, opz).then(function (r) {
-      return r.text().then(function (t) { return { http: r.status, d: leggiRisposta(t) }; });
-    }, function () { return { http: 0, d: null }; });
+    var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    var tm = null;
+    if (ctrl) { opz.signal = ctrl.signal; tm = setTimeout(function () { ctrl.abort(); }, ATTESA_RETE_MS); }
+    var fine = function () { if (tm) clearTimeout(tm); };
+    return fetch(A.base + '/' + azione, opz)
+      .then(function (r) { return r.text().then(function (t) { return { http: r.status, d: leggiRisposta(t) }; }); })
+      .then(function (x) { fine(); return x; }, function () { fine(); return { http: 0, d: null }; });
   }
 
   // ---- struttura del pannello ----
@@ -220,13 +228,17 @@
   A.host.appendChild(tsBox);
 
   // ---- stato sul dispositivo ----
-  function salvaStato() {
+  // s = il cursore di aggiorna, mai il seq di avvia, invia o passaggio (contratto C4 di chat-api, Gate 2 B1); una chat piu'
+  // nuova salvata da un'altra scheda o dalla pagina riprendi non si sovrascrive (C4), salvo una chat appena aperta qui
+  function salvaStato(nuova) {
     if (!S.token) return;
-    A.salva({ v: 1, t: S.token, p: prova, a: S.attivita, s: S.maxVisto, o: false });
+    var ora = A.leggi();
+    if (!nuova && ora && ora.t !== S.token) return;
+    A.salva({ v: 1, t: S.token, p: prova, a: S.attivita, s: S.cursore, o: false, e: S.email || '' });
   }
   function dimentica() {
     A.togli();
-    S.token = null; S.stato = null; S.email = null; S.cursore = 0; S.visti = {}; S.maxVisto = 0; S.fermo = false;
+    S.token = null; S.stato = null; S.email = null; S.cursore = 0; S.visti = {}; S.fermo = false; S.errori = 0;
     ferma();
   }
 
@@ -361,7 +373,10 @@
     f.appendChild(vai);
     sc.appendChild(f);
     c.appendChild(sc);
-    f.addEventListener('focusin', preparaTs);
+    // Turnstile al primo gesto nel modulo (non al focus automatico dell'apertura): tasto, tocco o testo
+    f.addEventListener('keydown', preparaTs);
+    f.addEventListener('pointerdown', preparaTs);
+    f.addEventListener('input', preparaTs);
     f.addEventListener('submit', function (e) {
       e.preventDefault();
       var em = email.i.value.trim().toLowerCase();
@@ -386,7 +401,8 @@
             S.email = typeof d.email === 'string' ? d.email : null;
             S.attivita = Date.now();
             S.movimento = Date.now();
-            salvaStato();
+            S.cursore = 0;
+            salvaStato(true);
             vistaChat();
             mostra(d.messaggi);
             if (d.testo_salvato === false) { V.testo.value = te; avviso(T.nonInviato, false); }
@@ -454,14 +470,18 @@
     form.appendChild(ta);
     form.appendChild(bi);
     c.appendChild(form);
-    var nota = el('div', 'nota', T.etichetta + ' ');
+    var nota = el('div', 'nota');
+    var dest = el('span', 'dest');
+    nota.appendChild(dest);
+    nota.appendChild(document.createTextNode(T.etichetta + ' '));
     nota.appendChild(linkInformativa());
     c.appendChild(nota);
     form.addEventListener('submit', function (e) { e.preventDefault(); inviaTesto(); });
     ta.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); inviaTesto(); }
     });
-    V.lista = lista; V.scorre = sc; V.fondo = fondo; V.avviso = av; V.testo = ta; V.invia = bi; V.persona = pers; V.rapidi = rapidi; V.form = form;
+    V.lista = lista; V.scorre = sc; V.fondo = fondo; V.avviso = av; V.testo = ta; V.invia = bi; V.persona = pers; V.rapidi = rapidi; V.form = form; V.dest = dest;
+    mostraDestinatario();
     if (cfg && !cfg.attiva) bloccaScrittura(T.spentaChat);
     aggiornaPersona();
     if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) ta.focus();
@@ -480,6 +500,11 @@
     if (!testo) { V.avviso.hidden = true; return; }
     if (conMail) mail(V.avviso, testo); else V.avviso.textContent = testo;
     V.avviso.hidden = false;
+  }
+  // a chi vanno le risposte: sempre a vista, cosi' una chat aperta da un link di altri si riconosce (Gate 2, B3)
+  function mostraDestinatario() {
+    if (V.nome !== 'chat') return;
+    V.dest.textContent = S.email ? T.inviaA + S.email + '. ' : '';
   }
   function aggiornaPersona() {
     if (V.nome !== 'chat') return;
@@ -530,7 +555,6 @@
       for (var j = 0; j < figli.length; j++) if (Number(figli[j].getAttribute('data-seq')) > m.seq) { dopo = figli[j]; break; }
       var inv = V.lista.querySelector('.in-invio,.fallito');
       V.lista.insertBefore(b, dopo || inv);
-      if (m.seq > S.maxVisto) S.maxVisto = m.seq;
       if (m.autore !== 'cliente') nuovi++;
     }
     if (nuovi && S.aperto) inBasso();
@@ -613,7 +637,7 @@
       var d = r.d;
       if (d && d.ok === true) {
         S.stato = typeof d.stato === 'string' ? d.stato : S.stato;
-        if (typeof d.email === 'string') S.email = d.email;
+        if (typeof d.email === 'string') { S.email = d.email; mostraDestinatario(); }
         S.attivita = Date.now();
         S.movimento = Date.now();
         mostra(d.messaggi);
@@ -656,18 +680,20 @@
     ferma();
     if (!S.aperto || document.hidden || !S.token || S.stato === 'chiusa' || V.nome !== 'chat') return;
     var ms = intervallo(Date.now() - S.movimento);
-    if (ms === null) {
-      S.fermo = true;
-      svuota(V.fondo);
-      V.fondo.appendChild(document.createTextNode(T.fermo + ' '));
-      var b = el('button', 'link', T.controlla);
-      b.type = 'button';
-      b.addEventListener('click', function () { S.fermo = false; S.movimento = Date.now() - 600000; V.fondo.hidden = true; aggiorna(); });
-      V.fondo.appendChild(b);
-      V.fondo.hidden = false;
-      return;
-    }
+    if (ms === null) { mostraFermo(); return; }
     S.timer = setTimeout(aggiorna, ms);
+  }
+  function mostraFermo() {
+    ferma();
+    S.fermo = true;
+    if (V.nome !== 'chat') return;
+    svuota(V.fondo);
+    V.fondo.appendChild(document.createTextNode(T.fermo + ' '));
+    var b = el('button', 'link', T.controlla);
+    b.type = 'button';
+    b.addEventListener('click', function () { S.fermo = false; S.errori = 0; S.movimento = Date.now() - 600000; V.fondo.hidden = true; aggiorna(); });
+    V.fondo.appendChild(b);
+    V.fondo.hidden = false;
   }
   function aggiorna(pagine) {
     if (!S.token || S.inVolo) return;
@@ -685,14 +711,19 @@
         aggiornaPersona();
         salvaStato();
         if (S.stato === 'chiusa') { mostraChiusa(); return; }
+        S.errori = 0;
         var p = typeof pagine === 'number' ? pagine : 0;
-        if (d.altri === true && p < PAGINE_STORIA) { S.timer = setTimeout(function () { aggiorna(p + 1); }, 300); return; }
+        if (d.altri === true && p < PAGINE_STORIA) {
+          if (S.aperto && !document.hidden) S.timer = setTimeout(function () { aggiorna(p + 1); }, 300);
+          return;
+        }
         programma();
         return;
       }
       if (d && d.state === 'troppo_veloce') { riprogramma(Math.min(60, Math.max(1, Number(d.retry_after_s) || 10)) * 1000); return; }
       if (rifiutoComune(r, '')) return;
-      riprogramma(20000);
+      if (++S.errori >= ERRORI_DI_FILA) { mostraFermo(); return; }
+      riprogramma(10000);
     });
   }
   document.addEventListener('visibilitychange', function () {
@@ -723,7 +754,7 @@
   function inizia() {
     S.iniziato = true;
     var st = A.leggi();
-    if (st && st.p === prova && Date.now() - st.a <= INATTIVITA_MS) { S.token = st.t; S.attivita = st.a; S.maxVisto = st.s; }
+    if (st && st.p === prova && Date.now() - st.a <= INATTIVITA_MS) { S.token = st.t; S.attivita = st.a; S.email = st.e || null; }
     else if (st && st.p === prova) A.togli();
     vistaTesto(T.carica, false);
     chiama('config').then(function (r) {

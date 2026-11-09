@@ -17,6 +17,8 @@
   var COLORE_RE = /^#[0-9a-fA-F]{6}$/;
   var SVG = 'http://www.w3.org/2000/svg';
   var PAGINE = { index: 'home', product: 'prodotto', collection: 'collezione', cart: 'carrello', search: 'ricerca', page: 'pagina', blog: 'blog', article: 'blog' };
+  // l'indirizzo di questo script: il pannello deve stare nella stessa cartella dell'estensione (Gate 2, C3)
+  var MIO = (document.currentScript && document.currentScript.src) || '';
   var api = { versione: VERSIONE, chiave: CHIAVE, base: BASE, pannello: null };
   window.__amimiChat = api;
 
@@ -25,7 +27,8 @@
     var o;
     try { o = JSON.parse(window.localStorage.getItem(CHIAVE) || 'null'); } catch (e) { return null; }
     if (!o || o.v !== 1 || typeof o.t !== 'string' || !TOKEN_RE.test(o.t) || typeof o.a !== 'number' || !isFinite(o.a)) return null;
-    return { v: 1, t: o.t, p: o.p === true, a: o.a, s: typeof o.s === 'number' && o.s >= 0 ? Math.floor(o.s) : 0, o: o.o === true };
+    return { v: 1, t: o.t, p: o.p === true, a: o.a, s: typeof o.s === 'number' && o.s >= 0 ? Math.floor(o.s) : 0, o: o.o === true,
+      e: typeof o.e === 'string' && o.e.length <= 260 ? o.e : '' };
   }
   function salva(o) { try { window.localStorage.setItem(CHIAVE, JSON.stringify(o)); return true; } catch (e) { return false; } }
   function togli() { try { window.localStorage.removeItem(CHIAVE); } catch (e) { /* storage non disponibile */ } }
@@ -46,12 +49,14 @@
   api.beacon = function (codice) { chiama('errore', { codice: codice, versione: VERSIONE, pagina: pagina() }); };
 
   // l'URL del pannello viene dal blocco ({{ 'chat-panel.js' | asset_url }}): solo https, stesso host o la CDN di Shopify,
-  // e solo un asset di un'estensione che si chiama chat-panel.js
+  // e solo il chat-panel.js della STESSA cartella di questo loader (stessa estensione e stessa versione)
   function urlPannello(s) {
     try {
       var u = new URL(s, window.location.href);
+      var m = new URL(MIO);
       if (u.protocol !== 'https:' || (u.hostname !== window.location.hostname && u.hostname !== 'cdn.shopify.com')) return null;
-      return /\/extensions\/[A-Za-z0-9_\/.-]+\/assets\/chat-panel\.js$/.test(u.pathname) ? u.href : null;
+      if (!/\/extensions\/[A-Za-z0-9_\/.-]+\/assets\/chat-loader\.js$/.test(m.pathname)) return null;
+      return u.origin === m.origin && u.pathname === m.pathname.replace(/chat-loader\.js$/, 'chat-panel.js') ? u.href : null;
     } catch (e) { return null; }
   }
 
@@ -147,7 +152,8 @@
       var s = document.createElement('script');
       s.src = src;
       s.async = true;
-      s.onload = function () { bolla.classList.remove('carica'); };
+      // un pannello che non si registra (versione diversa) non deve lasciare una bolla morta e muta (Gate 2, C5)
+      s.onload = function () { bolla.classList.remove('carica'); if (!api.pannello) { caricamento = false; api.beacon('pannello_non_avviato'); } };
       s.onerror = function () { caricamento = false; bolla.classList.remove('carica'); api.beacon('pannello_non_caricato'); };
       document.head.appendChild(s);
     }
@@ -171,10 +177,16 @@
       if (d.ok !== true) { if (d.state === 'token_non_valido') togli(); return; }
       var n = 0;
       var ms = Array.isArray(d.messaggi) ? d.messaggi : [];
-      for (var i = 0; i < ms.length; i++) if (ms[i] && ms[i].autore === 'staff') n++;
+      var ultima = st.a;
+      for (var i = 0; i < ms.length; i++) {
+        if (!ms[i] || ms[i].autore !== 'staff') continue;
+        n++;
+        var at = Date.parse(ms[i].at);
+        if (at > ultima && at <= Date.now()) ultima = at;
+      }
       if (n === 0 && d.stato === 'chiusa') { togli(); return; }
       if (n > 0) {
-        st.a = Date.now();
+        st.a = ultima;
         salva(st);
         api.pallino(d.altri ? 10 : n);
       }

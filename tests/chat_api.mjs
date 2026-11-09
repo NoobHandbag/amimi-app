@@ -658,7 +658,7 @@ console.log('\n== pagina GET riprendi (pezzo 5, 5.4 e 6.6) ==');
 // lo script della pagina guidato con un DOM finto: niente rete prima del tocco, token via dall'indirizzo, scambio al tocco
 const SCRIPT_RIP = (RIP.PAGINA_RIPRESA.match(/<script>([\s\S]*)<\/script>/) ?? [])[1] ?? '';
 const TS_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-async function provaPagina({ hash, lingua = 'it-IT', risposta = { ok: true, token: 'N'.repeat(43), stato: 'aperta', email: 'c***@esempio.it' }, storageGuasto = false, rete = true } = {}) {
+async function provaPagina({ hash, lingua = 'it-IT', risposta = { ok: true, token: 'N'.repeat(43), stato: 'aperta', email: 'c***@esempio.it' }, storageGuasto = false, rete = true, esistente = null, secondoClic = false } = {}) {
   const el = {};
   const log = { fetch: [], replaceState: [], set: [], replace: [], script: [], render: [] };
   const mk = (id) => (el[id] ??= { id, textContent: '', hidden: false, disabled: false, on: {}, addEventListener(tp, f) { this.on[tp] = f; } });
@@ -667,14 +667,16 @@ async function provaPagina({ hash, lingua = 'it-IT', risposta = { ok: true, toke
     head: { appendChild: (s) => { log.script.push(s.src); win.turnstile = { render: (sel, o) => { log.render.push({ sel, ...o }); queueMicrotask(() => o.callback('R-ts')); return 'w1'; }, reset() {} }; queueMicrotask(() => s.onload()); } } };
   const loc = { hash, pathname: '/apps/chat/riprendi', replace: (u) => log.replace.push(u) };
   const hist = { replaceState: (a, b, u) => { log.replaceState.push(u); loc.hash = ''; } };
-  const ls = { setItem: (k, v) => { if (storageGuasto) throw new Error('quota'); log.set.push([k, v]); }, getItem: () => null };
+  const ls = { setItem: (k, v) => { if (storageGuasto) throw new Error('quota'); log.set.push([k, v]); }, getItem: (k) => (k === 'amimi_chat_v1' && esistente ? JSON.stringify(esistente) : null) };
   const testo = typeof risposta === 'string' ? risposta : JSON.stringify(risposta);
   const ft = (u, o) => { log.fetch.push({ u, o }); return rete ? Promise.resolve({ text: () => Promise.resolve(testo) }) : Promise.reject(new Error('rete')); };
   new Function('location', 'history', 'navigator', 'document', 'localStorage', 'fetch', 'window', SCRIPT_RIP)(loc, hist, { language: lingua }, doc, ls, ft, win);
   const prima = { fetch: log.fetch.length, script: log.script.length, set: log.set.length, replaceState: [...log.replaceState] };
   if (el.vai.on.click) el.vai.on.click();
   for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
-  return { el, log, prima };
+  const dopoPrimo = { set: log.set.length, replace: log.replace.length, esito: el.esito.textContent, vai: el.vai.textContent };
+  if (secondoClic) { el.vai.on.click(); for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); }
+  return { el, log, prima, dopoPrimo };
 }
 {
   const TOK = 'r'.repeat(43);
@@ -686,7 +688,7 @@ async function provaPagina({ hash, lingua = 'it-IT', risposta = { ok: true, toke
     && JSON.stringify(corpo1) === JSON.stringify({ token_ripresa: TOK, turnstile: 'R-ts', prova: false }), { s: a1.log.script, r: a1.log.render, f: a1.log.fetch });
   const salvato = JSON.parse(a1.log.set[0]?.[1] ?? '{}');
   t('P9 chat token salvato nella chiave del widget, formato di chat-loader.js con o: true; poi la home', a1.log.set[0]?.[0] === 'amimi_chat_v1' && salvato.v === 1 && salvato.t === 'N'.repeat(43)
-    && salvato.p === false && typeof salvato.a === 'number' && salvato.s === 0 && salvato.o === true && JSON.stringify(Object.keys(salvato)) === '["v","t","p","a","s","o"]' && JSON.stringify(a1.log.replace) === '["/"]', { set: a1.log.set, rep: a1.log.replace });
+    && salvato.p === false && typeof salvato.a === 'number' && salvato.s === 0 && salvato.o === true && salvato.e === 'c***@esempio.it' && JSON.stringify(Object.keys(salvato)) === '["v","t","p","a","s","o","e"]' && JSON.stringify(a1.log.replace) === '["/"]', { set: a1.log.set, rep: a1.log.replace });
   const a2 = await provaPagina({ hash: '#t=' + TOK + '&prova=1', lingua: 'en-GB' });
   t('P10 prova=1: widget di prova e prova true; in inglese la home inglese', a2.log.render[0]?.sitekey === '0x4AAAAAAF33Q02jrHXJLHjr' && JSON.parse(a2.log.fetch[0].o.body).prova === true
     && JSON.parse(a2.log.set[0][1]).p === true && JSON.stringify(a2.log.replace) === '["/en"]' && a2.el.titolo.textContent === 'Continue the chat');
@@ -702,6 +704,12 @@ async function provaPagina({ hash, lingua = 'it-IT', risposta = { ok: true, toke
   t('P15 rete giu\': si puo\' riprovare, niente salvato', a7.el.vai.disabled === false && a7.log.set.length === 0 && a7.log.replace.length === 0);
   const a8 = await provaPagina({ hash: '#t=' + TOK, risposta: '<html>500</html>' });
   t('P16 pagina 500 del proxy (non JSON): si puo\' riprovare', a8.el.vai.disabled === false && a8.log.set.length === 0);
+  const a9 = await provaPagina({ hash: '#t=' + TOK, esistente: { v: 1, t: 'Z'.repeat(43), p: false, a: Date.now() - 60000, s: 4, o: false, e: 'g***@altro.it' }, secondoClic: true });
+  t('P18 un\'altra chat attiva sul dispositivo: prima si chiede, mostrando l\'email della chat del link; al secondo tocco si sostituisce (Gate 2, B3)', a9.dopoPrimo.set === 0 && a9.dopoPrimo.replace === 0
+    && a9.dopoPrimo.esito.includes('c***@esempio.it') && /apri questa chat/.test(a9.dopoPrimo.vai) && a9.log.set.length === 1 && JSON.parse(a9.log.set[0][1]).t === 'N'.repeat(43) && a9.log.replace.length === 1 && a9.log.fetch.length === 1, a9.dopoPrimo);
+  const a10 = await provaPagina({ hash: '#t=' + TOK, esistente: { v: 1, t: 'Z'.repeat(43), p: false, a: Date.now() - 5 * 3600000, s: 4, o: false } });
+  t('P19 una chat vecchia (oltre 4 ore) o la stessa non chiedono nulla', a10.log.set.length === 1 && a10.log.replace.length === 1
+    && (await provaPagina({ hash: '#t=' + TOK, esistente: { v: 1, t: 'N'.repeat(43), p: false, a: Date.now() - 60000 } })).log.set.length === 1);
   const sc = SCRIPT_RIP.replace(/^\s*\/\/.*$/gm, '');
   t('P17 guardie della pagina: nessun innerHTML/eval/log, un solo script e un solo host esterno (Turnstile), token mai in query',
     !/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|console\./.test(sc) && (RIP.PAGINA_RIPRESA.match(/https:\/\/[a-z0-9.-]+/g) ?? []).every((h) => h === 'https://challenges.cloudflare.com')

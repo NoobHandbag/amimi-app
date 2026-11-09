@@ -54,6 +54,7 @@ function nuovoServer() {
     if (b.token !== S.token) return { ok: false, state: 'token_non_valido' };
     if (azione === 'invia') {
       if (!S.attiva) return { ok: false, state: 'spenta' };
+      if (S.failNext) { const f = S.failNext; S.failNext = null; return f === 'troppo_veloce' ? { http: 429, ok: false, state: f, retry_after_s: 2 } : { ok: false, state: f }; }
       if (S.stato === 'chiusa') return { http: 409, ok: false, state: 'chiusa' };
       if (b.bottone === 'resi') return { ok: true, stato: S.stato, messaggi: [msg('cliente', 'Resi'), msg('automatica', 'Per i resi vedi https://amimi.it/pages/resi. Non https://evil.com/x ne\' https://amimi.it@evil.com <b>grassetto</b>')] };
       const out = [msg('cliente', b.testo)];
@@ -122,6 +123,7 @@ try {
   t('B3 al tocco: pannello caricato, config chiesta, modulo con saluto, orari e informativa', S.chiamate[0]?.azione === 'config' && await chat(p).getByText('Ciao, questa e\' la chat di Amimi').isVisible()
     && await chat(p).getByText('Informativa sulla privacy').isVisible());
   await schermata(p, '02_modulo');
+  t('B3b Turnstile non si carica all\'apertura (focus automatico): solo al primo gesto nel modulo (Gate 2, C1)', !reti.some((u) => u.includes('challenges.cloudflare')));
   await chat(p).locator('input[type=email]').fill('non-valida');
   await chat(p).getByRole('button', { name: 'Inizia la chat' }).click();
   t('B4 email non valida: errore nel modulo, nessun avvia', await chat(p).getByText('Scrivi un indirizzo email valido.').isVisible() && !S.chiamate.some((c) => c.azione === 'avvia'));
@@ -133,7 +135,8 @@ try {
   t('B5 avvia con Turnstile (azione chat_avvia, sitekey di produzione), email minuscola, nome, informativa, prova false', av.turnstile === 'TS-ok' && av.email === 'cliente@esempio.it' && av.nome === 'Giulia'
     && av.informativa === 'i-abc123' && av.prova === false && av.lingua === 'it' && (await p.evaluate(() => window.__tsOpts)).sitekey === '0x4AAAAAAF2QTzI4g31RhjIS', av);
   const st = await p.evaluate(() => JSON.parse(localStorage.getItem('amimi_chat_v1')));
-  t('B6 chat token salvato nel formato del loader', st?.v === 1 && st.t === 'T'.repeat(43) && st.p === false && typeof st.a === 'number' && st.o === false);
+  t('B6 chat token salvato nel formato del loader, con l\'email mascherata e il cursore di aggiorna', st?.v === 1 && st.t === 'T'.repeat(43) && st.p === false && typeof st.a === 'number' && st.o === false && st.e === 'c***@esempio.it' && st.s === 0, st);
+  t('B6b a chi vanno le risposte, sempre a vista (Gate 2, B3)', await chat(p).getByText('Le risposte del team arrivano via email a c***@esempio.it', { exact: false }).isVisible());
 
   console.log('\n== chat ==');
   await chat(p).getByRole('button', { name: 'Resi' }).click();
@@ -152,6 +155,26 @@ try {
   t('B9 risposta del team vista entro un ciclo di poll (5 s), con "Team Amimi" e "inviato anche via email", senza eseguire HTML', await chat(p).locator('.msg.staff .chi').first().isVisible()
     && await chat(p).getByText('inviato anche via email', { exact: false }).isVisible() && (await p.evaluate(() => window.__xss)) === undefined && S.viste.at(-1) === true);
   t('B10 nessun errore JavaScript nella pagina', errori.length === 0, errori);
+  // Gate 2, C7: invio non partito e ripetuto con lo stesso client_id; 429 con retry_after
+  S.failNext = 'riprova';
+  await chat(p).locator('textarea').fill('Messaggio che non parte subito');
+  await chat(p).locator('textarea').press('Enter');
+  await chat(p).getByRole('button', { name: 'Riprova' }).waitFor();
+  await chat(p).getByRole('button', { name: 'Riprova' }).click();
+  await chat(p).locator('.msg.fallito').waitFor({ state: 'detached' });
+  const inv = S.chiamate.filter((c) => c.azione === 'invia' && c.b.testo === 'Messaggio che non parte subito');
+  t('B10b invio non partito: bolla "Non inviato" con Riprova, che rimanda lo STESSO client_id', inv.length === 2 && inv[0].b.client_id === inv[1].b.client_id);
+  S.failNext = 'troppo_veloce';
+  await chat(p).locator('textarea').fill('Troppo veloce');
+  await chat(p).locator('textarea').press('Enter');
+  t('B10c 429: "Un attimo" e Riprova, niente perso', await chat(p).getByText('Un attimo: riprova tra qualche secondo.', { exact: false }).isVisible() && await chat(p).getByRole('button', { name: 'Riprova' }).isVisible());
+  await chat(p).getByRole('button', { name: 'Riprova' }).click();
+  await chat(p).locator('.msg.fallito').waitFor({ state: 'detached' });
+  // Gate 2, B2: un corpo interrotto a meta' non ferma il polling
+  const prima = S.chiamate.filter((c) => c.azione === 'aggiorna').length;
+  await p.evaluate(() => { const orig = window.fetch; let fatto = false; window.fetch = function (u, o) { if (!fatto && String(u).endsWith('/aggiorna')) { fatto = true; return Promise.resolve({ status: 200, text: () => Promise.reject(new Error('corpo interrotto')) }); } return orig.call(window, u, o); }; });
+  await pausa(13000);
+  t('B10d corpo interrotto in un aggiorna: il polling riparte (Gate 2, B2)', S.chiamate.filter((c) => c.azione === 'aggiorna').length > prima);
   await schermata(p, '04_risposta_team');
   await chat(p).getByRole('button', { name: 'Chiudi la chat' }).click();
   const n1 = S.chiamate.filter((c) => c.azione === 'aggiorna').length;
@@ -159,21 +182,34 @@ try {
   t('B11 pannello chiuso: il polling si ferma (D-8)', S.chiamate.filter((c) => c.azione === 'aggiorna').length === n1 && S.chiamate.length > n0);
 
   console.log('\n== ritorno sulla pagina ==');
+  // Gate 2, B1: una risposta del team arrivata mentre la cliente scrive non si perde dal pallino
+  await chat(p).locator('button.bolla').click();
+  S.msg('staff', 'Risposta scritta mentre la cliente scriveva.');
+  await chat(p).locator('textarea').fill('Scrivo e chiudo subito');
+  await chat(p).locator('textarea').press('Enter');
+  await chat(p).locator('.msg.in-invio').waitFor({ state: 'detached' });
+  await chat(p).getByRole('button', { name: 'Chiudi la chat' }).click();
+  const stB1 = await p.evaluate(() => JSON.parse(localStorage.getItem('amimi_chat_v1')));
+  const seqStaffB1 = S.msgs.find((m) => m.testo.startsWith('Risposta scritta mentre')).seq;
+  t('B10e il cursore salvato resta sotto la risposta del team non ancora vista (contratto C4, Gate 2 B1)', stB1.s < seqStaffB1, { s: stB1.s, staff: seqStaffB1 });
   S.msg('staff', 'Un altro dettaglio dal team.');
   const m0 = S.chiamate.length;
   await p.reload();
   await pausa(800);
   const dopoRicarica = S.chiamate.slice(m0);
-  t('B12 ricarica con una chat in corso: un solo aggiorna (vista false), pallino 1', dopoRicarica.length === 1 && dopoRicarica[0].azione === 'aggiorna' && dopoRicarica[0].b.vista === false
-    && (await chat(p).locator('.pallino').textContent()) === '1', dopoRicarica);
+  t('B12 ricarica con una chat in corso: un solo aggiorna (vista false), pallino 2 (le due risposte del team non viste)', dopoRicarica.length === 1 && dopoRicarica[0].azione === 'aggiorna' && dopoRicarica[0].b.vista === false
+    && (await chat(p).locator('.pallino').textContent()) === '2', dopoRicarica);
   await schermata(p, '05_pallino');
   await chat(p).locator('button.bolla').click();
   await chat(p).getByText('Un altro dettaglio dal team.').waitFor();
   const testi = await chat(p).locator('.msg').allTextContents();
   t('B13 riapertura: storia da capo, ogni messaggio una volta sola, pallino tolto', testi.length === S.msgs.length && new Set(testi).size === testi.length && await chat(p).locator('.pallino').isHidden(), { n: testi.length, attesi: S.msgs.length });
   S.stato = 'chiusa';
+  await chat(p).locator('textarea').fill('Scrivo su una chat chiusa');
+  await chat(p).locator('textarea').press('Enter');
   await chat(p).getByText('Questa chat \u00e8 stata chiusa', { exact: false }).waitFor({ timeout: 8000 });
-  t('B14 chat chiusa dal team: scrittura bloccata, "Nuova chat"', await chat(p).locator('textarea').isDisabled() && await chat(p).getByRole('button', { name: 'Nuova chat' }).isVisible());
+  t('B14 chat chiusa dal team (409 sull\'invio): scrittura bloccata, testo lasciato a vista, "Nuova chat"', await chat(p).locator('textarea').isDisabled() && (await chat(p).locator('textarea').inputValue()) === 'Scrivo su una chat chiusa'
+    && await chat(p).getByRole('button', { name: 'Nuova chat' }).isVisible());
   await chat(p).getByRole('button', { name: 'Nuova chat' }).click();
   t('B15 "Nuova chat": token tolto, di nuovo il modulo', (await p.evaluate(() => localStorage.getItem('amimi_chat_v1'))) === null && await chat(p).locator('form.modulo').isVisible());
   await ctx.close();

@@ -108,7 +108,7 @@ function pannelloStatico(s) {
   return sintassiOk(s) && VIETATI.every((re) => !re.test(c)) && !/localStorage/.test(c)
     && (c.match(/\bfetch\(/g) ?? []).length === 1 && /fetch\(A\.base \+ '\/' \+ azione, opz\)/.test(c)
     && (c.match(/createElement\('script'\)/g) ?? []).length === 1 && /s\.src = TURNSTILE_JS;/.test(c) && c.includes(`var TURNSTILE_JS = '${TS_URL}';`)
-    && isDeepStrictEqual(host, ['https://challenges.cloudflare.com']) && /A\.salva\(\{ v: 1, t: S\.token, p: prova, a: S\.attivita, s: S\.maxVisto, o: false \}\)/.test(c)
+    && isDeepStrictEqual(host, ['https://challenges.cloudflare.com']) && /A\.salva\(\{ v: 1, t: S\.token, p: prova, a: S\.attivita, s: S\.cursore, o: false, e: S\.email \|\| '' \}\)/.test(c)
     && /action: 'chat_avvia', execution: 'execute'/.test(c) && !SEGRETI.test(s);
 }
 
@@ -127,7 +127,10 @@ const sitekeyDi = (s) => (s.match(/var SITEKEY = (\{ produzione: '[^']+', prova:
 t('L3 la pagina riprendi di chat-api usa la stessa chiave, lo stesso formato e le stesse sitekey del widget', chiaveDi(LOADER) === 'amimi_chat_v1' && chiaveDi(RIPRENDI) === 'amimi_chat_v1'
   && sitekeyDi(PANNELLO) !== undefined && sitekeyDi(PANNELLO) === sitekeyDi(RIPRENDI)
   && sitekeyDi(PANNELLO) === "{ produzione: '0x4AAAAAAF2QTzI4g31RhjIS', prova: '0x4AAAAAAF33Q02jrHXJLHjr' }"
-  && /JSON\.stringify\(\{ v: 1, t: d\.token, p: prova, a: Date\.now\(\), s: 0, o: true \}\)/.test(RIPRENDI) && RIPRENDI.includes(`var TURNSTILE_JS = '${TS_URL}';`));
+  && /var nuovo = \{ v: 1, t: d\.token, p: prova, a: Date\.now\(\), s: 0, o: true, e: em \};/.test(RIPRENDI) && /localStorage\.setItem\(CHIAVE, JSON\.stringify\(nuovo\)\)/.test(RIPRENDI) && RIPRENDI.includes(`var TURNSTILE_JS = '${TS_URL}';`));
+t('L5 pannello: la storia a pagine si ferma a pannello chiuso (Gate 2, C2); una chat piu\' nuova di un\'altra scheda non si sovrascrive (C4); ogni chiamata ha un tempo massimo e non rifiuta mai (B2)',
+  /if \(S\.aperto && !document\.hidden\) S\.timer = setTimeout\(function \(\) \{ aggiorna\(p \+ 1\); \}, 300\);/.test(PANNELLO) && /if \(!nuova && ora && ora\.t !== S\.token\) return;/.test(PANNELLO)
+  && /ctrl\.abort\(\); \}, ATTESA_RETE_MS\)/.test(PANNELLO) && /\.then\(function \(x\) \{ fine\(\); return x; \}, function \(\) \{ fine\(\); return \{ http: 0, d: null \}; \}\);/.test(PANNELLO));
 t('L4 versione del widget uguale nel loader e nel pannello (il pannello rifiuta un loader diverso)', /var VERSIONE = 'w-1';/.test(LOADER) && /A\.versione !== 'w-1'/.test(PANNELLO) && /var VERSIONE = 'w-1';/.test(PANNELLO));
 
 // ---- il loader in un DOM finto (S8, test 16): cosa fa al caricamento e al tocco ----
@@ -140,7 +143,7 @@ class FakeEl {
   addEventListener(tp, f) { this.on[tp] = f; }
   attachShadow(o) { this.shadow = new FakeEl('#shadow'); this.shadow.mode = o.mode; return this.shadow; }
 }
-function eseguiLoader({ storage = null, prova = false, pannello = 'https://amimi.it/cdn/shop/extensions/abc-123/1.0.0/assets/chat-panel.js', risposta = { ok: true, stato: 'aperta', messaggi: [], altri: false }, ora = Date.parse('2026-11-09T10:00:00Z') } = {}) {
+function eseguiLoader({ storage = null, prova = false, mio = 'https://amimi.it/cdn/shop/extensions/abc-123/1.0.0/assets/chat-loader.js', pannello = 'https://amimi.it/cdn/shop/extensions/abc-123/1.0.0/assets/chat-panel.js', risposta = { ok: true, stato: 'aperta', messaggi: [], altri: false }, ora = Date.parse('2026-11-09T10:00:00Z') } = {}) {
   const log = { fetch: [], get: 0, set: [], remove: 0, script: [] };
   const cfg = new FakeEl('div');
   cfg.attr = { 'data-prova': String(prova), 'data-colore': '#1f1f1f', 'data-posizione': 'bottom_right', 'data-pannello': pannello };
@@ -148,7 +151,7 @@ function eseguiLoader({ storage = null, prova = false, pannello = 'https://amimi
   body.className = 'template-product';
   const head = new FakeEl('head');
   head.alAggiungere = (s) => log.script.push(s.src);
-  const doc = { readyState: 'complete', body, head, getElementById: (id) => (id === 'amimi-chat-embed' ? cfg : null), createElement: (tag) => new FakeEl(tag),
+  const doc = { readyState: 'complete', currentScript: mio === null ? null : { src: mio }, body, head, getElementById: (id) => (id === 'amimi-chat-embed' ? cfg : null), createElement: (tag) => new FakeEl(tag),
     createElementNS: (ns, tag) => new FakeEl(tag), addEventListener() {} };
   const mem = new Map(storage === null ? [] : [['amimi_chat_v1', typeof storage === 'string' ? storage : JSON.stringify(storage)]]);
   const win = { location: { href: 'https://amimi.it/products/lea', hostname: 'amimi.it' },
@@ -173,12 +176,12 @@ console.log('\n== loader in un DOM finto (S8, test 16) ==');
   await attesa();
   t('D2 al tocco: solo lo script del pannello (asset dell\'estensione), nessuna chiamata, niente scritto', JSON.stringify(x.log.script) === JSON.stringify(['https://amimi.it/cdn/shop/extensions/abc-123/1.0.0/assets/chat-panel.js'])
     && x.log.fetch.length === 0 && x.log.set.length === 0 && x.win.__amimiChat.daAprire === true);
-  const y = eseguiLoader({ storage: { v: 1, t: TOK, p: false, a: ORA - 3600000, s: 7, o: false }, risposta: { ok: true, stato: 'aperta', messaggi: [{ seq: 8, autore: 'staff' }, { seq: 9, autore: 'cliente' }, { seq: 10, autore: 'staff' }], altri: false } });
+  const y = eseguiLoader({ storage: { v: 1, t: TOK, p: false, a: ORA - 3600000, s: 7, o: false }, risposta: { ok: true, stato: 'aperta', messaggi: [{ seq: 8, autore: 'staff', at: new Date(ORA - 60000).toISOString() }, { seq: 9, autore: 'cliente' }, { seq: 10, autore: 'staff', at: new Date(ORA - 30000).toISOString() }], altri: false } });
   await attesa();
   t('D3 chat in corso: un solo aggiorna (dopo = ultimo visto, vista false), pallino col numero delle risposte del team', y.log.fetch.length === 1 && y.log.fetch[0].u === '/apps/chat/aggiorna'
     && JSON.stringify(y.log.fetch[0].corpo) === JSON.stringify({ token: TOK, dopo: 7, vista: false }) && y.log.script.length === 0, y.log.fetch);
   const pall = y.bolla.children.find((c) => c.className === 'pallino');
-  t('D4 pallino visibile con 2 e attivita\' rinfrescata', pall?.hidden === false && pall.textContent === '2' && JSON.parse(y.mem.get('amimi_chat_v1')).a === ORA);
+  t('D4 pallino visibile con 2 e attivita\' portata all\'ora dell\'ultima risposta del team (non ad adesso)', pall?.hidden === false && pall.textContent === '2' && JSON.parse(y.mem.get('amimi_chat_v1')).a === ORA - 30000);
   const z = eseguiLoader({ storage: { v: 1, t: TOK, p: false, a: ORA - 5 * 3600000, s: 0, o: false } });
   await attesa();
   t('D5 token oltre 4 ore di inattivita\': cancellato senza chiamate', z.log.fetch.length === 0 && z.log.remove === 1);
@@ -199,7 +202,8 @@ console.log('\n== loader in un DOM finto (S8, test 16) ==');
   await attesa();
   t('D10 stato illeggibile: come nessuna chat (nessuna chiamata, niente scritto)', r.log.fetch.length === 0 && r.log.set.length === 0 && r.log.remove === 0);
   const sbagliati = ['http://amimi.it/cdn/shop/extensions/a/assets/chat-panel.js', 'https://evil.com/cdn/shop/extensions/a/assets/chat-panel.js', 'https://amimi.it/cdn/shop/extensions/a/assets/altro.js',
-    'javascript:alert(1)', '//evil.com/extensions/a/assets/chat-panel.js', 'https://amimi.it.evil.com/extensions/a/assets/chat-panel.js', 'https://amimi.it/files/chat-panel.js', ''];
+    'javascript:alert(1)', '//evil.com/extensions/a/assets/chat-panel.js', 'https://amimi.it.evil.com/extensions/a/assets/chat-panel.js', 'https://amimi.it/files/chat-panel.js', '',
+    'https://cdn.shopify.com/extensions/altra-app-999/1.0.0/assets/chat-panel.js', 'https://amimi.it/cdn/shop/extensions/abc-123/0.9.0/assets/chat-panel.js', 'https://amimi.it/cdn/shop/extensions/altra/1.0.0/assets/chat-panel.js'];
   let rifiutati = 0;
   for (const p of sbagliati) {
     const q = eseguiLoader({ pannello: p });
@@ -207,10 +211,14 @@ console.log('\n== loader in un DOM finto (S8, test 16) ==');
     await attesa();
     if (q.log.script.length === 0 && q.log.fetch.length === 1 && q.log.fetch[0].u === '/apps/chat/errore' && q.log.fetch[0].corpo.codice === 'pannello_url' && q.log.fetch[0].corpo.pagina === 'prodotto') rifiutati++;
   }
-  t('D11 URL del pannello non valido (altro host, http, altro file, javascript:): nessuno script, solo il beacon d\'errore', rifiutati === sbagliati.length, rifiutati);
-  const cdn = eseguiLoader({ pannello: 'https://cdn.shopify.com/extensions/0193-ab/2.3.0/assets/chat-panel.js?v=1' });
+  t('D11 URL del pannello non valido (altro host, http, altro file, javascript:, il chat-panel.js di un\'altra app o di un\'altra versione): nessuno script, solo il beacon d\'errore', rifiutati === sbagliati.length, rifiutati);
+  const cdn = eseguiLoader({ mio: 'https://cdn.shopify.com/extensions/0193-ab/amimi-chat-3/assets/chat-loader.js', pannello: 'https://cdn.shopify.com/extensions/0193-ab/amimi-chat-3/assets/chat-panel.js?v=1' });
   cdn.bolla.on.click();
-  t('D12 URL del pannello sulla CDN di Shopify: accettato', cdn.log.script.length === 1);
+  t('D12 URL del pannello sulla CDN di Shopify, nella cartella del loader: accettato', cdn.log.script.length === 1);
+  const senza = eseguiLoader({ mio: null });
+  senza.bolla.on.click();
+  await attesa();
+  t('D13 loader senza il proprio indirizzo (currentScript): nessuno script, beacon', senza.log.script.length === 0 && senza.log.fetch[0]?.corpo.codice === 'pannello_url');
 }
 
 // ---- funzioni pure del pannello ----
