@@ -1,4 +1,4 @@
-// chat-api api-1 (2026-11-08): la chat del sito, Fase 1 pezzo 2 (docs/PROPOSTA_chat_sito.md 5.2-5.8, 6, 8.4, con le
+// chat-api api-2 (2026-11-09): la chat del sito, Fase 1 pezzi 2 e 5 (docs/PROPOSTA_chat_sito.md 5.2-5.8, 6, 8.4, con le
 // decisioni di Dan dell'8 novembre 2026: modello ticket D-8, tetti D-12). Al posto dell'eco dello spike, che resta in
 // eco.ts solo per le rotte /eco, /misura e /turnstile (misure dal telefono di Dan, si spegne da sola il 7 dicembre 2026).
 // Il widget chiama amimi.it/apps/chat/<azione>; il proxy di "Amimi Chat" firma la query e inoltra qui. verify_jwt = false
@@ -20,9 +20,9 @@
 //              risposte di avvia, invia e passaggio serve a non mostrare due volte lo stesso messaggio, mai a saltare.
 //              Su una chat chiusa aggiorna risponde ancora, in sola lettura, finche' il token vale (4 ore senza
 //              attivita'): cosi' la cliente legge l'ultima risposta mandata prima della chiusura (scostamento da 5.4).
-//   riprendi   {token_ripresa, turnstile, prova?} -> Turnstile (azione `chat_riprendi`), chat token nuovo per la sessione
-//              del link "Continua la chat" (al massimo 3 attivi: il piu' vecchio si revoca). La pagina che lo chiama arriva
-//              col pezzo che manda le email.
+//   riprendi   POST {token_ripresa, turnstile, prova?} -> Turnstile (azione `chat_riprendi`), chat token nuovo per la
+//              sessione del link "Continua la chat" (al massimo 3 attivi: il piu' vecchio si revoca). GET = la pagina del
+//              link delle email (riprendi.ts, api-2 del pezzo 5): statica, in Liquid, scambio solo al tocco.
 //   errore     {codice, versione, pagina} -> beacon d'errore del widget, al massimo 100 al giorno, senza testo libero.
 // Rifiuti visti dal widget: 200 con `state` o 4xx, MAI 5xx (il proxy li trasforma in una pagina 500 HTML del tema, spike
 // 13.3). Fallire chiusi (5.8): flag, segreti, contatori o DB illeggibili = nessuna chat, nessun messaggio, mai "passa".
@@ -38,9 +38,10 @@ import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import { inviaPush } from '../_shared/push.ts';
 import type { EsitoPush, MsgPush } from '../_shared/push.ts';
 import { rispondiEco } from './eco.ts';
+import { LIQUID_APRI, LIQUID_CHIUDI, PAGINA_RIPRESA } from './riprendi.ts';
 
 // ==== PURE:chat-api BEGIN ====
-const VERSIONE = 'api-1';
+const VERSIONE = 'api-2';
 const HEADER_BASE: Record<string, string> = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' };
 const ROTTE_ECO = ['eco', 'misura', 'turnstile'];
 const METODO: Record<string, string> = { config: 'GET', avvia: 'POST', invia: 'POST', passaggio: 'POST', aggiorna: 'POST', riprendi: 'POST', errore: 'POST' };
@@ -123,6 +124,7 @@ type Ambiente = {
   sfondo: (p: Promise<unknown>) => void;
   casuale: (n: number) => Uint8Array;
   eco: ((req: Request) => Promise<Response>) | null;
+  pagine: { riprendi: string };
 };
 type Testo = { it: string; en: string };
 type Bottone = { id: string; it: string; en: string; faq: number | null };
@@ -735,7 +737,9 @@ async function gestisci(req: Request, amb: Ambiente): Promise<Response> {
   const azione = azioneDi(url.pathname);
   const eco = amb.eco !== null && ROTTE_ECO.includes(azione);
   if (!eco && !Object.hasOwn(METODO, azione)) return json({ ok: false, error: 'not_found' }, 404);
-  if (!eco && req.method !== METODO[azione]) return json({ ok: false, error: 'method_not_allowed' }, 405);
+  // riprendi: POST scambia il token, GET e' la pagina del link delle email
+  const paginaRiprendi = azione === 'riprendi' && req.method === 'GET';
+  if (!eco && req.method !== METODO[azione] && !paginaRiprendi) return json({ ok: false, error: 'method_not_allowed' }, 405);
   const giorno = giornoUtc(amb.ora);
   // ogni richiesta instradata conta, anche rifiutata, eco compresa (5.8, D-12): in parallelo, mai bloccante
   const conto = amb.db.contatore('glob:richieste', 86400, RICHIESTE_TETTO);
@@ -751,6 +755,8 @@ async function gestisci(req: Request, amb: Ambiente): Promise<Response> {
     const firma = await controllaFirma(url.searchParams, amb.segreti.proxy, amb.ora);
     if (firma instanceof Response) r = firma;
     else if (azione === 'config') r = await azioneConfig(amb, problemi);
+    // statica, senza nessun dato della richiesta; il proxy riscrive text/html in text/plain, quindi Liquid (spike 13.3)
+    else if (paginaRiprendi) r = new Response(amb.pagine.riprendi, { status: 200, headers: { ...HEADER_BASE, 'Content-Type': 'application/liquid; charset=utf-8' } });
     else {
       const d = await leggiJson(req);
       if (d instanceof Response) r = d;
@@ -924,4 +930,5 @@ Deno.serve((req) => gestisci(req, {
   sfondo,
   casuale: (n) => crypto.getRandomValues(new Uint8Array(n)),
   eco: rispondiEco,
+  pagine: { riprendi: LIQUID_APRI + PAGINA_RIPRESA + LIQUID_CHIUDI },
 }));
