@@ -171,7 +171,7 @@ begin
   if st <> '23503' or cn is distinct from 'push_eventi_inviati_evento_fk' then raise exception 'KO V: evento con invii cancellato = % %', st, cn; end if;
 
   -- D (dal 21-10 anche attivita_team della migr 0168, dal 03-11 i due di Premia della 0183, dal 06-11 sistema_senza_iscritti
-  -- della 0185, dal 09-11 stock_fermo della 0191: va lanciata dopo l'apply di tutte)
+  -- della 0185, dal 09-11 stock_fermo della 0192: va lanciata dopo l'apply di tutte)
   select count(*) into n from push_eventi e
     join (values ('b2b_risposta_negozio', 'negozi'), ('cs_urgente', 'assistenza'), ('cs_cliente_ha_riscritto', 'assistenza'),
                  ('spedizione_eccezione', 'spedizioni'), ('sistema_cs_sync_fermo', 'sistema'), ('riepilogo', 'riepilogo'), ('attivita_team', 'attivita'),
@@ -179,7 +179,7 @@ begin
                  ('chat_sollecito', 'assistenza'), ('chat_sollecito_scala', 'assistenza_scala'), ('chat_salute', 'sistema'),
                  ('stock_fermo', 'magazzino')) x(ev, tema)
       on x.ev = e.evento and x.tema = e.tema;
-  if n <> 14 then raise exception 'KO D: dei quattordici eventi del contratto (0166, 0168, 0183, 0185, 0188 e 0191) ne tornano % sul tema giusto', n; end if;
+  if n <> 14 then raise exception 'KO D: dei quattordici eventi del contratto (0166, 0168, 0183, 0185, 0188 e 0192) ne tornano % sul tema giusto', n; end if;
 
   -- S (dal catalogo: il ruolo della edge non si assume da qui)
   if not (has_table_privilege('service_role', 'public.push_eventi', 'select') and has_table_privilege('service_role', 'public.push_eventi', 'update')

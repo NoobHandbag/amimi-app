@@ -24,7 +24,9 @@
 // chat-api in errore, tetto delle chat del giorno, oltre 5.000 richieste, errori del widget). Testi dei solleciti col nome
 // o l'email della cliente (D-9, solo da nomeCliente), mai il testo della chat; chat_salute solo conteggi e cause.
 // chat_sessioni, chat_eventi, chat_messaggi e chat_contatori si LEGGONO soltanto.
-// v8 (2026-11-09, chiesta da Dan in chat, migr 0191): stock_fermo (tema magazzino, di Benny e Ginni) quando un prodotto
+// v8 (2026-11-09, decisione di Dan in chat, migr 0191): il riepilogo serale parte alle 22:00 di Roma invece che alle 18:30
+// (ORA_RIEPILOGO_MIN; finestra 22:00-23:59, lunedi'-sabato come prima). Nient'altro cambia.
+// v9 (2026-11-09, chiesta da Dan in chat, migr 0192): stock_fermo (tema magazzino, di Benny e Ginni) quando un prodotto
 // entra fra i pezzi a magazzino non in vendita sul sito (v_stock_fermo, migr 0190: pezzi disponibili, nessuna pagina
 // Shopify attiva, fermi da almeno 3 giorni). Una push per giro con i prodotti nuovi (eseguiGruppi, un gruppo solo), dalle
 // 9 di Roma, lunedi'-sabato; ogni lotto fermo (codice e data del pezzo piu' vecchio) avvisa una volta, poi resta la scheda
@@ -89,7 +91,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const TEMA_RE = /^[a-z_]{2,32}$/;
 // tema di ogni evento (righe di push_eventi della 0166); la riga a DB vince se e' una chiave valida
 // (attivita_team dalla 0168 del 21-10, premia_da_approvare e premia_salute dalla 0183 del 03-11, sistema_senza_iscritti
-// dalla 0185 del 06-11, i tre della chat del sito dalla 0188 dell'08-11, stock_fermo dalla 0191 del 09-11)
+// dalla 0185 del 06-11, i tre della chat del sito dalla 0188 dell'08-11, stock_fermo dalla 0192 del 09-11)
 const TEMA_EVENTO: Record<string, string> = {
   b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza', cs_cliente_ha_riscritto: 'assistenza',
   spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
@@ -172,9 +174,9 @@ function nomeCliente(nome: unknown, email: unknown): string {
 
 // ==== PURE:pe-tempo BEGIN ====
 // Ora di Roma con Intl (ora legale compresa: il 25-10-2026 alle 03:00 si torna alle 02:00). Il riepilogo parte dalle
-// 18:30, da lunedi' a sabato; "oggi" = dalla mezzanotte di Roma.
+// 22:00 (dal 09-11, prima 18:30), da lunedi' a sabato; "oggi" = dalla mezzanotte di Roma.
 const FUSO = 'Europe/Rome';
-const ORA_RIEPILOGO_MIN = 18 * 60 + 30;
+const ORA_RIEPILOGO_MIN = 22 * 60;
 let fmtRoma: Intl.DateTimeFormat | null = null;
 function partiRoma(ms: number): { y: number; m: number; d: number; h: number; mi: number; s: number; wd: string } {
   fmtRoma ??= new Intl.DateTimeFormat('en-US', { timeZone: FUSO, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', weekday: 'short' });
@@ -193,17 +195,17 @@ function dataRoma(ms: number): string {
   return `${p.y}-${due(p.m)}-${due(p.d)}`;
 }
 // mezzanotte di Roma del giorno di `ms`, in ms UTC. L'offset si prende alla mezzanotte stessa (seconda passata): nei due
-// giorni del cambio d'ora quello delle 18:30 e quello delle 00:00 sono diversi.
+// giorni del cambio d'ora quello delle 22:00 e quello delle 00:00 sono diversi.
 function mezzanotteRoma(ms: number): number {
   const p = partiRoma(ms);
   const base = Date.UTC(p.y, p.m - 1, p.d);
   return base - offsetRomaMin(base - offsetRomaMin(ms) * 60000) * 60000;
 }
-// aperta dalle 18:30 alle 23:59 di Roma, da lunedi' a sabato; ts = le 18:30 di quel giorno (eta' del riepilogo)
+// aperta dalle 22:00 alle 23:59 di Roma, da lunedi' a sabato; ts = le 22:00 di quel giorno (eta' del riepilogo)
 function finestraRiepilogo(ms: number): { aperta: boolean; data: string; ts: number } {
   const p = partiRoma(ms);
   const data = `${p.y}-${due(p.m)}-${due(p.d)}`;
-  const ts = Date.UTC(p.y, p.m - 1, p.d, 18, 30) - offsetRomaMin(ms) * 60000;
+  const ts = Date.UTC(p.y, p.m - 1, p.d, 0, ORA_RIEPILOGO_MIN) - offsetRomaMin(ms) * 60000;
   return { aperta: p.wd !== 'Sun' && p.h * 60 + p.mi >= ORA_RIEPILOGO_MIN, data, ts };
 }
 // giorni da lunedi' a venerdi' strettamente dopo `da` e fino ad `a` compreso (date 'YYYY-MM-DD' di Roma). Ordine di
@@ -1028,7 +1030,7 @@ function msgChatSalute(cands: Cand[]): Msg[] {
   return out;
 }
 
-// stock_fermo (09-11, v8, tema magazzino, chiesta da Dan): un prodotto con pezzi a magazzino da almeno 3 giorni e nessuna
+// stock_fermo (09-11, v9, tema magazzino, chiesta da Dan): un prodotto con pezzi a magazzino da almeno 3 giorni e nessuna
 // pagina attiva sul sito (v_stock_fermo, migr 0190). Il 09-11 erano 107 pezzi su 13 codici, e la stessa sera la scheda
 // della Home li mostrava gia' a tutti: la push porta la notizia a chi li mette in vendita (Benny e Ginni) anche ad app
 // chiusa. Chiave fermo:<codice>:<fermo_dal> (la data del pezzo piu' vecchio ancora a magazzino, o senza_arrivi): un lotto
@@ -1090,7 +1092,7 @@ const FINALI = ['inviato', 'saltato', 'nessun_iscritto'];
 // premia_salute (03-11) e' dello stesso tipo: un guasto di Premia gia' in corso all'accensione si deve vedere. Cosi' anche
 // sistema_senza_iscritti (06-11): un tema gia' senza telefoni all'accensione e' proprio il guasto da vedere. E chat_salute
 // (08-11, 8.6). I due solleciti della chat no: si accendono prima di chat_sito_enabled, nessun arretrato (8.3).
-// stock_fermo (09-11, v8): i prodotti gia' fermi all'accensione sono proprio la notizia (il 09-11 erano 11).
+// stock_fermo (09-11, v9): i prodotti gia' fermi all'accensione sono proprio la notizia (il 09-11 erano 11).
 const EVENTI_DI_STATO = ['sistema_cs_sync_fermo', 'premia_salute', 'sistema_senza_iscritti', 'chat_salute', 'stock_fermo'];
 type Reg = { id: number | string; chiave: string; stato: string; tentativi: number; updated_at: string };
 type Decisione = { cand: Cand; azione: 'nuovo' | 'ritenta' | 'salta' | 'fermo'; motivo: string; reg?: Reg };
@@ -1121,7 +1123,7 @@ function baselineDi(ev: { evento?: unknown; baseline_at?: unknown; ultimo_giro_a
 // cs_urgente e cs_cliente_ha_riscritto), lead_touches.created_at (o at, oltre 72 ore di ritardo), shipping_status.updated_at
 // (riscritto da shipping-status-sync solo a un cambio di stato), change_log.ts (default now()); un fatto recuperato dopo un
 // blocco ha l'istante del recupero ed e' fresco. Un istante illeggibile non e' mai fresco. Fa eccezione il riepilogo: il suo
-// istante (le 18:30 di Roma) e' quello in cui diventa dovuto, non un fatto, e i numeri si calcolano all'invio; resta fresco
+// istante (le 22:00 di Roma, dal 09-11) e' quello in cui diventa dovuto, non un fatto, e i numeri si calcolano all'invio; resta fresco
 // per tutta l'eta' massima, cioe' finche' la sua finestra e' aperta (una push a testa al giorno). sistema_cs_sync_fermo non
 // salta mai il pregresso (EVENTI_DI_STATO) e qui non entra, come premia_salute dal 03-11. premia_da_approvare ha l'istante
 // in cui la cliente ha mandato il contenuto (loyalty_ugc.created_at, default now()).
@@ -1757,7 +1759,7 @@ const EVENTI: Record<string, DefEvento> = {
 // 08-11 (chat del sito): chat_sollecito (che porta anche il nuovo tentativo della push "chiede una persona") subito dopo
 // cs_urgente, la scala dopo, chat_salute dopo i solleciti (Gate 2, C6: con molti guasti in fila consumerebbe il tetto dei
 // 20 invii prima delle notizie per le clienti)
-// 09-11 (v8): stock_fermo dopo l'attivita' del team e prima dei promemoria di sistema (una push al giorno al massimo di
+// 09-11 (v9): stock_fermo dopo l'attivita' del team e prima dei promemoria di sistema (una push al giorno al massimo di
 // solito, e una sola lettura)
 const ORDINE = ['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'chat_sollecito', 'chat_sollecito_scala', 'chat_salute', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'stock_fermo', 'sistema_senza_iscritti', 'riepilogo'];
 // pezzi fermi: il 09-11 erano 13 codici; oltre 200 la lettura ferma l'evento invece di tagliare l'elenco

@@ -1,7 +1,7 @@
--- 0191_push_stock_fermo.sql (2026-11-09): notifica dei pezzi fermi non in vendita, chiesta da Dan in chat ("Si', la push")
--- dopo l'allarme in Home della 0190. Evento stock_fermo della edge push-eventi v8 sul tema nuovo `magazzino`, di Benny e
+-- 0192_push_stock_fermo.sql (2026-11-09): notifica dei pezzi fermi non in vendita, chiesta da Dan in chat ("Si', la push")
+-- dopo l'allarme in Home della 0190. Evento stock_fermo della edge push-eventi v9 sul tema nuovo `magazzino`, di Benny e
 -- Ginni (chi mette in vendita): una push per giro coi prodotti appena entrati in v_stock_fermo, dalle 9 di Roma. La edge
--- legge v_stock_fermo in sola lettura.
+-- legge v_stock_fermo in sola lettura. Numero 0192: la 0191 e' il riepilogo alle 22 (#173, altra sessione, stesso giorno).
 --
 -- L'evento nasce SPENTO: lo accende Claude Code dopo il deploy della edge e la sua anteprima (come la 0183). Rollback =
 -- attivo a false (o push_eventi_enabled a 'false' per tutto il modulo), senza deploy. Nessun flag cambia.
@@ -64,7 +64,7 @@ begin
     ins as (
       insert into change_log (tbl, row_id, op, before, after, chi, source)
       select 'push_subscriptions', id::text, 'temi_aggiunti', jsonb_build_object('temi', temi_prima),
-             jsonb_build_object('temi', temi_dopo, 'migr', '0191_push_stock_fermo'), 'claude-code', 'push-eventi'
+             jsonb_build_object('temi', temi_dopo, 'migr', '0192_push_stock_fermo'), 'claude-code', 'push-eventi'
         from agg
       returning 1)
     select (select count(*) from push_subscriptions s
@@ -90,49 +90,49 @@ begin
   if current_setting('amimi.push_fermo_tema_nato_qui', true) is null or v_eventi_nati < 0
      or current_setting('amimi.push_fermo_push_enabled_prima', true) is null or current_setting('amimi.push_fermo_eventi_enabled_prima', true) is null
      or v_attesi < 0 or v_aggiornati < 0 or v_log < 0 then
-    raise exception '0191: manca una lettura iniziale (cosa e'' nato in questa migrazione)';
+    raise exception '0192: manca una lettura iniziale (cosa e'' nato in questa migrazione)';
   end if;
 
   if not exists (select 1 from push_temi where key = 'magazzino') then
-    raise exception '0191: manca il tema magazzino';
+    raise exception '0192: manca il tema magazzino';
   end if;
   if v_tema_nato and not exists (select 1 from push_temi where key = 'magazzino' and attivo and predefinito_per = array['Bene', 'Ginevra']
                                    and etichetta = 'Pezzi fermi non in vendita'
                                    and descrizione = 'Prodotti con pezzi a magazzino da almeno 3 giorni e nessuna pagina attiva sul sito' and ordine = 55) then
-    raise exception '0191: il tema magazzino nato qui non e'' attivo, non e'' di Benny e Ginni o ha testi diversi dal contratto';
+    raise exception '0192: il tema magazzino nato qui non e'' attivo, non e'' di Benny e Ginni o ha testi diversi dal contratto';
   end if;
 
   if not exists (select 1 from push_eventi where evento = 'stock_fermo' and tema = 'magazzino') then
-    raise exception '0191: manca stock_fermo sul tema magazzino';
+    raise exception '0192: manca stock_fermo sul tema magazzino';
   end if;
   if v_eventi_nati = 1 and exists (select 1 from push_eventi where evento = 'stock_fermo'
                                      and (attivo or soglie <> '{}'::jsonb or baseline_at is not null or ultimo_giro_at is not null)) then
-    raise exception '0191: l''evento nato qui non e'' spento, ha soglie o un giro';
+    raise exception '0192: l''evento nato qui non e'' spento, ha soglie o un giro';
   end if;
 
   if v_tema_nato and exists (select 1 from push_subscriptions s join push_temi t on t.key = 'magazzino' and s.chi = any(t.predefinito_per)
                               where not ('magazzino' = any(s.temi))) then
-    raise exception '0191: un telefono dei profili non ha ricevuto il tema magazzino';
+    raise exception '0192: un telefono dei profili non ha ricevuto il tema magazzino';
   end if;
   if v_tema_nato and exists (select 1 from push_subscriptions s where 'magazzino' = any(s.temi)
                               and not exists (select 1 from push_temi t where t.key = 'magazzino' and s.chi = any(t.predefinito_per))) then
-    raise exception '0191: un telefono fuori dai profili ha il tema magazzino';
+    raise exception '0192: un telefono fuori dai profili ha il tema magazzino';
   end if;
   if v_tema_nato and (v_aggiornati <> v_attesi or v_log <> v_aggiornati) then
-    raise exception '0191: % telefoni dei profili senza il tema, % aggiornati, % righe di change_log', v_attesi, v_aggiornati, v_log;
+    raise exception '0192: % telefoni dei profili senza il tema, % aggiornati, % righe di change_log', v_attesi, v_aggiornati, v_log;
   end if;
   if exists (select 1 from push_subscriptions s where cardinality(s.temi) <> (select count(distinct x) from unnest(s.temi) x)) then
-    raise exception '0191: un telefono iscritto ha un tema doppio';
+    raise exception '0192: un telefono iscritto ha un tema doppio';
   end if;
 
   -- la edge legge v_stock_fermo con la chiave di servizio
   if to_regclass('public.v_stock_fermo') is null or not has_table_privilege('service_role', 'public.v_stock_fermo', 'select') then
-    raise exception '0191: v_stock_fermo (migr 0190) manca o service_role non la legge';
+    raise exception '0192: v_stock_fermo (migr 0190) manca o service_role non la legge';
   end if;
 
   if coalesce((select value from app_flags where key = 'push_enabled'), '<assente>') is distinct from current_setting('amimi.push_fermo_push_enabled_prima', true)
      or coalesce((select value from app_flags where key = 'push_eventi_enabled'), '<assente>') is distinct from current_setting('amimi.push_fermo_eventi_enabled_prima', true) then
-    raise exception '0191: push_enabled o push_eventi_enabled cambiati dalla migrazione';
+    raise exception '0192: push_enabled o push_eventi_enabled cambiati dalla migrazione';
   end if;
 end $$;
 

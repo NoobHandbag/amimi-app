@@ -23,7 +23,7 @@
 // 08-11 (v7, chat del sito Fase 1 pezzo 4, migr 0188): chat_sollecito, chat_sollecito_scala e chat_salute (CH1-CH26,
 // M8): ore contate nei giorni lavorativi di chat_orari, solleciti solo in orario, nuovo tentativo della push di passaggio,
 // guasti della chat al tema sistema senza dati della cliente; letture per firma e giro col client finto.
-// 09-11 (v8, migr 0191): stock_fermo (SF1-SF10), una push per giro coi prodotti appena fermi non in vendita, dalle 9 di
+// 09-11 (v9, migr 0192): stock_fermo (SF1-SF10), una push per giro coi prodotti appena fermi non in vendita, dalle 9 di
 // Roma, evento di stato; lettura per firma su v_stock_fermo senza prezzo ne' valore; giro col client finto.
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -62,7 +62,7 @@ const ESPORTA = ['APP_URL', 'LINK_ASSISTENZA', 'LINK_SALUTE', 'CHI_PERSONE', 'TE
   // 08-11 (v7): chat del sito
   'orariChat', 'oreSollecito', 'ORARI_CHAT_DEFAULT', 'dovutoDopo', 'inOrarioChat', 'giornoUtc', 'PRESO_DA', 'chiaviPassaggio', 'candChatPassaggio', 'candChatSollecito',
   'oreTesto', 'msgChatSollecito', 'candChatSalute', 'msgChatSalute',
-  // 09-11 (v8): pezzi fermi non in vendita
+  // 09-11 (v9): pezzi fermi non in vendita
   'candStockFermo', 'msgGruppoStockFermo'];
 // Gate 3 (18-10): il resto della edge (letture degli eventi, giro, run, salute, anteprima) ritagliato DAL SORGENTE e
 // guidato con un client finto che registra ogni chiamata. Tolti solo gli import e Deno.serve; inviaPush e sleep arrivano
@@ -124,7 +124,7 @@ console.log('== base ==');
     && APP_URL === (SHARED.match(/export const APP_URL = '([^']+)'/) ?? [])[1] && LINK_ASSISTENZA === APP_URL + '#assistenza' && LINK_SALUTE === APP_URL + '#salute');
   const chiApi = (PUSH_API.match(/const CHI_AMMESSI = (\[[^\]]+\])/) ?? [])[1];
   t('2  CHI_PERSONE = CHI_AMMESSI di push-api (Ale, Bene, Ginevra)', JSON.stringify(CHI_PERSONE) === '["Ale","Bene","Ginevra"]' && chiApi === "['Ale', 'Bene', 'Ginevra']", chiApi);
-  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo, dalla 0168 del 21-10 attivita, dalla 0183 del 03-11 premia e sistema, dalla 0185 del 06-11 sistema, dalla 0188 dell\'08-11 assistenza, assistenza_scala e sistema, dalla 0191 del 09-11 magazzino', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
+  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo, dalla 0168 del 21-10 attivita, dalla 0183 del 03-11 premia e sistema, dalla 0185 del 06-11 sistema, dalla 0188 dell\'08-11 assistenza, assistenza_scala e sistema, dalla 0192 del 09-11 magazzino', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
     cs_cliente_ha_riscritto: 'assistenza', spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
     premia_da_approvare: 'premia', premia_salute: 'sistema', sistema_senza_iscritti: 'sistema',
     chat_sollecito: 'assistenza', chat_sollecito_scala: 'assistenza_scala', chat_salute: 'sistema', stock_fermo: 'magazzino' }));
@@ -177,18 +177,20 @@ console.log('\n== ora di Roma ==');
   t('15 offset: +120 d\'estate, +60 d\'inverno, cambio alle 01:00Z del 25-10', offsetRomaMin(T('2026-10-25T00:59:00Z')) === 120 && offsetRomaMin(T('2026-10-25T01:00:00Z')) === 60
     && offsetRomaMin(T('2026-01-10T12:00:00Z')) === 60 && offsetRomaMin(T('2026-03-29T01:00:00Z')) === 120 && offsetRomaMin(T('2026-03-29T00:59:00Z')) === 60);
   const f = (s) => finestraRiepilogo(T(s));
+  // dal 09-11 (v8, decisione di Dan) alle 22:00 di Roma, prima alle 18:30
   const casi = [
-    ['2026-10-19T16:29:59Z', false, '2026-10-19'], ['2026-10-19T16:30:00Z', true, '2026-10-19'], ['2026-10-18T17:00:00Z', false, '2026-10-18'],
-    ['2026-10-24T16:30:00Z', true, '2026-10-24'], ['2026-10-25T17:30:00Z', false, '2026-10-25'], ['2026-10-26T16:45:00Z', false, '2026-10-26'],
-    ['2026-10-26T17:29:00Z', false, '2026-10-26'], ['2026-10-26T17:30:00Z', true, '2026-10-26'], ['2026-10-26T22:59:00Z', true, '2026-10-26'],
-    ['2026-10-26T23:00:00Z', false, '2026-10-27'], ['2026-03-27T17:29:00Z', false, '2026-03-27'], ['2026-03-27T17:30:00Z', true, '2026-03-27'],
-    ['2026-03-30T16:30:00Z', true, '2026-03-30'], ['2026-03-30T16:29:00Z', false, '2026-03-30'], ['2026-10-19T03:00:00Z', false, '2026-10-19'],
+    ['2026-10-19T19:59:59Z', false, '2026-10-19'], ['2026-10-19T20:00:00Z', true, '2026-10-19'], ['2026-10-19T16:30:00Z', false, '2026-10-19'],
+    ['2026-10-18T20:00:00Z', false, '2026-10-18'], ['2026-10-24T20:00:00Z', true, '2026-10-24'], ['2026-10-25T21:00:00Z', false, '2026-10-25'],
+    ['2026-10-26T20:15:00Z', false, '2026-10-26'], ['2026-10-26T20:59:00Z', false, '2026-10-26'], ['2026-10-26T21:00:00Z', true, '2026-10-26'],
+    ['2026-10-26T22:59:00Z', true, '2026-10-26'], ['2026-10-26T23:00:00Z', false, '2026-10-27'], ['2026-03-27T20:59:00Z', false, '2026-03-27'],
+    ['2026-03-27T21:00:00Z', true, '2026-03-27'], ['2026-03-30T20:00:00Z', true, '2026-03-30'], ['2026-03-30T19:59:00Z', false, '2026-03-30'],
+    ['2026-10-19T03:00:00Z', false, '2026-10-19'],
   ];
   const sbagli = casi.filter(([s, a, d]) => f(s).aperta !== a || f(s).data !== d).map(([s]) => [s, f(s)]);
-  t('16 riepilogo: dalle 18:30 di Roma, lunedi\'-sabato; domenica no (anche il 25-10 del cambio d\'ora); 16:45Z del 26-10 = 17:45 CET chiuso; mezzanotte cambia giorno',
+  t('16 riepilogo: dalle 22:00 di Roma (le 18:30 di prima no), lunedi\'-sabato; domenica no (anche il 25-10 del cambio d\'ora); 20:15Z del 26-10 = 21:15 CET chiuso; mezzanotte cambia giorno',
     sbagli.length === 0, sbagli);
-  t('17 ts del riepilogo = le 18:30 di Roma di quel giorno (16:30Z d\'estate, 17:30Z d\'inverno)', f('2026-10-19T20:00:00Z').ts === T('2026-10-19T16:30:00Z')
-    && f('2026-10-26T20:00:00Z').ts === T('2026-10-26T17:30:00Z') && f('2026-03-30T20:00:00Z').ts === T('2026-03-30T16:30:00Z'));
+  t('17 ts del riepilogo = le 22:00 di Roma di quel giorno (20:00Z d\'estate, 21:00Z d\'inverno)', f('2026-10-19T21:00:00Z').ts === T('2026-10-19T20:00:00Z')
+    && f('2026-10-26T22:00:00Z').ts === T('2026-10-26T21:00:00Z') && f('2026-03-30T21:00:00Z').ts === T('2026-03-30T20:00:00Z'));
   const mz = (s) => new Date(mezzanotteRoma(T(s))).toISOString();
   t('18 mezzanotteRoma: giorno normale, giorno del cambio d\'ora (00:00 CEST anche alle 19:00 CET), giorno dopo, 29-03',
     mz('2026-10-18T21:05:00Z') === '2026-10-17T22:00:00.000Z' && mz('2026-10-25T18:00:00Z') === '2026-10-24T22:00:00.000Z' && mz('2026-10-25T00:30:00Z') === '2026-10-24T22:00:00.000Z'
@@ -1028,7 +1030,7 @@ try {
     && isDeepStrictEqual([...wr.reg.keys()].sort(), ['assistenza', 'negozi', 'premia', 'spedizioni'].map((k) => `iscritti:${k}:${DATA_I}`)) && r2.inviati === 0 && inviate.length === 0, { r1: r1.eventi, r2: r2.eventi });
 } catch (e) { t('SI! eccezione nella sezione', false, String(e?.stack ?? e)); }
 
-console.log('\n== pezzi fermi non in vendita (09-11, v8, stock_fermo) ==');
+console.log('\n== pezzi fermi non in vendita (09-11, v9, stock_fermo) ==');
 try {
   // lunedi' 9 novembre 2026, 10:30 di Roma (CET, UTC+1)
   const ORA_F = T('2026-11-09T09:30:00Z');
@@ -1397,7 +1399,10 @@ console.log('\n== RF-1: la riga cs_sync letta nel buco del delete+insert di cs-s
 
 console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) ==');
 {
-  const ORA_Q = T('2026-10-19T17:00:00Z'), ctx = ctxDi(ORA_Q, { lead_outreach_ai_enabled: 'true' }), G = '2026-10-18T17:00:00.000Z';
+  // dal 09-11 il riepilogo parte alle 22:00: qui la sua finestra e' forzata aperta (come `forza_riepilogo` dell'anteprima)
+  // per tenere le letture delle 19:00; l'orario vero lo provano i casi 16 e 17
+  const ORA_Q = T('2026-10-19T17:00:00Z'), ctx0 = ctxDi(ORA_Q, { lead_outreach_ai_enabled: 'true' }), G = '2026-10-18T17:00:00.000Z';
+  const ctx = { ...ctx0, finestra: { ...ctx0.finestra, aperta: true } };
   const LETTURE = {
     // cs_urgente
     [`cs_events select id, conversation_id, azione, at, urgente:dettaglio->>urgente in:azione|["classify","urgenza_ricalcolo"] eq:dettaglio->>urgente|true gte:at|${G} at:desc limit:50`]:
@@ -1582,15 +1587,15 @@ console.log('\n== giro di un evento col client finto (F3, RF-4, RF-6, RF-3) ==')
   t('G6 RF-3: timeout -> la riga si chiude fallito coi tentativi al massimo (esito timeout, chiusa con .select(id)); il giro dopo non la rimanda',
     chiusure(scad.w).length === 2 && chiusure(scad.w).every((s) => s.payload.stato === 'fallito' && s.payload.tentativi === MAX_TENTATIVI && s.payload.esito.timeout === true && s.ritorna === 'id')
     && dopo.every((p) => p.azione === 'fermo' && p.motivo === 'tentativi_esauriti') && scad.r.esauriti === 2, { c: chiusure(scad.w).map((s) => s.payload), dopo: dopo.map((p) => p.motivo) });
-  // v4 (31-10): il riepilogo ha un istante sintetico (le 18:30 di Roma, quando diventa dovuto) e i numeri si calcolano
-  // all'invio: a una ripartenza resta fresco finche' la finestra e' aperta, anche oltre le 2 ore. Lunedi' 19-10 alle 21:00
-  // di Roma, ultimo giro alle 18:00: 2 ore e mezza dalle 18:30, quindi un fatto vero della stessa eta' sarebbe stallo (G2)
-  const ORA_RP = T('2026-10-19T19:00:00Z'), minRp = (m) => new Date(ORA_RP - m * 60000).toISOString();
+  // v4 (31-10): il riepilogo ha un istante sintetico (quando diventa dovuto) e i numeri si calcolano all'invio: a una
+  // ripartenza resta fresco finche' la finestra e' aperta. Dal 09-11 la finestra (22:00-23:59) dura meno delle 2 ore dello
+  // stallo, quindi la ripartenza lo manda comunque. Lunedi' 19-10 alle 23:30 di Roma, ultimo giro alle 20:30 (ripartenza)
+  const ORA_RP = T('2026-10-19T21:30:00Z'), minRp = (m) => new Date(ORA_RP - m * 60000).toISOString();
   const LETTURE_RP = ['shopify_orders', 'qromo_sales', 'change_log', 'loyalty_ugc', 'cs_conversations', 'v_lead_outreach', 'v_products_todo', 'v_lead_inbound', 'shipping_status', 'loyalty_visits'];
   const wRp = mondo({ risposte: (q) => (q.op === 'select' && LETTURE_RP.includes(q.table) ? (q.head ? { count: 1, error: null } : { data: [], error: null }) : undefined) });
   inviate.length = 0;
   const rRp = await MI.giroEvento(wRp.sb, evRiga('riepilogo', { baseline_at: minRp(3000), ultimo_giro_at: minRp(180) }), ctxDi(ORA_RP), { invii: 20, scade: Infinity }, () => 0);
-  t('G7 v4 riepilogo a una ripartenza alle 21:00 (2 ore e mezza dalle 18:30) -> parte a tutti e tre, niente stallo',
+  t('G7 v4 riepilogo a una ripartenza alle 23:30 (ultimo giro 3 ore prima) -> parte a tutti e tre, niente stallo',
     isDeepStrictEqual(inviate.map((m) => `${m.titolo}:${m.chi}`), ['Riepilogo di oggi:Ale', 'Riepilogo di oggi:Bene', 'Riepilogo di oggi:Ginevra']) && rRp.baseline === true && rRp.persi_stallo === 0
     && salti(wRp).length === 0 && rRp.inviati === 3, { i: inviate.map((m) => m.chi), r: rRp, s: salti(wRp) });
 }
@@ -1914,7 +1919,7 @@ const AMMESSE = {
   // messaggi dello staff id, sessione, istante e la causa dell'errore (testo fisso di chat-send): mai testi
   chat_sessioni: ['id', 'stato', 'passaggi', 'passaggio_at', 'ultima_risposta_staff_at', 'preso_da', 'prova', 'customer_name', 'customer_email'],
   chat_eventi: ['chiave', 'esito', 'at', 'dettaglio->>status'], chat_messaggi: ['id', 'sessione_id', 'email_errore', 'email_at'], chat_contatori: ['chiave', 'finestra', 'n'],
-  // 09-11 (v8, stock_fermo): dei pezzi fermi codice, nomi del prodotto, pezzi, data, giorni e stato della pagina; mai prezzo o valore
+  // 09-11 (v9, stock_fermo): dei pezzi fermi codice, nomi del prodotto, pezzi, data, giorni e stato della pagina; mai prezzo o valore
   v_stock_fermo: ['codice', 'item', 'variant', 'pezzi', 'fermo_dal', 'giorni', 'stato_shopify'],
 };
 const selectFuoriElenco = (s) => {
@@ -2068,7 +2073,7 @@ const MIGR_0168 = read('supabase/migrations/0168_push_attivita.sql');
 const MIGR_0183 = read('supabase/migrations/0183_push_premia.sql');
 const MIGR_0185 = read('supabase/migrations/0185_push_iscritti.sql');
 const MIGR_0188 = read('supabase/migrations/0188_chat_push.sql');
-const MIGR_0191 = read('supabase/migrations/0191_push_stock_fermo.sql');
+const MIGR_0192 = read('supabase/migrations/0192_push_stock_fermo.sql');
 const ROLLBACK_0185 = read('supabase/snippets/0185_rollback_push_eventi_salute.sql');
 const MIGR_0138 = read('supabase/migrations/0138_loyalty_orders_cron.sql');
 const RLS = read('tests/push_eventi_rls.sql');
@@ -2110,7 +2115,7 @@ const cronCoerente = (m) => {
 const temiCoerenti = (m) => {
   const temi = temiMigr(m);
   // 21-10: il tema attivita nasce nella 0168; i temi delle due migrazioni insieme coprono quelli degli eventi
-  const tutti = { ...temi, ...temiMigr(MIGR_0168), ...temiMigr(MIGR_0183), ...temiMigr(MIGR_0188), ...temiMigr(MIGR_0191) };
+  const tutti = { ...temi, ...temiMigr(MIGR_0168), ...temiMigr(MIGR_0183), ...temiMigr(MIGR_0188), ...temiMigr(MIGR_0192) };
   const chiCheck = listaSql((m.match(/check \(predefinito_per <@ array\[([^\]]*)\]::text\[\]\)/) ?? [])[1]);
   const people = listaSql((WEB_PEOPLE.match(/export const PEOPLE = \[([^\]]*)\]/) ?? [])[1]);
   const temaApi = new RegExp((PUSH_API.match(/const TEMA_RE = \/(.+)\/;/) ?? [])[1] ?? '^$');
@@ -2122,14 +2127,14 @@ const temiCoerenti = (m) => {
   const fuori = eventiFuoriCheck(MIGR);
   t('96 ogni evento della edge passa il CHECK push_eventi_evento_ck della 0166 (b2b_risposta_negozio ha una cifra)', fuori.length === 0, fuori);
   // 21-10: il settimo (attivita_team) nasce nella 0168; le due migrazioni insieme sono il contratto con la edge
-  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168), ...eventiMigr(MIGR_0183), ...eventiMigr(MIGR_0185), ...eventiMigr(MIGR_0188), ...eventiMigr(MIGR_0191) };
+  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168), ...eventiMigr(MIGR_0183), ...eventiMigr(MIGR_0185), ...eventiMigr(MIGR_0188), ...eventiMigr(MIGR_0192) };
   const rls = Object.fromEntries([...tra(RLS, 'join (values', ') x(ev, tema)').matchAll(/\('([^']+)', '([^']+)'\)/g)].map((x) => [x[1], x[2]]));
-  t('97 i sei eventi della 0166, attivita_team della 0168, i due di Premia della 0183, sistema_senza_iscritti della 0185, i tre della chat della 0188 e stock_fermo della 0191 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
+  t('97 i sei eventi della 0166, attivita_team della 0168, i due di Premia della 0183, sistema_senza_iscritti della 0185, i tre della chat della 0188 e stock_fermo della 0192 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
     Object.keys(eventiMigr(MIGR)).length === 6 && isDeepStrictEqual(eventiMigr(MIGR_0168), { attivita_team: 'attivita' })
     && isDeepStrictEqual(eventiMigr(MIGR_0183), { premia_da_approvare: 'premia', premia_salute: 'sistema' }) && isDeepStrictEqual(eventiMigr(MIGR_0185), { sistema_senza_iscritti: 'sistema' })
     && isDeepStrictEqual(em, TEMA_EVENTO) && isDeepStrictEqual(rls, TEMA_EVENTO)
     && isDeepStrictEqual(eventiMigr(MIGR_0188), { chat_sollecito: 'assistenza', chat_sollecito_scala: 'assistenza_scala', chat_salute: 'sistema' })
-    && isDeepStrictEqual(eventiMigr(MIGR_0191), { stock_fermo: 'magazzino' })
+    && isDeepStrictEqual(eventiMigr(MIGR_0192), { stock_fermo: 'magazzino' })
     && RLS.includes("if n <> 14 then raise exception 'KO D:"), { em, rls });
   t('98 temi nuovi e predefinito_per come il contratto; le tre chiavi = CHECK della 0166 = PEOPLE del web = CHI_PERSONE; chiavi valide per push-api; conti e vendite ad Ale',
     temiCoerenti(MIGR), temiMigr(MIGR));
