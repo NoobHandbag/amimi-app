@@ -403,8 +403,9 @@ console.log('\n== Topic ==');
     && AMMETTE.every((e) => (topicPer(e, 'conti') === undefined) === new URL(e).hostname.endsWith('.push.apple.com')), { apple: APPLE.map((e) => topicPer(e, 'riepilogo')), sosia: SOSIA.map((e) => topicPer(e, 'conti')) });
   // Gate 2 del 21-10 (B1): il tema attivita e' un flusso di fatti, non uno stato: nessun Topic verso nessun servizio, cosi'
   // una push non ancora consegnata (telefono di Ale in riposo) non viene sostituita dalla successiva dello stesso tema
-  t('42d temi attivita e, dal 03-11, premia (TEMI_SENZA_TOPIC): nessun Topic, nemmeno verso FCM; gli altri temi lo tengono', topicDi('attivita') === undefined
-    && topicDi('premia') === undefined && ALTRI.every((e) => topicPer(e, topicDi('attivita')) === undefined && topicPer(e, topicDi('premia')) === undefined)
+  t('42d temi attivita e, dal 03-11, premia e, dal 09-11, magazzino (TEMI_SENZA_TOPIC): nessun Topic, nemmeno verso FCM; gli altri temi lo tengono', topicDi('attivita') === undefined
+    && topicDi('premia') === undefined && topicDi('magazzino') === undefined
+    && ALTRI.every((e) => topicPer(e, topicDi('attivita')) === undefined && topicPer(e, topicDi('premia')) === undefined && topicPer(e, topicDi('magazzino')) === undefined)
     && ['riepilogo', 'conti', 'spedizioni', 'assistenza', 'negozi', 'sistema', 'prova'].every((x) => topicDi(x) === x)
     && topicDi('attivita_team') === 'attivita_team', [topicDi('attivita'), topicDi('riepilogo')]);
   // spedisci vero (ritagliato dal sorgente) contro una libreria finta che fa come APNs e FCM il 21-10

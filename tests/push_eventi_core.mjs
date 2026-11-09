@@ -23,6 +23,8 @@
 // 08-11 (v7, chat del sito Fase 1 pezzo 4, migr 0188): chat_sollecito, chat_sollecito_scala e chat_salute (CH1-CH26,
 // M8): ore contate nei giorni lavorativi di chat_orari, solleciti solo in orario, nuovo tentativo della push di passaggio,
 // guasti della chat al tema sistema senza dati della cliente; letture per firma e giro col client finto.
+// 09-11 (v9, migr 0192): stock_fermo (SF1-SF10), una push per giro coi prodotti appena fermi non in vendita, dalle 9 di
+// Roma, evento di stato; lettura per firma su v_stock_fermo senza prezzo ne' valore; giro col client finto.
 import { readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripTypeScriptTypes } from 'node:module';
@@ -59,7 +61,9 @@ const ESPORTA = ['APP_URL', 'LINK_ASSISTENZA', 'LINK_SALUTE', 'CHI_PERSONE', 'TE
   'candSenzaIscritti', 'msgSenzaIscritti',
   // 08-11 (v7): chat del sito
   'orariChat', 'oreSollecito', 'ORARI_CHAT_DEFAULT', 'dovutoDopo', 'inOrarioChat', 'giornoUtc', 'PRESO_DA', 'chiaviPassaggio', 'candChatPassaggio', 'candChatSollecito',
-  'oreTesto', 'msgChatSollecito', 'candChatSalute', 'msgChatSalute'];
+  'oreTesto', 'msgChatSollecito', 'candChatSalute', 'msgChatSalute',
+  // 09-11 (v9): pezzi fermi non in vendita
+  'candStockFermo', 'msgGruppoStockFermo'];
 // Gate 3 (18-10): il resto della edge (letture degli eventi, giro, run, salute, anteprima) ritagliato DAL SORGENTE e
 // guidato con un client finto che registra ogni chiamata. Tolti solo gli import e Deno.serve; inviaPush e sleep arrivano
 // dal test (sleep registra la pausa e non aspetta: la rilettura di cs_sync e il ritentativo restano veri, solo istantanei).
@@ -92,7 +96,7 @@ const { APP_URL, LINK_ASSISTENZA, LINK_SALUTE, CHI_PERSONE, TEMA_EVENTO, temaDi,
   statoProblema, contaProblemi, PROBLEMI_CORRIERE, candAttivita, msgGruppoAttivita, msgAttivita, PERSONA_TEAM, OP_ATTIVITA, eseguiGruppi,
   LINK_RECENSIONI, LINK_PREMIA, candPremia, msgPremia, candPremiaSalute, msgPremiaSalute, contaIscritte, candSenzaIscritti, msgSenzaIscritti,
   orariChat, oreSollecito, ORARI_CHAT_DEFAULT, dovutoDopo, inOrarioChat, giornoUtc, PRESO_DA, chiaviPassaggio, candChatPassaggio, candChatSollecito,
-  oreTesto, msgChatSollecito, candChatSalute, msgChatSalute } = M;
+  oreTesto, msgChatSollecito, candChatSalute, msgChatSalute, candStockFermo, msgGruppoStockFermo } = M;
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra !== '' ? '  <- ' + JSON.stringify(extra).slice(0, 260) : '')); } };
@@ -120,10 +124,10 @@ console.log('== base ==');
     && APP_URL === (SHARED.match(/export const APP_URL = '([^']+)'/) ?? [])[1] && LINK_ASSISTENZA === APP_URL + '#assistenza' && LINK_SALUTE === APP_URL + '#salute');
   const chiApi = (PUSH_API.match(/const CHI_AMMESSI = (\[[^\]]+\])/) ?? [])[1];
   t('2  CHI_PERSONE = CHI_AMMESSI di push-api (Ale, Bene, Ginevra)', JSON.stringify(CHI_PERSONE) === '["Ale","Bene","Ginevra"]' && chiApi === "['Ale', 'Bene', 'Ginevra']", chiApi);
-  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo, dalla 0168 del 21-10 attivita, dalla 0183 del 03-11 premia e sistema, dalla 0185 del 06-11 sistema, dalla 0188 dell\'08-11 assistenza, assistenza_scala e sistema', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
+  t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo, dalla 0168 del 21-10 attivita, dalla 0183 del 03-11 premia e sistema, dalla 0185 del 06-11 sistema, dalla 0188 dell\'08-11 assistenza, assistenza_scala e sistema, dalla 0192 del 09-11 magazzino', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
     cs_cliente_ha_riscritto: 'assistenza', spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
     premia_da_approvare: 'premia', premia_salute: 'sistema', sistema_senza_iscritti: 'sistema',
-    chat_sollecito: 'assistenza', chat_sollecito_scala: 'assistenza_scala', chat_salute: 'sistema' }));
+    chat_sollecito: 'assistenza', chat_sollecito_scala: 'assistenza_scala', chat_salute: 'sistema', stock_fermo: 'magazzino' }));
   t('4  temaDi: la riga a DB vince se e\' una chiave valida, altrimenti il tema del codice; evento sconosciuto -> vuoto', temaDi('negozi_vip', 'b2b_risposta_negozio') === 'negozi_vip'
     && temaDi(null, 'cs_urgente') === 'assistenza' && temaDi('Assistenza!', 'cs_urgente') === 'assistenza' && temaDi(42, 'riepilogo') === 'riepilogo' && temaDi(null, 'boh') === '');
   t('5  linkNegozio: uuid -> #negozi/outreach/<id> minuscolo; altro (anche iniezioni) -> la pipeline', linkNegozio(U1.toUpperCase()) === APP_URL + '#negozi/outreach/' + U1
@@ -578,7 +582,7 @@ const reg = (k, stato, tentativi = 1, minFa = 0) => ({ id: 'id-' + k, chiave: k,
     && bd({ evento: 'cs_urgente', baseline_at: iso2(600), ultimo_giro_at: iso2(180) }) === '{"seme":true,"baseline":true,"ripartenza":true}'
     && bd({ evento: 'cs_urgente', baseline_at: iso2(600), ultimo_giro_at: iso2(5) }) === '{"seme":false,"baseline":false,"ripartenza":false}');
   t('57c RF-4: l\'evento di STATO (cs-sync fermo) semina baseline_at ma non salta il pregresso, ne\' alla prima accensione ne\' alla ripartenza',
-    isDeepStrictEqual(EVENTI_DI_STATO, ['sistema_cs_sync_fermo', 'premia_salute', 'sistema_senza_iscritti', 'chat_salute']) && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: null, ultimo_giro_at: null }) === '{"seme":true,"baseline":false,"ripartenza":false}'
+    isDeepStrictEqual(EVENTI_DI_STATO, ['sistema_cs_sync_fermo', 'premia_salute', 'sistema_senza_iscritti', 'chat_salute', 'stock_fermo']) && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: null, ultimo_giro_at: null }) === '{"seme":true,"baseline":false,"ripartenza":false}'
     && bd({ evento: 'sistema_cs_sync_fermo', baseline_at: iso2(600), ultimo_giro_at: iso2(180) }) === '{"seme":true,"baseline":false,"ripartenza":false}');
   const stallo = pianifica([c('a', ORA - H)], new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'stallo' });
   const altro = pianifica([c('a', ORA - H)], new Map(), { ora: ORA, baseline: true, etaMaxMs: MAX, motivoBaseline: 'boh' });
@@ -1025,6 +1029,89 @@ try {
     r1.inviati === 4 && primo.length === 4 && primo.every((m) => m.tema === 'sistema' && m.url === LINK_SALUTE && m.urgente === false && !('chi' in m))
     && isDeepStrictEqual([...wr.reg.keys()].sort(), ['assistenza', 'negozi', 'premia', 'spedizioni'].map((k) => `iscritti:${k}:${DATA_I}`)) && r2.inviati === 0 && inviate.length === 0, { r1: r1.eventi, r2: r2.eventi });
 } catch (e) { t('SI! eccezione nella sezione', false, String(e?.stack ?? e)); }
+
+console.log('\n== pezzi fermi non in vendita (09-11, v9, stock_fermo) ==');
+try {
+  // lunedi' 9 novembre 2026, 10:30 di Roma (CET, UTC+1)
+  const ORA_F = T('2026-11-09T09:30:00Z');
+  const RIGHE_F = [
+    { codice: 'LEA_BAG_MAXI_SUEDE_BLACK_CHARM', item: 'LEA BAG MAXI', variant: 'SUEDE BLACK CHARM', pezzi: 27, fermo_dal: '2026-11-06', giorni: 3, stato_shopify: 'assente', valore: 4590, retail_price: 170 },
+    { codice: 'LEA_BAG_SUEDE_BURGUNDY', item: 'LEA BAG', variant: 'SUEDE BURGUNDY', pezzi: '10', fermo_dal: '2026-11-06', giorni: 3, stato_shopify: 'draft' },
+    { codice: 'AGATA_BAG_PERSONALIZZAZIONE_SPOSA', item: null, variant: null, pezzi: 1, fermo_dal: null, giorni: null, stato_shopify: 'archived,draft' },
+    { codice: 'ANNIE_BAG_MAXI_NAPPA_MARRONE', item: 'ANNIE BAG MAXI', variant: 'NAPPA MARRONE', pezzi: 10, fermo_dal: '2026-11-06', giorni: 3, stato_shopify: 'assente' },
+    { codice: 'SOPHIE_BAG_VERDE', item: 'SOPHIE BAG', variant: 'VERDE', pezzi: 1, fermo_dal: '2026-09-14', giorni: 56, stato_shopify: 'boh' },
+    // scartate: codice storto, pezzi a zero o non interi, riga nulla
+    { codice: 'LEA BAG; DROP', item: 'X', variant: 'Y', pezzi: 3, fermo_dal: '2026-11-01', giorni: 8, stato_shopify: 'assente' },
+    { codice: 'LEA_BAG_ZERO', pezzi: 0, fermo_dal: '2026-11-01', stato_shopify: 'assente' },
+    { codice: 'LEA_BAG_MEZZO', pezzi: 1.5, fermo_dal: '2026-11-01', stato_shopify: 'assente' },
+    null,
+  ];
+  const cf = candStockFermo(RIGHE_F, ORA_F, 9);
+  t('SF1 candStockFermo: un candidato per prodotto valido, chiave fermo:<codice>:<fermo_dal> (senza_arrivi senza data), istante adesso; codice storto, pezzi a zero o non interi scartati',
+    isDeepStrictEqual(cf.map((c) => c.chiave).sort(), ['fermo:AGATA_BAG_PERSONALIZZAZIONE_SPOSA:senza_arrivi', 'fermo:ANNIE_BAG_MAXI_NAPPA_MARRONE:2026-11-06',
+      'fermo:LEA_BAG_MAXI_SUEDE_BLACK_CHARM:2026-11-06', 'fermo:LEA_BAG_SUEDE_BURGUNDY:2026-11-06', 'fermo:SOPHIE_BAG_VERDE:2026-09-14']) && cf.every((c) => c.ts === ORA_F), cf.map((c) => c.chiave));
+  const rifDi = (k) => cf.find((c) => c.chiave.startsWith('fermo:' + k + ':'))?.rif ?? {};
+  t('SF2 stato della pagina in parole (assente, bozza, archiviata, altro), nome dal prodotto o dal codice, pezzi e giorni come interi; nessun prezzo o valore nei riferimenti',
+    rifDi('LEA_BAG_MAXI_SUEDE_BLACK_CHARM').stato === 'senza pagina' && rifDi('LEA_BAG_SUEDE_BURGUNDY').stato === 'in bozza' && rifDi('AGATA_BAG_PERSONALIZZAZIONE_SPOSA').stato === 'in bozza'
+    && rifDi('SOPHIE_BAG_VERDE').stato === 'non attiva' && rifDi('AGATA_BAG_PERSONALIZZAZIONE_SPOSA').nome === 'AGATA_BAG_PERSONALIZZAZIONE_SPOSA'
+    && rifDi('LEA_BAG_SUEDE_BURGUNDY').nome === 'LEA BAG SUEDE BURGUNDY' && rifDi('LEA_BAG_SUEDE_BURGUNDY').pezzi === '10' && rifDi('AGATA_BAG_PERSONALIZZAZIONE_SPOSA').giorni === ''
+    && !JSON.stringify(cf).includes('4590') && !JSON.stringify(cf).includes('170'), cf.map((c) => c.rif));
+  t('SF3 prima delle 9 di Roma niente (un prodotto fermo a mezzanotte avvisa al mattino); alle 9 in punto si\'; ora_da diversa rispettata; mai di domenica',
+    candStockFermo(RIGHE_F, T('2026-11-09T07:59:00Z'), 9).length === 0 && candStockFermo(RIGHE_F, T('2026-11-09T08:00:00Z'), 9).length === 5
+    && candStockFermo(RIGHE_F, ORA_F, 11).length === 0 && candStockFermo(null, ORA_F, 9).length === 0
+    // Gate 2 del 09-11: mai di domenica (8 novembre 2026), il sabato si' (7 novembre)
+    && candStockFermo(RIGHE_F, T('2026-11-08T11:00:00Z'), 9).length === 0 && candStockFermo(RIGHE_F, T('2026-11-07T11:00:00Z'), 9).length === 5);
+  const uno = msgGruppoStockFermo(cf.filter((c) => c.chiave.startsWith('fermo:LEA_BAG_MAXI_SUEDE_BLACK_CHARM:')));
+  const tutti = msgGruppoStockFermo(cf);
+  t('SF4 un prodotto: titolo col nome, testo con pezzi, giorni, stato e codice; tema magazzino, link alla Home, non urgente, a tutti gli iscritti al tema',
+    uno?.titolo === 'Pezzi fermi: LEA BAG MAXI SUEDE BLACK CHARM' && uno?.testo === '27 pezzi a magazzino da 3 giorni, non in vendita sul sito (senza pagina). Codice LEA_BAG_MAXI_SUEDE_BLACK_CHARM. Elenco nella Home dell\'app.'
+    && uno.tema === 'magazzino' && uno.url === APP_URL && !uno.urgente && !uno.chi, uno);
+  t('SF5 piu\' prodotti: UNA push, conteggi nel titolo, i quattro piu\' grossi nel testo e "e un altro"; nessun prezzo, valore o trattino lungo',
+    tutti?.titolo === 'Pezzi fermi: 5 prodotti, 49 pezzi'
+    && tutti?.testo === 'Non in vendita sul sito: LEA BAG MAXI SUEDE BLACK CHARM 27 pz (senza pagina); ANNIE BAG MAXI NAPPA MARRONE 10 pz (senza pagina); LEA BAG SUEDE BURGUNDY 10 pz (in bozza); AGATA_BAG_PERSONALIZZAZIONE_SPOSA 1 pz (in bozza); e un altro. Elenco nella Home dell\'app.'
+    && testoValido([uno, tutti]) && !/4590|170|euro/.test(JSON.stringify([uno, tutti])) && msgGruppoStockFermo([]) === null && msgGruppoStockFermo(null) === null, tutti);
+  t('SF6 evento di stato: alla prima accensione i prodotti gia\' fermi partono (nessuna baseline); una chiave gia\' registrata non riparte',
+    EVENTI_DI_STATO.includes('stock_fermo') && baselineDi({ evento: 'stock_fermo', baseline_at: null, ultimo_giro_at: null }, ORA_F).baseline === false
+    && pianifica(cf, new Map(), { ora: ORA_F, baseline: false, etaMaxMs: 6 * 3600000 }).every((p) => p.azione === 'nuovo')
+    && pianifica(cf, new Map(cf.map((c) => [c.chiave, { id: 1, chiave: c.chiave, stato: 'inviato', tentativi: 1, updated_at: '2026-11-09T08:05:00Z' }])), { ora: ORA_F, baseline: false, etaMaxMs: 6 * 3600000 }).every((p) => p.azione === 'fermo'));
+
+  // la lettura, per firma: una sola, sulla vista, colonne ammesse, dal piu' grosso, limite 200 + 1
+  const FIRMA_F = 'v_stock_fermo select codice, item, variant, pezzi, fermo_dal, giorni, stato_shopify pezzi:desc limit:201';
+  const wf = mondo({ risposte: (q, f) => (f === FIRMA_F ? { data: RIGHE_F, error: null } : undefined) });
+  const candF = await MI.EVENTI.stock_fermo.candidati(wf.sb, ctxDi(ORA_F), evRiga('stock_fermo'));
+  const msgF = await MI.EVENTI.stock_fermo.componi(wf.sb, ctxDi(ORA_F), evRiga('stock_fermo'), candF);
+  t('SF7 lettura con la firma attesa (v_stock_fermo, sole colonne ammesse, mai prezzo o valore), nessuna scrittura, la stessa push dei blocchi PURE',
+    wf.log.length === 1 && firma(wf.log[0]) === FIRMA_F && wf.scritte.length === 0 && isDeepStrictEqual(msgF, [tutti]), wf.log.map(firma));
+  const notteF = mondo({ risposte: () => ({ data: RIGHE_F, error: null }) });
+  t('SF8 prima delle 9 di Roma nessuna lettura (la soglia ora_da arriva da push_eventi.soglie)',
+    (await MI.EVENTI.stock_fermo.candidati(notteF.sb, ctxDi(T('2026-11-09T06:00:00Z')), evRiga('stock_fermo'))).length === 0 && notteF.log.length === 0
+    && (await MI.EVENTI.stock_fermo.candidati(notteF.sb, ctxDi(T('2026-11-09T06:00:00Z')), evRiga('stock_fermo', { soglie: { ora_da: 7 } }))).length === 5 && notteF.log.length === 1
+    && (await MI.EVENTI.stock_fermo.candidati(notteF.sb, ctxDi(T('2026-11-08T11:00:00Z')), evRiga('stock_fermo'))).length === 0 && notteF.log.length === 1);
+  const errF = async (risposta) => {
+    const w = mondo({ risposte: (q) => (q.table === 'v_stock_fermo' ? risposta : undefined) });
+    try { await MI.EVENTI.stock_fermo.candidati(w.sb, ctxDi(ORA_F), evRiga('stock_fermo')); return null; } catch (e) { return e instanceof MI.LetturaFallita ? e.cosa : 'altro: ' + e.message; }
+  };
+  const causeF = [await errF({ data: null, error: { message: 'giu' } }), await errF({ data: Array.from({ length: 201 }, (_, i) => ({ codice: 'C' + i, pezzi: 1 })), error: null })];
+  t('SF9 Regola 20: lettura fallita o troncata (oltre 200) ferma l\'evento con la sua causa, mai un elenco vuoto o tagliato', isDeepStrictEqual(causeF, ['v_stock_fermo', 'v_stock_fermo']), causeF);
+  // il giro vero col client finto: alla prima accensione UNA push coi cinque prodotti; il giro dopo nessuna; un prodotto
+  // nuovo (o un lotto con la data avanzata) fa una push con lui solo
+  inviate.length = 0;
+  let righeOra = RIGHE_F;
+  const wg = mondo({ eventi: [evRiga('stock_fermo', { tema: 'magazzino' })], risposte: (q, f) => (f === FIRMA_F ? { data: righeOra, error: null } : undefined) });
+  const g1 = await (await MI.eseguiRun(wg.sb, ctxDi(ORA_F))).json();
+  const p1 = inviate.splice(0);
+  const reg1 = [...wg.reg.values()].map((r) => r.stato);
+  const g2 = await (await MI.eseguiRun(wg.sb, ctxDi(ORA_F + 5 * 60000))).json();
+  const p2 = inviate.splice(0);
+  righeOra = [...RIGHE_F, { codice: 'ANNIE_BAG_MAXI_NAPPA_BORDOUX', item: 'ANNIE BAG MAXI', variant: 'NAPPA BORDOUX', pezzi: 10, fermo_dal: '2026-11-06', giorni: 3, stato_shopify: 'assente' }];
+  const g3 = await (await MI.eseguiRun(wg.sb, ctxDi(ORA_F + 10 * 60000))).json();
+  const p3 = inviate.splice(0);
+  t('SF10 giro: prima accensione UNA push sul tema magazzino coi cinque prodotti (cinque chiavi nel registro); il giro dopo nessuna; un prodotto nuovo -> una push con lui solo',
+    g1.inviati === 1 && p1.length === 1 && p1[0].tema === 'magazzino' && p1[0].titolo === 'Pezzi fermi: 5 prodotti, 49 pezzi' && p1[0].url === APP_URL && p1[0].urgente === false && !('chi' in p1[0])
+    && reg1.length === 5 && reg1.every((s) => s === 'inviato')
+    && g2.inviati === 0 && p2.length === 0
+    && g3.inviati === 1 && p3.length === 1 && p3[0].titolo === 'Pezzi fermi: ANNIE BAG MAXI NAPPA BORDOUX' && wg.reg.size === 6, { p1t: p1.map((x) => x.titolo), reg1, g3: g3.inviati, p3: p3.map((x) => x.titolo) });
+} catch (e) { t('SF! eccezione nella sezione', false, String(e?.stack ?? e)); }
 
 console.log('\n== chat del sito (08-11, v7: chat_sollecito, chat_sollecito_scala, chat_salute) ==');
 try {
@@ -1742,8 +1829,8 @@ console.log('\n== anteprima col client finto ==');
   const w = mondo({ eventi: [], risposte: (q) => (q.op === 'select' && q.head ? { count: 0, error: null } : q.op === 'select' && q.table !== 'push_eventi' && q.table !== 'push_eventi_inviati' ? { data: [], error: null } : undefined) });
   const res = await MI.anteprima(w.sb, ctxDi(ORA_A), true);
   const corpo = await res.json();
-  t('V1 anteprima: nessuna scrittura (registro, push_eventi, health_log) e nessun invio, tutti e tredici gli eventi', w.scritte.length === 0 && inviate.length === 0
-    && corpo.eventi.length === 13 && corpo.eventi.every((e) => !e.errore), corpo.eventi.map((e) => e.errore ?? e.evento));
+  t('V1 anteprima: nessuna scrittura (registro, push_eventi, health_log) e nessun invio, tutti e quattordici gli eventi (stock_fermo dal 09-11)', w.scritte.length === 0 && inviate.length === 0
+    && corpo.eventi.length === 14 && corpo.eventi.every((e) => !e.errore), corpo.eventi.map((e) => e.errore ?? e.evento));
 }
 
 console.log('\n== guardie sul sorgente ==');
@@ -1832,6 +1919,8 @@ const AMMESSE = {
   // messaggi dello staff id, sessione, istante e la causa dell'errore (testo fisso di chat-send): mai testi
   chat_sessioni: ['id', 'stato', 'passaggi', 'passaggio_at', 'ultima_risposta_staff_at', 'preso_da', 'prova', 'customer_name', 'customer_email'],
   chat_eventi: ['chiave', 'esito', 'at', 'dettaglio->>status'], chat_messaggi: ['id', 'sessione_id', 'email_errore', 'email_at'], chat_contatori: ['chiave', 'finestra', 'n'],
+  // 09-11 (v9, stock_fermo): dei pezzi fermi codice, nomi del prodotto, pezzi, data, giorni e stato della pagina; mai prezzo o valore
+  v_stock_fermo: ['codice', 'item', 'variant', 'pezzi', 'fermo_dal', 'giorni', 'stato_shopify'],
 };
 const selectFuoriElenco = (s) => {
   const out = [];
@@ -1959,7 +2048,7 @@ t('89c RF-1: cs_sync riletta dopo 3 s solo se la prima lettura dice ferma, e dec
   t('90 blocchi PURE senza Deno, import, client, rete, log o invio', impuri.length === 0, impuri);
   const ordine = (SRC.match(/const ORDINE = (\[[^\]]+\])/) ?? [])[1] ?? '';
   const eventi = [...(SRC.slice(SRC.indexOf('const EVENTI: Record<string, DefEvento> = {'), SRC.indexOf('const ORDINE = ')).matchAll(/^ {2}(\w+): \{$/gm))].map((m) => m[1]);
-  t('91 i tredici eventi del contratto (attivita_team dal 21-10, premia_salute col sistema e premia_da_approvare dal 03-11, sistema_senza_iscritti prima del riepilogo dal 06-11, i due solleciti dopo cs_urgente e chat_salute dopo di loro dall\'08-11, Gate 2 C6), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'chat_sollecito', 'chat_sollecito_scala', 'chat_salute', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo']"
+  t('91 i quattordici eventi del contratto (stock_fermo dopo l\'attivita\' del team dal 09-11, attivita_team dal 21-10, premia_salute col sistema e premia_da_approvare dal 03-11, sistema_senza_iscritti prima del riepilogo dal 06-11, i due solleciti dopo cs_urgente e chat_salute dopo di loro dall\'08-11, Gate 2 C6), in ORDINE (sistema e urgente prima, riepilogo ultimo) e in EVENTI', ordine === "['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'chat_sollecito', 'chat_sollecito_scala', 'chat_salute', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'stock_fermo', 'sistema_senza_iscritti', 'riepilogo']"
     && eventi.slice().sort().join() === Object.keys(TEMA_EVENTO).sort().join(), { ordine, eventi });
   const run92 = corpoRun(SRC);
   t('92 tetto e tempo: budget di TETTO_INVII per giro, nessun invio nuovo dopo 15 s e nessun evento cominciato dopo 30 s (RF-5, timeout del cron 60 s); finestra 24 ore, limite 50',
@@ -1984,6 +2073,7 @@ const MIGR_0168 = read('supabase/migrations/0168_push_attivita.sql');
 const MIGR_0183 = read('supabase/migrations/0183_push_premia.sql');
 const MIGR_0185 = read('supabase/migrations/0185_push_iscritti.sql');
 const MIGR_0188 = read('supabase/migrations/0188_chat_push.sql');
+const MIGR_0192 = read('supabase/migrations/0192_push_stock_fermo.sql');
 const ROLLBACK_0185 = read('supabase/snippets/0185_rollback_push_eventi_salute.sql');
 const MIGR_0138 = read('supabase/migrations/0138_loyalty_orders_cron.sql');
 const RLS = read('tests/push_eventi_rls.sql');
@@ -2025,7 +2115,7 @@ const cronCoerente = (m) => {
 const temiCoerenti = (m) => {
   const temi = temiMigr(m);
   // 21-10: il tema attivita nasce nella 0168; i temi delle due migrazioni insieme coprono quelli degli eventi
-  const tutti = { ...temi, ...temiMigr(MIGR_0168), ...temiMigr(MIGR_0183), ...temiMigr(MIGR_0188) };
+  const tutti = { ...temi, ...temiMigr(MIGR_0168), ...temiMigr(MIGR_0183), ...temiMigr(MIGR_0188), ...temiMigr(MIGR_0192) };
   const chiCheck = listaSql((m.match(/check \(predefinito_per <@ array\[([^\]]*)\]::text\[\]\)/) ?? [])[1]);
   const people = listaSql((WEB_PEOPLE.match(/export const PEOPLE = \[([^\]]*)\]/) ?? [])[1]);
   const temaApi = new RegExp((PUSH_API.match(/const TEMA_RE = \/(.+)\/;/) ?? [])[1] ?? '^$');
@@ -2037,14 +2127,15 @@ const temiCoerenti = (m) => {
   const fuori = eventiFuoriCheck(MIGR);
   t('96 ogni evento della edge passa il CHECK push_eventi_evento_ck della 0166 (b2b_risposta_negozio ha una cifra)', fuori.length === 0, fuori);
   // 21-10: il settimo (attivita_team) nasce nella 0168; le due migrazioni insieme sono il contratto con la edge
-  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168), ...eventiMigr(MIGR_0183), ...eventiMigr(MIGR_0185), ...eventiMigr(MIGR_0188) };
+  const em = { ...eventiMigr(MIGR), ...eventiMigr(MIGR_0168), ...eventiMigr(MIGR_0183), ...eventiMigr(MIGR_0185), ...eventiMigr(MIGR_0188), ...eventiMigr(MIGR_0192) };
   const rls = Object.fromEntries([...tra(RLS, 'join (values', ') x(ev, tema)').matchAll(/\('([^']+)', '([^']+)'\)/g)].map((x) => [x[1], x[2]]));
-  t('97 i sei eventi della 0166, attivita_team della 0168, i due di Premia della 0183, sistema_senza_iscritti della 0185 e i tre della chat della 0188 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
+  t('97 i sei eventi della 0166, attivita_team della 0168, i due di Premia della 0183, sistema_senza_iscritti della 0185, i tre della chat della 0188 e stock_fermo della 0192 (e la prova D di push_eventi_rls.sql) sono quelli della edge, ognuno sul suo tema',
     Object.keys(eventiMigr(MIGR)).length === 6 && isDeepStrictEqual(eventiMigr(MIGR_0168), { attivita_team: 'attivita' })
     && isDeepStrictEqual(eventiMigr(MIGR_0183), { premia_da_approvare: 'premia', premia_salute: 'sistema' }) && isDeepStrictEqual(eventiMigr(MIGR_0185), { sistema_senza_iscritti: 'sistema' })
     && isDeepStrictEqual(em, TEMA_EVENTO) && isDeepStrictEqual(rls, TEMA_EVENTO)
     && isDeepStrictEqual(eventiMigr(MIGR_0188), { chat_sollecito: 'assistenza', chat_sollecito_scala: 'assistenza_scala', chat_salute: 'sistema' })
-    && RLS.includes("if n <> 13 then raise exception 'KO D:"), { em, rls });
+    && isDeepStrictEqual(eventiMigr(MIGR_0192), { stock_fermo: 'magazzino' })
+    && RLS.includes("if n <> 14 then raise exception 'KO D:"), { em, rls });
   t('98 temi nuovi e predefinito_per come il contratto; le tre chiavi = CHECK della 0166 = PEOPLE del web = CHI_PERSONE; chiavi valide per push-api; conti e vendite ad Ale',
     temiCoerenti(MIGR), temiMigr(MIGR));
   const stati = listaSql((MIGR.match(/push_eventi_inviati_stato_ck check \(stato in \(([^)]*)\)\)/) ?? [])[1]);

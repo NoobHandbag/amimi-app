@@ -468,6 +468,13 @@ Pezzo 4 della Fase 1 della chat del sito (`docs/PROPOSTA_chat_sito.md` 8.3-8.6 e
 - **Chiavi nel registro** `push_eventi_inviati`: `<sessione>:<passaggio>:sollecito:1` e `:2`, `<sessione>:passaggio:<n>` (nuovo tentativo della push di chat-api), `<sessione>:<n>:passaggio` e `<sessione>:email:<messaggio>` (guasti di una chat), `invio:`, `api:`, `quota:`, `widget:`, `limite:<giorno UTC>`. Quelle che riguardano una chat cominciano con l'id della sessione: la pulizia a 12 mesi (0189) e `cancella_dati` di chat-staff (staff-2) le tolgono con lei (11.6 punto 4).
 - **Controllo dentro la migrazione**: tema ed eventi sui temi giusti e spenti se nati qui, il tema sui soli telefoni del profilo (conteggi attesi = aggiornati = righe di `change_log`), nessun tema doppio, `push_enabled`, `push_eventi_enabled`, `chat_sito_enabled` e i cron `push-eventi`, `push-eventi-salute`, `chat-send`, `chat-conservazione` invariati. Pin: `tests/push_eventi_core.mjs` M8, A-M8, 97, 98; `tests/push_eventi_rls.sql` (D) pretende tredici eventi.
 
+### 18g. Pezzi fermi non in vendita: tema `magazzino`, evento `stock_fermo` (migr 0192, 2026-11-09)
+
+Chiesto da Dan in chat dopo l'allarme in Home della 0190 (`v_stock_fermo`). Numero 0192: la 0191 dello stesso giorno e' il riepilogo alle 22 (#173).
+- **Tema** `magazzino` ("Pezzi fermi non in vendita", ordine 55, `predefinito_per` = Bene e Ginevra, chi mette in vendita); push-api v5 lo manda senza Topic. Aggiunto ai due telefoni gia' iscritti di Benny e Ginni con una riga `change_log` `temi_aggiunti` per telefono (come 0168 e 0183). Ale lo aggiunge dalla scheda Notifiche se lo vuole.
+- **Evento** `stock_fermo` sul tema `magazzino`, nato spento e acceso da Claude Code dopo il deploy della edge v9 (riga `change_log` `evento_acceso`). Legge `v_stock_fermo` (sola lettura, colonne senza prezzo ne' valore).
+- **Controllo dentro la migrazione**: tema ed evento come il contratto se nati qui, tema sui soli telefoni dei due profili, conteggi di telefoni e righe `change_log` uguali, nessun tema doppio, `service_role` legge `v_stock_fermo`, `push_enabled` e `push_eventi_enabled` invariati. Prova a vuoto in produzione prima dell'apply: `TEST_OK` (2 telefoni, 2 righe).
+
 ## 19. Modulo beh_* : comportamento utenti (migr 0169, 2026-10-25)
 
 Modulo additivo (Regola 19) per misurare come arrivano, cosa guardano e chi torna i visitatori di amimi.it. Disegno e numeri della Fase 1 nel repo hub: `Cowork12/projects/Analisi_Comportamento_Utenti_2026-10/` (`03_STATO_VERIFICATO.md`, `04_DESIGN_ECOSISTEMA.md`). Principio: gli ORDINI sono veri e completi, le VISITE (Shopify, GA4, LPV Meta) contano solo chi accetta i cookie; il 27,6% degli ordini online non ha visite registrate (Fase 1), quindi ogni conversione e' "su visitatori tracciati".
