@@ -24,6 +24,8 @@
 // chat-api in errore, tetto delle chat del giorno, oltre 5.000 richieste, errori del widget). Testi dei solleciti col nome
 // o l'email della cliente (D-9, solo da nomeCliente), mai il testo della chat; chat_salute solo conteggi e cause.
 // chat_sessioni, chat_eventi, chat_messaggi e chat_contatori si LEGGONO soltanto.
+// v8 (2026-11-09, decisione di Dan in chat, migr 0191): il riepilogo serale parte alle 22:00 di Roma invece che alle 18:30
+// (ORA_RIEPILOGO_MIN; finestra 22:00-23:59, lunedi'-sabato come prima). Nient'altro cambia.
 // Brief:Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
 // (Regola 19, migr 0166): scrive SOLO push_eventi_inviati (il registro), push_eventi (ultimo_giro_at, baseline_at) e la sua
 // riga di telemetria in health_log (k = 'push_eventi', una per giorno UTC: Gate 3 del 18-10, un giro che fallisce deve
@@ -163,9 +165,9 @@ function nomeCliente(nome: unknown, email: unknown): string {
 
 // ==== PURE:pe-tempo BEGIN ====
 // Ora di Roma con Intl (ora legale compresa: il 25-10-2026 alle 03:00 si torna alle 02:00). Il riepilogo parte dalle
-// 18:30, da lunedi' a sabato; "oggi" = dalla mezzanotte di Roma.
+// 22:00 (dal 09-11, prima 18:30), da lunedi' a sabato; "oggi" = dalla mezzanotte di Roma.
 const FUSO = 'Europe/Rome';
-const ORA_RIEPILOGO_MIN = 18 * 60 + 30;
+const ORA_RIEPILOGO_MIN = 22 * 60;
 let fmtRoma: Intl.DateTimeFormat | null = null;
 function partiRoma(ms: number): { y: number; m: number; d: number; h: number; mi: number; s: number; wd: string } {
   fmtRoma ??= new Intl.DateTimeFormat('en-US', { timeZone: FUSO, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', weekday: 'short' });
@@ -184,17 +186,17 @@ function dataRoma(ms: number): string {
   return `${p.y}-${due(p.m)}-${due(p.d)}`;
 }
 // mezzanotte di Roma del giorno di `ms`, in ms UTC. L'offset si prende alla mezzanotte stessa (seconda passata): nei due
-// giorni del cambio d'ora quello delle 18:30 e quello delle 00:00 sono diversi.
+// giorni del cambio d'ora quello delle 22:00 e quello delle 00:00 sono diversi.
 function mezzanotteRoma(ms: number): number {
   const p = partiRoma(ms);
   const base = Date.UTC(p.y, p.m - 1, p.d);
   return base - offsetRomaMin(base - offsetRomaMin(ms) * 60000) * 60000;
 }
-// aperta dalle 18:30 alle 23:59 di Roma, da lunedi' a sabato; ts = le 18:30 di quel giorno (eta' del riepilogo)
+// aperta dalle 22:00 alle 23:59 di Roma, da lunedi' a sabato; ts = le 22:00 di quel giorno (eta' del riepilogo)
 function finestraRiepilogo(ms: number): { aperta: boolean; data: string; ts: number } {
   const p = partiRoma(ms);
   const data = `${p.y}-${due(p.m)}-${due(p.d)}`;
-  const ts = Date.UTC(p.y, p.m - 1, p.d, 18, 30) - offsetRomaMin(ms) * 60000;
+  const ts = Date.UTC(p.y, p.m - 1, p.d, 0, ORA_RIEPILOGO_MIN) - offsetRomaMin(ms) * 60000;
   return { aperta: p.wd !== 'Sun' && p.h * 60 + p.mi >= ORA_RIEPILOGO_MIN, data, ts };
 }
 // giorni da lunedi' a venerdi' strettamente dopo `da` e fino ad `a` compreso (date 'YYYY-MM-DD' di Roma). Ordine di
@@ -1066,7 +1068,7 @@ function baselineDi(ev: { evento?: unknown; baseline_at?: unknown; ultimo_giro_a
 // cs_urgente e cs_cliente_ha_riscritto), lead_touches.created_at (o at, oltre 72 ore di ritardo), shipping_status.updated_at
 // (riscritto da shipping-status-sync solo a un cambio di stato), change_log.ts (default now()); un fatto recuperato dopo un
 // blocco ha l'istante del recupero ed e' fresco. Un istante illeggibile non e' mai fresco. Fa eccezione il riepilogo: il suo
-// istante (le 18:30 di Roma) e' quello in cui diventa dovuto, non un fatto, e i numeri si calcolano all'invio; resta fresco
+// istante (le 22:00 di Roma, dal 09-11) e' quello in cui diventa dovuto, non un fatto, e i numeri si calcolano all'invio; resta fresco
 // per tutta l'eta' massima, cioe' finche' la sua finestra e' aperta (una push a testa al giorno). sistema_cs_sync_fermo non
 // salta mai il pregresso (EVENTI_DI_STATO) e qui non entra, come premia_salute dal 03-11. premia_da_approvare ha l'istante
 // in cui la cliente ha mandato il contenuto (loyalty_ugc.created_at, default now()).
