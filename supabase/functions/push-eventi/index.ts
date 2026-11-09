@@ -24,6 +24,11 @@
 // chat-api in errore, tetto delle chat del giorno, oltre 5.000 richieste, errori del widget). Testi dei solleciti col nome
 // o l'email della cliente (D-9, solo da nomeCliente), mai il testo della chat; chat_salute solo conteggi e cause.
 // chat_sessioni, chat_eventi, chat_messaggi e chat_contatori si LEGGONO soltanto.
+// v8 (2026-11-09, chiesta da Dan in chat, migr 0191): stock_fermo (tema magazzino, di Benny e Ginni) quando un prodotto
+// entra fra i pezzi a magazzino non in vendita sul sito (v_stock_fermo, migr 0190: pezzi disponibili, nessuna pagina
+// Shopify attiva, fermi da almeno 3 giorni). Una push per giro con i prodotti nuovi (eseguiGruppi, un gruppo solo), dalle
+// 9 di Roma; ogni lotto fermo (codice e data del pezzo piu' vecchio) avvisa una volta, poi resta la scheda della Home.
+// Evento di stato: all'accensione i prodotti gia' fermi partono nella prima push. v_stock_fermo si LEGGE soltanto.
 // Brief:Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
 // (Regola 19, migr 0166): scrive SOLO push_eventi_inviati (il registro), push_eventi (ultimo_giro_at, baseline_at) e la sua
 // riga di telemetria in health_log (k = 'push_eventi', una per giorno UTC: Gate 3 del 18-10, un giro che fallisce deve
@@ -81,12 +86,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const TEMA_RE = /^[a-z_]{2,32}$/;
 // tema di ogni evento (righe di push_eventi della 0166); la riga a DB vince se e' una chiave valida
 // (attivita_team dalla 0168 del 21-10, premia_da_approvare e premia_salute dalla 0183 del 03-11, sistema_senza_iscritti
-// dalla 0185 del 06-11, i tre della chat del sito dalla 0188 dell'08-11)
+// dalla 0185 del 06-11, i tre della chat del sito dalla 0188 dell'08-11, stock_fermo dalla 0191 del 09-11)
 const TEMA_EVENTO: Record<string, string> = {
   b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza', cs_cliente_ha_riscritto: 'assistenza',
   spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
   premia_da_approvare: 'premia', premia_salute: 'sistema', sistema_senza_iscritti: 'sistema',
   chat_sollecito: 'assistenza', chat_sollecito_scala: 'assistenza_scala', chat_salute: 'sistema',
+  stock_fermo: 'magazzino',
 };
 function temaDi(daDb: unknown, evento: string): string {
   return typeof daDb === 'string' && TEMA_RE.test(daDb) ? daDb : (TEMA_EVENTO[evento] ?? '');
@@ -1018,6 +1024,49 @@ function msgChatSalute(cands: Cand[]): Msg[] {
   }
   return out;
 }
+
+// stock_fermo (09-11, v8, tema magazzino, chiesta da Dan): un prodotto con pezzi a magazzino da almeno 3 giorni e nessuna
+// pagina attiva sul sito (v_stock_fermo, migr 0190). Il 09-11 erano 107 pezzi su 13 codici, e la stessa sera la scheda
+// della Home li mostrava gia' a tutti: la push porta la notizia a chi li mette in vendita (Benny e Ginni) anche ad app
+// chiusa. Chiave fermo:<codice>:<fermo_dal> (la data del pezzo piu' vecchio ancora a magazzino, o senza_arrivi): un lotto
+// fermo avvisa UNA volta; se escono pezzi vecchi e la data avanza e' un lotto nuovo. Istante = adesso (e' uno stato), solo
+// dalle `oraDa` di Roma (9): un prodotto che diventa fermo a mezzanotte avvisa al mattino. Evento di stato
+// (EVENTI_DI_STATO): all'accensione i prodotti gia' fermi partono nella prima push, non si saltano. Nel testo solo nome e
+// codice del prodotto, pezzi, giorni e stato della pagina: mai prezzi o valore (le select non li chiedono nemmeno).
+const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
+function statoPagina(v: unknown): string {
+  const s = typeof v === 'string' ? v : '';
+  return s === 'assente' ? 'senza pagina' : /(^|,)draft(,|$)/.test(s) ? 'in bozza' : /(^|,)archived(,|$)/.test(s) ? 'archiviata' : 'non attiva';
+}
+function candStockFermo(righe: Riga[], ora: number, oraDa: number): Cand[] {
+  if (partiRoma(ora).h < oraDa) return [];
+  const out: Cand[] = [];
+  for (const r of righe ?? []) {
+    const codice = codiceProdotto(r?.codice), pezzi = intero(r?.pezzi);
+    if (!codice || !pezzi || Number(pezzi) <= 0) continue;
+    const dal = typeof r.fermo_dal === 'string' && DATA_RE.test(r.fermo_dal) ? r.fermo_dal : 'senza_arrivi';
+    const nome = pulisci([r.item, r.variant].filter((x) => typeof x === 'string' && x.trim()).join(' '), 50);
+    out.push({ chiave: `fermo:${codice}:${dal}`, ts: ora, rif: { codice, nome: nome || codice, pezzi, giorni: intero(r.giorni), stato: statoPagina(r.stato_shopify) } });
+  }
+  return ordinaRecenti(out);
+}
+// UNA push per giro con tutti i prodotti nuovi (un gruppo solo), dal piu' grosso. Link alla Home, dove sta l'elenco intero.
+function msgGruppoStockFermo(cands: Cand[]): Msg | null {
+  const cs = (cands ?? []).filter((c) => c && c.rif && Number(c.rif.pezzi) > 0)
+    .sort((a, b) => Number(b.rif.pezzi) - Number(a.rif.pezzi) || (a.chiave < b.chiave ? -1 : a.chiave > b.chiave ? 1 : 0));
+  if (!cs.length) return null;
+  const base = { chiave: cs[0].chiave, tema: TEMA_EVENTO.stock_fermo, url: APP_URL };
+  if (cs.length === 1) {
+    const c = cs[0].rif;
+    const da = Number(c.giorni) > 0 ? ` da ${plurale(Number(c.giorni), 'giorno', 'giorni')}` : '';
+    return { ...base, titolo: `Pezzi fermi: ${c.nome}`.slice(0, TITOLO_MAX_PUSH),
+      testo: `${plurale(Number(c.pezzi), 'pezzo', 'pezzi')} a magazzino${da}, non in vendita sul sito (${c.stato}). Codice ${c.codice}. Elenco nella Home dell'app.` };
+  }
+  const tot = cs.reduce((s, c) => s + Number(c.rif.pezzi), 0);
+  const voci = cs.map((c) => `${c.rif.nome} ${c.rif.pezzi} pz (${c.rif.stato})`);
+  return { ...base, titolo: `Pezzi fermi: ${plurale(cs.length, 'prodotto', 'prodotti')}, ${plurale(tot, 'pezzo', 'pezzi')}`,
+    testo: `Non in vendita sul sito: ${primeVoci(voci, '; ', eAltri)}. Elenco nella Home dell'app.` };
+}
 // ==== PURE:pe-messaggi END ====
 
 // ==== PURE:pe-registro BEGIN ====
@@ -1036,7 +1085,8 @@ const FINALI = ['inviato', 'saltato', 'nessun_iscritto'];
 // premia_salute (03-11) e' dello stesso tipo: un guasto di Premia gia' in corso all'accensione si deve vedere. Cosi' anche
 // sistema_senza_iscritti (06-11): un tema gia' senza telefoni all'accensione e' proprio il guasto da vedere. E chat_salute
 // (08-11, 8.6). I due solleciti della chat no: si accendono prima di chat_sito_enabled, nessun arretrato (8.3).
-const EVENTI_DI_STATO = ['sistema_cs_sync_fermo', 'premia_salute', 'sistema_senza_iscritti', 'chat_salute'];
+// stock_fermo (09-11, v8): i prodotti gia' fermi all'accensione sono proprio la notizia (il 09-11 erano 11).
+const EVENTI_DI_STATO = ['sistema_cs_sync_fermo', 'premia_salute', 'sistema_senza_iscritti', 'chat_salute', 'stock_fermo'];
 type Reg = { id: number | string; chiave: string; stato: string; tentativi: number; updated_at: string };
 type Decisione = { cand: Cand; azione: 'nuovo' | 'ritenta' | 'salta' | 'fermo'; motivo: string; reg?: Reg };
 // prima accensione (baseline_at vuoto) o ripartenza: ultimo giro assente o di oltre 2 ore fa (evento spento e riacceso,
@@ -1569,6 +1619,21 @@ const EVENTI: Record<string, DefEvento> = {
     },
     componi: async (_sb, _ctx, _ev, cands) => msgSenzaIscritti(cands),
   },
+  stock_fermo: {
+    candidati: async (sb, ctx, ev) => {
+      const oraDa = soglia(ev.soglie, 'ora_da', 9, 0, 23);
+      // prima di oraDa candStockFermo non darebbe niente: qui si evita anche la lettura dei giri di notte
+      if (partiRoma(ctx.ora).h < oraDa) return [];
+      // la vista fa tutto il calcolo (migr 0190); solo codice, nomi del prodotto, pezzi, data e stato della pagina, mai
+      // prezzo o valore. Una lettura piena oltre il limite e' troncata e ferma l'evento (Regola 20b), mai un prodotto perso
+      const { data, error } = await retryOnce(() => sb.from('v_stock_fermo').select('codice, item, variant, pezzi, fermo_dal, giorni, stato_shopify').order('pezzi', { ascending: false }).limit(LIMITE_FERMI + 1));
+      if (error || (data ?? []).length > LIMITE_FERMI) throw new LetturaFallita('v_stock_fermo', error ?? `oltre ${LIMITE_FERMI} righe`);
+      return candStockFermo((data ?? []) as Riga[], ctx.ora, oraDa);
+    },
+    // anteprima: la push di tutti i candidati passati
+    componi: async (_sb, _ctx, _ev, cands) => { const m = msgGruppoStockFermo(cands); return m ? [m] : []; },
+    gruppi: { dettagli: async () => ({}), gruppoDi: () => 'stock_fermo', messaggio: (cs) => msgGruppoStockFermo(cs) },
+  },
   chat_sollecito: {
     candidati: async (sb, ctx) => {
       const orari = orariChat(ctx.flags.chat_orari);
@@ -1686,7 +1751,11 @@ const EVENTI: Record<string, DefEvento> = {
 // 08-11 (chat del sito): chat_sollecito (che porta anche il nuovo tentativo della push "chiede una persona") subito dopo
 // cs_urgente, la scala dopo, chat_salute dopo i solleciti (Gate 2, C6: con molti guasti in fila consumerebbe il tetto dei
 // 20 invii prima delle notizie per le clienti)
-const ORDINE = ['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'chat_sollecito', 'chat_sollecito_scala', 'chat_salute', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'sistema_senza_iscritti', 'riepilogo'];
+// 09-11 (v8): stock_fermo dopo l'attivita' del team e prima dei promemoria di sistema (una push al giorno al massimo di
+// solito, e una sola lettura)
+const ORDINE = ['sistema_cs_sync_fermo', 'premia_salute', 'cs_urgente', 'chat_sollecito', 'chat_sollecito_scala', 'chat_salute', 'spedizione_eccezione', 'b2b_risposta_negozio', 'cs_cliente_ha_riscritto', 'premia_da_approvare', 'attivita_team', 'stock_fermo', 'sistema_senza_iscritti', 'riepilogo'];
+// pezzi fermi: il 09-11 erano 13 codici; oltre 200 la lettura ferma l'evento invece di tagliare l'elenco
+const LIMITE_FERMI = 200;
 
 // registro: .in() sulle sole chiavi dei candidati, a blocchi di 100 (Regola 20b), mai la tabella intera
 async function leggiRegistro(sb: Sb, evento: string, chiavi: string[]): Promise<Map<string, Reg>> {

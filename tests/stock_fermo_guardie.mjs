@@ -84,8 +84,10 @@ const erroreDetto = (s) => /if \(error\) \{ setErrore\(true\); return; \}/.test(
 
 console.log('== A: v_stock_fermo ==');
 const VF = vistaFermo(M190);
-t('1 migrazione 0190 presente e unica a definire v_stock_fermo', M190.length > 0
-  && nomi.filter((n) => /v_stock_fermo/.test(read(MIG + n)) && n !== '0190_stock_fermo.sql').length === 0);
+// 09-11 (0191, notifica dei pezzi fermi): un'altra migrazione puo' NOMINARE la vista (la 0191 ne controlla il privilegio),
+// non ridefinirla o cambiarne i privilegi
+t('1 migrazione 0190 presente e unica a definire v_stock_fermo o a cambiarne i privilegi', M190.length > 0
+  && nomi.filter((n) => n !== '0190_stock_fermo.sql' && /(create\s+(or\s+replace\s+)?view|drop\s+view|alter\s+view|grant|revoke)[^;]*v_stock_fermo/i.test(noComments(read(MIG + n)))).length === 0);
 t('2 criteri: disponibili > 0, nessuna riga attiva fresca (2 ore), non_product fuori, 3 giorni dall\'ultimo arrivo', criteri(VF), flat(VF).slice(0, 200));
 t('3 colonne come la prova della migrazione', JSON.stringify(colonne(VF)) === JSON.stringify(COLONNE), JSON.stringify(colonne(VF)));
 t('4 privilegi: solo select ai ruoli dell\'app, dopo un revoke all', JSON.stringify(privilegi(M190)) === JSON.stringify(PRIVILEGI), JSON.stringify(privilegi(M190)));
