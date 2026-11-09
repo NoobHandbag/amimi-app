@@ -96,7 +96,8 @@ a{color:inherit}
     try { localStorage.setItem(CHIAVE, JSON.stringify(nuovo)); }
     catch (e) { chiudi(T.storage); return; }
     chiudi(T.fatto);
-    location.replace(en ? '/en' : '/');
+    // la home, senza prefisso di lingua: Shopify sceglie la lingua (sul dominio d'anteprima /en non esiste, 09-11)
+    location.replace('/');
   }
   function scambia(ts) {
     fetch(dove, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token_ripresa: tok, turnstile: ts, prova: prova }),

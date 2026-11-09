@@ -129,7 +129,7 @@ try {
   t('B4 email non valida: errore nel modulo, nessun avvia', await chat(p).getByText('Scrivi un indirizzo email valido.').isVisible() && !S.chiamate.some((c) => c.azione === 'avvia'));
   await chat(p).locator('input[type=email]').fill('Cliente@Esempio.it');
   await chat(p).locator('input[type=text]').fill('Giulia');
-  await chat(p).getByRole('button', { name: 'Inizia la chat' }).click();
+  await chat(p).locator('input[type=email]').press('Enter');
   await chat(p).locator('.lista').waitFor({ state: 'attached' });
   const av = S.chiamate.find((c) => c.azione === 'avvia')?.b ?? {};
   t('B5 avvia con Turnstile (azione chat_avvia, sitekey di produzione), email minuscola, nome, informativa, prova false', av.turnstile === 'TS-ok' && av.email === 'cliente@esempio.it' && av.nome === 'Giulia'

@@ -323,9 +323,15 @@
     }
     c.appendChild(sc);
   }
+  // la radice della lingua della pagina ('/' o '/en/'), da Shopify.routes.root se ha una forma attesa: un prefisso
+  // scritto a mano non esiste su ogni dominio (sull'anteprima /en/ da' 404, 09-11)
+  function radiceLingua() {
+    var r = window.Shopify && window.Shopify.routes && window.Shopify.routes.root;
+    return typeof r === 'string' && /^\/([a-z]{2}(-[a-z]{2})?\/)?$/i.test(r) ? r : '/';
+  }
   function linkInformativa() {
     var a = el('a', '', T.informativa);
-    a.href = lingua === 'en' ? '/en/policies/privacy-policy' : '/policies/privacy-policy';
+    a.href = radiceLingua() + 'policies/privacy-policy';
     a.target = '_blank';
     a.rel = 'noopener';
     return a;

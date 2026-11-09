@@ -131,6 +131,8 @@ t('L3 la pagina riprendi di chat-api usa la stessa chiave, lo stesso formato e l
 t('L5 pannello: la storia a pagine si ferma a pannello chiuso (Gate 2, C2); una chat piu\' nuova di un\'altra scheda non si sovrascrive (C4); ogni chiamata ha un tempo massimo e non rifiuta mai (B2)',
   /if \(S\.aperto && !document\.hidden\) S\.timer = setTimeout\(function \(\) \{ aggiorna\(p \+ 1\); \}, 300\);/.test(PANNELLO) && /if \(!nuova && ora && ora\.t !== S\.token\) return;/.test(PANNELLO)
   && /ctrl\.abort\(\); \}, ATTESA_RETE_MS\)/.test(PANNELLO) && /\.then\(function \(x\) \{ fine\(\); return x; \}, function \(\) \{ fine\(\); return \{ http: 0, d: null \}; \}\);/.test(PANNELLO));
+t('L6 link all\'informativa dalla radice della lingua di Shopify (forma controllata), mai un prefisso scritto a mano; la pagina riprendi torna a "/"', /a\.href = radiceLingua\(\) \+ 'policies\/privacy-policy';/.test(PANNELLO) && !/'\/en\//.test(senzaCommenti(PANNELLO))
+  && /location\.replace\('\/'\);/.test(RIPRENDI) && !/location\.replace\(en/.test(RIPRENDI));
 t('L4 versione del widget uguale nel loader e nel pannello (il pannello rifiuta un loader diverso)', /var VERSIONE = 'w-1';/.test(LOADER) && /A\.versione !== 'w-1'/.test(PANNELLO) && /var VERSIONE = 'w-1';/.test(PANNELLO));
 
 // ---- il loader in un DOM finto (S8, test 16): cosa fa al caricamento e al tocco ----

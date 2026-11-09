@@ -690,8 +690,8 @@ async function provaPagina({ hash, lingua = 'it-IT', risposta = { ok: true, toke
   t('P9 chat token salvato nella chiave del widget, formato di chat-loader.js con o: true; poi la home', a1.log.set[0]?.[0] === 'amimi_chat_v1' && salvato.v === 1 && salvato.t === 'N'.repeat(43)
     && salvato.p === false && typeof salvato.a === 'number' && salvato.s === 0 && salvato.o === true && salvato.e === 'c***@esempio.it' && JSON.stringify(Object.keys(salvato)) === '["v","t","p","a","s","o","e"]' && JSON.stringify(a1.log.replace) === '["/"]', { set: a1.log.set, rep: a1.log.replace });
   const a2 = await provaPagina({ hash: '#t=' + TOK + '&prova=1', lingua: 'en-GB' });
-  t('P10 prova=1: widget di prova e prova true; in inglese la home inglese', a2.log.render[0]?.sitekey === '0x4AAAAAAF33Q02jrHXJLHjr' && JSON.parse(a2.log.fetch[0].o.body).prova === true
-    && JSON.parse(a2.log.set[0][1]).p === true && JSON.stringify(a2.log.replace) === '["/en"]' && a2.el.titolo.textContent === 'Continue the chat');
+  t('P10 prova=1: widget di prova e prova true; in inglese testi inglesi e la stessa home senza prefisso di lingua (/en non esiste sull\'anteprima)', a2.log.render[0]?.sitekey === '0x4AAAAAAF33Q02jrHXJLHjr' && JSON.parse(a2.log.fetch[0].o.body).prova === true
+    && JSON.parse(a2.log.set[0][1]).p === true && JSON.stringify(a2.log.replace) === '["/"]' && a2.el.titolo.textContent === 'Continue the chat');
   const a3 = await provaPagina({ hash: '#t=corto' });
   t('P11 link senza un token valido: niente pulsante, niente rete', a3.el.vai.hidden === true && a3.log.fetch.length === 0 && a3.log.script.length === 0 && /non \u00e8 completo/.test(a3.el.esito.textContent));
   const a4 = await provaPagina({ hash: '#t=' + TOK, risposta: { ok: false, state: 'token_non_valido' } });
