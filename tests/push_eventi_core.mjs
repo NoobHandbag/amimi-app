@@ -173,18 +173,20 @@ console.log('\n== ora di Roma ==');
   t('15 offset: +120 d\'estate, +60 d\'inverno, cambio alle 01:00Z del 25-10', offsetRomaMin(T('2026-10-25T00:59:00Z')) === 120 && offsetRomaMin(T('2026-10-25T01:00:00Z')) === 60
     && offsetRomaMin(T('2026-01-10T12:00:00Z')) === 60 && offsetRomaMin(T('2026-03-29T01:00:00Z')) === 120 && offsetRomaMin(T('2026-03-29T00:59:00Z')) === 60);
   const f = (s) => finestraRiepilogo(T(s));
+  // dal 09-11 (v8, decisione di Dan) alle 22:00 di Roma, prima alle 18:30
   const casi = [
-    ['2026-10-19T16:29:59Z', false, '2026-10-19'], ['2026-10-19T16:30:00Z', true, '2026-10-19'], ['2026-10-18T17:00:00Z', false, '2026-10-18'],
-    ['2026-10-24T16:30:00Z', true, '2026-10-24'], ['2026-10-25T17:30:00Z', false, '2026-10-25'], ['2026-10-26T16:45:00Z', false, '2026-10-26'],
-    ['2026-10-26T17:29:00Z', false, '2026-10-26'], ['2026-10-26T17:30:00Z', true, '2026-10-26'], ['2026-10-26T22:59:00Z', true, '2026-10-26'],
-    ['2026-10-26T23:00:00Z', false, '2026-10-27'], ['2026-03-27T17:29:00Z', false, '2026-03-27'], ['2026-03-27T17:30:00Z', true, '2026-03-27'],
-    ['2026-03-30T16:30:00Z', true, '2026-03-30'], ['2026-03-30T16:29:00Z', false, '2026-03-30'], ['2026-10-19T03:00:00Z', false, '2026-10-19'],
+    ['2026-10-19T19:59:59Z', false, '2026-10-19'], ['2026-10-19T20:00:00Z', true, '2026-10-19'], ['2026-10-19T16:30:00Z', false, '2026-10-19'],
+    ['2026-10-18T20:00:00Z', false, '2026-10-18'], ['2026-10-24T20:00:00Z', true, '2026-10-24'], ['2026-10-25T21:00:00Z', false, '2026-10-25'],
+    ['2026-10-26T20:15:00Z', false, '2026-10-26'], ['2026-10-26T20:59:00Z', false, '2026-10-26'], ['2026-10-26T21:00:00Z', true, '2026-10-26'],
+    ['2026-10-26T22:59:00Z', true, '2026-10-26'], ['2026-10-26T23:00:00Z', false, '2026-10-27'], ['2026-03-27T20:59:00Z', false, '2026-03-27'],
+    ['2026-03-27T21:00:00Z', true, '2026-03-27'], ['2026-03-30T20:00:00Z', true, '2026-03-30'], ['2026-03-30T19:59:00Z', false, '2026-03-30'],
+    ['2026-10-19T03:00:00Z', false, '2026-10-19'],
   ];
   const sbagli = casi.filter(([s, a, d]) => f(s).aperta !== a || f(s).data !== d).map(([s]) => [s, f(s)]);
-  t('16 riepilogo: dalle 18:30 di Roma, lunedi\'-sabato; domenica no (anche il 25-10 del cambio d\'ora); 16:45Z del 26-10 = 17:45 CET chiuso; mezzanotte cambia giorno',
+  t('16 riepilogo: dalle 22:00 di Roma (le 18:30 di prima no), lunedi\'-sabato; domenica no (anche il 25-10 del cambio d\'ora); 20:15Z del 26-10 = 21:15 CET chiuso; mezzanotte cambia giorno',
     sbagli.length === 0, sbagli);
-  t('17 ts del riepilogo = le 18:30 di Roma di quel giorno (16:30Z d\'estate, 17:30Z d\'inverno)', f('2026-10-19T20:00:00Z').ts === T('2026-10-19T16:30:00Z')
-    && f('2026-10-26T20:00:00Z').ts === T('2026-10-26T17:30:00Z') && f('2026-03-30T20:00:00Z').ts === T('2026-03-30T16:30:00Z'));
+  t('17 ts del riepilogo = le 22:00 di Roma di quel giorno (20:00Z d\'estate, 21:00Z d\'inverno)', f('2026-10-19T21:00:00Z').ts === T('2026-10-19T20:00:00Z')
+    && f('2026-10-26T22:00:00Z').ts === T('2026-10-26T21:00:00Z') && f('2026-03-30T21:00:00Z').ts === T('2026-03-30T20:00:00Z'));
   const mz = (s) => new Date(mezzanotteRoma(T(s))).toISOString();
   t('18 mezzanotteRoma: giorno normale, giorno del cambio d\'ora (00:00 CEST anche alle 19:00 CET), giorno dopo, 29-03',
     mz('2026-10-18T21:05:00Z') === '2026-10-17T22:00:00.000Z' && mz('2026-10-25T18:00:00Z') === '2026-10-24T22:00:00.000Z' && mz('2026-10-25T00:30:00Z') === '2026-10-24T22:00:00.000Z'
@@ -1310,7 +1312,10 @@ console.log('\n== RF-1: la riga cs_sync letta nel buco del delete+insert di cs-s
 
 console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) ==');
 {
-  const ORA_Q = T('2026-10-19T17:00:00Z'), ctx = ctxDi(ORA_Q, { lead_outreach_ai_enabled: 'true' }), G = '2026-10-18T17:00:00.000Z';
+  // dal 09-11 il riepilogo parte alle 22:00: qui la sua finestra e' forzata aperta (come `forza_riepilogo` dell'anteprima)
+  // per tenere le letture delle 19:00; l'orario vero lo provano i casi 16 e 17
+  const ORA_Q = T('2026-10-19T17:00:00Z'), ctx0 = ctxDi(ORA_Q, { lead_outreach_ai_enabled: 'true' }), G = '2026-10-18T17:00:00.000Z';
+  const ctx = { ...ctx0, finestra: { ...ctx0.finestra, aperta: true } };
   const LETTURE = {
     // cs_urgente
     [`cs_events select id, conversation_id, azione, at, urgente:dettaglio->>urgente in:azione|["classify","urgenza_ricalcolo"] eq:dettaglio->>urgente|true gte:at|${G} at:desc limit:50`]:
@@ -1495,15 +1500,15 @@ console.log('\n== giro di un evento col client finto (F3, RF-4, RF-6, RF-3) ==')
   t('G6 RF-3: timeout -> la riga si chiude fallito coi tentativi al massimo (esito timeout, chiusa con .select(id)); il giro dopo non la rimanda',
     chiusure(scad.w).length === 2 && chiusure(scad.w).every((s) => s.payload.stato === 'fallito' && s.payload.tentativi === MAX_TENTATIVI && s.payload.esito.timeout === true && s.ritorna === 'id')
     && dopo.every((p) => p.azione === 'fermo' && p.motivo === 'tentativi_esauriti') && scad.r.esauriti === 2, { c: chiusure(scad.w).map((s) => s.payload), dopo: dopo.map((p) => p.motivo) });
-  // v4 (31-10): il riepilogo ha un istante sintetico (le 18:30 di Roma, quando diventa dovuto) e i numeri si calcolano
-  // all'invio: a una ripartenza resta fresco finche' la finestra e' aperta, anche oltre le 2 ore. Lunedi' 19-10 alle 21:00
-  // di Roma, ultimo giro alle 18:00: 2 ore e mezza dalle 18:30, quindi un fatto vero della stessa eta' sarebbe stallo (G2)
-  const ORA_RP = T('2026-10-19T19:00:00Z'), minRp = (m) => new Date(ORA_RP - m * 60000).toISOString();
+  // v4 (31-10): il riepilogo ha un istante sintetico (quando diventa dovuto) e i numeri si calcolano all'invio: a una
+  // ripartenza resta fresco finche' la finestra e' aperta. Dal 09-11 la finestra (22:00-23:59) dura meno delle 2 ore dello
+  // stallo, quindi la ripartenza lo manda comunque. Lunedi' 19-10 alle 23:30 di Roma, ultimo giro alle 20:30 (ripartenza)
+  const ORA_RP = T('2026-10-19T21:30:00Z'), minRp = (m) => new Date(ORA_RP - m * 60000).toISOString();
   const LETTURE_RP = ['shopify_orders', 'qromo_sales', 'change_log', 'loyalty_ugc', 'cs_conversations', 'v_lead_outreach', 'v_products_todo', 'v_lead_inbound', 'shipping_status', 'loyalty_visits'];
   const wRp = mondo({ risposte: (q) => (q.op === 'select' && LETTURE_RP.includes(q.table) ? (q.head ? { count: 1, error: null } : { data: [], error: null }) : undefined) });
   inviate.length = 0;
   const rRp = await MI.giroEvento(wRp.sb, evRiga('riepilogo', { baseline_at: minRp(3000), ultimo_giro_at: minRp(180) }), ctxDi(ORA_RP), { invii: 20, scade: Infinity }, () => 0);
-  t('G7 v4 riepilogo a una ripartenza alle 21:00 (2 ore e mezza dalle 18:30) -> parte a tutti e tre, niente stallo',
+  t('G7 v4 riepilogo a una ripartenza alle 23:30 (ultimo giro 3 ore prima) -> parte a tutti e tre, niente stallo',
     isDeepStrictEqual(inviate.map((m) => `${m.titolo}:${m.chi}`), ['Riepilogo di oggi:Ale', 'Riepilogo di oggi:Bene', 'Riepilogo di oggi:Ginevra']) && rRp.baseline === true && rRp.persi_stallo === 0
     && salti(wRp).length === 0 && rRp.inviati === 3, { i: inviate.map((m) => m.chi), r: rRp, s: salti(wRp) });
 }
