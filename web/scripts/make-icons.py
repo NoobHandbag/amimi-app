@@ -1,110 +1,154 @@
-import os, base64
+# Icone della PWA da Mimi' (richiesta di Dan del 09-11-2026: via le icone oro "amimi'", al loro posto Mimi').
+#
+# Sorgente: la Mimi' della pagina premi (supabase/functions/loyalty-page/src/mimi.webp, 498x540 con trasparenza).
+# Scrive in web/public: icon-512.png e icon-192.png (purpose "any", quadrato tondo con gli angoli trasparenti, la 192
+# e' anche l'icona grande delle notifiche), icon-180.png (apple-touch: pieno, iOS arrotonda da se'),
+# icon-maskable-512.png (pieno, Mimi' dentro il cerchio sicuro dell'80%), favicon.svg (PNG 128 incorporato) e
+# badge-96.png (icona piccola delle notifiche Android: conta solo l'alfa, sagoma bianca con gli occhiali scavati).
+#
+#   python -I web/scripts/make-icons.py [cartella-anteprima]
+#
+# Con la cartella d'anteprima scrive anche _contact_sheet.png (icone alle misure vere su fondi chiari e scuri).
+# Solo numpy e Pillow.
+import base64
+import io
+import os
+import sys
+
 import numpy as np
-from PIL import Image
-from scipy import ndimage
+from PIL import Image, ImageDraw, ImageFilter
 
-SRC = r"C:/Users/super/Downloads/Gemini_Generated_Image_lfacn4lfacn4lfac.png"
-OUT = os.path.dirname(os.path.abspath(__file__))
-PREV = os.path.join(OUT, "preview")
-os.makedirs(PREV, exist_ok=True)
+WEB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(WEB, "..", "supabase", "functions", "loyalty-page", "src", "mimi.webp")
+PUB = os.path.join(WEB, "public")
 
-im = Image.open(SRC).convert("RGBA")
-a = np.asarray(im).astype(np.int16)
-rgb = a[..., :3]
-sat = rgb.max(2) - rgb.min(2)
+BG = (225, 10, 10)        # --red della pagina premi, il rosso di Mimi'
+RAGGIO = 0.22             # angoli del quadrato tondo, come le icone di iOS
+ALTEZZA = 0.84            # Mimi' (manico compreso) sull'altezza dell'icona
+ALTEZZA_MASKABLE = 0.64   # i due angoli in basso della borsa restano dentro il cerchio sicuro (raggio 0.40)
+PUNTO_DENTRO = (250, 400) # un pixel del corpo della borsa nella sorgente
+RIGA_OCCHIALI = 366       # una riga della sorgente che attraversa le lenti
 
-# 1) icon = saturated (pink/gold/beige) region -> excludes neutral checkerboard + gray shadow
-colored = sat >= 22
-colored = ndimage.binary_closing(colored, iterations=2)          # bridge tiny gaps
-icon = ndimage.binary_fill_holes(colored)                        # fill cream interior holes
-# keep only the largest connected component (the icon)
-lbl, n = ndimage.label(icon)
-if n > 1:
-    sizes = ndimage.sum(np.ones_like(lbl), lbl, range(1, n + 1))
-    icon = lbl == (1 + int(np.argmax(sizes)))
 
-ys, xs = np.where(icon)
-x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
-print("icon bbox:", x0, x1, y0, y1, "w", x1 - x0 + 1, "h", y1 - y0 + 1)
+def carica():
+    a = np.asarray(Image.open(SRC).convert("RGBA")).astype(np.int16)
+    al = a[..., 3]
+    a[..., 3] = np.where(al > 20, al, 0)  # via l'alone quasi trasparente attorno all'adesivo
+    tutta = Image.fromarray(a.astype(np.uint8), "RGBA")
+    # la borsa e' il pezzo connesso che contiene PUNTO_DENTRO; le due scintille sono pezzi a parte
+    m = Image.fromarray(((a[..., 3] > 0) * 255).astype(np.uint8)).copy()
+    ImageDraw.floodfill(m, PUNTO_DENTRO, 128)
+    borsa = np.asarray(m) == 128
+    return tutta, a, borsa
 
-# crop to a centered square
-w, h = x1 - x0 + 1, y1 - y0 + 1
-side = max(w, h)
-cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-sx0, sy0 = cx - side // 2, cy - side // 2
-sx1, sy1 = sx0 + side, sy0 + side
-# clamp
-sx0 = max(0, sx0); sy0 = max(0, sy0)
-sx1 = min(a.shape[1], sx1); sy1 = min(a.shape[0], sy1)
 
-crop_rgb = rgb[sy0:sy1, sx0:sx1].astype(np.uint8)
-crop_mask = icon[sy0:sy1, sx0:sx1]
+def riempi_buchi(mask):
+    m = Image.fromarray((mask * 255).astype(np.uint8)).copy()
+    ImageDraw.floodfill(m, (0, 0), 128)
+    return np.asarray(m) != 128
 
-# 2) replicate icon color outward into corners (kills gray halo + gives opaque fill)
-solid = ndimage.binary_erosion(crop_mask, iterations=1)
-# nearest opaque pixel index for every pixel
-idx = ndimage.distance_transform_edt(~solid, return_distances=False, return_indices=True)
-filled_rgb = crop_rgb[tuple(idx)]  # every pixel now carries nearest icon color
 
-# 3) soft anti-aliased alpha from the mask
-alpha_soft = ndimage.gaussian_filter(crop_mask.astype(np.float32) * 255.0, sigma=1.1)
-alpha_soft = np.clip(alpha_soft, 0, 255).astype(np.uint8)
+def quadrato_tondo(size):
+    big = Image.new("L", (size * 4, size * 4), 0)
+    ImageDraw.Draw(big).rounded_rectangle((0, 0, size * 4 - 1, size * 4 - 1), radius=int(size * 4 * RAGGIO), fill=255)
+    return big.resize((size, size), Image.LANCZOS)
 
-MASTER_T = np.dstack([filled_rgb, alpha_soft])                      # transparent rounded corners
-MASTER_O = np.dstack([filled_rgb, np.full(alpha_soft.shape, 255, np.uint8)])  # opaque full-bleed
 
-master_t = Image.fromarray(MASTER_T, "RGBA")
-master_o = Image.fromarray(MASTER_O, "RGBA")
-print("master size:", master_t.size)
+def componi(art, size, altezza, tondo):
+    crop = art.crop(art.getbbox())
+    h = int(round(size * altezza))
+    w = int(round(crop.width * h / crop.height))
+    crop = crop.resize((w, h), Image.LANCZOS)
+    tela = Image.new("RGBA", (size, size), BG + (255,))
+    tela.alpha_composite(crop, ((size - w) // 2, (size - h) // 2))
+    if tondo:
+        tela.putalpha(quadrato_tondo(size))
+    return tela
 
-def save_t(size, path):
-    master_t.resize((size, size), Image.LANCZOS).save(path)
 
-def save_o(size, path):
-    master_o.convert("RGB").resize((size, size), Image.LANCZOS).save(path)
+def badge(a, borsa, size):
+    rgb = a[..., :3]
+    # occhiali: il pezzo rosso scuro che passa per RIGA_OCCHIALI, preso solo all'interno della borsa (bordo bianco e
+    # contorno restano pieni, cosi' la sagoma non ha tacche); i riflessi bianchi delle lenti si riempiono
+    scuro = (rgb[..., 0] < 215) & (rgb[..., 1] < 80) & (rgb[..., 2] < 80)
+    interno = np.asarray(Image.fromarray((borsa * 255).astype(np.uint8)).filter(ImageFilter.MinFilter(29))) > 0
+    cand = scuro & interno
+    xs = np.where(cand[RIGA_OCCHIALI])[0]
+    seme = (int(xs[np.argmin(np.abs(xs - borsa.shape[1] // 2))]), RIGA_OCCHIALI)
+    m = Image.fromarray((cand * 255).astype(np.uint8)).copy()
+    ImageDraw.floodfill(m, seme, 128)
+    occhiali = riempi_buchi(np.asarray(m) == 128)
+    sagoma = borsa & ~occhiali
+    alfa = np.where(sagoma, a[..., 3], 0).astype(np.uint8)
+    bianco = np.dstack([np.full_like(alfa, 255)] * 3 + [alfa])
+    art = Image.fromarray(bianco, "RGBA")
+    crop = art.crop(art.getbbox())
+    lato = int(round(size * 0.92))
+    cw = int(round(crop.width * lato / crop.height))
+    crop = crop.resize((cw, lato), Image.LANCZOS)
+    tela = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    tela.alpha_composite(crop, ((size - cw) // 2, (size - lato) // 2))
+    return tela
 
-def save_maskable(size, path, scale=0.90):
-    # solid pink background sampled from icon center-bottom (dominant leather pink)
-    inner = int(round(size * scale))
-    art = master_o.resize((inner, inner), Image.LANCZOS)
-    bg_rgb = tuple(int(v) for v in np.median(crop_rgb[crop_mask].reshape(-1, 3), axis=0))
-    canvas = Image.new("RGB", (size, size), bg_rgb)
-    off = (size - inner) // 2
-    canvas.paste(art, (off, off))
-    canvas.save(path)
-    return bg_rgb
 
-# ---- write the deliverables into preview/ ----
-save_t(512, os.path.join(PREV, "icon-512.png"))
-save_t(192, os.path.join(PREV, "icon-192.png"))
-save_o(180, os.path.join(PREV, "icon-180.png"))
-bg = save_maskable(512, os.path.join(PREV, "icon-maskable-512.png"))
-print("maskable bg pink:", bg)
+def favicon_svg(icona128):
+    buf = io.BytesIO()
+    icona128.save(buf, "PNG", optimize=True)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">'
+            f'<image width="128" height="128" href="data:image/png;base64,{b64}"/></svg>\n')
 
-# favicon.svg embedding a transparent 128px PNG
-fav = os.path.join(PREV, "_favicon128.png")
-master_t.resize((128, 128), Image.LANCZOS).save(fav)
-b64 = base64.b64encode(open(fav, "rb").read()).decode()
-svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">'
-       f'<image width="128" height="128" href="data:image/png;base64,{b64}"/></svg>\n')
-open(os.path.join(PREV, "favicon.svg"), "w", encoding="utf-8").write(svg)
-print("favicon.svg bytes:", len(svg))
 
-# contact sheet for quick visual QA
-sheet = Image.new("RGBA", (512 * 2 + 30, 512 * 2 + 30), (128, 128, 128, 255))
-sheet.paste(master_t.resize((512, 512)), (0, 0), master_t.resize((512, 512)))
-sheet.paste(Image.open(os.path.join(PREV, "icon-maskable-512.png")).convert("RGBA"), (522, 0))
-sheet.paste(master_o.resize((512, 512)).convert("RGBA"), (0, 522))
-sheet.paste(master_t.resize((180, 180)), (522, 522), master_t.resize((180, 180)))
-sheet.convert("RGB").save(os.path.join(PREV, "_contact_sheet.png"))
-# fringe check: transparent icon-512 composited on black and white
-i512 = Image.open(os.path.join(PREV, "icon-512.png")).convert("RGBA")
-check = Image.new("RGB", (512 * 2 + 20, 512), (255, 255, 255))
-blk = Image.new("RGBA", (512, 512), (0, 0, 0, 255)); blk.alpha_composite(i512)
-wht = Image.new("RGBA", (512, 512), (255, 255, 255, 255)); wht.alpha_composite(i512)
-check.paste(blk.convert("RGB"), (0, 0)); check.paste(wht.convert("RGB"), (532, 0))
-check.save(os.path.join(PREV, "_fringe_check.png"))
+def main():
+    tutta, a, borsa = carica()
+    any512 = componi(tutta, 512, ALTEZZA, True)
+    out = {
+        "icon-512.png": any512,
+        "icon-192.png": componi(tutta, 192, ALTEZZA, True),
+        "icon-180.png": componi(tutta, 180, ALTEZZA, False).convert("RGB"),
+        "icon-maskable-512.png": componi(tutta, 512, ALTEZZA_MASKABLE, False).convert("RGB"),
+        "badge-96.png": badge(a, borsa, 96),
+    }
+    for nome, img in out.items():
+        img.save(os.path.join(PUB, nome), optimize=True)
+    fav = componi(tutta, 128, ALTEZZA, True)
+    with open(os.path.join(PUB, "favicon.svg"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(favicon_svg(fav))
+    for nome in list(out) + ["favicon.svg"]:
+        print(nome, os.path.getsize(os.path.join(PUB, nome)))
 
-print("done ->", PREV)
-for f in sorted(os.listdir(PREV)):
-    print("  ", f, os.path.getsize(os.path.join(PREV, f)))
+    if len(sys.argv) > 1:
+        prev = sys.argv[1]
+        os.makedirs(prev, exist_ok=True)
+        foglio = Image.new("RGB", (1180, 700), (110, 110, 110))
+        foglio.paste(any512, (20, 20), any512)
+        mk = out["icon-maskable-512.png"].convert("RGBA")
+        cerchio = Image.new("L", (512, 512), 0)
+        ImageDraw.Draw(cerchio).ellipse((51, 51, 461, 461), fill=255)
+        foglio.paste(mk.resize((256, 256), Image.LANCZOS), (560, 20))
+        mk_c = mk.copy()
+        mk_c.putalpha(cerchio)
+        foglio.paste(mk_c.resize((256, 256), Image.LANCZOS), (840, 20), mk_c.resize((256, 256), Image.LANCZOS))
+        for k, barra in enumerate(((255, 255, 255), (40, 41, 45))):
+            y0 = 560 + k * 70
+            ImageDraw.Draw(foglio).rectangle((0, y0, 1180, y0 + 64), fill=barra)
+            x = 20
+            for s in (48, 32, 16):
+                ic = fav.resize((s, s), Image.LANCZOS)
+                foglio.paste(ic, (x, y0 + 8), ic)
+                x += s + 24
+            for s in (96, 48, 24):
+                b = out["badge-96.png"].resize((s, s), Image.LANCZOS)
+                tinta = Image.new("RGBA", (s, s), (90, 90, 90, 255) if k == 0 else (255, 255, 255, 255))
+                tinta.putalpha(b.getchannel("A"))
+                foglio.paste(tinta, (x + 40, y0 + 4 + (56 - s) // 2 if s < 56 else y0 - 16), tinta)
+                x += s + 30
+        ap = out["icon-180.png"]
+        foglio.paste(ap, (560, 300))
+        foglio.paste(out["icon-192.png"], (760, 300), out["icon-192.png"])
+        foglio.save(os.path.join(prev, "_contact_sheet.png"))
+        print("anteprima ->", os.path.join(prev, "_contact_sheet.png"))
+
+
+if __name__ == "__main__":
+    main()

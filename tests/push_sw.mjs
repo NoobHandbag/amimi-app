@@ -127,7 +127,7 @@ console.log('\n== 2. push ==');
   eq('dichiarativa: una notifica dentro waitUntil', [n, r.mostrate.length], [1, 1]);
   const m = r.mostrate[0];
   eq('dichiarativa: titolo', m.title, 'Controllo contabile');
-  eq('dichiarativa: opzioni', m.opts, { body: '2 errori nuovi', lang: 'it', icon: SCOPE + 'icon-192.png', data: { url: SCOPE + '#notifiche' } });
+  eq('dichiarativa: opzioni', m.opts, { body: '2 errori nuovi', lang: 'it', icon: SCOPE + 'icon-192.png', badge: SCOPE + 'badge-96.png', data: { url: SCOPE + '#notifiche' } });
   check('dichiarativa: niente tag se non c\'e\'', !('tag' in m.opts));
 }
 {
@@ -136,7 +136,7 @@ console.log('\n== 2. push ==');
   const n = await push(r, JSON.stringify({ web_push: 8030, mutable: true, notification: { title: 'Controllo contabile', body: '2 errori nuovi', navigate: SCOPE + '#notifiche', lang: 'it' } }));
   eq('mutable nei dati (Chrome): una notifica dentro waitUntil', [n, r.mostrate.length], [1, 1]);
   eq('mutable nei dati (Chrome): titolo e opzioni', [r.mostrate[0].title, r.mostrate[0].opts],
-    ['Controllo contabile', { body: '2 errori nuovi', lang: 'it', icon: SCOPE + 'icon-192.png', data: { url: SCOPE + '#notifiche' } }]);
+    ['Controllo contabile', { body: '2 errori nuovi', lang: 'it', icon: SCOPE + 'icon-192.png', badge: SCOPE + 'badge-96.png', data: { url: SCOPE + '#notifiche' } }]);
 }
 {
   // iOS 18.4+ col payload mutable: event.data null, la notifica dichiarativa in event.notification (B1 Gate 2)
@@ -144,7 +144,7 @@ console.log('\n== 2. push ==');
   const n = await pushDichiarativa(r, NOTIFICA_IOS);
   eq('iOS mutable (dati null): una notifica dentro waitUntil', [n, r.mostrate.length], [1, 1]);
   eq('iOS mutable (dati null): titolo e testo veri, url in data.url', [r.mostrate[0].title, r.mostrate[0].opts],
-    ['Controllo contabile', { body: '2 errori nuovi', lang: 'it', icon: SCOPE + 'icon-192.png', data: { url: SCOPE + '#notifiche' } }]);
+    ['Controllo contabile', { body: '2 errori nuovi', lang: 'it', icon: SCOPE + 'icon-192.png', badge: SCOPE + 'badge-96.png', data: { url: SCOPE + '#notifiche' } }]);
   check('iOS mutable: niente navigate fra le opzioni (notificationclick deve partire)', !('navigate' in r.mostrate[0].opts), JSON.stringify(r.mostrate[0].opts));
   check('iOS mutable: tag vuoto della notifica non passato', !('tag' in r.mostrate[0].opts));
 }
@@ -181,6 +181,26 @@ for (const [nome, testo] of [['push senza dati', null], ['JSON numero', '42'], [
   const n = await push(r, testo);
   check(`${nome}: notifica generica dentro waitUntil`, n === 1 && r.mostrate.length === 1 && r.mostrate[0].title === GENERICO && r.mostrate[0].opts.body.length > 0,
     JSON.stringify(r.mostrate));
+}
+{
+  // le icone sono Mimi' dal 09-11 (web/scripts/make-icons.py): ogni PNG nominato da sw.js, manifest e index.html esiste
+  // in web/public alla misura che dichiara; un nome sbagliato darebbe la notifica senza icona, senza errori
+  const png = (nome) => {
+    try {
+      const b = readFileSync(new URL('../web/public/' + nome, import.meta.url));
+      return b.toString('ascii', 1, 4) === 'PNG' ? [b.readUInt32BE(16), b.readUInt32BE(20)] : null;
+    } catch { return null; }
+  };
+  const swIcone = [...SRC.matchAll(/scope \+ '([^']+\.png)'/g)].map((m) => m[1]);
+  eq('sw.js: icona e badge delle notifiche', swIcone, ['icon-192.png', 'badge-96.png']);
+  eq('sw.js: misure di icona e badge', swIcone.map(png), [[192, 192], [96, 96]]);
+  const man = JSON.parse(leggi('web/public/manifest.webmanifest'));
+  for (const ic of man.icons) {
+    const [w, h] = ic.sizes.split('x').map(Number);
+    eq(`manifest: ${ic.src} (${ic.purpose}) esiste a ${ic.sizes}`, png(ic.src.replace('/amimi-app/', '')), [w, h]);
+  }
+  const apple = /<link rel="apple-touch-icon" href="\/([^"]+)"/.exec(leggi('web/index.html'));
+  eq('index.html: apple-touch-icon a 180', apple && png(apple[1]), [180, 180]);
 }
 
 console.log('\n== 3. notificationclick ==');

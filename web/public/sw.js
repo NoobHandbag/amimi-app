@@ -65,7 +65,9 @@ self.addEventListener('push', (event) => {
   const scope = self.registration.scope;
   // MAI navigate fra le opzioni: una notifica con navigate fa navigare il browser da se' e notificationclick non parte
   // (Notifications spec, activation steps), quindi niente cambio di scheda con go() ad app aperta. L'URL va in data.url.
-  const opzioni = { body: p.body, lang: 'it', icon: scope + 'icon-192.png', data: { url: p.url } };
+  // icon e badge sono Mimi' (09-11, web/scripts/make-icons.py); il badge e' l'icona piccola della barra di stato di
+  // Android, che usa solo l'alfa. iOS li ignora e mostra l'icona della PWA
+  const opzioni = { body: p.body, lang: 'it', icon: scope + 'icon-192.png', badge: scope + 'badge-96.png', data: { url: p.url } };
   if (p.tag) opzioni.tag = p.tag;
   event.waitUntil(self.registration.showNotification(p.title, opzioni));
 });
