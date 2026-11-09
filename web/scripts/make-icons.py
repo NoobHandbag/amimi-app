@@ -74,6 +74,9 @@ def badge(a, borsa, size):
     interno = np.asarray(Image.fromarray((borsa * 255).astype(np.uint8)).filter(ImageFilter.MinFilter(29))) > 0
     cand = scuro & interno
     xs = np.where(cand[RIGA_OCCHIALI])[0]
+    if not len(xs):
+        sys.exit(f"RIGA_OCCHIALI={RIGA_OCCHIALI} non attraversa gli occhiali: la sorgente e' cambiata, rileggi"
+                 " RIGA_OCCHIALI e PUNTO_DENTRO sulla nuova mimi.webp")
     seme = (int(xs[np.argmin(np.abs(xs - borsa.shape[1] // 2))]), RIGA_OCCHIALI)
     m = Image.fromarray((cand * 255).astype(np.uint8)).copy()
     ImageDraw.floodfill(m, seme, 128)

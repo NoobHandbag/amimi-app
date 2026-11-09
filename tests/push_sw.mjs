@@ -5,7 +5,8 @@
 //   2. push: forma Declarative Web Push e forma semplice, SEMPRE dentro event.waitUntil(showNotification), titolo
 //      generico su dati rotti o assenti (Safari revoca l'iscrizione se una push non mostra niente); la notifica
 //      dichiarativa di iOS 18.4+ (event.notification, event.data null col payload mutable) letta prima dei dati; MAI
-//      navigate fra le opzioni (salterebbe notificationclick);
+//      navigate fra le opzioni (salterebbe notificationclick); icona e badge (Mimi', 09-11) esistono in web/public alla
+//      misura dichiarata, come le icone del manifest e l'apple-touch-icon;
 //   3. notificationclick: URL fuori scope -> radice dell'app; finestra dell'app aperta -> focus e messaggio
 //      {tipo:'amimi-apri', hash}; nessuna finestra (o solo il Villaggio a se') -> openWindow.
 //   5. sorgente del web (Gate 3 del 17-10): gli hash di tabDaHash (lib/push.ts) sono quelli del link diretto in App.tsx,
