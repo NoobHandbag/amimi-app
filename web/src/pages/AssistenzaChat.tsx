@@ -77,13 +77,16 @@ export function ChatThread({ c, msgs, ident, convs, onRicarica, onApri, onUscita
 
   const ricarica = async () => { await onRicarica(); await carica(); };
   const azione = async (fn: () => Promise<unknown>, ok: string) => {
-    setBusy(true); setErr('');
-    try { await fn(); setEsito(ok); showToast(ok); await ricarica(); } catch (x) { setErr((x as Error).message); }
+    setBusy(true); setErr(''); setEsito('');
+    try { await fn(); setEsito(ok); showToast(ok); await ricarica(); }
+    catch (x) { setErr((x as Error).message); if (/chiusa/i.test((x as Error).message)) await carica(); }
     setBusy(false);
   };
 
   if (!sid) return <div className="err">Chiave della chat non leggibile: {c.gmail_thread_id}</div>;
   const chiusa = sess?.stato === 'chiusa';
+  // una chat spostata nel Rumore resta nascosta anche se qualcuno le risponde: prima si riporta in coda (Gate 2, C13)
+  const nelRumore = c.canale === 'rumore';
   const verificata = !!sess?.shopify_customer_id;
   const chi = NOMI[ident] ?? ident;
   const stessaEmail = (convs ?? []).filter((x) => x.id !== c.id && x.id !== card?.id && x.canale !== 'rumore'
@@ -95,11 +98,12 @@ export function ChatThread({ c, msgs, ident, convs, onRicarica, onApri, onUscita
     try {
       const r = await chatRispondi(sid, testo, ident, conferma.sendKey);
       setConferma(null); setTesto('');
-      const esito = r.email === 'errore' ? `⚠ Risposta in chat salvata, ma l'email non è partita: ${r.email_errore ?? ''}` : `✓ Risposta inviata in chat. ${ESITO_EMAIL[r.email] ?? ''}`;
+      const esito = (r.email === 'errore' ? `⚠ Risposta in chat salvata, ma l'email non è partita: ${r.email_errore ?? ''}` : `✓ Risposta inviata in chat. ${ESITO_EMAIL[r.email] ?? ''}`)
+        + (r.proiezione ? '' : ' Qui compare entro 2 minuti: non rimandarla.');
       const detto = r.ripetuta ? 'Era già stata inviata: niente doppioni.' : esito;
       setEsito(detto); showToast(detto);
       await ricarica();
-    } catch (x) { setErr((x as Error).message); }
+    } catch (x) { setErr((x as Error).message); if (/chiusa/i.test((x as Error).message)) { setConferma(null); await carica(); } }
     setBusy(false);
   };
   const apriCancella = async () => {
@@ -127,7 +131,7 @@ export function ChatThread({ c, msgs, ident, convs, onRicarica, onApri, onUscita
   return (
     <>
       <div className="cs-actions-row">
-        {sess && (sess.stato === 'attesa_persona' || sess.stato === 'bot') && (
+        {sess && !nelRumore && (sess.stato === 'attesa_persona' || sess.stato === 'bot') && (
           <button className="cs-btn cs-ghost" disabled={busy} onClick={() => azione(() => chatAzione('prendo_io', sid, ident), `Chat presa da ${chi}`)} type="button">✋ Prendo io</button>
         )}
         {sess && !chiusa && (
@@ -139,11 +143,13 @@ export function ChatThread({ c, msgs, ident, convs, onRicarica, onApri, onUscita
           <button className="cs-btn cs-ghost cs-morebtn" onClick={() => setMore((o) => !o)} type="button" aria-label="Altre azioni della chat" aria-expanded={more}>⋯</button>
           {more && (
             <div className="cs-moremenu">
-              <button type="button" disabled={busy} onClick={() => { void rumore(); }}>🚫 Non è un cliente</button>
-              <div className="cs-note" style={{ margin: '2px 8px 6px', textAlign: 'left' }}>Sposta la chat nel Rumore. Non blocca nessun mittente.</div>
+              {!nelRumore && <>
+                <button type="button" disabled={busy} onClick={() => { void rumore(); }}>🚫 Non è un cliente</button>
+                <div className="cs-note" style={{ margin: '2px 8px 6px', textAlign: 'left' }}>Sposta la chat nel Rumore. Non blocca nessun mittente.</div>
+              </>}
               <button type="button" disabled={busy} onClick={() => {
                 setMore(false);
-                if (window.confirm('Revoco i link "Continua la chat"? La cliente non potrà più riaprire la chat dal sito o dalle email; le prossime email partono senza link. Serve per un’email sbagliata o un link inoltrato.')) void azione(() => chatAzione('revoca_accessi', sid, ident), 'Accessi revocati');
+                if (window.confirm('Revoco i link "Continua la chat"? Chi ha il link non potrà più riaprire la chat dal sito o dalle email; le prossime email partono senza link. Serve per un link inoltrato. Se l’email è sbagliata, le risposte andrebbero comunque a quell’indirizzo: chiudi la chat e non rispondere.')) void azione(() => chatAzione('revoca_accessi', sid, ident), 'Accessi revocati');
               }}>🔒 Revoca accessi</button>
               <button type="button" disabled={busy} onClick={() => { void apriCancella(); }}>🗑 Cancella dati…</button>
               <div className="cs-note" style={{ margin: '2px 8px 6px', textAlign: 'left' }}>Su richiesta della cliente (GDPR): prima un’anteprima, poi la conferma.</div>
@@ -154,7 +160,8 @@ export function ChatThread({ c, msgs, ident, convs, onRicarica, onApri, onUscita
 
       <div className="cs-banner cs-chatbanner">
         <b>💬 Chat del sito</b>{sess ? ` · ${STATO_CHAT[sess.stato] ?? sess.stato}${sess.preso_da ? ' · ' + sess.preso_da : ''}` : ''}{sess?.prova ? ' · PROVA' : ''}
-        <div style={{ marginTop: 4 }}>Ogni risposta compare nella chat e parte <b>subito per email</b> da info@amimi.it a {c.customer_email || 'la cliente'} (con il link “Continua la chat”).</div>
+        <div style={{ marginTop: 4 }}>Ogni risposta compare nella chat e parte <b>subito per email</b> da info@amimi.it a {c.customer_email || 'la cliente'} (col link “Continua la chat”, salvo accessi revocati).</div>
+        {nelRumore && <div className="cs-lint" style={{ marginTop: 8 }}>Questa chat è nel Rumore: riportala in coda (“È un cliente”) prima di rispondere, o resterebbe nascosta.</div>}
         {sess && !verificata && (
           <div className="cs-lint" style={{ marginTop: 8 }}>⚠️ <b>Email non verificata</b>: l’ha scritta chi ha aperto la chat, senza login. Niente dati d’ordine o personali nella risposta.</div>
         )}
@@ -175,7 +182,10 @@ export function ChatThread({ c, msgs, ident, convs, onRicarica, onApri, onUscita
       {msgs !== null && msgs.length > 0 && <div className="ds-seclb" style={{ marginTop: 12 }}>Conversazione</div>}
       {msgs === null ? <div className="muted center" style={{ padding: 20 }}>Carico messaggi…</div> :
         msgs.length === 0 ? <div className="muted center" style={{ padding: 20 }}>La cliente ha chiesto una persona senza scrivere.</div> :
-          msgs.map((m) => {
+          [...msgs].sort((a, b) => {
+            const sa = emails[(a.gmail_message_id ?? '').replace(/^chat:/, '')]?.seq, sb = emails[(b.gmail_message_id ?? '').replace(/^chat:/, '')]?.seq;
+            return sa !== undefined && sb !== undefined ? sa - sb : (a.sent_at ?? '').localeCompare(b.sent_at ?? '');
+          }).map((m) => {
             const out = m.direction === 'out';
             const idChat = (m.gmail_message_id ?? '').replace(/^chat:/, '');
             const e = out && m.is_via_tool ? etichettaEmail(emails[idChat]) : null;
@@ -197,7 +207,9 @@ export function ChatThread({ c, msgs, ident, convs, onRicarica, onApri, onUscita
           })}
 
       <div className="cs-draftbox">
-        {chiusa ? (
+        {nelRumore && !chiusa ? (
+          <div className="cs-note" style={{ textAlign: 'left' }}>Chat nel Rumore: per rispondere riportala prima in coda.</div>
+        ) : chiusa ? (
           <div className="cs-note" style={{ textAlign: 'left' }}>Chat chiusa {sess?.chiusa_at ? 'il ' + fmt(sess.chiusa_at) : ''}: non riceve più risposte. Se la cliente riscrive dal sito apre una chat nuova; se risponde all’email, la trovi come card email.</div>
         ) : (
           <>
@@ -208,7 +220,7 @@ export function ChatThread({ c, msgs, ident, convs, onRicarica, onApri, onUscita
               <button className="cs-btn cs-primary" type="button" disabled={busy || !testo.trim() || !sess}
                 onClick={() => { setErr(''); setConferma({ sendKey: crypto.randomUUID() }); }}>💬 Invia in chat…</button>
             </div>
-            <div className="cs-note">Niente bozze AI sulle chat (il testo resta fra noi e il fornitore del bot). Rispondi entro 2 giorni lavorativi: dopo 24 e 48 ore partono i promemoria.</div>
+            <div className="cs-note">Niente bozze AI sulle chat (il testo resta fra noi e il fornitore del bot). Alla cliente abbiamo detto “di solito entro 2 giorni lavorativi”; se nessuno risponde partono i promemoria (ore nella scheda Chat del sito).</div>
           </>
         )}
         {conferma && (
@@ -240,11 +252,12 @@ export function ChatThread({ c, msgs, ident, convs, onRicarica, onApri, onUscita
                   <input type="checkbox" checked={conCard} onChange={(e) => setConCard(e.target.checked)} /> Cancella anche la card email della risposta della cliente
                 </label>
               )}
-              {cancella.promemoria.map((p, i) => <div key={i} className="cs-note" style={{ textAlign: 'left' }}>{p}</div>)}
+              {cancella.trovate === 0 && <div className="cs-note" style={{ textAlign: 'left' }}>Nessuna chat trovata: forse è già stata cancellata.</div>}
+              {cancella.trovate > 0 && cancella.promemoria.map((p, i) => <div key={i} className="cs-note" style={{ textAlign: 'left' }}>{p}</div>)}
               {err && <div className="err" style={{ marginTop: 10 }}>{err}</div>}
               <div className="cs-send-actions">
-                <button className="cs-btn cs-ghost" onClick={() => setCancella(null)} disabled={busy} type="button">Annulla</button>
-                <button className="cs-btn cs-primary" onClick={() => { void confermaCancella(); }} disabled={busy} type="button">{busy ? 'Cancello…' : 'Cancella per sempre'}</button>
+                <button className="cs-btn cs-ghost" onClick={() => setCancella(null)} disabled={busy} type="button">{cancella.trovate === 0 ? 'Chiudi' : 'Annulla'}</button>
+                {cancella.trovate > 0 && <button className="cs-btn cs-primary" onClick={() => { void confermaCancella(); }} disabled={busy} type="button">{busy ? 'Cancello…' : 'Cancella per sempre'}</button>}
               </div>
             </div>
           </div>
@@ -263,6 +276,7 @@ const TESTI: [string, string, string][] = [
   ['chat_testo_attesa', 'Attesa (in orario)', 'Quando la cliente chiede una persona. {email} = la sua email mascherata.'],
   ['chat_testo_fuori_orario', 'Attesa (fuori orario)', 'Come sopra, fuori dagli orari: senza tempi promessi.'],
 ];
+const CHIAVI_TESTO_SCHEDA = TESTI.map(([k]) => k);
 const leggiJson = <T,>(v: string | undefined, riserva: T): T => { try { return v ? (JSON.parse(v) as T) : riserva; } catch { return riserva; } };
 
 export function ChatScheda({ ident, mostraProve, setMostraProve }: { ident: string; mostraProve: boolean; setMostraProve: (v: boolean) => void }) {
@@ -293,16 +307,55 @@ export function ChatScheda({ ident, mostraProve, setMostraProve }: { ident: stri
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void carica(); }, []);
 
+  // Gate 2, B3: dopo un salvataggio si aggiorna SOLO la chiave salvata (col valore canonico della risposta); rileggere
+  // tutto cancellerebbe le modifiche non ancora salvate nelle altre schede
   const salva = async (chiave: string, valore: unknown, nome: string) => {
     setBusy(true); setErr(''); setMsg('');
-    try { const r = await chatImposta(chiave, valore, ident); setMsg(r.invariato ? `${nome}: niente da cambiare` : `${nome}: salvato ✓`); await carica(); }
-    catch (x) { setErr(`${nome}: ${(x as Error).message}`); }
+    try {
+      const r = await chatImposta(chiave, valore, ident);
+      const v = r.invariato ? imp?.valori[chiave] ?? '' : r.valore;
+      setImp((p) => (p ? { ...p, valori: { ...p.valori, [chiave]: v } } : p));
+      if (chiave === 'chat_orari') { const o = leggiJson<Orari | null>(v, null); if (o) { setOrari(o); setChiusure(o.chiusure.join(', ')); } }
+      if (chiave === 'chat_sollecito_ore') { const p = v.split(','); setOre([p[0] ?? '', p[1] ?? '']); }
+      if (CHIAVI_TESTO_SCHEDA.includes(chiave)) setTesti((t) => ({ ...t, [chiave]: leggiJson(v, t[chiave]) }));
+      setMsg(r.invariato ? `${nome}: niente da cambiare` : `${nome}: salvato ✓`);
+    } catch (x) { setErr(`${nome}: ${(x as Error).message}`); }
     setBusy(false);
   };
   const salvaFaq = async (id: number) => {
     setBusy(true); setErr(''); setMsg('');
-    try { await chatConoscenza(id, faq[id], ident); setMsg('Risposta salvata ✓'); await carica(); } catch (x) { setErr((x as Error).message); }
+    // solo i campi pieni: un testo inglese vuoto non blocca il salvataggio di "attiva" (Gate 2, C5)
+    const f = faq[id];
+    const patch: { testo_it?: string; testo_en?: string; attiva: boolean } = { attiva: f.attiva };
+    if (f.testo_it.trim()) patch.testo_it = f.testo_it;
+    if (f.testo_en.trim()) patch.testo_en = f.testo_en;
+    try { await chatConoscenza(id, patch, ident); setMsg('Risposta salvata ✓'); } catch (x) { setErr((x as Error).message); }
     setBusy(false);
+  };
+  // controlli prima dell'invio, con un messaggio che dice cosa non va (Gate 2, C4); la edge resta il controllo vero
+  const salvaOrari = () => {
+    if (!orari) return;
+    const date = chiusure.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+    const oggi = new Date().toISOString().slice(0, 10);
+    if (!orari.giorni.length) { setErr('Orari: scegli almeno un giorno.'); return; }
+    if (!orari.dalle || !orari.alle || orari.dalle >= orari.alle) { setErr('Orari: “dalle” deve venire prima di “alle”.'); return; }
+    const storte = date.filter((d) => !/^\d{4}-\d{2}-\d{2}$/.test(d) || Number.isNaN(Date.parse(d + 'T00:00:00Z')));
+    if (storte.length) { setErr(`Orari: date non valide (${storte.join(', ')}). Scrivile come 2026-12-25.`); return; }
+    // le chiusure passate non servono piu': si tolgono, cosi' l'elenco non arriva mai al tetto di 100
+    const future = [...new Set(date)].filter((d) => d >= oggi);
+    if (future.length > 100) { setErr('Orari: al massimo 100 giorni di chiusura.'); return; }
+    void salva('chat_orari', { tz: 'Europe/Rome', giorni: orari.giorni, dalle: orari.dalle, alle: orari.alle, chiusure: future }, 'Orari');
+  };
+  const salvaOre = () => {
+    const a = Number(ore[0]), b = Number(ore[1]);
+    if (!ore[0].trim() || !ore[1].trim() || !Number.isFinite(a) || !Number.isFinite(b)) { setErr('Promemoria: scrivi due numeri di ore.'); return; }
+    if (a < 0.05 || b > 240 || a >= b) { setErr('Promemoria: il primo prima del secondo, fra 0,05 e 240 ore.'); return; }
+    void salva('chat_sollecito_ore', [a, b], 'Promemoria');
+  };
+  const salvaTesto = (k: string, nome: string) => {
+    const t = testi[k] ?? { it: '', en: '' };
+    if (!t.it.trim() || !t.en.trim()) { setErr(`${nome}: servono il testo italiano e quello inglese.`); return; }
+    void salva(k, t, nome);
   };
   if (!imp || !orari) return <div className="muted center cs-empty">{err || 'Carico le impostazioni…'}</div>;
   const accesa = (imp.valori.chat_sito_enabled ?? '').trim() === 'true';
@@ -336,11 +389,9 @@ export function ChatScheda({ ident, mostraProve, setMostraProve }: { ident: stri
           <label>dalle <input type="time" value={orari.dalle} onChange={(e) => setOrari({ ...orari, dalle: e.target.value })} aria-label="Dalle" /></label>
           <label>alle <input type="time" value={orari.alle} onChange={(e) => setOrari({ ...orari, alle: e.target.value })} aria-label="Alle" /></label>
         </div>
-        <div className="cs-fld"><label>Giorni di chiusura (AAAA-MM-GG, separati da virgola)</label>
-          <input value={chiusure} onChange={(e) => setChiusure(e.target.value)} placeholder="2026-12-24, 2026-12-25" /></div>
-        <button className="cs-btn cs-primary" type="button" disabled={busy} onClick={() => salva('chat_orari', {
-          tz: 'Europe/Rome', giorni: orari.giorni, dalle: orari.dalle, alle: orari.alle, chiusure: chiusure.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean),
-        }, 'Orari')}>Salva gli orari</button>
+        <div className="cs-fld"><label htmlFor="chat-chiusure">Giorni di chiusura (AAAA-MM-GG, separati da virgola; le date passate si tolgono al salvataggio)</label>
+          <input id="chat-chiusure" value={chiusure} onChange={(e) => setChiusure(e.target.value)} placeholder="2026-12-24, 2026-12-25" /></div>
+        <button className="cs-btn cs-primary" type="button" disabled={busy} onClick={salvaOrari}>Salva gli orari</button>
       </div>
 
       <div className="card">
@@ -350,7 +401,7 @@ export function ChatScheda({ ident, mostraProve, setMostraProve }: { ident: stri
           <label>primo dopo <input type="number" min={0.05} max={240} step={0.05} value={ore[0]} onChange={(e) => setOre([e.target.value, ore[1]])} aria-label="Primo promemoria, ore" /> ore</label>
           <label>secondo dopo <input type="number" min={0.05} max={240} step={0.05} value={ore[1]} onChange={(e) => setOre([ore[0], e.target.value])} aria-label="Secondo promemoria, ore" /> ore</label>
         </div>
-        <button className="cs-btn cs-primary" type="button" disabled={busy} onClick={() => salva('chat_sollecito_ore', [Number(ore[0]), Number(ore[1])], 'Promemoria')}>Salva i promemoria</button>
+        <button className="cs-btn cs-primary" type="button" disabled={busy} onClick={salvaOre}>Salva i promemoria</button>
       </div>
 
       {TESTI.map(([k, nome, aiuto]) => (
@@ -361,7 +412,7 @@ export function ChatScheda({ ident, mostraProve, setMostraProve }: { ident: stri
             <textarea className="cs-draft-ta" rows={3} maxLength={1000} value={testi[k]?.it ?? ''} onChange={(e) => setTesti({ ...testi, [k]: { ...testi[k], it: e.target.value } })} aria-label={nome + ' in italiano'} /></div>
           <div className="cs-fld"><label>Inglese</label>
             <textarea className="cs-draft-ta" rows={3} maxLength={1000} value={testi[k]?.en ?? ''} onChange={(e) => setTesti({ ...testi, [k]: { ...testi[k], en: e.target.value } })} aria-label={nome + ' in inglese'} /></div>
-          <button className="cs-btn cs-primary" type="button" disabled={busy} onClick={() => salva(k, testi[k], nome)}>Salva</button>
+          <button className="cs-btn cs-primary" type="button" disabled={busy} onClick={() => salvaTesto(k, nome)}>Salva</button>
         </div>
       ))}
 

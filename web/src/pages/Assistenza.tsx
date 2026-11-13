@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { pushBack, popBack } from '../lib/backnav';
-import { fetchConversations, fetchConcluse, PAGINA_CONCLUSE, isChatSito, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import { fetchCoda, fetchConcluse, cursoreDi, PAGINA_CONCLUSE, isChatSito, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato, BozzaSalvata } from '../lib/csApi';
 import AppBar from '../components/AppBar';
 import { ChatThread, ChatScheda } from './AssistenzaChat';
@@ -137,8 +137,11 @@ const altreAperte = (c: CsConversation, tutte: CsConversation[] | null): CsConve
 const FLAG_LABEL: Record<string, string> = { sollecito: '⏱ sollecito', reclamo_assistenza: '⚠️ reclamo', chiusura: '✅ chiusura', passaggio_agente: '🤖 dal chatbot', prova: '🧪 prova' };
 const FLAG_CODA: Record<string, string> = { sollecito: 'Sollecito', reclamo_assistenza: 'Reclamo', chiusura: 'Chiusura', passaggio_agente: 'Dal chatbot', prova: 'Prova' };
 // sulla chat del sito il passaggio e' la cliente che ha chiesto una persona, non il chatbot di Inbox
-const flagLab = (c: CsConversation, f: string, mappa: Record<string, string>): string | undefined =>
-  isChatSito(c) && f === 'passaggio_agente' ? (mappa === FLAG_LABEL ? '🙋 chiede una persona' : 'Chiede una persona') : mappa[f];
+const flagLab = (c: CsConversation, f: string, mappa: Record<string, string>): string | undefined => {
+  if (!isChatSito(c) || f !== 'passaggio_agente') return mappa[f];
+  const ora = c.stato === 'da_fare';   // presa o conclusa: l'ha chiesta, non la chiede piu' (Gate 2, C10)
+  return mappa === FLAG_LABEL ? (ora ? '🙋 chiede una persona' : '🙋 ha chiesto una persona') : (ora ? 'Chiede una persona' : 'Ha chiesto una persona');
+};
 // stato a parole; D-11: una chat del sito rimasta alle risposte fisse e' fra le Concluse come "Gestita dal bot"
 const statoConclusa = (c: CsConversation): string => c.stato_by === 'auto' ? 'Chiusa da sola' : c.stato_by === 'bot' ? 'Gestita dal bot' : `Conclusa${c.stato_by ? ` · ${c.stato_by}` : ''}`;
 const isUrg = (c: CsConversation) => c.urgente === true;
@@ -172,7 +175,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [mostraProve, setMostraProveS] = useState(() => { try { return localStorage.getItem('amimi_cs_prove') === '1'; } catch { return false; } });
   const setMostraProve = (v: boolean) => { setMostraProveS(v); try { localStorage.setItem('amimi_cs_prove', v ? '1' : '0'); } catch { /* niente */ } };
   // concluse piu' vecchie della prima pagina (punto 6 di 7.6): si caricano a richiesta
-  const [finiteConcluse, setFiniteConcluse] = useState(false);
+  const [altreConcluse, setAltreConcluse] = useState(false);
   const [caricoConcluse, setCaricoConcluse] = useState(false);
   const [filtro, setFiltro] = useState<'dafare' | 'incorso' | 'fatte' | 'tutte'>('dafare');
   const [savingStato, setSavingStato] = useState(false);
@@ -269,16 +272,21 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     if (session !== 'in' || !ident) return;
-    setErr(''); setConvs(null); setFiniteConcluse(false);
-    fetchConversations().then(setConvs).catch((e: Error) => setErr(e.message));
+    setErr(''); setConvs(null); setAltreConcluse(false);
+    fetchCoda().then((r) => { setConvs(r.convs); setAltreConcluse(r.altreConcluse); }).catch((e: Error) => setErr(e.message));
   }, [session, ident]);
+  // ogni rilettura della coda passa da qui: prima pagina delle concluse e stato del bottone "piu' vecchie" insieme (Gate 2, B1)
+  const ricaricaCoda = async (): Promise<CsConversation[]> => {
+    const r = await fetchCoda();
+    setConvs(r.convs); setAltreConcluse(r.altreConcluse);
+    return r.convs;
+  };
   const caricaConcluse = async () => {
     setCaricoConcluse(true); setErr('');
     try {
-      const gia = (convs ?? []).filter((x) => x.stato === 'fatto').length;
-      const altre = await fetchConcluse(gia);
+      const altre = await fetchConcluse(cursoreDi(convs ?? []));
       setConvs((prev) => { const ids = new Set((prev ?? []).map((x) => x.id)); return [...(prev ?? []), ...altre.filter((x) => !ids.has(x.id))]; });
-      if (altre.length < PAGINA_CONCLUSE) setFiniteConcluse(true);
+      setAltreConcluse(altre.length >= PAGINA_CONCLUSE);
     } catch (e) { setErr((e as Error).message); }
     setCaricoConcluse(false);
   };
@@ -287,7 +295,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const doRefresh = async () => {
     setRefreshing(true); setErr('');
     await csPollNow();
-    try { setConvs(await fetchConversations()); setFiniteConcluse(false); if (rumore) setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); }
+    try { await ricaricaCoda(); if (rumore) setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); }
     setRefreshing(false);
   };
 
@@ -432,8 +440,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       try {
         const m = await fetchMessages(tid);
         if (threadRef.current === tid) setMsgs(m);
-        const list = await fetchConversations();
-        setConvs(list);
+        const list = await ricaricaCoda();
         const cur = list.find((x) => x.id === tid);
         if (cur && threadRef.current === tid) setCurrent(cur);   // stato aggiornato (fatto/auto) in testata
       } catch { /* refresh best-effort: l'invio resta riuscito */ }
@@ -452,18 +459,22 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     try {
       const m = await fetchMessages(tid);
       if (threadRef.current === tid) setMsgs(m);
-      const list = await fetchConversations();
-      setConvs(list); setFiniteConcluse(false);
+      const list = await ricaricaCoda();
       const cur = list.find((x) => x.id === tid);
       if (cur && threadRef.current === tid) setCurrent(cur);
     } catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
   };
+  // dopo "Non e' un cliente" o "Cancella dati": la chat esce dalla lista (e dal Rumore, senza svuotarlo: Gate 2, B4), poi la
+  // coda si rilegge dal server (una card email cancellata insieme sparisce anche lei)
   const esciDallaChat = (msg: string) => {
     const id = current?.id;
+    if (!id || threadRef.current !== id) return;
     setConvs((prevC) => prevC ? prevC.filter((x) => x.id !== id) : prevC);
-    setRumore(null);
+    setRumore((p) => (p ? p.filter((x) => x.id !== id) : p));
     goCoda();
     showToast(msg);
+    void ricaricaCoda().catch(() => { /* la lista locale e' gia' giusta */ });
+    if (rumore) void fetchRumore().then(setRumore).catch(() => { /* idem */ });
   };
   const openChatScheda = () => { entra('chat', 'coda'); setView('chat'); setErr(''); };
   const openRumore = async () => {
@@ -477,7 +488,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     try {
       const r = await removeNoise(c.id, ident);
       setRumore((prev) => (prev ?? []).filter((x) => x.id !== c.id));
-      setConvs(await fetchConversations());
+      await ricaricaCoda();
       if (r.dominio_che_blocca) setErr(`Riportata in coda, ma il dominio ${r.dominio_che_blocca} resta in denylist (copre altri mittenti): le sue prossime mail finiranno ancora nel rumore.`);
     } catch (e) { setErr((e as Error).message); }
     setSavingStato(false);
@@ -492,7 +503,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       setCurrent({ ...current, ...patch } as CsConversation);
       setConvs((prev) => prev ? prev.map((x) => x.id === current.id ? { ...x, ...patch } as CsConversation : x) : prev);
       // correzione verso una categoria a caso (reso/cambio/indirizzo): carica subito il verdetto
-      if (categoria && CASE_CATS.has(categoria)) loadCaso(current.id, confirmDate || undefined); else setCaso(null);
+      if (categoria && CASE_CATS.has(categoria) && !isChatSito(current)) loadCaso(current.id, confirmDate || undefined); else setCaso(null);
     } catch (e) { setErr((e as Error).message); }
     setSavingCat(false);
   };
@@ -656,6 +667,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             <div style={{ marginTop: 6 }}><span className="cs-badge cs-can">{CANALI[c.canale]}</span></div>
           )}
         </div>
+        {isChatSito(c) && err && <div className="err">{err}</div>}
         {isChatSito(c) && (
           <ChatThread c={c} msgs={msgs} ident={ident} convs={convs} onRicarica={ricaricaChat} onApri={openThread} onUscita={esciDallaChat} showToast={showToast} />
         )}
@@ -1066,7 +1078,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
           <div className="ds-group cs-group">
             {rumore.map((c) => (
               <div key={c.id} className="cs-card cs-quiet" onClick={() => openThread(c)} role="button" tabIndex={0}>
-                <div className="cs-ctop"><span className="cs-cn">{c.subject || nmeOf(c)}</span><span className="cs-cora">{fmtWhen(c.last_msg_at)}</span></div>
+                <div className="cs-ctop"><span className="cs-cn">{isChatSito(c) ? `Chat · ${nmeOf(c)}` : (c.subject || nmeOf(c))}</span><span className="cs-cora">{fmtWhen(c.last_msg_at)}</span></div>
                 <div className="cs-rowact">
                   <button className="cs-btn cs-ghost" type="button" disabled={savingStato} onClick={(e) => { e.stopPropagation(); doUnNoise(c); }}><Icon name="return" size={16} /> È un cliente, riporta in coda</button>
                 </div>
@@ -1085,7 +1097,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const daf = visibili.filter((c) => c.stato === 'da_fare').length;
   const inc = visibili.filter((c) => c.stato === 'in_corso').length;
   const fatte = visibili.filter((c) => c.stato === 'fatto').length;
-  const conclusePossibili = convs !== null && !finiteConcluse && (convs.filter((x) => x.stato === 'fatto').length % PAGINA_CONCLUSE === 0) && convs.some((x) => x.stato === 'fatto');
+  const conclusePossibili = convs !== null && altreConcluse;
   const rumCount = rumore?.length;
 
   const card = (c: CsConversation) => (

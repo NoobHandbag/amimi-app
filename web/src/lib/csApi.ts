@@ -72,20 +72,43 @@ const CONV_COLS = 'id,gmail_thread_id,canale,customer_email,customer_name,stato,
 
 // Regola 20 (b), punto 6 di PROPOSTA_chat_sito 7.6: senza limite PostgREST taglia in silenzio a 1.000 righe, e con le chat
 // la coda ci arriva in qualche mese. Le aperte si leggono TUTTE a pagine (sono poche: 3 al 13-11); delle concluse solo le
-// piu' recenti, poi "Carica le concluse piu' vecchie" (fetchConcluse con l'offset). Ordine stabile (last_msg_at, id).
+// piu' recenti, poi "Carica le concluse piu' vecchie". Concluse a CURSORE (Gate 2, B1): ordine stabile (last_msg_at
+// decrescente con i null in fondo, poi id) e la pagina dopo parte dall'ultima riga gia' in mano, non da un offset, cosi'
+// una conclusa riaperta o una nuova fra due letture non fa saltare ne' ripetere righe.
 export const PAGINA_CONCLUSE = 300;
 const PAGINA = 1000;
-export async function fetchConcluse(offset: number, quante = PAGINA_CONCLUSE): Promise<CsConversation[]> {
-  const { data, error } = await csClient
+export type CursoreConcluse = { last_msg_at: string | null; id: string };
+/** L'ultima conclusa nell'ordine della coda: da li' parte la pagina dopo. */
+export function cursoreDi(convs: CsConversation[]): CursoreConcluse | null {
+  const ord = (a: CsConversation, b: CsConversation) => {
+    if (a.last_msg_at !== b.last_msg_at) {
+      if (a.last_msg_at === null) return 1;
+      if (b.last_msg_at === null) return -1;
+      return a.last_msg_at < b.last_msg_at ? 1 : -1;
+    }
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  };
+  const ultima = convs.filter((c) => c.stato === 'fatto').sort(ord).pop();
+  return ultima ? { last_msg_at: ultima.last_msg_at, id: ultima.id } : null;
+}
+export async function fetchConcluse(dopo: CursoreConcluse | null, quante = PAGINA_CONCLUSE): Promise<CsConversation[]> {
+  let q = csClient
     .from('cs_conversations').select(CONV_COLS)
-    .neq('canale', 'rumore').eq('stato', 'fatto')
+    .neq('canale', 'rumore').eq('stato', 'fatto');
+  if (dopo) {
+    q = dopo.last_msg_at === null
+      ? q.is('last_msg_at', null).gt('id', dopo.id)
+      : q.or(`last_msg_at.lt."${dopo.last_msg_at}",and(last_msg_at.eq."${dopo.last_msg_at}",id.gt.${dopo.id}),last_msg_at.is.null`);
+  }
+  const { data, error } = await q
     .order('last_msg_at', { ascending: false, nullsFirst: false }).order('id', { ascending: true })
-    .range(offset, offset + quante - 1);
+    .limit(quante);
   if (error) throw new Error(error.message);
   return (data ?? []) as CsConversation[];
 }
-/** Coda cliente: tutto tranne il rumore, piu' recenti in cima. Aperte tutte, concluse le ultime PAGINA_CONCLUSE. */
-export async function fetchConversations(): Promise<CsConversation[]> {
+/** Coda cliente: tutto tranne il rumore, piu' recenti in cima. Aperte tutte, concluse le ultime PAGINA_CONCLUSE;
+ *  `altreConcluse` = la pagina delle concluse era piena (ce ne possono essere di piu' vecchie). */
+export async function fetchCoda(): Promise<{ convs: CsConversation[]; altreConcluse: boolean }> {
   const aperte: CsConversation[] = [];
   for (let pagina = 0; pagina < 20; pagina++) {
     const { data, error } = await csClient
@@ -97,7 +120,13 @@ export async function fetchConversations(): Promise<CsConversation[]> {
     aperte.push(...((data ?? []) as CsConversation[]));
     if ((data ?? []).length < PAGINA) break;
   }
-  return [...aperte, ...(await fetchConcluse(0))];
+  const concluse = await fetchConcluse(null);
+  // una conversazione che cambia stato fra le due letture non compare due volte (vince la lettura delle aperte, Gate 2 C1)
+  const ids = new Set(aperte.map((c) => c.id));
+  return { convs: [...aperte, ...concluse.filter((c) => !ids.has(c.id))], altreConcluse: concluse.length >= PAGINA_CONCLUSE };
+}
+export async function fetchConversations(): Promise<CsConversation[]> {
+  return (await fetchCoda()).convs;
 }
 
 /** Vista Rumore: solo canale=rumore (controllo che il filtro non abbia nascosto un cliente). */
@@ -133,7 +162,7 @@ export type ChatSessione = {
   id: string; stato: 'bot' | 'attesa_persona' | 'aperta' | 'chiusa'; preso_da: string | null; customer_email: string; shopify_customer_id: string | null;
   lingua: string; prova: boolean; passaggi: number; passaggio_at: string | null; ultima_risposta_staff_at: string | null; chiusa_at: string | null; gmail_thread_id: string | null;
 };
-export type ChatEmail = { id: string; email_stato: 'prenotata' | 'inviata' | 'errore' | null; email_errore: string | null; email_at: string | null; delivered_at: string | null };
+export type ChatEmail = { id: string; seq: number; autore: string; email_stato: 'prenotata' | 'inviata' | 'errore' | null; email_errore: string | null; email_at: string | null; delivered_at: string | null };
 export async function fetchChatSessione(sessioneId: string): Promise<ChatSessione | null> {
   const { data, error } = await csClient.from('chat_sessioni')
     .select('id,stato,preso_da,customer_email,shopify_customer_id,lingua,prova,passaggi,passaggio_at,ultima_risposta_staff_at,chiusa_at,gmail_thread_id')
@@ -141,11 +170,13 @@ export async function fetchChatSessione(sessioneId: string): Promise<ChatSession
   if (error) throw new Error(error.message);
   return ((data ?? [])[0] as ChatSessione | undefined) ?? null;
 }
-/** Esito dell'email di ogni risposta dello staff, per id del messaggio (la proiezione lo porta in cs_messages come chat:<id>). */
+/** Per id del messaggio (la proiezione lo porta in cs_messages come chat:<id>): l'ordine vero (`seq`: bottone e risposta
+ *  fissa hanno lo stesso istante, Gate 2 C2) e l'esito dell'email delle risposte dello staff. Una chat ha al massimo 100
+ *  messaggi della cliente, piu' le risposte: 1.000 bastano. */
 export async function fetchChatEmail(sessioneId: string): Promise<Record<string, ChatEmail>> {
   const { data, error } = await csClient.from('chat_messaggi')
-    .select('id,email_stato,email_errore,email_at,delivered_at')
-    .eq('sessione_id', sessioneId).eq('autore', 'staff').order('seq', { ascending: true }).limit(500);
+    .select('id,seq,autore,email_stato,email_errore,email_at,delivered_at')
+    .eq('sessione_id', sessioneId).order('seq', { ascending: true }).limit(1000);
   if (error) throw new Error(error.message);
   return Object.fromEntries(((data ?? []) as ChatEmail[]).map((m) => [m.id, m]));
 }
@@ -171,6 +202,18 @@ async function callChatStaff(bodyObj: Record<string, unknown>): Promise<Record<s
 }
 const ERRORI_CHAT: Record<string, string> = {
   chiusa: 'La chat è chiusa: non riceve più risposte. Se la cliente riscrive, si apre una chat nuova.',
+  gia_inviata: 'L’email era già partita (l’ha mandata il giro automatico).',
+  in_corso: 'L’email sta partendo proprio ora: aggiorna tra qualche secondo.',
+  cambiato: 'L’email è cambiata nel frattempo: aggiorna e riprova.',
+  chiave_assente: 'Impostazione non trovata nel database.',
+  faq_inesistente: 'Risposta non trovata (o non è una risposta standard).',
+  troppe_sessioni: 'Troppe chat con questa email: cancellale una per una.',
+  chi_sconosciuto: 'Scegli chi sei dal menu in alto.',
+  sessione_non_valida: 'Sessione scaduta: rientra.',
+  non_autenticato: 'Sessione scaduta: rientra.',
+  dominio_non_ammesso: 'Questo account non è del team.',
+  messaggio_inesistente: 'Messaggio non trovato.',
+  non_dello_staff: 'Si riprovano solo le email delle risposte del team.',
   send_key_gia_usata: 'Questo invio è già stato usato per un’altra chat: chiudi e riapri il dialogo.',
   sessione_inesistente: 'Chat non trovata: forse è stata cancellata.',
   riprova: 'Il database non risponde: riprova tra poco.',
