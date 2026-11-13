@@ -1,4 +1,14 @@
-// cs-api v12: tool assistenza clienti, scritture dalla UI, gated dal JWT dell'utente loggato.
+// cs-api v13: tool assistenza clienti, scritture dalla UI, gated dal JWT dell'utente loggato.
+// v13 (2026-11-13, chat del sito Fase 1 pezzo 6, docs/PROPOSTA_chat_sito.md 7.6 punti 9-12): le chat del sito proiettate
+//   in Assistenza (canale `chat_sito`, chiave `chat:<id>`, migr 0193). (9) `chat_sito` e' un canale di coda: remove_noise
+//   e il ritorno dal B2B la riportano li' (evento ingest della proiezione); (10) il B2B non manda una chat nel rumore;
+//   (11) "non e' un cliente" su una chat la sposta nel rumore ma non mette mai in denylist l'email DICHIARATA nel widget
+//   (chiunque puo' scrivere l'email di un'altra persona e farle bloccare la posta vera), e remove_noise non la toglie;
+//   (12) set_stato risponde 422 su una chat: lo stato lo decide chat_sessioni, via chat-staff (prendo_io, chiudi).
+//   Gate 2 del pezzo 6, B3: add_noise su una chat NON chiusa risponde 422. Una chat aperta nel rumore continuerebbe a
+//   mandare push "chiede una persona" e solleciti verso una card che in coda non c'e'; chiusa, la cliente non puo' piu'
+//   scrivere li' e i solleciti si fermano. La PWA chiude la chat (chat-staff) e poi la sposta. Unica lettura di chat_ qui.
+//   Ogni ramo nuovo scatta solo su `chat_sito` o `chat:` (isChatSito), che nascono solo a chat accesa.
 // v12 (2026-10-31, OK di Dan in chat, CASI_APERTI n.54): CHAT e MODULI hanno un mittente CONDIVISO di
 //   Shopify (`no-reply@mailer.shopify.com` per la chat, `mailer@shopify.com` per il modulo contatti).
 //   Prima `add_noise` lo metteva in denylist come qualunque mittente. All'ingest non avrebbe avuto
@@ -82,15 +92,20 @@ function isMittenteShopify(sender: unknown): boolean {
 }
 // Dove torna una conversazione tolta dal rumore: nel canale con cui era ENTRATA (evento `ingest`),
 // se e' un canale di coda; altrimenti `email_diretta`, come prima della v12.
-const CANALI_CODA = new Set(['email_diretta', 'form_contatto', 'form_evento', 'chat_notifica']);
+const CANALI_CODA = new Set(['email_diretta', 'form_contatto', 'form_evento', 'chat_notifica', 'chat_sito']);
 function canaleDiRitorno(canaleIngest: unknown): string {
   const c = String(canaleIngest ?? '');
   return CANALI_CODA.has(c) ? c : 'email_diretta';
 }
-// La regola B2B -> rumore (v7, owner 01-08: "il B2B si risponde su Gmail") non vale per la chat, che si
-// risponde solo in Inbox. Identica a `b2bVaNelRumore` di cs-classify v9 (tests/cs_passaggio.mjs le confronta).
+// La regola B2B -> rumore (v7, owner 01-08: "il B2B si risponde su Gmail") non vale per le chat, che si rispondono in
+// Inbox (chat_notifica) o dalla chat del sito (chat_sito, v13). Identica a `b2bVaNelRumore` di cs-classify
+// (tests/cs_passaggio.mjs le confronta).
 function b2bVaNelRumore(categoria: unknown, canale: unknown): boolean {
-  return categoria === 'Collaborazioni e B2B' && canale !== 'chat_notifica';
+  return categoria === 'Collaborazioni e B2B' && canale !== 'chat_notifica' && canale !== 'chat_sito';
+}
+// v13: una chat del sito proiettata, anche quando e' stata spostata nel rumore (canale 'rumore', chiave sempre chat:)
+function isChatSito(c: { canale?: unknown; gmail_thread_id?: unknown } | null | undefined): boolean {
+  return !!c && (c.canale === 'chat_sito' || String(c.gmail_thread_id ?? '').startsWith('chat:'));
 }
 // La voce di DOMINIO della denylist che copre ancora questo mittente (da segnalare, non da togliere da
 // sola). Stesse forme di `denyMatch` in cs-sync: '@dominio' oppure 'dominio.tld' nudo (la 0180 ne ha
@@ -151,7 +166,7 @@ async function handle(req: Request): Promise<Response> {
   const loadConv = async (convId: string) => {
     if (!UUID_RE.test(convId)) return null;
     // 2026-09-14 (audit gate, B35): `error` destrutturato e un ritentativo; null resta "non trovata", l'errore sale
-    const { data, error } = await retryOnce(() => sb.from('cs_conversations').select('id,categoria,categoria_source,stato,stato_by,canale,customer_email').eq('id', convId).maybeSingle());
+    const { data, error } = await retryOnce(() => sb.from('cs_conversations').select('id,categoria,categoria_source,stato,stato_by,canale,customer_email,gmail_thread_id').eq('id', convId).maybeSingle());
     if (error) throw new ConvReadError('conversazione non leggibile, riprova: ' + error.message);
     return data ?? null;
   };
@@ -196,6 +211,8 @@ async function handle(req: Request): Promise<Response> {
     if (!STATI.has(stato)) return json({ error: 'stato non valido (da_fare|in_corso|fatto)' }, 422);
     const ex = await loadConv(convId);
     if (!ex) return json({ error: UUID_RE.test(convId) ? 'conversazione inesistente' : 'conversation_id non valido' }, UUID_RE.test(convId) ? 404 : 422);
+    // v13 (punto 12): sulla chat del sito lo stato lo decide chat_sessioni; qui cambierebbe solo la proiezione
+    if (isChatSito(ex)) return json({ error: 'chat del sito: lo stato si cambia da chat-staff (Prendo io, Chiudi)' }, 422);
 
     // stato_by: chi la prende in carico / chi la chiude. Tornare a da_fare azzera l'assegnazione.
     const stato_by = stato === 'da_fare' ? null : chi;
@@ -259,11 +276,21 @@ async function handle(req: Request): Promise<Response> {
     if (!ex) return json({ error: UUID_RE.test(convId) ? 'conversazione inesistente' : 'conversation_id non valido' }, UUID_RE.test(convId) ? 404 : 422);
     // mittente da bloccare: dal body (la UI passa il from della mail) o fallback all'email cliente della conv
     const sender = String(body.sender || ex.customer_email || '').trim().toLowerCase();
-    if (!sender || sender.length < 4 || !sender.includes('@')) return json({ error: 'mittente non valido' }, 422);
-    if (sender.endsWith('@amimi.it')) return json({ error: 'non puoi bloccare @amimi.it' }, 422);
+    // v13 (punto 11): su una chat del sito l'email e' solo DICHIARATA nel widget: si sposta la chat, non si blocca nessuno
+    const chat = isChatSito(ex);
+    if (chat) {
+      const sid = /^chat:([0-9a-f-]{36})$/i.exec(String(ex.gmail_thread_id ?? ''))?.[1] ?? '';
+      if (!UUID_RE.test(sid)) return json({ error: 'chat del sito senza sessione leggibile' }, 422);
+      const { data: sess, error: sErr } = await retryOnce(() => sb.from('chat_sessioni').select('stato').eq('id', sid).limit(1));
+      if (sErr) return json({ error: 'chat non leggibile, riprova: ' + sErr.message }, 503);
+      const statoChat = (sess ?? [])[0]?.stato;
+      if (statoChat !== undefined && statoChat !== 'chiusa') return json({ error: 'chat ancora aperta: chiudila prima (Chiudi la chat), poi spostala nel Rumore' }, 422);
+    }
+    if (!chat && (!sender || sender.length < 4 || !sender.includes('@'))) return json({ error: 'mittente non valido' }, 422);
+    if (!chat && sender.endsWith('@amimi.it')) return json({ error: 'non puoi bloccare @amimi.it' }, 422);
     // v12 (31-10): un mittente Shopify (chat, modulo) e' di tutte le clienti: la conversazione va nel
     // rumore, il mittente NON si blocca.
-    const bloccabile = !isMittenteShopify(sender);
+    const bloccabile = !chat && !isMittenteShopify(sender);
 
     // append con dedup alla denylist (match substring su From+Subject in cs-sync, riletta a runtime)
     // 2026-09-13 (sweep incidente doppioni): lettura fallita = denylist vuota -> l'upsert la riscriveva con
@@ -313,7 +340,8 @@ async function handle(req: Request): Promise<Response> {
       .eq('conversation_id', convId).eq('azione', 'ingest').order('at', { ascending: true }).limit(1));
     if (ingErr) return json({ error: 'storico della conversazione non leggibile, riprova: ' + ingErr.message }, 503);
     const canaleDest = canaleDiRitorno((ing?.[0]?.dettaglio as Record<string, unknown> | undefined)?.canale);
-    if (sender && !isMittenteShopify(sender)) {
+    // v13: una chat del sito non ha mai messo nessuno in denylist, quindi non ne toglie nessuno
+    if (sender && !isMittenteShopify(sender) && !isChatSito(ex)) {
       const kept = items.filter((x) => x.toLowerCase() !== sender);
       if (kept.length !== items.length) {
         const { error: fe } = await sb.from('app_flags').upsert({ key: 'cs_noise_senders', value: kept.join('\n') }, { onConflict: 'key' });

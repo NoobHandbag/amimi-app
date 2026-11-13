@@ -1255,6 +1255,11 @@ try {
   t('CH18 candChatSalute: un candidato per guasto (8.10 righe 4, 6, 7, 8, 11, 13, 16), chiavi della chat in testa con l\'id della sessione, le altre per giorno UTC; destinatario una volta per chat e mai per una chat di prova; sotto soglia, prenotato fresco, inviato, finestra non a mezzanotte o righe storte no',
     isDeepStrictEqual(cs.map((c) => c.chiave).sort(), [`${ID('2')}:1:passaggio`, `${ID('6')}:1:passaggio`, `${ID('b')}:email:${M1}`, `${ID('c')}:destinatario`, `${ID('e')}:1:passaggio`, `${ID('f')}:2:passaggio`, `${ID('f')}:email:${M2}`,
       'api:2026-11-08', 'api:2026-11-09', 'invio:2026-11-09', 'limite:2026-11-09', 'quota:2026-11-08', 'widget:2026-11-08'].sort()) && cs.every((c) => c.ts === ORA_C), cs.map((c) => c.chiave));
+  // v10 (Gate 2 del pezzo 6, B4): il cron della proiezione che fallisce arriva ad Ale come chat_salute, una push al giorno
+  const pk = candChatSalute({ ...baseSal, passaggi: [], email: [], coda: 0, limiti: [], contatori: [{ chiave: 'glob:proiezione_ko', finestra: '2026-11-09T00:00:00+00:00', n: 2 }, { chiave: 'glob:proiezione_ko', finestra: '2026-11-09T00:00:00+00:00', n: 0 }] });
+  const pm = msgChatSalute(pk);
+  t('CH18b proiezione in Assistenza fallita (glob:proiezione_ko): un candidato per giorno, push urgente senza dati della cliente', isDeepStrictEqual(pk.map((c) => c.chiave), ['proiezione:2026-11-09'])
+    && pm.length === 1 && pm[0].urgente === true && pm[0].titolo === 'Chat del sito: chat fuori da Assistenza' && /^2 tentativi falliti di mettere una chat in Assistenza/.test(pm[0].testo), pm);
   const ms = msgChatSalute(cs);
   const perS = Object.fromEntries(ms.map((m) => [m.chiave.includes(':email:') ? 'email:' + m.chiave.slice(0, 36) : m.chiave.includes(':destinatario') ? 'dest:' + m.chiave.slice(0, 36) : m.chiave.includes(':passaggio') ? 'pass:' + m.chiave.slice(0, 36) : m.chiave.split(':')[0] + ':' + m.chiave.split(':')[1], [m.titolo, m.testo, m.urgente === true]]));
   const T_FALLITO = 'La notifica "chiede una persona" non e\' partita (push-api in errore): chat_sollecito la ritenta, al massimo tre volte, finche\' la chat aspetta.';
@@ -1295,7 +1300,7 @@ try {
     [`chat_sessioni select id, prova in:id|${JSON.stringify([ID('e'), ID('f'), ID('1'), ID('2'), ID('6'), ID('a'), ID('b'), ID('c')])} limit:9`]: { data: [{ id: ID('f'), prova: true }, { id: ID('b'), prova: false }, { id: ID('c'), prova: false }, { id: ID('e'), prova: false }] },
     [`chat_messaggi select id head eq:autore|staff is:email_stato|null lt:created_at|${isoC(ora - 10 * MIN)}`]: { count: 1 },
     [`chat_messaggi select id head eq:autore|staff eq:email_stato|prenotata lt:email_at|${isoC(ora - 20 * MIN)}`]: { count: 1 },
-    [`chat_contatori select chiave, finestra, n in:chiave|${JSON.stringify(['glob:sev_error', 'glob:richieste', 'glob:errore'])} in:finestra|${JSON.stringify(['2026-11-08T00:00:00Z', '2026-11-09T00:00:00Z'])} limit:7`]: { data: SAL_CONT },
+    [`chat_contatori select chiave, finestra, n in:chiave|${JSON.stringify(['glob:sev_error', 'glob:richieste', 'glob:errore', 'glob:proiezione_ko'])} in:finestra|${JSON.stringify(['2026-11-08T00:00:00Z', '2026-11-09T00:00:00Z'])} limit:9`]: { data: SAL_CONT },
     [`chat_eventi select chiave in:chiave|${JSON.stringify(['limite:2026-11-08', 'limite:2026-11-09'])} limit:3`]: { data: SAL_LIM },
   });
   const LETTURE_C = lettureC(ORA_C);
@@ -1410,7 +1415,7 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
     // 19-10 (decisione di Dan): nome ed email della cliente nella lettura delle conversazioni, nome in quella delle spedizioni
     [`cs_conversations select id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email in:id|["${U1}"] limit:2`]:
       { data: [{ id: U1, canale: 'email_diretta', categoria: 'Reso', urgente: true, urgenza_motivo: 'rischio disputa', stato: 'da_fare', stato_by: null, customer_name: 'Carla Bianchi', customer_email: 'carla@example.com' }] },
-    'cs_conversations select id head eq:urgente|true neq:canale|rumore neq:stato|fatto': { count: 43 },
+    'cs_conversations select id head eq:urgente|true neq:canale|rumore not:flags|cs|["prova"] neq:stato|fatto': { count: 43 },
     // spedizione_eccezione
     [`v_spedizioni_eccezioni select ldv, order_name, stato_tws, updated_at, classe, customer_name eq:classe|eccezione gte:updated_at|${G} updated_at:desc limit:50`]:
       { data: [{ ldv: 'L1', order_name: '1890', stato_tws: 'INDIRIZZO ERRATO', updated_at: '2026-10-19T16:00:00Z', classe: 'eccezione', customer_name: 'Carla Bianchi' }] },
@@ -1427,7 +1432,7 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
       { data: [{ conversation_id: U3, at: '2026-10-19T16:30:00Z', a: 'da_fare' }] },
     [`cs_conversations select id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email in:id|["${U3}"] limit:2`]:
       { data: [{ id: U3, canale: 'email_diretta', categoria: 'Spedizione', urgente: false, stato: 'da_fare', customer_name: null, customer_email: 'Lucia.Verdi@Example.com' }] },
-    'cs_conversations select id head eq:stato|da_fare eq:last_direction|in neq:canale|rumore': { count: 59 },
+    'cs_conversations select id head eq:stato|da_fare eq:last_direction|in neq:canale|rumore not:flags|cs|["prova"]': { count: 59 },
     // riepilogo: lunedi' 19-10 alle 19:00 di Roma (CEST), mezzanotte di Roma = 18-10 22:00Z
     'shopify_orders select gross_total gte:created_at_shop|2026-10-18T22:00:00.000Z limit:501': { data: [{ gross_total: 100 }, { gross_total: 50.4 }] },
     'qromo_sales select order_id, prezzo eq:data|2026-10-19 limit:1001': { data: [{ order_id: 'A', prezzo: 120 }, { order_id: 'B', prezzo: 30 }] },
@@ -1437,14 +1442,14 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
       { data: [{ row_id: 'a', delta: '5', qty: null }, { row_id: 'a', delta: '-5', qty: null }, { row_id: 'b', delta: '3', qty: null }, { row_id: 'c', delta: null, qty: '2' }] },
     'change_log select id head in:op|["order","order_multi"] gte:ts|2026-10-18T22:00:00.000Z': { count: 7 },
     'loyalty_ugc select id head eq:status|in_revisione': { count: 11 },
-    'cs_conversations select id head eq:stato|da_fare eq:last_direction|in lt:last_msg_at|2026-10-18T17:00:00.000Z neq:canale|rumore': { count: 13 },
+    'cs_conversations select id head eq:stato|da_fare eq:last_direction|in lt:last_msg_at|2026-10-18T17:00:00.000Z neq:canale|rumore not:flags|cs|["prova"]': { count: 13 },
     'v_lead_outreach select id head eq:scaduta|true eq:da_gestire|false is:bozza_auto_tocco|null': { count: 17 },
     'v_products_todo select codice head in:bucket|["nuovo","costo_ricavo"]': { count: 19 },
     'v_products_todo select codice head eq:bucket|pulizia': { count: 23 },
     'v_lead_inbound select conv_id head': { count: 29 },
     'v_lead_outreach select id head not:bozza_auto_tocco|is|null eq:da_gestire|false': { count: 31 },
     'shipping_status select ldv head eq:stato_tws|IN ATTESA DI AFFIDO lt:updated_at|2026-10-17T17:00:00.000Z gte:shipped_date|2026-09-19': { count: 37 },
-    'cs_conversations select id head gte:created_at|2026-10-18T22:00:00.000Z neq:canale|rumore': { count: 41 },
+    'cs_conversations select id head gte:created_at|2026-10-18T22:00:00.000Z neq:canale|rumore not:flags|cs|["prova"] or:stato_by.is.null,stato_by.neq.bot': { count: 41 },
     // 03-11: nuove iscritte = prima visita dell'Area Membri oggi; c1 aveva gia' una visita (due righe), c2 e c3 no
     'loyalty_visits select shopify_customer_id gte:first_at|2026-10-18T22:00:00.000Z limit:1001': { data: [{ shopify_customer_id: 'c1' }, { shopify_customer_id: 'c2' }, { shopify_customer_id: 'c3' }, { shopify_customer_id: 'c2' }] },
     'loyalty_visits select shopify_customer_id in:shopify_customer_id|["c1","c2","c3"] lt:first_at|2026-10-18T22:00:00.000Z limit:10000': { data: [{ shopify_customer_id: 'c1' }, { shopify_customer_id: 'c1' }] },

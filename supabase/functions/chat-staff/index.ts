@@ -1,4 +1,4 @@
-// chat-staff staff-2 (2026-11-08): le azioni del team sulla chat del sito, Fase 1 pezzo 3 (docs/PROPOSTA_chat_sito.md 7.8
+// chat-staff staff-3 (2026-11-13): le azioni del team sulla chat del sito, Fase 1 pezzi 3, 4 e 6 (docs/PROPOSTA_chat_sito.md 7.8
 // e 11.6, con D-8 modello ticket: ogni risposta parte subito anche per email, niente "Invia solo via email"). Edge nuova
 // (Regola 19: cs-api non riceve azioni nuove). La chiama la PWA col JWT di una persona del team.
 //
@@ -24,8 +24,23 @@
 //                   sessione e senza dati personali). Audit in chat_eventi senza email ne' testi.
 //                   staff-2 (pezzo 4, 11.6 punto 4): cancella anche le righe del registro push_eventi_inviati dei tre
 //                   eventi della chat con la chiave della sessione (solleciti, nuovi tentativi, guasti di quella chat).
+// staff-3 (pezzo 6, Assistenza):
+//   - dopo rispondi, prendo_io e chiudi la chat si proietta in Assistenza con l'RPC chat_proietta (migr 0193, 7.4 e 7.5);
+//     un errore non annulla l'azione (fatta), la risposta dice `proiezione: false` e il cron chat-proiezione riprova.
+//     `chiudi` mette preso_da = chi chiude: la card chiusa dice chi l'ha chiusa (7.8).
+//   - cancella_dati cancella ogni sessione in UNA transazione (RPC chat_cancella_sessione, Gate 2 del pezzo 6, B1).
+//   impostazioni    {chi} -> la scheda Chat (sez. 10): i valori delle sole chiavi chat_* di CHIAVI_SCHEDA (mai un
+//                   segreto) e le righe di cs_faq puntate dai bottoni rapidi.
+//   imposta         {chiave, valore, chi} -> scrive una delle CHIAVI_SCRIVIBILI (orari, solleciti, quattro testi), solo
+//                   se il valore e' uno che chat-api e push-eventi leggono allo stesso modo (C7 del pezzo 4: un valore
+//                   storto valeva "sempre fuori orario" per chat-api e lunedi'-venerdi' 9-18 per push-eventi, o 24,48 in
+//                   silenzio); salvato in forma canonica. Audit staff_imposta con l'impronta prima e dopo, mai il testo.
+//   conoscenza_testo {faq_id, testo_it?, testo_en?, attiva?, chi} -> D-29: testo IT/EN e "attiva" delle sole righe di
+//                   cs_faq puntate da chat_bottoni (le stesse lette da cs-assist per le bozze email: una fonte sola).
 // Regola 19: scrive tabelle chat_* e, solo in cancella_dati, cancella righe cs_conversations della chat (cascata cs_) e
 // le righe di push_eventi_inviati degli eventi della chat con la chiave della sessione (modulo push_*, dalla staff-2);
+// dalla staff-3 la proiezione in cs_ (solo con l'RPC), le chiavi chat_* non segrete di CHIAVI_SCRIVIBILI in app_flags e
+// testi e "attiva" delle righe di cs_faq dei bottoni (7.8, come cs-api con set_ai_istruzioni);
 // nessuna scrittura in change_log, nessuna chiamata a write-api, nessun PIN. Regola 20: letture con errore controllato e
 // un ritentativo, scritture mai ritentate, idempotenza da send_key e update condizionati.
 // Log: solo cause scritte nel codice e codici d'errore, mai testi, token o email.
@@ -33,7 +48,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 
 // ==== PURE:chat-staff BEGIN ====
-const VERSIONE = 'staff-2';
+const VERSIONE = 'staff-3';
 const CORS: Record<string, string> = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 const IDENT: Record<string, string> = { B: 'Benedetta', G: 'Ginevra', A: 'Ale' };
@@ -50,7 +65,21 @@ const CAMPI: Record<string, { ammessi: string[]; obbligatori: string[] }> = {
   revoca_accessi: { ammessi: ['action', 'sessione_id', 'chi'], obbligatori: ['sessione_id', 'chi'] },
   reinvia: { ammessi: ['action', 'messaggio_id', 'chi'], obbligatori: ['messaggio_id', 'chi'] },
   cancella_dati: { ammessi: ['action', 'sessione_id', 'email', 'conferma', 'con_card_email', 'chi'], obbligatori: ['chi'] },
+  impostazioni: { ammessi: ['action', 'chi'], obbligatori: ['chi'] },
+  imposta: { ammessi: ['action', 'chiave', 'valore', 'chi'], obbligatori: ['chiave', 'valore', 'chi'] },
+  conoscenza_testo: { ammessi: ['action', 'faq_id', 'testo_it', 'testo_en', 'attiva', 'chi'], obbligatori: ['faq_id', 'chi'] },
 };
+// la scheda Chat (sez. 10): cosa legge (nessun segreto, nessuna chiave fuori dalla chat) e cosa scrive. chat_sito_enabled,
+// i tetti, la conservazione (D-25), l'informativa (D-22, legale) e i bottoni (pezzo 7) si vedono ma non si cambiano da qui.
+const CHIAVI_SCHEDA = ['chat_sito_enabled', 'chat_orari', 'chat_sollecito_ore', 'chat_limite_chat_giorno', 'chat_conservazione_mesi',
+  'chat_testo_saluto', 'chat_testo_orari', 'chat_testo_attesa', 'chat_testo_fuori_orario', 'chat_testo_informativa', 'chat_bottoni'];
+const CHIAVI_TESTO = ['chat_testo_saluto', 'chat_testo_orari', 'chat_testo_attesa', 'chat_testo_fuori_orario'];
+const CHIAVI_SCRIVIBILI = ['chat_orari', 'chat_sollecito_ore', ...CHIAVI_TESTO];
+const TESTO_FLAG_MAX = 1000;                     // TESTO_MAX di chat-api (testoFlag)
+const FAQ_MAX = 4000;                            // TESTO_DB_MAX di chat-api: la risposta fissa va in un messaggio
+const FUSO = 'Europe/Rome';
+const ORA_RE = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+const ORE_RE = /^\d{1,3}(?:\.\d{1,3})?$/;
 const PROMEMORIA_CANCELLA = [
   'Le email di risposta restano in info@amimi.it (thread "La tua richiesta in chat - Amimì"): vanno cancellate a mano da Gmail.',
   'Le chat di Shopify Inbox di prima non si cancellano dall\'app.',
@@ -75,13 +104,16 @@ interface Db {
   contaMessaggi(sessioneId: string): Promise<number>;
   proiezioni(s: Sess): Promise<string[]>;
   cardEmail(threadId: string): Promise<string | null>;
-  cancellaCs(ids: string[]): Promise<number>;
-  cancellaContatori(sessioneId: string): Promise<number>;
-  cancellaEventiChiave(sessioneId: string): Promise<number>;
-  cancellaPush(sessioneId: string): Promise<number>;
-  cancellaSessione(id: string): Promise<number>;
+  // staff-3 (Gate 2 del pezzo 6, B1): tutto in una transazione, RPC chat_cancella_sessione (migr 0193)
+  cancellaTutto(id: string, card: string | null): Promise<{ esito: string; messaggi: number; proiezioni: number; card_email: number; contatori: number; eventi: number; push: number }>;
   evento(r: { sessione_id: string | null; tipo: string; chi: string; esito: string | null; dettaglio: Record<string, unknown> }): Promise<void>;
+  proietta(sessioneId: string): Promise<void>;
+  flag(chiavi: string[]): Promise<Record<string, string>>;
+  scriviFlag(chiave: string, valore: string): Promise<boolean>;
+  faqRighe(ids: number[]): Promise<Faq[]>;
+  aggiornaFaq(id: number, patch: Record<string, unknown>): Promise<boolean>;
 }
+type Faq = { id: number; tipo: string; titolo: string | null; testo_it: string | null; testo_en: string | null; attiva: boolean };
 type Ambiente = { ora: number; db: Db; invio: (messaggioId: string) => Promise<string> };
 
 class ErroreDb extends Error {
@@ -131,6 +163,103 @@ async function audit(amb: Ambiente, sessioneId: string | null, tipo: string, chi
   try { await amb.db.evento({ sessione_id: sessioneId, tipo, chi, esito, dettaglio }); } catch { /* l'azione e' fatta: l'audit mancante non la annulla */ }
 }
 
+// 7.4: la chat in Assistenza dopo l'azione del team. Mai bloccante: l'azione e' fatta, il cron chat-proiezione riprova.
+async function proiettaSicuro(amb: Ambiente, id: string): Promise<boolean> {
+  try { await amb.db.proietta(id); return true; } catch { return false; }
+}
+// ---- valori della scheda Chat: accettati solo se chat-api (orariFlag, testoFlag) e push-eventi (orariChat, oreSollecito)
+// li leggono allo stesso modo; restituiti nella forma canonica da salvare, null = rifiuto ----
+function testoPulitoFlag(v: unknown, max: number): string | null {
+  if (typeof v !== 'string' || SURROGATO_SOLO_RE.test(v)) return null;
+  const s = v.normalize('NFC').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g, '').trim();
+  const n = cp(s);
+  return n >= 1 && n <= max ? s : null;
+}
+function dataVera(v: unknown): boolean {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const t = Date.parse(v + 'T00:00:00Z');
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v;
+}
+function valoreScheda(chiave: string, v: unknown): string | null {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) {
+    if (chiave !== 'chat_sollecito_ore' || !Array.isArray(v)) return null;
+  }
+  if (chiave === 'chat_sollecito_ore') {
+    const a = v as unknown[];
+    if (a.length !== 2 || !a.every((x) => typeof x === 'number' && Number.isFinite(x) && x >= 0.05 && x <= 240 && ORE_RE.test(String(x)))) return null;
+    return (a[0] as number) < (a[1] as number) ? `${a[0]},${a[1]}` : null;
+  }
+  const o = v as Record<string, unknown>;
+  if (chiave === 'chat_orari') {
+    if (Object.keys(o).some((k) => !['tz', 'giorni', 'dalle', 'alle', 'chiusure'].includes(k))) return null;
+    if (o.tz !== FUSO || typeof o.dalle !== 'string' || typeof o.alle !== 'string' || !ORA_RE.test(o.dalle) || !ORA_RE.test(o.alle) || o.dalle >= o.alle) return null;
+    if (!Array.isArray(o.giorni) || !o.giorni.length || !o.giorni.every((g) => typeof g === 'number' && Number.isInteger(g) && g >= 1 && g <= 7)) return null;
+    const chiusure = o.chiusure === undefined ? [] : o.chiusure;
+    if (!Array.isArray(chiusure) || chiusure.length > 100 || !chiusure.every(dataVera)) return null;
+    const giorni = [...new Set(o.giorni as number[])].sort((x, y) => x - y);
+    return JSON.stringify({ tz: FUSO, giorni, dalle: o.dalle, alle: o.alle, chiusure: [...new Set(chiusure as string[])].sort() });
+  }
+  if (CHIAVI_TESTO.includes(chiave)) {
+    if (Object.keys(o).some((k) => k !== 'it' && k !== 'en')) return null;
+    const it = testoPulitoFlag(o.it, TESTO_FLAG_MAX), en = testoPulitoFlag(o.en, TESTO_FLAG_MAX);
+    return it !== null && en !== null ? JSON.stringify({ it, en }) : null;
+  }
+  return null;
+}
+// le righe di cs_faq puntate dai bottoni rapidi (stesso criterio di bottoniFlag di chat-api: id intero positivo)
+function faqDeiBottoni(v: string | undefined): number[] {
+  try {
+    const a = JSON.parse(v ?? '');
+    if (!Array.isArray(a)) return [];
+    return [...new Set(a.slice(0, 8).map((r) => (r && typeof r === 'object' ? (r as Record<string, unknown>).faq : null))
+      .filter((f): f is number => Number.isSafeInteger(f) && (f as number) > 0))];
+  } catch { return []; }
+}
+async function impronta(v: string | undefined): Promise<string> {
+  if (v === undefined) return 'assente';
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)));
+  return [...h].slice(0, 6).map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+
+async function impostazioni(amb: Ambiente): Promise<Response> {
+  const valori = await amb.db.flag(CHIAVI_SCHEDA);
+  const ids = faqDeiBottoni(valori.chat_bottoni);
+  const faq = ids.length ? await amb.db.faqRighe(ids) : [];
+  return json({ ok: true, valori, faq, scrivibili: CHIAVI_SCRIVIBILI });
+}
+async function imposta(d: Record<string, unknown>, amb: Ambiente, chi: string): Promise<Response> {
+  const chiave = typeof d.chiave === 'string' && CHIAVI_SCRIVIBILI.includes(d.chiave) ? d.chiave : null;
+  if (!chiave) return errore('chiave_non_ammessa', 422);
+  const valore = valoreScheda(chiave, d.valore);
+  if (valore === null) return errore('campo_non_valido', 422, { campo: 'valore' });
+  const prima = (await amb.db.flag([chiave]))[chiave];
+  if (prima === valore) return json({ ok: true, chiave, valore, invariato: true });
+  if (!(await amb.db.scriviFlag(chiave, valore))) return errore('chiave_assente', 409);
+  await audit(amb, null, 'staff_imposta', chi, 'fatto', { chiave, prima: await impronta(prima), dopo: await impronta(valore) });
+  return json({ ok: true, chiave, valore });
+}
+async function conoscenzaTesto(d: Record<string, unknown>, amb: Ambiente, chi: string): Promise<Response> {
+  const id = d.faq_id;
+  if (!Number.isSafeInteger(id) || (id as number) < 1) return errore('campo_non_valido', 422, { campo: 'faq_id' });
+  const patch: Record<string, unknown> = {};
+  for (const k of ['testo_it', 'testo_en']) {
+    if (d[k] === undefined || d[k] === null) continue;
+    const t = testoPulitoFlag(d[k], FAQ_MAX);
+    if (t === null) return errore('campo_non_valido', 422, { campo: k, max: FAQ_MAX });
+    patch[k] = t;
+  }
+  if (d.attiva !== undefined && d.attiva !== null) {
+    if (typeof d.attiva !== 'boolean') return errore('campo_non_valido', 422, { campo: 'attiva' });
+    patch.attiva = d.attiva;
+  }
+  if (!Object.keys(patch).length) return errore('campo_mancante', 422, { campo: 'testo_it, testo_en o attiva' });
+  // solo le righe dei bottoni rapidi (D-29): l'editor completo della conoscenza e' Fase 2
+  if (!faqDeiBottoni((await amb.db.flag(['chat_bottoni'])).chat_bottoni).includes(id as number)) return errore('faq_non_dei_bottoni', 422);
+  if (!(await amb.db.aggiornaFaq(id as number, patch))) return errore('faq_inesistente', 404);
+  await audit(amb, null, 'staff_conoscenza', chi, 'fatto', { faq_id: id, campi: Object.keys(patch).sort() });
+  return json({ ok: true, faq_id: id, campi: Object.keys(patch).sort() });
+}
+
 async function rispondi(d: Record<string, unknown>, amb: Ambiente, chi: string): Promise<Response> {
   const id = uuid(d.sessione_id);
   if (!id) return errore('campo_non_valido', 422, { campo: 'sessione_id' });
@@ -151,8 +280,9 @@ async function rispondi(d: Record<string, unknown>, amb: Ambiente, chi: string):
   const dopo = await amb.db.aggiornaSessione(id, { stato: 'aperta', preso_da: chi, ultima_risposta_staff_at: ora, ultima_attivita_at: ora, updated_at: ora });
   if (m.email_stato === null) await amb.invio(m.id);
   const e = await statoEmail(amb, m.id);
+  const proiezione = await proiettaSicuro(amb, id);
   await audit(amb, id, 'staff_rispondi', chi, e.email, { seq: m.seq, ripetuta });
-  return json({ ok: true, messaggio: { id: m.id, seq: m.seq }, stato: dopo?.stato ?? 'chiusa', ...e, email_verificata: s.shopify_customer_id !== null, ripetuta });
+  return json({ ok: true, messaggio: { id: m.id, seq: m.seq }, stato: dopo?.stato ?? 'chiusa', ...e, email_verificata: s.shopify_customer_id !== null, ripetuta, proiezione });
 }
 
 async function cambiaStato(d: Record<string, unknown>, amb: Ambiente, chi: string, azione: string): Promise<Response> {
@@ -167,11 +297,13 @@ async function cambiaStato(d: Record<string, unknown>, amb: Ambiente, chi: strin
     return json({ ok: true, revocati: n });
   }
   if (s.stato === 'chiusa') return azione === 'chiudi' ? json({ ok: true, stato: 'chiusa', gia_chiusa: true }) : errore('chiusa', 409);
-  const patch = azione === 'chiudi' ? { stato: 'chiusa', chiusa_at: ora, updated_at: ora } : { stato: 'aperta', preso_da: chi, updated_at: ora };
+  // chiudi: preso_da = chi chiude, cosi' la card chiusa dice chi l'ha chiusa (7.8: `stato_by` = chi; Gate 2, C2)
+  const patch = azione === 'chiudi' ? { stato: 'chiusa', chiusa_at: ora, preso_da: chi, updated_at: ora } : { stato: 'aperta', preso_da: chi, updated_at: ora };
   const dopo = await amb.db.aggiornaSessione(id, patch);
   if (!dopo) return azione === 'chiudi' ? json({ ok: true, stato: 'chiusa', gia_chiusa: true }) : errore('chiusa', 409);
+  const proiezione = await proiettaSicuro(amb, id);
   await audit(amb, id, azione === 'chiudi' ? 'staff_chiudi' : 'staff_prendo', chi, 'fatto', { da: s.stato });
-  return json({ ok: true, stato: dopo.stato });
+  return json({ ok: true, stato: dopo.stato, proiezione });
 }
 
 async function reinvia(d: Record<string, unknown>, amb: Ambiente, chi: string): Promise<Response> {
@@ -222,21 +354,14 @@ async function cancellaDati(d: Record<string, unknown>, amb: Ambiente, chi: stri
   const per = perSessione ? 'sessione' : 'email';
   try {
     for (const v of voci) {
-      // prima le righe cs_ (un errore lascia la sessione, quindi la cancellazione si puo' ripetere), poi la sessione
-      const cs = [...v.proiezioni, ...(d.con_card_email === true && v.card ? [v.card] : [])];
-      if (cs.length) {
-        const n = await amb.db.cancellaCs(cs);
-        const card = d.con_card_email === true && v.card ? 1 : 0;
-        conti.card_email += Math.min(card, n);
-        conti.proiezioni += Math.max(0, n - card);
-      }
-      conti.contatori += await amb.db.cancellaContatori(v.s.id);
-      // le chiavi `<sessione>:...` (prenotazioni di push e thread, tetti) portano l'id della sessione e del thread Gmail:
-      // si cancellano con lei (11.6 punto 4, Gate 2 C2); gli eventi senza chiave restano senza sessione
-      conti.eventi += await amb.db.cancellaEventiChiave(v.s.id);
-      // staff-2 (11.6 punto 4): il registro delle push della chat con la chiave della sessione (push-eventi v7)
-      conti.push += await amb.db.cancellaPush(v.s.id);
-      if ((await amb.db.cancellaSessione(v.s.id)) === 1) { conti.sessioni++; conti.messaggi += v.messaggi; }
+      // staff-3 (Gate 2 del pezzo 6, B1): una sessione = una transazione (RPC chat_cancella_sessione) col lock della
+      // sessione preso prima, come chat_proietta: proiezione, card email se chiesta, contatori `sess:<id>:*`, eventi con
+      // chiave `<id>:*` (11.6 punto 4, Gate 2 C2), registro delle push della chat (staff-2) e sessione, tutto o niente.
+      // Con le chiamate separate di prima il cron della proiezione poteva far rinascere la card fra una e l'altra.
+      const r = await amb.db.cancellaTutto(v.s.id, d.con_card_email === true && v.card ? v.card : null);
+      if (r.esito !== 'cancellata') continue;
+      conti.sessioni++; conti.messaggi += r.messaggi; conti.proiezioni += r.proiezioni; conti.card_email += r.card_email;
+      conti.contatori += r.contatori; conti.eventi += r.eventi; conti.push += r.push;
     }
   } catch (x) {
     await audit(amb, null, 'cancella_dati', chi, 'parziale', { per, ...conti });
@@ -267,6 +392,9 @@ async function gestisci(req: Request, amb: Ambiente): Promise<Response> {
     if (azione === 'rispondi') return await rispondi(d, amb, chi);
     if (azione === 'reinvia') return await reinvia(d, amb, chi);
     if (azione === 'cancella_dati') return await cancellaDati(d, amb, chi);
+    if (azione === 'impostazioni') return await impostazioni(amb);
+    if (azione === 'imposta') return await imposta(d, amb, chi);
+    if (azione === 'conoscenza_testo') return await conoscenzaTesto(d, amb, chi);
     return await cambiaStato(d, amb, chi, azione);
   } catch (x) {
     return errore('riprova', 503, { causa: x instanceof ErroreDb ? x.causa : 'eccezione' });
@@ -290,8 +418,6 @@ const fallito = (causa: string, e: unknown): ErroreDb => {
   return new ErroreDb(causa);
 };
 const COL_SESS = 'id, stato, preso_da, customer_email, shopify_customer_id, prova, gmail_thread_id, cs_conversation_id, created_at, ultima_attivita_at';
-// gli eventi di push-eventi v7 (migr 0188) le cui chiavi cominciano con l'id della sessione
-const EVENTI_PUSH_CHAT = ['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'];
 const COL_MSG = 'id, sessione_id, seq, autore, email_stato, email_errore';
 const env = (k: string) => (Deno.env.get(k) ?? '').trim();
 
@@ -361,34 +487,49 @@ function dbSupabase(sb: SupabaseClient, anon: SupabaseClient): Db {
       if (error) throw fallito('card email non letta', error);
       return uno<{ id: string }>(data)?.id ?? null;
     },
-    async cancellaCs(ids) {
-      const { data, error } = await sb.from('cs_conversations').delete().in('id', ids).select('id');
-      if (error) throw fallito('righe cs non cancellate', error);
-      return (data ?? []).length;
-    },
-    async cancellaContatori(sessioneId) {
-      const { data, error } = await sb.from('chat_contatori').delete().like('chiave', `sess:${sessioneId}:%`).select('chiave');
-      if (error) throw fallito('contatori non cancellati', error);
-      return (data ?? []).length;
-    },
-    async cancellaEventiChiave(sessioneId) {
-      const { data, error } = await sb.from('chat_eventi').delete().like('chiave', `${sessioneId}:%`).select('id');
-      if (error) throw fallito('eventi della sessione non cancellati', error);
-      return (data ?? []).length;
-    },
-    async cancellaPush(sessioneId) {
-      const { data, error } = await sb.from('push_eventi_inviati').delete().in('evento', EVENTI_PUSH_CHAT).like('chiave', `${sessioneId}:%`).select('id');
-      if (error) throw fallito('registro delle push non cancellato', error);
-      return (data ?? []).length;
-    },
-    async cancellaSessione(id) {
-      const { data, error } = await sb.from('chat_sessioni').delete().eq('id', id).select('id');
-      if (error) throw fallito('sessione non cancellata', error);
-      return (data ?? []).length;
+    async cancellaTutto(id, card) {
+      // scrittura: mai ritentata (Regola 20 d); una transazione, quindi un errore non lascia niente a meta'
+      const { data, error } = await sb.rpc('chat_cancella_sessione', { p_sessione: id, p_card: card });
+      if (error) throw fallito('chat non cancellata', error);
+      const r = (data ?? {}) as Record<string, unknown>;
+      const n = (k: string) => (typeof r[k] === 'number' ? (r[k] as number) : 0);
+      if (r.esito !== 'cancellata' && r.esito !== 'assente') throw fallito('cancellazione con esito inatteso', null);
+      return { esito: String(r.esito), messaggi: n('messaggi'), proiezioni: n('proiezioni'), card_email: n('card_email'), contatori: n('contatori'), eventi: n('eventi'), push: n('push') };
     },
     async evento(r) {
       const { error } = await sb.from('chat_eventi').insert({ ...r, chiave: null });
       if (error) throw fallito('evento non scritto', error);
+    },
+    async proietta(sessioneId) {
+      // scrittura: mai ritentata (Regola 20 d); l'RPC e' idempotente e la riprova il cron chat-proiezione
+      const { data, error } = await sb.rpc('chat_proietta', { p_sessione: sessioneId });
+      if (error) throw fallito('proiezione non scritta', error);
+      const esito = (data as { esito?: unknown } | null)?.esito;
+      if (esito !== 'fatto' && esito !== 'vuota') throw fallito('proiezione con esito inatteso', null);
+    },
+    async flag(chiavi) {
+      // solo l'elenco chiuso della scheda (CONOSCENZA: app_flags contiene segreti, mai un filtro largo)
+      const { data, error } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', chiavi).limit(chiavi.length));
+      if (error) throw fallito('impostazioni non lette', error);
+      const out: Record<string, string> = {};
+      for (const r of (data ?? []) as { key: string; value: unknown }[]) if (chiavi.includes(r.key) && typeof r.value === 'string') out[r.key] = r.value;
+      return out;
+    },
+    async scriviFlag(chiave, valore) {
+      const { data, error } = await sb.from('app_flags').update({ value: valore }).eq('key', chiave).select('key');
+      if (error) throw fallito('impostazione non scritta', error);
+      return (data ?? []).length === 1;
+    },
+    async faqRighe(ids) {
+      const { data, error } = await retryOnce(() => sb.from('cs_faq').select('id, tipo, titolo, testo_it, testo_en, attiva').in('id', ids).limit(ids.length));
+      if (error) throw fallito('conoscenza non letta', error);
+      return (data ?? []) as Faq[];
+    },
+    async aggiornaFaq(id, patch) {
+      // come chat-api: solo righe pubblicabili, mai gli esempi di tono
+      const { data, error } = await sb.from('cs_faq').update(patch).eq('id', id).in('tipo', ['faq', 'risposta_standard']).select('id');
+      if (error) throw fallito('conoscenza non scritta', error);
+      return (data ?? []).length === 1;
     },
   };
 }

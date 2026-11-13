@@ -1,4 +1,8 @@
 // cs-classify — tool assistenza clienti, FASE 2: auto-categorizzazione + urgenza.
+// v10 (2026-11-13, chat del sito Fase 1 pezzo 6, docs/PROPOSTA_chat_sito.md 7.6 punti 7-8 e 7.10): le chat del sito
+//   (canale `chat_sito`, migr 0193) non passano mai da qui: niente Gemini sul loro testo (un solo fornitore AI per la
+//   chat, quello del bot), urgenza e flag li decide la proiezione da chat_sessioni (nessun evento `classify`, quindi
+//   nessuna seconda push da cs_urgente), la categoria la mette lo staff. E il B2B non manda una chat nel rumore.
 // v9 (2026-10-31, OK di Dan in chat, CASI_APERTI n.54): il PASSAGGIO del chatbot di Shopify Inbox.
 //   Dal 29-09 il chatbot AI di Inbox risponde per primo; quando passa la chat al team la notifica
 //   dice solo "Agent transferred this conversation to your team for further support", senza la
@@ -210,7 +214,7 @@ const MOTIVO_PASSAGGIO = 'chat passata dal chatbot';
 // Inbox: nascosta nel rumore non la vede piu' nessuno. Quindi la regola vale per tutti i canali
 // tranne la chat.
 function b2bVaNelRumore(categoria: unknown, canale: unknown): boolean {
-  return categoria === 'Collaborazioni e B2B' && canale !== 'chat_notifica';
+  return categoria === 'Collaborazioni e B2B' && canale !== 'chat_notifica' && canale !== 'chat_sito';
 }
 // ==== PURE:cs-passaggio END ====
 
@@ -289,7 +293,7 @@ Deno.serve(async (req) => {
   // Coda da classificare: categoria mancante, non rumore, testo disponibile (parse_failed escluse).
   const { data: convs, error: qe } = await sb.from('cs_conversations')
     .select('id,canale,subject,snippet,lingua,stato,stato_at,last_direction,last_msg_at')
-    .is('categoria', null).is('categoria_source', null).neq('canale', 'rumore').eq('parse_failed', false)
+    .is('categoria', null).is('categoria_source', null).neq('canale', 'rumore').neq('canale', 'chat_sito').eq('parse_failed', false)
     .order('last_msg_at', { ascending: true, nullsFirst: true }).limit(limit);
   if (qe) return json({ ok: false, error: qe.message }, 500);
   if (!convs || convs.length === 0) return json({ ok: true, classified: 0, low: 0, remaining: 0 });
@@ -378,7 +382,7 @@ Deno.serve(async (req) => {
   // quante restano ancora da classificare (per sapere se il cron deve continuare a drenare)
   const { count: remaining } = await sb.from('cs_conversations')
     .select('id', { count: 'exact', head: true })
-    .is('categoria', null).is('categoria_source', null).neq('canale', 'rumore').eq('parse_failed', false);
+    .is('categoria', null).is('categoria_source', null).neq('canale', 'rumore').neq('canale', 'chat_sito').eq('parse_failed', false);
 
   return json({ ok: true, classified, low, failed, remaining: remaining ?? 0, ...(dryRun ? { dryRun: true, preview } : {}) });
 });

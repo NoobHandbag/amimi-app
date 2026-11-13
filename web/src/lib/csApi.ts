@@ -3,7 +3,9 @@ import { csClient } from './csClient';
 // Letture della sezione Assistenza (Fase 1, SOLA LETTURA). Tutto passa dal client con la sessione
 // utente: se non loggati, la RLS `authenticated` nega e le query tornano vuote/errore.
 
-export type Canale = 'email_diretta' | 'form_contatto' | 'form_evento' | 'chat_notifica' | 'rumore';
+// chat_sito (13-11, chat del sito pezzo 6): le chat del widget nostro proiettate da chat_ (migr 0193); chat_notifica = le
+// notifiche email delle chat di Shopify Inbox ("Chat Inbox").
+export type Canale = 'email_diretta' | 'form_contatto' | 'form_evento' | 'chat_notifica' | 'chat_sito' | 'rumore';
 
 export type CsConversation = {
   id: string;
@@ -54,6 +56,7 @@ export const catEmoji = (label: string | null): string => CS_CATEGORIES.find((c)
 
 export type CsMessage = {
   id: string;
+  gmail_message_id?: string;    // chat del sito: 'chat:<id di chat_messaggi>' (esito dell'email della risposta)
   direction: string;
   sent_by: string | null;
   from_email: string | null;
@@ -67,14 +70,63 @@ export type CsMessage = {
 
 const CONV_COLS = 'id,gmail_thread_id,canale,customer_email,customer_name,stato,stato_by,last_msg_at,last_direction,subject,snippet,order_number,lingua,categoria,categoria_source,categoria_confidence,urgente,urgenza_motivo,flags,summary,parse_failed,created_at';
 
-/** Coda cliente: tutto tranne il rumore, piu' recenti in cima. */
-export async function fetchConversations(): Promise<CsConversation[]> {
-  const { data, error } = await csClient
+// Regola 20 (b), punto 6 di PROPOSTA_chat_sito 7.6: senza limite PostgREST taglia in silenzio a 1.000 righe, e con le chat
+// la coda ci arriva in qualche mese. Le aperte si leggono TUTTE a pagine (sono poche: 3 al 13-11); delle concluse solo le
+// piu' recenti, poi "Carica le concluse piu' vecchie". Concluse a CURSORE (Gate 2, B1): ordine stabile (last_msg_at
+// decrescente con i null in fondo, poi id) e la pagina dopo parte dall'ultima riga gia' in mano, non da un offset, cosi'
+// una conclusa riaperta o una nuova fra due letture non fa saltare ne' ripetere righe.
+export const PAGINA_CONCLUSE = 300;
+const PAGINA = 1000;
+export type CursoreConcluse = { last_msg_at: string | null; id: string };
+/** L'ultima conclusa nell'ordine della coda: da li' parte la pagina dopo. */
+export function cursoreDi(convs: CsConversation[]): CursoreConcluse | null {
+  const ord = (a: CsConversation, b: CsConversation) => {
+    if (a.last_msg_at !== b.last_msg_at) {
+      if (a.last_msg_at === null) return 1;
+      if (b.last_msg_at === null) return -1;
+      return a.last_msg_at < b.last_msg_at ? 1 : -1;
+    }
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  };
+  const ultima = convs.filter((c) => c.stato === 'fatto').sort(ord).pop();
+  return ultima ? { last_msg_at: ultima.last_msg_at, id: ultima.id } : null;
+}
+export async function fetchConcluse(dopo: CursoreConcluse | null, quante = PAGINA_CONCLUSE): Promise<CsConversation[]> {
+  let q = csClient
     .from('cs_conversations').select(CONV_COLS)
-    .neq('canale', 'rumore')
-    .order('last_msg_at', { ascending: false, nullsFirst: false });
+    .neq('canale', 'rumore').eq('stato', 'fatto');
+  if (dopo) {
+    q = dopo.last_msg_at === null
+      ? q.is('last_msg_at', null).gt('id', dopo.id)
+      : q.or(`last_msg_at.lt."${dopo.last_msg_at}",and(last_msg_at.eq."${dopo.last_msg_at}",id.gt.${dopo.id}),last_msg_at.is.null`);
+  }
+  const { data, error } = await q
+    .order('last_msg_at', { ascending: false, nullsFirst: false }).order('id', { ascending: true })
+    .limit(quante);
   if (error) throw new Error(error.message);
   return (data ?? []) as CsConversation[];
+}
+/** Coda cliente: tutto tranne il rumore, piu' recenti in cima. Aperte tutte, concluse le ultime PAGINA_CONCLUSE;
+ *  `altreConcluse` = la pagina delle concluse era piena (ce ne possono essere di piu' vecchie). */
+export async function fetchCoda(): Promise<{ convs: CsConversation[]; altreConcluse: boolean }> {
+  const aperte: CsConversation[] = [];
+  for (let pagina = 0; pagina < 20; pagina++) {
+    const { data, error } = await csClient
+      .from('cs_conversations').select(CONV_COLS)
+      .neq('canale', 'rumore').neq('stato', 'fatto')
+      .order('last_msg_at', { ascending: false, nullsFirst: false }).order('id', { ascending: true })
+      .range(pagina * PAGINA, pagina * PAGINA + PAGINA - 1);
+    if (error) throw new Error(error.message);
+    aperte.push(...((data ?? []) as CsConversation[]));
+    if ((data ?? []).length < PAGINA) break;
+  }
+  const concluse = await fetchConcluse(null);
+  // una conversazione che cambia stato fra le due letture non compare due volte (vince la lettura delle aperte, Gate 2 C1)
+  const ids = new Set(aperte.map((c) => c.id));
+  return { convs: [...aperte, ...concluse.filter((c) => !ids.has(c.id))], altreConcluse: concluse.length >= PAGINA_CONCLUSE };
+}
+export async function fetchConversations(): Promise<CsConversation[]> {
+  return (await fetchCoda()).convs;
 }
 
 /** Vista Rumore: solo canale=rumore (controllo che il filtro non abbia nascosto un cliente). */
@@ -91,11 +143,115 @@ export async function fetchRumore(): Promise<CsConversation[]> {
 export async function fetchMessages(conversationId: string): Promise<CsMessage[]> {
   const { data, error } = await csClient
     .from('cs_messages')
-    .select('id,direction,sent_by,from_email,to_email,sent_at,body_text,body_clean,is_via_tool,form_fields')
+    .select('id,gmail_message_id,direction,sent_by,from_email,to_email,sent_at,body_text,body_clean,is_via_tool,form_fields')
     .eq('conversation_id', conversationId)
     .order('sent_at', { ascending: true, nullsFirst: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as CsMessage[];
+}
+
+// ---- chat del sito (pezzo 6, PROPOSTA_chat_sito 7.6 e 7.8): la chat sta in chat_ (fonte di verita'), Assistenza ne
+// legge la proiezione in cs_ e chiama chat-staff per ogni azione. Letture col JWT del team: chat_sessioni e chat_messaggi
+// hanno grant per colonna al solo team (migr 0186), quindi qui si elencano le colonne, mai select=*.
+export const sessioneDiChat = (c: { gmail_thread_id?: string | null }): string | null => {
+  const m = /^chat:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(c.gmail_thread_id ?? '');
+  return m ? m[1].toLowerCase() : null;
+};
+export const isChatSito = (c: { canale?: string | null; gmail_thread_id?: string | null }): boolean => c.canale === 'chat_sito' || sessioneDiChat(c) !== null;
+export type ChatSessione = {
+  id: string; stato: 'bot' | 'attesa_persona' | 'aperta' | 'chiusa'; preso_da: string | null; customer_email: string; shopify_customer_id: string | null;
+  lingua: string; prova: boolean; passaggi: number; passaggio_at: string | null; ultima_risposta_staff_at: string | null; chiusa_at: string | null; gmail_thread_id: string | null;
+};
+export type ChatEmail = { id: string; seq: number; autore: string; email_stato: 'prenotata' | 'inviata' | 'errore' | null; email_errore: string | null; email_at: string | null; delivered_at: string | null };
+export async function fetchChatSessione(sessioneId: string): Promise<ChatSessione | null> {
+  const { data, error } = await csClient.from('chat_sessioni')
+    .select('id,stato,preso_da,customer_email,shopify_customer_id,lingua,prova,passaggi,passaggio_at,ultima_risposta_staff_at,chiusa_at,gmail_thread_id')
+    .eq('id', sessioneId).limit(1);
+  if (error) throw new Error(error.message);
+  return ((data ?? [])[0] as ChatSessione | undefined) ?? null;
+}
+/** Per id del messaggio (la proiezione lo porta in cs_messages come chat:<id>): l'ordine vero (`seq`: bottone e risposta
+ *  fissa hanno lo stesso istante, Gate 2 C2) e l'esito dell'email delle risposte dello staff. Una chat ha al massimo 100
+ *  messaggi della cliente, piu' le risposte: 1.000 bastano. */
+export async function fetchChatEmail(sessioneId: string): Promise<Record<string, ChatEmail>> {
+  const { data, error } = await csClient.from('chat_messaggi')
+    .select('id,seq,autore,email_stato,email_errore,email_at,delivered_at')
+    .eq('sessione_id', sessioneId).order('seq', { ascending: true }).limit(1000);
+  if (error) throw new Error(error.message);
+  return Object.fromEntries(((data ?? []) as ChatEmail[]).map((m) => [m.id, m]));
+}
+/** La card email della risposta della cliente al thread di chat-send (7.9): stesso gmail_thread_id. */
+export async function fetchCardDelThread(threadId: string): Promise<CsConversation | null> {
+  const { data, error } = await csClient.from('cs_conversations').select(CONV_COLS).eq('gmail_thread_id', threadId).limit(1);
+  if (error) throw new Error(error.message);
+  return ((data ?? [])[0] as CsConversation | undefined) ?? null;
+}
+const CHAT_STAFF_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/chat-staff';
+async function callChatStaff(bodyObj: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { data } = await csClient.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Sessione scaduta: rientra.');
+  const r = await fetch(CHAT_STAFF_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+    body: JSON.stringify(bodyObj),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.ok) throw new Error(ERRORI_CHAT[String(j.error ?? '')] ?? (j.error ? String(j.error) : 'Errore ' + r.status));
+  return j as Record<string, unknown>;
+}
+const ERRORI_CHAT: Record<string, string> = {
+  chiusa: 'La chat è chiusa: non riceve più risposte. Se la cliente riscrive, si apre una chat nuova.',
+  gia_inviata: 'L’email era già partita (l’ha mandata il giro automatico).',
+  in_corso: 'L’email sta partendo proprio ora: aggiorna tra qualche secondo.',
+  cambiato: 'L’email è cambiata nel frattempo: aggiorna e riprova.',
+  chiave_assente: 'Impostazione non trovata nel database.',
+  faq_inesistente: 'Risposta non trovata (o non è una risposta standard).',
+  troppe_sessioni: 'Troppe chat con questa email: cancellale una per una.',
+  chi_sconosciuto: 'Scegli chi sei dal menu in alto.',
+  sessione_non_valida: 'Sessione scaduta: rientra.',
+  non_autenticato: 'Sessione scaduta: rientra.',
+  dominio_non_ammesso: 'Questo account non è del team.',
+  messaggio_inesistente: 'Messaggio non trovato.',
+  non_dello_staff: 'Si riprovano solo le email delle risposte del team.',
+  send_key_gia_usata: 'Questo invio è già stato usato per un’altra chat: chiudi e riapri il dialogo.',
+  sessione_inesistente: 'Chat non trovata: forse è stata cancellata.',
+  riprova: 'Il database non risponde: riprova tra poco.',
+  campo_non_valido: 'Valore non valido.',
+  chiave_non_ammessa: 'Questa impostazione non si cambia da qui.',
+  faq_non_dei_bottoni: 'Si possono cambiare solo le risposte dei bottoni rapidi.',
+  non_reinviabile: 'Questa email non si può riprovare: potrebbe essere già arrivata.',
+};
+export type EsitoEmailChat = 'inviata' | 'errore' | 'in_corso' | 'in_coda';
+export type RispostaChat = { email: EsitoEmailChat; email_errore: string | null; email_verificata: boolean; ripetuta: boolean; proiezione: boolean; stato: string };
+/** "Invia in chat": la risposta compare nella chat e parte SUBITO per email da info@ (D-8). sendKey nasce all'apertura del dialogo. */
+export async function chatRispondi(sessioneId: string, testo: string, chi: string, sendKey: string): Promise<RispostaChat> {
+  const j = await callChatStaff({ action: 'rispondi', sessione_id: sessioneId, testo, chi, send_key: sendKey });
+  return { email: (j.email as EsitoEmailChat) ?? 'in_coda', email_errore: (j.email_errore as string) ?? null, email_verificata: j.email_verificata === true,
+    ripetuta: j.ripetuta === true, proiezione: j.proiezione !== false, stato: String(j.stato ?? '') };
+}
+export async function chatAzione(azione: 'prendo_io' | 'chiudi' | 'revoca_accessi', sessioneId: string, chi: string): Promise<Record<string, unknown>> {
+  return await callChatStaff({ action: azione, sessione_id: sessioneId, chi });
+}
+export async function chatReinvia(messaggioId: string, chi: string): Promise<{ email: EsitoEmailChat; email_errore: string | null }> {
+  const j = await callChatStaff({ action: 'reinvia', messaggio_id: messaggioId, chi });
+  return { email: (j.email as EsitoEmailChat) ?? 'in_coda', email_errore: (j.email_errore as string) ?? null };
+}
+export type AnteprimaCancella = { trovate: number; sessioni: { id: string; messaggi: number; proiezioni: number; card_email: boolean; prova: boolean }[]; promemoria: string[] };
+export async function chatCancellaDati(sessioneId: string, chi: string, conferma: boolean, conCardEmail = false): Promise<AnteprimaCancella & { cancellate?: Record<string, number> }> {
+  const j = await callChatStaff({ action: 'cancella_dati', sessione_id: sessioneId, chi, ...(conferma ? { conferma: true, con_card_email: conCardEmail } : {}) });
+  return j as unknown as AnteprimaCancella & { cancellate?: Record<string, number> };
+}
+export type ImpostazioniChat = { valori: Record<string, string>; faq: { id: number; tipo: string; titolo: string | null; testo_it: string | null; testo_en: string | null; attiva: boolean }[]; scrivibili: string[] };
+export async function chatImpostazioni(chi: string): Promise<ImpostazioniChat> {
+  return (await callChatStaff({ action: 'impostazioni', chi })) as unknown as ImpostazioniChat;
+}
+export async function chatImposta(chiave: string, valore: unknown, chi: string): Promise<{ valore: string; invariato: boolean }> {
+  const j = await callChatStaff({ action: 'imposta', chiave, valore, chi });
+  return { valore: String(j.valore ?? ''), invariato: j.invariato === true };
+}
+export async function chatConoscenza(faqId: number, patch: { testo_it?: string; testo_en?: string; attiva?: boolean }, chi: string): Promise<void> {
+  await callChatStaff({ action: 'conoscenza_testo', faq_id: faqId, ...patch, chi });
 }
 
 const CS_SYNC_URL = (import.meta.env.VITE_SUPABASE_URL as string) + '/functions/v1/cs-sync';

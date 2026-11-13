@@ -44,7 +44,12 @@ const T0 = Date.parse('2026-11-09T10:00:00Z');
 const isoT = (ms) => new Date(ms).toISOString();
 function nuovoStore() {
   return { ora: T0, flag: 'true', pinHash: sha('x'), sess: new Map(), msg: new Map(), token: [], eventi: [], cont: new Map(), cs: new Map(), push: [], seq: 0, salute: null,
-    utenti: { 'jwt-team': 'ginni@amimi.it', 'jwt-fuori': 'qualcuno@gmail.com' }, rotto: {} };
+    utenti: { 'jwt-team': 'ginni@amimi.it', 'jwt-fuori': 'qualcuno@gmail.com' }, rotto: {}, proiezioni: [],
+    flags: new Map([['chat_sito_enabled', 'false'], ['chat_orari', '{"tz":"Europe/Rome","giorni":[1,2,3,4,5],"dalle":"09:00","alle":"18:00","chiusure":[]}'],
+      ['chat_sollecito_ore', '24,48'], ['chat_testo_attesa', '{"it":"Attesa {email}","en":"Wait {email}"}'], ['chat_bottoni', '[{"id":"spedizioni","it":"Spedizioni","en":"Shipping","faq":7},{"id":"resi","it":"Resi","en":"Returns","faq":null}]'],
+      ['cs_gmail_sa_key', 'SEGRETO-CHE-NON-DEVE-USCIRE']]),
+    faq: new Map([[7, { id: 7, tipo: 'risposta_standard', titolo: 'Spedizioni', testo_it: 'Spediamo in 2 giorni.', testo_en: 'We ship in 2 days.', attiva: true }],
+      [8, { id: 8, tipo: 'esempio_tono', titolo: 'Tono', testo_it: 'x', testo_en: 'x', attiva: true }]]) };
 }
 function sessione(st, extra = {}) {
   const id = randomUUID();
@@ -311,19 +316,30 @@ function dbStaff(st) {
     async contaMessaggi(sid) { return [...st.msg.values()].filter((m) => m.sessione_id === sid).length; },
     async proiezioni(s) { return [...new Set([...[...st.cs.values()].filter((c) => c.gmail_thread_id === `chat:${s.id}`).map((c) => c.id), ...(s.cs_conversation_id ? [s.cs_conversation_id] : [])])]; },
     async cardEmail(tid) { return [...st.cs.values()].find((c) => c.gmail_thread_id === tid)?.id ?? null; },
-    async cancellaCs(ids) { rotto('cs'); let n = 0; for (const id of ids) if (st.cs.delete(id)) n++; for (const s of st.sess.values()) if (ids.includes(s.cs_conversation_id)) s.cs_conversation_id = null; return n; },
-    async cancellaContatori(sid) { let n = 0; for (const k of [...st.cont.keys()]) if (k.startsWith(`sess:${sid}:`)) { st.cont.delete(k); n++; } return n; },
-    async cancellaEventiChiave(sid) { const n = st.eventi.length; st.eventi = st.eventi.filter((e) => !(e.chiave && e.chiave.startsWith(sid + ':'))); return n - st.eventi.length; },
-    // staff-2: registro push_eventi_inviati, solo i tre eventi della chat e le chiavi della sessione
-    async cancellaPush(sid) { rotto('push'); const n = st.push.length; st.push = st.push.filter((r) => !(['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'].includes(r.evento) && r.chiave.startsWith(sid + ':'))); return n - st.push.length; },
-    async cancellaSessione(id) {
-      if (!st.sess.delete(id)) return 0;
+    // staff-3 (Gate 2 del pezzo 6, B1): come l'RPC chat_cancella_sessione, tutto o niente in una transazione
+    async cancellaTutto(id, card) {
+      rotto('cs'); rotto('push');
+      const s = st.sess.get(id);
+      if (!s) return { esito: 'assente', messaggi: 0, proiezioni: 0, card_email: 0, contatori: 0, eventi: 0, push: 0 };
+      const r = { esito: 'cancellata', messaggi: [...st.msg.values()].filter((m) => m.sessione_id === id).length, proiezioni: 0, card_email: 0, contatori: 0, eventi: 0, push: 0 };
+      for (const [k, c] of [...st.cs]) if (c.id === s.cs_conversation_id || c.gmail_thread_id === `chat:${id}`) { st.cs.delete(k); r.proiezioni++; }
+      if (card && s.gmail_thread_id) for (const [k, c] of [...st.cs]) if (c.id === card && c.gmail_thread_id === s.gmail_thread_id) { st.cs.delete(k); r.card_email++; }
+      for (const k of [...st.cont.keys()]) if (k.startsWith(`sess:${id}:`)) { st.cont.delete(k); r.contatori++; }
+      const ne = st.eventi.length; st.eventi = st.eventi.filter((e) => !(e.chiave && e.chiave.startsWith(id + ':'))); r.eventi = ne - st.eventi.length;
+      const np = st.push.length; st.push = st.push.filter((x) => !(['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'].includes(x.evento) && x.chiave.startsWith(id + ':'))); r.push = np - st.push.length;
+      st.sess.delete(id);
       for (const [k, m] of st.msg) if (m.sessione_id === id) st.msg.delete(k);
       st.token = st.token.filter((x) => x.sessione_id !== id);
       for (const e of st.eventi) if (e.sessione_id === id) e.sessione_id = null;
-      return 1;
+      return r;
     },
     async evento(r) { evento(st, r); },
+    // staff-3: proiezione (RPC chat_proietta), scheda Chat e conoscenza dei bottoni
+    async proietta(sid) { rotto('proietta'); st.proiezioni.push(sid); },
+    async flag(chiavi) { rotto('flag'); return Object.fromEntries(chiavi.filter((k) => st.flags.has(k)).map((k) => [k, st.flags.get(k)])); },
+    async scriviFlag(k, v) { rotto('scriviFlag'); if (!st.flags.has(k)) return false; st.flags.set(k, v); return true; },
+    async faqRighe(ids) { return ids.filter((i) => st.faq.has(i)).map((i) => copia(st.faq.get(i))); },
+    async aggiornaFaq(id, patch) { const f = st.faq.get(id); if (!f || !['faq', 'risposta_standard'].includes(f.tipo)) return false; Object.assign(f, patch); return true; },
   };
 }
 function ambStaff(st, g) {
@@ -362,6 +378,79 @@ const callStaff = async (st, g, body, bearer) => { const r = await F.gestisci(re
   t('F18 revoca_accessi: tutti i token della sessione revocati', (await callStaff(st, g, { action: 'revoca_accessi', sessione_id: sid, chi: 'A' })).j.revocati === 3 && st.token.filter((x) => x.sessione_id === sid).every((x) => x.revocato_at));
   t('F19 sessione inesistente = 404; DB in errore = 503', (await callStaff(st, g, { action: 'chiudi', sessione_id: randomUUID(), chi: 'A' })).status === 404
     && await (async () => { st.rotto.sessione = true; const x = (await callStaff(st, g, { action: 'chiudi', sessione_id: sid, chi: 'A' })).status; st.rotto.sessione = false; return x === 503; })());
+}
+{
+  // staff-3 (pezzo 6): proiezione in Assistenza dopo le azioni del team
+  const st = nuovoStore(), g = gmailFinto();
+  const sid = sessione(st);
+  const r = await callStaff(st, g, { action: 'rispondi', sessione_id: sid, testo: 'Ciao', chi: 'G', send_key: randomUUID() });
+  t('F33 rispondi proietta la chat in Assistenza dopo l\'email, e lo dice', r.j.ok && r.j.proiezione === true && st.proiezioni.length === 1 && st.proiezioni[0] === sid);
+  const altra = sessione(st);
+  const p = await callStaff(st, g, { action: 'prendo_io', sessione_id: altra, chi: 'B' });
+  const c = await callStaff(st, g, { action: 'chiudi', sessione_id: altra, chi: 'A' });
+  t('F34 prendo_io e chiudi proiettano; la chat chiusa e\' di chi l\'ha chiusa (7.8, Gate 2 C2)', p.j.proiezione === true && c.j.proiezione === true && st.proiezioni.length === 3 && st.sess.get(altra).preso_da === 'Ale');
+  const terza = sessione(st);
+  await callStaff(st, g, { action: 'chiudi', sessione_id: terza, chi: 'G' });
+  t('F35 chiudi una chat di nessuno: preso_da = chi la chiude (la card chiusa dice chi)', st.sess.get(terza).preso_da === 'Ginevra' && st.sess.get(terza).stato === 'chiusa');
+  st.rotto.proietta = true;
+  const quarta = sessione(st);
+  const r2 = await callStaff(st, g, { action: 'rispondi', sessione_id: quarta, testo: 'Ciao', chi: 'G', send_key: randomUUID() });
+  st.rotto.proietta = false;
+  t('F36 proiezione fallita: la risposta resta salvata e mandata, ok con proiezione false (la riprova il cron)', r2.status === 200 && r2.j.ok && r2.j.proiezione === false && r2.j.email === 'inviata'
+    && [...st.msg.values()].some((m) => m.sessione_id === quarta));
+  t('F37 chiudi gia\' chiusa e revoca non proiettano', await (async () => { const n = st.proiezioni.length; await callStaff(st, g, { action: 'chiudi', sessione_id: terza, chi: 'G' });
+    await callStaff(st, g, { action: 'revoca_accessi', sessione_id: terza, chi: 'G' }); return st.proiezioni.length === n; })());
+}
+{
+  // staff-3: la scheda Chat (sez. 10)
+  const st = nuovoStore(), g = gmailFinto();
+  const i = await callStaff(st, g, { action: 'impostazioni', chi: 'G' });
+  t('F38 impostazioni: solo le chiavi della scheda (mai un segreto) e le righe di cs_faq dei bottoni', i.j.ok && i.j.valori.chat_sollecito_ore === '24,48' && !('cs_gmail_sa_key' in i.j.valori)
+    && !JSON.stringify(i.j).includes('SEGRETO') && i.j.faq.length === 1 && i.j.faq[0].id === 7 && i.j.scrivibili.includes('chat_orari') && !i.j.scrivibili.includes('chat_sito_enabled'));
+  const imp = (chiave, valore) => callStaff(st, g, { action: 'imposta', chiave, valore, chi: 'G' });
+  const o = await imp('chat_orari', { tz: 'Europe/Rome', giorni: [5, 1, 2, 2], dalle: '09:30', alle: '17:00', chiusure: ['2026-12-25', '2026-12-24'] });
+  t('F39 orari validi salvati in forma canonica (giorni ordinati e unici, chiusure ordinate)', o.j.ok && st.flags.get('chat_orari') === '{"tz":"Europe/Rome","giorni":[1,2,5],"dalle":"09:30","alle":"17:00","chiusure":["2026-12-24","2026-12-25"]}', o.j);
+  const salvato = st.flags.get('chat_orari');
+  const storti = [
+    { tz: 'Europe/London', giorni: [1], dalle: '09:00', alle: '18:00', chiusure: [] }, { tz: 'Europe/Rome', giorni: [], dalle: '09:00', alle: '18:00', chiusure: [] },
+    { tz: 'Europe/Rome', giorni: [8], dalle: '09:00', alle: '18:00', chiusure: [] }, { tz: 'Europe/Rome', giorni: [1.5], dalle: '09:00', alle: '18:00', chiusure: [] },
+    { tz: 'Europe/Rome', giorni: [1], dalle: '18:00', alle: '09:00', chiusure: [] }, { tz: 'Europe/Rome', giorni: [1], dalle: '9:00', alle: '18:00', chiusure: [] },
+    { tz: 'Europe/Rome', giorni: [1], dalle: '09:00', alle: '24:00', chiusure: [] }, { tz: 'Europe/Rome', giorni: [1], dalle: '09:00', alle: '18:00', chiusure: ['2026-02-30'] },
+    { tz: 'Europe/Rome', giorni: [1], dalle: '09:00', alle: '18:00', chiusure: [], altro: 1 }, '{"tz":"Europe/Rome"}', null, [1, 2],
+  ];
+  let tuttiRifiutati = true;
+  for (const v of storti) { const x = await imp('chat_orari', v); if (x.status !== 422) tuttiRifiutati = false; }
+  t('F40 orari storti rifiutati (fuso, giorni, ore, dalle >= alle, data inesistente, campo in piu\', stringa, array) senza scrivere (C7 del pezzo 4)', tuttiRifiutati && st.flags.get('chat_orari') === salvato);
+  const s1 = await imp('chat_sollecito_ore', [24, 48]), s2 = await imp('chat_sollecito_ore', [0.05, 0.1]);
+  t('F41 solleciti: due numeri crescenti fra 0,05 e 240, salvati come "a,b"', s1.j.invariato === true && s2.j.ok && st.flags.get('chat_sollecito_ore') === '0.05,0.1');
+  let solleciti = true;
+  for (const v of [[48, 24], [24, 24], [0.01, 1], [1, 241], [1.2345, 2], [1e-7, 2], ['24', '48'], [24], [1, 2, 3], '24,48', { a: 1 }]) { if ((await imp('chat_sollecito_ore', v)).status !== 422) solleciti = false; }
+  t('F42 solleciti storti rifiutati (decrescenti, uguali, fuori intervallo, troppi decimali, stringhe, quantita\')', solleciti && st.flags.get('chat_sollecito_ore') === '0.05,0.1');
+  const tx = await imp('chat_testo_attesa', { it: '  Ciao\r\n{email}\u202E ', en: 'Hi {email}' });
+  t('F43 testo: pulito (a capo normalizzati, caratteri di direzione tolti) e salvato come {it, en}', tx.j.ok && st.flags.get('chat_testo_attesa') === '{"it":"Ciao\\n{email}","en":"Hi {email}"}', st.flags.get('chat_testo_attesa'));
+  let testi = true;
+  for (const v of [{ it: 'x' }, { it: 'x', en: '' }, { it: 'x'.repeat(1001), en: 'y' }, { it: 'x', en: 'y', fr: 'z' }, { it: 1, en: 'y' }, 'testo']) { if ((await imp('chat_testo_saluto', v)).status !== 422) testi = false; }
+  t('F44 testi storti rifiutati (lingua mancante, vuoto, oltre 1000, lingua in piu\', tipo)', testi);
+  const nonAmmesse = await Promise.all(['chat_sito_enabled', 'cs_gmail_sa_key', 'chat_bottoni', 'chat_testo_informativa', 'chat_limite_chat_giorno'].map((k) => imp(k, { it: 'x', en: 'y' })));
+  t('F45 chiavi fuori dalla scheda (interruttore, segreti, bottoni, informativa, tetti) = 422 e nessuna scrittura', nonAmmesse.every((x) => x.status === 422 && x.j.error === 'chiave_non_ammessa')
+    && st.flags.get('chat_sito_enabled') === 'false' && st.flags.get('cs_gmail_sa_key') === 'SEGRETO-CHE-NON-DEVE-USCIRE');
+  t('F46 audit staff_imposta con le impronte, mai il testo', st.eventi.filter((e) => e.tipo === 'staff_imposta').length === 3 && !JSON.stringify(st.eventi).includes('Ciao')
+    && st.eventi.filter((e) => e.tipo === 'staff_imposta').every((e) => /^[0-9a-f]{12}$/.test(e.dettaglio.prima) && /^[0-9a-f]{12}$/.test(e.dettaglio.dopo) && e.chi === 'Ginevra'));
+  const k1 = await callStaff(st, g, { action: 'conoscenza_testo', faq_id: 7, testo_it: 'Spediamo in 1 giorno.', attiva: false, chi: 'G' });
+  t('F47 conoscenza_testo: riga di un bottone aggiornata, audit coi soli campi', k1.j.ok && st.faq.get(7).testo_it === 'Spediamo in 1 giorno.' && st.faq.get(7).attiva === false && st.faq.get(7).testo_en === 'We ship in 2 days.'
+    && st.eventi.some((e) => e.tipo === 'staff_conoscenza' && e.dettaglio.faq_id === 7 && JSON.stringify(e.dettaglio.campi) === '["attiva","testo_it"]'));
+  const k2 = await callStaff(st, g, { action: 'conoscenza_testo', faq_id: 8, testo_it: 'x', chi: 'G' });
+  const k3 = await callStaff(st, g, { action: 'conoscenza_testo', faq_id: 7, chi: 'G' });
+  const k4 = await callStaff(st, g, { action: 'conoscenza_testo', faq_id: '7', testo_it: 'x', chi: 'G' });
+  const k5 = await callStaff(st, g, { action: 'conoscenza_testo', faq_id: 7, testo_en: 'x'.repeat(4001), chi: 'G' });
+  t('F48 conoscenza_testo rifiuta righe fuori dai bottoni, nessun campo, id non intero, testo oltre 4000', k2.status === 422 && k2.j.error === 'faq_non_dei_bottoni' && k3.status === 422 && k4.status === 422 && k5.status === 422
+    && st.faq.get(8).testo_it === 'x' && st.faq.get(7).testo_en === 'We ship in 2 days.');
+  st.flags.set('chat_bottoni', '[{"id":"tono","it":"T","en":"T","faq":8}]');
+  const k6 = await callStaff(st, g, { action: 'conoscenza_testo', faq_id: 8, testo_it: 'y', chi: 'G' });
+  t('F49 una riga di esempio di tono puntata per errore da un bottone non si scrive (404, come la legge chat-api)', k6.status === 404 && st.faq.get(8).testo_it === 'x');
+  st.rotto.flag = true;
+  t('F50 impostazioni illeggibili = 503', (await callStaff(st, g, { action: 'impostazioni', chi: 'G' })).status === 503);
+  st.rotto.flag = false;
 }
 {
   // reinvia
@@ -499,12 +588,20 @@ t('G14 0187: cron chat-send col PIN neutro e azione giro, cron della pulizia gio
   && /cron\.schedule\('chat-conservazione', '47 3 \* \* \*'/.test(M));
 t('G15 0187: nessuna scrittura in change_log', !/insert\s+into\s+change_log/i.test(M));
 t('G16 0187: la pulizia cancella anche gli eventi con la chiave della sessione (Gate 2, C2)', /delete from chat_eventi e\s+using unnest\(v_ids\) u\(id\)\s+where e\.chiave like u\.id::text \|\| ':%'/.test(M));
-t('G17 chat-staff cancella gli eventi con la chiave della sessione', /from\('chat_eventi'\)\.delete\(\)\.like\('chiave', `\$\{sessioneId\}:%`\)/.test(STAFF));
+// staff-3 (Gate 2 del pezzo 6, B1): la cancellazione di una chat e' UNA transazione, l'RPC chat_cancella_sessione della
+// migr 0193; chat-staff non cancella piu' niente da se' (ne' cs_, ne' contatori, eventi, registro delle push, sessione)
+const M0193 = read('supabase/migrations/0193_chat_proiezione.sql');
+const fnCanc = (M0193.match(/create or replace function public\.chat_cancella_sessione\(p_sessione uuid, p_card uuid default null\)[\s\S]*?\$fn\$;/) ?? [''])[0];
+t('G17 chat_cancella_sessione: lock della sessione PRIMA di tutto, poi eventi con la chiave della sessione e contatori della sessione', /select \* into v_s from chat_sessioni where id = p_sessione for update;[\s\S]*delete from cs_conversations/.test(fnCanc)
+  && fnCanc.indexOf('for update') < fnCanc.indexOf('delete from') && /delete from chat_eventi where chiave like p_sessione::text \|\| ':%';/.test(fnCanc)
+  && /delete from chat_contatori where chiave like 'sess:' \|\| p_sessione::text \|\| ':%';/.test(fnCanc)
+  && /delete from cs_conversations where id = p_card and gmail_thread_id = v_s\.gmail_thread_id;/.test(fnCanc));
 // staff-2 e migr 0189 (pezzo 4, 11.6 punto 4): il registro delle push della chat se ne va con la sessione, solo i tre
-// eventi della chat e solo le chiavi che cominciano con l'id della sessione
-t('G18 chat-staff staff-2 cancella il registro delle push dei soli tre eventi della chat, chiave della sessione', STAFF.includes("const EVENTI_PUSH_CHAT = ['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'];")
-  && /from\('push_eventi_inviati'\)\.delete\(\)\.in\('evento', EVENTI_PUSH_CHAT\)\.like\('chiave', `\$\{sessioneId\}:%`\)\.select\('id'\)/.test(STAFF)
-  && (STAFF.match(/from\('push_eventi_inviati'\)/g) ?? []).length === 1 && F.VERSIONE === 'staff-2');
+// eventi della chat e solo le chiavi che cominciano con l'id della sessione (dalla staff-3 dentro l'RPC)
+t('G18 chat_cancella_sessione cancella il registro delle push dei soli tre eventi della chat, chiave della sessione; chat-staff solo l\'RPC',
+  /delete from push_eventi_inviati where evento in \('chat_sollecito', 'chat_sollecito_scala', 'chat_salute'\) and chiave like p_sessione::text \|\| ':%';/.test(fnCanc)
+  && /sb\.rpc\('chat_cancella_sessione', \{ p_sessione: id, p_card: card \}\)/.test(STAFF)
+  && !/from\('(push_eventi_inviati|chat_contatori|chat_eventi|chat_sessioni|cs_conversations)'\)\.delete\(\)/.test(STAFF) && F.VERSIONE === 'staff-3');
 const M9 = M0189.replace(/--.*$/gm, '');
 const fn0187 = (M.match(/create or replace function public\.chat_conservazione\(\)[\s\S]*?\$fn\$;/) ?? [''])[0];
 const fn0189 = (M9.match(/create or replace function public\.chat_conservazione\(\)[\s\S]*?\$fn\$;/) ?? [''])[0];

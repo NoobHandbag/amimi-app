@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { pushBack, popBack } from '../lib/backnav';
-import { fetchConversations, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import { fetchCoda, fetchConcluse, cursoreDi, PAGINA_CONCLUSE, isChatSito, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
 import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato, BozzaSalvata } from '../lib/csApi';
 import AppBar from '../components/AppBar';
+import { ChatThread, ChatScheda } from './AssistenzaChat';
 import Icon from '../components/Icon';
 import '../styles/screens/assistenza.css';
 
@@ -61,9 +62,11 @@ function Avatar({ k, size = 30 }: { k: string; size?: number }) {
   if (err || !AVATAR_SRC[k]) return <span className={'cs-av ' + id.cls} style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}>{k}</span>;
   return <img className="cs-avimg" src={import.meta.env.BASE_URL + AVATAR_SRC[k]} alt={id.n} style={{ width: size, height: size }} onError={() => setErr(true)} />;
 }
-const CANALI: Record<Canale, string> = { email_diretta: '✉️ email', form_contatto: '📝 form sito', form_evento: '💍 form evento', chat_notifica: '💬 chat sito', rumore: '🔕 rumore' };
+// 13-11 (chat del sito pezzo 6, punto 2 di PROPOSTA_chat_sito 7.6): chat_sito = la chat nostra del sito, chat_notifica =
+// le notifiche delle chat di Shopify Inbox ("Chat Inbox", dopo la pulizia "Chat Inbox (allarme)", 12.5).
+const CANALI: Record<Canale, string> = { email_diretta: '✉️ email', form_contatto: '📝 form sito', form_evento: '💍 form evento', chat_notifica: '💬 chat Inbox', chat_sito: '💬 chat sito', rumore: '🔕 rumore' };
 // coda (tema A, 23-10): canali e flag senza emoji. Il thread tiene CANALI e FLAG_LABEL fino alla sua PR.
-const CANALE_CODA: Record<Canale, string> = { email_diretta: 'Email', form_contatto: 'Form sito', form_evento: 'Form evento', chat_notifica: 'Chat sito', rumore: 'Rumore' };
+const CANALE_CODA: Record<Canale, string> = { email_diretta: 'Email', form_contatto: 'Form sito', form_evento: 'Form evento', chat_notifica: 'Chat Inbox', chat_sito: 'Chat sito', rumore: 'Rumore' };
 const BUCKETS: [string, string][] = [['oggi', 'Oggi'], ['ieri', 'Ieri'], ['sett', 'Questa settimana'], ['vecchie', 'Piu’ vecchie']];
 const TONO_LABEL: Record<string, string> = { breve: '⚡ Breve', calda: '💛 Calda', formale: '🎩 Formale', bozza: '✍️ Bozza' };
 // v18: perche' il sistema NON dice entro/fuori pur avendo l'ordine sotto gli occhi.
@@ -121,15 +124,26 @@ const primoNomeOf = (c: CsConversation): string => {
 // separate che l'operatrice apriva come tre problemi diversi. Nessuna delle misure poteva vederlo,
 // perche' guardano una conversazione alla volta. Costo zero: la lista delle conversazioni e' gia'
 // tutta nel client, non serve nessun recupero.
+// 13-11 (punto 25 di PROPOSTA_chat_sito 7.6): mai con una chat del sito, in nessuno dei due versi. L'email di una chat e'
+// solo DICHIARATA nel widget: chi scrive l'email di un'altra persona non deve finire trattato come lei, accanto alle sue
+// email. La chat ha la sua riga "stessa email dichiarata, non verificata" (AssistenzaChat).
 const altreAperte = (c: CsConversation, tutte: CsConversation[] | null): CsConversation[] => {
   const mail = (c.customer_email || '').trim().toLowerCase();
-  if (!mail) return [];
-  return (tutte ?? []).filter((x) => x.id !== c.id && x.stato !== 'fatto' && x.canale !== 'rumore'
+  if (!mail || isChatSito(c)) return [];
+  return (tutte ?? []).filter((x) => x.id !== c.id && x.stato !== 'fatto' && x.canale !== 'rumore' && !isChatSito(x)
     && (x.customer_email || '').trim().toLowerCase() === mail);
 };
 
-const FLAG_LABEL: Record<string, string> = { sollecito: '⏱ sollecito', reclamo_assistenza: '⚠️ reclamo', chiusura: '✅ chiusura', passaggio_agente: '🤖 dal chatbot' };
-const FLAG_CODA: Record<string, string> = { sollecito: 'Sollecito', reclamo_assistenza: 'Reclamo', chiusura: 'Chiusura', passaggio_agente: 'Dal chatbot' };
+const FLAG_LABEL: Record<string, string> = { sollecito: '⏱ sollecito', reclamo_assistenza: '⚠️ reclamo', chiusura: '✅ chiusura', passaggio_agente: '🤖 dal chatbot', prova: '🧪 prova' };
+const FLAG_CODA: Record<string, string> = { sollecito: 'Sollecito', reclamo_assistenza: 'Reclamo', chiusura: 'Chiusura', passaggio_agente: 'Dal chatbot', prova: 'Prova' };
+// sulla chat del sito il passaggio e' la cliente che ha chiesto una persona, non il chatbot di Inbox
+const flagLab = (c: CsConversation, f: string, mappa: Record<string, string>): string | undefined => {
+  if (!isChatSito(c) || f !== 'passaggio_agente') return mappa[f];
+  const ora = c.stato === 'da_fare';   // presa o conclusa: l'ha chiesta, non la chiede piu' (Gate 2, C10)
+  return mappa === FLAG_LABEL ? (ora ? '🙋 chiede una persona' : '🙋 ha chiesto una persona') : (ora ? 'Chiede una persona' : 'Ha chiesto una persona');
+};
+// stato a parole; D-11: una chat del sito rimasta alle risposte fisse e' fra le Concluse come "Gestita dal bot"
+const statoConclusa = (c: CsConversation): string => c.stato_by === 'auto' ? 'Chiusa da sola' : c.stato_by === 'bot' ? 'Gestita dal bot' : `Conclusa${c.stato_by ? ` · ${c.stato_by}` : ''}`;
 const isUrg = (c: CsConversation) => c.urgente === true;
 // La coda mette gli urgenti in cima, poi per anzianita' del messaggio (piu' recente prima) (design 6.4).
 const urgSort = (a: CsConversation, b: CsConversation) => {
@@ -146,7 +160,7 @@ function Badges({ c }: { c: CsConversation }) {
       {daConfermare && <span className="cs-badge cs-confirm">Da confermare</span>}
       {isUrg(c) && <span className="cs-badge cs-urg">{c.urgenza_motivo ? `Urgente · ${c.urgenza_motivo}` : 'Urgente'}</span>}
       {(c.flags ?? []).filter((f) => f !== 'urgente' && FLAG_CODA[f]).map((f) => (
-        <span key={f} className="cs-badge cs-flag">{FLAG_CODA[f]}</span>
+        <span key={f} className="cs-badge cs-flag">{flagLab(c, f, FLAG_CODA)}</span>
       ))}
     </div>
   );
@@ -156,7 +170,13 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [session, setSession] = useState<'loading' | 'in' | 'out'>('loading');
   const [ident, setIdentS] = useState(() => localStorage.getItem('amimi_cs_ident') || '');
   const setIdent = (k: string) => { setIdentS(k); localStorage.setItem('amimi_cs_ident', k); };
-  const [view, setView] = useState<'coda' | 'thread' | 'rumore'>('coda');
+  const [view, setView] = useState<'coda' | 'thread' | 'rumore' | 'chat'>('coda');
+  // chat di prova (flag `prova`, sez. 13 della proposta): fuori dalla coda, salvo questa scelta del dispositivo
+  const [mostraProve, setMostraProveS] = useState(() => { try { return localStorage.getItem('amimi_cs_prove') === '1'; } catch { return false; } });
+  const setMostraProve = (v: boolean) => { setMostraProveS(v); try { localStorage.setItem('amimi_cs_prove', v ? '1' : '0'); } catch { /* niente */ } };
+  // concluse piu' vecchie della prima pagina (punto 6 di 7.6): si caricano a richiesta
+  const [altreConcluse, setAltreConcluse] = useState(false);
+  const [caricoConcluse, setCaricoConcluse] = useState(false);
   const [filtro, setFiltro] = useState<'dafare' | 'incorso' | 'fatte' | 'tutte'>('dafare');
   const [savingStato, setSavingStato] = useState(false);
   // swipe sulle card (mobile): trascina a sinistra oltre soglia = conclusa
@@ -243,7 +263,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // dell'Assistenza usano il contratto condiviso: un handler per gradino, nell'ordine giusto, e chi
   // esce dalla sezione resta in fondo alla pila dov'e' sempre stato.
   const [daDove, setDaDove] = useState<'coda' | 'rumore'>('coda');
-  const entra = (sotto: 'thread' | 'rumore', da: 'coda' | 'rumore') => {
+  const entra = (sotto: 'thread' | 'rumore' | 'chat', da: 'coda' | 'rumore') => {
     if (sotto === 'thread') setDaDove(da);
     pushBack(() => { setMenu(false); setView(da); });
   };
@@ -252,15 +272,30 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     if (session !== 'in' || !ident) return;
-    setErr(''); setConvs(null);
-    fetchConversations().then(setConvs).catch((e: Error) => setErr(e.message));
+    setErr(''); setConvs(null); setAltreConcluse(false);
+    fetchCoda().then((r) => { setConvs(r.convs); setAltreConcluse(r.altreConcluse); }).catch((e: Error) => setErr(e.message));
   }, [session, ident]);
+  // ogni rilettura della coda passa da qui: prima pagina delle concluse e stato del bottone "piu' vecchie" insieme (Gate 2, B1)
+  const ricaricaCoda = async (): Promise<CsConversation[]> => {
+    const r = await fetchCoda();
+    setConvs(r.convs); setAltreConcluse(r.altreConcluse);
+    return r.convs;
+  };
+  const caricaConcluse = async () => {
+    setCaricoConcluse(true); setErr('');
+    try {
+      const altre = await fetchConcluse(cursoreDi(convs ?? []));
+      setConvs((prev) => { const ids = new Set((prev ?? []).map((x) => x.id)); return [...(prev ?? []), ...altre.filter((x) => !ids.has(x.id))]; });
+      setAltreConcluse(altre.length >= PAGINA_CONCLUSE);
+    } catch (e) { setErr((e as Error).message); }
+    setCaricoConcluse(false);
+  };
 
   // "Aggiorna": forza un giro di lettura posta (come il cron) + ricarica la coda, per non aspettare i 2'.
   const doRefresh = async () => {
     setRefreshing(true); setErr('');
     await csPollNow();
-    try { setConvs(await fetchConversations()); if (rumore) setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); }
+    try { await ricaricaCoda(); if (rumore) setRumore(await fetchRumore()); } catch (e) { setErr((e as Error).message); }
     setRefreshing(false);
   };
 
@@ -309,6 +344,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     setSendOpen(false); setSending(false); setSendErr(''); setSendBloccato(false); setSentTo(null);
     try { const m = await fetchMessages(c.id); if (threadRef.current === c.id) setMsgs(m); }
     catch (e) { if (threadRef.current === c.id) setErr((e as Error).message); }
+    // chat del sito (punti 3 e 13 di 7.6): niente bozze, contesto ne' verdetti AI; il pannello della chat legge da se'
+    if (isChatSito(c)) return;
     // parte 3: c'e' gia' una bozza per questa conversazione? Lettura diretta col JWT, nessuna spesa
     // AI. Best-effort: se fallisce si continua come prima, con "Genera".
     ultimaBozza(c.id).then((b) => { if (threadRef.current === c.id) setBozzaSalvata(b); }).catch(() => { /* niente */ });
@@ -403,8 +440,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       try {
         const m = await fetchMessages(tid);
         if (threadRef.current === tid) setMsgs(m);
-        const list = await fetchConversations();
-        setConvs(list);
+        const list = await ricaricaCoda();
         const cur = list.find((x) => x.id === tid);
         if (cur && threadRef.current === tid) setCurrent(cur);   // stato aggiornato (fatto/auto) in testata
       } catch { /* refresh best-effort: l'invio resta riuscito */ }
@@ -416,6 +452,31 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     }
     if (threadRef.current === tid) setSending(false);
   };
+  // chat del sito: dopo un'azione di chat-staff si rileggono messaggi, coda e testata (la proiezione e' gia' scritta)
+  const ricaricaChat = async () => {
+    if (!current) return;
+    const tid = current.id;
+    try {
+      const m = await fetchMessages(tid);
+      if (threadRef.current === tid) setMsgs(m);
+      const list = await ricaricaCoda();
+      const cur = list.find((x) => x.id === tid);
+      if (cur && threadRef.current === tid) setCurrent(cur);
+    } catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
+  };
+  // dopo "Non e' un cliente" o "Cancella dati": la chat esce dalla lista (e dal Rumore, senza svuotarlo: Gate 2, B4), poi la
+  // coda si rilegge dal server (una card email cancellata insieme sparisce anche lei)
+  const esciDallaChat = (msg: string) => {
+    const id = current?.id;
+    if (!id || threadRef.current !== id) return;
+    setConvs((prevC) => prevC ? prevC.filter((x) => x.id !== id) : prevC);
+    setRumore((p) => (p ? p.filter((x) => x.id !== id) : p));
+    goCoda();
+    showToast(msg);
+    void ricaricaCoda().catch(() => { /* la lista locale e' gia' giusta */ });
+    if (rumore) void fetchRumore().then(setRumore).catch(() => { /* idem */ });
+  };
+  const openChatScheda = () => { entra('chat', 'coda'); setView('chat'); setErr(''); };
   const openRumore = async () => {
     entra('rumore', 'coda');
     setView('rumore'); setErr('');
@@ -427,7 +488,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     try {
       const r = await removeNoise(c.id, ident);
       setRumore((prev) => (prev ?? []).filter((x) => x.id !== c.id));
-      setConvs(await fetchConversations());
+      await ricaricaCoda();
       if (r.dominio_che_blocca) setErr(`Riportata in coda, ma il dominio ${r.dominio_che_blocca} resta in denylist (copre altri mittenti): le sue prossime mail finiranno ancora nel rumore.`);
     } catch (e) { setErr((e as Error).message); }
     setSavingStato(false);
@@ -442,7 +503,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       setCurrent({ ...current, ...patch } as CsConversation);
       setConvs((prev) => prev ? prev.map((x) => x.id === current.id ? { ...x, ...patch } as CsConversation : x) : prev);
       // correzione verso una categoria a caso (reso/cambio/indirizzo): carica subito il verdetto
-      if (categoria && CASE_CATS.has(categoria)) loadCaso(current.id, confirmDate || undefined); else setCaso(null);
+      if (categoria && CASE_CATS.has(categoria) && !isChatSito(current)) loadCaso(current.id, confirmDate || undefined); else setCaso(null);
     } catch (e) { setErr((e as Error).message); }
     setSavingCat(false);
   };
@@ -572,15 +633,16 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   {CS_CATEGORIES.map((k) => <option key={k.label} value={k.label}>{k.emoji} {k.label}</option>)}
                 </select>
                 <span className={'cs-badge cs-state' + (c.stato === 'fatto' ? ' cs-state-done' : c.stato === 'in_corso' ? ' cs-state-prog' : '')}>
-                  {c.stato === 'fatto' ? (c.stato_by === 'auto' ? '✓ conclusa da sola (risposta inviata)' : `✓ conclusa${c.stato_by ? ' · ' + c.stato_by : ''}`) : c.stato === 'in_corso' ? `✋ in corso · ${c.stato_by ?? ''}` : 'da iniziare'}
+                  {c.stato === 'fatto' ? (c.stato_by === 'auto' ? '✓ conclusa da sola (risposta inviata)' : c.stato_by === 'bot' ? '✓ gestita dal bot (solo risposte automatiche)' : `✓ conclusa${c.stato_by ? ' · ' + c.stato_by : ''}`) : c.stato === 'in_corso' ? `✋ in corso · ${c.stato_by ?? ''}` : 'da iniziare'}
                 </span>
                 {c.parse_failed && <span className="cs-badge cs-warn">da rivedere</span>}
                 {(c.flags ?? []).filter((f) => f !== 'urgente' && FLAG_LABEL[f]).map((f) => (
-                  <span key={f} className="cs-badge cs-flag">{FLAG_LABEL[f]}</span>
+                  <span key={f} className="cs-badge cs-flag">{flagLab(c, f, FLAG_LABEL)}</span>
                 ))}
                 {savingCat && <span className="muted" style={{ fontSize: 12 }}>salvo…</span>}
               </div>
-              <div className="cs-actions-row">
+              {/* chat del sito: le azioni (Prendo io, Chiudi, Rumore, Revoca, Cancella) stanno nel pannello della chat */}
+              {!isChatSito(c) && <div className="cs-actions-row">
                 {c.stato === 'da_fare' && <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'in_corso')} type="button">✋ Prendo io</button>}
                 {c.stato !== 'fatto'
                   ? <button className="cs-btn cs-ghost cs-okbtn" disabled={savingStato} onClick={() => doStato(c, 'fatto')} type="button">✓ Conclusa</button>
@@ -598,13 +660,18 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                     </div>
                   )}
                 </div>
-              </div>
+              </div>}
             </>
           )}
           {!draftMode && c.canale === 'rumore' && (
             <div style={{ marginTop: 6 }}><span className="cs-badge cs-can">{CANALI[c.canale]}</span></div>
           )}
         </div>
+        {isChatSito(c) && err && <div className="err">{err}</div>}
+        {isChatSito(c) && (
+          <ChatThread c={c} msgs={msgs} ident={ident} convs={convs} onRicarica={ricaricaChat} onApri={openThread} onUscita={esciDallaChat} showToast={showToast} />
+        )}
+        {!isChatSito(c) && <>
         {/* INFO UTILI (brief cs_info_utili, richiesta dell'owner). Quattro fatti che restano a video
             ANCHE a bozze generate: prima la strip spariva nell'istante in cui `draftMode` diventava
             true, cioe' esattamente quando l'operatrice smette di leggere e comincia a scrivere la
@@ -988,9 +1055,18 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             )}
           </div>
         )}
+        </>}
       </div>
     );
   }
+
+  // ---- scheda Chat (sez. 10 della proposta) ----
+  if (view === 'chat') return (
+    <div className="screen scr-assist">
+      <AppBar title="Chat del sito" onBack={goCoda} backLabel="Coda" />
+      <ChatScheda ident={ident} mostraProve={mostraProve} setMostraProve={setMostraProve} />
+    </div>
+  );
 
   // ---- rumore ----
   if (view === 'rumore') return (
@@ -1002,7 +1078,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
           <div className="ds-group cs-group">
             {rumore.map((c) => (
               <div key={c.id} className="cs-card cs-quiet" onClick={() => openThread(c)} role="button" tabIndex={0}>
-                <div className="cs-ctop"><span className="cs-cn">{c.subject || nmeOf(c)}</span><span className="cs-cora">{fmtWhen(c.last_msg_at)}</span></div>
+                <div className="cs-ctop"><span className="cs-cn">{isChatSito(c) ? `Chat · ${nmeOf(c)}` : (c.subject || nmeOf(c))}</span><span className="cs-cora">{fmtWhen(c.last_msg_at)}</span></div>
                 <div className="cs-rowact">
                   <button className="cs-btn cs-ghost" type="button" disabled={savingStato} onClick={(e) => { e.stopPropagation(); doUnNoise(c); }}><Icon name="return" size={16} /> È un cliente, riporta in coda</button>
                 </div>
@@ -1015,10 +1091,13 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
 
   // ---- coda ----
   const passa = (c: CsConversation) => filtro === 'tutte' ? true : filtro === 'fatte' ? c.stato === 'fatto' : filtro === 'incorso' ? c.stato === 'in_corso' : c.stato === 'da_fare';
-  const list = (convs ?? []).filter(passa).slice().sort(urgSort);   // urgenti in cima (design 6.4)
-  const daf = (convs ?? []).filter((c) => c.stato === 'da_fare').length;
-  const inc = (convs ?? []).filter((c) => c.stato === 'in_corso').length;
-  const fatte = (convs ?? []).filter((c) => c.stato === 'fatto').length;
+  // le chat di prova (sez. 13) restano fuori dalla coda e dai conteggi, salvo "Mostra le chat di prova" nella scheda Chat
+  const visibili = (convs ?? []).filter((c) => mostraProve || !(c.flags ?? []).includes('prova'));
+  const list = visibili.filter(passa).slice().sort(urgSort);   // urgenti in cima (design 6.4)
+  const daf = visibili.filter((c) => c.stato === 'da_fare').length;
+  const inc = visibili.filter((c) => c.stato === 'in_corso').length;
+  const fatte = visibili.filter((c) => c.stato === 'fatto').length;
+  const conclusePossibili = convs !== null && altreConcluse;
   const rumCount = rumore?.length;
 
   const card = (c: CsConversation) => (
@@ -1026,7 +1105,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       onClick={() => { if (suppressOpenRef.current === c.id) return; openThread(c); }}
       onTouchStart={(e) => { swipeRef.current = { id: c.id, x0: e.touches[0].clientX, dx: 0 }; }}
       onTouchMove={(e) => { const s = swipeRef.current; if (!s || s.id !== c.id) return; s.dx = e.touches[0].clientX - s.x0; if (s.dx < -8) setSwipeDx({ id: c.id, dx: s.dx }); }}
-      onTouchEnd={() => { const s = swipeRef.current; swipeRef.current = null; setSwipeDx(null); if (s && s.dx < -90 && c.stato !== 'fatto') doSwipeDone(c); }}
+      onTouchEnd={() => { const s = swipeRef.current; swipeRef.current = null; setSwipeDx(null); if (s && s.dx < -90 && c.stato !== 'fatto' && !isChatSito(c)) doSwipeDone(c); }}
       style={swipeDx?.id === c.id ? { transform: `translateX(${Math.max(swipeDx.dx, -150)}px)`, opacity: Math.max(0.35, 1 + swipeDx.dx / 400) } : undefined}
       type="button">
       <div className="cs-ctop">
@@ -1040,7 +1119,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
         <span className="cs-badge cs-can">{CANALE_CODA[c.canale]}</span>
         {c.stato === 'in_corso' && <span className="cs-badge cs-state cs-state-prog">In corso{c.stato_by ? ` · ${c.stato_by}` : ''}</span>}
         {/* brief stato_automatico: distinguere a colpo d'occhio chiusa-da-sola da chiusa-da-persona */}
-        {c.stato === 'fatto' && <span className="cs-badge cs-state cs-state-done">{c.stato_by === 'auto' ? 'Chiusa da sola' : `Conclusa${c.stato_by ? ` · ${c.stato_by}` : ''}`}</span>}
+        {c.stato === 'fatto' && <span className="cs-badge cs-state cs-state-done">{statoConclusa(c)}</span>}
         {c.canale === 'chat_notifica' && <span className="cs-badge cs-chat">Risposta in Inbox</span>}
         {c.parse_failed && <span className="cs-badge cs-warn">Da rivedere</span>}
         {/* 5.2: si vede gia' dalla coda che questa persona e' su piu' card */}
@@ -1121,6 +1200,15 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
               </div>
             );
           })}
+      {(filtro === 'fatte' || filtro === 'tutte') && conclusePossibili && (
+        <button className="cs-btn cs-ghost" style={{ width: '100%', marginTop: 8 }} onClick={() => { void caricaConcluse(); }} disabled={caricoConcluse} type="button">
+          {caricoConcluse ? 'Carico…' : 'Carica le concluse più vecchie'}
+        </button>
+      )}
+      <button className="cs-rumore" onClick={openChatScheda} type="button">
+        <span>Chat del sito: orari, promemoria e testi</span>
+        <Icon name="chevron" size={18} className="chev" />
+      </button>
       <button className="cs-rumore" onClick={openRumore} type="button">
         <span>Rumore nascosto (notifiche Shopify, spam, DMARC){rumCount != null ? `: ${rumCount}` : ''}</span>
         <Icon name="chevron" size={18} className="chev" />

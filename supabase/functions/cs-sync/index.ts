@@ -1,4 +1,13 @@
 // cs-sync v15 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v36 (2026-11-13, chat del sito Fase 1 pezzo 6, docs/PROPOSTA_chat_sito.md 7.6 punti 14-18): le chat del sito
+//   proiettate in Assistenza (canale `chat_sito`, chiave `chat:<id>`, migr 0193) non sono posta: backfill_stato,
+//   reapply_noise e reapply_spam le saltano (non si chiude ne' si manda nel rumore una chat per un'email dichiarata nel
+//   widget), backfill_out e backfill_replyto saltano le chiavi `chat:` (non sono id Gmail); chat_autoclose resta sul solo
+//   `chat_notifica` (filtro fissato da un test). E il token del link "Continua la chat" delle email di chat-send
+//   (`.../apps/chat/riprendi#t=<token>`) non entra piu' in chiaro nella scheda (Gate 2 del pezzo 3, C1): quando la
+//   cliente risponde, il thread diventa tracciato e le nostre email e le citazioni nella sua risposta passano da qui.
+//   `togliTokenChat` (blocco PURE:cs-tokenchat) lo toglie dal corpo appena estratto, in entrata e in uscita, e dallo
+//   snippet di Gmail; lineare (nessuna regex), il token spezzato da un a capo o da "> " di citazione si toglie lo stesso.
 // v35 (2026-10-27, incidente del 26-10): dalle 12:20 UTC ~250 giri di fila sono morti con 546
 //   WORKER_RESOURCE_LIMIT ("CPU Time exceeded") e la posta di info@ non e' piu' entrata. Causa: la seconda
 //   regex di ORDER_PATTERNS aveva tre `\s*` di fila separati da parti opzionali; su una risposta di un
@@ -425,6 +434,47 @@ function extractFormFields(body: string): Record<string, string> {
   }
   return out;
 }
+// ==== PURE:cs-tokenchat BEGIN ====
+// v36: il link "Continua la chat" di chat-send porta un token di ripresa di 43 caratteri dopo `#t=` (30 giorni, apre la
+// chat a chi lo ha). Chi legge Assistenza non ne ha bisogno: si tiene il link, si toglie il token. Lineare: indexOf e
+// un passo per carattere. Dentro il token tollera fino a 8 caratteri di spazio, a capo o ">" (un client che manda a
+// capo la riga lunga, la citazione "> " di una risposta), mai prima del primo carattere del token.
+// Gate 2 del pezzo 6, C5: anche il link codificato da un client (Outlook Safe Links: `apps%2Fchat%2Friprendi%23t%3D`).
+const SEGNO_RIPRESA = 'apps/chat/riprendi';
+const SEGNO_RIPRESA_COD = 'apps%2fchat%2friprendi';
+const TOKEN_TOLTO = '[link personale tolto]';
+function togliTokenChat(t: string): string {
+  if (!t) return t;
+  const basso = t.toLowerCase();
+  if (!basso.includes(SEGNO_RIPRESA) && !basso.includes(SEGNO_RIPRESA_COD)) return t;
+  let out = '';
+  let i = 0;
+  // le due posizioni si cercano di nuovo solo quando sono rimaste indietro: una ricerca per forma ad ogni giro rifarebbe la
+  // scansione fino in fondo per ogni link (quadratico, misurato: 504 ms su 400 KB)
+  let a1 = basso.indexOf(SEGNO_RIPRESA), a2 = basso.indexOf(SEGNO_RIPRESA_COD);
+  for (;;) {
+    if (a1 >= 0 && a1 < i) a1 = basso.indexOf(SEGNO_RIPRESA, i);
+    if (a2 >= 0 && a2 < i) a2 = basso.indexOf(SEGNO_RIPRESA_COD, i);
+    const a = a1 < 0 ? a2 : a2 < 0 ? a1 : Math.min(a1, a2);
+    if (a < 0) break;
+    let j = a + (a === a1 ? SEGNO_RIPRESA.length : SEGNO_RIPRESA_COD.length);
+    const pre = basso.startsWith('#t=', j) ? 3 : basso.startsWith('%23t%3d', j) ? 7 : 0;
+    if (!pre) { out += t.slice(i, j); i = j; continue; }
+    j += pre;
+    out += t.slice(i, j) + TOKEN_TOLTO;
+    let n = 0, vuoti = 0;
+    while (j < t.length && n < 43) {
+      const c = t.charCodeAt(j);
+      const tok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 45 || c === 95;
+      if (tok) { n++; vuoti = 0; j++; continue; }
+      if (n > 0 && vuoti < 8 && (c === 32 || c === 9 || c === 10 || c === 13 || c === 62)) { vuoti++; j++; continue; }
+      break;
+    }
+    i = j;
+  }
+  return out + t.slice(i);
+}
+// ==== PURE:cs-tokenchat END ====
 // ==== PURE:cs-crop BEGIN ====
 // v8: riconoscimento + taglio dello stampo del modulo. Gated sul CONTENUTO: se il wrapper non c'e'
 // (es. la risposta del cliente nello stesso thread) non tocca nulla. Ritorna null = "non era uno
@@ -889,7 +939,7 @@ Deno.serve(async (req) => {
     const apply = body.apply === true;
     const { data: convs } = await sb.from('cs_conversations')
       .select('id, subject, stato, stato_by')
-      .neq('canale', 'rumore').eq('stato', 'da_fare');
+      .neq('canale', 'rumore').neq('canale', 'chat_sito').eq('stato', 'da_fare');
     const candidates: { id: string; subject: string }[] = [];
     for (const c of (convs ?? []) as { id: string; subject: string | null; stato: string; stato_by: string | null }[]) {
       if (c.stato_by && c.stato_by !== 'auto') continue;
@@ -937,7 +987,7 @@ Deno.serve(async (req) => {
   if (action === 'reapply_noise') {
     const apply = body.apply === true;
     const { data: convs } = await sb.from('cs_conversations')
-      .select('id, subject, canale, categoria').neq('canale', 'rumore');
+      .select('id, subject, canale, categoria').neq('canale', 'rumore').neq('canale', 'chat_sito');
     const candidati: { id: string; subject: string; mittente: string; canale: string }[] = [];
     let conNostraRisposta = 0, b2bSaltate = 0;
     for (const c of (convs ?? []) as { id: string; subject: string | null; canale: string; categoria: string | null }[]) {
@@ -978,7 +1028,7 @@ Deno.serve(async (req) => {
   if (action === 'reapply_spam') {
     const apply = body.apply === true;
     const { data: convs } = await sb.from('cs_conversations')
-      .select('id, subject, customer_email, canale, categoria_source, order_number').neq('canale', 'rumore');
+      .select('id, subject, customer_email, canale, categoria_source, order_number').neq('canale', 'rumore').neq('canale', 'chat_sito');
     const cand: { id: string; subject: string; mittente: string; score: number; reasons: string[] }[] = [];
     let conNostraRisposta = 0, clienteNoto = 0, manuali = 0, conOrdine = 0;
     for (const c of (convs ?? []) as { id: string; subject: string | null; customer_email: string | null; canale: string; categoria_source: string | null; order_number: number | null }[]) {
@@ -1116,7 +1166,7 @@ Deno.serve(async (req) => {
       } catch { /* fail-soft */ }
     }
     const sentAt = msg.internalDate ? new Date(Number(msg.internalDate)).toISOString() : null;
-    const rawBody = stripNull(extractBody(msg.payload));
+    const rawBody = togliTokenChat(stripNull(extractBody(msg.payload)));
     const bodyText = stripQuote(rawBody);
     try {
       const { error: me, count } = await sb.from('cs_messages').upsert(sanitizeRow({
@@ -1155,7 +1205,8 @@ Deno.serve(async (req) => {
       // v13: una chiave suffissata non e' un thread Gmail: la GET /threads/<chiave> darebbe 404 a
       // ogni giro. Per il canale form questo backfill non serve comunque, perche' le nostre risposte
       // ai moduli partono in un thread NUOVO e la riga out la scrive cs-send.
-      if (String(c.gmail_thread_id).includes('#')) continue;
+      // v36: nemmeno una chiave `chat:` (chat del sito, migr 0193): non e' un thread Gmail
+      if (String(c.gmail_thread_id).includes('#') || String(c.gmail_thread_id).startsWith('chat:')) continue;
       scanned++;
       let th: { ok: boolean; status: number; j: Record<string, unknown> };
       try { th = await gGet(`/threads/${encodeURIComponent(c.gmail_thread_id)}?format=full`, token); }
@@ -1170,7 +1221,7 @@ Deno.serve(async (req) => {
         if (!(lbl.includes('SENT') || isAmimi(from.email))) continue;   // solo i NOSTRI messaggi
         const to = parseAddr(hdr(H, 'to'));
         const sentAt = m.internalDate ? new Date(Number(m.internalDate)).toISOString() : null;
-        const rawBody = stripNull(extractBody(m.payload));
+        const rawBody = togliTokenChat(stripNull(extractBody(m.payload)));
         const bodyText = stripQuote(rawBody);
         const bodyClean = stripQuoted(rawBody, c.canale);
         const { error: me, count } = await sb.from('cs_messages').upsert(sanitizeRow({
@@ -1211,7 +1262,7 @@ Deno.serve(async (req) => {
   if (action === 'backfill_order_number') {
     const dry = body.dry === true;
     const { data: convRows } = await sb.from('cs_conversations')
-      .select('id, subject, customer_email, canale, order_number').is('order_number', null).neq('canale', 'rumore');
+      .select('id, subject, customer_email, canale, order_number').is('order_number', null).neq('canale', 'rumore').neq('canale', 'chat_sito');
     const convs = (convRows ?? []) as { id: string; subject: string | null; customer_email: string | null; canale: string }[];
     let scanned = 0, trovati = 0, scritti = 0, ordineInesistente = 0, altroCliente = 0, letturaOrdineFallita = 0; const errors: string[] = [];
     for (const c of convs) {
@@ -1250,7 +1301,7 @@ Deno.serve(async (req) => {
     // id come backfill_clean (limit/after_id, `last_id` in risposta) e la lettura fallita e' un 502.
     const limit = Math.min(Number(body.limit) || 200, 400);
     const { data: convRows, error: convErr } = await retryOnce(() => {
-      let qc = sb.from('cs_conversations').select('id, canale, snippet').order('id', { ascending: true }).limit(limit);
+      let qc = sb.from('cs_conversations').select('id, canale, snippet').neq('canale', 'chat_sito').order('id', { ascending: true }).limit(limit);
       if (body.after_id) qc = qc.gt('id', String(body.after_id));
       return qc;
     });
@@ -1303,7 +1354,7 @@ Deno.serve(async (req) => {
     const nomiScritti: string[] = [];
     // keyset su id (le righe con clean legittimamente NULL restano NULL: senza keyset
     // occuperebbero per sempre la testa della coda non-force)
-    let q = sb.from('cs_messages').select('id, conversation_id, direction, body_text, body_clean, form_fields').not('body_text', 'is', null).order('id', { ascending: true }).limit(limit);
+    let q = sb.from('cs_messages').select('id, conversation_id, direction, body_text, body_clean, form_fields').not('body_text', 'is', null).not('gmail_message_id', 'like', 'chat:%').order('id', { ascending: true }).limit(limit);
     if (!force) q = q.is('body_clean', null);
     if (body.after_id) q = q.gt('id', String(body.after_id));
     const { data: msgs, error: qe } = await q;
@@ -1382,7 +1433,8 @@ Deno.serve(async (req) => {
   // Un messaggio non piu' su Gmail (404) si salta e si dichiara: non e' un errore, e' storia.
   if (action === 'backfill_replyto') {
     const limit = Math.min(Number(body.limit) || 200, 400);
-    let q = sb.from('cs_messages').select('id, gmail_message_id').eq('direction', 'in').is('reply_to', null).order('id', { ascending: true }).limit(limit);
+    // v36: i messaggi della chat del sito (`chat:<id>`) non sono in Gmail e non hanno Reply-To
+    let q = sb.from('cs_messages').select('id, gmail_message_id').eq('direction', 'in').is('reply_to', null).not('gmail_message_id', 'like', 'chat:%').order('id', { ascending: true }).limit(limit);
     if (body.after_id) q = q.gt('id', String(body.after_id));
     const { data: msgs, error: qe } = await q;
     if (qe) return json({ ok: false, error: qe.message }, 500);
@@ -1438,7 +1490,7 @@ Deno.serve(async (req) => {
     try {
       const H = msg.payload?.headers;
       const from = parseAddr(hdr(H, 'from')); const replyTo = parseAddr(hdr(H, 'reply-to')); const to = parseAddr(hdr(H, 'to'));
-      const subject = stripNull(hdr(H, 'subject')); const bodyText = stripNull(extractBody(msg.payload));   // NUL -> Postgres rifiuta
+      const subject = stripNull(hdr(H, 'subject')); const bodyText = togliTokenChat(stripNull(extractBody(msg.payload)));   // NUL -> Postgres rifiuta; v36: token della chat via
       // v10: header di bulk mail = segnale deterministico di newsletter/marketing
       const bulk = !!hdr(H, 'list-unsubscribe') || /\b(bulk|list)\b/i.test(hdr(H, 'precedence'));
       const cl = classify(from, replyTo, subject, bodyText, extraDeny, bulk);
@@ -1469,7 +1521,7 @@ Deno.serve(async (req) => {
         // GB Name: ..."), mentre la bolla nel thread era gia' pulita: lo snippet arrivava da Gmail,
         // che non sa niente di `body_clean`. Ora e' lo STESSO testo della bolla. Ripiego sullo
         // snippet di Gmail se la pulizia non lascia niente: mai una card senza anteprima.
-        snippet: stripNull(snippetDa(stripQuoted(bodyText, cl.canale), msg.snippet ?? '')),
+        snippet: stripNull(snippetDa(stripQuoted(bodyText, cl.canale), togliTokenChat(msg.snippet ?? ''))),
         formFields: Object.keys(ff).length ? ff : null,
         order: extractOrderNumber(subject + '\n' + bodyText), lingua: detectLingua(bodyText || subject),
       };
