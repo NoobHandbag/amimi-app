@@ -51,7 +51,7 @@ const concluse = (n: number, da = 0) => Array.from({ length: n }, (_, i) => conv
   customer_email: `vecchia${da + i}@esempio.test`, stato: 'fatto', stato_by: 'Ginevra', snippet: 'Vecchia', last_msg_at: new Date(Date.parse('2026-11-01T00:00:00Z') - (da + i) * 3600000).toISOString(),
 }));
 
-async function apri(page: Page, o: { concluse?: number; rotti?: boolean } = {}): Promise<Chiamata[]> {
+async function apri(page: Page, o: { concluse?: number; rotti?: boolean; imp?: Record<string, unknown> } = {}): Promise<Chiamata[]> {
   const edge: Chiamata[] = [];
   await page.addInitScript(() => {
     localStorage.setItem('amimi-cs-auth', JSON.stringify({
@@ -73,7 +73,7 @@ async function apri(page: Page, o: { concluse?: number; rotti?: boolean } = {}):
       edge.push({ fn, body });
       if (fn === 'chat-staff') {
         if (body.action === 'rispondi') return json({ ok: true, messaggio: { id: MSG_STAFF, seq: 3 }, stato: 'aperta', email: 'inviata', email_errore: null, email_verificata: false, ripetuta: false, proiezione: true });
-        if (body.action === 'impostazioni') return json(IMPOSTAZIONI);
+        if (body.action === 'impostazioni') return json(o.imp ?? IMPOSTAZIONI);
         if (body.action === 'imposta') return json({ ok: true, chiave: body.chiave, valore: 'x' });
         return json({ ok: true, stato: body.action === 'chiudi' ? 'chiusa' : 'aperta', proiezione: true });
       }
@@ -203,4 +203,25 @@ test('scheda Chat (Gate 2, B3 e C4): salvare gli orari non cancella un testo non
   await page.getByRole('button', { name: 'Salva gli orari' }).click();
   await expect(page.getByText('“dalle” deve venire prima di “alle”', { exact: false })).toBeVisible();
   expect(edge.filter((c) => c.fn === 'chat-staff' && c.body.action === 'imposta').length).toBe(1);
+});
+
+// pezzo 7 (migr 0195): i bottoni puntano a voci `risposta_chat`, che le bozze delle email non leggono; la scheda lo dice
+// riga per riga, e una risposta standard puntata da un bottone resta "la stessa delle bozze"
+test('scheda Chat (pezzo 7): risposta della sola chat o risposta standard, la nota lo dice; il salvataggio va a conoscenza_testo', async ({ page }) => {
+  const imp = {
+    ...IMPOSTAZIONI,
+    valori: { ...IMPOSTAZIONI.valori, chat_bottoni: '[{"id":"spedizioni","it":"Spedizioni","en":"Shipping","faq":30},{"id":"resi","it":"Resi","en":"Returns","faq":7}]' },
+    faq: [
+      { id: 30, tipo: 'risposta_chat', titolo: 'faq-costi-e-tempi-spedizione: Quanto costa la spedizione?', testo_it: 'Italia 3,90 EUR', testo_en: 'Italy EUR 3.90', attiva: true },
+      { id: 7, tipo: 'risposta_standard', titolo: 'A1 spedizione', testo_it: 'Ciao [nome]', testo_en: 'Hi [name]', attiva: true },
+    ],
+  };
+  const edge = await apri(page, { imp });
+  await page.getByRole('button', { name: /Chat del sito: orari, promemoria e testi/ }).click();
+  await expect(page.getByText('Vale solo per la chat: le bozze delle email non la usano.')).toHaveCount(1);
+  await expect(page.getByText('È la stessa risposta standard che usano le bozze delle email.')).toHaveCount(1);
+  await page.getByLabel('Risposta Spedizioni in italiano').fill('Italia 3,90 EUR, gratis sopra i 100 EUR');
+  await page.getByRole('button', { name: 'Salva la risposta' }).first().click();
+  await expect.poll(() => edge.filter((c) => c.fn === 'chat-staff' && c.body.action === 'conoscenza_testo').length).toBe(1);
+  expect(edge.find((c) => c.body.action === 'conoscenza_testo')!.body).toMatchObject({ faq_id: 30, testo_it: 'Italia 3,90 EUR, gratis sopra i 100 EUR', attiva: true });
 });

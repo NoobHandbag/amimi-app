@@ -173,7 +173,7 @@ console.log('\n== loader in un DOM finto (S8, test 16) ==');
 {
   const x = eseguiLoader();
   await attesa();
-  t('D1 senza chat in corso: bolla disegnata in uno shadow DOM, nessuna chiamata, niente scritto o tolto, nessuno script', x.host?.shadow?.mode === 'open' && x.bolla?.attr['aria-label'] === 'Chat con Amimi'
+  t('D1 senza chat in corso: bolla disegnata in uno shadow DOM, nessuna chiamata, niente scritto o tolto, nessuno script', x.host?.shadow?.mode === 'open' && x.bolla?.attr['aria-label'] === 'Chat con Amim\u00ec'
     && x.log.fetch.length === 0 && x.log.set.length === 0 && x.log.remove === 0 && x.log.script.length === 0);
   x.bolla.on.click();
   await attesa();
@@ -250,7 +250,14 @@ if (P) {
     && JSON.stringify(P.messaggioValido({ seq: 4, autore: 'sistema', testo: 't', at: 'x', extra: 1 })) === '{"seq":4,"autore":"sistema","testo":"t","at":"x","via_email":false}');
   const ki = Object.keys(P.TESTI.it).sort(), ke = Object.keys(P.TESTI.en).sort();
   t('U9 testi italiani e inglesi con le stesse voci, tutte non vuote', isDeepStrictEqual(ki, ke) && ki.every((k) => P.TESTI.it[k] && P.TESTI.en[k]));
-  t('U10 il titolo dice chi risponde (11.3, riga 1) e l\'etichetta fissa vicino al campo (riga 3)', P.TESTI.it.titolo === 'Chat Amimi: risposte automatiche e team' && P.TESTI.it.etichetta === 'Risposte automatiche e team Amimi.');
+  t('U10 il titolo dice chi risponde (11.3, riga 1) e l\'etichetta fissa vicino al campo (riga 3)', P.TESTI.it.titolo === 'Chat Amim\u00ec: risposte automatiche e team' && P.TESTI.it.etichetta === 'Risposte automatiche e team Amim\u00ec.');
+  // pezzo 7: il marchio si scrive Amimi con l'accento (nome del negozio su Shopify, firma e oggetto delle email di chat-send);
+  // le email di chat-send non hanno un bottone "Continua la chat": il link sta dopo la frase "continuare la chat sul sito"
+  const visibili = [...Object.values(P.TESTI.it), ...Object.values(P.TESTI.en)];
+  t('U11 nessun testo del pannello scrive il marchio senza accento', visibili.every((s) => !/Amimi(?!\u00ec)/.test(s)) && visibili.filter((s) => /Amim\u00ec/.test(s)).length === 8,
+    visibili.filter((s) => /Amimi(?!\u00ec)/.test(s)));
+  t('U12 la chat scaduta rimanda al link delle email senza citare un\'etichetta che le email non hanno', !/"Continua la chat"|"Continue the chat"/.test(P.TESTI.it.scaduta + P.TESTI.en.scaduta)
+    && /link per continuare la chat/.test(P.TESTI.it.scaduta) && /link to continue the chat/.test(P.TESTI.en.scaduta));
 }
 
 console.log('\n== file della cartella ==');

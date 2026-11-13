@@ -285,6 +285,10 @@ const TESTI: [string, string, string][] = [
 ];
 const CHIAVI_TESTO_SCHEDA = TESTI.map(([k]) => k);
 const leggiJson = <T,>(v: string | undefined, riserva: T): T => { try { return v ? (JSON.parse(v) as T) : riserva; } catch { return riserva; } };
+// pezzo 7 (migr 0195): le risposte dei bottoni sono voci `risposta_chat`, che le bozze delle email non leggono; una
+// risposta standard (`faq`, `risposta_standard`) puntata da un bottone e' invece la stessa delle bozze
+const notaRisposta =(tipo: string | undefined): string =>
+  tipo === 'risposta_chat' ? 'Vale solo per la chat: le bozze delle email non la usano.' : 'È la stessa risposta standard che usano le bozze delle email.';
 
 export function ChatScheda({ ident, mostraProve, setMostraProve }: { ident: string; mostraProve: boolean; setMostraProve: (v: boolean) => void }) {
   const [imp, setImp] = useState<ImpostazioniChat | null>(null);
@@ -441,7 +445,7 @@ export function ChatScheda({ ident, mostraProve, setMostraProve }: { ident: stri
                   <input type="checkbox" checked={faq[b.faq].attiva} onChange={(e) => setFaq({ ...faq, [b.faq as number]: { ...faq[b.faq as number], attiva: e.target.checked } })} /> attiva
                 </label>
                 <button className="cs-btn cs-primary" type="button" disabled={busy} onClick={() => salvaFaq(b.faq as number)}>Salva la risposta</button>
-                <div className="cs-note" style={{ textAlign: 'left' }}>È la stessa risposta standard che usano le bozze delle email.</div>
+                <div className="cs-note" style={{ textAlign: 'left' }}>{notaRisposta(imp?.faq.find((f) => f.id === b.faq)?.tipo)}</div>
               </>
             )}
           </div>

@@ -26,32 +26,32 @@
   var TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
   var TESTI = {
     it: {
-      titolo: 'Chat Amimi: risposte automatiche e team', chiudi: 'Chiudi la chat', prova: 'PROVA', carica: 'Un momento...',
+      titolo: 'Chat Amim\u00ec: risposte automatiche e team', chiudi: 'Chiudi la chat', prova: 'PROVA', carica: 'Un momento...',
       nome: 'Nome (facoltativo)', email: 'Email', messaggio: 'Messaggio (facoltativo)', inizia: 'Inizia la chat',
       verifica: 'Verifica anti-spam in corso...', emailKo: 'Scrivi un indirizzo email valido.', nomeKo: 'Il nome \u00e8 troppo lungo.',
       testoKo: 'Il messaggio \u00e8 troppo lungo.', informativa: 'Informativa sulla privacy',
-      etichetta: 'Risposte automatiche e team Amimi.', scrivi: 'Scrivi al team Amimi', invia: 'Invia', persona: 'Parla con una persona',
-      personaFatto: 'Il team \u00e8 stato avvisato', tu: 'Tu', automatica: 'Risposta automatica', staff: 'Team Amimi', anchePerEmail: 'inviato anche via email',
+      etichetta: 'Risposte automatiche e team Amim\u00ec.', scrivi: 'Scrivi al team Amim\u00ec', invia: 'Invia', persona: 'Parla con una persona',
+      personaFatto: 'Il team \u00e8 stato avvisato', tu: 'Tu', automatica: 'Risposta automatica', staff: 'Team Amim\u00ec', anchePerEmail: 'inviato anche via email',
       inInvio: 'Invio...', nonInviato: 'Non inviato.', riprova: 'Riprova', spenta: 'La chat non \u00e8 disponibile in questo momento. Scrivici a ',
       spentaChat: 'La chat non \u00e8 disponibile in questo momento: i messaggi nuovi non partono. Scrivici a ', nonDisponibile: 'La chat non risponde in questo momento. Riprova tra poco o scrivici a ',
       limite: 'Oggi la chat ha raggiunto il numero massimo di conversazioni. Scrivici a ', verificaKo: 'Non siamo riusciti a completare la verifica anti-spam. Riprova o scrivici a ',
       limiteMessaggi: 'Hai raggiunto il numero massimo di messaggi per questa chat: ti rispondiamo via email.', troppoVeloce: 'Un attimo: riprova tra qualche secondo.',
-      chiusa: 'Questa chat \u00e8 stata chiusa. Se ti serve ancora aiuto, apri una nuova chat.', scaduta: 'La chat non \u00e8 pi\u00f9 attiva su questo dispositivo. Le risposte del team ti arrivano via email, con il link "Continua la chat".',
+      chiusa: 'Questa chat \u00e8 stata chiusa. Se ti serve ancora aiuto, apri una nuova chat.', scaduta: 'La chat non \u00e8 pi\u00f9 attiva su questo dispositivo. Le risposte del team ti arrivano via email, con il link per continuare la chat.',
       nuova: 'Nuova chat', fermo: 'Quando il team risponde ti arriva un\'email; la risposta compare anche qui.', controlla: 'Controlla adesso',
       errore: 'La chat non si \u00e8 caricata. ', riprovaCarica: 'Riprova', inviaA: 'Le risposte del team arrivano via email a ', bottoneKo: 'Questa risposta non \u00e8 disponibile ora.'
     },
     en: {
-      titolo: 'Amimi chat: automatic answers and team', chiudi: 'Close the chat', prova: 'TEST', carica: 'One moment...',
+      titolo: 'Amim\u00ec chat: automatic answers and team', chiudi: 'Close the chat', prova: 'TEST', carica: 'One moment...',
       nome: 'Name (optional)', email: 'Email', messaggio: 'Message (optional)', inizia: 'Start the chat',
       verifica: 'Anti-spam check in progress...', emailKo: 'Please enter a valid email address.', nomeKo: 'The name is too long.',
       testoKo: 'The message is too long.', informativa: 'Privacy notice',
-      etichetta: 'Automatic answers and Amimi team.', scrivi: 'Write to the Amimi team', invia: 'Send', persona: 'Talk to a person',
-      personaFatto: 'Our team has been notified', tu: 'You', automatica: 'Automatic answer', staff: 'Amimi team', anchePerEmail: 'also sent by email',
+      etichetta: 'Automatic answers and Amim\u00ec team.', scrivi: 'Write to the Amim\u00ec team', invia: 'Send', persona: 'Talk to a person',
+      personaFatto: 'Our team has been notified', tu: 'You', automatica: 'Automatic answer', staff: 'Amim\u00ec team', anchePerEmail: 'also sent by email',
       inInvio: 'Sending...', nonInviato: 'Not sent.', riprova: 'Retry', spenta: 'The chat is not available right now. Write to us at ',
       spentaChat: 'The chat is not available right now: new messages cannot be sent. Write to us at ', nonDisponibile: 'The chat is not responding right now. Please try again shortly or write to us at ',
       limite: 'The chat has reached its maximum number of conversations for today. Write to us at ', verificaKo: 'We could not complete the anti-spam check. Please try again or write to us at ',
       limiteMessaggi: 'You have reached the maximum number of messages for this chat: we will reply by email.', troppoVeloce: 'One moment: please try again in a few seconds.',
-      chiusa: 'This chat has been closed. If you still need help, start a new chat.', scaduta: 'The chat is no longer active on this device. Our replies reach you by email, with the "Continue the chat" link.',
+      chiusa: 'This chat has been closed. If you still need help, start a new chat.', scaduta: 'The chat is no longer active on this device. Our replies reach you by email, with a link to continue the chat.',
       nuova: 'New chat', fermo: 'When our team replies you will get an email; the reply also appears here.', controlla: 'Check now',
       errore: 'The chat did not load. ', riprovaCarica: 'Retry', inviaA: 'Our replies are sent by email to ', bottoneKo: 'This answer is not available right now.'
     }
