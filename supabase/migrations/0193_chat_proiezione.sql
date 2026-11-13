@@ -2,7 +2,7 @@
 -- docs/PROPOSTA_chat_sito.md 7.4, 7.5 e 7.6 (opzione A di D-A: stessa lista delle email), con D-8 e D-11. Brief nel repo
 -- hub: Cowork12/_CLAUDE_CODE_INBOX/BRIEF_chat_sito_fase1_2026-11-08.md.
 --
--- Nessuna tabella nuova. Due funzioni e un cron:
+-- Nessuna tabella nuova. Tre funzioni e un cron:
 --   1) chat_proietta(sessione): scrive una chat in cs_conversations e cs_messages, la "proiezione" di 7.4. La chiamano
 --      chat-api (messaggi della cliente, passaggio) e chat-staff (risposta, prendo_io, chiudi) subito dopo le loro
 --      scritture, con la chiave di servizio. Una sola funzione per tutte e due, cosi' la mappa di 7.5 vive in un posto:
