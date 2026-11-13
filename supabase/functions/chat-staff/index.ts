@@ -27,7 +27,8 @@
 // staff-3 (pezzo 6, Assistenza):
 //   - dopo rispondi, prendo_io e chiudi la chat si proietta in Assistenza con l'RPC chat_proietta (migr 0193, 7.4 e 7.5);
 //     un errore non annulla l'azione (fatta), la risposta dice `proiezione: false` e il cron chat-proiezione riprova.
-//     `chiudi` mette preso_da = chi se la chat non era di nessuno: la card chiusa dice chi l'ha chiusa.
+//     `chiudi` mette preso_da = chi chiude: la card chiusa dice chi l'ha chiusa (7.8).
+//   - cancella_dati cancella ogni sessione in UNA transazione (RPC chat_cancella_sessione, Gate 2 del pezzo 6, B1).
 //   impostazioni    {chi} -> la scheda Chat (sez. 10): i valori delle sole chiavi chat_* di CHIAVI_SCHEDA (mai un
 //                   segreto) e le righe di cs_faq puntate dai bottoni rapidi.
 //   imposta         {chiave, valore, chi} -> scrive una delle CHIAVI_SCRIVIBILI (orari, solleciti, quattro testi), solo
@@ -103,11 +104,8 @@ interface Db {
   contaMessaggi(sessioneId: string): Promise<number>;
   proiezioni(s: Sess): Promise<string[]>;
   cardEmail(threadId: string): Promise<string | null>;
-  cancellaCs(ids: string[]): Promise<number>;
-  cancellaContatori(sessioneId: string): Promise<number>;
-  cancellaEventiChiave(sessioneId: string): Promise<number>;
-  cancellaPush(sessioneId: string): Promise<number>;
-  cancellaSessione(id: string): Promise<number>;
+  // staff-3 (Gate 2 del pezzo 6, B1): tutto in una transazione, RPC chat_cancella_sessione (migr 0193)
+  cancellaTutto(id: string, card: string | null): Promise<{ esito: string; messaggi: number; proiezioni: number; card_email: number; contatori: number; eventi: number; push: number }>;
   evento(r: { sessione_id: string | null; tipo: string; chi: string; esito: string | null; dettaglio: Record<string, unknown> }): Promise<void>;
   proietta(sessioneId: string): Promise<void>;
   flag(chiavi: string[]): Promise<Record<string, string>>;
@@ -299,7 +297,8 @@ async function cambiaStato(d: Record<string, unknown>, amb: Ambiente, chi: strin
     return json({ ok: true, revocati: n });
   }
   if (s.stato === 'chiusa') return azione === 'chiudi' ? json({ ok: true, stato: 'chiusa', gia_chiusa: true }) : errore('chiusa', 409);
-  const patch = azione === 'chiudi' ? { stato: 'chiusa', chiusa_at: ora, preso_da: s.preso_da ?? chi, updated_at: ora } : { stato: 'aperta', preso_da: chi, updated_at: ora };
+  // chiudi: preso_da = chi chiude, cosi' la card chiusa dice chi l'ha chiusa (7.8: `stato_by` = chi; Gate 2, C2)
+  const patch = azione === 'chiudi' ? { stato: 'chiusa', chiusa_at: ora, preso_da: chi, updated_at: ora } : { stato: 'aperta', preso_da: chi, updated_at: ora };
   const dopo = await amb.db.aggiornaSessione(id, patch);
   if (!dopo) return azione === 'chiudi' ? json({ ok: true, stato: 'chiusa', gia_chiusa: true }) : errore('chiusa', 409);
   const proiezione = await proiettaSicuro(amb, id);
@@ -355,21 +354,14 @@ async function cancellaDati(d: Record<string, unknown>, amb: Ambiente, chi: stri
   const per = perSessione ? 'sessione' : 'email';
   try {
     for (const v of voci) {
-      // prima le righe cs_ (un errore lascia la sessione, quindi la cancellazione si puo' ripetere), poi la sessione
-      const cs = [...v.proiezioni, ...(d.con_card_email === true && v.card ? [v.card] : [])];
-      if (cs.length) {
-        const n = await amb.db.cancellaCs(cs);
-        const card = d.con_card_email === true && v.card ? 1 : 0;
-        conti.card_email += Math.min(card, n);
-        conti.proiezioni += Math.max(0, n - card);
-      }
-      conti.contatori += await amb.db.cancellaContatori(v.s.id);
-      // le chiavi `<sessione>:...` (prenotazioni di push e thread, tetti) portano l'id della sessione e del thread Gmail:
-      // si cancellano con lei (11.6 punto 4, Gate 2 C2); gli eventi senza chiave restano senza sessione
-      conti.eventi += await amb.db.cancellaEventiChiave(v.s.id);
-      // staff-2 (11.6 punto 4): il registro delle push della chat con la chiave della sessione (push-eventi v7)
-      conti.push += await amb.db.cancellaPush(v.s.id);
-      if ((await amb.db.cancellaSessione(v.s.id)) === 1) { conti.sessioni++; conti.messaggi += v.messaggi; }
+      // staff-3 (Gate 2 del pezzo 6, B1): una sessione = una transazione (RPC chat_cancella_sessione) col lock della
+      // sessione preso prima, come chat_proietta: proiezione, card email se chiesta, contatori `sess:<id>:*`, eventi con
+      // chiave `<id>:*` (11.6 punto 4, Gate 2 C2), registro delle push della chat (staff-2) e sessione, tutto o niente.
+      // Con le chiamate separate di prima il cron della proiezione poteva far rinascere la card fra una e l'altra.
+      const r = await amb.db.cancellaTutto(v.s.id, d.con_card_email === true && v.card ? v.card : null);
+      if (r.esito !== 'cancellata') continue;
+      conti.sessioni++; conti.messaggi += r.messaggi; conti.proiezioni += r.proiezioni; conti.card_email += r.card_email;
+      conti.contatori += r.contatori; conti.eventi += r.eventi; conti.push += r.push;
     }
   } catch (x) {
     await audit(amb, null, 'cancella_dati', chi, 'parziale', { per, ...conti });
@@ -426,8 +418,6 @@ const fallito = (causa: string, e: unknown): ErroreDb => {
   return new ErroreDb(causa);
 };
 const COL_SESS = 'id, stato, preso_da, customer_email, shopify_customer_id, prova, gmail_thread_id, cs_conversation_id, created_at, ultima_attivita_at';
-// gli eventi di push-eventi v7 (migr 0188) le cui chiavi cominciano con l'id della sessione
-const EVENTI_PUSH_CHAT = ['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'];
 const COL_MSG = 'id, sessione_id, seq, autore, email_stato, email_errore';
 const env = (k: string) => (Deno.env.get(k) ?? '').trim();
 
@@ -497,30 +487,14 @@ function dbSupabase(sb: SupabaseClient, anon: SupabaseClient): Db {
       if (error) throw fallito('card email non letta', error);
       return uno<{ id: string }>(data)?.id ?? null;
     },
-    async cancellaCs(ids) {
-      const { data, error } = await sb.from('cs_conversations').delete().in('id', ids).select('id');
-      if (error) throw fallito('righe cs non cancellate', error);
-      return (data ?? []).length;
-    },
-    async cancellaContatori(sessioneId) {
-      const { data, error } = await sb.from('chat_contatori').delete().like('chiave', `sess:${sessioneId}:%`).select('chiave');
-      if (error) throw fallito('contatori non cancellati', error);
-      return (data ?? []).length;
-    },
-    async cancellaEventiChiave(sessioneId) {
-      const { data, error } = await sb.from('chat_eventi').delete().like('chiave', `${sessioneId}:%`).select('id');
-      if (error) throw fallito('eventi della sessione non cancellati', error);
-      return (data ?? []).length;
-    },
-    async cancellaPush(sessioneId) {
-      const { data, error } = await sb.from('push_eventi_inviati').delete().in('evento', EVENTI_PUSH_CHAT).like('chiave', `${sessioneId}:%`).select('id');
-      if (error) throw fallito('registro delle push non cancellato', error);
-      return (data ?? []).length;
-    },
-    async cancellaSessione(id) {
-      const { data, error } = await sb.from('chat_sessioni').delete().eq('id', id).select('id');
-      if (error) throw fallito('sessione non cancellata', error);
-      return (data ?? []).length;
+    async cancellaTutto(id, card) {
+      // scrittura: mai ritentata (Regola 20 d); una transazione, quindi un errore non lascia niente a meta'
+      const { data, error } = await sb.rpc('chat_cancella_sessione', { p_sessione: id, p_card: card });
+      if (error) throw fallito('chat non cancellata', error);
+      const r = (data ?? {}) as Record<string, unknown>;
+      const n = (k: string) => (typeof r[k] === 'number' ? (r[k] as number) : 0);
+      if (r.esito !== 'cancellata' && r.esito !== 'assente') throw fallito('cancellazione con esito inatteso', null);
+      return { esito: String(r.esito), messaggi: n('messaggi'), proiezioni: n('proiezioni'), card_email: n('card_email'), contatori: n('contatori'), eventi: n('eventi'), push: n('push') };
     },
     async evento(r) {
       const { error } = await sb.from('chat_eventi').insert({ ...r, chiave: null });

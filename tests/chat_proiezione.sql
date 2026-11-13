@@ -17,6 +17,9 @@ declare
   v_c cs_conversations%rowtype;
   v_seq bigint;
   v_p timestamptz := clock_timestamp();
+  v_s4 uuid;
+  v_card uuid;
+  v_altra uuid;
 begin
   insert into chat_sessioni (stato, customer_email, customer_name, lingua, informativa_versione, prova)
     values ('bot', 'prova.0193@example.com', 'PROVA 0193', 'it', 'i-test', true) returning id into v_s;
@@ -146,6 +149,56 @@ begin
 
   -- 13. v_lead_inbound (migr 0194) non vede le chiavi della chat
   if exists (select 1 from v_lead_inbound where gmail_thread_id like 'chat:%') then raise exception 'KO 13: chat in v_lead_inbound'; end if;
+
+  -- 14. sent_at strettamente crescente coi seq: bottone e risposta fissa nello stesso insert (stesso created_at, Gate 2 C3)
+  if (select count(distinct sent_at) from cs_messages where conversation_id = v_cs) <> (select count(*) from cs_messages where conversation_id = v_cs) then
+    raise exception 'KO 14: sent_at uguali nella stessa chat';
+  end if;
+  if exists (select 1 from cs_messages a join cs_messages b on b.conversation_id = a.conversation_id
+              join chat_messaggi ma on 'chat:' || ma.id = a.gmail_message_id join chat_messaggi mb on 'chat:' || mb.id = b.gmail_message_id
+             where a.conversation_id = v_cs and ma.seq < mb.seq and a.sent_at >= b.sent_at) then
+    raise exception 'KO 14: ordine dei sent_at diverso da quello dei seq';
+  end if;
+
+  -- 15. il cron ripara anche stato_by (Gate 2 C1): stessa chiusa, nome sbagliato in cs_
+  update cs_conversations set stato_by = 'Benedetta' where id = v_cs;
+  v_r := chat_proietta_arretrate();
+  if not exists (select 1 from cs_conversations where id = v_cs and stato_by = 'Ginevra') then raise exception 'KO 15: stato_by non riallineato'; end if;
+
+  -- 16. cancellazione in una transazione (Gate 2 B1): proiezione, card email solo se del thread, contatori, eventi, push, sessione
+  insert into chat_sessioni (stato, customer_email, lingua, informativa_versione, prova, gmail_thread_id)
+    values ('bot', 'prova.0193d@example.com', 'it', 'i-test', true, 'thread-prova-0193') returning id into v_s4;
+  insert into chat_messaggi (sessione_id, autore, testo, client_msg_id) values (v_s4, 'cliente', 'Da cancellare', gen_random_uuid());
+  v_r := chat_proietta(v_s4);
+  insert into cs_conversations (gmail_thread_id, canale, customer_email) values ('thread-prova-0193', 'email_diretta', 'prova.0193d@example.com') returning id into v_card;
+  insert into cs_conversations (gmail_thread_id, canale, customer_email) values ('thread-altro-0193', 'email_diretta', 'prova.0193d@example.com') returning id into v_altra;
+  perform chat_contatore_incrementa('sess:' || v_s4::text || ':msg', 0, 100);
+  insert into chat_eventi (sessione_id, tipo, chiave, chi, esito, dettaglio) values (v_s4, 'push_passaggio', v_s4::text || ':passaggio:1', null, 'prenotato', '{}');
+  v_r := chat_cancella_sessione(v_s4, v_altra);
+  if v_r ->> 'esito' <> 'cancellata' or (v_r ->> 'proiezioni')::int <> 1 or (v_r ->> 'card_email')::int <> 0 or (v_r ->> 'contatori')::int <> 1
+     or (v_r ->> 'eventi')::int <> 1 or (v_r ->> 'messaggi')::int <> 1 then
+    raise exception 'KO 16: %', v_r;
+  end if;
+  if not exists (select 1 from cs_conversations where id = v_altra) or not exists (select 1 from cs_conversations where id = v_card) then
+    raise exception 'KO 16: cancellata una card che non era quella del thread della sessione';
+  end if;
+  if exists (select 1 from chat_sessioni where id = v_s4) or exists (select 1 from cs_conversations where gmail_thread_id = 'chat:' || v_s4)
+     or exists (select 1 from chat_contatori where chiave like 'sess:' || v_s4::text || ':%') or exists (select 1 from chat_eventi where chiave like v_s4::text || ':%') then
+    raise exception 'KO 16: resti della chat cancellata';
+  end if;
+  v_r := chat_proietta(v_s4);
+  if v_r ->> 'esito' <> 'assente' then raise exception 'KO 16: la proiezione fa rinascere la chat cancellata: %', v_r; end if;
+  v_r := chat_cancella_sessione(v_s4, null);
+  if v_r ->> 'esito' <> 'assente' then raise exception 'KO 16: seconda cancellazione %', v_r; end if;
+  -- la card del thread si cancella solo se chiesta e se e' davvero quella della sessione
+  insert into chat_sessioni (stato, customer_email, lingua, informativa_versione, prova, gmail_thread_id)
+    values ('bot', 'prova.0193e@example.com', 'it', 'i-test', true, 'thread-prova-0193') returning id into v_s4;
+  v_r := chat_cancella_sessione(v_s4, v_card);
+  if (v_r ->> 'card_email')::int <> 1 or exists (select 1 from cs_conversations where id = v_card) then raise exception 'KO 16: card del thread non cancellata %', v_r; end if;
+  if has_function_privilege('anon', 'public.chat_cancella_sessione(uuid, uuid)', 'execute') or has_function_privilege('authenticated', 'public.chat_cancella_sessione(uuid, uuid)', 'execute')
+     or not has_function_privilege('service_role', 'public.chat_cancella_sessione(uuid, uuid)', 'execute') then
+    raise exception 'KO 16: privilegi di chat_cancella_sessione';
+  end if;
 
   raise exception 'TEST_OK';
 end

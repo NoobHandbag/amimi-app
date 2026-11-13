@@ -110,10 +110,11 @@ interface Db {
   tokenAttivi(sessioneId: string, oraIso: string): Promise<{ id: string }[]>;
   revocaToken(ids: string[], oraIso: string): Promise<void>;
   usaToken(id: string, oraIso: string): Promise<void>;
-  aggiornaSessione(id: string, patch: Record<string, unknown>, se: { stato?: string; passaggi?: number }): Promise<Sessione | null>;
+  aggiornaSessione(id: string, patch: Record<string, unknown>, se: { stato?: string; passaggi?: number; risposta?: string | null }): Promise<Sessione | null>;
   sessione(id: string): Promise<Sessione | null>;
   inserisciMessaggi(righe: NuovoMessaggio[]): Promise<Messaggio[]>;
   messaggiDopo(sessioneId: string, dopo: number, limite: number): Promise<Messaggio[]>;
+  messaggioCliente(sessioneId: string, clientId: string): Promise<{ created_at: string } | null>;
   segnaViste(ids: string[], oraIso: string): Promise<void>;
   evento(r: Evento): Promise<boolean>;
   esitoEvento(chiave: string, esito: string, dettaglio: Record<string, unknown>): Promise<void>;
@@ -489,7 +490,8 @@ async function aPersona(amb: Ambiente, s: Sessione, cliente: boolean): Promise<S
   const ora = iso(amb.ora);
   const patch: Record<string, unknown> = { stato: 'attesa_persona', passaggi: s.passaggi + 1, passaggio_at: ora, ultima_attivita_at: ora, updated_at: ora };
   if (cliente) patch.ultimo_cliente_at = ora;
-  const vinto = await amb.db.aggiornaSessione(s.id, patch, { stato: s.stato, passaggi: s.passaggi });
+  // la risposta dello staff letta e' nella condizione: una risposta arrivata nel frattempo fa perdere l'update (Gate 2, B2)
+  const vinto = await amb.db.aggiornaSessione(s.id, patch, { stato: s.stato, passaggi: s.passaggi, risposta: s.ultima_risposta_staff_at });
   if (vinto) return vinto;
   const letta = await amb.db.sessione(s.id);
   if (!letta) throw new ErroreDb('sessione non riletta');
@@ -530,7 +532,16 @@ async function testoLibero(amb: Ambiente, f: Flag, s: Sessione, clientId: string
   const doppione = ins.length === 0;
   let sess: Sessione;
   let nuovo = false;
-  if (serveUnaPersona(s)) {
+  // B4 solo per un messaggio arrivato DOPO l'ultima risposta dello staff (Gate 2, B2): un doppione salvato prima della
+  // risposta non riapre una domanda gia' evasa; un doppione salvato dopo (primo invio caduto prima del passaggio) si'.
+  // Da `bot` il passaggio si rifa' come prima: gli effetti sono idempotenti.
+  let persona = serveUnaPersona(s);
+  if (persona && s.stato === 'aperta' && doppione) {
+    const m = await amb.db.messaggioCliente(s.id, clientId);
+    const risposta = Date.parse(s.ultima_risposta_staff_at ?? '');
+    persona = m !== null && !(Number.isFinite(risposta) && Date.parse(m.created_at) <= risposta);
+  }
+  if (persona) {
     sess = await aPersona(amb, s, true);
     nuovo = sess.passaggi > s.passaggi;
   } else sess = await toccaSessione(amb, s, true);
@@ -875,6 +886,7 @@ function dbSupabase(sb: SupabaseClient): Db {
       let q = sb.from('chat_sessioni').update(patch).eq('id', id);
       if (se.stato !== undefined) q = q.eq('stato', se.stato);
       if (se.passaggi !== undefined) q = q.eq('passaggi', se.passaggi);
+      if (se.risposta !== undefined) q = se.risposta === null ? q.is('ultima_risposta_staff_at', null) : q.eq('ultima_risposta_staff_at', se.risposta);
       const { data, error } = await q.select(COL_SESSIONE);
       if (error) throw fallito('sessione non aggiornata', error);
       return ((data ?? [])[0] as Sessione | undefined) ?? null;
@@ -888,6 +900,11 @@ function dbSupabase(sb: SupabaseClient): Db {
       const { data, error } = await sb.from('chat_messaggi').upsert(righe, { onConflict: 'sessione_id,client_msg_id', ignoreDuplicates: true }).select(COL_MESSAGGIO);
       if (error) throw fallito('messaggio non salvato', error);
       return (data ?? []) as Messaggio[];
+    },
+    async messaggioCliente(sessioneId, clientId) {
+      const { data, error } = await retryOnce(() => sb.from('chat_messaggi').select('created_at').eq('sessione_id', sessioneId).eq('client_msg_id', clientId).limit(1));
+      if (error) throw fallito('messaggio non riletto', error);
+      return ((data ?? [])[0] as { created_at: string } | undefined) ?? null;
     },
     async messaggiDopo(sessioneId, dopo, limite) {
       const { data, error } = await retryOnce(() => sb.from('chat_messaggi').select(COL_MESSAGGIO).eq('sessione_id', sessioneId).gt('seq', dopo)

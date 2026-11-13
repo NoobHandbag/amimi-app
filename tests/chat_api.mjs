@@ -100,8 +100,10 @@ function nuovoDb() {
     async usaToken(id, oraIso) { const y = st.tok.find((z) => z.id === id); if (y) y.usato_at = oraIso; },
     async aggiornaSessione(id, patch, se) {
       st.chiamate.push('aggiornaSessione'); guasto('aggiornaSessione');
+      if (st.primaDiAggiornare) { const h = st.primaDiAggiornare; st.primaDiAggiornare = null; h(); }
       const s = st.sess.get(id);
-      if (!s || (se.stato !== undefined && s.stato !== se.stato) || (se.passaggi !== undefined && s.passaggi !== se.passaggi)) return null;
+      if (!s || (se.stato !== undefined && s.stato !== se.stato) || (se.passaggi !== undefined && s.passaggi !== se.passaggi)
+        || (se.risposta !== undefined && (s.ultima_risposta_staff_at ?? null) !== se.risposta)) return null;
       const dopo = { ...s, ...patch };
       if (dopo.stato === 'attesa_persona' && !(dopo.passaggi >= 1 && dopo.passaggio_at)) throw new M.ErroreDb('23514 passaggio');
       Object.assign(s, patch);
@@ -126,6 +128,7 @@ function nuovoDb() {
       }
       return out;
     },
+    async messaggioCliente(sid, cid) { const m = st.msg.find((x) => x.sessione_id === sid && x.client_msg_id === cid); return m ? { created_at: m.created_at } : null; },
     async messaggiDopo(sid, dopo, lim) { return st.msg.filter((m) => m.sessione_id === sid && m.seq > dopo).sort((p, q) => q.seq - p.seq).reverse().slice(0, lim).map(pick); },
     async segnaViste(ids, oraIso) { for (const m of st.msg) if (ids.includes(m.id) && m.autore === 'staff' && !m.delivered_at) m.delivered_at = oraIso; },
     async evento(r) {
@@ -862,6 +865,37 @@ console.log('\n== proiezione in Assistenza e B4 (api-3, pezzo 6) ==');
     && M.aspettaIlTeam({ passaggio_at: '2026-11-09T10:00:00Z', ultima_risposta_staff_at: '2026-11-09T09:59:59Z' })
     && !M.aspettaIlTeam({ passaggio_at: '2026-11-09T10:00:00Z', ultima_risposta_staff_at: '2026-11-09T10:00:00Z' })
     && !M.aspettaIlTeam({ passaggio_at: null, ultima_risposta_staff_at: null }));
+  // Gate 2 del pezzo 6, B2: un doppione e una risposta concorrente non riaprono una domanda gia' evasa
+  const w = nuovo();
+  const c1 = randomUUID();
+  const wa = await avvia(w, { testo: 'Domanda', client_id: c1 });
+  const ws = sessioneDi(w, wa.d.token);
+  clock.ora += 3600000;
+  Object.assign(ws, { stato: 'aperta', preso_da: 'Ginevra', ultima_risposta_staff_at: iso(clock.ora) });
+  passo();
+  const pw = pushInviati.length;
+  const d1 = await chiama(w, 'invia', { token: wa.d.token, client_id: c1, testo: 'Domanda' });
+  t('B4-8 doppione di un messaggio salvato prima della risposta: nessun passaggio, nessuna push (Gate 2, B2)',
+    d1.d.ok === true && d1.d.stato === 'aperta' && ws.passaggi === 1 && pushInviati.length === pw && w.st.msg.filter((m) => m.client_msg_id === c1).length === 1);
+  passo();
+  w.st.primaDiAggiornare = () => { ws.ultima_risposta_staff_at = iso(clock.ora); };
+  const d2 = await chiama(w, 'invia', { token: wa.d.token, client_id: randomUUID(), testo: 'Nuova domanda' });
+  t('B4-9 lo staff risponde fra la lettura e il passaggio: update perso, nessun passaggio ne\' push (Gate 2, B2)',
+    d2.d.ok === true && ws.stato === 'aperta' && ws.passaggi === 1 && pushInviati.length === pw);
+  passo();
+  // primo invio salvato DOPO la risposta e caduto prima del passaggio: il doppione lo deve aprire (rimedio del refuter)
+  const c2 = randomUUID();
+  w.st.guasti.set('aggiornaSessione', 1);
+  const g1 = await chiama(w, 'invia', { token: wa.d.token, client_id: c2, testo: 'Messaggio caduto' });
+  passo();
+  const g2 = await chiama(w, 'invia', { token: wa.d.token, client_id: c2, testo: 'Messaggio caduto' });
+  t('B4-9b doppione di un messaggio salvato DOPO la risposta (passaggio caduto al primo invio): il passaggio si apre al secondo',
+    g1.d.state === 'riprova' && g2.d.ok === true && g2.d.stato === 'attesa_persona' && ws.passaggi === 2 && pushInviati.length === pw + 1
+    && w.st.msg.filter((m) => m.client_msg_id === c2).length === 1);
+  Object.assign(ws, { stato: 'aperta', ultima_risposta_staff_at: iso(clock.ora) });
+  passo();
+  const d3 = await chiama(w, 'invia', { token: wa.d.token, client_id: randomUUID(), testo: 'E ora?' });
+  t('B4-10 un messaggio nuovo dopo l\'ultima risposta apre il passaggio 3', d3.d.stato === 'attesa_persona' && ws.passaggi === 3 && pushInviati.length === pw + 2);
   clock.ora = Date.parse('2026-11-09T09:30:00Z');
 }
 
@@ -922,8 +956,10 @@ console.log('\n== guardie sul sorgente ==');
   t('G15 le rotte dell\'eco sono solo le tre dello spike', JSON.stringify(M.ROTTE_ECO) === '["eco","misura","turnstile"]' && JSON.stringify(Object.keys(M.METODO).sort()) === '["aggiorna","avvia","config","errore","invia","passaggio","riprendi"]');
   t('G16 messaggi idempotenti su (sessione_id, client_msg_id); eventi sulla chiave', /onConflict: 'sessione_id,client_msg_id', ignoreDuplicates: true/.test(fuori) && /onConflict: 'chiave', ignoreDuplicates: true/.test(fuori));
   t('G17 le scritture non ritentano: retryOnce solo su select', [...fuori.matchAll(/retryOnce\(\(\) => sb\.from\('[a-z_]+'\)\.([a-z]+)\(/g)].every((m) => m[1] === 'select'));
-  t('G18 passaggio con update condizionato su stato e passaggi letti (B4: anche da aperta)', /aggiornaSessione\(s\.id, patch, \{ stato: s\.stato, passaggi: s\.passaggi \}\)/.test(BLOCCO)
+  t('G18 passaggio con update condizionato su stato, passaggi e risposta dello staff letti (B4: anche da aperta)', /aggiornaSessione\(s\.id, patch, \{ stato: s\.stato, passaggi: s\.passaggi, risposta: s\.ultima_risposta_staff_at \}\)/.test(BLOCCO)
     && /const serveUnaPersona = \(s: Sessione\) => s\.stato === 'bot' \|\| \(s\.stato === 'aperta' && !aspettaIlTeam\(s\)\);/.test(BLOCCO)
+    && /if \(persona && s\.stato === 'aperta' && doppione\) \{[\s\S]{0,300}persona = m !== null && !\(Number\.isFinite\(risposta\) && Date\.parse\(m\.created_at\) <= risposta\);/.test(BLOCCO)
+    && /\{ stato: s\.stato, passaggi: s\.passaggi, risposta: s\.ultima_risposta_staff_at \}/.test(BLOCCO)
     && (BLOCCO.match(/await aPersona\(/g) ?? []).length === 2 && /s\.stato === 'bot' \? await aPersona\(amb, s, false\)/.test(BLOCCO));
   t('G19 host di prova legato all\'id del negozio', M.HOST_ANTEPRIMA_RE.test('abc-95215747399.shopifypreview.com') && !M.HOST_ANTEPRIMA_RE.test('abc-95215747399.shopifypreview.com.evil.it') && !M.HOST_ANTEPRIMA_RE.test('x.abc-95215747399.shopifypreview.com'));
   t('G20 il token di chat non finisce mai in un URL ne\' in un log', !/searchParams\.get\('token/.test(SRC) && !/console\.error\([^)]*token/.test(codice));

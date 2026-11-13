@@ -141,7 +141,7 @@ const MARKERS = {
     "if (convErr) { lastErr = 'db_conv_out: ' + String(convErr.message ?? '').slice(0, 250); return 'transient'; }",
     "const { data: ord, error: ordErr } = await retryOnce(() => sb.from('shopify_orders').select('order_number, email').eq('order_number', String(n)).limit(1).maybeSingle());",
     "if (ordErr) { letturaOrdineFallita++;",
-    "let qc = sb.from('cs_conversations').select('id, canale, snippet').order('id', { ascending: true }).limit(limit);",
+    "let qc = sb.from('cs_conversations').select('id, canale, snippet').neq('canale', 'chat_sito').order('id', { ascending: true }).limit(limit);",
     "if (convErr) return json({ ok: false, error: 'cs_conversations non leggibile: ' + convErr.message }, 502);",
     "const { data: convRows, error: convErr } = await retryOnce(() => sb.from('cs_conversations').select('id, canale, customer_name').in('id', convIds.slice(i, i + 100)));",
     "const { data: ex0, error: e0 } = await retryOnce(() => sb.from('cs_conversations').select('id,canale,categoria,last_msg_at,customer_email').eq('gmail_thread_id', threadId).maybeSingle());",

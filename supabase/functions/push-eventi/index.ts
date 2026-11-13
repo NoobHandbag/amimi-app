@@ -954,6 +954,7 @@ function msgChatSollecito(cands: Cand[]): Msg[] {
 //   11 tetto delle chat nuove del giorno raggiunto (evento `limite:<g>` di chat-api): `limite:<g>`
 //   16 richieste a chat-api oltre la soglia (5.000, D-12; contatore glob:richieste): `quota:<g>`
 //   13 errori del widget oltre la soglia (20; contatore glob:errore, al tetto di 100 il beacon tace): `widget:<g>`
+//   v10 la proiezione in Assistenza fallita nel cron chat-proiezione (contatore glob:proiezione_ko, migr 0193): `proiezione:<g>`
 // I contatori si leggono per oggi e ieri (UTC): un guasto delle 23:58 non si perde al cambio di giorno, e quello di ieri
 // gia' mandato e' `inviato` nel registro. Nel testo la data, non "oggi" (Gate 2, C4: fra mezzanotte e le 2 di Roma il
 // giorno UTC e' ancora quello prima).
@@ -989,6 +990,8 @@ function candChatSalute(o: { passaggi: Riga[]; email: Riga[]; prova: Record<stri
     if (!Number.isFinite(f) || f % 86400000 !== 0 || !Number.isSafeInteger(n) || n <= 0) continue;
     const g = giornoUtc(f);
     if (r.chiave === 'glob:sev_error') out.push({ chiave: `api:${g}`, ts: o.ora, rif: { tipo: 'api', n: String(n), giorno: g } });
+    // v10 (Gate 2 del pezzo 6, B4): il cron chat-proiezione non riesce a mettere una chat in Assistenza (migr 0193)
+    else if (r.chiave === 'glob:proiezione_ko') out.push({ chiave: `proiezione:${g}`, ts: o.ora, rif: { tipo: 'proiezione', n: String(n), giorno: g } });
     else if (r.chiave === 'glob:richieste' && n >= o.sogliaRichieste) out.push({ chiave: `quota:${g}`, ts: o.ora, rif: { tipo: 'quota', n: String(n), soglia: String(o.sogliaRichieste), giorno: g } });
     else if (r.chiave === 'glob:errore' && n >= o.sogliaWidget) out.push({ chiave: `widget:${g}`, ts: o.ora, rif: { tipo: 'widget', n: String(n), soglia: String(o.sogliaWidget), tetto: n > ERRORI_BEACON_TETTO ? '1' : '', giorno: g } });
   }
@@ -1024,6 +1027,8 @@ function msgChatSalute(cands: Cand[]): Msg[] {
       out.push({ ...base, urgente: true, titolo: 'Chat del sito: email in coda', testo: `${plurale(n, 'risposta del team aspetta', 'risposte del team aspettano')} l'email da oltre 10 minuti: chat-send fermo o Gmail non disponibile.` });
     } else if (c.rif.tipo === 'api') {
       out.push({ ...base, urgente: true, titolo: 'Chat del sito in errore', testo: `chat-api: ${plurale(n, 'richiesta', 'richieste')} in errore nel giorno ${quando}. Dettagli in Salute.` });
+    } else if (c.rif.tipo === 'proiezione') {
+      out.push({ ...base, urgente: true, titolo: 'Chat del sito: chat fuori da Assistenza', testo: `${plurale(n, 'tentativo fallito', 'tentativi falliti')} di mettere una chat in Assistenza il giorno ${quando}: una cliente che chiede una persona potrebbe non comparire in coda. Serve Claude Code.` });
     } else if (c.rif.tipo === 'limite') {
       out.push({ ...base, urgente: true, titolo: 'Chat del sito: tetto delle chat nuove raggiunto', testo: `Raggiunto il tetto delle chat nuove del giorno ${quando}${c.rif.oggi ? ': fino a mezzanotte UTC nessun\'altra cliente puo\' aprirne una' : ''}. Se e' un abuso, spegni l'embed della chat.` });
     } else if (c.rif.tipo === 'quota') {
@@ -1486,7 +1491,7 @@ async function leggiPassaggi(sb: Sb, chiavi: string[]): Promise<Riga[]> {
 const CODA_EMAIL_MS = 10 * 60000;
 const PRENOTATA_FERMA_MS = 20 * 60000;
 const LIMITE_SALUTE_CHAT = 200;
-const CONTATORI_SALUTE = ['glob:sev_error', 'glob:richieste', 'glob:errore'];
+const CONTATORI_SALUTE = ['glob:sev_error', 'glob:richieste', 'glob:errore', 'glob:proiezione_ko'];
 
 const EVENTI: Record<string, DefEvento> = {
   sistema_cs_sync_fermo: {

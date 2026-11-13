@@ -2,7 +2,8 @@
 // sorgente v32 (2026-11-13, chat del sito Fase 1 pezzo 6, docs/PROPOSTA_chat_sito.md 7.6 punto 13 e 7.10): una chat del
 //   sito (canale `chat_sito` o chiave `chat:`, migr 0193) riceve 422 su context, dry_data, case_data, draft e refine, e il
 //   riassunto la salta: il suo testo non va a Gemini (un solo fornitore AI per la chat, quello del bot), e con la sola
-//   email DICHIARATA nel widget lookupOrder darebbe l'ultimo ordine di quell'email, cioe' dati di un'altra persona.
+//   email DICHIARATA nel widget lookupOrder darebbe l'ultimo ordine di quell'email, cioe' dati di un'altra persona. Per lo
+//   stesso motivo le "conversazioni precedenti" di un'email (contesto e riassunto) non contano le chat (Gate 2, C6).
 // sorgente v31 (2026-11-04, decisione di Dan del 03-11, CASI_APERTI n.54 e D-6 di amimi-app#154): la
 //   finestra di reso torna a contare 14 giorni dalla CONSEGNA, come l'Informativa sui rimborsi e le
 //   regole di reso di Shopify allineate il 03-11. Il verdetto entro/fuori si calcola sulla data di
@@ -1210,7 +1211,7 @@ async function assembleContext(sb: ReturnType<typeof createClient>, conv: Row, i
     // cliente ricorrente come nuovo: ritenta e se fallisce LANCIA -> 503, mai contesto muto per errore.
     const altre = await leggiFatto('cs_conversations', () => sb.from('cs_conversations')
       .select('subject,categoria,stato,last_msg_at,summary')
-      .eq('customer_email', String(conv.customer_email)).neq('id', String(conv.id))
+      .eq('customer_email', String(conv.customer_email)).neq('id', String(conv.id)).neq('canale', 'chat_sito')
       .order('last_msg_at', { ascending: false }).limit(5));
     precedenti = ((altre ?? []) as Row[]).map((a) =>
       `- ${String(a.last_msg_at ?? '').slice(0, 10)} [${a.categoria ?? '?'}${a.stato ? '/' + a.stato : ''}] ${String(a.subject ?? '').slice(0, 80)}${a.summary ? ': ' + String(a.summary).slice(0, 200) : ''}`);
@@ -1530,7 +1531,7 @@ Deno.serve(async (req) => {
       const thread = ((msgs ?? []) as Row[]).map((m) => `${m.direction === 'out' ? 'Noi' : 'Cliente'}: ${(String(m.body_clean ?? '') || String(m.body_text ?? '')).slice(0, 500)}`).join('\n');
       let storia = '';
       if (c.customer_email) {
-        const { data: altre } = await sb.from('cs_conversations').select('subject,categoria,stato,last_msg_at,summary').eq('customer_email', c.customer_email as string).neq('id', c.id as string).order('last_msg_at', { ascending: false }).limit(5);
+        const { data: altre } = await sb.from('cs_conversations').select('subject,categoria,stato,last_msg_at,summary').eq('customer_email', c.customer_email as string).neq('id', c.id as string).neq('canale', 'chat_sito').order('last_msg_at', { ascending: false }).limit(5);
         storia = ((altre ?? []) as Row[]).map((a) => `- ${String(a.last_msg_at ?? '').slice(0, 10)} [${a.categoria ?? '?'}/${a.stato}] ${a.subject ?? ''}`).join('\n');
       }
       const prompt = `Sei l'assistente di "Amimi'" (borse artigianali). Scrivi un RIASSUNTO in MASSIMO 2 righe di questa conversazione cliente: chi e', cosa vuole ORA, e (se rilevante) cosa le abbiamo gia' detto/fatto nelle conversazioni precedenti. Italiano, conciso, niente elenchi, niente saluti. Non inventare nulla: se non sai, ometti.

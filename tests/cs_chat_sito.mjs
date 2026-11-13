@@ -46,7 +46,7 @@ const punti = (s) => ({
     && /c\.stato !== 'fatto' && !isChatSito\(c\)\) doSwipeDone\(c\)/.test(x.UI),
   p5: (x) => /Inviata anche via email/.test(x.UICHAT) && /Email non verificata/.test(x.UICHAT) && /fetchCardDelThread\(s\.gmail_thread_id\)/.test(x.UICHAT) && /'Gestita dal bot'/.test(x.UI)
     && !/presenza|visibile|last_seen/i.test(x.UICHAT.replace(/\/\/[^\n]*/g, '')),
-  p6: (x) => /\.range\(pagina \* PAGINA, pagina \* PAGINA \+ PAGINA - 1\)/.test(x.CSAPI) && /\.range\(offset, offset \+ quante - 1\)/.test(x.CSAPI)
+  p6: (x) => /\.range\(pagina \* PAGINA, pagina \* PAGINA \+ PAGINA - 1\)/.test(x.CSAPI) && /\.limit\(quante\)/.test(x.CSAPI) && /q\.or\(`last_msg_at\.lt\."\$\{dopo\.last_msg_at\}",and\(last_msg_at\.eq\."\$\{dopo\.last_msg_at\}",id\.gt\.\$\{dopo\.id\}\),last_msg_at\.is\.null`\)/.test(x.CSAPI)
     && !/from\('cs_conversations'\)\.select\(CONV_COLS\)\s*\n?\s*\.neq\('canale', 'rumore'\)\s*\n?\s*\.order\('last_msg_at', \{ ascending: false, nullsFirst: false \}\);/.test(x.CSAPI)
     && /mostraProve \|\| !\(c\.flags \?\? \[\]\)\.includes\('prova'\)/.test(x.UI),
   p7: (x) => /return categoria === 'Collaborazioni e B2B' && canale !== 'chat_notifica' && canale !== 'chat_sito';/.test(x.CLS),
@@ -153,6 +153,26 @@ t('togliTokenChat lineare: 400 KB di link e spazi in meno di 200 ms', Date.now()
 t('cs-sync: il token si toglie nei tre punti dove entra un corpo (out, backfill_out, in) e dallo snippet di Gmail',
   (SYNC.match(/togliTokenChat\(stripNull\(extractBody\((msg|m)\.payload\)\)\)/g) ?? []).length === 3 && /togliTokenChat\(msg\.snippet \?\? ''\)/.test(SYNC)
   && !/[^(]stripNull\(extractBody\(/.test(SYNC.replace(/togliTokenChat\(stripNull\(extractBody\(/g, '')));
+
+console.log('\n== 4. Gate 2 del pezzo 6 ==');
+t('B3: cs-api add_noise su una chat ancora aperta = 422 (lettura controllata di chat_sessioni, 503 se non leggibile)',
+  /from\('chat_sessioni'\)\.select\('stato'\)\.eq\('id', sid\)\.limit\(1\)\);\n\s*if \(sErr\) return json\(\{ error: 'chat non leggibile, riprova: ' \+ sErr\.message \}, 503\);/.test(API)
+  && /if \(statoChat !== undefined && statoChat !== 'chiusa'\) return json\(\{ error: 'chat ancora aperta: chiudila prima/.test(API)
+  && /if \(aperta\) await chatAzione\('chiudi', sid, ident\);\n\s*await addNoise\(/.test(UICHAT));
+t('C4: backfill_order_number, backfill_snippet e backfill_clean saltano la chat',
+  /\.is\('order_number', null\)\.neq\('canale', 'rumore'\)\.neq\('canale', 'chat_sito'\);/.test(SYNC)
+  && /select\('id, canale, snippet'\)\.neq\('canale', 'chat_sito'\)/.test(SYNC)
+  && /\.not\('body_text', 'is', null\)\.not\('gmail_message_id', 'like', 'chat:%'\)/.test(SYNC));
+t('C6: le conversazioni precedenti di un\'email (contesto e riassunto di cs-assist) non contano le chat',
+  (ASSIST.match(/\.eq\('customer_email', [^\n]{0,80}\.neq\('id', [^\n]{0,40}\.neq\('canale', 'chat_sito'\)/g) ?? []).length === 2);
+const COD = `https://eur01.safelinks.protection.outlook.com/?url=https%3A%2F%2Famimi.it%2Fapps%2Fchat%2Friprendi%23t%3D${TOK}%26prova%3D1&data=x`;
+t('C5: token tolto anche dal link codificato di un client (Outlook Safe Links)', S.togliTokenChat(COD) === 'https://eur01.safelinks.protection.outlook.com/?url=https%3A%2F%2Famimi.it%2Fapps%2Fchat%2Friprendi%23t%3D[link personale tolto]%26prova%3D1&data=x', S.togliTokenChat(COD));
+t('C5: maiuscole nella codifica (%2F, %23, %3D) e testo intorno intatti', !S.togliTokenChat(`Vedi APPS%2FCHAT%2FRIPRENDI%23T%3D${TOK} ciao`).includes(TOK) && S.togliTokenChat(`Vedi APPS%2FCHAT%2FRIPRENDI%23T%3D${TOK} ciao`).endsWith(' ciao'));
+const B2 = read('supabase/functions/chat-api/index.ts');
+t('B2: B4 solo per un messaggio nuovo, e una risposta concorrente dello staff fa perdere l\'update', /if \(persona && s\.stato === 'aperta' && doppione\) \{/.test(B2)
+  && /if \(se\.risposta !== undefined\) q = se\.risposta === null \? q\.is\('ultima_risposta_staff_at', null\) : q\.eq\('ultima_risposta_staff_at', se\.risposta\);/.test(B2));
+t('B4: il cron della proiezione conta gli errori in glob:proiezione_ko e passa prima le sessioni recenti', /perform chat_contatore_incrementa\('glob:proiezione_ko', 86400, 1000000\);/.test(M0193)
+  && /order by s\.ultima_attivita_at desc\n\s*limit 50/.test(M0193) && /'glob:proiezione_ko'\]/.test(PE));
 
 console.log(`\ncs_chat_sito: ${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

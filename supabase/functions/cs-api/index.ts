@@ -5,6 +5,9 @@
 //   (11) "non e' un cliente" su una chat la sposta nel rumore ma non mette mai in denylist l'email DICHIARATA nel widget
 //   (chiunque puo' scrivere l'email di un'altra persona e farle bloccare la posta vera), e remove_noise non la toglie;
 //   (12) set_stato risponde 422 su una chat: lo stato lo decide chat_sessioni, via chat-staff (prendo_io, chiudi).
+//   Gate 2 del pezzo 6, B3: add_noise su una chat NON chiusa risponde 422. Una chat aperta nel rumore continuerebbe a
+//   mandare push "chiede una persona" e solleciti verso una card che in coda non c'e'; chiusa, la cliente non puo' piu'
+//   scrivere li' e i solleciti si fermano. La PWA chiude la chat (chat-staff) e poi la sposta. Unica lettura di chat_ qui.
 //   Ogni ramo nuovo scatta solo su `chat_sito` o `chat:` (isChatSito), che nascono solo a chat accesa.
 // v12 (2026-10-31, OK di Dan in chat, CASI_APERTI n.54): CHAT e MODULI hanno un mittente CONDIVISO di
 //   Shopify (`no-reply@mailer.shopify.com` per la chat, `mailer@shopify.com` per il modulo contatti).
@@ -275,6 +278,14 @@ async function handle(req: Request): Promise<Response> {
     const sender = String(body.sender || ex.customer_email || '').trim().toLowerCase();
     // v13 (punto 11): su una chat del sito l'email e' solo DICHIARATA nel widget: si sposta la chat, non si blocca nessuno
     const chat = isChatSito(ex);
+    if (chat) {
+      const sid = /^chat:([0-9a-f-]{36})$/i.exec(String(ex.gmail_thread_id ?? ''))?.[1] ?? '';
+      if (!UUID_RE.test(sid)) return json({ error: 'chat del sito senza sessione leggibile' }, 422);
+      const { data: sess, error: sErr } = await retryOnce(() => sb.from('chat_sessioni').select('stato').eq('id', sid).limit(1));
+      if (sErr) return json({ error: 'chat non leggibile, riprova: ' + sErr.message }, 503);
+      const statoChat = (sess ?? [])[0]?.stato;
+      if (statoChat !== undefined && statoChat !== 'chiusa') return json({ error: 'chat ancora aperta: chiudila prima (Chiudi la chat), poi spostala nel Rumore' }, 422);
+    }
     if (!chat && (!sender || sender.length < 4 || !sender.includes('@'))) return json({ error: 'mittente non valido' }, 422);
     if (!chat && sender.endsWith('@amimi.it')) return json({ error: 'non puoi bloccare @amimi.it' }, 422);
     // v12 (31-10): un mittente Shopify (chat, modulo) e' di tutte le clienti: la conversazione va nel

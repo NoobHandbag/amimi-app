@@ -122,9 +122,16 @@ export function ChatThread({ c, msgs, ident, convs, onRicarica, onApri, onUscita
   };
   const rumore = async () => {
     setMore(false);
-    if (!window.confirm('Sposto questa chat nel Rumore. Non blocca nessuno: l’email l’ha solo scritta chi ha aperto la chat. Confermi?')) return;
+    // cs-api v13 rifiuta una chat aperta (continuerebbe a mandare notifiche verso una card fuori dalla coda, Gate 2 B3):
+    // prima si chiude, poi si sposta
+    const aperta = !!sess && sess.stato !== 'chiusa';
+    if (!window.confirm(`${aperta ? 'Chiudo la chat (la cliente non potrà più scrivere qui) e la sposto' : 'Sposto questa chat'} nel Rumore. Non blocca nessuno: l’email l’ha solo scritta chi ha aperto la chat. Confermi?`)) return;
     setBusy(true); setErr('');
-    try { await addNoise(c.id, c.customer_email || 'chat', ident); onUscita('Chat spostata nel Rumore'); } catch (x) { setErr((x as Error).message); }
+    try {
+      if (aperta) await chatAzione('chiudi', sid, ident);
+      await addNoise(c.id, c.customer_email || 'chat', ident);
+      onUscita('Chat spostata nel Rumore');
+    } catch (x) { setErr((x as Error).message); }
     setBusy(false);
   };
 

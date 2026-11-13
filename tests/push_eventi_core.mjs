@@ -1255,6 +1255,11 @@ try {
   t('CH18 candChatSalute: un candidato per guasto (8.10 righe 4, 6, 7, 8, 11, 13, 16), chiavi della chat in testa con l\'id della sessione, le altre per giorno UTC; destinatario una volta per chat e mai per una chat di prova; sotto soglia, prenotato fresco, inviato, finestra non a mezzanotte o righe storte no',
     isDeepStrictEqual(cs.map((c) => c.chiave).sort(), [`${ID('2')}:1:passaggio`, `${ID('6')}:1:passaggio`, `${ID('b')}:email:${M1}`, `${ID('c')}:destinatario`, `${ID('e')}:1:passaggio`, `${ID('f')}:2:passaggio`, `${ID('f')}:email:${M2}`,
       'api:2026-11-08', 'api:2026-11-09', 'invio:2026-11-09', 'limite:2026-11-09', 'quota:2026-11-08', 'widget:2026-11-08'].sort()) && cs.every((c) => c.ts === ORA_C), cs.map((c) => c.chiave));
+  // v10 (Gate 2 del pezzo 6, B4): il cron della proiezione che fallisce arriva ad Ale come chat_salute, una push al giorno
+  const pk = candChatSalute({ ...baseSal, passaggi: [], email: [], coda: 0, limiti: [], contatori: [{ chiave: 'glob:proiezione_ko', finestra: '2026-11-09T00:00:00+00:00', n: 2 }, { chiave: 'glob:proiezione_ko', finestra: '2026-11-09T00:00:00+00:00', n: 0 }] });
+  const pm = msgChatSalute(pk);
+  t('CH18b proiezione in Assistenza fallita (glob:proiezione_ko): un candidato per giorno, push urgente senza dati della cliente', isDeepStrictEqual(pk.map((c) => c.chiave), ['proiezione:2026-11-09'])
+    && pm.length === 1 && pm[0].urgente === true && pm[0].titolo === 'Chat del sito: chat fuori da Assistenza' && /^2 tentativi falliti di mettere una chat in Assistenza/.test(pm[0].testo), pm);
   const ms = msgChatSalute(cs);
   const perS = Object.fromEntries(ms.map((m) => [m.chiave.includes(':email:') ? 'email:' + m.chiave.slice(0, 36) : m.chiave.includes(':destinatario') ? 'dest:' + m.chiave.slice(0, 36) : m.chiave.includes(':passaggio') ? 'pass:' + m.chiave.slice(0, 36) : m.chiave.split(':')[0] + ':' + m.chiave.split(':')[1], [m.titolo, m.testo, m.urgente === true]]));
   const T_FALLITO = 'La notifica "chiede una persona" non e\' partita (push-api in errore): chat_sollecito la ritenta, al massimo tre volte, finche\' la chat aspetta.';
@@ -1295,7 +1300,7 @@ try {
     [`chat_sessioni select id, prova in:id|${JSON.stringify([ID('e'), ID('f'), ID('1'), ID('2'), ID('6'), ID('a'), ID('b'), ID('c')])} limit:9`]: { data: [{ id: ID('f'), prova: true }, { id: ID('b'), prova: false }, { id: ID('c'), prova: false }, { id: ID('e'), prova: false }] },
     [`chat_messaggi select id head eq:autore|staff is:email_stato|null lt:created_at|${isoC(ora - 10 * MIN)}`]: { count: 1 },
     [`chat_messaggi select id head eq:autore|staff eq:email_stato|prenotata lt:email_at|${isoC(ora - 20 * MIN)}`]: { count: 1 },
-    [`chat_contatori select chiave, finestra, n in:chiave|${JSON.stringify(['glob:sev_error', 'glob:richieste', 'glob:errore'])} in:finestra|${JSON.stringify(['2026-11-08T00:00:00Z', '2026-11-09T00:00:00Z'])} limit:7`]: { data: SAL_CONT },
+    [`chat_contatori select chiave, finestra, n in:chiave|${JSON.stringify(['glob:sev_error', 'glob:richieste', 'glob:errore', 'glob:proiezione_ko'])} in:finestra|${JSON.stringify(['2026-11-08T00:00:00Z', '2026-11-09T00:00:00Z'])} limit:9`]: { data: SAL_CONT },
     [`chat_eventi select chiave in:chiave|${JSON.stringify(['limite:2026-11-08', 'limite:2026-11-09'])} limit:3`]: { data: SAL_LIM },
   });
   const LETTURE_C = lettureC(ORA_C);

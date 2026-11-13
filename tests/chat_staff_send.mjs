@@ -316,17 +316,22 @@ function dbStaff(st) {
     async contaMessaggi(sid) { return [...st.msg.values()].filter((m) => m.sessione_id === sid).length; },
     async proiezioni(s) { return [...new Set([...[...st.cs.values()].filter((c) => c.gmail_thread_id === `chat:${s.id}`).map((c) => c.id), ...(s.cs_conversation_id ? [s.cs_conversation_id] : [])])]; },
     async cardEmail(tid) { return [...st.cs.values()].find((c) => c.gmail_thread_id === tid)?.id ?? null; },
-    async cancellaCs(ids) { rotto('cs'); let n = 0; for (const id of ids) if (st.cs.delete(id)) n++; for (const s of st.sess.values()) if (ids.includes(s.cs_conversation_id)) s.cs_conversation_id = null; return n; },
-    async cancellaContatori(sid) { let n = 0; for (const k of [...st.cont.keys()]) if (k.startsWith(`sess:${sid}:`)) { st.cont.delete(k); n++; } return n; },
-    async cancellaEventiChiave(sid) { const n = st.eventi.length; st.eventi = st.eventi.filter((e) => !(e.chiave && e.chiave.startsWith(sid + ':'))); return n - st.eventi.length; },
-    // staff-2: registro push_eventi_inviati, solo i tre eventi della chat e le chiavi della sessione
-    async cancellaPush(sid) { rotto('push'); const n = st.push.length; st.push = st.push.filter((r) => !(['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'].includes(r.evento) && r.chiave.startsWith(sid + ':'))); return n - st.push.length; },
-    async cancellaSessione(id) {
-      if (!st.sess.delete(id)) return 0;
+    // staff-3 (Gate 2 del pezzo 6, B1): come l'RPC chat_cancella_sessione, tutto o niente in una transazione
+    async cancellaTutto(id, card) {
+      rotto('cs'); rotto('push');
+      const s = st.sess.get(id);
+      if (!s) return { esito: 'assente', messaggi: 0, proiezioni: 0, card_email: 0, contatori: 0, eventi: 0, push: 0 };
+      const r = { esito: 'cancellata', messaggi: [...st.msg.values()].filter((m) => m.sessione_id === id).length, proiezioni: 0, card_email: 0, contatori: 0, eventi: 0, push: 0 };
+      for (const [k, c] of [...st.cs]) if (c.id === s.cs_conversation_id || c.gmail_thread_id === `chat:${id}`) { st.cs.delete(k); r.proiezioni++; }
+      if (card && s.gmail_thread_id) for (const [k, c] of [...st.cs]) if (c.id === card && c.gmail_thread_id === s.gmail_thread_id) { st.cs.delete(k); r.card_email++; }
+      for (const k of [...st.cont.keys()]) if (k.startsWith(`sess:${id}:`)) { st.cont.delete(k); r.contatori++; }
+      const ne = st.eventi.length; st.eventi = st.eventi.filter((e) => !(e.chiave && e.chiave.startsWith(id + ':'))); r.eventi = ne - st.eventi.length;
+      const np = st.push.length; st.push = st.push.filter((x) => !(['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'].includes(x.evento) && x.chiave.startsWith(id + ':'))); r.push = np - st.push.length;
+      st.sess.delete(id);
       for (const [k, m] of st.msg) if (m.sessione_id === id) st.msg.delete(k);
       st.token = st.token.filter((x) => x.sessione_id !== id);
       for (const e of st.eventi) if (e.sessione_id === id) e.sessione_id = null;
-      return 1;
+      return r;
     },
     async evento(r) { evento(st, r); },
     // staff-3: proiezione (RPC chat_proietta), scheda Chat e conoscenza dei bottoni
@@ -383,7 +388,7 @@ const callStaff = async (st, g, body, bearer) => { const r = await F.gestisci(re
   const altra = sessione(st);
   const p = await callStaff(st, g, { action: 'prendo_io', sessione_id: altra, chi: 'B' });
   const c = await callStaff(st, g, { action: 'chiudi', sessione_id: altra, chi: 'A' });
-  t('F34 prendo_io e chiudi proiettano; chiudi tiene chi l\'aveva presa', p.j.proiezione === true && c.j.proiezione === true && st.proiezioni.length === 3 && st.sess.get(altra).preso_da === 'Benedetta');
+  t('F34 prendo_io e chiudi proiettano; la chat chiusa e\' di chi l\'ha chiusa (7.8, Gate 2 C2)', p.j.proiezione === true && c.j.proiezione === true && st.proiezioni.length === 3 && st.sess.get(altra).preso_da === 'Ale');
   const terza = sessione(st);
   await callStaff(st, g, { action: 'chiudi', sessione_id: terza, chi: 'G' });
   t('F35 chiudi una chat di nessuno: preso_da = chi la chiude (la card chiusa dice chi)', st.sess.get(terza).preso_da === 'Ginevra' && st.sess.get(terza).stato === 'chiusa');
@@ -583,12 +588,20 @@ t('G14 0187: cron chat-send col PIN neutro e azione giro, cron della pulizia gio
   && /cron\.schedule\('chat-conservazione', '47 3 \* \* \*'/.test(M));
 t('G15 0187: nessuna scrittura in change_log', !/insert\s+into\s+change_log/i.test(M));
 t('G16 0187: la pulizia cancella anche gli eventi con la chiave della sessione (Gate 2, C2)', /delete from chat_eventi e\s+using unnest\(v_ids\) u\(id\)\s+where e\.chiave like u\.id::text \|\| ':%'/.test(M));
-t('G17 chat-staff cancella gli eventi con la chiave della sessione', /from\('chat_eventi'\)\.delete\(\)\.like\('chiave', `\$\{sessioneId\}:%`\)/.test(STAFF));
+// staff-3 (Gate 2 del pezzo 6, B1): la cancellazione di una chat e' UNA transazione, l'RPC chat_cancella_sessione della
+// migr 0193; chat-staff non cancella piu' niente da se' (ne' cs_, ne' contatori, eventi, registro delle push, sessione)
+const M0193 = read('supabase/migrations/0193_chat_proiezione.sql');
+const fnCanc = (M0193.match(/create or replace function public\.chat_cancella_sessione\(p_sessione uuid, p_card uuid default null\)[\s\S]*?\$fn\$;/) ?? [''])[0];
+t('G17 chat_cancella_sessione: lock della sessione PRIMA di tutto, poi eventi con la chiave della sessione e contatori della sessione', /select \* into v_s from chat_sessioni where id = p_sessione for update;[\s\S]*delete from cs_conversations/.test(fnCanc)
+  && fnCanc.indexOf('for update') < fnCanc.indexOf('delete from') && /delete from chat_eventi where chiave like p_sessione::text \|\| ':%';/.test(fnCanc)
+  && /delete from chat_contatori where chiave like 'sess:' \|\| p_sessione::text \|\| ':%';/.test(fnCanc)
+  && /delete from cs_conversations where id = p_card and gmail_thread_id = v_s\.gmail_thread_id;/.test(fnCanc));
 // staff-2 e migr 0189 (pezzo 4, 11.6 punto 4): il registro delle push della chat se ne va con la sessione, solo i tre
-// eventi della chat e solo le chiavi che cominciano con l'id della sessione
-t('G18 chat-staff staff-2 cancella il registro delle push dei soli tre eventi della chat, chiave della sessione', STAFF.includes("const EVENTI_PUSH_CHAT = ['chat_sollecito', 'chat_sollecito_scala', 'chat_salute'];")
-  && /from\('push_eventi_inviati'\)\.delete\(\)\.in\('evento', EVENTI_PUSH_CHAT\)\.like\('chiave', `\$\{sessioneId\}:%`\)\.select\('id'\)/.test(STAFF)
-  && (STAFF.match(/from\('push_eventi_inviati'\)/g) ?? []).length === 1 && F.VERSIONE === 'staff-3');
+// eventi della chat e solo le chiavi che cominciano con l'id della sessione (dalla staff-3 dentro l'RPC)
+t('G18 chat_cancella_sessione cancella il registro delle push dei soli tre eventi della chat, chiave della sessione; chat-staff solo l\'RPC',
+  /delete from push_eventi_inviati where evento in \('chat_sollecito', 'chat_sollecito_scala', 'chat_salute'\) and chiave like p_sessione::text \|\| ':%';/.test(fnCanc)
+  && /sb\.rpc\('chat_cancella_sessione', \{ p_sessione: id, p_card: card \}\)/.test(STAFF)
+  && !/from\('(push_eventi_inviati|chat_contatori|chat_eventi|chat_sessioni|cs_conversations)'\)\.delete\(\)/.test(STAFF) && F.VERSIONE === 'staff-3');
 const M9 = M0189.replace(/--.*$/gm, '');
 const fn0187 = (M.match(/create or replace function public\.chat_conservazione\(\)[\s\S]*?\$fn\$;/) ?? [''])[0];
 const fn0189 = (M9.match(/create or replace function public\.chat_conservazione\(\)[\s\S]*?\$fn\$;/) ?? [''])[0];

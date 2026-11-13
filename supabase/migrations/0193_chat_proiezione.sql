@@ -27,6 +27,17 @@
 --      Gira anche a chat spenta: scostamento dichiarato dalla Regola 19 come il giro di chat-send, perche' tiene allineate
 --      solo le chat gia' nate (7.4: "quelle gia' in cs_ restano allineate finche' si chiudono"); senza sessioni non fa nulla.
 --   3) il cron `chat-proiezione` (minuti pari, una query sola se non c'e' niente da fare).
+--   4) chat_cancella_sessione(sessione, card): la cancellazione di una chat (11.6, chat-staff `cancella_dati`) in UNA
+--      transazione, col lock della sessione preso PRIMA, nello stesso ordine di chat_proietta (Gate 2 del pezzo 6, B1:
+--      cancellata la card con chiamate separate, la FK SET NULL rimetteva la sessione fra quelle "senza card" e il cron
+--      poteva farla rinascere un attimo prima della cancellazione della sessione, lasciandola orfana per sempre con
+--      email, nome e snippet). Cancella proiezione, card email del thread di risposta (solo se e' davvero quella della
+--      sessione), contatori `sess:<id>:*`, eventi con chiave `<id>:*`, registro delle push della chat e la sessione (in
+--      cascata messaggi e token). Restituisce i conteggi.
+-- Gate 2 del pezzo 6, anche: il cron ripara stato, stato_by e urgente (C1); le sessioni piu' recenti prima, cosi' una
+-- sessione che fallisce sempre non blocca le nuove (B4); ogni errore del cron conta in `glob:proiezione_ko`, che
+-- push-eventi v10 manda come chat_salute ad Ale (B4); sent_at strettamente crescente coi seq (C3: bottone e risposta
+-- fissa entrano nello stesso insert, stesso istante).
 -- Fermo d'emergenza: select cron.alter_job((select jobid from cron.job where jobname = 'chat-proiezione'), active := false);
 -- la proiezione dentro le richieste si ferma solo col flag chat_sito_enabled (niente chat nuove) o togliendo l'RPC.
 -- Sicurezza (5.9): funzioni security invoker con search_path fissato, EXECUTE revocato a public, anon e authenticated;
@@ -52,6 +63,7 @@ declare
   v_nata boolean := false;
   v_max bigint;
   v_n int := 0;
+  v_primo bigint;
 begin
   select * into v_s from chat_sessioni where id = p_sessione for update;
   if not found then
@@ -103,6 +115,9 @@ begin
     last_direction = excluded.last_direction
   returning c.id, (c.xmax = 0) into v_cs, v_nata;
 
+  -- sent_at = created_at piu' tanti microsecondi quanti seq dal primo della chat: bottone e risposta fissa (stesso
+  -- insert, stesso istante) restano nell'ordine dei seq anche fra chiamate diverse (Gate 2, C3)
+  select min(m.seq) into v_primo from chat_messaggi m where m.sessione_id = p_sessione;
   with nuovi as (
     select m.id, m.seq, m.autore, m.staff_nome, m.testo, m.created_at
       from chat_messaggi m where m.sessione_id = p_sessione and m.seq > v_s.proiettato_seq order by m.seq limit 500
@@ -111,7 +126,7 @@ begin
         body_clean, is_via_tool)
       select 'chat:' || n.id::text, v_cs, case when n.autore = 'cliente' then 'in' else 'out' end,
         case n.autore when 'cliente' then null when 'automatica' then 'Risposta automatica' when 'ai' then 'Assistente AI' else n.staff_nome end,
-        null, null, n.created_at, n.testo, n.testo, n.autore = 'staff'
+        null, null, n.created_at + (n.seq - v_primo) * interval '1 microsecond', n.testo, n.testo, n.autore = 'staff'
       from nuovi n where n.autore <> 'sistema'
     on conflict (gmail_message_id) do nothing
     returning 1
@@ -144,9 +159,13 @@ begin
      where (s.cs_conversation_id is null
             and (s.passaggi > 0 or exists (select 1 from chat_messaggi m where m.sessione_id = s.id and m.autore = 'cliente')))
         or exists (select 1 from chat_messaggi m where m.sessione_id = s.id and m.seq > s.proiettato_seq and m.autore <> 'sistema')
-        or (c.id is not null and c.stato is distinct from
-              (case s.stato when 'attesa_persona' then 'da_fare' when 'aperta' then 'in_corso' else 'fatto' end))
-     order by s.ultima_attivita_at
+        or (c.id is not null and (c.stato is distinct from
+              (case s.stato when 'attesa_persona' then 'da_fare' when 'aperta' then 'in_corso' else 'fatto' end)
+            or c.stato_by is distinct from
+              (case s.stato when 'bot' then 'bot' when 'attesa_persona' then null else coalesce(s.preso_da, 'Team') end)
+            or c.urgente is distinct from (s.stato in ('attesa_persona', 'aperta') and s.passaggio_at is not null
+              and (s.ultima_risposta_staff_at is null or s.ultima_risposta_staff_at < s.passaggio_at))))
+     order by s.ultima_attivita_at desc
      limit 50
   loop
     begin
@@ -154,6 +173,7 @@ begin
       v_fatte := v_fatte + 1;
     exception when others then
       v_errori := v_errori + 1;
+      perform chat_contatore_incrementa('glob:proiezione_ko', 86400, 1000000);
     end;
   end loop;
   -- una sessione che fallisce sempre ritorna a ogni giro: l'evento d'errore e' uno all'ora (chiave UNIQUE), non uno ogni 2'
@@ -170,12 +190,51 @@ begin
 end;
 $fn$;
 
+create or replace function public.chat_cancella_sessione(p_sessione uuid, p_card uuid default null) returns jsonb
+language plpgsql
+set search_path to 'public'
+as $fn$
+declare
+  v_s chat_sessioni%rowtype;
+  v_msg int;
+  v_cs int := 0;
+  v_card int := 0;
+  v_cont int := 0;
+  v_ev int := 0;
+  v_push int := 0;
+begin
+  select * into v_s from chat_sessioni where id = p_sessione for update;
+  if not found then
+    return jsonb_build_object('esito', 'assente');
+  end if;
+  select count(*) into v_msg from chat_messaggi where sessione_id = p_sessione;
+  delete from cs_conversations where id = v_s.cs_conversation_id or gmail_thread_id = 'chat:' || p_sessione::text;
+  get diagnostics v_cs = row_count;
+  if p_card is not null and v_s.gmail_thread_id is not null then
+    delete from cs_conversations where id = p_card and gmail_thread_id = v_s.gmail_thread_id;
+    get diagnostics v_card = row_count;
+  end if;
+  delete from chat_contatori where chiave like 'sess:' || p_sessione::text || ':%';
+  get diagnostics v_cont = row_count;
+  delete from chat_eventi where chiave like p_sessione::text || ':%';
+  get diagnostics v_ev = row_count;
+  delete from push_eventi_inviati where evento in ('chat_sollecito', 'chat_sollecito_scala', 'chat_salute') and chiave like p_sessione::text || ':%';
+  get diagnostics v_push = row_count;
+  delete from chat_sessioni where id = p_sessione;
+  return jsonb_build_object('esito', 'cancellata', 'messaggi', v_msg, 'proiezioni', v_cs, 'card_email', v_card,
+    'contatori', v_cont, 'eventi', v_ev, 'push', v_push);
+end;
+$fn$;
+
 revoke all on function public.chat_proietta(uuid) from public, anon, authenticated;
+revoke all on function public.chat_cancella_sessione(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.chat_cancella_sessione(uuid, uuid) to service_role;
 revoke all on function public.chat_proietta_arretrate() from public, anon, authenticated;
 revoke all on function public.chat_proietta_arretrate() from service_role;
 grant execute on function public.chat_proietta(uuid) to service_role;
 
 comment on function public.chat_proietta(uuid) is 'Chat del sito: proiezione di una sessione in cs_conversations e cs_messages (PROPOSTA_chat_sito 7.4, 7.5). La chiamano chat-api e chat-staff con la chiave di servizio.';
+comment on function public.chat_cancella_sessione(uuid, uuid) is 'Chat del sito: cancellazione di una chat in una transazione (11.6), col lock della sessione prima. La chiama chat-staff cancella_dati.';
 comment on function public.chat_proietta_arretrate() is 'Chat del sito: riproietta le sessioni rimaste indietro (al massimo 50 per giro). La chiama il cron chat-proiezione.';
 
 select cron.schedule('chat-proiezione', '*/2 * * * *', $cmd$ select public.chat_proietta_arretrate() $cmd$);
@@ -185,7 +244,7 @@ do $chk$
 declare
   v_f text;
 begin
-  foreach v_f in array array['public.chat_proietta(uuid)', 'public.chat_proietta_arretrate()'] loop
+  foreach v_f in array array['public.chat_proietta(uuid)', 'public.chat_proietta_arretrate()', 'public.chat_cancella_sessione(uuid, uuid)'] loop
     if exists (select 1 from pg_proc p where p.oid = v_f::regprocedure and p.prosecdef)
        or not exists (select 1 from pg_proc p where p.oid = v_f::regprocedure and p.proconfig @> array['search_path=public']) then
       raise exception '0193: % deve essere security invoker con search_path=public', v_f;
@@ -196,6 +255,9 @@ begin
   end loop;
   if has_function_privilege('service_role', 'public.chat_proietta_arretrate()', 'execute') then
     raise exception '0193: chat_proietta_arretrate eseguibile dal service_role';
+  end if;
+  if not has_function_privilege('service_role', 'public.chat_cancella_sessione(uuid, uuid)', 'execute') then
+    raise exception '0193: chat_cancella_sessione non eseguibile dal service_role';
   end if;
   if not has_function_privilege('service_role', 'public.chat_proietta(uuid)', 'execute') then
     raise exception '0193: chat_proietta non eseguibile dal service_role';

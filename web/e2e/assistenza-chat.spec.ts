@@ -45,7 +45,13 @@ const IMPOSTAZIONI = {
 
 type Chiamata = { fn: string; body: Record<string, unknown> };
 
-async function apri(page: Page): Promise<Chiamata[]> {
+// concluse finte per la paginazione (Gate 2, B1): `n` righe di email gia' concluse, dalla piu' recente
+const concluse = (n: number, da = 0) => Array.from({ length: n }, (_, i) => conv({
+  id: `00000000-0000-0000-0000-${String(900000000000 + da + i)}`, gmail_thread_id: `18c1${String(da + i).padStart(12, '0')}`, canale: 'email_diretta',
+  customer_email: `vecchia${da + i}@esempio.test`, stato: 'fatto', stato_by: 'Ginevra', snippet: 'Vecchia', last_msg_at: new Date(Date.parse('2026-11-01T00:00:00Z') - (da + i) * 3600000).toISOString(),
+}));
+
+async function apri(page: Page, o: { concluse?: number; rotti?: boolean } = {}): Promise<Chiamata[]> {
   const edge: Chiamata[] = [];
   await page.addInitScript(() => {
     localStorage.setItem('amimi-cs-auth', JSON.stringify({
@@ -79,10 +85,17 @@ async function apri(page: Page): Promise<Chiamata[]> {
     if (tab === 'cs_conversations') {
       if (q.get('canale') === 'eq.rumore') return json([]);
       if (q.get('gmail_thread_id')) return json([]);
-      if (q.get('stato') === 'eq.fatto') return json([]);
+      if (q.get('stato') === 'eq.fatto') {
+        if (q.get('or')) { edge.push({ fn: 'rest', body: { or: q.get('or') } }); return json(concluse(5, o.concluse ?? 0)); }
+        return json(concluse(o.concluse ?? 0));
+      }
       return json(CONVS);
     }
-    if (tab === 'cs_messages') return json(MSGS[(q.get('conversation_id') ?? '').replace('eq.', '')] ?? []);
+    if (tab === 'cs_messages') {
+      const id = (q.get('conversation_id') ?? '').replace('eq.', '');
+      if (o.rotti && id === CHAT) return json({ message: 'rete giu' }, 500);
+      return json(MSGS[id] ?? []);
+    }
     if (tab === 'chat_sessioni') return json([SESSIONE]);
     if (tab === 'chat_messaggi') return json([{ id: MSG_STAFF, email_stato: 'inviata', email_errore: null, email_at: '2026-11-13T09:05:10Z', delivered_at: null }]);
     return json([]);
@@ -155,4 +168,39 @@ test('scheda Chat: orari letti da chat-staff e salvati come oggetto; le chat di 
   await page.getByLabel(/Mostra in coda le chat di prova/).check();
   await page.getByRole('button', { name: 'Coda' }).click();
   await expect(page.locator('.cs-card')).toHaveCount(3);
+});
+
+test('concluse oltre 300 (Gate 2, B1): il bottone resta dopo "Conclusa" su una email e la pagina dopo parte dal cursore, non da un offset', async ({ page }) => {
+  const edge = await apri(page, { concluse: 300 });
+  await page.locator('.cs-card').filter({ hasText: 'Cliente Email' }).click();
+  await page.getByRole('button', { name: '✓ Conclusa' }).click();
+  await expect.poll(() => edge.filter((c) => c.fn === 'cs-api' && c.body.action === 'set_stato').length).toBe(1);
+  await page.getByRole('button', { name: 'Coda' }).click();
+  await page.getByRole('button', { name: /^Concluse/ }).click();
+  const carica = page.getByRole('button', { name: 'Carica le concluse più vecchie' });
+  await expect(carica).toBeVisible();
+  await carica.click();
+  await expect.poll(() => edge.filter((c) => c.fn === 'rest').length).toBe(1);
+  expect(String(edge.find((c) => c.fn === 'rest')!.body.or)).toMatch(/^\(last_msg_at\.lt\."[^"]+",and\(last_msg_at\.eq\."[^"]+",id\.gt\.[0-9a-f-]{36}\),last_msg_at\.is\.null\)$/);
+  await expect(carica).toHaveCount(0);
+});
+
+test('chat del sito con i messaggi illeggibili (Gate 2, B2): l\'errore si vede nel thread', async ({ page }) => {
+  await apri(page, { rotti: true });
+  await page.locator('.cs-card').filter({ hasText: 'Cliente Chat' }).click();
+  await expect(page.locator('.err').first()).toBeVisible();
+});
+
+test('scheda Chat (Gate 2, B3 e C4): salvare gli orari non cancella un testo non ancora salvato; orari storti fermati prima della edge', async ({ page }) => {
+  const edge = await apri(page);
+  await page.getByRole('button', { name: /Chat del sito: orari, promemoria e testi/ }).click();
+  await page.getByLabel('Saluto in italiano').fill('Ciao, testo nuovo non salvato');
+  await page.getByLabel('Alle', { exact: true }).fill('17:00');
+  await page.getByRole('button', { name: 'Salva gli orari' }).click();
+  await expect.poll(() => edge.filter((c) => c.fn === 'chat-staff' && c.body.action === 'imposta').length).toBe(1);
+  await expect(page.getByLabel('Saluto in italiano')).toHaveValue('Ciao, testo nuovo non salvato');
+  await page.getByLabel('Dalle', { exact: true }).fill('18:00');
+  await page.getByRole('button', { name: 'Salva gli orari' }).click();
+  await expect(page.getByText('“dalle” deve venire prima di “alle”', { exact: false })).toBeVisible();
+  expect(edge.filter((c) => c.fn === 'chat-staff' && c.body.action === 'imposta').length).toBe(1);
 });

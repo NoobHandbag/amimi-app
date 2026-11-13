@@ -439,18 +439,28 @@ function extractFormFields(body: string): Record<string, string> {
 // chat a chi lo ha). Chi legge Assistenza non ne ha bisogno: si tiene il link, si toglie il token. Lineare: indexOf e
 // un passo per carattere. Dentro il token tollera fino a 8 caratteri di spazio, a capo o ">" (un client che manda a
 // capo la riga lunga, la citazione "> " di una risposta), mai prima del primo carattere del token.
+// Gate 2 del pezzo 6, C5: anche il link codificato da un client (Outlook Safe Links: `apps%2Fchat%2Friprendi%23t%3D`).
 const SEGNO_RIPRESA = 'apps/chat/riprendi';
+const SEGNO_RIPRESA_COD = 'apps%2fchat%2friprendi';
 const TOKEN_TOLTO = '[link personale tolto]';
 function togliTokenChat(t: string): string {
-  if (!t || !t.includes(SEGNO_RIPRESA)) return t;
+  if (!t) return t;
+  const basso = t.toLowerCase();
+  if (!basso.includes(SEGNO_RIPRESA) && !basso.includes(SEGNO_RIPRESA_COD)) return t;
   let out = '';
   let i = 0;
+  // le due posizioni si cercano di nuovo solo quando sono rimaste indietro: una ricerca per forma ad ogni giro rifarebbe la
+  // scansione fino in fondo per ogni link (quadratico, misurato: 504 ms su 400 KB)
+  let a1 = basso.indexOf(SEGNO_RIPRESA), a2 = basso.indexOf(SEGNO_RIPRESA_COD);
   for (;;) {
-    const a = t.indexOf(SEGNO_RIPRESA, i);
+    if (a1 >= 0 && a1 < i) a1 = basso.indexOf(SEGNO_RIPRESA, i);
+    if (a2 >= 0 && a2 < i) a2 = basso.indexOf(SEGNO_RIPRESA_COD, i);
+    const a = a1 < 0 ? a2 : a2 < 0 ? a1 : Math.min(a1, a2);
     if (a < 0) break;
-    let j = a + SEGNO_RIPRESA.length;
-    if (!t.startsWith('#t=', j)) { out += t.slice(i, j); i = j; continue; }
-    j += 3;
+    let j = a + (a === a1 ? SEGNO_RIPRESA.length : SEGNO_RIPRESA_COD.length);
+    const pre = basso.startsWith('#t=', j) ? 3 : basso.startsWith('%23t%3d', j) ? 7 : 0;
+    if (!pre) { out += t.slice(i, j); i = j; continue; }
+    j += pre;
     out += t.slice(i, j) + TOKEN_TOLTO;
     let n = 0, vuoti = 0;
     while (j < t.length && n < 43) {
@@ -1252,7 +1262,7 @@ Deno.serve(async (req) => {
   if (action === 'backfill_order_number') {
     const dry = body.dry === true;
     const { data: convRows } = await sb.from('cs_conversations')
-      .select('id, subject, customer_email, canale, order_number').is('order_number', null).neq('canale', 'rumore');
+      .select('id, subject, customer_email, canale, order_number').is('order_number', null).neq('canale', 'rumore').neq('canale', 'chat_sito');
     const convs = (convRows ?? []) as { id: string; subject: string | null; customer_email: string | null; canale: string }[];
     let scanned = 0, trovati = 0, scritti = 0, ordineInesistente = 0, altroCliente = 0, letturaOrdineFallita = 0; const errors: string[] = [];
     for (const c of convs) {
@@ -1291,7 +1301,7 @@ Deno.serve(async (req) => {
     // id come backfill_clean (limit/after_id, `last_id` in risposta) e la lettura fallita e' un 502.
     const limit = Math.min(Number(body.limit) || 200, 400);
     const { data: convRows, error: convErr } = await retryOnce(() => {
-      let qc = sb.from('cs_conversations').select('id, canale, snippet').order('id', { ascending: true }).limit(limit);
+      let qc = sb.from('cs_conversations').select('id, canale, snippet').neq('canale', 'chat_sito').order('id', { ascending: true }).limit(limit);
       if (body.after_id) qc = qc.gt('id', String(body.after_id));
       return qc;
     });
@@ -1344,7 +1354,7 @@ Deno.serve(async (req) => {
     const nomiScritti: string[] = [];
     // keyset su id (le righe con clean legittimamente NULL restano NULL: senza keyset
     // occuperebbero per sempre la testa della coda non-force)
-    let q = sb.from('cs_messages').select('id, conversation_id, direction, body_text, body_clean, form_fields').not('body_text', 'is', null).order('id', { ascending: true }).limit(limit);
+    let q = sb.from('cs_messages').select('id, conversation_id, direction, body_text, body_clean, form_fields').not('body_text', 'is', null).not('gmail_message_id', 'like', 'chat:%').order('id', { ascending: true }).limit(limit);
     if (!force) q = q.is('body_clean', null);
     if (body.after_id) q = q.gt('id', String(body.after_id));
     const { data: msgs, error: qe } = await q;
