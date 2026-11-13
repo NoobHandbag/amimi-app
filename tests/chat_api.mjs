@@ -941,7 +941,8 @@ console.log('\n== guardie sul sorgente ==');
   const tabelle = [...new Set([...fuori.matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]))].sort();
   t('G7 tabelle toccate: solo chat_*, app_flags, cs_faq e health_log', JSON.stringify(tabelle) === JSON.stringify(['app_flags', 'chat_contatori', 'chat_eventi', 'chat_messaggi', 'chat_sessioni', 'chat_token', 'cs_faq', 'health_log']), tabelle);
   t('G7b chat_contatori solo letta (si scrive solo con la RPC atomica)', !/from\('chat_contatori'\)\.(insert|update|upsert|delete)/.test(fuori));
-  t('G7c un bottone legge da cs_faq solo righe pubblicabili, mai gli esempi di tono (Gate 2, C5)', /from\('cs_faq'\)\.select\('testo_it, testo_en, attiva'\)\.eq\('id', id\)\.in\('tipo', \['faq', 'risposta_standard'\]\)/.test(fuori));
+  t('G7c un bottone legge da cs_faq solo righe pubblicabili (risposte standard e, dalla api-4, le voci della sola chat), mai gli esempi di tono (Gate 2, C5)', /from\('cs_faq'\)\.select\('testo_it, testo_en, attiva'\)\.eq\('id', id\)\.in\('tipo', \['faq', 'risposta_standard', 'risposta_chat'\]\)/.test(fuori)
+    && !/esempio_tono/.test(fuori) && M.VERSIONE === 'api-4');
   t('G8 app_flags letta solo con .in() sull\'elenco chiuso, mai select *', /from\('app_flags'\)\.select\('key, value'\)\.in\('key', chiavi\)/.test(fuori) && !/select\('\*'\)/.test(codice));
   t('G9 cs_faq e app_flags in sola lettura', !/from\('(cs_faq|app_flags)'\)\.(insert|update|upsert|delete)/.test(fuori));
   t('G10 health_log: una sola scrittura, k chat_api, e la gravita\' del giorno dai contatori', (fuori.match(/from\('health_log'\)/g) ?? []).length === 1 && !/k: '(?!chat_api)/.test(fuori) && /k: 'chat_api'/.test(fuori)

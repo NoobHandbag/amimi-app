@@ -152,7 +152,7 @@ try {
   const n0 = S.chiamate.length;
   S.msg('staff', '<img src=x onerror="window.__xss=1"> Ciao Giulia! Ecco il link https://amimi.it/pages/faq', { via_email: true });
   await chat(p).getByText('Ciao Giulia!', { exact: false }).waitFor({ timeout: 8000 });
-  t('B9 risposta del team vista entro un ciclo di poll (5 s), con "Team Amimi" e "inviato anche via email", senza eseguire HTML', await chat(p).locator('.msg.staff .chi').first().isVisible()
+  t('B9 risposta del team vista entro un ciclo di poll (5 s), con "Team Amim\u00ec" e "inviato anche via email", senza eseguire HTML', await chat(p).locator('.msg.staff .chi').first().isVisible()
     && await chat(p).getByText('inviato anche via email', { exact: false }).isVisible() && (await p.evaluate(() => window.__xss)) === undefined && S.viste.at(-1) === true);
   t('B10 nessun errore JavaScript nella pagina', errori.length === 0, errori);
   // Gate 2, C7: invio non partito e ripetuto con lo stesso client_id; 429 con retry_after

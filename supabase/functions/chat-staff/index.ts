@@ -1,4 +1,4 @@
-// chat-staff staff-3 (2026-11-13): le azioni del team sulla chat del sito, Fase 1 pezzi 3, 4 e 6 (docs/PROPOSTA_chat_sito.md 7.8
+// chat-staff staff-4 (2026-11-13): le azioni del team sulla chat del sito, Fase 1 pezzi 3, 4, 6 e 7 (docs/PROPOSTA_chat_sito.md 7.8
 // e 11.6, con D-8 modello ticket: ogni risposta parte subito anche per email, niente "Invia solo via email"). Edge nuova
 // (Regola 19: cs-api non riceve azioni nuove). La chiama la PWA col JWT di una persona del team.
 //
@@ -36,7 +36,9 @@
 //                   storto valeva "sempre fuori orario" per chat-api e lunedi'-venerdi' 9-18 per push-eventi, o 24,48 in
 //                   silenzio); salvato in forma canonica. Audit staff_imposta con l'impronta prima e dopo, mai il testo.
 //   conoscenza_testo {faq_id, testo_it?, testo_en?, attiva?, chi} -> D-29: testo IT/EN e "attiva" delle sole righe di
-//                   cs_faq puntate da chat_bottoni (le stesse lette da cs-assist per le bozze email: una fonte sola).
+//                   cs_faq puntate da chat_bottoni. staff-4 (pezzo 7, migr 0195): oltre a `faq` e `risposta_standard`
+//                   (le stesse lette da cs-assist per le bozze email) anche `risposta_chat`, le voci della sola chat,
+//                   che cs-assist non legge: cambiarle non tocca le bozze delle email.
 // Regola 19: scrive tabelle chat_* e, solo in cancella_dati, cancella righe cs_conversations della chat (cascata cs_) e
 // le righe di push_eventi_inviati degli eventi della chat con la chiave della sessione (modulo push_*, dalla staff-2);
 // dalla staff-3 la proiezione in cs_ (solo con l'RPC), le chiavi chat_* non segrete di CHIAVI_SCRIVIBILI in app_flags e
@@ -48,7 +50,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 
 // ==== PURE:chat-staff BEGIN ====
-const VERSIONE = 'staff-3';
+const VERSIONE = 'staff-4';
 const CORS: Record<string, string> = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 const IDENT: Record<string, string> = { B: 'Benedetta', G: 'Ginevra', A: 'Ale' };
@@ -527,7 +529,7 @@ function dbSupabase(sb: SupabaseClient, anon: SupabaseClient): Db {
     },
     async aggiornaFaq(id, patch) {
       // come chat-api: solo righe pubblicabili, mai gli esempi di tono
-      const { data, error } = await sb.from('cs_faq').update(patch).eq('id', id).in('tipo', ['faq', 'risposta_standard']).select('id');
+      const { data, error } = await sb.from('cs_faq').update(patch).eq('id', id).in('tipo', ['faq', 'risposta_standard', 'risposta_chat']).select('id');
       if (error) throw fallito('conoscenza non scritta', error);
       return (data ?? []).length === 1;
     },

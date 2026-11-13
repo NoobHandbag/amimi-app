@@ -14,7 +14,7 @@ export const LIQUID_CHIUDI = '{% endraw %}';
 export const PAGINA_RIPRESA = `<!doctype html>
 <html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
-<title>Amimi: continua la chat</title>
+<title>Amim&igrave;: continua la chat</title>
 <style>
 body{margin:0;background:#f6f4f1;color:#1f1f1f;font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:440px;margin:12vh auto 0;padding:28px 24px;background:#fff;border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.08)}
@@ -30,9 +30,9 @@ button:focus-visible{outline:3px solid #1f1f1f;outline-offset:3px}
 a{color:inherit}
 </style></head>
 <body><main>
-<p class="marchio">Amimi</p>
+<p class="marchio">Amim&igrave;</p>
 <h1 id="titolo">Continua la chat</h1>
-<p id="testo">Tocca il pulsante per riaprire su questo dispositivo la tua chat con il team Amimi.</p>
+<p id="testo">Tocca il pulsante per riaprire su questo dispositivo la tua chat con il team Amim&igrave;.</p>
 <div id="ts"></div>
 <button id="vai" type="button">Continua la chat</button>
 <p id="esito" role="status" aria-live="polite"></p>
@@ -47,7 +47,7 @@ a{color:inherit}
   var SITEKEY = { produzione: '0x4AAAAAAF2QTzI4g31RhjIS', prova: '0x4AAAAAAF33Q02jrHXJLHjr' };
   var en = /^en\\b/i.test(navigator.language || '');
   var T = en ? {
-    titolo: 'Continue the chat', testo: 'Tap the button to reopen your chat with the Amimi team on this device.', vai: 'Continue the chat',
+    titolo: 'Continue the chat', testo: 'Tap the button to reopen your chat with the Amim\\u00ec team on this device.', vai: 'Continue the chat',
     nota: 'You can also reply directly to the email: our team receives it like any other.', verifica: 'Anti-spam check in progress...',
     fatto: 'Done: opening the chat...', linkKo: 'This link is not complete. Open it again from the email, or reply to the email.',
     scaduto: 'This link is no longer valid (links last 30 days). Reply to the email or write to info@amimi.it.',
@@ -56,7 +56,7 @@ a{color:inherit}
     storage: 'This browser does not let us keep the chat open (private browsing?). Reply to the email instead.',
     sostituisci: 'Another chat is already open on this device. This link opens the chat of ', siSostituisci: 'Yes, open this chat'
   } : {
-    titolo: 'Continua la chat', testo: 'Tocca il pulsante per riaprire su questo dispositivo la tua chat con il team Amimi.', vai: 'Continua la chat',
+    titolo: 'Continua la chat', testo: 'Tocca il pulsante per riaprire su questo dispositivo la tua chat con il team Amim\\u00ec.', vai: 'Continua la chat',
     nota: 'Puoi anche rispondere direttamente all\\'email: il team la riceve come le altre.', verifica: 'Verifica anti-spam in corso...',
     fatto: 'Fatto: apro la chat...', linkKo: 'Questo link non \\u00e8 completo. Aprilo di nuovo dall\\'email, oppure rispondi all\\'email.',
     scaduto: 'Questo link non vale pi\\u00f9 (dura 30 giorni). Rispondi all\\'email o scrivici a info@amimi.it.',

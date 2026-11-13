@@ -109,7 +109,7 @@
     radice.appendChild(cornice);
     var bolla = el('button', 'bolla');
     bolla.type = 'button';
-    bolla.setAttribute('aria-label', 'Chat con Amimi');
+    bolla.setAttribute('aria-label', 'Chat con Amim\u00ec');
     bolla.setAttribute('aria-expanded', 'false');
     bolla.appendChild(icona('M4.5 5h15a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 3.5V17h-1A1.5 1.5 0 0 1 3 15.5v-9A1.5 1.5 0 0 1 4.5 5z')).setAttribute('class', 'apri');
     bolla.appendChild(icona('M6 6l12 12M18 6L6 18')).setAttribute('class', 'chiusa');
@@ -129,7 +129,7 @@
     api.pallino = function (n) {
       pallino.hidden = !(n > 0);
       pallino.textContent = n > 9 ? '9+' : String(n || '');
-      bolla.setAttribute('aria-label', n > 0 ? 'Chat con Amimi: ' + n + ' nuove risposte' : 'Chat con Amimi');
+      bolla.setAttribute('aria-label', n > 0 ? 'Chat con Amim\u00ec: ' + n + ' nuove risposte' : 'Chat con Amim\u00ec');
     };
     api.aperto = function (si) {
       cornice.className = (api.impostazioni.sinistra ? 'sx' : '') + (si ? ' aperto' : '');

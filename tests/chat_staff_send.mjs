@@ -339,7 +339,7 @@ function dbStaff(st) {
     async flag(chiavi) { rotto('flag'); return Object.fromEntries(chiavi.filter((k) => st.flags.has(k)).map((k) => [k, st.flags.get(k)])); },
     async scriviFlag(k, v) { rotto('scriviFlag'); if (!st.flags.has(k)) return false; st.flags.set(k, v); return true; },
     async faqRighe(ids) { return ids.filter((i) => st.faq.has(i)).map((i) => copia(st.faq.get(i))); },
-    async aggiornaFaq(id, patch) { const f = st.faq.get(id); if (!f || !['faq', 'risposta_standard'].includes(f.tipo)) return false; Object.assign(f, patch); return true; },
+    async aggiornaFaq(id, patch) { const f = st.faq.get(id); if (!f || !['faq', 'risposta_standard', 'risposta_chat'].includes(f.tipo)) return false; Object.assign(f, patch); return true; },
   };
 }
 function ambStaff(st, g) {
@@ -448,6 +448,16 @@ const callStaff = async (st, g, body, bearer) => { const r = await F.gestisci(re
   st.flags.set('chat_bottoni', '[{"id":"tono","it":"T","en":"T","faq":8}]');
   const k6 = await callStaff(st, g, { action: 'conoscenza_testo', faq_id: 8, testo_it: 'y', chi: 'G' });
   t('F49 una riga di esempio di tono puntata per errore da un bottone non si scrive (404, come la legge chat-api)', k6.status === 404 && st.faq.get(8).testo_it === 'x');
+  // staff-4 (pezzo 7, migr 0195): i bottoni puntano alle voci della sola chat (`risposta_chat`), e la scheda le cambia
+  st.faq.set(30, { id: 30, tipo: 'risposta_chat', titolo: 'faq-costi-e-tempi-spedizione: Quanto costa?', testo_it: 'Italia 3,90 EUR', testo_en: 'Italy EUR 3.90', attiva: true });
+  st.flags.set('chat_bottoni', '[{"id":"spedizioni","it":"Spedizioni","en":"Shipping","faq":30}]');
+  const imp30 = await callStaff(st, g, { action: 'impostazioni', chi: 'G' });
+  const k7 = await callStaff(st, g, { action: 'conoscenza_testo', faq_id: 30, testo_en: 'Italy EUR 3.90, free over EUR 100', chi: 'G' });
+  t('F49b una voce della sola chat puntata da un bottone: la scheda la mostra col suo tipo e conoscenza_testo la cambia (staff-4)', imp30.j.ok
+    && imp30.j.faq.length === 1 && imp30.j.faq[0].id === 30 && imp30.j.faq[0].tipo === 'risposta_chat' && k7.j.ok && st.faq.get(30).testo_en === 'Italy EUR 3.90, free over EUR 100'
+    && st.faq.get(30).testo_it === 'Italia 3,90 EUR' && st.faq.get(7).testo_en === 'We ship in 2 days.');
+  t('F49c sul sorgente: l\'update di conoscenza_testo vale per faq, risposta_standard e risposta_chat, mai per esempio_tono',
+    /from\('cs_faq'\)\.update\(patch\)\.eq\('id', id\)\.in\('tipo', \['faq', 'risposta_standard', 'risposta_chat'\]\)/.test(STAFF) && !/esempio_tono/.test(STAFF));
   st.rotto.flag = true;
   t('F50 impostazioni illeggibili = 503', (await callStaff(st, g, { action: 'impostazioni', chi: 'G' })).status === 503);
   st.rotto.flag = false;
@@ -601,7 +611,7 @@ t('G17 chat_cancella_sessione: lock della sessione PRIMA di tutto, poi eventi co
 t('G18 chat_cancella_sessione cancella il registro delle push dei soli tre eventi della chat, chiave della sessione; chat-staff solo l\'RPC',
   /delete from push_eventi_inviati where evento in \('chat_sollecito', 'chat_sollecito_scala', 'chat_salute'\) and chiave like p_sessione::text \|\| ':%';/.test(fnCanc)
   && /sb\.rpc\('chat_cancella_sessione', \{ p_sessione: id, p_card: card \}\)/.test(STAFF)
-  && !/from\('(push_eventi_inviati|chat_contatori|chat_eventi|chat_sessioni|cs_conversations)'\)\.delete\(\)/.test(STAFF) && F.VERSIONE === 'staff-3');
+  && !/from\('(push_eventi_inviati|chat_contatori|chat_eventi|chat_sessioni|cs_conversations)'\)\.delete\(\)/.test(STAFF) && F.VERSIONE === 'staff-4');
 const M9 = M0189.replace(/--.*$/gm, '');
 const fn0187 = (M.match(/create or replace function public\.chat_conservazione\(\)[\s\S]*?\$fn\$;/) ?? [''])[0];
 const fn0189 = (M9.match(/create or replace function public\.chat_conservazione\(\)[\s\S]*?\$fn\$;/) ?? [''])[0];
