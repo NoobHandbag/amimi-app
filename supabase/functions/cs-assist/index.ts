@@ -1,4 +1,8 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// sorgente v32 (2026-11-13, chat del sito Fase 1 pezzo 6, docs/PROPOSTA_chat_sito.md 7.6 punto 13 e 7.10): una chat del
+//   sito (canale `chat_sito` o chiave `chat:`, migr 0193) riceve 422 su context, dry_data, case_data, draft e refine, e il
+//   riassunto la salta: il suo testo non va a Gemini (un solo fornitore AI per la chat, quello del bot), e con la sola
+//   email DICHIARATA nel widget lookupOrder darebbe l'ultimo ordine di quell'email, cioe' dati di un'altra persona.
 // sorgente v31 (2026-11-04, decisione di Dan del 03-11, CASI_APERTI n.54 e D-6 di amimi-app#154): la
 //   finestra di reso torna a contare 14 giorni dalla CONSEGNA, come l'Informativa sui rimborsi e le
 //   regole di reso di Shopify allineate il 03-11. Il verdetto entro/fuori si calcola sulla data di
@@ -1427,13 +1431,15 @@ Deno.serve(async (req) => {
   // chiamanti la restituiscono tale e quale PRIMA di qualunque scrittura (cs_drafts/cs_events).
   const loadConv = async (_withLingua = false): Promise<{ conv: Row; inbound: string; recent: Row[]; clienti: string[] } | null | Response> => {
     const convId = String(body.conversation_id || '');
-    const cols = 'id,canale,customer_email,customer_name,order_number,categoria,subject,lingua';
+    const cols = 'id,canale,customer_email,customer_name,order_number,categoria,subject,lingua,gmail_thread_id';
     // 2026-09-14 (audit gate, B28): la conversazione e' la base di tutto. Un 504 la faceva sembrare
     // INESISTENTE (404 permanente) invece che illeggibile ora: ritenta una volta, poi 503 esplicito.
     // `null` (data senza error) resta l'id davvero inesistente -> 404 dal chiamante.
     const { data: conv, error: convErr } = await retryOnce(() => sb.from('cs_conversations').select(cols).eq('id', convId).maybeSingle());
     if (convErr) return json({ error: 'conversazione non leggibile, riprova: cs_conversations: ' + convErr.message }, 503);
     if (!conv) return null;
+    // v32 (punto 13): niente dati, contesto ne' bozze AI su una chat del sito
+    if (conv.canale === 'chat_sito' || String(conv.gmail_thread_id ?? '').startsWith('chat:')) return json({ error: 'chat del sito: niente dati ne\' bozze AI (7.10)' }, 422);
     // v14: THREAD INTERO (cap 30 messaggi, i piu' recenti): prima si vedevano solo gli ultimi 4
     // v20: e con loro l'elenco dei CLIENTI distinti che hanno scritto in questa conversazione.
     // 2026-09-13 (sweep incidente doppioni): lettura fallita = thread vuoto = guardia due-clienti a vuoto
@@ -1514,7 +1520,7 @@ Deno.serve(async (req) => {
     if (String(body.source || 'manual') === 'cron' && flags.cs_enabled !== 'true') return json({ ok: true, skipped: 'disabled' });
     if (!key) return json({ ok: false, needs_key: true });
     const limit = Math.min(Number(body.limit) || MAX_SUMMARY_PER_RUN, MAX_SUMMARY_PER_RUN);
-    const { data: convs } = await sb.from('cs_conversations').select('id,customer_email,customer_name,subject,snippet,categoria').is('summary', null).neq('canale', 'rumore').eq('parse_failed', false).order('last_msg_at', { ascending: true, nullsFirst: true }).limit(limit);
+    const { data: convs } = await sb.from('cs_conversations').select('id,customer_email,customer_name,subject,snippet,categoria').is('summary', null).neq('canale', 'rumore').neq('canale', 'chat_sito').eq('parse_failed', false).order('last_msg_at', { ascending: true, nullsFirst: true }).limit(limit);
     let done = 0, failed = 0;
     for (const c of (convs ?? []) as Row[]) {
       // 2026-09-13 (sweep incidente doppioni): lettura fallita = riassunto PERMANENTE dal solo subject
@@ -1540,7 +1546,7 @@ Riassunto (max 2 righe):`;
         done++;
       } catch { failed++; }
     }
-    const { count: remaining } = await sb.from('cs_conversations').select('id', { count: 'exact', head: true }).is('summary', null).neq('canale', 'rumore').eq('parse_failed', false);
+    const { count: remaining } = await sb.from('cs_conversations').select('id', { count: 'exact', head: true }).is('summary', null).neq('canale', 'rumore').neq('canale', 'chat_sito').eq('parse_failed', false);
     return json({ ok: true, done, failed, remaining: remaining ?? 0 });
   }
 

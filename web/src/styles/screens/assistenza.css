@@ -114,3 +114,9 @@
 @media print {
   .scr-assist .cs-fpill.on .cs-fn { background: none; color: var(--ink-muted); }
 }
+
+/* ---- chat del sito (pezzo 6): esito dell'email sotto ogni risposta del team, scheda Chat ---- */
+.scr-assist .cs-mailstate { margin: 4px 0 0 auto; max-width: 92%; font-size: 12px; color: var(--ink-muted); text-align: right; }
+.scr-assist .cs-mailstate.err { color: var(--negative); }
+.scr-assist .cs-chatset { display: flex; flex-direction: column; gap: 10px; }
+.scr-assist .cs-chatset .cs-case-row label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }

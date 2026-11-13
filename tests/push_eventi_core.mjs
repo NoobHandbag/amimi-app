@@ -1410,7 +1410,7 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
     // 19-10 (decisione di Dan): nome ed email della cliente nella lettura delle conversazioni, nome in quella delle spedizioni
     [`cs_conversations select id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email in:id|["${U1}"] limit:2`]:
       { data: [{ id: U1, canale: 'email_diretta', categoria: 'Reso', urgente: true, urgenza_motivo: 'rischio disputa', stato: 'da_fare', stato_by: null, customer_name: 'Carla Bianchi', customer_email: 'carla@example.com' }] },
-    'cs_conversations select id head eq:urgente|true neq:canale|rumore neq:stato|fatto': { count: 43 },
+    'cs_conversations select id head eq:urgente|true neq:canale|rumore not:flags|cs|["prova"] neq:stato|fatto': { count: 43 },
     // spedizione_eccezione
     [`v_spedizioni_eccezioni select ldv, order_name, stato_tws, updated_at, classe, customer_name eq:classe|eccezione gte:updated_at|${G} updated_at:desc limit:50`]:
       { data: [{ ldv: 'L1', order_name: '1890', stato_tws: 'INDIRIZZO ERRATO', updated_at: '2026-10-19T16:00:00Z', classe: 'eccezione', customer_name: 'Carla Bianchi' }] },
@@ -1427,7 +1427,7 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
       { data: [{ conversation_id: U3, at: '2026-10-19T16:30:00Z', a: 'da_fare' }] },
     [`cs_conversations select id, canale, categoria, urgente, urgenza_motivo, stato, stato_by, customer_name, customer_email in:id|["${U3}"] limit:2`]:
       { data: [{ id: U3, canale: 'email_diretta', categoria: 'Spedizione', urgente: false, stato: 'da_fare', customer_name: null, customer_email: 'Lucia.Verdi@Example.com' }] },
-    'cs_conversations select id head eq:stato|da_fare eq:last_direction|in neq:canale|rumore': { count: 59 },
+    'cs_conversations select id head eq:stato|da_fare eq:last_direction|in neq:canale|rumore not:flags|cs|["prova"]': { count: 59 },
     // riepilogo: lunedi' 19-10 alle 19:00 di Roma (CEST), mezzanotte di Roma = 18-10 22:00Z
     'shopify_orders select gross_total gte:created_at_shop|2026-10-18T22:00:00.000Z limit:501': { data: [{ gross_total: 100 }, { gross_total: 50.4 }] },
     'qromo_sales select order_id, prezzo eq:data|2026-10-19 limit:1001': { data: [{ order_id: 'A', prezzo: 120 }, { order_id: 'B', prezzo: 30 }] },
@@ -1437,14 +1437,14 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
       { data: [{ row_id: 'a', delta: '5', qty: null }, { row_id: 'a', delta: '-5', qty: null }, { row_id: 'b', delta: '3', qty: null }, { row_id: 'c', delta: null, qty: '2' }] },
     'change_log select id head in:op|["order","order_multi"] gte:ts|2026-10-18T22:00:00.000Z': { count: 7 },
     'loyalty_ugc select id head eq:status|in_revisione': { count: 11 },
-    'cs_conversations select id head eq:stato|da_fare eq:last_direction|in lt:last_msg_at|2026-10-18T17:00:00.000Z neq:canale|rumore': { count: 13 },
+    'cs_conversations select id head eq:stato|da_fare eq:last_direction|in lt:last_msg_at|2026-10-18T17:00:00.000Z neq:canale|rumore not:flags|cs|["prova"]': { count: 13 },
     'v_lead_outreach select id head eq:scaduta|true eq:da_gestire|false is:bozza_auto_tocco|null': { count: 17 },
     'v_products_todo select codice head in:bucket|["nuovo","costo_ricavo"]': { count: 19 },
     'v_products_todo select codice head eq:bucket|pulizia': { count: 23 },
     'v_lead_inbound select conv_id head': { count: 29 },
     'v_lead_outreach select id head not:bozza_auto_tocco|is|null eq:da_gestire|false': { count: 31 },
     'shipping_status select ldv head eq:stato_tws|IN ATTESA DI AFFIDO lt:updated_at|2026-10-17T17:00:00.000Z gte:shipped_date|2026-09-19': { count: 37 },
-    'cs_conversations select id head gte:created_at|2026-10-18T22:00:00.000Z neq:canale|rumore': { count: 41 },
+    'cs_conversations select id head gte:created_at|2026-10-18T22:00:00.000Z neq:canale|rumore not:flags|cs|["prova"] or:stato_by.is.null,stato_by.neq.bot': { count: 41 },
     // 03-11: nuove iscritte = prima visita dell'Area Membri oggi; c1 aveva gia' una visita (due righe), c2 e c3 no
     'loyalty_visits select shopify_customer_id gte:first_at|2026-10-18T22:00:00.000Z limit:1001': { data: [{ shopify_customer_id: 'c1' }, { shopify_customer_id: 'c2' }, { shopify_customer_id: 'c3' }, { shopify_customer_id: 'c2' }] },
     'loyalty_visits select shopify_customer_id in:shopify_customer_id|["c1","c2","c3"] lt:first_at|2026-10-18T22:00:00.000Z limit:10000': { data: [{ shopify_customer_id: 'c1' }, { shopify_customer_id: 'c1' }] },

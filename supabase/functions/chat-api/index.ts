@@ -1,4 +1,4 @@
-// chat-api api-2 (2026-11-09): la chat del sito, Fase 1 pezzi 2 e 5 (docs/PROPOSTA_chat_sito.md 5.2-5.8, 6, 8.4, con le
+// chat-api api-3 (2026-11-13): la chat del sito, Fase 1 pezzi 2, 5 e 6 (docs/PROPOSTA_chat_sito.md 5.2-5.8, 6, 7.4, 8.4, con le
 // decisioni di Dan dell'8 novembre 2026: modello ticket D-8, tetti D-12). Al posto dell'eco dello spike, che resta in
 // eco.ts solo per le rotte /eco, /misura e /turnstile (misure dal telefono di Dan, si spegne da sola il 7 dicembre 2026).
 // Il widget chiama amimi.it/apps/chat/<azione>; il proxy di "Amimi Chat" firma la query e inoltra qui. verify_jwt = false
@@ -29,9 +29,14 @@
 // Regola 20: messaggi idempotenti su (sessione_id, client_msg_id), push prenotata su chat_eventi.chiave, passaggio con
 // update condizionato su (stato, passaggi), letture con limit e errore controllato, una lettura ritenta una volta, una
 // scrittura mai. Regola 19: scrive solo tabelle chat_* e la propria riga health_log `chat_api` (conteggi), legge app_flags
-// (elenco chiuso) e cs_faq; nessuna scrittura in change_log, nessuna chiamata a write-api, nessun PIN. La proiezione in
-// cs_ (7.4) NON e' qui: arriva col pezzo dei 25 punti di Assistenza (7.6), perche' prima di quelli una chat proiettata
-// andrebbe a cs-classify e nella coda del team.
+// (elenco chiuso) e cs_faq; nessuna scrittura in change_log, nessuna chiamata a write-api, nessun PIN.
+// api-3 (pezzo 6, 7.4): dopo ogni scrittura della cliente (testo, bottone, passaggio) la chat si proietta in Assistenza
+// con l'RPC chat_proietta (migr 0193: cs_conversations e cs_messages, canale chat_sito, chiavi chat:<id>); un errore non
+// ferma la richiesta (la chat in chat_ e' gia' giusta), va in health_log come warn e il cron chat-proiezione la riprova.
+// api-3 (B4 del pezzo 4, CASI_APERTI n.54 k): una cliente che riscrive con testo libero in una chat `aperta` gia' risposta
+// dal team (o presa con prendo_io senza un passaggio) apre un passaggio nuovo, come la prima volta: avviso di attesa,
+// push al tema `assistenza` e solleciti a 24 e 48 ore lavorative. Modello ticket: una risposta della cliente riapre il
+// ticket. I messaggi successivi, finche' il team non risponde, non aprono altri passaggi.
 // Log: solo cause scritte nel codice e codici d'errore del DB, mai corpi, token, email, nomi o testi.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
@@ -41,7 +46,7 @@ import { rispondiEco } from './eco.ts';
 import { LIQUID_APRI, LIQUID_CHIUDI, PAGINA_RIPRESA } from './riprendi.ts';
 
 // ==== PURE:chat-api BEGIN ====
-const VERSIONE = 'api-2';
+const VERSIONE = 'api-3';
 const HEADER_BASE: Record<string, string> = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' };
 const ROTTE_ECO = ['eco', 'misura', 'turnstile'];
 const METODO: Record<string, string> = { config: 'GET', avvia: 'POST', invia: 'POST', passaggio: 'POST', aggiorna: 'POST', riprendi: 'POST', errore: 'POST' };
@@ -90,7 +95,7 @@ const EMAIL_RE = /^[^\s\p{C}<>,;"@]+@[^\s\p{C}<>,;"@]+\.[^\s\p{C}<>,;"@]+$/u;
 
 type Sessione = {
   id: string; stato: string; passaggi: number; passaggio_at: string | null; customer_email: string; customer_name: string | null;
-  lingua: string; prova: boolean; ultima_attivita_at: string; chiusa_at: string | null;
+  lingua: string; prova: boolean; ultima_attivita_at: string; chiusa_at: string | null; ultima_risposta_staff_at: string | null;
 };
 type TokenRiga = { id: string; tipo: string; scade_at: string; revocato_at: string | null; sessione: Sessione | null };
 type Messaggio = { id: string; seq: number; autore: string; testo: string; created_at: string; email_stato: string | null; delivered_at: string | null };
@@ -114,6 +119,7 @@ interface Db {
   esitoEvento(chiave: string, esito: string, dettaglio: Record<string, unknown>): Promise<void>;
   faq(id: number): Promise<{ testo_it: string | null; testo_en: string | null; attiva: boolean } | null>;
   salute(giorno: string, n: number, severity: string, causa: string | null): Promise<void>;
+  proietta(sessioneId: string): Promise<void>;
 }
 type Ambiente = {
   ora: number;
@@ -478,12 +484,12 @@ async function limiteMessaggi(amb: Ambiente, s: Sessione, problemi: Problema[]):
   await eventoUnaVolta(amb, 'limite_messaggi', `${s.id}:limite_messaggi`, s.id, problemi);
   return rifiuto('limite_messaggi');
 }
-// passaggio a una persona: update condizionato (stato bot e passaggi letti), chi lo vince e' il passaggio nuovo
+// passaggio a una persona: update condizionato (stato e passaggi letti), chi lo vince e' il passaggio nuovo
 async function aPersona(amb: Ambiente, s: Sessione, cliente: boolean): Promise<Sessione> {
   const ora = iso(amb.ora);
   const patch: Record<string, unknown> = { stato: 'attesa_persona', passaggi: s.passaggi + 1, passaggio_at: ora, ultima_attivita_at: ora, updated_at: ora };
   if (cliente) patch.ultimo_cliente_at = ora;
-  const vinto = await amb.db.aggiornaSessione(s.id, patch, { stato: 'bot', passaggi: s.passaggi });
+  const vinto = await amb.db.aggiornaSessione(s.id, patch, { stato: s.stato, passaggi: s.passaggi });
   if (vinto) return vinto;
   const letta = await amb.db.sessione(s.id);
   if (!letta) throw new ErroreDb('sessione non riletta');
@@ -506,19 +512,35 @@ async function toccaSessione(amb: Ambiente, s: Sessione, cliente: boolean): Prom
   if (cliente) patch.ultimo_cliente_at = ora;
   return (await amb.db.aggiornaSessione(s.id, patch, {})) ?? s;
 }
-// testo libero: messaggio della cliente, poi (Fase 1) passaggio se la chat e' del bot. Gli effetti del passaggio si
-// rifanno anche quando il messaggio e' un doppione (nuovo invio dopo un errore a meta'): sono idempotenti.
+// B4 (api-3): la chat aspetta gia' il team quando c'e' un passaggio e nessuna risposta dello staff dopo di esso (stessa
+// regola di attesaChat in push-eventi, che decide i solleciti). Una chat `aperta` che NON aspetta il team (risposta gia'
+// data, o presa con prendo_io senza passaggio) riceve un passaggio nuovo al primo testo libero della cliente.
+function aspettaIlTeam(s: Sessione): boolean {
+  const p = Date.parse(s.passaggio_at ?? '');
+  if (!Number.isFinite(p)) return false;
+  const r = Date.parse(s.ultima_risposta_staff_at ?? '');
+  return !(Number.isFinite(r) && r >= p);
+}
+const serveUnaPersona = (s: Sessione) => s.stato === 'bot' || (s.stato === 'aperta' && !aspettaIlTeam(s));
+// testo libero: messaggio della cliente, poi (Fase 1) passaggio se la chat e' del bot o se il team le ha gia' risposto
+// (B4). Gli effetti del passaggio si rifanno anche quando il messaggio e' un doppione (nuovo invio dopo un errore a
+// meta'): sono idempotenti.
 async function testoLibero(amb: Ambiente, f: Flag, s: Sessione, clientId: string, testo: string): Promise<{ sessione: Sessione; messaggi: Messaggio[] }> {
   const ins = await amb.db.inserisciMessaggi([{ sessione_id: s.id, autore: 'cliente', testo, client_msg_id: clientId, fonte: null }]);
   const doppione = ins.length === 0;
   let sess: Sessione;
   let nuovo = false;
-  if (s.stato === 'bot') {
+  if (serveUnaPersona(s)) {
     sess = await aPersona(amb, s, true);
     nuovo = sess.passaggi > s.passaggi;
   } else sess = await toccaSessione(amb, s, true);
   const extra = sess.stato === 'attesa_persona' && (nuovo || doppione) ? await effettiPassaggio(amb, f, sess) : [];
   return { sessione: sess, messaggi: ordinati([...ins, ...extra]) };
+}
+
+// 7.4 (api-3): la chat in Assistenza. Mai bloccante: chat_ e' gia' giusta, il cron chat-proiezione riprova.
+async function proietta(amb: Ambiente, sessioneId: string, problemi: Problema[]): Promise<void> {
+  try { await amb.db.proietta(sessioneId); } catch { problemi.push({ sev: 'warn', causa: 'proiezione in Assistenza non scritta' }); }
 }
 
 // ---- azioni ----
@@ -588,6 +610,7 @@ async function azioneAvvia(d: Record<string, unknown>, amb: Ambiente, cliente: s
       s = r.sessione;
       messaggi = r.messaggi;
       testoSalvato = true;
+      await proietta(amb, s.id, problemi);
     } catch (x) {
       problemi.push({ sev: 'error', causa: x instanceof ErroreDb ? x.causa : 'primo messaggio non salvato' });
       testoSalvato = false;
@@ -624,6 +647,7 @@ async function azioneInvia(d: Record<string, unknown>, amb: Ambiente, problemi: 
     const tetto = await limiteMessaggi(amb, s, problemi);
     if (tetto) return tetto;
     const r = await testoLibero(amb, f, s, clientId, testo);
+    await proietta(amb, s.id, problemi);
     return json({ ok: true, stato: r.sessione.stato, messaggi: r.messaggi.map(pubblico) });
   }
   // bottone: risposta fissa dalla riga di cs_faq che il bottone indica; lo stato non cambia (7.5)
@@ -639,6 +663,7 @@ async function azioneInvia(d: Record<string, unknown>, amb: Ambiente, problemi: 
     { sessione_id: s.id, autore: 'automatica', testo: [...risposta.trim()].slice(0, TESTO_DB_MAX).join(''), client_msg_id: await uuidDa(`${clientId}:risposta`), fonte: `faq:${b.faq}` },
   ]);
   const sess = await toccaSessione(amb, s, true);
+  await proietta(amb, s.id, problemi);
   return json({ ok: true, stato: sess.stato, messaggi: ordinati(ins).map(pubblico) });
 }
 
@@ -662,6 +687,7 @@ async function azionePassaggio(d: Record<string, unknown>, amb: Ambiente, proble
   // bot: passaggio nuovo; attesa_persona: ripetizione, gli effetti sono idempotenti (nessuna push in piu')
   const sess = s.stato === 'bot' ? await aPersona(amb, s, false) : await toccaSessione(amb, s, false);
   const messaggi = sess.stato === 'attesa_persona' ? await effettiPassaggio(amb, f, sess) : [];
+  await proietta(amb, s.id, problemi);
   return json({ ok: true, stato: sess.stato, email: mascheraEmail(sess.customer_email), messaggi: ordinati(messaggi).map(pubblico) });
 }
 
@@ -792,7 +818,7 @@ const fallito = (causa: string, e: unknown): ErroreDb => {
   console.error('chat-api: ' + causa, codice(e));
   return new ErroreDb(causa);
 };
-const COL_SESSIONE = 'id, stato, passaggi, passaggio_at, customer_email, customer_name, lingua, prova, ultima_attivita_at, chiusa_at';
+const COL_SESSIONE = 'id, stato, passaggi, passaggio_at, customer_email, customer_name, lingua, prova, ultima_attivita_at, chiusa_at, ultima_risposta_staff_at';
 const COL_MESSAGGIO = 'id, seq, autore, testo, created_at, email_stato, delivered_at';
 
 function dbSupabase(sb: SupabaseClient): Db {
@@ -803,6 +829,13 @@ function dbSupabase(sb: SupabaseClient): Db {
       const out: Record<string, string> = {};
       for (const r of (data ?? []) as { key: string; value: unknown }[]) if (chiavi.includes(r.key) && typeof r.value === 'string') out[r.key] = r.value;
       return out;
+    },
+    async proietta(sessioneId) {
+      // scrittura: mai ritentata (Regola 20 d); l'RPC e' idempotente e la riprova il cron chat-proiezione
+      const { data, error } = await sb.rpc('chat_proietta', { p_sessione: sessioneId });
+      if (error) throw fallito('proiezione non scritta', error);
+      const esito = (data as { esito?: unknown } | null)?.esito;
+      if (esito !== 'fatto' && esito !== 'vuota') throw fallito('proiezione con esito inatteso', null);
     },
     async contatore(chiave, finestraS, tetto) {
       const { data, error } = await sb.rpc('chat_contatore_incrementa', { p_chiave: chiave, p_finestra_secondi: finestraS, p_tetto: tetto });

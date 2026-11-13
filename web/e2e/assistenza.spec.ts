@@ -4,8 +4,8 @@ import { test, expect } from '@playwright/test';
 // Smoke pre-auth: la pagina monta e mostra il cancello di login (nessuna chiamata dati finche'
 // non si fa login, quindi nessuna scrittura ne' lettura cs_* qui).
 test('assistenza: mostra il cancello di login (nessun dato senza auth)', async ({ page }) => {
-  await page.goto('');
-  await page.getByRole('button', { name: /Assistenza clienti/ }).click();
+  // 13-11: la Home non ha piu' il bottone "Assistenza clienti" (spec ferma dal 21-10, fuori dalla CI): si entra dal link
+  await page.goto('#assistenza');
   await expect(page.getByRole('button', { name: /Accedi con Google/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /^Entra$/ })).toBeVisible();
   // nessuna coda visibile senza login (il titolo "Assistenza" ora sta nella AppBar anche sul login: si guardano i filtri della coda)

@@ -26,6 +26,12 @@
 // chat_sessioni, chat_eventi, chat_messaggi e chat_contatori si LEGGONO soltanto.
 // v8 (2026-11-09, decisione di Dan in chat, migr 0191): il riepilogo serale parte alle 22:00 di Roma invece che alle 18:30
 // (ORA_RIEPILOGO_MIN; finestra 22:00-23:59, lunedi'-sabato come prima). Nient'altro cambia.
+// v10 (2026-11-13, chat del sito Fase 1 pezzo 6, docs/PROPOSTA_chat_sito.md 7.6 punti 20-21 e D-11): le chat del sito
+// proiettate in Assistenza (canale `chat_sito`, migr 0193). cs_urgente salta `chat_sito` (la push di una chat la manda
+// chat-api al passaggio, un evento urgente arrivato comunque ne darebbe due); il riepilogo serale non conta le chat di
+// prova (flag `prova`) ne' quelle gestite solo dalle risposte fisse (stato_by `bot`, D-11 "Concluse, fuori riepilogo").
+// B4 del pezzo 4 deciso nel pezzo 6: una cliente che riscrive dopo una risposta del team apre in chat-api un passaggio
+// nuovo, quindi i solleciti qui sotto ripartono da soli (una chiave per passaggio), senza codice nuovo.
 // v9 (2026-11-09, chiesta da Dan in chat, migr 0192): stock_fermo (tema magazzino, di Benny e Ginni) quando un prodotto
 // entra fra i pezzi a magazzino non in vendita sul sito (v_stock_fermo, migr 0190: pezzi disponibili, nessuna pagina
 // Shopify attiva, fermi da almeno 3 giorni). Una push per giro con i prodotti nuovi (eseguiGruppi, un gruppo solo), dalle
@@ -391,7 +397,8 @@ function msgCsUrgente(cands: Cand[], conv: Record<string, Riga>, aperte: number)
   const out: Msg[] = [];
   for (const c of cands) {
     const v = conv[c.rif.conv];
-    if (!v || v.urgente !== true || v.canale === 'rumore') continue;
+    // v10 (punto 20): mai una chat del sito, la sua push la manda chat-api al passaggio
+    if (!v || v.urgente !== true || v.canale === 'rumore' || v.canale === 'chat_sito') continue;
     const riapertaDopoChiusuraAMano = v.stato === 'fatto' && v.urgenza_motivo === SOLLECITO_DOPO_CHIUSURA
       && typeof v.stato_by === 'string' && v.stato_by.trim() !== '' && v.stato_by !== 'auto';
     if (v.stato === 'fatto' && !riapertaDopoChiusuraAMano) continue;
@@ -822,9 +829,9 @@ function msgAttivita(cands: Cand[], ordini: Record<string, Riga[]>): Msg[] {
 // Una chat aspetta il team quando e' `attesa_persona` (la cliente ha chiesto una persona) o `aperta` (presa da qualcuno)
 // e il team non ha risposto DOPO l'ultimo passaggio (ultima_risposta_staff_at vuota o prima di passaggio_at). Il sollecito
 // si ferma da solo quando lo staff risponde, la chat si chiude o torna al bot (8.5): sono tutti stati letti a ogni giro.
-// Come nella proposta (8.3: una chiave per passaggio e per passo) il sollecito segue il PASSAGGIO: una cliente che riscrive
-// dal widget dopo una risposta del team non apre un passaggio nuovo e non ha un sollecito (Gate 2, B4: decisione rimandata
-// al pezzo 6, CASI_APERTI n.54).
+// Come nella proposta (8.3: una chiave per passaggio e per passo) il sollecito segue il PASSAGGIO. B4 (Gate 2 del pezzo 4,
+// deciso nel pezzo 6, CASI_APERTI n.54 k): una cliente che riscrive con testo libero dopo una risposta del team apre un
+// passaggio nuovo in chat-api api-3 (avviso, push immediata), quindi anche i solleciti ripartono, da quel passaggio.
 // preso_da usa i nomi del selettore (Benedetta, Ginevra, Ale): nel testo i nomi di casa. Le push vanno al tema
 // dell'evento, mai con `chi`, quindi la mappa Benedetta -> Bene di push-api qui non serve (8.5).
 const PRESO_DA: Record<string, string> = { Benedetta: 'Benny', Ginevra: 'Ginni', Ale: 'Ale' };
@@ -1508,7 +1515,7 @@ const EVENTI: Record<string, DefEvento> = {
     },
     componi: async (sb, _ctx, _ev, cands) => {
       const conv = await leggiConversazioni(sb, [...new Set(cands.map((c) => c.rif.conv))]);
-      const aperte = await conta(retryOnce(() => sb.from('cs_conversations').select('id', { count: 'exact', head: true }).eq('urgente', true).neq('canale', 'rumore').neq('stato', 'fatto')), 'urgenti aperte');
+      const aperte = await conta(retryOnce(() => sb.from('cs_conversations').select('id', { count: 'exact', head: true }).eq('urgente', true).neq('canale', 'rumore').not('flags', 'cs', '["prova"]').neq('stato', 'fatto')), 'urgenti aperte');
       return msgCsUrgente(cands, conv, aperte);
     },
   },
@@ -1556,7 +1563,7 @@ const EVENTI: Record<string, DefEvento> = {
     },
     componi: async (sb, _ctx, _ev, cands) => {
       const conv = await leggiConversazioni(sb, [...new Set(cands.map((c) => c.rif.conv))]);
-      const inAttesa = await conta(retryOnce(() => sb.from('cs_conversations').select('id', { count: 'exact', head: true }).eq('stato', 'da_fare').eq('last_direction', 'in').neq('canale', 'rumore')), 'richieste in attesa');
+      const inAttesa = await conta(retryOnce(() => sb.from('cs_conversations').select('id', { count: 'exact', head: true }).eq('stato', 'da_fare').eq('last_direction', 'in').neq('canale', 'rumore').not('flags', 'cs', '["prova"]')), 'richieste in attesa');
       return msgCsRiscritto(cands, conv, inAttesa);
     },
   },
@@ -1723,14 +1730,14 @@ const EVENTI: Record<string, DefEvento> = {
       const [ordiniFornitore, premia, csFerme, b2bScadute, daCompletare, daPulire, daCollegare, followUpPronti, affido, csNuove] = await Promise.all([
         conta(retryOnce(() => sb.from('change_log').select('id', { count: 'exact', head: true }).in('op', ['order', 'order_multi']).gte('ts', t0)), 'ordini fornitore'),
         conta(retryOnce(() => sb.from('loyalty_ugc').select('id', { count: 'exact', head: true }).eq('status', 'in_revisione')), 'Premia'),
-        conta(retryOnce(() => sb.from('cs_conversations').select('id', { count: 'exact', head: true }).eq('stato', 'da_fare').eq('last_direction', 'in').lt('last_msg_at', ieri).neq('canale', 'rumore')), 'richieste ferme'),
+        conta(retryOnce(() => sb.from('cs_conversations').select('id', { count: 'exact', head: true }).eq('stato', 'da_fare').eq('last_direction', 'in').lt('last_msg_at', ieri).neq('canale', 'rumore').not('flags', 'cs', '["prova"]')), 'richieste ferme'),
         conta(retryOnce(() => sb.from('v_lead_outreach').select('id', { count: 'exact', head: true }).eq('scaduta', true).eq('da_gestire', false).is('bozza_auto_tocco', null)), 'azioni B2B scadute'),
         conta(retryOnce(() => sb.from('v_products_todo').select('codice', { count: 'exact', head: true }).in('bucket', ['nuovo', 'costo_ricavo'])), 'prodotti da completare'),
         conta(retryOnce(() => sb.from('v_products_todo').select('codice', { count: 'exact', head: true }).eq('bucket', 'pulizia')), 'prodotti da pulire'),
         collegare ? conta(retryOnce(() => sb.from('v_lead_inbound').select('conv_id', { count: 'exact', head: true })), 'messaggi da collegare') : Promise.resolve(0),
         conta(retryOnce(() => sb.from('v_lead_outreach').select('id', { count: 'exact', head: true }).not('bozza_auto_tocco', 'is', null).eq('da_gestire', false)), 'follow-up pronti'),
         conta(retryOnce(() => sb.from('shipping_status').select('ldv', { count: 'exact', head: true }).eq('stato_tws', 'IN ATTESA DI AFFIDO').lt('updated_at', dalle(ctx, oreAffido * 3600000)).gte('shipped_date', dataRoma(ctx.ora - giorniAffido * 86400000))), 'in attesa di affido'),
-        conta(retryOnce(() => sb.from('cs_conversations').select('id', { count: 'exact', head: true }).gte('created_at', t0).neq('canale', 'rumore')), 'richieste nuove'),
+        conta(retryOnce(() => sb.from('cs_conversations').select('id', { count: 'exact', head: true }).gte('created_at', t0).neq('canale', 'rumore').not('flags', 'cs', '["prova"]').or('stato_by.is.null,stato_by.neq.bot')), 'richieste nuove'),
       ]);
       // 03-11: nuove iscritte = prima apertura dell'Area Membri oggi (contaIscritte). Le clienti viste oggi, poi quali di
       // loro avevano gia' una visita prima: solo l'id della cliente, a blocchi di 100 (Regola 20b)

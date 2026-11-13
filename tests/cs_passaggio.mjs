@@ -74,7 +74,8 @@ t('B2B via email -> rumore (regola owner 01-08 invariata)', b2bVaNelRumore('Coll
 t('B2B dal modulo -> rumore (invariato)', b2bVaNelRumore('Collaborazioni e B2B', 'form_contatto') === true);
 t('categoria non B2B in chat -> no', b2bVaNelRumore('Spedizione e stato ordine', 'chat_notifica') === false);
 t('categoria nulla -> no', b2bVaNelRumore(null, 'email_diretta') === false);
-t('cs-api applica la STESSA regola', ['chat_notifica', 'email_diretta', 'form_contatto', 'form_evento', 'rumore'].every((c) =>
+t('B2B nella chat del sito (pezzo 6) -> resta in coda', b2bVaNelRumore('Collaborazioni e B2B', 'chat_sito') === false);
+t('cs-api applica la STESSA regola', ['chat_notifica', 'chat_sito', 'email_diretta', 'form_contatto', 'form_evento', 'rumore'].every((c) =>
   ['Collaborazioni e B2B', 'Info prodotto', null].every((k) => api.b2bVaNelRumore(k, c) === b2bVaNelRumore(k, c))));
 
 console.log('\n== mittenti condivisi di Shopify: mai in denylist (cs-api) ==');
@@ -88,6 +89,7 @@ t('vuoto -> bloccabile (lo ferma la validazione esistente)', api.isMittenteShopi
 
 console.log('\n== canale di ritorno dal rumore ==');
 t('chat torna chat', api.canaleDiRitorno('chat_notifica') === 'chat_notifica');
+t('chat del sito torna chat del sito (pezzo 6, punto 9)', api.canaleDiRitorno('chat_sito') === 'chat_sito');
 t('modulo torna modulo', api.canaleDiRitorno('form_contatto') === 'form_contatto' && api.canaleDiRitorno('form_evento') === 'form_evento');
 t('email torna email', api.canaleDiRitorno('email_diretta') === 'email_diretta');
 t('entrata gia\' come rumore -> email (come prima della v12)', api.canaleDiRitorno('rumore') === 'email_diretta');
@@ -115,7 +117,7 @@ t('cs-classify (Gate 2 B1): il passaggio e\' URGENTE col suo motivo', /const urg
 const SYNC = src('supabase/functions/cs-sync/index.ts');
 const ruleMotivi = (SYNC.match(/const RULE_MOTIVI = \[([^\]]*)\]/) || [])[1] || '';
 t('cs-sync recomputeUrgency non spegne mai l\'urgenza del passaggio (motivo fuori da RULE_MOTIVI)', ruleMotivi.length > 0 && !ruleMotivi.includes(MOTIVO_PASSAGGIO), ruleMotivi);
-t('cs-api add_noise: la denylist si scrive solo se bloccabile', /const bloccabile = !isMittenteShopify\(sender\);/.test(API) && /if \(bloccabile\) \{[\s\S]{0,900}?upsert\(\{ key: 'cs_noise_senders'/.test(API));
+t('cs-api add_noise: la denylist si scrive solo se bloccabile (mai per una chat del sito, v13)', /const bloccabile = !chat && !isMittenteShopify\(sender\);/.test(API) && /if \(bloccabile\) \{[\s\S]{0,900}?upsert\(\{ key: 'cs_noise_senders'/.test(API));
 t('cs-api remove_noise: torna nel canale d\'origine', /update\(\{ canale: canaleDest \}\)/.test(API) && !/update\(\{ canale: 'email_diretta' \}\)/.test(API));
 t('cs-api set_categoria: rumore solo via b2bVaNelRumore', /if \(b2bVaNelRumore\(categoria, ex\.canale\) && ex\.canale !== 'rumore'\) updCat\.canale = 'rumore';/.test(API));
 const reDi = (s) => (s.match(/const RE_PASSAGGIO_AGENTE = (\/[^\n]+\/i);/) || [])[1];

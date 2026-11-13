@@ -26,7 +26,7 @@ const a = SRC.indexOf(B), b = SRC.indexOf(E);
 if (a < 0 || b < a) { console.error('marcatori PURE:chat-api non trovati'); process.exit(1); }
 const BLOCCO = SRC.slice(a + B.length, b);
 const ESPORTA = ['gestisci', 'azzeraCache', 'azzeraSalute', 'ErroreDb', 'nomeCliente', 'statoDaEsito', 'inOrario', 'testoAttesa', 'interpretaFlag', 'mascheraEmail',
-  'emailValida', 'nomePulito', 'testoPulito', 'uuidDa', 'FLAG_LETTI', 'HOST_ANTEPRIMA_RE', 'METODO', 'VERSIONE', 'ROTTE_ECO', 'messaggioPush'];
+  'emailValida', 'nomePulito', 'testoPulito', 'uuidDa', 'FLAG_LETTI', 'HOST_ANTEPRIMA_RE', 'METODO', 'VERSIONE', 'ROTTE_ECO', 'messaggioPush', 'aspettaIlTeam'];
 const M = new Function(stripTypeScriptTypes(BLOCCO) + `\nreturn { ${ESPORTA.join(', ')} };`)();
 // pagina GET /apps/chat/riprendi (pezzo 5): il modulo riprendi.ts valutato cosi' com'e' (solo stringhe)
 const RIP_SRC = read('supabase/functions/chat-api/riprendi.ts');
@@ -59,9 +59,9 @@ const iso = (ms) => new Date(ms).toISOString();
 const malformato = (v) => typeof v === 'string' && !v.isWellFormed();
 function nuovoDb() {
   const st = { flag: new Map(), cont: new Map(), sess: new Map(), tok: [], msg: [], ev: [], faq: new Map(), salute: [], seq: 0, tseq: 0,
-    guasti: new Map(), flagChiesti: [], chiamate: [] };
+    guasti: new Map(), flagChiesti: [], chiamate: [], proiezioni: [] };
   const guasto = (nome) => { const g = st.guasti.get(nome); if (g > 0) { st.guasti.set(nome, g - 1); throw new M.ErroreDb('guasto ' + nome); } };
-  const COLS = ['id', 'stato', 'passaggi', 'passaggio_at', 'customer_email', 'customer_name', 'lingua', 'prova', 'ultima_attivita_at', 'chiusa_at'];
+  const COLS = ['id', 'stato', 'passaggi', 'passaggio_at', 'customer_email', 'customer_name', 'lingua', 'prova', 'ultima_attivita_at', 'chiusa_at', 'ultima_risposta_staff_at'];
   const proj = (s) => Object.fromEntries(COLS.map((k) => [k, s[k] ?? (k === 'prova' ? false : null)]));
   const pick = (m) => ({ id: m.id, seq: m.seq, autore: m.autore, testo: m.testo, created_at: m.created_at, email_stato: m.email_stato, delivered_at: m.delivered_at });
   const db = {
@@ -139,6 +139,7 @@ function nuovoDb() {
     async esitoEvento(chiave, esito, dettaglio) { guasto('esitoEvento'); const e = st.ev.find((x) => x.chiave === chiave); if (e) { e.esito = esito; e.dettaglio = dettaglio; } },
     async faq(id) { return st.faq.get(id) ?? null; },
     async salute(giorno, n, severity, causa) { st.salute.push({ giorno, n, severity, causa }); },
+    async proietta(id) { st.chiamate.push('proietta'); guasto('proietta'); st.proiezioni.push(id); },
   };
   return { db, st };
 }
@@ -786,6 +787,84 @@ console.log('\n== orari (D-8) e funzioni pure ==');
     && M.messaggioPush({ customer_name: null, customer_email: 'NON EMAIL', prova: false }, true).titolo === 'Chat del sito: Una cliente chiede una persona');
 }
 
+console.log('\n== proiezione in Assistenza e B4 (api-3, pezzo 6) ==');
+{
+  clock.ora = Date.parse('2026-11-09T09:30:00Z');
+  const passo = () => { clock.ora += 11000; };
+  const x = nuovo();
+  const a = await avvia(x);
+  const tk = a.d.token;
+  const s = sessioneDi(x, tk);
+  t('P1 avvia senza testo: nessuna proiezione (la card nasce al primo messaggio, 7.4)', a.d.ok === true && x.st.proiezioni.length === 0);
+  passo();
+  const b = await chiama(x, 'invia', { token: tk, client_id: randomUUID(), bottone: 'spedizioni' });
+  t('P2 un bottone proietta la sessione una volta, dopo le scritture', b.d.ok === true && x.st.proiezioni.length === 1 && x.st.proiezioni[0] === s.id
+    && x.st.chiamate.lastIndexOf('proietta') > x.st.chiamate.lastIndexOf('inserisciMessaggi'));
+  passo();
+  const c = await chiama(x, 'invia', { token: tk, client_id: randomUUID(), testo: 'Vorrei una persona' });
+  t('P3 il testo libero (passaggio) proietta dopo l\'avviso di attesa', c.d.ok === true && c.d.stato === 'attesa_persona' && x.st.proiezioni.length === 2
+    && x.st.chiamate.lastIndexOf('proietta') > x.st.chiamate.lastIndexOf('evento:push_passaggio'));
+  passo();
+  const d = await chiama(x, 'passaggio', { token: tk });
+  t('P4 "Parla con una persona" ripetuto proietta di nuovo (idempotente), nessuna push in piu\'', d.d.ok === true && x.st.proiezioni.length === 3
+    && x.st.ev.filter((e) => e.tipo === 'push_passaggio').length === 1);
+  passo();
+  x.st.guasti.set('proietta', 1);
+  const nSalute = x.st.salute.length;
+  const e = await chiama(x, 'invia', { token: tk, client_id: randomUUID(), testo: 'Ci siete?' });
+  t('P5 proiezione fallita: la richiesta riesce lo stesso e la salute dice warn (il cron riprova)', e.d.ok === true && x.st.msg.some((m) => m.testo === 'Ci siete?')
+    && x.st.salute.length > nSalute && x.st.salute.at(-1).severity === 'warn' && x.st.salute.at(-1).causa === 'proiezione in Assistenza non scritta');
+  passo();
+  const av = await avvia(x, { testo: 'Primo messaggio', client_id: randomUUID() });
+  t('P6 avvia col primo testo proietta la sessione nuova', av.d.ok === true && av.d.testo_salvato === true && x.st.proiezioni.at(-1) === sessioneDi(x, av.d.token).id);
+
+  // B4: la cliente riscrive dopo una risposta del team = passaggio nuovo (avviso, push, solleciti)
+  const y = nuovo();
+  const ya = await avvia(y, { testo: 'Domanda', client_id: randomUUID() });
+  const ys = sessioneDi(y, ya.d.token);
+  const pushPrima = pushInviati.length;
+  t('B4-0 il primo testo apre il passaggio 1 con una push', ys.stato === 'attesa_persona' && ys.passaggi === 1 && pushInviati.length === pushPrima);
+  clock.ora += 3600000;
+  Object.assign(ys, { stato: 'aperta', preso_da: 'Ginevra', ultima_risposta_staff_at: iso(clock.ora) });
+  passo();
+  const p0 = pushInviati.length;
+  const r1 = await chiama(y, 'invia', { token: ya.d.token, client_id: randomUUID(), testo: 'Grazie, ma ho un\'altra domanda' });
+  t('B4-1 aperta e gia\' risposta: il testo libero apre il passaggio 2, avviso di attesa e una push al tema assistenza',
+    r1.d.ok === true && r1.d.stato === 'attesa_persona' && ys.passaggi === 2 && ys.passaggio_at === iso(clock.ora)
+    && y.st.ev.some((ev) => ev.chiave === `${ys.id}:passaggio:2`) && pushInviati.length === p0 + 1 && pushInviati.at(-1).tema === 'assistenza'
+    && r1.d.messaggi.some((m) => m.autore === 'sistema'));
+  passo();
+  const r2 = await chiama(y, 'invia', { token: ya.d.token, client_id: randomUUID(), testo: 'E un\'altra cosa' });
+  t('B4-2 in attesa del team i messaggi dopo non aprono altri passaggi ne\' push', r2.d.ok === true && ys.passaggi === 2 && pushInviati.length === p0 + 1);
+  Object.assign(ys, { stato: 'aperta', preso_da: 'Ginevra' });
+  passo();
+  const r3 = await chiama(y, 'invia', { token: ya.d.token, client_id: randomUUID(), testo: 'Presa ma non ancora risposta' });
+  t('B4-3 aperta senza risposta dopo l\'ultimo passaggio: resta aperta, nessuna push (il sollecito corre gia\')', r3.d.ok === true && r3.d.stato === 'aperta' && ys.passaggi === 2 && pushInviati.length === p0 + 1);
+  Object.assign(ys, { ultima_risposta_staff_at: iso(clock.ora + 1000) });
+  passo();
+  const r4 = await chiama(y, 'invia', { token: ya.d.token, client_id: randomUUID(), bottone: 'spedizioni' });
+  t('B4-4 un bottone non apre mai un passaggio, neanche dopo una risposta', r4.d.ok === true && r4.d.stato === 'aperta' && ys.passaggi === 2 && pushInviati.length === p0 + 1);
+  const z = nuovo();
+  const za = await avvia(z);
+  const zs = sessioneDi(z, za.d.token);
+  Object.assign(zs, { stato: 'aperta', preso_da: 'Ale' });
+  passo();
+  const pz = pushInviati.length;
+  const r5 = await chiama(z, 'invia', { token: za.d.token, client_id: randomUUID(), testo: 'Ciao' });
+  t('B4-5 chat presa con prendo_io mentre era del bot (nessun passaggio): il testo apre il passaggio 1 con la push',
+    r5.d.ok === true && r5.d.stato === 'attesa_persona' && zs.passaggi === 1 && pushInviati.length === pz + 1);
+  Object.assign(zs, { stato: 'chiusa', chiusa_at: iso(clock.ora) });
+  passo();
+  const r6 = await chiama(z, 'invia', { token: za.d.token, client_id: randomUUID(), testo: 'Dopo la chiusura' });
+  t('B4-6 una chat chiusa non riceve messaggi (409), nessun passaggio', r6.r.status === 409 && zs.passaggi === 1 && pushInviati.length === pz + 1);
+  t('B4-7 aspettaIlTeam: passaggio senza risposta, risposta prima del passaggio, risposta uguale al passaggio',
+    M.aspettaIlTeam({ passaggio_at: '2026-11-09T10:00:00Z', ultima_risposta_staff_at: null })
+    && M.aspettaIlTeam({ passaggio_at: '2026-11-09T10:00:00Z', ultima_risposta_staff_at: '2026-11-09T09:59:59Z' })
+    && !M.aspettaIlTeam({ passaggio_at: '2026-11-09T10:00:00Z', ultima_risposta_staff_at: '2026-11-09T10:00:00Z' })
+    && !M.aspettaIlTeam({ passaggio_at: null, ultima_risposta_staff_at: null }));
+  clock.ora = Date.parse('2026-11-09T09:30:00Z');
+}
+
 console.log('\n== impronte: copie di push-eventi (8.7) e regole comuni ==');
 {
   const corpo = (src, nome) => { const i = src.indexOf(nome); if (i < 0) return null; const j = src.indexOf('\n}\n', i); return src.slice(i, j + 2); };
@@ -833,14 +912,19 @@ console.log('\n== guardie sul sorgente ==');
   t('G9 cs_faq e app_flags in sola lettura', !/from\('(cs_faq|app_flags)'\)\.(insert|update|upsert|delete)/.test(fuori));
   t('G10 health_log: una sola scrittura, k chat_api, e la gravita\' del giorno dai contatori', (fuori.match(/from\('health_log'\)/g) ?? []).length === 1 && !/k: '(?!chat_api)/.test(fuori) && /k: 'chat_api'/.test(fuori)
     && /in\('chiave', \['glob:sev_error', 'glob:sev_warn'\]\)/.test(fuori));
-  t('G11 niente write-api, PIN, change_log, cs_conversations o cs_messages (proiezione nel pezzo dei 25 punti)', !/write-api|\bpin\b|pin_hash|change_log|cs_conversations|cs_messages|cs_events/.test(codice));
-  t('G12 una sola RPC, quella dei contatori', [...codice.matchAll(/\.rpc\('([a-z_]+)'/g)].map((m) => m[1]).join() === 'chat_contatore_incrementa');
+  t('G11 niente write-api, PIN, change_log, cs_conversations o cs_messages (la proiezione passa solo dall\'RPC chat_proietta)', !/write-api|\bpin\b|pin_hash|change_log|cs_conversations|cs_messages|cs_events/.test(codice));
+  t('G12 due RPC: i contatori e la proiezione (api-3), una chiamata ciascuna', [...codice.matchAll(/\.rpc\('([a-z_]+)'/g)].map((m) => m[1]).sort().join() === 'chat_contatore_incrementa,chat_proietta');
+  t('G12b la proiezione si chiama dopo ogni scrittura della cliente (avvia col testo, invia testo e bottone, passaggio) e mai da aggiorna o riprendi',
+    (BLOCCO.match(/await proietta\(amb, s\.id, problemi\);/g) ?? []).length === 4
+    && !/proietta/.test((BLOCCO.match(/async function azioneAggiorna[\s\S]*?\n}\n/) ?? [''])[0]) && !/proietta/.test((BLOCCO.match(/async function azioneRiprendi[\s\S]*?\n}\n/) ?? [''])[0]));
   t('G13 fetch: solo siteverify (push via _shared/push.ts)', (fuori.match(/\bfetch\(/g) ?? []).length === 1 && /fetch\(SITEVERIFY_URL, \{ method: 'POST', body: new URLSearchParams\(\{ secret, response: token \}\), signal: AbortSignal\.timeout\(10000\) \}\)/.test(fuori) && !/\bfetch\(/.test(senzaCommenti(BLOCCO)));
   t('G14 importa _shared/push.ts (chat-api e\' importatrice: test 102) e l\'eco', /from '\.\.\/_shared\/push\.ts';/.test(SRC) && /import \{ rispondiEco \} from '\.\/eco\.ts';/.test(SRC) && /eco: rispondiEco,/.test(fuori));
   t('G15 le rotte dell\'eco sono solo le tre dello spike', JSON.stringify(M.ROTTE_ECO) === '["eco","misura","turnstile"]' && JSON.stringify(Object.keys(M.METODO).sort()) === '["aggiorna","avvia","config","errore","invia","passaggio","riprendi"]');
   t('G16 messaggi idempotenti su (sessione_id, client_msg_id); eventi sulla chiave', /onConflict: 'sessione_id,client_msg_id', ignoreDuplicates: true/.test(fuori) && /onConflict: 'chiave', ignoreDuplicates: true/.test(fuori));
   t('G17 le scritture non ritentano: retryOnce solo su select', [...fuori.matchAll(/retryOnce\(\(\) => sb\.from\('[a-z_]+'\)\.([a-z]+)\(/g)].every((m) => m[1] === 'select'));
-  t('G18 passaggio con update condizionato su stato e passaggi', /aggiornaSessione\(s\.id, patch, \{ stato: 'bot', passaggi: s\.passaggi \}\)/.test(BLOCCO));
+  t('G18 passaggio con update condizionato su stato e passaggi letti (B4: anche da aperta)', /aggiornaSessione\(s\.id, patch, \{ stato: s\.stato, passaggi: s\.passaggi \}\)/.test(BLOCCO)
+    && /const serveUnaPersona = \(s: Sessione\) => s\.stato === 'bot' \|\| \(s\.stato === 'aperta' && !aspettaIlTeam\(s\)\);/.test(BLOCCO)
+    && (BLOCCO.match(/await aPersona\(/g) ?? []).length === 2 && /s\.stato === 'bot' \? await aPersona\(amb, s, false\)/.test(BLOCCO));
   t('G19 host di prova legato all\'id del negozio', M.HOST_ANTEPRIMA_RE.test('abc-95215747399.shopifypreview.com') && !M.HOST_ANTEPRIMA_RE.test('abc-95215747399.shopifypreview.com.evil.it') && !M.HOST_ANTEPRIMA_RE.test('x.abc-95215747399.shopifypreview.com'));
   t('G20 il token di chat non finisce mai in un URL ne\' in un log', !/searchParams\.get\('token/.test(SRC) && !/console\.error\([^)]*token/.test(codice));
 }
