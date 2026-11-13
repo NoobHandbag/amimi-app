@@ -72,11 +72,18 @@ const vere = await confronta(faqTono);
 t('P1 con le voci risposta_chat (in fondo, in testa, mescolate) le risposte standard e gli esempi di tono di ogni bozza restano identici, per ogni categoria e lingua', vere.length === 0, vere);
 const campione = await faqTono(sbFinto(ORDINI.mescolate), null, 'en');
 t('P2 anche una conversazione senza categoria (dove entrano tutte le risposte) non vede nessuna voce della chat', campione.standard.length === 4 && campione.standard.every((s) => /^EN \d+$/.test(s)) && campione.tono.every((s) => /^IT \d+$/.test(s)), campione);
-// chi legge cs_faq: le edge che la nominano, e la PWA mai
-const edge = readdirSync(ROOT + 'supabase/functions', { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('_'))
-  .flatMap((d) => readdirSync(ROOT + 'supabase/functions/' + d.name).filter((f) => f.endsWith('.ts')).map((f) => `${d.name}/${f}`))
-  .filter((p) => /from\('cs_faq'\)/.test(read('supabase/functions/' + p))).sort();
-t('P3 leggono cs_faq solo chat-api, chat-staff e cs-assist (un lettore nuovo va guardato qui)', JSON.stringify(edge) === JSON.stringify(['chat-api/index.ts', 'chat-staff/index.ts', 'cs-assist/index.ts']), edge);
+// chi legge cs_faq: ogni file .ts sotto supabase/functions (anche _shared e sottocartelle) che NOMINA la tabella, con
+// qualunque virgolette o anche solo in una costante (Gate 2 del pezzo 7, C4: prima si cercava solo from('cs_faq')); e
+// ogni migrazione dopo la 0195 che crea una funzione o una vista che la nomina. Un lettore nuovo va guardato qui.
+const tuttiTs = (function cerca(dir) { return readdirSync(ROOT + dir, { withFileTypes: true }).flatMap((d) => d.isDirectory() ? cerca(dir + '/' + d.name) : d.name.endsWith('.ts') ? [dir + '/' + d.name] : []); })('supabase/functions');
+const lettori = (file) => file.filter((f) => /\bcs_faq\b/.test(f.testo)).map((f) => f.path.replace(/^supabase\/functions\//, '')).sort();
+const edge = lettori(tuttiTs.map((p) => ({ path: p, testo: read(p) })));
+t('P3 nominano cs_faq solo chat-api, chat-staff e cs-assist, fra tutte le edge e _shared (un lettore nuovo va guardato qui)', JSON.stringify(edge) === JSON.stringify(['chat-api/index.ts', 'chat-staff/index.ts', 'cs-assist/index.ts']), edge);
+const finto = [{ path: 'supabase/functions/_shared/nuovo.ts', testo: 'const T = "cs_faq"; sb.from(T)' }, { path: 'supabase/functions/x/y/z.ts', testo: '.from("cs_faq")' }];
+t('P3b autocontrollo: un lettore in _shared o in una sottocartella, con le doppie virgolette o una costante -> visto', JSON.stringify(lettori(finto)) === JSON.stringify(['_shared/nuovo.ts', 'x/y/z.ts']));
+const migrDopo = readdirSync(ROOT + 'supabase/migrations').filter((f) => /^\d{4}_/.test(f) && Number(f.slice(0, 4)) > 195)
+  .filter((f) => /create\s+(or\s+replace\s+)?(function|view|materialized\s+view)[\s\S]*\bcs_faq\b/i.test(read('supabase/migrations/' + f)));
+t('P3c nessuna migrazione dopo la 0195 crea funzioni o viste che leggono cs_faq', migrDopo.length === 0, migrDopo);
 const pwa = (function cerca(dir) { return readdirSync(ROOT + dir, { withFileTypes: true }).flatMap((d) => d.isDirectory() ? cerca(dir + '/' + d.name) : /\.(ts|tsx)$/.test(d.name) && /cs_faq/.test(read(dir + '/' + d.name)) ? [dir + '/' + d.name] : []); })('web/src');
 t('P4 la PWA non legge cs_faq (la scheda Chat passa da chat-staff)', pwa.length === 0, pwa);
 t('P5 cs-assist legge cs_faq in un punto solo e non nomina il tipo della chat', (ASSIST.match(/from\('cs_faq'\)/g) ?? []).length === 1 && !/risposta_chat/.test(ASSIST));
@@ -130,7 +137,8 @@ t('M15 il rollback scritto nella testata rimette chat_bottoni della 0186 (faq nu
 
 // ---- parte 3: la scheda Chat ----
 console.log('\n== scheda Chat ==');
-t('S1 la nota sotto ogni risposta dice se vale solo per la chat (risposta_chat) o e\' la stessa delle bozze', /tipo === 'risposta_chat' \? 'Vale solo per la chat: le bozze delle email non la usano\.' : 'È la stessa risposta standard che usano le bozze delle email\.'/.test(SCHEDA)
+t('S1 la nota sotto ogni risposta: solo chat (risposta_chat), la stessa delle bozze (solo faq e risposta_standard), altrimenti non usabile (Gate 2, C5)',
+  /tipo === 'risposta_chat' \? 'Vale solo per la chat: le bozze delle email non la usano\.'\s*: tipo === 'faq' \|\| tipo === 'risposta_standard' \? 'È la stessa risposta standard che usano le bozze delle email\.'\s*: 'Questa riga non può essere la risposta di un bottone/.test(SCHEDA)
   && /notaRisposta\(imp\?\.faq\.find\(\(f\) => f\.id === b\.faq\)\?\.tipo\)/.test(SCHEDA) && existsSync(ROOT + 'web/e2e/assistenza-chat.spec.ts')
   && /scheda Chat \(pezzo 7\)/.test(read('web/e2e/assistenza-chat.spec.ts')));
 

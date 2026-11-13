@@ -4,7 +4,8 @@
 --   1. importa UNA volta in `cs_faq` le 15 voci `faq-*` della Knowledge base di Shopify (metaobject
 --      `shopify--knowledge-base-fact`, testi decisi da Dan il 3 novembre 2026 e pubblicati quel giorno; letti
 --      dall'Admin API il 13 novembre 2026). Italiano = il testo pubblicato su Shopify, alla lettera; inglese = bozza
---      di Claude Code. Tutte e due da approvare dal team (D-15): finche' non approva restano bozze.
+--      di Claude Code. Tutte e due da approvare dal team (D-15): sono bozze, nessuna cliente le vede finche' la chat e'
+--      spenta, e l'accensione al go-live (`chat_sito_enabled`) aspetta quell'OK (Gate 2 del pezzo 7, C2).
 --   2. collega i quattro bottoni di `chat_bottoni` (nati nella 0186 con `faq` null) alle voci della chat:
 --      spedizioni -> faq-costi-e-tempi-spedizione, resi -> faq-reso-e-spedizione-reso,
 --      ritiri -> faq-ritiro-di-persona, ordine -> faq-dove-e-il-mio-ordine. Etichette dei bottoni invariate.

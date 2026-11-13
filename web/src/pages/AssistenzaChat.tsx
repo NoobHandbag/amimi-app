@@ -286,9 +286,12 @@ const TESTI: [string, string, string][] = [
 const CHIAVI_TESTO_SCHEDA = TESTI.map(([k]) => k);
 const leggiJson = <T,>(v: string | undefined, riserva: T): T => { try { return v ? (JSON.parse(v) as T) : riserva; } catch { return riserva; } };
 // pezzo 7 (migr 0195): le risposte dei bottoni sono voci `risposta_chat`, che le bozze delle email non leggono; una
-// risposta standard (`faq`, `risposta_standard`) puntata da un bottone e' invece la stessa delle bozze
-const notaRisposta =(tipo: string | undefined): string =>
-  tipo === 'risposta_chat' ? 'Vale solo per la chat: le bozze delle email non la usano.' : 'È la stessa risposta standard che usano le bozze delle email.';
+// risposta standard (`faq`, `risposta_standard`) puntata da un bottone e' invece la stessa delle bozze; ogni altro tipo
+// (un esempio di tono puntato per errore) chat-api non lo mostra e chat-staff non lo salva (Gate 2 del pezzo 7, C5)
+const notaRisposta = (tipo: string | undefined): string =>
+  tipo === 'risposta_chat' ? 'Vale solo per la chat: le bozze delle email non la usano.'
+    : tipo === 'faq' || tipo === 'risposta_standard' ? 'È la stessa risposta standard che usano le bozze delle email.'
+      : 'Questa riga non può essere la risposta di un bottone: il widget non la mostra. Chiedi a Code di collegare il bottone a una risposta.';
 
 export function ChatScheda({ ident, mostraProve, setMostraProve }: { ident: string; mostraProve: boolean; setMostraProve: (v: boolean) => void }) {
   const [imp, setImp] = useState<ImpostazioniChat | null>(null);

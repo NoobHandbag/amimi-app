@@ -210,16 +210,18 @@ test('scheda Chat (Gate 2, B3 e C4): salvare gli orari non cancella un testo non
 test('scheda Chat (pezzo 7): risposta della sola chat o risposta standard, la nota lo dice; il salvataggio va a conoscenza_testo', async ({ page }) => {
   const imp = {
     ...IMPOSTAZIONI,
-    valori: { ...IMPOSTAZIONI.valori, chat_bottoni: '[{"id":"spedizioni","it":"Spedizioni","en":"Shipping","faq":30},{"id":"resi","it":"Resi","en":"Returns","faq":7}]' },
+    valori: { ...IMPOSTAZIONI.valori, chat_bottoni: '[{"id":"spedizioni","it":"Spedizioni","en":"Shipping","faq":30},{"id":"resi","it":"Resi","en":"Returns","faq":7},{"id":"tono","it":"Tono","en":"Tone","faq":8}]' },
     faq: [
       { id: 30, tipo: 'risposta_chat', titolo: 'faq-costi-e-tempi-spedizione: Quanto costa la spedizione?', testo_it: 'Italia 3,90 EUR', testo_en: 'Italy EUR 3.90', attiva: true },
       { id: 7, tipo: 'risposta_standard', titolo: 'A1 spedizione', testo_it: 'Ciao [nome]', testo_en: 'Hi [name]', attiva: true },
+      { id: 8, tipo: 'esempio_tono', titolo: 'seed: restock', testo_it: 'Tono', testo_en: null, attiva: true },
     ],
   };
   const edge = await apri(page, { imp });
   await page.getByRole('button', { name: /Chat del sito: orari, promemoria e testi/ }).click();
   await expect(page.getByText('Vale solo per la chat: le bozze delle email non la usano.')).toHaveCount(1);
   await expect(page.getByText('È la stessa risposta standard che usano le bozze delle email.')).toHaveCount(1);
+  await expect(page.getByText('Questa riga non può essere la risposta di un bottone', { exact: false })).toHaveCount(1);
   await page.getByLabel('Risposta Spedizioni in italiano').fill('Italia 3,90 EUR, gratis sopra i 100 EUR');
   await page.getByRole('button', { name: 'Salva la risposta' }).first().click();
   await expect.poll(() => edge.filter((c) => c.fn === 'chat-staff' && c.body.action === 'conoscenza_testo').length).toBe(1);
