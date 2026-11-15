@@ -120,3 +120,7 @@ verify_jwt = false
 # Chat del sito, email da info@ (08-11, Fase 1 pezzo 3): chiave di servizio (da chat-staff) o PIN neutro del cron.
 [functions.chat-send]
 verify_jwt = false
+
+# Chat del sito, controllo giornaliero della home (15-11, Fase 1 pezzo 8): PIN neutro del cron o chiave di servizio.
+[functions.chat-controllo]
+verify_jwt = false

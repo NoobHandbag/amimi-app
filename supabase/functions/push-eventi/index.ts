@@ -40,6 +40,13 @@
 // Limiti accettati (Gate 2): se escono i pezzi piu' vecchi la data avanza e lo stesso prodotto avvisa di nuovo; un prodotto
 // rimesso offline con la stessa data non avvisa piu' (resta la scheda della Home).
 // Evento di stato: all'accensione i prodotti gia' fermi partono nella prima push. v_stock_fermo si LEGGE soltanto.
+// v11 (2026-11-15, chat del sito Fase 1 pezzo 8, docs/PROPOSTA_chat_sito.md 4.6 punto 2 e 8.10 riga 12, migr 0196):
+// chat_salute legge anche la riga health_log `chat_controllo` scritta ogni mattina dalla edge chat-controllo (controllo
+// in sola lettura dell'HTML della home: marcatore del nostro embed, Modalita' prova come attesa, niente Inbox, config con
+// firma valida). Una riga in `error` = push `embed:<giorno>`; con il controllo acceso (app_flags.chat_controllo_home
+// `copia` o `amimi.it`) e nessuna riga di oggi dalle 12 di Roma = push `embed_mancato:<giorno>` "controllo non fatto" (cron o
+// edge fermi: un controllo che smette in silenzio non e' un controllo). Della riga solo giorno, gravita' e conteggio, mai
+// la label (come cs_sync): il dettaglio sta in Salute.
 // Brief:Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
 // (Regola 19, migr 0166): scrive SOLO push_eventi_inviati (il registro), push_eventi (ultimo_giro_at, baseline_at) e la sua
 // riga di telemetria in health_log (k = 'push_eventi', una per giorno UTC: Gate 3 del 18-10, un giro che fallisce deve
@@ -955,16 +962,29 @@ function msgChatSollecito(cands: Cand[]): Msg[] {
 //   16 richieste a chat-api oltre la soglia (5.000, D-12; contatore glob:richieste): `quota:<g>`
 //   13 errori del widget oltre la soglia (20; contatore glob:errore, al tetto di 100 il beacon tace): `widget:<g>`
 //   v10 la proiezione in Assistenza fallita nel cron chat-proiezione (contatore glob:proiezione_ko, migr 0193): `proiezione:<g>`
+//   12 v11 il controllo giornaliero della home (riga health_log `chat_controllo` della edge chat-controllo, di oggi o di
+//      ieri) in `error`: `embed:<g>`; col controllo acceso (`modoControllo` `copia` o `amimi.it`) e nessuna riga di oggi
+//      dalle ORA_CONTROLLO_MANCATO di Roma: `embed_mancato:<oggi>` "non fatto" (chiave a parte, Gate 2 B1: con la stessa
+//      chiave un guasto vero trovato piu' tardi lo stesso giorno, da un controllo rifatto, non avrebbe avuto la sua push). Il cron gira alle 08:07 UTC (09:07 o 10:07 di
+//      Roma): a mezzogiorno la riga deve esserci. Una riga warn o ok (copia non controllata, link scaduto) non e' una push.
 // I contatori si leggono per oggi e ieri (UTC): un guasto delle 23:58 non si perde al cambio di giorno, e quello di ieri
 // gia' mandato e' `inviato` nel registro. Nel testo la data, non "oggi" (Gate 2, C4: fra mezzanotte e le 2 di Roma il
 // giorno UTC e' ancora quello prima).
 const ERRORI_BEACON_TETTO = 100;
+const ORA_CONTROLLO_MANCATO = 12;
+const MODI_CONTROLLO = ['copia', 'amimi.it'];
+const GIORNO_RE = /^\d{4}-\d{2}-\d{2}$/;
+// il valore di app_flags.chat_controllo_home come lo legge chat-controllo (modoDi): solo i due modi, il resto = spento
+function modoControllo(v: unknown): string {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return MODI_CONTROLLO.includes(s) ? s : '';
+}
 function sessioniDaChiavi(passaggi: Riga[]): string[] {
   const out: string[] = [];
   for (const e of passaggi ?? []) { const m = typeof e?.chiave === 'string' ? PASSAGGIO_CHIAVE_RE.exec(e.chiave.toLowerCase()) : null; if (m) out.push(m[1]); }
   return out;
 }
-function candChatSalute(o: { passaggi: Riga[]; email: Riga[]; prova: Record<string, boolean>; coda: number; contatori: Riga[]; limiti: Riga[]; ora: number; sogliaRichieste: number; sogliaWidget: number }): Cand[] {
+function candChatSalute(o: { passaggi: Riga[]; email: Riga[]; prova: Record<string, boolean>; coda: number; contatori: Riga[]; limiti: Riga[]; ora: number; sogliaRichieste: number; sogliaWidget: number; controllo?: Riga[] | null; modoControllo?: unknown }): Cand[] {
   const out: Cand[] = [];
   const oggi = giornoUtc(o.ora);
   const prova = (sid: string) => (o.prova?.[sid] === true ? '1' : '');
@@ -998,6 +1018,17 @@ function candChatSalute(o: { passaggi: Riga[]; email: Riga[]; prova: Record<stri
   for (const r of o.limiti ?? []) {
     const m = typeof r?.chiave === 'string' ? /^limite:(\d{4}-\d{2}-\d{2})$/.exec(r.chiave) : null;
     if (m) out.push({ chiave: `limite:${m[1]}`, ts: o.ora, rif: { tipo: 'limite', giorno: m[1], oggi: m[1] === oggi ? '1' : '' } });
+  }
+  // v11: controllo della home (riga 12 di 8.10). Il modo dice solo il titolo; la riga di un giorno vale anche se il modo e'
+  // cambiato dopo (un guasto visto resta un guasto). "Non fatto" solo con la lettura riuscita (controllo = elenco).
+  const modo = modoControllo(o.modoControllo), ieri = giornoUtc(o.ora - 86400000);
+  const righe = Array.isArray(o.controllo) ? o.controllo : null;
+  for (const r of righe ?? []) {
+    const g = typeof r?.day === 'string' && GIORNO_RE.test(r.day) ? r.day : '';
+    if (g && (g === oggi || g === ieri) && r.severity === 'error') out.push({ chiave: `embed:${g}`, ts: o.ora, rif: { tipo: 'embed', giorno: g, n: String(pos(r.n)), modo } });
+  }
+  if (modo && righe && !righe.some((r) => r?.day === oggi) && partiRoma(o.ora).h >= ORA_CONTROLLO_MANCATO) {
+    out.push({ chiave: `embed_mancato:${oggi}`, ts: o.ora, rif: { tipo: 'embed_mancato', giorno: oggi, modo } });
   }
   return ordinaRecenti(out);
 }
@@ -1037,6 +1068,12 @@ function msgChatSalute(cands: Cand[]): Msg[] {
       out.push({ ...base, titolo: 'Chat del sito: errori del widget', testo: c.rif.tetto
         ? `Tetto del beacon raggiunto nel giorno ${quando}: possibile abuso, gli errori veri del giorno non si vedono.`
         : `${plurale(n, 'errore', 'errori')} del widget nel giorno ${quando}, soglia ${Number(c.rif.soglia) || 0}.` });
+    } else if (c.rif.tipo === 'embed') {
+      // v11: la copia di prova prima del go-live, amimi.it dopo (app_flags.chat_controllo_home); il dettaglio in Salute
+      const dove = c.rif.modo === 'copia' ? 'della copia di prova' : 'della home';
+      out.push({ ...base, urgente: true, titolo: `Chat del sito: controllo ${dove} non superato`, testo: `Il controllo del giorno ${quando} ha trovato ${n > 0 ? plurale(n, 'problema', 'problemi') : 'un problema'} fra embed della chat, Modalita' prova, chat di Inbox e config con firma valida. Dettagli in Salute.` });
+    } else if (c.rif.tipo === 'embed_mancato') {
+      out.push({ ...base, titolo: 'Chat del sito: controllo della home non fatto', testo: `La edge chat-controllo non ha scritto la sua riga in Salute il giorno ${quando} (cron delle 08:07 UTC): il controllo della chat sul sito oggi non c'e'. Serve Claude Code.` });
     }
   }
   return out;
@@ -1699,8 +1736,12 @@ const EVENTI: Record<string, DefEvento> = {
       if (cErr) throw new LetturaFallita('contatori della chat', cErr);
       const { data: lim, error: lErr } = await retryOnce(() => sb.from('chat_eventi').select('chiave').in('chiave', [`limite:${ieri}`, `limite:${oggi}`]).limit(3));
       if (lErr) throw new LetturaFallita('tetto delle chat', lErr);
+      // v11: la riga del controllo della home di oggi e di ieri (edge chat-controllo): giorno, gravita' e conteggio, mai la label
+      const { data: ctl, error: kErr } = await retryOnce(() => sb.from('health_log').select('day, severity, n').eq('k', 'chat_controllo').in('day', [ieri, oggi]).limit(3));
+      if (kErr) throw new LetturaFallita('controllo della home', kErr);
       return candChatSalute({ passaggi: (pas ?? []) as Riga[], email: (em ?? []) as Riga[], prova, coda: coda + ferme, contatori: (cont ?? []) as Riga[], limiti: (lim ?? []) as Riga[],
-        ora: ctx.ora, sogliaRichieste: soglia(ev.soglie, 'richieste_giorno', 5000, 100, 1000000), sogliaWidget: soglia(ev.soglie, 'errori_widget', 20, 1, 100) });
+        ora: ctx.ora, sogliaRichieste: soglia(ev.soglie, 'richieste_giorno', 5000, 100, 1000000), sogliaWidget: soglia(ev.soglie, 'errori_widget', 20, 1, 100),
+        controllo: (ctl ?? []) as Riga[], modoControllo: ctx.flags.chat_controllo_home });
     },
     componi: async (_sb, _ctx, _ev, cands) => msgChatSalute(cands),
   },
@@ -1938,7 +1979,7 @@ Deno.serve(async (req) => {
   }
 
   // 2) flag: whitelist esplicita (CONOSCENZA 02-08), lettura controllata
-  const { data: frows, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['push_eventi_enabled', 'push_enabled', 'lead_outreach_ai_enabled', 'loyalty_pool_min', 'chat_sollecito_ore', 'chat_orari']).limit(10));
+  const { data: frows, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['push_eventi_enabled', 'push_enabled', 'lead_outreach_ai_enabled', 'loyalty_pool_min', 'chat_sollecito_ore', 'chat_orari', 'chat_controllo_home']).limit(10));
   if (fErr) return json({ ok: false, error: 'flag non leggibili, riprova' }, 503);
   const flags: Record<string, string> = {};
   for (const r of (frows ?? []) as { key: string; value: unknown }[]) flags[r.key] = typeof r.value === 'string' ? r.value : '';

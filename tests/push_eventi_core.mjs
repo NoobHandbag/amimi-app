@@ -62,6 +62,8 @@ const ESPORTA = ['APP_URL', 'LINK_ASSISTENZA', 'LINK_SALUTE', 'CHI_PERSONE', 'TE
   // 08-11 (v7): chat del sito
   'orariChat', 'oreSollecito', 'ORARI_CHAT_DEFAULT', 'dovutoDopo', 'inOrarioChat', 'giornoUtc', 'PRESO_DA', 'chiaviPassaggio', 'candChatPassaggio', 'candChatSollecito',
   'oreTesto', 'msgChatSollecito', 'candChatSalute', 'msgChatSalute',
+  // 15-11 (v11): controllo giornaliero della home
+  'modoControllo', 'ORA_CONTROLLO_MANCATO',
   // 09-11 (v9): pezzi fermi non in vendita
   'candStockFermo', 'msgGruppoStockFermo'];
 // Gate 3 (18-10): il resto della edge (letture degli eventi, giro, run, salute, anteprima) ritagliato DAL SORGENTE e
@@ -96,7 +98,7 @@ const { APP_URL, LINK_ASSISTENZA, LINK_SALUTE, CHI_PERSONE, TEMA_EVENTO, temaDi,
   statoProblema, contaProblemi, PROBLEMI_CORRIERE, candAttivita, msgGruppoAttivita, msgAttivita, PERSONA_TEAM, OP_ATTIVITA, eseguiGruppi,
   LINK_RECENSIONI, LINK_PREMIA, candPremia, msgPremia, candPremiaSalute, msgPremiaSalute, contaIscritte, candSenzaIscritti, msgSenzaIscritti,
   orariChat, oreSollecito, ORARI_CHAT_DEFAULT, dovutoDopo, inOrarioChat, giornoUtc, PRESO_DA, chiaviPassaggio, candChatPassaggio, candChatSollecito,
-  oreTesto, msgChatSollecito, candChatSalute, msgChatSalute, candStockFermo, msgGruppoStockFermo } = M;
+  oreTesto, msgChatSollecito, candChatSalute, msgChatSalute, candStockFermo, msgGruppoStockFermo, modoControllo, ORA_CONTROLLO_MANCATO } = M;
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra !== '' ? '  <- ' + JSON.stringify(extra).slice(0, 260) : '')); } };
@@ -1287,6 +1289,37 @@ try {
     && msgChatSalute(candChatSalute({ ...baseSal, passaggi: [], email: [], coda: 0, contatori: [], limiti: [{ chiave: 'limite:2026-11-08' }] }))[0].testo === 'Raggiunto il tetto delle chat nuove del giorno 8 novembre (UTC). Se e\' un abuso, spegni l\'embed della chat.' && candChatSalute({ ...baseSal, passaggi: [], email: [], coda: 0, limiti: [], contatori: SAL_CONT, sogliaRichieste: 6000, sogliaWidget: 200 }).every((c) => !/^(quota|widget):/.test(c.chiave))
     && candChatSalute({ ...baseSal, passaggi: null, email: null, coda: NaN, contatori: null, limiti: null, prova: null }).length === 0);
 
+  // v11 (15-11, pezzo 8): la riga del controllo della home (edge chat-controllo, health_log `chat_controllo`)
+  const vuotoSal = { ...baseSal, passaggi: [], email: [], coda: 0, contatori: [], limiti: [] };
+  const ORA_12 = T('2026-11-09T11:30:00Z'), ORA_11 = T('2026-11-09T10:30:00Z');
+  const chiaviE = (o) => candChatSalute({ ...vuotoSal, ...o }).map((c) => `${c.chiave}|${c.rif.tipo}|${c.rif.modo}`);
+  const RIGHE_CTL = [{ day: '2026-11-09', severity: 'error', n: 2 }, { day: '2026-11-08', severity: 'error', n: 1 }, { day: '2026-11-07', severity: 'error', n: 1 },
+    { day: '2026-11-09', severity: 'warn', n: 0 }, { day: 'boh', severity: 'error', n: 1 }, null];
+  t('CH27 controllo della home: una riga `error` di oggi o di ieri (UTC) = `embed:<giorno>`; piu\' vecchia, warn, ok o giorno storto no; il modo solo per il titolo, letto come chat-controllo (copia, amimi.it, il resto spento)',
+    isDeepStrictEqual(chiaviE({ controllo: RIGHE_CTL, modoControllo: ' Copia ' }), ['embed:2026-11-09|embed|copia', 'embed:2026-11-08|embed|copia'])
+    && isDeepStrictEqual(chiaviE({ controllo: [{ day: '2026-11-09', severity: 'ok', n: 0 }, { day: '2026-11-08', severity: 'warn', n: 0 }], modoControllo: 'amimi.it' }), [])
+    && isDeepStrictEqual(chiaviE({ controllo: RIGHE_CTL.slice(0, 1), modoControllo: 'spento' }), ['embed:2026-11-09|embed|'])
+    && modoControllo('AMIMI.IT') === 'amimi.it' && modoControllo('copia') === 'copia' && modoControllo('amimi') === '' && modoControllo(null) === '' && ORA_CONTROLLO_MANCATO === 12,
+    chiaviE({ controllo: RIGHE_CTL, modoControllo: ' Copia ' }));
+  t('CH28 controllo "non fatto": modo acceso, lettura riuscita senza la riga di oggi e dalle 12 di Roma (11:30 UTC = 12:30); non prima, non a controllo spento, non con una riga di oggi (anche ok o warn), non con la lettura che manca',
+    isDeepStrictEqual(chiaviE({ ora: ORA_12, controllo: [{ day: '2026-11-08', severity: 'ok', n: 0 }], modoControllo: 'copia' }), ['embed_mancato:2026-11-09|embed_mancato|copia'])
+    && isDeepStrictEqual(chiaviE({ ora: ORA_12, controllo: [], modoControllo: 'amimi.it' }), ['embed_mancato:2026-11-09|embed_mancato|amimi.it'])
+    && chiaviE({ ora: ORA_11, controllo: [], modoControllo: 'copia' }).length === 0 && chiaviE({ ora: ORA_12, controllo: [], modoControllo: 'spento' }).length === 0
+    && chiaviE({ ora: ORA_12, controllo: [], modoControllo: undefined }).length === 0 && chiaviE({ ora: ORA_12, controllo: [{ day: '2026-11-09', severity: 'warn', n: 0 }], modoControllo: 'copia' }).length === 0
+    && chiaviE({ ora: ORA_12, controllo: null, modoControllo: 'copia' }).length === 0 && chiaviE({ ora: ORA_12, modoControllo: 'copia' }).length === 0
+    // una riga error di oggi E il modo acceso: solo la push del guasto visto ("non fatto" vuole che la riga manchi)
+    && isDeepStrictEqual(chiaviE({ ora: ORA_12, controllo: [{ day: '2026-11-09', severity: 'error', n: 1 }], modoControllo: 'amimi.it' }), ['embed:2026-11-09|embed|amimi.it']));
+  const mE = msgChatSalute([...candChatSalute({ ...vuotoSal, controllo: [{ day: '2026-11-09', severity: 'error', n: 2 }], modoControllo: 'amimi.it' }),
+    ...candChatSalute({ ...vuotoSal, controllo: [{ day: '2026-11-08', severity: 'error', n: 1 }], modoControllo: 'copia' }),
+    ...candChatSalute({ ...vuotoSal, ora: ORA_12, controllo: [], modoControllo: 'copia' })]);
+  t('CH29 testi del controllo: senza dati della cliente e senza la label, tema sistema, #salute; il guasto urgente, "non fatto" no; il titolo dice copia o home',
+    isDeepStrictEqual(mE.map((m) => [m.chiave, m.titolo, m.testo, m.urgente === true]), [
+      ['embed:2026-11-09', 'Chat del sito: controllo della home non superato', 'Il controllo del giorno 9 novembre (UTC) ha trovato 2 problemi fra embed della chat, Modalita\' prova, chat di Inbox e config con firma valida. Dettagli in Salute.', true],
+      ['embed:2026-11-08', 'Chat del sito: controllo della copia di prova non superato', 'Il controllo del giorno 8 novembre (UTC) ha trovato 1 problema fra embed della chat, Modalita\' prova, chat di Inbox e config con firma valida. Dettagli in Salute.', true],
+      ['embed_mancato:2026-11-09', 'Chat del sito: controllo della home non fatto', 'La edge chat-controllo non ha scritto la sua riga in Salute il giorno 9 novembre (UTC) (cron delle 08:07 UTC): il controllo della chat sul sito oggi non c\'e\'. Serve Claude Code.', false],
+    ]) && mE.every((m) => m.tema === 'sistema' && m.url === LINK_SALUTE && !('chi' in m)) && perdeTutto(mE).length === 0 && testoValido(mE)
+    && msgChatSalute(candChatSalute({ ...vuotoSal, controllo: [{ day: '2026-11-09', severity: 'error', n: 'x' }] }))[0].testo.includes('ha trovato un problema fra'), mE);
+
   // letture per firma, col client finto
   const SESS_DB = SESS.filter(Boolean);
   const fSess = (ora) => `chat_sessioni select id, stato, passaggi, passaggio_at, ultima_risposta_staff_at, preso_da, prova, customer_name, customer_email in:stato|${JSON.stringify(['attesa_persona', 'aperta'])} gte:passaggio_at|${isoC(ora - 30 * 86400000)} passaggio_at:asc limit:501`;
@@ -1302,6 +1335,8 @@ try {
     [`chat_messaggi select id head eq:autore|staff eq:email_stato|prenotata lt:email_at|${isoC(ora - 20 * MIN)}`]: { count: 1 },
     [`chat_contatori select chiave, finestra, n in:chiave|${JSON.stringify(['glob:sev_error', 'glob:richieste', 'glob:errore', 'glob:proiezione_ko'])} in:finestra|${JSON.stringify(['2026-11-08T00:00:00Z', '2026-11-09T00:00:00Z'])} limit:9`]: { data: SAL_CONT },
     [`chat_eventi select chiave in:chiave|${JSON.stringify(['limite:2026-11-08', 'limite:2026-11-09'])} limit:3`]: { data: SAL_LIM },
+    // v11 (pezzo 8): la riga del controllo della home di ieri e di oggi
+    [`health_log select day, severity, n eq:k|chat_controllo in:day|${JSON.stringify(['2026-11-08', '2026-11-09'])} limit:3`]: { data: [] },
   });
   const LETTURE_C = lettureC(ORA_C);
   const FLAGS_C = { chat_orari: '{"tz": "Europe/Rome", "alle": "18:00", "dalle": "09:00", "giorni": [1, 2, 3, 4, 5], "chiusure": []}', chat_sollecito_ore: '24,48' };
@@ -1342,9 +1377,10 @@ try {
     await errC('chat_salute', (q, f) => (f.includes('eq:email_stato|prenotata') ? giu : undefined)),
     await errC('chat_salute', (q) => (q.table === 'chat_contatori' ? giu : undefined)),
     await errC('chat_salute', (q, f) => (f.startsWith('chat_eventi select chiave in:') ? giu : undefined)),
+    await errC('chat_salute', (q, f) => (f.includes('eq:k|chat_controllo') ? giu : undefined)),
   ];
   t('CH23 Regola 20: ogni lettura fallita o troncata ferma l\'evento con la sua causa, mai un default vuoto', isDeepStrictEqual(causeC, ['chat in attesa', 'chat in attesa', 'push di passaggio', 'chat in attesa',
-    'push di passaggio non arrivate', 'push di passaggio non arrivate', 'email non partite', 'chat dei guasti', 'email in coda', 'email prenotate ferme', 'contatori della chat', 'tetto delle chat']), causeC);
+    'push di passaggio non arrivate', 'push di passaggio non arrivate', 'email non partite', 'chat dei guasti', 'email in coda', 'email prenotate ferme', 'contatori della chat', 'tetto delle chat', 'controllo della home']), causeC);
 
   // il giro vero: solleciti accesi da un po' (nessuna baseline), salute alla prima accensione (evento di stato)
   inviate.length = 0;
@@ -1369,6 +1405,42 @@ try {
   const g3 = await (await MI.eseguiRun(wb.sb, ctxC)).json();
   t('CH26 prima accensione dei solleciti: il pregresso si segna `saltato` baseline, nessuna push (si accendono prima della chat)', inviate.splice(0).length === 0 && g3.inviati === 0
     && [...wb.reg.values()].length === 7 && [...wb.reg.values()].every((r) => r.stato === 'saltato' && r.esito?.motivo === 'baseline'), [...wb.reg.values()]);
+  // v11: il giro vero con la riga `error` del controllo di oggi: una push al tema sistema, il giro dopo nessun doppione
+  const HL_CTL = `health_log select day, severity, n eq:k|chat_controllo in:day|${JSON.stringify(['2026-11-08', '2026-11-09'])} limit:3`;
+  const L_E = {
+    [`chat_eventi select chiave, esito, at, status:dettaglio->>status eq:tipo|push_passaggio in:esito|${JSON.stringify(['nessun_iscritto', 'fallito', 'prenotato'])} gte:at|${isoC(ORA_C - 24 * 3600000)} at:desc limit:201`]: { data: [] },
+    [`chat_messaggi select id, sessione_id, email_errore, email_at eq:autore|staff eq:email_stato|errore gte:email_at|${isoC(ORA_C - 24 * 3600000)} email_at:desc limit:201`]: { data: [] },
+    [`chat_messaggi select id head eq:autore|staff is:email_stato|null lt:created_at|${isoC(ORA_C - 10 * MIN)}`]: { count: 0 },
+    [`chat_messaggi select id head eq:autore|staff eq:email_stato|prenotata lt:email_at|${isoC(ORA_C - 20 * MIN)}`]: { count: 0 },
+    [`chat_contatori select chiave, finestra, n in:chiave|${JSON.stringify(['glob:sev_error', 'glob:richieste', 'glob:errore', 'glob:proiezione_ko'])} in:finestra|${JSON.stringify(['2026-11-08T00:00:00Z', '2026-11-09T00:00:00Z'])} limit:9`]: { data: [] },
+    [`chat_eventi select chiave in:chiave|${JSON.stringify(['limite:2026-11-08', 'limite:2026-11-09'])} limit:3`]: { data: [] },
+    [HL_CTL]: { data: [{ day: '2026-11-09', severity: 'error', n: 1 }] } };
+  const we = mondo({ eventi: [evAcc('chat_salute')], risposte: rispDi(L_E) });
+  const ge1 = await (await MI.eseguiRun(we.sb, ctxDi(ORA_C, { ...FLAGS_C, chat_controllo_home: 'amimi.it' }))).json();
+  const ie1 = inviate.splice(0);
+  const we2 = mondo({ eventi: [evAcc('chat_salute')], risposte: rispDi(L_E), registro: [...we.reg.values()] });
+  const ge2 = await (await MI.eseguiRun(we2.sb, ctxDi(ORA_C + 5 * MIN, { ...FLAGS_C, chat_controllo_home: 'amimi.it' }))).json();
+  t('CH30 giro con la riga `error` del controllo: UNA push "controllo della home non superato" al tema sistema, registro `embed:2026-11-09` inviato; il giro dopo niente',
+    ie1.length === 1 && ie1[0].tema === 'sistema' && ie1[0].titolo === 'Chat del sito: controllo della home non superato' && ge1.inviati === 1
+    && we.reg.get('embed:2026-11-09')?.stato === 'inviato' && inviate.splice(0).length === 0 && ge2.inviati === 0, { ie1, ge1: ge1.eventi, ge2: ge2.eventi });
+  // Gate 2, B1: alle 12:30 di Roma nessuna riga -> "non fatto"; piu' tardi un controllo rifatto scrive `error` -> anche la sua push
+  const ORA_B1 = T('2026-11-09T11:30:00Z');
+  const LB1 = (righe, ora) => ({ ...Object.fromEntries(Object.entries(L_E).filter(([f]) => !f.startsWith('chat_eventi select chiave, esito') && !f.startsWith('chat_messaggi select id, sessione_id') && !f.startsWith('chat_messaggi select id head'))),
+    [`chat_eventi select chiave, esito, at, status:dettaglio->>status eq:tipo|push_passaggio in:esito|${JSON.stringify(['nessun_iscritto', 'fallito', 'prenotato'])} gte:at|${isoC(ora - 24 * 3600000)} at:desc limit:201`]: { data: [] },
+    [`chat_messaggi select id, sessione_id, email_errore, email_at eq:autore|staff eq:email_stato|errore gte:email_at|${isoC(ora - 24 * 3600000)} email_at:desc limit:201`]: { data: [] },
+    [`chat_messaggi select id head eq:autore|staff is:email_stato|null lt:created_at|${isoC(ora - 10 * MIN)}`]: { count: 0 },
+    [`chat_messaggi select id head eq:autore|staff eq:email_stato|prenotata lt:email_at|${isoC(ora - 20 * MIN)}`]: { count: 0 },
+    [HL_CTL]: { data: righe } });
+  const wb1 = mondo({ eventi: [evAcc('chat_salute')], risposte: rispDi(LB1([], ORA_B1)) });
+  const gb1 = await (await MI.eseguiRun(wb1.sb, ctxDi(ORA_B1, { ...FLAGS_C, chat_controllo_home: 'copia' }))).json();
+  const ib1 = inviate.splice(0);
+  const ORA_B2 = ORA_B1 + 3 * 3600000;
+  const wb2 = mondo({ eventi: [evAcc('chat_salute')], risposte: rispDi(LB1([{ day: '2026-11-09', severity: 'error', n: 1 }], ORA_B2)), registro: [...wb1.reg.values()] });
+  const gb2 = await (await MI.eseguiRun(wb2.sb, ctxDi(ORA_B2, { ...FLAGS_C, chat_controllo_home: 'copia' }))).json();
+  const ib2 = inviate.splice(0);
+  t('CH31 Gate 2, B1: "non fatto" a mezzogiorno e poi, lo stesso giorno, il guasto vero di un controllo rifatto: due push con chiavi diverse (embed_mancato e embed)',
+    ib1.length === 1 && ib1[0].titolo === 'Chat del sito: controllo della home non fatto' && wb1.reg.get('embed_mancato:2026-11-09')?.stato === 'inviato' && gb1.inviati === 1
+    && ib2.length === 1 && ib2[0].titolo === 'Chat del sito: controllo della copia di prova non superato' && wb2.reg.get('embed:2026-11-09')?.stato === 'inviato' && gb2.inviati === 1, { ib1, ib2, gb1: gb1.eventi, gb2: gb2.eventi });
 } catch (e) { t('CH! eccezione nella sezione', false, String(e?.stack ?? e)); }
 
 console.log('\n== RF-1: la riga cs_sync letta nel buco del delete+insert di cs-sync ==');
@@ -1874,7 +1946,7 @@ const noopAFlagSpento = (s) => {
   const n = f.indexOf(NOOP), r = f.indexOf(RUN_DOPO_NOOP);
   return n > f.indexOf("if (action === 'anteprima') return await anteprima(") && r > n && (codice(s).match(/eseguiRun\(sb, ctx/g) ?? []).length === 1
     && !/\.from\('push_eventi'\)/.test(f) && corpoRun(s).includes(SOLO_ATTIVI)
-    && f.includes("const { data: frows, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['push_eventi_enabled', 'push_enabled', 'lead_outreach_ai_enabled', 'loyalty_pool_min', 'chat_sollecito_ore', 'chat_orari']).limit(10));")
+    && f.includes("const { data: frows, error: fErr } = await retryOnce(() => sb.from('app_flags').select('key, value').in('key', ['push_eventi_enabled', 'push_enabled', 'lead_outreach_ai_enabled', 'loyalty_pool_min', 'chat_sollecito_ore', 'chat_orari', 'chat_controllo_home']).limit(10));")
     && f.includes("if (fErr) return json({ ok: false, error: 'flag non leggibili, riprova' }, 503);");
 };
 const soloAttivi = (s) => {
@@ -1905,6 +1977,8 @@ const AMMESSE = {
   // chiavi, persone o etichette dei dispositivi)
   push_temi: ['key', 'etichetta', 'attivo'], push_subscriptions: ['id'],
   'health_log:cs_sync': ['severity', 'created_at'], 'health_log:push_eventi': ['severity', 'label'],
+  // 15-11 (v11, pezzo 8): della riga del controllo della home giorno, gravita' e conteggio, mai la label (il dettaglio sta in Salute)
+  'health_log:chat_controllo': ['day', 'severity', 'n'],
   cs_events: ['id', 'conversation_id', 'azione', 'at', 'dettaglio->>urgente', 'dettaglio->>a'],
   // customer_name e customer_email dal 19-10 (decisione di Dan), e SOLO nelle due letture di LETTURE_CLIENTE (caso N13)
   cs_conversations: ['id', 'canale', 'categoria', 'urgente', 'urgenza_motivo', 'stato', 'stato_by', 'customer_name', 'customer_email'],
