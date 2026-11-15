@@ -1302,12 +1302,12 @@ try {
     && modoControllo('AMIMI.IT') === 'amimi.it' && modoControllo('copia') === 'copia' && modoControllo('amimi') === '' && modoControllo(null) === '' && ORA_CONTROLLO_MANCATO === 12,
     chiaviE({ controllo: RIGHE_CTL, modoControllo: ' Copia ' }));
   t('CH28 controllo "non fatto": modo acceso, lettura riuscita senza la riga di oggi e dalle 12 di Roma (11:30 UTC = 12:30); non prima, non a controllo spento, non con una riga di oggi (anche ok o warn), non con la lettura che manca',
-    isDeepStrictEqual(chiaviE({ ora: ORA_12, controllo: [{ day: '2026-11-08', severity: 'ok', n: 0 }], modoControllo: 'copia' }), ['embed:2026-11-09|embed_mancato|copia'])
-    && isDeepStrictEqual(chiaviE({ ora: ORA_12, controllo: [], modoControllo: 'amimi.it' }), ['embed:2026-11-09|embed_mancato|amimi.it'])
+    isDeepStrictEqual(chiaviE({ ora: ORA_12, controllo: [{ day: '2026-11-08', severity: 'ok', n: 0 }], modoControllo: 'copia' }), ['embed_mancato:2026-11-09|embed_mancato|copia'])
+    && isDeepStrictEqual(chiaviE({ ora: ORA_12, controllo: [], modoControllo: 'amimi.it' }), ['embed_mancato:2026-11-09|embed_mancato|amimi.it'])
     && chiaviE({ ora: ORA_11, controllo: [], modoControllo: 'copia' }).length === 0 && chiaviE({ ora: ORA_12, controllo: [], modoControllo: 'spento' }).length === 0
     && chiaviE({ ora: ORA_12, controllo: [], modoControllo: undefined }).length === 0 && chiaviE({ ora: ORA_12, controllo: [{ day: '2026-11-09', severity: 'warn', n: 0 }], modoControllo: 'copia' }).length === 0
     && chiaviE({ ora: ORA_12, controllo: null, modoControllo: 'copia' }).length === 0 && chiaviE({ ora: ORA_12, modoControllo: 'copia' }).length === 0
-    // una riga error di oggi E il modo acceso: una push sola (stessa chiave), quella del guasto visto
+    // una riga error di oggi E il modo acceso: solo la push del guasto visto ("non fatto" vuole che la riga manchi)
     && isDeepStrictEqual(chiaviE({ ora: ORA_12, controllo: [{ day: '2026-11-09', severity: 'error', n: 1 }], modoControllo: 'amimi.it' }), ['embed:2026-11-09|embed|amimi.it']));
   const mE = msgChatSalute([...candChatSalute({ ...vuotoSal, controllo: [{ day: '2026-11-09', severity: 'error', n: 2 }], modoControllo: 'amimi.it' }),
     ...candChatSalute({ ...vuotoSal, controllo: [{ day: '2026-11-08', severity: 'error', n: 1 }], modoControllo: 'copia' }),
@@ -1316,7 +1316,7 @@ try {
     isDeepStrictEqual(mE.map((m) => [m.chiave, m.titolo, m.testo, m.urgente === true]), [
       ['embed:2026-11-09', 'Chat del sito: controllo della home non superato', 'Il controllo del giorno 9 novembre (UTC) ha trovato 2 problemi fra embed della chat, Modalita\' prova, chat di Inbox e config con firma valida. Dettagli in Salute.', true],
       ['embed:2026-11-08', 'Chat del sito: controllo della copia di prova non superato', 'Il controllo del giorno 8 novembre (UTC) ha trovato 1 problema fra embed della chat, Modalita\' prova, chat di Inbox e config con firma valida. Dettagli in Salute.', true],
-      ['embed:2026-11-09', 'Chat del sito: controllo della home non fatto', 'La edge chat-controllo non ha scritto la sua riga in Salute il giorno 9 novembre (UTC) (cron delle 08:07 UTC): il controllo della chat sul sito oggi non c\'e\'. Serve Claude Code.', false],
+      ['embed_mancato:2026-11-09', 'Chat del sito: controllo della home non fatto', 'La edge chat-controllo non ha scritto la sua riga in Salute il giorno 9 novembre (UTC) (cron delle 08:07 UTC): il controllo della chat sul sito oggi non c\'e\'. Serve Claude Code.', false],
     ]) && mE.every((m) => m.tema === 'sistema' && m.url === LINK_SALUTE && !('chi' in m)) && perdeTutto(mE).length === 0 && testoValido(mE)
     && msgChatSalute(candChatSalute({ ...vuotoSal, controllo: [{ day: '2026-11-09', severity: 'error', n: 'x' }] }))[0].testo.includes('ha trovato un problema fra'), mE);
 
@@ -1423,6 +1423,24 @@ try {
   t('CH30 giro con la riga `error` del controllo: UNA push "controllo della home non superato" al tema sistema, registro `embed:2026-11-09` inviato; il giro dopo niente',
     ie1.length === 1 && ie1[0].tema === 'sistema' && ie1[0].titolo === 'Chat del sito: controllo della home non superato' && ge1.inviati === 1
     && we.reg.get('embed:2026-11-09')?.stato === 'inviato' && inviate.splice(0).length === 0 && ge2.inviati === 0, { ie1, ge1: ge1.eventi, ge2: ge2.eventi });
+  // Gate 2, B1: alle 12:30 di Roma nessuna riga -> "non fatto"; piu' tardi un controllo rifatto scrive `error` -> anche la sua push
+  const ORA_B1 = T('2026-11-09T11:30:00Z');
+  const LB1 = (righe, ora) => ({ ...Object.fromEntries(Object.entries(L_E).filter(([f]) => !f.startsWith('chat_eventi select chiave, esito') && !f.startsWith('chat_messaggi select id, sessione_id') && !f.startsWith('chat_messaggi select id head'))),
+    [`chat_eventi select chiave, esito, at, status:dettaglio->>status eq:tipo|push_passaggio in:esito|${JSON.stringify(['nessun_iscritto', 'fallito', 'prenotato'])} gte:at|${isoC(ora - 24 * 3600000)} at:desc limit:201`]: { data: [] },
+    [`chat_messaggi select id, sessione_id, email_errore, email_at eq:autore|staff eq:email_stato|errore gte:email_at|${isoC(ora - 24 * 3600000)} email_at:desc limit:201`]: { data: [] },
+    [`chat_messaggi select id head eq:autore|staff is:email_stato|null lt:created_at|${isoC(ora - 10 * MIN)}`]: { count: 0 },
+    [`chat_messaggi select id head eq:autore|staff eq:email_stato|prenotata lt:email_at|${isoC(ora - 20 * MIN)}`]: { count: 0 },
+    [HL_CTL]: { data: righe } });
+  const wb1 = mondo({ eventi: [evAcc('chat_salute')], risposte: rispDi(LB1([], ORA_B1)) });
+  const gb1 = await (await MI.eseguiRun(wb1.sb, ctxDi(ORA_B1, { ...FLAGS_C, chat_controllo_home: 'copia' }))).json();
+  const ib1 = inviate.splice(0);
+  const ORA_B2 = ORA_B1 + 3 * 3600000;
+  const wb2 = mondo({ eventi: [evAcc('chat_salute')], risposte: rispDi(LB1([{ day: '2026-11-09', severity: 'error', n: 1 }], ORA_B2)), registro: [...wb1.reg.values()] });
+  const gb2 = await (await MI.eseguiRun(wb2.sb, ctxDi(ORA_B2, { ...FLAGS_C, chat_controllo_home: 'copia' }))).json();
+  const ib2 = inviate.splice(0);
+  t('CH31 Gate 2, B1: "non fatto" a mezzogiorno e poi, lo stesso giorno, il guasto vero di un controllo rifatto: due push con chiavi diverse (embed_mancato e embed)',
+    ib1.length === 1 && ib1[0].titolo === 'Chat del sito: controllo della home non fatto' && wb1.reg.get('embed_mancato:2026-11-09')?.stato === 'inviato' && gb1.inviati === 1
+    && ib2.length === 1 && ib2[0].titolo === 'Chat del sito: controllo della copia di prova non superato' && wb2.reg.get('embed:2026-11-09')?.stato === 'inviato' && gb2.inviati === 1, { ib1, ib2, gb1: gb1.eventi, gb2: gb2.eventi });
 } catch (e) { t('CH! eccezione nella sezione', false, String(e?.stack ?? e)); }
 
 console.log('\n== RF-1: la riga cs_sync letta nel buco del delete+insert di cs-sync ==');

@@ -20,9 +20,14 @@
 // controllata ogni verifica mancata, e su amimi.it anche la home non leggibile, e' un `error` e diventa la push. La (4)
 // non dipende dal link: se manca e' sempre un `error`.
 //
+// Gate 2 (15-11, revisore indipendente e refuter): B2, prima del go-live si legge ANCHE amimi.it, e il nostro embed sul tema
+// pubblicato (la copia di prova pubblicata per sbaglio: chat in Modalita' prova e Inbox spento sul sito vero) e' un `error`;
+// C1, il PIN vale solo nell'ora del cron (08 UTC); C2, 429 e 408 si ritentano come i 5xx; C4, corpo letto a pezzi col tetto.
+//
 // Chiamate (POST JSON, verify_jwt = false in supabase/config.toml):
-//   controlla {pin}            cron ogni giorno alle 08:07 UTC (migr 0196), PIN neutro come tutti i cron: una volta al
-//                              giorno, se la riga di oggi c'e' gia' risponde `fatto_oggi` senza nessuna chiamata fuori.
+//   controlla {pin}            cron ogni giorno alle 08:07 UTC (migr 0196), PIN neutro come tutti i cron: solo fra le 08:00
+//                              e le 08:59 UTC (fuori: `fuori_orario`, il PIN e' pubblico) e una volta al giorno (con la riga
+//                              di oggi gia' scritta: `fatto_oggi`), sempre senza nessuna chiamata fuori.
 //   controlla {forza: true}    solo con la chiave di servizio: rifa il controllo e riscrive la riga di oggi (il giorno del
 //                              go-live, o dopo aver rinnovato il link).
 //   anteprima {}               solo con la chiave di servizio: il controllo senza scrivere niente, con l'esito per verifica.
@@ -50,6 +55,10 @@ const TIMEOUT_MS = 10000;
 const RITENTA_MS = 2000;
 const CORPO_MAX_BYTE = 2048;
 const UA = 'Amimi-ControlloHome/1 (+https://amimi.it)';
+// l'ora UTC del cron (migr 0196, '7 8 * * *'): fuori da quest'ora il PIN pubblico non fa partire niente (Gate 2, C1)
+const ORA_CRON_UTC = 8;
+// 429 e 408: Shopify che chiede di rallentare o una richiesta scaduta, si ritentano come i 5xx (Gate 2, C2)
+const RITENTABILI = [408, 429];
 type Modo = 'copia' | 'amimi.it';
 const ATTESE: Record<Modo, { prova: 'true' | 'false' }> = { copia: { prova: 'true' }, 'amimi.it': { prova: 'false' } };
 const MODO_TESTO: Record<Modo, string> = { copia: 'copia di prova del tema', 'amimi.it': 'home di amimi.it' };
@@ -67,7 +76,7 @@ type Scaricato = { stato: number | null; testo: string | null };
 type Analisi = { ruolo: string | null; marcatore: boolean; prova: 'true' | 'false' | null; inbox: boolean };
 type Esito = {
   modo: Modo; pagina: string; http: number | null; ruolo: string | null; marcatore: boolean | null; prova: string | null;
-  inbox: boolean | null; config: string; mancano: string[]; severity: 'ok' | 'warn' | 'error'; label: string; n: number;
+  inbox: boolean | null; config: string; live: boolean | null; mancano: string[]; severity: 'ok' | 'warn' | 'error'; label: string; n: number;
 };
 
 class ErroreDb extends Error {
@@ -132,8 +141,11 @@ const CONFIG_TESTO: Record<string, string> = {
 };
 const configTesto = (c: string) => CONFIG_TESTO[c] ?? (/^http_[0-9]{3}$/.test(c) ? `HTTP ${c.slice(5)}` : 'errore');
 
-// Il verdetto, PURE: dalla pagina scaricata (o dal motivo per cui non lo e'), dal modo e dall'esito di config.
-function valuta(modo: Modo, pag: { motivo: string | null; r: Scaricato | null }, config: string): Esito {
+// Il verdetto, PURE: dalla pagina scaricata (o dal motivo per cui non lo e'), dal modo, dall'esito di config e, prima del
+// go-live, da amimi.it (`live`): li' il nostro embed NON deve esserci (Gate 2, B2: la copia di prova pubblicata per sbaglio
+// mette la chat in Modalita' prova sul sito vero e spegne Inbox, e dal solo link d'anteprima non si vedrebbe). amimi.it non
+// leggibile prima del go-live non e' un guasto della chat: si ignora.
+function valuta(modo: Modo, pag: { motivo: string | null; r: Scaricato | null }, config: string, live: Scaricato | null = null): Esito {
   const mancano: string[] = [];
   let pagina = pag.motivo ?? 'controllata';
   let a: Analisi | null = null;
@@ -159,18 +171,20 @@ function valuta(modo: Modo, pag: { motivo: string | null; r: Scaricato | null },
     mancano.push('home');
     parti.push(`home non leggibile (${http === null ? 'senza risposta' : `HTTP ${http}`})`);
   } else parti.push(PAGINA_TESTO[pagina] ?? 'pagina non controllata');
+  const liveEmbed = modo === 'copia' && live && live.stato === 200 && live.testo !== null ? analizza(live.testo).marcatore : null;
+  if (liveEmbed) { mancano.push('live'); parti.push('embed della chat sul tema pubblicato di amimi.it prima del go-live'); }
   if (config === 'ok') parti.push('config con firma valida');
   else { mancano.push('config'); parti.push(`config senza firma valida (${configTesto(config)})`); }
   const severity = mancano.length ? 'error' : a || PAGINA_ATTESA.includes(pagina) ? 'ok' : 'warn';
   return { modo, pagina, http, ruolo: a?.ruolo ?? null, marcatore: a ? a.marcatore : null, prova: a ? a.prova : null, inbox: a ? a.inbox : null,
-    config, mancano, severity, label: `Chat del sito, ${MODO_TESTO[modo]}: ${parti.join('; ')}`, n: mancano.length };
+    config, live: liveEmbed, mancano, severity, label: `Chat del sito, ${MODO_TESTO[modo]}: ${parti.join('; ')}`, n: mancano.length };
 }
 
 type Rete = { scarica: (url: string, accetta: string, max: number) => Promise<Scaricato>; dormi: (ms: number) => Promise<void> };
-// Una lettura idempotente ritenta UNA volta (Regola 20d): senza risposta o 5xx. Un 404 o 410 e' una risposta.
+// Una lettura idempotente ritenta UNA volta (Regola 20d): senza risposta, 5xx, 408 o 429. Un 404 o 410 e' una risposta.
 async function conRitento(rete: Rete, url: string, accetta: string, max: number): Promise<Scaricato> {
   const r = await rete.scarica(url, accetta, max);
-  if (r.stato !== null && r.stato < 500 && r.testo !== null) return r;
+  if (r.stato !== null && r.stato < 500 && !RITENTABILI.includes(r.stato) && r.testo !== null) return r;
   await rete.dormi(RITENTA_MS);
   return await rete.scarica(url, accetta, max);
 }
@@ -179,11 +193,12 @@ async function controllo(modo: Modo, anteprima: string, rete: Rete): Promise<Esi
   const link = anteprima.trim();
   const motivo = modo === 'copia' ? (!link ? 'senza_link' : !ANTEPRIMA_RE.test(link) ? 'link_non_valido' : null) : null;
   const url = modo === 'amimi.it' ? URL_AMIMI : link;
-  const [pag, cfg] = await Promise.all([
+  const [pag, cfg, live] = await Promise.all([
     motivo ? Promise.resolve(null) : conRitento(rete, url, 'text/html', HTML_MAX),
     conRitento(rete, URL_CONFIG, 'application/json', CONFIG_MAX),
+    modo === 'copia' ? conRitento(rete, URL_AMIMI, 'text/html', HTML_MAX) : Promise.resolve(null),
   ]);
-  return valuta(modo, { motivo, r: pag }, esitoConfig(cfg));
+  return valuta(modo, { motivo, r: pag }, esitoConfig(cfg), live);
 }
 
 type Riga = { day: string; k: string; label: string; n: number; severity: string };
@@ -197,14 +212,32 @@ type Ambiente = { ora: number; servizio: string; db: Db; rete: Rete };
 
 // solo i campi dell'esito: niente link, niente HTML
 const pubblico = (e: Esito) => ({ modo: e.modo, pagina: e.pagina, http: e.http, ruolo: e.ruolo, marcatore: e.marcatore, prova: e.prova, inbox: e.inbox,
-  config: e.config, mancano: e.mancano, severity: e.severity, n: e.n, label: e.label });
+  config: e.config, live: e.live, mancano: e.mancano, severity: e.severity, n: e.n, label: e.label });
 
+// un flusso letto a pezzi e fermato appena supera il tetto, anche senza content-length (Gate 2, C4); null = troppo grande
+async function leggiFlusso(corpo: ReadableStream<Uint8Array> | null, max: number): Promise<Uint8Array | null> {
+  if (!corpo) return new Uint8Array(0);
+  const reader = corpo.getReader();
+  const pezzi: Uint8Array[] = [];
+  let tot = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    tot += value.byteLength;
+    if (tot > max) { await reader.cancel(); return null; }
+    pezzi.push(value);
+  }
+  const out = new Uint8Array(tot);
+  let at = 0;
+  for (const x of pezzi) { out.set(x, at); at += x.byteLength; }
+  return out;
+}
 async function leggiCorpo(req: Request): Promise<Record<string, unknown> | null> {
   if (Number(req.headers.get('content-length') ?? 0) > CORPO_MAX_BYTE) return null;
-  const t = await req.text();
-  if (t.length > CORPO_MAX_BYTE) return null;
+  const b = await leggiFlusso(req.body, CORPO_MAX_BYTE);
+  if (b === null) return null;
   try {
-    const d = JSON.parse(t);
+    const d = JSON.parse(new TextDecoder().decode(b));
     return d !== null && typeof d === 'object' && !Array.isArray(d) ? d as Record<string, unknown> : null;
   } catch { return null; }
 }
@@ -222,6 +255,8 @@ async function gestisci(req: Request, amb: Ambiente): Promise<Response> {
       if (!servizio) return json({ ok: false, error: 'non_autorizzato' }, 401);
     } else if (d.action === 'controlla') {
       if (!servizio && !(typeof d.pin === 'string' && d.pin !== '' && await amb.db.pinOk(d.pin))) return json({ ok: false, error: 'non_autorizzato' }, 401);
+      // il PIN (pubblico) fa partire il controllo solo nell'ora del cron (Gate 2, C1)
+      if (!servizio && new Date(amb.ora).getUTCHours() !== ORA_CRON_UTC) return json({ ok: true, versione: VERSIONE, saltato: 'fuori_orario' });
     } else return json({ ok: false, error: 'azione_sconosciuta' }, 400);
     const f = await amb.db.flags();
     const modo = modoDi(f.modo);
@@ -232,7 +267,7 @@ async function gestisci(req: Request, amb: Ambiente): Promise<Response> {
     if (scrive && !forza && await amb.db.rigaDiOggi(giorno)) return json({ ok: true, versione: VERSIONE, saltato: 'fatto_oggi' });
     const e = await controllo(modo, f.anteprima, amb.rete);
     if (scrive) await amb.db.scrivi({ day: giorno, k: K_SALUTE, label: e.label, n: e.n, severity: e.severity });
-    console.log(JSON.stringify({ fn: 'chat-controllo', azione: d.action, modo: e.modo, pagina: e.pagina, http: e.http, config: e.config, mancano: e.mancano, severity: e.severity }));
+    console.log(JSON.stringify({ fn: 'chat-controllo', azione: d.action, modo: e.modo, pagina: e.pagina, http: e.http, config: e.config, live: e.live, mancano: e.mancano, severity: e.severity }));
     return json({ ok: true, versione: VERSIONE, scritto: scrive, esito: pubblico(e) });
   } catch (x) {
     const causa = x instanceof ErroreDb ? x.causa : 'eccezione';
@@ -286,25 +321,12 @@ function dbSupabase(sb: SupabaseClient): Db {
   };
 }
 
-// Il corpo si legge a pezzi e si ferma al tetto (null = troppo grande); nessun cookie, nessuna credenziale.
+// Il corpo si legge a pezzi e si ferma al tetto (leggiFlusso, null = troppo grande); nessun cookie, nessuna credenziale.
 async function scarica(url: string, accetta: string, max: number): Promise<Scaricato> {
   try {
     const r = await fetch(url, { method: 'GET', redirect: 'follow', headers: { 'User-Agent': UA, Accept: accetta }, signal: AbortSignal.timeout(TIMEOUT_MS) });
-    if (!r.body) return { stato: r.status, testo: '' };
-    const reader = r.body.getReader();
-    const pezzi: Uint8Array[] = [];
-    let tot = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      tot += value.byteLength;
-      if (tot > max) { await reader.cancel(); return { stato: r.status, testo: null }; }
-      pezzi.push(value);
-    }
-    const out = new Uint8Array(tot);
-    let at = 0;
-    for (const p of pezzi) { out.set(p, at); at += p.byteLength; }
-    return { stato: r.status, testo: new TextDecoder().decode(out) };
+    const b = await leggiFlusso(r.body, max);
+    return { stato: r.status, testo: b === null ? null : new TextDecoder().decode(b) };
   } catch {
     return { stato: null, testo: null };
   }

@@ -44,7 +44,7 @@
 // chat_salute legge anche la riga health_log `chat_controllo` scritta ogni mattina dalla edge chat-controllo (controllo
 // in sola lettura dell'HTML della home: marcatore del nostro embed, Modalita' prova come attesa, niente Inbox, config con
 // firma valida). Una riga in `error` = push `embed:<giorno>`; con il controllo acceso (app_flags.chat_controllo_home
-// `copia` o `amimi.it`) e nessuna riga di oggi dalle 12 di Roma = push `embed:<giorno>` "controllo non fatto" (cron o
+// `copia` o `amimi.it`) e nessuna riga di oggi dalle 12 di Roma = push `embed_mancato:<giorno>` "controllo non fatto" (cron o
 // edge fermi: un controllo che smette in silenzio non e' un controllo). Della riga solo giorno, gravita' e conteggio, mai
 // la label (come cs_sync): il dettaglio sta in Salute.
 // Brief:Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
@@ -964,7 +964,8 @@ function msgChatSollecito(cands: Cand[]): Msg[] {
 //   v10 la proiezione in Assistenza fallita nel cron chat-proiezione (contatore glob:proiezione_ko, migr 0193): `proiezione:<g>`
 //   12 v11 il controllo giornaliero della home (riga health_log `chat_controllo` della edge chat-controllo, di oggi o di
 //      ieri) in `error`: `embed:<g>`; col controllo acceso (`modoControllo` `copia` o `amimi.it`) e nessuna riga di oggi
-//      dalle ORA_CONTROLLO_MANCATO di Roma: `embed:<oggi>` "non fatto". Il cron gira alle 08:07 UTC (09:07 o 10:07 di
+//      dalle ORA_CONTROLLO_MANCATO di Roma: `embed_mancato:<oggi>` "non fatto" (chiave a parte, Gate 2 B1: con la stessa
+//      chiave un guasto vero trovato piu' tardi lo stesso giorno, da un controllo rifatto, non avrebbe avuto la sua push). Il cron gira alle 08:07 UTC (09:07 o 10:07 di
 //      Roma): a mezzogiorno la riga deve esserci. Una riga warn o ok (copia non controllata, link scaduto) non e' una push.
 // I contatori si leggono per oggi e ieri (UTC): un guasto delle 23:58 non si perde al cambio di giorno, e quello di ieri
 // gia' mandato e' `inviato` nel registro. Nel testo la data, non "oggi" (Gate 2, C4: fra mezzanotte e le 2 di Roma il
@@ -1027,7 +1028,7 @@ function candChatSalute(o: { passaggi: Riga[]; email: Riga[]; prova: Record<stri
     if (g && (g === oggi || g === ieri) && r.severity === 'error') out.push({ chiave: `embed:${g}`, ts: o.ora, rif: { tipo: 'embed', giorno: g, n: String(pos(r.n)), modo } });
   }
   if (modo && righe && !righe.some((r) => r?.day === oggi) && partiRoma(o.ora).h >= ORA_CONTROLLO_MANCATO) {
-    out.push({ chiave: `embed:${oggi}`, ts: o.ora, rif: { tipo: 'embed_mancato', giorno: oggi, modo } });
+    out.push({ chiave: `embed_mancato:${oggi}`, ts: o.ora, rif: { tipo: 'embed_mancato', giorno: oggi, modo } });
   }
   return ordinaRecenti(out);
 }

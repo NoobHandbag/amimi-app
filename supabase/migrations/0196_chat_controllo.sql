@@ -65,8 +65,10 @@ begin
         and command like '%/functions/v1/chat-controllo%' and command like '%"action":"controlla"%') <> 1 then
     raise exception '0196: il cron chat-controllo non e'' uno solo, attivo, alle 08:07 UTC sulla edge giusta';
   end if;
-  -- il link d'anteprima non e' pubblico solo se app_flags non si legge con la chiave del sito ne' da un utente qualunque
-  if has_table_privilege('anon', 'public.app_flags', 'select') or has_table_privilege('authenticated', 'public.app_flags', 'select') then
+  -- il link d'anteprima non e' pubblico solo se app_flags non si legge con la chiave del sito ne' da un utente qualunque,
+  -- neanche una colonna sola (has_table_privilege non vede i grant per colonna: Gate 2, C5)
+  if has_table_privilege('anon', 'public.app_flags', 'select') or has_table_privilege('authenticated', 'public.app_flags', 'select')
+     or has_any_column_privilege('anon', 'public.app_flags', 'select') or has_any_column_privilege('authenticated', 'public.app_flags', 'select') then
     raise exception '0196: app_flags e'' leggibile da anon o authenticated: il link d''anteprima non puo'' starci';
   end if;
 end $$;

@@ -42,6 +42,8 @@ const INBOX_HTML = `<script id='shopify-chat-app-embed-data' type='application/j
 const pagina = ({ role = 'main', prova, marcatore = true, inbox = false, prima = '' } = {}) =>
   `<!doctype html><html><head>${tema(role)}</head><body>${prima}<main>Amimi</main>${marcatore ? embed(prova) : ''}${inbox ? INBOX_HTML : ''}</body></html>`;
 const CONFIG_OK = JSON.stringify({ ok: true, versione: 'api-4', attiva: false });
+// amimi.it com'e' prima del go-live: niente embed nostro, Inbox acceso
+const LIVE_OGGI = { stato: 200, testo: pagina({ marcatore: false, inbox: true }) };
 
 console.log('== analizza: ruolo del tema, marcatore, Modalita\' prova del SUO tag, Inbox ==');
 {
@@ -104,11 +106,21 @@ const pag = (stato, testo) => ({ motivo: null, r: { stato, testo } });
   const tutte = [];
   for (const modo of ['copia', 'amimi.it']) for (const st of [200, 404, 410, 500, null]) for (const role of ['main', 'unpublished']) for (const prova of ['true', 'false', undefined])
     for (const inbox of [true, false]) for (const marcatore of [true, false]) for (const cfg of ['ok', 'firma_rifiutata', 'http_502', 'senza_risposta'])
-      tutte.push(v(modo, pag(st, st === null ? null : pagina({ role, prova, inbox, marcatore, prima: 'Maria Rossi <b>' + LINK + '</b>' })), cfg));
+      for (const live of [null, LIVE_OGGI, { stato: 200, testo: pagina({ prova: 'true', prima: 'Maria Rossi <b>' + LINK + '</b>' }) }, { stato: 503, testo: 'x' }])
+        tutte.push(C.valuta(modo, pag(st, st === null ? null : pagina({ role, prova, inbox, marcatore, prima: 'Maria Rossi <b>' + LINK + '</b>' })), cfg, live));
   for (const motivo of ['senza_link', 'link_non_valido']) tutte.push(v('copia', { motivo, r: null }, 'ok'));
   const brutte = tutte.filter((e) => e.label.length > 300 || /Maria|shopifypreview|<|>|—/.test(e.label) || !e.label.startsWith('Chat del sito, ')
     || !['ok', 'warn', 'error'].includes(e.severity) || (e.severity === 'error') !== (e.n > 0) || e.n !== e.mancano.length);
-  t(`V9 ${tutte.length} combinazioni: label di testo fisso (mai la pagina o il link), al massimo 300 caratteri, error se e solo se manca qualcosa`, brutte.length === 0 && tutte.length > 900, brutte[0]);
+  t(`V9 ${tutte.length} combinazioni: label di testo fisso (mai la pagina o il link), al massimo 300 caratteri, error se e solo se manca qualcosa`, brutte.length === 0 && tutte.length > 3600, brutte[0]);
+  // Gate 2, B2: prima del go-live il nostro embed sul tema PUBBLICATO (la copia pubblicata per sbaglio) e' un error, anche col link scaduto
+  const pubblicata = v('copia', pag(410, 'x'), 'ok');
+  const conLive = C.valuta('copia', pag(410, 'x'), 'ok', { stato: 200, testo: pagina({ prova: 'true' }) });
+  t('V10 B2: copia e link scaduto, ma amimi.it ha il nostro embed = error `live`; amimi.it com\'e\' oggi, illeggibile o non letta = nessun effetto; dal go-live `live` non si guarda',
+    pubblicata.severity === 'ok' && conLive.severity === 'error' && isDeepStrictEqual(conLive.mancano, ['live']) && conLive.live === true
+    && conLive.label === 'Chat del sito, copia di prova del tema: pagina non controllata (link d\'anteprima scaduto); embed della chat sul tema pubblicato di amimi.it prima del go-live; config con firma valida'
+    && C.valuta('copia', pag(410, 'x'), 'ok', LIVE_OGGI).severity === 'ok' && C.valuta('copia', pag(410, 'x'), 'ok', LIVE_OGGI).live === false
+    && C.valuta('copia', pag(410, 'x'), 'ok', { stato: 503, testo: 'x' }).severity === 'ok' && C.valuta('copia', pag(410, 'x'), 'ok', { stato: null, testo: null }).live === null
+    && C.valuta('amimi.it', pag(200, pagina({ prova: 'false' })), 'ok', { stato: 200, testo: pagina({ prova: 'true' }) }).severity === 'ok', conLive);
 }
 
 console.log('\n== controllo: quali chiamate fuori, con un ritentativo solo dove serve ==');
@@ -118,24 +130,28 @@ const reteFinta = (risposte) => {
     dormi: async (ms) => { sonni.push(ms); } };
 };
 await (async () => {
-  const r1 = reteFinta({ [LINK]: { stato: 200, testo: pagina({ role: 'unpublished', prova: 'true' }) }, 'https://amimi.it/apps/chat/config': { stato: 200, testo: CONFIG_OK } });
+  const r1 = reteFinta({ [LINK]: { stato: 200, testo: pagina({ role: 'unpublished', prova: 'true' }) }, 'https://amimi.it/apps/chat/config': { stato: 200, testo: CONFIG_OK }, 'https://amimi.it/': LIVE_OGGI });
   const e1 = await C.controllo('copia', LINK + '\n', r1);
-  t('K1 copia: due chiamate (link e config), Accept giusti, tetti, nessuna pausa; esito ok', e1.severity === 'ok' && isDeepStrictEqual(r1.log.map((x) => x[0]).sort(), [LINK, C.URL_CONFIG].sort())
+  t('K1 copia: tre chiamate (link, config e amimi.it per B2), Accept giusti, tetti, nessuna pausa; esito ok', e1.severity === 'ok' && e1.live === false && isDeepStrictEqual(r1.log.map((x) => x[0]).sort(), [LINK, C.URL_CONFIG, C.URL_AMIMI].sort())
     && r1.log.find((x) => x[0] === LINK)[1] === 'text/html' && r1.log.find((x) => x[0] === C.URL_CONFIG)[1] === 'application/json' && r1.log.every((x) => x[2] > 0) && r1.sonni.length === 0, r1.log);
   const r2 = reteFinta({ 'https://amimi.it/': { stato: 200, testo: pagina({ prova: 'false' }) }, 'https://amimi.it/apps/chat/config': { stato: 200, testo: CONFIG_OK } });
   const e2 = await C.controllo('amimi.it', LINK, r2);
-  t('K2 amimi.it: la home e config, MAI il link d\'anteprima', e2.severity === 'ok' && isDeepStrictEqual(r2.log.map((x) => x[0]).sort(), ['https://amimi.it/', 'https://amimi.it/apps/chat/config']));
+  t('K2 amimi.it: la home e config, una volta sola la home, MAI il link d\'anteprima', e2.severity === 'ok' && isDeepStrictEqual(r2.log.map((x) => x[0]).sort(), ['https://amimi.it/', 'https://amimi.it/apps/chat/config']));
   for (const [cosa, link] of [['vuoto', ''], ['altro dominio', 'https://evil.example.com'], ['con percorso', LINK + '/admin'], ['http', LINK.replace('https', 'http')], ['amimi.it', 'https://amimi.it/']]) {
-    const r = reteFinta({ 'https://amimi.it/apps/chat/config': { stato: 200, testo: CONFIG_OK } });
+    const r = reteFinta({ 'https://amimi.it/apps/chat/config': { stato: 200, testo: CONFIG_OK }, 'https://amimi.it/': LIVE_OGGI });
     const e = await C.controllo('copia', link, r);
-    t(`K3 link ${cosa}: nessuna chiamata alla pagina (solo config), copia non controllata`, isDeepStrictEqual(r.log.map((x) => x[0]), [C.URL_CONFIG]) && e.pagina === (link ? 'link_non_valido' : 'senza_link'), [r.log, e.pagina]);
+    t(`K3 link ${cosa}: nessuna chiamata al link (solo config e amimi.it), copia non controllata`, isDeepStrictEqual(r.log.map((x) => x[0]).sort(), [C.URL_CONFIG, C.URL_AMIMI].sort()) && e.pagina === (link ? 'link_non_valido' : 'senza_link'), [r.log, e.pagina]);
   }
-  const r4 = reteFinta({ [LINK]: (n) => (n === 1 ? { stato: 503, testo: 'x' } : { stato: 200, testo: pagina({ role: 'unpublished', prova: 'true' }) }), 'https://amimi.it/apps/chat/config': (n) => (n === 1 ? { stato: null, testo: null } : { stato: 200, testo: CONFIG_OK }) });
+  const r4 = reteFinta({ [LINK]: (n) => (n === 1 ? { stato: 503, testo: 'x' } : { stato: 200, testo: pagina({ role: 'unpublished', prova: 'true' }) }), 'https://amimi.it/apps/chat/config': (n) => (n === 1 ? { stato: null, testo: null } : { stato: 200, testo: CONFIG_OK }),
+    'https://amimi.it/': (n) => (n === 1 ? { stato: 429, testo: 'rallenta' } : LIVE_OGGI) });
   const e4 = await C.controllo('copia', LINK, r4);
-  t('K4 Regola 20d: senza risposta o 5xx si ritenta UNA volta dopo una pausa; poi vale il secondo', e4.severity === 'ok' && r4.log.length === 4 && r4.sonni.length === 2 && r4.sonni.every((ms) => ms === 2000), [r4.log.length, r4.sonni]);
-  const r5 = reteFinta({ [LINK]: { stato: 410, testo: 'gone' }, 'https://amimi.it/apps/chat/config': { stato: 401, testo: '{}' } });
+  t('K4 Regola 20d: senza risposta, 5xx o 429 (Gate 2, C2) si ritenta UNA volta dopo una pausa; poi vale il secondo', e4.severity === 'ok' && e4.live === false && r4.log.length === 6 && r4.sonni.length === 3 && r4.sonni.every((ms) => ms === 2000), [r4.log.length, r4.sonni]);
+  const r5 = reteFinta({ [LINK]: { stato: 410, testo: 'gone' }, 'https://amimi.it/apps/chat/config': { stato: 401, testo: '{}' }, 'https://amimi.it/': LIVE_OGGI });
   const e5 = await C.controllo('copia', LINK, r5);
-  t('K5 410 e 401 sono risposte: nessun ritentativo', r5.log.length === 2 && r5.sonni.length === 0 && e5.pagina === 'scaduta' && e5.config === 'firma_rifiutata' && e5.severity === 'error');
+  t('K5 410 e 401 sono risposte: nessun ritentativo', r5.log.length === 3 && r5.sonni.length === 0 && e5.pagina === 'scaduta' && e5.config === 'firma_rifiutata' && e5.severity === 'error');
+  const r7 = reteFinta({ 'https://amimi.it/': { stato: 200, testo: pagina({ prova: 'false' }) }, 'https://amimi.it/apps/chat/config': (n) => (n === 1 ? { stato: 429, testo: 'x' } : n === 2 ? { stato: 408, testo: 'x' } : { stato: 200, testo: CONFIG_OK }) });
+  const e7 = await C.controllo('amimi.it', '', r7);
+  t('K7 Gate 2, C2: un 429 di config si ritenta; un secondo 408 resta (una sola ripresa) e diventa la causa', e7.config === 'http_408' && r7.log.filter((x) => x[0] === C.URL_CONFIG).length === 2 && r7.sonni.length === 1, [e7.config, r7.log]);
   const r6 = reteFinta({});
   const e6 = await C.controllo('amimi.it', '', r6);
   t('K6 tutto giu\' due volte: error con home e config, quattro chiamate', r6.log.length === 4 && isDeepStrictEqual(e6.mancano, ['home', 'config']));
@@ -174,15 +190,15 @@ const inFila = async (fs) => { const out = []; for (const f of fs) out.push(awai
 await (async () => {
   const cron = await chiama({ action: 'controlla', pin: 'x' });
   t('G1 cron col PIN: controllo fatto e UNA riga health_log di oggi (giorno UTC, k chat_controllo, label, n, severity)', cron.s === 200 && cron.b.scritto === true && cron.st.scritte.length === 1
-    && isDeepStrictEqual(cron.st.scritte[0], { day: '2026-11-16', k: 'chat_controllo', label: cron.b.esito.label, n: 0, severity: 'ok' }) && cron.rete.log.length === 2, cron.b);
+    && isDeepStrictEqual(cron.st.scritte[0], { day: '2026-11-16', k: 'chat_controllo', label: cron.b.esito.label, n: 0, severity: 'ok' }) && cron.rete.log.length === 3, cron.b);
   const dbf = dbFinto({ righe: [{ day: '2026-11-16', k: 'chat_controllo', label: 'x', n: 0, severity: 'ok' }] });
   const rif = await chiama({ action: 'controlla', pin: 'x' }, { dbf });
   t('G2 una volta al giorno: con la riga di oggi il PIN non fa nessuna chiamata fuori ne\' scrittura', rif.s === 200 && rif.b.saltato === 'fatto_oggi' && rif.rete.log.length === 0 && rif.st.scritte.length === 0);
   const forza = await chiama({ action: 'controlla', forza: true }, { dbf: dbFinto({ righe: [{ day: '2026-11-16', k: 'chat_controllo', label: 'x', n: 0, severity: 'ok' }] }), bearer: SVC });
-  t('G3 forza con la chiave di servizio: rifa il controllo e riscrive la riga di oggi', forza.s === 200 && forza.b.scritto === true && forza.st.scritte.length === 1 && forza.rete.log.length === 2
+  t('G3 forza con la chiave di servizio: rifa il controllo e riscrive la riga di oggi', forza.s === 200 && forza.b.scritto === true && forza.st.scritte.length === 1 && forza.rete.log.length === 3
     && !forza.st.letture.some((l) => l.startsWith('oggi:')));
   const ant = await chiama({ action: 'anteprima' }, { bearer: SVC });
-  t('G4 anteprima con la chiave di servizio: controllo senza scrivere niente', ant.s === 200 && ant.b.scritto === false && ant.st.scritte.length === 0 && ant.rete.log.length === 2 && ant.b.esito.severity === 'ok');
+  t('G4 anteprima con la chiave di servizio: controllo senza scrivere niente', ant.s === 200 && ant.b.scritto === false && ant.st.scritte.length === 0 && ant.rete.log.length === 3 && ant.b.esito.severity === 'ok');
   const no = await inFila([() => chiama({ action: 'controlla' }), () => chiama({ action: 'controlla', pin: 'y' }), () => chiama({ action: 'controlla', pin: 'x', forza: true }),
     () => chiama({ action: 'anteprima', pin: 'x' }), () => chiama({ action: 'anteprima' }, { bearer: SVC + 'x' }), () => chiama({ action: 'controlla', forza: true }, { bearer: 'x' })]);
   t('G5 senza credenziali giuste: 401 e nessuna lettura dei flag, nessuna chiamata fuori (forza e anteprima solo con la chiave di servizio, il PIN non basta)',
@@ -202,7 +218,18 @@ await (async () => {
   const tutte = [cron, rif, forza, ant, live, ...no, ...altre, ...spenti, ...guasti];
   t('G10 risposte e log: mai il link d\'anteprima ne\' un pezzo della pagina', tutte.every((r) => !r.testo.includes('shopifypreview') && !r.testo.includes('k3x9q2w7') && !r.testo.includes('<')
     && r.righeLog.every((l) => !l.includes('shopifypreview') && !l.includes('<'))) && cron.righeLog.length === 1);
-  t('G11 la riga e\' del giorno UTC della chiamata', (await chiama({ action: 'controlla', pin: 'x' }, { ora: Date.parse('2026-11-16T23:59:59Z') })).st.scritte[0].day === '2026-11-16');
+  t('G11 la riga e\' del giorno UTC della chiamata', (await chiama({ action: 'controlla', forza: true }, { bearer: SVC, ora: Date.parse('2026-11-16T23:59:59Z') })).st.scritte[0].day === '2026-11-16');
+  const fuori = await inFila([Date.parse('2026-11-16T07:59:59Z'), Date.parse('2026-11-16T09:00:00Z'), Date.parse('2026-11-16T00:01:00Z')].map((ora) => () => chiama({ action: 'controlla', pin: 'x' }, { ora })));
+  const dentro = await chiama({ action: 'controlla', pin: 'x' }, { ora: Date.parse('2026-11-16T08:59:59Z') });
+  const svcFuori = await chiama({ action: 'controlla' }, { bearer: SVC, ora: Date.parse('2026-11-16T15:00:00Z') });
+  t('G12 Gate 2, C1: il PIN fa partire il controllo solo fra le 08:00 e le 08:59 UTC (ora del cron); fuori `fuori_orario` senza flag, chiamate o righe; la chiave di servizio a qualunque ora',
+    fuori.every((r) => r.s === 200 && r.b.saltato === 'fuori_orario' && r.rete.log.length === 0 && r.st.scritte.length === 0 && !r.st.letture.includes('flags'))
+    && dentro.st.scritte.length === 1 && svcFuori.st.scritte.length === 1, fuori.map((r) => r.b));
+  // Gate 2, C4: un corpo senza content-length si legge a pezzi e si ferma al tetto
+  const flusso = (n) => new ReadableStream({ start(c) { for (let i = 0; i < n; i++) c.enqueue(new TextEncoder().encode('x'.repeat(512))); c.close(); } });
+  const aPezzi = async (corpo) => { const { db } = dbFinto(); const rete = reteOk(); const res = await C.gestisci(new Request('https://x/f', { method: 'POST', body: corpo, duplex: 'half' }), { ora: T0, servizio: SVC, db, rete }); return [res.status, rete.log.length]; };
+  t('G13 Gate 2, C4: 1 MB a pezzi senza content-length = 400 senza leggerlo tutto; un corpo giusto a pezzi passa', isDeepStrictEqual(await aPezzi(flusso(2048)), [400, 0])
+    && (await aPezzi(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{"action":"contr')); c.enqueue(new TextEncoder().encode('olla","pin":"x"}')); c.close(); } })))[0] === 200);
 })();
 
 console.log('\n== guardie sul sorgente, su config.toml e sulla migr 0196 ==');
@@ -225,12 +252,14 @@ const logPulito = (s) => {
   return righe.length > 0 && righe.every((l) => !/\b(anteprima|url|link|testo|html|f\.)\b/.test(l.replace(/'[^']*'/g, '')));
 };
 const unaVolta = (s) => codiceDi(s).includes("if (scrive && !forza && await amb.db.rigaDiOggi(giorno)) return json({ ok: true, versione: VERSIONE, saltato: 'fatto_oggi' });")
+  && codiceDi(s).includes("if (!servizio && new Date(amb.ora).getUTCHours() !== ORA_CRON_UTC) return json({ ok: true, versione: VERSIONE, saltato: 'fuori_orario' });")
+  && /const ORA_CRON_UTC = 8;/.test(s) && M0196.includes("select cron.schedule('chat-controllo', '7 8 * * *',")
   && codiceDi(s).includes("if (d.action === 'anteprima' || (d.action === 'controlla' && forza)) {\n      if (!servizio) return json({ ok: false, error: 'non_autorizzato' }, 401);");
 t('S1 una sola fetch, senza cookie ne\' credenziali, verso amimi.it o il link d\'anteprima solo se ha la forma giusta', unFetch(SRC));
 t('S2 di app_flags solo le due chiavi del controllo, con elenco esplicito', soloDueFlag(SRC));
 t('S3 scrive SOLO la sua riga health_log (upsert su day,k); niente change_log, niente write-api', soloSalute(SRC));
 t('S4 log e risposte senza link, URL o testo delle pagine', logPulito(SRC));
-t('S5 una volta al giorno col PIN; forza e anteprima solo con la chiave di servizio', unaVolta(SRC));
+t('S5 una volta al giorno col PIN e solo nell\'ora del cron (la stessa della 0196); forza e anteprima solo con la chiave di servizio', unaVolta(SRC));
 t('S6 config.toml: chat-controllo con verify_jwt = false (il cron non manda JWT)', /\n\[functions\.chat-controllo\]\nverify_jwt = false\n/.test(CONFIG));
 t('S7 il link d\'anteprima ha solo la forma https://<token>-<negozio>.shopifypreview.com', C.ANTEPRIMA_RE.test(LINK) && C.ANTEPRIMA_RE.test(LINK + '/') && !C.ANTEPRIMA_RE.test(LINK + '/x')
   && !C.ANTEPRIMA_RE.test(LINK + '?a=1') && !C.ANTEPRIMA_RE.test('https://x-1.shopifypreview.com.evil.com') && !C.ANTEPRIMA_RE.test('https://a-123456.shopifypreview.com@evil.com/'));
@@ -239,7 +268,8 @@ const migrOk = (s) => /\nbegin;\n/.test(s) && s.trimEnd().endsWith('commit;')
   && s.includes("insert into app_flags (key, value) values\n    ('chat_controllo_home', 'copia'),\n    ('chat_controllo_anteprima', '')\n  on conflict (key) do nothing;")
   && s.includes("select cron.schedule('chat-controllo', '7 8 * * *',") && s.includes("body := '{\"action\":\"controlla\",\"pin\":\"x\"}'::jsonb,")
   && s.includes("url := 'https://imszbjeyplaiovylhkgl.supabase.co/functions/v1/chat-controllo',")
-  && s.includes("if has_table_privilege('anon', 'public.app_flags', 'select') or has_table_privilege('authenticated', 'public.app_flags', 'select') then")
+  && s.includes("if has_table_privilege('anon', 'public.app_flags', 'select') or has_table_privilege('authenticated', 'public.app_flags', 'select')")
+  && s.includes("or has_any_column_privilege('anon', 'public.app_flags', 'select') or has_any_column_privilege('authenticated', 'public.app_flags', 'select') then")
   && !/shopifypreview\.com/.test(s.replace(/--.*$/gm, '')) && !/\bgrant\b/i.test(s.replace(/--.*$/gm, '')) && !/insert\s+into\s+change_log/i.test(s);
 t('S8 0196: chiavi nate copia e vuoto senza sovrascrivere, cron 08:07 UTC col PIN neutro, prova che app_flags non e\' leggibile da anon, nessun link, nessun grant', migrOk(m));
 
@@ -269,11 +299,12 @@ t('X2 un filtro largo su app_flags -> visto', !soloDueFlag(pianta(SRC, ".in('key
 t('X3 un insert altrove o change_log -> visti', [pianta(SRC, 'async pinOk(pin) {', "async pinOk(pin) { await sb.from('change_log').insert({});"),
   pianta(SRC, ".upsert({ ...r, created_at: new Date().toISOString() }, { onConflict: 'day,k' })", ".insert({ ...r })")].every((s) => !soloSalute(s)));
 t('X4 il link nel log -> visto', !logPulito(pianta(SRC, "console.log(JSON.stringify({ fn: 'chat-controllo', azione: d.action,", "console.log(JSON.stringify({ fn: 'chat-controllo', link: f.anteprima, azione: d.action,")));
-t('X5 il PIN che basta per forza, o niente guardia giornaliera -> visti', [pianta(SRC, "if (d.action === 'anteprima' || (d.action === 'controlla' && forza)) {", "if (d.action === 'anteprima') {"),
-  pianta(SRC, 'if (scrive && !forza && await amb.db.rigaDiOggi(giorno))', 'if (false)')].every((s) => !unaVolta(s)));
+t('X5 il PIN che basta per forza, niente guardia giornaliera o niente finestra oraria -> visti', [pianta(SRC, "if (d.action === 'anteprima' || (d.action === 'controlla' && forza)) {", "if (d.action === 'anteprima') {"),
+  pianta(SRC, 'if (scrive && !forza && await amb.db.rigaDiOggi(giorno))', 'if (false)'), pianta(SRC, 'new Date(amb.ora).getUTCHours() !== ORA_CRON_UTC', 'false')].every((s) => !unaVolta(s)));
 t('X6 migrazione che sovrascrive, col link, o senza la prova su anon -> viste', [pianta(m, 'on conflict (key) do nothing;', 'on conflict (key) do update set value = excluded.value;'),
   pianta(m, "('chat_controllo_anteprima', '')", "('chat_controllo_anteprima', 'https://k3x9q2w7z1m5b8v4-95215747399.shopifypreview.com')"),
-  pianta(m, "if has_table_privilege('anon', 'public.app_flags', 'select') or has_table_privilege('authenticated', 'public.app_flags', 'select') then", 'if false then')].every((s) => !migrOk(s)));
+  pianta(m, "if has_table_privilege('anon', 'public.app_flags', 'select') or has_table_privilege('authenticated', 'public.app_flags', 'select')", 'if false'),
+  pianta(m, "or has_any_column_privilege('anon', 'public.app_flags', 'select') or has_any_column_privilege('authenticated', 'public.app_flags', 'select') then", 'then')].every((s) => !migrOk(s)));
 t('X7 un link vero in un file -> visto dalla ricerca', VERO_RE.test('vedi https://' + 'q7'.repeat(8) + '-95215747399.shopifypreview.com qui') && !VERO_RE.test('https://<token>-<shop_id>.shopifypreview.com')
   && !VERO_RE.test('abc123-95215747399.shopifypreview.com'));
 const Crotto = carica(pianta(SRC, "if (modo === 'copia' && (r.stato === 404 || r.stato === 410)) pagina = 'scaduta';", "if (false) pagina = 'scaduta';"));
