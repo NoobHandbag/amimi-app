@@ -854,7 +854,7 @@ export function OutreachSequenze({ sequences, settings }: { sequences: LeadSeque
           <div className="tablewrap"><table className="sortable">
             <thead><tr><th>Tocco</th><th>Quando</th><th>Canale</th><th>Oggetto</th><th>Chi</th></tr></thead>
             <tbody>{sequences.filter((s) => s.codice === c).map((s) => (
-              <tr key={s.id}><td>{s.tocco}</td><td className="l">{s.tocco === 0 ? 'prima dell’email, se c’è un numero' : s.giorni_attesa ? `+${s.giorni_attesa} giorni dal precedente` : 'subito'}</td><td className="l">{CANALI[s.canale] ?? s.canale}</td><td className="l">{s.oggetto ?? 'n.d.'}</td><td className="l">{s.chi_default ?? ''}</td></tr>
+              <tr key={s.id}><td>{s.tocco}</td><td className="l">{s.tocco === 0 ? 'facoltativa, se c’è un numero (l’outreach parte dall’email 1)' : s.giorni_attesa ? `+${s.giorni_attesa} giorni dal precedente` : 'subito'}</td><td className="l">{CANALI[s.canale] ?? s.canale}</td><td className="l">{s.oggetto ?? 'n.d.'}</td><td className="l">{s.chi_default ?? ''}</td></tr>
             ))}</tbody>
           </table></div>
           {sequences.filter((s) => s.codice === c).map((s) => <details key={s.id} style={{ marginTop: 6 }}><summary style={{ cursor: 'pointer', fontSize: 13 }}>Testo del tocco {s.tocco}</summary><pre className="lead-pre" style={{ maxHeight: 300 }}>{s.corpo}</pre></details>)}

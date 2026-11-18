@@ -8,8 +8,9 @@
 --    spuntati per lui alla prima iscrizione del telefono. Nessun telefono cambia: oggi lui non ne ha.
 -- 2) lead_*: firma nuova in app_flags.lead_firma (nome e telefono di Giovanni, numero dato da Dan il 18-11), i tre template
 --    che dicono "sono Benedetta" / "I'm Benedetta" e chi_default dei nove template a `Giovanni`, il telefono di contatto
---    wholesale nella voce 2 di lead_knowledge (la stessa che l'AI usa per le risposte), e le bozze ancora `proposta`
---    scritte con la firma vecchia (al 18-11 sono 5: in 2 c'e' anche "sono Benedetta" nel corpo). In una bozza "Gentile
+--    wholesale nella voce 2 di lead_knowledge (la stessa che l'AI usa per le risposte), e le bozze non ancora inviate
+--    (proposta, approvata, errore) scritte con la firma vecchia, nel testo e nelle alternative di `fatti_usati` (al 18-11
+--    sono 5, tutte `proposta`: in 2 c'e' anche "sono Benedetta" nel corpo, una ha 3 alternative). In una bozza "Gentile
 --    Benedetta" e' la referente del negozio e resta. Nella voce 2 resta "oppure Benedetta passa in negozio": chi va in
 --    negozio non e' stato deciso.
 --
@@ -64,22 +65,27 @@ select 'app_flags', 'lead_firma', 'update', jsonb_build_object('value', value),
 update app_flags set value = E'Giovanni - Amimì Milano\nwholesale@amimi.it - +39 348 918 8037 - P.IVA 14559580965'
  where key = 'lead_firma';
 
--- 3) template: chi si presenta e chi_default
-with agg as (
+-- 3) template: chi si presenta e chi_default (before con chi_default e md5 del corpo di prima: i testi di partenza sono
+--    quelli della 0114, nel repo)
+with prima as (
+  select s.id, s.chi_default, md5(s.corpo) as md5_prima from lead_sequences s
+   where s.corpo like '%Benedetta%' or s.chi_default is distinct from 'Giovanni'
+), agg as (
   update lead_sequences s
      set corpo = replace(replace(s.corpo, 'sono Benedetta di Amim', 'sono Giovanni di Amim'), 'I''m Benedetta from Amim', 'I''m Giovanni from Amim'),
          chi_default = 'Giovanni', updated_at = now()
-   where s.corpo like '%Benedetta%' or s.chi_default is distinct from 'Giovanni'
+    from prima p
+   where s.id = p.id
   returning s.id, s.codice, s.tocco, md5(s.corpo) as md5_dopo
 )
 insert into change_log (tbl, row_id, op, before, after, chi, source)
-select 'lead_sequences', a.id::text, 'update', jsonb_build_object('codice', a.codice, 'tocco', a.tocco),
+select 'lead_sequences', a.id::text, 'update', jsonb_build_object('codice', a.codice, 'tocco', a.tocco, 'chi_default', p.chi_default, 'md5_corpo', p.md5_prima),
        jsonb_build_object('chi_default', 'Giovanni', 'md5_corpo', a.md5_dopo), 'claude-code', 'migr 0197'
-  from agg a;
+  from agg a join prima p on p.id = a.id;
 
 -- 4) lead_knowledge voce 2: il telefono di contatto wholesale e' quello della firma
 with agg as (
-  update lead_knowledge k set contenuto = replace(k.contenuto, 'telefono +39 333 280 8226', 'telefono +39 348 918 8037')
+  update lead_knowledge k set contenuto = replace(k.contenuto, 'telefono +39 333 280 8226', 'telefono +39 348 918 8037'), updated_at = now()
    where k.id = 2 and k.contenuto like '%telefono +39 333 280 8226%'
   returning k.id
 )
@@ -88,29 +94,38 @@ select 'lead_knowledge', a.id::text, 'update', jsonb_build_object('telefono', '+
        jsonb_build_object('telefono', '+39 348 918 8037'), 'claude-code', 'migr 0197'
   from agg a;
 
--- 5) bozze non ancora inviate: firma nuova e "sono Giovanni" (il testo resta fuori da change_log)
+-- 5) bozze non ancora inviate, in tutti gli stati che la edge e il web riaprono e mandano (proposta, approvata, errore:
+--    lead-outreach prende la bozza da quei tre): firma nuova e "sono Giovanni" nel testo E nelle alternative delle proposte
+--    di risposta (`fatti_usati.alternative[*].testo`, che la scheda apre al posto di `testo`; Gate 2 del 18-11, A1). Dentro
+--    `fatti_usati::text` l'a capo della firma e' la sequenza \n del JSON, quindi li' la firma si cerca senza E''. Il testo
+--    resta fuori da change_log.
 with agg as (
   update lead_drafts d
      set testo = replace(replace(replace(d.testo,
                    E'Benedetta - Amimì Milano\nwholesale@amimi.it - +39 333 280 8226 - P.IVA 14559580965',
                    E'Giovanni - Amimì Milano\nwholesale@amimi.it - +39 348 918 8037 - P.IVA 14559580965'),
                    'sono Benedetta di Amim', 'sono Giovanni di Amim'), 'I''m Benedetta from Amim', 'I''m Giovanni from Amim'),
+         fatti_usati = case when d.fatti_usati is null then null else replace(replace(replace(d.fatti_usati::text,
+                   'Benedetta - Amimì Milano\nwholesale@amimi.it - +39 333 280 8226 - P.IVA 14559580965',
+                   'Giovanni - Amimì Milano\nwholesale@amimi.it - +39 348 918 8037 - P.IVA 14559580965'),
+                   'sono Benedetta di Amim', 'sono Giovanni di Amim'), 'I''m Benedetta from Amim', 'I''m Giovanni from Amim')::jsonb end,
          updated_at = now()
-   where d.stato = 'proposta'
-     and (d.testo like E'%Benedetta - Amimì Milano\nwholesale@amimi.it - +39 333 280 8226%'
-          or d.testo like '%sono Benedetta di Amim%' or d.testo like '%I''m Benedetta from Amim%')
-  returning d.id
+   where d.stato in ('proposta', 'approvata', 'errore')
+     and (d.testo || coalesce(d.fatti_usati::text, '')) ~ '333 280 8226|sono Benedetta di Amim|I''m Benedetta from Amim'
+  returning d.id, d.stato
 )
 insert into change_log (tbl, row_id, op, before, after, chi, source)
-select 'lead_drafts', a.id::text, 'firma_giovanni', null,
-       jsonb_build_object('sostituzioni', 'firma, sono/I''m Benedetta -> Giovanni'), 'claude-code', 'migr 0197'
+select 'lead_drafts', a.id::text, 'update', jsonb_build_object('stato', a.stato),
+       jsonb_build_object('sostituzioni', 'firma, sono/I''m Benedetta -> Giovanni, in testo e fatti_usati'), 'claude-code', 'migr 0197'
   from agg a;
 
 -- 6) prova nella stessa transazione
 do $$
 declare
-  v_def_chi text := (select pg_get_constraintdef(oid) from pg_constraint where conname = 'push_subscriptions_chi_ck');
-  v_def_pred text := (select pg_get_constraintdef(oid) from pg_constraint where conname = 'push_temi_predefinito_per_ck');
+  v_def_chi text := (select pg_get_constraintdef(oid) from pg_constraint
+                      where conname = 'push_subscriptions_chi_ck' and conrelid = 'public.push_subscriptions'::regclass);
+  v_def_pred text := (select pg_get_constraintdef(oid) from pg_constraint
+                       where conname = 'push_temi_predefinito_per_ck' and conrelid = 'public.push_temi'::regclass);
 begin
   if v_def_chi is distinct from 'CHECK ((chi = ANY (ARRAY[''Ale''::text, ''Bene''::text, ''Ginevra''::text, ''Giovanni''::text])))' then
     raise exception '0197: push_subscriptions_chi_ck inatteso: %', v_def_chi;
@@ -135,9 +150,9 @@ begin
   if exists (select 1 from lead_knowledge where contenuto like '%333 280 8226%') then
     raise exception '0197: il telefono vecchio resta in lead_knowledge';
   end if;
-  if exists (select 1 from lead_drafts where stato = 'proposta'
-               and (testo like '%333 280 8226%' or testo like '%sono Benedetta di Amim%' or testo like '%I''m Benedetta from Amim%')) then
-    raise exception '0197: una bozza proposta ha ancora la firma vecchia o si presenta come Benedetta';
+  if exists (select 1 from lead_drafts where stato in ('proposta', 'approvata', 'errore')
+               and (testo || coalesce(fatti_usati::text, '')) ~ '333 280 8226|sono Benedetta di Amim|I''m Benedetta from Amim') then
+    raise exception '0197: una bozza da inviare (testo o alternative) ha ancora la firma vecchia o si presenta come Benedetta';
   end if;
   if current_setting('amimi.g0197_push_enabled_prima') is distinct from coalesce((select value from app_flags where key = 'push_enabled'), '<assente>')
      or current_setting('amimi.g0197_iscritti_prima') is distinct from (select count(*)::text from push_subscriptions) then

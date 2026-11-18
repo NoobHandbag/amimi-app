@@ -753,11 +753,22 @@ console.log('\n== 18-11 (Dan): Giovanni guida il B2B, outreach quasi solo email:
     /export const PEOPLE = \['Ale', 'Bene', 'Ginevra', 'Giovanni'\] as const;/.test(peopleG)
     && /Giovanni: \{\n    name: 'Giovanni', finance: false,\n    tiles: \[\n      \{ icon: 'store', label: 'Negozi B2B', tab: 'negozi' \},\n    \],\n  \},/.test(peopleG)
     && /const firma = settings\.lead_firma \?\? 'Giovanni - Amimì Milano';/.test(outG) && !/Benedetta - Amim/.test(outG));
-  t('gio-5 migr 0197: si ferma se la firma o i template non sono quelli attesi, poi firma, template, voce 2, bozze proposta e la prova finale nella stessa transazione',
+  t('gio-5 migr 0197: si ferma se la firma o i template non sono quelli attesi, poi firma, template, voce 2, bozze da inviare e la prova finale nella stessa transazione',
     /if v_firma is distinct from E'Benedetta - Amimì Milano\\nwholesale@amimi\.it - \+39 333 280 8226 - P\.IVA 14559580965' then/.test(migrG)
     && /update app_flags set value = E'Giovanni - Amimì Milano\\nwholesale@amimi\.it - \+39 348 918 8037 - P\.IVA 14559580965'\n where key = 'lead_firma';/.test(migrG)
-    && /where d\.stato = 'proposta'/.test(migrG) && /raise exception '0197: una bozza proposta ha ancora la firma vecchia/.test(migrG)
+    && /where d\.stato in \('proposta', 'approvata', 'errore'\)/.test(migrG) && /raise exception '0197: una bozza da inviare \(testo o alternative\) ha ancora la firma vecchia/.test(migrG)
     && /^begin;$/m.test(migrG) && /^commit;$/m.test(migrG));
+}
+
+{
+  const migrG6 = readFileSync(`${ROOT}supabase/migrations/0197_giovanni_b2b.sql`, 'utf8').replace(/\r\n/g, '\n');
+  const edgeG6 = readFileSync(`${ROOT}supabase/functions/lead-outreach/index.ts`, 'utf8');
+  const claim = [...edgeG6.matchAll(/\.eq\('id', (?:draftId|id)\)\.in\('stato', (\[[^\]]+\])\)/g)].map((m) => m[1]);
+  t('gio-6 migr 0197 (Gate 2 A1): le bozze riscritte e la prova finale coprono gli stati che lead-outreach puo\' ancora mandare, testo E alternative di fatti_usati',
+    claim.length >= 1 && claim.every((c) => c === "['proposta', 'approvata', 'errore']")
+    && (migrG6.match(/stato in \('proposta', 'approvata', 'errore'\)/g) ?? []).length === 2
+    && /fatti_usati = case when d\.fatti_usati is null then null else replace\(replace\(replace\(d\.fatti_usati::text,/.test(migrG6)
+    && (migrG6.match(/\((?:d\.)?testo \|\| coalesce\((?:d\.)?fatti_usati::text, ''\)\) ~ '333 280 8226\|sono Benedetta di Amim\|I''m Benedetta from Amim'/g) ?? []).length === 2, claim);
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);

@@ -108,5 +108,19 @@ t('57 ordini: pannello AI gated dal flag e dal login csClient', /const aiPanel =
 t('58 ordini: pannello AI anche al primo passo (prima della scelta del fornitore) e al secondo', (ORD.match(/\{aiPanel\}/g) ?? []).length === 2 && ORD.indexOf('{aiPanel}') < ORD.indexOf('<label className="fl">Fornitore</label>'));
 t('59 ordini: senza sessione login in linea (csClient), niente rimando che fa perdere l ordine in corso', /csClient\.auth\.signInWithPassword/.test(ORD) && !/aprilo dalla sezione Materie prime/.test(ORD));
 
+// 18-11 (Gate 2 di Giovanni, B2): una persona che mat-api non conosce non scrive come Ale
+{
+  const src = (API.match(/export const chiKey = \(chi: string\) => ([^;]+);/) ?? [])[1];
+  const chiKeyJs = src ? new Function('chi', 'return ' + src) : null;
+  t('60 chiKey: Ale A, Bene B, Ginevra G; Giovanni o un nome sconosciuto -> vuoto, mai A',
+    !!chiKeyJs && chiKeyJs('Ale') === 'A' && chiKeyJs('Bene') === 'B' && chiKeyJs('Ginevra') === 'G'
+    && chiKeyJs('Giovanni') === '' && chiKeyJs('Dan') === '' && chiKeyJs('') === '', src);
+  t('61 matApi, uploadInbox e aiCompila passano da chiOFerma (profilo non ammesso = errore detto, nessuna chiamata)',
+    /const chiOFerma = \(chi: string\) => \{ const k = chiKey\(chi\); if \(!k\) throw new Error\(PROFILO_NON_AMMESSO\); return k; \};/.test(API)
+    && /callEdge\('mat-api', \{ action, chi: chiOFerma\(chi\), \.\.\.body \}\)/.test(API)
+    && /export async function uploadInbox\(file: File, chi: string\): Promise<string> \{\n  chiOFerma\(chi\);/.test(API.replace(/\r\n/g, '\n'))
+    && /callEdge\('ai-compila', \{ chi: chiOFerma\(chi\),/.test(API) && !/chi: chiKey\(chi\)/.test(API));
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

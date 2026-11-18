@@ -979,7 +979,7 @@ test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
     // villaggio non e' montato (niente letture sue)
     await expect(page.getByText('Chi usa questo telefono?')).toBeVisible(ATTESA);
     const scelte = page.locator('.screen .card button');
-    await expect(scelte).toHaveText(['Ale', 'Benny', 'Ginni']);
+    await expect(scelte).toHaveText(['Ale', 'Benny', 'Ginni', 'Giovanni']);
     await expect(page.locator('.vil')).toHaveCount(0);
     expect(r.letture.ordini).toBe(0);
     expect(await page.evaluate(() => localStorage.getItem('amimi_chi'))).toBeNull();
@@ -1088,7 +1088,7 @@ test.describe('app a se\' /amimi-app/villaggio/ (telefono di Ginni)', () => {
     await expect(menu).toBeEnabled();
     await expect(page.getByRole('combobox', { name: 'Chi scrive' })).toHaveCount(1);
     // le persone dell'app (Ale, Bene, Ginevra) coi loro nomi; scelta Ginni, scrive Ginevra
-    await expect(menu.locator('option')).toHaveText(['Ale', 'Benny', 'Ginni']);
+    await expect(menu.locator('option')).toHaveText(['Ale', 'Benny', 'Ginni', 'Giovanni']);
     await expect(menu).toHaveValue('Ginevra');
     // un giro completo: ogni scelta vale subito per il dispositivo (amimi_chi, la stessa chiave dell'app intera)
     for (const [valore, nome] of [['Ale', 'Ale'], ['Bene', 'Benny'], ['Ginevra', 'Ginni'], ['Bene', 'Benny']] as const) {

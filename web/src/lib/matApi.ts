@@ -119,14 +119,19 @@ async function callEdge(name: 'mat-api' | 'ai-compila', body: Record<string, unk
   if (!r.ok || j.ok === false || j.error) throw new Error(String(j.error || j.detail || ('Errore ' + r.status)));
   return j;
 }
-/** chi = selettore persona dell'app ('Ale' | 'Bene' | 'Ginevra') -> iniziale attesa dalla edge (A | B | G) */
-export const chiKey = (chi: string) => (chi === 'Bene' ? 'B' : chi === 'Ginevra' ? 'G' : 'A');
+/** chi = selettore persona dell'app ('Ale' | 'Bene' | 'Ginevra') -> iniziale attesa dalla edge (A | B | G).
+ *  18-11: una persona che le edge delle materie prime non conoscono (Giovanni, B2B) da' '' e non scrive: prima
+ *  ogni persona diversa da Benny e Ginni finiva registrata come Ale. */
+export const chiKey = (chi: string) => (chi === 'Bene' ? 'B' : chi === 'Ginevra' ? 'G' : chi === 'Ale' ? 'A' : '');
+const PROFILO_NON_AMMESSO = 'Materie prime: scegli in Home il profilo di Ale, Benny o Ginni per scrivere qui.';
+const chiOFerma = (chi: string) => { const k = chiKey(chi); if (!k) throw new Error(PROFILO_NON_AMMESSO); return k; };
 
-export const matApi = (action: string, chi: string, body: Record<string, unknown>) => callEdge('mat-api', { action, chi: chiKey(chi), ...body });
+export const matApi = async (action: string, chi: string, body: Record<string, unknown>) => callEdge('mat-api', { action, chi: chiOFerma(chi), ...body });
 
 /** Carica un file nel bucket privato sotto inbox/ (policy INSERT solo @amimi.it e solo li'). Ritorna il path. */
 export async function uploadInbox(file: File, chi: string): Promise<string> {
-  const ext = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
+  chiOFerma(chi);
+  const ext =(file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
   const day = new Date().toISOString().slice(0, 10);
   const path = `inbox/${chiKey(chi)}/${day}/${crypto.randomUUID()}.${ext}`;
   const { error } = await csClient.storage.from('mat-assets').upload(path, file, { contentType: file.type || undefined, upsert: false });
@@ -181,7 +186,7 @@ export async function preparaFoto(file: File, lato = 2000): Promise<{ file: File
 }
 
 export async function aiCompila<T>(chi: string, target: 'materiale' | 'fornitore' | 'ordine_prodotti' | 'foglio_ordine', immagini: string[], testo: string, contesto: Record<string, string[]>): Promise<AiRisposta<T>> {
-  const j = await callEdge('ai-compila', { chi: chiKey(chi), target, immagini, testo, contesto });
+  const j = await callEdge('ai-compila', { chi: chiOFerma(chi), target, immagini, testo, contesto });
   return j as unknown as AiRisposta<T>;
 }
 export const v = <T,>(c: AiCampo<T> | undefined | null): T | null => (c && c.valore != null ? c.valore : null);
