@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchTouches, addTouch, renderTemplate, STAGES, STAGE_LABEL, ESITI, VERDETTO_LABEL, TIPO_LABEL, fetchDrafts, generaBozza, inviaBozza, inviaProva, indirizzoInterno, sbloccaBozza, scartaBozza, segnaposto, LEAD_MITTENTE, cercaInviate, agganciaTocco, inviaRisposta, proponiRisposta, rifinisciTesto, fetchInbound, inboundCollega, inboundScarta, inboundCrea, nuovoNegozio } from '../lib/leadApi';
 import type { LeadOutreach, LeadTouch, LeadSequence, LeadDraft, InviataCandidata, LeadInbound, NegozioCandidato, Alternativa } from '../lib/leadApi';
-import { negozioCiHaScritto, dopoInvioManuale, rispostaPreparata, avvisiTesto, ordinaConversazione, propostaSalvata, propostaStantia, giaRisposto, modoIniziale, NON_CONVERSAZIONE } from '../lib/leadRegole';
+import { negozioCiHaScritto, dopoInvioManuale, rispostaPreparata, avvisiTesto, ordinaConversazione, propostaSalvata, propostaStantia, giaRisposto, modoIniziale, emailDelNegozio, etichettaPrimoContatto, NON_CONVERSAZIONE } from '../lib/leadRegole';
 import type { ElementoConv } from '../lib/leadRegole';
 import { EMAIL_TEAM_TESTO } from '../lib/csClient';
 import AppBar from '../components/AppBar';
@@ -22,7 +22,7 @@ function Due({ r }: { r: LeadOutreach }) {
   if (r.bozza_auto_tocco != null) return <span className="or-due late">follow-up {r.bozza_auto_tocco} pronto da rivedere</span>;
   if (r.scaduta) return <span className="or-due late">{r.prossima_azione ?? 'azione'} · scaduta {fmtD(r.prossima_azione_at)}</span>;
   if (r.prossima_azione_at) return <span className="or-due">{r.prossima_azione ?? 'prossima azione'} · {fmtD(r.prossima_azione_at)}</span>;
-  if (r.lead_stage === 'da_contattare' && !r.n_tocchi) return <span className="or-due">{r.telefono_maps || r.telefono ? 'telefono prima' : r.email_generica || r.email_sito ? 'email 1 da scrivere' : 'nessun contatto: cercarlo'}</span>;
+  if (r.lead_stage === 'da_contattare' && !r.n_tocchi) { const e = etichettaPrimoContatto(r); return <span className={e.conEmail ? 'or-due' : 'or-due muted'}>{e.testo}</span>; }
   if (r.giorni_da_ultimo != null) return <span className="or-due muted">{r.giorni_da_ultimo} gg dall&#8217;ultimo tocco</span>;
   return null;
 }
@@ -199,7 +199,7 @@ export function OutreachCoda({ rows, onOpen, who, onChanged, aiOn }: { rows: Lea
       {pronti.length > 0 && <section className="card"><h2>Follow-up pronti da rivedere · {pronti.length}</h2><div className="or-list">{pronti.map((r) => <Row key={r.id} r={r} icon="✍️" what={`bozza del follow-up ${r.bozza_auto_tocco} di 4 già scritta: rileggila e inviala`} />)}</div></section>}
       {scadute.length > 0 && <section className="card"><h2>Azioni scadute · {scadute.length}</h2><div className="or-list">{scadute.map((r) => <Row key={r.id} r={r} icon="⏰" what={`${r.prossima_azione ?? 'azione'} · scaduta il ${fmtD(r.prossima_azione_at)} · ${r.owner_outreach ?? ''}`} />)}</div></section>}
       {inScadenza.length > 0 && <section className="card"><h2>In scadenza entro 2 giorni · {inScadenza.length}</h2><div className="or-list">{inScadenza.map((r) => <Row key={r.id} r={r} icon="📅" what={`${r.prossima_azione ?? 'azione'} · ${fmtD(r.prossima_azione_at)}`} />)}</div></section>}
-      {nuovi.length > 0 && <section className="card"><h2>Da contattare, mai toccati · {nuovi.length}</h2><div className="or-list">{nuovi.map((r) => <Row key={r.id} r={r} icon={r.telefono_maps || r.telefono ? '📞' : '✍️'} what={r.telefono_maps || r.telefono ? `telefonata di qualifica (${r.telefono ?? r.telefono_maps})` : r.email_generica || r.email_sito ? `email 1 a ${r.email_generica ?? r.email_sito}` : 'nessun contatto trovato: cercare email o telefono'} />)}</div></section>}
+      {nuovi.length > 0 && <section className="card"><h2>Da contattare, mai toccati · {nuovi.length}</h2><div className="or-list">{nuovi.map((r) => { const e = emailDelNegozio(r); return <Row key={r.id} r={r} icon="✍️" what={e ? `email 1 a ${e}` : 'nessuna email trovata: cercarla'} />; })}</div></section>}
     </>
   );
 }
@@ -231,7 +231,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const [tmsg, setTmsg] = useState<{ t: string; err: boolean } | null>(null);
   const diciT = (t: string, err = false) => setTmsg(t ? { t, err } : null);
   const [moveTo, setMoveTo] = useState('');
-  const firma = settings.lead_firma ?? 'Benedetta - Amimì Milano';
+  const firma = settings.lead_firma ?? 'Giovanni - Amimì Milano';
   const linesheet = settings.lead_linesheet_url ?? '';
   // flag: lead_outreach_ai_enabled = bozza AI della sequenza, invio e prova dall'app; lead_risposta_ai_enabled (v15) =
   // proposte di risposta dalla conversazione e "chiedi una modifica"
@@ -541,7 +541,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   const cambiaModo = (m: 'risposta' | 'sequenza') => { setModo(m); setCmsg(null); setRefineTxt(''); setSendOpen(false); setApertura(''); setIncertoMsg(''); };
   const openSend = () => { setSendErr(''); setSendBloccato(false); setSendOpen(true); };
 
-  const contatto = r.email_generica ?? r.email_sito ?? '';
+  const contatto = emailDelNegozio(r) ?? '';
   const tel = r.telefono ?? r.telefono_maps ?? '';
   const testoBox = modo === 'risposta' ? rTesto : testo;
   const refineBox = (
@@ -854,7 +854,7 @@ export function OutreachSequenze({ sequences, settings }: { sequences: LeadSeque
           <div className="tablewrap"><table className="sortable">
             <thead><tr><th>Tocco</th><th>Quando</th><th>Canale</th><th>Oggetto</th><th>Chi</th></tr></thead>
             <tbody>{sequences.filter((s) => s.codice === c).map((s) => (
-              <tr key={s.id}><td>{s.tocco}</td><td className="l">{s.tocco === 0 ? 'prima dell’email, se c’è un numero' : s.giorni_attesa ? `+${s.giorni_attesa} giorni dal precedente` : 'subito'}</td><td className="l">{CANALI[s.canale] ?? s.canale}</td><td className="l">{s.oggetto ?? 'n.d.'}</td><td className="l">{s.chi_default ?? ''}</td></tr>
+              <tr key={s.id}><td>{s.tocco}</td><td className="l">{s.tocco === 0 ? 'facoltativa, se c’è un numero (l’outreach parte dall’email 1)' : s.giorni_attesa ? `+${s.giorni_attesa} giorni dal precedente` : 'subito'}</td><td className="l">{CANALI[s.canale] ?? s.canale}</td><td className="l">{s.oggetto ?? 'n.d.'}</td><td className="l">{s.chi_default ?? ''}</td></tr>
             ))}</tbody>
           </table></div>
           {sequences.filter((s) => s.codice === c).map((s) => <details key={s.id} style={{ marginTop: 6 }}><summary style={{ cursor: 'pointer', fontSize: 13 }}>Testo del tocco {s.tocco}</summary><pre className="lead-pre" style={{ maxHeight: 300 }}>{s.corpo}</pre></details>)}

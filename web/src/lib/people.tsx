@@ -7,7 +7,8 @@ export type Tab = 'home' | 'registra' | 'ordini' | 'magazzino' | 'cruscotto' | '
 export const FINANCE_TABS: ReadonlySet<Tab> = new Set<Tab>(['cruscotto', 'ce', 'margini', 'clienti', 'ads', 'premia', 'comportamento']);
 export type Tile = { icon: string; label: string; tab: Tab; param?: string; badge?: 'arrivi' | 'todo' };
 
-export const PEOPLE = ['Ale', 'Bene', 'Ginevra'] as const;
+// Giovanni (18-11-2026, Dan): quarta persona, responsabile del B2B; entra con il login condiviso info@amimi.it.
+export const PEOPLE = ['Ale', 'Bene', 'Ginevra', 'Giovanni'] as const;
 
 export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Tile[] }> = {
   Ale: {
@@ -48,6 +49,12 @@ export const PERSONA: Record<string, { name: string; finance: boolean; tiles: Ti
       // 03-11 (decisione di Dan): Ginni modera i look e le recensioni dell'Area Membri; la tab Premia resta fra le finanza
       { icon: 'gift', label: 'Recensioni da approvare', tab: 'recensioni' },
       { icon: 'globe', label: 'Villaggio', tab: 'villaggio' },
+    ],
+  },
+  Giovanni: {
+    name: 'Giovanni', finance: false,
+    tiles: [
+      { icon: 'store', label: 'Negozi B2B', tab: 'negozi' },
     ],
   },
 };

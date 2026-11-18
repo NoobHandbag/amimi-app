@@ -231,8 +231,8 @@ const base = () => ({ chi: 'Bene', device_id: DEV, subscription: { endpoint: AMM
   t('29 iscrizione valida, normalizzata (device_id minuscolo, temi senza doppioni, etichetta compressa)', v.ok && v.val.device_id === DEV.toLowerCase()
     && JSON.stringify(v.val.temi) === '["conti","vendite"]' && v.val.etichetta === 'iPhone di Benny' && v.val.chi === 'Bene' && v.val.endpoint === AMMETTE[2]
     && v.val.p256dh === P256 && v.val.auth === AUTH, v);
-  t('30 chi = chiavi di PEOPLE del web (Ale, Bene, Ginevra), non i nomi mostrati', JSON.stringify(CHI_AMMESSI) === '["Ale","Bene","Ginevra"]'
-    && ['Benny', 'Ginni', 'ale', 'ALE', '', null, 3].every((c) => validaIscrizione({ ...base(), chi: c }).ok === false));
+  t('30 chi = chiavi di PEOPLE del web (Ale, Bene, Ginevra, Giovanni dal 18-11), non i nomi mostrati', JSON.stringify(CHI_AMMESSI) === '["Ale","Bene","Ginevra","Giovanni"]'
+    && ['Benny', 'Ginni', 'ale', 'ALE', 'giovanni', 'Gio', '', null, 3].every((c) => validaIscrizione({ ...base(), chi: c }).ok === false) && validaIscrizione({ ...base(), chi: 'Giovanni' }).ok === true);
   t('31 device_id non uuid rifiutato', ['abc', '3F2504E04F8941D39A0C0305E82C3301', '', null, 42, DEV + 'x'].every((d) => validaIscrizione({ ...base(), device_id: d }).ok === false)
     && normDevice(' ' + DEV + ' ') === DEV.toLowerCase());
   const ep = validaIscrizione({ ...base(), subscription: { endpoint: 'https://evil.com/x', keys: { p256dh: P256, auth: AUTH } } });
@@ -438,14 +438,14 @@ console.log('\n== confronto a tempo costante ==');
 
 console.log('\n== v2 (18-10): chi di invia e predefinito_per di config ==');
 {
-  const tutti = ['Ale', 'Bene', 'Ginevra'];
+  const tutti = ['Ale', 'Bene', 'Ginevra', 'Giovanni'];
   const senza = [undefined, null, ''].map((v) => chiDestinatario(v));
-  t('87 chi assente, null o vuoto: filtro sulle tre chiavi (come la v1), chi null', senza.every((d) => d.ok === true && isDeepStrictEqual(d.filtro, tutti) && d.chi === null), senza);
+  t('87 chi assente, null o vuoto: filtro su tutte le chiavi (come la v1), chi null', senza.every((d) => d.ok === true && isDeepStrictEqual(d.filtro, tutti) && d.chi === null), senza);
   t('88 chi valido: filtro su quella sola persona', tutti.every((c) => { const d = chiDestinatario(c); return d.ok === true && isDeepStrictEqual(d.filtro, [c]) && d.chi === c; }));
   const sbagliati = ['Benny', 'Ginni', 'ale', 'ALE', ' Ale', 'Ale ', 'tutti', 'Dan', 0, 1, true, false, {}, [], ['Ale'], { toString: () => 'Ale' }];
   const passati = sbagliati.filter((v) => chiDestinatario(v).ok !== false);
   t('89 chi sbagliato (nome mostrato, minuscole, spazi, "tutti", non stringa, array) -> errore, mai un ripiego su tutti', passati.length === 0, passati);
-  t('89b il filtro e\' una copia: modificarlo non tocca CHI_AMMESSI', (() => { const d = chiDestinatario(undefined); d.filtro.push('x'); return CHI_AMMESSI.length === 3 && chiDestinatario(undefined).filtro.length === 3; })());
+  t('89b il filtro e\' una copia: modificarlo non tocca CHI_AMMESSI', (() => { const d = chiDestinatario(undefined); d.filtro.push('x'); return CHI_AMMESSI.length === 4 && chiDestinatario(undefined).filtro.length === 4; })());
   const righe = [
     { key: 'negozi', etichetta: 'Negozi', descrizione: 'x', ordine: 30, attivo: true, predefinito_per: ['Ale', 'Bene'] },
     { key: 'assistenza', etichetta: 'Assistenza', descrizione: null, predefinito_per: ['Ginevra', 'Benny', 'Ginevra', 3, null] },
@@ -455,7 +455,7 @@ console.log('\n== v2 (18-10): chi di invia e predefinito_per di config ==');
   const v = vistaTemi(righe);
   t('90 vistaTemi: solo key, etichetta, descrizione, predefinito_per (niente ordine o attivo), nell\'ordine della lettura',
     v.length === 4 && v.every((r) => Object.keys(r).join() === 'key,etichetta,descrizione,predefinito_per') && v.map((r) => r.key).join() === 'negozi,assistenza,conti,vendite', v);
-  t('91 predefinito_per: solo le tre chiavi, senza doppioni; assente o non array -> []', isDeepStrictEqual(v[0].predefinito_per, ['Ale', 'Bene'])
+  t('91 predefinito_per: solo le chiavi di CHI_AMMESSI, senza doppioni; assente o non array -> []', isDeepStrictEqual(v[0].predefinito_per, ['Ale', 'Bene'])
     && isDeepStrictEqual(v[1].predefinito_per, ['Ginevra']) && isDeepStrictEqual(v[2].predefinito_per, []) && isDeepStrictEqual(v[3].predefinito_per, []), v.map((r) => r.predefinito_per));
   t('92 vistaTemi: lettura non array -> [], righe nulle -> campi undefined senza lanciare', vistaTemi(null).length === 0 && vistaTemi('x').length === 0
     && vistaTemi([null, 3]).every((r) => r.key === undefined && isDeepStrictEqual(r.predefinito_per, [])));
@@ -554,7 +554,7 @@ const cancellazioniFiltrate = (s) => {
 const chiFiltrato = (s) => {
   const f = codice(corpoFunzione(s, 'async function inviaTema('));
   const d = f.indexOf('const dest = chiDestinatario(body.chi);');
-  const no = f.indexOf("if (!dest.ok) return json({ error: 'chi non valido (Ale, Bene o Ginevra)' }, 422);");
+  const no = f.indexOf("if (!dest.ok) return json({ error: 'chi non valido (Ale, Bene, Ginevra o Giovanni)' }, 422);");
   const lettura = f.split('\n').find((l) => l.includes(".contains('temi', [tema])")) ?? '';
   return d > f.indexOf('if (!pulisciTesto(body.titolo) && !pulisciTesto(body.testo))') && no > d && no < f.indexOf('await temiAttivi(sb, [tema])')
     && no < f.indexOf('await vapidDaEnv()') && lettura.includes(".contains('temi', [tema]).in('chi', dest.filtro).order(") && (f.match(/body\.chi/g) ?? []).length === 1
@@ -718,7 +718,7 @@ console.log('\n== autocontrollo dei rilevatori ==');
   t('A26 invia senza il filtro chi, con body.chi grezzo nella lettura, o con il 422 tolto -> visto', [
     pianta(".contains('temi', [tema]).in('chi', dest.filtro).order(", ".contains('temi', [tema]).order("),
     pianta(".in('chi', dest.filtro)", ".in('chi', [body.chi])"),
-    pianta("if (!dest.ok) return json({ error: 'chi non valido (Ale, Bene o Ginevra)' }, 422);", ''),
+    pianta("if (!dest.ok) return json({ error: 'chi non valido (Ale, Bene, Ginevra o Giovanni)' }, 422);", ''),
   ].every((s) => !chiFiltrato(s)));
   t('A27 risposta di invia senza chi (vera o dryRun) -> vista', [pianta('esiti: g.esiti, chi: dest.chi, ...(g.fermato', 'esiti: g.esiti, ...(g.fermato'),
     pianta('rimossi: 0, destinatari, chi: dest.chi });', 'rimossi: 0, destinatari });')].every((s) => !chiRimandato(s)));

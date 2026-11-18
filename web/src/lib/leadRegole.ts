@@ -12,6 +12,17 @@ export function negozioCiHaScritto(tocchi: ToccoMinimo[]): boolean {
   return tocchi.some((t) => t.direzione === 'in' && !NON_CONVERSAZIONE.includes(t.esito ?? ''));
 }
 
+// 18-11 (Dan): l'outreach e' quasi solo email, quindi il cartellino di un negozio da contattare dice se un'email c'e'
+// (prima diceva "telefono prima" appena c'era un numero). L'email e' quella che la scheda propone come destinatario:
+// la generica del negozio, altrimenti quella trovata sul sito; una stringa vuota o di soli spazi non conta.
+export function emailDelNegozio(r: { email_generica: string | null; email_sito: string | null }): string | null {
+  for (const e of [r.email_generica, r.email_sito]) { const t = (e ?? '').trim(); if (t) return t; }
+  return null;
+}
+export function etichettaPrimoContatto(r: { email_generica: string | null; email_sito: string | null }): { conEmail: boolean; testo: string } {
+  return emailDelNegozio(r) ? { conEmail: true, testo: 'email 1 da scrivere' } : { conEmail: false, testo: 'nessuna email: cercarla' };
+}
+
 // v12 (blocco B): come si prepara il riquadro "Rispondi". Stessa regola della edge (bersaglioRisposta): la risposta va
 // nel thread dell'ultimo messaggio vero (un tocco con id Gmail, bounce e risposte automatiche esclusi); se quel messaggio
 // e' il modulo del sito (senza thread) parte un'email nuova. Il destinatario e' chi ci ha scritto per ultimo (la prima

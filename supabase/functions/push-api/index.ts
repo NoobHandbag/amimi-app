@@ -1,3 +1,5 @@
+// push-api v6 (2026-11-18, Dan): quarta persona Giovanni (responsabile del B2B) fra le chiavi ammesse (CHI_AMMESSI,
+// stessa lista del check push_subscriptions_chi_ck della migr 0197). Il resto come la v5.
 // push-api v5 (2026-11-09, Gate 2 dell'evento stock_fermo di push-eventi): anche il tema magazzino senza Topic. Il resto come la v4.
 // push-api v4 (2026-11-03, Gate 2 di push-eventi v5): anche il tema premia senza Topic (TEMI_SENZA_TOPIC). Il resto come la v3.
 // push-api v3 (2026-10-21, OK di Dan in chat): niente header Topic verso Apple (topicPer: APNs rispondeva 400
@@ -30,7 +32,7 @@
 //   prova       {device_id}                         -> {ok, esito, messaggio}; 429 se l'ultima prova ha meno di un minuto
 // Azione servizio:
 //   invia       {tema, titolo, testo, url?, urgente?, dryRun?, chi?} -> {ok: inviati>=1, inviati, falliti, rimossi, destinatari, esiti}
-//               tema spento o inesistente -> {ok:false, skipped:'tema_spento', inviati:0}; chi fuori dalle tre chiavi -> 422
+//               tema spento o inesistente -> {ok:false, skipped:'tema_spento', inviati:0}; chi fuori da CHI_AMMESSI -> 422
 //               La risposta (anche in dryRun) rimanda `chi` (la persona, o null = tutti): Gate 3 del 18-10 (RF-7), push-eventi
 //               chiude come persa una push per una persona se la risposta non lo rimanda uguale (una push-api v1 manda a tutti).
 // Endpoint e chiavi di un telefono non escono MAI da qui, ne' nelle risposte ne' nei log: bastano a mandargli notifiche.
@@ -82,7 +84,7 @@ function endpointAmmesso(v: unknown): string | null {
 
 // ==== PURE:push-valida BEGIN ====
 // chi = chiavi di PEOPLE del web (i nomi mostrati sono Ale, Benny, Ginni), come il check di push_subscriptions (migr 0163)
-const CHI_AMMESSI = ['Ale', 'Bene', 'Ginevra'];
+const CHI_AMMESSI = ['Ale', 'Bene', 'Ginevra', 'Giovanni'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TEMA_RE = /^[a-z_]{2,32}$/;
 const TEMI_MAX = 32;
@@ -158,7 +160,7 @@ function validaSubscription(v: unknown): { ok: true; sub: Sub } | { ok: false; e
 type Iscrizione = Sub & { chi: string; device_id: string; temi: string[]; etichetta: string | null };
 function validaIscrizione(b: Record<string, unknown>): { ok: true; val: Iscrizione } | { ok: false; error: string } {
   const chi = typeof b.chi === 'string' ? b.chi : '';
-  if (!CHI_AMMESSI.includes(chi)) return { ok: false, error: 'chi non valido (Ale, Bene o Ginevra)' };
+  if (!CHI_AMMESSI.includes(chi)) return { ok: false, error: 'chi non valido (Ale, Bene, Ginevra o Giovanni)' };
   const device_id = normDevice(b.device_id);
   if (!device_id) return { ok: false, error: 'device_id non valido' };
   const s = validaSubscription(b.subscription);
@@ -225,15 +227,15 @@ function provaTroppoPresto(lastTestAt: unknown, ora: number): boolean {
 
 // ==== PURE:push-destinatari BEGIN ====
 // v2 (18-10, push-eventi). `chi` di invia: assente, null o vuoto = tutti gli iscritti al tema (la v1, ce-guard e
-// sales-guard); altrimenti una delle tre chiavi esatte, e la lettura delle iscrizioni filtra su quella sola. Un valore
+// sales-guard); altrimenti una delle chiavi esatte di CHI_AMMESSI, e la lettura delle iscrizioni filtra su quella sola. Un valore
 // sbagliato e' un errore, mai un ripiego su "tutti": il riepilogo di una persona finirebbe sui telefoni degli altri.
-// Il filtro e' sempre una lista per `.in('chi', ...)`: senza chi sono le tre chiavi del check di push_subscriptions.
+// Il filtro e' sempre una lista per `.in('chi', ...)`: senza chi sono tutte le chiavi del check di push_subscriptions.
 function chiDestinatario(v: unknown): { ok: true; filtro: string[]; chi: string | null } | { ok: false } {
   if (v === undefined || v === null || v === '') return { ok: true, filtro: [...CHI_AMMESSI], chi: null };
   if (typeof v === 'string' && CHI_AMMESSI.includes(v)) return { ok: true, filtro: [v], chi: v };
   return { ok: false };
 }
-// Temi per config, campo per campo. predefinito_per (migr 0166) arriva come text[]: qui restano solo le tre chiavi, una
+// Temi per config, campo per campo. predefinito_per (migr 0166) arriva come text[]: qui restano solo le chiavi di CHI_AMMESSI, una
 // volta sola, nell'ordine della riga; assente o non array = nessuno (la scheda allora spunta tutti, come prima).
 function vistaTemi(righe: unknown): { key: unknown; etichetta: unknown; descrizione: unknown; predefinito_per: string[] }[] {
   return (Array.isArray(righe) ? righe : []).map((x) => {
@@ -532,7 +534,7 @@ async function inviaTema(sb: Sb, body: Record<string, unknown>): Promise<Respons
   if (!TEMA_RE.test(tema)) return json({ error: 'tema non valido' }, 422);
   if (!pulisciTesto(body.titolo) && !pulisciTesto(body.testo)) return json({ error: 'titolo o testo mancanti' }, 422);
   const dest = chiDestinatario(body.chi);
-  if (!dest.ok) return json({ error: 'chi non valido (Ale, Bene o Ginevra)' }, 422);
+  if (!dest.ok) return json({ error: 'chi non valido (Ale, Bene, Ginevra o Giovanni)' }, 422);
   // tema spento (push_temi.attivo = false) o inesistente: niente invio (Gate 2, 17-10). Prima un tema tolto dalla scheda
   // continuava ad arrivare ai telefoni che l'avevano gia', senza piu' la casella per toglierlo.
   if (!(await temiAttivi(sb, [tema])).includes(tema)) return json({ ok: false, skipped: 'tema_spento', inviati: 0 });

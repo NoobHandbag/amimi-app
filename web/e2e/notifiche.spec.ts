@@ -30,17 +30,18 @@ const TEMI = [
 const TEMI_18 = [
   { ...TEMI[0], predefinito_per: ['Ale'] },
   { ...TEMI[1], predefinito_per: ['Ale'] },
-  { key: 'negozi', etichetta: 'Negozi B2B', descrizione: 'Quando un negozio contattato risponde', predefinito_per: ['Ale', 'Bene'] },
+  { key: 'negozi', etichetta: 'Negozi B2B', descrizione: 'Quando un negozio contattato risponde', predefinito_per: ['Ale', 'Bene', 'Giovanni'] },
   { key: 'assistenza', etichetta: 'Assistenza clienti', descrizione: 'Richieste urgenti', predefinito_per: ['Ginevra'] },
   { key: 'spedizioni', etichetta: 'Spedizioni', descrizione: 'Problemi segnalati dal corriere', predefinito_per: ['Ginevra'] },
   { key: 'sistema', etichetta: 'Sistema', descrizione: 'Lettura della posta clienti ferma', predefinito_per: ['Ale'] },
-  { key: 'riepilogo', etichetta: 'Riepilogo serale', descrizione: 'Alle 18:30, solo se c’è qualcosa', predefinito_per: ['Ale', 'Bene', 'Ginevra'] },
+  { key: 'riepilogo', etichetta: 'Riepilogo serale', descrizione: 'Alle 18:30, solo se c’è qualcosa', predefinito_per: ['Ale', 'Bene', 'Ginevra', 'Giovanni'] },
 ];
 const CONFIG_18 = { enabled: true, vapidPublicKey: VAPID, temi: TEMI_18 };
 const PREDEFINITI = {
   Ale: ['conti', 'vendite', 'negozi', 'sistema', 'riepilogo'],
   Bene: ['negozi', 'riepilogo'],
   Ginevra: ['assistenza', 'spedizioni', 'riepilogo'],
+  Giovanni: ['negozi', 'riepilogo'],   // 18-11, migr 0197: quarta persona, B2B
 };
 const E1 = 'https://fcm.googleapis.com/fcm/send/vecchia';
 const E2 = 'https://fcm.googleapis.com/fcm/send/nuova';
@@ -241,7 +242,7 @@ test('flag acceso con sessione: persona dal selettore dell\'app, temi tutti spun
   await expect(page.locator('h1')).toHaveText('Notifiche');
   // persona preselezionata dal selettore dell'app (amimi_chi = Bene -> Benny)
   const persona = page.locator('.card', { hasText: 'Chi usa questo telefono' });
-  await expect(persona.locator('.seg button')).toHaveText(['Ale', 'Benny', 'Ginni']);
+  await expect(persona.locator('.seg button')).toHaveText(['Ale', 'Benny', 'Ginni', 'Giovanni']);
   await expect(persona.locator('.seg button.on')).toHaveText('Benny');
   // temi da config.temi, tutti spuntati prima dell'iscrizione
   const conti = page.getByRole('checkbox', { name: /Controlli contabili/ });
@@ -595,6 +596,8 @@ test('predefiniti: cambiare persona prima di iscriversi cambia i temi spuntati, 
   await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Ale);
   await bottonePersona(page, 'Ginni').click();
   await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Ginevra);
+  await bottonePersona(page, 'Giovanni').click();
+  await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Giovanni);
   await bottonePersona(page, 'Benny').click();
   await expect.poll(() => spuntati(page)).toEqual(PREDEFINITI.Bene);
   // una casella toccata vince sui predefiniti: cambiando persona la scelta resta
@@ -654,7 +657,7 @@ test('F2: telefono nuovo senza persona scelta: nessuna persona segnata, temi vuo
   await expect(statoTelefono(page)).toContainText('Spente su questo telefono.');
   await expect(page.getByText('Preparo il telefono…')).toHaveCount(0);
   const persona = page.locator('.card', { hasText: 'Chi usa questo telefono' });
-  await expect(persona.locator('.seg button')).toHaveText(['Ale', 'Benny', 'Ginni']);
+  await expect(persona.locator('.seg button')).toHaveText(['Ale', 'Benny', 'Ginni', 'Giovanni']);
   await expect(persona.locator('.seg button.on')).toHaveCount(0);
   expect(await spuntati(page)).toEqual([]);
   await expect(page.getByRole('checkbox', { name: /Assistenza clienti/ })).toBeDisabled();
