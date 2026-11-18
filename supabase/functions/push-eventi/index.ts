@@ -47,6 +47,9 @@
 // `copia` o `amimi.it`) e nessuna riga di oggi dalle 12 di Roma = push `embed_mancato:<giorno>` "controllo non fatto" (cron o
 // edge fermi: un controllo che smette in silenzio non e' un controllo). Della riga solo giorno, gravita' e conteggio, mai
 // la label (come cs_sync): il dettaglio sta in Salute.
+// v12 (2026-11-18, Dan): quarta persona Giovanni, responsabile del B2B (CHI_PERSONE, come CHI_AMMESSI di push-api v6 e il
+// check della migr 0197). Il suo riepilogo serale ha la sola riga B2B, la stessa di Benny (che resta com'era); le push dei
+// negozi gli arrivano dal tema negozi, predefinito per lui dalla 0197. Niente altro cambia.
 // Brief:Cowork12/_CLAUDE_CODE_INBOX/2026-10-18_BRIEF_push_eventi_per_profilo.md (decisioni di Dan del 18-10). Modulo push_*
 // (Regola 19, migr 0166): scrive SOLO push_eventi_inviati (il registro), push_eventi (ultimo_giro_at, baseline_at) e la sua
 // riga di telemetria in health_log (k = 'push_eventi', una per giorno UTC: Gate 3 del 18-10, un giro che fallisce deve
@@ -99,7 +102,7 @@ const LINK_SALUTE = APP_URL + '#salute';
 const LINK_RECENSIONI = APP_URL + '#recensioni';
 const LINK_PREMIA = APP_URL + '#premia';
 // chiavi di PEOPLE del web, come il check di push_subscriptions (migr 0163) e CHI_AMMESSI di push-api
-const CHI_PERSONE = ['Ale', 'Bene', 'Ginevra'];
+const CHI_PERSONE = ['Ale', 'Bene', 'Ginevra', 'Giovanni'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TEMA_RE = /^[a-z_]{2,32}$/;
 // tema di ogni evento (righe di push_eventi della 0166); la riga a DB vince se e' una chiave valida
@@ -666,6 +669,10 @@ const unisci = (testa: string, parti: string[]) => { const p = parti.filter(Bool
 // 03-11 (decisione di Dan): nella riga Premia di Ale anche le nuove iscritte del giorno (solo qui, mai una push); Ginni,
 // che modera, ha la sua riga Premia coi contenuti ancora da approvare.
 const rigaDaApprovare = (c: ContiRiepilogo) => (pos(c.premia) ? plurale(pos(c.premia), 'contenuto da approvare', 'contenuti da approvare') : '');
+// v12 (18-11): la riga B2B di Benny, uguale per Giovanni che dal 18-11 guida il B2B
+const rigaB2B = (c: ContiRiepilogo) => unisci('B2B', [pos(c.daCollegare) ? plurale(pos(c.daCollegare), 'messaggio da collegare', 'messaggi da collegare') : '',
+  pos(c.b2bScadute) ? plurale(pos(c.b2bScadute), 'azione scaduta', 'azioni scadute') : '',
+  pos(c.followUpPronti) ? plurale(pos(c.followUpPronti), 'follow-up pronto da rivedere', 'follow-up pronti da rivedere') : '']);
 function righeRiepilogo(chi: string, c: ContiRiepilogo, giorni: number, oreAffido: number): string[] {
   const r: string[] = [];
   if (chi === 'Ale') {
@@ -678,9 +685,9 @@ function righeRiepilogo(chi: string, c: ContiRiepilogo, giorni: number, oreAffid
       pos(c.b2bScadute) ? plurale(pos(c.b2bScadute), 'azione B2B scaduta', 'azioni B2B scadute') : '']));
   } else if (chi === 'Bene') {
     r.push(unisci('Prodotti', [pos(c.daCompletare) ? `${pos(c.daCompletare)} da completare` : '', pos(c.daPulire) ? `${pos(c.daPulire)} da pulire` : '']));
-    r.push(unisci('B2B', [pos(c.daCollegare) ? plurale(pos(c.daCollegare), 'messaggio da collegare', 'messaggi da collegare') : '',
-      pos(c.b2bScadute) ? plurale(pos(c.b2bScadute), 'azione scaduta', 'azioni scadute') : '',
-      pos(c.followUpPronti) ? plurale(pos(c.followUpPronti), 'follow-up pronto da rivedere', 'follow-up pronti da rivedere') : '']));
+    r.push(rigaB2B(c));
+  } else if (chi === 'Giovanni') {
+    r.push(rigaB2B(c));
   } else if (chi === 'Ginevra') {
     const n = Array.isArray(c.daSpedire) ? c.daSpedire.filter((x) => numeroOrdine(x)).map(numeroOrdine) : [];
     if (n.length) r.push(`Da spedire da oltre ${giorni} giorni lavorativi: ${plurale(n.length, 'ordine', 'ordini')} (${n.slice(0, 3).join(', ')}${n.length > 3 ? ` e altri ${n.length - 3}` : ''})`);

@@ -125,7 +125,7 @@ console.log('== base ==');
   t('1  APP_URL uguale a push-api e a _shared/push.ts; link #assistenza e #salute', APP_URL === (PUSH_API.match(/const APP_URL = '([^']+)'/) ?? [])[1]
     && APP_URL === (SHARED.match(/export const APP_URL = '([^']+)'/) ?? [])[1] && LINK_ASSISTENZA === APP_URL + '#assistenza' && LINK_SALUTE === APP_URL + '#salute');
   const chiApi = (PUSH_API.match(/const CHI_AMMESSI = (\[[^\]]+\])/) ?? [])[1];
-  t('2  CHI_PERSONE = CHI_AMMESSI di push-api (Ale, Bene, Ginevra)', JSON.stringify(CHI_PERSONE) === '["Ale","Bene","Ginevra"]' && chiApi === "['Ale', 'Bene', 'Ginevra']", chiApi);
+  t('2  CHI_PERSONE = CHI_AMMESSI di push-api (Ale, Bene, Ginevra, Giovanni dal 18-11)', JSON.stringify(CHI_PERSONE) === '["Ale","Bene","Ginevra","Giovanni"]' && chiApi === "['Ale', 'Bene', 'Ginevra', 'Giovanni']", chiApi);
   t('3  temi del contratto: negozi, assistenza (x2), spedizioni, sistema, riepilogo, dalla 0168 del 21-10 attivita, dalla 0183 del 03-11 premia e sistema, dalla 0185 del 06-11 sistema, dalla 0188 dell\'08-11 assistenza, assistenza_scala e sistema, dalla 0192 del 09-11 magazzino', isDeepStrictEqual(TEMA_EVENTO, { b2b_risposta_negozio: 'negozi', cs_urgente: 'assistenza',
     cs_cliente_ha_riscritto: 'assistenza', spedizione_eccezione: 'spedizioni', sistema_cs_sync_fermo: 'sistema', riepilogo: 'riepilogo', attivita_team: 'attivita',
     premia_da_approvare: 'premia', premia_salute: 'sistema', sistema_senza_iscritti: 'sistema',
@@ -497,7 +497,7 @@ console.log('\n== riepilogo ==');
   const aperta = { aperta: true, data: '2026-10-19', ts: T('2026-10-19T16:30:00Z') };
   const cr = candRiepilogo(aperta);
   t('38 riepilogo: finestra chiusa -> niente; aperta -> una chiave per persona riepilogo:<chi>:<data>', candRiepilogo({ ...aperta, aperta: false }).length === 0
-    && cr.map((x) => x.chiave).join() === 'riepilogo:Ale:2026-10-19,riepilogo:Bene:2026-10-19,riepilogo:Ginevra:2026-10-19' && cr.every((x) => x.ts === aperta.ts));
+    && cr.map((x) => x.chiave).join() === 'riepilogo:Ale:2026-10-19,riepilogo:Bene:2026-10-19,riepilogo:Ginevra:2026-10-19,riepilogo:Giovanni:2026-10-19' && cr.every((x) => x.ts === aperta.ts));
   const C = { ordini: 8, incasso: 1012.5, scontrini: 2, incassoCassa: 240, arrivi: 3, ordiniFornitore: 1, premia: 1, csFerme: 21, b2bScadute: 2, daCompletare: 7, daPulire: 44,
     daCollegare: 4, followUpPronti: 4, daSpedire: ['1890', '#1893', 'Maria Rossi', '1901', '1902', '1903'], affido: 10, csNuove: 1, iscritte: 3 };
   const ale = righeRiepilogo('Ale', C, 4, 48), bene = righeRiepilogo('Bene', C, 4, 48), gin = righeRiepilogo('Ginevra', C, 4, 48);
@@ -506,6 +506,12 @@ console.log('\n== riepilogo ==');
   t('40 Benny: prodotti da completare e da pulire, B2B con le sezioni della Coda (da collegare, azioni scadute, follow-up pronti da rivedere: B4 e C4 del 18-10)',
     isDeepStrictEqual(bene, ['Prodotti: 7 da completare, 44 da pulire', 'B2B: 4 messaggi da collegare, 2 azioni scadute, 4 follow-up pronti da rivedere'])
     && isDeepStrictEqual(righeRiepilogo('Bene', { ...C, daCompletare: 0, daPulire: 0, daCollegare: 0, b2bScadute: 1, followUpPronti: 1 }, 4, 48), ['B2B: 1 azione scaduta, 1 follow-up pronto da rivedere']), bene);
+  t('40g Giovanni (18-11): la sola riga B2B, identica a quella di Benny; niente prodotti, vendite, spedizioni o Premia',
+    isDeepStrictEqual(righeRiepilogo('Giovanni', C, 4, 48), ['B2B: 4 messaggi da collegare, 2 azioni scadute, 4 follow-up pronti da rivedere'])
+    && isDeepStrictEqual(righeRiepilogo('Giovanni', C, 4, 48)[0], bene[1])
+    && isDeepStrictEqual(righeRiepilogo('Giovanni', { ...C, daCollegare: 0, b2bScadute: 0, followUpPronti: 1 }, 4, 48), ['B2B: 1 follow-up pronto da rivedere'])
+    && righeRiepilogo('Giovanni', { ...C, daCollegare: 0, b2bScadute: 0, followUpPronti: 0 }, 4, 48).length === 0
+    && righeRiepilogo('giovanni', C, 4, 48).length === 0 && righeRiepilogo('Gio', C, 4, 48).length === 0, righeRiepilogo('Giovanni', C, 4, 48));
   t('41 Ginni: da spedire coi numeri d\'ordine (al massimo 3, poi "e altri N"; un nome non passa), affido, Assistenza e, dal 03-11, i contenuti di Premia da approvare (mai le iscritte)', isDeepStrictEqual(gin, [
     'Da spedire da oltre 4 giorni lavorativi: 5 ordini (#1890, #1893, #1901 e altri 2)', 'In attesa di affido da oltre 48 ore: 10 spedizioni',
     'Assistenza: 1 richiesta nuova oggi, 21 ferme da oltre 24 ore', 'Premia: 1 contenuto da approvare']), gin);
@@ -526,7 +532,7 @@ console.log('\n== riepilogo ==');
   t('46 testo su piu\' righe (a capo fra le voci), niente em dash', msgRiepilogo(cr, C, 4, 48)[0].testo.split('\n').length === 4 && testoValido(msgRiepilogo(cr, C, 4, 48)));
   const rDati = msgRiepilogo(cr, { ...C, daSpedire: [...C.daSpedire, CLIENTE, CLIENTE_EMAIL, PII[0]] }, 4, 48);
   t('N11 il riepilogo serale non cambia col 19-10: nessun dato della cliente, nemmeno il nome (un nome al posto del numero d\'ordine non passa)',
-    rDati.length === 3 && perdeTutto(rDati).length === 0, perdeTutto(rDati));
+    rDati.length === 4 && perdeTutto(rDati).length === 0, perdeTutto(rDati));
   // B3 (Gate 3 del 18-10): arrivi al netto per riga d'ordine. 29-09: +10 e -10 sulla stessa riga (storno) piu' un +4
   t('46b B3: arrivi = righe d\'ordine con arrivo netto positivo (0 e negativi fuori, storno annullato, legacy con qty, riga vuota fuori)',
     contaArrivi([{ row_id: 'x', delta: 5 }, { row_id: 'y', delta: 0 }, { row_id: 'z', delta: -2 }, { row_id: 'w', qty: 3 }]) === 2
@@ -1560,6 +1566,7 @@ console.log('\n== letture e testi di ogni evento, per firma (F4, B1-B5, C5, C7) 
       ['Riepilogo di oggi', 'Vendite: 2 ordini sul sito (150 EUR), 2 scontrini in cassa (150 EUR)\nFornitori: 2 arrivi registrati, 7 ordini registrati\nPremia: 2 nuove iscritte, 11 contenuti da approvare\nTeam: 13 richieste ferme da oltre 24 ore, 17 azioni B2B scadute', 'Ale'],
       ['Riepilogo di oggi', 'Prodotti: 19 da completare, 23 da pulire\nB2B: 29 messaggi da collegare, 17 azioni scadute, 31 follow-up pronti da rivedere', 'Bene'],
       ['Riepilogo di oggi', 'Da spedire da oltre 4 giorni lavorativi: 1 ordine (#1890)\nIn attesa di affido da oltre 48 ore: 37 spedizioni\nAssistenza: 41 richieste nuove oggi, 13 ferme da oltre 24 ore\nPremia: 11 contenuti da approvare', 'Ginevra'],
+      ['Riepilogo di oggi', 'B2B: 29 messaggi da collegare, 17 azioni scadute, 31 follow-up pronti da rivedere', 'Giovanni'],
     ]), msgs.riepilogo);
   t('Q6b premia_da_approvare (03-11): una push per contenuto, dal piu\' recente; tipo nel titolo, codice della borsa e totale da approvare nel testo, mai testi della cliente',
     isDeepStrictEqual(msgs.premia_da_approvare, [['Nuova recensione da approvare', 'In Recensioni: 11 contenuti da approvare.', ''],
@@ -1672,9 +1679,9 @@ console.log('\n== giro di un evento col client finto (F3, RF-4, RF-6, RF-3) ==')
   const wRp = mondo({ risposte: (q) => (q.op === 'select' && LETTURE_RP.includes(q.table) ? (q.head ? { count: 1, error: null } : { data: [], error: null }) : undefined) });
   inviate.length = 0;
   const rRp = await MI.giroEvento(wRp.sb, evRiga('riepilogo', { baseline_at: minRp(3000), ultimo_giro_at: minRp(180) }), ctxDi(ORA_RP), { invii: 20, scade: Infinity }, () => 0);
-  t('G7 v4 riepilogo a una ripartenza alle 23:30 (ultimo giro 3 ore prima) -> parte a tutti e tre, niente stallo',
-    isDeepStrictEqual(inviate.map((m) => `${m.titolo}:${m.chi}`), ['Riepilogo di oggi:Ale', 'Riepilogo di oggi:Bene', 'Riepilogo di oggi:Ginevra']) && rRp.baseline === true && rRp.persi_stallo === 0
-    && salti(wRp).length === 0 && rRp.inviati === 3, { i: inviate.map((m) => m.chi), r: rRp, s: salti(wRp) });
+  t('G7 v4 riepilogo a una ripartenza alle 23:30 (ultimo giro 3 ore prima) -> parte a tutti e quattro, niente stallo',
+    isDeepStrictEqual(inviate.map((m) => `${m.titolo}:${m.chi}`), ['Riepilogo di oggi:Ale', 'Riepilogo di oggi:Bene', 'Riepilogo di oggi:Ginevra', 'Riepilogo di oggi:Giovanni']) && rRp.baseline === true && rRp.persi_stallo === 0
+    && salti(wRp).length === 0 && rRp.inviati === 4, { i: inviate.map((m) => m.chi), r: rRp, s: salti(wRp) });
 }
 
 // 21-10 (v3): attivita_team dalla lettura al registro, col client finto e il registro simulato (UNIQUE evento + chiave,
@@ -2153,6 +2160,7 @@ const MIGR_0183 = read('supabase/migrations/0183_push_premia.sql');
 const MIGR_0185 = read('supabase/migrations/0185_push_iscritti.sql');
 const MIGR_0188 = read('supabase/migrations/0188_chat_push.sql');
 const MIGR_0192 = read('supabase/migrations/0192_push_stock_fermo.sql');
+const MIGR_0197 = read('supabase/migrations/0197_giovanni_b2b.sql');
 const ROLLBACK_0185 = read('supabase/snippets/0185_rollback_push_eventi_salute.sql');
 const MIGR_0138 = read('supabase/migrations/0138_loyalty_orders_cron.sql');
 const RLS = read('tests/push_eventi_rls.sql');
@@ -2195,7 +2203,8 @@ const temiCoerenti = (m) => {
   const temi = temiMigr(m);
   // 21-10: il tema attivita nasce nella 0168; i temi delle due migrazioni insieme coprono quelli degli eventi
   const tutti = { ...temi, ...temiMigr(MIGR_0168), ...temiMigr(MIGR_0183), ...temiMigr(MIGR_0188), ...temiMigr(MIGR_0192) };
-  const chiCheck = listaSql((m.match(/check \(predefinito_per <@ array\[([^\]]*)\]::text\[\]\)/) ?? [])[1]);
+  // 18-11: i due check con le persone li riscrive la 0197 (quarta persona Giovanni): quello della 0166 e' il passato
+  const chiCheck = listaSql((MIGR_0197.match(/check \(predefinito_per <@ array\[([^\]]*)\]::text\[\]\)/) ?? [])[1]);
   const people = listaSql((WEB_PEOPLE.match(/export const PEOPLE = \[([^\]]*)\]/) ?? [])[1]);
   const temaApi = new RegExp((PUSH_API.match(/const TEMA_RE = \/(.+)\/;/) ?? [])[1] ?? '^$');
   return isDeepStrictEqual(temi, TEMI_ATTESI) && isDeepStrictEqual(chiCheck, CHI_PERSONE) && isDeepStrictEqual(people, CHI_PERSONE)
@@ -2215,7 +2224,11 @@ const temiCoerenti = (m) => {
     && isDeepStrictEqual(eventiMigr(MIGR_0188), { chat_sollecito: 'assistenza', chat_sollecito_scala: 'assistenza_scala', chat_salute: 'sistema' })
     && isDeepStrictEqual(eventiMigr(MIGR_0192), { stock_fermo: 'magazzino' })
     && RLS.includes("if n <> 14 then raise exception 'KO D:"), { em, rls });
-  t('98 temi nuovi e predefinito_per come il contratto; le tre chiavi = CHECK della 0166 = PEOPLE del web = CHI_PERSONE; chiavi valide per push-api; conti e vendite ad Ale',
+  t('98b 0197 (18-11): i due check con le quattro chiavi = CHI_PERSONE; Giovanni aggiunto ai soli temi negozi e riepilogo, una volta sola',
+    isDeepStrictEqual(listaSql((MIGR_0197.match(/add constraint push_subscriptions_chi_ck check \(chi in \(([^)]*)\)\)/) ?? [])[1]), CHI_PERSONE)
+    && isDeepStrictEqual(listaSql((MIGR_0197.match(/add constraint push_temi_predefinito_per_ck check \(predefinito_per <@ array\[([^\]]*)\]::text\[\]\)/) ?? [])[1]), CHI_PERSONE)
+    && /set predefinito_per = t\.predefinito_per \|\| array\['Giovanni'\]\n   where t\.key in \('negozi', 'riepilogo'\) and not \('Giovanni' = any\(t\.predefinito_per\)\)/.test(MIGR_0197));
+  t('98 temi nuovi e predefinito_per come il contratto; le chiavi = CHECK della 0197 = PEOPLE del web = CHI_PERSONE; chiavi valide per push-api; conti e vendite ad Ale',
     temiCoerenti(MIGR), temiMigr(MIGR));
   const stati = listaSql((MIGR.match(/push_eventi_inviati_stato_ck check \(stato in \(([^)]*)\)\)/) ?? [])[1]);
   const scritti = [...new Set([...[...codice(SRC).matchAll(/stato: '([a-z_]+)'/g)].map((x) => x[1]),
