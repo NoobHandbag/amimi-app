@@ -14,7 +14,9 @@
 --      `cs_knowledge` 2 e 6, nella risposta standard A3 (`cs_faq` 9, P1 come scritta nel file) e nell'esempio di tono
 --      del ritiro (`cs_faq` 3, che diceva la stessa cosa di A3 e che le bozze vedono sempre: ci sono 6 esempi di tono e
 --      cs-assist ne prende 6). Spariscono "non esistono orari pubblicati" e "concorda giorno e fascia oraria". La frase
---      "non per pre-ordini o personalizzati" di `cs_knowledge` 2 resta com'e' (domanda ancora aperta per il team).
+--      "non per pre-ordini o personalizzati" di `cs_knowledge` 2 resta com'e' (domanda ancora aperta per il team). In
+--      `cs_knowledge` 6 la vecchia frase valeva anche per lo showroom di Via Plinio, che resta su appuntamento: la riga nuova
+--      dice che giorno e ora dello showroom si fissano con la cliente (Gate 2, B1).
 --   3. P5: nelle voci 5, 6 e 13 della chat (`cs_faq` 41, 42, 49, tipo `risposta_chat`, che le bozze email non leggono)
 --      "lascia in chat nome, email..." diventa "scrivi qui...": nella chat l'email la cliente l'ha gia' data. La Knowledge
 --      base di Shopify resta com'e'.
@@ -42,7 +44,7 @@ begin
            '; articoli in saldo o comprati durante promozioni speciali: NIENTE cambi ne'' resi. DIFETTI:',
            '. DIFETTI:'),
            'RITIRO ORDINI ONLINE: Via Santa Maria Fulcorina 13, 20123 Milano (non per pre-ordini o personalizzati).',
-           'RITIRO ORDINI ONLINE: Via Santa Maria Fulcorina 13, 20123 Milano, in portineria, lun-ven 8:00-13:00 e 14:00-17:00, sabato 8:00-11:00 (non per pre-ordini o personalizzati).'),
+           'RITIRO ORDINI ONLINE: Via Santa Maria Fulcorina 13, 20123 Milano (non per pre-ordini o personalizzati), in portineria, lun-ven 8:00-13:00 e 14:00-17:00, sabato 8:00-11:00.'),
            'RIPARAZIONI E RESI SPEDITI: Via Santa Maria Fulcorina 13, 20123 Milano; niente orari fissi: si concorda la fascia col cliente, mai inventare orari.',
            'RIPARAZIONI E RESI SPEDITI: Via Santa Maria Fulcorina 13, 20123 Milano. Gli unici orari della portineria sono quelli del ritiro: mai inventarne altri.'),
          updated_at = now()
@@ -56,7 +58,7 @@ begin
     raise exception 'cs_knowledge id 6: testo atteso non trovato (trovate % righe). Non sovrascrivo.', n;
   end if;
   update cs_knowledge
-     set contenuto = 'Ordini online: ritiro in Via Santa Maria Fulcorina 13, 20123 Milano, in portineria, dal lunedi'' al venerdi'' 8:00-13:00 e 14:00-17:00, il sabato 8:00-11:00: sono gli unici orari, mai inventarne altri. Showroom e prove borse: Via Plinio 43, 20129 Milano su appuntamento.',
+     set contenuto = 'Ordini online: ritiro in Via Santa Maria Fulcorina 13, 20123 Milano, in portineria, dal lunedi'' al venerdi'' 8:00-13:00 e 14:00-17:00, il sabato 8:00-11:00: sono gli unici orari del ritiro, mai inventarne altri. Showroom e prove borse: Via Plinio 43, 20129 Milano, solo su appuntamento: lo showroom non ha orari di apertura, giorno e ora si fissano con la cliente.',
          updated_at = now()
    where id = 6;
 
@@ -145,6 +147,34 @@ begin
      and (coalesce(testo_it, '') || ' ' || coalesce(testo_en, '')) ~* '(in chat nome|in chat con nome|your name, email|with your name and email)';
   if n <> 0 then
     raise exception 'restano % voci della chat che chiedono nome ed email', n;
+  end if;
+
+  -- Controllo positivo (Gate 2, C2): le frasi nuove ci sono davvero, cosi' un refuso nella frase cercata da replace() non
+  -- lascia una riga senza orari pur passando la guardia qui sopra.
+  select count(*) into n from (
+    select contenuto as t from cs_knowledge where id in (2, 6)
+    union all select testo_it from cs_faq where id in (3, 9)
+    union all select testo_en from cs_faq where id = 9
+  ) s where position('8:00-13:00' in s.t) > 0 and position('14:00-17:00' in s.t) > 0 and position('8:00-11:00' in s.t) > 0
+          and position('portineria' in s.t) > 0;
+  if n <> 5 then
+    raise exception 'orari della portineria in % righe su 5 (cs_knowledge 2 e 6, cs_faq 3, 9 it e en)', n;
+  end if;
+  select count(*) into n from cs_knowledge where id = 2 and position('in perfette condizioni con etichette originali. DIFETTI:' in contenuto) > 0
+     and position('Milano (non per pre-ordini o personalizzati), in portineria' in contenuto) > 0;
+  if n <> 1 then
+    raise exception 'cs_knowledge id 2: frasi nuove non trovate dopo l''update';
+  end if;
+  select count(*) into n from cs_knowledge where id = 6 and position('giorno e ora si fissano con la cliente' in contenuto) > 0;
+  if n <> 1 then
+    raise exception 'cs_knowledge id 6: frase dello showroom non trovata dopo l''update';
+  end if;
+  select count(*) into n from cs_faq
+   where (id = 41 and position('oppure scrivi qui il numero d''ordine' in testo_it) > 0 and position('or write your order number here' in testo_en) > 0)
+      or (id = 42 and position('oppure scrivilo qui:' in testo_it) > 0 and position('or write it here:' in testo_en) > 0)
+      or (id = 49 and position('oppure scrivi qui la tua domanda:' in testo_it) > 0 and position('or write your question here:' in testo_en) > 0);
+  if n <> 3 then
+    raise exception 'P5: frasi nuove in % voci della chat su 3', n;
   end if;
 
   -- guardia sul tetto di cs-assist (0174), contata come JavaScript (unita' UTF-16: un carattere fuori dal BMP conta 2),
