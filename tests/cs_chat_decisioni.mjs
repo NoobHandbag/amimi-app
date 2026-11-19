@@ -71,6 +71,8 @@ const iPos = corpo.indexOf("'orari della portineria in %");
 t('T8 controllo positivo dopo le UPDATE e prima del tetto: orari in 5 righe, frasi nuove delle righe 2 e 6, P5 in 3 voci (Gate 2, C2)',
   /if n <> 5 then\s+raise exception 'orari della portineria in % righe su 5/.test(corpo) && /if n <> 3 then\s+raise exception 'P5: frasi nuove in % voci della chat su 3'/.test(corpo)
   && corpo.includes(sql('Milano (non per pre-ordini o personalizzati), in portineria')) && corpo.includes(sql('giorno e ora si fissano con la cliente'))
+  && /if n <> 1 then\s+raise exception 'cs_knowledge id 2: frasi nuove/.test(corpo) && /if n <> 1 then\s+raise exception 'cs_knowledge id 6: frase dello showroom/.test(corpo)
+  && /and position\('portineria' in s\.t\) > 0;\s+if n <> 5 then/.test(corpo)
   && iPos > corpo.lastIndexOf('update cs_faq') && iPos < corpo.indexOf('if peggiore > 6000'));
 
 // ---- parte 2: i fatti ----
