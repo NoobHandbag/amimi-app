@@ -593,6 +593,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
           {r.n_opt_out > 0 && <div className="err" style={{ marginTop: 4 }}>OPT-OUT registrato: non contattare.</div>}
         </div>
       </div>
+      {/* 19-11 (Giovanni): la nota del negozio anche qui in cima; si scrive dal dossier ("Tier e note") */}
+      {r.owner_note && <section className="card warn"><div className="lead-verd-head"><h2 style={{ margin: 0 }}>Nota</h2><button type="button" className="or-link" onClick={() => onOpenDossier(r.id)}>Modifica nel dossier ›</button></div><p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{r.owner_note}</p></section>}
 
       {/* INFO UTILI come in Assistenza: i fatti che servono mentre si scrive, richiudibili ma aperti */}
       <details className="cs-info" open>

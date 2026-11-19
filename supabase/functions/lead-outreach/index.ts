@@ -20,6 +20,9 @@
 // proposta di risposta legge la CONVERSAZIONE col negozio (lead_touches) come cs-assist legge il thread del cliente; prima
 // la sola bozza AI era quella della sequenza a freddo, che non vede i messaggi. `rispondi` accetta il `draft_id` della
 // proposta (claim con UPDATE della riga). Flag dedicato lead_risposta_ai_enabled: spegnerlo non ferma gli invii.
+// v16 (2026-11-19, Giovanni, migr 0198): il destinatario di ripiego della bozza e' `email_sito` di v_lead_dossier, la
+// prima email del sito che vale come email del negozio (lead_email_utile: niente PEC, segnaposto, indirizzi di terzi);
+// prima era site_meta.emails[0], che su 5 negozi era una PEC.
 // v9 (2026-10-12): la risposta di un negozio con DMARC rigido arriva dal gruppo wholesale@ con il From riscritto;
 // si legge l'autore da X-Original-From / Reply-To (mittenteVero) invece di scartarla come posta nostra. CASI_APERTI 29.
 // v8 (2026-10-08): azione `prova`. L'invio vero rifiuta i destinatari @amimi.it, quindi una prova mandata a info@
@@ -958,7 +961,7 @@ async function creaBozza(sb: any, flags: Flags, p: { accountId: string; tocco: n
   if (grezzo.length < 80) return { status: 502, body: { error: `bozza vuota o troncata (${finish}): riprova` } };
   const testo = completaTesto(grezzo, flags.lead_firma || '', lingua);
   const oggetto = pulisciOggetto(String(parsed?.oggetto ?? template.oggetto)).slice(0, 200);
-  const to = String(d.email_generica ?? '') || (((d.site_meta ?? {}) as { emails?: string[] }).emails ?? [])[0] || '';
+  const to = String(d.email_generica ?? '').trim() || String(d.email_sito ?? '');
 
   const { data: ins, error: iErr } = await sb.from('lead_drafts').insert({
     account_id: accountId, lingua, testo, oggetto, to_email: to || null, sequenza_tocco: tocco, model: MODEL,

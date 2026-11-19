@@ -873,6 +873,8 @@ button.badge { min-height: 40px; padding: 9px 13px; display: inline-flex; align-
 .lead-verd textarea, .cs-fld textarea, .or-form textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; line-height: 1.4; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); resize: vertical; }
 .lead-actions .ds-btn, .or-move .ds-btn, .or-form + .ds-btn { border: 1px solid var(--border-strong); border-radius: 10px; }
 .lead-verd-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 19-11 (Giovanni): la nota del negozio sulla scheda della lista (in cima alla scheda e in Pipeline e' una .card.warn) */
+.lead-nota-card { color: var(--accent); font-weight: 600; }
 /* Outreach (tappa 1, 10-09) */
 .or-nav { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 12px; }
 .or-nav button { border: 1px solid var(--border); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 7px 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
