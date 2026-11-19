@@ -771,5 +771,56 @@ console.log('\n== 18-11 (Dan): Giovanni guida il B2B, outreach quasi solo email:
     && (migrG6.match(/\((?:d\.)?testo \|\| coalesce\((?:d\.)?fatti_usati::text, ''\)\) ~ '333 280 8226\|sono Benedetta di Amim\|I''m Benedetta from Amim'/g) ?? []).length === 2, claim);
 }
 
+console.log('\n== 19-11 (Giovanni): una PEC non e\' un\'email; la nota del negozio in cima alla scheda ==');
+{
+  const m98 = readFileSync(`${ROOT}supabase/migrations/0198_lead_email_utile.sql`, 'utf8').replace(/\r\n/g, '\n');
+  const neg = readFileSync(`${ROOT}web/src/pages/Negozi.tsx`, 'utf8').replace(/\r\n/g, '\n');
+  const outP = readFileSync(`${ROOT}web/src/pages/Outreach.tsx`, 'utf8').replace(/\r\n/g, '\n');
+  const apiP = readFileSync(`${ROOT}web/src/lib/leadApi.ts`, 'utf8').replace(/\r\n/g, '\n');
+  // la regola SQL ritagliata dalla migrazione e provata qui con le stesse regex (POSIX e JS coincidono su queste)
+  const corpo = m98.slice(m98.indexOf('function public.lead_email_utile'), m98.indexOf('function public.lead_emails_sito'));
+  const forma = corpo.match(/x ~ '([^']+)'/)?.[1];
+  const neg3 = [...corpo.matchAll(/!~ '([^']+)'/g)].map((x) => x[1]);
+  const utile = (e) => { const x = String(e ?? '').trim().toLowerCase(); const [loc, dom] = [x.split('@')[0], x.split('@')[1] ?? ''];
+    return new RegExp(forma).test(x) && !new RegExp(neg3[0]).test(dom) && !new RegExp(neg3[1]).test(dom) && !new RegExp(neg3[2]).test(loc); };
+  // indirizzi finti: il repo e' pubblico, niente email vere di negozi nei test
+  const pec = ['a@pec.it', 'a@x.pec.it', 'a@arubapec.it', 'a@confcommerciopec.it', 'a@pec.conmet.it', 'a@legalmail.it', 'a@cgn.legalmail.it', 'a@certificata.taxmail.it', 'a@pcert.it', 'a@postacert.it', 'a@actaliscertymail.it', 'a@sicurezzapostale.it', 'a@postacertificata.gov.it', 'protocollo@pec.gpdp.it'];
+  const terzi = ['nome@gmail.com', 'utente@dominio.com', 'xxx@xxx.xxx', 'johndoe@domain.com', 'tuo@email.com', 'tu@email.address', 'iltuo@negozio.it', 'tua-email@negozio.it', 'mymail@mailservice.com', 'dpo@negozio.it', 'u003einfo@negozio.it', 'assistenza@webador.it', 'support@mlinformaticasrl.it', 'info@ilportaledellaliguria.it'];
+  const buone = [' Info@Negozio-Esempio.IT ', 'helpdesk@boutique-prova.it', 'spec@specchi.it', 'info@spec.it', 'info@ipec.it', 'info@tecnospec.it', 'info@pecora.it', 'marketing@hotel-prova.com', 'shop@cert-design.it'];
+  t('pec-1 migr 0198: la regola ha forma + tre esclusioni; PEC, segnaposto e indirizzi di terzi fuori, un\'email vera dentro (anche con "pec" dentro un nome: spec.it, ipec.it)',
+    !!forma && neg3.length === 3 && pec.every((e) => !utile(e)) && terzi.every((e) => !utile(e)) && buone.every(utile) && !utile('') && !utile(null) && !utile('maria') && !utile('a@b'),
+    [...pec, ...terzi].filter(utile).concat(buone.filter((e) => !utile(e))));
+  // allineata a emailCommerciale() del collector: cio' che il collector non conta, la vista non lo propone
+  const { emailCommerciale } = await import(pathToFileURL(`${ROOT}workers/lead/priority.mjs`).href);
+  const casiCollector = [...pec, ...terzi, ...buone, 'xxx@xxx.xxx', 'tua@email.com', 'your@email.com', 'john.doe@email.com', 'a@example.com', 'a@esempio.it', 'x@sentry.io', 'x@sentry-next.wixpress.com', 'a@b.pec.it'];
+  t('pec-1b la regola della vista scarta tutto cio\' che emailCommerciale() del collector scarta (workers/lead/priority.mjs)',
+    casiCollector.every((e) => emailCommerciale(e) || !utile(e)), casiCollector.filter((e) => !emailCommerciale(e) && utile(e)));
+  t('pec-2 migr 0198: funzioni immutable con search_path vuoto, nessuna vista legge piu\' emails[0] grezzo, email_sito dalla lista filtrata in tutte e tre le viste, emails_sito nel dossier, una transazione',
+    (m98.match(/language sql immutable set search_path = ''/g) ?? []).length === 2
+    && !/'emails'::text\) ->> 0|->'emails'->>0/.test(m98)
+    && (m98.match(/\( SELECT \(public\.lead_emails_sito\(e\.payload\)\)\[1\] FROM lead_evidence e\n {10}WHERE e\.account_id = a\.id AND e\.tipo = 'site_meta'::text ORDER BY e\.captured_at DESC LIMIT 1\) AS email_sito/g) ?? []).length === 2
+    && /em\.l\[1\] AS email_sito,\n {4}COALESCE\(em\.l, '\{\}'::text\[\]\) AS emails_sito\n/.test(m98)
+    && /LEFT JOIN LATERAL \( SELECT public\.lead_emails_sito\(e\.payload\) AS l FROM lead_evidence e\n {10}WHERE e\.account_id = a\.id AND e\.tipo = 'site_meta'::text ORDER BY e\.captured_at DESC LIMIT 1\) em ON true/.test(m98)
+    && ['v_lead_outreach', 'v_lead_lista', 'v_lead_dossier'].every((v) => m98.includes(`create or replace view ${v} with (security_invoker = on) as`))
+    && /^begin;$/m.test(m98) && /^commit;$/m.test(m98));
+  t('pec-3 (edge v16) il destinatario di ripiego della bozza e\' email_sito della vista, mai site_meta.emails[0]',
+    src.includes("const to = String(d.email_generica ?? '').trim() || String(d.email_sito ?? '');") && !/emails \?\? \[\]\)\[0\]/.test(src));
+  t('pec-4 (web) la scheda Negozi usa la stessa email del cartellino e non tocca piu\' emails[0]; le altre del sito scartate si vedono a parte',
+    /const email = emailDelNegozio\(r\);/.test(neg) && /\{email && <a href=\{`mailto:\$\{email\}`\}>\{email\}<\/a>\}/.test(neg)
+    && !/site_meta\?\.emails\?\.\[0\]/.test(neg) && /\.\.\.\(r\.emails_sito \?\? \[\]\)/.test(neg) && /emailsScartate\.length > 0/.test(neg)
+    && /const emailsGrezze = Array\.isArray\(r\.site_meta\?\.emails\) \? r\.site_meta\.emails\.filter\(\(e\): e is string => typeof e === 'string'\) : \[\];/.test(neg)
+    && !/r\.site_meta\?\.emails \?\? \[\]\)\.map/.test(neg)
+    && /email_sito: string \| null;\n  emails_sito\?: string\[\];/.test(apiP) && /'n_evidenze' \| 'email_sito'> & \{/.test(apiP));
+  t('pec-5 (web) chip "Senza email (o solo PEC)" in Negozi con la regola del cartellino, nelle dipendenze del filtro',
+    /\(fMail === 'tutti' \|\| \(fMail === 'con'\) === !!emailDelNegozio\(r\)\)/.test(neg) && /\[rows, fStato, fTier, fTipo, fVerd, fMail, q\]/.test(neg)
+    && neg.includes("'Senza email (o solo PEC)'") && /import \{ emailDelNegozio \} from '\.\.\/lib\/leadRegole';/.test(neg));
+  t('pec-6 (web) la nota del negozio in cima alla scheda (o il bottone per aggiungerla), sulla scheda della lista e nella Pipeline; "Modifica" la precompila',
+    /\{r\.owner_note\n {8}\? <section className="card warn">/.test(neg) && /\+ Aggiungi una nota \(si vede qui in cima\)/.test(neg)
+    && /if \(!nota\.trim\(\) && r\.owner_note\) setNota\(r\.owner_note\);/.test(neg) && /<textarea id="lead-nota"/.test(neg)
+    && /\{r\.owner_note && <div className="lead-mot lead-nota-card">Nota: \{short\(r\.owner_note, 140\)\}<\/div>\}/.test(neg)
+    && /\{r\.owner_note && <section className="card warn">/.test(outP)
+    && neg.indexOf('<section className="card warn">') < neg.indexOf('<section className="card lead-verd">'));
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

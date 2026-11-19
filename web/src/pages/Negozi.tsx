@@ -4,6 +4,7 @@ import { pushBack, popBack, killBack } from '../lib/backnav';
 import { fetchEvidence, fetchContacts, fetchReviews, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL } from '../lib/leadApi';
 import type { LeadDossier, LeadLista, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
 import { PEOPLE, personaName } from '../lib/people';
+import { emailDelNegozio } from '../lib/leadRegole';
 import ExportBtn from '../components/ExportBtn';
 import AppBar from '../components/AppBar';
 import type { LeadOutreach, LeadSequence } from '../lib/leadApi';
@@ -118,6 +119,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
   const [fTier, setFTier] = useState<string>('tutti');
   const [fTipo, setFTipo] = useState<string>('tutti');
   const [fVerd, setFVerd] = useState<string>('tutti');
+  const [fMail, setFMail] = useState<string>('tutti');
   const [q, setQ] = useState('');
   const who = personaName(chi);
 
@@ -207,8 +209,10 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
       (fTier === 'tutti' || (fTier === 'senza' ? !r.tier && !r.tier_proposto : (r.tier ?? r.tier_proposto) === fTier)) &&
       (fTipo === 'tutti' || r.tipo === fTipo) &&
       (fVerd === 'tutti' || (fVerd === 'senza' ? !r.verdetto : r.verdetto === fVerd)) &&
+      // 19-11 (Giovanni): "con email" = la stessa email che propone il cartellino della Pipeline; una PEC non conta (migr 0198)
+      (fMail === 'tutti' || (fMail === 'con') === !!emailDelNegozio(r)) &&
       (!s || `${r.nome} ${r.citta ?? ''} ${r.ig_handle ?? ''} ${(r.brands_carried?.peer_match ?? []).join(' ')} ${(r.brands_carried?.vendors ?? []).join(' ')}`.toLowerCase().includes(s)));
-  }, [rows, fStato, fTier, fTipo, fVerd, q]);
+  }, [rows, fStato, fTier, fTipo, fVerd, fMail, q]);
   // miniature: si firmano SOLO quelle delle schede a schermo dopo i filtri (vista Schede), a blocchi da 100 in parallelo;
   // `urls` fra le dipendenze fa ripassare il giro quando una firma arriva, e daFirmare esclude cio' che e' gia' valido o in firma
   useEffect(() => {
@@ -302,6 +306,9 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
             <div className="chips" style={{ marginBottom: 6 }}>
               {['tutti', 'da_contattare', 'forse', 'no', 'senza'].map((v) => <button key={v} type="button" className={`chip ${fVerd === v ? 'on' : ''}`} onClick={() => setFVerd(v)} style={v !== 'tutti' && v !== 'senza' && fVerd === v ? { background: verdColor(v), borderColor: verdColor(v), color: '#fff' } : undefined}>{v === 'tutti' ? 'Ogni verdetto' : v === 'senza' ? 'Senza verdetto' : VERDETTO_LABEL[v]}</button>)}
             </div>
+            <div className="chips" style={{ marginBottom: 6 }}>
+              {['tutti', 'con', 'senza'].map((m) => <button key={m} type="button" className={`chip ${fMail === m ? 'on' : ''}`} onClick={() => setFMail(m)} title={m === 'senza' ? 'Nessuna email, o solo una PEC o indirizzi che non sono del negozio' : undefined}>{m === 'tutti' ? 'Ogni email' : m === 'con' ? 'Con email' : 'Senza email (o solo PEC)'}</button>)}
+            </div>
             <div className="seg" style={{ marginTop: 4 }}>
               <button type="button" className={view === 'lista' ? 'on' : ''} onClick={() => setView('lista')}>Schede</button>
               <button type="button" className={view === 'tabella' ? 'on' : ''} onClick={() => setView('tabella')}>Tabella</button>
@@ -351,6 +358,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
                       {peer.length > 0 && <div className="chips" style={{ marginTop: 4 }}>{peer.slice(0, 4).map((b) => <span key={b} className="chip on" style={{ fontSize: 11 }}>{b}</span>)}</div>}
                       {r.verdetto_motivo ? <div className="lead-mot" style={{ color: 'var(--ink)' }}>{short(r.verdetto_motivo, 140)}</div> : r.motivazione && <div className="lead-mot">{short(r.motivazione, 140)}</div>}
                       {r.esclusione && <div className="lead-mot" style={{ color: 'var(--negative-700)' }}>Esclusione: {r.esclusione}</div>}
+                      {r.owner_note && <div className="lead-mot lead-nota-card">Nota: {short(r.owner_note, 140)}</div>}
                     </div>
                   </button>
                 );
@@ -420,6 +428,14 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
   };
 
   const ig = r.ig_metrics; const mp = r.maps; const bc = r.brands_carried; const pb = r.price_band;
+  // migr 0198: l'email della scheda e' quella del cartellino (generica, poi la prima utile del sito); le altre del sito
+  // che la regola scarta (PEC, segnaposto, indirizzi di terzi) si vedono a parte, per sapere che ci sono
+  const email = emailDelNegozio(r);
+  const emailsUtili = [r.email_generica?.trim(), ...(r.emails_sito ?? [])].filter((e, i, a): e is string => !!e && a.findIndex((x) => x?.toLowerCase() === e.toLowerCase()) === i);
+  // la lista grezza del collector puo' non essere un array di stringhe: un payload rotto non deve rompere la scheda
+  const emailsGrezze = Array.isArray(r.site_meta?.emails) ? r.site_meta.emails.filter((e): e is string => typeof e === 'string') : [];
+  const emailsScartate = emailsGrezze.map((e) => e.trim()).filter((e, i, a) => e && !emailsUtili.some((u) => u.toLowerCase() === e.toLowerCase()) && a.findIndex((x) => x.toLowerCase() === e.toLowerCase()) === i);
+  const vaiANota = () => { if (!nota.trim() && r.owner_note) setNota(r.owner_note); const el = document.getElementById('lead-nota'); el?.scrollIntoView({ behavior: 'smooth', block: 'center' }); (el as HTMLTextAreaElement | null)?.focus({ preventScroll: true }); };
   const posts = (r.ig_posts?.post ?? []).filter((p) => p.asset_path);
   const cad = r.ig_posts?.cadenza;
   const perWeek = cad && cad.giorni > 0 ? (cad.n / cad.giorni) * 7 : null;
@@ -445,9 +461,13 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
         {r.website && <a href={r.website} target="_blank" rel="noreferrer">sito</a>}
         {r.ig_handle && <a href={`https://www.instagram.com/${r.ig_handle}/`} target="_blank" rel="noreferrer">@{r.ig_handle}</a>}
         {r.google_maps_url && <a href={r.google_maps_url} target="_blank" rel="noreferrer">maps</a>}
-        {(r.email_generica || r.site_meta?.emails?.[0]) && <a href={`mailto:${r.email_generica ?? r.site_meta?.emails?.[0]}`}>{r.email_generica ?? r.site_meta?.emails?.[0]}</a>}
+        {email && <a href={`mailto:${email}`}>{email}</a>}
         {(r.telefono || mp?.telefono) && <span>{r.telefono ?? mp?.telefono}</span>}
       </div>
+      {/* 19-11 (Giovanni): la nota del negozio in cima, appena si apre la scheda; si scrive in "Tier e note" */}
+      {r.owner_note
+        ? <section className="card warn"><div className="lead-verd-head"><h2 style={{ margin: 0 }}>Nota</h2><button type="button" className="or-link" onClick={vaiANota}>Modifica</button></div><p style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>{r.owner_note}</p></section>
+        : <button type="button" className="or-link" style={{ margin: '0 0 8px' }} onClick={vaiANota}>+ Aggiungi una nota (si vede qui in cima)</button>}
       <section className="card lead-verd">
         <div className="lead-verd-head">
           <h2 style={{ margin: 0 }}>Verdetto</h2>
@@ -587,7 +607,7 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
         </div>
         <div className="cs-fld" style={{ marginTop: 8 }}><label htmlFor="lead-motivo">Motivo scarto</label><input id="lead-motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="es. monomarca, chiuso, fuori target…" /></div>
         <button type="button" className="ds-btn" disabled={busy} style={{ color: 'var(--negative-700)', borderColor: 'var(--negative-700)' }} onClick={() => act('scarta')}>Scarta</button>
-        <div className="cs-fld" style={{ marginTop: 10 }}><label htmlFor="lead-nota">Nota</label><textarea id="lead-nota" rows={2} value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Una nota per voi due (resta sulla scheda)" /></div>
+        <div className="cs-fld" style={{ marginTop: 10 }}><label htmlFor="lead-nota">Nota</label><textarea id="lead-nota" rows={2} value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Una nota per il team: si vede in cima alla scheda, nella lista e nella Pipeline (salvarne una nuova sostituisce quella attuale)" /></div>
         <button type="button" className="ds-btn" disabled={busy} onClick={() => act('nota')}>Salva nota</button>
         {msg && <div className="note" style={{ marginTop: 6 }}>{msg}</div>}
         {r.owner_note && <p className="note" style={{ marginTop: 8 }}><b>Nota attuale:</b> {r.owner_note}</p>}
@@ -602,7 +622,8 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
           {r.ig_handle && <div className="row"><div className="rt">Instagram</div><div className="rs"><a href={`https://www.instagram.com/${r.ig_handle}/`} target="_blank" rel="noreferrer">@{r.ig_handle}</a></div></div>}
           {r.google_maps_url && <div className="row"><div className="rt">Google Maps</div><div className="rs"><a href={r.google_maps_url} target="_blank" rel="noreferrer">apri la scheda</a></div></div>}
           {(r.telefono || mp?.telefono) && <div className="row"><div className="rt">Telefono</div><div className="rs">{r.telefono ?? mp?.telefono}</div></div>}
-          {(r.email_generica || r.site_meta?.emails?.length) && <div className="row"><div className="rt">Email</div><div className="rs">{[r.email_generica, ...(r.site_meta?.emails ?? [])].filter((e, i, a) => e && a.indexOf(e) === i).slice(0, 5).join(' · ')}</div></div>}
+          {emailsUtili.length > 0 && <div className="row"><div className="rt">Email</div><div className="rs">{emailsUtili.slice(0, 5).join(' · ')}</div></div>}
+          {emailsScartate.length > 0 && <div className="row"><div className="rt">Non usate</div><div className="rs muted">{emailsScartate.slice(0, 5).join(' · ')} (PEC o indirizzi che non sono del negozio: non valgono come email)</div></div>}
           {(r.piva || r.site_meta?.piva) && <div className="row"><div className="rt">P.IVA</div><div className="rs">{r.piva ?? r.site_meta?.piva}</div></div>}
           <div className="row"><div className="rt">Fonte</div><div className="rs">{r.fonte_seed}{r.contattato_prima ? ' · gia’ contattato in passato' : ''}{r.chi ? ` · ${r.chi}` : ''}</div></div>
         </div>

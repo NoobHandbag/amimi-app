@@ -64,6 +64,10 @@ export type LeadDossier = {
   site_products: { fonte?: string; n?: number; n_borse?: number; prodotti?: { titolo: string; prezzo: number | null; vendor: string | null; tipo: string | null; borsa: boolean; url: string; asset_path: string | null }[] } | null;
   stampa: { query?: string; n?: number; risultati?: { url: string; dominio: string; titolo: string; snippet: string }[] } | null;
   site_meta: { url?: string; title?: string; meta?: string | null; lang?: string | null; platform?: string | null; ecommerce?: boolean; emails?: string[]; piva?: string | null } | null;
+  // migr 0198: le email del sito che valgono come email del negozio (niente PEC, segnaposto, indirizzi di terzi): la
+  // regola e' lead_email_utile() a DB e qui non si rifa'. email_sito = la prima; una cache di prima della 0198 non le ha.
+  email_sito: string | null;
+  emails_sito?: string[];
   about_text: { url?: string; testo?: string } | null;
   ig_metrics: { follower?: number | null; seguiti?: number | null; post?: number | null; bio?: string | null; login_wall?: boolean; errore?: string; post_alt?: string[] } | null;
   maps: { rating?: number | null; recensioni?: number | null; categoria?: string | null; indirizzo?: string | null; telefono?: string | null; orari?: string | null; sito?: string | null; errore?: string; chiuso_definitivamente?: boolean } | null;
@@ -119,7 +123,7 @@ export async function fetchDossier(): Promise<LeadDossier[]> {
 // invece dei 23,5 di v_lead_dossier letti in 8 pagine in serie. La prima pagina porta il conteggio, le altre partono in
 // parallelo. Regola 20b: se le righe lette non sono quante dice il conteggio, errore (mai una lista monca in silenzio).
 // Il dossier completo si legge per id quando si apre la scheda (fetchDossierUno).
-export type LeadLista = Pick<LeadDossier, 'id' | 'nome' | 'tipo' | 'citta' | 'paese' | 'website' | 'ig_handle' | 'telefono' | 'email_generica' | 'stato_ricerca' | 'lead_stage' | 'tier' | 'gancio' | 'owner_note' | 'verdetto' | 'verdetto_motivo' | 'totale' | 'tier_proposto' | 'esclusione' | 'motivazione' | 'n_evidenze'> & {
+export type LeadLista = Pick<LeadDossier, 'id' | 'nome' | 'tipo' | 'citta' | 'paese' | 'website' | 'ig_handle' | 'telefono' | 'email_generica' | 'stato_ricerca' | 'lead_stage' | 'tier' | 'gancio' | 'owner_note' | 'verdetto' | 'verdetto_motivo' | 'totale' | 'tier_proposto' | 'esclusione' | 'motivazione' | 'n_evidenze' | 'email_sito'> & {
   ig_metrics: { follower?: number | null } | null;
   maps: { rating?: number | null; recensioni?: number | null; telefono?: string | null } | null;
   brands_carried: { peer_match?: string[] | null; vendors?: string[] | null } | null;
