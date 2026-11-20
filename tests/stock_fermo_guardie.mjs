@@ -169,6 +169,14 @@ console.log('\n== autocontrollo: i controlli vedono un sorgente rotto ==');
   t('30 0203: soglia rimessa a 3 giorni -> KO', !criteri(vistaFermo(rotto(M203, 'f.fermo_dal <= f.oggi - 30', 'f.fermo_dal <= f.oggi - 3')), 30));
   t('31 0203: grant sulla tabella degli esclusi -> KO', JSON.stringify(privilegi(M203 + '\ngrant select on public.stock_fermo_esclusi to anon;\n')) !== JSON.stringify(PRIVILEGI_203));
   t('32 0203: un codice in piu\' nella semina (anche minuscolo, anche sulla stessa riga) -> KO', semina(rotto(M203, "\n  ('LEA_BAG_CAVALLINO_CHOCOLATE',", "\n  ('Lea Bag Cocco', 'x', 'x'), ('LEA_BAG_CAVALLINO_CHOCOLATE',")).length === 4);
+  t('35 0205: un\'esclusione dopo la 0203 aggiunge solo codici (insert on conflict do nothing) e pulisce il registro, mai una vista', (() => {
+    const altri = nomi.filter((n) => n > '0203_stock_fermo_solo_problemi.sql' && /stock_fermo_esclusi/.test(noComments(read(MIG + n))));
+    return altri.includes('0205_stock_fermo_escluso_credit_card_beige.sql') && altri.every((n) => {
+      const src = noComments(read(MIG + n));
+      return !/create\s+(or\s+replace\s+)?view|drop\s|alter\s|grant|revoke|update\s+public\.stock_fermo_esclusi|delete\s+from\s+public\.stock_fermo_esclusi/i.test(src)
+        && /insert into public\.stock_fermo_esclusi \(codice, motivo, chi\) values[\s\S]*?on conflict \(codice\) do nothing;/.test(src);
+    });
+  })());
   t('34 0203: una scrittura in piu\' -> KO', scrive(rotto(M203, '\n-- (e) prova', "\ndelete from public.push_eventi_inviati where evento = 'stock_fermo';\n-- (e) prova")).length === 4);
   t('33 0203: testo di v_health rimasto a 3 giorni -> KO', !vecchieUguali(rotto(M203, "sul sito da almeno 30 giorni',\n    (select count(*) from v_stock_fermo)", "sul sito da almeno 3 giorni',\n    (select count(*) from v_stock_fermo)"), 30));
   t('28 giorni sul calendario del server (UTC) -> KO', !criteri(vistaFermo(rotto(M203, "(now() at time zone 'Europe/Rome')::date as oggi", 'current_date as oggi')), 30));
