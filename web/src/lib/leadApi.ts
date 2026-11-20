@@ -228,6 +228,7 @@ export type LeadOutreach = {
   n_tocchi: number; n_email_out: number; giorni_da_ultimo: number | null; scaduta: boolean; da_gestire: boolean;
   thumb: string | null; follower: number | null; telefono_maps: string | null; email_sito: string | null; n_opt_out: number;
   bozza_auto_tocco: number | null;   // migr 0148: follow-up gia' scritto dal cron, da rivedere e inviare
+  emails_sito?: string[];            // migr 0200: tutte le email utili del sito, da spuntare come destinatari
 };
 export type LeadTouch = {
   id: string; account_id: string; contact_id: string | null; canale: string; direzione: 'in' | 'out'; subject: string | null; body_clean: string | null;
@@ -322,7 +323,8 @@ export type LeadProvaResult = { to: string; from?: string; segnaposto?: number; 
 export async function inviaProva(p: { oggetto: string; testo: string }): Promise<LeadProvaResult> {
   return (await callOutreach({ action: 'prova', ...p })) as unknown as LeadProvaResult;
 }
-export const indirizzoInterno = (to: string): boolean => DOMINI_TEAM.some((d) => to.trim().toLowerCase().endsWith('@' + d));
+// 20-11: "to" puo' essere una lista separata da virgole (piu' indirizzi dello stesso negozio): basta uno del team
+export const indirizzoInterno = (to: string): boolean => to.split(/[,;\s]+/).some((x) => DOMINI_TEAM.some((d) => x.trim().toLowerCase().endsWith('@' + d)));
 // bozza rimasta 'in_invio' (esito incerto): si sblocca solo dopo aver controllato "Posta inviata" di info@
 export async function sbloccaBozza(p: { draft_id: string; chi: string }): Promise<void> {
   await callOutreach({ action: 'sblocca', ...p });
