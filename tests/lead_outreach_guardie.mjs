@@ -880,5 +880,17 @@ console.log('== ls26 (migr 0206): condizioni commerciali come in pagina ==');
   t('ls26-10 controllo finale: 1 voce attiva allineata (titolo e le due frasi nuove) e nessuna frase o titolo vecchi', (do206.match(/raise exception/g) ?? []).length === 2 && do206.includes(`attiva and titolo = ${TITOLO}`) && do206.includes("like '%Minimo per colore: 2 pezzi per ciascun colore, sui modelli di borse.%'") && do206.includes("like '%fino a 50; nessuna consegna in agosto.%'") && do206.includes("contenuto ~ 'accessori liberi|sempre su ordine' or titolo ~ 'line sheet del 02-10-2026'") && /if n_ok <> 1 then raise/.test(do206) && /if n_old <> 0 then raise/.test(do206));
 }
 
+// 20-11 (Giovanni e Dan): nella lista Negozi un "Da contattare" gia' in pipeline mostra lo stadio; "Aggiorna" fa girare la edge
+{
+  const webNeg20 = readFileSync(`${ROOT}web/src/pages/Negozi.tsx`, 'utf8').replace(/\r\n/g, '\n');
+  const webApi20 = readFileSync(`${ROOT}web/src/lib/leadApi.ts`, 'utf8').replace(/\r\n/g, '\n');
+  t('e20-1 etichetta: stadio della pipeline per i "Da contattare" gia\' contattati, nella tabella e nelle schede; filtro "Già contattati"',
+    webNeg20.includes("const inPipeline = (r: { verdetto: string | null; lead_stage: string }) => r.verdetto === 'da_contattare' && !!r.lead_stage && r.lead_stage !== 'da_contattare';")
+    && webNeg20.includes("{etichetta(r) || '—'}</td>") && webNeg20.includes('background: etichettaColor(r) }}>{etichetta(r)}</span>')
+    && webNeg20.includes("fVerd === 'contattati' ? inPipeline(r) : fVerd === 'da_contattare' ? r.verdetto === 'da_contattare' && !inPipeline(r)"));
+  t('e20-2 "Aggiorna" fa prima il giro della edge (action cron) e poi rilegge lista e pipeline da zero; un giro fallito non blocca',
+    /export async function giroOra\(\): Promise<void> \{\s*await callOutreach\(\{ action: 'cron' \}\);/.test(webApi20)
+    && webNeg20.includes('if (forza) await giroOra().catch(() => undefined);') && webNeg20.includes('loadLista(dopo), loadPipeline(dopo)'));
+}
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

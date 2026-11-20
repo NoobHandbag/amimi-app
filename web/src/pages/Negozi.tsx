@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { pushBack, popBack, killBack } from '../lib/backnav';
-import { fetchEvidence, fetchContacts, fetchReviews, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL } from '../lib/leadApi';
+import { fetchEvidence, fetchContacts, fetchReviews, addReview, assetPathsOf, TIPO_LABEL, STATO_LABEL, CRITERI_ORDER, VERDETTO_LABEL, STAGE_LABEL, giroOra } from '../lib/leadApi';
 import type { LeadDossier, LeadLista, LeadEvidence, LeadContact, LeadReview } from '../lib/leadApi';
 import { PEOPLE, personaName } from '../lib/people';
 import { emailDelNegozio } from '../lib/leadRegole';
@@ -64,6 +64,11 @@ const cleanReview = (raw: string) => {
   return { autore, quando: m ? m[2] : '', testo };
 };
 const verdColor = (v: string | null | undefined) => (v === 'da_contattare' ? 'var(--positive-700)' : v === 'forse' ? 'var(--warning-700)' : v === 'no' ? 'var(--negative-700)' : 'var(--border-strong)');
+// 20-11 (Giovanni): un negozio "Da contattare" gia' entrato in pipeline mostra lo stadio (Contattato, Risposto, ...), non
+// piu' il verdetto; il verdetto resta nella scheda
+const inPipeline = (r: { verdetto: string | null; lead_stage: string }) => r.verdetto === 'da_contattare' && !!r.lead_stage && r.lead_stage !== 'da_contattare';
+const etichetta = (r: { verdetto: string | null; lead_stage: string }) => (inPipeline(r) ? STAGE_LABEL[r.lead_stage] ?? r.lead_stage : r.verdetto ? VERDETTO_LABEL[r.verdetto] : '');
+const etichettaColor = (r: { verdetto: string | null; lead_stage: string }) => (!inPipeline(r) ? verdColor(r.verdetto) : r.lead_stage === 'chiuso_no' || r.lead_stage === 'opt_out' ? 'var(--negative-700)' : 'var(--interactive-700)');
 
 type View = 'lista' | 'tabella' | 'scheda';
 
@@ -142,7 +147,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
     }
   };
   const signMore = (paths: string[]) => firmaIn(paths, true);
-  const loadLista = async () => { const r = await caricaLista(); setRows(r); return r; };
+  const loadLista = async (dopo = 0) => { const r = await caricaLista(dopo); setRows(r); return r; };
   // la pipeline e le sue miniature; i negozi entrati in pipeline che la lista non ha ancora (creati dalla Coda o collegati
   // da Assistenza) si leggono riga per riga, senza rifare la lista
   const loadPipeline = async (dopo = 0) => {
@@ -155,7 +160,11 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
   // lo schermo non si svuota intanto (il bottone Aggiorna rilegge anche sequenze e settings)
   const load = async (forza = false) => {
     setErr('');
-    const esiti = await Promise.allSettled([loadLista(), loadPipeline(), loadSeqSet(forza)]);
+    // "Aggiorna": prima il giro della edge (email partite da Gmail e risposte), poi la rilettura; un giro fallito non
+    // ferma la rilettura
+    if (forza) await giroOra().catch(() => undefined);
+    const dopo = forza ? Date.now() : 0;
+    const esiti = await Promise.allSettled([loadLista(dopo), loadPipeline(dopo), loadSeqSet(forza)]);
     const errori = esiti.filter((e): e is PromiseRejectedResult => e.status === 'rejected').map((e) => (e.reason as Error).message);
     // con la cache a schermo l'errore deve dire che cio' che si vede e' la lettura di prima (Gate 2 v15, C5)
     if (errori.length) setErr([...new Set(errori)].join(' · ') + (rows || orows ? ' (a schermo resta la lettura di prima)' : ''));
@@ -208,7 +217,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
       (fStato === 'tutti' || (fStato === 'attivi' ? r.stato_ricerca !== 'rejected' && r.stato_ricerca !== 'seed' : r.stato_ricerca === fStato)) &&
       (fTier === 'tutti' || (fTier === 'senza' ? !r.tier && !r.tier_proposto : (r.tier ?? r.tier_proposto) === fTier)) &&
       (fTipo === 'tutti' || r.tipo === fTipo) &&
-      (fVerd === 'tutti' || (fVerd === 'senza' ? !r.verdetto : r.verdetto === fVerd)) &&
+      (fVerd === 'tutti' || (fVerd === 'senza' ? !r.verdetto : fVerd === 'contattati' ? inPipeline(r) : fVerd === 'da_contattare' ? r.verdetto === 'da_contattare' && !inPipeline(r) : r.verdetto === fVerd)) &&
       // 19-11 (Giovanni): "con email" = la stessa email che propone il cartellino della Pipeline; una PEC non conta (migr 0198)
       (fMail === 'tutti' || (fMail === 'con') === !!emailDelNegozio(r)) &&
       (!s || `${r.nome} ${r.citta ?? ''} ${r.ig_handle ?? ''} ${(r.brands_carried?.peer_match ?? []).join(' ')} ${(r.brands_carried?.vendors ?? []).join(' ')}`.toLowerCase().includes(s)));
@@ -304,7 +313,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
               {['tutti', ...tipi].map((t) => <button key={t} type="button" className={`chip ${fTipo === t ? 'on' : ''}`} onClick={() => setFTipo(t)}>{t === 'tutti' ? 'Ogni tipo' : TIPO_LABEL[t] ?? t}</button>)}
             </div>
             <div className="chips" style={{ marginBottom: 6 }}>
-              {['tutti', 'da_contattare', 'forse', 'no', 'senza'].map((v) => <button key={v} type="button" className={`chip ${fVerd === v ? 'on' : ''}`} onClick={() => setFVerd(v)} style={v !== 'tutti' && v !== 'senza' && fVerd === v ? { background: verdColor(v), borderColor: verdColor(v), color: '#fff' } : undefined}>{v === 'tutti' ? 'Ogni verdetto' : v === 'senza' ? 'Senza verdetto' : VERDETTO_LABEL[v]}</button>)}
+              {['tutti', 'da_contattare', 'contattati', 'forse', 'no', 'senza'].map((v) => { const co = v === 'contattati' ? 'var(--interactive-700)' : verdColor(v); return <button key={v} type="button" className={`chip ${fVerd === v ? 'on' : ''}`} onClick={() => setFVerd(v)} style={v !== 'tutti' && v !== 'senza' && fVerd === v ? { background: co, borderColor: co, color: '#fff' } : undefined}>{v === 'tutti' ? 'Ogni verdetto' : v === 'senza' ? 'Senza verdetto' : v === 'contattati' ? 'Già contattati' : VERDETTO_LABEL[v]}</button>; })}
             </div>
             <div className="chips" style={{ marginBottom: 6 }}>
               {['tutti', 'con', 'senza'].map((m) => <button key={m} type="button" className={`chip ${fMail === m ? 'on' : ''}`} onClick={() => setFMail(m)} title={m === 'senza' ? 'Nessuna email, o solo una PEC o indirizzi che non sono del negozio' : undefined}>{m === 'tutti' ? 'Ogni email' : m === 'con' ? 'Con email' : 'Senza email (o solo PEC)'}</button>)}
@@ -325,7 +334,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
                   <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => openScheda(r)}>
                     <td className="l" title={r.nome}>{r.nome}</td><td className="l">{r.citta ?? r.paese}</td><td className="l">{TIPO_LABEL[r.tipo] ?? r.tipo}</td><td className="l">{STATO_LABEL[r.stato_ricerca]}</td>
                     <td style={{ color: scoreColor(r.totale), fontWeight: 700 }}>{r.totale ?? '—'}</td>
-                    <td style={{ color: verdColor(r.verdetto), fontWeight: 700 }}>{r.verdetto ? VERDETTO_LABEL[r.verdetto] : '—'}</td>
+                    <td style={{ color: etichettaColor(r), fontWeight: 700 }}>{etichetta(r) || '—'}</td>
                     <td>{r.tier ?? (r.tier_proposto ? `${r.tier_proposto}?` : '—')}</td>
                     <td>{fmtN(r.ig_metrics?.follower)}</td><td className="lead-tel-no">{r.maps?.rating != null ? `${r.maps.rating} (${fmtN(r.maps.recensioni)})` : '—'}</td>
                     <td>{eur(r.price_band?.borse?.mediana)}</td><td className="l lead-tel-no">{(r.brands_carried?.peer_match ?? []).join(', ') || '—'}</td><td className="lead-tel-no">{r.n_evidenze}</td>
@@ -345,7 +354,7 @@ export default function Negozi({ onBack, chi, setChi }: { onBack?: () => void; c
                     <div className="lead-thumb" style={{ background: 'var(--surface-alt)' }}>
                       {shot ? <img src={shot} alt="" loading="lazy" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : <span className="muted">nessuna immagine</span>}
                       <span className="lead-score" style={{ background: scoreColor(r.totale) }}>{r.totale ?? '—'}</span>
-                      {r.verdetto ? <span className="lead-tier" style={{ background: verdColor(r.verdetto) }}>{VERDETTO_LABEL[r.verdetto]}</span> : (r.tier || r.tier_proposto) && <span className="lead-tier" style={{ background: tierColor(r.tier ?? r.tier_proposto) }}>{r.tier ? `Tier ${r.tier}` : `${r.tier_proposto}?`}</span>}
+                      {r.verdetto ? <span className="lead-tier" style={{ background: etichettaColor(r) }}>{etichetta(r)}</span> : (r.tier || r.tier_proposto) && <span className="lead-tier" style={{ background: tierColor(r.tier ?? r.tier_proposto) }}>{r.tier ? `Tier ${r.tier}` : `${r.tier_proposto}?`}</span>}
                     </div>
                     <div className="lead-body">
                       <div className="lead-name">{r.nome}</div>

@@ -314,6 +314,11 @@ export async function generaBozza(p: { account_id: string; tocco: number; refere
 }
 export const LEAD_MITTENTE = 'wholesale@amimi.it';   // alias sendAs di info@: la edge ripiega su info@ se non e' verificato
 export type LeadSendResult = { to: string; from?: string; oggetto: string; already_sent?: boolean; prossimo: string | null; warnings?: string[] };
+// 20-11 (Dan): il bottone "Aggiorna" fa girare subito il giro della edge (risposte dei negozi ed email partite da Gmail)
+// invece di aspettare il prossimo giro di pg_cron; la edge ne fa partire al massimo uno ogni 5 minuti
+export async function giroOra(): Promise<void> {
+  await callOutreach({ action: 'cron' });
+}
 export async function inviaBozza(p: { draft_id: string; send_key: string; to: string; oggetto: string; testo: string; chi: string }): Promise<LeadSendResult> {
   return (await callOutreach({ action: 'send', ...p })) as unknown as LeadSendResult;
 }
