@@ -836,5 +836,14 @@ console.log('== ls26 (migr 0203): line sheet 2026, listino e descrizione della p
   t('ls26-4 la regola resta: nelle email il listino non si riscrive, si rimanda alla line sheet', /NON si riscrive il listino: si rimanda alla line sheet/.test(sql203) && /amimi\.it\/pages\/amimi-trade#en/.test(sql203));
 }
 
+console.log('== ls26 (migr 0204): fascia al pubblico 50-180 ==');
+{
+  const sql204 = readFileSync(`${ROOT}supabase/migrations/0204_lead_fascia_50_180.sql`, 'utf8').replace(/\r\n/g, '\n').replace(/^\s*--[^\n]*$/gm, '');
+  const upd204 = sql204.split('do $$')[0];
+  t('ls26-5 template e knowledge: le tre forme della fascia passano a 180 (IT tocco 0, IT tocco 1, EN) e la voce del listino pure', ["'dai 50 ai 190 euro', 'dai 50 ai 180 euro'", "'da 50 a 190 euro', 'da 50 a 180 euro'", "'from 50 to 190 euros', 'from 50 to 180 euros'"].every((x) => upd204.includes(x)) && /update lead_knowledge set[\s\S]*'da 50 a 190 euro', 'da 50 a 180 euro'/.test(upd204));
+  t('ls26-6 controllo finale: 3 template, 1 voce, nessun "190 euro" rimasto (3 RAISE); le bozze gia\' scritte non si toccano', (sql204.match(/raise exception/g) ?? []).length === 3 && /corpo ~ '190 euro'/.test(sql204) && /contenuto ~ '190 euro'/.test(sql204) && !/lead_drafts/.test(sql204));
+  t('ls26-7 Negozi: la scala prezzi usa la stessa fascia (50-180)', /const AMIMI_MIN = 50; const AMIMI_MAX = 180;/.test(readFileSync(`${ROOT}web/src/pages/Negozi.tsx`, 'utf8')));
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
