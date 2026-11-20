@@ -1,4 +1,4 @@
--- 0205: voce "Condizioni commerciali" di lead_knowledge allineata alla line sheet 2026 (pagina amimi-trade v8,
+-- 0206: voce "Condizioni commerciali" di lead_knowledge allineata alla line sheet 2026 (pagina amimi-trade v8,
 -- migr 0203). Owner in chat, 20-11-2026: "fix the conditions note too".
 -- Due frasi che la pagina non dice piu': "accessori liberi" (gli accessori non sono nella line sheet) e
 -- "Lea e Annie sono sempre su ordine" (la pagina distingue solo fra pronto a magazzino e su ordinazione).
@@ -24,6 +24,6 @@ begin
       and contenuto like '%fino a 50; nessuna consegna in agosto.%';
   select count(*) into n_old from lead_knowledge
     where contenuto ~ 'accessori liberi|sempre su ordine' or titolo ~ 'line sheet del 02-10-2026';
-  if n_ok <> 1 then raise exception '0205: attesa 1 voce "Condizioni commerciali" allineata, trovate %', n_ok; end if;
-  if n_old <> 0 then raise exception '0205: restano % voci con le frasi o il titolo vecchi', n_old; end if;
+  if n_ok <> 1 then raise exception '0206: attesa 1 voce "Condizioni commerciali" allineata, trovate %', n_ok; end if;
+  if n_old <> 0 then raise exception '0206: restano % voci con le frasi o il titolo vecchi', n_old; end if;
 end $$;
