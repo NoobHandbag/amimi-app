@@ -845,5 +845,19 @@ console.log('== ls26 (migr 0204): fascia al pubblico 50-180 ==');
   t('ls26-7 Negozi: la scala prezzi usa la stessa fascia (50-180)', /const AMIMI_MIN = 50; const AMIMI_MAX = 180;/.test(readFileSync(`${ROOT}web/src/pages/Negozi.tsx`, 'utf8')));
 }
 
+console.log('== ls26 (migr 0206): condizioni commerciali come in pagina ==');
+{
+  const sql206 = readFileSync(`${ROOT}supabase/migrations/0206_lead_condizioni_ls26.sql`, 'utf8').replace(/\r\n/g, '\n').replace(/^\s*--[^\n]*$/gm, '');
+  const [upd206, do206 = ''] = sql206.split('do $$');
+  const sql149 = readFileSync(`${ROOT}supabase/migrations/0149_lead_linesheet_0210.sql`, 'utf8').replace(/\r\n/g, '\n');
+  const prima = (sql149.match(/titolo = 'Condizioni commerciali \(line sheet del 02-10-2026\)',\s*contenuto = '((?:[^']|'')*)'/)?.[1] ?? '').replace(/''/g, "'");
+  const coppie = [...upd206.matchAll(/'((?:[^']|'')*)',\s*'((?:[^']|'')*)'\)/g)].map((m) => [m[1].replace(/''/g, "'"), m[2].replace(/''/g, "'")]);
+  const dopo = coppie.reduce((x, [da, a]) => x.split(da).join(a), prima);
+  const TITOLO = "'Condizioni commerciali (line sheet 2026, in pagina dal 20-11-2026)'";
+  t('ls26-8 condizioni: i due replace trovano il testo della 0149 e tolgono "accessori liberi" e "Lea e Annie sempre su ordine"', prima.length > 1000 && coppie.length === 2 && coppie.every(([da]) => prima.includes(da)) && !/accessori liberi|sempre su ordine/.test(dopo) && dopo.includes('Minimo per colore: 2 pezzi per ciascun colore, sui modelli di borse.') && dopo.includes('fino a 50; nessuna consegna in agosto.') && dopo.length < prima.length);
+  t('ls26-9 una sola voce toccata, col titolo nuovo; template e bozze non si toccano', (upd206.match(/\bupdate\b/g) ?? []).length === 1 && /where titolo like 'Condizioni commerciali%';/.test(upd206) && upd206.includes(`titolo = ${TITOLO}`) && !/lead_drafts|lead_sequences/.test(sql206));
+  t('ls26-10 controllo finale: 1 voce attiva allineata (titolo e le due frasi nuove) e nessuna frase o titolo vecchi', (do206.match(/raise exception/g) ?? []).length === 2 && do206.includes(`attiva and titolo = ${TITOLO}`) && do206.includes("like '%Minimo per colore: 2 pezzi per ciascun colore, sui modelli di borse.%'") && do206.includes("like '%fino a 50; nessuna consegna in agosto.%'") && do206.includes("contenuto ~ 'accessori liberi|sempre su ordine' or titolo ~ 'line sheet del 02-10-2026'") && /if n_ok <> 1 then raise/.test(do206) && /if n_old <> 0 then raise/.test(do206));
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
