@@ -249,10 +249,31 @@ const BA = '// ==== PURE:lead-aggancio BEGIN ====', EA = '// ==== PURE:lead-agga
 const aa = src.indexOf(BA), ba = src.indexOf(EA);
 if (aa < 0 || ba < 0) { console.error('marcatori PURE:lead-aggancio non trovati in lead-outreach'); process.exit(1); }
 const TMP4 = `${ROOT}tests/_leadaggancio.tmp.ts`;
-writeFileSync(TMP4, `${src.slice(aa + BA.length, ba).trim()}\nexport { GMAIL_ID_RE, indirizziDi, bloccantiAggancio, stessaChiave, queryInviate };\n`, 'utf8');
-let GMAIL_ID_RE, indirizziDi, bloccantiAggancio, stessaChiave, queryInviate;
-try { ({ GMAIL_ID_RE, indirizziDi, bloccantiAggancio, stessaChiave, queryInviate } = await import(pathToFileURL(TMP4).href)); }
+writeFileSync(TMP4, `${src.slice(aa + BA.length, ba).trim()}\nexport { GMAIL_ID_RE, indirizziDi, bloccantiAggancio, stessaChiave, queryInviate, mappaIndirizzi, decidiInviata };\n`, 'utf8');
+let GMAIL_ID_RE, indirizziDi, bloccantiAggancio, stessaChiave, queryInviate, mappaIndirizzi, decidiInviata;
+try { ({ GMAIL_ID_RE, indirizziDi, bloccantiAggancio, stessaChiave, queryInviate, mappaIndirizzi, decidiInviata } = await import(pathToFileURL(TMP4).href)); }
 finally { try { unlinkSync(TMP4); } catch { /* niente */ } }
+// v18 (20-11): le email partite da Gmail le registra il giro, senza "Segna come inviata" ne' "Collega"
+{
+  const m = mappaIndirizzi([{ id: 'A', indirizzi: ['Info@Negozio.it', 'buying@negozio.it', 'dan@amimi.it', 'non-email'] }, { id: 'B', indirizzi: ['info@gruppo.it'] }, { id: 'C', indirizzi: ['info@gruppo.it'] }]);
+  t('v18-1 mappa: minuscole, niente @amimi.it ne\' indirizzi non validi, un indirizzo di due negozi e\' ambiguo', m.get('info@negozio.it') === 'A' && m.get('buying@negozio.it') === 'A' && !m.has('dan@amimi.it') && !m.has('non-email') && m.get('info@gruppo.it') === null);
+  const at = Date.parse('2026-11-20T15:08:30Z');
+  const man = { id: 'm1', direzione: 'out', canale: 'email', esito: null, gmail_message_id: null, gmail_thread_id: null, sequenza_tocco: 1, at: '2026-11-20T15:08:53Z' };
+  t('v18-2 c\'e\' il tocco registrato a mano (Wait and See): si aggancia quello', JSON.stringify(decidiInviata({ messaggioId: 'x1', at, leadStage: 'contattato', tocchi: [man] })) === '{"tipo":"aggancia","touchId":"m1"}');
+  t('v18-3 messaggio gia\' noto: niente', decidiInviata({ messaggioId: 'x1', at, leadStage: 'contattato', tocchi: [{ ...man, gmail_message_id: 'x1', gmail_thread_id: 't' }] }).tipo === 'salta');
+  const sposta = { id: 's', direzione: 'out', canale: 'altro', esito: null, gmail_message_id: null, gmail_thread_id: null, sequenza_tocco: null, at: '2026-11-20T15:17:35Z' };
+  t('v18-4 solo "Sposta a Contattato" (Daniele Giovani): tocco nuovo numero 1', JSON.stringify(decidiInviata({ messaggioId: 'x2', at, leadStage: 'contattato', tocchi: [sposta] })) === '{"tipo":"nuovo","sequenza_tocco":1,"stage_dopo":null}');
+  t('v18-5 negozio mai toccato: tocco 1 e stadio Contattato', JSON.stringify(decidiInviata({ messaggioId: 'x3', at, leadStage: 'da_contattare', tocchi: [] })) === '{"tipo":"nuovo","sequenza_tocco":1,"stage_dopo":"contattato"}');
+  const t1 = { ...man, gmail_message_id: 'old', gmail_thread_id: 't' };
+  t('v18-6 dopo il tocco 1 agganciato il prossimo e\' il 2; un manuale oltre 7 giorni non si aggancia', decidiInviata({ messaggioId: 'x4', at, leadStage: 'contattato', tocchi: [t1] }).sequenza_tocco === 2 && decidiInviata({ messaggioId: 'x4', at, leadStage: 'contattato', tocchi: [{ ...man, at: '2026-11-01T10:00:00Z' }] }).tipo === 'nuovo');
+  const risp = { id: 'r', direzione: 'in', canale: 'email', esito: null, gmail_message_id: 'in1', gmail_thread_id: 't', sequenza_tocco: null, at: '2026-11-19T10:00:00Z' };
+  t('v18-7 il negozio ci ha scritto: la nostra email e\' una risposta senza numero; un bounce non conta', decidiInviata({ messaggioId: 'x5', at, leadStage: 'risposto', tocchi: [t1, risp] }).sequenza_tocco === null && decidiInviata({ messaggioId: 'x5', at, leadStage: 'contattato', tocchi: [t1, { ...risp, esito: 'bounce' }] }).sequenza_tocco === 2);
+  t('v18-8 oltre il tocco 4: senza numero', decidiInviata({ messaggioId: 'x6', at, leadStage: 'contattato', tocchi: [{ ...t1, sequenza_tocco: 4 }] }).sequenza_tocco === null);
+  t('v18-9 il giro registra le inviate prima dei follow-up, solo SENT da @amimi.it, opt-out e chiusi fuori, upsert su gmail_message_id',
+    src.includes('try { inviate = await registraInviate(sb, flags, t0); }') && src.indexOf('inviate = await registraInviate') < src.indexOf('followup = await proponiFollowUp')
+    && src.includes("includes('SENT') || !indirizziDi(hv('from')).some((a) => a.endsWith('@amimi.it'))") && src.includes(".not('lead_stage', 'in', '(opt_out,chiuso_no)')")
+    && src.includes('n_opt_out) > 0') && src.includes("upsert(riga, { onConflict: 'gmail_message_id', ignoreDuplicates: true })"));
+}
 // il caso vero di Glitter (15-10): tocco 8023de2e del 14-10 12:54:37 UTC, messaggio SENT 1a13a7a717a150bc delle 12:54:24
 const toccoG = { direzione: 'out', canale: 'email', gmail_message_id: null, gmail_thread_id: null, at: '2026-10-14T12:54:37.281603+00:00' };
 const msgG = { tocco: toccoG, messaggioId: '1a13a7a717a150bc', etichette: ['SENT'], from: 'Amimi <wholesale@amimi.it>', destinatari: 'agnese.marrone.24@gmail.com, ', internalDate: 1791982464000, indirizziNegozio: ['agnese.marrone.24@gmail.com', ''] };
