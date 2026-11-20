@@ -830,8 +830,8 @@ console.log('\n== 19-11 (Giovanni): una PEC non e\' un\'email; la nota del negoz
 console.log('== ls26 (migr 0203): line sheet 2026, listino e descrizione della pagina ==');
 {
   const sql203 = readFileSync(`${ROOT}supabase/migrations/0203_lead_linesheet_2026.sql`, 'utf8').replace(/\r\n/g, '\n').replace(/^\s*--[^\n]*$/gm, '');
-  t('ls26-1 knowledge: listino della line sheet 2026 (51/135, 62/165, 69/180, 34/90, 19/50, 28/70)', ['51 e 135', '62 e 165', '69 e 180', '34 e 90', '19 e 50', '28 e 70'].every((x) => sql203.includes(x)));
-  t('ls26-2 knowledge: nessun prezzo della v7 e niente "solo Kit" per Annie e Agata nei testi nuovi', !/(71 e 185|29 e 77|63 e 165|73 e 190|18 e 49)/.test(sql203.split('do $$')[0]) && !/solo nel Kit/.test(sql203.split('do $$')[0]));
+  t('ls26-1 knowledge: listino della line sheet 2026 (51/135, 62/165, 69/180, 34/90, 19/50, 28/70)', ['51 e 135', '62 e 165', '69 e 180', '34 e 90', '19 e 50', '28 e 70'].every((x) => sql203.split('do $$')[0].includes(x)));
+  t('ls26-2 knowledge: nessun prezzo della v7 e niente "solo Kit" per Annie e Agata nei testi nuovi', !/(71 e 185|29 e 77|63 e 165|73 e 190|18 e 49|7 e 20|6 e 17)/.test(sql203.split('do $$')[0]) && !/solo nel Kit/.test(sql203.split('do $$')[0]));
   t('ls26-3 solo lead_knowledge, per titolo, con controllo finale (3 RAISE) e senza toccare i template', (sql203.match(/update lead_knowledge set/g) ?? []).length === 2 && !/lead_sequences/.test(sql203) && (sql203.match(/raise exception/g) ?? []).length === 3 && /where titolo like 'Listino wholesale%'/.test(sql203) && /where titolo like 'Line sheet online%'/.test(sql203));
   t('ls26-4 la regola resta: nelle email il listino non si riscrive, si rimanda alla line sheet', /NON si riscrive il listino: si rimanda alla line sheet/.test(sql203) && /amimi\.it\/pages\/amimi-trade#en/.test(sql203));
 }
