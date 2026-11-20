@@ -58,6 +58,13 @@
 // torna (nessuno al 31-10: order_number 1001-1974 senza buchi). Finestra piena (mai vista: massimo storico 38 ordini in 48
 // ore) = si rilegge dal solo cursore, come prima, e la guardia "pagina piena" decide, cosi' una finestra piena non ferma il
 // pull dei nuovi. La cintura invece conta TUTTI i mancanti della finestra: oltre 50, anche vecchi, il giro si ferma forte.
+// 2026-11-20 v11 (migr 0205, CASI_APERTI 63, OK di Dan in chat): un rimborso Shopify registra il reso da solo. Per ogni
+// riga di rimborso creata dal RESI_AUTO_DAL (fine della conta fisica del 20-11, 12:03 UTC) una riga in
+// `returns` col codice della riga d'ordine e rientra_stock = la spunta "Restock items" del rimborso. Il CE non cambia
+// (le viste leggono `returns` solo per qromo), cambia la giacenza. In piu' `shopify_orders.rimborsato_il` (PRIMO
+// rimborso), letto dalla vista del WARN `ce_resi_shopify_mancanti` di ce-guard. Blocco PURE:sync-resi, test in
+// tests/shopify_sync_guardie.mjs (166-178). Limiti (Gate 2 del 20-11): un reso automatico cancellato a mano torna al giro
+// dopo finche' il rimborso e' nella finestra dei 45 giorni; un `sale_correct` successivo sposta la vendita, non il reso.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -109,6 +116,45 @@ function paginaDelNegozio(url: string, shop: string): boolean {
   } catch { return false; }
 }
 // ==== PURE:sync-paging END ====
+// ==== PURE:sync-resi BEGIN ====
+// v11 (migr 0205): dai rimborsi REST di un ordine, le righe di reso da registrare. Solo rimborsi creati da `dal` in poi;
+// una riga per refund_line_item con quantita' > 0. `rientra` = la spunta "Restock items" (restock_type diverso da
+// no_restock: 'return' o 'cancel', e 'legacy_restock' dei rimborsi vecchi). `data` = giorno di Roma del rimborso.
+type RigaReso = { refund_line_id: string; line_id: number; order: string; quantita: number; importo: number; rientra: boolean; data: string };
+function giornoRoma(iso: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+}
+function righeResoDaRimborsi(o: Record<string, any>, dal: string): RigaReso[] {
+  const out: RigaReso[] = [];
+  const t0 = Date.parse(dal);
+  for (const rf of o.refunds ?? []) {
+    const t = Date.parse(String(rf?.created_at ?? ''));
+    if (!Number.isFinite(t) || t < t0) continue;
+    for (const rli of rf.refund_line_items ?? []) {
+      const quantita = Number(rli?.quantity);
+      const line_id = Number(rli?.line_item_id);
+      if (rli?.id == null || !(quantita > 0) || !line_id) continue;
+      out.push({
+        refund_line_id: String(rli.id), line_id, order: String(o.name), quantita,
+        importo: Math.round(Number(rli.subtotal ?? 0) * 100) / 100,
+        rientra: String(rli.restock_type ?? 'no_restock') !== 'no_restock',
+        data: giornoRoma(String(rf.created_at)),
+      });
+    }
+  }
+  return out;
+}
+// Data del PRIMO rimborso dell'ordine (ISO di Shopify), null senza rimborsi. Il primo, non l'ultimo: un rimborso nuovo su
+// un ordine rimborsato prima della conta non deve riportarlo nella vista del WARN (Gate 2 del 20-11).
+function primoRimborso(o: Record<string, any>): string | null {
+  let best: string | null = null;
+  for (const rf of o.refunds ?? []) {
+    const c = rf?.created_at ? String(rf.created_at) : null;
+    if (c && Number.isFinite(Date.parse(c)) && (best == null || Date.parse(c) < Date.parse(best))) best = c;
+  }
+  return best;
+}
+// ==== PURE:sync-resi END ====
 async function sha256hex(s: string) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -130,6 +176,10 @@ const POSTGREST_CAP = 1000;
 const RESYNC_MAX_PAGES = 8;
 const RESYNC_BUDGET_MS = 60000;
 const RESYNC_PAGE_TIMEOUT_MS = 20000;
+// Resi automatici dai rimborsi (v11, migr 0205): solo i rimborsi da qui in poi. E' la fine della conta fisica del 20-11
+// (ultima rettifica alle 12:02:05 UTC), che Dan dice giusta: un rimborso con Restock fatto prima della fine della conta e'
+// gia' dentro il numero contato, rimetterlo a magazzino lo conterebbe due volte (Gate 2 del 20-11, B1).
+const RESI_AUTO_DAL = '2026-11-20T12:03:00Z';
 const refundOf = (o: Record<string, any>) => (o.refunds ?? []).reduce((s: number, rf: any) => s + (rf.transactions ?? []).reduce((t: number, tx: any) => t + Number(tx.amount || 0), 0), 0);
 // PostgREST risponde 504 anche su letture banali: 4% delle chiamate REST delle edge (439 su 10.462 nelle 24 ore
 // al 13-09), il 90% nei secondi :00-:03 di ogni minuto, cioe' proprio quando partono i cron (postgrest_logs
@@ -318,7 +368,7 @@ Deno.serve(async (req) => {
       customer_name: [o.customer?.first_name, o.customer?.last_name].filter(Boolean).join(' ') || null,
       email: o.email, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status,
       gross_total: gross, discount_total: Number(o.total_discounts || 0), shipping_total: shipping,
-      payment_fees: -Math.round((gross * 0.022 + 0.25) * 100) / 100, refund_amount: refundOf(o),
+      payment_fees: -Math.round((gross * 0.022 + 0.25) * 100) / 100, refund_amount: refundOf(o), rimborsato_il: primoRimborso(o),
       free_shipping: false, free_shipping_amt: 0, currency: o.currency,
       year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, vendor: null,
       fulfilled_at: o.fulfillments?.[0]?.created_at ?? null,
@@ -351,6 +401,8 @@ Deno.serve(async (req) => {
   if (nuovi.length > cap) return fail('cintura', `${nuovi.length} ordini da inserire in un giro (tetto ${cap}): nessun insert. Se e' un backfill vero: action 'backfill'`, 409);
 
   let inserted = 0, lineCount = 0, skipped = 0; const errors: string[] = []; const insertedNames: string[] = [];
+  // v11: righe di reso dai rimborsi, per refund_line_id (il pull e il resync possono leggere lo stesso ordine)
+  const resiDaScrivere = new Map<string, RigaReso>();
   for (const o of nuovi) {
     const { order, lines } = parse(o);
     // upsert ignoreDuplicates sul vincolo UNIQUE(order_id): se l'ordine c'e' gia' (corsa fra due run, esistenza
@@ -372,6 +424,8 @@ Deno.serve(async (req) => {
     }
     inserted++; insertedNames.push(String(o.name));
   }
+  // v11: un ordine rimborsato prima di entrare (o nella finestra del ripasso) porta gia' i suoi rimborsi
+  for (const o of orders) for (const r of righeResoDaRimborsi(o, RESI_AUTO_DAL)) resiDaScrivere.set(r.refund_line_id, r);
 
   // Re-sync rimborsi/stato (audit A7): un ordine puo' essere rimborsato/evaso/modificato DOPO il primo ingest;
   // il pull normale (created_at_min) non lo ripesca. Ripassa gli ordini AGGIORNATI negli ultimi 45 giorni e
@@ -402,28 +456,65 @@ Deno.serve(async (req) => {
     const uNames = upd.map((o) => String(o.name));
     const known = new Map<string, Record<string, any>>();
     if (uNames.length) {
-      const { data: kn, error: kErr } = await retryOnce(() => sb.from('shopify_orders').select('order_id, refund_amount, financial_status, fulfillment_status, fulfilled_at, year, month').in('order_id', uNames));
+      const { data: kn, error: kErr } = await retryOnce(() => sb.from('shopify_orders').select('order_id, refund_amount, financial_status, fulfillment_status, fulfilled_at, rimborsato_il, year, month').in('order_id', uNames));
       if (kErr) resyncErr++;
       for (const r of kn ?? []) known.set(String(r.order_id), r);
     }
     for (const o of upd) {
       const k = known.get(String(o.name));
       if (!k) continue;
+      // v11: i resi si raccolgono anche quando l'ordine non cambia, cosi' un upsert fallito si ritenta al giro dopo
+      for (const r of righeResoDaRimborsi(o, RESI_AUTO_DAL)) resiDaScrivere.set(r.refund_line_id, r);
       const refund = refundOf(o);
+      const rimborsato_il = primoRimborso(o);
       const meseAperto = Number(k.year) * 100 + Number(k.month) > closedMax;
       const fulfilled_at = k.fulfilled_at ?? (meseAperto ? (o.fulfillments?.[0]?.created_at ?? null) : null);
       const same = Math.abs(Number(k.refund_amount ?? 0) - refund) < 0.005 && (k.financial_status ?? null) === (o.financial_status ?? null)
-        && (k.fulfillment_status ?? null) === (o.fulfillment_status ?? null) && (k.fulfilled_at ?? null) === fulfilled_at;
+        && (k.fulfillment_status ?? null) === (o.fulfillment_status ?? null) && (k.fulfilled_at ?? null) === fulfilled_at
+        && (k.rimborsato_il ? Date.parse(k.rimborsato_il) : null) === (rimborsato_il ? Date.parse(rimborsato_il) : null);
       if (same) continue;
-      const { error: ue } = await sb.from('shopify_orders').update({ refund_amount: refund, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status, fulfilled_at }).eq('order_id', o.name);
+      const { error: ue } = await sb.from('shopify_orders').update({ refund_amount: refund, financial_status: o.financial_status, fulfillment_status: o.fulfillment_status, fulfilled_at, rimborsato_il }).eq('order_id', o.name);
       if (ue) resyncErr++; else resynced++;
+    }
+  }
+
+  // Resi automatici dai rimborsi (v11, migr 0205). Una riga di `returns` per riga di rimborso Shopify dal RESI_AUTO_DAL,
+  // con il codice della riga d'ordine gia' in `shopify_line_items` (per shopify_line_id) e rientra_stock = la spunta
+  // "Restock items". Upsert ignoreDuplicates sulla UNIQUE shopify_refund_line_id: idempotente, e i rimborsi restano nella
+  // finestra del resync per 45 giorni, quindi un giro fallito si recupera da solo. Un reso Shopify non muove il CE (le
+  // viste leggono `returns` solo per qromo): muove solo la giacenza. Errori e righe senza codice = warn, mai un giro fermo.
+  let resiNuovi = 0, resiErr = 0, resiSenzaCodice = 0;
+  if (resiDaScrivere.size) {
+    const ids = [...new Set([...resiDaScrivere.values()].map((r) => r.line_id))];
+    const { data: rl, error: rlErr } = await retryOnce(() => sb.from('shopify_line_items').select('shopify_line_id, codice').in('shopify_line_id', ids));
+    if (rlErr) resiErr++;
+    else {
+      const codiceDi = new Map<string, string>();
+      for (const r of rl ?? []) if (r.codice) codiceDi.set(String(r.shopify_line_id), String(r.codice));
+      const righe = [];
+      for (const r of resiDaScrivere.values()) {
+        const codice = codiceDi.get(String(r.line_id));
+        if (!codice) { resiSenzaCodice++; continue; }
+        righe.push({
+          codice, quantita: r.quantita, data: r.data, year: Number(r.data.slice(0, 4)), month: Number(r.data.slice(5, 7)),
+          canale: 'online', importo_rimborsato: r.importo, rientra_stock: r.rientra, motivo: 'Rimborso Shopify',
+          note: `automatico: ordine ${r.order}, rimborso del ${r.data}, ${r.rientra ? 'rimesso a magazzino (Restock su Shopify)' : 'senza rientro a magazzino'}`,
+          source: 'shopify-sync', chi: 'shopify-sync', shopify_refund_line_id: r.refund_line_id,
+        });
+      }
+      if (righe.length) {
+        const { data: insR, error: rErr } = await sb.from('returns').upsert(righe, { onConflict: 'shopify_refund_line_id', ignoreDuplicates: true }).select('id');
+        if (rErr) resiErr++; else resiNuovi = insR?.length ?? 0;
+      }
     }
   }
 
   const label = `sync: letti ${orders.length}, nuovi ${inserted} (${lineCount} righe${insertedNames.length ? ': ' + insertedNames.slice(0, 8).join(' ') : ''}), gia' presenti ${existing.size + skipped}, resync ${resynced}`
     + (resyncPages > 1 ? ` (${resyncPages} pagine)` : '') + (ripassoSaltato ? ', ripasso di 48 ore saltato (finestra piena)' : '')
-    + (errors.length ? `, ERRORI ${errors.length}: ${errors.slice(0, 3).join(' | ')}` : '') + (resyncErr ? `, resync falliti ${resyncErr}` : '') + (resyncStop ? `, ${resyncStop}` : '');
-  const resyncWarn = resyncErr + (resyncStop && !paginaFallita ? 1 : 0);
+    + (errors.length ? `, ERRORI ${errors.length}: ${errors.slice(0, 3).join(' | ')}` : '') + (resyncErr ? `, resync falliti ${resyncErr}` : '') + (resyncStop ? `, ${resyncStop}` : '')
+    + (resiNuovi ? `, resi automatici ${resiNuovi}` : '') + (resiErr ? ', resi automatici NON scritti (errore, si ritenta al giro dopo)' : '')
+    + (resiSenzaCodice ? `, ${resiSenzaCodice} righe di rimborso senza codice: correggi la vendita (Correggi vendita), il reso entra da solo al giro dopo` : '');
+  const resyncWarn = resyncErr + (resyncStop && !paginaFallita ? 1 : 0) + resiErr + resiSenzaCodice;
   await health(label, errors.length + resyncWarn, errors.length ? 'error' : (resyncWarn ? 'warn' : 'ok'));
-  return json({ ok: true, fetched: orders.length, since: sinceDate, inserted, lineCount, skipped, resynced, resyncErr, resyncPages, resyncStop: resyncStop || undefined, errors: errors.length ? errors : undefined });
+  return json({ ok: true, fetched: orders.length, since: sinceDate, inserted, lineCount, skipped, resynced, resyncErr, resyncPages, resyncStop: resyncStop || undefined, resiNuovi, resiErr, resiSenzaCodice, errors: errors.length ? errors : undefined });
 });
