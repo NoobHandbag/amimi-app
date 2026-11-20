@@ -381,11 +381,18 @@ function bloccantiProva(p: { oggetto: string; testo: string }): string[] {
   if (p.testo.length > 6000) b.push('testo troppo lungo');
   return b;
 }
+// 20-11 (Giovanni): un tocco della sequenza puo' andare a piu' indirizzi dello stesso negozio (es. info@ e buying@),
+// separati da virgola nel campo "to"; minuscoli e senza doppioni
+const MAX_DESTINATARI = 3;
+function destinatari(s: string): string[] {
+  return [...new Set(s.split(/[,;\s]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
+}
 function bloccantiInvio(p: { to: string; oggetto: string; testo: string }): string[] {
   const b: string[] = [];
-  const to = p.to.trim().toLowerCase();
-  if (!EMAIL_RE.test(to)) b.push('destinatario mancante o non valido');
-  else if (EMAIL_TEAM.test(to)) b.push('il destinatario e\' un indirizzo del team (@amimi.it o @telaioconsulting.com): l\'invio vero va solo ai negozi (per vedere l\'email usa "Manda una prova a me")');
+  const tos = destinatari(p.to);
+  if (!tos.length || tos.some((x) => !EMAIL_RE.test(x))) b.push('destinatario mancante o non valido');
+  else if (tos.length > MAX_DESTINATARI) b.push(`troppi destinatari (massimo ${MAX_DESTINATARI})`);
+  else if (tos.some((x) => EMAIL_TEAM.test(x))) b.push('il destinatario e\' un indirizzo del team (@amimi.it o @telaioconsulting.com): l\'invio vero va solo ai negozi (per vedere l\'email usa "Manda una prova a me")');
   if (!p.oggetto.trim()) b.push('oggetto vuoto');
   if (p.oggetto.length > 200) b.push('oggetto troppo lungo');
   if (p.testo.trim().length < 80) b.push('testo troppo corto');
@@ -1847,7 +1854,8 @@ Deno.serve(async (req) => {
   const draftId = String(body.draft_id || '');
   const sendKey = String(body.send_key || '');
   if (!UUID_RE.test(draftId) || !UUID_RE.test(sendKey)) return json({ error: 'draft_id o send_key non validi' }, 422);
-  const to = String(body.to || '').trim().toLowerCase();
+  const tos = destinatari(String(body.to || ''));
+  const to = tos.join(', ');
   const oggetto = pulisciOggetto(String(body.oggetto || ''));
   const testo = String(body.testo || '').replace(/\r\n/g, '\n').trim();
   const blocchi = bloccantiInvio({ to, oggetto, testo });
@@ -1873,9 +1881,11 @@ Deno.serve(async (req) => {
   if (oErr) return json({ error: 'lettura opt-out fallita, riprova: ' + oErr.message }, 503);
   if ((nOpt ?? 0) > 0) return json({ error: 'opt-out registrato su questo negozio: non si contatta', bloccante: true }, 409);
   // l'indirizzo e' testo libero: un opt-out vale per la PERSONA, anche se sta su un altro negozio (es. sede di un gruppo)
-  const { count: nOptTo, error: otErr } = await retryOnce(() => sb.from('lead_contacts').select('id', { count: 'exact', head: true }).ilike('email', to.replace(/[\\%_]/g, '\\$&')).eq('opt_out', true));
-  if (otErr) return json({ error: 'lettura opt-out fallita, riprova: ' + otErr.message }, 503);
-  if ((nOptTo ?? 0) > 0) return json({ error: `${to} ha chiesto di non essere contattato`, bloccante: true }, 409);
+  for (const x of tos) {
+    const { count: nOptTo, error: otErr } = await retryOnce(() => sb.from('lead_contacts').select('id', { count: 'exact', head: true }).ilike('email', x.replace(/[\\%_]/g, '\\$&')).eq('opt_out', true));
+    if (otErr) return json({ error: 'lettura opt-out fallita, riprova: ' + otErr.message }, 503);
+    if ((nOptTo ?? 0) > 0) return json({ error: `${x} ha chiesto di non essere contattato`, bloccante: true }, 409);
+  }
 
   // lo stesso tocco registrato A MANO (Gmail + "Segna come inviata") conta come inviato
   const tocco = Number(dr.sequenza_tocco ?? 1);
@@ -1943,7 +1953,7 @@ Deno.serve(async (req) => {
 
   const mime = [
     `From: ${encHdr('Amimì Milano')} <${mitt.from}>`,
-    `To: <${to}>`,
+    `To: ${tos.map((x) => `<${x}>`).join(', ')}`,
     `Subject: ${encHdr(oggettoInvio)}`,
     ...(inReplyTo ? [`In-Reply-To: ${inReplyTo}`] : []),
     ...(references ? [`References: ${references}`] : []),

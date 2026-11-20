@@ -369,6 +369,13 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
   };
   const residui = segnaposto(`${oggetto}\n${testo}`);
   const toInterno = indirizzoInterno(to);
+  // 20-11 (Giovanni): con piu' email del negozio si spuntano quelle a cui mandare il tocco; "to" resta il campo vero
+  const emailsNegozio = [r.email_generica, r.email_sito, ...(r.emails_sito ?? [])].map((e) => e?.trim() ?? '').filter((e, i, a) => e && a.findIndex((x) => x.toLowerCase() === e.toLowerCase()) === i);
+  const scelte = to.split(/[,;\s]+/).map((x) => x.toLowerCase()).filter(Boolean);
+  const spunta = (e: string) => setTo((prev) => {
+    const l = prev.split(/[,;\s]+/).filter(Boolean);
+    return (l.some((x) => x.toLowerCase() === e.toLowerCase()) ? l.filter((x) => x.toLowerCase() !== e.toLowerCase()) : [...l, e]).join(', ');
+  });
   // invio della sequenza: dalla finestra di conferma. Un errore resta nella finestra (la persona legge e decide).
   const invia = async () => {
     if (!draftId) return;
@@ -753,7 +760,8 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               {avvisi.length > 0 && <span className="cs-badge cs-urg">⚠ {avvisi.length} da controllare</span>}
               {sNonGrounded.length > 0 && <span className="cs-badge cs-urg">⚠ {sNonGrounded.length} non nei fatti</span>}
             </div>
-            {seq?.canale === 'email' && <div className="cs-fld"><label htmlFor="or-s-to">Destinatario</label><input id="or-s-to" type="email" value={to} onChange={(e) => setTo(e.target.value.trim())} placeholder="email del negozio" /></div>}
+            {seq?.canale === 'email' && <div className="cs-fld"><label htmlFor="or-s-to">Destinatario</label><input id="or-s-to" type="email" multiple value={to} onChange={(e) => setTo(e.target.value.trim())} placeholder="email del negozio" /></div>}
+            {seq?.canale === 'email' && emailsNegozio.length > 1 && <div className="cs-note" style={{ textAlign: 'left' }}>Email del negozio, spunta a chi mandarla: {emailsNegozio.map((e) => <label key={e} style={{ marginRight: 12, whiteSpace: 'nowrap' }}><input type="checkbox" checked={scelte.includes(e.toLowerCase())} onChange={() => spunta(e)} /> {e}</label>)}</div>}
             {(oggetto !== '' || seq?.canale === 'email') && <div className="cs-fld"><label htmlFor="or-s-oggetto">Oggetto</label><input id="or-s-oggetto" value={oggetto} onChange={(e) => setOggetto(e.target.value)} /></div>}
             <textarea className="cs-draft-ta" rows={12} aria-label="Testo" value={testo} onChange={(e) => setTesto(e.target.value)} />
             {avvisi.length > 0 && <div className="cs-lint">⚠️ <b>Da controllare</b>: {avvisi.join(' · ')}</div>}
