@@ -1,4 +1,4 @@
--- 0205_resi_auto_da_shopify.sql (2026-11-20, CASI_APERTI 63, OK di Dan in chat: "yes to both")
+-- 0207_resi_auto_da_shopify.sql (2026-11-20, CASI_APERTI 63, OK di Dan in chat: "yes to both")
 --
 -- Da oggi un rimborso Shopify registra il reso da solo (shopify-sync v11): per ogni riga rimborsata una riga in
 -- `returns`, con `rientra_stock` = la spunta "Restock items" del rimborso su Shopify (restock_type diverso da
@@ -21,11 +21,11 @@ do $$ begin
   end if;
 end $$;
 comment on column public.returns.shopify_refund_line_id is
-  'Id della riga di rimborso Shopify (refund_line_items.id). Scritto da shopify-sync v11 (migr 0205); NULL sui resi registrati a mano.';
+  'Id della riga di rimborso Shopify (refund_line_items.id). Scritto da shopify-sync v11 (migr 0207); NULL sui resi registrati a mano.';
 
 alter table public.shopify_orders add column if not exists rimborsato_il timestamptz;
 comment on column public.shopify_orders.rimborsato_il is
-  'Data del primo rimborso Shopify dell''ordine (shopify-sync v11, migr 0205). NULL = nessun rimborso o ordine fuori dalla finestra del resync.';
+  'Data del primo rimborso Shopify dell''ordine (shopify-sync v11, migr 0207). NULL = nessun rimborso o ordine fuori dalla finestra del resync.';
 
 create or replace view public.v_resi_shopify_mancanti as
 with prodotti as (

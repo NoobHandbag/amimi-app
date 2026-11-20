@@ -690,7 +690,7 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
     tt('164 backfill con since: parte da since, il ripasso non lo sposta, pagina con since_id', r.status === 200 && minSoli(r.urls[0]) === '2026-09-01T00:00:00Z' && /since_id=0/.test(r.urls[0]) && r.body.since === '2026-09-01T00:00:00Z', { urls: r.urls.slice(0, 1), since: r.body.since });
     r = await giro({ pagine: 1, perPagina: () => 0 }, { action: 'backfill' });
     tt('165 backfill senza since: 48 ore prima dell\'ultimo ordine, come il giro di cron', r.status === 200 && minSoli(r.urls[0]) === '2026-10-29T08:00:00.000Z' && /since_id=0/.test(r.urls[0]), { urls: r.urls.slice(0, 1) });
-    // v11 (migr 0205): resi automatici dai rimborsi. Ordine #5000 rimborsato oggi: riga 1 con Restock, riga 2 senza;
+    // v11 (migr 0207): resi automatici dai rimborsi. Ordine #5000 rimborsato oggi: riga 1 con Restock, riga 2 senza;
     // #5001 rimborsato il 10-11 (prima del taglio: la conta fisica lo ha gia' assorbito).
     const RIMB = {
       0: [{ created_at: '2026-11-20T14:15:00+01:00', transactions: [{ amount: '200.00' }], refund_line_items: [
@@ -739,7 +739,7 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
     /orders\.length >= 250 && !isBackfill\) return fail/.test(SYNC) && Number(SYNC.match(/const MAX_INSERTS_CRON = (\d+)/)?.[1]) < 250);
 }
 
-console.log('\n== shopify-sync: resi automatici dai rimborsi, blocco PURE (v11, migr 0205) ==');
+console.log('\n== shopify-sync: resi automatici dai rimborsi, blocco PURE (v11, migr 0207) ==');
 {
   const B = '// ==== PURE:sync-resi BEGIN ====', E = '// ==== PURE:sync-resi END ====';
   const a = SYNC.indexOf(B), b = SYNC.indexOf(E);

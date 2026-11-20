@@ -8,7 +8,7 @@
 import { readFileSync } from 'node:fs';
 
 const MIG = readFileSync(new URL('../supabase/migrations/0201_resi_shopify_mancanti.sql', import.meta.url), 'utf8');
-const M0205 = readFileSync(new URL('../supabase/migrations/0205_resi_auto_da_shopify.sql', import.meta.url), 'utf8');
+const M0207 = readFileSync(new URL('../supabase/migrations/0207_resi_auto_da_shopify.sql', import.meta.url), 'utf8');
 const GUARD = readFileSync(new URL('../supabase/functions/ce-guard/index.ts', import.meta.url), 'utf8');
 
 let fail = 0;
@@ -84,16 +84,16 @@ ok('integrale: #1672 resta finche\' manca il reso di una delle due righe',
   mancanti(ORD, [...RESO_1571, { codice: 'NINA_BAG_STRIPES_PETROL_BLUE', data: '2026-07-01' }, { codice: 'NINA_BAG_STRIPES_PETROL_BLUE', data: '2026-09-01' }]).includes('#1672')
   && !mancanti(ORD, [...RESO_1571, { codice: 'NINA_BAG_STRIPES_PETROL_BLUE', data: '2026-07-01' }, { codice: 'NINA_BAG_STRIPES_PETROL_BLUE', data: '2026-09-01' }, { codice: 'ANNIE_BAG_PEARL_GREY', data: '2026-09-01' }]).includes('#1672'));
 
-// migr 0205 (20-11, Dan: la conta fisica e' giusta, i rimborsi vecchi non si toccano): la vista guarda solo i rimborsi
+// migr 0207 (20-11, Dan: la conta fisica e' giusta, i rimborsi vecchi non si toccano): la vista guarda solo i rimborsi
 // e i resi dal 20-11, il resto della regola resta quello della 0201.
-ok('0205: la vista guarda solo i rimborsi e i resi dalla fine della conta del 20-11 (12:03 UTC)',
-  /o\.rimborsato_il >= timestamptz '2026-11-20 12:03:00\+00'/.test(M0205) && /and created_at >= timestamptz '2026-11-20 12:03:00\+00'/.test(M0205));
-ok('0205: stessa regola della 0201 (soglia, integrale/parziale, line_id), niente anon',
-  /having refund_amount >= 0\.5 \* min\(price\)/.test(M0205) && /where ri\.line_id = p\.line_id/.test(M0205)
-  && /case when o\.financial_status = 'refunded' then bool_or\(not s\.coperta\) else not bool_or\(s\.coperta\) end/.test(M0205)
-  && /revoke all on public\.v_resi_shopify_mancanti from anon/.test(M0205));
-ok('0205: chiave unica del reso automatico (lo stesso rimborso non entra due volte) e data dell\'ultimo rimborso',
-  /if not exists \(select 1 from pg_constraint where conname = 'returns_shopify_refund_line_id_key'\)[\s\S]*add constraint returns_shopify_refund_line_id_key unique \(shopify_refund_line_id\)/.test(M0205) && /add column if not exists rimborsato_il timestamptz/.test(M0205));
+ok('0207: la vista guarda solo i rimborsi e i resi dalla fine della conta del 20-11 (12:03 UTC)',
+  /o\.rimborsato_il >= timestamptz '2026-11-20 12:03:00\+00'/.test(M0207) && /and created_at >= timestamptz '2026-11-20 12:03:00\+00'/.test(M0207));
+ok('0207: stessa regola della 0201 (soglia, integrale/parziale, line_id), niente anon',
+  /having refund_amount >= 0\.5 \* min\(price\)/.test(M0207) && /where ri\.line_id = p\.line_id/.test(M0207)
+  && /case when o\.financial_status = 'refunded' then bool_or\(not s\.coperta\) else not bool_or\(s\.coperta\) end/.test(M0207)
+  && /revoke all on public\.v_resi_shopify_mancanti from anon/.test(M0207));
+ok('0207: chiave unica del reso automatico (lo stesso rimborso non entra due volte) e data dell\'ultimo rimborso',
+  /if not exists \(select 1 from pg_constraint where conname = 'returns_shopify_refund_line_id_key'\)[\s\S]*add constraint returns_shopify_refund_line_id_key unique \(shopify_refund_line_id\)/.test(M0207) && /add column if not exists rimborsato_il timestamptz/.test(M0207));
 
 if (fail) { console.error(`\n${fail} guardie fallite`); process.exit(1); }
 console.log('\ntutte le guardie ok');

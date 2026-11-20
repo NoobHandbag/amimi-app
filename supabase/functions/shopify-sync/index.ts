@@ -58,7 +58,7 @@
 // torna (nessuno al 31-10: order_number 1001-1974 senza buchi). Finestra piena (mai vista: massimo storico 38 ordini in 48
 // ore) = si rilegge dal solo cursore, come prima, e la guardia "pagina piena" decide, cosi' una finestra piena non ferma il
 // pull dei nuovi. La cintura invece conta TUTTI i mancanti della finestra: oltre 50, anche vecchi, il giro si ferma forte.
-// 2026-11-20 v11 (migr 0205, CASI_APERTI 63, OK di Dan in chat): un rimborso Shopify registra il reso da solo. Per ogni
+// 2026-11-20 v11 (migr 0207, CASI_APERTI 63, OK di Dan in chat): un rimborso Shopify registra il reso da solo. Per ogni
 // riga di rimborso creata dal RESI_AUTO_DAL (fine della conta fisica del 20-11, 12:03 UTC) una riga in
 // `returns` col codice della riga d'ordine e rientra_stock = la spunta "Restock items" del rimborso. Il CE non cambia
 // (le viste leggono `returns` solo per qromo), cambia la giacenza. In piu' `shopify_orders.rimborsato_il` (PRIMO
@@ -117,7 +117,7 @@ function paginaDelNegozio(url: string, shop: string): boolean {
 }
 // ==== PURE:sync-paging END ====
 // ==== PURE:sync-resi BEGIN ====
-// v11 (migr 0205): dai rimborsi REST di un ordine, le righe di reso da registrare. Solo rimborsi creati da `dal` in poi;
+// v11 (migr 0207): dai rimborsi REST di un ordine, le righe di reso da registrare. Solo rimborsi creati da `dal` in poi;
 // una riga per refund_line_item con quantita' > 0. `rientra` = la spunta "Restock items" (restock_type diverso da
 // no_restock: 'return' o 'cancel', e 'legacy_restock' dei rimborsi vecchi). `data` = giorno di Roma del rimborso.
 type RigaReso = { refund_line_id: string; line_id: number; order: string; quantita: number; importo: number; rientra: boolean; data: string };
@@ -176,7 +176,7 @@ const POSTGREST_CAP = 1000;
 const RESYNC_MAX_PAGES = 8;
 const RESYNC_BUDGET_MS = 60000;
 const RESYNC_PAGE_TIMEOUT_MS = 20000;
-// Resi automatici dai rimborsi (v11, migr 0205): solo i rimborsi da qui in poi. E' la fine della conta fisica del 20-11
+// Resi automatici dai rimborsi (v11, migr 0207): solo i rimborsi da qui in poi. E' la fine della conta fisica del 20-11
 // (ultima rettifica alle 12:02:05 UTC), che Dan dice giusta: un rimborso con Restock fatto prima della fine della conta e'
 // gia' dentro il numero contato, rimetterlo a magazzino lo conterebbe due volte (Gate 2 del 20-11, B1).
 const RESI_AUTO_DAL = '2026-11-20T12:03:00Z';
@@ -478,7 +478,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Resi automatici dai rimborsi (v11, migr 0205). Una riga di `returns` per riga di rimborso Shopify dal RESI_AUTO_DAL,
+  // Resi automatici dai rimborsi (v11, migr 0207). Una riga di `returns` per riga di rimborso Shopify dal RESI_AUTO_DAL,
   // con il codice della riga d'ordine gia' in `shopify_line_items` (per shopify_line_id) e rientra_stock = la spunta
   // "Restock items". Upsert ignoreDuplicates sulla UNIQUE shopify_refund_line_id: idempotente, e i rimborsi restano nella
   // finestra del resync per 45 giorni, quindi un giro fallito si recupera da solo. Un reso Shopify non muove il CE (le
