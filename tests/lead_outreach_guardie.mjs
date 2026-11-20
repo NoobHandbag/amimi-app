@@ -845,5 +845,13 @@ console.log('== ls26 (migr 0204): fascia al pubblico 50-180 ==');
   t('ls26-7 Negozi: la scala prezzi usa la stessa fascia (50-180)', /const AMIMI_MIN = 50; const AMIMI_MAX = 180;/.test(readFileSync(`${ROOT}web/src/pages/Negozi.tsx`, 'utf8')));
 }
 
+console.log('== ls26 (migr 0205): condizioni commerciali come in pagina ==');
+{
+  const sql205 = readFileSync(`${ROOT}supabase/migrations/0205_lead_condizioni_ls26.sql`, 'utf8').replace(/\r\n/g, '\n').replace(/^\s*--[^\n]*$/gm, '');
+  const upd205 = sql205.split('do $$')[0];
+  t('ls26-8 condizioni: via "accessori liberi" e "Lea e Annie sempre su ordine", una sola voce toccata', /update lead_knowledge set[\s\S]*'Minimo per colore: 2 pezzi sulle borse, accessori liberi\.',\s*'Minimo per colore: 2 pezzi per ciascun colore, sui modelli di borse\.'/.test(upd205) && /'; Lea e Annie sono sempre su ordine; nessuna consegna in agosto\.',\s*'; nessuna consegna in agosto\.'/.test(upd205) && /where titolo like 'Condizioni commerciali%';/.test(upd205) && (upd205.match(/\bupdate\b/g) ?? []).length === 1);
+  t('ls26-9 controllo finale: 1 voce allineata e nessuna frase o titolo vecchi (2 RAISE); template e bozze non si toccano', (sql205.match(/raise exception/g) ?? []).length === 2 && /accessori liberi\|sempre su ordine/.test(sql205.split('do $$')[1]) && !/lead_drafts|lead_sequences/.test(sql205));
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
