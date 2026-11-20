@@ -6,7 +6,7 @@ import Icon from './Icon';
 // codici, 97 arrivati fra il 16-10 e il 06-11 (codici doppi senza pagina, schede mai create, una bozza), e nessuno schermo
 // lo diceva: il banner
 // dei controlli (HealthBanner) lo vede solo Ale, mentre chi registra gli arrivi e pubblica sono Ginni e Benny. Per questo
-// la scheda e' per tutto il team, in cima alla Home, e dice QUALI codici: pezzi, giorni dall'ultimo arrivo, e se la pagina
+// la scheda e' per tutto il team, in cima alla Home, e dice QUALI codici: pezzi, giorni dall'arrivo del pezzo piu' vecchio ancora a magazzino, e se la pagina
 // sul sito manca o e' in bozza. La vista fa tutto il calcolo (fermo da almeno 30 giorni dalla migr 0203, fuori i codici esclusi apposta, nessuna riga Shopify attiva fra
 // quelle dell'ultimo giro di sync); qui si legge soltanto. Una lettura fallita si dice, non si nasconde.
 

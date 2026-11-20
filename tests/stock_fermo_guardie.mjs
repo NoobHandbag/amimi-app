@@ -84,8 +84,9 @@ const privilegi = (src) => [...noComments(src).matchAll(/\b(grant|revoke)\b[^;]*
 const PRIVILEGI = ['revoke all on public.v_stock_fermo from public, anon, authenticated, ask_ro;', 'grant select on public.v_stock_fermo to anon, authenticated, ask_ro;'];
 const PRIVILEGI_203 = ['revoke all on public.stock_fermo_esclusi from public, anon, authenticated, ask_ro;', ...PRIVILEGI];
 const scrive = (src) => [...noComments(src).matchAll(/\b(insert\s+into|update\s+[a-z_.]+\s+set|delete\s+from|truncate\s+[a-z_.]+)\b[^;]*/gi)].map((m) => m[0].slice(0, 60));
-// i codici seminati in stock_fermo_esclusi: la prima stringa di ogni riga dei values
-const semina = (src) => { const b = (noComments(src).match(/insert into public\.stock_fermo_esclusi[\s\S]*?;/) ?? [''])[0]; return [...b.matchAll(/\n\s*\('([A-Z0-9_]+)',/g)].map((m) => m[1]); };
+// i codici seminati in stock_fermo_esclusi: la prima stringa di OGNI tupla dei values (qualunque testo, anche due per riga)
+const semina = (src) => { const b = (noComments(src).match(/insert into public\.stock_fermo_esclusi[\s\S]*?;/) ?? [''])[0].split(/\bvalues\b/)[1] ?? ''; return [...b.matchAll(/\(\s*'((?:[^']|'')*)'\s*,\s*'(?:[^']|'')*'\s*,\s*'(?:[^']|'')*'\s*\)/g)].map((m) => m[1]); };
+const scriveIntere = (src) => [...noComments(src).split('\ndo $$')[0].matchAll(/\b(insert\s+into|update\s+[a-z_.]+\s+set|delete\s+from|truncate\s+[a-z_.]+)\b[^;]*/gi)].map((m) => m[0]);
 const innesti = (src) => /refresh_health_log|create\s+(or\s+replace\s+)?(trigger|function)|cron\.(schedule|alter_job|unschedule)|net\.http_(post|get)|\bdrop\s/i.test(noComments(src));
 // l'app: colonne lette = colonne della vista; scheda fuori dal cancello delle finanze; errore detto
 const selectScheda = (s) => ((s.match(/from\('v_stock_fermo'\)\s*\.select\('([^']+)'\)/) ?? ['', ''])[1]).split(',').filter(Boolean);
@@ -105,7 +106,7 @@ t('2c fra 0190 e 0203 la vista cambia solo per l\'esclusione e la soglia', flat(
 t('3 colonne come la prova della migrazione', JSON.stringify(colonne(VF)) === JSON.stringify(COLONNE), JSON.stringify(colonne(VF)));
 t('4 privilegi: solo select ai ruoli dell\'app, dopo un revoke all', JSON.stringify(privilegi(M190)) === JSON.stringify(PRIVILEGI), JSON.stringify(privilegi(M190)));
 t('4b 0203: stessi privilegi sulla vista, nessuno sulla tabella degli esclusi (RLS accesa, niente grant)', JSON.stringify(privilegi(M203)) === JSON.stringify(PRIVILEGI_203)
-  && /alter table public\.stock_fermo_esclusi enable row level security;/.test(noComments(M203)) && !/create\s+policy/i.test(noComments(M203)), JSON.stringify(privilegi(M203)));
+  && /alter table public\.stock_fermo_esclusi enable row level security;/.test(noComments(M203)) && !/create\s+policy/i.test(noComments(M203)) && !/disable\s+row\s+level|no\s+force|security_invoker/i.test(noComments(M203)), JSON.stringify(privilegi(M203)));
 
 console.log('\n== B: v_health ==');
 t('5 le 14 righe della 0181 identiche, in testa, poi solo stock_fermo', vecchieUguali(M190));
@@ -116,7 +117,9 @@ t('6b 0203: gravita\' identiche alla 0190', gravitaOk(M203) && flat(gravita(vist
 console.log('\n== C: niente scritture, niente innesti, prova in fondo ==');
 t('7 nessuna scrittura di dati', scrive(M190).length === 0, scrive(M190).join(' | '));
 t('8 nessun trigger, funzione, cron, pg_net, drop o refresh_health_log', !innesti(M190));
-t('7b 0203: una sola scrittura, la semina degli esclusi (on conflict do nothing), coi tre codici decisi da Dan il 20-11', scrive(M203).length === 1
+t('7b 0203: tre scritture e basta: la semina degli esclusi (on conflict do nothing) coi tre codici decisi da Dan il 20-11, il testo del tema magazzino, la pulizia del registro stock_fermo', scrive(M203).length === 3
+  && /^update public\.push_temi set descrizione = 'Prodotti con pezzi a magazzino da almeno 30 giorni e nessuna pagina attiva sul sito' where key = 'magazzino' and descrizione = 'Prodotti con pezzi a magazzino da almeno 3 giorni e nessuna pagina attiva sul sito'$/.test(flat(scriveIntere(M203)[1] ?? ''))
+  && flat(scriveIntere(M203)[2] ?? '') === "delete from public.push_eventi_inviati r where r.evento = 'stock_fermo' and r.chiave like 'fermo:%' and not exists (select 1 from v_stock_fermo f where upper(f.codice) = upper(split_part(r.chiave, ':', 2)))"
   && /^insert into public\.stock_fermo_esclusi \(codice, motivo, chi\)/.test(scrive(M203)[0])
   && JSON.stringify(semina(M203)) === JSON.stringify(['AGATA_BAG_PALLIETTES_ADOC_ARGENTO_PER_SPOSA', 'AGATA_BAG_PERSONALIZZAZIONE_SPOSA', 'LEA_BAG_CAVALLINO_CHOCOLATE'])
   && /\non conflict \(codice\) do nothing;/.test(noComments(M203)), scrive(M203).join(' | '));
@@ -135,7 +138,8 @@ t('8b 0203: nessun trigger, funzione, cron, pg_net, drop o refresh_health_log', 
     && pre3.includes('from v_stock_fermo f join stock_fermo_esclusi e') && pre3.includes('un codice escluso non esiste in anagrafica')
     && pre3.includes("relrowsecurity from pg_class where oid = 'public.stock_fermo_esclusi'::regclass")
     && pre3.includes("has_table_privilege(r, 'public.stock_fermo_esclusi', 'select')") && pre3.includes("array['anon', 'authenticated', 'ask_ro']")
-    && pre3.includes("has_table_privilege('service_role', 'public.v_stock_fermo', 'select')"));
+    && pre3.includes("has_table_privilege('service_role', 'public.v_stock_fermo', 'select')")
+    && pre3.includes("descrizione like '%almeno 3 giorni%'") && pre3.includes('nel registro restano righe stock_fermo di codici fuori elenco'));
   t('10 la prova viva della 0181 conta 15 righe', /if v_n <> 15 then raise exception 'KO V: v_health ha % righe'/.test(RLS181));
 }
 
@@ -164,7 +168,8 @@ console.log('\n== autocontrollo: i controlli vedono un sorgente rotto ==');
   t('29 0203: esclusione dimenticata -> KO', !criteri(vistaFermo(rotto(M203, "\n   " + ESCLUSI, '')), 30));
   t('30 0203: soglia rimessa a 3 giorni -> KO', !criteri(vistaFermo(rotto(M203, 'f.fermo_dal <= f.oggi - 30', 'f.fermo_dal <= f.oggi - 3')), 30));
   t('31 0203: grant sulla tabella degli esclusi -> KO', JSON.stringify(privilegi(M203 + '\ngrant select on public.stock_fermo_esclusi to anon;\n')) !== JSON.stringify(PRIVILEGI_203));
-  t('32 0203: un codice in piu\' nella semina -> KO', semina(rotto(M203, "\n  ('LEA_BAG_CAVALLINO_CHOCOLATE',", "\n  ('LEA_BAG_COCCO_BEIGE', 'x', 'x'),\n  ('LEA_BAG_CAVALLINO_CHOCOLATE',")).length === 4);
+  t('32 0203: un codice in piu\' nella semina (anche minuscolo, anche sulla stessa riga) -> KO', semina(rotto(M203, "\n  ('LEA_BAG_CAVALLINO_CHOCOLATE',", "\n  ('Lea Bag Cocco', 'x', 'x'), ('LEA_BAG_CAVALLINO_CHOCOLATE',")).length === 4);
+  t('34 0203: una scrittura in piu\' -> KO', scrive(rotto(M203, '\n-- (e) prova', "\ndelete from public.push_eventi_inviati where evento = 'stock_fermo';\n-- (e) prova")).length === 4);
   t('33 0203: testo di v_health rimasto a 3 giorni -> KO', !vecchieUguali(rotto(M203, "sul sito da almeno 30 giorni',\n    (select count(*) from v_stock_fermo)", "sul sito da almeno 3 giorni',\n    (select count(*) from v_stock_fermo)"), 30));
   t('28 giorni sul calendario del server (UTC) -> KO', !criteri(vistaFermo(rotto(M203, "(now() at time zone 'Europe/Rome')::date as oggi", 'current_date as oggi')), 30));
 }

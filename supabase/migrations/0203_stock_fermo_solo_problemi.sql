@@ -15,8 +15,17 @@
 --      Effetto sulla notifica stock_fermo (migr 0192, push-eventi): legge questa vista, quindi avvisa a 30 giorni e non
 --      per i codici esclusi, senza toccare la edge.
 --  (c) v_health: identica alla 0190 (15 righe, stesse gravita'), cambia solo il testo della riga stock_fermo (30 giorni).
--- Prova dentro la migrazione (blocco DO in fondo). Numero 0203: in produzione l'ultima e' la 0202.
--- Rollback: v_stock_fermo e v_health col corpo della 0190, poi drop table public.stock_fermo_esclusi.
+--  (d) notifiche (modulo push_*, migr 0192; Gate 2 del 20-11): il testo del tema `magazzino` nella scheda Notifiche passa
+--      da 3 a 30 giorni, e dal registro push_eventi_inviati escono le righe stock_fermo dei codici che con la soglia nuova
+--      non sono piu' nella vista. La chiave e' fermo:<codice>:<fermo_dal> e una riga inviata la blocca per sempre: senza
+--      questo, un lotto gia' avvisato a 3 giorni (le Annie Maxi del 06-11) rientrerebbe a 30 giorni senza notifica.
+--      Restano le righe dei codici ancora in elenco (niente doppia notifica oggi).
+--  Rinuncia consapevole (Gate 2): un codice con pezzi ma senza nessun arrivo registrato (fermo_dal nullo) entra subito,
+--  come nella 0190: e' un'anomalia di anagrafica che conviene vedere, non un prodotto in preparazione.
+-- Prova dentro la migrazione (blocco DO in fondo). Numero 0203: in produzione l'ultima e' la 0202 (branch
+-- claude/stock-drift-non-prodotti, non ancora in main al 20-11: ridefinisce solo v_stock_drift).
+-- Rollback: v_stock_fermo e v_health col corpo della 0190, poi drop table public.stock_fermo_esclusi; il testo del tema
+-- si rimette a mano, le righe tolte dal registro non servono (al piu' una notifica ripetuta).
 
 -- (a) i codici tenuti fuori dal sito apposta
 create table if not exists public.stock_fermo_esclusi (
@@ -31,7 +40,7 @@ revoke all on public.stock_fermo_esclusi from public, anon, authenticated, ask_r
 insert into public.stock_fermo_esclusi (codice, motivo, chi) values
   ('AGATA_BAG_PALLIETTES_ADOC_ARGENTO_PER_SPOSA', 'Pezzo da sposa su misura: non va sul sito (Dan, 20-11-2026)', 'Claude Code'),
   ('AGATA_BAG_PERSONALIZZAZIONE_SPOSA', 'Pezzo da sposa su misura: non va sul sito (Dan, 20-11-2026)', 'Claude Code'),
-  ('LEA_BAG_CAVALLINO_CHOCOLATE', 'Fuori dal catalogo del sito per scelta (Ale, giugno 2026; confermato da Dan il 20-11-2026)', 'Claude Code')
+  ('LEA_BAG_CAVALLINO_CHOCOLATE', 'Fuori dal catalogo del sito per scelta (Ale, giugno 2026, confermato da Dan il 20-11-2026)', 'Claude Code')
 on conflict (codice) do nothing;
 
 -- (b) i codici fermi: fuori gli esclusi, soglia a 30 giorni
@@ -145,7 +154,18 @@ select k, label, n,
   end as severity
 from checks;
 
--- (d) prova dentro la stessa transazione: se qualcosa non torna la migrazione non passa
+-- (d) notifiche: testo del tema e registro
+update public.push_temi
+   set descrizione = 'Prodotti con pezzi a magazzino da almeno 30 giorni e nessuna pagina attiva sul sito'
+ where key = 'magazzino'
+   and descrizione = 'Prodotti con pezzi a magazzino da almeno 3 giorni e nessuna pagina attiva sul sito';
+
+delete from public.push_eventi_inviati r
+ where r.evento = 'stock_fermo'
+   and r.chiave like 'fermo:%'
+   and not exists (select 1 from v_stock_fermo f where upper(f.codice) = upper(split_part(r.chiave, ':', 2)));
+
+-- (e) prova dentro la stessa transazione: se qualcosa non torna la migrazione non passa
 do $$
 declare
   r name;
@@ -206,6 +226,14 @@ begin
       raise exception '0203: % ha privilegi su stock_fermo_esclusi', r;
     end if;
   end loop;
+  -- notifiche: nessun testo a 3 giorni, e nel registro restano solo righe di codici in elenco
+  if exists (select 1 from push_temi where key = 'magazzino' and descrizione like '%almeno 3 giorni%') then
+    raise exception '0203: il tema magazzino dice ancora 3 giorni';
+  end if;
+  if exists (select 1 from push_eventi_inviati r where r.evento = 'stock_fermo' and r.chiave like 'fermo:%'
+               and not exists (select 1 from v_stock_fermo f where upper(f.codice) = upper(split_part(r.chiave, ':', 2)))) then
+    raise exception '0203: nel registro restano righe stock_fermo di codici fuori elenco';
+  end if;
   -- service_role legge la vista (push-eventi, migr 0192)
   if not has_table_privilege('service_role', 'public.v_stock_fermo', 'select') then
     raise exception '0203: service_role non legge v_stock_fermo (la notifica stock_fermo si fermerebbe)';
