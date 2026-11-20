@@ -7,7 +7,7 @@ import Icon from './Icon';
 // lo diceva: il banner
 // dei controlli (HealthBanner) lo vede solo Ale, mentre chi registra gli arrivi e pubblica sono Ginni e Benny. Per questo
 // la scheda e' per tutto il team, in cima alla Home, e dice QUALI codici: pezzi, giorni dall'ultimo arrivo, e se la pagina
-// sul sito manca o e' in bozza. La vista fa tutto il calcolo (fermo da almeno 3 giorni, nessuna riga Shopify attiva fra
+// sul sito manca o e' in bozza. La vista fa tutto il calcolo (fermo da almeno 30 giorni dalla migr 0203, fuori i codici esclusi apposta, nessuna riga Shopify attiva fra
 // quelle dell'ultimo giro di sync); qui si legge soltanto. Una lettura fallita si dice, non si nasconde.
 
 type Fermo = { codice: string; item: string | null; variant: string | null; pezzi: number; giorni: number | null; stato_shopify: string };
