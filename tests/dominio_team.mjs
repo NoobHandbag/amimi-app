@@ -110,9 +110,9 @@ const CSSYNC = read('supabase/functions/cs-sync/index.ts'), LEADAPI = read('web/
 const codice = (s) => s.replace(/^\s*\/\/[^\n]*$/gm, '');
 t('24 cs-send: un destinatario del team blocca l\'invio al cliente', /if \(EMAIL_TEAM\.test\(to\)\) return blocco\(/.test(CSSEND) && !/to\.endsWith\('@amimi\.it'\)/.test(CSSEND));
 t('25 lead-outreach: invio e risposta a un indirizzo del team bloccati (dentro il blocco PURE:lead-guard, con la costante)',
-  (LEAD.match(/else if \(EMAIL_TEAM\.test\(to\)\) b\.push\(/g) ?? []).length === 2 && !/to\.endsWith\('@amimi\.it'\)/.test(LEAD)
+  (LEAD.match(/else if \(EMAIL_TEAM\.test\(to\)\) b\.push\(/g) ?? []).length === 1 && (LEAD.match(/else if \(tos\.some\(\(x\) => EMAIL_TEAM\.test\(x\)\)\) b\.push\(/g) ?? []).length === 1 && !/to\.endsWith\('@amimi\.it'\)/.test(LEAD)
   && LEAD.indexOf('const EMAIL_TEAM') > LEAD.indexOf('// ==== PURE:lead-guard BEGIN ====') && LEAD.indexOf('const EMAIL_TEAM') < LEAD.indexOf('// ==== PURE:lead-guard END ===='));
-t('26 web: indirizzoInterno dalla lista del team', /import \{ csClient, DOMINI_TEAM \} from '\.\/csClient';/.test(LEADAPI) && /export const indirizzoInterno = \(to: string\): boolean => DOMINI_TEAM\.some\(\(d\) => to\.trim\(\)\.toLowerCase\(\)\.endsWith\('@' \+ d\)\);/.test(LEADAPI));
+t('26 web: indirizzoInterno dalla lista del team', /import \{ csClient, DOMINI_TEAM \} from '\.\/csClient';/.test(LEADAPI) && /export const indirizzoInterno = \(to: string\): boolean => to\.split\(\/\[,;\\s\]\+\/\)\.some\(\(x\) => DOMINI_TEAM\.some\(\(d\) => x\.trim\(\)\.toLowerCase\(\)\.endsWith\('@' \+ d\)\)\);/.test(LEADAPI));
 const conti = { 'ai-compila': 2, 'cs-api': 2, 'cs-assist': 2, 'cs-send': 3, 'lead-outreach': 4, 'mat-api': 2, 'push-api': 2 };
 t('27 EMAIL_TEAM solo nel cancello e nei blocchi sui destinatari (dichiarazione + usi contati)', EDGE.every((e) => (codice(read(`supabase/functions/${e}/index.ts`)).match(/EMAIL_TEAM/g) ?? []).length === conti[e]),
   EDGE.map((e) => e + '=' + (codice(read(`supabase/functions/${e}/index.ts`)).match(/EMAIL_TEAM/g) ?? []).length).join(' '));
