@@ -43,6 +43,8 @@
 // PURE:ceguard-reconcile, test in tests/shopify_sync_guardie.mjs (gira nella CI).
 // v12 (2026-10-26, migr 0173): check WARN `ce_tasse_iva_da_dividere` (F24 in TASSE non ancora diviso fra IVA, fuori
 // dal CE, e ritenute/diritti, che restano costo). Test `node tests/iva_fuori_ce.mjs`.
+// v13 (2026-11-20, migr 0201, CASI_APERTI 63 b): check WARN `ce_resi_shopify_mancanti` (ordini rimborsati su Shopify
+// senza reso in `returns`: la giacenza li conta ancora venduti). Test `node tests/resi_shopify_mancanti.mjs`.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { APP_URL, canaleEffettivo, consegnaAvviso, inviaPush } from '../_shared/push.ts';
 import type { Canale, EsitoPush } from '../_shared/push.ts';
@@ -371,6 +373,15 @@ Deno.serve(async (req) => {
   add('ce_tasse_iva_da_dividere',
     'F24 in TASSE da dividere fra IVA (fuori CE), ritenute e diritti: ' + ((ivaDiv ?? []).length ? (ivaDiv ?? []).map((r: { year: number; month: number; costo: number }) => `${r.year}-${r.month}: ${r.costo}`).join(', ') : 'nessuno'),
     (ivaDiv ?? []).length, 'warn');
+  // 11-quater) RESI SHOPIFY MANCANTI (v13, migr 0201): un rimborso Shopify entra nel CE da solo (refund_amount), ma la
+  // giacenza scala la riga come venduta finche' non c'e' un reso in `returns`. Il #1571 e' rimasto cosi' quasi tre mesi.
+  // WARN: si chiude registrando il reso (rientra_stock si' o no), non c'e' un euro sbagliato nel CE.
+  const { data: resiMancanti } = read('v_resi_shopify_mancanti', await sb.from('v_resi_shopify_mancanti').select('order_id, data_ordine').order('data_ordine'));
+  const nResi = (resiMancanti ?? []).length;
+  add('ce_resi_shopify_mancanti',
+    'Ordini Shopify rimborsati senza reso registrato (la giacenza li conta venduti): '
+      + (nResi ? (resiMancanti ?? []).slice(0, 10).map((r: { order_id: string }) => r.order_id).join(', ') + (nResi > 10 ? ` e altri ${nResi - 10}` : '') : 'nessuno'),
+    nResi, 'warn');
   // righe di VENDITA con periodo NULL/invalido: sarebbero invisibili al CE (che raggruppa per year/month), lo
   // stesso rischio dal lato ricavi. v_vendite_orfane conta le righe scoperte su shopify/qromo/gift/b2b.
   const { data: orf } = read('v_vendite_orfane', await sb.from('v_vendite_orfane').select('*').single());
