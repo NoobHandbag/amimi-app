@@ -537,13 +537,23 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
       S.altro.push(`shopify_orders ${q.op}`);
     }
     if (q.tabella === 'shopify_line_items' && q.op === 'insert') { S.righe += q.args[0].length; return { data: null, error: null }; }
+    if (q.tabella === 'shopify_line_items' && q.op === 'select') {
+      S.lineeLette.push(...f('in')[1]);
+      return { data: f('in')[1].filter((id) => (S.sc.codici ?? {})[id]).map((id) => ({ shopify_line_id: id, codice: S.sc.codici[id] })), error: null };
+    }
+    if (q.tabella === 'returns' && q.op === 'upsert') {
+      S.resiOpz.push(q.args[1]);
+      if (S.sc.resiRotti) return { data: null, error: { message: 'upsert fallito' } };
+      const nuove = q.args[0].filter((x) => !(S.sc.resiGiaDentro ?? []).includes(x.shopify_refund_line_id));
+      S.resi.push(...q.args[0]); return { data: nuove.map((_, i) => ({ id: i })), error: null };
+    }
     return { data: [], error: null };
   };
   // ordine n della finestra: nel DB pagato ed evaso, rimborso 0; su Shopify uguale, salvo quelli `cambiato` (rimborso 10)
   const nome = (n) => `#${5000 + n}`;
-  const rigaDb = (nm) => ({ order_id: nm, refund_amount: 0, financial_status: 'paid', fulfillment_status: 'fulfilled', fulfilled_at: '2026-10-20T10:00:00Z', year: 2026, month: 10 });
+  const rigaDb = (nm) => ({ order_id: nm, refund_amount: 0, financial_status: 'paid', fulfillment_status: 'fulfilled', fulfilled_at: '2026-10-20T10:00:00Z', year: 2026, month: 10, ...(S?.sc?.dbExtra?.(nm) ?? {}) });
   const ordine = (n, cambiato) => ({ id: 7000000 + n, name: nome(n), financial_status: cambiato ? 'partially_refunded' : 'paid', fulfillment_status: 'fulfilled',
-    fulfillments: [{ created_at: '2026-10-20T10:00:00Z' }], refunds: cambiato ? [{ transactions: [{ amount: '10.00' }] }] : [] });
+    fulfillments: [{ created_at: '2026-10-20T10:00:00Z' }], refunds: S?.sc?.rimborsi?.(n) ?? (cambiato ? [{ transactions: [{ amount: '10.00' }] }] : []) });
   const linkDi = (i, n, base = BASE) => {
     const u = (j) => `<${base}?limit=250&fields=id,name,financial_status,fulfillment_status,fulfillments,refunds&page_info=pg${j}>`;
     return [i > 0 ? `${u(i - 1)}; rel="previous"` : null, i + 1 < n ? `${u(i + 1)}; rel="next"` : null].filter(Boolean).join(', ');
@@ -574,7 +584,7 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
   let handler = null;
   const fetchVero = globalThis.fetch, nowVero = Date.now, denoPrima = globalThis.Deno;
   const giro = async (sc, corpo = {}) => {
-    S = { sc, urls: [], pull: [], upsert: [], righe: 0, resync: [], inLen: [], update: [], health: [], altro: [], senzaToken: 0 };
+    S = { sc, urls: [], pull: [], upsert: [], righe: 0, resync: [], inLen: [], update: [], health: [], altro: [], senzaToken: 0, lineeLette: [], resi: [], resiOpz: [] };
     globalThis.fetch = shopifyFinto;
     try {
       const res = await handler(new Request('http://edge/shopify-sync', { method: 'POST', body: JSON.stringify({ pin: PIN, ...corpo }) }));
@@ -680,6 +690,46 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
     tt('164 backfill con since: parte da since, il ripasso non lo sposta, pagina con since_id', r.status === 200 && minSoli(r.urls[0]) === '2026-09-01T00:00:00Z' && /since_id=0/.test(r.urls[0]) && r.body.since === '2026-09-01T00:00:00Z', { urls: r.urls.slice(0, 1), since: r.body.since });
     r = await giro({ pagine: 1, perPagina: () => 0 }, { action: 'backfill' });
     tt('165 backfill senza since: 48 ore prima dell\'ultimo ordine, come il giro di cron', r.status === 200 && minSoli(r.urls[0]) === '2026-10-29T08:00:00.000Z' && /since_id=0/.test(r.urls[0]), { urls: r.urls.slice(0, 1) });
+    // v11 (migr 0207): resi automatici dai rimborsi. Ordine #5000 rimborsato oggi: riga 1 con Restock, riga 2 senza;
+    // #5001 rimborsato il 10-11 (prima del taglio: la conta fisica lo ha gia' assorbito).
+    const RIMB = {
+      0: [{ created_at: '2026-11-20T14:15:00+01:00', transactions: [{ amount: '200.00' }], refund_line_items: [
+        { id: 901, line_item_id: 801, quantity: 1, restock_type: 'return', subtotal: '120.00' },
+        { id: 902, line_item_id: 802, quantity: 1, restock_type: 'no_restock', subtotal: '80.00' }] }],
+      1: [{ created_at: '2026-11-10T10:00:00+01:00', transactions: [{ amount: '90.00' }], refund_line_items: [
+        { id: 903, line_item_id: 803, quantity: 1, restock_type: 'return', subtotal: '90.00' }] }],
+    };
+    const scResi = (extra = {}) => ({ pagine: 1, perPagina: () => 2, cambiati: () => [0, 1], rimborsi: (n) => RIMB[n], codici: { 801: 'LEA_BAG_BLACK', 802: 'NINA_BAG_PINK', 803: 'ANNIE_BAG_BLUE' }, ...extra });
+    r = await giro(scResi());
+    const per = (id) => r.resi.find((x) => x.shopify_refund_line_id === id);
+    tt('166 rimborso di oggi: una riga di reso per riga rimborsata, col codice della riga d\'ordine; il rimborso del 10-11 (prima della conta) no',
+      r.status === 200 && r.resi.length === 2 && per('901')?.codice === 'LEA_BAG_BLACK' && per('902')?.codice === 'NINA_BAG_PINK' && !per('903')
+      && JSON.stringify(r.lineeLette.slice().sort()) === JSON.stringify([801, 802]), { resi: r.resi, linee: r.lineeLette, body: r.body });
+    tt('167 rientra_stock = la spunta Restock di Shopify (return -> si\', no_restock -> no); canale online, data di Roma, anno e mese',
+      per('901')?.rientra_stock === true && per('902')?.rientra_stock === false && per('901')?.canale === 'online'
+      && per('901')?.data === '2026-11-20' && per('901')?.year === 2026 && per('901')?.month === 11 && per('901')?.quantita === 1 && per('901')?.importo_rimborsato === 120, { resi: r.resi });
+    tt('168 upsert ignoreDuplicates su shopify_refund_line_id (idempotente) e nell\'etichetta "resi automatici 2", giro ok',
+      JSON.stringify(r.resiOpz[0]) === JSON.stringify({ onConflict: 'shopify_refund_line_id', ignoreDuplicates: true }) && r.h.severity === 'ok'
+      && /resi automatici 2$/.test(r.h.label) && r.body.resiNuovi === 2, { opz: r.resiOpz, h: r.h });
+    tt('172 rimborsato_il scritto nell\'update del resync (i due ordini cambiati)', r.update.length === 2, { update: r.update });
+    r = await giro(scResi({ resiGiaDentro: ['901', '902'] }));
+    tt('169 secondo giro sullo stesso rimborso: nessuna riga nuova, etichetta senza resi, giro ok', r.body.resiNuovi === 0 && r.h.severity === 'ok' && !/resi/.test(r.h.label), { h: r.h, body: r.body });
+    r = await giro(scResi({ codici: { 801: 'LEA_BAG_BLACK' } }));
+    tt('170 riga rimborsata senza codice: non si scrive, warn con "da registrare a mano", le altre entrano',
+      r.resi.length === 1 && r.h.severity === 'warn' && /1 righe di rimborso senza codice: correggi la vendita \(Correggi vendita\), il reso entra da solo/.test(r.h.label)
+      && !/a mano/.test(r.h.label) && r.body.resiSenzaCodice === 1, { h: r.h, resi: r.resi });
+    // Gate 2: nessun update a ogni giro quando il DB ha gia' rimborsato_il (formato di Postgres contro ISO di Shopify)
+    r = await giro(scResi({ dbExtra: (nm) => (nm === nome(0) ? { refund_amount: 200, financial_status: 'partially_refunded', rimborsato_il: '2026-11-20T13:15:00+00:00' }
+      : nm === nome(1) ? { refund_amount: 90, financial_status: 'partially_refunded', rimborsato_il: '2026-11-10T09:00:00+00:00' } : {}) }));
+    tt('177 DB gia\' allineato (rimborsato_il in formato Postgres): nessun update, i resi si riprovano lo stesso', r.update.length === 0 && r.resi.length === 2, { update: r.update, resi: r.resi.length });
+    // il pull: un ordine nuovo che arriva gia' rimborsato porta il suo reso
+    const giaRimborsato = { ...nuovoOrdine(3, '2026-11-20T13:00:00Z'), refunds: [{ created_at: '2026-11-20T13:30:00Z', transactions: [{ amount: '100.00' }],
+      refund_line_items: [{ id: 950, line_item_id: 9000003, quantity: 1, restock_type: 'cancel', subtotal: '100.00' }] }] };
+    r = await giro({ pagine: 1, perPagina: () => 0, assenti: [nome(3)], pull: () => [giaRimborsato], codici: { 9000003: 'LEA_BAG_BLACK' } });
+    tt('178 pull: ordine nuovo gia\' rimborsato (annullato con Restock) = inserito e reso registrato col rientro', r.upsert.includes(nome(3)) && r.resi.length === 1
+      && r.resi[0].shopify_refund_line_id === '950' && r.resi[0].rientra_stock === true && r.resi[0].codice === 'LEA_BAG_BLACK', { upsert: r.upsert, resi: r.resi, body: r.body });
+    r = await giro(scResi({ resiRotti: true }));
+    tt('171 upsert dei resi fallito: warn "si ritenta al giro dopo", il giro non si ferma', r.status === 200 && r.h.severity === 'warn' && /resi automatici NON scritti/.test(r.h.label) && r.body.resiErr === 1, { h: r.h });
   } else t('141-152 la edge non e\' caricabile coi finti (import del client cambiato?)', false);
   if (denoPrima === undefined) delete globalThis.Deno; else globalThis.Deno = denoPrima;
   delete globalThis.__amimiSyncFinto;
@@ -687,6 +737,35 @@ console.log('\n== shopify-sync: resync dei 45 giorni a pagine (v10) ==');
     TETTO >= 2 && TETTO <= 20 && Number(SYNC.match(/const RESYNC_BUDGET_MS = (\d+)/)?.[1] ?? 1e9) <= 90000 && /AbortSignal\.timeout\(RESYNC_PAGE_TIMEOUT_MS\)/.test(SYNC));
   t('154 il pull dei nuovi resta a una pagina (cintura 50 < pagina 250): pagina piena = giro fermato, come la v7',
     /orders\.length >= 250 && !isBackfill\) return fail/.test(SYNC) && Number(SYNC.match(/const MAX_INSERTS_CRON = (\d+)/)?.[1]) < 250);
+}
+
+console.log('\n== shopify-sync: resi automatici dai rimborsi, blocco PURE (v11, migr 0207) ==');
+{
+  const B = '// ==== PURE:sync-resi BEGIN ====', E = '// ==== PURE:sync-resi END ====';
+  const a = SYNC.indexOf(B), b = SYNC.indexOf(E);
+  let righeResoDaRimborsi = null, primoRimborso = null;
+  if (a >= 0 && b > a) {
+    const dir = mkdtempSync(join(tmpdir(), 'amimi-resi-'));
+    const f = join(dir, 'resi.mjs');
+    writeFileSync(f, stripTypeScriptTypes(SYNC.slice(a + B.length, b)) + '\nexport { righeResoDaRimborsi, primoRimborso };\n', 'utf8');
+    try { ({ righeResoDaRimborsi, primoRimborso } = await import(pathToFileURL(f).href)); } finally { try { rmSync(dir, { recursive: true, force: true }); } catch { /* niente */ } }
+  }
+  if (righeResoDaRimborsi) {
+    const DAL = SYNC.match(/const RESI_AUTO_DAL = '([^']+)'/)?.[1];
+    t('173 taglio = fine della conta fisica del 20-11-2026 (ultima rettifica 12:02:05 UTC)', DAL === '2026-11-20T12:03:00Z');
+    const o = { name: '#9', refunds: [
+      { created_at: '2026-11-20T13:30:00+01:00', refund_line_items: [{ id: 1, line_item_id: 11, quantity: 1, restock_type: 'cancel', subtotal: '50' },
+        { id: 2, line_item_id: 12, quantity: 0, restock_type: 'return' }, { id: 3, quantity: 1, restock_type: 'return' }, { id: 4, line_item_id: 14, quantity: 2, subtotal: '10.005' }] },
+      { created_at: '2026-11-20T12:02:59Z', refund_line_items: [{ id: 5, line_item_id: 15, quantity: 1, restock_type: 'return' }] },
+      { created_at: 'non una data', refund_line_items: [{ id: 6, line_item_id: 16, quantity: 1 }] }, { refund_line_items: [{ id: 7, line_item_id: 17, quantity: 1 }] }] };
+    const rr = righeResoDaRimborsi(o, DAL);
+    t('174 solo rimborsi dal taglio (12:30 UTC si\', 12:02:59 UTC no, data rotta o assente no); quantita\' 0 o riga d\'ordine assente scartate',
+      JSON.stringify(rr.map((x) => x.refund_line_id)) === JSON.stringify(['1', '4']), JSON.stringify(rr));
+    t('175 cancel rientra (pezzo mai partito), restock assente = no_restock non rientra; data di Roma, quantita\' e riga d\'ordine',
+      rr[0]?.rientra === true && rr[1]?.rientra === false && rr[0]?.data === '2026-11-20' && rr[1]?.quantita === 2 && rr[0]?.order === '#9' && rr[0]?.line_id === 11, JSON.stringify(rr));
+    t('176 primoRimborso: il piu\' vecchio fra date valide (un rimborso nuovo su un ordine vecchio non lo riporta nel WARN), null senza rimborsi',
+      primoRimborso(o) === '2026-11-20T12:02:59Z' && primoRimborso({ refunds: [] }) === null && primoRimborso({}) === null);
+  } else t('173-176 blocco PURE:sync-resi assente o non caricabile', false);
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);
