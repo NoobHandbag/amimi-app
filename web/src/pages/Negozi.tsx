@@ -52,7 +52,7 @@ const fmtD = (iso: string | null | undefined) => { if (!iso) return ''; const [y
 const postDate = (p: { alt: string; data: string | null }) => { const m = p.alt.match(/on ([A-Z][a-z]+) (\d{1,2}), (\d{4})/); if (!m) return fmtD(p.data); const EN = ['january','february','march','april','may','june','july','august','september','october','november','december']; const i = EN.indexOf(m[1].toLowerCase()); return i < 0 ? fmtD(p.data) : `${Number(m[2])} ${MESI[i]} ${m[3]}`; };
 // descrizione automatica di Instagram ("Potrebbe essere un'immagine raffigurante ...")
 const postDesc = (alt: string) => { const m = alt.match(/raffigurante (.+?)\.?$/) || alt.match(/may be an image of (.+?)\.?$/i); return m ? m[1] : ''; };
-const AMIMI_MIN = 50; const AMIMI_MAX = 190;
+const AMIMI_MIN = 50; const AMIMI_MAX = 180;
 // recensione Google grezza ("Nome Local Guide · 12 recensioni · 3 foto <icone> 3 mesi fa Testo... Altro Mi piace Condividi")
 // -> { autore, quando, testo }. Le icone sono glifi in area privata: via.
 const cleanReview = (raw: string) => {
@@ -447,7 +447,7 @@ function Scheda({ r, urls, signMore, who, avviso, onBack, onChanged, onOutreach 
   const shots: { label: string; path: string | null }[] = [
     { label: 'Instagram (profilo)', path: r.shot_ig }, { label: 'Sito (mobile)', path: r.shot_home_mobile }, { label: 'Sito (desktop)', path: r.shot_home }, { label: 'Google Maps', path: r.shot_maps }, { label: 'Foto su Google', path: r.shot_maps_photos },
   ];
-  // scala prezzi: borse del negozio contro Amimi (50-190), su un asse 0-max
+  // scala prezzi: borse del negozio contro Amimi (50-180), su un asse 0-max
   const axisMax = Math.max(AMIMI_MAX, pb?.borse?.max ?? 0, 200);
   const pct = (v: number) => `${Math.min(100, (v / axisMax) * 100)}%`;
 
