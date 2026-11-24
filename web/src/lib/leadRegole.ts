@@ -47,6 +47,7 @@ export function avvisiTesto(testo: string): string[] {
   const low = testo.toLowerCase();
   if (/\bindia\b/.test(low)) a.push('il testo nomina l\'India: non si dice mai');
   if (/cotone[^.\n]{0,80}(made in italy|in italia|italian)|(made in italy|in italia)[^.\n]{0,80}cotone/.test(low)) a.push('il testo associa il cotone all\'Italia: vale solo per la pelle');
+  if (low.split(/[.\n]/).some((s) => /\bmilan[oe]?\b/.test(s) && /cotone|cotton|tessut|fabric/.test(s) && !/showroom/.test(s))) a.push('il testo lega il cotone o il tessuto a Milano: "fatte a Milano" vale solo per la pelle');
   if (/\d+\s?%/.test(testo)) a.push('il testo contiene una percentuale: nelle email non si scrivono sconti ne\' supplementi, si rimanda alla line sheet');
   if (/ordine minimo|minimo d.ordine|conto vendita|consignment|minimum order/.test(low)) a.push('il testo cita minimi d\'ordine o conto vendita: controlla che coincida con la line sheet (primo ordine 12 pezzi e 400 euro netto; il conto vendita non c\'e\' piu\')');
   if (/alleg|attach/.test(low)) a.push('il testo parla di un allegato: l\'email parte senza allegati');

@@ -20,6 +20,9 @@
 // proposta di risposta legge la CONVERSAZIONE col negozio (lead_touches) come cs-assist legge il thread del cliente; prima
 // la sola bozza AI era quella della sequenza a freddo, che non vede i messaggi. `rispondi` accetta il `draft_id` della
 // proposta (claim con UPDATE della riga). Flag dedicato lead_risposta_ai_enabled: spegnerlo non ferma gli invii.
+// v19 (2026-11-24, Giovanni e Dan: "voi" in tutta la sequenza, migr 0208): la presentazione del tocco 1 e' quella che
+// Giovanni scrive a mano; registro "voi" (al team del negozio), riga di opt-out al plurale, un breve paragrafo personale
+// (2-3 frasi) invece di una frase; avvisiContenuto segnala anche cotone o tessuto legati a Milano.
 // v16 (2026-11-19, Giovanni, migr 0198): il destinatario di ripiego della bozza e' `email_sito` di v_lead_dossier, la
 // prima email del sito che vale come email del negozio (lead_email_utile: niente PEC, segnaposto, indirizzi di terzi);
 // prima era site_meta.emails[0], che su 5 negozi era una PEC.
@@ -355,10 +358,10 @@ function testoModulo(t: string): string {
 // (migr 0161) e di DOMINI_TEAM del web (tests/dominio_team.mjs). Qui dentro perche' il test ritaglia questo blocco.
 const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
-const OPT_OUT_IT = 'Se preferisce non ricevere altre email da parte mia, mi risponda "no grazie" e non la contatterò più.';
+const OPT_OUT_IT = 'Se preferite non ricevere altre email da parte mia, rispondete "no grazie" e non vi contatterò più.';
 const OPT_OUT_EN = 'If you would rather not hear from me again, just reply "no thanks" and I will not contact you further.';
 // ogni email chiude con la riga di opt-out, oppure (tocco 4) con la chiusura definitiva "non la contatterò ulteriormente"
-const CHIUSURA_RE = /no grazie|no thanks|non la contatter[oò] ulteriormente|won'?t contact you again|will not contact you/i;
+const CHIUSURA_RE = /no grazie|no thanks|non (?:la|vi) contatter[oò] ulteriormente|won'?t contact you again|will not contact you/i;
 function segnapostoResidui(t: string): string[] {
   const out: string[] = [];
   for (const m of t.matchAll(/\[[^\]\n]{1,200}\]|\{\{[^}\n]{1,60}\}\}/g)) out.push(m[0]);
@@ -433,6 +436,8 @@ function avvisiContenuto(testo: string): string[] {
   const low = testo.toLowerCase();
   if (/\bindia\b/.test(low)) a.push('il testo nomina l\'India: non si dice mai');
   if (/cotone[^.\n]{0,80}(made in italy|in italia|italian)|(made in italy|in italia)[^.\n]{0,80}cotone/.test(low)) a.push('il testo associa il cotone all\'Italia: vale solo per la pelle');
+  // v19: "fatte a mano a Milano, in pelle e tessuto" lega anche il cotone a Milano (email del 23-11)
+  if (low.split(/[.\n]/).some((s) => /\bmilan[oe]?\b/.test(s) && /cotone|cotton|tessut|fabric/.test(s) && !/showroom/.test(s))) a.push('il testo lega il cotone o il tessuto a Milano: "fatte a Milano" vale solo per la pelle');
   if (/\d+\s?%/.test(testo)) a.push('il testo contiene una percentuale: nelle email non si scrivono sconti ne\' supplementi, si rimanda alla line sheet');
   if (/ordine minimo|minimo d.ordine|conto vendita|consignment|minimum order/.test(low)) a.push('il testo cita minimi d\'ordine o conto vendita: controlla che coincida con la line sheet (primo ordine 12 pezzi e 400 euro netto; il conto vendita non c\'e\' piu\')');
   if (/alleg|attach/.test(low)) a.push('il testo parla di un allegato: l\'email parte senza allegati');
@@ -927,18 +932,18 @@ function buildPrompt(p: { lingua: 'it' | 'en'; negozio: Record<string, unknown>;
   const it = p.lingua === 'it';
   return [
     `Sei ${p.firma.split('\n')[0].split(' - ')[0] || 'Benedetta'} di Amimì Milano, brand di borse artigianali. Scrivi la email ${p.tocco === 1 ? 'di PRIMO contatto' : `di follow-up (tocco ${p.tocco} di 4)`} a un negozio multimarca, per proporgli di vendere le nostre borse.`,
-    `Lingua: ${it ? 'italiano, registro "lei"' : 'English'}.`,
+    `Lingua: ${it ? 'italiano, registro "voi" (scrivi al team del negozio; "lei" solo se il referente e\' una persona con il suo nome)' : 'English'}.`,
     '',
     'REGOLE (vincolanti):',
     '1. Usa SOLO i fatti nei blocchi NEGOZIO, AMIMI e LINK. Nessun numero, prezzo, condizione, nome o data che non sia scritto li\'.',
-    '2. Una sola frase personale sul negozio, presa dal NEGOZIO (gancio, brand affini, stile). Se non c\'e\' niente di specifico, scrivi [DA VERIFICARE: gancio personale] al suo posto.',
+    '2. Un breve paragrafo personale sul negozio (due o tre frasi), preso dal NEGOZIO (gancio, brand affini, stile, dove si trova): cosa hai notato e perche\' Amimì sta bene nella loro selezione. Se non c\'e\' niente di specifico, scrivi [DA VERIFICARE: gancio personale] al suo posto.',
     '3. Obiettivo della email: fargli guardare la line sheet e fissare un appuntamento (in negozio o in showroom a Milano). Chiudi con una domanda semplice.',
     '4. Listino wholesale e condizioni commerciali sono pubblicati nella line sheet (v7, migr 0149): nell\'email rimanda al link e NON riscrivere il listino, ANCHE SE il template lo fa. Puoi citare al massimo UN dato delle condizioni, solo se e\' scritto identico nel blocco AMIMI (per esempio il primo ordine da 12 pezzi). Mai sconti, percentuali, margini o credito al negozio. Il conto vendita non esiste piu\': non proporlo.',
     '4b. L\'email parte SENZA allegati: non scrivere "in allegato" o "le allego". Non dare per scontata una telefonata precedente ("come anticipato", "come da telefonata"), anche se il template lo dice.',
     '5. Il cotone NON e\' fatto in Italia: "Made in Italy" o "in Italia" solo per la pelle. Non nominare mai l\'India.',
     `6. Line sheet: ${p.linesheet ? `inserisci questo link esatto: ${p.linesheet}` : 'il link non esiste ancora: scrivi [DA VERIFICARE: link line sheet] dove andrebbe'}.`,
     `7. Referente: ${p.referente ? `rivolgiti a ${p.referente}` : 'nome non noto, usa un saluto generico al team del negozio'}.`,
-    '8. Breve: massimo 130 parole nel corpo, niente elenchi puntati, niente punti esclamativi, niente em dash.',
+    '8. Breve: massimo 160 parole nel corpo, niente elenchi puntati, niente punti esclamativi, niente em dash.',
     `9. Chiudi con questa firma, identica:\n${p.firma}`,
     `10. Ultima riga, identica: ${it ? OPT_OUT_IT : OPT_OUT_EN}`,
     '',
