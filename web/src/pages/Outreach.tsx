@@ -683,9 +683,9 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
           <button type="button" className={'cs-seg-btn' + (modo === 'sequenza' ? ' on' : '')} aria-pressed={modo === 'sequenza'} disabled={!modo} onClick={() => cambiaModo('sequenza')}>Sequenza a freddo</button>
         </div>
         {apertura && <div className="cs-note" style={{ textAlign: 'left', margin: '0 0 8px' }}>{apertura}</div>}
-        {modo === 'sequenza' && ciHaScrittoOra && <div className="cs-note" style={{ textAlign: 'left', margin: '0 0 8px' }}>Questo negozio ci ha già scritto: un’email della sequenza conta come tocco (fino a 4), rientra nel tetto giornaliero e porta la riga di opt-out. Per rispondere alla conversazione usa “Rispondi”.</div>}
+        {modo === 'sequenza' && ciHaScrittoOra && <div className="cs-note" style={{ textAlign: 'left', margin: '0 0 8px' }}>Questo negozio ci ha già scritto: un’email della sequenza conta come tocco (fino a 4) e rientra nel tetto giornaliero. Per rispondere alla conversazione usa “Rispondi”.</div>}
         {modo === 'risposta' && !touches && convErr && <div className="cs-lint" style={{ marginBottom: 8 }}>Conversazione non caricata: riprova a caricarla (qui sopra) prima di rispondere. Proposta e invio restano fermi.</div>}
-        {modo === 'risposta' && touches && !puoRispondere && <div className="cs-lint" style={{ marginBottom: 8 }}>{!ciHaScrittoOra ? 'Questo negozio non ci ha mai scritto: la risposta non si può né proporre né inviare (il primo contatto passa dalla sequenza a freddo, con verdetto, tetto e riga di opt-out).' : 'Negozio in opt-out o chiuso: non si contatta.'}</div>}
+        {modo === 'risposta' && touches && !puoRispondere && <div className="cs-lint" style={{ marginBottom: 8 }}>{!ciHaScrittoOra ? 'Questo negozio non ci ha mai scritto: la risposta non si può né proporre né inviare (il primo contatto passa dalla sequenza a freddo, con verdetto e tetto).' : 'Negozio in opt-out o chiuso: non si contatta.'}</div>}
         {!modo && <p className="muted">Preparo il compositore…</p>}
 
         {modo === 'risposta' && (
@@ -739,7 +739,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               {aiRispostaOn && options && <button className="cs-btn cs-ghost" type="button" disabled={aiBusy || !puoRispondere} onClick={() => void proponi()}>{aiBusy ? '…' : '↻ Rigenera'}</button>}
             </div>
             {!aiOn && <p className="cs-note" style={{ textAlign: 'left' }}>Invio e prova dall’app spenti (impostazione lead_outreach_ai_enabled): copia la risposta e mandala dal thread in Gmail.</p>}
-            <div className="cs-note" style={{ textAlign: 'left' }}>La risposta va nel thread della conversazione, non conta nel tetto giornaliero e non serve la riga di opt-out. Parte da {LEAD_MITTENTE} solo dopo la tua conferma.</div>
+            <div className="cs-note" style={{ textAlign: 'left' }}>La risposta va nel thread della conversazione e non conta nel tetto giornaliero. Parte da {LEAD_MITTENTE} solo dopo la tua conferma.</div>
           </>
         )}
 
@@ -805,7 +805,7 @@ export function OutreachScheda({ r, urls, who, sequences, settings, onBack, onOp
               <div className="cs-send-row"><span className="k">Oggetto</span><span>{modo === 'risposta' ? rOggetto : oggetto}</span></div>
               <div className="cs-send-row"><span className="k">Come</span><span>{modo === 'risposta'
                 ? (prep?.nelThread && prep.riferimento ? `nel thread di “${prep.riferimento.subject || '(senza oggetto)'}” del ${fmtDT(prep.riferimento.at)}` : 'email nuova (nessun thread Gmail da riprendere)')
-                : `sequenza a freddo · tocco ${tocco} di 4 · email nuova con la riga di opt-out`}</span></div>
+                : `sequenza a freddo · tocco ${tocco} di 4 · email nuova`}</span></div>
               {modo === 'risposta' && giaRisp && (
                 <div className="cs-lint" style={{ marginTop: 10 }}>⚠️ A questo negozio risulta <b>già inviata una risposta</b> il {fmtDT(giaRisp)}, e da allora il negozio non ha più scritto. Se è un secondo invio voluto va bene, altrimenti annulla.</div>
               )}
@@ -877,7 +877,7 @@ export function OutreachSequenze({ sequences, settings }: { sequences: LeadSeque
           <div className="row"><div className="rt">Firma</div><div className="rs" style={{ whiteSpace: 'pre-line' }}>{settings.lead_firma ?? 'n.d.'}</div></div>
           <div className="row"><div className="rt">Tetto invii al giorno</div><div className="rs">{settings.lead_tetto_giornaliero ?? '20'}</div></div>
           <div className="row"><div className="rt">Modulo (flag)</div><div className="rs">lead_enabled = {settings.lead_enabled ?? 'false'}: {settings.lead_enabled === 'true' ? 'ogni 30 minuti il giro automatico legge le risposte dei negozi e, alla scadenza, scrive la bozza del follow-up nella Coda. L’invio resta sempre un tuo click.' : 'giro automatico spento: risposte e follow-up si registrano a mano. Acceso, legge le risposte e propone i follow-up in Coda (mai invii automatici).'}</div></div>
-          <div className="row"><div className="rt">Regole</div><div className="rs">Massimo 4 tocchi email, poi stop. Opt-out onorato dal database (esito "Opt-out" su un tocco). Contatto 1:1 personalizzato, riga di opt-out in ogni email.</div></div>
+          <div className="row"><div className="rt">Regole</div><div className="rs">Massimo 4 tocchi email, poi stop. Opt-out onorato dal database (esito "Opt-out" su un tocco). Contatto 1:1 personalizzato.</div></div>
         </div>
         <p className="note">I testi vivono nella tabella lead_sequences: per cambiarli, chiedi a Claude Code o modifica a DB. La firma e il tetto in app_flags (lead_firma, lead_tetto_giornaliero).</p>
       </section>

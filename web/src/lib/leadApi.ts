@@ -350,7 +350,7 @@ export async function proponiRisposta(p: { account_id: string; chi: string }): P
   return (await callOutreach({ action: 'proponi_risposta', ...p })) as unknown as PropostaRisposta;
 }
 // v15: il testo del box riscritto con l'istruzione della persona ("piu' breve", "proponi martedi'"); vale anche per la sequenza
-// a freddo (modo 'sequenza': la riga di opt-out resta). Non scrive nulla: il testo torna nel box e la persona decide.
+// a freddo (modo 'sequenza'). Non scrive nulla: il testo torna nel box e la persona decide.
 export async function rifinisciTesto(p: { account_id: string; testo: string; istruzione: string; modo: 'risposta' | 'sequenza'; lingua?: 'it' | 'en'; chi: string }): Promise<Alternativa> {
   return (await callOutreach({ action: 'rifinisci', ...p })) as unknown as Alternativa;
 }
