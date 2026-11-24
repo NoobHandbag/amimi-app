@@ -21,7 +21,7 @@ finally { try { unlinkSync(TMP); } catch { /* niente */ } }
 
 let ok = 0, ko = 0;
 const t = (n, c, extra = '') => { if (c) { ok++; console.log('  ok  ' + n); } else { ko++; console.log('  KO  ' + n + (extra ? '  <- ' + JSON.stringify(extra) : '')); } };
-const OPT = 'Se preferisce non ricevere altre email da parte mia, mi risponda "no grazie" e non la contatterò più.';
+const OPT = 'Se preferite non ricevere altre email da parte mia, rispondete "no grazie" e non vi contatterò più.';   // v19: "voi"
 const body = 'Gentile team di Ivy,\nvi scrivo da Amimì Milano: borse artigianali fatte a mano, pelle Made in Italy. Vi va di fissare un appuntamento?\n\n' + OPT;
 const pulita = { to: 'info@negozio.it', oggetto: 'Amimì Milano per Ivy', testo: body };
 
@@ -433,7 +433,7 @@ const corpoFn = (txt, nome) => { const i = txt.indexOf(`function ${nome}(`); ret
 const regexDi = (txt) => [...txt.matchAll(/(\/(?:\\.|[^\/\n])+\/[a-z]*)\.test/g)].map((m) => m[1]);
 const regoleWeb = readFileSync(`${ROOT}web/src/lib/leadRegole.ts`, 'utf8').replace(/\r\n/g, '\n');
 const rxEdge = regexDi(corpoFn(src, 'avvisiContenuto')), rxWeb = regexDi(corpoFn(regoleWeb, 'avvisiTesto'));
-t('f7 (C) avvisi di contenuto: le regex del web sono identiche a quelle della edge, una per una', rxEdge.length === 5 && JSON.stringify(rxEdge) === JSON.stringify(rxWeb), { rxEdge, rxWeb });
+t('f7 (C) avvisi di contenuto: le regex del web sono identiche a quelle della edge, una per una', rxEdge.length === 8 && JSON.stringify(rxEdge) === JSON.stringify(rxWeb), { rxEdge, rxWeb });
 t('f8 (C) "ci ha scritto": stessi esiti esclusi nel web e nella edge', /\['bounce', 'risposta_automatica', 'opt_out'\]\.includes\(t\.esito \?\? ''\)/.test(src) && /const NON_CONVERSAZIONE = \['bounce', 'risposta_automatica', 'opt_out'\];/.test(regoleWeb));
 
 console.log('== Gate Fable (15-10) sull\'edge e sulla vista: 7 B e 5 C ==');
@@ -891,6 +891,19 @@ console.log('== ls26 (migr 0206): condizioni commerciali come in pagina ==');
   t('e20-2 "Aggiorna" fa prima il giro della edge (action cron) e poi rilegge lista e pipeline da zero; un giro fallito non blocca',
     /export async function giroOra\(\): Promise<void> \{\s*await callOutreach\(\{ action: 'cron' \}\);/.test(webApi20)
     && webNeg20.includes('if (forza) await giroOra().catch(() => undefined);') && webNeg20.includes('loadLista(dopo), loadPipeline(dopo)'));
+}
+console.log('== v19 (24-11): presentazione di Giovanni, "voi", cotone e Milano (migr 0208) ==');
+{
+  const mig208 = readFileSync(`${ROOT}supabase/migrations/0208_lead_presentazione_giovanni_voi.sql`, 'utf8').replace(/\r\n/g, '\n').replace(/^\s*--[^\n]*$/gm, '');
+  const tpl208 = [...mig208.matchAll(/E'((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'").replace(/\\n/g, '\n').replace(/\{\{[a-z_]+\}\}/g, 'x'));
+  t('v19-1 migr 0208: cinque template, nessuno fa scattare avvisiContenuto', tpl208.length === 5 && tpl208.every((x) => avvisiContenuto(x).length === 0), tpl208.map((x) => avvisiContenuto(x)));
+  t('v19-2 migr 0208: tocchi italiani 1-4 senza "lei", fascia 50-180, niente 190', tpl208.slice(0, 4).every((x) => !/Qui trova |nel suo negozio|secondo lei|Le va |disturbarla|preferisce non/.test(x)) && tpl208[0].includes('tra 50 e 180 euro') && !/190/.test(mig208));
+  t('v19-3 tocco 1 e tocco 4 al plurale chiudono come vuole bloccantiInvio (opt-out o chiusura definitiva)', [tpl208[0], tpl208[3]].every((x) => bloccantiInvio({ ...pulita, testo: x }).length === 0), [tpl208[0], tpl208[3]].map((x) => bloccantiInvio({ ...pulita, testo: x })));
+  t('v19-4 completaTesto aggiunge la riga di opt-out al plurale', completaTesto('Gentile team di Ivy,\nvi scrivo.', '', 'it').endsWith(OPT));
+  t('v19-5 "borse a mano a Milano, in pelle e tessuti colorati" segnalato (email del 23-11)', avvisiContenuto('Realizziamo borse a mano a Milano, in pelle Made in Italy e tessuti colorati.').length === 1);
+  t('v19-6 "handmade bags in Milan ... natural cotton" segnalato', avvisiContenuto('We create handmade bags in Milan, using leather and natural cotton for our lighter styles.').length === 1);
+  t('v19-7 showroom a Milano e cotone in frasi diverse, o showroom nella stessa: non segnalato', avvisiContenuto('La Nina in cotone colorato. Appuntamento nel nostro showroom a Milano?').length === 0 && avvisiContenuto('Venite nello showroom a Milano a vedere la Nina in cotone').length === 0);
+  t('v19-8 prompt: registro "voi" e paragrafo personale di due o tre frasi', /registro "voi"/.test(src) && /breve paragrafo personale sul negozio \(due o tre frasi\)/.test(src) && !/registro "lei"'/.test(src));
 }
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
