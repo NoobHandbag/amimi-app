@@ -23,6 +23,9 @@
 // v19 (2026-11-24, Giovanni e Dan: "voi" in tutta la sequenza, migr 0208): la presentazione del tocco 1 e' quella che
 // Giovanni scrive a mano; registro "voi" (al team del negozio), riga di opt-out al plurale, un breve paragrafo personale
 // (2-3 frasi) invece di una frase; avvisiContenuto segnala anche cotone o tessuto legati a Milano.
+// v20 (2026-11-24, Dan: "togli l'ultima riga come ha fatto lui, ignora la privacy", migr 0209): niente riga di opt-out
+// nelle email della sequenza (template, prompt, completaTesto) e l'invio non la chiede piu'. Il "no grazie" di un negozio
+// resta un opt-out riconosciuto dal giro; la chiusura del tocco 4 resta nel testo.
 // v16 (2026-11-19, Giovanni, migr 0198): il destinatario di ripiego della bozza e' `email_sito` di v_lead_dossier, la
 // prima email del sito che vale come email del negozio (lead_email_utile: niente PEC, segnaposto, indirizzi di terzi);
 // prima era site_meta.emails[0], che su 5 negozi era una PEC.
@@ -358,10 +361,7 @@ function testoModulo(t: string): string {
 // (migr 0161) e di DOMINI_TEAM del web (tests/dominio_team.mjs). Qui dentro perche' il test ritaglia questo blocco.
 const EMAIL_TEAM = /@(?:amimi\.it|telaioconsulting\.com)$/;
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
-const OPT_OUT_IT = 'Se preferite non ricevere altre email da parte mia, rispondete "no grazie" e non vi contatterò più.';
-const OPT_OUT_EN = 'If you would rather not hear from me again, just reply "no thanks" and I will not contact you further.';
-// ogni email chiude con la riga di opt-out, oppure (tocco 4) con la chiusura definitiva "non la contatterò ulteriormente"
-const CHIUSURA_RE = /no grazie|no thanks|non (?:la|vi) contatter[oò] ulteriormente|won'?t contact you again|will not contact you/i;
+// v20 (24-11, Dan: "ignora la privacy"): nessuna riga di opt-out obbligatoria ne' aggiunta in fondo alle email
 function segnapostoResidui(t: string): string[] {
   const out: string[] = [];
   for (const m of t.matchAll(/\[[^\]\n]{1,200}\]|\{\{[^}\n]{1,60}\}\}/g)) out.push(m[0]);
@@ -402,7 +402,6 @@ function bloccantiInvio(p: { to: string; oggetto: string; testo: string }): stri
   if (p.testo.length > 6000) b.push('testo troppo lungo');
   const seg = segnapostoResidui(`${p.oggetto}\n${p.testo}`);
   if (seg.length) b.push(`restano ${seg.length} parti da completare fra parentesi: ${seg.slice(0, 3).join(' ')}`);
-  if (!CHIUSURA_RE.test(p.testo)) b.push('manca la riga di opt-out ("no grazie") o la chiusura definitiva del tocco 4');
   return b;
 }
 // v12 (blocco B): la risposta scritta da una persona a un negozio che ci ha scritto. Niente riga di opt-out obbligatoria
@@ -421,13 +420,11 @@ function bloccantiRisposta(p: { to: string; oggetto: string; testo: string }): s
   if (seg.length) b.push(`restano ${seg.length} parti da completare fra parentesi: ${seg.slice(0, 3).join(' ')}`);
   return b;
 }
-// garantisce firma e riga di opt-out anche se il modello le ha dimenticate (mai due volte)
-function completaTesto(testo: string, firma: string, lingua: 'it' | 'en'): string {
+// garantisce la firma anche se il modello l'ha dimenticata (mai due volte); v20: niente riga di opt-out
+function completaTesto(testo: string, firma: string, _lingua: 'it' | 'en'): string {
   let t = testo.trim();
   const f = firma.trim();
   if (f && !t.includes(f.split('\n')[0].trim())) t += `\n\n${f}`;
-  const opt = lingua === 'en' ? OPT_OUT_EN : OPT_OUT_IT;
-  if (!CHIUSURA_RE.test(t)) t += `\n\n${opt}`;
   return t;
 }
 // cotone = produzione India: mai "Italia" ne' "India" associati al cotone (CONOSCENZA sez. 1)
@@ -945,7 +942,7 @@ function buildPrompt(p: { lingua: 'it' | 'en'; negozio: Record<string, unknown>;
     `7. Referente: ${p.referente ? `rivolgiti a ${p.referente}` : 'nome non noto, usa un saluto generico al team del negozio'}.`,
     '8. Breve: massimo 160 parole nel corpo, niente elenchi puntati, niente punti esclamativi, niente em dash.',
     `9. Chiudi con questa firma, identica:\n${p.firma}`,
-    `10. Ultima riga, identica: ${it ? OPT_OUT_IT : OPT_OUT_EN}`,
+    '10. Niente riga di opt-out ("no grazie") in fondo: l\'email finisce con la firma.',
     '',
     'Il TEMPLATE qui sotto e\' il testo approvato dal team per questo tocco: prendilo come riferimento di tono e di contenuto, ma personalizzalo.',
     '',
@@ -1491,7 +1488,7 @@ Deno.serve(async (req) => {
     if (!d) return json({ error: 'negozio inesistente', bloccante: true }, 404);
     if (d.lead_stage === 'opt_out' || d.lead_stage === 'chiuso_no' || (nOptP ?? 0) > 0) return json({ error: 'negozio in opt-out o chiuso: non si contatta', bloccante: true }, 409);
     const tocchiL = (tocchiP ?? []) as (ToccoConv & { id: string; gmail_message_id: string | null; gmail_thread_id: string | null })[];
-    if (modo === 'risposta' && !ciHaScritto(tocchiL)) return json({ error: 'questo negozio non ci ha mai scritto: per il primo contatto si usa la sequenza (riga di opt-out, verdetto e tetto giornaliero)', bloccante: true }, 409);
+    if (modo === 'risposta' && !ciHaScritto(tocchiL)) return json({ error: 'questo negozio non ci ha mai scritto: per il primo contatto si usa la sequenza (verdetto e tetto giornaliero)', bloccante: true }, 409);
     const th = threadRisposta(tocchiL);
     const firmaP = flags.lead_firma || '';
     const lingua: 'it' | 'en' = modo === 'sequenza' && (body.lingua === 'en' || body.lingua === 'it') ? body.lingua : linguaRisposta(modo === 'sequenza' ? testoAttuale : th.ultimoNegozio, d.paese);
@@ -1625,7 +1622,7 @@ Deno.serve(async (req) => {
     if ((nOptR ?? 0) > 0) return json({ error: 'opt-out registrato su questo negozio: non si contatta', bloccante: true }, 409);
     if ((nOptToR ?? 0) > 0) return json({ error: `${toR} ha chiesto di non essere contattato`, bloccante: true }, 409);
     const tocchiList = (tocchiR ?? []) as { id: string; direzione: string; canale: string; esito: string | null; at: string; gmail_message_id: string | null; gmail_thread_id: string | null; subject: string | null; body_clean: string | null }[];
-    if (!ciHaScritto(tocchiList)) return json({ error: 'questo negozio non ci ha mai scritto: per il primo contatto si usa la sequenza (riga di opt-out, verdetto e tetto giornaliero)', bloccante: true }, 409);
+    if (!ciHaScritto(tocchiList)) return json({ error: 'questo negozio non ci ha mai scritto: per il primo contatto si usa la sequenza (verdetto e tetto giornaliero)', bloccante: true }, 409);
     // Gate 2 (15-10): fuori dal tetto e senza riga di opt-out, una risposta va SOLO a un indirizzo del negozio (contatti,
     // email del negozio, chi ci ha scritto: la prima riga dei tocchi in entrata scritti dal giro). Senza questa cintura,
     // cambiare il destinatario farebbe di "Rispondi" un invio libero a chiunque.
