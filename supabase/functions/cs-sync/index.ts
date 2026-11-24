@@ -1,4 +1,9 @@
 // cs-sync v15 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v37 (2026-11-24, richiesta di Dan dopo la segnalazione di Ginevra del 23-11): risposte automatiche
+//   (header Auto-Submitted: auto-replied / X-Autoreply, o oggetto "Risposta automatica", "Out of
+//   office"...) e mittenti di sistema (noreply, notifications, newsletter...) vanno nel rumore
+//   all'ingest, senza AI. Blocco PURE:cs-nonumano, tests/cs_nonumano.mjs. Il non cliente scritto da
+//   una persona (fornitore, servizio, privato) lo prende cs-classify v11.
 // v36 (2026-11-13, chat del sito Fase 1 pezzo 6, docs/PROPOSTA_chat_sito.md 7.6 punti 14-18): le chat del sito
 //   proiettate in Assistenza (canale `chat_sito`, chiave `chat:<id>`, migr 0193) non sono posta: backfill_stato,
 //   reapply_noise e reapply_spam le saltano (non si chiude ne' si manda nel rumore una chat per un'email dichiarata nel
@@ -341,6 +346,42 @@ function denyMatch(voce: string, from: string, subject: string): boolean {
   return fd === dom || fd.endsWith('.' + dom);                           // dominio o sottodominio
 }
 // ==== PURE:cs-deny END ====
+// ==== PURE:cs-nonumano BEGIN ====
+// v37 (2026-11-24, richiesta di Dan dopo la segnalazione di Ginevra del 23-11): due casi in cui non
+// scrive una persona, riconosciuti senza AI. Misurati su TUTTO lo storico: nessuna conversazione di
+// una cliente vera li tocca; le 9 che sono passate in coda erano tutte da buttare (Amazon, Adobe,
+// Google Ads, Aruba, CoverManager, risposte automatiche di Moschino).
+//   - RISPOSTA AUTOMATICA: header `Auto-Submitted: auto-replied` (RFC 3834) o `X-Autoreply`, oppure
+//     un oggetto che COMINCIA con la formula del fuori ufficio. Solo `auto-replied`: `auto-generated`
+//     lo mettono anche notifiche che contano (contestazioni di pagamento), e non si tocca.
+//   - MITTENTE DI SISTEMA: la parte prima della @ e' noreply/do-not-reply (anche seguita da un
+//     separatore: no-reply-xyz@, noreply.internetbanking@) oppure ESATTAMENTE notifications,
+//     notifiche, newsletter, bounce. Gate 2 (B2): niente news/alerts/mailer/notify con separatore,
+//     che prendevano indirizzi personali (news.giulia@gmail.com). Gate 2 (B1): mai sul wrapper di
+//     Shopify (una notifica di chat con un oggetto nuovo resta visibile come prima) e mai quando il
+//     Reply-To porta a una persona (moduli o marketplace che scrivono da noreply per conto di una
+//     cliente).
+const RE_OGGETTO_AUTO = /^\s*(?:risposta automatica|automatic reply|auto(?:matic)?[- ]?(?:reply|response)|out of office|fuori ufficio|assente dall.ufficio|r[ée]ponse automatique|abwesenheitsnotiz|respuesta autom[áa]tica)(?:\s*:|\s*$)/i;
+const RE_LOCAL_SISTEMA = /^(?:(?:no-?reply|do-?not-?reply|donotreply)(?:[._+-].*)?|notifications?|notifiche|newsletter|bounces?)$/i;
+const RE_WRAPPER_SHOPIFY = /@(?:shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/i;
+function isRispostaAutomatica(subject: string, autoSubmitted: string, xAutoreply: string): boolean {
+  if (/\bauto-replied\b/i.test(autoSubmitted || '')) return true;
+  if (/^\s*(?:yes|true|1)\s*$/i.test(xAutoreply || '')) return true;   // Gate 2 (C1): "X-Autoreply: no" non conta
+  return RE_OGGETTO_AUTO.test(subject || '');
+}
+function localDiSistema(email: string): boolean {
+  const f = (email || '').toLowerCase().trim();
+  const i = f.lastIndexOf('@');
+  return i > 0 && RE_LOCAL_SISTEMA.test(f.slice(0, i));
+}
+function isMittenteDiSistema(from: string, replyTo = ''): boolean {
+  const f = (from || '').toLowerCase().trim();
+  if (!localDiSistema(f) || RE_WRAPPER_SHOPIFY.test(f)) return false;
+  const rt = (replyTo || '').toLowerCase().trim();
+  if (rt && rt !== f && !localDiSistema(rt)) return false;   // risponde una persona: resta in coda
+  return true;
+}
+// ==== PURE:cs-nonumano END ====
 // ==== PURE:cs-spam BEGIN ====
 // v19 (2026-09-13, richiesta owner): pre-filtro DETERMINISTICO dello spam "esperto e-commerce".
 // Sono bot che scrivono da gmail usa e getta (consulthub, ...growth, ...expert) con pitch commerciali
@@ -374,7 +415,7 @@ function vendorSpamScore(fromEmail: string, subject: string, body: string): { sc
   return { score, reasons };
 }
 // ==== PURE:cs-spam END ====
-function classify(from: { email: string; name: string }, replyTo: { email: string; name: string }, subject: string, body: string, extraDeny: string[], bulk = false): { canale: Canale; email: string | null; name: string | null; spam?: boolean; spamReasons?: string[] } {
+function classify(from: { email: string; name: string }, replyTo: { email: string; name: string }, subject: string, body: string, extraDeny: string[], bulk = false, autoRisposta = false): { canale: Canale; email: string | null; name: string | null; spam?: boolean; spamReasons?: string[] } {
   const fe = from.email, rt = replyTo.email;
   // 1) Notifica chat Shopify Inbox: no-reply@mailer.shopify.com, subject "New Message from <nome>".
   //    Se il visitatore lascia l'email in chat, Shopify la usa come nome: catturarla in customer_email
@@ -398,6 +439,9 @@ function classify(from: { email: string; name: string }, replyTo: { email: strin
   // 4bis) v10: bulk mail per HEADER (List-Unsubscribe / Precedence bulk): newsletter e marketing
   // vendor, qualunque cosa dica il testo. DOPO form/chat (mai su una richiesta cliente dai moduli).
   if (bulk) return { canale: 'rumore', email: fe, name: from.name || null };
+  // 4ter) v37: risposta automatica (fuori ufficio) o mittente di sistema (noreply, notifications...).
+  // Come il bulk, DOPO form/chat: il wrapper Shopify dei moduli non arriva mai qui.
+  if (autoRisposta || isMittenteDiSistema(fe, rt)) return { canale: 'rumore', email: fe, name: from.name || null };
   // 5) Posta interna Amimi' (non e' un cliente)
   if (isAmimi(fe)) return { canale: 'rumore', email: fe, name: from.name || null };
   // 5bis) v19: spam "esperto e-commerce" da gmail usa e getta. Guardia: un riferimento a un ordine
@@ -1460,14 +1504,15 @@ Deno.serve(async (req) => {
     if (!lst.ok) return json({ ok: false, error: 'gmail_list ' + lst.status, detail: JSON.stringify(lst.j).slice(0, 200) });
     const ids = ((lst.j.messages as { id: string }[]) ?? []).map((m) => m.id);
     for (const id of ids) {
-      const mg = await gGet(`/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Reply-To&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence`, token);
+      const mg = await gGet(`/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Reply-To&metadataHeaders=Subject&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted&metadataHeaders=X-Autoreply`, token);
       if (!mg.ok) { parseFailed++; continue; }
       const p = (mg.j as GMsg).payload;
       const from = parseAddr(hdr(p?.headers, 'from'));
       const replyTo = parseAddr(hdr(p?.headers, 'reply-to'));
       const subject = hdr(p?.headers, 'subject');
       const bulk = !!hdr(p?.headers, 'list-unsubscribe') || /\b(bulk|list)\b/i.test(hdr(p?.headers, 'precedence'));
-      counts[classify(from, replyTo, subject, '', extraDeny, bulk).canale]++;
+      const auto = isRispostaAutomatica(subject, hdr(p?.headers, 'auto-submitted'), hdr(p?.headers, 'x-autoreply'));
+      counts[classify(from, replyTo, subject, '', extraDeny, bulk, auto).canale]++;
     }
     return json({ ok: true, dryRun: true, scanned: ids.length, counts, parse_failed: parseFailed });
   }
@@ -1493,7 +1538,9 @@ Deno.serve(async (req) => {
       const subject = stripNull(hdr(H, 'subject')); const bodyText = togliTokenChat(stripNull(extractBody(msg.payload)));   // NUL -> Postgres rifiuta; v36: token della chat via
       // v10: header di bulk mail = segnale deterministico di newsletter/marketing
       const bulk = !!hdr(H, 'list-unsubscribe') || /\b(bulk|list)\b/i.test(hdr(H, 'precedence'));
-      const cl = classify(from, replyTo, subject, bodyText, extraDeny, bulk);
+      // v37: fuori ufficio per header o per oggetto
+      const auto = isRispostaAutomatica(subject, hdr(H, 'auto-submitted'), hdr(H, 'x-autoreply'));
+      const cl = classify(from, replyTo, subject, bodyText, extraDeny, bulk, auto);
       const isForm = cl.canale === 'form_contatto' || cl.canale === 'form_evento';
       // v8: i campi si estraggono solo dallo STAMPO vero (wrapper presente), mai dalle risposte
       // successive del cliente nello stesso thread; {} non si scrive (resta NULL, la UI non accende)

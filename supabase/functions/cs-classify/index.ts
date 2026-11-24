@@ -1,4 +1,14 @@
 // cs-classify — tool assistenza clienti, FASE 2: auto-categorizzazione + urgenza.
+// v11 (2026-11-24, richiesta di Dan dopo la segnalazione di Ginevra del 23-11): il "NON CLIENTE".
+//   Sessanta giorni di coda misurati: circa meta' delle email dirette da mittenti che non hanno mai
+//   ordinato e senza numero d'ordine erano fornitori, laboratori, fatture, corrieri, servizi, posta
+//   personale o truffe, tutte finite in "Altro". Due cose nuove: (1) Gemini vede anche il MITTENTE
+//   (prima vedeva solo il testo) e dice se il messaggio viene da un non cliente, con la sua
+//   confidenza; (2) la conversazione va nel rumore SOLO se insieme: email diretta (mai moduli o chat),
+//   confidenza >= 0.85, mittente che non ha mai ordinato su Shopify, nessun numero d'ordine nella
+//   mail (blocco PURE:cs-noncliente, tests/cs_noncliente.mjs). Categoria conservata, evento in
+//   cs_events, gesto inverso "Riporta in coda" (cs-api remove_noise). Interruttore:
+//   app_flags.cs_non_cliente_attivo = 'true'; spento, la decisione si scrive solo nell'evento.
 // v10 (2026-11-13, chat del sito Fase 1 pezzo 6, docs/PROPOSTA_chat_sito.md 7.6 punti 7-8 e 7.10): le chat del sito
 //   (canale `chat_sito`, migr 0193) non passano mai da qui: niente Gemini sul loro testo (un solo fornitore AI per la
 //   chat, quello del bot), urgenza e flag li decide la proiezione da chat_sessioni (nessun evento `classify`, quindi
@@ -142,15 +152,18 @@ Regole:
 - "urgente": true SOLO se il testo indica un evento con DATA vicina (matrimonio/cerimonia/laurea con data esplicita) OPPURE un tono chiaramente arrabbiato/esasperato. Altrimenti false.
 - "urgenza_motivo": se urgente=true, frase breve col perche' (es. "matrimonio 27-07", "tono arrabbiato"); "" se urgente=false.
 - "flags": lista, sottoinsieme di ["chiusura","reclamo_assistenza"]. "chiusura" = solo un ringraziamento/conferma senza richiesta (es. "arrivata, grazie"). "reclamo_assistenza" = lamentela sul servizio/assistenza ("nessuno risponde"). [] se nessuno.
+- "non_cliente": true se chi scrive NON e' un cliente o un aspirante cliente di Amimi'. Sono non clienti: fornitori, laboratori e produzione (materiali, buste, etichette, DDT, preventivi, fatture A Amimi'); corrieri e dogane che scrivono ad Amimi' come azienda (EORI, fatture doganali, avvisi di spedizione di pacchi che Amimi' riceve); servizi e piattaforme (account, abbonamenti, ricevute, conferme di prenotazione, ordini fatti DA Amimi' presso altri negozi); banche e commercialista; posta personale o interna (stage, shooting, contratti, grafica, faccende private come auto o moto); truffe e richieste assurde da sconosciuti. "non_cliente": false per chiunque chieda qualcosa su un prodotto, un ordine, un reso, un ritiro o un evento Amimi', anche se non ha ancora comprato. Nel dubbio false.
+- "non_cliente_confidence": numero tra 0 e 1 (quanto sei sicuro che NON sia un cliente). 0 se "non_cliente" e' false.
+- Il mittente ti aiuta: un dominio aziendale di un fornitore o di un servizio pesa verso non_cliente; un indirizzo personale (gmail, libero, hotmail, icloud) da solo non dice niente.
 
 Formato ESATTO della risposta:
-{"categoria":"","categoria_confidence":0.0,"lingua":"it","urgente":false,"urgenza_motivo":"","flags":[]}
+{"categoria":"","categoria_confidence":0.0,"lingua":"it","urgente":false,"urgenza_motivo":"","flags":[],"non_cliente":false,"non_cliente_confidence":0.0}
 
-Testo del cliente:
+Messaggio (mittente, oggetto, testo):
 `;
 
 type Row = Record<string, unknown>;
-type AiOut = { categoria: string; categoria_confidence: number; lingua: string; urgente: boolean; urgenza_motivo: string; flags: string[] };
+type AiOut = { categoria: string; categoria_confidence: number; lingua: string; urgente: boolean; urgenza_motivo: string; flags: string[]; non_cliente: boolean; non_cliente_confidence: number };
 
 function cleanJson(t: string): string {
   return (t || '').trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim();
@@ -174,6 +187,8 @@ async function classifyText(text: string, key: string): Promise<AiOut> {
   const conf = Number(p.categoria_confidence);
   const flagsIn = Array.isArray(p.flags) ? p.flags.map((x) => String(x)) : [];
   const flags = flagsIn.filter((f) => f === 'chiusura' || f === 'reclamo_assistenza');
+  const ncConf = Number(p.non_cliente_confidence);
+  const nonCliente = p.non_cliente === true;
   return {
     categoria: toCanon(p.categoria),
     categoria_confidence: Number.isFinite(conf) ? Math.max(0, Math.min(1, conf)) : 0,
@@ -181,8 +196,37 @@ async function classifyText(text: string, key: string): Promise<AiOut> {
     urgente: p.urgente === true,
     urgenza_motivo: String(p.urgenza_motivo ?? '').slice(0, 200),
     flags,
+    non_cliente: nonCliente,
+    non_cliente_confidence: nonCliente && Number.isFinite(ncConf) ? Math.max(0, Math.min(1, ncConf)) : 0,
   };
 }
+
+// ==== PURE:cs-noncliente BEGIN ====
+// v11 (24-11): quando un "non cliente" esce dalla coda. Tutte le condizioni insieme, e ognuna e' una
+// guardia verso la sicurezza (mai nascondere una cliente): solo EMAIL DIRETTA (moduli e chat sono
+// clienti per costruzione), confidenza alta, mittente che non ha MAI ordinato, nessun numero d'ordine
+// nella mail. Sotto queste condizioni resta in coda come prima.
+// Gate 2 del 24-11: anche (A1) mai una conversazione che una persona ha gia' riportato in coda
+// ("Riporta in coda" = evento noise_remove; lettura fallita = null = resta), e (C3) mai una
+// conversazione a cui abbiamo gia' risposto (stessa esclusione di reapply_noise).
+const NON_CLIENTE_SOGLIA = 0.85;
+function nonClienteVaNelRumore(p: { nonCliente: unknown; confidenza: unknown; canale: unknown; haOrdinato: unknown; orderNumber: unknown; nostreRisposte: unknown; riportataAMano: unknown }): boolean {
+  const conf = Number(p.confidenza);
+  if (p.nonCliente !== true || !Number.isFinite(conf) || conf < NON_CLIENTE_SOGLIA) return false;
+  if (p.canale !== 'email_diretta') return false;
+  if (p.nostreRisposte !== 0) return false;
+  if (p.orderNumber != null && String(p.orderNumber).trim() !== '') return false;
+  if (p.haOrdinato !== false) return false;      // lettura fallita o sconosciuta = trattala da cliente
+  return p.riportataAMano === false;             // idem
+}
+// Il testo che vede Gemini: il mittente in testa (prima vedeva solo oggetto e corpo).
+function testoConMittente(mittente: { nome?: unknown; email?: unknown }, resto: string): string {
+  const em = String(mittente.email ?? '').trim();
+  const nome = String(mittente.nome ?? '').trim();
+  const riga = em ? `Mittente: ${nome ? nome + ' ' : ''}<${em}>` : '';
+  return [riga, resto].filter(Boolean).join('\n');
+}
+// ==== PURE:cs-noncliente END ====
 
 // --- Regole deterministiche di urgenza (design 6.4): certe, sul testo/metadati, non AI ---
 const RE_DISPUTA = /chargeback|contestazion|\bdisputa\b|rimborso non (ancora )?ricevut|non ho (mai |ancora |piu' )?ricevuto (il |alcun )?rimbors|mi rivolg[oò] alla banca|segnal(o|er[oò]) alla banca|contest(o|azione) (il )?pagament|apert[oa] una (contestazione|disputa)|pratica paypal/i;
@@ -269,7 +313,7 @@ Deno.serve(async (req) => {
   if (!cfg?.pin_hash || !body.pin || (await sha256hex(String(body.pin))) !== cfg.pin_hash) return json({ error: 'PIN errato' }, 401);
 
   const flags: Record<string, string> = {};
-  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled']);
+  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_non_cliente_attivo']);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const key = flags.gemini_api_key;
   if (!key) return json({ ok: false, needs_key: true, error: 'Gemini non configurato (app_flags.gemini_api_key).' });
@@ -282,7 +326,8 @@ Deno.serve(async (req) => {
   if (action === 'classify_text') {
     const text = String(body.text || '').trim();
     if (!text) return json({ error: 'testo mancante' }, 422);
-    try { return json({ ok: true, ...(await classifyText(text, key)) }); }
+    const conMittente = testoConMittente({ nome: body.mittente_nome, email: body.mittente }, text);
+    try { return json({ ok: true, ...(await classifyText(conMittente, key)) }); }
     catch (e) { return json({ ok: false, error: (e as Error).message }, 502); }
   }
   if (action !== 'classify') return json({ error: 'azione sconosciuta: ' + action }, 422);
@@ -292,7 +337,7 @@ Deno.serve(async (req) => {
 
   // Coda da classificare: categoria mancante, non rumore, testo disponibile (parse_failed escluse).
   const { data: convs, error: qe } = await sb.from('cs_conversations')
-    .select('id,canale,subject,snippet,lingua,stato,stato_at,last_direction,last_msg_at')
+    .select('id,canale,subject,snippet,lingua,stato,stato_at,last_direction,last_msg_at,customer_email,customer_name,order_number')
     .is('categoria', null).is('categoria_source', null).neq('canale', 'rumore').neq('canale', 'chat_sito').eq('parse_failed', false)
     .order('last_msg_at', { ascending: true, nullsFirst: true }).limit(limit);
   if (qe) return json({ ok: false, error: qe.message }, 500);
@@ -300,6 +345,8 @@ Deno.serve(async (req) => {
 
   let classified = 0, low = 0, failed = 0;
   const preview: Row[] = [];
+  // fuori dal ciclo: dentro, `flags` e' l'elenco dei flag della conversazione e coprirebbe questo
+  const nonClienteAttivo = flags.cs_non_cliente_attivo === 'true';
 
   for (const c of convs) {
     // messaggi del thread: testo (per la classificazione) + conteggi direzione (per le regole)
@@ -329,9 +376,12 @@ Deno.serve(async (req) => {
     if (passaggi > 0 && inbound.length === 0) {
       // solo il passaggio del chatbot: niente da classificare, la domanda e' in Inbox. "Da confermare"
       // (ai_low, non piu' ripescata), in coda, con il flag che la UI mostra come "passata dal chatbot".
-      ai = { categoria: '', categoria_confidence: 0, lingua: 'it', urgente: false, urgenza_motivo: '', flags: [] };
+      ai = { categoria: '', categoria_confidence: 0, lingua: 'it', urgente: false, urgenza_motivo: '', flags: [], non_cliente: false, non_cliente_confidence: 0 };
     } else {
-      try { ai = await classifyText(text || String(c.subject ?? ''), key); }
+      // v11: il mittente in testa. Per i moduli e' la cliente (reply-to). Mai il from_email grezzo: in
+      // chat e nei moduli e' il wrapper di Shopify e farebbe sembrare una cliente una notifica di sistema.
+      const mitt = { nome: c.customer_name, email: c.customer_email };
+      try { ai = await classifyText(testoConMittente(mitt, text || String(c.subject ?? '')), key); }
       catch { failed++; continue; }   // Gemini giu' su questa: la salta, resta da classificare
     }
     if (passaggi > 0) ai = { ...ai, flags: [...ai.flags, 'passaggio_agente'] };
@@ -357,7 +407,7 @@ Deno.serve(async (req) => {
     const source = hasCat ? 'ai' : 'ai_low';
     if (!hasCat) low++; else classified++;
 
-    if (dryRun) { preview.push({ categoria, source, conf: ai.categoria_confidence, urgente, flags }); continue; }   // no id/urgenza_motivo (no leak UUID/PII dietro PIN pubblico)
+    if (dryRun) { preview.push({ categoria, source, conf: ai.categoria_confidence, urgente, flags, non_cliente: ai.non_cliente, non_cliente_conf: ai.non_cliente_confidence }); continue; }   // no id/urgenza_motivo (no leak UUID/PII dietro PIN pubblico)
 
     const upd: Row = {
       categoria, categoria_source: source, categoria_confidence: ai.categoria_confidence,
@@ -371,12 +421,29 @@ Deno.serve(async (req) => {
     // in silenzio una classificazione incerta.
     // v9 (31-10): MAI per una chat (b2bVaNelRumore): la chat si risponde solo in Inbox.
     if (b2bVaNelRumore(categoria, c.canale)) upd.canale = 'rumore';
+    // v11: il non cliente. La lettura degli ordini si fa solo se l'AI e' gia' sopra soglia su un'email
+    // diretta; se fallisce, haOrdinato resta null e la regola la tiene in coda.
+    let nonCliente: Row | null = null;
+    if (ai.non_cliente && ai.non_cliente_confidence >= NON_CLIENTE_SOGLIA && c.canale === 'email_diretta' && c.customer_email) {
+      // ilike: le email negli ordini hanno maiuscole a caso. Un '_' nell'indirizzo fa da jolly e al
+      // massimo trova un ordine che non e' suo: la conversazione resta in coda, il verso sicuro.
+      const { count, error: oe } = await retryOnce(() => sb.from('shopify_orders').select('id', { count: 'exact', head: true }).ilike('email', String(c.customer_email)));
+      const haOrdinato = oe || typeof count !== 'number' ? null : count > 0;   // Gate 2 (B3): conteggio assente = sconosciuto
+      // Gate 2 (A1): "Riporta in coda" e' una decisione umana, l'AI non la ribalta
+      const { count: nRip, error: re } = await retryOnce(() => sb.from('cs_events').select('id', { count: 'exact', head: true }).eq('conversation_id', c.id as string).eq('azione', 'noise_remove'));
+      const riportataAMano = re || typeof nRip !== 'number' ? null : nRip > 0;
+      const sposta = nonClienteVaNelRumore({ nonCliente: ai.non_cliente, confidenza: ai.non_cliente_confidence, canale: c.canale, haOrdinato, orderNumber: c.order_number, nostreRisposte: outboundCount, riportataAMano });
+      const attivo = nonClienteAttivo;
+      nonCliente = { confidenza: ai.non_cliente_confidence, ha_ordinato: haOrdinato, riportata_a_mano: riportataAMano, nostre_risposte: outboundCount, sposta, attivo };
+      if (sposta && attivo && !upd.canale) upd.canale = 'rumore';
+    }
     // guard anti-race: scrive SOLO se ancora non categorizzata. Una correzione manuale via cs-api
     // (categoria!=null, source='manuale') arrivata mentre Gemini girava NON deve essere sovrascritta.
     const { data: upRows, error: ue } = await sb.from('cs_conversations').update(upd).eq('id', c.id as string).is('categoria', null).select('id');
     if (ue) { failed++; continue; }
     if (!upRows || upRows.length === 0) continue;   // gia' corretta a mano nel frattempo: non toccare
-    await sb.from('cs_events').insert({ conversation_id: c.id, azione: 'classify', chi: 'cs-classify', dettaglio: { categoria, source, confidence: ai.categoria_confidence, urgente, flags, ...(upd.canale ? { canale: upd.canale, motivo_canale: 'B2B si risponde su Gmail (owner 01-08)' } : {}) } });
+    const motivoCanale = upd.canale ? (b2bVaNelRumore(categoria, c.canale) ? 'B2B si risponde su Gmail (owner 01-08)' : 'non cliente (v11, 24-11)') : null;
+    await sb.from('cs_events').insert({ conversation_id: c.id, azione: 'classify', chi: 'cs-classify', dettaglio: { categoria, source, confidence: ai.categoria_confidence, urgente, flags, ...(nonCliente ? { non_cliente: nonCliente } : {}), ...(upd.canale ? { canale: upd.canale, motivo_canale: motivoCanale } : {}) } });
   }
 
   // quante restano ancora da classificare (per sapere se il cron deve continuare a drenare)

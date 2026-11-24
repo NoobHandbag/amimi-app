@@ -252,6 +252,8 @@ cliente vero deve mai finire nel rumore. Il 13-09 l'owner ne ha visti ~24 in cod
 singolo ("you send across countries?" da un throwaway debole), scam per DOMINIO (`web-reviewteam.com`
 -> denylist owner), notifiche personali legittime (IKEA/Poste/ristorante -> denylist di dominio).
 
+**Dal 24-11 (cs-sync v37, cs-classify v11), stesso principio, due strati in piu'.** Risposte automatiche e mittenti di sistema (noreply, notifications...) vanno nel rumore all'ingest: `tests/cs_nonumano.mjs` (44 casi, meta' guardia: cliente che cita una "risposta automatica" a meta' oggetto, `auto-generated` che non basta, indirizzi personali con "news" o "info"). Il non cliente scritto da una persona lo decide Gemini col mittente visibile, ma esce dalla coda solo con tutte le guardie insieme (email diretta, confidenza >= 0.85, mai ordinato con lettura riuscita, nessun numero d'ordine): `tests/cs_noncliente.mjs` (22 casi, uno per guardia, compresi "gia' riportata a mano" e "gia' risposto"). Interruttore `app_flags.cs_non_cliente_attivo`.
+
 ## 14. Una lettura fallita non e' "zero righe" (dal 2026-09-13)
 
 | Cosa | Dove | Nota |
