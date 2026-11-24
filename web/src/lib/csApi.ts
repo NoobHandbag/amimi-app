@@ -335,16 +335,19 @@ export async function salvaTestoBozza(draftId: string, testo: string): Promise<v
 
 /** L'ultima bozza salvata per la conversazione, con la data. Lettura diretta da PostgREST col JWT
  *  dell'utente (stessa via delle altre letture cs_*): nessuna spesa AI, nessuna edge. */
-export type BozzaSalvata = { id: string; testo: string; created_at: string; edited: boolean; fonti: string[] };
+// cs-assist v33 (24-11): anche le bozze PRONTE del cron (source 'auto'), e la risposta completa
+// (`risposta`, NULL sulle bozze di prima) per mostrare subito tutte le proposte.
+export type BozzaSalvata = { id: string; testo: string; created_at: string; edited: boolean; fonti: string[]; auto: boolean; risposta: Record<string, unknown> | null };
 export async function ultimaBozza(conversationId: string): Promise<BozzaSalvata | null> {
   const { data, error } = await csClient.from('cs_drafts')
-    .select('id, testo, created_at, edited, dati_usati, source')
-    .eq('conversation_id', conversationId).eq('source', 'app')
+    .select('id, testo, created_at, edited, dati_usati, source, risposta')
+    .eq('conversation_id', conversationId).in('source', ['app', 'auto'])
     .order('created_at', { ascending: false }).limit(1);
   if (error || !data || !data.length) return null;
-  const r = data[0] as { id: string; testo: string | null; created_at: string; edited: boolean | null; dati_usati: { fonti?: string[] } | null };
+  const r = data[0] as { id: string; testo: string | null; created_at: string; edited: boolean | null; dati_usati: { fonti?: string[] } | null; source: string; risposta: Record<string, unknown> | null };
   if (!r.testo || !r.testo.trim()) return null;
-  return { id: r.id, testo: r.testo, created_at: r.created_at, edited: r.edited === true, fonti: r.dati_usati?.fonti ?? [] };
+  const risposta = r.risposta && Array.isArray(r.risposta.options) && r.risposta.options.length ? r.risposta : null;
+  return { id: r.id, testo: r.testo, created_at: r.created_at, edited: r.edited === true, fonti: r.dati_usati?.fonti ?? [], auto: r.source === 'auto', risposta };
 }
 
 /** "Non e' un cliente": aggiunge il mittente alla denylist rumore (le prossime mail non entrano in coda)
@@ -447,8 +450,14 @@ export async function fetchCaseData(conversationId: string, deliveredAt?: string
 /** Genera 3 opzioni di risposta (toni breve/calda/formale) con dati reali. JWT-gated; Gemini scrive usando
  *  SOLO il blocco DATI, con [DA VERIFICARE] dove un dato manca. Sui casi (reso/indirizzo) il verdetto del
  *  sistema VINCOLA la bozza; `deliveredAt` = data confermata dalla collega. NON invia (Fase 4). */
-export async function generateOptions(conversationId: string, chi: string, deliveredAt?: string): Promise<{ options: DraftOption[]; fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null; fallbackSingola: boolean; troncate: number; schema: 'rami' | 'toni'; draftId: string | null }> {
+export type Proposte = { options: DraftOption[]; fonti: string[]; order_admin_url: string | null; storia: OrderHistory | null; fallbackSingola: boolean; troncate: number; schema: 'rami' | 'toni'; draftId: string | null };
+export async function generateOptions(conversationId: string, chi: string, deliveredAt?: string): Promise<Proposte> {
   const j = await callAssist({ action: 'draft', conversation_id: conversationId, chi, ...(deliveredAt ? { delivered_at: deliveredAt } : {}) });
+  return proposteDa(j);
+}
+/** cs-assist v33: la stessa forma arriva dalla risposta live di `draft` e da `cs_drafts.risposta` (bozza
+ *  pronta del cron o generata prima): un solo traduttore, cosi' le due vie non possono divergere. */
+export function proposteDa(j: Record<string, unknown>): Proposte {
   const options = (j.options || []) as DraftOption[];
   return {
     options: options.length ? options : [{ tono: 'bozza', testo: String(j.draft || ''), da_verificare: Number(j.da_verificare || 0) }],

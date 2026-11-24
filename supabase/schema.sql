@@ -1649,14 +1649,18 @@ CREATE TABLE IF NOT EXISTS "public"."cs_drafts" (
     "edited" boolean DEFAULT false NOT NULL,
     "source" "text" DEFAULT 'app'::"text" NOT NULL,
     "rami" "jsonb",
-    "ramo_scelto" "text"
+    "ramo_scelto" "text",
+    "risposta" "jsonb"
 );
 
 
 ALTER TABLE "public"."cs_drafts" OWNER TO "postgres";
 
 
-COMMENT ON COLUMN "public"."cs_drafts"."source" IS 'app = bozza chiesta da operatrice; eval = generata dall''harness di valutazione (scripts/cs-eval.mjs, brief 29-07)';
+COMMENT ON COLUMN "public"."cs_drafts"."risposta" IS 'v33 (24-11): la risposta completa di cs-assist draft (options, schema, fonti, order_admin_url, storia, fallback_singola, troncate). La UI la mostra aprendo il thread senza rigenerare. NULL sulle bozze precedenti.';
+
+
+COMMENT ON COLUMN "public"."cs_drafts"."source" IS 'app = bozza chiesta da operatrice; auto = bozza pronta generata dal cron cs-assist-predraft (v33, 24-11); eval = generata dall''harness di valutazione (scripts/cs-eval.mjs, brief 29-07)';
 
 
 

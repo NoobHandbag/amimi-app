@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { csClient, EMAIL_TEAM_TESTO } from '../lib/csClient';
 import { pushBack, popBack } from '../lib/backnav';
-import { fetchCoda, fetchConcluse, cursoreDi, PAGINA_CONCLUSE, isChatSito, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
-import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato, BozzaSalvata } from '../lib/csApi';
+import { fetchCoda, fetchConcluse, cursoreDi, PAGINA_CONCLUSE, isChatSito, fetchRumore, fetchMessages, csPollNow, setCategoria, setStato, addNoise, removeNoise, fetchContext, fetchCaseData, generateOptions, proposteDa, refineDraft, sendReply, recordRamo, ultimaBozza, salvaTestoBozza, getAiConfig, setAiIstruzioni, catEmoji, CS_CATEGORIES, CASE_CATS } from '../lib/csApi';
+import type { CsConversation, CsMessage, Canale, CsContext, DraftOption, CaseData, Stato, BozzaSalvata, Proposte } from '../lib/csApi';
 import AppBar from '../components/AppBar';
 import { ChatThread, ChatScheda } from './AssistenzaChat';
 import Icon from '../components/Icon';
@@ -166,6 +166,11 @@ function Badges({ c }: { c: CsConversation }) {
   );
 }
 
+// v33 (Gate 2, C2): giorno e ora nello stesso fuso (quello del dispositivo). Prima il giorno veniva
+// dalla stringa UTC e l'ora dal fuso locale: una bozza delle 00:30 di Roma risultava del giorno prima.
+const giornoLocale = (iso: string) => new Date(iso).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const oraLocale = (iso: string) => new Date(iso).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+
 export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [session, setSession] = useState<'loading' | 'in' | 'out'>('loading');
   const [ident, setIdentS] = useState(() => localStorage.getItem('amimi_cs_ident') || '');
@@ -202,6 +207,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // parte 3: la bozza gia' salvata per questa conversazione. Si MOSTRA, non si carica da sola:
   // ricaricarla d'ufficio sovrascriverebbe senza chiedere quello che l'operatrice sta guardando.
   const [bozzaSalvata, setBozzaSalvata] = useState<BozzaSalvata | null>(null);
+  // v33: le proposte a schermo vengono da una bozza gia' pronta (ISO di quando e' stata scritta), non da un click
+  const [pronte, setPronte] = useState<string | null>(null);
+  const genRef = useRef(false);   // Gate 2 (B3): generazione a mano in corso (letto da callback asincrone)
   // guardia race (audit #7): le risposte async di un thread APERTO PRIMA non devono scrivere sul corrente
   const threadRef = useRef('');
   const [selIdx, setSelIdx] = useState(0);
@@ -340,15 +348,30 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     entra('thread', view === 'rumore' ? 'rumore' : 'coda');
     threadRef.current = c.id;
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
-    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]); setMoreOpen(false); setBozzaSalvata(null);
+    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]); setMoreOpen(false); setBozzaSalvata(null); setPronte(null);
     setSendOpen(false); setSending(false); setSendErr(''); setSendBloccato(false); setSentTo(null);
-    try { const m = await fetchMessages(c.id); if (threadRef.current === c.id) setMsgs(m); }
+    let letti: CsMessage[] | null = null;
+    try { const m = await fetchMessages(c.id); letti = m; if (threadRef.current === c.id) setMsgs(m); }
     catch (e) { if (threadRef.current === c.id) setErr((e as Error).message); }
     // chat del sito (punti 3 e 13 di 7.6): niente bozze, contesto ne' verdetti AI; il pannello della chat legge da se'
     if (isChatSito(c)) return;
     // parte 3: c'e' gia' una bozza per questa conversazione? Lettura diretta col JWT, nessuna spesa
     // AI. Best-effort: se fallisce si continua come prima, con "Genera".
-    ultimaBozza(c.id).then((b) => { if (threadRef.current === c.id) setBozzaSalvata(b); }).catch(() => { /* niente */ });
+    // cs-assist v33 (24-11): se la bozza ha le proposte complete, nessuno l'ha ritoccata e dopo non e'
+    // successo niente nel thread, le proposte si mostrano SUBITO (di solito le ha scritte il cron prima
+    // che qualcuno aprisse). All'apertura non c'e' ancora niente sullo schermo da sovrascrivere. Se il
+    // thread e' andato avanti, o la bozza e' ritoccata, resta il riquadro "C'e' gia' una bozza" di prima.
+    ultimaBozza(c.id).then((b) => {
+      if (threadRef.current !== c.id) return;
+      setBozzaSalvata(b);
+      // Gate 2 (B3): se intanto l'operatrice ha premuto Genera, la generazione vince
+      if (!b || !b.risposta || b.edited || letti === null || genRef.current) return;
+      // Gate 2 (A2): fresca = nessun messaggio piu' recente di quello su cui la bozza si basa
+      // (base_msg_at; created_at solo per le bozze di prima della v33). Date confrontate come istanti.
+      const base = Date.parse(String(b.risposta.base_msg_at ?? b.created_at));
+      const fresca = Number.isFinite(base) && !letti.some((m) => m.sent_at && Date.parse(m.sent_at) > base);
+      if (fresca) { applicaProposte({ ...proposteDa(b.risposta), draftId: b.id }); setPronte(b.created_at); }
+    }).catch(() => { /* niente */ });
     // Contesto (link ordine + storico acquisti): nessuna spesa AI, best-effort (non blocca il thread).
     // Vale anche per la chat del sito (dal 26-07): se il visitatore ha lasciato l'email, storia e ordine si agganciano.
     if (c.canale !== 'rumore') {
@@ -357,17 +380,22 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     }
   };
   // Fase 3: 3 opzioni di risposta con dati reali (edge cs-assist, JWT). Recupero dati deterministico + Gemini.
+  // v33: le proposte arrivano o dalla generazione live o da una bozza salvata: stesso caricamento.
+  const applicaProposte = (r: Proposte) => {
+    setOptions(r.options); setSelIdx(0); setBozzaText(r.options[0]?.testo ?? ''); setDaVer(r.options[0]?.da_verificare ?? 0); setNonGrounded(r.options[0]?.non_grounded ?? []); setFonti(r.fonti); setFallbackSingola(r.fallbackSingola); setTroncate(r.troncate);
+    setSchema(r.schema); setDraftId(r.draftId);
+    setCtx((x) => x ?? { fonti: r.fonti, order_admin_url: r.order_admin_url, storia: r.storia });
+  };
   const doGenOptions = async () => {
     if (!current) return;
     const tid = current.id;
-    setGenBozza(true); setErr(''); setCopied(false); setSentTo(null); setSendOpen(false);
+    setGenBozza(true); genRef.current = true; setErr(''); setCopied(false); setSentTo(null); setSendOpen(false); setPronte(null);
     try {
       const r = await generateOptions(tid, ident, confirmDate || undefined);
       if (threadRef.current !== tid) return;   // thread cambiato nel frattempo: butta la risposta
-      setOptions(r.options); setSelIdx(0); setBozzaText(r.options[0]?.testo ?? ''); setDaVer(r.options[0]?.da_verificare ?? 0); setNonGrounded(r.options[0]?.non_grounded ?? []); setFonti(r.fonti); setFallbackSingola(r.fallbackSingola); setTroncate(r.troncate);
-      setSchema(r.schema); setDraftId(r.draftId);
-      if (!ctx) setCtx({ fonti: r.fonti, order_admin_url: r.order_admin_url, storia: r.storia });
+      applicaProposte(r); setPronte(null);
     } catch (e) { if (threadRef.current === tid) setErr((e as Error).message); }
+    finally { genRef.current = false; }
     if (threadRef.current === tid) setGenBozza(false);
   };
   const pickOption = (i: number) => { if (!options?.[i]) return; setSelIdx(i); setBozzaText(options[i].testo); setDaVer(options[i].da_verificare); setNonGrounded(options[i].non_grounded ?? []); setCopied(false); setSentTo(null); };
@@ -901,13 +929,15 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 risposta gia' partita) lo si dice: e' l'unico caso in cui la bozza vecchia inganna. */}
             {!options && bozzaSalvata && (() => {
               const q = bozzaSalvata.created_at;
-              const dopo = (msgs ?? []).filter((m) => m.sent_at && m.sent_at > q);
+              // v33 (Gate 2, A2): conta il messaggio su cui la bozza si basa, non l'ora della riga
+              const base = Date.parse(String(bozzaSalvata.risposta?.base_msg_at ?? q));
+              const dopo = (msgs ?? []).filter((m) => m.sent_at && Date.parse(m.sent_at) > base);
               const inDopo = dopo.some((m) => m.direction === 'in');
               const outDopo = dopo.some((m) => m.direction === 'out');
               const stantia = inDopo || outDopo;
               return (
                 <div className={stantia ? 'cs-lint' : 'cs-note'} style={{ textAlign: 'left', marginBottom: 8 }}>
-                  <b>C&#8217;&#232; gi&#224; una bozza</b> del {fmtData(q.slice(0, 10))} alle {new Date(q).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+                  <b>C&#8217;&#232; gi&#224; una bozza</b> del {giornoLocale(q)} alle {oraLocale(q)}
                   {bozzaSalvata.edited ? ', con le tue modifiche' : ''}.
                   {inDopo && <div style={{ marginTop: 4 }}>⚠️ Dopo quella bozza la cliente ha scritto di nuovo: rigenerala, o risponderai a un messaggio vecchio.</div>}
                   {!inDopo && outDopo && <div style={{ marginTop: 4 }}>⚠️ Dopo quella bozza &#232; gi&#224; partita una risposta: controlla il thread prima di usarla.</div>}
@@ -922,15 +952,36 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 </div>
               );
             })()}
-            {!options ? (
-              <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doGenOptions} disabled={genBozza} type="button">
+            {genBozza && (
+              // v33 (24-11): la generazione dura ~30 s di ragionamento del modello. Prima era un bottone
+              // grigio fermo e sembrava bloccata: ora un'animazione e una barra che avanza (a tempo, non
+              // a progresso reale: si ferma al 95% e aspetta), piu' l'avviso di non cambiare thread,
+              // perche' cambiandolo la risposta si butta (la bozza resta comunque salvata).
+              <div className="cs-gen" role="status" aria-live="polite">
+                <div className="cs-gen-top">
+                  <span className="cs-gen-dots" aria-hidden="true"><i /><i /><i /></span>
+                  <span>Scrivo le proposte con i dati reali…</span>
+                </div>
+                <div className="cs-gen-bar" aria-hidden="true"><span /></div>
+                <div className="cs-gen-nota">Di solito ci vuole mezzo minuto: resta su questa conversazione.</div>
+              </div>
+            )}
+            {/* Gate 2 (C4): durante "Rigenera" le proposte restano leggibili sotto il caricamento */}
+            {!options ? (!genBozza && (
+              <button className="cs-btn cs-primary" style={{ width: '100%' }} onClick={doGenOptions} type="button">
                 {/* v24: niente "3" nel bottone. Col nuovo schema il numero di alternative dipende dal
                     caso (una sola quando i dati decidono), e la UI non sa quale schema e' attivo
                     prima di generare: promettere tre e darne una sembrerebbe un guasto. */}
-                {genBozza ? 'Genero le proposte…' : '✍️ Genera le risposte con i dati reali'}
+                ✍️ Genera le risposte con i dati reali
               </button>
-            ) : (
+            )) : (
               <>
+                {pronte && !genBozza && (
+                  <div className="cs-note" style={{ textAlign: 'left', marginBottom: 8 }}>
+                    ✨ Proposte gi&#224; pronte, scritte alle {oraLocale(pronte)}{giornoLocale(pronte) !== giornoLocale(new Date().toISOString()) ? ` del ${giornoLocale(pronte)}` : ''}. Se servono dati pi&#249; freschi: ↻ Rigenera.
+                    {c.categoria && CASE_CATS.has(c.categoria) && ' Se confermi la data di consegna qui sopra, rigenera: queste proposte non la conoscono.'}
+                  </div>
+                )}
                 {options.length > 1 && (
                   <div className="cs-opts">
                     {options.map((o, i) => (
