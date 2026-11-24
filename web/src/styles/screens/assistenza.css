@@ -120,3 +120,18 @@
 .scr-assist .cs-mailstate.err { color: var(--negative); }
 .scr-assist .cs-chatset { display: flex; flex-direction: column; gap: 10px; }
 .scr-assist .cs-chatset .cs-case-row label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+
+/* v33 (24-11): attesa della bozza (~30 s di ragionamento del modello). Tre puntini che pulsano e una
+   barra a tempo che rallenta verso il 95%: dice "sto lavorando" senza promettere un progresso vero. */
+.scr-assist .cs-gen { border-radius: 18px; background: var(--surface); padding: 14px 16px; text-align: left; }
+.scr-assist .cs-gen-top { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: var(--ink); }
+.scr-assist .cs-gen-dots { display: inline-flex; gap: 4px; }
+.scr-assist .cs-gen-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--interactive); animation: cs-gen-pulse 1.2s ease-in-out infinite; }
+.scr-assist .cs-gen-dots i:nth-child(2) { animation-delay: .2s; }
+.scr-assist .cs-gen-dots i:nth-child(3) { animation-delay: .4s; }
+.scr-assist .cs-gen-bar { height: 4px; margin: 12px 0 8px; border-radius: 999px; background: var(--surface-alt); overflow: hidden; }
+.scr-assist .cs-gen-bar span { display: block; height: 100%; width: 95%; border-radius: 999px; background: var(--interactive); transform-origin: left; animation: cs-gen-fill 32s cubic-bezier(.15,.7,.35,1) forwards; }
+.scr-assist .cs-gen-nota { font-size: 13px; color: var(--ink-muted); }
+@keyframes cs-gen-pulse { 0%, 80%, 100% { opacity: .25; transform: scale(.8); } 40% { opacity: 1; transform: scale(1); } }
+@keyframes cs-gen-fill { from { transform: scaleX(.03); } to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) { .scr-assist .cs-gen-dots i { animation: none; opacity: .7; } .scr-assist .cs-gen-bar span { animation: none; transform: scaleX(.5); } }

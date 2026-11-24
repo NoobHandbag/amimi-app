@@ -1,4 +1,13 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// sorgente v33 (2026-11-24, richiesta di Dan dopo la segnalazione di Ginevra del 23-11): BOZZE PRONTE.
+//   La bozza costa ~30 s di ragionamento di Gemini e l'operatrice la aspettava a schermo. Ora l'azione
+//   `predraft` (PIN, cron cs-assist-predraft ogni 2 minuti, interruttore app_flags.cs_predraft_attivo)
+//   genera UNA bozza per giro, con lo stesso identico codice di `draft` (faiBozza), per la conversazione
+//   cliente piu' vecchia che ne e' senza: email o modulo, non fatta, ultimo messaggio della cliente
+//   negli ultimi 7 giorni e piu' recente dell'ultima bozza, gia' classificata (cosi' il non cliente e'
+//   gia' uscito dalla coda), mai B2B. Un esito non riuscito si scrive (`predraft_ko`) e non si riprova
+//   finche' la cliente non riscrive. Ogni bozza salva ora in `cs_drafts.risposta` (migr 0210) le
+//   proposte COMPLETE, che la UI mostra subito aprendo il thread; source 'auto', chi 'auto'.
 // sorgente v32 (2026-11-13, chat del sito Fase 1 pezzo 6, docs/PROPOSTA_chat_sito.md 7.6 punto 13 e 7.10): una chat del
 //   sito (canale `chat_sito` o chiave `chat:`, migr 0193) riceve 422 su context, dry_data, case_data, draft e refine, e il
 //   riassunto la salta: il suo testo non va a Gemini (un solo fornitore AI per la chat, quello del bot), e con la sola
@@ -277,6 +286,38 @@ const SITE_URL = 'https://amimi.it';   // dominio del sito: unico posto in cui e
 const MODEL_SUMMARY = 'gemini-flash-lite-latest';
 const MODEL_DRAFT = 'gemini-flash-latest';
 const MAX_SUMMARY_PER_RUN = 8;
+// v33: bozze pronte. Una per giro (~30 s): il cron ogni 2 minuti non si sovrappone mai a se stesso.
+const PREDRAFT_GIORNI = 7;
+// Gate 2 del 24-11 (A1, B4): un tentativo in corso (evento draft_start) blocca gli altri per 10 minuti
+// (giri che si sovrappongono, o l'operatrice che preme Genera mentre il cron lavora); al massimo 2
+// tentativi del cron per lo stesso messaggio della cliente, cosi' un errore che si ripete non costa
+// una chiamata ogni 2 minuti per 7 giorni.
+const PREDRAFT_CLAIM_MS = 10 * 60 * 1000;
+const PREDRAFT_MAX_TENTATIVI = 2;
+const PREDRAFT_CANDIDATI = 200;
+const PREDRAFT_CANALI = ['email_diretta', 'form_contatto', 'form_evento'];
+// ==== PURE:cs-predraft BEGIN ====
+// v33 (24-11, con le correzioni del Gate 2): il cron deve scrivere una bozza per questa conversazione?
+// `ultimo` = last_msg_at della conversazione. Una bozza copre il messaggio se la sua BASE (il messaggio
+// piu' recente che ha letto) non e' piu' vecchia di `ultimo`; le bozze senza base (prima della v33)
+// usano created_at, come prima. Eventi considerati solo DOPO `ultimo` (un messaggio nuovo azzera tutto).
+type PdBozza = { created_at: string; base_msg_at: string | null };
+type PdEvento = { azione: string; chi: string; at: string };
+function predraftStato(ultimo: string, bozze: PdBozza[], eventi: PdEvento[], ora: number): 'da_fare' | 'coperta' | 'in_corso' | 'ko' | 'tentativi_finiti' {
+  const u = Date.parse(ultimo);
+  if (!Number.isFinite(u)) return 'ko';
+  if (bozze.some((d) => { const base = Date.parse(d.base_msg_at ?? d.created_at); return Number.isFinite(base) && base >= u; })) return 'coperta';
+  const dopo = eventi.filter((e) => { const t = Date.parse(e.at); return Number.isFinite(t) && t > u; });
+  if (dopo.some((e) => e.azione === 'predraft_ko')) return 'ko';
+  const avvii = dopo.filter((e) => e.azione === 'draft_start');
+  if (avvii.some((e) => ora - Date.parse(e.at) < PREDRAFT_CLAIM_MS)) return 'in_corso';
+  if (avvii.filter((e) => e.chi === 'auto').length >= PREDRAFT_MAX_TENTATIVI) return 'tentativi_finiti';
+  return 'da_fare';
+}
+function predraftKoPermanente(status: number): boolean {
+  return status === 404 || status === 422 || status === 400;
+}
+// ==== PURE:cs-predraft END ====
 
 const stripMarks = (s: string): string => [...s.normalize('NFD')].filter((ch) => { const c = ch.codePointAt(0)!; return c < 0x300 || c > 0x36f; }).join('');
 const norm = (s: string): string => stripMarks((s || '').toLowerCase()).replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1342,7 +1383,7 @@ Deno.serve(async (req) => {
   // `flags.X` e non elencato qui vale sempre `undefined`, quindi la feature che governa e' morta in
   // silenzio: nessun errore, nessun test rosso, e una misura che sembra fatta e non lo e'.
   // `tests/cs_rami.mjs` confronta l'elenco con i `flags.` davvero consumati nel sorgente.
-  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model_claude', 'cs_ai_istruzioni', 'cs_rami_enabled', 'cs_thread_precede', 'cs_impegno_esplicito']);
+  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model_claude', 'cs_ai_istruzioni', 'cs_rami_enabled', 'cs_thread_precede', 'cs_impegno_esplicito', 'cs_predraft_attivo']);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
@@ -1351,7 +1392,7 @@ Deno.serve(async (req) => {
   // dry_data ritorna lo STESSO payload PII di context: DEVE essere JWT (non PIN pubblico). Solo summary
   // (aggregato, cron) resta PIN. (audit 2026-07-24: dry_data dietro PIN 'x' esponeva PII cliente.)
   const JWT_ACTIONS = new Set(['context', 'dry_data', 'draft', 'refine', 'case_data']);
-  const chi = ({ B: 'Benedetta', G: 'Ginevra', A: 'Ale' } as Record<string, string>)[String(body.chi || '').toUpperCase()] || 'ignoto';
+  const chi = action === 'predraft' ? 'auto' : ({ B: 'Benedetta', G: 'Ginevra', A: 'Ale' } as Record<string, string>)[String(body.chi || '').toUpperCase()] || 'ignoto';
   if (JWT_ACTIONS.has(action)) {
     const authz = req.headers.get('Authorization') || '';
     const tk = authz.toLowerCase().startsWith('bearer ') ? authz.slice(7).trim() : '';
@@ -1385,7 +1426,8 @@ Deno.serve(async (req) => {
   let claudeFellBack: string | null = null;
   // bozze dell'harness marcate 'eval' (migr 0080): distinguibili con una query, la UI non le vede mai
   // (le opzioni mostrate arrivano dalla risposta live, cs_drafts non viene letta dal client).
-  const draftSource = body.source === 'eval' ? 'eval' : 'app';
+  // v33: 'auto' = bozza pronta generata dal cron (la UI la mostra come la bozza dell'operatrice)
+  const draftSource = action === 'predraft' ? 'auto' : body.source === 'eval' ? 'eval' : 'app';
   // "come rispondere": istruzioni editabili dal team (app_flags.cs_ai_istruzioni), iniettate come CONTESTO
   // in ogni bozza. Guidano il tono; non superano MAI la regola anti-invenzione.
   const aiIstruzioni = (flags.cs_ai_istruzioni || '').trim();
@@ -1552,7 +1594,8 @@ Riassunto (max 2 righe):`;
   }
 
   // ---------- draft: 3 opzioni (JWT), Claude o Gemini, una sola chiamata ----------
-  if (action === 'draft') {
+  // v33: corpo in una funzione, cosi' `predraft` (cron) usa lo STESSO codice della bozza chiesta a mano.
+  const faiBozza = async (): Promise<Response> => {
     if (!haveLLM) return json({ ok: false, needs_key: true, error: 'Nessun motore AI configurato (Gemini o Claude).' });
     // chiave del motore RICHIESTO assente -> needs_key, mai ripiegare sull'altro (falserebbe l'A/B)
     if (useClaude && !claudeKey) return json({ ok: false, needs_key: true, error: 'model_override Claude ma anthropic_api_key assente: nessun fallback.' });
@@ -1560,6 +1603,9 @@ Riassunto (max 2 righe):`;
     const lc = await loadConv(true);
     if (lc instanceof Response) return lc;   // 2026-09-13 (sweep incidente doppioni): thread non leggibile = 503, nessuna bozza dal solo subject
     if (!lc) return json({ error: 'conversazione inesistente' }, 404);
+    // v33 (Gate 2, A1): segno di lavoro in corso, a mano o dal cron. Il cron non parte su una
+    // conversazione con un tentativo recente: niente doppioni e niente giri che si accavallano.
+    await sb.from('cs_events').insert({ conversation_id: lc.conv.id, azione: 'draft_start', chi, dettaglio: { source: draftSource } });
     // v20: due clienti nella stessa conversazione = nessuna bozza. Succede quando due invii dal
     // modulo nello stesso minuto finiscono nello stesso thread Gmail: la bozza nascerebbe dal TESTO
     // di uno e dai DATI dell'altro (ordine, storico, email), e sarebbe un dato di un terzo dentro
@@ -1719,16 +1765,68 @@ ${rami
     // aveva visto). Il ramo scelto lo scrive dopo cs-api `draft_ramo`, all'invio.
     const ramiTitoli = rami && !fallbackSingola ? options.map((o) => (o as { titolo?: string }).titolo ?? '') : null;
 
-    const { data: ins } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: usedModel, source: draftSource, rami: ramiTitoli }).select('id').single();
-    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length, tentativi, tetto_token: tetto, llm: diag, ...(ramiTitoli ? { schema: 'rami', rami: ramiTitoli } : {}), ...(troncate ? { troncate } : {}), ...(fallbackSingola ? { fallback_singola: true } : {}), ...(draftSource === 'eval' ? { source: 'eval', model: usedModel } : {}), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
-    return json({
-      ok: true, options, draft: options[0].testo, da_verificare: options[0].da_verificare,   // draft = retro-compat
+    // v33: la risposta completa (tutte le proposte) si salva con la bozza: la UI la mostra subito.
+    // v33 (Gate 2, A2): su quale messaggio si basa la bozza. Si confronta QUESTO, non created_at: un
+    // messaggio arrivato durante i ~30 s della generazione ha sent_at piu' vecchio della riga.
+    const baseMsgAt = lc.recent.reduce((mx: string, m) => { const t = String(m.sent_at ?? ''); return t > mx ? t : mx; }, '');
+    const risposta = {
+      ok: true, base_msg_at: baseMsgAt || null, options, draft: options[0].testo, da_verificare: options[0].da_verificare,   // draft = retro-compat
       schema: ramiTitoli ? 'rami' : 'toni',   // v24: la UI etichetta le scelte di conseguenza
-      fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia, draft_id: ins?.id, llm: diag,
+      fonti: ctx.dati.fonti, order_admin_url: ctx.order_admin_url, storia: ctx.storia,
       ...(claudeFellBack ? { engine_fallback: 'gemini' } : {}),
       ...(fallbackSingola ? { fallback_singola: true } : {}),
       ...(troncate ? { troncate } : {}),
-    });
+    };
+    const { data: ins, error: insErr } = await sb.from('cs_drafts').insert({ conversation_id: conv.id, testo: options[0].testo, dati_usati: ctx.dati as unknown as Row, model: usedModel, source: draftSource, rami: ramiTitoli, risposta: risposta as unknown as Row }).select('id').single();
+    // v33 (Gate 2, B2): una bozza non salvata non e' un successo (niente draft_id, il cron riproverebbe)
+    if (insErr || !ins?.id) return json({ ok: false, error: 'bozza non salvata, riprova: ' + (insErr?.message ?? 'nessun id') }, 503);
+    await sb.from('cs_events').insert({ conversation_id: conv.id, azione: 'draft', chi, dettaglio: { draft_id: ins?.id, n_options: options.length, tentativi, tetto_token: tetto, llm: diag, ...(ramiTitoli ? { schema: 'rami', rami: ramiTitoli } : {}), ...(troncate ? { troncate } : {}), ...(fallbackSingola ? { fallback_singola: true } : {}), ...(draftSource === 'eval' ? { source: 'eval', model: usedModel } : {}), ...(claudeFellBack ? { fallback_da_claude: claudeFellBack } : {}) } });
+    return json({ ...risposta, draft_id: ins?.id, llm: diag });
+  };
+  if (action === 'draft') return await faiBozza();
+
+  // ---------- predraft (v33, PIN, cron): una bozza pronta per giro ----------
+  if (action === 'predraft') {
+    if (String(body.source || 'manual') === 'cron' && (flags.cs_enabled !== 'true' || flags.cs_predraft_attivo !== 'true')) return json({ ok: true, skipped: 'disabled' });
+    if (!haveLLM) return json({ ok: false, needs_key: true });
+    const da = new Date(Date.now() - PREDRAFT_GIORNI * 86400000).toISOString();
+    const { data: cand, error: candErr } = await retryOnce(() => sb.from('cs_conversations')
+      .select('id,last_msg_at,categoria').in('canale', PREDRAFT_CANALI).neq('stato', 'fatto').eq('last_direction', 'in')
+      .not('categoria_source', 'is', null).eq('parse_failed', false).gte('last_msg_at', da)
+      .order('last_msg_at', { ascending: true }).limit(PREDRAFT_CANDIDATI));
+    if (candErr) return json({ ok: false, error: 'coda non leggibile: ' + candErr.message }, 503);
+    const lista = ((cand ?? []) as Row[]).filter((c) => c.categoria !== 'Collaborazioni e B2B');
+    if (!lista.length) return json({ ok: true, fatte: 0 });
+    // Gate 2 (B1): bozze ed eventi di TUTTI i candidati in due letture, non 20 per volta: con tante
+    // conversazioni gia' pronte le nuove non restano mai fuori dalla finestra.
+    const ids = lista.map((c) => c.id as string);
+    const { data: bozze, error: be } = await retryOnce(() => sb.from('cs_drafts').select('conversation_id,created_at,risposta').in('conversation_id', ids).in('source', ['app', 'auto']).gte('created_at', da));
+    const { data: eventi, error: ee } = await retryOnce(() => sb.from('cs_events').select('conversation_id,azione,chi,at').in('conversation_id', ids).in('azione', ['draft_start', 'predraft_ko']).gte('at', da));
+    if (be || ee) return json({ ok: false, error: 'bozze o eventi non leggibili: ' + (be ?? ee)?.message }, 503);   // lettura incerta = non generare
+    const ora = Date.now();
+    let scelta: Row | null = null;
+    for (const c of lista) {
+      const st = predraftStato(String(c.last_msg_at),
+        ((bozze ?? []) as Row[]).filter((d) => d.conversation_id === c.id).map((d) => ({ created_at: String(d.created_at), base_msg_at: ((d.risposta as Row | null)?.base_msg_at as string | undefined) ?? null })),
+        ((eventi ?? []) as Row[]).filter((e) => e.conversation_id === c.id).map((e) => ({ azione: String(e.azione), chi: String(e.chi ?? ''), at: String(e.at) })),
+        ora);
+      if (st === 'da_fare') { scelta = c; break; }
+    }
+    if (!scelta) return json({ ok: true, fatte: 0 });
+    body.conversation_id = scelta.id;
+    let r: Response;
+    try { r = await faiBozza(); }
+    catch (e) {   // Gate 2 (A1): un'eccezione non e' un ko permanente, ma il draft_start conta come tentativo
+      return json({ ok: false, error: 'bozza interrotta: ' + (e as Error).message.slice(0, 200) }, 500);
+    }
+    const esito = await r.clone().json().catch(() => ({})) as Row;
+    if (r.status === 200 && esito.ok === true) return json({ ok: true, fatte: 1 });
+    // Gate 2 (B4): solo gli esiti PERMANENTI (conversazione inesistente o non bozzabile, bozza vuota)
+    // fermano il cron fino al prossimo messaggio; un 503 o un 502 si ritenta al giro dopo (max 2).
+    if (predraftKoPermanente(r.status)) {
+      await sb.from('cs_events').insert({ conversation_id: scelta.id, azione: 'predraft_ko', chi: 'auto', dettaglio: { status: r.status, errore: String(esito.error ?? '').slice(0, 200) } });
+    }
+    return json({ ok: true, fatte: 0, ko: 1, status: r.status });
   }
 
   // ---------- refine: riscrivi una bozza data applicando un'istruzione (JWT), Claude o Gemini ----------
