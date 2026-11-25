@@ -1,4 +1,4 @@
-// chat-api api-4 (2026-11-13): la chat del sito, Fase 1 pezzi 2, 5, 6 e 7 (docs/PROPOSTA_chat_sito.md 5.2-5.8, 6, 7.4, 8.4, con le
+// chat-api api-5 (2026-11-25): la chat del sito, Fase 1 pezzi 2, 5, 6, 7 e 9 (docs/PROPOSTA_chat_sito.md 5.2-5.8, 6, 7.4, 8.4, con le
 // decisioni di Dan dell'8 novembre 2026: modello ticket D-8, tetti D-12). Al posto dell'eco dello spike, che resta in
 // eco.ts solo per le rotte /eco, /misura e /turnstile (misure dal telefono di Dan, si spegne da sola il 7 dicembre 2026).
 // Il widget chiama amimi.it/apps/chat/<azione>; il proxy di "Amimi Chat" firma la query e inoltra qui. verify_jwt = false
@@ -40,6 +40,7 @@
 // api-4 (pezzo 7, proposta 9.8, migr 0195): la risposta di un bottone puo' venire anche da una riga `risposta_chat` di
 // cs_faq, il tipo delle voci importate dalla Knowledge base di Shopify per la sola chat (cs-assist non lo legge, quindi
 // le bozze delle email non cambiano). Testi della pagina di ripresa col nome del marchio, Amimi con l'accento.
+// api-5 (pezzo 9, 25-11): pagina di ripresa col logo del negozio e col pulsante davvero nascosto (riprendi.ts).
 // Log: solo cause scritte nel codice e codici d'errore del DB, mai corpi, token, email, nomi o testi.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
@@ -49,7 +50,7 @@ import { rispondiEco } from './eco.ts';
 import { LIQUID_APRI, LIQUID_CHIUDI, PAGINA_RIPRESA } from './riprendi.ts';
 
 // ==== PURE:chat-api BEGIN ====
-const VERSIONE = 'api-4';
+const VERSIONE = 'api-5';
 const HEADER_BASE: Record<string, string> = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' };
 const ROTTE_ECO = ['eco', 'misura', 'turnstile'];
 const METODO: Record<string, string> = { config: 'GET', avvia: 'POST', invia: 'POST', passaggio: 'POST', aggiorna: 'POST', riprendi: 'POST', errore: 'POST' };
