@@ -29,55 +29,55 @@ begin
   if v_r ->> 'esito' <> 'vuota' then raise exception 'KO 1: atteso vuota, %', v_r; end if;
   if exists (select 1 from cs_conversations where gmail_thread_id = 'chat:' || v_s) then raise exception 'KO 1: card vuota creata'; end if;
 
-  -- 2. un bottone: messaggio della cliente e risposta fissa, la chat resta del bot (Concluse, "Gestita dal bot", D-11)
+  -- 2. (0214) un bottone e una risposta del bot: la chat resta del bot e la card NON nasce (prima del passaggio la chat
+  --    puo' non avere email e non ha niente da fare per il team; scostamento da D-11 dichiarato nella 0214)
   insert into chat_messaggi (sessione_id, autore, testo, client_msg_id, fonte)
     values (v_s, 'cliente', 'Spedizioni', gen_random_uuid(), 'bottone:spedizioni');
   insert into chat_messaggi (sessione_id, autore, testo, client_msg_id, fonte)
     values (v_s, 'automatica', 'Risposta fissa di prova', gen_random_uuid(), 'faq:1');
+  insert into chat_messaggi (sessione_id, autore, testo, client_msg_id, fonte)
+    values (v_s, 'ai', 'Risposta del bot di prova', gen_random_uuid(), 'ai:1');
   v_r := chat_proietta(v_s);
-  if (v_r ->> 'nata')::boolean is not true or (v_r ->> 'messaggi')::int <> 2 then raise exception 'KO 2: %', v_r; end if;
-  select * into v_c from cs_conversations where gmail_thread_id = 'chat:' || v_s;
-  if v_c.canale <> 'chat_sito' or v_c.stato <> 'fatto' or v_c.stato_by <> 'bot' or v_c.urgente is not false or v_c.flags <> '["prova"]'::jsonb
-     or v_c.last_direction <> 'out' or v_c.snippet <> 'Spedizioni' or v_c.subject <> 'Chat del sito' or v_c.customer_email <> 'prova.0193@example.com'
-     or v_c.categoria is not null then
-    raise exception 'KO 2: card %', row_to_json(v_c);
-  end if;
-  v_cs := v_c.id;
-  select count(*) into v_n from cs_messages where conversation_id = v_cs and gmail_message_id like 'chat:%' and from_email is null
-    and ((direction = 'in' and sent_by is null and body_text = 'Spedizioni' and body_clean = 'Spedizioni' and not is_via_tool)
-      or (direction = 'out' and sent_by = 'Risposta automatica' and not is_via_tool));
-  if v_n <> 2 then raise exception 'KO 2: messaggi proiettati %', v_n; end if;
-  select count(*) into v_n from cs_events where conversation_id = v_cs and azione = 'ingest' and dettaglio ->> 'canale' = 'chat_sito';
-  if v_n <> 1 then raise exception 'KO 2: eventi ingest %', v_n; end if;
-  select max(seq) into v_seq from chat_messaggi where sessione_id = v_s;
-  if not exists (select 1 from chat_sessioni where id = v_s and proiettato_seq = v_seq and cs_conversation_id = v_cs) then
-    raise exception 'KO 2: proiettato_seq o cs_conversation_id non scritti';
-  end if;
+  if v_r ->> 'esito' <> 'vuota' then raise exception 'KO 2: atteso vuota prima del passaggio, %', v_r; end if;
+  if exists (select 1 from cs_conversations where gmail_thread_id = 'chat:' || v_s) then raise exception 'KO 2: card nata senza passaggio'; end if;
+  if not exists (select 1 from chat_sessioni where id = v_s and proiettato_seq = 0 and cs_conversation_id is null) then raise exception 'KO 2: cursore mosso senza card'; end if;
 
-  -- 3. idempotente: una seconda chiamata non duplica niente
-  v_r := chat_proietta(v_s);
-  if (v_r ->> 'nata')::boolean or (v_r ->> 'messaggi')::int <> 0 then raise exception 'KO 3: %', v_r; end if;
-  select count(*) into v_n from cs_messages where conversation_id = v_cs;
-  if v_n <> 2 then raise exception 'KO 3: messaggi %', v_n; end if;
-  select count(*) into v_n from cs_events where conversation_id = v_cs and azione = 'ingest';
-  if v_n <> 1 then raise exception 'KO 3: ingest %', v_n; end if;
-
-  -- 4. testo libero e passaggio: avviso di sistema NON proiettato, ma il cursore lo supera
+  -- 3. testo libero e passaggio: la card nasce con TUTTA la conversazione col bot (bottone, risposta fissa, risposta AI,
+  --    testo); l'avviso di sistema NON e' proiettato, ma il cursore lo supera
   insert into chat_messaggi (sessione_id, autore, testo, client_msg_id)
     values (v_s, 'cliente', E'Vorrei   parlare\ncon qualcuno', gen_random_uuid());
   update chat_sessioni set stato = 'attesa_persona', passaggi = 1, passaggio_at = v_p, ultimo_cliente_at = v_p where id = v_s;
   insert into chat_messaggi (sessione_id, autore, testo, client_msg_id, fonte)
     values (v_s, 'sistema', 'Abbiamo ricevuto la tua richiesta', gen_random_uuid(), 'attesa');
   v_r := chat_proietta(v_s);
-  if (v_r ->> 'messaggi')::int <> 1 then raise exception 'KO 4: %', v_r; end if;
-  select * into v_c from cs_conversations where id = v_cs;
-  if v_c.stato <> 'da_fare' or v_c.stato_by is not null or v_c.urgente is not true or v_c.urgenza_motivo <> 'chat: serve una persona'
-     or v_c.flags <> '["passaggio_agente", "prova"]'::jsonb or v_c.last_direction <> 'in' or v_c.snippet <> 'Vorrei parlare con qualcuno' then
-    raise exception 'KO 4: card %', row_to_json(v_c);
+  if (v_r ->> 'nata')::boolean is not true or (v_r ->> 'messaggi')::int <> 4 then raise exception 'KO 3: %', v_r; end if;
+  select * into v_c from cs_conversations where gmail_thread_id = 'chat:' || v_s;
+  if v_c.canale <> 'chat_sito' or v_c.stato <> 'da_fare' or v_c.stato_by is not null or v_c.urgente is not true or v_c.urgenza_motivo <> 'chat: serve una persona'
+     or v_c.flags <> '["passaggio_agente", "prova"]'::jsonb or v_c.last_direction <> 'in' or v_c.snippet <> 'Vorrei parlare con qualcuno'
+     or v_c.subject <> 'Chat del sito' or v_c.customer_email <> 'prova.0193@example.com' or v_c.categoria is not null then
+    raise exception 'KO 3: card %', row_to_json(v_c);
   end if;
-  if exists (select 1 from cs_messages where conversation_id = v_cs and body_text like 'Abbiamo ricevuto%') then raise exception 'KO 4: avviso proiettato'; end if;
+  v_cs := v_c.id;
+  select count(*) into v_n from cs_messages where conversation_id = v_cs and gmail_message_id like 'chat:%' and from_email is null
+    and ((direction = 'in' and sent_by is null and not is_via_tool and body_text in ('Spedizioni', E'Vorrei   parlare\ncon qualcuno'))
+      or (direction = 'out' and sent_by = 'Risposta automatica' and body_text = 'Risposta fissa di prova' and not is_via_tool)
+      or (direction = 'out' and sent_by = 'Assistente AI' and body_text = 'Risposta del bot di prova' and not is_via_tool));
+  if v_n <> 4 then raise exception 'KO 3: messaggi proiettati %', v_n; end if;
+  if exists (select 1 from cs_messages where conversation_id = v_cs and body_text like 'Abbiamo ricevuto%') then raise exception 'KO 3: avviso proiettato'; end if;
+  select count(*) into v_n from cs_events where conversation_id = v_cs and azione = 'ingest' and dettaglio ->> 'canale' = 'chat_sito';
+  if v_n <> 1 then raise exception 'KO 3: eventi ingest %', v_n; end if;
   select max(seq) into v_seq from chat_messaggi where sessione_id = v_s;
-  if not exists (select 1 from chat_sessioni where id = v_s and proiettato_seq = v_seq) then raise exception 'KO 4: cursore fermo prima dell''avviso'; end if;
+  if not exists (select 1 from chat_sessioni where id = v_s and proiettato_seq = v_seq and cs_conversation_id = v_cs) then
+    raise exception 'KO 3: proiettato_seq o cs_conversation_id non scritti (cursore fermo prima dell''avviso?)';
+  end if;
+
+  -- 4. idempotente: una seconda chiamata non duplica niente
+  v_r := chat_proietta(v_s);
+  if (v_r ->> 'nata')::boolean or (v_r ->> 'messaggi')::int <> 0 then raise exception 'KO 4: %', v_r; end if;
+  select count(*) into v_n from cs_messages where conversation_id = v_cs;
+  if v_n <> 4 then raise exception 'KO 4: messaggi %', v_n; end if;
+  select count(*) into v_n from cs_events where conversation_id = v_cs and azione = 'ingest';
+  if v_n <> 1 then raise exception 'KO 4: ingest %', v_n; end if;
 
   -- 5. risposta dello staff: in corso, non piu' urgente, out con is_via_tool e il nome
   insert into chat_messaggi (sessione_id, autore, staff_nome, testo, send_key) values (v_s, 'staff', 'Ginevra', 'Risposta del team', gen_random_uuid());
@@ -120,10 +120,13 @@ begin
     raise exception 'KO 9: card %', row_to_json(v_c);
   end if;
 
-  -- 10. rete di sicurezza: una sessione con un messaggio mai proiettato e una card con lo stato sbagliato
-  insert into chat_sessioni (stato, customer_email, lingua, informativa_versione, prova)
-    values ('bot', 'prova.0193c@example.com', 'it', 'i-test', true) returning id into v_s3;
+  -- 10. rete di sicurezza: una sessione passata al team con un messaggio mai proiettato e una card con lo stato sbagliato;
+  --     (0214) una chat del solo bot, senza email, non diventa una card nemmeno dal cron
+  insert into chat_sessioni (stato, customer_email, lingua, informativa_versione, prova, passaggi, passaggio_at)
+    values ('attesa_persona', 'prova.0193c@example.com', 'it', 'i-test', true, 1, v_p) returning id into v_s3;
   insert into chat_messaggi (sessione_id, autore, testo, client_msg_id) values (v_s3, 'cliente', 'Mai proiettata', gen_random_uuid());
+  insert into chat_sessioni (stato, lingua, informativa_versione, prova) values ('bot', 'it', 'i-test', true) returning id into v_altra;
+  insert into chat_messaggi (sessione_id, autore, testo, client_msg_id) values (v_altra, 'cliente', 'Solo col bot', gen_random_uuid());
   update cs_conversations set stato = 'da_fare' where gmail_thread_id = 'chat:' || v_s2;
   update chat_sessioni set stato = 'aperta', preso_da = 'Ale' where id = v_s2;
   v_r := chat_proietta_arretrate();
@@ -134,6 +137,11 @@ begin
   if v_n < 1 then raise exception 'KO 10: evento proiezione assente'; end if;
   v_r := chat_proietta_arretrate();
   if exists (select 1 from chat_sessioni where id in (v_s, v_s2, v_s3) and cs_conversation_id is null) then raise exception 'KO 10: sessione senza card'; end if;
+  if exists (select 1 from cs_conversations where gmail_thread_id = 'chat:' || v_altra) or exists (select 1 from chat_sessioni where id = v_altra and cs_conversation_id is not null) then
+    raise exception 'KO 10: la chat del solo bot e'' diventata una card';
+  end if;
+  delete from chat_sessioni where id = v_altra;
+  v_altra := null;
 
   -- 11. una sessione cancellata: la proiezione dice assente
   v_r := chat_proietta(gen_random_uuid());
@@ -166,8 +174,9 @@ begin
   if not exists (select 1 from cs_conversations where id = v_cs and stato_by = 'Ginevra') then raise exception 'KO 15: stato_by non riallineato'; end if;
 
   -- 16. cancellazione in una transazione (Gate 2 B1): proiezione, card email solo se del thread, contatori, eventi, push, sessione
-  insert into chat_sessioni (stato, customer_email, lingua, informativa_versione, prova, gmail_thread_id)
-    values ('bot', 'prova.0193d@example.com', 'it', 'i-test', true, 'thread-prova-0193') returning id into v_s4;
+  -- (0214: passata al team, altrimenti la card non nasce)
+  insert into chat_sessioni (stato, customer_email, lingua, informativa_versione, prova, gmail_thread_id, passaggi, passaggio_at)
+    values ('attesa_persona', 'prova.0193d@example.com', 'it', 'i-test', true, 'thread-prova-0193', 1, v_p) returning id into v_s4;
   insert into chat_messaggi (sessione_id, autore, testo, client_msg_id) values (v_s4, 'cliente', 'Da cancellare', gen_random_uuid());
   v_r := chat_proietta(v_s4);
   insert into cs_conversations (gmail_thread_id, canale, customer_email) values ('thread-prova-0193', 'email_diretta', 'prova.0193d@example.com') returning id into v_card;

@@ -236,6 +236,12 @@ begin
 end;
 $fn$;
 
+-- privilegi come nella 0193 (create or replace li conserva; qui sono riscritti perche' ogni migrazione della chat li dice)
+revoke all on function public.chat_proietta(uuid) from public, anon, authenticated;
+grant execute on function public.chat_proietta(uuid) to service_role;
+revoke all on function public.chat_proietta_arretrate() from public, anon, authenticated;
+revoke all on function public.chat_proietta_arretrate() from service_role;
+
 -- 5) flag nuovi (nascono spenti o ai valori di D-17)
 insert into app_flags (key, value) values
   ('chat_bot_ai_enabled', 'false'),

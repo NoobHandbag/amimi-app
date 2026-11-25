@@ -1,23 +1,26 @@
-// Amimi Chat, pannello (Fase 1 pezzo 5, docs/PROPOSTA_chat_sito.md 3.2, 4.3, 5.3-5.8, 6.2 con D-8, 11.3, 11.7, 11.10).
-// Caricato da chat-loader.js solo al tocco sulla bolla: da qui partono `config`, Turnstile (render esplicito, la sfida
-// solo su execute, al primo gesto nel modulo) e il chat token, che nasce con `avvia`. Modello ticket (D-8): ogni risposta
-// del team arriva per email e compare anche qui; il polling gira SOLO a pannello aperto e scheda visibile, con la cadenza
-// ridotta di `intervallo` (5 s nei 2 minuti dopo un messaggio, 20 s fino a 10 minuti, 60 s fino a 30, poi si ferma).
-// Tutto cio' che arriva dalla rete e' un dato: solo textContent, mai innerHTML; un link e' cliccabile solo se e' https su
-// amimi.it o www.amimi.it (5.7). Stato sul dispositivo: la chiave di chat-loader.js (stesso formato della pagina riprendi).
-// Guardie e prove in tests/chat_widget_guardie.mjs.
+// Amimi Chat, pannello (w-2, Fase 2 ridotta del 25-11-2026: il chatbot vero chiesto da Dan; prima w-1, Fase 1 pezzo 5;
+// docs/PROPOSTA_chat_sito.md 3.2, 4.3, 5.3-5.8, 6.2, 9, 11.3, 11.7, 11.10). Caricato da chat-loader.js solo al tocco sulla
+// bolla: da qui partono `config` e, al primo invio, Turnstile (render esplicito, sfida solo su execute) e il chat token,
+// che nasce con `avvia`. Niente modulo d'apertura: il pannello si apre sul saluto dell'assistente col campo per scrivere e
+// i bottoni rapidi. Il bot (chat-api api-6) risponde da se'; quando serve una persona la chat chiede l'email e qui compare
+// il campo email (e nome facoltativo) dentro la conversazione, con l'informativa breve. Modello ticket per il team (D-8):
+// ogni risposta del team arriva per email e compare anche qui; il polling gira SOLO a pannello aperto e scheda visibile,
+// con la cadenza ridotta di `intervallo`. Tutto cio' che arriva dalla rete e' un dato: solo textContent, mai innerHTML; un
+// link e' cliccabile solo se e' https su amimi.it o www.amimi.it (5.7). Stato sul dispositivo: la chiave di chat-loader.js
+// (stesso formato della pagina riprendi). Guardie e prove in tests/chat_widget_guardie.mjs.
 (function () {
   'use strict';
   var A = window.__amimiChat;
-  if (!A || A.versione !== 'w-1' || A.pannello || !A.radice) return;
+  if (!A || A.versione !== 'w-2' || A.pannello || !A.radice) return;
 
   // ==== PURE:chat-panel BEGIN ====
-  var VERSIONE = 'w-1';
+  var VERSIONE = 'w-2';
   var INATTIVITA_MS = 4 * 3600 * 1000;
   var TS_VALIDO_MS = 280000;
   var TS_ATTESA_MS = 60000;
   var PAGINE_STORIA = 6;
   var ATTESA_RETE_MS = 20000;
+  var ATTESA_BOT_MS = 35000;           // un turno del bot dura al massimo 22 s lato server; il proxy chiude a 30 s
   var ERRORI_DI_FILA = 6;
   var TURNSTILE_JS = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
   var SITEKEY = { produzione: '0x4AAAAAAF2QTzI4g31RhjIS', prova: '0x4AAAAAAF33Q02jrHXJLHjr' };
@@ -26,13 +29,13 @@
   var TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
   var TESTI = {
     it: {
-      titolo: 'Chat Amim\u00ec: risposte automatiche e team', chiudi: 'Chiudi la chat', prova: 'PROVA', carica: 'Un momento...',
-      nome: 'Nome (facoltativo)', email: 'Email', messaggio: 'Messaggio (facoltativo)', inizia: 'Inizia la chat',
-      verifica: 'Verifica anti-spam in corso...', emailKo: 'Scrivi un indirizzo email valido.', nomeKo: 'Il nome \u00e8 troppo lungo.',
-      testoKo: 'Il messaggio \u00e8 troppo lungo.', informativa: 'Informativa sulla privacy',
-      etichetta: 'Risposte automatiche e team Amim\u00ec.', scrivi: 'Scrivi al team Amim\u00ec', invia: 'Invia', persona: 'Parla con una persona',
-      personaFatto: 'Il team \u00e8 stato avvisato', tu: 'Tu', automatica: 'Risposta automatica', staff: 'Team Amim\u00ec', anchePerEmail: 'inviato anche via email',
-      inInvio: 'Invio...', nonInviato: 'Non inviato.', riprova: 'Riprova', spenta: 'La chat non \u00e8 disponibile in questo momento. Scrivici a ',
+      titolo: 'Chat Amim\u00ec: risposte automatiche e team', titoloAi: 'Assistente AI di Amim\u00ec', chiudi: 'Chiudi la chat', prova: 'PROVA', carica: 'Un momento...',
+      nome: 'Nome (facoltativo)', email: 'La tua email', inviaTeam: 'Invia al team', emailTitolo: 'Per passarti al team',
+      verifica: 'Un attimo...', emailKo: 'Scrivi un indirizzo email valido.', nomeKo: 'Il nome \u00e8 troppo lungo.',
+      testoKo: 'Il messaggio \u00e8 troppo lungo.', informativa: 'Informativa', privacy: 'Informativa sulla privacy',
+      etichetta: 'Risposte automatiche e team Amim\u00ec.', scrivi: 'Scrivi un messaggio', scriviAi: 'Scrivi la tua domanda', invia: 'Invia', persona: 'Parla con una persona',
+      personaFatto: 'Il team \u00e8 stato avvisato', tu: 'Tu', automatica: 'Risposta automatica', ai: 'Assistente AI', staff: 'Team Amim\u00ec', anchePerEmail: 'inviato anche via email',
+      sta: 'L\'assistente sta scrivendo...', inInvio: 'Invio...', nonInviato: 'Non inviato.', riprova: 'Riprova', spenta: 'La chat non \u00e8 disponibile in questo momento. Scrivici a ',
       spentaChat: 'La chat non \u00e8 disponibile in questo momento: i messaggi nuovi non partono. Scrivici a ', nonDisponibile: 'La chat non risponde in questo momento. Riprova tra poco o scrivici a ',
       limite: 'Oggi la chat ha raggiunto il numero massimo di conversazioni. Scrivici a ', verificaKo: 'Non siamo riusciti a completare la verifica anti-spam. Riprova o scrivici a ',
       limiteMessaggi: 'Hai raggiunto il numero massimo di messaggi per questa chat: ti rispondiamo via email.', troppoVeloce: 'Un attimo: riprova tra qualche secondo.',
@@ -41,13 +44,13 @@
       errore: 'La chat non si \u00e8 caricata. ', riprovaCarica: 'Riprova', inviaA: 'Le risposte del team arrivano via email a ', bottoneKo: 'Questa risposta non \u00e8 disponibile ora.'
     },
     en: {
-      titolo: 'Amim\u00ec chat: automatic answers and team', chiudi: 'Close the chat', prova: 'TEST', carica: 'One moment...',
-      nome: 'Name (optional)', email: 'Email', messaggio: 'Message (optional)', inizia: 'Start the chat',
-      verifica: 'Anti-spam check in progress...', emailKo: 'Please enter a valid email address.', nomeKo: 'The name is too long.',
-      testoKo: 'The message is too long.', informativa: 'Privacy notice',
-      etichetta: 'Automatic answers and Amim\u00ec team.', scrivi: 'Write to the Amim\u00ec team', invia: 'Send', persona: 'Talk to a person',
-      personaFatto: 'Our team has been notified', tu: 'You', automatica: 'Automatic answer', staff: 'Amim\u00ec team', anchePerEmail: 'also sent by email',
-      inInvio: 'Sending...', nonInviato: 'Not sent.', riprova: 'Retry', spenta: 'The chat is not available right now. Write to us at ',
+      titolo: 'Amim\u00ec chat: automatic answers and team', titoloAi: 'Amim\u00ec AI assistant', chiudi: 'Close the chat', prova: 'TEST', carica: 'One moment...',
+      nome: 'Name (optional)', email: 'Your email', inviaTeam: 'Send to the team', emailTitolo: 'To pass you to our team',
+      verifica: 'One moment...', emailKo: 'Please enter a valid email address.', nomeKo: 'The name is too long.',
+      testoKo: 'The message is too long.', informativa: 'Privacy', privacy: 'Privacy notice',
+      etichetta: 'Automatic answers and Amim\u00ec team.', scrivi: 'Write a message', scriviAi: 'Write your question', invia: 'Send', persona: 'Talk to a person',
+      personaFatto: 'Our team has been notified', tu: 'You', automatica: 'Automatic answer', ai: 'AI assistant', staff: 'Amim\u00ec team', anchePerEmail: 'also sent by email',
+      sta: 'The assistant is typing...', inInvio: 'Sending...', nonInviato: 'Not sent.', riprova: 'Retry', spenta: 'The chat is not available right now. Write to us at ',
       spentaChat: 'The chat is not available right now: new messages cannot be sent. Write to us at ', nonDisponibile: 'The chat is not responding right now. Please try again shortly or write to us at ',
       limite: 'The chat has reached its maximum number of conversations for today. Write to us at ', verificaKo: 'We could not complete the anti-spam check. Please try again or write to us at ',
       limiteMessaggi: 'You have reached the maximum number of messages for this chat: we will reply by email.', troppoVeloce: 'One moment: please try again in a few seconds.',
@@ -111,9 +114,18 @@
   // un messaggio della risposta, controllato campo per campo; null = scartato
   function messaggioValido(m) {
     if (!m || typeof m !== 'object' || typeof m.seq !== 'number' || !isFinite(m.seq) || m.seq < 0 || typeof m.testo !== 'string') return null;
-    var autori = ['cliente', 'automatica', 'staff', 'sistema'];
+    var autori = ['cliente', 'automatica', 'ai', 'staff', 'sistema'];
     if (autori.indexOf(m.autore) < 0) return null;
     return { seq: m.seq, autore: m.autore, testo: m.testo, at: typeof m.at === 'string' ? m.at : '', via_email: m.via_email === true };
+  }
+  // chi firma la bolla (11.3 riga 4): l'assistente AI e' sempre "Assistente AI"; le risposte fisse, col bot acceso,
+  // vengono dallo stesso assistente; il team e' "Team Amimi"; gli avvisi della chat non hanno firma
+  function firma(autore, ai, T) {
+    if (autore === 'cliente') return T.tu;
+    if (autore === 'ai') return T.ai;
+    if (autore === 'automatica') return ai ? T.ai : T.automatica;
+    if (autore === 'staff') return T.staff;
+    return '';
   }
   // ==== PURE:chat-panel END ====
 
@@ -122,7 +134,7 @@
   var T = TESTI[lingua];
   var S = {
     aperto: false, iniziato: false, config: null, token: null, stato: null, email: null, cursore: 0, visti: {},
-    attivita: 0, movimento: 0, timer: null, fermo: false, inVolo: false,
+    attivita: 0, movimento: 0, timer: null, fermo: false, inVolo: false, serveEmail: false, avvio: null,
     tsId: null, tsToken: null, tsAt: 0, tsInCorso: false, tsAttese: [], tsCarica: [], errori: 0
   };
 
@@ -141,14 +153,14 @@
     dove.appendChild(document.createTextNode('.'));
     return dove;
   }
-  // ogni esito diventa {http, d}: rete giu', corpo interrotto o chiamata ferma oltre ATTESA_RETE_MS = {http: 0, d: null},
+  // ogni esito diventa {http, d}: rete giu', corpo interrotto o chiamata ferma oltre l'attesa = {http: 0, d: null},
   // mai una promessa rifiutata (che lascerebbe il pannello fermo a meta', Gate 2 B2)
-  function chiama(azione, corpo) {
+  function chiama(azione, corpo, attesaMs) {
     var opz = { method: corpo ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store' };
     if (corpo) { opz.headers = { 'Content-Type': 'application/json' }; opz.body = JSON.stringify(corpo); }
     var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     var tm = null;
-    if (ctrl) { opz.signal = ctrl.signal; tm = setTimeout(function () { ctrl.abort(); }, ATTESA_RETE_MS); }
+    if (ctrl) { opz.signal = ctrl.signal; tm = setTimeout(function () { ctrl.abort(); }, attesaMs || ATTESA_RETE_MS); }
     var fine = function () { if (tm) clearTimeout(tm); };
     return fetch(A.base + '/' + azione, opz)
       .then(function (r) { return r.text().then(function (t) { return { http: r.status, d: leggiRisposta(t) }; }); })
@@ -171,7 +183,7 @@
     '.corpo{flex:1;display:flex;flex-direction:column;min-height:0}' +
     '.scorre{flex:1;overflow-y:auto;padding:16px 16px 8px;overscroll-behavior:contain}' +
     '.intro p{margin:0 0 10px}.piccolo{font-size:13px;color:#555}.piccolo a,.intro a,.avviso a{color:inherit}' +
-    'form.modulo{display:flex;flex-direction:column;gap:10px;margin-top:6px}' +
+    'form.modulo{display:flex;flex-direction:column;gap:8px;margin:0}' +
     'label{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600;color:#333}' +
     'input,textarea{font:400 16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#1f1f1f;background:#fff;border:1px solid #bbb;' +
     'border-radius:10px;padding:9px 11px;box-sizing:border-box;width:100%;margin:0}' +
@@ -180,11 +192,14 @@
     '.prim:disabled,.chip:disabled{opacity:.55;cursor:default}' +
     '.errore{color:#b3261e;font-size:13px;margin:0}' +
     '.avviso{margin:8px 16px;padding:10px 12px;border-radius:10px;background:#fff4e5;color:#5f3b00;font-size:14px}' +
+    '.info{margin:0 16px 8px;padding:10px 12px;border-radius:10px;background:#f6f6f6;color:#333;font-size:13px}.info a{color:inherit}' +
     '.lista{display:flex;flex-direction:column;gap:10px}' +
     '.msg{max-width:85%;padding:9px 12px;border-radius:14px;background:#f2f2f2;align-self:flex-start;white-space:pre-wrap;overflow-wrap:anywhere}' +
     '.msg.cliente{align-self:flex-end;background:var(--amc-colore,#1f1f1f);color:#fff}' +
     '.msg.cliente a{color:#fff}.msg.staff{background:#eef3ec}' +
     '.msg.sistema{align-self:center;max-width:92%;background:#fff8e1;font-size:14px;text-align:center}' +
+    '.msg.sta{font-style:italic;color:#555}' +
+    '.scheda{align-self:stretch;max-width:none;background:#fff;border:1px solid #ddd;white-space:normal}' +
     '.chi{display:block;font-size:12px;font-weight:700;margin-bottom:2px}' +
     '.meta{display:block;font-size:11px;opacity:.7;margin-top:4px}' +
     '.msg.in-invio{opacity:.6}.msg.fallito{opacity:1;outline:2px solid #b3261e}' +
@@ -194,7 +209,7 @@
     '.chip.persona{background:#1f1f1f;color:#fff}' +
     '.scrivi{display:flex;gap:8px;align-items:flex-end;padding:10px 16px 6px}' +
     '.scrivi textarea{flex:1;max-height:120px}' +
-    '.nota{padding:0 16px 10px;font-size:12px;color:#555}.nota a{color:inherit}' +
+    '.nota{padding:0 16px 10px;font-size:12px;color:#555}.nota a,.nota .link{color:inherit}' +
     '.fondo{text-align:center;font-size:13px;color:#555;padding:4px 0}' +
     '.ts{display:flex;justify-content:center}' +
     '@media (max-width:480px){.pannello{top:0;left:0;right:0;bottom:0;width:100%;max-width:none;height:100%;max-height:none;border-radius:0}.sx .pannello{left:0}}';
@@ -238,7 +253,7 @@
   }
   function dimentica() {
     A.togli();
-    S.token = null; S.stato = null; S.email = null; S.cursore = 0; S.visti = {}; S.fermo = false; S.errori = 0;
+    S.token = null; S.stato = null; S.email = null; S.cursore = 0; S.visti = {}; S.fermo = false; S.errori = 0; S.serveEmail = false;
     ferma();
   }
 
@@ -279,8 +294,9 @@
       } catch (e) { rispondiTs(null); }
     });
   }
+  // la sfida parte al primo gesto nella chat ancora senza token (tasto, tocco, testo), non all'apertura
   function preparaTs() {
-    if (S.tsInCorso || (S.tsToken && Date.now() - S.tsAt < TS_VALIDO_MS)) return;
+    if (S.token || S.tsInCorso || (S.tsToken && Date.now() - S.tsAt < TS_VALIDO_MS)) return;
     S.tsInCorso = true;
     eseguiTs();
   }
@@ -329,8 +345,8 @@
     var r = window.Shopify && window.Shopify.routes && window.Shopify.routes.root;
     return typeof r === 'string' && /^\/([a-z]{2}(-[a-z]{2})?\/)?$/i.test(r) ? r : '/';
   }
-  function linkInformativa() {
-    var a = el('a', '', T.informativa);
+  function linkPrivacy() {
+    var a = el('a', '', T.privacy);
     a.href = radiceLingua() + 'policies/privacy-policy';
     a.target = '_blank';
     a.rel = 'noopener';
@@ -344,103 +360,31 @@
     l.appendChild(i);
     return { l: l, i: i };
   }
-
-  function vistaModulo() {
-    var c = vista('modulo');
+  // l'informativa breve (11.7): a vista dal link vicino al campo, e sempre dentro la scheda dell'email
+  function testoInformativa(dove) {
     var cfg = S.config;
-    var sc = el('div', 'scorre');
-    var intro = el('div', 'intro');
-    if (cfg.testi.saluto) intro.appendChild(el('p', '', cfg.testi.saluto[lingua]));
-    if (cfg.testi.orari) intro.appendChild(el('p', 'piccolo', cfg.testi.orari[lingua]));
-    sc.appendChild(intro);
-    var f = el('form', 'modulo');
-    f.noValidate = true;
-    var nome = campo(T.nome, 'input', 'text', cfg.limiti.nome);
-    nome.i.autocomplete = 'name';
-    var email = campo(T.email, 'input', 'email', 254);
-    email.i.autocomplete = 'email';
-    email.i.required = true;
-    var msg = campo(T.messaggio, 'textarea', '', cfg.limiti.testo);
-    msg.i.rows = 3;
-    var info = el('p', 'piccolo', cfg.testi.informativa[lingua] + ' ');
-    info.appendChild(linkInformativa());
-    var err = el('p', 'errore');
-    err.setAttribute('role', 'alert');
-    var slot = el('slot', 'ts');
-    slot.setAttribute('name', 'amc-ts');
-    var vai = el('button', 'prim', T.inizia);
-    vai.type = 'submit';
-    f.appendChild(nome.l);
-    f.appendChild(email.l);
-    f.appendChild(msg.l);
-    f.appendChild(info);
-    f.appendChild(slot);
-    f.appendChild(err);
-    f.appendChild(vai);
-    sc.appendChild(f);
-    c.appendChild(sc);
-    // Turnstile al primo gesto nel modulo (non al focus automatico dell'apertura): tasto, tocco o testo
-    f.addEventListener('keydown', preparaTs);
-    f.addEventListener('pointerdown', preparaTs);
-    f.addEventListener('input', preparaTs);
-    f.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var em = email.i.value.trim().toLowerCase();
-      var no = nome.i.value.trim();
-      var te = msg.i.value.trim();
-      err.textContent = '';
-      if (!emailOk(em)) { err.textContent = T.emailKo; email.i.focus(); return; }
-      if (contaCp(no) > cfg.limiti.nome) { err.textContent = T.nomeKo; nome.i.focus(); return; }
-      if (contaCp(te) > cfg.limiti.testo) { err.textContent = T.testoKo; msg.i.focus(); return; }
-      vai.disabled = true;
-      vai.textContent = T.verifica;
-      tokenTs(function (ts) {
-        if (!ts) { vai.disabled = false; vai.textContent = T.inizia; mail(err, T.verificaKo); return; }
-        var corpoAv = { email: em, lingua: lingua, informativa: cfg.informativa_versione, turnstile: ts, prova: prova };
-        if (no) corpoAv.nome = no;
-        if (te) { corpoAv.testo = te; corpoAv.client_id = nuovoUuid(window.crypto); }
-        chiama('avvia', corpoAv).then(function (r) {
-          var d = r.d;
-          if (d && d.ok === true && typeof d.token === 'string' && TOKEN_RE.test(d.token)) {
-            S.token = d.token;
-            S.stato = typeof d.stato === 'string' ? d.stato : 'bot';
-            S.email = typeof d.email === 'string' ? d.email : null;
-            S.attivita = Date.now();
-            S.movimento = Date.now();
-            S.cursore = 0;
-            salvaStato(true);
-            vistaChat();
-            mostra(d.messaggi);
-            if (d.testo_salvato === false) { V.testo.value = te; avviso(T.nonInviato, false); }
-            programma();
-            return;
-          }
-          vai.disabled = false;
-          vai.textContent = T.inizia;
-          var stato = d && d.state;
-          if (stato === 'spenta') { vistaTesto(T.spenta, true); return; }
-          if (r.http === 422 && d && d.campo === 'email') { err.textContent = T.emailKo; return; }
-          if (r.http === 422 && d && d.campo === 'nome') { err.textContent = T.nomeKo; return; }
-          if (r.http === 422 && d && d.campo === 'testo') { err.textContent = T.testoKo; return; }
-          mail(err, stato === 'verifica_fallita' ? T.verificaKo : stato === 'limite' ? T.limite : T.nonDisponibile);
-        });
-      });
-    });
-    if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) email.i.focus();
+    if (!cfg || !cfg.testi || !cfg.testi.informativa) return;
+    dove.appendChild(document.createTextNode(cfg.testi.informativa[lingua] + ' '));
+    dove.appendChild(linkPrivacy());
   }
 
   function vistaChat() {
     var c = vista('chat');
     var cfg = S.config;
+    var ai = !!(cfg && cfg.ai);
+    h2.textContent = ai ? T.titoloAi : T.titolo;
     var sc = el('div', 'scorre');
-    if (cfg && cfg.attiva && cfg.testi.saluto) {
-      var intro = el('div', 'intro');
-      intro.appendChild(el('p', 'piccolo', cfg.testi.saluto[lingua]));
-      sc.appendChild(intro);
-    }
     var lista = el('div', 'lista');
     lista.setAttribute('role', 'log');
     lista.setAttribute('aria-live', 'polite');
+    // il saluto dell'assistente apre la chat (11.3 riga 2): una bolla fissa, non un messaggio salvato
+    if (cfg && cfg.attiva && cfg.testi.saluto) {
+      var saluto = el('div', 'msg automatica');
+      saluto.appendChild(el('span', 'chi', firma('automatica', ai, T)));
+      saluto.appendChild(el('span', '', cfg.testi.saluto[lingua]));
+      lista.appendChild(saluto);
+      if (!ai && cfg.testi.orari) lista.appendChild(el('p', 'piccolo', cfg.testi.orari[lingua]));
+    }
     sc.appendChild(lista);
     var fondo = el('div', 'fondo');
     fondo.hidden = true;
@@ -450,6 +394,10 @@
     av.hidden = true;
     av.setAttribute('role', 'status');
     c.appendChild(av);
+    var info = el('div', 'info');
+    info.hidden = true;
+    testoInformativa(info);
+    c.appendChild(info);
     var rapidi = el('div', 'rapidi');
     var bott = cfg && cfg.attiva ? cfg.bottoni : [];
     for (var i = 0; i < bott.length; i++) {
@@ -465,28 +413,40 @@
     pers.addEventListener('click', function () { chiediPersona(pers); });
     rapidi.appendChild(pers);
     c.appendChild(rapidi);
+    var slot = el('slot', 'ts');
+    slot.setAttribute('name', 'amc-ts');
+    c.appendChild(slot);
     var form = el('form', 'scrivi');
     var ta = el('textarea');
     ta.rows = 2;
     ta.maxLength = cfg ? cfg.limiti.testo : 1000;
-    ta.placeholder = T.scrivi;
-    ta.setAttribute('aria-label', T.scrivi);
+    ta.placeholder = ai ? T.scriviAi : T.scrivi;
+    ta.setAttribute('aria-label', ai ? T.scriviAi : T.scrivi);
     var bi = el('button', 'prim', T.invia);
     bi.type = 'submit';
     form.appendChild(ta);
     form.appendChild(bi);
     c.appendChild(form);
+    // l'etichetta fissa vicino al campo (11.3 riga 3): col bot "Stai scrivendo a un assistente AI", poi l'informativa
     var nota = el('div', 'nota');
     var dest = el('span', 'dest');
     nota.appendChild(dest);
-    nota.appendChild(document.createTextNode(T.etichetta + ' '));
-    nota.appendChild(linkInformativa());
+    nota.appendChild(document.createTextNode(((ai && cfg.testi.etichetta) ? cfg.testi.etichetta[lingua] : T.etichetta) + ' '));
+    var li = el('button', 'link', T.informativa);
+    li.type = 'button';
+    li.setAttribute('aria-expanded', 'false');
+    li.addEventListener('click', function () { info.hidden = !info.hidden; li.setAttribute('aria-expanded', info.hidden ? 'false' : 'true'); });
+    nota.appendChild(li);
     c.appendChild(nota);
     form.addEventListener('submit', function (e) { e.preventDefault(); inviaTesto(); });
     ta.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); inviaTesto(); }
     });
-    V.lista = lista; V.scorre = sc; V.fondo = fondo; V.avviso = av; V.testo = ta; V.invia = bi; V.persona = pers; V.rapidi = rapidi; V.form = form; V.dest = dest;
+    // Turnstile al primo gesto nella chat (tasto, tocco o testo), solo finche' la chat non ha un token
+    c.addEventListener('keydown', preparaTs);
+    c.addEventListener('pointerdown', preparaTs);
+    c.addEventListener('input', preparaTs);
+    V.lista = lista; V.scorre = sc; V.fondo = fondo; V.avviso = av; V.testo = ta; V.invia = bi; V.persona = pers; V.rapidi = rapidi; V.form = form; V.dest = dest; V.scheda = null;
     mostraDestinatario();
     if (cfg && !cfg.attiva) bloccaScrittura(T.spentaChat);
     aggiornaPersona();
@@ -498,6 +458,7 @@
     V.invia.disabled = true;
     var b = V.rapidi.querySelectorAll('button');
     for (var i = 0; i < b.length; i++) b[i].disabled = true;
+    togliSchedaEmail();
     avviso(testo, true);
   }
   function avviso(testo, conMail) {
@@ -528,7 +489,7 @@
   }
   function bollaMsg(m) {
     var b = el('div', 'msg ' + m.autore);
-    var chi = m.autore === 'cliente' ? T.tu : m.autore === 'automatica' ? T.automatica : m.autore === 'staff' ? T.staff : '';
+    var chi = firma(m.autore, !!(S.config && S.config.ai), T);
     if (chi) b.appendChild(el('span', 'chi', chi));
     var p = el('span');
     var pz = pezziTesto(m.testo);
@@ -559,12 +520,122 @@
       var dopo = null;
       var figli = V.lista.querySelectorAll('[data-seq]');
       for (var j = 0; j < figli.length; j++) if (Number(figli[j].getAttribute('data-seq')) > m.seq) { dopo = figli[j]; break; }
-      var inv = V.lista.querySelector('.in-invio,.fallito');
+      var inv = V.lista.querySelector('.in-invio,.fallito,.sta,.scheda');
       V.lista.insertBefore(b, dopo || inv);
       if (m.autore !== 'cliente') nuovi++;
     }
     if (nuovi && S.aperto) inBasso();
     return nuovi;
+  }
+  // lo stato comune delle risposte di avvia, invia, passaggio e aggiorna
+  function leggiStato(d) {
+    if (typeof d.stato === 'string') S.stato = d.stato;
+    if (typeof d.email === 'string') { S.email = d.email; mostraDestinatario(); }
+    S.serveEmail = d.serve_email === true && S.stato === 'bot';
+    if (S.serveEmail) mostraSchedaEmail(); else togliSchedaEmail();
+    aggiornaPersona();
+  }
+
+  // ---- la scheda dell'email, dentro la conversazione, solo quando la chat la chiede ----
+  function togliSchedaEmail() {
+    if (V.scheda && V.scheda.parentNode) V.scheda.parentNode.removeChild(V.scheda);
+    if (V.nome === 'chat') V.scheda = null;
+  }
+  function mostraSchedaEmail() {
+    if (V.nome !== 'chat' || V.scheda) return;
+    var cfg = S.config;
+    var b = el('div', 'msg scheda');
+    var f = el('form', 'modulo');
+    f.noValidate = true;
+    f.appendChild(el('span', 'chi', T.emailTitolo));
+    var email = campo(T.email, 'input', 'email', 254);
+    email.i.autocomplete = 'email';
+    email.i.required = true;
+    var nome = campo(T.nome, 'input', 'text', cfg.limiti.nome);
+    nome.i.autocomplete = 'name';
+    var info = el('p', 'piccolo');
+    testoInformativa(info);
+    var err = el('p', 'errore');
+    err.setAttribute('role', 'alert');
+    var vai = el('button', 'prim', T.inviaTeam);
+    vai.type = 'submit';
+    f.appendChild(email.l);
+    f.appendChild(nome.l);
+    f.appendChild(info);
+    f.appendChild(err);
+    f.appendChild(vai);
+    b.appendChild(f);
+    V.lista.appendChild(b);
+    V.scheda = b;
+    f.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var em = email.i.value.trim().toLowerCase();
+      var no = nome.i.value.trim();
+      err.textContent = '';
+      if (!emailOk(em)) { err.textContent = T.emailKo; email.i.focus(); return; }
+      if (contaCp(no) > cfg.limiti.nome) { err.textContent = T.nomeKo; nome.i.focus(); return; }
+      vai.disabled = true;
+      var corpoP = { token: S.token, email: em };
+      if (no) corpoP.nome = no;
+      chiama('passaggio', corpoP).then(function (r) {
+        vai.disabled = false;
+        var d = r.d;
+        if (d && d.ok === true) {
+          S.attivita = Date.now();
+          S.movimento = Date.now();
+          leggiStato(d);
+          mostra(d.messaggi);
+          salvaStato();
+          inBasso();
+          programma();
+          return;
+        }
+        if (rifiutoComune(r, '')) return;
+        if (r.http === 422 && d && d.campo === 'email') { err.textContent = T.emailKo; return; }
+        if (r.http === 422 && d && d.campo === 'nome') { err.textContent = T.nomeKo; return; }
+        mail(err, d && d.state === 'troppo_veloce' ? T.troppoVeloce + ' ' : T.nonDisponibile);
+      });
+    });
+    inBasso();
+    if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) email.i.focus();
+  }
+
+  // ---- la chat nasce al primo invio: Turnstile, poi `avvia` senza email ----
+  function assicuraChat(cb) {
+    if (S.token) { cb(true); return; }
+    if (S.avvio) { S.avvio.push(cb); return; }
+    S.avvio = [cb];
+    var fine = function (ok) { var l = S.avvio; S.avvio = null; for (var i = 0; i < l.length; i++) l[i](ok); };
+    var cfg = S.config;
+    tokenTs(function (ts) {
+      if (!ts) { avviso(T.verificaKo, true); fine(false); return; }
+      chiama('avvia', { lingua: lingua, informativa: cfg.informativa_versione, turnstile: ts, prova: prova }).then(function (r) {
+        var d = r.d;
+        if (d && d.ok === true && typeof d.token === 'string' && TOKEN_RE.test(d.token)) {
+          S.token = d.token;
+          S.attivita = Date.now();
+          S.movimento = Date.now();
+          S.cursore = 0;
+          leggiStato(d);
+          salvaStato(true);
+          fine(true);
+          return;
+        }
+        var st = d && d.state;
+        if (st === 'spenta') { if (S.config) S.config.attiva = false; bloccaScrittura(T.spentaChat); }
+        else avviso(st === 'verifica_fallita' ? T.verificaKo : st === 'limite' ? T.limite : T.nonDisponibile, true);
+        fine(false);
+      });
+    });
+  }
+  // "l'assistente sta scrivendo": solo mentre aspettiamo una risposta del bot
+  function staScrivendo(si) {
+    if (V.nome !== 'chat') return;
+    var x = V.lista.querySelector('.sta');
+    if (!si) { if (x) x.parentNode.removeChild(x); return; }
+    if (x || !(S.config && S.config.ai) || S.stato !== 'bot') return;
+    V.lista.appendChild(el('div', 'msg sta', T.sta));
+    inBasso();
   }
 
   // ---- azioni della cliente ----
@@ -578,7 +649,7 @@
     return false;
   }
   function inviaTesto(riprovaDi) {
-    if (!S.token || V.nome !== 'chat') return;
+    if (V.nome !== 'chat' || !S.config || !S.config.attiva) return;
     var testo = riprovaDi ? riprovaDi.testo : V.testo.value.trim();
     if (!testo) return;
     if (contaCp(testo) > S.config.limiti.testo) { avviso(T.testoKo, false); return; }
@@ -587,27 +658,14 @@
     if (!riprovaDi) {
       b.appendChild(el('span', '', testo));
       b.appendChild(el('span', 'meta', T.inInvio));
-      V.lista.appendChild(b);
+      V.lista.insertBefore(b, V.lista.querySelector('.scheda'));
       V.testo.value = '';
       inBasso();
     }
     b.className = 'msg cliente in-invio';
     avviso('', false);
-    chiama('invia', { token: S.token, client_id: cid, testo: testo }).then(function (r) {
-      var d = r.d;
-      if (d && d.ok === true) {
-        if (b.parentNode) b.parentNode.removeChild(b);
-        S.stato = typeof d.stato === 'string' ? d.stato : S.stato;
-        S.attivita = Date.now();
-        S.movimento = Date.now();
-        mostra(d.messaggi);
-        aggiornaPersona();
-        salvaStato();
-        inBasso();
-        riprogramma(1500);
-        return;
-      }
-      if (rifiutoComune(r, testo)) { if (b.parentNode) b.parentNode.removeChild(b); return; }
+    var fallito = function (d) {
+      staScrivendo(false);
       b.className = 'msg cliente fallito';
       var meta = b.querySelector('.meta');
       svuota(meta);
@@ -616,46 +674,70 @@
       rb.type = 'button';
       rb.addEventListener('click', function () { meta.textContent = T.inInvio; inviaTesto({ testo: testo, cid: cid, bolla: b }); });
       meta.appendChild(rb);
+    };
+    assicuraChat(function (ok) {
+      if (!ok) { fallito(null); return; }
+      staScrivendo(true);
+      chiama('invia', { token: S.token, client_id: cid, testo: testo }, ATTESA_BOT_MS).then(function (r) {
+        var d = r.d;
+        staScrivendo(false);
+        if (d && d.ok === true) {
+          if (b.parentNode) b.parentNode.removeChild(b);
+          S.attivita = Date.now();
+          S.movimento = Date.now();
+          mostra(d.messaggi);
+          leggiStato(d);
+          salvaStato();
+          inBasso();
+          riprogramma(1500);
+          return;
+        }
+        if (rifiutoComune(r, testo)) { if (b.parentNode) b.parentNode.removeChild(b); return; }
+        fallito(d);
+      });
     });
   }
   function inviaBottone(bt, x) {
-    if (!S.token) return;
     x.disabled = true;
-    chiama('invia', { token: S.token, client_id: nuovoUuid(window.crypto), bottone: bt.id }).then(function (r) {
-      x.disabled = false;
-      var d = r.d;
-      if (d && d.ok === true) {
-        S.attivita = Date.now();
-        S.movimento = Date.now();
-        mostra(d.messaggi);
-        salvaStato();
-        inBasso();
-        return;
-      }
-      if (rifiutoComune(r, '')) return;
-      avviso(d && d.state === 'bottone_non_disponibile' ? T.bottoneKo : d && d.state === 'troppo_veloce' ? T.troppoVeloce : T.nonInviato, false);
+    assicuraChat(function (ok) {
+      if (!ok) { x.disabled = false; return; }
+      chiama('invia', { token: S.token, client_id: nuovoUuid(window.crypto), bottone: bt.id }).then(function (r) {
+        x.disabled = false;
+        var d = r.d;
+        if (d && d.ok === true) {
+          S.attivita = Date.now();
+          S.movimento = Date.now();
+          mostra(d.messaggi);
+          leggiStato(d);
+          salvaStato();
+          inBasso();
+          return;
+        }
+        if (rifiutoComune(r, '')) return;
+        avviso(d && d.state === 'bottone_non_disponibile' ? T.bottoneKo : d && d.state === 'troppo_veloce' ? T.troppoVeloce : T.nonInviato, false);
+      });
     });
   }
   function chiediPersona(x) {
-    if (!S.token) return;
     x.disabled = true;
-    chiama('passaggio', { token: S.token }).then(function (r) {
-      var d = r.d;
-      if (d && d.ok === true) {
-        S.stato = typeof d.stato === 'string' ? d.stato : S.stato;
-        if (typeof d.email === 'string') { S.email = d.email; mostraDestinatario(); }
-        S.attivita = Date.now();
-        S.movimento = Date.now();
-        mostra(d.messaggi);
+    assicuraChat(function (ok) {
+      if (!ok) { aggiornaPersona(); return; }
+      chiama('passaggio', { token: S.token }).then(function (r) {
+        var d = r.d;
+        if (d && d.ok === true) {
+          S.attivita = Date.now();
+          S.movimento = Date.now();
+          mostra(d.messaggi);
+          leggiStato(d);
+          salvaStato();
+          inBasso();
+          programma();
+          return;
+        }
         aggiornaPersona();
-        salvaStato();
-        inBasso();
-        programma();
-        return;
-      }
-      aggiornaPersona();
-      if (rifiutoComune(r, '')) return;
-      avviso(d && d.state === 'troppo_veloce' ? T.troppoVeloce : T.nonInviato, false);
+        if (rifiutoComune(r, '')) return;
+        avviso(d && d.state === 'troppo_veloce' ? T.troppoVeloce : T.nonInviato, false);
+      });
     });
   }
   function mostraChiusa() {
@@ -666,6 +748,7 @@
     V.invia.disabled = true;
     var b = V.rapidi.querySelectorAll('button');
     for (var i = 0; i < b.length; i++) b[i].disabled = true;
+    togliSchedaEmail();
     svuota(V.avviso);
     V.avviso.appendChild(document.createTextNode(T.chiusa + ' '));
     var n = el('button', 'link', T.nuova);
@@ -676,10 +759,10 @@
   }
   function nuovaChat() {
     dimentica();
-    if (S.config && S.config.attiva) vistaModulo(); else vistaTesto(T.spenta, true);
+    if (S.config && S.config.attiva) vistaChat(); else vistaTesto(T.spenta, true);
   }
 
-  // ---- polling: solo a pannello aperto e scheda visibile ----
+  // ---- polling: solo a pannello aperto e scheda visibile, e solo con una chat nata ----
   function ferma() { if (S.timer) { clearTimeout(S.timer); S.timer = null; } }
   function riprogramma(ms) { ferma(); if (S.aperto && !document.hidden && S.token) S.timer = setTimeout(aggiorna, ms); }
   function programma() {
@@ -713,8 +796,7 @@
         for (var i = 0; i < ms.length; i++) if (ms[i] && typeof ms[i].seq === 'number' && ms[i].seq > S.cursore) S.cursore = ms[i].seq;
         var nuovi = mostra(ms);
         if (nuovi) { S.movimento = Date.now(); S.attivita = Date.now(); if (V.fondo) V.fondo.hidden = true; S.fermo = false; }
-        if (typeof d.stato === 'string') S.stato = d.stato;
-        aggiornaPersona();
+        leggiStato(d);
         salvaStato();
         if (S.stato === 'chiusa') { mostraChiusa(); return; }
         S.errori = 0;
@@ -752,8 +834,10 @@
     var lim = d.limiti && typeof d.limiti === 'object' ? d.limiti : {};
     var inf = testo(t.informativa);
     if (!inf || typeof d.informativa_versione !== 'string') return null;
+    var ai = d.ai === true && !!testo(t.etichetta);
     return {
-      attiva: true, testi: { saluto: testo(t.saluto), orari: testo(t.orari), informativa: inf }, bottoni: bott, informativa_versione: d.informativa_versione,
+      attiva: true, ai: ai, testi: { saluto: testo(t.saluto), orari: testo(t.orari), informativa: inf, etichetta: ai ? testo(t.etichetta) : null },
+      bottoni: bott, informativa_versione: d.informativa_versione,
       limiti: { testo: Number.isInteger(lim.testo) && lim.testo > 0 ? lim.testo : 1000, nome: Number.isInteger(lim.nome) && lim.nome > 0 ? lim.nome : 80 }
     };
   }
@@ -771,7 +855,7 @@
         vistaTesto(T.errore, false, T.riprovaCarica, inizia);
         return;
       }
-      S.config = cfg.attiva ? cfg : { attiva: false, bottoni: [], limiti: { testo: 1000, nome: 80 } };
+      S.config = cfg.attiva ? cfg : { attiva: false, ai: false, bottoni: [], limiti: { testo: 1000, nome: 80 }, testi: {} };
       if (S.token) {
         vistaChat();
         S.movimento = Date.now();
@@ -780,7 +864,8 @@
         return;
       }
       if (!cfg.attiva) { vistaTesto(T.spenta, true); return; }
-      vistaModulo();
+      // niente modulo: la chat si apre sul saluto, col campo per scrivere; la sessione nasce al primo invio
+      vistaChat();
     });
   }
   function apri() {

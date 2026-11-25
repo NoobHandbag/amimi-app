@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   if (window.__amimiChat) return;
-  var VERSIONE = 'w-1';
+  var VERSIONE = 'w-2';
   var CHIAVE = 'amimi_chat_v1';
   var INATTIVITA_MS = 4 * 3600 * 1000;
   var BASE = '/apps/chat';
