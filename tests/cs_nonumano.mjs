@@ -66,5 +66,16 @@ t('42 C1: X-Autoreply: true conta', auto('Domanda', '', 'true'));
 t('43 C2: "Out of office hours shopping?" e\' una cliente', !auto('Out of office hours shopping?'));
 t('44 C2: "Out of office" da solo conta', auto('Out of office'));
 
+// v38 (25-11, Dan: "se ha un noreply ovunque, non e' una persona"). I primi sette sono indirizzi veri
+// dello storico che la v37 lasciava passare (cloudplatform-noreply era finito in coda).
+console.log('\n== v38: noreply in qualunque punto dell\'indirizzo ==');
+for (const [i, em] of [['45', 'cloudplatform-noreply@google.com'], ['46', 'googlebase-noreply@google.com'], ['47', 'payments-noreply@google.com'], ['48', 'drive-shares-dm-noreply@google.com'], ['49', 'posteinfo-noreply@posteitaliane.it'], ['50', 'no_reply@communications.paypal.com'], ['51', 'google-workspace-alerts-noreply@google.com'], ['52', 'info@noreply.esempio.it'], ['53', 'mail.do_not_reply@banca.it'], ['54', 'alerts-no-reply@banca.it'], ['55', 'servizio.donotreply@inps.it'], ['56', 'NO.REPLY@ESEMPIO.COM']]) {
+  t(`${i} ${em}`, isMittenteDiSistema(em));
+}
+for (const [i, em] of [['57', 'stefano.reply@gmail.com'], ['58', 'marino@reply.it'], ['59', 'info@replyshop.it'], ['60', 'bruno_reply@libero.it']]) {
+  t(`${i} persona: ${em} resta in coda`, !isMittenteDiSistema(em));
+}
+t('61 le due eccezioni della v37 valgono anche col noreply in mezzo', !isMittenteDiSistema('shop-noreply@mailer.shopify.com') && !isMittenteDiSistema('marketplace-noreply@zalando.it', 'giulia.rossi@gmail.com'));
+
 console.log(`\n${ok}/${ok + ko} verdi`);
 if (ko) process.exit(1);
