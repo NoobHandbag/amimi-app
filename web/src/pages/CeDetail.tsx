@@ -30,6 +30,7 @@ type Src =
 type RowDef = {
   grp?: string; k?: string; lab?: string; unit?: 'e' | 'n';
   kind?: 'rev' | 'cost' | 'muted'; strong?: boolean; sub?: boolean; mc?: 1 | 2; pctOf?: 'mc1' | 'mc2'; src?: Src;
+  onlyTotale?: boolean;
 };
 
 const ROWS: RowDef[] = [
@@ -63,6 +64,11 @@ const ROWS: RowDef[] = [
   { k: 'fissi_tot', lab: 'Totale costi fissi', unit: 'e', kind: 'cost', sub: true, src: { type: 'sub' } },
   { k: 'mc2', lab: 'MC2 · utile', unit: 'e', mc: 2, src: { type: 'formula' } },
   { k: 'mc2p', lab: 'MC2 % su netto', pctOf: 'mc2' },
+  // migr 0212: stima per competenza, fuori da MC2 e dal compenso soci; aliquote in ce_imposte_aliquote
+  { grp: 'Imposte stimate (da confermare con lo Studio)', onlyTotale: true },
+  { k: 'ires_stimata', lab: 'IRES stimata', unit: 'e', kind: 'cost', onlyTotale: true, src: { type: 'formula' } },
+  { k: 'irap_stimata', lab: 'IRAP stimata', unit: 'e', kind: 'cost', onlyTotale: true, src: { type: 'formula' } },
+  { k: 'utile_dopo_imposte', lab: 'Utile dopo imposte stimate', unit: 'e', mc: 2, onlyTotale: true, src: { type: 'formula' } },
   { grp: 'IVA' },
   { k: 'iva', lab: 'IVA a debito (22%)', unit: 'e', kind: 'muted', src: { type: 'formula' } },
 ];
@@ -101,7 +107,7 @@ export default function CeDetail({ onBack }: { onBack?: () => void }) {
   const closed = months.filter((m) => m < CUR);
   const hasB2B = rows.some((r) => r.b2b_netto !== 0 || r.b2b_pezzi !== 0);
 
-  const shown = ROWS.filter((r) => hasB2B || !r.k?.startsWith('b2b'));
+  const shown = ROWS.filter((r) => (hasB2B || !r.k?.startsWith('b2b')) && (scope === 'totale' || !r.onlyTotale));
 
   // KPI periodo (mesi chiusi)
   const sum = (k: string) => closed.reduce((s, m) => s + val(byMonth.get(m)!, k), 0);
@@ -153,6 +159,7 @@ export default function CeDetail({ onBack }: { onBack?: () => void }) {
     }
     if (k === 'mc1') return 'MC1 = Fatturato netto − Costi variabili (COGS, packaging, commissioni, logistica, resi, compenso soci). Tocca quelle celle per il dettaglio.';
     if (k === 'mc2') return 'MC2 (utile) = MC1 − Costi fissi (salari, tasse, logistica magazzino, OPEX, eventi, marketing). Tocca quelle celle per il dettaglio.';
+    if (k === 'ires_stimata' || k === 'irap_stimata' || k === 'utile_dopo_imposte') return 'Stima per competenza, non un pagamento: IRES 24% sull’utile progressivo dell’anno (MC2 del CE Totale), IRAP 3,9% su MC2 + salari, mai sotto zero sul progressivo; il mese porta la differenza col mese prima, quindi un mese in perdita restituisce parte dell’accantonamento. Le imposte 2026 si pagano nel 2027. Fuori da MC1, MC2 e dalla base del compenso soci. Aliquote e base da confermare con lo Studio CSSF (ce_imposte_aliquote).';
     if (k === 'iva') return 'IVA a debito = Lordo − Netto = Netto × 22%. Non è un costo del conto economico, è la quota da versare.';
     return '';
   }
@@ -309,7 +316,7 @@ function Drawer({ d, scope, onClose }: { d: DrillState; scope: Scope; onClose: (
             <div className="cedt-row" key={i}>
               <div className="di"><div className="dt">{r.operazione || '(senza descrizione)'}</div>
                 <div className="dm">{(r.date_paid ?? '').slice(0, 10)}{r.sottocategoria ? ' · ' + r.sottocategoria : ''}{scope === 'totale' && !r.amimi ? ' · personale' : ''}</div></div>
-              <div className="dv neg">{money(r.costo)}</div>
+              <div className={`dv ${r.costo < 0 ? 'neg' : ''}`}>{money(r.costo)}</div>
             </div>
           )) : <p className="muted center">Nessuna spesa in questo mese.</p>)}
 
