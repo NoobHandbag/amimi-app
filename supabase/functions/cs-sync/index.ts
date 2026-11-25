@@ -1,4 +1,7 @@
-// cs-sync v15 — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// cs-sync (versione corrente: la prima voce qui sotto) — tool assistenza clienti, FASE 1: ingest reale della posta cliente in cs_*.
+// v38 (2026-11-25, Dan: "se ha un noreply ovunque, non e' una persona"): noreply / no-reply / no_reply /
+//   donotreply / do-not-reply in QUALUNQUE punto dell'indirizzo (cloudplatform-noreply@google.com era
+//   finito in coda: la v37 lo voleva all'inizio). Blocco PURE:cs-nonumano.
 // v37 (2026-11-24, richiesta di Dan dopo la segnalazione di Ginevra del 23-11): risposte automatiche
 //   (header Auto-Submitted: auto-replied / X-Autoreply, o oggetto "Risposta automatica", "Out of
 //   office"...) e mittenti di sistema (noreply, notifications, newsletter...) vanno nel rumore
@@ -354,15 +357,20 @@ function denyMatch(voce: string, from: string, subject: string): boolean {
 //   - RISPOSTA AUTOMATICA: header `Auto-Submitted: auto-replied` (RFC 3834) o `X-Autoreply`, oppure
 //     un oggetto che COMINCIA con la formula del fuori ufficio. Solo `auto-replied`: `auto-generated`
 //     lo mettono anche notifiche che contano (contestazioni di pagamento), e non si tocca.
-//   - MITTENTE DI SISTEMA: la parte prima della @ e' noreply/do-not-reply (anche seguita da un
-//     separatore: no-reply-xyz@, noreply.internetbanking@) oppure ESATTAMENTE notifications,
-//     notifiche, newsletter, bounce. Gate 2 (B2): niente news/alerts/mailer/notify con separatore,
+//   - MITTENTE DI SISTEMA: un noreply in QUALUNQUE punto dell'indirizzo (v38: googlebase-noreply@,
+//     no_reply@communications.paypal.com, x@noreply.dominio.it) oppure la parte prima della @
+//     ESATTAMENTE notifications, notifiche, newsletter, bounce. Le forme col separatore (no-reply,
+//     no_reply, do-not-reply) contano solo se "no"/"do" apre una parola: stefano.reply@ e' una
+//     persona; "noreply" e "donotreply" attaccati contano ovunque. Misurato il 25-11 su tutto lo
+//     storico: 15 indirizzi in piu' (81 conversazioni), tutti Google, Poste, PayPal, nessuna persona.
+//     Gate 2 (B2): niente news/alerts/mailer/notify con separatore,
 //     che prendevano indirizzi personali (news.giulia@gmail.com). Gate 2 (B1): mai sul wrapper di
 //     Shopify (una notifica di chat con un oggetto nuovo resta visibile come prima) e mai quando il
 //     Reply-To porta a una persona (moduli o marketplace che scrivono da noreply per conto di una
 //     cliente).
 const RE_OGGETTO_AUTO = /^\s*(?:risposta automatica|automatic reply|auto(?:matic)?[- ]?(?:reply|response)|out of office|fuori ufficio|assente dall.ufficio|r[ée]ponse automatique|abwesenheitsnotiz|respuesta autom[áa]tica)(?:\s*:|\s*$)/i;
-const RE_LOCAL_SISTEMA = /^(?:(?:no-?reply|do-?not-?reply|donotreply)(?:[._+-].*)?|notifications?|notifiche|newsletter|bounces?)$/i;
+const RE_NOREPLY = /noreply|donotreply|(?:^|[^a-z0-9])(?:no|do[-_.]?not)[-_.]?reply/i;
+const RE_LOCAL_SISTEMA = /^(?:notifications?|notifiche|newsletter|bounces?)$/i;
 const RE_WRAPPER_SHOPIFY = /@(?:shopify\.com|mailer\.shopify\.com|shopifyemail\.com)$/i;
 function isRispostaAutomatica(subject: string, autoSubmitted: string, xAutoreply: string): boolean {
   if (/\bauto-replied\b/i.test(autoSubmitted || '')) return true;
@@ -372,7 +380,7 @@ function isRispostaAutomatica(subject: string, autoSubmitted: string, xAutoreply
 function localDiSistema(email: string): boolean {
   const f = (email || '').toLowerCase().trim();
   const i = f.lastIndexOf('@');
-  return i > 0 && RE_LOCAL_SISTEMA.test(f.slice(0, i));
+  return i > 0 && (RE_NOREPLY.test(f) || RE_LOCAL_SISTEMA.test(f.slice(0, i)));
 }
 function isMittenteDiSistema(from: string, replyTo = ''): boolean {
   const f = (from || '').toLowerCase().trim();
