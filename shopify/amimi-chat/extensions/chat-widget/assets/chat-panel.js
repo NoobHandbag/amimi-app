@@ -235,6 +235,10 @@
   pannello.appendChild(testata);
   var corpo = el('div', 'corpo');
   pannello.appendChild(corpo);
+  // Turnstile al primo gesto nella chat (tasto, tocco o testo), non all'apertura; preparaTs non fa nulla con un token
+  corpo.addEventListener('keydown', function () { if (V.nome === 'chat') preparaTs(); });
+  corpo.addEventListener('pointerdown', function () { if (V.nome === 'chat') preparaTs(); });
+  corpo.addEventListener('input', function () { if (V.nome === 'chat') preparaTs(); });
   A.cornice.appendChild(pannello);
   pannello.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); chiudi(); } });
   // Turnstile disegna in un div del DOM della pagina (il suo iframe), mostrato dentro il pannello con uno slot
@@ -442,10 +446,6 @@
     ta.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); inviaTesto(); }
     });
-    // Turnstile al primo gesto nella chat (tasto, tocco o testo), solo finche' la chat non ha un token
-    c.addEventListener('keydown', preparaTs);
-    c.addEventListener('pointerdown', preparaTs);
-    c.addEventListener('input', preparaTs);
     V.lista = lista; V.scorre = sc; V.fondo = fondo; V.avviso = av; V.testo = ta; V.invia = bi; V.persona = pers; V.rapidi = rapidi; V.form = form; V.dest = dest; V.scheda = null;
     mostraDestinatario();
     if (cfg && !cfg.attiva) bloccaScrittura(T.spentaChat);
