@@ -27,7 +27,7 @@ const RISPOSTA_MAX = 900;
 const DESCRIZIONE_MAX = 900;
 const MOTIVI = ['non_so', 'richiesta_persona', 'ordine', 'reso_rimborso', 'difetto_reclamo', 'su_misura', 'collaborazione', 'decisione', 'altro'];
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{0,120}$/;
-const EMAIL_IN_TESTO_RE = /[^\s<>,;:"'()[\]@]+@[^\s<>,;:"'()[\]@]+\.[a-z]{2,}/gi;
+const EMAIL_IN_TESTO_RE = /[^\s<>,;:"'()[\]@]+@[^\s<>,;:"'()[\]@]+\.[^\s<>,;:"'()[\]@]{2,}/gu;
 const COTONE_RE = /^(cotone|cotton)$/i;
 const PELLE_RE = /^(pelle|vera pelle|leather|borse in pelle)$/i;
 
@@ -132,15 +132,19 @@ export function impronta(s: string): string {
 
 // ---- contesto del turno (mid-conversation system message, fuori dalla cache) ----
 const GIORNI_IT = ['domenica', 'lunedi\'', 'martedi\'', 'mercoledi\'', 'giovedi\'', 'venerdi\'', 'sabato'];
-export function contestoTurno(ora: number, lingua: string): string {
+// la data e l'ora del contesto NON entrano fra le fonti dei numeri (Gate 2, B2: alle 14:30 "costa 30 EUR" passava): il
+// lint le ammette solo scritte esattamente cosi' (gg/mm/aaaa, hh:mm)
+export function contestoTurno(ora: number, lingua: string): { testo: string; esatti: string[] } {
   let data = '';
+  const esatti: string[] = [];
   try {
     const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', weekday: 'short', year: 'numeric', month: '2-digit',
       day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(ora)).map((x) => [x.type, x.value]));
     const g = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(String(p.weekday));
     data = `${GIORNI_IT[g] ?? ''} ${p.day}/${p.month}/${p.year}, ore ${p.hour}:${p.minute} a Milano`;
+    esatti.push(`${p.day}/${p.month}/${p.year}`, `${p.hour}:${p.minute}`);
   } catch { data = ''; }
-  return `Contesto del turno (dalla chat, non dalla cliente): ${data ? 'oggi e\' ' + data + '. ' : ''}La cliente scrive dal sito; lingua del sito: ${lingua === 'en' ? 'inglese' : 'italiano'}. Rispondi nella lingua in cui scrive la cliente.`;
+  return { testo: `Contesto del turno (dalla chat, non dalla cliente): ${data ? 'oggi e\' ' + data + '. ' : ''}La cliente scrive dal sito; lingua del sito: ${lingua === 'en' ? 'inglese' : 'italiano'}. Rispondi nella lingua in cui scrive la cliente.`, esatti };
 }
 
 // ---- storia: solo cliente e bot, emails tolte, al massimo STORIA_MAX messaggi e STORIA_CARATTERI ----
@@ -272,13 +276,15 @@ async function eseguiStrumento(nome: string, input: unknown, lingua: string, dip
 // ---- lint bloccante (9.11 ridotta) ----
 const EMAIL_RE_G = /[^\s<>,;:"'()[\]@]+@[^\s<>,;:"'()[\]@]+\.[a-z]{2,}/gi;
 const URL_RE_G = /\bhttps?:\/\/[^\s<>"')\]]+/gi;
-const DOMINIO_RE_G = /\b(?:www\.)?[a-z0-9][a-z0-9-]*\.(?:it|com|net|org|eu|io|co|shop|store|uk|fr|de|es)\b(?:\/[^\s<>"')\]]*)?/gi;
+const DOMINIO_RE_G = /\b(?:www\.)?[a-z0-9][a-z0-9-]*\.(?:it|com|net|org|eu|io|co|shop|store|uk|fr|de|es|ru|app|xyz|info|biz|top|site|online|link|ly|gg|ch|nl|at|be|us|cn)\b(?:\/[^\s<>"')\]]*)?/gi;
 const TELEFONO_RE = /(?:\+|\b00)\d[\d\s.-]{6,}\d|\b\d{3}[\s.-]?\d{3}[\s.-]?\d{3,4}\b/;
-const CODICE_RE_G = /\b[A-Z]{3,}[0-9]{1,4}(?:-[A-Z0-9]+)?\b/g;
+const CODICE_RE_G = /\b[A-Z]{3,}[0-9]{1,4}(?:-[A-Z0-9]+)?\b|\b[A-Z][A-Z0-9]{2,}(?:-[A-Z0-9]{2,})+\b/g;
+// la parola dopo "codice"/"code" e' un codice se ha una maiuscola o una cifra ("codice BENVENUTO", "code Amimi20")
+const CODICE_DOPO_RE_G = /\b(?:codice|code|coupon)\s+(?:sconto\s+|promo\s+|discount\s+)?["'\u00ab]?([A-Za-z0-9][A-Za-z0-9-]{3,})/gi;
 const MESI_RE = /\b(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre|january|february|march|april|may|june|july|august|september|october|november|december)\b/gi;
 // in JavaScript \w e \b sono solo ASCII anche col flag u: le parole italiane accentate ("tornerà", "rimborserò") e
 // scritte con l'apostrofo ("tornera'") si prendono con classi Unicode esplicite
-const RIASSORTIMENTO_RE = /riassort|torn[\p{L}'’]*\s+([\p{L}'’]+\s+)?disponibil|di nuovo disponibil|restock|back in stock|available again/iu;
+const RIASSORTIMENTO_RE = /riassort|torn[\p{L}'’]*\s+([\p{L}'’]+\s+)?(disponibil|in vendita)|di nuovo disponibil|rifar[\p{L}'’]*|riprodurr[\p{L}'’]*|nuova produzione|nuovo lotto|ristock|restock|back in stock|available again/iu;
 const TEMPO_RE = /\d|settiman|giorn|mes[ei]|presto|a breve|entro|week|day|month|soon|shortly/i;
 // azioni sull'ordine dette come fatte o promesse in prima persona (le regole generali della conoscenza, al presente o
 // alla seconda persona, come "ti mandiamo le istruzioni" o "spedirai il reso", restano lecite)
@@ -287,10 +293,17 @@ const AZIONI_RE = [
   /(?<![\p{L}])(rimborser|annuller|spedir|cambier|modificher|accetter|approver|prenoter|riserver|avviser|applicher)(ò|o'|o|emo)(?![\p{L}])/iu,
   /\b(I|we)\s*(?:'ve|\s+have)\s+(already\s+)?(cancel+ed|refunded|changed|shipped|approved|applied|reserved|forwarded)\b/i,
   /\b(I|we)\s*(?:'ll|\s+will)\s+(refund|cancel|ship|change|reserve|notify|approve|apply)\b/i,
+  /\bti\s+(rimborsiamo|annulliamo|sostituiamo|cambiamo|riserviamo|prenotiamo|avvisiamo|accreditiamo)\b/iu,
+  /(?<![\p{L}])(faremo|facciamo|faccio|farò)\s+(il|un|lo|uno)\s+(rimborso|reso|cambio|sconto|annullamento|eccezione|omaggio)/iu,
+  /\bwe\s+(refund|cancel|replace)\s+(it|your|the)\b/i,
 ];
-const PERSONA_RE = [/(?<!non\s)\bsono\s+(una persona|un essere umano|umana|umano|una ragazza|un ragazzo)\b/i, /\bI(?:'m|\s+am)\s+(?!not\b)(a human|a real person|human|a person)\b/i];
+const PERSONA_RE = [/(?<!non\s)\bsono\s+(una persona|un essere umano|umana|umano|una ragazza|un ragazzo|una commessa|un commesso|un'operatrice|un operatore)\b/i,
+  /\bsono\s+[A-Z][\p{L}]+\s+(del|dal|di)\s+(team|negozio|amim)/u, /\b[Mm]i chiamo\s+[A-Z]/u, /\b[Mm]y name is\s+[A-Z]/, /\bI(?:'m|\s+am)\s+(?!not\b)(a human|a real person|human|a person)\b/i];
 const RISPOSTA_QUI_RE = [/rispond[\p{L}'’]*\s+(qui|in chat|in questa chat|subito)/iu, /\b(reply|answer|respond)\w*\s+(here|in (this|the) chat|right away|immediately)/i];
 const ITALIA_RE = /itali|italy/i;
+// una frase che dice DOVE e' fatto un prodotto: "fatta in Italia", "Made in Italy", "a mano a Milano", "produzione italiana"
+const PRODUZIONE_LUOGO_RE = /(fatt|prodott|realizzat|made|cucit|lavorat|artigian|manifattur|produzion|produc|craft|handmade|hand-made)[^.!?\n]{0,60}(itali|italy|milano|milan)|(itali|italy)[^.!?\n]{0,20}(made|craft)|\bitalian[ae]?\b/iu;
+const PELLE_RE_T = /pelle|leather|cuoio|camoscio|suede/i;
 const FAMIGLIE_COTONE_RE = /\b(nina|laptop cover|mini case|sunglass cover|airpod cover)\b/i;
 
 // i numeri di un testo, normalizzati: "3,90" = "3.90" = "3.9"; "180,00" = "180.0" = "180"
@@ -311,7 +324,7 @@ export function nuovoCorpus(): Corpus { return { testo: '', numeri: new Set(), c
 export function aggiungiCorpus(c: Corpus, s: string): void { c.testo += '\n' + s; for (const n of numeri(s)) c.numeri.add(n); }
 
 // [] = va bene; altrimenti l'elenco delle regole violate (nomi fissi, mai il testo)
-export function lint(testo: string, c: Corpus, etichette: Set<string>, ordiniCliente: Set<string>): string[] {
+export function lint(testo: string, c: Corpus, etichette: Set<string>, ordiniCliente: Set<string>, esatti: string[] = [], ultimoCliente = ''): string[] {
   const v: string[] = [];
   const t = testo;
   if (!t.trim()) v.push('vuota');
@@ -322,10 +335,16 @@ export function lint(testo: string, c: Corpus, etichette: Set<string>, ordiniCli
   const urls = urlDi(t);
   for (const u of urls) {
     let ok = false;
-    try { const x = new URL(u); ok = x.protocol === 'https:' && (x.hostname === 'amimi.it' || x.hostname === 'www.amimi.it') && (x.pathname === '/' || c.testo.includes(`https://amimi.it${x.pathname}`)); } catch { ok = false; }
+    try {
+      const x = new URL(u);
+      const esatto = new RegExp('https://amimi\\.it' + x.pathname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9/_%-])');
+      ok = x.protocol === 'https:' && (x.hostname === 'amimi.it' || x.hostname === 'www.amimi.it') && !x.search && !x.hash && !x.username && !x.port
+        && (x.pathname === '/' || esatto.test(c.testo));
+    } catch { ok = false; }
     if (!ok) { v.push('link'); break; }
   }
-  const senzaUrl = t.replace(URL_RE_G, ' ').replace(EMAIL_RE_G, ' ');
+  let senzaUrl = t.replace(URL_RE_G, ' ').replace(EMAIL_RE_G, ' ');
+  for (const e of esatti) if (e) senzaUrl = senzaUrl.split(e).join(' ');
   for (const d of senzaUrl.match(DOMINIO_RE_G) ?? []) if (!/^(www\.)?amimi\.it(\/|$)/i.test(d)) { v.push('link'); break; }
   // numeri: ognuno nelle fonti; un numero d'ordine (#1234) solo se l'ha scritto la cliente
   const ordini = new Set([...senzaUrl.matchAll(/#\s?(\d{3,7})\b/g)].map((m) => m[1]));
@@ -333,6 +352,7 @@ export function lint(testo: string, c: Corpus, etichette: Set<string>, ordiniCli
   for (const o of ordini) if (!ordiniCliente.has(o)) { v.push('numero_senza_fonte'); break; }
   for (const m of senzaUrl.match(MESI_RE) ?? []) if (!c.testo.toLowerCase().includes(m.toLowerCase())) { v.push('data_senza_fonte'); break; }
   for (const k of t.match(CODICE_RE_G) ?? []) if (!c.testo.includes(k)) { v.push('codice'); break; }
+  for (const m of t.matchAll(CODICE_DOPO_RE_G)) if (/[A-Z0-9]/.test(m[1]) && !c.testo.toLowerCase().includes(m[1].toLowerCase())) { v.push('codice'); break; }
   // riassortimento con un tempo nella STESSA frase (un prezzo in un'altra frase non conta); il nome del pulsante e' lecito
   const frasi = t.replace(/avvisami quando torna disponibile|notify me when (it'?s|it is) (back in stock|available)/ig, ' ').split(/(?<=[.!?\n])\s+/);
   if (frasi.some((f) => RIASSORTIMENTO_RE.test(f) && TEMPO_RE.test(f))) v.push('riassortimento');
@@ -340,10 +360,14 @@ export function lint(testo: string, c: Corpus, etichette: Set<string>, ordiniCli
   // parola, una famiglia in cotone o un prodotto in cotone trovato dagli strumenti nel turno), e in una frase su "tutte"
   // le borse quando la risposta parla di cotone. La voce della conoscenza che separa pelle (Italia) e cotone resta lecita.
   // Le AirPods Case esistono in pelle e in cotone: le decide il materiale dello strumento, non il nome.
+  // Gate 2, B1: il contesto di cotone vale per TUTTA la risposta (prodotti in cotone negli strumenti del turno, l'ultimo
+  // messaggio della cliente che parla di cotone, una frase della risposta che ne parla): allora nessuna frase dice dove e'
+  // fatto qualcosa, salvo una frase che nomina la pelle (la voce della conoscenza che separa pelle e cotone resta lecita).
+  // "Spedizione in Italia" non dice dove e' fatto niente e resta lecita.
   const parlaDiCotone = (f: string) => FAMIGLIE_COTONE_RE.test(f) || /cotone|cotton/i.test(f) || [...c.titoliCotone].some((x) => f.toLowerCase().includes(x));
   const frasiTutte = t.split(/(?<=[.!?\n;])\s+/);
-  const cotoneNellaRisposta = c.cotone || frasiTutte.some(parlaDiCotone);
-  if (/india/i.test(t) || frasiTutte.some((f) => ITALIA_RE.test(f) && (parlaDiCotone(f) || (cotoneNellaRisposta && /\btutt[eia]\b|\ball\b/i.test(f))))) v.push('cotone');
+  const cotoneNelTurno = c.cotone || parlaDiCotone(ultimoCliente) || frasiTutte.some(parlaDiCotone);
+  if (/india/i.test(t) || (cotoneNelTurno && frasiTutte.some((f) => PRODUZIONE_LUOGO_RE.test(f) && !PELLE_RE_T.test(f)))) v.push('cotone');
   if (AZIONI_RE.some((r) => r.test(t))) v.push('azione');
   if (PERSONA_RE.some((r) => r.test(t))) v.push('persona');
   if (RISPOSTA_QUI_RE.some((r) => r.test(t))) v.push('promessa_chat');
@@ -388,8 +412,9 @@ export async function turnoBot(inp: { modello: string; lingua: string; storia: T
   if (!MODELLI_AMMESSI.includes(inp.modello)) return esci({ esito: 'errore', errore: 'modello non ammesso' });
   const storia = messaggiDaStoria(inp.storia);
   if (!storia.length || storia[storia.length - 1].role !== 'user') return esci({ esito: 'errore', errore: 'storia senza messaggio della cliente' });
-  const contesto = contestoTurno(inizio, inp.lingua);
-  aggiungiCorpus(corpus, contesto);
+  const ctx = contestoTurno(inizio, inp.lingua);
+  const contesto = ctx.testo;
+  const ultimoCliente = [...inp.storia].reverse().find((m) => m.autore === 'cliente')?.testo ?? '';
   const base: Record<string, unknown>[] = [...storia, { role: 'system', content: contesto }];
   let giri: Record<string, unknown>[] = [];       // assistant(tool_use) + user(tool_result) del turno, aggiunti senza modifiche
   let rigenerata = false;
@@ -424,7 +449,7 @@ export async function turnoBot(inp: { modello: string; lingua: string; storia: T
       strumenti.push({ nome: 'passa_al_team', input: { motivo }, esito: 'ok', durata_ms: 0, fonti: [] });
       // la frase del bot prima del passaggio si mostra solo se passa il lint; senza, basta il testo fisso della chat
       const p = pulisciRisposta(testo, etichette);
-      const l = p.testo ? lint(p.testo, corpus, etichette, ordiniCliente) : ['vuota'];
+      const l = p.testo ? lint(p.testo, corpus, etichette, ordiniCliente, ctx.esatti, ultimoCliente) : ['vuota'];
       return esci({ esito: 'passa', motivo, testo: l.length ? null : p.testo, testoModello: testo || null, lint: l, rigenerata });
     }
     if (r.stop_reason === 'tool_use' && usi.length) {
@@ -443,7 +468,7 @@ export async function turnoBot(inp: { modello: string; lingua: string; storia: T
     // risposta finale
     const p = pulisciRisposta(testo, etichette);
     for (const k of p.citate) fonti.add(k);
-    const l = r.stop_reason === 'max_tokens' ? ['troncata'] : lint(p.testo, corpus, etichette, ordiniCliente);
+    const l = r.stop_reason === 'max_tokens' ? ['troncata'] : lint(p.testo, corpus, etichette, ordiniCliente, ctx.esatti, ultimoCliente);
     if (!l.length) return esci({ esito: 'risposta', testo: p.testo, testoModello: testo, rigenerata });
     ultimoLint = l;
     if (rigenerata) return esci({ esito: 'passa', motivo: 'controllo_automatico', testoModello: testo, lint: l, rigenerata });

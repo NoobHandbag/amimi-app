@@ -542,7 +542,8 @@
     if (V.nome === 'chat') V.scheda = null;
   }
   function mostraSchedaEmail() {
-    if (V.nome !== 'chat' || V.scheda) return;
+    // mai a chat spenta o chiusa (scrittura bloccata): Gate 2 del 25-11, C6
+    if (V.nome !== 'chat' || V.scheda || V.testo.disabled) return;
     var cfg = S.config;
     var b = el('div', 'msg scheda');
     var f = el('form', 'modulo');

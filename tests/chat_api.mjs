@@ -61,7 +61,7 @@ function nuovoDb() {
   const st = { flag: new Map(), cont: new Map(), sess: new Map(), tok: [], msg: [], ev: [], faq: new Map(), salute: [], seq: 0, tseq: 0,
     guasti: new Map(), flagChiesti: [], chiamate: [], proiezioni: [] };
   const guasto = (nome) => { const g = st.guasti.get(nome); if (g > 0) { st.guasti.set(nome, g - 1); throw new M.ErroreDb('guasto ' + nome); } };
-  const COLS = ['id', 'stato', 'passaggi', 'passaggio_at', 'customer_email', 'customer_name', 'lingua', 'prova', 'ultima_attivita_at', 'chiusa_at', 'ultima_risposta_staff_at', 'email_chiesta_at'];
+  const COLS = ['id', 'stato', 'passaggi', 'passaggio_at', 'customer_email', 'customer_name', 'lingua', 'prova', 'ultima_attivita_at', 'chiusa_at', 'ultima_risposta_staff_at', 'email_chiesta_at', 'informativa_versione'];
   const proj = (s) => Object.fromEntries(COLS.map((k) => [k, s[k] ?? (k === 'prova' ? false : null)]));
   const pick = (m) => ({ id: m.id, seq: m.seq, autore: m.autore, testo: m.testo, created_at: m.created_at, email_stato: m.email_stato, delivered_at: m.delivered_at });
   const db = {
@@ -1005,7 +1005,8 @@ console.log('\n== bot AI e chat senza modulo (api-6, Fase 2 ridotta) ==');
   const esito = (e) => ({ esito: 'risposta', testo: null, motivo: null, testoModello: null, strumenti: [], fonti: [], lint: [], rigenerata: false,
     usage: { input: 10, output: 5, cache_scrittura: 0, cache_lettura: 0, chiamate: 1 }, costoUsd: 0.0001, errore: null, versionePrompt: 'bot-1:x', durataMs: 5, ...e });
   const botFinto = (risposte) => { const f = async (inp, prenota) => { f.chiamate.push(inp); f.prenotate.push(await prenota()); return typeof risposte === 'function' ? risposte(inp) : risposte.shift(); }; f.chiamate = []; f.prenotate = []; return f; };
-  const avviaSenza = (x, extra = {}, o = {}) => chiama(x, 'avvia', { informativa: 'i-abc123', turnstile: tsA(), ...extra }, o);
+  const VERS_AI = 'i-' + sha(FLAG_AI.chat_testo_informativa_ai).slice(0, 12);
+  const avviaSenza = (x, extra = {}, o = {}) => chiama(x, 'avvia', { informativa: x.st.flag.get('chat_bot_ai_enabled') === 'true' ? VERS_AI : 'i-abc123', turnstile: tsA(), ...extra }, o);
   const testiDi = (x, sid, autore) => x.st.msg.filter((m) => m.sessione_id === sid && m.autore === autore).map((m) => m.testo);
 
   // ---- bot spento: la chat si apre senza email, il testo libero chiede l'email, il ticket nasce con l'email ----
@@ -1075,7 +1076,7 @@ console.log('\n== bot AI e chat senza modulo (api-6, Fase 2 ridotta) ==');
     t('B6b il bot riceve modello, lingua, conoscenza e la storia con l\'ultimo messaggio della cliente in fondo; il turno prenota una chiamata',
       bot.chiamate.length === 1 && bot.chiamate[0].modello === 'claude-haiku-5-5' && bot.chiamate[0].conoscenza[0].id === 'K39'
       && bot.chiamate[0].storia.at(-1).autore === 'cliente' && bot.prenotate[0] === true);
-    t('B6c un\'email scritta nel messaggio si salva anche senza passaggio (al passaggio non si richiede)', s.customer_email === 'giulia@esempio.it' && s.passaggi === 0);
+    t('B6c (Gate 2, A1) un\'email scritta di passaggio, senza che la chat l\'abbia chiesta, NON diventa l\'email della cliente', s.customer_email === null && s.passaggi === 0);
     const log = x.st.logAi ?? [];
     t('B6d registro: una riga, turno 1, esito inviata, costo e fonti, testo mostrato = messaggio', log.length === 1 && log[0].turno === 1 && log[0].esito === 'inviata'
       && log[0].costo_usd === 0.0001 && log[0].fonti[0] === 'P:lea' && log[0].testo_mostrato === 'La Lea costa 165,00 EUR.' && log[0].messaggio_id !== null && log[0].prova === false, log);
@@ -1166,6 +1167,67 @@ console.log('\n== bot AI e chat senza modulo (api-6, Fase 2 ridotta) ==');
     const a = await avviaSenza(x, {}, { bot });
     const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ciao' }, { bot });
     t('B16 conoscenza illeggibile: niente bot, rifiuto `riprova` (fallire chiusi, mai una risposta senza fonti)', bot.chiamate.length === 0 && i.d.state === 'riprova', i.d);
+  }
+
+  // ---- Gate 2 del 25-11 (revisore indipendente): A1, B3, C2, C4, C5 ----
+  {
+    const x = nuovo(FLAG_AI);
+    const bot = botFinto(() => esito({ esito: 'passa', motivo: 'ordine', testo: null }));
+    const a = await avviaSenza(x, {}, { bot });
+    const s = sessioneDi(x, a.d.token);
+    await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'il regalo e\' per mia sorella sara@esempio.it, dov\'e\' l\'ordine #1931?' }, { bot });
+    t('A1a email di una terza persona nel testo: il bot passa al team, ma il ticket NON si apre con quell\'indirizzo (la chat chiede l\'email)', s.customer_email === null && s.passaggi === 0 && s.email_chiesta_at !== null);
+    const i2 = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ho gia\' scritto a info@amimi.it' }, { bot });
+    t('A1b chat che chiede l\'email: un indirizzo del negozio nel testo non vale, la chat la chiede ancora', s.customer_email === null && i2.d.serve_email === true);
+    const p0 = pushInviati.length;
+    const i3 = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'la mia e\' anna@esempio.it' }, { bot });
+    t('A1c chat che chiede l\'email: l\'email della cliente apre il ticket', i3.d.stato === 'attesa_persona' && s.customer_email === 'anna@esempio.it' && pushInviati.length === p0 + 1);
+    t('C4 la richiesta dell\'email compare una volta sola per chat, anche se il bot passa al team piu\' volte', testiDi(x, s.id, 'automatica').length === 1);
+  }
+  {
+    const x = nuovo({ ...FLAG_AI, chat_testo_etichetta_ai: '{storto' });
+    const bot = botFinto([esito({ testo: 'mai' })]);
+    const c = await chiama(x, 'config', null, { metodo: 'GET' });
+    const a = await avviaSenza(x, {}, { bot });
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ciao' }, { bot });
+    t('B3a un testo del bot illeggibile (etichetta): config dice ai false E il testo libero non va al bot (stesso predicato)', c.d.ai === false && bot.chiamate.length === 0 && i.d.serve_email === true);
+  }
+  {
+    const x = nuovo(FLAG_AI);
+    const bot = botFinto([esito({ testo: 'mai' })]);
+    const a = await chiama(x, 'avvia', { informativa: 'i-abc123', turnstile: tsA() }, { bot });
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ciao' }, { bot });
+    t('B3b sessione nata con l\'informativa della Fase 1 (chat aperta prima del flag): niente bot, la chat chiede una persona', bot.chiamate.length === 0 && i.d.serve_email === true);
+  }
+  {
+    const x = nuovo(FLAG_AI);
+    const bot = botFinto(() => esito({ testo: 'Risposta.' }));
+    const a = await avviaSenza(x, {}, { bot });
+    x.st.guasti.set('contatore', 0);
+    const orig = x.db.contatore;
+    x.db.contatore = async (k, f, tt) => { if (k === 'glob:ai_chiamate') throw new M.ErroreDb('giu'); return orig(k, f, tt); };
+    const botTetto = async (inp, prenota) => { const okp = await prenota(); return esito({ esito: okp ? 'risposta' : 'tetto', testo: okp ? 'x' : null, usage: { input: 50, output: 0, cache_scrittura: 0, cache_lettura: 0, chiamate: 1 }, costoUsd: 0.0002 }); };
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ciao' }, { bot: botTetto });
+    const log = x.st.logAi ?? [];
+    t('C2a contatore delle chiamate in errore: passaggio, Salute in error col suo nome, turno registrato col costo', i.d.serve_email === true && x.st.salute.at(-1)?.causa === 'bot: contatore delle chiamate AI non scritto'
+      && log.length === 1 && log[0].costo_usd === 0.0002, { sal: x.st.salute.at(-1), log });
+  }
+  {
+    const x = nuovo(FLAG_AI);
+    const bot = botFinto([esito({ testo: 'Risposta del bot.', costoUsd: 0.0003 })]);
+    const a = await avviaSenza(x, {}, { bot });
+    x.st.guasti.set('aggiornaSessione', 1);
+    const orig = x.db.inserisciMessaggi;
+    x.db.inserisciMessaggi = async (righe) => { if (righe.some((r) => r.autore === 'ai')) throw new M.ErroreDb('giu'); return orig(righe); };
+    x.st.guasti.delete('aggiornaSessione');
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ciao' }, { bot });
+    t('C2b risposta del bot non scritta: la richiesta torna `riprova` ma il turno e il suo costo restano nel registro', i.d.state === 'riprova' && (x.st.logAi ?? [])[0]?.costo_usd === 0.0003, { d: i.d, log: x.st.logAi });
+  }
+  {
+    const x = nuovo(FLAG_AI);
+    const bot = botFinto([esito({ testo: 'mai' })]);
+    const a = await chiama(x, 'avvia', { informativa: 'i-' + sha(FLAG_AI.chat_testo_informativa_ai).slice(0, 12), turnstile: tsA(), testo: 'ciao dal w-1', client_id: randomUUID() }, { bot });
+    t('C5 avvia con un primo testo (solo i widget w-1): nessun turno del bot, la chat chiede una persona', a.d.ok === true && bot.chiamate.length === 0 && a.d.serve_email === true);
   }
   {
     const x = nuovo();
