@@ -653,9 +653,13 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             </div>
             {isUrg(c) && <span className="cs-urgpill" title={c.urgenza_motivo || 'urgente'}>🚨 {c.urgenza_motivo || 'urgente'}</span>}
           </div>
-          {!draftMode && c.canale !== 'rumore' && (
+          {/* 25-11: la riga delle azioni NON dipende piu' da draftMode. Dalla v33 le bozze pronte del
+              cron si aprono subito, quindi draftMode e' vero gia' all'apertura e con le chip spariva
+              anche "Prendo io / Conclusa / ⋯ Non e' un cliente" (Dan: "e' sparito il bottone"). In
+              modalita' bozza si comprimono solo le chip. */}
+          {c.canale !== 'rumore' && (
             <>
-              <div className="cs-chiprow">
+              {!draftMode && <div className="cs-chiprow">
                 <select className="cs-catchip" value={c.categoria ?? ''} disabled={savingCat} onChange={(e) => applyCat(e.target.value || null)} aria-label="Categoria">
                   <option value="">🏷️ da confermare</option>
                   {CS_CATEGORIES.map((k) => <option key={k.label} value={k.label}>{k.emoji} {k.label}</option>)}
@@ -668,7 +672,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                   <span key={f} className="cs-badge cs-flag">{flagLab(c, f, FLAG_LABEL)}</span>
                 ))}
                 {savingCat && <span className="muted" style={{ fontSize: 12 }}>salvo…</span>}
-              </div>
+              </div>}
               {/* chat del sito: le azioni (Prendo io, Chiudi, Rumore, Revoca, Cancella) stanno nel pannello della chat */}
               {!isChatSito(c) && <div className="cs-actions-row">
                 {c.stato === 'da_fare' && <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'in_corso')} type="button">✋ Prendo io</button>}
