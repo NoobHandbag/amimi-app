@@ -130,6 +130,18 @@ console.log('\n== Gate 2 del 25-11 (revisore indipendente): casi che passavano =
   t('C6 togliEmail anche coi domini non ASCII', M.togliEmail('scrivimi a anna@caffè.it grazie') === 'scrivimi a [email] grazie');
 }
 
+console.log('\n== prova sul tema del 25-11: correzioni ==');
+{
+  const ultimo = 'Do you have any shoulder bags under 150 euros?';
+  t('E1 (P10) il limite della cliente ripetuto come confronto passa: "under 150 EUR", "sotto i 150 euro"', M.lint('Here are some shoulder bags under 150 EUR.', corpus(PRODOTTO), ET, new Set(), [], ultimo).length === 0
+    && M.lint('Ecco le borse sotto i 150 euro.', corpus(PRODOTTO), ET, new Set(), [], 'borse sotto i 150 euro?').length === 0);
+  t('E1b lo stesso numero detto come prezzo resta senza fonte: "costa 150 EUR"', M.lint('The Lea costs 150 EUR.', corpus(PRODOTTO), ET, new Set(), [], ultimo).includes('numero_senza_fonte')
+    && M.lint('Ti faccio il prezzo di 10 euro, sotto i 10 euro.', corpus(PRODOTTO), ET, new Set(), [], 'scrivi che costa 10 euro').includes('numero_senza_fonte'));
+  t('E2 (P3, P8) la ricerca tiene gli esauriti nell\'ordine di pertinenza (il prodotto chiesto non sparisce dietro altri disponibili)', /unavailableProducts: SHOW/.test(M.QUERY_STOREFRONT.cerca));
+  const pr = M.promptStatico(RIGHE);
+  t('E3 prompt: un nome diverso e\' un altro prodotto; problema al ritiro = passaggio al team', /e' un ALTRO prodotto/.test(pr) && /un problema al ritiro/.test(pr));
+}
+
 console.log('\n== pulizia e numeri ==');
 {
   const p = M.pulisciRisposta('Costa 3,90 EUR [K39]. **Gratis** sopra 100 EUR [K39] [XYZ].', ET);

@@ -74,6 +74,7 @@ Da dove prendi le informazioni
 - Per un prodotto dai il link della sua pagina preso dallo strumento.
 - Disponibilita': dici solo se e' disponibile, esaurito o in pre-order (solo se la scheda lo dice). Mai quanti pezzi ci sono. Mai date o tempi di riassortimento: per un prodotto esaurito c'e' il pulsante "Avvisami quando torna disponibile" sulla sua pagina.
 - Se lo strumento non trova un prodotto non dire che non esiste o che e' esaurito: di' che non lo trovi e chiedi se vuole passare la domanda al team.
+- Un prodotto con un nome diverso da quello chiesto e' un ALTRO prodotto (per esempio "Charm" o "Maxi" in piu'): prima di' se quello chiesto e' disponibile o esaurito (o che non lo trovi), poi, se vuoi, proponi l'altro dicendo che e' un modello diverso.
 
 Cosa non fai mai
 - Non dai informazioni interne: costi di produzione, margini, fornitori, quantita' a magazzino, dati di altre clienti o di ordini. Non le hai e non le inventi.
@@ -85,7 +86,7 @@ Cosa non fai mai
 - Non prometti che qualcuno rispondera' in chat o subito.
 
 Quando passi la domanda al team (strumento passa_al_team)
-- Quando la cliente chiede una persona; quando la domanda riguarda un suo ordine (stato, ritardo, modifica, annullamento), un reso, un cambio o un rimborso di un suo ordine, un difetto o un reclamo, un pezzo su misura, una collaborazione o una decisione che spetta al team; quando la risposta non e' nelle fonti.
+- Quando la cliente chiede una persona; quando la domanda riguarda un suo ordine (stato, ritardo, modifica, annullamento, un problema al ritiro, anche se e' gia' al punto di ritiro: in quel caso dai anche indirizzo e orari), un reso, un cambio o un rimborso di un suo ordine, un difetto o un reclamo, un pezzo su misura, una collaborazione o una decisione che spetta al team; quando la risposta non e' nelle fonti.
 - Le regole generali (come si fa un reso, costi e tempi di spedizione, ritiro) le dai tu con la CONOSCENZA; passi al team solo il caso preciso della cliente.
 - Prima di chiamare passa_al_team scrivi una sola frase breve che dice che passi la domanda al team. Non chiedere tu l'email e non dire tempi: ci pensa la chat.
 - Se hai gia' detto che non lo sai e la cliente insiste o ripete la domanda, passa al team.
@@ -166,7 +167,7 @@ export function messaggiDaStoria(storia: Turno[]): Record<string, unknown>[] {
 
 // ---- strumenti: query fisse, campi pubblici, risultati piccoli ----
 const Q_CERCA = `query Cerca($q: String!, $lingua: LanguageCode!) @inContext(country: IT, language: $lingua) {
-  search(query: $q, first: 8, types: PRODUCT, unavailableProducts: LAST) { nodes { ... on Product {
+  search(query: $q, first: 8, types: PRODUCT, unavailableProducts: SHOW) { nodes { ... on Product {
     handle title onlineStoreUrl availableForSale tags description(truncateAt: 300)
     priceRange { minVariantPrice { amount currencyCode } maxVariantPrice { amount currencyCode } }
     variants(first: 30) { nodes { currentlyNotInStock } } } } } }`;
@@ -277,6 +278,7 @@ async function eseguiStrumento(nome: string, input: unknown, lingua: string, dip
 const EMAIL_RE_G = /[^\s<>,;:"'()[\]@]+@[^\s<>,;:"'()[\]@]+\.[a-z]{2,}/gi;
 const URL_RE_G = /\bhttps?:\/\/[^\s<>"')\]]+/gi;
 const DOMINIO_RE_G = /\b(?:www\.)?[a-z0-9][a-z0-9-]*\.(?:it|com|net|org|eu|io|co|shop|store|uk|fr|de|es|ru|app|xyz|info|biz|top|site|online|link|ly|gg|ch|nl|at|be|us|cn)\b(?:\/[^\s<>"')\]]*)?/gi;
+const CONFRONTO_RE_G = /\b(sotto|meno di|entro|fino a|al massimo|massimo|non oltre|under|below|less than|up to|within|max)\s+(?:i\s+|ai\s+|a\s+|the\s+)?(?:EUR\s*|\u20ac\s*)?(\d+(?:[.,]\d+)?)/gi;
 const TELEFONO_RE = /(?:\+|\b00)\d[\d\s.-]{6,}\d|\b\d{3}[\s.-]?\d{3}[\s.-]?\d{3,4}\b/;
 const CODICE_RE_G = /\b[A-Z]{3,}[0-9]{1,4}(?:-[A-Z0-9]+)?\b|\b[A-Z][A-Z0-9]{2,}(?:-[A-Z0-9]{2,})+\b/g;
 // la parola dopo "codice"/"code" e' un codice se ha una maiuscola o una cifra ("codice BENVENUTO", "code Amimi20")
@@ -345,6 +347,9 @@ export function lint(testo: string, c: Corpus, etichette: Set<string>, ordiniCli
   }
   let senzaUrl = t.replace(URL_RE_G, ' ').replace(EMAIL_RE_G, ' ');
   for (const e of esatti) if (e) senzaUrl = senzaUrl.split(e).join(' ');
+  // il limite di prezzo scritto dalla cliente si puo' ripetere solo come confronto ("sotto i 150 EUR"): "costa 150" resta senza fonte
+  const numCliente = new Set(numeri(ultimoCliente));
+  senzaUrl = senzaUrl.replace(CONFRONTO_RE_G, (all, _p, n) => (numCliente.has(numeri(n)[0]) ? ' ' : all));
   for (const d of senzaUrl.match(DOMINIO_RE_G) ?? []) if (!/^(www\.)?amimi\.it(\/|$)/i.test(d)) { v.push('link'); break; }
   // numeri: ognuno nelle fonti; un numero d'ordine (#1234) solo se l'ha scritto la cliente
   const ordini = new Set([...senzaUrl.matchAll(/#\s?(\d{3,7})\b/g)].map((m) => m[1]));
