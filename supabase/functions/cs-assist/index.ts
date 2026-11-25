@@ -1,4 +1,8 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// sorgente v34 (2026-11-25, decisione di Dan del 25-11 su P2 «Si', come la chat», migr 0211): le due righe del reso
+//   ammesso (ramo "Reso ammesso: istruzioni" e blocco CASO) dicono come la risposta standard A7 e la voce 7 della chat:
+//   niente etichette di reso, rimborso entro 14 giorni dall'accettazione del reso, dopo il controllo delle condizioni
+//   (prima: "entro 14 giorni dal rientro"). Nient'altro cambia.
 // sorgente v33 (2026-11-24, richiesta di Dan dopo la segnalazione di Ginevra del 23-11): BOZZE PRONTE.
 //   La bozza costa ~30 s di ragionamento di Gemini e l'operatrice la aspettava a schermo. Ora l'azione
 //   `predraft` (PIN, cron cs-assist-predraft ogni 2 minuti, interruttore app_flags.cs_predraft_attivo)
@@ -852,7 +856,7 @@ function casoRami(categoria: string | null, cd: { verificato: boolean; reso: Cas
   }
   // v31 (Dan 03-11): i giorni si contano dalla CONSEGNA; senza consegna nota nessun verdetto.
   if (cd.reso.verdetto === 'entro') {
-    R.push({ titolo: 'Reso ammesso: istruzioni', istruzione: `Reso AMMESSO: consegnato il ${dmy(cd.reso.delivered_at)} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla consegna). Istruzioni + link resi; spedizione di rientro a carico della cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` });
+    R.push({ titolo: 'Reso ammesso: istruzioni', istruzione: `Reso AMMESSO: consegnato il ${dmy(cd.reso.delivered_at)} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla consegna). Istruzioni + link resi; spedizione di rientro a carico della cliente, niente etichette di reso; rimborso sul metodo originale entro 14 giorni dall'accettazione del reso, dopo il controllo che sia in perfette condizioni.` });
     // Solo sul CAMBIO esiste un secondo esito che i dati non possono decidere: se la cliente e' a
     // Milano, il cambio in showroom evita del tutto la spedizione. Lo sa il team, non la tabella.
     if (categoria === 'Cambio e prodotto errato') {
@@ -905,7 +909,7 @@ function casoBlock(categoria: string | null, cd: { verificato: boolean; reso: Ca
     else if (cd.reso.difetto_sospetto) { /* la riga del difetto basta: nessun verdetto sulla finestra */ }
     // v31 (Dan 03-11): i giorni si contano dalla CONSEGNA; ordine agganciato senza consegna nota =
     // nessun verdetto e [DA VERIFICARE: data di consegna], mai un conto sulla data dell'ordine.
-    else if (cd.reso.verdetto === 'entro') L.push(`- Reso AMMESSO: consegnato il ${dmy(cd.reso.delivered_at)} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla consegna). Istruzioni + link resi; spedizione di rientro a carico del cliente; rimborso entro 14 giorni dal rientro sul metodo originale.` + (categoria === 'Cambio e prodotto errato' ? ' Per il CAMBIO: stessa finestra, spese a carico del cliente (salvo errore nostro: allora scuse e spese nostre).' : ''));
+    else if (cd.reso.verdetto === 'entro') L.push(`- Reso AMMESSO: consegnato il ${dmy(cd.reso.delivered_at)} (${cd.reso.giorni} giorni fa, entro i ${cd.reso.finestra} dalla consegna). Istruzioni + link resi; spedizione di rientro a carico del cliente, niente etichette di reso; rimborso sul metodo originale entro 14 giorni dall'accettazione del reso, dopo il controllo che sia in perfette condizioni.` + (categoria === 'Cambio e prodotto errato' ? ' Per il CAMBIO: stessa finestra, spese a carico del cliente (salvo errore nostro: allora scuse e spese nostre).' : ''));
     else if (cd.reso.verdetto === 'fuori') L.push(`- Reso NON ammesso: consegnato il ${dmy(cd.reso.delivered_at)}, ${cd.reso.giorni} giorni fa (finestra ${cd.reso.finestra} dalla consegna). Rifiuto GARBATO con un'alternativa concreta; se dovesse emergere un difetto, cambia tutto: proponi il contatto.`);
     else if (cd.verificato) L.push(`- Ordine agganciato ma data di CONSEGNA non nota: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla consegna in generale e usa [DA VERIFICARE: data di consegna]. MAI contare i giorni dalla data dell'ordine.`);
     else L.push(`- Ordine NON identificato con certezza: nessun verdetto sulla finestra. Spiega la regola dei ${cd.reso.finestra} giorni dalla consegna in generale e usa [DA VERIFICARE: numero ordine].`);
