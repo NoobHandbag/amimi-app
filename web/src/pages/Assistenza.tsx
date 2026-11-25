@@ -237,8 +237,6 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   const [current, setCurrent] = useState<CsConversation | null>(null);
   const [msgs, setMsgs] = useState<CsMessage[] | null>(null);
   const [menu, setMenu] = useState(false);
-  // menu overflow "..." della testata thread (redesign 31-07: "Non e' un cliente" e' un'azione rara)
-  const [moreOpen, setMoreOpen] = useState(false);
   const [err, setErr] = useState('');
   const [email, setEmail] = useState('');
   const [pwd, setPwd] = useState('');
@@ -348,7 +346,7 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     entra('thread', view === 'rumore' ? 'rumore' : 'coda');
     threadRef.current = c.id;
     setCurrent(c); setMsgs(null); setView('thread'); setErr('');
-    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]); setMoreOpen(false); setBozzaSalvata(null); setPronte(null);
+    setCtx(null); setCaso(null); setConfirmDate(''); setOptions(null); setBozzaText(''); setFonti([]); setRefineTxt(''); setCopied(false); setNonGrounded([]); setBozzaSalvata(null); setPronte(null);
     setSendOpen(false); setSending(false); setSendErr(''); setSendBloccato(false); setSentTo(null);
     let letti: CsMessage[] | null = null;
     try { const m = await fetchMessages(c.id); letti = m; if (threadRef.current === c.id) setMsgs(m); }
@@ -560,7 +558,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
     const domanda = condiviso
       ? 'Sposto questa conversazione nel Rumore. Il mittente è Shopify (porta le chat e i moduli di tutte le clienti): non viene bloccato. Confermi?'
       : `Blocco "${sender}" (le prossime mail finiscono nel Rumore) e sposto questa conversazione fuori dalla coda. Confermi?`;
-    if (!window.confirm(domanda)) return;
+    // 25-11: il bottone ora e' in vista e su telefono il suo title non si legge: la conferma dice anche come si torna indietro
+    if (!window.confirm(`${domanda}\n\nSi può annullare: la conversazione resta in “Rumore”, da dove si rimette in coda.`)) return;
     setSavingStato(true); setErr('');
     try {
       await addNoise(c.id, sender, ident);
@@ -683,19 +682,11 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
                 {c.stato !== 'fatto'
                   ? <button className="cs-btn cs-ghost cs-okbtn" disabled={savingStato} onClick={() => doStato(c, 'fatto')} type="button">✓ Conclusa</button>
                   : <button className="cs-btn cs-ghost" disabled={savingStato} onClick={() => doStato(c, 'da_fare')} type="button">↩ Riapri</button>}
-                <div className="cs-more-wrap">
-                  <button className="cs-btn cs-ghost cs-morebtn" onClick={() => setMoreOpen((o) => !o)} type="button" aria-label="Altre azioni" aria-expanded={moreOpen}>⋯</button>
-                  {moreOpen && (
-                    <div className="cs-moremenu">
-                      {/* UAT 02-08: la domanda aperta dell'owner ("marcare non-cliente scrive in
-                          denylist?") ha una risposta nel codice, ed e' SI: cs-api `add_noise`
-                          aggiunge il mittente a `cs_noise_senders` e sposta la conversazione in
-                          rumore. Ora il gesto lo dichiara invece di lasciarlo indovinare. */}
-                      <button type="button" disabled={savingStato} onClick={() => { setMoreOpen(false); doNoise(c); }}>🚫 Non è un cliente</button>
-                      <div className="cs-note" style={{ margin: '2px 8px 6px', textAlign: 'left' }}>Blocca anche i prossimi messaggi di questo mittente. Resta visibile in “Rumore”, da dove si può rimettere in coda.</div>
-                    </div>
-                  )}
-                </div>
+                {/* 25-11 (Dan: "ma non c'e'"): bottone visibile in testata, non piu' nel menu ⋯ del
+                    redesign 31-07. Cosa fa (cs-api `add_noise`: mittente in `cs_noise_senders`,
+                    conversazione nel Rumore) lo dichiara la conferma di doNoise prima di procedere. */}
+                <button className="cs-btn cs-ghost cs-noisebtn" disabled={savingStato} onClick={() => doNoise(c)} type="button"
+                  title="Blocca anche i prossimi messaggi di questo mittente. Resta visibile in “Rumore”, da dove si può rimettere in coda.">🚫 Non è un cliente</button>
               </div>}
             </>
           )}

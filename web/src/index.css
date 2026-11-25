@@ -690,6 +690,7 @@ button.kpibtn.selk { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(196
 .cs-actions-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
 .cs-actions-row .cs-btn { padding: 8px 12px; font-size: 12.5px; }
 .cs-okbtn { border-color: color-mix(in srgb, var(--positive) 40%, transparent); color: var(--positive-700); }
+.cs-noisebtn { margin-left: auto; border-color: color-mix(in srgb, var(--negative) 35%, transparent); color: var(--negative-700); }
 .cs-noisebtn { border-color: color-mix(in srgb, var(--negative) 35%, transparent); color: var(--negative-700); margin-left: auto; }
 /* --- toggle segmentato Tempo|Tema --- */
 .cs-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--card); }

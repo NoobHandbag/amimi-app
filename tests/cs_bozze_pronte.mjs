@@ -104,6 +104,11 @@ t('43 bozze pronte: testata piena (chip e riassunto), compressa solo dopo un cli
   /const draftMode = options !== null && !pronte;/.test(UI) && /\{!draftMode && c\.summary && \(/.test(UI)
   && /setGenBozza\(true\); genRef\.current = true;[^\n]*setPronte\(null\);/.test(UI)
   && /if \(options\) showToast\('Categoria cambiata: le proposte sono della categoria di prima/.test(UI));
+// 25-11 (Dan, "ma non c'e'"): "Non e' un cliente" e' un bottone visibile nella riga delle azioni, non
+// una voce del menu ⋯ (che nelle email non esiste piu'); la conferma di doNoise resta prima di scrivere.
+t('44 "Non è un cliente" visibile in testata, fuori da menu, con conferma',
+  /<button className="cs-btn cs-ghost cs-noisebtn" disabled=\{savingStato\} onClick=\{\(\) => doNoise\(c\)\}/.test(TESTATA)
+  && !/cs-morebtn|cs-moremenu|moreOpen/.test(UI) && /if \(!window\.confirm\(`\$\{domanda\}\\n\\nSi può annullare: la conversazione resta in “Rumore”/.test(UI));
 
 console.log(`\n${ok}/${ok + ko} verdi`);
 if (ko) process.exit(1);
