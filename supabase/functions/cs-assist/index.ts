@@ -1,4 +1,9 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// sorgente v35 (2026-11-25, OK di Dan in chat: «Sì, fallo»): `faqTono` legge `cs_faq` in ordine di id. Prima l'ordine era
+//   quello fisico della tabella, che cambia a ogni UPDATE (Gate 2 della migr 0211, C4; succedeva gia' dalle migr 0069 e
+//   0070): le bozze delle conversazioni senza categoria ricevono ora sempre le prime 4 risposte standard per id (A1-A4;
+//   il 25-11 erano A4, A6, A9, A11) e gli esempi di tono, dopo quelli della categoria, arrivano in ordine di id. Con
+//   categoria le risposte standard sono le stesse di prima. Nient'altro cambia.
 // sorgente v34 (2026-11-25, decisione di Dan del 25-11 su P2 «Si', come la chat», migr 0211): le due righe del reso
 //   ammesso (ramo "Reso ammesso: istruzioni" e blocco CASO) dicono come la risposta standard A7 e la voce 7 della chat:
 //   rimborso entro 14 giorni dall'accettazione del reso, dopo il controllo delle condizioni (prima: "entro 14 giorni
@@ -1186,7 +1191,10 @@ async function csKnowledge(sb: ReturnType<typeof createClient>, categoria: strin
 }
 
 async function faqTono(sb: ReturnType<typeof createClient>, categoria: string | null, lingua: string | null): Promise<{ tono: string[]; standard: string[] }> {
-  const { data } = await sb.from('cs_faq').select('tipo,testo_it,testo_en,categoria').eq('attiva', true);
+  // v35: in ordine di id. Senza `order` PostgREST restituisce le righe nell'ordine fisico della tabella, che cambia a ogni
+  // UPDATE (dalle migr 0069-0070 fino alle 0199 e 0211): cambiavano cosi', senza volerlo, l'ordine degli esempi di tono e
+  // le 4 risposte standard delle conversazioni senza categoria.
+  const { data } = await sb.from('cs_faq').select('tipo,testo_it,testo_en,categoria').eq('attiva', true).order('id');
   const rows = (data ?? []) as Row[];
   // v11: esempi di tono PRIMA quelli della categoria della conversazione, poi gli altri, cap 6
   // (prima erano in ordine di id: su un reso arrivavano anche cerimonia, ritiro e restock in testa)
