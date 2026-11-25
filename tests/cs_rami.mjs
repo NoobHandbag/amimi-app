@@ -455,5 +455,14 @@ t('110 sul CAMBIO entro finestra restano i due rami, e il blocco tiene la riga d
 t('111 il DIFETTO continua a vincere: nessun verdetto anche se la consegna e\' di 20 giorni fa',
   !/Reso NON ammesso/.test(casoBlock(RESO, caso({ testo: 'la borsa e\' arrivata scucita', ship: TWS('2026-10-15') }))));
 
+console.log('\n== v34 (decisione di Dan del 25-11, P2 come la chat): rimborso dall\'accettazione, etichette solo sui resi ==');
+const istrRamo = (cat) => casoRami(cat, cd({ verdetto: 'entro' })).find((r) => r.titolo === 'Reso ammesso: istruzioni')?.istruzione ?? '';
+const rigaCaso = (cat) => (casoBlock(cat, c88).split('\n').find((l) => /Reso AMMESSO/.test(l)) ?? '');
+const ACC = /rimborso sul metodo originale entro 14 giorni dall'accettazione del reso, dopo il controllo che sia in perfette condizioni\./;
+t('112 RESO entro finestra: ramo e blocco CASO dicono niente etichette e rimborso dall\'accettazione, mai "dal rientro"',
+  [istrRamo(RESO), rigaCaso(RESO)].every((s) => s && /niente etichette di reso/.test(s) && ACC.test(s) && !/dal rientro/.test(s)), [istrRamo(RESO), rigaCaso(RESO)]);
+t('113 CAMBIO entro finestra: stesso rimborso, ma NESSUNA frase sulle etichette (A4: il ritiro lo organizziamo noi; Gate 2 del 25-11, B1-bis)',
+  [istrRamo(CAMBIO), rigaCaso(CAMBIO)].every((s) => s && !/etichett/.test(s) && ACC.test(s) && !/dal rientro/.test(s)), [istrRamo(CAMBIO), rigaCaso(CAMBIO)]);
+
 console.log(`\n${ok}/${ok + ko} verdi` + (ko ? ` — ${ko} ROSSI` : ''));
 process.exitCode = ko ? 1 : 0;
