@@ -960,7 +960,7 @@ console.log('\n== guardie sul sorgente ==');
   t('G5 log: solo console.error con causa fissa e codice del DB, mai altro', !/console\.(log|info|warn|debug|trace)/.test(codice) && logs.length === 2
     && logs.every((l) => /^console\.error\(('chat-api: ' \+ causa|'chat-api: [a-z ]+'), codice\((e|error)\)\);$/.test(l)), logs);
   const envs = [...codice.matchAll(/env\('([A-Z_]+)'\)/g)].map((m) => m[1]).sort();
-  t('G6 segreti e ambiente: solo i sei nomi attesi (la chiave del bot dalla api-6), letti fuori dal blocco puro', JSON.stringify([...new Set(envs)]) === JSON.stringify(['CHAT_ANTHROPIC_API_KEY', 'CHAT_APP_PROXY_SECRET', 'CHAT_TURNSTILE_PRODUZIONE_SECRET', 'CHAT_TURNSTILE_PROVA_SECRET', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_URL'])
+  t('G6 segreti e ambiente: solo i sei nomi attesi (la chiave del bot dalla api-6), letti fuori dal blocco puro', JSON.stringify([...new Set(envs)]) === JSON.stringify(['ANTHROPIC_API_KEY', 'CHAT_APP_PROXY_SECRET', 'CHAT_TURNSTILE_PRODUZIONE_SECRET', 'CHAT_TURNSTILE_PROVA_SECRET', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_URL'])
     && !/Deno\.env/.test(BLOCCO) && (codice.match(/Deno\.env\.get\(/g) ?? []).length === 1);
   const tabelle = [...new Set([...fuori.matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]))].sort();
   t('G7 tabelle toccate: solo chat_*, app_flags, cs_faq, cs_knowledge (conoscenza del bot, api-6) e health_log', JSON.stringify(tabelle) === JSON.stringify(['app_flags', 'chat_ai_log', 'chat_contatori', 'chat_eventi', 'chat_messaggi', 'chat_sessioni', 'chat_token', 'cs_faq', 'cs_knowledge', 'health_log']), tabelle);

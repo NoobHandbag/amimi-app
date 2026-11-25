@@ -91,7 +91,7 @@ const LINK_ASSISTENZA = 'https://noobhandbag.github.io/amimi-app/#assistenza';
 const FLAG_LETTI = ['chat_sito_enabled', 'chat_limite_chat_giorno', 'chat_orari', 'chat_testo_saluto', 'chat_testo_orari',
   'chat_testo_attesa', 'chat_testo_fuori_orario', 'chat_testo_informativa', 'chat_bottoni',
   // api-6, bot AI (migr 0214): interruttore, modello, tetti, testi fissi del bot. Nessun segreto: la chiave e' un segreto
-  // delle Edge Functions (CHAT_ANTHROPIC_API_KEY), mai in app_flags.
+  // delle Edge Functions (ANTHROPIC_API_KEY), mai in app_flags.
   'chat_bot_ai_enabled', 'chat_ai_modello', 'chat_ai_tetto_usd_giorno', 'chat_ai_chiamate_giorno', 'chat_ai_risposte_chat',
   'chat_testo_saluto_bot', 'chat_testo_etichetta_ai', 'chat_testo_chiedi_email', 'chat_testo_informativa_ai'];
 // conoscenza del bot (proposta 9.8): le voci risposta_chat di cs_faq e, di cs_knowledge, solo l'Area Membri (20). Fuori
@@ -1225,7 +1225,7 @@ Deno.serve((req) => gestisci(req, {
   ora: Date.now(),
   segreti: { proxy: env('CHAT_APP_PROXY_SECRET'), turnstile: env('CHAT_TURNSTILE_PRODUZIONE_SECRET'), turnstileProva: env('CHAT_TURNSTILE_PROVA_SECRET') },
   db: DB,
-  bot: botDa(env('CHAT_ANTHROPIC_API_KEY')),
+  bot: botDa(env('ANTHROPIC_API_KEY')),
   siteverify,
   push: (m) => inviaPush(m),
   sfondo,
