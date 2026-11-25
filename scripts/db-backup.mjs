@@ -23,6 +23,8 @@ const TABLES = [
   'ce_snapshots', 'shopify_catalog', 'non_product_codici',
   // 0154: parametri della riga compenso_soci del CE (senza, un restore azzera il compenso e manda in drift i mesi chiusi).
   'ce_compensi_soci',
+  // 0212: rettifiche dei mesi (senza, un restore toglie la rettifica COGS e manda in drift i mesi chiusi) e aliquote delle imposte stimate.
+  'ce_rettifiche', 'ce_imposte_aliquote',
 ];
 const PAGE = 1000;
 

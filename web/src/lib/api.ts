@@ -734,6 +734,8 @@ export type CeFull = {
   logistica_mag: number; opex: number; eventi: number; marketing: number;
   mc1: number; mc2: number;
   base_compenso_soci: number; compenso_soci: number;
+  // imposte stimate (migr 0212, v_ce_imposte_stimate): solo scope Totale, fuori da mc1/mc2 e dal compenso soci
+  ires_stimata?: number; irap_stimata?: number; utile_dopo_imposte?: number;
 };
 const CE_COLS = 'year,month,online_lordo,online_netto,online_pezzi,offline_lordo,offline_netto,offline_pezzi,b2b_lordo,b2b_netto,b2b_pezzi,omni_netto,cogs,packaging,commissioni,logistica_var,resi,salari,tasse,logistica_mag,opex,eventi,marketing,mc1,mc2,base_compenso_soci,compenso_soci';
 /** Full CE grid for the active scope. Amimì = v_ce_amimi_summary (brand), Totale = v_ce_totale. */
@@ -741,11 +743,26 @@ export async function fetchCeGrid(scope: 'amimi' | 'totale'): Promise<CeFull[]> 
   const view = scope === 'amimi' ? 'v_ce_amimi_summary' : 'v_ce_totale';
   const { data, error } = await supabase.from(view).select(CE_COLS).eq('year', nowYear()).order('month');
   if (error) throw new Error(error.message);
-  return (data ?? []).map((r: Record<string, unknown>) => {
+  const rows = (data ?? []).map((r: Record<string, unknown>) => {
     const o = {} as Record<string, number>;
     CE_COLS.split(',').forEach((c) => { o[c] = Number(r[c] ?? 0); });
     return o as unknown as CeFull;
   });
+  if (scope === 'totale') {
+    const { data: imp, error: ie } = await supabase.from('v_ce_imposte_stimate')
+      .select('month,ires_stimata,irap_stimata,utile_dopo_imposte').eq('year', nowYear());
+    // una stima: se la vista manca o non risponde il CE si mostra lo stesso, senza le righe imposte
+    if (ie) return rows;
+    const byM = new Map((imp ?? []).map((r: Record<string, unknown>) => [Number(r.month), r]));
+    rows.forEach((o) => {
+      const r = byM.get(o.month);
+      if (!r) return;
+      o.ires_stimata = Number(r.ires_stimata ?? 0);
+      o.irap_stimata = Number(r.irap_stimata ?? 0);
+      o.utile_dopo_imposte = Number(r.utile_dopo_imposte ?? 0);
+    });
+  }
+  return rows;
 }
 
 export type DrillExp = { date_paid: string | null; operazione: string | null; categoria: string | null; sottocategoria: string | null; costo: number; amimi: boolean };
@@ -763,7 +780,8 @@ export async function fetchDrillExpense(ceLine: string, month: number, amimiOnly
 export type DrillCogs = { codice: string; item: string | null; variant: string | null; canale: string; qty: number; costo: number };
 /** COGS per codice (aggregato dalle righe di venduto). includeGift = scope Totale. */
 export async function fetchDrillCogs(month: number, includeGift: boolean): Promise<DrillCogs[]> {
-  const canali = includeGift ? ['online', 'offline', 'b2b', 'gift'] : ['online', 'offline', 'b2b'];
+  // 'rettifica' = righe di ce_rettifiche (migr 0212), 'rettifica_gift' la loro parte sui gift (solo Totale)
+  const canali = includeGift ? ['online', 'offline', 'b2b', 'gift', 'rettifica', 'rettifica_gift'] : ['online', 'offline', 'b2b', 'rettifica'];
   const { data, error } = await supabase.from('v_ce_drill_cogs')
     .select('codice,item,variant,canale,qty,costo').eq('year', nowYear()).eq('month', month).in('canale', canali);
   if (error) throw new Error(error.message);
