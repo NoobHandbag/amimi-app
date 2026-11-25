@@ -54,7 +54,7 @@ const sbFinto = (righe) => ({
     // come PostgREST: senza .order le righe arrivano nell'ordine fisico (qui quello dell'array), con .order(col) ordinate
     return { select(cols) { const c = cols.split(','); const proietta = (rs) => rs.map((r) => Object.fromEntries(c.map((x) => [x, r[x]])));
       return { eq(k, v) { const f = righe.filter((r) => r[k] === v); const p = Promise.resolve({ data: proietta(f), error: null });
-        p.order = (col) => Promise.resolve({ data: proietta([...f].sort((a, b) => a[col] - b[col])), error: null }); return p; } }; } };
+        p.order = (col, opts) => Promise.resolve({ data: proietta([...f].sort((a, b) => (opts?.ascending === false ? -1 : 1) * (a[col] - b[col]))), error: null }); return p; } }; } };
   },
 });
 async function confronta(fn) {
@@ -116,6 +116,14 @@ t('P8 senza categoria: le prime 4 risposte standard per id (A1-A4); con categori
   JSON.stringify(senzaCat.standard) === JSON.stringify(['IT 7', 'IT 8', 'IT 9', 'IT 10']) && JSON.stringify(conCat.tono) === JSON.stringify(['IT 5', 'IT 1', 'IT 2', 'IT 3', 'IT 4', 'IT 6']), { senzaCat: senzaCat.standard, tono: conCat.tono });
 const senzaOrder = faqToneSrc.replace(".eq('attiva', true).order('id');", ".eq('attiva', true);");
 t('P9 autocontrollo: la lettura senza .order(\'id\') dipende dall\'ordine fisico -> visto', senzaOrder !== faqToneSrc && (await dipendeDallOrdine(crea(senzaOrder))).length > 0);
+const alContrario = faqToneSrc.replace(".order('id');", ".order('id', { ascending: false });");
+const rov = await faqTono(sbFinto(PERM.caso1), null, 'it'), rovC = await crea(alContrario)(sbFinto(PERM.caso1), null, 'it');
+t('P9b autocontrollo: in ordine di id decrescente le risposte senza categoria cambiano -> P8 se ne accorgerebbe (Gate 2 v35, C1)', alContrario !== faqToneSrc && JSON.stringify(rovC.standard) !== JSON.stringify(rov.standard));
+// la regola gia' esistente (v11): con categoria, prima le risposte della categoria e poi le trasversali (categoria nulla),
+// anche se una trasversale ha un id piu' basso. Oggi in produzione non ce ne sono: la riga finta id 0 la simula.
+const TRASV = { id: 0, tipo: 'risposta_standard', categoria: null, attiva: true, testo_it: 'IT 0', testo_en: 'EN 0' };
+const conTrasv = await faqTono(sbFinto([TRASV, ...PERM.caso2]), 'Spedizione e stato ordine', 'it');
+t('P10 con categoria: prima la risposta della categoria, poi la trasversale a categoria nulla, anche con id piu\' basso', JSON.stringify(conTrasv.standard) === JSON.stringify(['IT 7', 'IT 0']), conTrasv.standard);
 
 // ---- parte 2: la migrazione ----
 console.log('\n== migrazione 0195: le 15 voci e i bottoni ==');
