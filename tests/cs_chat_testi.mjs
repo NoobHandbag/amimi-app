@@ -51,7 +51,10 @@ const ORDINI = { senza: BASE, in_fondo: [...BASE, ...CHAT], in_testa: [...CHAT, 
 const sbFinto = (righe) => ({
   from(tab) {
     if (tab !== 'cs_faq') throw new Error('tabella inattesa ' + tab);
-    return { select(cols) { const c = cols.split(','); return { eq(k, v) { return Promise.resolve({ data: righe.filter((r) => r[k] === v).map((r) => Object.fromEntries(c.map((x) => [x, r[x]]))), error: null }); } }; } };
+    // come PostgREST: senza .order le righe arrivano nell'ordine fisico (qui quello dell'array), con .order(col) ordinate
+    return { select(cols) { const c = cols.split(','); const proietta = (rs) => rs.map((r) => Object.fromEntries(c.map((x) => [x, r[x]])));
+      return { eq(k, v) { const f = righe.filter((r) => r[k] === v); const p = Promise.resolve({ data: proietta(f), error: null });
+        p.order = (col) => Promise.resolve({ data: proietta([...f].sort((a, b) => a[col] - b[col])), error: null }); return p; } }; } };
   },
 });
 async function confronta(fn) {
@@ -92,6 +95,27 @@ const rottaStd = faqToneSrc.replace("(r.tipo === 'faq' || r.tipo === 'risposta_s
 const rottaTono = faqToneSrc.replace("rows.filter((r) => r.tipo === 'esempio_tono')", "rows.filter((r) => r.tipo === 'esempio_tono' || r.tipo === 'risposta_chat')");
 t('P6 autocontrollo: cs-assist che legge anche risposta_chat fra le risposte o fra i toni -> visto', rottaStd !== faqToneSrc && rottaTono !== faqToneSrc
   && (await confronta(crea(rottaStd))).length > 0 && (await confronta(crea(rottaTono))).length > 0);
+
+// v35 (25-11, Gate 2 della migr 0211, C4): l'ordine fisico della tabella cambia a ogni UPDATE; le bozze no.
+console.log('\n== v35: le bozze non dipendono dall\'ordine fisico di cs_faq ==');
+const rimescola = (a, seme) => { const out = [...a]; let s = seme; for (let i = out.length - 1; i > 0; i--) { s = (s * 9301 + 49297) % 233280; const j = Math.floor((s / 233280) * (i + 1)); [out[i], out[j]] = [out[j], out[i]]; } return out; };
+const PERM = { id: BASE, rovescio: [...BASE].reverse(), caso1: rimescola(BASE, 7), caso2: rimescola([...BASE, ...CHAT], 42) };
+async function dipendeDallOrdine(fn) {
+  const diverse = [];
+  for (const categoria of [null, '', ...CANON]) for (const lingua of [null, 'it', 'en']) {
+    const base = JSON.stringify(await fn(sbFinto(PERM.id), categoria, lingua));
+    for (const [nome, righe] of Object.entries(PERM)) if (JSON.stringify(await fn(sbFinto(righe), categoria, lingua)) !== base) diverse.push(`${nome}/${categoria}/${lingua}`);
+  }
+  return diverse;
+}
+const dip = await dipendeDallOrdine(faqTono);
+t('P7 stesse risposte standard e stessi esempi di tono, nello stesso ordine, con le righe in qualunque ordine fisico, per ogni categoria e lingua', dip.length === 0, dip.slice(0, 5));
+const senzaCat = await faqTono(sbFinto(PERM.caso1), null, 'it');
+const conCat = await faqTono(sbFinto(PERM.caso2), 'Reso e rimborso', 'it');
+t('P8 senza categoria: le prime 4 risposte standard per id (A1-A4); con categoria: gli esempi di tono della categoria e poi gli altri per id',
+  JSON.stringify(senzaCat.standard) === JSON.stringify(['IT 7', 'IT 8', 'IT 9', 'IT 10']) && JSON.stringify(conCat.tono) === JSON.stringify(['IT 5', 'IT 1', 'IT 2', 'IT 3', 'IT 4', 'IT 6']), { senzaCat: senzaCat.standard, tono: conCat.tono });
+const senzaOrder = faqToneSrc.replace(".eq('attiva', true).order('id');", ".eq('attiva', true);");
+t('P9 autocontrollo: la lettura senza .order(\'id\') dipende dall\'ordine fisico -> visto', senzaOrder !== faqToneSrc && (await dipendeDallOrdine(crea(senzaOrder))).length > 0);
 
 // ---- parte 2: la migrazione ----
 console.log('\n== migrazione 0195: le 15 voci e i bottoni ==');
