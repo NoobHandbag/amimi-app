@@ -718,6 +718,13 @@ async function provaPagina({ hash, lingua = 'it-IT', risposta = { ok: true, toke
   t('P17 guardie della pagina: nessun innerHTML/eval/log, un solo script e un solo host esterno (Turnstile), token mai in query',
     !/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function|console\./.test(sc) && (RIP.PAGINA_RIPRESA.match(/https:\/\/[a-z0-9.-]+/g) ?? []).every((h) => h === 'https://challenges.cloudflare.com')
     && (RIP.PAGINA_RIPRESA.match(/<script/g) ?? []).length === 1 && !/[?&]t=|searchParams/.test(sc));
+  // api-5 (25-11, pezzo 9): logo del negozio al posto della scritta e pulsante davvero nascosto quando la pagina lo nasconde
+  const imgs = RIP.PAGINA_RIPRESA.match(/<img\b[^>]*>/g) ?? [];
+  t('P20 in alto il logo del negozio dal dominio della pagina, col nome come testo alternativo, e nessun altro host', imgs.length === 1
+    && /^<img src="\/cdn\/shop\/files\/LOGO_UFFICIALE\.png\?width=240" alt="Amim&igrave;" width="120" height="38">$/.test(imgs[0])
+    && /<p class="marchio"><img /.test(RIP.PAGINA_RIPRESA) && !/<p class="marchio">Amim/.test(RIP.PAGINA_RIPRESA));
+  t('P21 [hidden] vince su button{display:block}: il pulsante nascosto (link incompleto, scaduto, spenta, fatto) non resta a vista',
+    /\[hidden\]\{display:none!important\}/.test(RIP.PAGINA_RIPRESA) && /button\{display:block/.test(RIP.PAGINA_RIPRESA));
 }
 
 console.log('\n== errore del widget (8.10 riga 13) ==');
@@ -942,7 +949,7 @@ console.log('\n== guardie sul sorgente ==');
   t('G7 tabelle toccate: solo chat_*, app_flags, cs_faq e health_log', JSON.stringify(tabelle) === JSON.stringify(['app_flags', 'chat_contatori', 'chat_eventi', 'chat_messaggi', 'chat_sessioni', 'chat_token', 'cs_faq', 'health_log']), tabelle);
   t('G7b chat_contatori solo letta (si scrive solo con la RPC atomica)', !/from\('chat_contatori'\)\.(insert|update|upsert|delete)/.test(fuori));
   t('G7c un bottone legge da cs_faq solo righe pubblicabili (risposte standard e, dalla api-4, le voci della sola chat), mai gli esempi di tono (Gate 2, C5)', /from\('cs_faq'\)\.select\('testo_it, testo_en, attiva'\)\.eq\('id', id\)\.in\('tipo', \['faq', 'risposta_standard', 'risposta_chat'\]\)/.test(fuori)
-    && !/esempio_tono/.test(fuori) && M.VERSIONE === 'api-4');
+    && !/esempio_tono/.test(fuori) && M.VERSIONE === 'api-5');
   t('G8 app_flags letta solo con .in() sull\'elenco chiuso, mai select *', /from\('app_flags'\)\.select\('key, value'\)\.in\('key', chiavi\)/.test(fuori) && !/select\('\*'\)/.test(codice));
   t('G9 cs_faq e app_flags in sola lettura', !/from\('(cs_faq|app_flags)'\)\.(insert|update|upsert|delete)/.test(fuori));
   t('G10 health_log: una sola scrittura, k chat_api, e la gravita\' del giorno dai contatori', (fuori.match(/from\('health_log'\)/g) ?? []).length === 1 && !/k: '(?!chat_api)/.test(fuori) && /k: 'chat_api'/.test(fuori)

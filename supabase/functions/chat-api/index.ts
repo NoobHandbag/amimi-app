@@ -40,6 +40,7 @@
 // api-4 (pezzo 7, proposta 9.8, migr 0195): la risposta di un bottone puo' venire anche da una riga `risposta_chat` di
 // cs_faq, il tipo delle voci importate dalla Knowledge base di Shopify per la sola chat (cs-assist non lo legge, quindi
 // le bozze delle email non cambiano). Testi della pagina di ripresa col nome del marchio, Amimi con l'accento.
+// api-5 (pezzo 9, 25-11): pagina di ripresa col logo del negozio e col pulsante davvero nascosto (riprendi.ts).
 // Log: solo cause scritte nel codice e codici d'errore del DB, mai corpi, token, email, nomi o testi.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
@@ -49,7 +50,7 @@ import { rispondiEco } from './eco.ts';
 import { LIQUID_APRI, LIQUID_CHIUDI, PAGINA_RIPRESA } from './riprendi.ts';
 
 // ==== PURE:chat-api BEGIN ====
-const VERSIONE = 'api-4';
+const VERSIONE = 'api-5';
 const HEADER_BASE: Record<string, string> = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' };
 const ROTTE_ECO = ['eco', 'misura', 'turnstile'];
 const METODO: Record<string, string> = { config: 'GET', avvia: 'POST', invia: 'POST', passaggio: 'POST', aggiorna: 'POST', riprendi: 'POST', errore: 'POST' };

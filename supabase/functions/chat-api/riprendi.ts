@@ -8,6 +8,9 @@
 // carica Turnstile (azione `chat_riprendi`, widget di prova con `prova=1`), scambia il token con POST /riprendi, salva il
 // chat token nella chiave di localStorage del widget (`amimi_chat_v1`, stesso formato di chat-loader.js, con `o: true`
 // perche' la bolla si apra da sola) e porta alla home. Guardie e prova di comportamento in tests/chat_api.mjs.
+// api-5 (25-11, pezzo 9): in alto il logo del negozio (lo stesso file dell'intestazione del sito, sul dominio della pagina, alt
+// col nome) al posto della scritta, su richiesta di Dan; `[hidden]` vince su `button{display:block}`, che teneva a vista il
+// pulsante quando la pagina lo nasconde (link incompleto, scaduto, chat spenta, fatto).
 export const LIQUID_APRI = '{% layout none %}{% raw %}';
 export const LIQUID_CHIUDI = '{% endraw %}';
 
@@ -18,7 +21,9 @@ export const PAGINA_RIPRESA = `<!doctype html>
 <style>
 body{margin:0;background:#f6f4f1;color:#1f1f1f;font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:440px;margin:12vh auto 0;padding:28px 24px;background:#fff;border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.08)}
-.marchio{margin:0 0 6px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:13px}
+.marchio{margin:0 0 10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:13px}
+.marchio img{display:block;width:120px;height:auto}
+[hidden]{display:none!important}
 h1{margin:0 0 10px;font-size:22px;line-height:1.25}
 p{margin:0 0 14px}
 .piccolo{font-size:14px;color:#555}
@@ -30,7 +35,7 @@ button:focus-visible{outline:3px solid #1f1f1f;outline-offset:3px}
 a{color:inherit}
 </style></head>
 <body><main>
-<p class="marchio">Amim&igrave;</p>
+<p class="marchio"><img src="/cdn/shop/files/LOGO_UFFICIALE.png?width=240" alt="Amim&igrave;" width="120" height="38"></p>
 <h1 id="titolo">Continua la chat</h1>
 <p id="testo">Tocca il pulsante per riaprire su questo dispositivo la tua chat con il team Amim&igrave;.</p>
 <div id="ts"></div>
