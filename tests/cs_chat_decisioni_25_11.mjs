@@ -102,8 +102,8 @@ t('F2 reso: nessuna frase nuova fa partire il rimborso "appena arriva la borsa" 
 t('F3 conoscenza (righe 2 e 8): rimborso entro 14 giorni dall\'accettazione del reso, come la voce 7 ("dall\'accettazione del reso")', /dall'accettazione del reso/.test(v7it)
   && /entro 14 giorni dall'accettazione del reso, dopo il controllo delle condizioni/.test(di('k2 rimborso').nuovo) && /entro 14 giorni dall'accettazione del reso, dopo il controllo delle condizioni/.test(di('k8').nuovo));
 const righeReso = ASSIST.split('\n').filter((l) => /Reso AMMESSO: consegnato il/.test(l));
-t('F4 cs-assist v34: le due righe del reso ammesso (ramo e blocco CASO) come A7, mai piu\' "dal rientro"', righeReso.length === 2
-  && righeReso.every((l) => /niente etichette di reso; rimborso sul metodo originale entro 14 giorni dall'accettazione del reso, dopo il controllo che sia in perfette condizioni\./.test(l) && !/dal rientro/.test(l))
+t('F4 cs-assist v34: le due righe del reso ammesso (ramo e blocco CASO) come A7 (etichette solo sui resi, comportamento in cs_rami 112-113), mai piu\' "dal rientro"', righeReso.length === 2
+  && righeReso.every((l) => l.includes("${categoria === 'Reso e rimborso' ? ', niente etichette di reso' : ''}; rimborso sul metodo originale entro 14 giorni dall'accettazione del reso, dopo il controllo che sia in perfette condizioni.") && !/dal rientro/.test(l))
   && !/dal rientro/.test(ASSIST.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n')) && /^\/\/ sorgente v34 \(2026-11-25/m.test(ASSIST), righeReso.map((l) => l.trim().slice(0, 60)));
 t('F5 la riga 2 non esclude piu\' pre-ordini e su misura dal ritiro, il resto della frase resta', !/pre-ordini|personalizzati/.test(di('k2 ritiro').nuovo) && di('k2 ritiro').nuovo === di('k2 ritiro').vecchio.replace(' (non per pre-ordini o personalizzati)', ''));
 const dazi = COPPIE.filter((c) => c.dazi);
