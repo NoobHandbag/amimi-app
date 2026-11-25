@@ -92,12 +92,18 @@ t('39 C2: giorno e ora nello stesso fuso', /const giornoLocale = \(iso: string\)
 t('40 C4: il caricamento sta sopra le proposte, non al loro posto', /\{genBozza && \(/.test(UI) && /\{!options \? \(!genBozza && \(/.test(UI));
 t('41 animazione con avviso di restare, movimento ridotto rispettato', /className="cs-gen"/.test(UI) && /resta su questa conversazione/.test(UI) && /@keyframes cs-gen-fill/.test(CSS) && /prefers-reduced-motion: reduce\) \{ \.scr-assist \.cs-gen-dots/.test(CSS));
 
-// 25-11: con le bozze pronte draftMode e' vero gia' all'apertura; la riga delle azioni (Prendo io,
-// Conclusa, ⋯ Non e' un cliente) stava sotto !draftMode e spariva. Si comprimono solo le chip.
+// 25-11: la riga delle azioni (Prendo io, Conclusa, ⋯ Non e' un cliente) stava sotto !draftMode e con le
+// bozze pronte spariva gia' all'apertura. Con le bozze a schermo si comprimono solo le chip.
 const TESTATA = blocco(UI, "{c.canale !== 'rumore' && (", "{!draftMode && c.canale === 'rumore'");
 t('42 azioni della testata visibili anche con le bozze a schermo (solo le chip si comprimono)',
   /\{!draftMode && <div className="cs-chiprow">/.test(TESTATA) && /\{!isChatSito\(c\) && <div className="cs-actions-row">/.test(TESTATA)
   && /Non è un cliente/.test(TESTATA) && (TESTATA.match(/draftMode &&/g) || []).length === 1 && !/!draftMode && c\.canale !== 'rumore'/.test(UI));
+// 25-11 (Dan): le bozze pronte del cron non comprimono la testata: categoria, stato e riassunto restano
+// all'apertura; si comprime solo dopo Genera o Riprendi (che azzerano o non impostano `pronte`).
+t('43 bozze pronte: testata piena (chip e riassunto), compressa solo dopo un click',
+  /const draftMode = options !== null && !pronte;/.test(UI) && /\{!draftMode && c\.summary && \(/.test(UI)
+  && /setGenBozza\(true\); genRef\.current = true;[^\n]*setPronte\(null\);/.test(UI)
+  && /if \(options\) showToast\('Categoria cambiata: le proposte sono della categoria di prima/.test(UI));
 
 console.log(`\n${ok}/${ok + ko} verdi`);
 if (ko) process.exit(1);

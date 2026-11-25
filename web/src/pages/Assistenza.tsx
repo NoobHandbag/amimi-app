@@ -532,6 +532,8 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
       setConvs((prev) => prev ? prev.map((x) => x.id === current.id ? { ...x, ...patch } as CsConversation : x) : prev);
       // correzione verso una categoria a caso (reso/cambio/indirizzo): carica subito il verdetto
       if (categoria && CASE_CATS.has(categoria) && !isChatSito(current)) loadCaso(current.id, confirmDate || undefined); else setCaso(null);
+      // 25-11: con le bozze pronte il selettore e' visibile insieme alle proposte, che restano quelle della categoria di prima
+      if (options) showToast('Categoria cambiata: le proposte sono della categoria di prima. ↻ Rigenera per aggiornarle.');
     } catch (e) { setErr((e as Error).message); }
     setSavingCat(false);
   };
@@ -626,7 +628,10 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
   // ---- thread ----
   if (view === 'thread' && current) {
     const c = current;
-    const draftMode = options !== null;   // bozze generate: testata compressa, contesto lascia spazio (mockup frame 3)
+    // bozze generate: testata compressa, contesto lascia spazio (mockup frame 3). 25-11 (Dan): NON con le
+    // bozze pronte del cron (`pronte`), che si aprono insieme al thread: l'operatrice non l'ha ancora letto,
+    // e categoria, stato e riassunto le servono prima di usare la bozza (con la v33 sparivano all'apertura).
+    const draftMode = options !== null && !pronte;
     const primoNome = primoNomeOf(c);
     const ordSub = ctx?.ordine ? [
       ctx.ordine.created_at_shop ? `${ctx.ordine.created_at_shop.slice(8, 10)}-${ctx.ordine.created_at_shop.slice(5, 7)}` : null,
@@ -653,10 +658,9 @@ export default function Assistenza({ onBack }: { onBack: () => void }) {
             </div>
             {isUrg(c) && <span className="cs-urgpill" title={c.urgenza_motivo || 'urgente'}>🚨 {c.urgenza_motivo || 'urgente'}</span>}
           </div>
-          {/* 25-11: la riga delle azioni NON dipende piu' da draftMode. Dalla v33 le bozze pronte del
-              cron si aprono subito, quindi draftMode e' vero gia' all'apertura e con le chip spariva
-              anche "Prendo io / Conclusa / ⋯ Non e' un cliente" (Dan: "e' sparito il bottone"). In
-              modalita' bozza si comprimono solo le chip. */}
+          {/* 25-11: la riga delle azioni NON dipende da draftMode. Ci stava insieme alle chip e con le
+              bozze pronte spariva gia' all'apertura "Prendo io / Conclusa / ⋯ Non e' un cliente"
+              (Dan: "e' sparito il bottone"). In modalita' bozza si comprimono solo le chip. */}
           {c.canale !== 'rumore' && (
             <>
               {!draftMode && <div className="cs-chiprow">
