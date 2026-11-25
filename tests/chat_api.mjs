@@ -61,7 +61,7 @@ function nuovoDb() {
   const st = { flag: new Map(), cont: new Map(), sess: new Map(), tok: [], msg: [], ev: [], faq: new Map(), salute: [], seq: 0, tseq: 0,
     guasti: new Map(), flagChiesti: [], chiamate: [], proiezioni: [] };
   const guasto = (nome) => { const g = st.guasti.get(nome); if (g > 0) { st.guasti.set(nome, g - 1); throw new M.ErroreDb('guasto ' + nome); } };
-  const COLS = ['id', 'stato', 'passaggi', 'passaggio_at', 'customer_email', 'customer_name', 'lingua', 'prova', 'ultima_attivita_at', 'chiusa_at', 'ultima_risposta_staff_at'];
+  const COLS = ['id', 'stato', 'passaggi', 'passaggio_at', 'customer_email', 'customer_name', 'lingua', 'prova', 'ultima_attivita_at', 'chiusa_at', 'ultima_risposta_staff_at', 'email_chiesta_at'];
   const proj = (s) => Object.fromEntries(COLS.map((k) => [k, s[k] ?? (k === 'prova' ? false : null)]));
   const pick = (m) => ({ id: m.id, seq: m.seq, autore: m.autore, testo: m.testo, created_at: m.created_at, email_stato: m.email_stato, delivered_at: m.delivered_at });
   const db = {
@@ -84,7 +84,7 @@ function nuovoDb() {
     async creaSessione(r) {
       guasto('creaSessione');
       if (Object.values(r).some(malformato)) throw new M.ErroreDb('22P02');
-      if (!EMAIL_DB.test(r.customer_email) || r.customer_email.length > 254) throw new M.ErroreDb('23514 email');
+      if (r.customer_email !== null && (!EMAIL_DB.test(r.customer_email) || r.customer_email.length > 254)) throw new M.ErroreDb('23514 email');
       if (r.customer_name !== null && (/[\p{Cc}]/u.test(r.customer_name) || [...r.customer_name].length > 80)) throw new M.ErroreDb('23514 nome');
       const s = { id: randomUUID(), passaggi: 0, passaggio_at: null, chiusa_at: null, ultimo_cliente_at: null, ...r };
       st.sess.set(s.id, s);
@@ -106,6 +106,9 @@ function nuovoDb() {
         || (se.risposta !== undefined && (s.ultima_risposta_staff_at ?? null) !== se.risposta)) return null;
       const dopo = { ...s, ...patch };
       if (dopo.stato === 'attesa_persona' && !(dopo.passaggi >= 1 && dopo.passaggio_at)) throw new M.ErroreDb('23514 passaggio');
+      // 0214: senza email nessun passaggio e mai aperta
+      if (!dopo.customer_email && !(dopo.passaggi === 0 && ['bot', 'chiusa'].includes(dopo.stato))) throw new M.ErroreDb('23514 email al passaggio');
+      if (dopo.customer_email && (!EMAIL_DB.test(dopo.customer_email) || dopo.customer_email.length > 254)) throw new M.ErroreDb('23514 email');
       Object.assign(s, patch);
       return proj(s);
     },
@@ -143,6 +146,12 @@ function nuovoDb() {
     async faq(id) { return st.faq.get(id) ?? null; },
     async salute(giorno, n, severity, causa) { st.salute.push({ giorno, n, severity, causa }); },
     async proietta(id) { st.chiamate.push('proietta'); guasto('proietta'); st.proiezioni.push(id); },
+    // api-6
+    async messaggiPerClient(sid, ids) { return st.msg.filter((m) => m.sessione_id === sid && ids.includes(m.client_msg_id)).sort((p, q) => p.seq - q.seq).map(pick); },
+    async storia(sid, lim) { return st.msg.filter((m) => m.sessione_id === sid).sort((p, q) => p.seq - q.seq).slice(-lim).map((m) => ({ autore: m.autore, testo: m.testo })); },
+    async conoscenza() { st.chiamate.push('conoscenza'); guasto('conoscenza'); return [{ id: 'K39', titolo: 'Spedizioni', it: 'Italia 3,90 EUR', en: 'Italy 3.90 EUR' }]; },
+    async spesaAiOggi() { st.chiamate.push('spesaAiOggi'); guasto('spesaAiOggi'); return st.spesaAi ?? 0; },
+    async logAi(r) { st.chiamate.push('logAi'); guasto('logAi'); if (!['inviata', 'rigenerata', 'passata', 'bloccata_lint', 'errore', 'tetto'].includes(r.esito) || !(r.turno >= 1)) throw new M.ErroreDb('23514 log'); st.logAi = [...(st.logAi ?? []), JSON.parse(JSON.stringify(r))]; },
   };
   return { db, st };
 }
@@ -178,14 +187,14 @@ const sv = async (secret, token) => {
 };
 const STATI = [];
 const echi = [];
-async function chiama(x, azione, corpo, { metodo = 'POST', cliente = '', segreti = {}, opz = {}, cache = false, coppie } = {}) {
+async function chiama(x, azione, corpo, { metodo = 'POST', cliente = '', segreti = {}, opz = {}, cache = false, coppie, bot = null } = {}) {
   if (!cache) M.azzeraCache();
   const init = metodo === 'GET' ? { method: 'GET' } : { method: metodo, body: typeof corpo === 'string' ? corpo : JSON.stringify(corpo ?? {}), headers: { 'content-type': 'application/json' } };
   const req = new Request(url(azione, coppie ?? shopify(cliente), opz), init);
   const amb = { ora: clock.ora, segreti: { proxy: SECRET, turnstile: TS_PROD, turnstileProva: TS_PROVA, ...segreti }, db: x.db, siteverify: sv,
     push: async (m) => { pushInviati.push(m); if (rispostaPush instanceof Error) throw rispostaPush; return rispostaPush; },
     sfondo: (p) => sfondi.push(p), casuale: (n) => new Uint8Array(randomBytes(n)), eco: async (r) => { echi.push(r.url); return new Response('eco'); },
-    pagine: { riprendi: PAGINA_LIQUID } };
+    pagine: { riprendi: PAGINA_LIQUID }, bot };
   const r = await M.gestisci(req, amb);
   const attese = sfondi; sfondi = [];
   await Promise.all(attese);
@@ -243,13 +252,13 @@ console.log('\n== config e flag (sez. 10, test 18) ==');
 {
   const x = nuovo();
   const c = await chiama(x, 'config', null, { metodo: 'GET' });
-  t('C1 chiavi della risposta esattamente quelle pubbliche', JSON.stringify(Object.keys(c.d).sort()) === JSON.stringify(['attiva', 'bottoni', 'informativa_versione', 'limiti', 'ok', 'testi', 'versione']), Object.keys(c.d));
+  t('C1 chiavi della risposta esattamente quelle pubbliche', JSON.stringify(Object.keys(c.d).sort()) === JSON.stringify(['ai', 'attiva', 'bottoni', 'informativa_versione', 'limiti', 'ok', 'testi', 'versione']), Object.keys(c.d));
   t('C2 bottoni solo con una risposta fissa (faq), senza l\'id di cs_faq', c.d.bottoni.length === 1 && c.d.bottoni[0].id === 'spedizioni' && !('faq' in c.d.bottoni[0]));
-  t('C3 testi pubblici: saluto, orari, informativa (non attesa, non fuori orario)', JSON.stringify(Object.keys(c.d.testi).sort()) === '["informativa","orari","saluto"]' && c.d.testi.saluto.it === 'Ciao');
+  t('C3 testi pubblici: saluto, orari, informativa ed etichetta AI (non attesa, non fuori orario); bot spento = testi della Fase 1', JSON.stringify(Object.keys(c.d.testi).sort()) === '["etichetta","informativa","orari","saluto"]' && c.d.testi.saluto.it === 'Ciao' && c.d.testi.etichetta === null && c.d.ai === false);
   t('C4 versione dell\'informativa = impronta del testo', c.d.informativa_versione === 'i-' + sha(FLAG_BASE.chat_testo_informativa).slice(0, 12));
   t('C5 nessun valore fuori lista nella risposta (segreto e sollecito)', !c.testo.includes('SEGRETO') && !c.testo.includes('24,48'));
   t('C6 la edge chiede ad app_flags solo FLAG_LETTI', x.st.flagChiesti.every((k) => JSON.stringify(k) === JSON.stringify(M.FLAG_LETTI)));
-  t('C7 FLAG_LETTI: nove chiavi chat_*, nessun segreto', M.FLAG_LETTI.length === 9 && M.FLAG_LETTI.every((k) => /^chat_[a-z_]+$/.test(k)) && !M.FLAG_LETTI.some((k) => /key|token|secret|pin/.test(k)));
+  t('C7 FLAG_LETTI: diciotto chiavi chat_* (nove della Fase 1, nove del bot dalla api-6), nessun segreto', M.FLAG_LETTI.length === 18 && M.FLAG_LETTI.every((k) => /^chat_[a-z_]+$/.test(k)) && !M.FLAG_LETTI.some((k) => /key|token|secret|pin/.test(k)));
   x.st.flag.set('chat_sito_enabled', 'false');
   const off = await chiama(x, 'config', null, { metodo: 'GET' });
   t('C8 chat spenta: solo {ok, versione, attiva:false}', off.d.attiva === false && JSON.stringify(Object.keys(off.d).sort()) === '["attiva","ok","versione"]');
@@ -951,19 +960,22 @@ console.log('\n== guardie sul sorgente ==');
   t('G5 log: solo console.error con causa fissa e codice del DB, mai altro', !/console\.(log|info|warn|debug|trace)/.test(codice) && logs.length === 2
     && logs.every((l) => /^console\.error\(('chat-api: ' \+ causa|'chat-api: [a-z ]+'), codice\((e|error)\)\);$/.test(l)), logs);
   const envs = [...codice.matchAll(/env\('([A-Z_]+)'\)/g)].map((m) => m[1]).sort();
-  t('G6 segreti e ambiente: solo i cinque nomi attesi, letti fuori dal blocco puro', JSON.stringify([...new Set(envs)]) === JSON.stringify(['CHAT_APP_PROXY_SECRET', 'CHAT_TURNSTILE_PRODUZIONE_SECRET', 'CHAT_TURNSTILE_PROVA_SECRET', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_URL'])
+  t('G6 segreti e ambiente: solo i sei nomi attesi (la chiave del bot dalla api-6), letti fuori dal blocco puro', JSON.stringify([...new Set(envs)]) === JSON.stringify(['CHAT_ANTHROPIC_API_KEY', 'CHAT_APP_PROXY_SECRET', 'CHAT_TURNSTILE_PRODUZIONE_SECRET', 'CHAT_TURNSTILE_PROVA_SECRET', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_URL'])
     && !/Deno\.env/.test(BLOCCO) && (codice.match(/Deno\.env\.get\(/g) ?? []).length === 1);
   const tabelle = [...new Set([...fuori.matchAll(/\.from\('([a-z_]+)'\)/g)].map((m) => m[1]))].sort();
-  t('G7 tabelle toccate: solo chat_*, app_flags, cs_faq e health_log', JSON.stringify(tabelle) === JSON.stringify(['app_flags', 'chat_contatori', 'chat_eventi', 'chat_messaggi', 'chat_sessioni', 'chat_token', 'cs_faq', 'health_log']), tabelle);
+  t('G7 tabelle toccate: solo chat_*, app_flags, cs_faq, cs_knowledge (conoscenza del bot, api-6) e health_log', JSON.stringify(tabelle) === JSON.stringify(['app_flags', 'chat_ai_log', 'chat_contatori', 'chat_eventi', 'chat_messaggi', 'chat_sessioni', 'chat_token', 'cs_faq', 'cs_knowledge', 'health_log']), tabelle);
   t('G7b chat_contatori solo letta (si scrive solo con la RPC atomica)', !/from\('chat_contatori'\)\.(insert|update|upsert|delete)/.test(fuori));
   t('G7c un bottone legge da cs_faq solo righe pubblicabili (risposte standard e, dalla api-4, le voci della sola chat), mai gli esempi di tono (Gate 2, C5)', /from\('cs_faq'\)\.select\('testo_it, testo_en, attiva'\)\.eq\('id', id\)\.in\('tipo', \['faq', 'risposta_standard', 'risposta_chat'\]\)/.test(fuori)
-    && !/esempio_tono/.test(fuori) && M.VERSIONE === 'api-5');
+    && !/esempio_tono/.test(fuori) && M.VERSIONE === 'api-6'
+    // api-6: la conoscenza del bot legge solo le voci della chat attive e, di cs_knowledge, solo l'elenco chiuso
+    && /from\('cs_faq'\)\.select\('id, titolo, testo_it, testo_en'\)\.eq\('tipo', 'risposta_chat'\)\.eq\('attiva', true\)/.test(fuori)
+    && /from\('cs_knowledge'\)\.select\('id, titolo, contenuto'\)\.in\('id', CONOSCENZA_KN\)/.test(fuori) && /const CONOSCENZA_KN = \[20\];/.test(BLOCCO));
   t('G8 app_flags letta solo con .in() sull\'elenco chiuso, mai select *', /from\('app_flags'\)\.select\('key, value'\)\.in\('key', chiavi\)/.test(fuori) && !/select\('\*'\)/.test(codice));
   t('G9 cs_faq e app_flags in sola lettura', !/from\('(cs_faq|app_flags)'\)\.(insert|update|upsert|delete)/.test(fuori));
   t('G10 health_log: una sola scrittura, k chat_api, e la gravita\' del giorno dai contatori', (fuori.match(/from\('health_log'\)/g) ?? []).length === 1 && !/k: '(?!chat_api)/.test(fuori) && /k: 'chat_api'/.test(fuori)
     && /in\('chiave', \['glob:sev_error', 'glob:sev_warn'\]\)/.test(fuori));
   t('G11 niente write-api, PIN, change_log, cs_conversations o cs_messages (la proiezione passa solo dall\'RPC chat_proietta)', !/write-api|\bpin\b|pin_hash|change_log|cs_conversations|cs_messages|cs_events/.test(codice));
-  t('G12 due RPC: i contatori e la proiezione (api-3), una chiamata ciascuna', [...codice.matchAll(/\.rpc\('([a-z_]+)'/g)].map((m) => m[1]).sort().join() === 'chat_contatore_incrementa,chat_proietta');
+  t('G12 tre RPC: i contatori, la proiezione (api-3) e la spesa del bot (api-6), una chiamata ciascuna', [...codice.matchAll(/\.rpc\('([a-z_]+)'/g)].map((m) => m[1]).sort().join() === 'chat_ai_spesa_oggi,chat_contatore_incrementa,chat_proietta');
   t('G12b la proiezione si chiama dopo ogni scrittura della cliente (avvia col testo, invia testo e bottone, passaggio) e mai da aggiorna o riprendi',
     (BLOCCO.match(/await proietta\(amb, s\.id, problemi\);/g) ?? []).length === 4
     && !/proietta/.test((BLOCCO.match(/async function azioneAggiorna[\s\S]*?\n}\n/) ?? [''])[0]) && !/proietta/.test((BLOCCO.match(/async function azioneRiprendi[\s\S]*?\n}\n/) ?? [''])[0]));
@@ -973,12 +985,195 @@ console.log('\n== guardie sul sorgente ==');
   t('G16 messaggi idempotenti su (sessione_id, client_msg_id); eventi sulla chiave', /onConflict: 'sessione_id,client_msg_id', ignoreDuplicates: true/.test(fuori) && /onConflict: 'chiave', ignoreDuplicates: true/.test(fuori));
   t('G17 le scritture non ritentano: retryOnce solo su select', [...fuori.matchAll(/retryOnce\(\(\) => sb\.from\('[a-z_]+'\)\.([a-z]+)\(/g)].every((m) => m[1] === 'select'));
   t('G18 passaggio con update condizionato su stato, passaggi e risposta dello staff letti (B4: anche da aperta)', /aggiornaSessione\(s\.id, patch, \{ stato: s\.stato, passaggi: s\.passaggi, risposta: s\.ultima_risposta_staff_at \}\)/.test(BLOCCO)
-    && /const serveUnaPersona = \(s: Sessione\) => s\.stato === 'bot' \|\| \(s\.stato === 'aperta' && !aspettaIlTeam\(s\)\);/.test(BLOCCO)
+    && /const serveUnaPersona = \(s: Sessione\) => s\.stato === 'aperta' && !aspettaIlTeam\(s\);/.test(BLOCCO)
     && /if \(persona && s\.stato === 'aperta' && doppione\) \{[\s\S]{0,300}persona = m !== null && !\(Number\.isFinite\(risposta\) && Date\.parse\(m\.created_at\) <= risposta\);/.test(BLOCCO)
     && /\{ stato: s\.stato, passaggi: s\.passaggi, risposta: s\.ultima_risposta_staff_at \}/.test(BLOCCO)
-    && (BLOCCO.match(/await aPersona\(/g) ?? []).length === 2 && /s\.stato === 'bot' \? await aPersona\(amb, s, false\)/.test(BLOCCO));
+    && (BLOCCO.match(/await aPersona\(/g) ?? []).length === 2 && /s\.stato === 'bot' \? await aPersona\(amb, s, cliente\)/.test(BLOCCO));
   t('G19 host di prova legato all\'id del negozio', M.HOST_ANTEPRIMA_RE.test('abc-95215747399.shopifypreview.com') && !M.HOST_ANTEPRIMA_RE.test('abc-95215747399.shopifypreview.com.evil.it') && !M.HOST_ANTEPRIMA_RE.test('x.abc-95215747399.shopifypreview.com'));
   t('G20 il token di chat non finisce mai in un URL ne\' in un log', !/searchParams\.get\('token/.test(SRC) && !/console\.error\([^)]*token/.test(codice));
+}
+
+console.log('\n== bot AI e chat senza modulo (api-6, Fase 2 ridotta) ==');
+{
+  const FLAG_AI = {
+    chat_bot_ai_enabled: 'true', chat_ai_modello: 'claude-haiku-5-5', chat_ai_tetto_usd_giorno: '1', chat_ai_chiamate_giorno: '300', chat_ai_risposte_chat: '10',
+    chat_testo_saluto_bot: JSON.stringify({ it: 'Ciao, sono l\'assistente automatico', en: 'Hi, automated assistant' }),
+    chat_testo_etichetta_ai: JSON.stringify({ it: 'Assistente AI', en: 'AI assistant' }),
+    chat_testo_chiedi_email: JSON.stringify({ it: 'CHIEDI EMAIL entro 2 giorni', en: 'ASK EMAIL within 2 days' }),
+    chat_testo_informativa_ai: JSON.stringify({ it: 'Informativa AI', en: 'AI notice' }),
+  };
+  const esito = (e) => ({ esito: 'risposta', testo: null, motivo: null, testoModello: null, strumenti: [], fonti: [], lint: [], rigenerata: false,
+    usage: { input: 10, output: 5, cache_scrittura: 0, cache_lettura: 0, chiamate: 1 }, costoUsd: 0.0001, errore: null, versionePrompt: 'bot-1:x', durataMs: 5, ...e });
+  const botFinto = (risposte) => { const f = async (inp, prenota) => { f.chiamate.push(inp); f.prenotate.push(await prenota()); return typeof risposte === 'function' ? risposte(inp) : risposte.shift(); }; f.chiamate = []; f.prenotate = []; return f; };
+  const avviaSenza = (x, extra = {}, o = {}) => chiama(x, 'avvia', { informativa: 'i-abc123', turnstile: tsA(), ...extra }, o);
+  const testiDi = (x, sid, autore) => x.st.msg.filter((m) => m.sessione_id === sid && m.autore === autore).map((m) => m.testo);
+
+  // ---- bot spento: la chat si apre senza email, il testo libero chiede l'email, il ticket nasce con l'email ----
+  {
+    const x = nuovo();
+    const a = await avviaSenza(x);
+    const s = sessioneDi(x, a.d.token);
+    t('B1 avvia senza email: chat del bot, nessuna email, serve_email false', a.d.ok === true && a.d.stato === 'bot' && a.d.email === null && a.d.serve_email === false && s.customer_email === null);
+    const em = await chiama(x, 'avvia', { email: 'non-valida', informativa: 'i-abc123', turnstile: tsA() });
+    t('B1b un\'email data ma non valida resta un 422 (campo email)', em.r.status === 422 && em.d.campo === 'email');
+    const p0 = pushInviati.length;
+    const i1 = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'avete la lea nera?' });
+    t('B2 bot spento, testo libero senza email: la chat chiede l\'email (testo di riserva), nessun passaggio, nessuna push', i1.d.ok === true && i1.d.stato === 'bot' && i1.d.serve_email === true
+      && i1.d.messaggi.some((m) => m.autore === 'automatica' && m.testo.startsWith('Passo la tua domanda')) && s.passaggi === 0 && s.email_chiesta_at !== null && pushInviati.length === p0, i1.d);
+    t('B2b la proiezione si chiama (la 0214 la lascia vuota finche\' non c\'e\' un passaggio)', x.st.proiezioni.includes(s.id));
+    const agg = await chiama(x, 'aggiorna', { token: a.d.token, dopo: 0 });
+    t('B2c aggiorna dice serve_email (il widget riapre il campo dopo un ricaricamento)', agg.d.serve_email === true && agg.d.email === null);
+    const pv = await chiama(x, 'passaggio', { token: a.d.token, email: 'non valida' });
+    t('B3 passaggio con un\'email non valida: 422 campo email, niente salvato', pv.r.status === 422 && pv.d.campo === 'email' && s.customer_email === null);
+    const pp = await chiama(x, 'passaggio', { token: a.d.token, email: 'Nuova.Cliente@Esempio.IT', nome: 'Anna' });
+    t('B3b passaggio con email e nome: ticket aperto (attesa_persona), email minuscola e mascherata, avviso di attesa, una push',
+      pp.d.ok === true && pp.d.stato === 'attesa_persona' && pp.d.email === 'n***@esempio.it' && pp.d.serve_email === false && s.customer_email === 'nuova.cliente@esempio.it'
+      && s.customer_name === 'Anna' && s.passaggi === 1 && pp.d.messaggi.some((m) => m.autore === 'sistema' && m.testo.includes('n***@esempio.it')) && pushInviati.length === p0 + 1, pp.d);
+    const i2 = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'grazie' });
+    t('B3c dopo il passaggio il testo libero non chiede altro (la chat e\' del team)', i2.d.ok === true && i2.d.stato === 'attesa_persona' && testiDi(x, s.id, 'automatica').length === 1);
+  }
+  {
+    const x = nuovo();
+    const a = await avviaSenza(x);
+    const s = sessioneDi(x, a.d.token);
+    const p1 = await chiama(x, 'passaggio', { token: a.d.token });
+    const p2 = await chiama(x, 'passaggio', { token: a.d.token });
+    t('B4 "Parla con una persona" senza email: la chat la chiede una volta sola, anche toccando due volte', p1.d.serve_email === true && p2.d.serve_email === true
+      && testiDi(x, s.id, 'automatica').length === 1 && s.passaggi === 0);
+    const p0 = pushInviati.length;
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'la mia mail e\' anna@esempio.it grazie' });
+    t('B4b l\'email scritta nel messaggio apre il ticket quando la chat la stava chiedendo', i.d.stato === 'attesa_persona' && s.customer_email === 'anna@esempio.it' && pushInviati.length === p0 + 1);
+  }
+  {
+    const x = nuovo();
+    const a = await avviaSenza(x);
+    const s = sessioneDi(x, a.d.token);
+    await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'mail uno@esempio.it oppure due@esempio.it' });
+    t('B4c due email diverse in un messaggio: nessuna si salva (e il ticket non nasce)', s.customer_email === null && s.passaggi === 0);
+  }
+
+  // ---- bot acceso ----
+  {
+    const x = nuovo(FLAG_AI);
+    const c = await chiama(x, 'config', null, { metodo: 'GET' });
+    t('B5 config col bot acceso: ai true, saluto e informativa del bot, etichetta AI vicino al campo, versione = impronta del testo AI',
+      c.d.ai === true && c.d.testi.saluto.it.startsWith('Ciao, sono') && c.d.testi.informativa.it === 'Informativa AI' && c.d.testi.etichetta.it === 'Assistente AI'
+      && c.d.informativa_versione === 'i-' + sha(FLAG_AI.chat_testo_informativa_ai).slice(0, 12), c.d);
+    const c2 = await chiama(nuovo({ ...FLAG_AI, chat_testo_informativa_ai: undefined }), 'config', null, { metodo: 'GET' });
+    t('B5b bot acceso senza informativa AI leggibile: config resta sui testi della Fase 1 (mai un bot senza avviso)', c2.d.ai === false && c2.d.testi.informativa.it === 'Informativa');
+  }
+  {
+    const x = nuovo(FLAG_AI);
+    const bot = botFinto([esito({ testo: 'La Lea costa 165,00 EUR.', testoModello: 'La Lea costa 165,00 EUR. [K39]', fonti: ['P:lea'] })]);
+    const a = await avviaSenza(x, {}, { bot });
+    const s = sessioneDi(x, a.d.token);
+    const cid = randomUUID();
+    const p0 = pushInviati.length;
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: cid, testo: 'quanto costa la lea? scrivimi a giulia@esempio.it' }, { bot });
+    t('B6 bot acceso: la risposta del bot e\' un messaggio `ai`, la chat resta del bot, nessuna push, nessun passaggio',
+      i.d.ok === true && i.d.stato === 'bot' && i.d.messaggi.some((m) => m.autore === 'ai' && m.testo === 'La Lea costa 165,00 EUR.') && s.passaggi === 0 && pushInviati.length === p0, i.d);
+    t('B6b il bot riceve modello, lingua, conoscenza e la storia con l\'ultimo messaggio della cliente in fondo; il turno prenota una chiamata',
+      bot.chiamate.length === 1 && bot.chiamate[0].modello === 'claude-haiku-5-5' && bot.chiamate[0].conoscenza[0].id === 'K39'
+      && bot.chiamate[0].storia.at(-1).autore === 'cliente' && bot.prenotate[0] === true);
+    t('B6c un\'email scritta nel messaggio si salva anche senza passaggio (al passaggio non si richiede)', s.customer_email === 'giulia@esempio.it' && s.passaggi === 0);
+    const log = x.st.logAi ?? [];
+    t('B6d registro: una riga, turno 1, esito inviata, costo e fonti, testo mostrato = messaggio', log.length === 1 && log[0].turno === 1 && log[0].esito === 'inviata'
+      && log[0].costo_usd === 0.0001 && log[0].fonti[0] === 'P:lea' && log[0].testo_mostrato === 'La Lea costa 165,00 EUR.' && log[0].messaggio_id !== null && log[0].prova === false, log);
+    const doppio = await chiama(x, 'invia', { token: a.d.token, client_id: cid, testo: 'quanto costa la lea? scrivimi a giulia@esempio.it' }, { bot });
+    t('B7 doppione (stesso client_id): nessun turno nuovo del bot, torna la stessa risposta', bot.chiamate.length === 1 && doppio.d.messaggi.some((m) => m.autore === 'ai') && testiDi(x, s.id, 'ai').length === 1);
+  }
+  {
+    const x = nuovo(FLAG_AI);
+    const bot = botFinto([esito({ esito: 'passa', motivo: 'ordine', testo: 'Passo la tua domanda al team.' })]);
+    const a = await avviaSenza(x, {}, { bot });
+    const s = sessioneDi(x, a.d.token);
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'dov\'e\' il mio ordine #1931?' }, { bot });
+    t('B8 il bot passa al team senza email: la sua frase, poi la richiesta fissa dell\'email; serve_email; registro `passata`',
+      i.d.serve_email === true && i.d.messaggi.map((m) => m.autore).join() === 'cliente,ai,automatica' && s.passaggi === 0 && x.st.logAi[0].esito === 'passata', i.d);
+  }
+  {
+    const x = nuovo(FLAG_AI);
+    const bot = botFinto([esito({ esito: 'passa', motivo: 'richiesta_persona', testo: null })]);
+    const a = await avviaSenza(x, { email: 'marta@esempio.it' }, { bot });
+    const s = sessioneDi(x, a.d.token);
+    const p0 = pushInviati.length;
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'voglio parlare con una persona' }, { bot });
+    t('B9 il bot passa al team con l\'email gia\' nota: ticket subito, avviso di attesa, una push', i.d.stato === 'attesa_persona' && s.passaggi === 1 && pushInviati.length === p0 + 1
+      && i.d.messaggi.some((m) => m.autore === 'sistema'));
+    const i2 = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'e intanto quanto costa la nina?' }, { bot });
+    t('B9b chat del team: il bot non risponde piu\'', bot.chiamate.length === 1 && i2.d.stato === 'attesa_persona');
+  }
+  for (const [nome, bot, causa, esitoLog] of [
+    ['errore del modello', botFinto([esito({ esito: 'errore', errore: 'chiave_non_valida 401' })]), 'bot: errore del modello', 'errore'],
+    ['tetto delle chiamate', botFinto([esito({ esito: 'tetto', errore: 'tetto' })]), 'bot: tetto delle chiamate AI del giorno', 'tetto'],
+    ['eccezione', async () => { throw new Error('boom'); }, 'bot: eccezione del bot', 'errore'],
+    ['chiave assente', null, 'bot: chiave AI assente', 'errore'],
+  ]) {
+    const x = nuovo(FLAG_AI);
+    const a = await avviaSenza(x, {}, { bot });
+    const s = sessioneDi(x, a.d.token);
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ciao' }, { bot });
+    const sal = x.st.salute.at(-1);
+    t(`B10 ${nome}: mai una risposta inventata, la chat chiede l'email per il team, Salute in error, registro ${esitoLog}`,
+      i.d.ok === true && i.d.serve_email === true && !i.d.messaggi.some((m) => m.autore === 'ai') && sal?.severity === 'error' && sal?.causa === causa
+      && x.st.logAi?.[0]?.esito === esitoLog && s.passaggi === 0, { sal, log: x.st.logAi });
+  }
+  {
+    const x = nuovo(FLAG_AI);
+    x.st.spesaAi = 1.2;
+    const bot = botFinto([esito({ testo: 'mai' })]);
+    const a = await avviaSenza(x, {}, { bot });
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ciao' }, { bot });
+    t('B11 spesa del giorno oltre il tetto: il bot non si chiama, passaggio al team, Salute in error, registro tetto',
+      bot.chiamate.length === 0 && i.d.serve_email === true && x.st.salute.at(-1)?.severity === 'error' && x.st.logAi[0].esito === 'tetto');
+  }
+  {
+    const x = nuovo({ ...FLAG_AI, chat_ai_risposte_chat: '1' });
+    const bot = botFinto(() => esito({ testo: 'Risposta.' }));
+    const a = await avviaSenza(x, {}, { bot });
+    await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'uno' }, { bot });
+    const salPrima = x.st.salute.length;
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'due' }, { bot });
+    t('B12 tetto delle risposte per chat: dal turno dopo il bot non si chiama e la chat passa al team, senza allarme',
+      bot.chiamate.length === 1 && i.d.serve_email === true && (x.st.logAi ?? []).length === 1 && !x.st.salute.slice(salPrima).some((r) => r.severity === 'error'));
+  }
+  {
+    const x = nuovo({ ...FLAG_AI, chat_ai_chiamate_giorno: '1' });
+    const bot = botFinto(() => esito({ testo: 'Risposta.' }));
+    const a = await avviaSenza(x, {}, { bot });
+    await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'uno' }, { bot });
+    await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'due' }, { bot });
+    t('B13 tetto delle chiamate del giorno: la seconda prenotazione e\' rifiutata (il bot la vede e passa)', JSON.stringify(bot.prenotate) === '[true,false]', bot.prenotate);
+  }
+  {
+    const f = M.interpretaFlag({ chat_ai_modello: 'claude-opus-qualcosa', chat_ai_tetto_usd_giorno: 'tanto', chat_ai_risposte_chat: '9999' });
+    t('B14 flag del bot illeggibili: modello di riserva haiku, tetti ai default (1 USD, 300 chiamate, 10 risposte)', f.ai.modello === 'claude-haiku-5-5' && f.ai.tettoUsd === 1 && f.ai.risposteChat === 10 && f.ai.chiamateGiorno === 300);
+    const g = M.interpretaFlag({ chat_bot_ai_enabled: 'TRUE ' });
+    t('B14b interruttore: solo "true" (spazi e maiuscole tollerati); assente = spento', g.ai.attivo === true && M.interpretaFlag({}).ai.attivo === false);
+  }
+  {
+    const x = nuovo(FLAG_AI);
+    x.st.guasti.set('logAi', 1);
+    const bot = botFinto([esito({ testo: 'Risposta.' })]);
+    const a = await avviaSenza(x, {}, { bot });
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ciao' }, { bot });
+    t('B15 registro non scritto: la risposta parte lo stesso, Salute in warn', i.d.messaggi.some((m) => m.autore === 'ai') && x.st.salute.at(-1)?.severity === 'warn');
+  }
+  {
+    const x = nuovo(FLAG_AI);
+    x.st.guasti.set('conoscenza', 2);
+    const bot = botFinto([esito({ testo: 'mai' })]);
+    const a = await avviaSenza(x, {}, { bot });
+    const i = await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ciao' }, { bot });
+    t('B16 conoscenza illeggibile: niente bot, rifiuto `riprova` (fallire chiusi, mai una risposta senza fonti)', bot.chiamate.length === 0 && i.d.state === 'riprova', i.d);
+  }
+  {
+    const x = nuovo();
+    const a = await avviaSenza(x);
+    for (let k = 0; k < 3; k++) await chiama(x, 'passaggio', { token: a.d.token });
+    await chiama(x, 'invia', { token: a.d.token, client_id: randomUUID(), testo: 'ciao' });
+    t('B17 senza email nessun errore 23514 (il codice non tenta mai un passaggio senza email)', !x.st.salute.some((r) => r.severity === 'error') && sessioneDi(x, a.d.token).passaggi === 0);
+  }
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);
