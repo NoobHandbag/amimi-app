@@ -10,7 +10,8 @@
 // perche' la bolla si apra da sola) e porta alla home. Guardie e prova di comportamento in tests/chat_api.mjs.
 // api-5 (25-11, pezzo 9): in alto il logo del negozio (lo stesso file dell'intestazione del sito, sul dominio della pagina, alt
 // col nome) al posto della scritta, su richiesta di Dan; `[hidden]` vince su `button{display:block}`, che teneva a vista il
-// pulsante quando la pagina lo nasconde (link incompleto, scaduto, chat spenta, fatto).
+// pulsante quando la pagina lo nasconde (link incompleto, scaduto, chat spenta, fatto). Dalla revisione: dopo chiudi() un
+// errore tardivo di Turnstile non cambia piu' il messaggio, e il token di Turnstile non si rinnova da solo.
 export const LIQUID_APRI = '{% layout none %}{% raw %}';
 export const LIQUID_CHIUDI = '{% endraw %}';
 
@@ -89,7 +90,8 @@ a{color:inherit}
 
   var tsId = null;
   var finito = false;
-  function libera(testo) { esito.textContent = testo; vai.disabled = false; }
+  // dopo chiudi() nessun callback tardivo di Turnstile cambia il messaggio (Gate 2 del pezzo 9, C1)
+  function libera(testo) { if (finito) return; esito.textContent = testo; vai.disabled = false; }
   function chiudi(testo) { esito.textContent = testo; vai.hidden = true; finito = true; }
   var inAttesa = null;
   function altraChatAttiva(nuovoToken) {
@@ -130,7 +132,8 @@ a{color:inherit}
   function verifica() {
     try {
       if (tsId === null) {
-        tsId = window.turnstile.render('#ts', { sitekey: prova ? SITEKEY.prova : SITEKEY.produzione, action: 'chat_riprendi', language: en ? 'en' : 'it',
+        // 'refresh-expired' manual: un token scaduto non si rinnova da solo, quindi nessun POST /riprendi senza un tocco (C2)
+        tsId = window.turnstile.render('#ts', { sitekey: prova ? SITEKEY.prova : SITEKEY.produzione, action: 'chat_riprendi', language: en ? 'en' : 'it', 'refresh-expired': 'manual',
           callback: function (ts) { if (!finito) scambia(ts); },
           'error-callback': function () { libera(T.verificaKo); }, 'timeout-callback': function () { libera(T.verificaKo); } });
       } else window.turnstile.reset(tsId);

@@ -1,4 +1,4 @@
-// chat-api api-4 (2026-11-13): la chat del sito, Fase 1 pezzi 2, 5, 6 e 7 (docs/PROPOSTA_chat_sito.md 5.2-5.8, 6, 7.4, 8.4, con le
+// chat-api api-5 (2026-11-25): la chat del sito, Fase 1 pezzi 2, 5, 6, 7 e 9 (docs/PROPOSTA_chat_sito.md 5.2-5.8, 6, 7.4, 8.4, con le
 // decisioni di Dan dell'8 novembre 2026: modello ticket D-8, tetti D-12). Al posto dell'eco dello spike, che resta in
 // eco.ts solo per le rotte /eco, /misura e /turnstile (misure dal telefono di Dan, si spegne da sola il 7 dicembre 2026).
 // Il widget chiama amimi.it/apps/chat/<azione>; il proxy di "Amimi Chat" firma la query e inoltra qui. verify_jwt = false

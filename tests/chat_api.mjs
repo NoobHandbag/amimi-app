@@ -724,7 +724,15 @@ async function provaPagina({ hash, lingua = 'it-IT', risposta = { ok: true, toke
     && /^<img src="\/cdn\/shop\/files\/LOGO_UFFICIALE\.png\?width=240" alt="Amim&igrave;" width="120" height="38">$/.test(imgs[0])
     && /<p class="marchio"><img /.test(RIP.PAGINA_RIPRESA) && !/<p class="marchio">Amim/.test(RIP.PAGINA_RIPRESA));
   t('P21 [hidden] vince su button{display:block}: il pulsante nascosto (link incompleto, scaduto, spenta, fatto) non resta a vista',
-    /\[hidden\]\{display:none!important\}/.test(RIP.PAGINA_RIPRESA) && /button\{display:block/.test(RIP.PAGINA_RIPRESA));
+    /\[hidden\]\{display:none!important\}/.test(RIP.PAGINA_RIPRESA));
+  t('P22 nessun host esterno nascosto: niente src/href verso //host o http(s)://host oltre Turnstile, niente url() nel CSS',
+    !/(?:src|href)=["']?(?:https?:)?\/\//.test(RIP.PAGINA_RIPRESA.replace(/https:\/\/challenges\.cloudflare\.com[^"'\s]*/g, '')) && !/url\(/.test(RIP.PAGINA_RIPRESA));
+  t('P23 Turnstile non rinnova da solo il token (refresh-expired manual): nessuna ripresa senza un tocco (Gate 2 del pezzo 9, C2)',
+    a1.log.render[0]?.['refresh-expired'] === 'manual');
+  const a4b = await provaPagina({ hash: '#t=' + 'r'.repeat(43), risposta: { ok: false, state: 'token_non_valido' } });
+  a4b.log.render[0]?.['error-callback']?.(); a4b.log.render[0]?.['timeout-callback']?.();
+  t('P24 dopo un link scaduto un errore tardivo di Turnstile non cambia il messaggio ne\' rimette il pulsante (C1)',
+    /30 giorni/.test(a4b.el.esito.textContent) && a4b.el.vai.hidden === true && a4b.el.vai.disabled === true);
 }
 
 console.log('\n== errore del widget (8.10 riga 13) ==');
