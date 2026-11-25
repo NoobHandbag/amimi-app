@@ -131,10 +131,11 @@ t('L3 la pagina riprendi di chat-api usa la stessa chiave, lo stesso formato e l
   && /var nuovo = \{ v: 1, t: d\.token, p: prova, a: Date\.now\(\), s: 0, o: true, e: em \};/.test(RIPRENDI) && /localStorage\.setItem\(CHIAVE, JSON\.stringify\(nuovo\)\)/.test(RIPRENDI) && RIPRENDI.includes(`var TURNSTILE_JS = '${TS_URL}';`));
 t('L5 pannello: la storia a pagine si ferma a pannello chiuso (Gate 2, C2); una chat piu\' nuova di un\'altra scheda non si sovrascrive (C4); ogni chiamata ha un tempo massimo e non rifiuta mai (B2)',
   /if \(S\.aperto && !document\.hidden\) S\.timer = setTimeout\(function \(\) \{ aggiorna\(p \+ 1\); \}, 300\);/.test(PANNELLO) && /if \(!nuova && ora && ora\.t !== S\.token\) return;/.test(PANNELLO)
-  && /ctrl\.abort\(\); \}, ATTESA_RETE_MS\)/.test(PANNELLO) && /\.then\(function \(x\) \{ fine\(\); return x; \}, function \(\) \{ fine\(\); return \{ http: 0, d: null \}; \}\);/.test(PANNELLO));
+  && /ctrl\.abort\(\); \}, attesaMs \|\| ATTESA_RETE_MS\)/.test(PANNELLO) && /var ATTESA_BOT_MS = 35000;/.test(PANNELLO) && /\.then\(function \(x\) \{ fine\(\); return x; \}, function \(\) \{ fine\(\); return \{ http: 0, d: null \}; \}\);/.test(PANNELLO));
 t('L6 link all\'informativa dalla radice della lingua di Shopify (forma controllata), mai un prefisso scritto a mano; la pagina riprendi torna a "/"', /a\.href = radiceLingua\(\) \+ 'policies\/privacy-policy';/.test(PANNELLO) && !/'\/en\//.test(senzaCommenti(PANNELLO))
   && /location\.replace\('\/'\);/.test(RIPRENDI) && !/location\.replace\(en/.test(RIPRENDI));
-t('L4 versione del widget uguale nel loader e nel pannello (il pannello rifiuta un loader diverso)', /var VERSIONE = 'w-1';/.test(LOADER) && /A\.versione !== 'w-1'/.test(PANNELLO) && /var VERSIONE = 'w-1';/.test(PANNELLO));
+t('L4 versione del widget uguale nel loader e nel pannello (il pannello rifiuta un loader diverso)', /var VERSIONE = 'w-2';/.test(LOADER) && /A\.versione !== 'w-2'/.test(PANNELLO) && /var VERSIONE = 'w-2';/.test(PANNELLO));
+t('L4b file del widget solo ASCII (accenti come \\u escape: la CDN di Shopify puo\' servire il JS senza charset)', /^[\x00-\x7F]*$/.test(LOADER) && /^[\x00-\x7F]*$/.test(PANNELLO));
 
 // ---- il loader in un DOM finto (S8, test 16): cosa fa al caricamento e al tocco ----
 class FakeEl {
@@ -227,7 +228,7 @@ console.log('\n== loader in un DOM finto (S8, test 16) ==');
 // ---- funzioni pure del pannello ----
 const PB = '// ==== PURE:chat-panel BEGIN ====', PE = '// ==== PURE:chat-panel END ====';
 const pa = PANNELLO.indexOf(PB), pb = PANNELLO.indexOf(PE);
-const P = pa > 0 && pb > pa ? new Function(PANNELLO.slice(pa + PB.length, pb) + '\nreturn { linkSicuro, pezziTesto, intervallo, emailOk, nuovoUuid, leggiRisposta, messaggioValido, TESTI };')() : null;
+const P = pa > 0 && pb > pa ? new Function(PANNELLO.slice(pa + PB.length, pb) + '\nreturn { linkSicuro, pezziTesto, intervallo, emailOk, nuovoUuid, leggiRisposta, messaggioValido, firma, TESTI };')() : null;
 console.log('\n== pannello: funzioni pure ==');
 t('U0 blocco PURE:chat-panel trovato', P !== null);
 if (P) {
@@ -250,7 +251,12 @@ if (P) {
     && JSON.stringify(P.messaggioValido({ seq: 4, autore: 'sistema', testo: 't', at: 'x', extra: 1 })) === '{"seq":4,"autore":"sistema","testo":"t","at":"x","via_email":false}');
   const ki = Object.keys(P.TESTI.it).sort(), ke = Object.keys(P.TESTI.en).sort();
   t('U9 testi italiani e inglesi con le stesse voci, tutte non vuote', isDeepStrictEqual(ki, ke) && ki.every((k) => P.TESTI.it[k] && P.TESTI.en[k]));
-  t('U10 il titolo dice chi risponde (11.3, riga 1) e l\'etichetta fissa vicino al campo (riga 3)', P.TESTI.it.titolo === 'Chat Amim\u00ec: risposte automatiche e team' && P.TESTI.it.etichetta === 'Risposte automatiche e team Amim\u00ec.');
+  t('U10 il titolo dice chi risponde (11.3, riga 1) e l\'etichetta fissa vicino al campo (riga 3)', P.TESTI.it.titolo === 'Chat Amim\u00ec: risposte automatiche e team' && P.TESTI.it.etichetta === 'Risposte automatiche e team Amim\u00ec.'
+    // w-2: col bot acceso la testata dice "Assistente AI" (Fase 2 di 11.3) e le bolle del bot sono firmate "Assistente AI"
+    && P.TESTI.it.titoloAi === 'Assistente AI di Amim\u00ec' && P.TESTI.en.titoloAi === 'Amim\u00ec AI assistant'
+    && P.firma('ai', false, P.TESTI.it) === 'Assistente AI' && P.firma('automatica', true, P.TESTI.it) === 'Assistente AI'
+    && P.firma('automatica', false, P.TESTI.it) === 'Risposta automatica' && P.firma('sistema', true, P.TESTI.it) === '');
+  t('U10b messaggi del bot (autore ai) accettati, autori sconosciuti scartati', P.messaggioValido({ seq: 3, autore: 'ai', testo: 'x' })?.autore === 'ai' && P.messaggioValido({ seq: 3, autore: 'bot', testo: 'x' }) === null);
   // pezzo 7: il marchio si scrive Amimi con l'accento (nome del negozio su Shopify, firma e oggetto delle email di chat-send);
   // le email di chat-send non hanno un bottone "Continua la chat": il link sta dopo la frase "continuare la chat sul sito"
   const visibili = [...Object.values(P.TESTI.it), ...Object.values(P.TESTI.en)];

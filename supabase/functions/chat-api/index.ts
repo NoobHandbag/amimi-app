@@ -7,9 +7,9 @@
 // Azioni (tutte con la firma del proxy; GET solo `config`, il resto POST con corpo JSON di al massimo 8 KB e schema rigido):
 //   config     stato della chat e configurazione pubblica gia' composta (testi, bottoni con risposta, versione
 //              dell'informativa). Mai valori grezzi di app_flags: si leggono solo le chiavi di FLAG_LETTI.
-//   avvia      {email, nome?, lingua?, informativa, turnstile, prova?, testo?, client_id?} -> Turnstile (azione
+//   avvia      {email?, nome?, lingua?, informativa, turnstile, prova?, testo?, client_id?} -> Turnstile (azione
 //              `chat_avvia`, hostname controllato), tetto globale del giorno, sessione `bot`, chat token (solo l'hash nel
-//              DB). Un primo testo libero va subito a una persona come in `invia`.
+//              DB). Un primo testo libero (solo i widget w-1) va alla persona senza turno del bot (api-6, Gate 2 C5).
 //   invia      {token, client_id, testo | bottone} -> testo libero: messaggio della cliente e, se la chat e' `bot`,
 //              passaggio a una persona (Fase 1, 9.1); bottone: risposta fissa dalla riga di cs_faq di `chat_bottoni`.
 //   passaggio  {token} -> "Parla con una persona": `attesa_persona`, avviso fisso con l'email mascherata (chat_testo_attesa,
@@ -41,6 +41,14 @@
 // cs_faq, il tipo delle voci importate dalla Knowledge base di Shopify per la sola chat (cs-assist non lo legge, quindi
 // le bozze delle email non cambiano). Testi della pagina di ripresa col nome del marchio, Amimi con l'accento.
 // api-5 (pezzo 9, 25-11): pagina di ripresa col logo del negozio e col pulsante davvero nascosto (riprendi.ts).
+// api-6 (Fase 2 ridotta, 25-11, migr 0214, brief BRIEF_chat_sito_fase2_ridotta_2026-11-25.md nel repo hub): il chatbot
+// vero chiesto da Dan. `avvia` senza email (la chat si apre sul saluto del bot, senza modulo); il testo libero su una
+// chat `bot` va al bot AI (bot.ts) se chat_bot_ai_enabled e' acceso, altrimenti alla persona come nella Fase 1. Il
+// passaggio a una persona (pulsante, scelta del bot, chiave assente, errore, rifiuto, tetto) senza email della cliente
+// non apre il ticket: la chat chiede l'email con un testo fisso (email_chiesta_at, `serve_email` nelle risposte) e il
+// ticket nasce quando arriva (`passaggio` con email, o un'email scritta nel messaggio). Tetti del bot in app_flags (D-17);
+// spesa letta da chat_ai_log; ogni turno del bot finisce in chat_ai_log. Errori e tetti del bot vanno in Salute come
+// error (push chat_salute "Chat del sito in errore"), mai una risposta inventata.
 // Log: solo cause scritte nel codice e codici d'errore del DB, mai corpi, token, email, nomi o testi.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
@@ -48,9 +56,11 @@ import { inviaPush } from '../_shared/push.ts';
 import type { EsitoPush, MsgPush } from '../_shared/push.ts';
 import { rispondiEco } from './eco.ts';
 import { LIQUID_APRI, LIQUID_CHIUDI, PAGINA_RIPRESA } from './riprendi.ts';
+import { modelloAnthropic, storefrontPubblico, turnoBot } from './bot.ts';
+import type { EsitoTurno, Riga, Turno } from './bot.ts';
 
 // ==== PURE:chat-api BEGIN ====
-const VERSIONE = 'api-5';
+const VERSIONE = 'api-6';
 const HEADER_BASE: Record<string, string> = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' };
 const ROTTE_ECO = ['eco', 'misura', 'turnstile'];
 const METODO: Record<string, string> = { config: 'GET', avvia: 'POST', invia: 'POST', passaggio: 'POST', aggiorna: 'POST', riprendi: 'POST', errore: 'POST' };
@@ -79,7 +89,19 @@ const SALUTE_OGNI_MS = 3600000;                // riga health_log riscritta alme
 const LINK_ASSISTENZA = 'https://noobhandbag.github.io/amimi-app/#assistenza';
 // Le sole chiavi di app_flags che la edge legge (sez. 10, test 18): nessun segreto, nessuna chiave fuori dalla chat.
 const FLAG_LETTI = ['chat_sito_enabled', 'chat_limite_chat_giorno', 'chat_orari', 'chat_testo_saluto', 'chat_testo_orari',
-  'chat_testo_attesa', 'chat_testo_fuori_orario', 'chat_testo_informativa', 'chat_bottoni'];
+  'chat_testo_attesa', 'chat_testo_fuori_orario', 'chat_testo_informativa', 'chat_bottoni',
+  // api-6, bot AI (migr 0214): interruttore, modello, tetti, testi fissi del bot. Nessun segreto: la chiave e' un segreto
+  // delle Edge Functions (ANTHROPIC_API_KEY), mai in app_flags.
+  'chat_bot_ai_enabled', 'chat_ai_modello', 'chat_ai_tetto_usd_giorno', 'chat_ai_chiamate_giorno', 'chat_ai_risposte_chat',
+  'chat_testo_saluto_bot', 'chat_testo_etichetta_ai', 'chat_testo_chiedi_email', 'chat_testo_informativa_ai'];
+// conoscenza del bot (proposta 9.8): le voci risposta_chat di cs_faq e, di cs_knowledge, solo l'Area Membri (20). Fuori
+// cs_knowledge 2 perche' contiene il codice di benvenuto, che il bot non da' (D-18 consigliata)
+const CONOSCENZA_KN = [20];
+// copia di MODELLI_AMMESSI di bot.ts (questo blocco gira anche da solo nei test): tests/chat_bot.mjs le tiene uguali
+const MODELLI_BOT = ['claude-haiku-5-5', 'claude-sonnet-5-5'];
+const AI_TETTO_USD_MAX = 50;
+const AI_CHIAMATE_MAX = 10000;
+const AI_RISPOSTE_MAX = 50;
 // Turnstile (5.5, S6): il widget di produzione vale solo su amimi.it; quello di prova anche sulle anteprime di QUESTO
 // negozio (`<token>-<id del negozio>.shopifypreview.com`), mai di un altro. Le chiavi di prova di Cloudflare passano sempre:
 // un secret di quel tipo vale come assente e il token finto e' rifiutato prima di chiamare Cloudflare.
@@ -98,9 +120,16 @@ const SURROGATO_SOLO_RE = /\p{Cs}/u;
 const EMAIL_RE = /^[^\s\p{C}<>,;"@]+@[^\s\p{C}<>,;"@]+\.[^\s\p{C}<>,;"@]+$/u;
 
 type Sessione = {
-  id: string; stato: string; passaggi: number; passaggio_at: string | null; customer_email: string; customer_name: string | null;
+  id: string; stato: string; passaggi: number; passaggio_at: string | null; customer_email: string | null; customer_name: string | null;
   lingua: string; prova: boolean; ultima_attivita_at: string; chiusa_at: string | null; ultima_risposta_staff_at: string | null;
+  email_chiesta_at: string | null; informativa_versione: string;
 };
+type RigaLogAi = {
+  sessione_id: string; messaggio_id: string | null; turno: number; modello: string; parametri: Record<string, unknown>;
+  versione_prompt: string | null; strumenti: unknown[]; fonti: string[]; testo_modello: string | null; testo_mostrato: string | null;
+  esito: string; lint: string[]; usage: Record<string, unknown>; costo_usd: number; errore: string | null; durata_ms: number | null; prova: boolean;
+};
+type InputBot = { modello: string; lingua: string; storia: Turno[]; conoscenza: Riga[] };
 type TokenRiga = { id: string; tipo: string; scade_at: string; revocato_at: string | null; sessione: Sessione | null };
 type Messaggio = { id: string; seq: number; autore: string; testo: string; created_at: string; email_stato: string | null; delivered_at: string | null };
 type NuovoMessaggio = { sessione_id: string; autore: string; testo: string; client_msg_id: string; fonte: string | null };
@@ -125,11 +154,19 @@ interface Db {
   faq(id: number): Promise<{ testo_it: string | null; testo_en: string | null; attiva: boolean } | null>;
   salute(giorno: string, n: number, severity: string, causa: string | null): Promise<void>;
   proietta(sessioneId: string): Promise<void>;
+  // api-6 (bot AI)
+  messaggiPerClient(sessioneId: string, clientIds: string[]): Promise<Messaggio[]>;
+  storia(sessioneId: string, limite: number): Promise<Turno[]>;
+  conoscenza(): Promise<Riga[]>;
+  spesaAiOggi(): Promise<number>;
+  logAi(r: RigaLogAi): Promise<void>;
 }
 type Ambiente = {
   ora: number;
   segreti: { proxy: string; turnstile: string; turnstileProva: string };
   db: Db;
+  // il turno del bot (bot.ts); null = chiave Anthropic assente o non valida come intestazione (5.8: niente bot, passaggio)
+  bot: ((inp: InputBot, prenota: () => Promise<boolean>) => Promise<EsitoTurno>) | null;
   siteverify: (secret: string, token: string) => Promise<unknown>;
   push: (m: MsgPush) => Promise<EsitoPush>;
   sfondo: (p: Promise<unknown>) => void;
@@ -143,6 +180,10 @@ type Orari = { tz: string; giorni: number[]; dalle: string; alle: string; chiusu
 type Flag = {
   attiva: boolean; limiteGiorno: number; orari: Orari | null; bottoni: Bottone[]; informativaGrezza: string | null;
   testi: { saluto: Testo | null; orari: Testo | null; attesa: Testo | null; fuori_orario: Testo | null; informativa: Testo | null };
+  // api-6: il bot. Valori illeggibili = default prudenti (modello fuori elenco = bot che passa al team)
+  ai: { attivo: boolean; modello: string; tettoUsd: number; chiamateGiorno: number; risposteChat: number };
+  testiAi: { saluto: Testo | null; etichetta: Testo | null; chiediEmail: Testo | null; informativa: Testo | null };
+  informativaAiGrezza: string | null;
 };
 type Problema = { sev: string; causa: string };
 
@@ -326,9 +367,24 @@ function bottoniFlag(v: string | undefined): Bottone[] {
     return out;
   } catch { return []; }
 }
+function numeroFlag(v: string | undefined, min: number, max: number, def: number): number {
+  const n = Number((v ?? '').trim());
+  return (v ?? '').trim() !== '' && Number.isFinite(n) && n >= min && n <= max ? n : def;
+}
 function interpretaFlag(v: Record<string, string>): Flag {
   const lim = Number((v.chat_limite_chat_giorno ?? '').trim());
+  const modello = (v.chat_ai_modello ?? '').trim();
   return {
+    ai: {
+      attivo: (v.chat_bot_ai_enabled ?? '').trim().toLowerCase() === 'true',
+      modello: MODELLI_BOT.includes(modello) ? modello : 'claude-haiku-5-5',
+      tettoUsd: numeroFlag(v.chat_ai_tetto_usd_giorno, 0, AI_TETTO_USD_MAX, 1),
+      chiamateGiorno: Math.floor(numeroFlag(v.chat_ai_chiamate_giorno, 1, AI_CHIAMATE_MAX, 300)),
+      risposteChat: Math.floor(numeroFlag(v.chat_ai_risposte_chat, 1, AI_RISPOSTE_MAX, 10)),
+    },
+    testiAi: { saluto: testoFlag(v.chat_testo_saluto_bot), etichetta: testoFlag(v.chat_testo_etichetta_ai),
+      chiediEmail: testoFlag(v.chat_testo_chiedi_email), informativa: testoFlag(v.chat_testo_informativa_ai) },
+    informativaAiGrezza: typeof v.chat_testo_informativa_ai === 'string' ? v.chat_testo_informativa_ai : null,
     attiva: (v.chat_sito_enabled ?? '').trim().toLowerCase() === 'true',
     limiteGiorno: Number.isInteger(lim) && lim >= 1 && lim <= LIMITE_CHAT_GIORNO_MAX ? lim : LIMITE_CHAT_GIORNO_DEFAULT,
     orari: orariFlag(v.chat_orari),
@@ -368,7 +424,24 @@ const ATTESA_RISERVA: Testo = {
 function testoAttesa(f: Flag, s: Sessione, oraMs: number): string {
   const t = (inOrario(f.orari, oraMs) ? f.testi.attesa : f.testi.fuori_orario) ?? f.testi.fuori_orario ?? ATTESA_RISERVA;
   const base = s.lingua === 'en' ? t.en : t.it;
-  return [...base.split('{email}').join(mascheraEmail(s.customer_email))].slice(0, TESTO_DB_MAX).join('');
+  return [...base.split('{email}').join(mascheraEmail(s.customer_email ?? ''))].slice(0, TESTO_DB_MAX).join('');
+}
+// api-6: richiesta dell'email al passaggio (testo fisso, mai generato)
+const CHIEDI_EMAIL_RISERVA: Testo = {
+  it: 'Passo la tua domanda al team Amimì, che ti risponde via email, di solito entro 2 giorni lavorativi. Scrivimi la tua email (e il tuo nome, se vuoi).',
+  en: 'I\'ll pass your question to the Amimì team, who will reply by email, usually within 2 working days. Please write your email address (and your name, if you like).',
+};
+const testoLingua = (t: Testo, lingua: string) => [...(lingua === 'en' ? t.en : t.it)].slice(0, TESTO_DB_MAX).join('');
+const emailMascherata = (s: Sessione): string | null => (s.customer_email ? mascheraEmail(s.customer_email) : null);
+// la chat aspetta l'email della cliente per aprire il ticket (il widget mostra il campo)
+const serveEmail = (s: Sessione): boolean => s.stato === 'bot' && !s.customer_email && s.email_chiesta_at !== null;
+// un'email scritta in un messaggio: vale solo se ce n'e' una sola (diverse = nessuna)
+const EMAIL_CERCA_RE = /[^\s<>,;:"'()[\]@]+@[^\s<>,;:"'()[\]@]+\.[^\s<>,;:"'()[\]@]+/g;
+function emailNelTesto(t: string): string | null {
+  const trovate = new Set<string>();
+  // Gate 2, A1: mai un indirizzo del negozio ("ho gia' scritto a info@amimi.it" non e' l'email della cliente)
+  for (const m of t.match(EMAIL_CERCA_RE) ?? []) { const e = emailValida(m.replace(/[.!?]+$/, '')); if (e && !/@(.+\.)?amimi\.it$/.test(e)) trovate.add(e); }
+  return trovate.size === 1 ? [...trovate][0] : null;
 }
 
 // ---- push (8.4, 8.7): copie di push-eventi, con test d'impronta (tests/chat_api.mjs) ----
@@ -527,18 +600,136 @@ function aspettaIlTeam(s: Sessione): boolean {
   const r = Date.parse(s.ultima_risposta_staff_at ?? '');
   return !(Number.isFinite(r) && r >= p);
 }
-const serveUnaPersona = (s: Sessione) => s.stato === 'bot' || (s.stato === 'aperta' && !aspettaIlTeam(s));
-// testo libero: messaggio della cliente, poi (Fase 1) passaggio se la chat e' del bot o se il team le ha gia' risposto
-// (B4). Gli effetti del passaggio si rifanno anche quando il messaggio e' un doppione (nuovo invio dopo un errore a
-// meta'): sono idempotenti.
-async function testoLibero(amb: Ambiente, f: Flag, s: Sessione, clientId: string, testo: string): Promise<{ sessione: Sessione; messaggi: Messaggio[] }> {
+const serveUnaPersona = (s: Sessione) => s.stato === 'aperta' && !aspettaIlTeam(s);
+
+// api-6: l'email della cliente su una chat del bot (update condizionato su stato `bot`: mai dopo il passaggio)
+async function salvaEmail(amb: Ambiente, s: Sessione, email: string, nome: string | null): Promise<Sessione> {
+  const ora = iso(amb.ora);
+  const patch: Record<string, unknown> = { customer_email: email, updated_at: ora };
+  if (nome) patch.customer_name = nome;
+  const r = await amb.db.aggiornaSessione(s.id, patch, { stato: 'bot' });
+  if (r) return r;
+  const letta = await amb.db.sessione(s.id);
+  if (!letta) throw new ErroreDb('sessione non riletta');
+  return letta;
+}
+// api-6: la cliente (o il bot) vuole una persona. Con l'email: il passaggio della Fase 1 (attesa_persona, avviso, push,
+// solleciti). Senza: la chat la chiede col testo fisso chat_testo_chiedi_email e segna email_chiesta_at; il ticket nasce
+// quando l'email arriva. `chiave` rende idempotente il messaggio della richiesta (un nuovo invio non lo duplica).
+async function chiediPersona(amb: Ambiente, f: Flag, s: Sessione, cliente: boolean, chiave: string): Promise<{ sessione: Sessione; messaggi: Messaggio[] }> {
+  if (s.customer_email) {
+    const sess = s.stato === 'bot' ? await aPersona(amb, s, cliente) : s;
+    return { sessione: sess, messaggi: sess.stato === 'attesa_persona' ? await effettiPassaggio(amb, f, sess) : [] };
+  }
+  const ora = iso(amb.ora);
+  const patch: Record<string, unknown> = { ultima_attivita_at: ora, updated_at: ora };
+  if (!s.email_chiesta_at) patch.email_chiesta_at = ora;
+  if (cliente) patch.ultimo_cliente_at = ora;
+  const sess = (await amb.db.aggiornaSessione(s.id, patch, {})) ?? s;
+  const msg = await amb.db.inserisciMessaggi([{ sessione_id: s.id, autore: 'automatica', testo: testoLingua(f.testiAi.chiediEmail ?? CHIEDI_EMAIL_RISERVA, s.lingua),
+    client_msg_id: await uuidDa(chiave), fonte: 'chiedi_email' }]);
+  return { sessione: sess, messaggi: msg };
+}
+
+// api-6: un turno del bot su una chat `bot` (proposta 9, ridotta). Prima i tetti (risposte per chat, spesa e chiamate del
+// giorno), poi bot.ts; ogni esito che non e' una risposta mostrabile diventa un passaggio a una persona, mai un testo
+// inventato. Il registro chat_ai_log si scrive sempre che il turno sia contato; un errore di scrittura non ferma la chat.
+const ESITO_LOG: Record<string, string> = { risposta: 'inviata', passa: 'passata', errore: 'errore', tetto: 'tetto' };
+// Gate 2, B3: il bot e' acceso solo se lo sono il flag e TUTTI i suoi testi (saluto, informativa, etichetta): un JSON
+// storto in uno dei testi spegne il bot, cosi' il widget non dice "ti risponde una persona" mentre risponde Claude.
+// Stesso predicato per config e per il testo libero.
+const botAttivo = (f: Flag): boolean => f.ai.attivo && f.testiAi.saluto !== null && f.testiAi.informativa !== null && f.testiAi.etichetta !== null
+  && f.informativaAiGrezza !== null;
+const versioneInformativa = async (grezza: string) => 'i-' + (await sha256hex(grezza)).slice(0, 12);
+// la richiesta dell'email: un solo messaggio fisso per sessione (Gate 2, C4), dal bot, dal testo o dal pulsante
+const chiaveChiediEmail = (s: Sessione) => `${s.id}:chiedi_email`;
+async function turnoAi(amb: Ambiente, f: Flag, s: Sessione, clientId: string, problemi: Problema[]): Promise<{ sessione: Sessione; messaggi: Messaggio[] }> {
+  const chiaveEmail = chiaveChiediEmail(s);
+  const turno = await amb.db.contatore(`sess:${s.id}:ai`, 0, f.ai.risposteChat);
+  if (turno === null) return chiediPersona(amb, f, s, false, chiaveEmail);       // tetto della chat: passa, senza allarme
+  let e: EsitoTurno | null = null;
+  let causa: string | null = null;
+  if (!amb.bot) causa = 'chiave AI assente';
+  else if ((await amb.db.spesaAiOggi()) >= f.ai.tettoUsd) causa = 'tetto di spesa AI del giorno';
+  if (!causa && amb.bot) {
+    const [storia, conoscenza] = await Promise.all([amb.db.storia(s.id, 40), amb.db.conoscenza()]);
+    // un contatore che non si scrive vale come tetto (fallire chiusi) ma col suo nome, e il turno resta registrato (C2)
+    let prenotaGuasta = false;
+    const prenota = async () => {
+      try { return (await amb.db.contatore('glob:ai_chiamate', 86400, f.ai.chiamateGiorno)) !== null; } catch { prenotaGuasta = true; return false; }
+    };
+    try { e = await amb.bot({ modello: f.ai.modello, lingua: s.lingua, storia, conoscenza }, prenota); } catch { causa = 'eccezione del bot'; }
+    if (prenotaGuasta) causa = 'contatore delle chiamate AI non scritto';
+  }
+  if (e && e.esito === 'errore') causa = 'errore del modello';
+  if (e && e.esito === 'tetto' && !causa) causa = 'tetto delle chiamate AI del giorno';
+  let sess = s;
+  const out: Messaggio[] = [];
+  let mostrato: Messaggio | null = null;
+  // il registro si scrive anche se le scritture qui sotto falliscono (Gate 2, C2: un costo non registrato sfugge al tetto)
+  try {
+  // la risposta (o la frase del bot prima del passaggio, se ha passato il lint) come messaggio `ai`
+  if (e && (e.esito === 'risposta' || e.esito === 'passa') && e.testo) {
+    const m = await amb.db.inserisciMessaggi([{ sessione_id: s.id, autore: 'ai', testo: [...e.testo].slice(0, TESTO_DB_MAX).join(''),
+      client_msg_id: await uuidDa(`${clientId}:ai`), fonte: `ai:${turno}` }]);
+    out.push(...m);
+    mostrato = m[0] ?? null;
+  }
+  if (!e || e.esito !== 'risposta' || !e.testo) {
+    if (causa) problemi.push({ sev: 'error', causa: 'bot: ' + causa });
+    const r = await chiediPersona(amb, f, s, false, chiaveEmail);
+    sess = r.sessione;
+    out.push(...r.messaggi);
+  } else sess = await toccaSessione(amb, s, false);
+  } finally {
+  try {
+    await amb.db.logAi({
+      sessione_id: s.id, messaggio_id: mostrato ? mostrato.id : null, turno, modello: f.ai.modello,
+      parametri: { versione: VERSIONE, motivo: e?.motivo ?? null, rigenerata: e?.rigenerata ?? false, chiamate: e?.usage.chiamate ?? 0 },
+      versione_prompt: e?.versionePrompt ?? null, strumenti: e?.strumenti ?? [], fonti: e?.fonti ?? [],
+      testo_modello: e?.testoModello ? [...e.testoModello].slice(0, 8000).join('') : null, testo_mostrato: mostrato ? mostrato.testo : null,
+      esito: e ? (e.esito === 'risposta' && e.rigenerata ? 'rigenerata' : e.esito === 'passa' && e.motivo === 'controllo_automatico' ? 'bloccata_lint' : ESITO_LOG[e.esito] ?? 'errore')
+        : (causa && causa.startsWith('tetto') ? 'tetto' : 'errore'),
+      lint: e?.lint ?? [], usage: e ? { ...e.usage } : {}, costo_usd: e?.costoUsd ?? 0,
+      errore: e?.errore ? e.errore.slice(0, 300) : causa, durata_ms: e?.durataMs ?? null, prova: s.prova,
+    });
+  } catch { problemi.push({ sev: 'warn', causa: 'registro del bot non scritto' }); }
+  }
+  return { sessione: sess, messaggi: out };
+}
+
+// testo libero: messaggio della cliente, poi
+//   - chat `bot` (api-6): un'email scritta nel messaggio si salva; se la chat la stava chiedendo, il ticket nasce subito;
+//     altrimenti il bot AI risponde (chat_bot_ai_enabled acceso) o la chat chiede una persona (spento, come la Fase 1);
+//   - chat del team: passaggio nuovo se il team le ha gia' risposto (B4), altrimenti niente.
+// Gli effetti del passaggio si rifanno anche quando il messaggio e' un doppione (nuovo invio dopo un errore a meta'): sono
+// idempotenti; per il bot un doppione con la risposta gia' scritta la restituisce senza un turno nuovo.
+async function testoLibero(amb: Ambiente, f: Flag, s: Sessione, clientId: string, testo: string, problemi: Problema[], conBot = true): Promise<{ sessione: Sessione; messaggi: Messaggio[] }> {
   const ins = await amb.db.inserisciMessaggi([{ sessione_id: s.id, autore: 'cliente', testo, client_msg_id: clientId, fonte: null }]);
   const doppione = ins.length === 0;
+  if (s.stato === 'bot') {
+    let sess = await toccaSessione(amb, s, true);
+    // Gate 2, A1: un'email nel testo vale solo se la chat la sta chiedendo (un indirizzo scritto di passaggio, "il regalo e'
+    // per mia sorella x@y.it", non diventa l'email del ticket); mai un indirizzo del negozio
+    const email = sess.email_chiesta_at && !sess.customer_email ? emailNelTesto(testo) : null;
+    if (email) sess = await salvaEmail(amb, sess, email, null);
+    if (sess.stato !== 'bot') return { sessione: sess, messaggi: ins };
+    // Gate 2, B3: il bot solo col predicato unico e sulle sessioni nate con l'informativa del bot (una chat aperta prima
+    // di accendere il flag, o con un'informativa cambiata dopo, passa alla persona come nella Fase 1)
+    const bot = conBot && botAttivo(f) && s.informativa_versione === await versioneInformativa(f.informativaAiGrezza as string);
+    let r: { sessione: Sessione; messaggi: Messaggio[] };
+    if (email) r = await chiediPersona(amb, f, sess, true, chiaveChiediEmail(sess));
+    else if (!bot) r = await chiediPersona(amb, f, sess, true, chiaveChiediEmail(sess));
+    else {
+      const gia = doppione ? await amb.db.messaggiPerClient(s.id, [await uuidDa(`${clientId}:ai`)]) : [];
+      r = gia.length ? { sessione: sess, messaggi: gia } : await turnoAi(amb, f, sess, clientId, problemi);
+    }
+    return { sessione: r.sessione, messaggi: ordinati([...ins, ...r.messaggi]) };
+  }
   let sess: Sessione;
   let nuovo = false;
   // B4 solo per un messaggio arrivato DOPO l'ultima risposta dello staff (Gate 2, B2): un doppione salvato prima della
   // risposta non riapre una domanda gia' evasa; un doppione salvato dopo (primo invio caduto prima del passaggio) si'.
-  // Da `bot` il passaggio si rifa' come prima: gli effetti sono idempotenti.
   let persona = serveUnaPersona(s);
   if (persona && s.stato === 'aperta' && doppione) {
     const m = await amb.db.messaggioCliente(s.id, clientId);
@@ -566,20 +757,25 @@ async function azioneConfig(amb: Ambiente, problemi: Problema[]): Promise<Respon
     return json({ ok: true, versione: VERSIONE, attiva: false });     // 5.8: config illeggibile = spenta
   }
   if (!f.attiva) return json({ ok: true, versione: VERSIONE, attiva: false });
+  // api-6: col bot acceso saluto, etichetta e informativa sono quelli del bot (11.3); spento, quelli della Fase 1
+  const ai = botAttivo(f);
+  const grezza = ai ? f.informativaAiGrezza : f.informativaGrezza;
   return json({
-    ok: true, versione: VERSIONE, attiva: true,
-    testi: { saluto: f.testi.saluto, orari: f.testi.orari, informativa: f.testi.informativa },
+    ok: true, versione: VERSIONE, attiva: true, ai,
+    testi: { saluto: ai ? f.testiAi.saluto : f.testi.saluto, orari: f.testi.orari, informativa: ai ? f.testiAi.informativa : f.testi.informativa,
+      etichetta: ai ? f.testiAi.etichetta : null },
     bottoni: f.bottoni.filter((b) => b.faq !== null).map((b) => ({ id: b.id, it: b.it, en: b.en })),
-    informativa_versione: f.informativaGrezza === null ? null : 'i-' + (await sha256hex(f.informativaGrezza)).slice(0, 12),
+    informativa_versione: grezza === null ? null : 'i-' + (await sha256hex(grezza)).slice(0, 12),
     limiti: { testo: TESTO_MAX, nome: NOME_MAX },
   });
 }
 
 async function azioneAvvia(d: Record<string, unknown>, amb: Ambiente, cliente: string, giorno: string, problemi: Problema[]): Promise<Response> {
-  const e = schema(d, ['email', 'nome', 'lingua', 'informativa', 'turnstile', 'prova', 'testo', 'client_id'], ['email', 'informativa', 'turnstile']);
+  // api-6: email facoltativa (la chat si apre sul bot, senza modulo); se c'e' deve essere valida
+  const e = schema(d, ['email', 'nome', 'lingua', 'informativa', 'turnstile', 'prova', 'testo', 'client_id'], ['informativa', 'turnstile']);
   if (e) return e;
-  const email = emailValida(d.email);
-  if (!email) return campo('email');
+  const email = d.email === undefined || d.email === null ? null : emailValida(d.email);
+  if (email === null && d.email !== undefined && d.email !== null) return campo('email');
   const nome = nomePulito(d.nome);
   if (nome === false) return campo('nome');
   const lingua = d.lingua === undefined || d.lingua === null ? 'it' : d.lingua;
@@ -621,7 +817,9 @@ async function azioneAvvia(d: Record<string, unknown>, amb: Ambiente, cliente: s
     // la sessione c'e' gia': se il primo messaggio non passa la cliente ha comunque il suo token e lo rimanda con `invia`
     try {
       if ((await amb.db.contatore(`sess:${s.id}:msg`, 0, MESSAGGI_PER_CHAT)) === null) throw new ErroreDb('tetto dei messaggi al primo messaggio');
-      const r = await testoLibero(amb, f, s, clientId, testo);
+      // Gate 2, C5: Turnstile piu' un turno del bot potrebbero superare i 30 s del proxy; il testo in `avvia` lo manda
+      // solo il widget w-1, quindi va alla persona come nella Fase 1
+      const r = await testoLibero(amb, f, s, clientId, testo, problemi, false);
       s = r.sessione;
       messaggi = r.messaggi;
       testoSalvato = true;
@@ -631,7 +829,7 @@ async function azioneAvvia(d: Record<string, unknown>, amb: Ambiente, cliente: s
       testoSalvato = false;
     }
   }
-  return json({ ok: true, token, stato: s.stato, email: mascheraEmail(email), messaggi: messaggi.map(pubblico),
+  return json({ ok: true, token, stato: s.stato, email: emailMascherata(s), serve_email: serveEmail(s), messaggi: messaggi.map(pubblico),
     ...(testoSalvato === null ? {} : { testo_salvato: testoSalvato }) });
 }
 
@@ -661,9 +859,9 @@ async function azioneInvia(d: Record<string, unknown>, amb: Ambiente, problemi: 
   if (testo !== null) {
     const tetto = await limiteMessaggi(amb, s, problemi);
     if (tetto) return tetto;
-    const r = await testoLibero(amb, f, s, clientId, testo);
+    const r = await testoLibero(amb, f, s, clientId, testo, problemi);
     await proietta(amb, s.id, problemi);
-    return json({ ok: true, stato: r.sessione.stato, messaggi: r.messaggi.map(pubblico) });
+    return json({ ok: true, stato: r.sessione.stato, email: emailMascherata(r.sessione), serve_email: serveEmail(r.sessione), messaggi: r.messaggi.map(pubblico) });
   }
   // bottone: risposta fissa dalla riga di cs_faq che il bottone indica; lo stato non cambia (7.5)
   const b = f.bottoni.find((x) => x.id === d.bottone);
@@ -679,14 +877,19 @@ async function azioneInvia(d: Record<string, unknown>, amb: Ambiente, problemi: 
   ]);
   const sess = await toccaSessione(amb, s, true);
   await proietta(amb, s.id, problemi);
-  return json({ ok: true, stato: sess.stato, messaggi: ordinati(ins).map(pubblico) });
+  return json({ ok: true, stato: sess.stato, serve_email: serveEmail(sess), messaggi: ordinati(ins).map(pubblico) });
 }
 
 async function azionePassaggio(d: Record<string, unknown>, amb: Ambiente, problemi: Problema[]): Promise<Response> {
-  const e = schema(d, ['token'], ['token']);
+  // api-6: email e nome facoltativi, dal campo che il widget mostra quando la chat chiede l'email (serve_email)
+  const e = schema(d, ['token', 'email', 'nome'], ['token']);
   if (e) return e;
   const token = tokenValido(d.token);
   if (!token) return campo('token');
+  const email = d.email === undefined || d.email === null ? null : emailValida(d.email);
+  if (email === null && d.email !== undefined && d.email !== null) return campo('email');
+  const nome = nomePulito(d.nome);
+  if (nome === false) return campo('nome');
   let f: Flag;
   try { f = await leggiFlag(amb); } catch { problemi.push({ sev: 'error', causa: 'flag non letti' }); return rifiuto('non_disponibile'); }
   if (!f.attiva) return rifiuto('spenta');
@@ -697,13 +900,23 @@ async function azionePassaggio(d: Record<string, unknown>, amb: Ambiente, proble
   if (veloce) return veloce;
   if (s.stato === 'aperta') {
     const sess = await toccaSessione(amb, s, false);
-    return json({ ok: true, stato: sess.stato, email: mascheraEmail(s.customer_email), messaggi: [] });
+    return json({ ok: true, stato: sess.stato, email: emailMascherata(s), serve_email: false, messaggi: [] });
   }
-  // bot: passaggio nuovo; attesa_persona: ripetizione, gli effetti sono idempotenti (nessuna push in piu')
-  const sess = s.stato === 'bot' ? await aPersona(amb, s, false) : await toccaSessione(amb, s, false);
-  const messaggi = sess.stato === 'attesa_persona' ? await effettiPassaggio(amb, f, sess) : [];
+  let messaggi: Messaggio[] = [];
+  let sess: Sessione;
+  if (s.stato === 'bot') {
+    // bot: con l'email (data ora o prima) passaggio nuovo; senza, la chat la chiede (idempotente per richiesta)
+    const conEmail = email ? await salvaEmail(amb, s, email, nome) : s;
+    const r = await chiediPersona(amb, f, conEmail, false, chiaveChiediEmail(s));
+    sess = r.sessione;
+    messaggi = r.messaggi;
+  } else {
+    // attesa_persona: ripetizione, gli effetti sono idempotenti (nessuna push in piu')
+    sess = await toccaSessione(amb, s, false);
+    messaggi = await effettiPassaggio(amb, f, sess);
+  }
   await proietta(amb, s.id, problemi);
-  return json({ ok: true, stato: sess.stato, email: mascheraEmail(sess.customer_email), messaggi: ordinati(messaggi).map(pubblico) });
+  return json({ ok: true, stato: sess.stato, email: emailMascherata(sess), serve_email: serveEmail(sess), messaggi: ordinati(messaggi).map(pubblico) });
 }
 
 async function azioneAggiorna(d: Record<string, unknown>, amb: Ambiente, problemi: Problema[]): Promise<Response> {
@@ -725,7 +938,7 @@ async function azioneAggiorna(d: Record<string, unknown>, amb: Ambiente, problem
       try { await amb.db.segnaViste(viste, iso(amb.ora)); } catch { problemi.push({ sev: 'warn', causa: 'vista in chat non scritta' }); }
     }
   }
-  return json({ ok: true, stato: s.stato, messaggi: messaggi.map(pubblico), altri: righe.length > AGGIORNA_LIMITE });
+  return json({ ok: true, stato: s.stato, email: emailMascherata(s), serve_email: serveEmail(s), messaggi: messaggi.map(pubblico), altri: righe.length > AGGIORNA_LIMITE });
 }
 
 async function azioneRiprendi(d: Record<string, unknown>, amb: Ambiente, problemi: Problema[]): Promise<Response> {
@@ -755,7 +968,7 @@ async function azioneRiprendi(d: Record<string, unknown>, amb: Ambiente, problem
     await amb.db.usaToken(r.id, ora);
   } catch { problemi.push({ sev: 'warn', causa: 'token vecchi non revocati' }); }
   const s = await toccaSessione(amb, s0, false);
-  return json({ ok: true, token, stato: s.stato, email: mascheraEmail(s.customer_email) });
+  return json({ ok: true, token, stato: s.stato, email: emailMascherata(s), serve_email: serveEmail(s) });
 }
 
 async function azioneErrore(d: Record<string, unknown>, amb: Ambiente, giorno: string, problemi: Problema[]): Promise<Response> {
@@ -833,7 +1046,7 @@ const fallito = (causa: string, e: unknown): ErroreDb => {
   console.error('chat-api: ' + causa, codice(e));
   return new ErroreDb(causa);
 };
-const COL_SESSIONE = 'id, stato, passaggi, passaggio_at, customer_email, customer_name, lingua, prova, ultima_attivita_at, chiusa_at, ultima_risposta_staff_at';
+const COL_SESSIONE = 'id, stato, passaggi, passaggio_at, customer_email, customer_name, lingua, prova, ultima_attivita_at, chiusa_at, ultima_risposta_staff_at, email_chiesta_at, informativa_versione';
 const COL_MESSAGGIO = 'id, seq, autore, testo, created_at, email_stato, delivered_at';
 
 function dbSupabase(sb: SupabaseClient): Db {
@@ -957,7 +1170,64 @@ function dbSupabase(sb: SupabaseClient): Db {
       const { error: e2 } = await sb.from('health_log').upsert({ day: giorno, k: 'chat_api', label, n, severity: sev, created_at: new Date().toISOString() }, { onConflict: 'day,k' });
       if (e2) throw fallito('health_log non scritto', e2);
     },
+    // ---- api-6, bot AI ----
+    async messaggiPerClient(sessioneId, clientIds) {
+      const { data, error } = await retryOnce(() => sb.from('chat_messaggi').select(COL_MESSAGGIO).eq('sessione_id', sessioneId)
+        .in('client_msg_id', clientIds).order('seq', { ascending: true }).limit(clientIds.length));
+      if (error) throw fallito('messaggi del bot non riletti', error);
+      return (data ?? []) as Messaggio[];
+    },
+    async storia(sessioneId, limite) {
+      const { data, error } = await retryOnce(() => sb.from('chat_messaggi').select('seq, autore, testo').eq('sessione_id', sessioneId)
+        .order('seq', { ascending: false }).limit(limite));
+      if (error) throw fallito('storia della chat non letta', error);
+      return ((data ?? []) as { seq: number; autore: string; testo: string }[]).sort((a, b) => a.seq - b.seq).map((m) => ({ autore: m.autore, testo: m.testo }));
+    },
+    // la conoscenza del bot, 60 s in memoria (come i flag): il prompt statico resta identico fra i turni e sta in cache
+    async conoscenza() {
+      if (CACHE_CONOSCENZA && Date.now() - CACHE_CONOSCENZA.at < FLAG_CACHE_MS) return CACHE_CONOSCENZA.v;
+      const [a, b] = await Promise.all([
+        retryOnce(() => sb.from('cs_faq').select('id, titolo, testo_it, testo_en').eq('tipo', 'risposta_chat').eq('attiva', true).order('id').limit(200)),
+        retryOnce(() => sb.from('cs_knowledge').select('id, titolo, contenuto').in('id', CONOSCENZA_KN).eq('attiva', true).limit(CONOSCENZA_KN.length)),
+      ]);
+      if (a.error || b.error) throw fallito('conoscenza del bot non letta', a.error ?? b.error);
+      const righe: Riga[] = [];
+      for (const r of (a.data ?? []) as { id: number; titolo: string | null; testo_it: string | null; testo_en: string | null }[]) {
+        if (typeof r.testo_it !== 'string' || !r.testo_it.trim()) continue;
+        const titolo = String(r.titolo ?? '').replace(/^faq-[a-z0-9-]+:\s*/, '').slice(0, 200);
+        righe.push({ id: `K${r.id}`, titolo, it: r.testo_it.trim(), en: typeof r.testo_en === 'string' && r.testo_en.trim() ? r.testo_en.trim() : null });
+      }
+      for (const r of (b.data ?? []) as { id: number; titolo: string | null; contenuto: string | null }[]) {
+        if (typeof r.contenuto !== 'string' || !r.contenuto.trim()) continue;
+        righe.push({ id: `KN${r.id}`, titolo: String(r.titolo ?? '').slice(0, 200), it: r.contenuto.trim(), en: null });
+      }
+      if (!righe.length) throw fallito('conoscenza del bot vuota', null);
+      CACHE_CONOSCENZA = { at: Date.now(), v: righe };
+      return righe;
+    },
+    async spesaAiOggi() {
+      const { data, error } = await retryOnce(() => sb.rpc('chat_ai_spesa_oggi'));
+      if (error) throw fallito('spesa del bot non letta', error);
+      const n = Number(data);
+      if (!Number.isFinite(n) || n < 0) throw fallito('spesa del bot non leggibile', null);
+      return n;
+    },
+    async logAi(r) {
+      // scrittura: mai ritentata (Regola 20 d)
+      const { error } = await sb.from('chat_ai_log').insert(r);
+      if (error) throw fallito('registro del bot non scritto', error);
+    },
   };
+}
+let CACHE_CONOSCENZA: { at: number; v: Riga[] } | null = null;
+
+// il bot (bot.ts) solo con una chiave plausibile come intestazione HTTP (CONOSCENZA sez. 5: un a capo o un carattere di
+// controllo nel segreto farebbe fallire fetch citando il valore). Letta a ogni richiesta: un segreto messo dopo il deploy
+// vale dalla richiesta successiva. Mai stampata.
+function botDa(chiave: string): Ambiente['bot'] {
+  if (!/^[\x21-\x7E]{20,300}$/.test(chiave)) return null;
+  const modello = modelloAnthropic(chiave);
+  return (inp, prenota) => turnoBot(inp, { modello, storefront: storefrontPubblico, prenota, ora: () => Date.now() });
 }
 
 // L'unica chiamata fuori della edge oltre a push-api: siteverify di Turnstile, 10 s di tetto, secret nel corpo.
@@ -979,6 +1249,7 @@ Deno.serve((req) => gestisci(req, {
   ora: Date.now(),
   segreti: { proxy: env('CHAT_APP_PROXY_SECRET'), turnstile: env('CHAT_TURNSTILE_PRODUZIONE_SECRET'), turnstileProva: env('CHAT_TURNSTILE_PROVA_SECRET') },
   db: DB,
+  bot: botDa(env('ANTHROPIC_API_KEY')),
   siteverify,
   push: (m) => inviaPush(m),
   sfondo,

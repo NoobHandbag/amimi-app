@@ -78,7 +78,14 @@ begin
     'delete from public.chat_contatori',
     format('select nextval(%L)', v_seq_m),
     format('select nextval(%L)', v_seq_e),
-    'select public.chat_contatore_incrementa(''prova:rls'', 0, 5)'
+    'select public.chat_contatore_incrementa(''prova:rls'', 0, 5)',
+    -- 0214: registro del bot, sua sequenza e spesa del giorno, solo service_role
+    'select count(*) from public.chat_ai_log',
+    'insert into public.chat_ai_log (sessione_id, turno, modello, esito) values (gen_random_uuid(), 1, ''claude-haiku-5-5'', ''inviata'')',
+    'update public.chat_ai_log set esito = ''errore''',
+    'delete from public.chat_ai_log',
+    'select nextval(''public.chat_ai_log_id_sq'')',
+    'select public.chat_ai_spesa_oggi()'
   ];
   -- in piu', ad anon: neanche la lettura delle due tabelle del team
   vietate_lette := array['select count(*) from public.chat_sessioni', 'select count(*) from public.chat_messaggi'];
@@ -118,9 +125,20 @@ begin
     begin execute q; exception when others then get stacked diagnostics st = returned_sqlstate, v_val = constraint_name; end;
     if st <> '23514' or v_val is distinct from cn then raise exception 'KO V: "%" = % % (atteso 23514 %)', q, st, v_val, cn; end if;
   end loop;
+  -- 0214: senza email la sessione nasce (chat del bot, senza modulo); il passaggio e lo stato aperta no
   st := 'ok';
-  begin insert into chat_sessioni (informativa_versione) values ('v'); exception when others then st := sqlstate; end;
-  if st <> '23502' then raise exception 'KO V: sessione senza email = % (atteso 23502)', st; end if;
+  begin insert into chat_sessioni (informativa_versione) values ('v') returning id into v_s2; exception when others then st := sqlstate; end;
+  if st <> 'ok' then raise exception 'KO V: sessione senza email (chat del bot) rifiutata = %', st; end if;
+  for q in select * from (values
+      ('insert into chat_sessioni (informativa_versione, stato, passaggi, passaggio_at) values (''v'', ''attesa_persona'', 1, now())'),
+      ('insert into chat_sessioni (informativa_versione, passaggi, passaggio_at) values (''v'', 1, now())'),
+      (format('update chat_sessioni set stato = ''aperta'', preso_da = ''Ginevra'' where id = %L', v_s2))) x(a)
+  loop
+    st := 'ok'; v_val := null;
+    begin execute q; exception when others then get stacked diagnostics st = returned_sqlstate, v_val = constraint_name; end;
+    if st <> '23514' or v_val is distinct from 'chat_sessioni_email_passaggio_ck' then raise exception 'KO V: "%" senza email = % % (atteso 23514 chat_sessioni_email_passaggio_ck)', q, st, v_val; end if;
+  end loop;
+  delete from chat_sessioni where id = v_s2;
 
   -- V: messaggi
   v_m := gen_random_uuid();
@@ -316,7 +334,7 @@ begin
   --   due derive passavano verdi (provato in locale l'8-11): RLS spenta su chat_token e EXECUTE della RPC ad
   --   authenticated, che oggi non aprono niente solo perche' mancano i grant di tabella e la RPC e' invoker.
   if exists (select 1 from pg_class cl where cl.oid in ('public.chat_sessioni'::regclass, 'public.chat_messaggi'::regclass, 'public.chat_token'::regclass,
-                                                       'public.chat_eventi'::regclass, 'public.chat_contatori'::regclass) and not cl.relrowsecurity) then
+                                                       'public.chat_eventi'::regclass, 'public.chat_contatori'::regclass, 'public.chat_ai_log'::regclass) and not cl.relrowsecurity) then
     raise exception 'KO K: RLS spenta su una tabella chat_';
   end if;
   if has_function_privilege('anon', 'public.chat_contatore_incrementa(text, integer, integer)', 'execute')
@@ -338,7 +356,8 @@ begin
     select v.oid from pg_depend d join pg_rewrite rw on rw.oid = d.objid join pg_class v on v.oid = rw.ev_class
      where d.classid = 'pg_rewrite'::regclass and v.oid <> d.refobjid
        and d.refobjid in ('public.cs_conversations'::regclass, 'public.cs_messages'::regclass, 'public.chat_sessioni'::regclass,
-                          'public.chat_messaggi'::regclass, 'public.chat_token'::regclass, 'public.chat_eventi'::regclass, 'public.chat_contatori'::regclass)
+                          'public.chat_messaggi'::regclass, 'public.chat_token'::regclass, 'public.chat_eventi'::regclass, 'public.chat_contatori'::regclass,
+                          'public.chat_ai_log'::regclass)
     union
     select v.oid from dip join pg_depend d on d.refobjid = dip.oid join pg_rewrite rw on rw.oid = d.objid join pg_class v on v.oid = rw.ev_class
      where d.classid = 'pg_rewrite'::regclass and v.oid <> dip.oid)
@@ -355,7 +374,7 @@ begin
   if v_val is not null then raise exception 'KO K2: viste che espongono la chat: %', v_val; end if;
   select string_agg(p.oid::regprocedure::text, ', ') into v_val
     from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
-   where ns.nspname = 'public' and p.prosecdef and p.prosrc ~ '\m(cs_conversations|cs_messages|chat_sessioni|chat_messaggi|chat_token|chat_eventi|chat_contatori)\M'
+   where ns.nspname = 'public' and p.prosecdef and p.prosrc ~ '\m(cs_conversations|cs_messages|chat_sessioni|chat_messaggi|chat_token|chat_eventi|chat_contatori|chat_ai_log)\M'
      and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute'));
   if v_val is not null then raise exception 'KO K2: funzioni security definer eseguibili dal sito che leggono la chat: %', v_val; end if;
 
@@ -365,6 +384,8 @@ begin
           and has_table_privilege('service_role', 'public.chat_token', 'select, insert, update, delete')
           and has_table_privilege('service_role', 'public.chat_eventi', 'select, insert, update, delete')
           and has_table_privilege('service_role', 'public.chat_contatori', 'select, insert, update, delete')
+          and has_table_privilege('service_role', 'public.chat_ai_log', 'select, insert, update, delete')
+          and has_function_privilege('service_role', 'public.chat_ai_spesa_oggi()', 'execute')
           and has_sequence_privilege('service_role', v_seq_m, 'usage') and has_sequence_privilege('service_role', v_seq_e, 'usage')
           and has_function_privilege('service_role', 'public.chat_contatore_incrementa(text, integer, integer)', 'execute')
           and has_table_privilege('service_role', 'public.app_flags', 'select')) then

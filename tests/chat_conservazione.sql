@@ -17,6 +17,9 @@ declare
 begin
   select count(*) into v_altre from chat_sessioni;
   select value into v_mesi from app_flags where key = 'chat_conservazione_mesi';
+  -- la prova conta in mesi su 12; dal 19-11 il flag vale 24 (D-25): lo si fissa a 12 per la durata della prova (rollback)
+  update app_flags set value = '12' where key = 'chat_conservazione_mesi';
+  v_mesi := '12';
 
   insert into chat_sessioni (stato, customer_email, informativa_versione, prova, ultima_attivita_at, created_at)
   values ('bot', 'info@amimi.it', 'test', true, now() - interval '13 months', now() - interval '13 months') returning id into v_vecchia;
