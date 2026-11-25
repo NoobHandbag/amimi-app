@@ -3,6 +3,9 @@
 -- SOLO STRUTTURA: dopo questa migrazione il CE e' identico al centesimo (ce_rettifiche nasce vuota, guardia in fondo).
 -- I numeri entrano con la 0213, dopo l'OK di Dan sulla tabella mese per mese (Regola Ferrea 11).
 --
+-- Limiti noti: una rettifica di logistica su un mese con blocco manuale (ce_totale_manual, gen-feb) si somma al manuale;
+--    una vendita passata ri-risolta con sale_correct prende il products.cogs di oggi (materiali dentro) e la rettifica
+--    congelata la conterebbe due volte (ce-guard segnala il drift se il mese e' chiuso).
 -- 1) ce_rettifiche: righe di rettifica del CE per mese, separate dalle vendite. Servono quando un costo di un mese
 --    passato va corretto senza riscrivere i cogs_snapshot delle singole vendite (che restano la traccia di cio' che il
 --    sistema sapeva il giorno della vendita). Primo uso: il COGS dei materiali comprati da Amimi (pelle, tessuti) che
@@ -35,6 +38,7 @@ create table if not exists public.ce_rettifiche (
   annullata_at timestamptz,
   annullata_by text,
   check (canale is null or linea = 'cogs'),
+  check (linea <> 'cogs' or canale is not null),
   check (canale is distinct from 'gift' or not in_amimi),
   check (attiva or (annullata_at is not null and annullata_by is not null))
 );
@@ -231,6 +235,9 @@ from calc
 group by year, month, canale
 having round(sum(d_unit * q), 2) <> 0;
 grant select on public.v_ce_rettifica_cogs_materiali to authenticated;
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'ask_ro') then grant select on public.v_ce_rettifica_cogs_materiali to ask_ro; end if;
+end $$;
 
 ------------------------------------------------------------------------------------------------ 3) imposte stimate
 create table if not exists public.ce_imposte_aliquote (

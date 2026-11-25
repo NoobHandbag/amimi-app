@@ -52,8 +52,10 @@ ok('imposte FUORI da mc1, mc2 e compenso: le sostituzioni nelle viste CE non nom
   VISTE.length > 500 && !/impost|ires|irap/i.test(VISTE));
 
 // 0213: dati
-ok('0213: COGS materiali solo febbraio-ottobre 2026, scritti dal calcolo vivo',
-  /from public\.v_ce_rettifica_cogs_materiali r\s+where r\.year = 2026 and r\.month between 2 and 10/.test(M13));
+ok('0213: COGS materiali febbraio-novembre 2026, scritti dal calcolo vivo',
+  /from public\.v_ce_rettifica_cogs_materiali r\s+where r\.year = 2026 and r\.month between 2 and 11/.test(M13));
+ok('0212: una riga COGS ha sempre il canale', /check \(linea <> 'cogs' or canale is not null\)/.test(M12));
+ok('0212: anche ask_ro legge il calcolo vivo', /grant select on public\.v_ce_rettifica_cogs_materiali to ask_ro/.test(M12));
 ok('0213: dazi India fuori dalla logistica solo dopo il controllo delle 2 spese UPS (-1440,49)',
   /v_tot <> -1440\.49/.test(M13) && Math.abs(425.07 + 1015.42 - 1440.49) < 0.005 && /-e\.costo/.test(M13));
 ok('0213: F24 del 16-10 = 1.280,72 IVA + 123,57 ritenuta',
@@ -70,6 +72,9 @@ ok('drill COGS: rettifica nel brand, rettifica_gift solo nel Totale',
 ok('CE dettagliato: righe imposte solo nello scope Totale, da v_ce_imposte_stimate',
   /from\('v_ce_imposte_stimate'\)/.test(API) && /scope === 'totale' \|\| !r\.onlyTotale/.test(CE)
   && /k: 'utile_dopo_imposte'[^\n]*onlyTotale: true/.test(CE));
+ok('CE dettagliato: le righe imposte si sommano tutte sugli stessi mesi (niente mc: 2 sull\'utile dopo imposte)',
+  !/k: 'utile_dopo_imposte'[^\n]*mc: 2/.test(CE));
+ok('CE dettagliato: se la vista imposte non risponde il CE si mostra lo stesso', /if \(ie\) return rows;/.test(API));
 
 if (fail) { console.error(`\n${fail} guardie fallite`); process.exit(1); }
 console.log('\ntutte le guardie ok');

@@ -751,7 +751,8 @@ export async function fetchCeGrid(scope: 'amimi' | 'totale'): Promise<CeFull[]> 
   if (scope === 'totale') {
     const { data: imp, error: ie } = await supabase.from('v_ce_imposte_stimate')
       .select('month,ires_stimata,irap_stimata,utile_dopo_imposte').eq('year', nowYear());
-    if (ie) throw new Error(ie.message);
+    // una stima: se la vista manca o non risponde il CE si mostra lo stesso, senza le righe imposte
+    if (ie) return rows;
     const byM = new Map((imp ?? []).map((r: Record<string, unknown>) => [Number(r.month), r]));
     rows.forEach((o) => {
       const r = byM.get(o.month);

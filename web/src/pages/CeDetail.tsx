@@ -68,7 +68,7 @@ const ROWS: RowDef[] = [
   { grp: 'Imposte stimate (da confermare con lo Studio)', onlyTotale: true },
   { k: 'ires_stimata', lab: 'IRES stimata', unit: 'e', kind: 'cost', onlyTotale: true, src: { type: 'formula' } },
   { k: 'irap_stimata', lab: 'IRAP stimata', unit: 'e', kind: 'cost', onlyTotale: true, src: { type: 'formula' } },
-  { k: 'utile_dopo_imposte', lab: 'Utile dopo imposte stimate', unit: 'e', mc: 2, onlyTotale: true, src: { type: 'formula' } },
+  { k: 'utile_dopo_imposte', lab: 'Utile dopo imposte stimate', unit: 'e', strong: true, onlyTotale: true, src: { type: 'formula' } },
   { grp: 'IVA' },
   { k: 'iva', lab: 'IVA a debito (22%)', unit: 'e', kind: 'muted', src: { type: 'formula' } },
 ];

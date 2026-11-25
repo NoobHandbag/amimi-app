@@ -3,7 +3,8 @@
 -- DATI. Si applica SOLO dopo l'OK esplicito di Dan in chat sulla tabella mese per mese (Regola Ferrea 11): tocca i mesi
 -- chiusi febbraio-giugno 2026 e li richiude.
 --
--- 1) COGS dei materiali, febbraio-ottobre 2026: righe di ce_rettifiche scritte dal calcolo vivo v_ce_rettifica_cogs_materiali
+-- 1) COGS dei materiali, febbraio-novembre 2026 (novembre: le vendite fino alla Parte A del 25-11 hanno il costo vecchio;
+--    quelle dopo hanno gia' il costo nuovo e greatest() da' delta 0): righe di ce_rettifiche scritte dal calcolo vivo v_ce_rettifica_cogs_materiali
 --    al momento dell'apply (una per mese e canale). Dentro c'e' anche il +2,42 a pezzo dei pezzi India venduti.
 -- 2) Dazi e spedizione India: le due spese LOGISTICA/Spedizioni (08-03 UPS 425,07 e 10-05 UPS 1.015,42) escono dalla
 --    logistica variabile con una rettifica di segno opposto. Il loro costo entra nel COGS a 2,42 a pezzo venduto (punto 1
@@ -26,7 +27,7 @@ select 'cogs_materiali_2026-11', r.year, r.month, 'cogs', r.canale, r.canale <> 
                           'regole', 'brief 25-11 sez. 2, vista v_ce_rettifica_cogs_materiali', 'calcolato_il', now()),
        'claude-code (0213: COGS materiali, OK Dan)'
   from public.v_ce_rettifica_cogs_materiali r
- where r.year = 2026 and r.month between 2 and 10;
+ where r.year = 2026 and r.month between 2 and 11;
 
 ------------------------------------------------------------------------------------------------ 2) dazi India fuori dalla logistica
 do $$
