@@ -96,5 +96,16 @@ console.log('\n== lib.ts: helper puri presenti ==');
   t('num, isoDate, todayRome, ymFromIso, tok, cnorm, VALID_CATEGORIE esportati', /export function num/.test(LIB) && /export function isoDate/.test(LIB) && /export function todayRome/.test(LIB) && /export function ymFromIso/.test(LIB) && /export const tok/.test(LIB) && /export const cnorm/.test(LIB) && /export const VALID_CATEGORIE/.test(LIB));
 }
 
+console.log('\n== product_verify: scrive anche model (CASI_APERTI 51 d, 26-11) ==');
+{
+  // ugc-publish legge products.model: senza questo campo un refuso nel modello si correggeva solo via SQL.
+  const a = SRC.indexOf("if (action === 'product_verify')"), b = SRC.indexOf('// --- FLOW 4/5', a);
+  const blk = a >= 0 && b > a ? SRC.slice(a, b) : '';
+  const fields = blk.match(/for \(const f of \[([^\]]+)\]\)/);
+  t("'model' tra i campi accettati dal payload", !!fields && /'model'/.test(fields[1]));
+  t('model in maiuscolo server-side', /upd\.model = \(upd\.model as string\)\.trim\(\)\.toUpperCase\(\)/.test(blk));
+  t('il codice resta derivato da item, non da model', /derived = `\$\{tok\(finalItem\)\}/.test(blk));
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);

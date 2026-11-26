@@ -708,11 +708,14 @@ async function handle(req: Request): Promise<Response> {
     const { data: cur } = await sb.from('products').select('id, codice, verificato, cogs, retail_price, item, variant, source').eq('codice', codice).single();
     if (!cur) return json({ error: 'prodotto non trovato' }, 404);
     const upd: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    for (const f of ['item', 'variant', 'categoria', 'image_url', 'description', 'seo_title']) {
+    // `model` (CASI_APERTI 51 d, Dan 26-11): nome esteso letto da ugc-publish (`custom.modello`), puo' differire da
+    // `item` (LEA BAG X RITA, PORTA CARTE): si scrive solo se nel payload, mai derivato da item, e non entra nel codice.
+    for (const f of ['item', 'variant', 'model', 'categoria', 'image_url', 'description', 'seo_title']) {
       if (payload[f] != null && String(payload[f]).trim() !== '') upd[f] = payload[f];
     }
     // nomi in MAIUSCOLO (decisione call 06-07): difesa server-side, qualunque client scriva
     if (typeof upd.item === 'string') upd.item = (upd.item as string).toUpperCase();
+    if (typeof upd.model === 'string') upd.model = (upd.model as string).trim().toUpperCase();
     if (typeof upd.variant === 'string') upd.variant = (upd.variant as string).toUpperCase();
     // A5 (audit gate 14-09): prezzo e COGS, se dati, devono essere numeri > 0 ('12,50' o '' o negativo = 422; prima
     // Number('12,50') dava NaN, serializzato a null, che AZZERAVA il COGS di un prodotto verificato).

@@ -133,6 +133,10 @@ const [pv] = await call('product_verify', { payload: { codice: 'ZZZTEST_NUOVA_X'
 const verified = await get('/products?codice=eq.ZZZTEST_NUOVA_X&select=verificato,retail_price,description');
 ok(pv === 200 && verified[0].verificato === true && Number(verified[0].retail_price) === 120, 'verify completes product');
 ok((await get('/v_products_todo?codice=eq.ZZZTEST_NUOVA_X&select=codice')).length === 0, 'verified product left the todo queue');
+// CASI_APERTI 51 (d): `model` (letto da ugc-publish) si corregge via write-api, in maiuscolo, senza toccare `item`.
+const [pm] = await call('product_verify', { payload: { codice: 'ZZZTEST_NUOVA_X', model: 'Zzztest Nuova x Rita' } });
+const mod = await get('/products?codice=eq.ZZZTEST_NUOVA_X&select=model,item');
+ok(pm === 200 && mod[0].model === 'ZZZTEST NUOVA X RITA' && mod[0].item === 'ZZZTEST NUOVA', 'verify writes model, item untouched');
 
 console.log('\n===== FLOW 4/5: expenses =====');
 const cats = ['MARKETING', 'OPEX', 'LOGISTICA', 'PACKAGING'];
