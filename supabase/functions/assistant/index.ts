@@ -43,8 +43,12 @@ export const MODELLO = 'claude-opus-5-5';
 export const EFFORT_SQL = 'medium';
 export const EFFORT_RISPOSTA = 'low';
 // USD per milione di token (listino Anthropic): input, output, scrittura cache 5 minuti, lettura cache.
+// Una chiamata servita da un modello di ripiego (fallback sul rifiuto) si paga ai prezzi di quel modello; un modello
+// fuori tabella si conta ai prezzi di Opus 5.5. I tentativi rifiutati prima del ripiego non sono contati (solo log).
 export const PREZZI: Record<string, { i: number; o: number; cw: number; cr: number }> = {
   'claude-opus-5-5': { i: 4, o: 20, cw: 5, cr: 0.20 },
+  'claude-opus-5': { i: 5, o: 25, cw: 6.25, cr: 0.50 },
+  'claude-opus-4-8': { i: 5, o: 25, cw: 6.25, cr: 0.50 },
 };
 
 // Schema generated to match the REAL views (categoria = BAG/ACCESSORY/null, not the stale ACCESSORI/PELLE/TESSUTO)
@@ -162,36 +166,85 @@ export function mesiNellaDomanda(testo: string): number[] {
 export function anniNellaDomanda(testo: string): number[] {
   return [...new Set((String(testo ?? '').match(/(?<!\d)20\d\d(?!\d)/g) ?? []).map(Number))];
 }
-// Il mese m compare in un filtro della query: "month = 11", "month in (10, 11)", "extract(month from data) = 11",
-// "month between 1 and 9", una data '2026-11-01' o '2026-11'.
-function meseInSql(s: string, m: number): boolean {
-  const n = '0?' + m;
-  return new RegExp('\\bmonth\\b[^;]{0,80}?(?<![\\d.])' + n + '(?![\\d.])').test(s) || new RegExp('\\d{4}-' + n + '(?!\\d)').test(s);
+// L'anno di un mese nominato senza anno: la sua ultima occorrenza fino a oggi ("dicembre" a novembre 2026 = dicembre 2025).
+export function annoInferito(mese: number, oggi: string): number {
+  const [y, m] = String(oggi).split('-').map(Number);
+  return mese <= m ? y : y - 1;
 }
-// null = la query filtra il periodo nominato nella domanda (o la domanda non ne nomina); altrimenti cosa manca.
-// Con due o piu' mesi (un intervallo, "da gennaio a settembre") basta che uno compaia: "month <= 9" non nomina il 1.
-export function controllaPeriodo(domanda: string, sql: string): string | null {
-  const mesi = mesiNellaDomanda(domanda), anni = anniNellaDomanda(domanda);
-  const s = String(sql ?? '').toLowerCase();
-  const manca: string[] = [];
-  if (mesi.length) {
-    const trovati = mesi.filter((m) => meseInSql(s, m));
-    if (mesi.length === 1 ? trovati.length !== 1 : trovati.length === 0) manca.push('il mese (' + mesi.map((m) => MESI[m - 1]).join(', ') + ')');
+// Mesi e anni che la query FILTRA davvero: "month = 11", "q.month in (10, 11)", "month between 1 and 9", "month <= 9",
+// "extract(month from data) = 11", "date_part('month', data) = 11", "to_char(data, 'MM') = '11'", "make_date(2026, 11, 1)",
+// e le date fra apici ('2026-11-01', '2026-11'), tranne il limite superiore escluso ("< '2026-12-01'", che non e' dicembre).
+// Un "LIMIT 1" o un "ROUND(x, 2)" dopo la parola month non conta piu' come mese (Gate 2 del 26-11, C5).
+export function filtriPeriodo(sql: string): { mesi: Set<number>; anni: Set<number> } {
+  let s = String(sql ?? '').toLowerCase();
+  s = s.replace(/extract\s*\(\s*(month|year)\s+from\s+[^)]*\)/g, ' $1 ')
+    .replace(/date_part\s*\(\s*'(month|year)'\s*,\s*[^)]*\)/g, ' $1 ')
+    .replace(/to_char\s*\([^,()]+,\s*'mm'\s*\)/g, ' month ').replace(/to_char\s*\([^,()]+,\s*'yyyy'\s*\)/g, ' year ')
+    .replace(/\b\w+\.(month|year)\b/g, ' $1 ');
+  const mesi = new Set<number>(), anni = new Set<number>();
+  const intervallo = (set: Set<number>, lo: number, hi: number, min: number, max: number) => { for (let x = Math.max(lo, min); x <= Math.min(hi, max); x++) set.add(x); };
+  for (const [campo, set, min, max] of [['month', mesi, 1, 12], ['year', anni, 2000, 2100]] as const) {
+    let m: RegExpExecArray | null;
+    const eq = new RegExp(`\\b${campo}\\b\\s*=\\s*'?(\\d{1,4})'?(?!\\d)`, 'g');
+    while ((m = eq.exec(s)) !== null) set.add(Number(m[1]));
+    const inn = new RegExp(`\\b${campo}\\b\\s+in\\s*\\(([^)]*)\\)`, 'g');
+    while ((m = inn.exec(s)) !== null) for (const d of m[1].match(/\d{1,4}/g) ?? []) set.add(Number(d));
+    const tra = new RegExp(`\\b${campo}\\b\\s+between\\s+'?(\\d{1,4})'?\\s+and\\s+'?(\\d{1,4})'?`, 'g');
+    while ((m = tra.exec(s)) !== null) intervallo(set, Number(m[1]), Number(m[2]), min, max);
+    let lo: number | null = null, hi: number | null = null;
+    const ge = new RegExp(`\\b${campo}\\b\\s*(>=|>)\\s*'?(\\d{1,4})'?`, 'g');
+    while ((m = ge.exec(s)) !== null) lo = Number(m[2]) + (m[1] === '>' ? 1 : 0);
+    const le = new RegExp(`\\b${campo}\\b\\s*(<=|<)\\s*'?(\\d{1,4})'?`, 'g');
+    while ((m = le.exec(s)) !== null) hi = Number(m[2]) - (m[1] === '<' ? 1 : 0);
+    if (lo != null || hi != null) intervallo(set, lo ?? min, hi ?? max, min, max);
   }
-  for (const a of anni) if (!new RegExp('(?<!\\d)' + a + '(?!\\d)').test(s)) manca.push("l'anno " + a);
-  return manca.length ? manca.join(' e ') : null;
+  let m: RegExpExecArray | null;
+  const data = /(<=|<)?\s*'(\d{4})-(\d{1,2})(?:-(\d{1,2}))?/g;
+  while ((m = data.exec(s)) !== null) {
+    if (m[1] === '<' && (m[4] == null || Number(m[4]) === 1)) continue;   // limite superiore escluso: il mese dopo non e' filtrato
+    anni.add(Number(m[2])); mesi.add(Number(m[3]));
+  }
+  const md = /make_date\s*\(\s*(\d{4})\s*,\s*(\d{1,2})/g;
+  while ((m = md.exec(s)) !== null) { anni.add(Number(m[1])); mesi.add(Number(m[2])); }
+  return { mesi, anni };
 }
-
-// Nessuna riga, oppure righe con tutti i valori null (un SUM su zero righe): la ricerca non ha trovato niente. Non e'
-// "vendite nulle" (25-11: una query con un filtro che non trovava niente tornava una riga null e l'assistente
-// rispondeva "venduto offline nullo" su un mese con vendite).
-export function righeVuote(rows: unknown): boolean {
-  if (!Array.isArray(rows) || rows.length === 0) return true;
-  return rows.every((r) => r == null || typeof r !== 'object' || Object.values(r as Record<string, unknown>).every((v) => v == null));
+// Il mese e' un obiettivo, non un filtro ("cosa riordinare per dicembre?"): niente controllo sul mese.
+const MESE_OBIETTIVO = /\b(riordin\w*|ordinar\w*|comprar\w*|preparar\w*|prevision\w*|preved\w*|scorte|servir\w*)\b/i;
+// null = la query filtra il periodo nominato nella domanda (o la domanda non ne nomina); altrimenti cosa manca.
+// Un mese senza anno vuole anche l'anno nella query: quello dell'ultima occorrenza del mese, o un anno gia' nominato
+// nelle domande di prima (Gate 2 del 26-11, B3: "month = 1" da solo a gennaio 2027 somma gennaio 2026 e gennaio 2027).
+// Con due o piu' mesi (un intervallo, "da gennaio a settembre") basta che uno compaia.
+export function controllaPeriodo(domanda: string, sql: string, oggi: string, storia = ''): string | null {
+  const mesi = MESE_OBIETTIVO.test(domanda) ? [] : mesiNellaDomanda(domanda);
+  const anni = anniNellaDomanda(domanda);
+  if (!mesi.length && !anni.length) return null;
+  const f = filtriPeriodo(sql);
+  const manca: string[] = [];
+  if (mesi.length && !mesi.some((m) => f.mesi.has(m))) manca.push('il mese (' + mesi.map((m) => MESI[m - 1]).join(', ') + ')');
+  for (const a of anni) if (!f.anni.has(a)) manca.push("l'anno " + a);
+  if (mesi.length && !anni.length) {
+    const attesi = new Set<number>([...mesi.map((m) => annoInferito(m, oggi)), ...anniNellaDomanda(storia)]);
+    if (![...f.anni].some((a) => attesi.has(a))) manca.push("l'anno (" + [...attesi].sort().join(' o ') + ')');
+  }
+  return manca.length ? manca.join(' e ') : null;
 }
 
 const NON_SOMMARE = /^(year|month|anno|mese|giorno|day|id|.*_id)$/i;
 const r2 = (x: number) => Math.round(x * 100) / 100;
+
+// Righe che non hanno trovato niente: nessuna riga, oppure righe in cui, tolte anno/mese/id, i valori sono tutti null o
+// sono zeri accanto a un null (COUNT 0 e SUM null). Non e' "vendite nulle" (25-11: una query con un filtro che non
+// trovava niente tornava una riga null e l'assistente rispondeva "venduto offline nullo" su un mese con vendite).
+export function righeVuote(rows: unknown): boolean {
+  if (!Array.isArray(rows) || rows.length === 0) return true;
+  return rows.every((r) => {
+    if (r == null || typeof r !== 'object') return true;
+    const v = Object.entries(r as Record<string, unknown>).filter(([k]) => !NON_SOMMARE.test(k)).map(([, x]) => x);
+    if (v.every((x) => x == null)) return true;
+    return v.some((x) => x == null) && v.every((x) => x == null || aNumero(x) === 0);
+  });
+}
+
 // Totali calcolati dal programma: per ogni colonna numerica (non anno/mese/id) somma, numero di valori, minimo e massimo.
 // Il modello li riceve gia' fatti e non deve sommare a mente (25-11: il testo contava due pezzi in meno delle righe).
 export function totaliCalcolati(rows: Record<string, unknown>[]): { righe: number; colonne: Record<string, { somma: number; valori: number; min: number; max: number }> } {
@@ -212,14 +265,18 @@ export function totaliCalcolati(rows: Record<string, unknown>[]): { righe: numbe
   return { righe: rows.length, colonne };
 }
 
-// Numeri scritti nel testo, con le letture possibili: "3.456" e' 3456 (migliaia all'italiana) o 3,456; "1.234,50" e'
-// 1234,5; "1234.50" e' 1234,5. Le date ("25 novembre", "25/11", "2026-11-25") e gli anni da soli (2000-2099 senza
-// separatori e senza euro dopo) non sono cifre da verificare.
-export function numeriNelTesto(testo: string): { raw: string; letture: number[]; decimali: number; percento: boolean }[] {
+// I numeri del testo da verificare. Prima si tolgono quelli che non sono dati: date ("25 novembre", "25/11", "26.11.2026",
+// "2026-11-25"), ordinali e posizioni in classifica ("1°", "al 3°", "top 3", "le prime 5", "1. LEA ... 2. NINA") e gli
+// anni da soli (2000-2099 senza separatori e senza euro dopo). "3.456" e' sempre 3456 (migliaia all'italiana: le
+// istruzioni chiedono quel formato, e la lettura 3,456 lasciava passare importi sbagliati, Gate 2 del 26-11, B1);
+// "1.234,50" e' 1234,5; "1234.50" e' 1234,5.
+export function numeriNelTesto(testo: string): { raw: string; valore: number; decimali: number; percento: boolean }[] {
   let t = String(testo ?? '');
-  t = t.replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' ').replace(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, ' ');
+  t = t.replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' ').replace(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, ' ').replace(/\b\d{1,2}\.\d{1,2}\.\d{2,4}\b/g, ' ');
   t = t.replace(new RegExp('\\b\\d{1,2}(°|º)?\\s+(' + MESI.join('|') + ')\\b', 'gi'), ' ');
-  const out: { raw: string; letture: number[]; decimali: number; percento: boolean }[] = [];
+  t = t.replace(/\b\d+\s*[°ºª]/g, ' ').replace(/\b(top|primi|prime|primo|prima|ultimi|ultime)\s+\d+\b/gi, ' ');
+  t = t.replace(/(^|[\n;,:(]\s*)\d{1,2}[.)](?=\s)/g, '$1 ');
+  const out: { raw: string; valore: number; decimali: number; percento: boolean }[] = [];
   const re = /(?<![\w.,])(\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)(?![\w])/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(t)) !== null) {
@@ -228,44 +285,59 @@ export function numeriNelTesto(testo: string): { raw: string; letture: number[];
     const percento = /^\s*%/.test(dopo);
     const euro = /^\s*(€|euro|eur)/i.test(dopo);
     if (/^20\d\d$/.test(raw) && !euro && !percento) continue;
-    const letture: number[] = [];
-    let decimali = 0;
+    let valore: number, decimali = 0;
     if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(raw)) {
       const [intero, dec = ''] = raw.split(',');
-      letture.push(Number(intero.replace(/\./g, '') + (dec ? '.' + dec : '')));
-      decimali = dec.length;
-      if (!dec && /^\d{1,3}\.\d{3}$/.test(raw)) letture.push(Number(raw)); // "3.456" letto anche come 3,456
-    } else if (/^\d+,\d+$/.test(raw)) { letture.push(Number(raw.replace(',', '.'))); decimali = raw.split(',')[1].length; }
-    else if (/^\d+\.\d+$/.test(raw)) { letture.push(Number(raw)); decimali = raw.split('.')[1].length; }
-    else letture.push(Number(raw));
-    out.push({ raw, letture, decimali, percento });
+      valore = Number(intero.replace(/\./g, '') + (dec ? '.' + dec : '')); decimali = dec.length;
+    } else if (/^\d+,\d+$/.test(raw)) { valore = Number(raw.replace(',', '.')); decimali = raw.split(',')[1].length; }
+    else if (/^\d+\.\d+$/.test(raw)) { valore = Number(raw); decimali = raw.split('.')[1].length; }
+    else valore = Number(raw);
+    out.push({ raw, valore, decimali, percento });
   }
   return out;
 }
-// I numeri del testo che non corrispondono a nessun valore consentito (righe, totali, numero di righe, numeri della
-// domanda e della query, IVA 22 / 1,22), a meno dell'arrotondamento ai decimali scritti. Vuoto = testo verificato.
+// I numeri del testo che non corrispondono a nessun valore consentito, a meno dell'arrotondamento ai decimali scritti
+// (una percentuale vale anche come frazione, con la tolleranza divisa per 100; il 22% dell'IVA e' sempre ammesso).
+// Vuoto = testo verificato.
 export function numeriNonVerificati(testo: string, consentiti: number[]): string[] {
-  const ok = [...new Set([...consentiti, 22, 1.22].filter((x) => Number.isFinite(x)).map((x) => Math.abs(x)))];
+  const ok = [...new Set(consentiti.filter((x) => Number.isFinite(x)).map((x) => Math.abs(x)))];
+  const vicino = (x: number, toll: number) => ok.some((a) => Math.abs(a - x) <= toll);
   const male: string[] = [];
   for (const n of numeriNelTesto(testo)) {
     const toll = 0.5 * Math.pow(10, -n.decimali) + 1e-9;
-    const letture = n.percento ? [...n.letture, ...n.letture.map((x) => x / 100)] : n.letture;
-    if (!letture.some((x) => ok.some((a) => Math.abs(a - x) <= toll))) male.push(n.raw);
+    const buono = vicino(n.valore, toll) || (n.percento && (n.valore === 22 || vicino(n.valore / 100, toll / 100)));
+    if (!buono) male.push(n.raw);
   }
   return male;
 }
-// I valori consentiti per il controllo: ogni valore numerico delle righe, le parti delle date nelle righe, i totali, il
-// numero di righe, i numeri della domanda e della query (LIMIT 5, month = 11, year = 2026).
-export function valoriConsentiti(rows: Record<string, unknown>[], tot: ReturnType<typeof totaliCalcolati>, domanda: string, sql: string): number[] {
+// Numeri "a se'" di un testo (non quelli dentro un nome: b2b, venduto_60d, LEA_BAG_2).
+function numeriSciolti(s: string): number[] {
+  return (String(s ?? '').match(/(?<![\w.])\d+(?:\.\d+)?(?![\w])/g) ?? []).map(Number);
+}
+// I valori consentiti per il controllo: ogni valore numerico delle righe, le cifre sciolte delle stringhe delle righe
+// (varianti come "MAXI 2"; non le date, che nel testo si tolgono), i totali, il numero di righe, i numeri sciolti della
+// domanda e della query (LIMIT 5, month = 11, year = 2026), la data di oggi.
+export function valoriConsentiti(rows: Record<string, unknown>[], tot: ReturnType<typeof totaliCalcolati>, domanda: string, sql: string, oggi = ''): number[] {
   const v: number[] = [tot.righe];
   for (const r of rows) for (const x of Object.values(r)) {
     const n = aNumero(x);
     if (n != null) { v.push(n); continue; }
-    if (typeof x === 'string') for (const d of x.match(/\d+(?:\.\d+)?/g) ?? []) v.push(Number(d));
+    if (typeof x === 'string' && !/^\d{4}-\d{2}-\d{2}/.test(x)) v.push(...numeriSciolti(x));
   }
   for (const c of Object.values(tot.colonne)) v.push(c.somma, c.valori, c.min, c.max);
-  for (const s of [domanda, sql]) for (const d of String(s ?? '').match(/\d+(?:\.\d+)?/g) ?? []) v.push(Number(d));
+  v.push(...numeriSciolti(domanda), ...numeriSciolti(sql), ...String(oggi).split('-').map(Number).filter(Number.isFinite));
   return v;
+}
+
+// Tempo: l'edge ha un tetto di circa 150 s. La richiesta intera ne usa al massimo 120, ogni chiamata al modello al massimo
+// 50 e almeno 10, senza ritentativi dell'SDK (che su un 429 aspetta il retry-after senza tetto). Le riscritture si
+// saltano se il tempo non basta (Gate 2 del 26-11, B2).
+export const SCADENZA_MS = 120000;
+export const CHIAMATA_MAX_MS = 50000;
+export const CHIAMATA_MIN_MS = 10000;
+export function tempoChiamata(scadenza: number, ora: number): number | null {
+  const resto = scadenza - ora - 3000;
+  return resto < CHIAMATA_MIN_MS ? null : Math.min(CHIAMATA_MAX_MS, resto);
 }
 
 export function costoUsd(modello: string, u: { input: number; output: number; cache_scrittura: number; cache_lettura: number }): number {
@@ -276,13 +348,17 @@ export function costoUsd(modello: string, u: { input: number; output: number; ca
 // ==== PURE:assistant END ====
 
 type Row = Record<string, unknown>;
-type Uso = { input: number; output: number; cache_scrittura: number; cache_lettura: number; chiamate: number; modelli: string[] };
+type Uso = { input: number; output: number; cache_scrittura: number; cache_lettura: number; chiamate: number; modelli: string[]; costo_usd: number };
 class RifiutoModello extends Error {}
+class TempoFinito extends Error {}
 
 // Una chiamata a Claude con output strutturato. Thinking adattivo (su Opus 5.5 non si spegne), effort esplicito,
 // fallback lato server sul rifiuto (fallbacks "default"), prompt di sistema in cache. Nessun campionamento (la versione
-// API dell'SDK 1.8.0 rifiuta temperature). Ritorna l'oggetto JSON gia' parsato.
-async function chiama(client: Anthropic, uso: Uso, p: { system: string; user: string; effort: string; formato: Record<string, unknown>; maxTokens?: number; timeoutMs?: number }): Promise<Row> {
+// API dell'SDK 1.8.0 rifiuta temperature). Tempo dalla scadenza della richiesta, nessun ritentativo dell'SDK.
+// Ritorna l'oggetto JSON gia' parsato.
+async function chiama(client: Anthropic, uso: Uso, p: { system: string; user: string; effort: string; formato: Record<string, unknown>; maxTokens?: number; scadenza: number }): Promise<Row> {
+  const timeout = tempoChiamata(p.scadenza, Date.now());
+  if (timeout == null) throw new TempoFinito('tempo della richiesta finito');
   const richiesta = {
     model: MODELLO,
     max_tokens: p.maxTokens ?? 8000,
@@ -294,12 +370,12 @@ async function chiama(client: Anthropic, uso: Uso, p: { system: string; user: st
     messages: [{ role: 'user', content: p.user }],
   };
   const r = await client.beta.messages.create(richiesta as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
-    { timeout: p.timeoutMs ?? 60000, maxRetries: 1 });
+    { timeout, maxRetries: 0 });
+  const u = { input: Number(r.usage?.input_tokens ?? 0), output: Number(r.usage?.output_tokens ?? 0),
+    cache_scrittura: Number(r.usage?.cache_creation_input_tokens ?? 0), cache_lettura: Number(r.usage?.cache_read_input_tokens ?? 0) };
   uso.chiamate++;
-  uso.input += Number(r.usage?.input_tokens ?? 0);
-  uso.output += Number(r.usage?.output_tokens ?? 0);
-  uso.cache_scrittura += Number(r.usage?.cache_creation_input_tokens ?? 0);
-  uso.cache_lettura += Number(r.usage?.cache_read_input_tokens ?? 0);
+  uso.input += u.input; uso.output += u.output; uso.cache_scrittura += u.cache_scrittura; uso.cache_lettura += u.cache_lettura;
+  uso.costo_usd = Math.round((uso.costo_usd + costoUsd(r.model, u)) * 1e6) / 1e6;
   if (!uso.modelli.includes(r.model)) uso.modelli.push(r.model);
   if (r.stop_reason === 'refusal') throw new RifiutoModello('il modello ha rifiutato la richiesta');
   if (r.stop_reason === 'max_tokens') throw new Error('risposta del modello troncata');
@@ -309,6 +385,7 @@ async function chiama(client: Anthropic, uso: Uso, p: { system: string; user: st
 
 // Errore del modello -> messaggio per chi usa l'app (il pannello mostra `error`). Niente dettagli tecnici della chiave.
 function erroreModello(e: unknown): { msg: string; status: number } {
+  if (e instanceof TempoFinito) return { msg: 'Il modello ci ha messo troppo a rispondere: riprova.', status: 504 };
   if (e instanceof RifiutoModello) return { msg: 'Il modello non ha voluto rispondere a questa domanda. Prova a riformularla.', status: 502 };
   if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) return { msg: 'Assistente non configurato: la chiave Anthropic non e\' valida.', status: 502 };
   if (e instanceof Anthropic.BadRequestError && /credit balance/i.test(String((e as Error).message))) return { msg: 'Assistente fermo: il credito Anthropic e\' finito.', status: 502 };
@@ -322,12 +399,12 @@ function erroreModello(e: unknown): { msg: string; status: number } {
 // Returns null unless it is clearly an expense with a real amount (never invents an amount). The user
 // reviews/adjusts (esp. categoria) and confirms in the app; execution goes through write-api (expense_propose,
 // which lands PENDING and does not touch the CE until separately approved).
-async function proposeExpense(client: Anthropic, uso: Uso, question: string, storia: unknown) {
+async function proposeExpense(client: Anthropic, uso: Uso, question: string, storia: unknown, scadenza: number) {
   let p: Row;
   try {
     p = await chiama(client, uso, {
       system: ISTRUZIONI_SPESA + `\nCategorie valide: ${EXPENSE_CATS.join(', ')}.`,
-      user: `${storiaUtente(storia)}\nRichiesta: ${question}`, effort: EFFORT_RISPOSTA, formato: FORMATO_SPESA, maxTokens: 2000,
+      user: `${storiaUtente(storia)}\nRichiesta: ${question}`, effort: EFFORT_RISPOSTA, formato: FORMATO_SPESA, maxTokens: 2000, scadenza,
     });
   } catch { return null; }
   if (p.e_spesa !== true) return null;
@@ -358,8 +435,9 @@ Deno.serve(async (req) => {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) return json({ ok: true, testo: 'Assistente non configurato (manca la chiave Anthropic).', needs_key: true });
   const client = new Anthropic({ apiKey });
-  const uso: Uso = { input: 0, output: 0, cache_scrittura: 0, cache_lettura: 0, chiamate: 0, modelli: [] };
-  const usoOut = () => ({ ...uso, costo_usd: costoUsd(uso.modelli[0] ?? MODELLO, uso) });
+  const scadenza = Date.now() + SCADENZA_MS;
+  const uso: Uso = { input: 0, output: 0, cache_scrittura: 0, cache_lettura: 0, chiamate: 0, modelli: [], costo_usd: 0 };
+  const usoOut = () => ({ ...uso });
   const oggi = oggiRoma(new Date());
   const storia = storiaUtente(body.storia);
 
@@ -372,7 +450,7 @@ Deno.serve(async (req) => {
   // Not enabled, or not a supported action -> plain read-only message.
   if (!isHowtoish && /\b(azzer|cancell|elimin|svuot|resett|sovrascriv|rimuov|modific|aggiorn|imposta|corregg|registr|inserisc|aggiung)\w*/i.test(question)) {
     if (cfg?.ai_actions_enabled) {
-      const azione = await proposeExpense(client, uso, question, body.storia);
+      const azione = await proposeExpense(client, uso, question, body.storia, scadenza);
       if (azione) return json({ ok: true, azione, uso: usoOut() });
     }
     return json({ ok: true, testo: 'Sono in sola lettura: ti mostro e analizzo i dati, ma non modifico niente nell’app (conta, spese, ordini, stock). Per registrare o cambiare qualcosa usa le funzioni Registra / Inserisci dell’app.' });
@@ -381,7 +459,7 @@ Deno.serve(async (req) => {
   // 1) route: NL -> {percorso, sql}. Se la domanda nomina un mese o un anno e la query non lo filtra, UNA riscrittura.
   const scriviSql = async (nota: string) => {
     const p = await chiama(client, uso, {
-      system: SCHEMA, effort: EFFORT_SQL, formato: FORMATO_SQL, maxTokens: 8000,
+      system: SCHEMA, effort: EFFORT_SQL, formato: FORMATO_SQL, maxTokens: 8000, scadenza,
       user: `Oggi e' ${oggi} (Europe/Rome).\n${storia}\nDomanda: ${question}${nota ? '\n\n' + nota : ''}`,
     });
     return { percorso: String(p.percorso ?? ''), sql: cleanSql(String(p.sql ?? '')) };
@@ -390,12 +468,14 @@ Deno.serve(async (req) => {
   try {
     passo = await scriviSql('');
     if (passo.percorso !== 'howto' && /^\s*select\b/i.test(passo.sql)) {
-      const manca = controllaPeriodo(question, passo.sql);
+      const manca = controllaPeriodo(question, passo.sql, oggi, storia);
       if (manca) {
         console.warn('assistant: la query non filtra ' + manca + ', riscrivo: ' + passo.sql.slice(0, 300));
         const prima = passo.sql;
+        // senza il tempo per riscriverla, meglio nessun numero che un numero del periodo sbagliato
+        if (tempoChiamata(scadenza, Date.now()) == null) return json({ ok: true, testo: TESTO_PERIODO, sql: prima, righe: [], uso: usoOut() });
         passo = await scriviSql(`ATTENZIONE: questa query non filtra ${manca} che la domanda nomina:\n${prima}\nRiscrivila filtrando year e month (o un intervallo sulla colonna data).`);
-        if (passo.percorso !== 'howto' && controllaPeriodo(question, passo.sql)) {
+        if (passo.percorso !== 'howto' && controllaPeriodo(question, passo.sql, oggi, storia)) {
           return json({ ok: true, testo: TESTO_PERIODO, sql: passo.sql, righe: [], uso: usoOut() });
         }
       }
@@ -412,7 +492,7 @@ Deno.serve(async (req) => {
     let testo = '';
     try {
       const h = await chiama(client, uso, {
-        system: `${ISTRUZIONI_HOWTO}\n\nGUIDA:\n${corpus}`, effort: EFFORT_RISPOSTA, maxTokens: 6000,
+        system: `${ISTRUZIONI_HOWTO}\n\nGUIDA:\n${corpus}`, effort: EFFORT_RISPOSTA, maxTokens: 6000, scadenza,
         formato: { type: 'object', additionalProperties: false, required: ['testo'], properties: { testo: { type: 'string' } } },
         user: `${storia}\nDomanda: ${question}`,
       });
@@ -442,25 +522,29 @@ Deno.serve(async (req) => {
 
   const cols = Object.keys(rows[0]);
   const tot = totaliCalcolati(rows);
-  const consentiti = valoriConsentiti(rows, tot, question, sql);
+  const consentiti = valoriConsentiti(rows, tot, question, sql, oggi);
+  const tetto = rows.length >= 200;
 
   // 3) answer + chart/product MAPPING. Claude sceglie colonne e scrive la prosa; i numeri restano nelle righe e nei totali,
   // e il testo si controlla numero per numero. Una riscrittura sola, poi testo senza cifre.
   const base = `Oggi: ${oggi} (Europe/Rome).\nDomanda dell'utente: ${question}\n${storia}\nQuery SQL eseguita: ${sql}\nColonne: ${JSON.stringify(cols)}\n`
-    + `Numero di righe: ${rows.length}${rows.length >= 200 ? ' (tetto di 200 raggiunto: potrebbero essercene altre)' : ''}\n`
-    + `TOTALI CALCOLATI DAL PROGRAMMA (somma, numero di valori, minimo e massimo di ogni colonna numerica, su TUTTE le righe): ${JSON.stringify(tot.colonne)}\n`
+    + `Numero di righe: ${rows.length}${tetto ? ' (tetto di 200 raggiunto: ce ne sono probabilmente altre)' : ''}\n`
+    + (tetto
+      ? `TOTALI CALCOLATI DAL PROGRAMMA sulle SOLE 200 righe ricevute, NON sono totali completi: se li usi, scrivi che riguardano solo le prime 200 righe: ${JSON.stringify(tot.colonne)}\n`
+      : `TOTALI CALCOLATI DAL PROGRAMMA (somma, numero di valori, minimo e massimo di ogni colonna numerica, su TUTTE le righe): ${JSON.stringify(tot.colonne)}\n`)
     + `Righe (JSON, max 40 mostrate): ${JSON.stringify(rows.slice(0, 40))}`;
   let parsed: Row = {};
   let testo = '';
   try {
     for (let tentativo = 0; tentativo < 2; tentativo++) {
       const nota = tentativo === 0 ? '' : `\n\nATTENZIONE: la risposta di prima conteneva numeri che non sono nelle righe ne' nei totali (${numeriNonVerificati(testo, consentiti).join(', ')}). Riscrivila usando SOLO numeri presenti.`;
-      parsed = await chiama(client, uso, { system: ISTRUZIONI_RISPOSTA, user: base + nota, effort: EFFORT_RISPOSTA, formato: FORMATO_RISPOSTA, maxTokens: 6000 });
+      parsed = await chiama(client, uso, { system: ISTRUZIONI_RISPOSTA, user: base + nota, effort: EFFORT_RISPOSTA, formato: FORMATO_RISPOSTA, maxTokens: 6000, scadenza });
       testo = String(parsed.testo ?? '').trim();
       const male = numeriNonVerificati(testo, consentiti);
       if (!male.length) break;
       console.warn('assistant: numeri non verificati (' + male.join(', ') + ') al tentativo ' + (tentativo + 1));
-      if (tentativo === 1) testo = TESTO_NUMERI;
+      // dopo la riscrittura, o senza il tempo per farla: il testo senza cifre (grafico e card restano, vengono dalle righe)
+      if (tentativo === 1 || tempoChiamata(scadenza, Date.now()) == null) { testo = TESTO_NUMERI; break; }
     }
   } catch (e) {
     // Se il passo risposta cade dopo che la query ha funzionato, le righe ci sono: si mostrano con un testo onesto.
@@ -479,7 +563,8 @@ Deno.serve(async (req) => {
       const slice = rows.slice(0, 12);
       const tipo = ['barre', 'linee', 'torta'].includes(String(gspec.tipo)) ? String(gspec.tipo) : 'barre';
       grafico = {
-        tipo, titolo: String(gspec.titolo ?? '').slice(0, 80),
+        // il titolo e' testo del modello: con un numero non verificato si toglie (Gate 2 del 26-11, C2)
+        tipo, titolo: numeriNonVerificati(String(gspec.titolo ?? ''), consentiti).length ? '' : String(gspec.titolo ?? '').slice(0, 80),
         etichette: slice.map((r) => String(r[lc] ?? '')),
         valori: slice.map((r) => Number(r[vc] ?? 0)),
       };
@@ -501,7 +586,8 @@ Deno.serve(async (req) => {
       for (const p of inv) { lut.set(norm(p.codice_norm), p); lut.set(norm(p.codice), p); }
       const vc = String(pspec.value_col ?? '');
       const hasVal = cols.includes(vc);
-      const valLabel = String(pspec.value_label ?? 'valore').slice(0, 18) || 'valore';
+      const etichetta = String(pspec.value_label ?? '').slice(0, 18);
+      const valLabel = etichetta && !numeriNonVerificati(etichetta, consentiti).length ? etichetta : 'valore';
       const seen = new Set<string>();
       const out: Row[] = [];
       for (const r of rows) {

@@ -23,7 +23,7 @@ const a = SRC.indexOf(B), b = SRC.indexOf(E);
 if (a < 0 || b < a) { console.error('marcatori PURE:assistant non trovati'); process.exit(1); }
 const BLOCCO = SRC.slice(a + B.length, b);
 const ESPORTA = ['MODELLO', 'EFFORT_SQL', 'EFFORT_RISPOSTA', 'PREZZI', 'SCHEMA', 'ISTRUZIONI_RISPOSTA', 'FORMATO_SQL', 'FORMATO_RISPOSTA', 'FORMATO_SPESA',
-  'MESI', 'TESTO_VUOTO', 'oggiRoma', 'cleanSql', 'aNumero', 'storiaUtente', 'mesiNellaDomanda', 'anniNellaDomanda', 'controllaPeriodo', 'righeVuote',
+  'MESI', 'TESTO_VUOTO', 'oggiRoma', 'annoInferito', 'filtriPeriodo', 'tempoChiamata', 'SCADENZA_MS', 'CHIAMATA_MAX_MS', 'CHIAMATA_MIN_MS', 'cleanSql', 'aNumero', 'storiaUtente', 'mesiNellaDomanda', 'anniNellaDomanda', 'controllaPeriodo', 'righeVuote',
   'totaliCalcolati', 'numeriNelTesto', 'numeriNonVerificati', 'valoriConsentiti', 'costoUsd'];
 const M = new Function(stripTypeScriptTypes(BLOCCO).replace(/^export /gm, '') + `\nreturn { ${ESPORTA.join(', ')} };`)();
 
@@ -74,32 +74,50 @@ t('25-11 23:30 UTC = 26-11 a Roma', M.oggiRoma(new Date('2026-11-25T23:30:00Z'))
 t('31-12 23:30 UTC = 01-01-2027 a Roma', M.oggiRoma(new Date('2026-12-31T23:30:00Z')) === '2027-01-01');
 t('estate (UTC+2): 30-06 22:30 UTC = 01-07', M.oggiRoma(new Date('2026-06-30T22:30:00Z')) === '2026-07-01');
 
-console.log('\n== controllo del periodo (query vere del 25-11) ==');
+console.log('\n== controllo del periodo (query vere del 25-11 e casi della Gate 2 del 26-11) ==');
+const OGGI = '2026-11-26';
+const CP = (d, q, oggi = OGGI, storia = '') => M.controllaPeriodo(d, q, oggi, storia);
 const NOV = 'Quanto abbiamo venduto offline a novembre';
-t('il venduto di sempre: SUM su v_inventory senza mese -> bloccata', M.controllaPeriodo(NOV, 'SELECT sum(qromo_sold * retail_price) as venduto_offline_lordo FROM v_inventory') !== null);
-t('qromo_sales month = 11 AND year = 2026 -> passa', M.controllaPeriodo(NOV, 'SELECT SUM(quantita * prezzo) AS t FROM qromo_sales WHERE month = 11 AND year = 2026') === null);
-t('v_ce_totale year = 2026 AND month = 11 -> passa', M.controllaPeriodo(NOV, 'SELECT year, month, offline_lordo, offline_netto FROM v_ce_totale WHERE year = 2026 AND month = 11') === null);
-t('follow-up "Per ottobre?" con month = 10 -> passa', M.controllaPeriodo('Per ottobre? Intendo vendite non online', 'SELECT codice FROM qromo_sales WHERE month = 10') === null);
-t('novembre ma la query filtra month = 1 -> bloccata', M.controllaPeriodo(NOV, 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month = 1') !== null);
-t('gennaio ma la query filtra month = 11 -> bloccata', M.controllaPeriodo('vendite di gennaio', 'SELECT * FROM v_ce_totale WHERE month = 11') !== null);
-t('gennaio con month = 10 -> bloccata (1 non e\' dentro 10)', M.controllaPeriodo('vendite di gennaio', 'SELECT * FROM v_ce_totale WHERE month = 10') !== null);
-t('intervallo di date sulla colonna data -> passa', M.controllaPeriodo(NOV, "SELECT SUM(prezzo) FROM qromo_sales WHERE data >= '2026-11-01' AND data < '2026-12-01'") === null);
-t('EXTRACT(MONTH FROM data) = 11 -> passa', M.controllaPeriodo(NOV, 'SELECT SUM(prezzo) FROM qromo_sales WHERE EXTRACT(MONTH FROM data) = 11') === null);
-t("to_char(data, 'YYYY-MM') = '2026-11' -> passa", M.controllaPeriodo(NOV, "SELECT SUM(prezzo) FROM qromo_sales WHERE to_char(data, 'YYYY-MM') = '2026-11'") === null);
-t('month IN (10, 11) per ottobre -> passa', M.controllaPeriodo('e a ottobre?', 'SELECT * FROM v_ce_totale WHERE month IN (10, 11)') === null);
-t('da gennaio a settembre con BETWEEN 1 AND 9 -> passa', M.controllaPeriodo('vendite da gennaio a settembre 2026', 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month BETWEEN 1 AND 9') === null);
-t('da gennaio a settembre con month <= 9 -> passa (basta un mese dell\'intervallo)', M.controllaPeriodo('vendite da gennaio a settembre 2026', 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month <= 9') === null);
-t('anno nominato ma assente dalla query -> bloccata', M.controllaPeriodo('vendite offline di novembre 2025', 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month = 11') !== null);
-t('nessun periodo nella domanda -> nessun controllo', M.controllaPeriodo('quali borse sono esaurite?', 'SELECT codice FROM v_inventory WHERE disponibili_da_vendere <= 0') === null);
+t('il venduto di sempre: SUM su v_inventory senza mese -> bloccata', CP(NOV, 'SELECT sum(qromo_sold * retail_price) as venduto_offline_lordo FROM v_inventory') !== null);
+t('qromo_sales month = 11 AND year = 2026 -> passa', CP(NOV, 'SELECT SUM(quantita * prezzo) AS t FROM qromo_sales WHERE month = 11 AND year = 2026') === null);
+t('v_ce_totale year = 2026 AND month = 11 -> passa', CP(NOV, 'SELECT year, month, offline_lordo, offline_netto FROM v_ce_totale WHERE year = 2026 AND month = 11') === null);
+t('follow-up "Per ottobre?" con q.year = 2026 AND q.month = 10 -> passa', CP('Per ottobre? Intendo vendite non online', 'SELECT codice FROM qromo_sales q WHERE q.year = 2026 AND q.month = 10') === null);
+t('B3: mese senza anno nella query ("month = 10" da solo) -> bloccata', CP('Per ottobre? Intendo vendite non online', 'SELECT codice FROM qromo_sales WHERE month = 10') !== null);
+t('B3: a gennaio 2027 "gennaio" vuole il 2027, non il 2026', CP('vendite offline di gennaio', 'SELECT SUM(prezzo) FROM qromo_sales WHERE year = 2026 AND month = 1', '2027-01-15') !== null
+  && CP('vendite offline di gennaio', 'SELECT SUM(prezzo) FROM qromo_sales WHERE year = 2027 AND month = 1', '2027-01-15') === null);
+t('"dicembre" chiesto a novembre 2026 = dicembre 2025', CP('vendite di dicembre', 'SELECT * FROM v_ce_totale WHERE year = 2025 AND month = 12') === null
+  && CP('vendite di dicembre', 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month = 12') !== null);
+t('un anno gia\' nominato nelle domande di prima vale per il follow-up', CP('e a ottobre?', 'SELECT * FROM v_ce_totale WHERE year = 2025 AND month = 10', OGGI, '- vendite offline di novembre 2025') === null);
+t('anno annoInferito: novembre a novembre = anno in corso, dicembre = anno prima', M.annoInferito(11, OGGI) === 2026 && M.annoInferito(12, OGGI) === 2025);
+t('novembre ma la query filtra month = 1 -> bloccata', CP(NOV, 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month = 1') !== null);
+t('gennaio ma la query filtra month = 11 -> bloccata', CP('vendite di gennaio', 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month = 11') !== null);
+t('gennaio con month = 10 -> bloccata (1 non e\' dentro 10)', CP('vendite di gennaio', 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month = 10') !== null);
+t('intervallo di date sulla colonna data -> passa', CP(NOV, "SELECT SUM(prezzo) FROM qromo_sales WHERE data >= '2026-11-01' AND data < '2026-12-01'") === null);
+t('C5: il limite superiore escluso non vale come mese dopo (gennaio non e\' febbraio)', CP('vendite di febbraio', "SELECT SUM(prezzo) FROM qromo_sales WHERE data >= '2026-01-01' AND data < '2026-02-01'") !== null);
+t('EXTRACT(MONTH FROM data) = 11 AND EXTRACT(YEAR FROM data) = 2026 -> passa', CP(NOV, 'SELECT SUM(prezzo) FROM qromo_sales WHERE EXTRACT(MONTH FROM data) = 11 AND EXTRACT(YEAR FROM data) = 2026') === null);
+t("to_char(data, 'YYYY-MM') = '2026-11' -> passa", CP(NOV, "SELECT SUM(prezzo) FROM qromo_sales WHERE to_char(data, 'YYYY-MM') = '2026-11'") === null);
+t("C5: to_char(data, 'MM') = '11' con l'anno -> passa", CP(NOV, "SELECT SUM(prezzo) FROM qromo_sales WHERE to_char(data, 'MM') = '11' AND to_char(data, 'YYYY') = '2026'") === null);
+t('C5: make_date(2026, 11, 1) -> passa', CP(NOV, 'SELECT SUM(prezzo) FROM qromo_sales WHERE data >= make_date(2026, 11, 1)') === null);
+t('C5: "LIMIT 1" o "ROUND(x, 2)" dopo month non contano come gennaio/febbraio',
+  CP('vendite di gennaio', 'SELECT month, ROUND(SUM(prezzo), 2) FROM qromo_sales WHERE year = 2026 GROUP BY month ORDER BY month LIMIT 1') !== null);
+t('month IN (10, 11) per ottobre -> passa', CP('e a ottobre?', 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month IN (10, 11)') === null);
+t('da gennaio a settembre con BETWEEN 1 AND 9 -> passa', CP('vendite da gennaio a settembre 2026', 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month BETWEEN 1 AND 9') === null);
+t('da gennaio a settembre con month <= 9 -> passa', CP('vendite da gennaio a settembre 2026', 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month <= 9') === null);
+t('anno nominato ma assente dalla query -> bloccata', CP('vendite offline di novembre 2025', 'SELECT * FROM v_ce_totale WHERE year = 2026 AND month = 11') !== null);
+t('nessun periodo nella domanda -> nessun controllo', CP('quali borse sono esaurite?', 'SELECT codice FROM v_inventory WHERE disponibili_da_vendere <= 0') === null);
+t('C5: mese come obiettivo ("cosa riordinare per dicembre?") -> nessun controllo sul mese', CP('Cosa devo riordinare per dicembre?', 'SELECT * FROM v_reorder') === null);
 t('"maggiore" non e\' maggio', JSON.stringify(M.mesiNellaDomanda('la borsa con il prezzo maggiore')) === '[]');
 t('mesi riconosciuti anche con maiuscole e punteggiatura', JSON.stringify(M.mesiNellaDomanda('Novembre, e Ottobre?')) === '[10,11]');
 t('anni nella domanda', JSON.stringify(M.anniNellaDomanda('nel 2025 e nel 2026, non 120260')) === '[2025,2026]');
-
 console.log('\n== righe vuote: "la ricerca non ha trovato righe", mai "vendite nulle" ==');
 t('nessuna riga -> vuota', M.righeVuote([]) === true);
 t('una riga tutta null (SUM su zero righe, il caso "nullo" del 25-11) -> vuota', M.righeVuote([{ totale_venduto_offline: null }]) === true);
 t('uno zero vero non e\' vuoto', M.righeVuote([{ totale: 0 }]) === false);
 t('una riga con un valore non e\' vuota', M.righeVuote([{ a: null, b: 'x' }]) === false);
+t('C4: anno e mese pieni ma totale null -> vuota', M.righeVuote([{ year: 2026, month: 11, totale: null }]) === true);
+t('C4: COUNT 0 e SUM null -> vuota', M.righeVuote([{ n: 0, totale: null }]) === true);
+t('C4: COUNT 0 e SUM 0 (zero vero, nessun null) -> non vuota', M.righeVuote([{ n: 0, totale: 0 }]) === false);
+t('C4: un totale vero con anno e mese -> non vuota', M.righeVuote([{ year: 2026, month: 11, totale: 15 }]) === false);
 t('il testo per le righe vuote non parla di vendite nulle', !/null|zero|nessuna vendita/i.test(M.TESTO_VUOTO) && /non ha trovato righe/.test(M.TESTO_VUOTO));
 t('il flusso usa righeVuote prima del passo risposta', /if \(righeVuote\(rows\)\) return json\(\{ ok: true, testo: TESTO_VUOTO/.test(SRC)
   && SRC.indexOf('righeVuote(rows)') < SRC.indexOf('ISTRUZIONI_RISPOSTA, user: base'));
@@ -129,11 +147,42 @@ t('un importo che sembra un anno ma ha l\'euro dopo si controlla', JSON.stringif
 t('percentuale da una frazione nelle righe (0,45 -> 45%)', M.numeriNonVerificati('il 45% delle vendite', [0.45]).length === 0);
 t('IVA 22% sempre ammessa', M.numeriNonVerificati('prezzi con IVA al 22%', [1]).length === 0);
 t('valori negativi (costi) letti in valore assoluto', M.numeriNonVerificati('spese per 1.234,50 €', [-1234.5]).length === 0);
-t('"3.456" letto come 3456 o come 3,456', JSON.stringify(M.numeriNelTesto('3.456')[0].letture) === '[3456,3.456]');
+t('B1: "3.456" e\' sempre 3456 (migliaia), mai 3,456', M.numeriNelTesto('3.456')[0].valore === 3456 && M.numeriNelTesto('3.456').length === 1);
+{
+  // la riga del CE di prova: 1.500,00 con IVA, 1.229,51 senza IVA. Questi testi sono tutti SBAGLIATI e devono cadere.
+  const sbagliati = ['1.700 € con IVA', '1.000 €', '1.400 € senza IVA', '11.250 €', '1.220 €', "l'80% del totale", 'il 99%', 'il 150%', 'crescita del 120%'];
+  const cadute = sbagliati.filter((x) => M.numeriNonVerificati(x, OK_NOV).length === 1);
+  t('B1: importi in migliaia e percentuali sbagliate non passano piu\'', cadute.length === sbagliati.length, sbagliati.filter((x) => !cadute.includes(x)));
+  const zeri = M.valoriConsentiti([{ a: 0, b: 15 }], M.totaliCalcolati([{ a: 0, b: 15 }]), 'x', 'SELECT 1');
+  t('B1: con uno 0 nelle righe "il 30%" non passa', M.numeriNonVerificati('il 30% delle vendite', zeri).length === 1);
+  t('B1: le cifre dentro i nomi della query (b2b, venduto_60d) non sono valori ammessi',
+    M.numeriNonVerificati('60 pezzi e 2 negozi', M.valoriConsentiti([{ x: 15 }], M.totaliCalcolati([{ x: 15 }]), 'x', 'SELECT b2b_venduto, venduto_60d FROM v_reorder')).length === 2);
+  const DATE = [{ data: '2026-11-03', prezzo: 120 }, { data: '2026-11-17', prezzo: 90 }];
+  t('B1: le date delle righe non ammettono ogni numero da 1 a 31', M.numeriNonVerificati('17 pezzi', M.valoriConsentiti(DATE, M.totaliCalcolati(DATE), 'x', 'SELECT 1')).length === 1);
+}
+{
+  // B4: classifiche corrette con posizioni e ordinali
+  const RK = [{ codice: 'A', venduti: 12 }, { codice: 'B', venduti: 9 }, { codice: 'C', venduti: 7 }, { codice: 'D', venduti: 6 }, { codice: 'E', venduti: 5 }];
+  const OK_RK = M.valoriConsentiti(RK, M.totaliCalcolati(RK), 'Le piu\' vendute con foto', 'SELECT codice, venduti FROM x ORDER BY venduti DESC LIMIT 5');
+  t('B4: lista numerata "1. LEA (12), 2. NINA (9), 3. AGATA (7), 4. ANNIE (6)" -> verificata', M.numeriNonVerificati('1. LEA (12), 2. NINA (9), 3. AGATA (7), 4. ANNIE (6)', OK_RK).length === 0,
+    M.numeriNonVerificati('1. LEA (12), 2. NINA (9), 3. AGATA (7), 4. ANNIE (6)', OK_RK));
+  t('B4: lista a capo "1) ... 3) ..." -> verificata', M.numeriNonVerificati('Classifica:\n1) LEA con 12 pezzi\n3) AGATA con 7 pezzi', OK_RK).length === 0);
+  t('B4: ordinali e "top 3" -> verificati', M.numeriNonVerificati('Al 3° posto la AGATA con 7 pezzi; nella top 3 c\'e\' anche la NINA (9).', OK_RK).length === 0);
+  t('B4: un conteggio sbagliato dentro la classifica cade lo stesso', JSON.stringify(M.numeriNonVerificati('1. LEA (13), 2. NINA (9)', OK_RK)) === '["13"]');
+}
+{
+  // C3: giorno di oggi e date puntate
+  const OK_OGGI = M.valoriConsentiti([{ x: 15 }], M.totaliCalcolati([{ x: 15 }]), 'x', 'SELECT 1', '2026-11-26');
+  t('C3: "nei primi 26 giorni" (oggi e\' il 26) -> verificato', M.numeriNonVerificati('nei primi 26 giorni del mese', OK_OGGI).length === 0);
+  t('C3: data puntata "26.11.2026" non e\' un numero da verificare', M.numeriNonVerificati('aggiornato al 26.11.2026', [1]).length === 0);
+}
 t('numeri dentro i codici prodotto non si leggono', M.numeriNelTesto('COLD_AD_2 e LEA2').length === 0);
 t('cifre dentro le stringhe delle righe ammesse (varianti, date)', M.numeriNonVerificati('la MAXI 2 venduta il 3 marzo', M.valoriConsentiti([{ variant: 'MAXI 2' }], { righe: 1, colonne: {} }, 'x', 'SELECT 1')).length === 0);
-t('il flusso riscrive UNA volta e poi passa al testo senza cifre',
-  /for \(let tentativo = 0; tentativo < 2; tentativo\+\+\)/.test(SRC) && /if \(tentativo === 1\) testo = TESTO_NUMERI;/.test(SRC));
+t('il flusso riscrive UNA volta (se c\'e\' tempo) e poi passa al testo senza cifre',
+  /for \(let tentativo = 0; tentativo < 2; tentativo\+\+\)/.test(SRC) && /if \(tentativo === 1 \|\| tempoChiamata\(scadenza, Date\.now\(\)\) == null\) \{ testo = TESTO_NUMERI; break; \}/.test(SRC));
+t('C6: al tetto di 200 righe i totali sono dichiarati parziali', /TOTALI CALCOLATI DAL PROGRAMMA sulle SOLE 200 righe ricevute, NON sono totali completi/.test(SRC));
+t('C2: titolo del grafico ed etichetta delle card con un numero non verificato si tolgono',
+  /titolo: numeriNonVerificati\(String\(gspec\.titolo \?\? ''\), consentiti\)\.length \? '' :/.test(SRC) && /etichetta && !numeriNonVerificati\(etichetta, consentiti\)\.length/.test(SRC));
 t('il passo risposta vede la query (periodo e filtri) e i totali calcolati', /Query SQL eseguita: \$\{sql\}/.test(SRC) && /TOTALI CALCOLATI DAL PROGRAMMA/.test(SRC) && /TOTALI CALCOLATI DAL PROGRAMMA/.test(M.ISTRUZIONI_RISPOSTA));
 t('istruzioni: niente conti a mente, formato italiano, IVA e periodo dichiarati',
   /Non fare mai somme, medie, differenze, percentuali o conversioni a mente/.test(M.ISTRUZIONI_RISPOSTA) && /1\.234,50 €/.test(M.ISTRUZIONI_RISPOSTA)
@@ -147,14 +196,26 @@ t('storia non valida -> stringa vuota', M.storiaUtente(null) === '' && M.storiaU
 
 console.log('\n== controllo del periodo nel flusso ==');
 t('controllaPeriodo prima di ask_select, con UNA riscrittura e poi il testo onesto',
-  SRC.indexOf('controllaPeriodo(question, passo.sql)') < SRC.indexOf("sb.rpc('ask_select'") && /return json\(\{ ok: true, testo: TESTO_PERIODO/.test(SRC));
+  SRC.indexOf('controllaPeriodo(question, passo.sql, oggi, storia)') < SRC.indexOf("sb.rpc('ask_select'") && /return json\(\{ ok: true, testo: TESTO_PERIODO/.test(SRC));
 
 console.log('\n== costi ==');
 t('costo Opus 5.5: 1M input = 4 USD, 1M output = 20, 1M letture cache = 0,20', M.costoUsd('claude-opus-5-5', { input: 1e6, output: 0, cache_scrittura: 0, cache_lettura: 0 }) === 4
   && M.costoUsd('claude-opus-5-5', { input: 0, output: 1e6, cache_scrittura: 0, cache_lettura: 0 }) === 20
   && M.costoUsd('claude-opus-5-5', { input: 0, output: 0, cache_scrittura: 0, cache_lettura: 1e6 }) === 0.2);
 t('una domanda tipica (5.000 in, 1.500 out) costa 0,05 USD', M.costoUsd('claude-opus-5-5', { input: 5000, output: 1500, cache_scrittura: 0, cache_lettura: 0 }) === 0.05);
-t('modello sconosciuto (fallback) -> prezzi di Opus 5.5, non NaN', M.costoUsd('claude-altro', { input: 1e6, output: 0, cache_scrittura: 0, cache_lettura: 0 }) === 4);
+t('C7: una chiamata servita da un ripiego si paga ai prezzi del ripiego', M.costoUsd('claude-opus-4-8', { input: 1e6, output: 0, cache_scrittura: 0, cache_lettura: 0 }) === 5
+  && /uso\.costo_usd = Math\.round\(\(uso\.costo_usd \+ costoUsd\(r\.model, u\)\) \* 1e6\) \/ 1e6;/.test(SRC));
+t('modello sconosciuto -> prezzi di Opus 5.5, non NaN', M.costoUsd('claude-altro', { input: 1e6, output: 0, cache_scrittura: 0, cache_lettura: 0 }) === 4);
+
+console.log('\n== tempo (Gate 2 del 26-11, B2: niente piu\' 4 chiamate da 60 s con ritentativi contro i 150 s dell\'edge) ==');
+t('tetto della richiesta 120 s, chiamata fra 10 e 50 s', M.SCADENZA_MS === 120000 && M.CHIAMATA_MAX_MS === 50000 && M.CHIAMATA_MIN_MS === 10000);
+t('tempoChiamata: all\'inizio 50 s, verso la fine il resto meno 3 s, sotto i 10 s nessuna chiamata',
+  M.tempoChiamata(120000, 0) === 50000 && M.tempoChiamata(120000, 90000) === 27000 && M.tempoChiamata(120000, 108000) === null);
+t('ogni chiamata prende il tempo dalla scadenza e non ritenta (l\'SDK su un 429 aspetta il retry-after senza tetto)',
+  /const timeout = tempoChiamata\(p\.scadenza, Date\.now\(\)\);\n\s*if \(timeout == null\) throw new TempoFinito/.test(SRC) && /\{ timeout, maxRetries: 0 \}/.test(SRC) && !/maxRetries: [1-9]/.test(SRC));
+t('scadenza unica per la richiesta, passata a ogni chiamata', /const scadenza = Date\.now\(\) \+ SCADENZA_MS;/.test(SRC) && (SRC.match(/scadenza[,}\s]/g) || []).length >= 6);
+t('senza tempo per riscrivere la query: TESTO_PERIODO, mai un numero del periodo sbagliato',
+  /if \(tempoChiamata\(scadenza, Date\.now\(\)\) == null\) return json\(\{ ok: true, testo: TESTO_PERIODO/.test(SRC));
 
 console.log('\n== resta in sola lettura ==');
 t('nessuna scrittura: niente insert/update/delete/upsert/rpc diverse da ask_select', !/\.(insert|update|delete|upsert)\(/.test(SRC) && (SRC.match(/\.rpc\(/g) || []).length === 1);
