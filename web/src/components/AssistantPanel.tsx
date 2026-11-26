@@ -118,7 +118,7 @@ function Answer({ res }: { res: AsstResult }) {
     <div className="ai-a">
       <div className="ai-who"><span className="ai-who-m"><Spark s={12} /></span><span>Amimì</span></div>
       {res.error && <p className="err">{res.error}</p>}
-      {res.needs_key && <p className="ai-note">Per l'assistente serve la chiave Google AI in <code>app_flags.gemini_api_key</code>.</p>}
+      {res.needs_key && <p className="ai-note">Per l'assistente serve la chiave Anthropic nei segreti delle Edge Functions (<code>ANTHROPIC_API_KEY</code>).</p>}
       {res.testo && <p>{res.testo}</p>}
       {res.grafico && res.grafico.valori?.length ? <Chart g={res.grafico} /> : null}
       {res.prodotti?.length ? (
