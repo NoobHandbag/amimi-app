@@ -56,7 +56,7 @@ export const PREZZI: Record<string, { i: number; o: number; cw: number; cr: numb
 export const SCHEMA = `
 Postgres (Italian handbag business "Amimì"). Answer with ONE read-only SELECT.
 Key relations (use the views, they are live):
-- v_inventory(codice, item, variant, categoria, retail_price, cogs, image_url, status, qty_purchased, shopify_sold, qromo_sold, gift_sold, b2b_venduto, giacenza_attuale, disponibili_da_vendere, valore, last_sale, on_shopify)  -- one row per product; the *_sold / b2b_venduto columns are ALL-TIME totals: NEVER use them for a month or any period
+- v_inventory(codice, item, variant, categoria, retail_price, cogs, image_url, status, qty_purchased, shopify_sold, qromo_sold, gift_sold, b2b_venduto, giacenza_attuale, disponibili_da_vendere, valore, last_sale, on_shopify)  -- one row per product; the *_sold / b2b_venduto columns are ALL-TIME totals: NEVER use them for a month or any period; valore = giacenza_attuale x retail_price (stock value at LIST price, VAT incl.), NOT at cost: stock value at cost = SUM(giacenza_attuale * cogs); image_url here is the product photo (products.image_url is often empty)
 - v_reorder(codice, item, variant, image_url, giacenza, disponibili, on_shopify, venduto_60d, in_arrivo, giorni_stock)  -- what to reorder
 - v_ce_amimi_summary(year, month, online_lordo, online_netto, offline_lordo, offline_netto, b2b_lordo, b2b_netto, omni_netto, cogs, packaging, commissioni, logistica_var, resi, salari, tasse, logistica_mag, opex, eventi, marketing, mc1, mc2, base_compenso_soci, compenso_soci)  -- Amimì brand P&L (ONLY when the user asks for the brand / "solo Amimì"); brand sales start month 2
 - v_ce_totale(year, month, online_lordo, online_netto, online_pezzi, offline_lordo, offline_netto, offline_pezzi, b2b_lordo, b2b_netto, b2b_pezzi, omni_netto, cogs, ... same columns as above)  -- whole-business P&L, native/live, incl. January. DEFAULT for any P&L / conto economico / margini question (the app screens open on Totale). In both views costs are NEGATIVE; compenso_soci = partner compensation (rate from table ce_compensi_soci x base_compenso_soci; base = net sales ex VAT, net of refunds, without gifts_offline kind 'vendita_fuori_fatturato') is a VARIABLE cost already INSIDE mc1 and mc2: mc1 = omni_netto + cogs + packaging + commissioni + logistica_var + resi + compenso_soci. In v_ce_totale omni_netto also contains the historical sales collected outside official revenue (gifts_offline kind 'vendita_fuori_fatturato'), which base_compenso_soci leaves out; gifts have price 0.
@@ -69,7 +69,8 @@ Key relations (use the views, they are live):
 - expenses(date_paid date, operazione, costo, categoria, amimi boolean, status, year, month)  -- costo is NEGATIVE
 - products(codice, item, variant, categoria, retail_price, cogs, image_url, verificato)
 GLOSSARY (business):
-- categoria has exactly 3 real values: 'BAG' (all handbags, leather AND textile), 'ACCESSORY', or NULL. NEVER filter categoria='ACCESSORI'/'PELLE'/'TESSUTO' (those do not exist). Do NOT ILIKE '%borsa%'.
+- BAGS vs ACCESSORIES: categoria is EMPTY (NULL) on many products, bags included, so NEVER use categoria to find bags or accessories. A bag ("borsa") = item ILIKE '%BAG%' (models LEA, AGATA, ANNIE, NINA, MARIA, VALENTINA, LOLA, SOPHIE, SVEVA, GALIANO TOAST, also in the MAXI / PAILLETTES / SILK versions); in the sales tables, codice ILIKE '%BAG%' (codice = MODEL_VARIANT, e.g. LEA_BAG_COCCO_GREEN). Everything else is an accessory (cases, covers, chains, charms, scarves). When present, categoria is 'BAG' or 'ACCESSORY' (never 'ACCESSORI'/'PELLE'/'TESSUTO'). Do NOT ILIKE '%borsa%'.
+- codice is case-insensitive: join sales tables to v_inventory/products on UPPER(codice). The app shows product photos by itself from the codice column.
 - "borse tessili" (textile bags) = models Nina, Agata, Annie -> filter item ILIKE '%NINA%' OR item ILIKE '%AGATA%' OR item ILIKE '%ANNIE%'. "borse in pelle" (leather) = Lea, Valentina, Maria.
 - prices are VAT-inclusive: netto = lordo/1.22 (IVA 22%). Money is EUR.
 - SALES CHANNELS: "online" = Shopify (the website). "offline" = "non online" = "in negozio" = "di persona" = "mercatini" = "eventi" = "Qromo" = in-person sales = qromo_sales PLUS gifts_offline rows with kind 'vendita_manuale' or 'vendita_fuori_fatturato'. "B2B" = sales through shops.
@@ -89,6 +90,8 @@ Regole sui numeri, obbligatorie:
 - Quando una colonna e' "lordo" scrivi "con IVA", quando e' "netto" scrivi "senza IVA".
 - Scrivi sempre il periodo esatto (mese e anno) dei numeri, letto dalla query SQL o dalle colonne. Se e' il mese in corso, scrivi "fino a oggi".
 - Se le righe non rispondono davvero alla domanda (periodo, canale o prodotto diversi da quelli chiesti), dillo chiaramente invece di forzare una risposta.
+- Un valore di magazzino ("valore") e' a prezzo di listino con IVA: scrivilo. Un valore calcolato sul costo (cogs) e' "a costo": scrivilo.
+- Le foto dei prodotti le mostra l'app da sola nelle schede: non scrivere mai che le foto mancano o non ci sono.
 Poi scegli grafico e schede prodotto:
 - "grafico" solo se una classifica o un andamento aiuta (classifica -> barre, andamento mensile -> linee, poche quote -> torta) e SOLO se label_col e value_col sono fra le colonne; altrimenti null.
 - "prodotti" solo se le righe riguardano prodotti specifici e c'e' una colonna con il codice prodotto; value_col e value_label possono essere stringhe vuote. Altrimenti null.
