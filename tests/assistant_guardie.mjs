@@ -67,6 +67,14 @@ t('le colonne *_sold di v_inventory sono di sempre, mai per un periodo', /ALL-TI
 t('qromo_sales.prezzo e\' il totale di riga: SUM(prezzo), mai prezzo*quantita (come il CE)', /prezzo is the ROW total, VAT-inclusive: use SUM\(prezzo\), never prezzo\*quantita/.test(S));
 t('anno non piu\' scritto fisso ("current year is 2026"): la data arriva con la domanda', !/current year is/i.test(S) && /today's date is given with the question/.test(S)
   && /user: `Oggi e' \$\{oggi\} \(Europe\/Rome\)/.test(SRC));
+t('borse per nome (item/codice ILIKE BAG), mai per categoria: 340 borse a magazzino hanno la categoria vuota (26-11)',
+  /NEVER use categoria to find bags or accessories\. A bag \("borsa"\) = item ILIKE '%BAG%'/.test(S) && /in the sales tables, codice ILIKE '%BAG%'/.test(S)
+  && !/categoria has exactly 3 real values/.test(S));
+t('join sui codici senza maiuscole/minuscole', /join sales tables to v_inventory\/products on UPPER\(codice\)/.test(S));
+t('valore di magazzino = giacenza x listino, non costo', /valore = giacenza_attuale x retail_price \(stock value at LIST price, VAT incl\.\), NOT at cost/.test(S)
+  && /a prezzo di listino con IVA/.test(M.ISTRUZIONI_RISPOSTA));
+t('foto: le mostra l\'app, il testo non dice mai che mancano (26-11: "foto non disponibili" con 5 card con foto)',
+  /image_url here is the product photo \(products\.image_url is often empty\)/.test(S) && /non scrivere mai che le foto mancano/.test(M.ISTRUZIONI_RISPOSTA));
 t('un mese nominato va filtrato nella query', /When the question names a month or a year, the SELECT MUST filter on it/.test(S));
 
 console.log('\n== data di oggi a Roma ==');
