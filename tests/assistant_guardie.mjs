@@ -24,7 +24,7 @@ if (a < 0 || b < a) { console.error('marcatori PURE:assistant non trovati'); pro
 const BLOCCO = SRC.slice(a + B.length, b);
 const ESPORTA = ['MODELLO', 'EFFORT_SQL', 'EFFORT_RISPOSTA', 'PREZZI', 'SCHEMA', 'ISTRUZIONI_RISPOSTA', 'FORMATO_SQL', 'FORMATO_RISPOSTA', 'FORMATO_SPESA',
   'MESI', 'TESTO_VUOTO', 'oggiRoma', 'annoInferito', 'filtriPeriodo', 'tempoChiamata', 'SCADENZA_MS', 'CHIAMATA_MAX_MS', 'CHIAMATA_MIN_MS', 'cleanSql', 'aNumero', 'storiaUtente', 'mesiNellaDomanda', 'anniNellaDomanda', 'controllaPeriodo', 'righeVuote',
-  'totaliCalcolati', 'numeriNelTesto', 'numeriNonVerificati', 'valoriConsentiti', 'costoUsd'];
+  'totaliCalcolati', 'numeriNelTesto', 'numeriNonVerificati', 'valoriConsentiti', 'costoUsd', 'ISTRUZIONI_NO', 'FORMATO_NO', 'domandaSiNo', 'testoNoValido'];
 const M = new Function(stripTypeScriptTypes(BLOCCO).replace(/^export /gm, '') + `\nreturn { ${ESPORTA.join(', ')} };`)();
 
 console.log('\n== blocco puro senza import ne\' rete ==');
@@ -54,7 +54,7 @@ const oggettiOk = (s) => {
   if (s.type === 'object' && (s.additionalProperties !== false || JSON.stringify([...s.required].sort()) !== JSON.stringify(Object.keys(s.properties).sort()))) return false;
   return Object.values(s).every((v) => (Array.isArray(v) ? v.every(oggettiOk) : oggettiOk(v)));
 };
-for (const f of ['FORMATO_SQL', 'FORMATO_RISPOSTA', 'FORMATO_SPESA']) t(f + ' valido per gli output strutturati', oggettiOk(M[f]));
+for (const f of ['FORMATO_SQL', 'FORMATO_RISPOSTA', 'FORMATO_SPESA', 'FORMATO_NO']) t(f + ' valido per gli output strutturati', oggettiOk(M[f]));
 t('FORMATO_SQL: percorso dati o howto', JSON.stringify(M.FORMATO_SQL.properties.percorso.enum) === '["dati","howto"]');
 t('la guida how-to ha un formato inline valido', /formato: \{ type: 'object', additionalProperties: false, required: \['testo'\], properties: \{ testo: \{ type: 'string' \} \} \}/.test(SRC));
 
@@ -132,7 +132,7 @@ t('C4: COUNT 0 e SUM null -> vuota', M.righeVuote([{ n: 0, totale: null }]) === 
 t('C4: COUNT 0 e SUM 0 (zero vero, nessun null) -> non vuota', M.righeVuote([{ n: 0, totale: 0 }]) === false);
 t('C4: un totale vero con anno e mese -> non vuota', M.righeVuote([{ year: 2026, month: 11, totale: 15 }]) === false);
 t('il testo per le righe vuote non parla di vendite nulle', !/null|zero|nessuna vendita/i.test(M.TESTO_VUOTO) && /non ha trovato righe/.test(M.TESTO_VUOTO));
-t('il flusso usa righeVuote prima del passo risposta', /if \(righeVuote\(rows\)\) return json\(\{ ok: true, testo: TESTO_VUOTO/.test(SRC)
+t('il flusso usa righeVuote prima del passo risposta', /if \(righeVuote\(rows\)\) \{/.test(SRC)
   && SRC.indexOf('righeVuote(rows)') < SRC.indexOf('ISTRUZIONI_RISPOSTA, user: base'));
 
 console.log('\n== totali dal programma e controllo dei numeri (righe finte: 20 righe, 27 pezzi, 3.110,50 euro) ==');
@@ -200,6 +200,30 @@ t('il passo risposta vede la query (periodo e filtri) e i totali calcolati', /Qu
 t('istruzioni: niente conti a mente, formato italiano, IVA e periodo dichiarati',
   /Non fare mai somme, medie, differenze, percentuali o conversioni a mente/.test(M.ISTRUZIONI_RISPOSTA) && /1\.234,50 €/.test(M.ISTRUZIONI_RISPOSTA)
   && /con IVA/.test(M.ISTRUZIONI_RISPOSTA) && /fino a oggi/.test(M.ISTRUZIONI_RISPOSTA));
+
+console.log('\n== domande si\'/no con zero righe: "No" e cosa e\' stato cercato (27-11) ==');
+{
+  const si = ['Abbiamo venduto qualcosa in negozio ieri?', 'Ci sono ordini oggi?', "C'e' stato qualche reso a novembre?", "C’è stato qualche reso a novembre?",
+    "È arrivato l'ordine dal fornitore?", 'Hai venduto borse Nina a ottobre?', 'Sono arrivate le borse Lea?', 'Did we sell anything yesterday?', 'abbiamo venduto la Pippo bag a ottobre'];
+  const no = ['Quanto abbiamo venduto ieri?', 'Quali borse sono esaurite?', 'Abbiamo venduto quanti pezzi a ottobre?', 'Come registro una spesa?',
+    'Vendite del modello Pippo a ottobre', 'Quando e\' arrivato l\'ultimo ordine?', 'Chi ha comprato di piu\'?', 'How much did we sell yesterday?', 'Le 5 borse piu\' vendute', 'e ieri?'];
+  const siKo = si.filter((d) => !M.domandaSiNo(d)), noKo = no.filter((d) => M.domandaSiNo(d));
+  t('domande si\'/no riconosciute (anche c\'e\' con l\'apostrofo curvo, È maiuscola, inglese)', siKo.length === 0, siKo);
+  t('domande quanto/quali/come/quando/chi e frasi senza verbo NON sono si\'/no', noKo.length === 0, noKo);
+  const OK0 = M.valoriConsentiti([], M.totaliCalcolati([]), 'Abbiamo venduto qualcosa in negozio ieri?', "SELECT * FROM qromo_sales WHERE data = DATE '2026-11-26'", '2026-11-27');
+  t('"No:" con periodo e dove -> valido', M.testoNoValido('No: il 26 novembre 2026 non risultano vendite in negozio (cassa Qromo e vendite manuali).', OK0));
+  t('"No, non abbiamo venduto nulla..." -> valido ("nulla" = niente, non un importo)', M.testoNoValido('No, il 26 novembre 2026 non abbiamo venduto nulla in negozio.', OK0));
+  t('senza "No" all\'inizio -> scartato', !M.testoNoValido('Il 26 novembre 2026 non risultano vendite in negozio.', OK0));
+  t('"nullo" come importo (il caso del 25-11) -> scartato', !M.testoNoValido('No, il totale venduto offline e\' nullo.', OK0) && !M.testoNoValido('No: vendite nulle il 26 novembre 2026.', OK0));
+  t('un conteggio inventato -> scartato', !M.testoNoValido('No, solo 3 borse vendute il 26 novembre 2026.', OK0));
+  t('testo troppo lungo -> scartato', !M.testoNoValido('No. ' + 'x'.repeat(400), OK0));
+  t('istruzioni: inizia con No, dice periodo e dove, sicura=false se la query non corrisponde, niente importi',
+    /INIZIA con "No" e dice esattamente cosa e' stato cercato/.test(M.ISTRUZIONI_NO) && /metti sicura = false/.test(M.ISTRUZIONI_NO) && /Non scrivere importi ne' conteggi/.test(M.ISTRUZIONI_NO));
+  t('flusso: solo si\'/no, solo con sicura === true e testoNoValido, altrimenti TESTO_VUOTO come prima',
+    /if \(domandaSiNo\(question\) && tempoChiamata\(scadenza, Date\.now\(\)\) != null\)/.test(SRC)
+    && /if \(p\.sicura === true && testoNoValido\(t, valoriConsentiti\(rows, totaliCalcolati\(rows\), question, sql, oggi\)\)\)/.test(SRC)
+    && /\} catch \(e\) \{ console\.warn\('assistant: risposta "no" fallita: '[^\n]*\n\s*\}\n\s*return json\(\{ ok: true, testo: TESTO_VUOTO, sql, righe: rows, uso: usoOut\(\) \}\);/.test(SRC));
+}
 
 console.log('\n== storia: solo le domande dell\'utente ==');
 const ST = M.storiaUtente([{ ruolo: 'user', testo: 'q1' }, { ruolo: 'assistant', testo: 'il totale e\' nullo' }, { ruolo: 'user', testo: 'q2' }, { ruolo: 'user', testo: 'q3' }, { ruolo: 'user', testo: 'q4' }, { ruolo: 'user', testo: 'q5' }]);

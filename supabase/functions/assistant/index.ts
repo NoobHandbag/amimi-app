@@ -131,6 +131,33 @@ export const TESTO_VUOTO = 'La mia ricerca non ha trovato righe per questa doman
 export const TESTO_PERIODO = 'Non sono riuscito a costruire una ricerca che filtri davvero il periodo chiesto, quindi non ti do un numero che potrebbe essere sbagliato. Prova a riformulare indicando mese e anno (per esempio "vendite offline di novembre 2026").';
 export const TESTO_NUMERI = 'Ho trovato i dati, ma non sono riuscito a scrivere una risposta con numeri tutti verificati sulle righe. Li trovi nelle fonti qui sotto.';
 
+// Domande si'/no con zero righe (27-11, richiesta di Dan dopo la batteria): "Abbiamo venduto qualcosa in negozio ieri?"
+// riceveva TESTO_VUOTO ("prova a riformulare"), vero ma inutile. Ora la risposta e' "No", ma SOLO se il modello conferma
+// che la query cerca proprio quello che chiede la domanda e se il testo dice COSA e' stato cercato (periodo e dove):
+// cosi' una ricerca sbagliata si vede, invece di diventare un "no" sicuro come il "nullo" del 25-11. Le domande
+// "quanto/quali/come..." senza righe restano su TESTO_VUOTO.
+export const ISTRUZIONI_NO = `La ricerca sui dati di "Amimì" (la query SQL qui sotto) non ha trovato nessuna riga. La domanda dell'utente chiede se qualcosa e' successo. Rispondi in ITALIANO, in una o due frasi.
+- Se la query cerca davvero quello che chiede la domanda (stesso periodo, stesso canale o tipo di dato, stesso prodotto), metti sicura = true e scrivi un testo che INIZIA con "No" e dice esattamente cosa e' stato cercato, letto dalla query: il periodo (data, oppure mese e anno) e dove (per esempio vendite in negozio con la cassa Qromo e vendite manuali, ordini del sito, spese, arrivi dai fornitori). Esempio: "No: il 26 novembre 2026 non risultano vendite in negozio (cassa Qromo e vendite manuali)."
+- Se la query non corrisponde alla domanda (periodo, canale, prodotto o tipo di dato diversi) o non sei sicuro, metti sicura = false e testo vuoto.
+- Non scrivere importi ne' conteggi. Non scrivere che un totale e' "nullo".`;
+export const FORMATO_NO = {
+  type: 'object', additionalProperties: false, required: ['sicura', 'testo'],
+  properties: { sicura: { type: 'boolean' }, testo: { type: 'string' } },
+};
+// Una domanda si'/no: comincia con un verbo o un "c'e'" (abbiamo, avete, hai, ci sono, e' arrivato, did, is...) e non
+// contiene parole che chiedono una quantita', una lista o un modo (quanto, quali, come, dove, perche', cosa, chi, quando).
+export function domandaSiNo(domanda: string): boolean {
+  const t = String(domanda ?? '').toLowerCase().replace(/[\u2018\u2019`]/g, "'").replace(/è|é/g, "e'").trim();
+  if (/(^|[^a-z'])(quant[aoie]?|qual[ei]?|come|dove|perche'?|cosa|chi|quando|how|what|which|where|why|who|when)(?=[^a-z']|$)/.test(t)) return false;
+  return /^(abbiamo|avete|hai|ho|ha|hanno|c'e'|ci sono|ci sono stat[ei]|e'|sono|esiste|esistono|qualcuno|did|do|does|is|are|was|were|have|has)(?=[\s?,]|$)/.test(t);
+}
+// Il testo del "no" si accetta solo se comincia con "No", non ha numeri che non vengano dalla domanda, dalla query o
+// dalla data di oggi (niente importi ne' conteggi inventati), non dice "nullo/nulle/nulli" ed e' corto.
+export function testoNoValido(testo: string, consentiti: number[]): boolean {
+  const t = String(testo ?? '').trim();
+  return /^no\b/i.test(t) && t.length <= 400 && !/\bnull[oie]\b/i.test(t) && numeriNonVerificati(t, consentiti).length === 0;
+}
+
 // Data di oggi a Roma, YYYY-MM-DD (l'anno non e' piu' scritto fisso nel prompt: "novembre" a gennaio 2027 = novembre 2026).
 export function oggiRoma(ora: Date): string {
   return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' }).format(ora);
@@ -521,7 +548,24 @@ Deno.serve(async (req) => {
   if (sqlError) return json({ ok: true, testo: 'La query non ha funzionato: ' + sqlError.message + '. Prova a riformulare la domanda.', sql, righe: [], uso: usoOut() });
   if (error) return readFailed('ask_select', error.message);
   const rows: Row[] = Array.isArray(rowsRaw) ? rowsRaw as Row[] : [];
-  if (righeVuote(rows)) return json({ ok: true, testo: TESTO_VUOTO, sql, righe: rows, uso: usoOut() });
+  if (righeVuote(rows)) {
+    // si'/no con zero righe: "No" piu' cosa e' stato cercato, solo se il modello conferma che la query corrisponde alla
+    // domanda e il testo passa testoNoValido; altrimenti (o senza tempo, o su errore) TESTO_VUOTO come prima.
+    if (domandaSiNo(question) && tempoChiamata(scadenza, Date.now()) != null) {
+      try {
+        const p = await chiama(client, uso, {
+          system: ISTRUZIONI_NO, effort: EFFORT_RISPOSTA, formato: FORMATO_NO, maxTokens: 2000, scadenza,
+          user: `Oggi: ${oggi} (Europe/Rome).\nDomanda dell'utente: ${question}\n${storia}\nQuery SQL eseguita (nessuna riga trovata): ${sql}`,
+        });
+        const t = String(p.testo ?? '').trim();
+        if (p.sicura === true && testoNoValido(t, valoriConsentiti(rows, totaliCalcolati(rows), question, sql, oggi))) {
+          return json({ ok: true, testo: t, sql, righe: rows, uso: usoOut() });
+        }
+        console.warn('assistant: risposta "no" scartata (sicura=' + String(p.sicura) + '): ' + t.slice(0, 150));
+      } catch (e) { console.warn('assistant: risposta "no" fallita: ' + String((e as Error)?.message ?? e).slice(0, 150)); }
+    }
+    return json({ ok: true, testo: TESTO_VUOTO, sql, righe: rows, uso: usoOut() });
+  }
 
   const cols = Object.keys(rows[0]);
   const tot = totaliCalcolati(rows);
