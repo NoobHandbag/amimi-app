@@ -173,5 +173,25 @@ console.log('\n== Gate 2 del giro v1.4 (28-10): un orologio per giro, cause degl
     /if \(error\) \{ dailyErr\+\+; if \(!dailyWarn\) dailyWarn = redact_\(error\.message\); \}/.test(SRC) && /dailyWarn \? ` \(daily: \$\{dailyWarn\.slice\(0, 150\)\}\)`/.test(SRC) && /cause_\(\)/.test(finale));
 }
 
+console.log('\n== v1.5 (27-11): il giro del cron rilegge gli ultimi 7 giorni, un giro saltato non lascia un buco ==');
+{
+  // 03-11: il giro del 04-11 non e' partito (quota Supabase) e con days = 1 quel giorno e' rimasto senza spesa per 23
+  // giorni (card Comportamento "Spesa n.d."). Tornare a 1 riaprirebbe il buco senza che nient'altro se ne accorga.
+  t('40 RUN_DAYS = 7 e il giro (non backfill) usa RUN_DAYS, il backfill resta a blocchi di 30',
+    /^const RUN_DAYS = 7;$/m.test(SRC) && /const days = isBackfill \? Math\.min\(30, Math\.max\(1, Number\(body\.days\) \|\| 14\)\) : RUN_DAYS;/.test(SRC));
+  t('40b le date si calcolano dallo stesso ciclo (dal piu\' vecchio a ieri, offset 0 nel giro)',
+    /const startOffset = isBackfill \? Math\.max\(0, Number\(body\.offset\) \|\| 0\) : 0;/.test(SRC)
+    && SRC.includes('for (let i = startOffset + days; i >= startOffset + 1; i--) dates.push(romeDate_(i, now));'));
+  // PURE: replica del ciclo con la romeDate_ provata sopra, sulla settimana del cambio ora di marzo 2027
+  const todayRome_ = (now) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(now);
+  const romeDate_ = (offsetDays, now) => new Date(Date.parse(todayRome_(now) + 'T00:00:00Z') - offsetDays * 86400000).toISOString().slice(0, 10);
+  const giro = (now, days = 7, startOffset = 0) => { const d = []; for (let i = startOffset + days; i >= startOffset + 1; i--) d.push(romeDate_(i, now)); return d; };
+  const g = giro(new Date('2027-03-31T04:07:00Z')); // 06:07 di Roma del 31-03, ora legale da 3 giorni
+  t('41 il giro del 31-03-2027 legge dal 24-03 al 30-03, sette giorni distinti, ieri compreso, oggi no',
+    g.length === 7 && g[0] === '2027-03-24' && g[6] === '2027-03-30' && new Set(g).size === 7 && g.includes('2027-03-28'), g.join(','));
+  const g2 = giro(new Date('2026-11-04T06:07:00Z'));
+  t('41b il giro del 04-11-2026 avrebbe riletto il 03-11 (il giorno rimasto senza spesa)', g2.includes('2026-11-03') && g2[6] === '2026-11-03', g2.join(','));
+}
+
 console.log(`\n${ok} ok, ${ko} KO`);
 process.exit(ko ? 1 : 0);
