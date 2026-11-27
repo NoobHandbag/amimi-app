@@ -1,5 +1,7 @@
-// ask-data — FLOW 6. Natural-language question -> SQL (Gemini) -> guarded SELECT (ask_select RPC).
-// Gemini key in app_flags.gemini_api_key (server-only). PIN-gated. Read-only, capped at 200 rows.
+// ask-data — FLOW 6. Natural-language question -> SQL (Claude) -> guarded SELECT (ask_select RPC).
+// Anthropic key = Edge Functions secret ANTHROPIC_API_KEY (server-only). PIN-gated. Read-only, capped at 200 rows.
+// v9 (2026-11-27, decisione di Dan in chat): Claude claude-sonnet-5-5 al posto di gemini-flash-lite-latest, con la
+// chiave della chat del sito e dell'assistente (stesso credito, stesso limite di spesa). Prompt e guardie invariati.
 // v5 (2026-09-14, audit gate B65): letture controllate. Prima un 504 su app_config diventava "PIN errato"
 // e un 504 sulla RPC ask_select tornava 200 "Esecuzione fallita" come se fosse la query sbagliata.
 // Ora ogni lettura (RPC compresa) ritenta una volta e poi risponde 503 esplicito (Regola Ferrea 20).
@@ -59,8 +61,13 @@ For best-sellers / units sold per product, prefer v_inventory columns shopify_so
 Current year 2026. Use ILIKE for free-text names. Prefer the views. One SELECT only, no semicolons, no comments.
 Return ONLY the SQL, no markdown, no explanation.`;
 
+const MODEL = 'claude-sonnet-5-5';
+
 function cleanSql(t: string): string {
   let s = (t || '').trim();
+  // v9: con un blocco ```sql``` vale solo il suo contenuto, anche se dopo c'e' una nota
+  const f = s.match(/```(?:sql)?\s*([\s\S]*?)```/i);
+  if (f) s = f[1];
   s = s.replace(/^```(sql)?/i, '').replace(/```$/,'').trim();
   s = s.replace(/;+\s*$/, '').trim();
   return s;
@@ -79,26 +86,25 @@ Deno.serve(async (req) => {
   const question = String(body.question || '').trim();
   if (!question) return json({ error: 'domanda mancante' }, 422);
 
-  // maybeSingle: chiave assente = needs_key (come prima); chiave NON LEGGIBILE = 503.
-  const { data: flag, error: flagErr } = await retryOnce(() => sb.from('app_flags').select('value').eq('key', 'gemini_api_key').maybeSingle());
-  if (flagErr) return readFailed('app_flags', flagErr.message);
-  const key = flag?.value;
-  if (!key) return json({ error: 'Gemini non configurato. Aggiungi la chiave in app_flags.gemini_api_key.', needs_key: true }, 200);
+  const key = (Deno.env.get('ANTHROPIC_API_KEY') || '').trim();
+  if (!key) return json({ error: 'Claude non configurato: manca il segreto delle Edge Functions ANTHROPIC_API_KEY.', needs_key: true }, 200);
 
-  // 1) NL -> SQL via Gemini
+  // 1) NL -> SQL via Claude
   let sql = '';
   try {
-    const g = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${key}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: `${SCHEMA}\n\nDomanda: ${question}\nSQL:` }] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 400 },
+        model: MODEL, max_tokens: 1024, system: SCHEMA,
+        messages: [{ role: 'user', content: `Domanda: ${question}\nSQL:` }],
       }),
     });
-    const gj = await g.json();
-    if (!g.ok) return json({ error: 'Gemini ' + g.status, detail: JSON.stringify(gj).slice(0, 300) }, 502);
-    sql = cleanSql(gj?.candidates?.[0]?.content?.parts?.[0]?.text ?? '');
-  } catch (e) { return json({ error: 'Gemini non raggiungibile: ' + (e as Error).message }, 502); }
+    const rj = await r.json();
+    if (!r.ok) return json({ error: 'Claude ' + r.status, detail: JSON.stringify(rj).slice(0, 300) }, 502);
+    const parts = Array.isArray(rj?.content) ? rj.content : [];
+    sql = cleanSql(parts.filter((p: { type?: string }) => p.type === 'text').map((p: { text?: string }) => String(p.text ?? '')).join(''));
+  } catch (e) { return json({ error: 'Claude non raggiungibile: ' + (e as Error).message }, 502); }
 
   if (!/^\s*select\b/i.test(sql)) return json({ error: 'La domanda non ha prodotto una query valida.', sql }, 200);
 

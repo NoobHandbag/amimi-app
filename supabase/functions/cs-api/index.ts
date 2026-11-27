@@ -1,4 +1,6 @@
-// cs-api v13: tool assistenza clienti, scritture dalla UI, gated dal JWT dell'utente loggato.
+// cs-api v14: tool assistenza clienti, scritture dalla UI, gated dal JWT dell'utente loggato.
+// v14 (2026-11-27): get_ai_config dichiara Claude quando c'e' il segreto delle Edge Functions ANTHROPIC_API_KEY (come
+//   cs-assist v36), non piu' app_flags.anthropic_api_key; modello di ripiego claude-sonnet-5-5. Nient'altro cambia.
 // v13 (2026-11-13, chat del sito Fase 1 pezzo 6, docs/PROPOSTA_chat_sito.md 7.6 punti 9-12): le chat del sito proiettate
 //   in Assistenza (canale `chat_sito`, chiave `chat:<id>`, migr 0193). (9) `chat_sito` e' un canale di coda: remove_noise
 //   e il ritorno dal B2B la riportano li' (evento ingest della proiezione); (10) il B2B non manda una chat nel rumore;
@@ -361,16 +363,16 @@ async function handle(req: Request): Promise<Response> {
 
   // Configurazione AI (come rispondere): leggi/scrivi le istruzioni del team + stato del motore.
   if (action === 'get_ai_config') {
-    const { data } = await sb.from('app_flags').select('key,value').in('key', ['cs_ai_istruzioni', 'cs_ai_model_claude', 'anthropic_api_key']);
+    const { data } = await sb.from('app_flags').select('key,value').in('key', ['cs_ai_istruzioni', 'cs_ai_model_claude']);
     const m: Record<string, string> = {};
     for (const r of data ?? []) m[r.key] = r.value ?? '';
     // provider = solo la PRESENZA della chiave (mai il valore: non esporre segreti alla UI), stessa
-    // regola con cui cs-assist sceglie il motore.
-    const provider = (m.anthropic_api_key || '').trim() ? 'claude' : 'gemini';
+    // regola con cui cs-assist sceglie il motore. v14: la chiave e' il segreto ANTHROPIC_API_KEY, come in cs-assist v36.
+    const provider = (Deno.env.get('ANTHROPIC_API_KEY') || '').trim() ? 'claude' : 'gemini';
     // migr 0084: `cs_ai_model` -> `cs_ai_model_claude`, perche' e' SOLO il nome del modello CLAUDE.
     // Prima questo campo tornava 'claude-sonnet-5' anche mentre le bozze le scriveva Gemini: la UI
     // dichiarava un motore che non stava girando. Ora il modello mostrato segue il provider reale.
-    const model = provider === 'claude' ? (m.cs_ai_model_claude || 'claude-sonnet-5') : 'gemini-flash-latest';
+    const model = provider === 'claude' ? (m.cs_ai_model_claude || 'claude-sonnet-5-5') : 'gemini-flash-latest';
     return json({ ok: true, istruzioni: m.cs_ai_istruzioni ?? '', provider, model });
   }
 

@@ -104,8 +104,8 @@ Colonne **generate, mai scrivere**: `codice_norm` (ovunque), `products.is_finali
   con netto E mc2), vendite unresolved, COGS mancanti, giacenze negative, categorie spese, spese da
   verificare, riconciliazione ordini vs Shopify, token Shopify e freschezza sync. Esito in `health_log`
   (banner rosso in Home se error/warn). Azione `close_month` congela un mese in `ce_snapshots`.
-- **`ask-data`** (v4) — NL→SQL: Gemini (`gemini-flash-lite-latest`) genera l'SQL, eseguito da
-  `ask_select` (SECURITY DEFINER, solo SELECT, una query, max 200 righe). Key in app_flags.
+- **`ask-data`** (v9) — NL→SQL: Claude (`claude-sonnet-5-5`) genera l'SQL, eseguito da
+  `ask_select` (SECURITY DEFINER, solo SELECT, una query, max 200 righe). Chiave = segreto `ANTHROPIC_API_KEY`.
   Dal 06-07 legge `v_ce_totale` live.
 - **`mcp`** (v4) — server MCP JSON-RPC per Claude: tool read aperti (inventario, riordino, disponibilita',
   P&L, ads, ask_data) + 2 write (propose_expense, register_count) dietro Bearer `app_flags.mcp_token`,
@@ -291,7 +291,8 @@ rotazione segreti + chiusura esfiltrazione ask_select (audit A1/A2, vedi `audits
 | **Shopify** giacenze | **LIVE automatico** (shopify-stock v9: cron :17 sync + :27 realign_all autopush; era on-demand/gated fino al 03-07) |
 | **Qromo** vendite | **LIVE** via edge `qromo-webhook` v4 dal cutover 03-07 (il path Apps Script/Foglio e' rollback a secco; smoke test prima vendita reale ancora aperto al 06-07). Vedi §10 e TRIGGER_MIGRAZIONE.md §4b |
 | **Meta Ads** | da seed (`meta_ads_daily`); nessun pull live |
-| **Gemini** | live (ask-data) |
+| **Gemini** | live (activity-digest, cs-classify, riassunti di cs-assist, ai-compila, lead-outreach; ripiego delle bozze di cs-assist) |
+| **Claude** (segreto `ANTHROPIC_API_KEY`) | live (chat del sito, assistant, ask-data dal 27-11, bozze di cs-assist dal 27-11) |
 | **Google Sheet** | nessun sync automatico app↔foglio (app seedata una volta dal foglio) |
 
 ## 10. App vs Foglio — i due mondi e i ponti
