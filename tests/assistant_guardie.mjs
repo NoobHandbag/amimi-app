@@ -24,7 +24,7 @@ if (a < 0 || b < a) { console.error('marcatori PURE:assistant non trovati'); pro
 const BLOCCO = SRC.slice(a + B.length, b);
 const ESPORTA = ['MODELLO', 'EFFORT_SQL', 'EFFORT_RISPOSTA', 'PREZZI', 'SCHEMA', 'ISTRUZIONI_RISPOSTA', 'FORMATO_SQL', 'FORMATO_RISPOSTA', 'FORMATO_SPESA',
   'MESI', 'TESTO_VUOTO', 'oggiRoma', 'annoInferito', 'filtriPeriodo', 'tempoChiamata', 'SCADENZA_MS', 'CHIAMATA_MAX_MS', 'CHIAMATA_MIN_MS', 'cleanSql', 'aNumero', 'storiaUtente', 'mesiNellaDomanda', 'anniNellaDomanda', 'controllaPeriodo', 'righeVuote',
-  'totaliCalcolati', 'numeriNelTesto', 'numeriNonVerificati', 'valoriConsentiti', 'costoUsd', 'FONTI_NO', 'domandaSiNo', 'argomentoSiNo', 'tabelleSql', 'filtriProdotto', 'prodottoNelCatalogo', 'periodoSiNo', 'rispostaNo'];
+  'totaliCalcolati', 'numeriNelTesto', 'numeriNonVerificati', 'valoriConsentiti', 'costoUsd', 'CATEGORIE_SPESA', 'domandaSiNo', 'verificaSiNo'];
 const M = new Function(stripTypeScriptTypes(BLOCCO).replace(/^export /gm, '') + `\nreturn { ${ESPORTA.join(', ')} };`)();
 
 console.log('\n== blocco puro senza import ne\' rete ==');
@@ -201,63 +201,59 @@ t('istruzioni: niente conti a mente, formato italiano, IVA e periodo dichiarati'
   /Non fare mai somme, medie, differenze, percentuali o conversioni a mente/.test(M.ISTRUZIONI_RISPOSTA) && /1\.234,50 €/.test(M.ISTRUZIONI_RISPOSTA)
   && /con IVA/.test(M.ISTRUZIONI_RISPOSTA) && /fino a oggi/.test(M.ISTRUZIONI_RISPOSTA));
 
-console.log('\n== domande si\'/no con zero righe: il "No" lo scrive il codice, solo se fonti, periodo e prodotti tornano (27-11) ==');
+console.log('\n== domande si\'/no con zero righe: il codice costruisce ed esegue la SUA query di esistenza (27-11) ==');
 {
   const si = ['Abbiamo venduto qualcosa in negozio ieri?', 'Ci sono ordini oggi?', "C'e' stato qualche ordine a novembre?", "C’è stato qualche ordine a novembre?",
     "È arrivato l'ordine dal fornitore?", 'Hai venduto borse Nina a ottobre?', 'Did we sell anything yesterday?', 'Ieri abbiamo venduto qualcosa in negozio?',
     'Oggi ci sono ordini?', 'In negozio ieri abbiamo venduto qualcosa?', 'Risultano vendite ieri?', 'Any sales yesterday?', 'e a ottobre abbiamo venduto qualcosa in negozio?'];
   const no = ['Quanto abbiamo venduto ieri?', 'Quali borse sono esaurite?', 'Abbiamo venduto quanti pezzi a ottobre?', 'Come registro una spesa?',
-    'Vendite del modello Pippo a ottobre', 'Quando e\' arrivato l\'ultimo ordine?', 'Chi ha comprato di piu\'?', 'How much did we sell yesterday?', 'Le 5 borse piu\' vendute', 'e ieri?'];
+    'Vendite del modello Pippo a ottobre', 'Quando e\' arrivato l\'ultimo ordine?', 'Chi ha comprato di piu\'?', 'How much did we sell yesterday?', 'Le 5 borse piu\' vendute', 'e ieri?',
+    "È vero che non abbiamo venduto nulla in negozio ieri?", 'Abbiamo venduto zero borse in negozio ieri?', 'Abbiamo chiuso ieri senza vendite in negozio?', 'Ci sono ordini non evasi?'];
   const siKo = si.filter((d) => !M.domandaSiNo(d)), noKo = no.filter((d) => M.domandaSiNo(d));
   t('domande si\'/no riconosciute (apostrofo curvo, È, inglese, "ieri abbiamo...", "risultano")', siKo.length === 0, siKo);
-  t('domande quanto/quali/come/quando/chi e frasi senza verbo NON sono si\'/no', noKo.length === 0, noKo);
+  t('quanto/quali/come/chi, frasi senza verbo e domande NEGATIVE (non, nulla, zero, senza) NON sono si\'/no', noKo.length === 0, noKo);
 
-  const OGGI = '2026-11-27';
-  const CAT = [{ codice: 'LEA_BAG_COCCO_GREEN', item: 'LEA BAG', variant: 'COCCO GREEN' }, { codice: 'NINA_BAG_SAILOR_BLUE', item: 'NINA BAG', variant: 'SAILOR BLUE' }];
-  const NEG = 'Abbiamo venduto qualcosa in negozio ieri?';
-  const SQL_NEG_OK = "SELECT 'qromo' f, codice FROM qromo_sales WHERE data = '2026-11-26' UNION ALL SELECT kind, codice FROM gifts_offline WHERE data = '2026-11-26' AND kind IN ('vendita_manuale','vendita_fuori_fatturato')";
-  const r1 = M.rispostaNo(NEG, SQL_NEG_OK, OGGI, []);
-  t('negozio ieri, cassa + vendite manuali, data giusta -> "No" scritto dal codice con periodo e fonti',
-    r1?.tipo === 'no' && /^No: ieri, 26 novembre 2026, non risulta nessuna vendita nella cassa Qromo e nelle vendite manuali\.$/.test(r1.testo), r1);
-  t('A1: "in negozio" cercato solo nella cassa Qromo (mancano le vendite manuali) -> niente "No"',
-    M.rispostaNo(NEG, "SELECT * FROM qromo_sales WHERE data = '2026-11-26'", OGGI, []) === null);
-  t('C4: data relativa (CURRENT_DATE, ora UTC) -> niente "No"', M.rispostaNo(NEG, SQL_NEG_OK.replaceAll("'2026-11-26'", 'CURRENT_DATE - 1'), OGGI, []) === null);
-  t('giorno sbagliato (25 invece di 26) -> niente "No"', M.rispostaNo(NEG, SQL_NEG_OK.replaceAll('2026-11-26', '2026-11-25'), OGGI, []) === null);
-  t('una parte su un giorno sbagliato -> niente "No"', M.rispostaNo(NEG, SQL_NEG_OK.replace("gifts_offline WHERE data = '2026-11-26'", "gifts_offline WHERE data = '2026-11-25'"), OGGI, []) === null);
-  t('omaggi al posto delle vendite manuali (kind = gift) -> niente "No"', M.rispostaNo(NEG, SQL_NEG_OK.replace("kind IN ('vendita_manuale','vendita_fuori_fatturato')", "kind = 'gift'"), OGGI, []) === null);
-  t('tabella fuori elenco (join al catalogo) -> niente "No"', M.rispostaNo(NEG, SQL_NEG_OK + ' JOIN v_inventory i ON upper(i.codice) = upper(codice)', OGGI, []) === null);
-
-  const LEA = 'Abbiamo venduto la Lea cocco verde a novembre?';
-  const sqlLea = (pat) => `SELECT codice FROM shopify_line_items WHERE year = 2026 AND month = 11 AND codice ILIKE '${pat}' UNION ALL SELECT codice FROM qromo_sales WHERE year = 2026 AND month = 11 AND codice ILIKE '${pat}' UNION ALL SELECT codice FROM gifts_offline WHERE year = 2026 AND month = 11 AND kind IN ('vendita_manuale','vendita_fuori_fatturato') AND codice ILIKE '${pat}'`;
-  const r2 = M.rispostaNo(LEA, sqlLea('%LEA%COCCO%VERDE%'), OGGI, CAT);
-  t('A2: prodotto che non esiste nel catalogo (verde invece di GREEN) -> "non trovo il prodotto", mai "No"',
-    r2?.tipo === 'prodotto' && /^Non trovo nel catalogo un prodotto che corrisponda a «lea cocco verde»/.test(r2.testo), r2);
-  const r3 = M.rispostaNo(LEA, sqlLea('%LEA%COCCO%GREEN%'), OGGI, CAT);
-  t('prodotto che esiste, tutti i canali, novembre 2026 -> "No" con mese, prodotto e fonti',
-    r3?.tipo === 'no' && r3.testo === 'No: a novembre 2026 non risulta nessuna vendita per «lea cocco green» negli ordini del sito, nella cassa Qromo e nelle vendite manuali.', r3);
-  t('vendite senza canale ma cercate solo online -> niente "No"', M.rispostaNo(LEA, "SELECT codice FROM shopify_line_items WHERE year = 2026 AND month = 11 AND codice ILIKE '%LEA%COCCO%GREEN%'", OGGI, CAT) === null);
-  t('catalogo non leggibile o troncato -> niente "No" quando si cerca un prodotto', M.rispostaNo(LEA, sqlLea('%LEA%COCCO%GREEN%'), OGGI, null) === null);
-  t('filtro negato (NOT ILIKE) -> niente "No"', M.rispostaNo(LEA, sqlLea('%LEA%COCCO%GREEN%').replace("codice ILIKE '%LEA%COCCO%GREEN%' UNION", "codice NOT ILIKE '%NINA%' UNION"), OGGI, CAT) === null);
-  t('A2: "e\' esaurita?" (domanda negativa sul magazzino) -> niente "No"', M.rispostaNo("È esaurita la Lea cocco verde?", "SELECT codice FROM v_inventory WHERE codice ILIKE '%LEA%COCCO%VERDE%' AND disponibili_da_vendere <= 0", OGGI, CAT) === null);
-  t('"Ci sono borse esaurite?" -> niente "No"', M.rispostaNo('Ci sono borse esaurite?', "SELECT codice FROM v_inventory WHERE item ILIKE '%BAG%' AND disponibili_da_vendere <= 0", OGGI, CAT) === null);
-  t('vendite filtrate per categoria (vuota su meta\' catalogo) -> niente "No"', M.rispostaNo(LEA, sqlLea('%LEA%COCCO%GREEN%') + " AND categoria = 'BAG'", OGGI, CAT) === null);
-  t('data d\'import di shopify_line_items (created_at) -> niente "No"', M.rispostaNo('Abbiamo venduto la Lea online ieri?', "SELECT codice FROM shopify_line_items WHERE created_at::date = '2026-11-26' AND codice ILIKE '%LEA%'", OGGI, CAT) === null);
-  t('mese chiesto ma query su meta\' mese (overclaim) -> niente "No"', M.rispostaNo('Abbiamo venduto qualcosa in negozio a novembre?', "SELECT codice FROM qromo_sales WHERE data >= '2026-11-15' AND data < '2026-12-01' UNION ALL SELECT codice FROM gifts_offline WHERE data >= '2026-11-15' AND data < '2026-12-01'", OGGI, []) === null);
-  t('mese intero con intervallo di date -> "No"', M.rispostaNo('Abbiamo venduto qualcosa in negozio a novembre?', "SELECT codice FROM qromo_sales WHERE data >= '2026-11-01' AND data < '2026-12-01' UNION ALL SELECT codice FROM gifts_offline WHERE data >= '2026-11-01' AND data < '2026-12-01'", OGGI, [])?.testo === 'No: a novembre 2026 non risulta nessuna vendita nella cassa Qromo e nelle vendite manuali.');
-  t('domanda senza periodo ma query con un periodo -> niente "No"', M.rispostaNo('Abbiamo mai venduto la Lea cocco green in negozio?', "SELECT codice FROM qromo_sales WHERE year = 2026 AND codice ILIKE '%LEA%COCCO%GREEN%' UNION ALL SELECT codice FROM gifts_offline WHERE codice ILIKE '%LEA%COCCO%GREEN%'", OGGI, CAT) === null);
-  t('domanda senza periodo e query senza periodo -> "No (in tutti i dati dell\'app)"', /\(in tutti i dati dell'app\)\.$/.test(M.rispostaNo('Abbiamo mai venduto la Lea cocco green in negozio?', "SELECT codice FROM qromo_sales WHERE codice ILIKE '%LEA%COCCO%GREEN%' UNION ALL SELECT codice FROM gifts_offline WHERE codice ILIKE '%LEA%COCCO%GREEN%'", OGGI, CAT)?.testo ?? ''));
-  t('spese di marketing a novembre -> "No" con la categoria della spesa', M.rispostaNo('Abbiamo speso qualcosa in marketing a novembre?', "SELECT * FROM expenses WHERE year = 2026 AND month = 11 AND categoria = 'MARKETING'", OGGI, [])?.testo === 'No: a novembre 2026 non risulta nessuna spesa di MARKETING nelle spese registrate.');
-  t('ordini online ieri -> "No" sugli ordini del sito', M.rispostaNo('Abbiamo ricevuto ordini online ieri?', "SELECT order_id FROM shopify_orders WHERE (created_at_shop AT TIME ZONE 'Europe/Rome')::date = '2026-11-26'", OGGI, [])?.testo === 'No: ieri, 26 novembre 2026, non risulta nessun ordine negli ordini del sito.');
-  t('arrivi, resi, magazzino: argomenti non gestiti -> niente "No"', ['Sono arrivate le borse Lea?', 'Ci sono stati resi a novembre?', 'Abbiamo borse Nina in magazzino?'].every((d) => M.argomentoSiNo(d) === null));
-  t('C4: data giusta ma anche now() (orologio UTC) nella stessa query -> niente "No"', M.rispostaNo('Ci sono ordini online oggi?', "SELECT order_id FROM shopify_orders WHERE (created_at_shop AT TIME ZONE 'Europe/Rome')::date = '2026-11-27' AND created_at_shop <= now()", OGGI, []) === null
-    && M.rispostaNo('Ci sono ordini online oggi?', "SELECT order_id FROM shopify_orders WHERE (created_at_shop AT TIME ZONE 'Europe/Rome')::date = '2026-11-27'", OGGI, [])?.tipo === 'no');
-  t('resi, arrivi e magazzino escludono anche se la domanda nomina le vendite', ['Ci sono stati resi sulle vendite di novembre?', 'Abbiamo venduto le borse arrivate dal fornitore?', 'Abbiamo venduto tutte le borse in magazzino?'].every((d) => M.argomentoSiNo(d) === null));
+  const OGGI = '2026-11-27', ADESSO = new Date('2026-11-27T13:00:00Z');
+  const V = (d, adesso = ADESSO) => M.verificaSiNo(d, OGGI, adesso);
+  const n1 = V('Abbiamo venduto qualcosa in negozio ieri?');
+  t('negozio ieri: query del codice su cassa + vendite manuali (non omaggi), giorno italiano scritto',
+    n1?.sql === "SELECT x FROM (SELECT 1 AS x FROM qromo_sales WHERE data = '2026-11-26' UNION ALL SELECT 1 AS x FROM gifts_offline WHERE kind IN ('vendita_manuale','vendita_fuori_fatturato') AND data = '2026-11-26') t LIMIT 1", n1?.sql);
+  t('negozio ieri: testi "No" e "Si\'" scritti dal codice con periodo e fonti',
+    n1?.no === 'No: ieri, 26 novembre 2026, non risulta nessuna vendita nella cassa Qromo e nelle vendite manuali.'
+    && n1?.si === 'Si\', ieri, 26 novembre 2026, risulta almeno una vendita nella cassa Qromo o nelle vendite manuali. Per i numeri chiedimi "quanto" con lo stesso periodo.', n1);
+  t('stesso risultato con le parole in un altro ordine', V('Ieri abbiamo venduto qualcosa in negozio?')?.sql === n1.sql);
+  const n2 = V('Did we sell anything yesterday?');
+  t('nessun canale: sito (giorno italiano su created_at_shop) + cassa + vendite manuali', /^SELECT x FROM \(SELECT 1 AS x FROM shopify_orders WHERE \(created_at_shop AT TIME ZONE 'Europe\/Rome'\)::date = '2026-11-26' UNION ALL SELECT 1 AS x FROM qromo_sales WHERE data = '2026-11-26' UNION ALL SELECT 1 AS x FROM gifts_offline WHERE kind IN \('vendita_manuale','vendita_fuori_fatturato'\) AND data = '2026-11-26'\) t LIMIT 1$/.test(n2?.sql ?? ''), n2);
+  const n3 = V('Ci sono ordini online oggi?');
+  t('ordini online oggi: solo sito, con l\'avviso che gli ordini arrivano una volta all\'ora', /FROM shopify_orders WHERE \(created_at_shop AT TIME ZONE 'Europe\/Rome'\)::date = '2026-11-27'\) t LIMIT 1$/.test(n3?.sql ?? '') && /una volta all'ora/.test(n3?.no ?? ''), n3);
+  t('ordini del sito "ieri" subito dopo mezzanotte (cron al minuto 7): non verificabile', V('Ci sono ordini online ieri?', new Date('2026-11-26T23:05:00Z')) === null && V('Ci sono ordini online ieri?') !== null);
+  const n4 = V('Abbiamo speso qualcosa in marketing a novembre?');
+  t('spese di marketing a novembre: categoria esatta, anno e mese', n4?.sql === "SELECT x FROM (SELECT 1 AS x FROM expenses WHERE year = 2026 AND month = 11 AND categoria = 'MARKETING') t LIMIT 1"
+    && n4?.no === 'No: a novembre 2026 non risulta nessuna spesa di MARKETING nelle spese registrate.', n4);
+  t('"eventi" nelle spese e\' la categoria EVENTI, nelle vendite e\' il canale offline', /categoria = 'EVENTI'/.test(V('Abbiamo speso per eventi a ottobre?')?.sql ?? '') && /qromo_sales.*gifts_offline/.test(V('Abbiamo venduto qualcosa agli eventi a ottobre?')?.sql ?? ''));
+  t('giorno con "con Qromo": solo la cassa', V('Abbiamo venduto qualcosa con Qromo il 3 novembre?')?.sql === "SELECT x FROM (SELECT 1 AS x FROM qromo_sales WHERE data = '2026-11-03') t LIMIT 1");
+  t('mese passato senza anno = ultima occorrenza (dicembre a novembre 2026 = dicembre 2025)', /year = 2025 AND month = 12/.test(V('Abbiamo venduto qualcosa a dicembre?')?.sql ?? ''));
+  t('domanda senza periodo: tutti i dati, e il testo lo dice', /\(in tutti i dati dell'app\)\./.test(V('Abbiamo mai venduto qualcosa in negozio?')?.no ?? '') && !/WHERE true AND|data =|year =/.test(V('Abbiamo mai venduto qualcosa in negozio?')?.sql.replace("kind IN ('vendita_manuale','vendita_fuori_fatturato') AND true", '') ?? 'x'));
+  // tutte le domande trovate dalle due Gate 2 del 27-11: nessuna e' verificabile, quindi restano su TESTO_VUOTO
+  const nonVerificabili = [
+    'Abbiamo venduto la Lea cocco verde a novembre?', 'Abbiamo venduto borse Nina a ottobre?', 'Abbiamo venduto qualcosa a Giulia Rossi in negozio a novembre?',
+    'Abbiamo venduto piu\' di 3 borse in negozio ieri?', 'Ci sono ordini sopra i 300 euro a novembre?', 'Ci sono ordini non evasi?', 'Ci sono ordini da spedire oggi?',
+    "C'e' qualche spesa da approvare?", 'Ci sono spese sopra i 1000 euro a novembre?', "È vero che non abbiamo venduto nulla in negozio ieri?", 'Abbiamo venduto zero borse in negozio ieri?',
+    'Abbiamo chiuso ieri senza vendite in negozio?', 'Abbiamo venduto qualcosa in negozio il primo novembre?', 'Abbiamo venduto qualcosa in negozio a fine novembre?',
+    'Abbiamo ricevuto ordini online ieri sera?', "Abbiamo venduto qualcosa l'altro ieri?", 'Abbiamo venduto qualcosa in negozio il 30 novembre?', 'Abbiamo venduto qualcosa sullo shop ieri?',
+    'Abbiamo venduto qualcosa ai negozi a ottobre?', 'Ci sono ordini B2B a ottobre?', 'Abbiamo venduto qualcosa questa settimana?', 'Abbiamo venduto e speso qualcosa ieri?',
+    'Abbiamo speso in marketing e tasse a novembre?', 'Sono arrivate le borse Lea?', 'Ci sono stati resi a novembre?', 'Ci sono borse esaurite?', 'Abbiamo venduto la stessa borsa sia online che in negozio a novembre?',
+    'Abbiamo venduto qualcosa nel 2027?', 'Abbiamo venduto qualcosa il 31 novembre?', 'Abbiamo venduto qualcosa ieri e oggi?', 'Ci sono ordini in negozio ieri?'];
+  const passati = nonVerificabili.filter((d) => V(d) !== null);
+  t('prodotti, clienti, importi, stati, negazioni, giorni presi per mesi, ore, futuro, canali ambigui, due argomenti: niente verifica', passati.length === 0, passati);
+  t('la verifica non guarda la query del modello (nessun parametro sql)', !/export function verificaSiNo\([^)]*sql/.test(SRC));
+  t('flusso: verifica solo con zero righe, query del codice via ask_select con retryOnce, testi del codice, altrimenti TESTO_VUOTO; nessun modello',
+    /if \(righeVuote\(rows\)\) \{[\s\S]{0,400}const v = verificaSiNo\(question, oggi, new Date\(\)\);\n\s*if \(v\) \{\n\s*const \{ data: esiste, error: vErr \} = await retryOnce\(\(\) => sb\.rpc\('ask_select', \{ q: v\.sql \}\)\);\n\s*if \(!vErr && Array\.isArray\(esiste\)\) return json\(\{ ok: true, testo: esiste\.length \? v\.si : v\.no, sql, sql_verifica: v\.sql, righe: rows, uso: usoOut\(\) \}\);/.test(SRC)
+    && /console\.warn\('assistant: verifica si\/no fallita: '[^\n]*\n\s*\}\n\s*return json\(\{ ok: true, testo: TESTO_VUOTO/.test(SRC)
+    && !/ISTRUZIONI_NO|FORMATO_NO|rispostaNo/.test(SRC));
+  t('una riga di soli id (SELECT order_id) con un valore NON e\' vuota (Gate 2 del 27-11, A1: bug gia\' in produzione)',
+    M.righeVuote([{ order_id: '#1801' }]) === false && M.righeVuote([{ order_id: null }]) === true && M.righeVuote([{ year: 2026, month: 11 }]) === false);
   t('la query non chiede mai di usare CURRENT_DATE o now()', /NEVER use CURRENT_DATE, now\(\) or interval arithmetic \(the database clock is UTC\)/.test(M.SCHEMA));
-  t('flusso: rispostaNo solo per si\'/no, catalogo letto solo se serve e scartato se >= 1000, nessun modello, altrimenti TESTO_VUOTO',
-    /if \(domandaSiNo\(question\)\) \{\n\s*let catalogo[^\n]*\n\s*if \(filtriProdotto\(sql\)\.letterali\.length\) \{/.test(SRC)
-    && /catalogo = catErr \|\| !Array\.isArray\(cat\) \|\| cat\.length >= 1000 \? null : cat/.test(SRC)
-    && /const no = rispostaNo\(question, sql, oggi, catalogo\);\n\s*if \(no\) return json\(\{ ok: true, testo: no\.testo, sql, righe: rows, uso: usoOut\(\) \}\);\n\s*\}\n\s*return json\(\{ ok: true, testo: TESTO_VUOTO/.test(SRC)
-    && !/ISTRUZIONI_NO|FORMATO_NO/.test(SRC));
 }
 
 console.log('\n== storia: solo le domande dell\'utente ==');
@@ -290,7 +286,8 @@ t('senza tempo per riscrivere la query: TESTO_PERIODO, mai un numero del periodo
   /if \(tempoChiamata\(scadenza, Date\.now\(\)\) == null\) return json\(\{ ok: true, testo: TESTO_PERIODO/.test(SRC));
 
 console.log('\n== resta in sola lettura ==');
-t('nessuna scrittura: niente insert/update/delete/upsert/rpc diverse da ask_select', !/\.(insert|update|delete|upsert)\(/.test(SRC) && (SRC.match(/\.rpc\(/g) || []).length === 1);
+t('nessuna scrittura: niente insert/update/delete/upsert, e ogni rpc e\' ask_select (sola lettura)', !/\.(insert|update|delete|upsert)\(/.test(SRC)
+  && (SRC.match(/\.rpc\(/g) || []).length === (SRC.match(/\.rpc\('ask_select'/g) || []).length && (SRC.match(/\.rpc\('ask_select'/g) || []).length === 2);
 t('la proposta di spesa resta una proposta (write-api la scrive dall\'app)', /tipo: 'expense_propose'/.test(SRC) && !/write-api|writeApi/.test(SRC.replace(/\/\/[^\n]*/g, '')));
 
 console.log(`\n${ok} ok, ${ko} KO`);

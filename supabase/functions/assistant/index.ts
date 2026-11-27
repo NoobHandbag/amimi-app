@@ -132,152 +132,140 @@ export const TESTO_PERIODO = 'Non sono riuscito a costruire una ricerca che filt
 export const TESTO_NUMERI = 'Ho trovato i dati, ma non sono riuscito a scrivere una risposta con numeri tutti verificati sulle righe. Li trovi nelle fonti qui sotto.';
 
 // Domande si'/no con zero righe (27-11, richiesta di Dan dopo la batteria): "Abbiamo venduto qualcosa in negozio ieri?"
-// riceveva TESTO_VUOTO ("prova a riformulare"), vero ma inutile. Ora puo' ricevere "No", ma il "No" lo SCRIVE IL CODICE
-// dalla query, senza modello, e solo se il codice verifica che la ricerca era completa (Gate 2 del 27-11, A1 e A2: un
-// controllo affidato al modello confermava ricerche sbagliate, e "nullo" del 25-11 era proprio una ricerca sbagliata):
-// - fonti giuste e tutte: "in negozio" = cassa Qromo E vendite manuali; nessun canale = sito + cassa + vendite manuali;
-// - periodo esatto, ne' piu' largo ne' piu' stretto, con date scritte (mai CURRENT_DATE/now(): il DB e' in UTC);
-// - ogni prodotto cercato esiste nel catalogo, altrimenti la risposta e' "non trovo il prodotto", non "No".
-// Se una sola condizione manca resta TESTO_VUOTO. Le domande "quanto/quali/come..." senza righe non cambiano.
-export const FONTI_NO: Record<string, string> = {
-  qromo_sales: 'nella cassa Qromo',
-  gifts_offline: 'nelle vendite manuali',
-  shopify_orders: 'negli ordini del sito',
-  shopify_line_items: 'negli ordini del sito',
-  expenses: 'nelle spese registrate',
-};
+// riceveva TESTO_VUOTO ("prova a riformulare"), vero ma inutile. Due prove fermate dalla Gate 2: (1) il modello giudica
+// se la query corrisponde alla domanda (confermava ricerche incomplete); (2) il codice valida la query del modello pezzo
+// per pezzo (passavano filtri in piu', giorni presi per mesi, domande negative). Ora il codice NON guarda la query del
+// modello: se la domanda e' una si'/no semplice (nessun prodotto, cliente, importo, stato; solo verbo, periodo, canale e
+// al piu' una categoria di spesa, parole da un elenco chiuso) costruisce LUI una query di esistenza (SELECT 1 ... LIMIT 1)
+// con periodo e fonti presi dalla domanda, la esegue, e risponde "No" o "Si'" con periodo e fonti scritti dal codice.
+// Ogni domanda che non riesce a tradurre cosi' resta su TESTO_VUOTO.
+export const CATEGORIE_SPESA = ['COGS', 'EVENTI', 'LOGISTICA', 'MARKETING', 'OPEX', 'PACKAGING', 'SALARI', 'TASSE'];
 function normDomanda(d: string): string {
-  return String(d ?? '').toLowerCase().replace(/[\u2018\u2019`]/g, "'").replace(/è|é/g, "e'").replace(/\s+/g, ' ').trim();
+  return String(d ?? '').toLowerCase().replace(/[‘’`]/g, "'").replace(/è|é/g, "e'").replace(/\s+/g, ' ').trim();
 }
+const NEGAZIONE = /(^|[^a-z'])(non|nessun\w*|niente|nulla|zero|senza|vero che|neanche|nemmeno|not|no|nothing|none|without|never)(?=[^a-z']|$)/;
 // Una domanda si'/no: dopo eventuali parole iniziali di contesto (ieri, oggi, in negozio, a novembre, e, ma...) comincia
-// con un verbo o un "c'e'" (abbiamo, ci sono, risultano, e' arrivato, did, any...) e non chiede una quantita', una lista
-// o un modo (quanto, quali, come, dove, perche', cosa, chi, quando).
+// con un verbo o un "c'e'" (abbiamo, ci sono, risultano, did, any...), non chiede una quantita', una lista o un modo
+// (quanto, quali, come...) e non e' negativa ("e' vero che non...", "zero", "senza": il "No" sarebbe rovesciato).
 export function domandaSiNo(domanda: string): boolean {
   let t = normDomanda(domanda);
   if (/(^|[^a-z'])(quant[aoie]?|qual[ei]?|come|dove|perche'?|cosa|chi|quando|how|what|which|where|why|who|when)(?=[^a-z']|$)/.test(t)) return false;
+  if (NEGAZIONE.test(t)) return false;
   const contesto = new RegExp('^(?:(?:e|ma|allora|quindi|ieri|oggi|in negozio|online|al mercatino|ai mercatini|(?:a|ad|in|nel mese di) (?:' + MESI.join('|') + ')(?: 20\\d\\d)?)[ ,]+){1,4}');
   t = t.replace(contesto, '');
-  return /^(abbiamo|avete|hai|ho|ha|hanno|c'e'|ci sono|ci sono stat[ei]|e'|sono|esiste|esistono|risulta|risultano|si e'|si sono|qualcuno|did|do|does|is|are|was|were|have|has|any)(?=[\s?,]|$)/.test(t);
+  return /^(abbiamo|avete|hai|ho|ha|hanno|c'e'|ci sono|ci sono stat[ei]|e'|sono|risulta|risultano|si e'|si sono|did|do|does|have|has|any)(?=[\s?,]|$)/.test(t);
 }
-// Di cosa parla la domanda e quali fonti deve aver cercato la query per poter dire "No". null = non gestita.
-export function argomentoSiNo(domanda: string): { cosa: string; gruppi: string[][]; spese: boolean } | null {
-  const t = normDomanda(domanda);
-  if (/fornitor|arriv|magazzin|stock|esaurit|disponibil|riordin|supplier|deliver|reso|resi\b|rimbors|refund/.test(t)) return null;
-  const spese = /\b(spes[aoei]|speso|spendere|spent|expenses?)\b/.test(t);
-  const vendite = /\b(vend\w*|incass\w*|sold|sell\w*|sales?)\b/.test(t);
-  const ordini = /\b(ordin[ei]|orders?)\b/.test(t);
-  const sito = ['shopify_orders', 'shopify_line_items'];
-  if (spese && !vendite && !ordini) return { cosa: 'nessuna spesa', gruppi: [['expenses']], spese: true };
-  if (spese || (!vendite && !ordini)) return null;
-  const qromo = /\bqromo\b/.test(t);
-  const offline = /\b(negozi[o]?|offline|off-line|mercatin\w*|persona|eventi|evento|cassa|shop|store)\b/.test(t);
-  const online = /\b(online|on-line|sito|shopify|web|e-?commerce|website)\b/.test(t);
-  if (qromo) return { cosa: 'nessuna vendita', gruppi: [['qromo_sales']], spese: false };
-  if (offline && !online) return { cosa: 'nessuna vendita', gruppi: [['qromo_sales'], ['gifts_offline']], spese: false };
-  if (online && !offline) return { cosa: ordini && !vendite ? 'nessun ordine' : 'nessuna vendita', gruppi: [sito], spese: false };
-  if (ordini && !vendite) return { cosa: 'nessun ordine', gruppi: [sito], spese: false };
-  return { cosa: 'nessuna vendita', gruppi: [['qromo_sales'], ['gifts_offline'], sito], spese: false };
-}
-export function tabelleSql(sql: string): string[] {
-  return [...new Set([...String(sql ?? '').toLowerCase().matchAll(/\b(?:from|join)\s+(?:public\.)?([a-z_][a-z0-9_]*)/g)].map((m) => m[1]))];
-}
-// I testi cercati sui prodotti (codice/item/variant/lineitem_name con ILIKE, LIKE, = o IN), e se ci sono filtri negati.
-export function filtriProdotto(sql: string): { letterali: string[]; negati: boolean } {
-  const s = String(sql ?? '').toLowerCase();
-  const col = '(?:upper|lower)?\\s*\\(?\\s*(?:[a-z_]+\\.)?(?:codice|codice_norm|item|variant|lineitem_name)\\s*\\)?';
-  const negati = new RegExp(col + '\\s*(?:not\\s+(?:i?like|in)\\b|<>|!=)').test(s);
-  const letterali: string[] = [];
-  for (const m of s.matchAll(new RegExp(col + "\\s*(?:i?like|=)\\s*'([^']*)'", 'g'))) letterali.push(m[1]);
-  for (const m of s.matchAll(new RegExp(col + '\\s+in\\s*\\(([^)]*)\\)', 'g'))) for (const q of m[1].matchAll(/'([^']*)'/g)) letterali.push(q[1]);
-  return { letterali: [...new Set(letterali)], negati };
-}
-// Un testo cercato (con i jolly di ILIKE: % e _) corrisponde ad almeno un prodotto del catalogo?
-export function prodottoNelCatalogo(letterale: string, catalogo: Record<string, unknown>[]): boolean {
-  const re = new RegExp('^' + String(letterale).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.') + '$');
-  return catalogo.some((p) => {
-    const c = String(p.codice ?? ''), i = String(p.item ?? ''), v = String(p.variant ?? '');
-    return [c, i, v, `${i} ${v}`, `${i} - ${v}`].some((x) => re.test(x.toLowerCase()));
-  });
-}
+// Le sole parole ammesse in una domanda che il codice sa verificare da solo. Prodotti, clienti, importi, stati
+// (evasi, da approvare...), "shop"/"negozi"/"B2B" (ambigui) e periodi relativi (settimana, sera, scorso, fine...) non ci
+// sono: la domanda resta su TESTO_VUOTO.
+const PAROLE_SINO = new Set(('abbiamo avete hai ho ha hanno avuto avuta avuti avute e sono stato stata stati state risulta risultano risultato '
+  + 'si c ci venduto venduta venduti vendute vendere vendita vendite incassato incassata incassi incasso ordine ordini ricevuto ricevuta '
+  + 'ricevuti ricevute speso spesa spese spendere qualcosa qualche almeno un uno una mai anche ancora per caso in a ad al ai alla alle '
+  + 'allo agli nel nella nei negli del della dei di da dal dalla il lo la le i gli l ma allora quindi scusa sul sulla con mese anno ieri oggi '
+  + 'negozio mercatino mercatini cassa persona eventi evento offline online sito web ecommerce e-commerce website shopify qromo '
+  + 'did do does we you have has any anything something sell sold sale sales order orders receive received get got spend spent on at '
+  + 'the yesterday today our').split(' ').concat(MESI, CATEGORIE_SPESA.map((c) => c.toLowerCase())));
 const due = (n: number) => String(n).padStart(2, '0');
 function dataIt(iso: string): string { const [y, m, d] = iso.split('-').map(Number); return `${d} ${MESI[m - 1]} ${y}`; }
 function spostaGiorni(iso: string, n: number): string { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 function ultimoGiorno(y: number, m: number): number { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
-// Il periodo che la query ha cercato, se e' ESATTAMENTE quello della domanda (giorno, mese o anno; oppure nessuno).
-// null = periodo diverso, piu' largo, piu' stretto, relativo (CURRENT_DATE, now(), interval) o non gestito.
-export function periodoSiNo(domanda: string, sql: string, oggi: string): { testo: string } | null {
-  const t = normDomanda(domanda), s = String(sql ?? '').toLowerCase();
-  if (/current_date|now\s*\(|current_timestamp|localtimestamp|\binterval\b/.test(s)) return null;
-  if (/settiman|weekend|stamattin|stasera|scors|passat|natale|black friday|last |this |week|questo mese|quest'anno|ultim/.test(t)) return null;
-  const lit = [...s.matchAll(/'(\d{4}-\d{2}-\d{2})/g)].map((m) => m[1]);
-  const f = filtriPeriodo(sql);
-  const ieri = /\b(ieri|yesterday)\b/.test(t), oggiQ = /\b(oggi|today)\b/.test(t);
-  const gm = [...t.matchAll(new RegExp('\\b(\\d{1,2})\\s+(' + MESI.join('|') + ')(?:\\s+(20\\d\\d))?', 'g'))];
-  if ([ieri, oggiQ, gm.length > 0].filter(Boolean).length > 1 || gm.length > 1) return null;
-  if (ieri || oggiQ || gm.length) {
-    let giorno: string;
-    if (ieri) giorno = spostaGiorni(oggi, -1);
-    else if (oggiQ) giorno = oggi;
-    else {
-      const d = Number(gm[0][1]), m = MESI.indexOf(gm[0][2]) + 1, y = gm[0][3] ? Number(gm[0][3]) : annoInferito(m, oggi);
-      if (d < 1 || d > ultimoGiorno(y, m)) return null;
-      giorno = `${y}-${due(m)}-${due(d)}`;
-    }
-    const dopo = spostaGiorni(giorno, 1);
-    if (!lit.includes(giorno) || lit.some((x) => x !== giorno && x !== dopo)) return null;
-    if ([...f.mesi].some((m) => m !== Number(giorno.slice(5, 7))) || [...f.anni].some((a) => a !== Number(giorno.slice(0, 4)))) return null;
-    return { testo: ieri ? `ieri, ${dataIt(giorno)},` : oggiQ ? `oggi, ${dataIt(giorno)},` : `il ${dataIt(giorno)}` };
-  }
-  const mesi = mesiNellaDomanda(domanda), anni = anniNellaDomanda(domanda);
-  if (mesi.length > 1 || anni.length > 1) return null;
-  if (mesi.length === 1) {
-    const m = mesi[0], y = anni.length ? anni[0] : annoInferito(m, oggi);
-    if (!f.mesi.has(m) || [...f.mesi].some((x) => x !== m) || !f.anni.has(y) || [...f.anni].some((a) => a !== y)) return null;
-    const ammessi = [`${y}-${due(m)}-01`, `${y}-${due(m)}-${due(ultimoGiorno(y, m))}`, m === 12 ? `${y + 1}-01-01` : `${y}-${due(m + 1)}-01`];
-    if (lit.some((x) => !ammessi.includes(x))) return null;
-    return { testo: `a ${MESI[m - 1]} ${y}` };
-  }
-  if (anni.length === 1) {
-    const y = anni[0];
-    if (f.mesi.size || !f.anni.has(y) || [...f.anni].some((a) => a !== y)) return null;
-    if (lit.some((x) => ![`${y}-01-01`, `${y}-12-31`, `${y + 1}-01-01`].includes(x))) return null;
-    return { testo: `nel ${y}` };
-  }
-  if (lit.length || f.mesi.size || f.anni.size) return null;
-  return { testo: '' };
-}
-// La risposta per una domanda si'/no senza righe, scritta dal codice: "No: <periodo> non risulta <cosa> <fonti>." oppure
-// "non trovo il prodotto"; null = non si puo' dire con certezza, resta TESTO_VUOTO.
-export function rispostaNo(domanda: string, sql: string, oggi: string, catalogo: Record<string, unknown>[] | null): { tipo: 'no' | 'prodotto'; testo: string } | null {
+function elenco(xs: string[], cong: string): string { return xs.length > 1 ? xs.slice(0, -1).join(', ') + ` ${cong} ` + xs[xs.length - 1] : xs[0]; }
+export type VerificaSiNo = { sql: string; no: string; si: string };
+// La verifica indipendente di una domanda si'/no: la query di esistenza e i due testi. null = domanda non verificabile.
+// oggi = YYYY-MM-DD a Roma; adesso = l'istante della richiesta (per l'ora di Roma).
+export function verificaSiNo(domanda: string, oggi: string, adesso: Date): VerificaSiNo | null {
   if (!domandaSiNo(domanda)) return null;
-  const arg = argomentoSiNo(domanda);
-  if (!arg) return null;
-  const s = String(sql ?? '').toLowerCase();
-  if (/created_at(?!_shop)/.test(s) || /\bunion\b(?!\s+all)/.test(s)) return null;
-  const tab = tabelleSql(sql);
-  if (!tab.length || tab.some((x) => !(x in FONTI_NO))) return null;
-  if (!arg.gruppi.every((g) => g.some((x) => tab.includes(x)))) return null;
-  if (tab.includes('gifts_offline') && /\bkind\b/.test(s) && !/'vendita_manuale'/.test(s)) return null;
-  // categoria: per le spese e' la categoria della spesa (si dice nel testo); per le vendite e' vuota su meta' catalogo
-  const cat = [...s.matchAll(/\bcategoria\s*(?:=|i?like)\s*'([^']*)'/g)].map((m) => m[1].replace(/%/g, '').toUpperCase());
-  if (/\bcategoria\b/.test(s) && (!arg.spese || !cat.length)) return null;
-  const per = periodoSiNo(domanda, sql, oggi);
-  if (!per) return null;
-  const prod = filtriProdotto(sql);
-  if (prod.negati) return null;
-  const pulisci = (l: string) => l.replace(/[%_]+/g, ' ').trim();
-  if (prod.letterali.length) {
-    if (!catalogo) return null;
-    const assente = prod.letterali.find((l) => !prodottoNelCatalogo(l, catalogo));
-    if (assente != null) return { tipo: 'prodotto', testo: `Non trovo nel catalogo un prodotto che corrisponda a «${pulisci(assente)}», quindi non posso dirti se e' stato venduto: controlla il nome (nel catalogo i colori sono spesso in inglese, per esempio GREEN e non verde).` };
+  let t = normDomanda(domanda).replace(/[?!.,;:]/g, ' ');
+  // periodo, letto solo dalla domanda
+  let periodo: { tipo: 'giorno'; g: string; parola: string } | { tipo: 'mese'; y: number; m: number } | { tipo: 'anno'; y: number } | { tipo: 'nessuno' } = { tipo: 'nessuno' };
+  const trovati: string[] = [];
+  const ieri = /(^|\s)(ieri|yesterday)(?=\s|$)/.test(t), oggiQ = /(^|\s)(oggi|today)(?=\s|$)/.test(t);
+  const gm = [...t.matchAll(new RegExp('(?:^|\\s)(\\d{1,2})\\s*°?\\s+(?:di\\s+)?(' + MESI.join('|') + ')(?:\\s+(20\\d\\d))?(?=\\s|$)', 'g'))];
+  const mesi = mesiNellaDomanda(t), anni = anniNellaDomanda(t);
+  if (ieri) trovati.push('ieri'); if (oggiQ) trovati.push('oggi'); if (gm.length) trovati.push('giorno');
+  if (trovati.length > 1 || gm.length > 1 || mesi.length > 1 || anni.length > 1) return null;
+  if (ieri || oggiQ) {
+    periodo = { tipo: 'giorno', g: ieri ? spostaGiorni(oggi, -1) : oggi, parola: ieri ? 'ieri' : 'oggi' };
+    t = t.replace(/(^|\s)(ieri|yesterday|oggi|today)(?=\s|$)/g, ' ');
+  } else if (gm.length) {
+    const d = Number(gm[0][1]), m = MESI.indexOf(gm[0][2]) + 1, y = gm[0][3] ? Number(gm[0][3]) : annoInferito(m, oggi);
+    if (d < 1 || d > ultimoGiorno(y, m)) return null;
+    const g = `${y}-${due(m)}-${due(d)}`;
+    if (g > oggi) return null;                                   // un giorno futuro non ha vendite da cercare
+    periodo = { tipo: 'giorno', g, parola: '' };
+    t = t.replace(gm[0][0], ' ');
+  } else if (mesi.length === 1) {
+    const m = mesi[0], y = anni.length ? anni[0] : annoInferito(m, oggi);
+    if (`${y}-${due(m)}-01` > oggi) return null;
+    periodo = { tipo: 'mese', y, m };
+    t = t.replace(new RegExp('(^|\\s)' + MESI[m - 1] + '(?=\\s|$)'), ' ').replace(/(^|\s)20\d\d(?=\s|$)/, ' ');
+  } else if (anni.length === 1) {
+    if (anni[0] > Number(oggi.slice(0, 4))) return null;
+    periodo = { tipo: 'anno', y: anni[0] };
+    t = t.replace(/(^|\s)20\d\d(?=\s|$)/, ' ');
   }
-  const fonti = [...new Set(tab.map((x) => FONTI_NO[x]))];
-  const elenco = fonti.length > 1 ? fonti.slice(0, -1).join(', ') + ' e ' + fonti[fonti.length - 1] : fonti[0];
-  const perProd = prod.letterali.length ? ` per «${prod.letterali.map(pulisci).join('», «')}»` : '';
-  const perCat = cat.length ? ` di ${cat.join(', ')}` : '';
-  const quando = per.testo ? ` ${per.testo}` : '';
-  const sempre = per.testo ? '' : " (in tutti i dati dell'app)";
-  return { tipo: 'no', testo: `No:${quando} non risulta ${arg.cosa}${perCat}${perProd} ${elenco}${sempre}.`.replace(/\s+/g, ' ').replace(' ,', ',') };
+  // tutte le parole rimaste devono essere nell'elenco chiuso (niente prodotti, clienti, importi, stati, cifre)
+  const parole = t.replace(/'/g, ' ').split(/\s+/).filter(Boolean);
+  if (!parole.length || parole.some((w) => !PAROLE_SINO.has(w))) return null;
+  const ha = (re: RegExp) => parole.some((w) => re.test(w));
+  const spese = ha(/^(speso|spesa|spese|spendere|spent|spend)$/);
+  const vendite = ha(/^(venduto|venduta|venduti|vendute|vendere|vendita|vendite|incassato|incassata|incassi|incasso|sell|sold|sale|sales)$/);
+  const ordini = ha(/^(ordine|ordini|order|orders)$/);
+  // le categorie contano solo nelle domande sulle spese; in una domanda sulle vendite "eventi" e' il canale, ogni altra
+  // categoria rende la domanda non verificabile
+  const catTutte = CATEGORIE_SPESA.filter((c) => parole.includes(c.toLowerCase()));
+  if (!spese && catTutte.some((c) => c !== 'EVENTI')) return null;
+  const cat = spese ? catTutte : [];
+  const offline = ha(/^(negozio|mercatino|mercatini|cassa|persona|offline)$/) || (!spese && ha(/^(eventi|evento)$/));
+  const online = ha(/^(online|sito|web|ecommerce|e-commerce|website|shopify)$/);
+  const qromo = parole.includes('qromo');
+  type Fonte = 'qromo' | 'manuali' | 'sito' | 'spese';
+  let fonti: Fonte[]; let cosa: [string, string];               // [nessuna..., almeno una...]
+  if (spese) {
+    if (vendite || ordini || offline || online || qromo || cat.length > 1) return null;
+    fonti = ['spese']; cosa = ['nessuna spesa', 'una spesa'];
+  } else if (cat.length) return null;
+  else if (ordini && !vendite) {
+    if (offline || qromo) return null;
+    fonti = ['sito']; cosa = ['nessun ordine', 'un ordine'];
+  } else if (vendite) {
+    if (qromo) fonti = ['qromo'];
+    else if (offline && !online) fonti = ['qromo', 'manuali'];
+    else if (online && !offline) fonti = ['sito'];
+    else fonti = ['sito', 'qromo', 'manuali'];
+    cosa = ['nessuna vendita', 'una vendita'];
+  } else return null;
+  // gli ordini del sito arrivano nell'app col cron orario (minuto 7): subito dopo mezzanotte "ieri" non e' completo
+  const oraRoma = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', hour12: false }).format(adesso);
+  if (fonti.includes('sito') && periodo.tipo === 'giorno' && periodo.parola === 'ieri' && oraRoma < '00:15') return null;
+  // la query di esistenza, scritta dal codice
+  const dove = (f: Fonte): string => {
+    if (periodo.tipo === 'nessuno') return 'true';
+    if (periodo.tipo === 'anno') return `year = ${periodo.y}`;
+    if (periodo.tipo === 'mese') return `year = ${periodo.y} AND month = ${periodo.m}`;
+    if (f === 'sito') return `(created_at_shop AT TIME ZONE 'Europe/Rome')::date = '${periodo.g}'`;
+    return `${f === 'spese' ? 'date_paid' : 'data'} = '${periodo.g}'`;
+  };
+  const rami: Record<Fonte, string> = {
+    qromo: `SELECT 1 AS x FROM qromo_sales WHERE ${dove('qromo')}`,
+    manuali: `SELECT 1 AS x FROM gifts_offline WHERE kind IN ('vendita_manuale','vendita_fuori_fatturato') AND ${dove('manuali')}`,
+    sito: `SELECT 1 AS x FROM shopify_orders WHERE ${dove('sito')}`,
+    spese: `SELECT 1 AS x FROM expenses WHERE ${dove('spese')}${cat.length ? ` AND categoria = '${cat[0]}'` : ''}`,
+  };
+  const sql = `SELECT x FROM (${fonti.map((f) => rami[f]).join(' UNION ALL ')}) t LIMIT 1`;
+  const nomi: Record<Fonte, [string, string]> = {
+    qromo: ['nella cassa Qromo', 'nella cassa Qromo'], manuali: ['nelle vendite manuali', 'nelle vendite manuali'],
+    sito: ['negli ordini del sito', 'negli ordini del sito'], spese: ['nelle spese registrate', 'nelle spese registrate'],
+  };
+  const quando = periodo.tipo === 'giorno' ? (periodo.parola ? `${periodo.parola}, ${dataIt(periodo.g)},` : `il ${dataIt(periodo.g)}`)
+    : periodo.tipo === 'mese' ? `a ${MESI[periodo.m - 1]} ${periodo.y}` : periodo.tipo === 'anno' ? `nel ${periodo.y}` : '';
+  const sempre = periodo.tipo === 'nessuno' ? " (in tutti i dati dell'app)" : '';
+  const perCat = cat.length ? ` di ${cat[0]}` : '';
+  const nota = fonti.includes('sito') && periodo.tipo === 'giorno' && periodo.parola === 'oggi'
+    ? " Gli ordini del sito arrivano nell'app una volta all'ora: uno dell'ultima ora potrebbe non esserci ancora." : '';
+  const no = `No:${quando ? ' ' + quando : ''} non risulta ${cosa[0]}${perCat} ${elenco(fonti.map((f) => nomi[f][0]), 'e')}${sempre}.${nota}`;
+  const si = `Si', ${quando ? quando + ' ' : ''}risulta almeno ${cosa[1]}${perCat} ${elenco(fonti.map((f) => nomi[f][1]), 'o')}${sempre}. Per i numeri chiedimi "quanto" con lo stesso periodo.`;
+  return { sql, no: no.replace(/\s+/g, ' ').replace(' ,', ','), si: si.replace(/\s+/g, ' ').replace(' ,', ',') };
 }
 
 // Data di oggi a Roma, YYYY-MM-DD (l'anno non e' piu' scritto fisso nel prompt: "novembre" a gennaio 2027 = novembre 2026).
@@ -392,6 +380,9 @@ export function righeVuote(rows: unknown): boolean {
   return rows.every((r) => {
     if (r == null || typeof r !== 'object') return true;
     const v = Object.entries(r as Record<string, unknown>).filter(([k]) => !NON_SOMMARE.test(k)).map(([, x]) => x);
+    // una riga fatta solo di colonne id/anno/mese (SELECT order_id ...) e' una riga vera se ha un valore (Gate 2 del 27-11:
+    // prima contava come vuota e "ci sono ordini ieri?" riceveva "non ha trovato righe" con gli ordini presenti)
+    if (!v.length) return Object.values(r as Record<string, unknown>).every((x) => x == null);
     if (v.every((x) => x == null)) return true;
     return v.some((x) => x == null) && v.every((x) => x == null || aNumero(x) === 0);
   });
@@ -671,16 +662,14 @@ Deno.serve(async (req) => {
   if (error) return readFailed('ask_select', error.message);
   const rows: Row[] = Array.isArray(rowsRaw) ? rowsRaw as Row[] : [];
   if (righeVuote(rows)) {
-    // si'/no con zero righe: il "No" lo scrive rispostaNo dalla query, solo se fonti, periodo e prodotti tornano; nessun
-    // modello qui. Il catalogo si legge solo se la query cerca un prodotto, e se puo' essere troncato (>= 1000) non vale.
-    if (domandaSiNo(question)) {
-      let catalogo: Record<string, unknown>[] | null = [];
-      if (filtriProdotto(sql).letterali.length) {
-        const { data: cat, error: catErr } = await retryOnce(() => sb.from('v_inventory').select('codice, item, variant'));
-        catalogo = catErr || !Array.isArray(cat) || cat.length >= 1000 ? null : cat as Record<string, unknown>[];
-      }
-      const no = rispostaNo(question, sql, oggi, catalogo);
-      if (no) return json({ ok: true, testo: no.testo, sql, righe: rows, uso: usoOut() });
+    // si'/no con zero righe: il codice costruisce ed esegue la SUA query di esistenza (verificaSiNo), senza guardare la
+    // query del modello, e risponde "No" o "Si'" con i testi scritti dal codice. Lettura fallita o domanda non
+    // verificabile: TESTO_VUOTO come prima. Nessun modello qui.
+    const v = verificaSiNo(question, oggi, new Date());
+    if (v) {
+      const { data: esiste, error: vErr } = await retryOnce(() => sb.rpc('ask_select', { q: v.sql }));
+      if (!vErr && Array.isArray(esiste)) return json({ ok: true, testo: esiste.length ? v.si : v.no, sql, sql_verifica: v.sql, righe: rows, uso: usoOut() });
+      console.warn('assistant: verifica si/no fallita: ' + String((vErr as SqlErr)?.message ?? '').slice(0, 150));
     }
     return json({ ok: true, testo: TESTO_VUOTO, sql, righe: rows, uso: usoOut() });
   }
