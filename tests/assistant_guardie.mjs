@@ -75,6 +75,11 @@ t('valore di magazzino = giacenza x listino, non costo', /valore = giacenza_attu
   && /a prezzo di listino con IVA/.test(M.ISTRUZIONI_RISPOSTA));
 t('foto: le mostra l\'app, il testo non dice mai che mancano (26-11: "foto non disponibili" con 5 card con foto)',
   /image_url here is the product photo \(products\.image_url is often empty\)/.test(S) && /non scrivere mai che le foto mancano/.test(M.ISTRUZIONI_RISPOSTA));
+t('giorni in ora italiana: created_at_shop e\' UTC (27-11: "ieri" contava 32 ordini invece di 29)',
+  /created_at_shop is a UTC timestamp: for a day in Italy \(oggi, ieri, a date\) ALWAYS use \(created_at_shop AT TIME ZONE 'Europe\/Rome'\)::date/.test(S)
+  && /created_at is the IMPORT time, never use it/.test(S));
+t('"Qromo" da solo = solo la cassa, non tutto l\'offline', /"Qromo" alone means the POS till only = qromo_sales \(manual offline sales excluded\)/.test(S)
+  && !/"eventi" = "Qromo"/.test(S));
 t('un mese nominato va filtrato nella query', /When the question names a month or a year, the SELECT MUST filter on it/.test(S));
 
 console.log('\n== data di oggi a Roma ==');
