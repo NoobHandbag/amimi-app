@@ -215,26 +215,61 @@ console.log('\n== domande si\'/no con zero righe: il codice costruisce ed esegue
 
   const OGGI = '2026-11-27', ADESSO = new Date('2026-11-27T13:00:00Z');
   const V = (d, adesso = ADESSO) => M.verificaSiNo(d, OGGI, adesso);
+  const GIORNO = (col, g, y, m) => `(${col} = '${g}' OR (${col} IS NULL AND year = ${y} AND month = ${m}))`;
   const n1 = V('Abbiamo venduto qualcosa in negozio ieri?');
-  t('negozio ieri: query del codice su cassa + vendite manuali (non omaggi), giorno italiano scritto',
-    n1?.sql === "SELECT x FROM (SELECT 1 AS x FROM qromo_sales WHERE data = '2026-11-26' UNION ALL SELECT 1 AS x FROM gifts_offline WHERE kind IN ('vendita_manuale','vendita_fuori_fatturato') AND data = '2026-11-26') t LIMIT 1", n1?.sql);
-  t('negozio ieri: testi "No" e "Si\'" scritti dal codice con periodo e fonti',
-    n1?.no === 'No: ieri, 26 novembre 2026, non risulta nessuna vendita nella cassa Qromo e nelle vendite manuali.'
-    && n1?.si === 'Si\', ieri, 26 novembre 2026, risulta almeno una vendita nella cassa Qromo o nelle vendite manuali. Per i numeri chiedimi "quanto" con lo stesso periodo.', n1);
+  t('negozio ieri: query del codice su cassa + vendite manuali (tutto tranne omaggi e rettifiche senza prezzo) + righe manuali del CE',
+    n1?.sql === `SELECT x FROM (SELECT 1 AS x FROM qromo_sales WHERE ${GIORNO('data', '2026-11-26', 2026, 11)} UNION ALL SELECT 1 AS x FROM gifts_offline WHERE (kind IS NULL OR kind NOT IN ('gift','rettifica') OR COALESCE(prezzo, 0) <> 0) AND ${GIORNO('data', '2026-11-26', 2026, 11)} UNION ALL SELECT 1 AS x FROM ce_totale_manual WHERE year = 2026 AND month = 11 AND (COALESCE(offline_netto, 0) <> 0)) t LIMIT 1`, n1?.sql);
+  t('negozio ieri: solo il "No", scritto dal codice con periodo e fonti; nessun "Si\'"',
+    n1?.no === 'No: ieri, 26 novembre 2026, non risulta nessuna vendita nella cassa Qromo e nelle vendite manuali. Le vendite inserite a mano a volte vengono registrate qualche giorno dopo.' && Object.keys(n1 ?? {}).sort().join() === 'no,sql', n1);
   t('stesso risultato con le parole in un altro ordine', V('Ieri abbiamo venduto qualcosa in negozio?')?.sql === n1.sql);
   const n2 = V('Did we sell anything yesterday?');
-  t('nessun canale: sito (giorno italiano su created_at_shop) + cassa + vendite manuali', /^SELECT x FROM \(SELECT 1 AS x FROM shopify_orders WHERE \(created_at_shop AT TIME ZONE 'Europe\/Rome'\)::date = '2026-11-26' UNION ALL SELECT 1 AS x FROM qromo_sales WHERE data = '2026-11-26' UNION ALL SELECT 1 AS x FROM gifts_offline WHERE kind IN \('vendita_manuale','vendita_fuori_fatturato'\) AND data = '2026-11-26'\) t LIMIT 1$/.test(n2?.sql ?? ''), n2);
+  t('nessun canale: TUTTE le fonti delle vendite (sito sul giorno italiano, cassa, manuali, B2B) e le tre colonne manuali del CE',
+    n2?.sql.startsWith(`SELECT x FROM (SELECT 1 AS x FROM shopify_orders WHERE ((created_at_shop AT TIME ZONE 'Europe/Rome')::date = '2026-11-26' OR `)
+    && /FROM qromo_sales WHERE/.test(n2.sql) && /FROM gifts_offline WHERE/.test(n2.sql) && /FROM b2b_movements WHERE \(data = '2026-11-26'/.test(n2.sql)
+    && /FROM ce_totale_manual WHERE year = 2026 AND month = 11 AND \(COALESCE\(online_netto, 0\) <> 0 OR COALESCE\(offline_netto, 0\) <> 0 OR COALESCE\(b2b_netto, 0\) <> 0\)\) t LIMIT 1$/.test(n2.sql)
+    && n2.no === 'No: ieri, 26 novembre 2026, non risulta nessuna vendita negli ordini del sito, nella cassa Qromo, nelle vendite manuali e nei movimenti B2B. Le vendite inserite a mano a volte vengono registrate qualche giorno dopo.', n2);
   const n3 = V('Ci sono ordini online oggi?');
-  t('ordini online oggi: solo sito, con l\'avviso che gli ordini arrivano una volta all\'ora', /FROM shopify_orders WHERE \(created_at_shop AT TIME ZONE 'Europe\/Rome'\)::date = '2026-11-27'\) t LIMIT 1$/.test(n3?.sql ?? '') && /una volta all'ora/.test(n3?.no ?? ''), n3);
-  t('ordini del sito "ieri" subito dopo mezzanotte (cron al minuto 7): non verificabile', V('Ci sono ordini online ieri?', new Date('2026-11-26T23:05:00Z')) === null && V('Ci sono ordini online ieri?') !== null);
-  const n4 = V('Abbiamo speso qualcosa in marketing a novembre?');
-  t('spese di marketing a novembre: categoria esatta, anno e mese', n4?.sql === "SELECT x FROM (SELECT 1 AS x FROM expenses WHERE year = 2026 AND month = 11 AND categoria = 'MARKETING') t LIMIT 1"
-    && n4?.no === 'No: a novembre 2026 non risulta nessuna spesa di MARKETING nelle spese registrate.', n4);
-  t('"eventi" nelle spese e\' la categoria EVENTI, nelle vendite e\' il canale offline', /categoria = 'EVENTI'/.test(V('Abbiamo speso per eventi a ottobre?')?.sql ?? '') && /qromo_sales.*gifts_offline/.test(V('Abbiamo venduto qualcosa agli eventi a ottobre?')?.sql ?? ''));
-  t('giorno con "con Qromo": solo la cassa', V('Abbiamo venduto qualcosa con Qromo il 3 novembre?')?.sql === "SELECT x FROM (SELECT 1 AS x FROM qromo_sales WHERE data = '2026-11-03') t LIMIT 1");
-  t('mese passato senza anno = ultima occorrenza (dicembre a novembre 2026 = dicembre 2025)', /year = 2025 AND month = 12/.test(V('Abbiamo venduto qualcosa a dicembre?')?.sql ?? ''));
-  t('domanda senza periodo: tutti i dati, e il testo lo dice', /\(in tutti i dati dell'app\)\./.test(V('Abbiamo mai venduto qualcosa in negozio?')?.no ?? '') && !/WHERE true AND|data =|year =/.test(V('Abbiamo mai venduto qualcosa in negozio?')?.sql.replace("kind IN ('vendita_manuale','vendita_fuori_fatturato') AND true", '') ?? 'x'));
-  // tutte le domande trovate dalle due Gate 2 del 27-11: nessuna e' verificabile, quindi restano su TESTO_VUOTO
+  t('ordini online oggi: solo sito (+ online_netto manuale), con l\'avviso che gli ordini arrivano una volta all\'ora',
+    /^SELECT x FROM \(SELECT 1 AS x FROM shopify_orders WHERE \(\(created_at_shop AT TIME ZONE 'Europe\/Rome'\)::date = '2026-11-27' OR /.test(n3?.sql ?? '') && !/qromo|gifts|b2b|expenses/.test(n3?.sql ?? '') && /una volta all'ora/.test(n3?.no ?? ''), n3);
+  t('l\'avviso orario vale anche per la data di oggi scritta per esteso', /una volta all'ora/.test(V('Ci sono ordini il 27 novembre?')?.no ?? ''));
+  const notte = new Date('2026-11-26T23:05:00Z');   // 00:05 a Roma del 27
+  t('ordini del sito "ieri" subito dopo mezzanotte (cron al minuto 7): non verificabile, anche con la data scritta',
+    V('Ci sono ordini online ieri?', notte) === null && V('Ci sono ordini online il 26 novembre?', notte) === null && V('Ci sono ordini online ieri?') !== null
+    && V('Abbiamo venduto qualcosa in negozio ieri?', notte) !== null);
+  const n4 = V('Abbiamo speso qualcosa in marketing ad agosto?');
+  t('spese di marketing ad agosto: tutti gli stati, le due date, righe senza categoria o non valide, campagne Meta, righe manuali, rettifiche e mese chiuso',
+    n4?.sql === "SELECT x FROM (SELECT 1 AS x FROM expenses WHERE (date_paid BETWEEN '2026-08-01' AND '2026-08-31' OR date_reported BETWEEN '2026-08-01' AND '2026-08-31' OR (year = 2026 AND month = 8)) AND (categoria = 'MARKETING' OR categoria IS NULL OR categoria_valid IS NOT TRUE) UNION ALL SELECT 1 AS x FROM meta_ads_daily WHERE spend > 0 AND date BETWEEN '2026-08-01' AND '2026-08-31' UNION ALL SELECT 1 AS x FROM v_beh_ads_funnel_daily WHERE spend > 0 AND date BETWEEN '2026-08-01' AND '2026-08-31' UNION ALL SELECT 1 AS x FROM ce_totale_manual WHERE year = 2026 AND month = 8 AND (COALESCE(marketing, 0) <> 0) UNION ALL SELECT 1 AS x FROM ce_rettifiche WHERE year = 2026 AND month = 8 AND COALESCE(importo, 0) <> 0 AND linea IN ('marketing') UNION ALL SELECT 1 AS x FROM (VALUES (2026,8)) AS p(y, m) WHERE NOT EXISTS (SELECT 1 FROM ce_snapshots s WHERE s.ce = 'totale' AND s.year = p.y AND s.month = p.m)) t LIMIT 1"
+    && n4?.no === 'No: ad agosto 2026 non risulta nessuna spesa di MARKETING nelle spese registrate e nelle campagne Meta.', n4);
+  t('la spesa Meta arriva il giorno dopo: marketing (o spese senza categoria) negli ultimi giorni non verificabile; le altre categorie si',
+    V('Abbiamo speso qualcosa in marketing a novembre?') === null && V('Abbiamo speso qualcosa ieri?') === null && V('Abbiamo speso qualcosa il 25 novembre?') === null
+    && V('Abbiamo speso qualcosa il 24 novembre?') !== null && V('Abbiamo speso qualcosa in opex ieri?') !== null);
+  const n5 = V('Abbiamo speso qualcosa a ottobre?');
+  t('spese senza categoria: tutte le categorie, Meta e tutte le rettifiche del mese', /FROM expenses WHERE \([^)]*\)\) UNION ALL/.test(n5?.sql ?? '') && /meta_ads_daily/.test(n5?.sql ?? '')
+    && /FROM ce_rettifiche WHERE year = 2026 AND month = 10 AND COALESCE\(importo, 0\) <> 0 UNION ALL SELECT 1 AS x FROM \(VALUES \(2026,10\)\) AS p\(y, m\)/.test(n5?.sql ?? '') && !/status/.test(n5?.sql ?? ''), n5);
+  t('LOGISTICA: le due colonne manuali e le due linee di rettifica', /COALESCE\(logistica_mag, 0\) <> 0 OR COALESCE\(logistica_var, 0\) <> 0/.test(V('Abbiamo speso in logistica a ottobre?')?.sql ?? '')
+    && /linea IN \('logistica_mag','logistica_var'\)/.test(V('Abbiamo speso in logistica a ottobre?')?.sql ?? ''));
+  t('"eventi" nelle spese e\' la categoria EVENTI, nelle vendite e\' il canale offline', /categoria = 'EVENTI'/.test(V('Abbiamo speso per eventi a ottobre?')?.sql ?? '') && /qromo_sales.*gifts_offline/.test(V('Abbiamo venduto qualcosa agli eventi a ottobre?')?.sql ?? '')
+    && !/shopify_orders/.test(V('Abbiamo venduto qualcosa agli eventi a ottobre?')?.sql ?? ''));
+  t('giorno con "con Qromo": solo la cassa (+ offline_netto manuale)', V('Abbiamo venduto qualcosa con Qromo il 3 novembre?')?.sql === `SELECT x FROM (SELECT 1 AS x FROM qromo_sales WHERE ${GIORNO('data', '2026-11-03', 2026, 11)} UNION ALL SELECT 1 AS x FROM ce_totale_manual WHERE year = 2026 AND month = 11 AND (COALESCE(offline_netto, 0) <> 0)) t LIMIT 1`);
+  t('mese: anno/mese della tabella OPPURE le date del mese; "ad" davanti a vocale',
+    /qromo_sales WHERE \(data BETWEEN '2026-08-01' AND '2026-08-31' OR \(year = 2026 AND month = 8\)\)/.test(V('Abbiamo venduto qualcosa ad agosto?')?.sql ?? '') && /^No: ad agosto 2026 /.test(V('Abbiamo venduto qualcosa ad agosto?')?.no ?? ''));
+  t('anno: anno della tabella OPPURE le date dell\'anno', /qromo_sales WHERE \(data BETWEEN '2026-01-01' AND '2026-12-31' OR \(year = 2026\)\)/.test(V('Abbiamo venduto qualcosa nel 2026?')?.sql ?? ''));
+  t('gennaio online: guarda anche le righe manuali del CE (le vendite online di gennaio 2026 vivono li\')',
+    /FROM ce_totale_manual WHERE year = 2026 AND month = 1 AND \(COALESCE\(online_netto, 0\) <> 0\)\) t LIMIT 1$/.test(V('Abbiamo venduto qualcosa online a gennaio?')?.sql ?? ''));
+  const n6 = V('Abbiamo mai venduto qualcosa in negozio?');
+  t('domanda senza periodo: tutti i dati, e il testo dice da quando partono', n6?.no === "No: non risulta nessuna vendita nella cassa Qromo e nelle vendite manuali (nei dati dell'app, che partono da gennaio 2026). Le vendite inserite a mano a volte vengono registrate qualche giorno dopo."
+    && !/data =|BETWEEN|year =/.test(n6?.sql ?? 'x'), n6);
+  const CHIUSO = (mesi) => ` UNION ALL SELECT 1 AS x FROM (VALUES ${mesi}) AS p(y, m) WHERE NOT EXISTS (SELECT 1 FROM ce_snapshots s WHERE s.ce = 'totale' AND s.year = p.y AND s.month = p.m)) t LIMIT 1`;
+  t('spese: il "No" solo sui mesi CHIUSI (le spese arrivano a blocchi mensili, settimane dopo): ogni mese del periodo deve stare in ce_snapshots',
+    (V('Abbiamo speso per eventi il 20 aprile?')?.sql ?? '').endsWith(CHIUSO('(2026,4)')) && (V('Abbiamo speso qualcosa in opex ieri?')?.sql ?? '').endsWith(CHIUSO('(2026,11)'))
+    && (V('Abbiamo mai speso qualcosa in opex?')?.sql ?? '').endsWith(CHIUSO('(2026,1),(2026,2),(2026,3),(2026,4),(2026,5),(2026,6),(2026,7),(2026,8),(2026,9),(2026,10),(2026,11)'))
+    && !/ce_snapshots/.test(n1.sql + n2.sql + n3.sql));
+  t('vendite inserite a mano: nell\'ultima settimana il "No" avvisa che possono arrivare qualche giorno dopo; prima no; la sola cassa Qromo no',
+    (V('Abbiamo venduto qualcosa in negozio il 21 novembre?')?.no ?? '').endsWith(' Le vendite inserite a mano a volte vengono registrate qualche giorno dopo.') && !/a mano/.test(V('Abbiamo venduto qualcosa in negozio il 20 novembre?')?.no ?? 'a mano')
+    && !/a mano/.test(V('Abbiamo venduto qualcosa con Qromo ieri?')?.no ?? 'a mano') && !/a mano/.test(V('Ci sono ordini online oggi?')?.no ?? 'a mano'));
+  t('prima dei dati dell\'app (gennaio 2026) nessun "No"', V('Abbiamo venduto qualcosa a dicembre?') === null && V('Abbiamo venduto qualcosa nel 2025?') === null
+    && V('Abbiamo venduto qualcosa il 3 dicembre 2025?') === null && V('Abbiamo venduto qualcosa a gennaio?') !== null);
+  // le domande trovate dalle tre Gate 2 del 27-11: nessuna e' verificabile, quindi restano su TESTO_VUOTO
   const nonVerificabili = [
     'Abbiamo venduto la Lea cocco verde a novembre?', 'Abbiamo venduto borse Nina a ottobre?', 'Abbiamo venduto qualcosa a Giulia Rossi in negozio a novembre?',
     'Abbiamo venduto piu\' di 3 borse in negozio ieri?', 'Ci sono ordini sopra i 300 euro a novembre?', 'Ci sono ordini non evasi?', 'Ci sono ordini da spedire oggi?',
@@ -243,14 +278,25 @@ console.log('\n== domande si\'/no con zero righe: il codice costruisce ed esegue
     'Abbiamo ricevuto ordini online ieri sera?', "Abbiamo venduto qualcosa l'altro ieri?", 'Abbiamo venduto qualcosa in negozio il 30 novembre?', 'Abbiamo venduto qualcosa sullo shop ieri?',
     'Abbiamo venduto qualcosa ai negozi a ottobre?', 'Ci sono ordini B2B a ottobre?', 'Abbiamo venduto qualcosa questa settimana?', 'Abbiamo venduto e speso qualcosa ieri?',
     'Abbiamo speso in marketing e tasse a novembre?', 'Sono arrivate le borse Lea?', 'Ci sono stati resi a novembre?', 'Ci sono borse esaurite?', 'Abbiamo venduto la stessa borsa sia online che in negozio a novembre?',
-    'Abbiamo venduto qualcosa nel 2027?', 'Abbiamo venduto qualcosa il 31 novembre?', 'Abbiamo venduto qualcosa ieri e oggi?', 'Ci sono ordini in negozio ieri?'];
+    'Abbiamo venduto qualcosa nel 2027?', 'Abbiamo venduto qualcosa il 31 novembre?', 'Abbiamo venduto qualcosa ieri e oggi?', 'Ci sono ordini in negozio ieri?',
+    // terza Gate 2: intervalli, importi, "ancora", periodi in conflitto, canali incompatibili, mese senza dire quale
+    'Abbiamo venduto qualcosa dal 3 novembre?', 'Abbiamo venduto qualcosa da ottobre?', 'Abbiamo venduto almeno 2000 euro nel 2026?', 'Abbiamo venduto qualcosa ieri a ottobre?',
+    'Abbiamo venduto qualcosa con Qromo online a novembre?', 'Abbiamo venduto ancora qualcosa a novembre?', 'Abbiamo venduto qualcosa nel mese?', "Abbiamo venduto qualcosa quest'anno?",
+    'Abbiamo venduto qualcosa da Rinascente a ottobre?', 'Ci sono ordini in negozio a ottobre?', 'Abbiamo speso in COGS online a ottobre?', 'Abbiamo venduto qualcosa a ottobre nel 2026?',
+    // dalla prova a rompere il codice (mutation test): categoria in una domanda sulle vendite, due categorie, giorno inesistente passato, numero preso per anno
+    'Abbiamo venduto qualcosa in marketing a ottobre?', 'Abbiamo speso in marketing e tasse a ottobre?', 'Abbiamo venduto qualcosa il 31 settembre?', 'Abbiamo venduto almeno 2026?'];
   const passati = nonVerificabili.filter((d) => V(d) !== null);
-  t('prodotti, clienti, importi, stati, negazioni, giorni presi per mesi, ore, futuro, canali ambigui, due argomenti: niente verifica', passati.length === 0, passati);
+  t('prodotti, clienti, importi, stati, negazioni, intervalli, periodi in conflitto o relativi, futuro, canali ambigui, due argomenti: niente verifica', passati.length === 0, passati);
+  // tutte le query generate: una sola SELECT di esistenza, niente punto e virgola, niente funzioni dell'orologio del database
+  const batteria = si.concat(['Abbiamo speso qualcosa in marketing ad agosto?', 'Abbiamo speso qualcosa a ottobre?', 'Abbiamo venduto qualcosa nel 2026?', 'Abbiamo venduto qualcosa ad agosto?',
+    'Abbiamo mai venduto qualcosa in negozio?', 'Ci sono ordini il 27 novembre?', 'Abbiamo speso in logistica a ottobre?']).map((d) => V(d)).filter(Boolean);
+  const sqlKo = batteria.filter((v) => !/^SELECT x FROM \(SELECT 1 AS x FROM [\s\S]+\) t LIMIT 1$/.test(v.sql) || /;|current_date|now\(\)|interval/i.test(v.sql) || !/^No: /.test(v.no) || /Si'|Sì/.test(v.no) || (/FROM expenses/.test(v.sql) && !/ce_snapshots/.test(v.sql)));
+  t('ogni verifica: una SELECT di esistenza (LIMIT 1), un testo che comincia con "No:", mai "Si\'"; ogni verifica di spese guarda i mesi chiusi', batteria.length >= 12 && sqlKo.length === 0, sqlKo);
   t('la verifica non guarda la query del modello (nessun parametro sql)', !/export function verificaSiNo\([^)]*sql/.test(SRC));
-  t('flusso: verifica solo con zero righe, query del codice via ask_select con retryOnce, testi del codice, altrimenti TESTO_VUOTO; nessun modello',
-    /if \(righeVuote\(rows\)\) \{[\s\S]{0,400}const v = verificaSiNo\(question, oggi, new Date\(\)\);\n\s*if \(v\) \{\n\s*const \{ data: esiste, error: vErr \} = await retryOnce\(\(\) => sb\.rpc\('ask_select', \{ q: v\.sql \}\)\);\n\s*if \(!vErr && Array\.isArray\(esiste\)\) return json\(\{ ok: true, testo: esiste\.length \? v\.si : v\.no, sql, sql_verifica: v\.sql, righe: rows, uso: usoOut\(\) \}\);/.test(SRC)
-    && /console\.warn\('assistant: verifica si\/no fallita: '[^\n]*\n\s*\}\n\s*return json\(\{ ok: true, testo: TESTO_VUOTO/.test(SRC)
-    && !/ISTRUZIONI_NO|FORMATO_NO|rispostaNo/.test(SRC));
+  t('flusso: verifica solo con zero righe, query del codice via ask_select con retryOnce, "No" SOLO se la ricerca larga non trova niente, altrimenti TESTO_VUOTO; nessun modello',
+    /if \(righeVuote\(rows\)\) \{[\s\S]{0,500}const v = verificaSiNo\(question, oggi, new Date\(\)\);\n\s*if \(v\) \{\n\s*const \{ data: esiste, error: vErr \} = await retryOnce\(\(\) => sb\.rpc\('ask_select', \{ q: v\.sql \}\)\);\n\s*if \(!vErr && Array\.isArray\(esiste\) && esiste\.length === 0\) return json\(\{ ok: true, testo: v\.no, sql, sql_verifica: v\.sql, righe: rows, uso: usoOut\(\) \}\);/.test(SRC)
+    && /if \(vErr\) console\.warn\('assistant: verifica si\/no fallita: '[^\n]*\n\s*\}\n\s*return json\(\{ ok: true, testo: TESTO_VUOTO/.test(SRC)
+    && !/v\.si\b|ISTRUZIONI_NO|FORMATO_NO|rispostaNo/.test(SRC));
   t('una riga di soli id (SELECT order_id) con un valore NON e\' vuota (Gate 2 del 27-11, A1: bug gia\' in produzione)',
     M.righeVuote([{ order_id: '#1801' }]) === false && M.righeVuote([{ order_id: null }]) === true && M.righeVuote([{ year: 2026, month: 11 }]) === false);
   t('la query non chiede mai di usare CURRENT_DATE o now()', /NEVER use CURRENT_DATE, now\(\) or interval arithmetic \(the database clock is UTC\)/.test(M.SCHEMA));
