@@ -128,6 +128,7 @@ export const FORMATO_SPESA = {
 
 export const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
 export const TESTO_VUOTO = 'La mia ricerca non ha trovato righe per questa domanda. Non vuol dire per forza che non ci siano dati: prova a riformularla, per esempio indicando mese e anno.';
+export const TESTO_ZERI_LARGO = 'La mia ricerca ha dato solo zeri, ma una ricerca piu\' larga sullo stesso periodo trova dei dati, quindi non ti rispondo "No". Prova a chiedere "quanto" o "quali" con lo stesso periodo.';
 export const TESTO_PERIODO = 'Non sono riuscito a costruire una ricerca che filtri davvero il periodo chiesto, quindi non ti do un numero che potrebbe essere sbagliato. Prova a riformulare indicando mese e anno (per esempio "vendite offline di novembre 2026").';
 export const TESTO_NUMERI = 'Ho trovato i dati, ma non sono riuscito a scrivere una risposta con numeri tutti verificati sulle righe. Li trovi nelle fonti qui sotto.';
 
@@ -160,13 +161,15 @@ export function domandaSiNo(domanda: string): boolean {
 }
 // Le sole parole ammesse in una domanda che il codice sa verificare da solo. Prodotti, clienti, importi, stati, spese,
 // intervalli ("dal", "fino", "per"), "ancora", "mai", "ordine" al singolare (anche al fornitore), "persona", "shop"/"negozi",
-// "mese"/"anno" senza dire quale e periodi relativi non ci sono: TESTO_VUOTO.
+// "mese"/"anno" senza dire quale, periodi relativi, "incassato" (i soldi del sito arrivano giorni dopo la vendita),
+// "ricevuto"/"get" (anche le consegne di cose comprate), "vendita"/"sale"/"sales" (anche un evento o una promozione):
+// TESTO_VUOTO.
 const PAROLE_SINO = new Set(('abbiamo avete hai ho ha hanno avuto avuta avuti avute e sono stato stata stati state risulta risultano risultato '
-  + 'si c ci venduto venduta venduti vendute vendita vendite incassato incassata incassi incasso ordini ricevuto ricevuta '
-  + 'ricevuti ricevute qualcosa qualche almeno un uno una anche in a ad al ai alla alle allo agli nel nella nei negli del della '
+  + 'si c ci venduto venduta venduti vendute vendite ordini '
+  + 'qualcosa qualche almeno un uno una anche in a ad al ai alla alle allo agli nel nella nei negli del della '
   + 'dei di il lo la le i gli l ma allora quindi scusa sul sulla con ieri oggi '
   + 'negozio mercatino mercatini cassa eventi evento offline online sito web ecommerce e-commerce website shopify qromo '
-  + 'did do does we you have has any anything something sell sold sales orders receive received get got on at '
+  + 'did do does we you have has any anything something sell sold orders on at '
   + 'the yesterday today our').split(' ').concat(MESI));
 const due = (n: number) => String(n).padStart(2, '0');
 function dataIt(iso: string): string { const [y, m, d] = iso.split('-').map(Number); return `${d} ${MESI[m - 1]} ${y}`; }
@@ -221,7 +224,7 @@ export function verificaSiNo(domanda: string, oggi: string, adesso: Date): Verif
   const parole = t.replace(/'/g, ' ').split(/\s+/).filter(Boolean);
   if (!parole.length || parole.some((w) => !PAROLE_SINO.has(w))) return null;
   const ha = (re: RegExp) => parole.some((w) => re.test(w));
-  const vendite = ha(/^(venduto|venduta|venduti|vendute|vendita|vendite|incassato|incassata|incassi|incasso|sell|sold|sales)$/);
+  const vendite = ha(/^(venduto|venduta|venduti|vendute|vendite|sell|sold)$/);
   const ordini = ha(/^(ordini|orders)$/);
   const offline = ha(/^(negozio|mercatino|mercatini|cassa|offline|eventi|evento)$/);
   const online = ha(/^(online|sito|web|ecommerce|e-commerce|website|shopify)$/);
@@ -270,7 +273,10 @@ export function verificaSiNo(domanda: string, oggi: string, adesso: Date): Verif
   // 75 minuti); se il sync e' fermo o in errore, la riga torna e blocca il "No"
   if (fonti.includes('sito')) {
     const soglia = fine >= oggi ? `'${new Date(adesso.getTime() - 75 * 60000).toISOString()}'::timestamptz` : `(DATE '${spostaGiorni(fine, 1)}')::timestamp AT TIME ZONE 'Europe/Rome'`;
-    bloccanti.push(`SELECT 1 AS x WHERE NOT EXISTS (SELECT 1 FROM health_log WHERE k = 'shopify_sync' AND severity = 'ok' AND created_at >= ${soglia})`);
+    bloccanti.push(`SELECT 1 AS x WHERE NOT EXISTS (SELECT 1 FROM health_log WHERE k = 'shopify_sync' AND severity = 'ok' AND label NOT LIKE 'sync: letti 0,%' AND created_at >= ${soglia})`);
+    // un giro ok dice che il sync e' vivo ADESSO, non che un ordine fallito giorni fa sia entrato: blocca anche l'ultima
+    // riconciliazione di ce-guard (conteggio ordini Shopify API contro DB, 2 mesi) se non e' ok
+    bloccanti.push(`SELECT 1 AS x WHERE NOT EXISTS (SELECT 1 FROM (SELECT severity FROM health_log WHERE k = 'ce_shopify_reconcile' ORDER BY day DESC, created_at DESC LIMIT 1) r WHERE r.severity = 'ok')`);
   }
   const sql = `SELECT x FROM (${fonti.map((f) => rami[f]).concat(bloccanti).join(' UNION ALL ')}) t LIMIT 1`;
   const nomi: Record<Fonte, string> = { sito: 'negli ordini del sito', qromo: 'nella cassa Qromo', manuali: 'nelle vendite manuali', b2b: 'nei movimenti B2B' };
@@ -281,7 +287,8 @@ export function verificaSiNo(domanda: string, oggi: string, adesso: Date): Verif
   // avvisi: gli ordini del sito arrivano una volta all'ora; le vendite inserite a mano (manuali, B2B) a volte giorni dopo
   const nota = (fonti.includes('sito') && fine >= oggi ? " Gli ordini del sito arrivano nell'app una volta all'ora: uno dell'ultima ora potrebbe non esserci ancora." : '')
     + ((fonti.includes('manuali') || fonti.includes('b2b')) && fine > spostaGiorni(oggi, -7) ? ' Le vendite inserite a mano a volte vengono registrate qualche giorno dopo.' : '');
-  const no = `No: ${quando} non risulta ${cosa} ${elenco(fonti.map((f) => nomi[f]))}.${nota}`;
+  const finora = periodo.tipo === 'giorno' && periodo.g === oggi ? ' finora' : '';
+  const no = `No: ${quando}${finora} non risulta ${cosa} ${elenco(fonti.map((f) => nomi[f]))}.${nota}`;
   return { sql, no: no.replace(/\s+/g, ' ').replace(' ,', ',') };
 }
 
@@ -392,16 +399,17 @@ const r2 = (x: number) => Math.round(x * 100) / 100;
 // Righe che non hanno trovato niente: nessuna riga, oppure righe in cui, tolte anno/mese/id, i valori sono tutti null o
 // sono zeri accanto a un null (COUNT 0 e SUM null). Non e' "vendite nulle" (25-11: una query con un filtro che non
 // trovava niente tornava una riga null e l'assistente rispondeva "venduto offline nullo" su un mese con vendite).
-// Righe vere ma tutte a zero, falso o null (SELECT COUNT(*) = 0, SELECT EXISTS = false, SUM = 0), tolte anno/mese/id:
-// su una domanda si'/no il modello scriverebbe il suo "No" da una query forse piu' stretta (Gate 2 del 27-11, B4), quindi
-// passa dalla stessa verifica del codice. Una riga di soli id con un valore non e' "a zero".
+// UNA riga di aggregato a zero (SELECT COUNT(*) = 0, SELECT EXISTS = false, SUM = 0), tolti anno/mese: su una domanda
+// si'/no il modello scriverebbe il suo "No" da una query forse piu' stretta (Gate 2 del 27-11, B4), quindi passa dalla
+// stessa verifica del codice. Solo la forma di un aggregato: una riga di un record vero (un id, un codice, un testo) con
+// un valore a zero (sconto 0, spedizione gratuita false) e' una riga trovata, non uno zero (seconda Gate 2, B1).
 export function righeZero(rows: unknown): boolean {
-  if (!Array.isArray(rows) || rows.length === 0) return false;
-  return rows.every((r) => {
-    if (r == null || typeof r !== 'object') return false;
-    const v = Object.entries(r as Record<string, unknown>).filter(([k]) => !NON_SOMMARE.test(k)).map(([, x]) => x);
-    return v.length > 0 && v.every((x) => x == null || x === false || x === 0 || (typeof x === 'string' && /^\s*(?:-?0+(?:[.,]0+)?|f|false)\s*$/i.test(x)));
-  });
+  if (!Array.isArray(rows) || rows.length !== 1) return false;
+  const r = rows[0];
+  if (r == null || typeof r !== 'object') return false;
+  const e = Object.entries(r as Record<string, unknown>).filter(([k]) => !/^(year|month|anno|mese)$/i.test(k));
+  return e.length > 0 && e.every(([k, x]) => !/(^|_)id$|codice|^order_|data|date|nome|name/i.test(k)
+    && (x == null || x === false || x === 0 || (typeof x === 'string' && /^\s*-?0+(?:[.,]0+)?\s*$/.test(x))));
 }
 export function righeVuote(rows: unknown): boolean {
   if (!Array.isArray(rows) || rows.length === 0) return true;
@@ -693,16 +701,17 @@ Deno.serve(async (req) => {
   if (vuote || zeri) {
     // si'/no con zero righe (o righe a zero): il codice costruisce ed esegue la SUA query di esistenza (verificaSiNo), almeno
     // larga quanto la domanda e senza guardare la query del modello; se non trova niente risponde "No" col testo scritto
-    // dal codice. Trovato qualcosa o lettura fallita: TESTO_VUOTO. Nessun modello qui.
+    // dal codice. Nessun modello qui.
     const v = verificaSiNo(question, oggi, new Date());
     if (v) {
       const { data: esiste, error: vErr } = await retryOnce(() => sb.rpc('ask_select', { q: v.sql }));
       if (!vErr && Array.isArray(esiste) && esiste.length === 0) return json({ ok: true, testo: v.no, sql, sql_verifica: v.sql, righe: rows, uso: usoOut() });
-      // la ricerca piu' larga del codice ha trovato qualcosa: la domanda era piu' stretta, nessun "No" e nessun "Si'"
-      if (vErr) console.warn('assistant: verifica si/no fallita: ' + String((vErr as SqlErr)?.message ?? '').slice(0, 150));
-      return json({ ok: true, testo: TESTO_VUOTO, sql, righe: rows, uso: usoOut() });
+      // la ricerca piu' larga del codice ha trovato qualcosa: la domanda era piu' stretta, nessun "No" e nessun "Si'".
+      // Con righe a zero "non ha trovato righe" sarebbe falso: il testo dice che una ricerca piu' larga trova dati
+      if (!vErr && Array.isArray(esiste)) return json({ ok: true, testo: zeri ? TESTO_ZERI_LARGO : TESTO_VUOTO, sql, righe: rows, uso: usoOut() });
+      console.warn('assistant: verifica si/no fallita: ' + String((vErr as SqlErr)?.message ?? 'risposta non valida').slice(0, 150));
     }
-    // domanda non verificabile dal codice: zero righe -> TESTO_VUOTO come prima; righe a zero -> risposta normale come prima
+    // domanda non verificabile o verifica fallita: zero righe -> TESTO_VUOTO; righe a zero -> risposta normale, come prima
     if (vuote) return json({ ok: true, testo: TESTO_VUOTO, sql, righe: rows, uso: usoOut() });
   }
 
