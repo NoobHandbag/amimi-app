@@ -169,14 +169,38 @@ console.log('\n== autocontrollo: i controlli vedono un sorgente rotto ==');
   t('30 0203: soglia rimessa a 3 giorni -> KO', !criteri(vistaFermo(rotto(M203, 'f.fermo_dal <= f.oggi - 30', 'f.fermo_dal <= f.oggi - 3')), 30));
   t('31 0203: grant sulla tabella degli esclusi -> KO', JSON.stringify(privilegi(M203 + '\ngrant select on public.stock_fermo_esclusi to anon;\n')) !== JSON.stringify(PRIVILEGI_203));
   t('32 0203: un codice in piu\' nella semina (anche minuscolo, anche sulla stessa riga) -> KO', semina(rotto(M203, "\n  ('LEA_BAG_CAVALLINO_CHOCOLATE',", "\n  ('Lea Bag Cocco', 'x', 'x'), ('LEA_BAG_CAVALLINO_CHOCOLATE',")).length === 4);
+  // 27-11 (migr 0215, rinomina Annie Velvet): la 0215 nomina stock_fermo_esclusi solo per LEGGERLA in una guardia (select count
+  // sulla lista v_fuori, "il codice non deve stare qui"). Non e' un'esclusione, quindi non passa dalla regola dell'insert, ma per
+  // lei resta vietato scriverla o crearci viste: una sola occorrenza, dentro v_fuori, letta solo da select count, e mai nella
+  // lista v_tabelle che guida gli update.
+  const SOLO_LETTURA = ['0215_rinomina_codici_annie_velvet.sql'];
+  const soloLettura = (src) => {
+    const fuori = (src.match(/v_fuori constant text\[\] := array\[[^\]]*\];/) ?? [''])[0];
+    const tabelle = (src.match(/v_tabelle constant text\[\] := array\[[^\]]*\];/) ?? [''])[0];
+    return [...src.matchAll(/stock_fermo_esclusi/g)].length === 1 && /'stock_fermo_esclusi'/.test(fuori)
+      && tabelle !== '' && !/stock_fermo_esclusi/.test(tabelle)
+      && [...src.matchAll(/in array v_fuori loop\s*execute format\('([^']*)/g)].every((m) => /^select count\(\*\) from /.test(m[1]))
+      && /in array v_fuori loop/.test(src)
+      && !/create\s+(or\s+replace\s+)?view|drop\s|alter\s|grant|revoke|(insert\s+into|update|delete\s+from)\s+public\.stock_fermo_esclusi/i.test(src);
+  };
   t('35 0205: un\'esclusione dopo la 0203 aggiunge solo codici (insert on conflict do nothing) e pulisce il registro, mai una vista', (() => {
     const altri = nomi.filter((n) => n > '0203_stock_fermo_solo_problemi.sql' && /stock_fermo_esclusi/.test(noComments(read(MIG + n))));
     return altri.includes('0205_stock_fermo_escluso_credit_card_beige.sql') && altri.every((n) => {
       const src = noComments(read(MIG + n));
+      if (SOLO_LETTURA.includes(n)) return soloLettura(src);
       return !/create\s+(or\s+replace\s+)?view|drop\s|alter\s|grant|revoke|update\s+public\.stock_fermo_esclusi|delete\s+from\s+public\.stock_fermo_esclusi/i.test(src)
         && /insert into public\.stock_fermo_esclusi \(codice, motivo, chi\) values[\s\S]*?on conflict \(codice\) do nothing;/.test(src);
     });
   })());
+  {
+    const M215 = noComments(read(MIG + '0215_rinomina_codici_annie_velvet.sql'));
+    t('36 0215: la lettura di stock_fermo_esclusi resta sola lettura (rotta apposta: in v_tabelle, un insert, un update in piu\', un execute che non legge -> KO)',
+      soloLettura(M215)
+      && !soloLettura(rotto(M215, "'b2b_movements', 'product_aliases'];", "'b2b_movements', 'product_aliases', 'stock_fermo_esclusi'];"))
+      && !soloLettura(rotto(M215, "raise notice '0215 fatto", "insert into public.stock_fermo_esclusi (codice, motivo, chi) values ('X', 'y', 'z');\n  raise notice '0215 fatto"))
+      && !soloLettura(rotto(M215, "raise notice '0215 fatto", "update public.stock_fermo_esclusi set motivo = 'x';\n  raise notice '0215 fatto"))
+      && !soloLettura(rotto(M215, "foreach v_t in array v_fuori loop\n      execute format('select count(*) from", "foreach v_t in array v_fuori loop\n      execute format('delete from")));
+  }
   t('34 0203: una scrittura in piu\' -> KO', scrive(rotto(M203, '\n-- (e) prova', "\ndelete from public.push_eventi_inviati where evento = 'stock_fermo';\n-- (e) prova")).length === 4);
   t('33 0203: testo di v_health rimasto a 3 giorni -> KO', !vecchieUguali(rotto(M203, "sul sito da almeno 30 giorni',\n    (select count(*) from v_stock_fermo)", "sul sito da almeno 3 giorni',\n    (select count(*) from v_stock_fermo)"), 30));
   t('28 giorni sul calendario del server (UTC) -> KO', !criteri(vistaFermo(rotto(M203, "(now() at time zone 'Europe/Rome')::date as oggi", 'current_date as oggi')), 30));
