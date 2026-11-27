@@ -173,8 +173,10 @@ Deno.serve(async (req) => {
   ].join(',');
 
   let dailyRows = 0, dailyErr = 0, dailyWarn = '';
+  let dateInCorso = ''; // v1.5: con 7 giorni per giro, il fermo dice quale giorno non e' stato letto
   try {
     for (const date of dates) {
+      dateInCorso = date;
       const tr = encodeURIComponent(JSON.stringify({ since: date, until: date }));
       const url = `${GRAPH}/${AD_ACCOUNT}/insights?level=ad&time_range=${tr}&fields=${insightFields}&limit=200`;
       const ins = await metaGetAll_(token, url);
@@ -212,7 +214,7 @@ Deno.serve(async (req) => {
       await sleep(200);
     }
   } catch (e) {
-    return fail('insights', (e as Error).message, 502);
+    return fail('insights', `${dateInCorso}: ${(e as Error).message}`, 502);
   }
 
   // ---- frequency VERA a 7 giorni (punto 6): UNA chiamata insights sul 7d con reach DEDUPLICATA, non la somma dei

@@ -191,6 +191,8 @@ console.log('\n== v1.5 (27-11): il giro del cron rilegge gli ultimi 7 giorni, un
     g.length === 7 && g[0] === '2027-03-24' && g[6] === '2027-03-30' && new Set(g).size === 7 && g.includes('2027-03-28'), g.join(','));
   const g2 = giro(new Date('2026-11-04T06:07:00Z'));
   t('41b il giro del 04-11-2026 avrebbe riletto il 03-11 (il giorno rimasto senza spesa)', g2.includes('2026-11-03') && g2[6] === '2026-11-03', g2.join(','));
+  // Gate 2 del 27-11: con 7 letture per giro il fermo deve dire quale giorno non e' stato letto
+  t('42 il fermo insights nomina il giorno in corso', /dateInCorso = date;/.test(SRC) && SRC.includes("return fail('insights', `${dateInCorso}: ${(e as Error).message}`, 502);"));
 }
 
 console.log(`\n${ok} ok, ${ko} KO`);
