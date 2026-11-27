@@ -332,7 +332,9 @@ snapshot**. Ponti previsti:
   pensato per il restore.
 - **Apps Script "Amimi App Snapshot Drive"** (dal 2026-07-04): daily 05-06 Roma, scrive un Google Sheet
   datato nella cartella Drive "Amimi App Snapshots" (24 fonti + tab RIEPILOGO), retention 30gg,
-  mail a info@amimi.it su errore, trigger self-healing, rilancio manuale via `/exec?k=`.
+  mail a info@amimi.it solo se lo snapshot fallisce o manca l'archivio del mese corrente (dal 27-11 niente mail
+  PARZIALE: le tabelle fallite restano nella tab RIEPILOGO), trigger self-healing, rilancio manuale via `/exec?k=`.
+  Il dump cifrato si cerca solo da `backup-2026-10` (settembre ha solo il JSON).
   Sorgente: `amimi-app/scripts/appsscript-snapshot/`.
 - **Dump completo cifrato** (dall'11-10-2026): ogni notte `db-backup.yml` fa anche `supabase db dump`
   dei dati di TUTTE le tabelle (public, auth, storage; esclusa solo `app_config`, che tiene pin_hash e

@@ -75,15 +75,36 @@ console.log('\n== copia dei due archivi mancanti, senza doppioni ==');
   const dest = folder.sub['Mensili (permanenti)'];
   eq('copiati i file che esistono', dest.files.map((f) => f.name),
     ['amimi-backup-2026-10.tar.gz', 'amimi-backup-2026-10-full.tar.gz.gpg', 'amimi-backup-2026-09.tar.gz']);
-  eq('gli altri tornano come mancanti, col tag in testa', missing, [
-    'backup-2026-09: amimi-backup-2026-09-full.tar.gz.gpg (HTTP 404)',
+  eq('gli altri tornano come mancanti, col tag in testa; prima di ottobre il dump cifrato non si cerca', missing, [
     'backup-2026-08: amimi-backup-2026-08.tar.gz (HTTP 404)',
-    'backup-2026-08: amimi-backup-2026-08-full.tar.gz.gpg (HTTP 404)',
   ]);
+  eq('nessun fetch del dump cifrato prima di ottobre', fetched.filter((u) => /2026-0[89]-full/.test(u)), []);
   eq('mancano solo mesi vecchi: niente mail', ctx.monthlyAlertDue_('2026-10-11', missing), false);
   const before = fetched.length;
   ctx.archiveMonthly_(folder, '2026-10-12');
-  eq('secondo giro: riprova solo i mancanti, nessun doppione', [fetched.length - before, dest.files.length], [3, 3]);
+  eq('secondo giro: riprova solo i mancanti, nessun doppione', [fetched.length - before, dest.files.length], [1, 3]);
+}
+
+console.log('\n== un fetch che lancia su un mese vecchio non manda mail (27-11) ==');
+{
+  const { ctx } = load(['amimi-backup-2026-11.tar.gz', 'amimi-backup-2026-11-full.tar.gz.gpg',
+    'amimi-backup-2026-10.tar.gz', 'amimi-backup-2026-10-full.tar.gz.gpg']);
+  const realFetch = ctx.UrlFetchApp.fetch;
+  ctx.UrlFetchApp.fetch = (url) => {
+    if (url.includes('backup-2026-09')) throw new Error('Exception: Indirizzo non disponibile: ' + url);
+    return realFetch(url);
+  };
+  const folder = mkFolder();
+  const missing = ctx.archiveMonthly_(folder, '2026-11-27');
+  eq('settembre resta legato al suo tag', missing.map((x) => x.slice(0, 15)), ['backup-2026-09:']);
+  eq('novembre e ottobre copiati comunque', folder.sub['Mensili (permanenti)'].files.length, 4);
+  eq('niente mail', ctx.monthlyAlertDue_('2026-11-27', missing), false);
+}
+
+console.log('\n== tabella fallita: niente mail PARZIALE ==');
+{
+  const src = readFileSync(new URL('../scripts/appsscript-snapshot/Snapshot.js', import.meta.url), 'utf8');
+  eq('la mail PARZIALE non esiste piu', src.includes('PARZIALE'), false);
 }
 
 console.log('\n== mail solo per il mese corrente, dal giorno 3 ==');

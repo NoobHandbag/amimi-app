@@ -7,7 +7,7 @@
 // archivi mensili del backup GitHub (Release backup-AAAA-MM: JSON in chiaro + dump completo cifrato,
 // quello che serve al restore) vengono copiati nella sottocartella "Mensili (permanenti)". Cosi' esiste
 // una copia fuori da GitHub. La Release esce dopo questo script: la copia arriva il giorno dopo.
-// In caso di errore: mail a info@amimi.it. Setup una tantum: eseguire setup().
+// Mail a info@amimi.it solo se lo snapshot fallisce o se manca l'archivio del mese corrente. Setup una tantum: eseguire setup().
 
 const SB_URL = 'https://imszbjeyplaiovylhkgl.supabase.co';
 const SB_KEY = 'sb_publishable_DP66FFObEGagJknhGOz8xw_8KO8WIgD'; // publishable, sola lettura by-grant
@@ -19,6 +19,7 @@ const PAGE = 1000;
 const MONTHLY_FOLDER = 'Mensili (permanenti)';
 const GH_RELEASE_BASE = 'https://github.com/NoobHandbag/amimi-app/releases/download/';
 const MONTHLY_ASSET_SUFFIXES = ['.tar.gz', '-full.tar.gz.gpg']; // JSON in chiaro, dump completo cifrato
+const FULL_DUMP_FROM = 'backup-2026-10'; // il dump cifrato esiste dall'11-10-2026: le Release prima hanno solo il JSON
 const MONTHLY_LOOKBACK = 3;       // mesi controllati a ogni run (recupera i giorni/mesi saltati)
 const MONTHLY_ALERT_FROM_DAY = 3; // dal giorno 3 l'archivio del mese corrente deve esserci
 
@@ -94,13 +95,8 @@ function run_() {
       '\n\nControlla la Action db-backup e le Release di NoobHandbag/amimi-app. Lo script riprova da solo ogni giorno.');
   }
 
-  // se qualche tabella e' fallita, avvisa comunque (lo snapshot parziale resta su Drive)
-  const failed = summary.filter(function (r) { return r[1] === -1; });
-  if (failed.length) {
-    MailApp.sendEmail(ALERT_TO, '[Amimi] Snapshot Drive PARZIALE ' + day,
-      'Snapshot creato ma ' + failed.length + ' tabelle sono fallite:\n' +
-      failed.map(function (r) { return r[0] + ': ' + r[2]; }).join('\n') + '\n\n' + ss.getUrl());
-  }
+  // una tabella fallita NON manda mail (Dan, 27-11: meno mail in Gmail): l'errore resta nella tab RIEPILOGO,
+  // e il backup per il restore e' quello GitHub. La mail resta solo se lo snapshot fallisce del tutto.
 }
 
 function fetchAll_(t) {
@@ -208,9 +204,14 @@ function archiveMonthly_(folder, day) {
   const missing = [];
   for (let i = 0; i < tags.length; i++) {
     for (let j = 0; j < MONTHLY_ASSET_SUFFIXES.length; j++) {
+      if (MONTHLY_ASSET_SUFFIXES[j].indexOf('-full') === 0 && tags[i] < FULL_DUMP_FROM) continue;
       const name = 'amimi-' + tags[i] + MONTHLY_ASSET_SUFFIXES[j];
       if (dest.getFilesByName(name).hasNext()) continue;
-      const r = UrlFetchApp.fetch(GH_RELEASE_BASE + tags[i] + '/' + name, { muteHttpExceptions: true });
+      // un fetch che lancia (27-11: "Indirizzo non disponibile" su un asset inesistente) resta legato al suo mese:
+      // prima finiva come 'errore' generico e mandava la mail ogni giorno per un mese vecchio
+      let r;
+      try { r = UrlFetchApp.fetch(GH_RELEASE_BASE + tags[i] + '/' + name, { muteHttpExceptions: true }); }
+      catch (e) { missing.push(tags[i] + ': ' + name + ' (' + String(e).slice(0, 150) + ')'); continue; }
       if (r.getResponseCode() === 200 && r.getBlob().getBytes().length > 0) dest.createFile(r.getBlob().setName(name));
       else missing.push(tags[i] + ': ' + name + ' (HTTP ' + r.getResponseCode() + ')');
     }
