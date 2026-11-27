@@ -27,6 +27,8 @@
 //  Gate 2 (28-10): un solo orologio per giro, `now` passato a ogni romeDate_ (C2: un giro a cavallo della mezzanotte
 //  di Roma calcolava i daily su D e freq7/finestre su D+1); le cause degli errori di daily (la prima), finestre e
 //  freq7 restano nella label finale e nei due ritorni anticipati (C3, X7: 'errori daily N' senza causa).
+// v1.5 (2026-11-27): il giro del cron rilegge gli ultimi 7 giorni chiusi invece del solo ieri (RUN_DAYS), con lo
+//  stesso upsert idempotente su (date, ad_id): un giro saltato non lascia piu' un giorno senza spesa.
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
@@ -52,6 +54,10 @@ const redact_ = (s: string) => String(s ?? '').replace(/access_token=[^&\s)]*/gi
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 const AD_ACCOUNT = 'act_686034712784477';
+// v1.5: giorni riletti dal giro del cron. Con 1 (solo ieri) un giro saltato lasciava quel giorno senza spesa per sempre
+// (03-11: il giro del 04-11 non e' partito col blocco di quota Supabase). 7 come beh-sync: un fermo fino a 6 giorni si
+// recupera da solo, e gli acquisti che Meta attribuisce nei giorni dopo (finestra di 7 giorni dal click) si aggiornano.
+const RUN_DAYS = 7;
 const CATALOG_ID = '916048904718661'; // assunto: unico catalogo del business (C3), non letto dal set
 // Nomi "actions" di Meta -> nostre colonne. Meta espone la stessa conversione anche come omni_* e
 // offsite_conversion.fb_pixel_*: tutte le forme mappano sulla stessa colonna e parseActions_ tiene il valore
@@ -151,10 +157,11 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ---- date da pullare: default IERI (Roma). Backfill a blocchi di max 30 giorni per invocazione (C6, wall-clock
-  // edge): action='backfill', days<=30, offset = giorni da saltare per il blocco successivo (risposta: next_offset). ----
+  // ---- date da pullare: il giro del cron rilegge gli ultimi RUN_DAYS giorni di Roma chiusi, fino a ieri (v1.5).
+  // Backfill a blocchi di max 30 giorni per invocazione (C6, wall-clock edge): action='backfill', days<=30, offset =
+  // giorni da saltare per il blocco successivo (risposta: next_offset). ----
   const isBackfill = body.action === 'backfill';
-  const days = isBackfill ? Math.min(30, Math.max(1, Number(body.days) || 14)) : 1;
+  const days = isBackfill ? Math.min(30, Math.max(1, Number(body.days) || 14)) : RUN_DAYS;
   const startOffset = isBackfill ? Math.max(0, Number(body.offset) || 0) : 0;
   const dates: string[] = [];
   for (let i = startOffset + days; i >= startOffset + 1; i--) dates.push(romeDate_(i, now));
@@ -166,8 +173,10 @@ Deno.serve(async (req) => {
   ].join(',');
 
   let dailyRows = 0, dailyErr = 0, dailyWarn = '';
+  let dateInCorso = ''; // v1.5: con 7 giorni per giro, il fermo dice quale giorno non e' stato letto
   try {
     for (const date of dates) {
+      dateInCorso = date;
       const tr = encodeURIComponent(JSON.stringify({ since: date, until: date }));
       const url = `${GRAPH}/${AD_ACCOUNT}/insights?level=ad&time_range=${tr}&fields=${insightFields}&limit=200`;
       const ins = await metaGetAll_(token, url);
@@ -205,7 +214,7 @@ Deno.serve(async (req) => {
       await sleep(200);
     }
   } catch (e) {
-    return fail('insights', (e as Error).message, 502);
+    return fail('insights', `${dateInCorso}: ${(e as Error).message}`, 502);
   }
 
   // ---- frequency VERA a 7 giorni (punto 6): UNA chiamata insights sul 7d con reach DEDUPLICATA, non la somma dei
