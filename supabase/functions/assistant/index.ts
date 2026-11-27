@@ -79,7 +79,7 @@ GLOSSARY (business):
 - PER PRODUCT offline sales in a period = qromo_sales UNION ALL gifts_offline with kind IN ('vendita_manuale','vendita_fuori_fatturato'), filtered on year and month. Per product online = shopify_line_items.
 - units sold per product of ALL TIME = shopify_sold + qromo_sold + b2b_venduto (from v_inventory). For a period, use the sales tables filtered on year and month instead.
 - "disponibili da vendere" = disponibili_da_vendere; "giacenza"/"a stock" = giacenza_attuale; "esaurito"/"stock zero" = disponibili_da_vendere <= 0.
-Rules: today's date is given with the question. A month named without a year means its most recent occurrence up to today (the current month included). When the question names a month or a year, the SELECT MUST filter on it (year and month columns, or a range on the date column). Use ILIKE for free-text names. When the question is about specific products, ALWAYS include the "codice" column so the app can show photos. One SELECT only, no semicolons, no comments, no markdown.
+Rules: today's date is given with the question. A month named without a year means its most recent occurrence up to today (the current month included). NEVER use CURRENT_DATE, now() or interval arithmetic (the database clock is UTC): write literal dates computed from the given today's date, e.g. yesterday = data = '2026-11-26'. When the question names a month or a year, the SELECT MUST filter on it (year and month columns, or a range on the date column). Use ILIKE for free-text names. When the question is about specific products, ALWAYS include the "codice" column so the app can show photos. One SELECT only, no semicolons, no comments, no markdown.
 ROUTING: if the question asks HOW TO USE the app (operational instructions: "come registro/aggiungo/faccio/cambio X", "dove trovo X", "come funziona X", "a cosa serve X"), do NOT produce SQL: set percorso to "howto" and sql to an empty string. Otherwise (data/numbers: sales, stock, expenses, P&L, ...) set percorso to "dati" and put ONE SELECT in sql.`;
 
 export const ISTRUZIONI_RISPOSTA = `Sei l'assistente dati di "Amimì" (borse artigianali). Chi legge non conosce i database: rispondi in ITALIANO, in modo chiaro e conciso (2-6 frasi).
@@ -128,8 +128,169 @@ export const FORMATO_SPESA = {
 
 export const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
 export const TESTO_VUOTO = 'La mia ricerca non ha trovato righe per questa domanda. Non vuol dire per forza che non ci siano dati: prova a riformularla, per esempio indicando mese e anno.';
+export const TESTO_ZERI_LARGO = 'La mia ricerca ha dato solo zeri, ma una ricerca piu\' larga sullo stesso periodo trova dei dati, quindi non ti rispondo "No". Prova a chiedere "quanto" o "quali" con lo stesso periodo.';
 export const TESTO_PERIODO = 'Non sono riuscito a costruire una ricerca che filtri davvero il periodo chiesto, quindi non ti do un numero che potrebbe essere sbagliato. Prova a riformulare indicando mese e anno (per esempio "vendite offline di novembre 2026").';
 export const TESTO_NUMERI = 'Ho trovato i dati, ma non sono riuscito a scrivere una risposta con numeri tutti verificati sulle righe. Li trovi nelle fonti qui sotto.';
+
+// Domande si'/no con zero righe (27-11, richiesta di Dan dopo la batteria): "Abbiamo venduto qualcosa in negozio ieri?"
+// riceveva TESTO_VUOTO ("prova a riformulare"), vero ma inutile. Quattro prove prima di questa, fermate dalla Gate 2:
+// (1) un modello giudicava la query; (2) il codice validava la query del modello pezzo per pezzo; (3) il codice faceva la
+// SUA query e rispondeva "No" o "Si'" (il "Si'" rispondeva a una domanda piu' larga); (4) solo "No", ma anche sulle spese
+// (eventi archiviati come MARKETING, packaging calcolato dalle vendite, spesa Meta solo da aprile) e con parole ambigue
+// ("ad oggi" = fino a oggi, "in vendita" = in offerta, "ordine" = ordine al fornitore).
+// Ora: solo "No", solo su VENDITE e ORDINI DEL SITO, e solo quando la query del codice e' ALMENO larga quanto la domanda:
+// tutte le fonti del CE per il canale (anche B2B per il negozio, le righe manuali del CE e, per un mese o un anno, la vista
+// del CE), periodo esatto letto dalla domanda e preso in largo, sync del sito vivo (health_log). Se la ricerca larga non
+// trova niente, "No" e' vero. Se trova qualcosa, o la domanda non e' traducibile, resta TESTO_VUOTO.
+// I dati delle due fonti principali partono il 13-16 febbraio 2026 (cassa e sito): prima di DATI_DAL nessun "No".
+export const DATI_DAL = '2026-02-16';
+function normDomanda(d: string): string {
+  return String(d ?? '').toLowerCase().replace(/[‘’`]/g, "'").replace(/è|é/g, "e'").replace(/\s+/g, ' ').trim();
+}
+const NEGAZIONE = /(^|[^a-z'])(non|nessun\w*|niente|nulla|zero|senza|vero che|neanche|nemmeno|not|no|nothing|none|without|never)(?=[^a-z']|$)/;
+// Una domanda si'/no: dopo eventuali parole iniziali di contesto (ieri, oggi, in negozio, a novembre, e, ma...) comincia
+// con un verbo o un "c'e'" (abbiamo, ci sono, risultano, did, any...), non chiede una quantita', una lista o un modo
+// (quanto, quali, come...) e non e' negativa ("e' vero che non...", "zero", "senza": il "No" sarebbe rovesciato).
+export function domandaSiNo(domanda: string): boolean {
+  let t = normDomanda(domanda);
+  if (/(^|[^a-z'])(quant[aoie]?|qual[ei]?|come|dove|perche'?|cosa|chi|quando|how|what|which|where|why|who|when)(?=[^a-z']|$)/.test(t)) return false;
+  if (NEGAZIONE.test(t)) return false;
+  const contesto = new RegExp('^(?:(?:e|ma|allora|quindi|ieri|oggi|in negozio|online|al mercatino|ai mercatini|(?:a|ad|in|nel mese di) (?:' + MESI.join('|') + ')(?: 20\\d\\d)?)[ ,]+){1,4}');
+  t = t.replace(contesto, '');
+  return /^(abbiamo|avete|hai|ho|ha|hanno|c'e'|ci sono|ci sono stat[ei]|e'|sono|risulta|risultano|si e'|si sono|did|do|does|have|has|any)(?=[\s?,]|$)/.test(t);
+}
+// Le sole parole ammesse in una domanda che il codice sa verificare da solo. Prodotti, clienti, importi, stati, spese,
+// intervalli ("dal", "fino", "per"), "ancora", "mai", "ordine" al singolare (anche al fornitore), "persona", "shop"/"negozi",
+// "mese"/"anno" senza dire quale, periodi relativi, "incassato" (i soldi del sito arrivano giorni dopo la vendita),
+// "ricevuto"/"get" (anche le consegne di cose comprate), "vendita"/"sale"/"sales" (anche un evento o una promozione):
+// TESTO_VUOTO.
+const PAROLE_SINO = new Set(('abbiamo avete hai ho ha hanno avuto avuta avuti avute e sono stato stata stati state risulta risultano risultato '
+  + 'si c ci venduto venduta venduti vendute vendite ordini '
+  + 'qualcosa qualche almeno un uno una anche in a ad al ai alla alle allo agli nel nella nei negli del della '
+  + 'dei di il lo la le i gli l ma allora quindi scusa sul sulla con ieri oggi '
+  + 'negozio mercatino mercatini cassa eventi evento offline online sito web ecommerce e-commerce website shopify qromo '
+  + 'did do does we you have has any anything something sell sold orders on at '
+  + 'the yesterday today our').split(' ').concat(MESI));
+const due = (n: number) => String(n).padStart(2, '0');
+function dataIt(iso: string): string { const [y, m, d] = iso.split('-').map(Number); return `${d} ${MESI[m - 1]} ${y}`; }
+function spostaGiorni(iso: string, n: number): string { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function ultimoGiorno(y: number, m: number): number { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+function elenco(xs: string[]): string { return xs.length > 1 ? xs.slice(0, -1).join(', ') + ' e ' + xs[xs.length - 1] : xs[0]; }
+const aMese = (m: number) => (/^[aeiou]/.test(MESI[m - 1]) ? 'ad ' : 'a ') + MESI[m - 1];
+export type VerificaNo = { sql: string; no: string };
+// La verifica indipendente di una domanda si'/no: la query di esistenza (piu' larga o uguale alla domanda) e il testo del
+// "No". null = domanda non verificabile. oggi = YYYY-MM-DD a Roma; adesso = l'istante della richiesta.
+export function verificaSiNo(domanda: string, oggi: string, adesso: Date): VerificaNo | null {
+  if (!domandaSiNo(domanda)) return null;
+  let t = ' ' + normDomanda(domanda).replace(/[?!.,;:]/g, ' ').replace(/\s+/g, ' ') + ' ';
+  const mesiRe = MESI.join('|');
+  // significati diversi con le stesse parole: "in vendita"/"on sale" (in offerta, da vendere), "sul negozio" (anche il
+  // negozio online), "ad oggi"/"al 3 novembre" (fino a quel giorno, non quel giorno)
+  if (/ (?:in|on|for) (?:vendita|sale) /.test(t) || / sul negozio /.test(t)) return null;
+  if (new RegExp(' (?:a|ad|al|allo|ai|agli) (?:oggi|ieri|today|yesterday|\\d{1,2}\\s*°?\\s+(?:di\\s+)?(?:' + mesiRe + '))(?= )').test(t)) return null;
+  // periodo, letto solo dalla domanda; un anno vale solo dopo un mese o dopo nel/del (non "almeno 2000")
+  type Periodo = { tipo: 'giorno'; g: string } | { tipo: 'mese'; y: number; m: number } | { tipo: 'anno'; y: number };
+  let periodo: Periodo | null = null;
+  const ieri = / (ieri|yesterday) /.test(t), oggiQ = / (oggi|today) /.test(t);
+  const gm = [...t.matchAll(new RegExp(' (\\d{1,2})\\s*°?\\s+(?:di\\s+)?(' + mesiRe + ')(?:\\s+(20\\d\\d))? ', 'g'))];
+  const mm = [...t.matchAll(new RegExp(' (?:mese di )?(' + mesiRe + ')(?:\\s+(20\\d\\d))? ', 'g'))];
+  const ya = [...t.matchAll(/ (?:nel|del) (20\d\d) /g)];
+  if ((ieri ? 1 : 0) + (oggiQ ? 1 : 0) + gm.length > 1 || mm.length > 1 || ya.length > 1) return null;
+  if ((ieri || oggiQ) && (mm.length || ya.length)) return null;          // "ieri a ottobre": periodi in conflitto
+  if (gm.length && ya.length) return null;
+  if (ieri || oggiQ) {
+    periodo = { tipo: 'giorno', g: ieri ? spostaGiorni(oggi, -1) : oggi };
+    t = t.replace(/ (ieri|yesterday|oggi|today) /g, ' ');
+  } else if (gm.length) {
+    const d = Number(gm[0][1]), m = MESI.indexOf(gm[0][2]) + 1, y = gm[0][3] ? Number(gm[0][3]) : annoInferito(m, oggi);
+    if (d < 1 || d > ultimoGiorno(y, m)) return null;
+    periodo = { tipo: 'giorno', g: `${y}-${due(m)}-${due(d)}` };
+    t = t.replace(gm[0][0], ' ');
+  } else if (mm.length) {
+    if (ya.length) return null;
+    const m = MESI.indexOf(mm[0][1]) + 1, y = mm[0][2] ? Number(mm[0][2]) : annoInferito(m, oggi);
+    periodo = { tipo: 'mese', y, m };
+    t = t.replace(mm[0][0], ' ');
+  } else if (ya.length) {
+    periodo = { tipo: 'anno', y: Number(ya[0][1]) };
+    t = t.replace(ya[0][0], ' ');
+  }
+  if (!periodo) return null;                                             // senza periodo: niente "No" su tutti i dati
+  // il periodo deve stare fra l'inizio dei dati dell'app e oggi
+  const inizio = periodo.tipo === 'giorno' ? periodo.g : periodo.tipo === 'mese' ? `${periodo.y}-${due(periodo.m)}-01` : `${periodo.y}-01-01`;
+  const fine = periodo.tipo === 'giorno' ? periodo.g : periodo.tipo === 'mese' ? `${periodo.y}-${due(periodo.m)}-${due(ultimoGiorno(periodo.y, periodo.m))}` : `${periodo.y}-12-31`;
+  if (inizio > oggi || inizio < DATI_DAL) return null;
+  // tutte le parole rimaste devono essere nell'elenco chiuso (niente prodotti, clienti, importi, stati, cifre)
+  const parole = t.replace(/'/g, ' ').split(/\s+/).filter(Boolean);
+  if (!parole.length || parole.some((w) => !PAROLE_SINO.has(w))) return null;
+  const ha = (re: RegExp) => parole.some((w) => re.test(w));
+  const vendite = ha(/^(venduto|venduta|venduti|vendute|vendite|sell|sold)$/);
+  const ordini = ha(/^(ordini|orders)$/);
+  const offline = ha(/^(negozio|mercatino|mercatini|cassa|offline|eventi|evento)$/);
+  const online = ha(/^(online|sito|web|ecommerce|e-commerce|website|shopify)$/);
+  const qromo = parole.includes('qromo');
+  type Fonte = 'sito' | 'qromo' | 'manuali' | 'b2b';
+  let fonti: Fonte[]; let cosa: string; let manuali: string[];          // colonne del CE che bloccano il "No"
+  if (ordini && !vendite) {
+    // "ordini" senza "online"/"sito" puo' voler dire gli ordini ai fornitori: niente verifica
+    if (!online || offline || qromo) return null;
+    fonti = ['sito']; cosa = 'nessun ordine'; manuali = ['online_netto'];
+  } else if (vendite && !ordini) {
+    if (qromo && online) return null;
+    if (qromo) { fonti = ['qromo']; manuali = ['offline_netto']; }
+    // "in negozio" puo' voler dire anche un negozio che vende per noi: anche B2B
+    else if (offline && !online) { fonti = ['qromo', 'manuali', 'b2b']; manuali = ['offline_netto', 'b2b_netto']; }
+    else if (online && !offline) { fonti = ['sito']; manuali = ['online_netto']; }
+    else { fonti = ['sito', 'qromo', 'manuali', 'b2b']; manuali = ['online_netto', 'offline_netto', 'b2b_netto']; }
+    cosa = 'nessuna vendita';
+  } else return null;
+  // gli ordini del sito arrivano nell'app col cron orario (minuto 7): "ieri" subito dopo mezzanotte puo' essere incompleto
+  // (vale anche per la data scritta, non solo per la parola ieri)
+  const oraRoma = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', hour12: false }).format(adesso);
+  if (fonti.includes('sito') && fine === spostaGiorni(oggi, -1) && oraRoma < '00:15') return null;
+  // la query di esistenza, scritta dal codice, presa in largo: anno/mese della tabella OPPURE la data del periodo
+  const [ya0, ma0] = [Number(inizio.slice(0, 4)), Number(inizio.slice(5, 7))];
+  const perMese = periodo.tipo === 'anno' ? `year = ${ya0}` : `year = ${ya0} AND month = ${ma0}`;
+  const dove = (f: Fonte): string => {
+    const col = f === 'sito' ? "(created_at_shop AT TIME ZONE 'Europe/Rome')::date" : 'data';
+    // giorno: la data, piu' una riga senza data nel suo mese (anno/mese da soli allargherebbero al mese intero e il "No"
+    // non uscirebbe mai); mese/anno: le date del periodo OPPURE anno/mese della tabella
+    return periodo.tipo === 'giorno' ? `(${col} = '${periodo.g}' OR (${col} IS NULL AND ${perMese}))` : `(${col} BETWEEN '${inizio}' AND '${fine}' OR (${perMese}))`;
+  };
+  const rami: Record<Fonte, string> = {
+    sito: `SELECT 1 AS x FROM shopify_orders WHERE ${dove('sito')}`,
+    qromo: `SELECT 1 AS x FROM qromo_sales WHERE ${dove('qromo')}`,
+    // tutto tranne omaggi e rettifiche senza prezzo (un tipo nuovo, o una riga con un prezzo, conta come vendita)
+    manuali: `SELECT 1 AS x FROM gifts_offline WHERE (kind IS NULL OR kind NOT IN ('gift','rettifica') OR COALESCE(prezzo, 0) <> 0) AND ${dove('manuali')}`,
+    b2b: `SELECT 1 AS x FROM b2b_movements WHERE ${dove('b2b')}`,
+  };
+  const nonZero = manuali.map((c) => `COALESCE(${c}, 0) <> 0`).join(' OR ');
+  // le righe manuali del CE sono mensili: per un giorno si guarda il suo mese intero (piu' largo, quindi prudente);
+  // per un mese o un anno anche la vista del CE (una fonte nuova del CE blocca il "No" anche se qui non e' elencata)
+  const bloccanti = [`SELECT 1 AS x FROM ce_totale_manual WHERE ${perMese} AND (${nonZero})`];
+  if (periodo.tipo !== 'giorno') bloccanti.push(`SELECT 1 AS x FROM v_ce_totale WHERE ${perMese} AND (${nonZero})`);
+  // sito: serve un giro di shopify-sync riuscito DOPO la fine del periodo (per un periodo che arriva a oggi, negli ultimi
+  // 75 minuti); se il sync e' fermo o in errore, la riga torna e blocca il "No"
+  if (fonti.includes('sito')) {
+    const soglia = fine >= oggi ? `'${new Date(adesso.getTime() - 75 * 60000).toISOString()}'::timestamptz` : `(DATE '${spostaGiorni(fine, 1)}')::timestamp AT TIME ZONE 'Europe/Rome'`;
+    bloccanti.push(`SELECT 1 AS x WHERE NOT EXISTS (SELECT 1 FROM health_log WHERE k = 'shopify_sync' AND severity = 'ok' AND label NOT LIKE 'sync: letti 0,%' AND created_at >= ${soglia})`);
+    // un giro ok dice che il sync e' vivo ADESSO, non che un ordine fallito giorni fa sia entrato: blocca anche l'ultima
+    // riconciliazione di ce-guard (conteggio ordini Shopify API contro DB, 2 mesi) se non e' ok
+    bloccanti.push(`SELECT 1 AS x WHERE NOT EXISTS (SELECT 1 FROM (SELECT severity FROM health_log WHERE k = 'ce_shopify_reconcile' ORDER BY day DESC, created_at DESC LIMIT 1) r WHERE r.severity = 'ok')`);
+  }
+  const sql = `SELECT x FROM (${fonti.map((f) => rami[f]).concat(bloccanti).join(' UNION ALL ')}) t LIMIT 1`;
+  const nomi: Record<Fonte, string> = { sito: 'negli ordini del sito', qromo: 'nella cassa Qromo', manuali: 'nelle vendite manuali', b2b: 'nei movimenti B2B' };
+  const finoOggi = fine > oggi ? ' (fino a oggi)' : '';
+  const quando = periodo.tipo === 'giorno'
+    ? (periodo.g === oggi ? `oggi, ${dataIt(periodo.g)},` : periodo.g === spostaGiorni(oggi, -1) ? `ieri, ${dataIt(periodo.g)},` : `il ${dataIt(periodo.g)}`)
+    : (periodo.tipo === 'mese' ? `${aMese(periodo.m)} ${periodo.y}` : `nel ${periodo.y}`) + finoOggi;
+  // avvisi: gli ordini del sito arrivano una volta all'ora; le vendite inserite a mano (manuali, B2B) a volte giorni dopo
+  const nota = (fonti.includes('sito') && fine >= oggi ? " Gli ordini del sito arrivano nell'app una volta all'ora: uno dell'ultima ora potrebbe non esserci ancora." : '')
+    + ((fonti.includes('manuali') || fonti.includes('b2b')) && fine > spostaGiorni(oggi, -7) ? ' Le vendite inserite a mano a volte vengono registrate qualche giorno dopo.' : '');
+  const finora = periodo.tipo === 'giorno' && periodo.g === oggi ? ' finora' : '';
+  const no = `No: ${quando}${finora} non risulta ${cosa} ${elenco(fonti.map((f) => nomi[f]))}.${nota}`;
+  return { sql, no: no.replace(/\s+/g, ' ').replace(' ,', ',') };
+}
 
 // Data di oggi a Roma, YYYY-MM-DD (l'anno non e' piu' scritto fisso nel prompt: "novembre" a gennaio 2027 = novembre 2026).
 export function oggiRoma(ora: Date): string {
@@ -238,11 +399,26 @@ const r2 = (x: number) => Math.round(x * 100) / 100;
 // Righe che non hanno trovato niente: nessuna riga, oppure righe in cui, tolte anno/mese/id, i valori sono tutti null o
 // sono zeri accanto a un null (COUNT 0 e SUM null). Non e' "vendite nulle" (25-11: una query con un filtro che non
 // trovava niente tornava una riga null e l'assistente rispondeva "venduto offline nullo" su un mese con vendite).
+// UNA riga di aggregato a zero (SELECT COUNT(*) = 0, SELECT EXISTS = false, SUM = 0), tolti anno/mese: su una domanda
+// si'/no il modello scriverebbe il suo "No" da una query forse piu' stretta (Gate 2 del 27-11, B4), quindi passa dalla
+// stessa verifica del codice. Solo la forma di un aggregato: una riga di un record vero (un id, un codice, un testo) con
+// un valore a zero (sconto 0, spedizione gratuita false) e' una riga trovata, non uno zero (seconda Gate 2, B1).
+export function righeZero(rows: unknown): boolean {
+  if (!Array.isArray(rows) || rows.length !== 1) return false;
+  const r = rows[0];
+  if (r == null || typeof r !== 'object') return false;
+  const e = Object.entries(r as Record<string, unknown>).filter(([k]) => !/^(year|month|anno|mese)$/i.test(k));
+  return e.length > 0 && e.every(([k, x]) => !/(^|_)id$|codice|^order_|data|date|nome|name/i.test(k)
+    && (x == null || x === false || x === 0 || (typeof x === 'string' && /^\s*-?0+(?:[.,]0+)?\s*$/.test(x))));
+}
 export function righeVuote(rows: unknown): boolean {
   if (!Array.isArray(rows) || rows.length === 0) return true;
   return rows.every((r) => {
     if (r == null || typeof r !== 'object') return true;
     const v = Object.entries(r as Record<string, unknown>).filter(([k]) => !NON_SOMMARE.test(k)).map(([, x]) => x);
+    // una riga fatta solo di colonne id/anno/mese (SELECT order_id ...) e' una riga vera se ha un valore (Gate 2 del 27-11:
+    // prima contava come vuota e "ci sono ordini ieri?" riceveva "non ha trovato righe" con gli ordini presenti)
+    if (!v.length) return Object.values(r as Record<string, unknown>).every((x) => x == null);
     if (v.every((x) => x == null)) return true;
     return v.some((x) => x == null) && v.every((x) => x == null || aNumero(x) === 0);
   });
@@ -521,7 +697,23 @@ Deno.serve(async (req) => {
   if (sqlError) return json({ ok: true, testo: 'La query non ha funzionato: ' + sqlError.message + '. Prova a riformulare la domanda.', sql, righe: [], uso: usoOut() });
   if (error) return readFailed('ask_select', error.message);
   const rows: Row[] = Array.isArray(rowsRaw) ? rowsRaw as Row[] : [];
-  if (righeVuote(rows)) return json({ ok: true, testo: TESTO_VUOTO, sql, righe: rows, uso: usoOut() });
+  const vuote = righeVuote(rows), zeri = !vuote && righeZero(rows);
+  if (vuote || zeri) {
+    // si'/no con zero righe (o righe a zero): il codice costruisce ed esegue la SUA query di esistenza (verificaSiNo), almeno
+    // larga quanto la domanda e senza guardare la query del modello; se non trova niente risponde "No" col testo scritto
+    // dal codice. Nessun modello qui.
+    const v = verificaSiNo(question, oggi, new Date());
+    if (v) {
+      const { data: esiste, error: vErr } = await retryOnce(() => sb.rpc('ask_select', { q: v.sql }));
+      if (!vErr && Array.isArray(esiste) && esiste.length === 0) return json({ ok: true, testo: v.no, sql, sql_verifica: v.sql, righe: rows, uso: usoOut() });
+      // la ricerca piu' larga del codice ha trovato qualcosa: la domanda era piu' stretta, nessun "No" e nessun "Si'".
+      // Con righe a zero "non ha trovato righe" sarebbe falso: il testo dice che una ricerca piu' larga trova dati
+      if (!vErr && Array.isArray(esiste)) return json({ ok: true, testo: zeri ? TESTO_ZERI_LARGO : TESTO_VUOTO, sql, righe: rows, uso: usoOut() });
+      console.warn('assistant: verifica si/no fallita: ' + String((vErr as SqlErr)?.message ?? 'risposta non valida').slice(0, 150));
+    }
+    // domanda non verificabile o verifica fallita: zero righe -> TESTO_VUOTO; righe a zero -> risposta normale, come prima
+    if (vuote) return json({ ok: true, testo: TESTO_VUOTO, sql, righe: rows, uso: usoOut() });
+  }
 
   const cols = Object.keys(rows[0]);
   const tot = totaliCalcolati(rows);
