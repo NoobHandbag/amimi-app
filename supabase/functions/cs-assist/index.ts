@@ -1,4 +1,9 @@
 // cs-assist — tool assistenza clienti, FASE 3/4-lite: recupero DATI + riassunto/storia + bozze.
+// sorgente v36 (2026-11-27, decisione di Dan in chat: «make cs-assist use the ANTHROPIC_API_KEY secret»): la chiave
+//   Anthropic e' il segreto delle Edge Functions ANTHROPIC_API_KEY (chat del sito e assistente), non piu'
+//   app_flags.anthropic_api_key, parcheggiata dal 31-07 come anthropic_api_key_disabled. Con il segreto presente le
+//   bozze tornano su Claude, modello claude-sonnet-5-5 (migr 0216 sul flag cs_ai_model_claude); se Claude fallisce
+//   (credito finito, limite di spesa) ripiegano su Gemini come dalla v12. Nient'altro cambia.
 // sorgente v35 (2026-11-25, OK di Dan in chat: «Sì, fallo»): `faqTono` legge `cs_faq` in ordine di id. Prima l'ordine era
 //   quello fisico della tabella, che cambia a ogni UPDATE (Gate 2 della migr 0211, C4; succedeva gia' dalle migr 0069 e
 //   0070): le bozze delle conversazioni senza categoria ricevono ora sempre le prime 4 risposte standard per id (A1-A4;
@@ -451,13 +456,15 @@ async function gemini(model: string, prompt: string, key: string, maxTokens: num
   return text;
 }
 
-// Claude (Anthropic Messages API) — motore preferito per bozze/refine quando c'e' app_flags.anthropic_api_key
+// Claude (Anthropic Messages API) — motore preferito per bozze/refine quando c'e' il segreto ANTHROPIC_API_KEY
 // (tono migliore, niente quota giornaliera come Gemini free). v12: fallback a Gemini se Claude fallisce (no override).
 async function claude(model: string, system: string, user: string, key: string, maxTokens: number): Promise<string> {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
+    // v36: Claude che non risponde deve diventare un errore, se no il ripiego su Gemini non scatta mai
+    signal: AbortSignal.timeout(90_000),
   });
   const j = await r.json();
   if (!r.ok) throw new Error('Claude ' + r.status + ': ' + JSON.stringify(j).slice(0, 200));
@@ -1396,7 +1403,7 @@ Deno.serve(async (req) => {
   // `flags.X` e non elencato qui vale sempre `undefined`, quindi la feature che governa e' morta in
   // silenzio: nessun errore, nessun test rosso, e una misura che sembra fatta e non lo e'.
   // `tests/cs_rami.mjs` confronta l'elenco con i `flags.` davvero consumati nel sorgente.
-  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'anthropic_api_key', 'cs_ai_model_claude', 'cs_ai_istruzioni', 'cs_rami_enabled', 'cs_thread_precede', 'cs_impegno_esplicito', 'cs_predraft_attivo']);
+  const { data: frows } = await sb.from('app_flags').select('key,value').in('key', ['gemini_api_key', 'cs_enabled', 'cs_reso_finestra_giorni', 'cs_ai_model_claude', 'cs_ai_istruzioni', 'cs_rami_enabled', 'cs_thread_precede', 'cs_impegno_esplicito', 'cs_predraft_attivo']);
   for (const r of frows ?? []) flags[r.key] = r.value ?? '';
   const { data: cfg } = await sb.from('app_config').select('pin_hash, shopify_token').eq('id', 1).single();
   const token = String(cfg?.shopify_token ?? '');
@@ -1419,15 +1426,17 @@ Deno.serve(async (req) => {
   }
 
   const key = flags.gemini_api_key;
-  // Motore AI: Claude se c'e' anthropic_api_key (owner lo mette a mano, mai in repo/chat), altrimenti Gemini (piano a pagamento, Livello 1 dal 31-07, verificato in AI Studio il 04-11).
-  const claudeKey = (flags.anthropic_api_key || '').trim();
+  // Motore AI: Claude se c'e' la chiave Anthropic, altrimenti Gemini (piano a pagamento, Livello 1 dal 31-07, verificato in AI Studio il 04-11).
+  // v36 (27-11, decisione di Dan): la chiave e' il segreto delle Edge Functions ANTHROPIC_API_KEY, lo stesso della chat
+  // del sito e dell'assistente (stesso credito e stesso limite di spesa), non piu' app_flags.anthropic_api_key.
+  const claudeKey = (Deno.env.get('ANTHROPIC_API_KEY') || '').trim();
   // migr 0084: `cs_ai_model` -> `cs_ai_model_claude` (e' SOLO il nome del modello Claude, non il selettore di motore)
-  const claudeModel = (flags.cs_ai_model_claude || 'claude-sonnet-5').trim();
+  const claudeModel = (flags.cs_ai_model_claude || 'claude-sonnet-5-5').trim();
   // model_override (harness eval, brief 29-07): A/B sulle stesse conversazioni senza toccare i flag
   // globali, e baseline Gemini rigenerabile anche DOPO l'inserimento della chiave Anthropic. Vale solo
   // per draft/refine (rami JWT: qui siamo gia' oltre il gate), allowlist esplicita, e MAI fallback
   // silenzioso su un altro modello: falserebbe il confronto.
-  const MODEL_ALLOW = ['gemini-flash-latest', 'claude-sonnet-5'];
+  const MODEL_ALLOW = ['gemini-flash-latest', 'claude-sonnet-5-5'];
   const override = String(body.model_override || '').trim();
   if (override && !['draft', 'refine'].includes(action)) return json({ error: 'model_override vale solo per draft/refine' }, 400);
   if (override && !MODEL_ALLOW.includes(override)) return json({ error: `model_override non ammesso: "${override}" (ammessi: ${MODEL_ALLOW.join(', ')})` }, 400);
@@ -1611,7 +1620,7 @@ Riassunto (max 2 righe):`;
   const faiBozza = async (): Promise<Response> => {
     if (!haveLLM) return json({ ok: false, needs_key: true, error: 'Nessun motore AI configurato (Gemini o Claude).' });
     // chiave del motore RICHIESTO assente -> needs_key, mai ripiegare sull'altro (falserebbe l'A/B)
-    if (useClaude && !claudeKey) return json({ ok: false, needs_key: true, error: 'model_override Claude ma anthropic_api_key assente: nessun fallback.' });
+    if (useClaude && !claudeKey) return json({ ok: false, needs_key: true, error: 'model_override Claude ma ANTHROPIC_API_KEY assente: nessun fallback.' });
     if (!useClaude && !key) return json({ ok: false, needs_key: true, error: 'motore Gemini richiesto ma gemini_api_key assente.' });
     const lc = await loadConv(true);
     if (lc instanceof Response) return lc;   // 2026-09-13 (sweep incidente doppioni): thread non leggibile = 503, nessuna bozza dal solo subject
@@ -1845,7 +1854,7 @@ ${rami
   // ---------- refine: riscrivi una bozza data applicando un'istruzione (JWT), Claude o Gemini ----------
   if (action === 'refine') {
     if (!haveLLM) return json({ ok: false, needs_key: true, error: 'Nessun motore AI configurato (Gemini o Claude).' });
-    if (useClaude && !claudeKey) return json({ ok: false, needs_key: true, error: 'model_override Claude ma anthropic_api_key assente: nessun fallback.' });
+    if (useClaude && !claudeKey) return json({ ok: false, needs_key: true, error: 'model_override Claude ma ANTHROPIC_API_KEY assente: nessun fallback.' });
     if (!useClaude && !key) return json({ ok: false, needs_key: true, error: 'motore Gemini richiesto ma gemini_api_key assente.' });
     const testo = String(body.testo || '').trim();
     const istruzione = String(body.istruzione || '').trim();
